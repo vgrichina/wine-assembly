@@ -526,3 +526,85 @@ suites), so the seal covers it.
 New manifest digest:
 
   56bf8193ed55ccda9273b571d77be9adccd9fcab78dbdc6c87120ecc4ccf5bf4
+
+## 2026-08-31 — the deterministic allocator, the laws, derived bases, region-relative data, and the shake
+
+Milestone 6 stage A, the rest of it (`docs/watx-region-safety-design.md` §4.1-§4.4,
+§8, failure modes 15-20). Step 1 declared the map; this makes the map *movable*.
+
+`compiler-codegen.js`. The four declaration heads — the pre-existing
+`region.declare-static/-bump/-rc`, `region.declare-fixed`, and the two new
+`region.declare` (allocated) and `region.declare-derived` (a base computed from a
+guest VA) — now share ONE record type, ONE name→base map and ONE validation
+pass, and that pass MOVED above the data-segment scan, because a region-relative
+segment offset cannot resolve until the regions exist.
+
+- **`(region.declare $N (size N) (align N) (owner "…"))` — allocated.**
+  Declaration-order first-fit above `(region.floor N)`, never backfilling into an
+  earlier hole (backfilling would make every base depend on the size history of
+  every earlier region). `(region.gap N (reason "text"))` advances the cursor and
+  *documents* a preserved hole; the reason is mandatory. Pinned and derived
+  regions are placed first and are obstacles the cursor skips.
+- **Constraints.** `(stride S (count C))` — either operand may name an i32
+  constant global, so `DLL_TABLE_SIZE == DLL_TABLE_CAPACITY * 32` becomes one
+  statement instead of two numbers that agree by luck; `(size-is-power-of-2)`;
+  `(mask $G)`, which asserts the global is one below the region's count (or its
+  size when no stride is declared) and refuses a mask over a non-power-of-two
+  count. Laws apply to pins too — the constraint is about the extent, not about
+  who chose the address.
+- **Derived bases.** `(region.declare-derived $R (base (g2w 0xVA)) …)` resolves
+  to `$GUEST_BASE + (VA - image base)`, so the written constant is the guest
+  address, which is the thing that is actually an ABI. The image base is
+  `(region.image-base N)`, defaulting to `0x400000`. A derived base needs a
+  PINNED `$GUEST_BASE`: deriving from an allocated one would let the guest ABI
+  move with the layout.
+- **Region-relative data segments.** `(data (region.addr $R OFF) "…")` places the
+  segment at base+off and checks it against the region's extent **including the
+  segment's own length** — the bound the absolute form never had. It emits the
+  identical `i32.const` the absolute form emits, pinned by a byte comparison in
+  the suite.
+- **The shake.** `options.regionShake` = `gap` (a prime gap before each region),
+  `rotate`, `reverse`, `pad` (prime spacing without resizing, so the stride/mask
+  laws stay intact) or a numeric seed (a reproducible LCG shuffle). It reaches
+  the allocator and nothing else: pins and derived regions never move, because
+  moving `$GUEST_BASE` changes the guest ABI, which is a different experiment.
+  The layout is reported on the compile result (`result.regions`) so a build
+  banner can say which map an artifact carries; a shaken artifact must never be
+  mistakable for a canonical one.
+- **Failure modes 15-20** are hard errors with `file`/`line`/`col`: 15 allocation
+  past initial memory (naming the last placed region), 16 a pin with no room
+  after it (naming the pin), 17 a stride×count that is not the size, 18
+  `(size-is-power-of-2)` over a size that is not one, 19 `(g2w …)` with no
+  declared `$GUEST_BASE`, 20 a data segment running past its region.
+
+**Round-6 review finding, folded in.** Regions share the `$name` namespace with
+functions, globals and locals, and only one of those collisions is intentional —
+a region named after the `(global $R i32 (i32.const base))` it replaces, which is
+the migration pattern and stays legal. Two are now hard errors: a region named
+after a **function** (a bare `$f` would emit the region base while `(call $f)`
+still calls the function), and a bare region symbol **shadowed by a local** (the
+local silently won, so the address the author wrote could never be read). An
+explicit `(local.get $X)` is unambiguous and stays legal. Function contexts gained
+`sourceForm` so a diagnostic raised before any inner form has compiled still
+carries a line number.
+
+`compiler.js` surfaces `result.regions` — the layout and whether a shake permuted
+it. Nothing else on the result changed.
+
+**Byte identity holds.** All 160 regions still compile to tail
+`01daf6ccfbd115e3` / compat `0ee6414668129ac4`, and — the load-bearing proof —
+so does the tree with every one of those declarations rewritten as
+`region.declare` with 30 explicit gaps: `node tools/region-alloc.js --prove`
+substitutes the allocated form into the source closure in memory and reports
+`984347 B 01daf6ccfbd115e3` / `984796 B 0ee6414668129ac4`. The allocator can land
+on the hand-placed map exactly, which is what stage A required before stage B's
+fan-out can use byte identity as its correctness oracle.
+
+New suite `test/watx-compiler-alloc.test.js` (76 checks) joins `REQUIRED_FILES`
+in `tools/check-watx-provenance.js` (19 → 20 pinned suites);
+`test/watx-compiler-regions.test.js` grew to 67 with the namespace-collision
+checks.
+
+New manifest digest:
+
+  4b1b8a0321f09da79b98801df2e892627e19facfeb847ce40012ffb28e52461f

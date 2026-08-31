@@ -101,6 +101,9 @@ const REQUIRED_FILES = [
   // Milestone 6 step 1: region.declare-fixed, the head that VERIFIES a base
   // instead of allocating one (docs/watx-region-safety-design.md).
   'test/watx-compiler-regions.test.js',
+  // Milestone 6 stage A: the deterministic ALLOCATOR, the constraint laws,
+  // derived (g2w) bases, region-relative data segments and the shake.
+  'test/watx-compiler-alloc.test.js',
 ];
 
 function fail(msg) {

@@ -330,6 +330,10 @@ function compile(source, vfs = new Map(), options = {}) {
       importMeta: wasmResult.importDecls,
       stages,
       diagnostics: checkResult.warnings.map(w => ({ type: 'warning', ...w })),
+      // The region layout (docs/watx-region-safety-design.md §4.1/§8): what the
+      // allocator produced, and whether a shake permuted it. A caller that
+      // writes an artifact prints this; a caller that does not, ignores it.
+      regions: wasmResult.regions || null,
     };
     if (debugArtifacts) {
       result.wasmText = wasmText;

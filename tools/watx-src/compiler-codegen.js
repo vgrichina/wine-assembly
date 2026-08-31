@@ -488,6 +488,87 @@ const BUILTIN_REGION_ENTER = '$__region_enter';
 const BUILTIN_REGION_ALLOC = '$__region_alloc';
 const BUILTIN_REGION_EXIT = '$__region_exit';
 
+// ── The shake (docs/watx-region-safety-design.md §8) ─────────────────────────
+// A layout that never moves is a layout nobody has tested. Byte identity proves
+// each conversion was EXACT; it cannot prove they were COMPLETE, because a
+// missed raw literal that still equals the right address emits identical bytes.
+// So the allocator can be asked to produce a deliberately different — and
+// deterministic — layout, and the test pool is run against it.
+//
+// The permutation touches the ALLOCATED sequence and nothing else: pinned and
+// derived regions keep their addresses, because moving $GUEST_BASE or a
+// guest-VA-anchored stack changes the guest ABI, which is a different
+// experiment. A shaken artifact is therefore never canonical, and the build
+// banner says so.
+//
+// Prime gaps are deliberate: a shift that is a multiple of every stride in the
+// tree can be absorbed by an off-by-a-stride bug and stay green.
+const REGION_SHAKE_PRIMES = [4099, 8209, 12289, 16411, 20483, 24593, 28687, 32771, 36871, 40961];
+
+function normalizeRegionShake(value) {
+  if (value === undefined || value === null || value === false || value === '') return null;
+  const text = String(value).trim();
+  if (text === '' || text === '0' || text === 'off' || text === 'none') return null;
+  const named = text.toLowerCase();
+  if (named === 'gap' || named === 'rotate' || named === 'reverse' || named === 'pad') {
+    return { mode: named, seed: 0, label: named };
+  }
+  const seed = /^0x/i.test(text) ? Number.parseInt(text, 16) : Number.parseInt(text, 10);
+  if (!Number.isInteger(seed) || seed <= 0) {
+    throw new Error(`region shake: '${text}' is not gap, rotate, reverse, pad or a positive numeric seed`);
+  }
+  return { mode: 'seed', seed: seed >>> 0, label: `seed 0x${(seed >>> 0).toString(16)}` };
+}
+
+function shakeRegionSequence(sequence, shake) {
+  const items = sequence.map(item => ({ ...item }));
+  const regionsAt = [];
+  items.forEach((item, i) => { if (item.kind === 'region') regionsAt.push(i); });
+  if (shake.mode === 'gap') {
+    const out = [];
+    let n = 0;
+    for (const item of items) {
+      if (item.kind === 'region') {
+        out.push({ kind: 'gap', size: REGION_SHAKE_PRIMES[n % REGION_SHAKE_PRIMES.length], form: item.form,
+                   reason: 'shake' });
+        n++;
+      }
+      out.push(item);
+    }
+    return out;
+  }
+  if (shake.mode === 'pad') {
+    // Space every region out by a prime page count WITHOUT changing its declared
+    // size: growing the size would break the very (stride …)/(mask …) laws the
+    // shake needs left intact to be a test of addressing rather than of arithmetic.
+    let n = 0;
+    for (const i of regionsAt) {
+      items[i].extent = items[i].region.size + REGION_SHAKE_PRIMES[(n++) % REGION_SHAKE_PRIMES.length];
+    }
+    return items;
+  }
+  // The order permutations rearrange the allocated regions among the positions
+  // they occupy, leaving the source's own gaps where they were declared.
+  const picked = regionsAt.map(i => items[i]);
+  let order;
+  if (shake.mode === 'reverse') {
+    order = picked.slice().reverse();
+  } else if (shake.mode === 'rotate') {
+    order = picked.length ? picked.slice(1).concat(picked.slice(0, 1)) : picked;
+  } else {
+    // A 32-bit LCG shuffle: reproducible from the seed alone, on any engine.
+    let state = shake.seed >>> 0;
+    const next = () => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0);
+    order = picked.slice();
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = next() % (i + 1);
+      const t = order[i]; order[i] = order[j]; order[j] = t;
+    }
+  }
+  regionsAt.forEach((slot, k) => { items[slot] = order[k]; });
+  return items;
+}
+
 
 function generateWasm(forms, loweredForms, checkResult, options = {}) {
   const V = watxValue;
@@ -700,6 +781,530 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
   }
   if (!memoryDecl) memoryDecl = { kind: 'memory', imported: false, name: null, min: 16, max: 16384, shared: false };
 
+  // Collect region declarations (the allocating heads that predate Milestone 6)
+  const regionDecls = [];
+  for (const form of forms) {
+    if (Array.isArray(form)) {
+      const h = V(form[1]);
+      if (h === 'region.declare-static' || h === 'region.declare-bump' || h === 'region.declare-rc') {
+        const rname = V(form[2]);
+        const sizeForm = form[3];
+        let size = 4096;
+        if (Array.isArray(sizeForm) && V(sizeForm[1]) === 'size') {
+          size = parseInt(V(sizeForm[2])) || 4096;
+        } else if (T(sizeForm) === 'number') {
+          size = parseInt(V(sizeForm)) || 4096;
+        }
+        regionDecls.push({ name: rname, kind: h.split('-').pop(), size });
+      }
+    }
+  }
+
+  // ── The region family ───────────────────────────────────────────────────────
+  // docs/watx-region-safety-design.md. Four declaration heads share ONE record
+  // type, ONE name→base map and ONE validation pass, because a memory map with
+  // two grammars has two places to look when an address is wrong:
+  //
+  //   (region.declare-static $S (size 64))                     ; laid out from 1024
+  //   (region.declare-fixed  $N (base 0x12000) (size 0x3C00000))
+  //   (region.declare-derived $N (base (g2w 0x07400000)) (size 0x100000))
+  //   (region.declare        $N (size 0x1800) (align 0x100) (owner "…"))
+  //
+  // plus the sequence forms `(region.floor N)`, `(region.gap N (reason "…"))`
+  // and `(region.image-base N)`.
+  //
+  // `region.declare` ALLOCATES, which is the target state (§3): a fixed pin
+  // needs one of exactly two reasons — a guest-visible ABI, or an alignment /
+  // derivation law — and most of a real map has neither. The allocator is
+  // declaration-order first-fit above a floor (§4.1), deterministic by
+  // construction: the same source yields the same layout, so byte identity is a
+  // usable correctness oracle for a conversion wave.
+  //
+  // This whole block runs BEFORE the data-segment scan on purpose: §4.4's
+  // `(data (region.addr $R 0x40) "…")` cannot resolve its offset until the
+  // regions exist, and an absolute data offset is the single largest anchor
+  // holding the map in place.
+  const STATIC_REGION_BASE = 1024;
+  const regionBase = new Map();
+  let staticCursor = STATIC_REGION_BASE;
+  const regions = new Map();
+  let regionConstValue = null;   // shared by compileExpr and the data scan
+  let regionLayoutReport = null; // surfaced on the compile result for the banner
+  {
+    const memoryBytes = memoryDecl.min * 65536;
+    const located = (form, message) => {
+      const e = new Error(message);
+      const loc = watxFormLoc(form);
+      if (loc !== undefined) {
+        e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc);
+      }
+      return e;
+    };
+    const at = (r) => r.file ? `${r.file}:${r.line}` : `line ${r.line}`;
+    const hx = (n) => `0x${(n >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
+    const alignUp = (n, a) => ((n + a - 1) / a | 0) * a;
+    const HEADS = new Map([
+      ['region.declare-fixed', 'fixed'],
+      ['region.declare-derived', 'derived'],
+      ['region.declare', 'alloc'],
+    ]);
+    const REGION_CLAUSES = new Set(['base', 'size', 'end', 'align', 'owner', 'within',
+      'stride', 'mask', 'size-is-power-of-2']);
+
+    // The constant globals, read straight off the top-level forms. The laws in
+    // §4.2 tie a region's extent to globals the code already reads
+    // (`$CACHE_MASK`, `$DLL_TABLE_CAPACITY`), and those fourteen derived values
+    // are exactly the ones nothing asserts today. Scanned here rather than taken
+    // from the later `globalDecls` pass so the region block stays movable.
+    const constGlobals = new Map();
+    for (const form of forms) {
+      if (!Array.isArray(form) || V(form[1]) !== 'global') continue;
+      const gname = V(form[2]);
+      const init = form[form.length - 1];
+      if (!gname || !gname.startsWith('$')) continue;
+      if (!Array.isArray(init) || V(init[1]) !== 'i32.const') continue;
+      let value;
+      try { value = watxParseIntLiteral(V(init[2]), 'global initializer'); } catch (err) { continue; }
+      if (Number.isInteger(value) && !constGlobals.has(gname)) constGlobals.set(gname, value);
+    }
+
+    // ── Pass 1: read the declaration sequence in source order ─────────────────
+    // Order is the allocator's only input besides the sizes, so it is the
+    // module's top-level form order — the same order src/main.watx fixes — and
+    // never the name or the size, both of which move under an unrelated edit.
+    const sequence = [];
+    let floor = null, floorForm = null;
+    let imageBase = null, imageBaseForm = null;
+    const DEFAULT_IMAGE_BASE = 0x400000;
+
+    const litOperand = (form, part, label) => {
+      const raw = V(part);
+      let value;
+      try {
+        value = watxParseIntLiteral(raw, label);
+      } catch (err) {
+        throw located(form, `${label}: (${raw}) is not an integer literal`);
+      }
+      if (!Number.isInteger(value) || value < 0) {
+        throw located(form, `${label}: ${raw} must be a non-negative integer`);
+      }
+      return value;
+    };
+    // A stride/count operand is either a literal or the NAME of an i32 constant
+    // global — which is the point: `(stride 32 (count $DLL_TABLE_CAPACITY))`
+    // makes the capacity global and the region's extent one statement instead of
+    // two numbers that agree by luck.
+    const amount = (form, part, label) => {
+      const raw = V(part);
+      if (typeof raw === 'string' && raw.startsWith('$')) {
+        if (!constGlobals.has(raw)) {
+          throw located(form, `${label}: ${raw} names no (global ${raw} i32 (i32.const N)) in this module`);
+        }
+        return constGlobals.get(raw);
+      }
+      return litOperand(form, part, label);
+    };
+
+    for (const form of forms) {
+      if (!Array.isArray(form)) continue;
+      const head = V(form[1]);
+
+      if (head === 'region.floor') {
+        if (floor !== null) throw located(form, `(region.floor ...) is already declared at ${at(floorForm)}`);
+        if (form.length !== 3) throw located(form, `(region.floor N) takes exactly one operand`);
+        floor = litOperand(form, form[2], 'region.floor');
+        const loc = watxFormLoc(form);
+        floorForm = { line: loc !== undefined ? watxNodeLine(loc) : 0, file: loc !== undefined ? watxNodeFile(loc) : null };
+        continue;
+      }
+      if (head === 'region.image-base') {
+        if (imageBase !== null) throw located(form, `(region.image-base ...) is already declared at ${at(imageBaseForm)}`);
+        if (form.length !== 3) throw located(form, `(region.image-base N) takes exactly one operand`);
+        imageBase = litOperand(form, form[2], 'region.image-base');
+        const loc = watxFormLoc(form);
+        imageBaseForm = { line: loc !== undefined ? watxNodeLine(loc) : 0, file: loc !== undefined ? watxNodeFile(loc) : null };
+        continue;
+      }
+      if (head === 'region.gap') {
+        // A hole in the map is either documented or it is a mystery the next
+        // reader preserves out of fear. `(reason "…")` is mandatory for exactly
+        // that: "unknown, preserved" is an honest marker, a silent gap is not.
+        if (form.length !== 4) {
+          throw located(form, `(region.gap N ...) needs a size and a (reason "text") clause`);
+        }
+        const size = litOperand(form, form[2], 'region.gap');
+        const reasonForm = form[3];
+        if (!Array.isArray(reasonForm) || V(reasonForm[1]) !== 'reason' || reasonForm.length !== 3) {
+          throw located(form, `(region.gap ${hx(size)} ...) needs a (reason "text") clause; ` +
+            `an undocumented hole is the mystery this feature exists to delete`);
+        }
+        if (size === 0) throw located(form, `(region.gap 0 ...) advances nothing`);
+        sequence.push({ kind: 'gap', size, form, reason: V(reasonForm[2]) });
+        continue;
+      }
+
+      const kind = HEADS.get(head);
+      if (!kind) continue;
+
+      const name = V(form[2]);
+      if (!name || !name.startsWith('$')) {
+        throw located(form, `${head}: expected a $-prefixed region name as the first operand`);
+      }
+      const prev = regions.get(name);
+      if (prev) throw located(form, `${head} ${name} is already declared at ${at(prev)}`);
+
+      const clause = new Map();
+      for (let i = 3; i < form.length; i++) {
+        const part = form[i];
+        if (!Array.isArray(part)) {
+          throw located(form, `${head} ${name}: unexpected bare operand '${V(part)}'; ` +
+            `clauses are (base N) (size N) (end N) (align N) (owner "text") (within $R) ` +
+            `(stride N (count N)) (mask $G) (size-is-power-of-2)`);
+        }
+        const key = V(part[1]);
+        if (!REGION_CLAUSES.has(key)) {
+          throw located(form, `${head} ${name}: unknown clause (${key} ...); ` +
+            `expected base, size, end, align, owner, within, stride, mask, size-is-power-of-2`);
+        }
+        if (clause.has(key)) {
+          throw located(form, `${head} ${name}: duplicate (${key} ...) clause`);
+        }
+        if (key === 'size-is-power-of-2') {
+          if (part.length !== 2) throw located(form, `${head} ${name}: (size-is-power-of-2) takes no operand`);
+        } else if (key === 'stride') {
+          if (part.length !== 4 || !Array.isArray(part[3]) || V(part[3][1]) !== 'count' || part[3].length !== 3) {
+            throw located(form, `${head} ${name}: (stride ...) is spelled (stride N (count N)); ` +
+              `either operand may be a $-named i32 constant global`);
+          }
+        } else if (part.length !== 3) {
+          throw located(form, `${head} ${name}: (${key} ...) takes exactly one operand`);
+        }
+        clause.set(key, part);
+      }
+      const intClause = (key) => {
+        const part = clause.get(key);
+        const raw = V(part[2]);
+        let value;
+        try {
+          value = watxParseIntLiteral(raw, `${head} ${name} (${key} ...)`);
+        } catch (err) {
+          throw located(form, `${head} ${name}: (${key} ${raw}) is not an integer literal`);
+        }
+        if (!Number.isInteger(value) || value < 0) {
+          throw located(form, `${head} ${name}: (${key} ${raw}) must be a non-negative integer`);
+        }
+        return value;
+      };
+
+      // Extent. `end` is exclusive, and exactly one of the two is required —
+      // "no extent" and "two extents" are both a map that does not say where a
+      // region stops.
+      if (clause.has('size') === clause.has('end')) {
+        throw located(form, `${head} ${name} needs exactly one of (size N) or (end N)`);
+      }
+      let base = null, guestVa = null, size;
+
+      if (kind === 'fixed') {
+        if (!clause.has('base')) throw located(form, `${head} ${name} needs a (base N) clause`);
+        base = intClause('base');
+      } else if (kind === 'derived') {
+        if (!clause.has('base')) throw located(form, `${head} ${name} needs a (base (g2w VA)) clause`);
+        const spec = clause.get('base')[2];
+        if (!Array.isArray(spec) || V(spec[1]) !== 'g2w' || spec.length !== 3) {
+          throw located(form, `${head} ${name}: a derived base is spelled (base (g2w 0xVA)) — ` +
+            `the GUEST address is the ABI and the wasm offset follows it; ` +
+            `use region.declare-fixed for a literal wasm base`);
+        }
+        guestVa = litOperand(form, spec[2], `${head} ${name} (g2w ...)`);
+      } else if (clause.has('base')) {
+        throw located(form, `${head} ${name}: (base ...) is only for region.declare-fixed; ` +
+          `an allocated region's base is the compiler's to choose`);
+      }
+
+      if (clause.has('size')) {
+        size = intClause('size');
+      } else {
+        if (kind !== 'fixed') {
+          throw located(form, `${head} ${name}: (end N) states an absolute address, ` +
+            `which an allocated region does not have; use (size N)`);
+        }
+        const end = intClause('end');
+        if (end <= base) {
+          throw located(form, `${head} ${name}: (end ${hx(end)}) is not above (base ${hx(base)})`);
+        }
+        size = end - base;
+      }
+      if (size === 0) {
+        throw located(form, `${head} ${name}: (size 0) — a region must have an extent`);
+      }
+      const align = clause.has('align') ? intClause('align') : 4;
+      if (align < 1 || (align & (align - 1)) !== 0) {
+        throw located(form, `${head} ${name}: (align ${align}) is not a power of two`);
+      }
+      const loc = watxFormLoc(form);
+      const record = {
+        name, head, kind, base, guestVa, size, align, form, clause,
+        within: clause.has('within') ? V(clause.get('within')[2]) : null,
+        owner: clause.has('owner') ? V(clause.get('owner')[2]) : null,
+        line: loc !== undefined ? watxNodeLine(loc) : 0,
+        file: loc !== undefined ? watxNodeFile(loc) : null,
+      };
+      regions.set(name, record);
+      if (kind === 'alloc') sequence.push({ kind: 'region', region: record, form });
+    }
+
+    const imageBaseValue = imageBase === null ? DEFAULT_IMAGE_BASE : imageBase;
+
+    // ── Pass 2: place the pins, then derive from them ─────────────────────────
+    const checkPlaced = (r) => {
+      if (r.base % r.align !== 0) {
+        throw located(r.form, `${r.head} ${r.name} base ${hx(r.base)} is not a multiple of its (align ${hx(r.align)})`);
+      }
+      // Bound against the memory GUARANTEED to exist at instantiation, not the
+      // maximum: a region that only exists after a memory.grow the compiler
+      // cannot see is not a fixed region, and the family should refuse it rather
+      // than bless it.
+      if (r.base + r.size > memoryBytes) {
+        throw located(r.form, `${r.head} ${r.name} ends at ${hx(r.base + r.size)}, past the ` +
+          `${hx(memoryBytes)} bytes of initial memory (${memoryDecl.min} pages)`);
+      }
+    };
+    for (const r of regions.values()) {
+      if (r.kind === 'fixed') checkPlaced(r);
+    }
+    for (const r of regions.values()) {
+      if (r.kind !== 'derived') continue;
+      const gb = regions.get('$GUEST_BASE');
+      if (!gb) {
+        throw located(r.form, `${r.head} ${r.name}: (g2w ${hx(r.guestVa)}) needs a declared $GUEST_BASE region`);
+      }
+      if (gb.kind === 'alloc') {
+        throw located(r.form, `${r.head} ${r.name}: (g2w ${hx(r.guestVa)}) needs a PINNED $GUEST_BASE; ` +
+          `$GUEST_BASE is allocated, so the guest ABI would move with the layout`);
+      }
+      if (gb.kind === 'derived') {
+        throw located(r.form, `${r.head} ${r.name}: (g2w ...) cannot be resolved through a derived $GUEST_BASE`);
+      }
+      const wasmBase = gb.base + (r.guestVa - imageBaseValue);
+      if (wasmBase < 0) {
+        throw located(r.form, `${r.head} ${r.name}: (g2w ${hx(r.guestVa)}) is below the image base ` +
+          `${hx(imageBaseValue)}, so it translates to the negative wasm offset ${wasmBase}`);
+      }
+      r.base = wasmBase;
+      checkPlaced(r);
+    }
+
+    // ── Pass 3: allocate ──────────────────────────────────────────────────────
+    // Declaration-order first-fit above a floor, never backfilling into an
+    // earlier gap: backfilling would make the layout depend on the size history
+    // of every earlier region, and a layout that reshuffles under an unrelated
+    // capacity bump is not reproducible in any sense that helps.
+    const shake = normalizeRegionShake(options.regionShake);
+    let placedSequence = sequence;
+    let shakenCount = 0;
+    if (shake && sequence.some(item => item.kind === 'region')) {
+      placedSequence = shakeRegionSequence(sequence, shake);
+      shakenCount = sequence.filter(item => item.kind === 'region').length;
+    }
+    const pins = [...regions.values()]
+      .filter(r => r.kind !== 'alloc')
+      .sort((a, b) => a.base - b.base);
+    let cursor = floor === null ? 0 : floor;
+    let lastPlaced = null;
+    for (const item of placedSequence) {
+      if (item.kind === 'gap') { cursor += item.size; continue; }
+      const r = item.region;
+      const extent = item.extent || r.size;   // `pad` shake spaces without resizing
+      let candidate = alignUp(cursor, r.align);
+      for (;;) {
+        const hit = pins.find(p => candidate < p.base + p.size && p.base < candidate + extent);
+        if (!hit) break;
+        const next = alignUp(hit.base + hit.size, r.align);
+        if (next + extent > memoryBytes) {
+          throw located(r.form, `${r.name} cannot be allocated at ${hx(candidate)}: ` +
+            `pinned ${hit.name} occupies it, and nothing fits after it inside the ` +
+            `${hx(memoryBytes)} bytes of memory`);
+        }
+        candidate = next;
+      }
+      if (candidate + extent > memoryBytes) {
+        throw located(r.form, `allocating ${r.name} (${hx(candidate + extent)}) past the ` +
+          `${hx(memoryBytes)} bytes of memory; the last placed region was ` +
+          `${lastPlaced ? lastPlaced.name : '(none — the floor is already past it)'}`);
+      }
+      r.base = candidate;
+      cursor = candidate + extent;
+      lastPlaced = r;
+    }
+
+    // ── Pass 4: set-level validation over the FINAL bases ─────────────────────
+    for (const r of regions.values()) {
+      if (!r.within) continue;
+      const outer = regions.get(r.within);
+      if (!outer) {
+        throw located(r.form, `${r.head} ${r.name}: (within ${r.within}) names no declared region`);
+      }
+      if (outer === r) {
+        throw located(r.form, `${r.head} ${r.name}: (within ${r.within}) names itself`);
+      }
+      if (r.base < outer.base || r.base + r.size > outer.base + outer.size) {
+        throw located(r.form, `${r.head} ${r.name} [${hx(r.base)},${hx(r.base + r.size)}) ` +
+          `is not contained in ${outer.name} [${hx(outer.base)},${hx(outer.base + outer.size)})`);
+      }
+    }
+    // Overlap-freedom. Sort by base and compare each region with the ones still
+    // open at its start; an interval list is small enough that the obvious
+    // O(n log n) sweep is the whole algorithm.
+    const ordered = [...regions.values()].sort((a, b) => (a.base - b.base) || (a.size - b.size));
+    const nested = (a, b) => a.within === b.name || b.within === a.name;
+    for (let i = 0; i < ordered.length; i++) {
+      for (let j = i + 1; j < ordered.length; j++) {
+        const a = ordered[i], b = ordered[j];
+        if (b.base >= a.base + a.size) break; // sorted: nothing later can overlap a
+        if (nested(a, b)) continue;
+        throw located(b.form, `${b.head} ${b.name} [${hx(b.base)},${hx(b.base + b.size)}) ` +
+          `overlaps ${a.name} [${hx(a.base)},${hx(a.base + a.size)}) (declared at ${at(a)}); ` +
+          `use (within ${a.name}) if the nesting is deliberate`);
+      }
+    }
+
+    // ── Pass 5: the laws (§4.2) ───────────────────────────────────────────────
+    // A law is enforced and emits nothing. The mask and the capacity stay
+    // ordinary globals; what changes is that they can no longer drift from the
+    // extent they were derived from, which is the fourteen-global debt §5.2
+    // measured.
+    for (const r of regions.values()) {
+      if (r.clause.has('size-is-power-of-2') && (r.size & (r.size - 1)) !== 0) {
+        throw located(r.form, `${r.head} ${r.name} declares (size-is-power-of-2) but its size is ${hx(r.size)}`);
+      }
+      if (r.clause.has('stride')) {
+        const part = r.clause.get('stride');
+        const stride = amount(r.form, part[2], `${r.head} ${r.name} (stride ...)`);
+        const count = amount(r.form, part[3][2], `${r.head} ${r.name} (count ...)`);
+        if (stride < 1 || count < 1) {
+          throw located(r.form, `${r.head} ${r.name}: (stride ${hx(stride)}) x (count ${count}) must both be positive`);
+        }
+        if (stride * count !== r.size) {
+          throw located(r.form, `${r.head} ${r.name} (size ${hx(r.size)}) is not ` +
+            `(stride ${hx(stride)}) x (count ${count})`);
+        }
+        r.stride = stride; r.count = count;
+      }
+      if (r.clause.has('mask')) {
+        const gname = V(r.clause.get('mask')[2]);
+        if (typeof gname !== 'string' || !gname.startsWith('$')) {
+          throw located(r.form, `${r.head} ${r.name}: (mask ...) names an i32 constant global, e.g. (mask $CACHE_MASK)`);
+        }
+        if (!constGlobals.has(gname)) {
+          throw located(r.form, `${r.head} ${r.name}: (mask ${gname}) names no ` +
+            `(global ${gname} i32 (i32.const N)) in this module`);
+        }
+        const slots = r.clause.has('stride') ? r.count : r.size;
+        if ((slots & (slots - 1)) !== 0) {
+          throw located(r.form, `${r.head} ${r.name}: (mask ${gname}) is only well formed over a ` +
+            `power-of-two ${r.clause.has('stride') ? 'count' : 'size'}, and ${slots} is not one`);
+        }
+        const value = constGlobals.get(gname);
+        if (value !== slots - 1) {
+          throw located(r.form, `${r.head} ${r.name}: (mask ${gname}) is ${hx(value)}, not ` +
+            `${hx(slots - 1)} — a mask is one below the ` +
+            `${r.clause.has('stride') ? `(count ${r.count})` : `size ${hx(r.size)}`} it comes from`);
+        }
+      }
+    }
+
+    // Static/bump/rc regions keep their own cursor from 1024 up; declare-fixed,
+    // -derived and declare contribute nothing to it, so the interned-string pool
+    // and the bump heap do not move when a map is declared.
+    for (const rd of regionDecls) {
+      if (rd.kind === 'static') {
+        regionBase.set(rd.name, staticCursor);
+        staticCursor += (rd.size + 15) & ~15; // 16-byte align (safe for f64/v128)
+      }
+    }
+    // Every region joins the SAME name→base map, which is the whole point of
+    // making these heads in the existing family: `$NAME` in operand position
+    // resolves to `i32.const <base>` through compileExpr's existing symbol
+    // handler, with no new resolution path to keep in step.
+    for (const r of regions.values()) {
+      if (regionBase.has(r.name)) {
+        throw located(r.form, `Region ${r.name} is declared both fixed and allocated; a region has one base`);
+      }
+      regionBase.set(r.name, r.base);
+    }
+
+    regionLayoutReport = {
+      shake: shake ? shake.label : null,
+      shaken: shakenCount,
+      allocated: sequence.filter(item => item.kind === 'region').length,
+      floor: floor === null ? 0 : floor,
+      imageBase: imageBaseValue,
+      regions: [...regions.values()]
+        .sort((a, b) => a.base - b.base)
+        .map(r => ({ name: r.name, kind: r.kind, base: r.base, size: r.size, align: r.align, owner: r.owner })),
+    };
+
+    // ── region.addr / region.size / region.end, in ONE place ──────────────────
+    // Used both by compileExpr (where it emits an i32.const) and by the data
+    // scan (where the same constant becomes a segment offset), so a bounds rule
+    // cannot hold in an instruction and not in a data segment.
+    regionConstValue = (expr, extraSpan, context) => {
+      const head = V(expr[1]);
+      const loc8 = (message) => located(expr, context ? `${context}: ${message}` : message);
+      const rname = V(expr[2]);
+      const region = rname ? regions.get(rname) : null;
+      if (!region) {
+        const known = [...regions.keys()];
+        throw loc8(`${head}: unknown region ${rname || '<missing>'}; declared regions are ` +
+          (known.length ? known.join(', ') : '(none)'));
+      }
+      if (head === 'region.size') {
+        if (expr.length !== 3) throw loc8(`region.size ${rname} takes no operand besides the region`);
+        return region.size;
+      }
+      if (head === 'region.end') {
+        if (expr.length !== 3) throw loc8(`region.end ${rname} takes no operand besides the region`);
+        return region.base + region.size;
+      }
+      if (expr.length < 4) throw loc8(`region.addr ${rname}: expected a constant offset operand`);
+      const rawOffset = V(expr[3]);
+      let offset;
+      try {
+        offset = watxParseIntLiteral(rawOffset, `region.addr ${rname} offset`);
+      } catch (err) { offset = NaN; }
+      if (!Number.isInteger(offset) || offset < 0 || Array.isArray(expr[3])) {
+        throw loc8(`region.addr ${rname}: offset must be a non-negative integer literal ` +
+          `(got '${Array.isArray(expr[3]) ? '<expression>' : rawOffset}')`);
+      }
+      // With no (span N) the form still addresses a byte, so the last valid
+      // offset is size-1: an address AT the region end is one-past-the-end,
+      // which is exactly the off-by-one this feature exists to catch.
+      let span = 1, spanned = false;
+      if (expr.length > 4) {
+        const spanForm = expr[4];
+        if (!Array.isArray(spanForm) || V(spanForm[1]) !== 'span' || spanForm.length !== 3) {
+          throw loc8(`region.addr ${rname}: the only extra clause is (span N)`);
+        }
+        span = watxParseIntLiteral(V(spanForm[2]), `region.addr ${rname} span`);
+        if (!Number.isInteger(span) || span < 1) {
+          throw loc8(`region.addr ${rname}: (span ${V(spanForm[2])}) must be a positive integer`);
+        }
+        spanned = true;
+        if (expr.length > 5) throw loc8(`region.addr ${rname}: too many operands`);
+      }
+      // A data segment's LENGTH is a span nobody writes down; check it, or
+      // converting a segment to region-relative form silently loses the only
+      // bound that mattered.
+      if (extraSpan !== undefined && extraSpan !== null) { span = Math.max(span, extraSpan); spanned = true; }
+      if (offset + span > region.size) {
+        throw loc8(`region.addr ${rname} offset 0x${offset.toString(16)}` +
+          (spanned ? ` span 0x${span.toString(16)}` : '') +
+          ` runs past the region's 0x${region.size.toString(16)} bytes`);
+      }
+      return region.base + offset;
+    };
+  }
+
   const fixedDataSegments = [];
   for (const form of forms) {
     if (!Array.isArray(form) || V(form[1]) !== 'data') continue;
@@ -707,15 +1312,29 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     if (V(form[i + 1])?.startsWith('$')) i++; // optional segment id
     if (Array.isArray(form[i + 1]) && V(form[i + 1][1]) === 'memory') i++; // explicit memory selector
     const offsetForm = form[(i++) + 1];
-    if (!Array.isArray(offsetForm) || V(offsetForm[1]) !== 'i32.const') throw new Error('Active data requires an i32.const offset');
-    const offset = watxParseIntLiteral(
-      watxConstFormToken(offsetForm, 'active data segment offset'), 'active data segment offset');
-    if (!Number.isInteger(offset) || offset < 0) throw new Error('Data offset must be a non-negative integer');
+    const offsetHead = Array.isArray(offsetForm) ? V(offsetForm[1]) : null;
+    const regionRelative = offsetHead === 'region.addr' || offsetHead === 'region.end' || offsetHead === 'region.size';
+    if (!regionRelative && (!Array.isArray(offsetForm) || offsetHead !== 'i32.const')) {
+      throw new Error('Active data requires an i32.const offset or a (region.addr $R OFF) offset');
+    }
     const bytes = [];
     for (; i < (form.length - 1); i++) {
       const fragment=form[i + 1];
       if (T(fragment) !== 'string') throw new Error('Data payload must contain string fragments');
       appendArray(bytes, decodeWatStringBytes(V(fragment)));
+    }
+    // §4.4: a region-relative segment. The offset is checked against the
+    // region's extent INCLUDING the segment's own length — the bound that an
+    // absolute `(data (i32.const 0x11300) …)` never had, and the reason 171 of
+    // the tree's 221 segments are currently nails holding the map in place. It
+    // emits the identical i32.const the absolute form emits.
+    let offset;
+    if (regionRelative) {
+      offset = regionConstValue(offsetForm, bytes.length, `data segment (${bytes.length} bytes)`);
+    } else {
+      offset = watxParseIntLiteral(
+        watxConstFormToken(offsetForm, 'active data segment offset'), 'active data segment offset');
+      if (!Number.isInteger(offset) || offset < 0) throw new Error('Data offset must be a non-negative integer');
     }
     fixedDataSegments.push({ offset, bytes });
   }
@@ -917,214 +1536,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     return { params, results };
   }
 
-  // Collect region declarations
-  const regionDecls = [];
-  for (const form of forms) {
-    if (Array.isArray(form)) {
-      const h = V(form[1]);
-      if (h === 'region.declare-static' || h === 'region.declare-bump' || h === 'region.declare-rc') {
-        const rname = V(form[2]);
-        const sizeForm = form[3];
-        let size = 4096;
-        if (Array.isArray(sizeForm) && V(sizeForm[1]) === 'size') {
-          size = parseInt(V(sizeForm[2])) || 4096;
-        } else if (T(sizeForm) === 'number') {
-          size = parseInt(V(sizeForm)) || 4096;
-        }
-        regionDecls.push({ name: rname, kind: h.split('-').pop(), size });
-      }
-    }
-  }
-
-  // ── region.declare-fixed ────────────────────────────────────────────────────
-  // The rest of the family ALLOCATES: declare-static lays regions out from
-  // STATIC_REGION_BASE below, bump/rc carve from the heap that starts after
-  // them. This head is the opposite verb — the base is an INPUT. It exists for
-  // trees whose addresses are an ABI they do not get to choose (wine-assembly's
-  // fixed memory map is shared with JavaScript, with tests and with guest
-  // address translation), so the useful operation is "this region is AT 0xA and
-  // is N bytes — verify that, never place it".
-  //
-  //   (region.declare-fixed $NAME (base 0x12000) (size 0x3C00000)
-  //                               (align 0x1000) (owner "text"))
-  //
-  // Exactly one of (size N) / (end N) is required; `end` is exclusive.
-  // (within $OUTER) declares a deliberate nested region: it must be contained
-  // in $OUTER, and the pair is then exempt from the overlap error — so "these
-  // two overlap on purpose" is written at the point of overlap instead of
-  // living in some gate's exception list.
-  //
-  // Declarations emit NOTHING. They add no data, no global, no instruction; a
-  // module with them is byte-identical to the same module without them. What
-  // they buy is set-level validation here, plus base resolution: a fixed region
-  // joins the same `regionBase` map static regions use, so `$NAME` in operand
-  // position already emits `i32.const <base>` via compileExpr's symbol handler
-  // with no new code at all. See docs/watx-region-safety-design.md.
-  const fixedRegions = new Map();
-  {
-    const REGION_CLAUSES = new Set(['base', 'size', 'end', 'align', 'owner', 'within']);
-    const located = (form, message) => {
-      const e = new Error(message);
-      const loc = watxFormLoc(form);
-      if (loc !== undefined) {
-        e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc);
-      }
-      return e;
-    };
-    const at = (r) => r.file ? `${r.file}:${r.line}` : `line ${r.line}`;
-    const hx = (n) => `0x${(n >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
-
-    for (const form of forms) {
-      if (!Array.isArray(form) || V(form[1]) !== 'region.declare-fixed') continue;
-      const name = V(form[2]);
-      if (!name || !name.startsWith('$')) {
-        throw located(form, `region.declare-fixed: expected a $-prefixed region name as the first operand`);
-      }
-      const prev = fixedRegions.get(name);
-      if (prev) {
-        throw located(form, `region.declare-fixed ${name} is already declared at ${at(prev)}`);
-      }
-      const clause = new Map();
-      for (let i = 2; i < (form.length - 1); i++) {
-        const part = form[i + 1];
-        if (!Array.isArray(part)) {
-          throw located(form, `region.declare-fixed ${name}: unexpected bare operand '${V(part)}'; ` +
-            `clauses are (base N) (size N) (end N) (align N) (owner "text") (within $R)`);
-        }
-        const key = V(part[1]);
-        if (!REGION_CLAUSES.has(key)) {
-          throw located(form, `region.declare-fixed ${name}: unknown clause (${key} ...); ` +
-            `expected base, size, end, align, owner, within`);
-        }
-        if (clause.has(key)) {
-          throw located(form, `region.declare-fixed ${name}: duplicate (${key} ...) clause`);
-        }
-        if (part.length !== 3) {
-          throw located(form, `region.declare-fixed ${name}: (${key} ...) takes exactly one operand`);
-        }
-        clause.set(key, part[2]);
-      }
-      const intClause = (key) => {
-        const raw = V(clause.get(key));
-        let value;
-        try {
-          value = watxParseIntLiteral(raw, `region.declare-fixed ${name} (${key} ...)`);
-        } catch (err) {
-          throw located(form, `region.declare-fixed ${name}: (${key} ${raw}) is not an integer literal`);
-        }
-        if (!Number.isInteger(value) || value < 0) {
-          throw located(form, `region.declare-fixed ${name}: (${key} ${raw}) must be a non-negative integer`);
-        }
-        return value;
-      };
-
-      if (!clause.has('base')) throw located(form, `region.declare-fixed ${name} needs a (base N) clause`);
-      if (clause.has('size') === clause.has('end')) {
-        throw located(form, `region.declare-fixed ${name} needs exactly one of (size N) or (end N)`);
-      }
-      const base = intClause('base');
-      let size;
-      if (clause.has('size')) {
-        size = intClause('size');
-      } else {
-        const end = intClause('end');
-        if (end <= base) {
-          throw located(form, `region.declare-fixed ${name}: (end ${hx(end)}) is not above (base ${hx(base)})`);
-        }
-        size = end - base;
-      }
-      if (size === 0) {
-        throw located(form, `region.declare-fixed ${name}: (size 0) — a region must have an extent`);
-      }
-      const align = clause.has('align') ? intClause('align') : 4;
-      if (align < 1 || (align & (align - 1)) !== 0) {
-        throw located(form, `region.declare-fixed ${name}: (align ${align}) is not a power of two`);
-      }
-      if (base % align !== 0) {
-        throw located(form, `region.declare-fixed ${name} base ${hx(base)} is not a multiple of its (align ${hx(align)})`);
-      }
-      // Bound against the memory GUARANTEED to exist at instantiation, not the
-      // maximum: a region that only exists after a memory.grow the compiler
-      // cannot see is not a fixed region, and declare-fixed should refuse it
-      // rather than bless it.
-      const memoryBytes = memoryDecl.min * 65536;
-      if (base + size > memoryBytes) {
-        throw located(form, `region.declare-fixed ${name} ends at ${hx(base + size)}, past the ` +
-          `${hx(memoryBytes)} bytes of initial memory (${memoryDecl.min} pages)`);
-      }
-      const loc = watxFormLoc(form);
-      fixedRegions.set(name, {
-        name, base, size, align, form,
-        within: clause.has('within') ? V(clause.get('within')) : null,
-        owner: clause.has('owner') ? V(clause.get('owner')) : null,
-        line: loc !== undefined ? watxNodeLine(loc) : 0,
-        file: loc !== undefined ? watxNodeFile(loc) : null,
-      });
-    }
-
-    for (const r of fixedRegions.values()) {
-      if (!r.within) continue;
-      const outer = fixedRegions.get(r.within);
-      if (!outer) {
-        throw located(r.form, `region.declare-fixed ${r.name}: (within ${r.within}) names no declared region`);
-      }
-      if (outer === r) {
-        throw located(r.form, `region.declare-fixed ${r.name}: (within ${r.within}) names itself`);
-      }
-      if (r.base < outer.base || r.base + r.size > outer.base + outer.size) {
-        throw located(r.form, `region.declare-fixed ${r.name} [${hx(r.base)},${hx(r.base + r.size)}) ` +
-          `is not contained in ${outer.name} [${hx(outer.base)},${hx(outer.base + outer.size)})`);
-      }
-    }
-
-    // Overlap-freedom. Sort by base and compare each region with the ones still
-    // open at its start; an interval list is small enough that the obvious
-    // O(n log n) sweep is the whole algorithm.
-    const ordered = [...fixedRegions.values()].sort((a, b) => (a.base - b.base) || (a.size - b.size));
-    const nested = (a, b) => a.within === b.name || b.within === a.name;
-    for (let i = 0; i < ordered.length; i++) {
-      for (let j = i + 1; j < ordered.length; j++) {
-        const a = ordered[i], b = ordered[j];
-        if (b.base >= a.base + a.size) break; // sorted: nothing later can overlap a
-        if (nested(a, b)) continue;
-        throw located(b.form, `region.declare-fixed ${b.name} [${hx(b.base)},${hx(b.base + b.size)}) ` +
-          `overlaps ${a.name} [${hx(a.base)},${hx(a.base + a.size)}) (declared at ${at(a)}); ` +
-          `use (within ${a.name}) if the nesting is deliberate`);
-      }
-    }
-  }
-
-  // Lay static regions out at fixed base addresses and start the bump heap after
-  // them. This makes a `(region.declare-static $r (size N))` symbol resolve to a
-  // real base address (see compileExpr's symbol handler), so code addresses the
-  // region by NAME — e.g. `(store.elem Ball x $balls i v)` — instead of a magic
-  // number. Static regions occupy [1024, bumpStart); the bump allocator's heap
-  // begins at bumpStart. With no static regions (e.g. all of android-emu) the
-  // bump heap stays at 1024, so this is a no-op there.
-  const STATIC_REGION_BASE = 1024;
-  const regionBase = new Map();
-  let staticCursor = STATIC_REGION_BASE;
-  for (const rd of regionDecls) {
-    if (rd.kind === 'static') {
-      regionBase.set(rd.name, staticCursor);
-      staticCursor += (rd.size + 15) & ~15; // 16-byte align (safe for f64/v128)
-    }
-  }
-  // Fixed regions join the SAME name→base map, which is the whole point of
-  // making this a head in the existing family: `$NAME` in operand position
-  // resolves to `i32.const <base>` through compileExpr's existing symbol
-  // handler, with no new resolution path to keep in step.
-  for (const r of fixedRegions.values()) {
-    if (regionBase.has(r.name)) {
-      const e = new Error(`Region ${r.name} is declared both fixed and allocated; a region has one base`);
-      const loc = watxFormLoc(r.form);
-      if (loc !== undefined) {
-        e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc);
-      }
-      throw e;
-    }
-    regionBase.set(r.name, r.base);
-  }
+  // Data-segment bounds. The declaration set itself was validated far above,
+  // before this scan, because a region-relative segment offset cannot resolve
+  // until the regions exist.
   const initialMemoryBytes = memoryDecl.min * 65536;
   for (const seg of fixedDataSegments) {
     const end = seg.offset + seg.bytes.length;
@@ -1159,6 +1573,24 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     if (options.strictDeclarations && funcIndexMap.has(fd.name)) throw new Error(`Duplicate function/import '${fd.name}'`);
     funcIndexMap.set(fd.name, idx++);
     funcNames.push(fd.name);
+  }
+  // Regions share the `$name` namespace with functions, globals and locals, and
+  // only one of those collisions is ever intentional: a region named after the
+  // `(global $R i32 (i32.const base))` it replaces, which is the designed
+  // migration pattern and stays legal. A region named after a FUNCTION is not —
+  // `(call $f)` still calls the function while a bare `$f` in operand position
+  // now emits the region's base, so the same token means two things in one
+  // module. Refuse it at declaration time rather than let a fan-out typo pick
+  // whichever meaning the context happens to give it.
+  for (const rname of regions.keys()) {
+    if (!funcIndexMap.has(rname)) continue;
+    const r = regions.get(rname);
+    const e = new Error(`${r.head} ${rname} collides with a function of the same name; ` +
+      `a bare ${rname} would emit the region base while (call ${rname}) still calls the function. ` +
+      `Rename one of them.`);
+    const loc = watxFormLoc(r.form);
+    if (loc !== undefined) { e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc); }
+    throw e;
   }
   function expectedParamCount(name) {
     const imp = importDeclByName.get(name);
@@ -1466,6 +1898,22 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         // type-colliding names, else the default slot)
         const localIdx = func.activeLocal.get(V(expr)) ?? func.localMap.get(V(expr));
         if (localIdx !== undefined) {
+          // A local WINS over a region of the same name, and silently: the base
+          // the author wrote `$THREAD_BASE` for becomes whatever that local
+          // holds. That is invisible in a conversion wave, where the whole point
+          // is that `$REGION` replaces an address, so refuse the ambiguity
+          // instead of resolving it. Renaming the local is the fix.
+          if (regions.has(V(expr))) {
+            const e = new Error(
+              `'${V(expr)}' in function ${func.name} is both a local/parameter and a declared ` +
+              `region; the local wins, so the region base can never be read here. Rename the local.`);
+            // func.sourceNode is only set once an enclosing FORM has been
+            // compiled; a one-atom body (`(func $f … $R)`) never sets it, so
+            // fall back to the function's own declaration form.
+            const loc = watxTokenLoc(func.sourceNode || func.sourceForm, V(expr));
+            e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc);
+            throw e;
+          }
           bytes.byte(OP.local_get);
           bytes.uleb(localIdx);
           return bytes;
@@ -2711,63 +3159,8 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     // — the identical bytes the raw hex literal emits — so adopting it costs
     // nothing at runtime and is a pure compile-time gain.
     if (head === 'region.addr' || head === 'region.size' || head === 'region.end') {
-      const located = (message) => {
-        const e = new Error(message);
-        const loc = watxFormLoc(expr);
-        if (loc !== undefined) {
-          e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc);
-        }
-        return e;
-      };
-      const rname = V(expr[2]);
-      const region = rname ? fixedRegions.get(rname) : null;
-      if (!region) {
-        const known = [...fixedRegions.keys()];
-        throw located(`${head}: unknown region ${rname || '<missing>'}; declared regions are ` +
-          (known.length ? known.join(', ') : '(none)'));
-      }
-      let value;
-      if (head === 'region.size') {
-        if (expr.length !== 3) throw located(`region.size ${rname} takes no operand besides the region`);
-        value = region.size;
-      } else if (head === 'region.end') {
-        if (expr.length !== 3) throw located(`region.end ${rname} takes no operand besides the region`);
-        value = region.base + region.size;
-      } else {
-        if (expr.length < 4) throw located(`region.addr ${rname}: expected a constant offset operand`);
-        const rawOffset = V(expr[3]);
-        let offset;
-        try {
-          offset = watxParseIntLiteral(rawOffset, `region.addr ${rname} offset`);
-        } catch (err) { offset = NaN; }
-        if (!Number.isInteger(offset) || offset < 0 || Array.isArray(expr[3])) {
-          throw located(`region.addr ${rname}: offset must be a non-negative integer literal ` +
-            `(got '${Array.isArray(expr[3]) ? '<expression>' : rawOffset}')`);
-        }
-        // With no (span N) the form still addresses a byte, so the last valid
-        // offset is size-1: an address AT the region end is one-past-the-end,
-        // which is exactly the off-by-one this feature exists to catch.
-        let span = 1;
-        if (expr.length > 4) {
-          const spanForm = expr[4];
-          if (!Array.isArray(spanForm) || V(spanForm[1]) !== 'span' || spanForm.length !== 3) {
-            throw located(`region.addr ${rname}: the only extra clause is (span N)`);
-          }
-          span = watxParseIntLiteral(V(spanForm[2]), `region.addr ${rname} span`);
-          if (!Number.isInteger(span) || span < 1) {
-            throw located(`region.addr ${rname}: (span ${V(spanForm[2])}) must be a positive integer`);
-          }
-          if (expr.length > 5) throw located(`region.addr ${rname}: too many operands`);
-        }
-        if (offset + span > region.size) {
-          throw located(`region.addr ${rname} offset 0x${offset.toString(16)}` +
-            (expr.length > 4 ? ` span 0x${span.toString(16)}` : '') +
-            ` runs past the region's 0x${region.size.toString(16)} bytes`);
-        }
-        value = region.base + offset;
-      }
       bytes.byte(OP.i32_const);
-      bytes.sleb(value);
+      bytes.sleb(regionConstValue(expr));
       return bytes;
     }
 
@@ -3716,6 +4109,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       activeLocal: new Map(),
       body: fd.body,
       name: fd.name,
+      // The declaration form, so a diagnostic raised before any inner form has
+      // been compiled still has a source location to point at.
+      sourceForm: fd.form,
       blockLabels: [],
     };
   }
@@ -4059,6 +4455,10 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     funcDecls: funcNames,
     layoutInfo,
     runtimeBuiltins,
+    // The map as the compiler laid it out, so a build banner can print WHICH
+    // layout it produced. A shaken artifact that cannot be told from a canonical
+    // one is worse than no shake at all.
+    regions: regionLayoutReport,
   };
 }
 

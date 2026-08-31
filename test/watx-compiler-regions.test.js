@@ -229,6 +229,47 @@ mustFail('a region declared both fixed and allocated',
    (region.declare-static $A (size 64))`,
   'one base');
 
+console.log('── (3d) THE SHARED $-NAMESPACE ──');
+// Regions share `$name` with functions, globals and locals. Exactly ONE of those
+// collisions is intentional — a region named after the (global $R i32 base) it
+// replaces, which is the whole migration pattern — and the others resolve
+// silently in a direction nobody chose. During a fan-out that silence is the
+// dangerous part: the conversion's premise is that `$REGION` IS an address.
+{
+  const r = build(`
+(global $TABLE i32 (i32.const 0x1000))
+(region.declare-fixed $TABLE (base 0x1000) (size 0x800))
+(func $f (result i32) (effects heap) (global.get $TABLE))
+(func $g (result i32) (effects heap) $TABLE)
+(wasm-export "f" $f) (wasm-export "g" $g)`);
+  ck('a region may share its name with the global it mirrors', r.success === true, r.error);
+  if (r.success) {
+    const e = new WebAssembly.Instance(new WebAssembly.Module(r.wasmBinary), {}).exports;
+    ck('(global.get $R) still reads the global, bare $R is the region base',
+       e.f() === 0x1000 && e.g() === 0x1000, [e.f(), e.g()]);
+  }
+}
+mustFail('a region named after a FUNCTION',
+  `(region.declare-fixed $helper (base 0x1000) (size 0x800))
+   (func $helper (result i32) (effects heap) (i32.const 1))
+   (wasm-export "helper" $helper)`,
+  'collides with a function of the same name');
+mustFail('a bare region symbol shadowed by a local',
+  `(region.declare-fixed $TABLE (base 0x1000) (size 0x800))
+   (func $f (param $TABLE i32) (result i32) (effects heap) $TABLE)
+   (wasm-export "f" $f)`,
+  'is both a local/parameter and a declared region');
+{
+  // A local of that name is only a problem where the ambiguity is READ: a
+  // function that never mentions the name bare compiles, so the rejection is
+  // targeted rather than a repo-wide rename.
+  const r = build(`
+(region.declare-fixed $TABLE (base 0x1000) (size 0x800))
+(func $f (param $TABLE i32) (result i32) (effects heap) (local.get $TABLE))
+(wasm-export "f" $f)`);
+  ck('an explicit (local.get $X) is unambiguous and stays legal', r.success === true, r.error);
+}
+
 console.log('── (4) STANDARD-WAT / COMPAT MODE ──');
 {
   // Both canonical artifacts (tail calls and compat) must agree that a
