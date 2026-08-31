@@ -248,6 +248,83 @@ query, the fixed 8x8 light-grid builder and the signed D2CMP command decoder.
 Those are whole engine primitives; generic `XOR -> LOAD8` or `CMP -> Jcc`
 fusions would only shave pieces of all four.
 
+### Browser CPU attribution of pixels versus row control
+
+A subsequent Chrome/V8 sampling profile measured actual Rogue Encampment
+gameplay rather than inferring native cost from handler counts. The driver did
+not arm the handler histogram during the CPU window, moved the Barbarian with a
+ground click, and rejected the sample until the rendered frame contained green
+terrain plus both life and mana orbs. It then took a separate short histogram
+window in the same live instance. Two headless runs captured 46,462 samples
+over 15.53s and 34,918 samples over 10.49s. A state-aware intro driver then
+repeated the measurement in a real headful/compositor-backed Chrome window:
+38,251 samples over 10.43s. Host load was still high (roughly 8--14), so these
+are CPU self-time shares only, not FPS or throughput measurements.
+
+The result narrows the multi-row claim considerably:
+
+| Native function | Headless 1 | Headless 2 | Headful | Meaning |
+| --- | ---: | ---: | ---: | --- |
+| `$next` | 22.98% | 21.53% | 22.44% | Threaded dispatch itself remains the largest single native cost. |
+| H431 `$th_lut_span` | 1.68% | 1.58% | 1.97% | The already-folded fixed-span pixel kernel is no longer a dominant cost. |
+| H418 `$th_lut_run` | 0.30% | 0.36% | 0.32% | Clipped palette translation/blending is smaller again. |
+| all Wasm | 90.0% | 90.4% | 91.1% | Browser presentation/JS is not the principal ceiling in this capture. |
+
+Separating samples whose ancestry goes through `thread-manager.js` puts H431
+at 1.82--2.21% of main-path CPU and H418 at 0.36--0.42%; neither ran on the
+worker path. Main-thread `$next` alone was 20.15--21.53%. The worker share
+varied from 10.7% to 18.3% in these three windows, so the earlier larger blue
+HUD share is phase-dependent rather than a fixed split.
+
+The matched histogram explains what remains around H431. In the repeat window,
+the fixed-shade row head ran 134,596 times and the per-pixel-lit row head
+122,360 times, while H431 ran 265,541 times in total. Accounting for the
+existing ESP load-run fusion, the two fixed-tile outer bodies represent about
+5.84M row-setup/control handler dispatches out of 62.86M total (about 9.3%);
+including their H431 calls makes the theoretical handler-count ceiling about
+9.7%. A multi-row handler would not remove the pixel work or all address
+calculation, however. At uniform dispatch cost it saves only about two points
+of total CPU from `$next`; direct WAT row setup could save some additional
+generic-handler cost. Consequently the honest expected ceiling is a few
+percent until an A/B prototype measures it, not evidence that the outer tile
+loop dominates the whole browser.
+
+### Per-present guest-operation attribution
+
+A temporary guest-EIP range timer measured the main instance between actual
+DirectDraw presents. The steady Rogue Encampment window contains 57 frames;
+menus, loading and the first loading-to-gameplay spike are excluded. A matched
+empty-range control retained the frame/timer hooks but removed all hot-range
+transitions. The detailed probe raised median active main-guest time from
+77.96ms to 89.04ms (14.2%), so uncorrected probe time is not an honest browser
+frame-time result. A standalone Wasm-to-JS timer-import calibration measured
+85.7--92.4ns per transition; the full launch made 4.04M transitions.
+
+The table reports exclusive loop-body buckets. “Adjusted” divides the raw
+medians and p90s by the measured 1.142 probe inflation. It is a deterministic
+Node/V8 CLI estimate of computation per DirectDraw present, not browser wall
+time, and helpers outside a listed EIP range remain in `other`.
+
+| Exclusive operation bucket | Raw median | Adjusted median | Adjusted p90 | Mean active share |
+| --- | ---: | ---: | ---: | ---: |
+| Fixed/per-pixel-lit isometric tile bodies | 12.64ms | 11.07ms | 18.47ms | 14.48% |
+| Lighting-grid build/sample/interpolation | 8.75ms | 7.66ms | 11.88ms | 9.87% |
+| Object/list/visible-scene traversal | 8.01ms | 7.01ms | 11.68ms | 9.32% |
+| CEL renderer bodies | 7.51ms | 6.57ms | 11.69ms | 8.60% |
+| Collision walk and room-mask query | 5.94ms | 5.20ms | 7.46ms | 6.56% |
+| D2CMP RLE encode/decode/transform | 2.42ms | 2.12ms | 3.15ms | 3.03% |
+| Clipped palette/light blits | 2.40ms | 2.10ms | 3.30ms | 2.71% |
+| Nearest-palette-color search | 1.97ms | 1.72ms | 2.73ms | 2.34% |
+| DirectDraw scanline loop | 0.31ms | 0.27ms | 0.40ms | 0.36% |
+| Everything outside those ranges | 37.90ms | 33.18ms | 52.40ms | 42.74% |
+
+Thus the larger named buckets are now ranked per present, but these numbers do
+not prove inclusive whole-function cost or transfer directly to browser
+milliseconds. The lower-overhead Chrome sampling result above remains the
+browser authority: `$next` is 22.44% of total CPU while H431 and H418 themselves
+are only 1.97% and 0.32%. The operation timer says where the surrounding guest
+work is concentrated; it does not overturn that native attribution.
+
 ## Cooperative workers and real browser threads
 
 The browser HUD's blue `threads` phase is literal wall time spent in

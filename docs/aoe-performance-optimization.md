@@ -43,6 +43,20 @@ prints top handlers/pairs/SIB consumers/branch operands, clusters hot guest VAs,
 and disassembles the hottest blocks from `Empires.exe`. Pass an explicit profile
 path as the first argument when comparing older histogram runs.
 
+## Player-name EDIT composition (2026-08-26)
+
+AoE I and II both subclass a native EDIT for the new-player name. The control
+did receive every character and painted the growing string into its top-level
+window's canonical GDI surface, but an exclusive DirectDraw frame layer was
+then composited over that surface. The field looked blank while typing even
+though the game accepted the hidden name.
+
+`lib/renderer.js` now retains the suppressed top-level GDI surface as a sparse
+native-child overlay. Only the rectangles of visible children are copied above
+DirectDraw, so menu/chrome painting cannot displace the game frame. The focused
+regression is `test/test-directdraw-native-child-overlay.js`; real captures show
+live `AOE` in AoE I and `Codex` in AoE II.
+
 ## Measured Experiments
 
 See also [interpreter-dispatch-perf.md](interpreter-dispatch-perf.md), which

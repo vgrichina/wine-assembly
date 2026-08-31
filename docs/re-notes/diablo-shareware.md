@@ -2409,7 +2409,7 @@ re-present. Cross this off.
 Reproduce it in the browser, which is the only place it has been seen, and
 capture the palette at that instant. Both hosts re-present on a palette change
 (`$handle_IDirectDrawPalette_SetEntries` calls `$dx_present` when the written
-table is `$dx_primary_pal_wa`), and on the browser's direct-attach path that
+table is the process primary returned by `$dx_primary_pal_get`), and on the browser's direct-attach path that
 becomes `host_gdi_surface_upload`, which marks the whole surface dirty — so on
 paper the refresh should happen. What is worth checking first is
 `_flushGdiSurfacePresentation` in `lib/host-imports.js`: it takes the dirty
