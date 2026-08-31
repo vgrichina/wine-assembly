@@ -1302,7 +1302,6 @@
   ;; 0x07E08000   1KB    TEXT_SCRATCH (Unicode-to-ANSI conversion)
   ;; 0x07E09000 12KB     CONSOLE_TEXT (6144 cells × 2 bytes)
   ;; 0x07E0C000 12KB     CONSOLE_ATTR (6144 cells × 2 bytes)
-  ;; 0x07E0F000  4KB     CONSOLE_INPUT (queue, buffers, handle aliases, title)
   ;; 0x07E10000 16KB     DIB_PAGE_USED
   ;; 0x07E14000 32KB     DIB_PAGE_RUNS
   ;; 0x07E1C000 832KB    GDI_REGION_BANDS (256 x 208 RECT slots)
@@ -3489,13 +3488,6 @@
   (global $CONSOLE_BUFFER_STRIDE i32 (i32.const 48))
   (global $CONSOLE_BUFFER_COUNT i32 (i32.const 8))
   (global $CONSOLE_BUFFER_HANDLE_TAG i32 (i32.const 0x00310000))
-  ;; 31 process-shared standard-console handle aliases at +0xB00. Each record
-  ;; is {generation-tagged handle, canonical stream 1/2/3}; the final dword of
-  ;; the 256-byte run is the monotonically increasing generation source.
-  (global $CONSOLE_HANDLE_TABLE i32 (i32.const 0x07E0FB00))
-  (global $CONSOLE_HANDLE_COUNT i32 (i32.const 31))
-  (global $CONSOLE_HANDLE_STRIDE i32 (i32.const 8))
-  (global $CONSOLE_HANDLE_TAG i32 (i32.const 0x00320000))
   (global $ansi_code_page (mut i32) (i32.const 1252))  ;; process ANSI code page
   (global $console_cp (mut i32) (i32.const 437))  ;; input code page
   (global $console_output_cp (mut i32) (i32.const 437))  ;; output code page

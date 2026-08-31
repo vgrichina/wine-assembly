@@ -1285,7 +1285,7 @@
   (func $menu_check_position_global (export "menu_check_position_global")
         (param $hmenu i32) (param $pos i32) (param $check i32) (result i32)
     (local $i i32) (local $hwnd i32) (local $blob i32) (local $it i32)
-    (local $tidx i32) (local $flags i32) (local $prev i32)
+    (local $tidx i32) (local $id i32) (local $r i32) (local $prev i32)
     (local.set $prev (i32.const -1))
     (local.set $tidx (i32.sub (i32.shr_u (local.get $hmenu) (i32.const 16)) (i32.const 1)))
     (if (i32.lt_s (local.get $tidx) (i32.const 0)) (then (return (local.get $prev))))
@@ -1300,16 +1300,18 @@
               (local.set $it (call $child_item_w (local.get $blob) (local.get $tidx) (local.get $pos)))
               (if (local.get $it)
                 (then
-                  (local.set $flags (i32.load offset=16 (local.get $it)))
-                  (if (i32.eq (local.get $prev) (i32.const -1))
-                    (then (local.set $prev
-                      (select (i32.const 8) (i32.const 0)
-                        (i32.ne (i32.and (local.get $flags) (i32.const 4)) (i32.const 0)))))))
-                  (i32.store offset=16 (local.get $it)
-                    (select (i32.or (local.get $flags) (i32.const 4))
-                            (i32.and (local.get $flags) (i32.const -5))
-                            (local.get $check)))
-                  (call $invalidate_hwnd (local.get $hwnd)))))))
+                  ;; Resolve MF_BYPOSITION to the command id, then use the
+                  ;; same blob walker as MF_BYCOMMAND. The old direct store
+                  ;; returned the right prior state without persisting the
+                  ;; checked bit in resource-backed Viewer menus.
+                  (local.set $id (i32.load offset=20 (local.get $it)))
+                  (local.set $r (call $menu_blob_set_check
+                    (local.get $blob) (call $menu_blob_size (local.get $hwnd))
+                    (local.get $id) (local.get $check)))
+                  (if (i32.ne (local.get $r) (i32.const -1))
+                    (then
+                      (call $invalidate_hwnd (local.get $hwnd))
+                      (return (local.get $r))))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (local.get $prev))

@@ -78,6 +78,7 @@ UNIT=(
   test/test-codepage-dbcs.js
   test/test-atom-table.js
   test/test-menu-insert.js
+  test/test-menu-check-position.js
   test/test-image-list-icons.js
   test/test-insert-menu-item-host-bar.js
   test/test-menu-popup-text.js
@@ -778,6 +779,7 @@ SMOKE=(
   test/test-d3dim-globe-go-menu.js
   test/test-d3dim-globe-render-menu.js
   test/test-d3dim-viewer-selection.js
+  test/test-d3dim-viewer-open-web.js
   test/test-notepad-dialogs.js
 )
 

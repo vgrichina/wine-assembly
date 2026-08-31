@@ -214,7 +214,6 @@ const highFixedAliases = new Map(Object.entries({
   CONSOLE_BUFFER_TABLE: { owner: 'CONSOLE_INPUT' },
   CONSOLE_BUFFER_ACTIVE: { owner: 'CONSOLE_INPUT' },
   CONSOLE_TITLE_STORAGE: { owner: 'CONSOLE_INPUT' },
-  CONSOLE_HANDLE_TABLE: { owner: 'CONSOLE_INPUT' },
   D3DIM_MATRIX_USED: { owner: 'D3DIM_AUX' },
   D3DIM_UNIMPL_EXEC_OP: { owner: 'D3DIM_AUX' },
   D3DIM_UNIMPL_DRAW: { owner: 'D3DIM_AUX' },
