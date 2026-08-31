@@ -32,10 +32,58 @@ const extraWat = String.raw`
       (local.get $this) (i32.const 0x3f800000) (i32.const 1)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $esp))
+
+  (func (export "test_ds3d_buffer_get_all")
+      (param $this i32) (param $params i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_IDirectSound3DBuffer_GetAllParameters
+      (local.get $this) (local.get $params) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_ds3d_buffer_set_all")
+      (param $this i32) (param $params i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_IDirectSound3DBuffer_SetAllParameters
+      (local.get $this) (local.get $params) (i32.const 1)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_ds3d_listener_get_all")
+      (param $this i32) (param $params i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_IDirectSound3DListener_GetAllParameters
+      (local.get $this) (local.get $params) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_ds3d_listener_set_all")
+      (param $this i32) (param $params i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_IDirectSound3DListener_SetAllParameters
+      (local.get $this) (local.get $params) (i32.const 1)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
 `;
 
 (async () => {
-  const { exports: wat, memory } = await bootRenderHarness({ extraWat, fonts: 'none' });
+  const voice3dSets = [];
+  const { exports: wat, memory } = await bootRenderHarness({
+    extraWat,
+    fonts: 'none',
+    extraHostOverrides: {
+      voice_3d_get: () => 0,
+      voice_3d_set: (...args) => { voice3dSets.push(args); },
+    },
+  });
   const exe = fs.readFileSync(path.join(__dirname, 'binaries', 'calc.exe'));
   new Uint8Array(memory.buffer).set(exe, wat.get_staging());
   assert(wat.load_pe(exe.length), 'fixture PE initializes DirectX vtables');
@@ -66,7 +114,91 @@ const extraWat = String.raw`
   assert.strictEqual(wat.test_listener_set_distance_stack(listener) >>> 0, 0x30010,
     'SetDistanceFactor must consume return + this + value + apply (16 bytes)');
 
-  console.log('PASS DirectSound primary buffer QI exposes the 3D listener vtable');
+  // DS3DBUFFER and DS3DLISTENER are both fixed 64-byte DirectSound
+  // structures. Win98 validates the caller-initialized dwSize before reading
+  // or writing the remainder; accepting a smaller value corrupts the caller's
+  // next stack/heap object.
+  const params = wat.guest_alloc(68) >>> 0;
+  const canary = 0xc0decafe;
+  const sentinel = 0x13579bdf;
+  const invalidParam = 0x80070057;
+  const pointerError = 0x80004003;
+
+  voice3dSets.length = 0;
+  wat.guest_write32(params, 60);
+  wat.guest_write32(params + 4, sentinel);
+  wat.guest_write32(params + 64, canary);
+  assert.strictEqual(wat.test_ds3d_listener_get_all(listener, params) >>> 0,
+    invalidParam, 'listener GetAllParameters rejects an undersized structure');
+  assert.strictEqual(wat.guest_read32(params + 4) >>> 0, sentinel,
+    'rejected listener output must remain untouched');
+  assert.strictEqual(wat.guest_read32(params + 64) >>> 0, canary,
+    'rejected listener output must not overrun the caller structure');
+  assert.strictEqual(wat.test_ds3d_buffer_get_all(buffer, params) >>> 0,
+    invalidParam, 'buffer GetAllParameters rejects an undersized structure');
+  assert.strictEqual(wat.guest_read32(params + 4) >>> 0, sentinel,
+    'rejected buffer output must remain untouched');
+  assert.strictEqual(wat.guest_read32(params + 64) >>> 0, canary,
+    'rejected buffer output must not overrun the caller structure');
+
+  assert.strictEqual(wat.test_ds3d_listener_set_all(listener, params) >>> 0,
+    invalidParam, 'listener SetAllParameters rejects an undersized structure');
+  assert.strictEqual(wat.test_ds3d_buffer_set_all(buffer, params) >>> 0,
+    invalidParam, 'buffer SetAllParameters rejects an undersized structure');
+  assert.strictEqual(voice3dSets.length, 0,
+    'rejected DirectSound structures must not mutate host 3D state');
+  assert.strictEqual(wat.test_ds3d_listener_get_all(listener, 0) >>> 0,
+    pointerError, 'listener GetAllParameters retains its null-pointer result');
+  assert.strictEqual(wat.test_ds3d_buffer_set_all(buffer, 0) >>> 0,
+    pointerError, 'buffer SetAllParameters retains its null-pointer result');
+
+  wat.guest_write32(params, 64);
+  wat.guest_write32(params + 64, canary);
+  assert.strictEqual(wat.test_ds3d_listener_get_all(listener, params) >>> 0, 0,
+    'listener accepts the exact DS3DLISTENER size');
+  assert.strictEqual(wat.guest_read32(params) >>> 0, 64);
+  assert.strictEqual(wat.guest_read32(params + 64) >>> 0, canary,
+    'valid listener output writes exactly 64 bytes');
+  assert.strictEqual(wat.test_ds3d_buffer_get_all(buffer, params) >>> 0, 0,
+    'buffer accepts the exact DS3DBUFFER size');
+  assert.strictEqual(wat.guest_read32(params + 64) >>> 0, canary,
+    'valid buffer output writes exactly 64 bytes');
+
+  // Native-compatible getters accept a larger caller buffer, but still report
+  // and write only the fixed structure size. Setters require the exact layout.
+  wat.guest_write32(params, 68);
+  wat.guest_write32(params + 64, canary);
+  assert.strictEqual(wat.test_ds3d_listener_get_all(listener, params) >>> 0, 0,
+    'listener getter accepts a larger caller buffer');
+  assert.strictEqual(wat.guest_read32(params) >>> 0, 64,
+    'listener getter reports the fixed DS3DLISTENER size');
+  assert.strictEqual(wat.guest_read32(params + 64) >>> 0, canary,
+    'listener getter leaves extension bytes untouched');
+  wat.guest_write32(params, 68);
+  assert.strictEqual(wat.test_ds3d_buffer_get_all(buffer, params) >>> 0, 0,
+    'buffer getter accepts a larger caller buffer');
+  assert.strictEqual(wat.guest_read32(params) >>> 0, 64,
+    'buffer getter reports the fixed DS3DBUFFER size');
+  assert.strictEqual(wat.guest_read32(params + 64) >>> 0, canary,
+    'buffer getter leaves extension bytes untouched');
+
+  wat.guest_write32(params, 68);
+  voice3dSets.length = 0;
+  assert.strictEqual(wat.test_ds3d_listener_set_all(listener, params) >>> 0,
+    invalidParam, 'listener setter rejects an oversized fixed-layout structure');
+  assert.strictEqual(wat.test_ds3d_buffer_set_all(buffer, params) >>> 0,
+    invalidParam, 'buffer setter rejects an oversized fixed-layout structure');
+  assert.strictEqual(voice3dSets.length, 0,
+    'oversized DirectSound structures must not mutate host 3D state');
+
+  wat.guest_write32(params, 64);
+  voice3dSets.length = 0;
+  assert.strictEqual(wat.test_ds3d_listener_set_all(listener, params) >>> 0, 0);
+  assert.strictEqual(wat.test_ds3d_buffer_set_all(buffer, params) >>> 0, 0);
+  assert.strictEqual(voice3dSets.length, 15,
+    'valid listener and buffer structures reach every host 3D property group');
+
+  console.log('PASS DirectSound 3D listener vtable and 64-byte parameter contracts');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

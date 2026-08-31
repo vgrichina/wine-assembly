@@ -4960,7 +4960,9 @@
     (local $handle i32)
     (if (i32.eqz (local.get $arg1))
       (then (global.set $eax (i32.const 0x80004003)))
-      (else
+      (else (if (i32.lt_u (call $gl32 (local.get $arg1)) (i32.const 64))
+        (then (global.set $eax (i32.const 0x80070057))) ;; DSERR_INVALIDPARAM
+        (else
         (local.set $handle (call $ds3d_voice_from_this (local.get $arg0)))
         (call $gs32 (local.get $arg1) (i32.const 64))
         (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (call $host_voice_3d_get (local.get $handle) (i32.const 0)))
@@ -4978,7 +4980,7 @@
         (call $gs32 (i32.add (local.get $arg1) (i32.const 52)) (call $host_voice_3d_get (local.get $handle) (i32.const 12)))
         (call $gs32 (i32.add (local.get $arg1) (i32.const 56)) (call $host_voice_3d_get (local.get $handle) (i32.const 13)))
         (call $gs32 (i32.add (local.get $arg1) (i32.const 60)) (call $host_voice_3d_get (local.get $handle) (i32.const 14)))
-        (global.set $eax (i32.const 0))))
+        (global.set $eax (i32.const 0))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirectSound3DBuffer_GetConeAngles (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -5051,7 +5053,9 @@
     (local $handle i32)
     (if (i32.eqz (local.get $arg1))
       (then (global.set $eax (i32.const 0x80004003)))
-      (else
+      (else (if (i32.ne (call $gl32 (local.get $arg1)) (i32.const 64))
+        (then (global.set $eax (i32.const 0x80070057))) ;; DSERR_INVALIDPARAM
+        (else
         (local.set $handle (call $ds3d_voice_from_this (local.get $arg0)))
         (call $host_voice_3d_set (local.get $handle) (i32.const 0)
           (call $gl32 (i32.add (local.get $arg1) (i32.const 4)))
@@ -5076,7 +5080,7 @@
           (call $gl32 (i32.add (local.get $arg1) (i32.const 56))) (i32.const 0) (i32.const 0))
         (call $host_voice_3d_set (local.get $handle) (i32.const 14)
           (call $gl32 (i32.add (local.get $arg1) (i32.const 60))) (i32.const 0) (i32.const 0))
-        (global.set $eax (i32.const 0))))
+        (global.set $eax (i32.const 0))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectSound3DBuffer_SetConeAngles (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -5160,7 +5164,9 @@
   (func $handle_IDirectSound3DListener_GetAllParameters (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.eqz (local.get $arg1))
       (then (global.set $eax (i32.const 0x80004003)))
-      (else
+      (else (if (i32.lt_u (call $gl32 (local.get $arg1)) (i32.const 64))
+        (then (global.set $eax (i32.const 0x80070057))) ;; DSERR_INVALIDPARAM
+        (else
         (call $gs32 (local.get $arg1) (i32.const 64))
         (call $ds3d_listener_get_vector (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))
         (call $ds3d_listener_get_vector (i32.add (local.get $arg1) (i32.const 16)) (i32.const 3))
@@ -5169,7 +5175,7 @@
         (call $gs32 (i32.add (local.get $arg1) (i32.const 52)) (call $host_voice_3d_get (i32.const 0) (i32.const 12)))
         (call $gs32 (i32.add (local.get $arg1) (i32.const 56)) (call $host_voice_3d_get (i32.const 0) (i32.const 13)))
         (call $gs32 (i32.add (local.get $arg1) (i32.const 60)) (call $host_voice_3d_get (i32.const 0) (i32.const 14)))
-        (global.set $eax (i32.const 0))))
+        (global.set $eax (i32.const 0))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirectSound3DListener_GetDistanceFactor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -5220,7 +5226,9 @@
   (func $handle_IDirectSound3DListener_SetAllParameters (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.eqz (local.get $arg1))
       (then (global.set $eax (i32.const 0x80004003)))
-      (else
+      (else (if (i32.ne (call $gl32 (local.get $arg1)) (i32.const 64))
+        (then (global.set $eax (i32.const 0x80070057))) ;; DSERR_INVALIDPARAM
+        (else
         (call $host_voice_3d_set (i32.const 0) (i32.const 0)
           (call $gl32 (i32.add (local.get $arg1) (i32.const 4)))
           (call $gl32 (i32.add (local.get $arg1) (i32.const 8)))
@@ -5243,7 +5251,7 @@
           (call $gl32 (i32.add (local.get $arg1) (i32.const 56))) (local.get $arg2) (i32.const 0))
         (call $host_voice_3d_set (i32.const 0) (i32.const 14)
           (call $gl32 (i32.add (local.get $arg1) (i32.const 60))) (local.get $arg2) (i32.const 0))
-        (global.set $eax (i32.const 0))))
+        (global.set $eax (i32.const 0))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectSound3DListener_SetDistanceFactor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
