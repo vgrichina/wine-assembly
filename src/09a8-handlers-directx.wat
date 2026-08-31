@@ -13,15 +13,15 @@
   ;; +20 dib_ptr (WASM addr of pixel data, 0 if none)
   ;; +24 color_key_low
   ;; +28 flags (surface type: 1=primary,2=backbuf,4=offscreen; 0x100=has_colorkey)
-  (global $DX_OBJECTS i32 (i32.const 0x07F60000))
-  (global $DX_OBJECTS_SIZE i32 (i32.const 0x00020000))
+  (global $DX_OBJECTS i32 (region.addr $DX_OBJECTS 0))
+  (global $DX_OBJECTS_SIZE i32 (region.size $DX_OBJECTS))
   (global $DX_MAX i32 (i32.const 4096))
   ;; D3DIM matrix handle table (Immediate Mode): 256 slots × 64 bytes.
   ;; Handle value = slot_idx + 1 (0 is invalid). Allocation state is kept in
   ;; a separate byte table because SetMatrix may legitimately store an all-zero
   ;; matrix; matrix contents therefore cannot serve as the ownership marker.
-  (global $D3DIM_MATRICES i32 (i32.const 0x07FEC000))
-  (global $D3DIM_MATRICES_SIZE i32 (i32.const 0x00004000))
+  (global $D3DIM_MATRICES i32 (region.addr $D3DIM_MATRICES 0))
+  (global $D3DIM_MATRICES_SIZE i32 (region.size $D3DIM_MATRICES))
   (global $D3DIM_MATRIX_MAX i32 (i32.const 256))
   (global $D3DIM_MATRIX_USED i32 (i32.const 0x07FEBF00))
   (global $DX_ENTRY_SIZE i32 (i32.const 32))
@@ -30,26 +30,26 @@
   ;; itself is full (32 bytes, every field taken), and a single global is wrong
   ;; for textures: an 8bpp D3D texture carries its own palette while the
   ;; primary surface carries another.
-  (global $DX_SURF_PAL i32 (i32.const 0x07F32000))
-  (global $DX_SURF_PAL_SIZE i32 (i32.const 0x00004000))
+  (global $DX_SURF_PAL i32 (region.addr $DX_SURF_PAL 0))
+  (global $DX_SURF_PAL_SIZE i32 (region.size $DX_SURF_PAL))
   ;; DirectDraw surfaces with the same bit count can have incompatible channel
   ;; layouts. In particular MW3 uses ARGB4444 light/detail textures alongside
   ;; RGB565 render targets. Keep one normalized format kind per surface:
   ;;   0=infer from bpp, 1=RGB565, 2=XRGB1555, 3=ARGB1555,
   ;;   4=ARGB4444, 5=ARGB8888, 6=XRGB8888.
-  (global $DX_SURF_FMT i32 (i32.const 0x07F88000))
-  (global $DX_SURF_FMT_SIZE i32 (i32.const 0x00004000))
+  (global $DX_SURF_FMT i32 (region.addr $DX_SURF_FMT 0))
+  (global $DX_SURF_FMT_SIZE i32 (region.size $DX_SURF_FMT))
   ;; Creation caps and attachment parent for every surface.  AddAttachedSurface
   ;; is used for flipping chains and mipmaps as well as depth buffers, so D3DIM
   ;; must retain DDSCAPS_ZBUFFER instead of treating every attached 16-bit
   ;; surface as depth.  4096 entries x {caps,parent_slot+1}.
-  (global $DX_SURF_META i32 (i32.const 0x07F28000))
-  (global $DX_SURF_META_SIZE i32 (i32.const 0x00008000))
+  (global $DX_SURF_META i32 (region.addr $DX_SURF_META 0))
+  (global $DX_SURF_META_SIZE i32 (region.size $DX_SURF_META))
   ;; DirectDraw object that created each surface, stored as owner slot + 1.
   ;; EnumSurfaces is scoped to one DirectDraw instance; a process may have
   ;; several live instances and must not see surfaces belonging to another.
-  (global $DX_SURF_OWNER i32 (i32.const 0x07F8C000))
-  (global $DX_SURF_OWNER_SIZE i32 (i32.const 0x00004000))
+  (global $DX_SURF_OWNER i32 (region.addr $DX_SURF_OWNER 0))
+  (global $DX_SURF_OWNER_SIZE i32 (region.size $DX_SURF_OWNER))
   ;; CPU-write epochs and reversible-copy provenance for DirectDraw surfaces.
   ;; 4096 entries x 32 bytes in 0x07F36000..0x07F55FFF:
   ;;   +0  CPU-write epoch (advanced by Unlock)
@@ -62,24 +62,24 @@
   ;; the large surface was CPU-redrawn after the save, replaying those pixels
   ;; would stamp stale terrain over the new frame (AoE I/II). Exact inverse
   ;; rectangle matching keeps ordinary small-surface blits untouched.
-  (global $DX_SURF_STATE i32 (i32.const 0x07F36000))
-  (global $DX_SURF_STATE_SIZE i32 (i32.const 0x00020000))
+  (global $DX_SURF_STATE i32 (region.addr $DX_SURF_STATE 0))
+  (global $DX_SURF_STATE_SIZE i32 (region.size $DX_SURF_STATE))
   ;; Per-destination cache for the 32x32 keyed software cursor used by MCM.
   ;; +0 is 0 (inactive), 1 (legacy null-source frame marker seen), or a DIB-
   ;; arena record holding two physical-page identities, x/y pairs, and their
   ;; 32x32x16 backgrounds. Flip swaps DIB pointers between COM surface entries,
   ;; so keying those two saves by physical page is essential. +4 is reserved.
-  (global $DX_CURSOR_SAVE i32 (i32.const 0x07F56000))
-  (global $DX_CURSOR_SAVE_SIZE i32 (i32.const 0x00008000))
+  (global $DX_CURSOR_SAVE i32 (region.addr $DX_CURSOR_SAVE 0))
+  (global $DX_CURSOR_SAVE_SIZE i32 (region.size $DX_CURSOR_SAVE))
   ;; COM wrapper stubs: DX_MAX × 8 bytes in high memory (safe from guest address collision)
-  (global $COM_WRAPPERS i32 (i32.const 0x07F80000))
-  (global $COM_WRAPPERS_SIZE i32 (i32.const 0x00008000))
+  (global $COM_WRAPPERS i32 (region.addr $COM_WRAPPERS 0))
+  (global $COM_WRAPPERS_SIZE i32 (region.size $COM_WRAPPERS))
   ;; Auxiliary wrappers for QueryInterface results that need a different vtable
   ;; than the primary wrapper. Each entry is [vtbl, slot], same shape as the
   ;; primary wrappers so $dx_from_this works for aux guest ptrs too. Dedup'd
   ;; by (slot, vtbl) via linear scan.
-  (global $COM_WRAPPERS_AUX  i32 (i32.const 0x07FFA000))
-  (global $COM_WRAPPERS_AUX_SIZE i32 (i32.const 0x00003EFC))
+  (global $COM_WRAPPERS_AUX  i32 (region.addr $COM_WRAPPERS_AUX 0))
+  (global $COM_WRAPPERS_AUX_SIZE i32 (region.size $COM_WRAPPERS_AUX))
   (global $COM_WRAPPERS_AUX_MAX i32 (i32.const 2015))
   ;; The aux-wrapper cursor lives at $COM_AUX_NEXT_SHARED, not in a global: a
   ;; mutable global is per-instance, and every guest thread is its own instance
@@ -98,7 +98,7 @@
   ;; $init_dx_com_thunks here; a worker restores its local globals before its
   ;; guest code begins. Reserve the tail of the auxiliary-wrapper region
   ;; rather than overlapping VSOCK_TABLE at 0x07FFE000.
-  (global $DX_VTBL_REGISTRY i32 (i32.const 0x07FFDEFC))
+  (global $DX_VTBL_REGISTRY i32 (region.addr $DX_VTBL_REGISTRY 0))
   (global $DX_VTBL_REGISTRY_COUNT i32 (i32.const 64))
 
   ;; Vtable blocks — arrays of thunk guest-addrs, one per interface type.
@@ -291,8 +291,8 @@
   ;;   +16       cooperative-level HWND
   ;;   +20       exclusive/fullscreen flag
   ;;   +24       primary palette WASM address
-  (global $DX_PROCESS_STATE i32 (i32.const 0x07F0CE90))
-  (global $DX_PROCESS_STATE_SIZE i32 (i32.const 0x0000001C))
+  (global $DX_PROCESS_STATE i32 (region.addr $DX_PROCESS_STATE 0))
+  (global $DX_PROCESS_STATE_SIZE i32 (region.size $DX_PROCESS_STATE))
 
   (func $dx_display_w_get (result i32)
     (local $v i32)
@@ -364,8 +364,8 @@
   ;; that virtual cursor and would otherwise become a phantom DirectInput
   ;; event. Atomic exchange lets a Worker consume exactly the deltas that were
   ;; present at its poll while later browser movement remains queued.
-  (global $DI_MOUSE_INPUT_STATE i32 (i32.const 0x07F20400))
-  (global $DI_MOUSE_INPUT_STATE_SIZE i32 (i32.const 0x00000118))
+  (global $DI_MOUSE_INPUT_STATE i32 (region.addr $DI_MOUSE_INPUT_STATE 0))
+  (global $DI_MOUSE_INPUT_STATE_SIZE i32 (region.size $DI_MOUSE_INPUT_STATE))
   (func $di_mouse_delta_peek_x (result i32)
     (i32.atomic.load offset=0 (global.get $DI_MOUSE_INPUT_STATE)))
   (func $di_mouse_delta_peek_y (result i32)
@@ -6307,8 +6307,8 @@
   ;; has no VK, which the buffered-keyboard scan uses to skip it. A table
   ;; rather than a comparison chain because GetDeviceData walks all 256 codes
   ;; on every poll, and an Allegro input thread polls continuously.
-  (global $DI_DIK_VK_TABLE i32 (i32.const 0x11400))
-  (global $DI_DIK_VK_TABLE_SIZE i32 (i32.const 256))
+  (global $DI_DIK_VK_TABLE i32 (region.addr $DI_DIK_VK_TABLE 0))
+  (global $DI_DIK_VK_TABLE_SIZE i32 (region.size $DI_DIK_VK_TABLE))
   (data (i32.const 0x11400)
     "\00\1b\31\32\33\34\35\36\37\38\39\30\bd\bb\08\09"  ;; DIK 00-0F
     "\51\57\45\52\54\59\55\49\4f\50\db\dd\0d\11\41\53"  ;; DIK 10-1F
