@@ -1347,6 +1347,9 @@ Resource-aware Win98 emulator
   <!-- Written by tools/deploy-berrry.js, absent in a local tree. A 404 here is
        expected off the deployed site and costs nothing. -->
   <script src="build-info.js"></script>
+  <!-- The generated region map must load before any lib script: filesystem.js
+       reads the RegionMap global at script-evaluation time, not call time. -->
+  <script src="lib/region-map.generated.js?v=1"></script>
   <script src="lib/mem-utils.js?v=169"></script>
   <script src="lib/dib.js?v=168"></script>
   <script src="lib/gdi-surface.js?v=2"></script>
