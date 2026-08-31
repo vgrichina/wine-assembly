@@ -2621,12 +2621,53 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 256)))
     (global.set $eax (i32.const 0)))
 
+  (func $dd_enum_surfaces_invoke (param $frame i32) (param $surface i32)
+    (local $frame_wa i32)
+    (local.set $frame_wa (call $g2w (local.get $frame)))
+    ;; Callback(surface, descriptor, context), right-to-left under stdcall.
+    (global.set $esp (i32.sub (local.get $frame) (i32.const 16)))
+    (call $gs32 (global.get $esp) (global.get $ddenum_ret_thunk))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $surface))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 8))
+      (i32.add (local.get $frame) (i32.const 140)))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 12))
+      (i32.load offset=12 (local.get $frame_wa)))
+    (global.set $eip (i32.load offset=8 (local.get $frame_wa)))
+    (global.set $steps (i32.const 0)))
+
+  ;; CANBECREATED owns the temporary surface's initial reference. A callback
+  ;; may AddRef it to retain the object; after the callback, release only our
+  ;; reference. Be defensive if guest callback code already released it.
+  (func $dd_enum_surfaces_drop_temp (param $frame i32)
+    (local $frame_wa i32) (local $surface i32) (local $entry i32)
+    (local.set $frame_wa (call $g2w (local.get $frame)))
+    (local.set $surface (i32.load offset=248 (local.get $frame_wa)))
+    (if (i32.eqz (local.get $surface)) (then (return)))
+    (local.set $entry (call $dx_from_this (local.get $surface)))
+    (if (i32.and
+          (i32.eq (i32.load (local.get $entry)) (i32.const 2))
+          (i32.eq (i32.load (call $dx_surf_owner_ptr (local.get $entry)))
+            (i32.load offset=16 (local.get $frame_wa))))
+      (then
+        (global.set $esp (local.get $frame))
+        (call $handle_IDirectDrawSurface_Release
+          (local.get $surface) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (global.set $esp (local.get $frame)))))
+
   (func $dd_enum_surfaces_continue
     (local $frame i32) (local $frame_wa i32) (local $slot i32)
     (local $entry i32) (local $selected i32) (local $matches i32)
-    (local $surface i32) (local $desc i32)
+    (local $surface i32)
     (local.set $frame (global.get $esp))
     (local.set $frame_wa (call $g2w (local.get $frame)))
+    ;; CANBECREATED enumerates only the first temporary match. The callback's
+    ;; return value does not change its one-shot lifecycle.
+    (if (i32.and (i32.load offset=20 (local.get $frame_wa)) (i32.const 0x8))
+      (then
+        (call $dd_enum_surfaces_drop_temp (local.get $frame))
+        (call $dd_enum_surfaces_finish)
+        (return)))
     ;; DDENUMRET_CANCEL is zero. The reference passed to the just-finished
     ;; callback remains the caller's to Release, exactly as Microsoft documents.
     (if (i32.eqz (global.get $eax))
@@ -2680,21 +2721,13 @@
     (local.set $surface (call $w2g
       (i32.add (global.get $COM_WRAPPERS)
         (i32.shl (local.get $selected) (i32.const 3)))))
-    (local.set $desc (i32.add (local.get $frame) (i32.const 140)))
-    ;; Callback(surface, descriptor, context), right-to-left under stdcall.
-    (global.set $esp (i32.sub (local.get $frame) (i32.const 16)))
-    (call $gs32 (global.get $esp) (global.get $ddenum_ret_thunk))
-    (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $surface))
-    (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $desc))
-    (call $gs32 (i32.add (global.get $esp) (i32.const 12))
-      (i32.load offset=12 (local.get $frame_wa)))
-    (global.set $eip (i32.load offset=8 (local.get $frame_wa)))
-    (global.set $steps (i32.const 0)))
+    (call $dd_enum_surfaces_invoke (local.get $frame) (local.get $surface)))
 
   ;; EnumSurfaces(this, flags, descriptor, context, callback).
   (func $handle_IDirectDraw_EnumSurfaces (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $ret i32) (local $frame i32) (local $frame_wa i32)
     (local $search i32) (local $match i32)
+    (local $create_result i32) (local $temp i32) (local $saved_primary i32)
     (local.set $ret (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
     (local.set $entry (call $dx_from_this (local.get $arg0)))
@@ -2721,10 +2754,6 @@
     (if (i32.and (i32.ne (local.get $match) (i32.const 0x1))
                  (i32.eqz (local.get $arg2)))
       (then (global.set $eax (i32.const 0x80070057)) (return)))
-    ;; CANBECREATED requires a temporary usable surface. Do not claim a false
-    ;; success until that lifecycle is modeled; DOESEXIST below is complete.
-    (if (i32.eq (local.get $search) (i32.const 0x8))
-      (then (global.set $eax (i32.const 0x80004001)) (return))) ;; DDERR_UNSUPPORTED
     (if (i32.and (i32.ne (local.get $arg2) (i32.const 0))
           (i32.lt_u (call $gl32 (local.get $arg2)) (i32.const 108)))
       (then (global.set $eax (i32.const 0x80070057)) (return)))
@@ -2742,6 +2771,35 @@
     (if (local.get $arg2)
       (then (call $memcpy (i32.add (local.get $frame_wa) (i32.const 32))
         (call $g2w (local.get $arg2)) (i32.const 108))))
+    (if (i32.eq (local.get $search) (i32.const 0x8))
+      (then
+        ;; Microsoft's contract describes a temporary creation attempt. Use
+        ;; the real CreateSurface path so callback code receives a usable COM
+        ;; object, but restore the prior primary selection immediately: this
+        ;; probe must not replace the application's display surface.
+        (local.set $saved_primary (global.get $dx_primary_wa))
+        (global.set $esp (local.get $frame))
+        (call $handle_IDirectDraw_CreateSurface
+          (local.get $arg0)
+          (i32.add (local.get $frame) (i32.const 32))
+          (i32.add (local.get $frame) (i32.const 248))
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (local.set $create_result (global.get $eax))
+        (global.set $dx_primary_wa (local.get $saved_primary))
+        (global.set $esp (local.get $frame))
+        (local.set $temp (i32.load offset=248 (local.get $frame_wa)))
+        ;; A description that cannot be created is a successful empty search,
+        ;; not the old unconditional success that skipped every valid callback.
+        (if (i32.or (local.get $create_result) (i32.eqz (local.get $temp)))
+          (then
+            (call $dd_enum_surfaces_drop_temp (local.get $frame))
+            (call $dd_enum_surfaces_finish)
+            (return)))
+        (local.set $entry (call $dx_from_this (local.get $temp)))
+        (call $dx_fill_surface_desc
+          (i32.add (local.get $frame_wa) (i32.const 140)) (local.get $entry))
+        (call $dd_enum_surfaces_invoke (local.get $frame) (local.get $temp))
+        (return)))
     (global.set $eax (i32.const 1)) ;; initial dispatch is not cancellation
     (call $dd_enum_surfaces_continue))
 

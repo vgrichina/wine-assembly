@@ -54,6 +54,13 @@ const extraWat = String.raw`
     (call $dd_enum_surfaces_continue))
   (func (export "test_ddes_ref") (param $surface i32) (result i32)
     (i32.load offset=4 (call $dx_from_this (local.get $surface))))
+  (func (export "test_ddes_type") (param $surface i32) (result i32)
+    (i32.load (call $dx_from_this (local.get $surface))))
+  (func (export "test_ddes_retain") (param $surface i32)
+    (local $entry i32)
+    (local.set $entry (call $dx_from_this (local.get $surface)))
+    (i32.store offset=4 (local.get $entry)
+      (i32.add (i32.load offset=4 (local.get $entry)) (i32.const 1))))
 `;
 
 (async () => {
@@ -162,10 +169,31 @@ const extraWat = String.raw`
     'a null callback is invalid');
   assert.strictEqual(begin(small, 0x11), 0x88760082,
     'a surface passed as this returns DDERR_INVALIDOBJECT');
-  assert.strictEqual(begin(ddraw, 0x0a, query), 0x80004001,
-    'CANBECREATED fails honestly until temporary-surface lifetime is modeled');
+  begin(ddraw, 0x0a, createDesc); // CANBECREATED | MATCH
+  args = callbackArgs();
+  const temporary = args.surface;
+  assert(temporary, 'CANBECREATED calls back with a temporary surface');
+  assert.deepStrictEqual([
+    wat.guest_read32(args.desc + 8), wat.guest_read32(args.desc + 12),
+    wat.guest_read32(args.desc + 104), wat.test_ddes_ref(temporary),
+  ], [64, 96, 0x840, 1],
+  'temporary callback surface is usable and described by the real creation path');
+  wat.test_ddes_continue(1);
+  assert.strictEqual(wat.test_ddes_type(temporary), 0,
+    'the enumeration releases its temporary reference after the callback');
+  assert.strictEqual(wat.get_eip() >>> 0, callerReturn);
 
-  console.log('PASS  DirectDraw EnumSurfaces enumerates owned live surfaces with matching and cancellation');
+  begin(ddraw, 0x0a, createDesc);
+  args = callbackArgs();
+  const retainedTemporary = args.surface;
+  wat.test_ddes_retain(retainedTemporary); // callback calls AddRef
+  wat.test_ddes_continue(0);
+  assert.strictEqual(wat.test_ddes_type(retainedTemporary), 2,
+    'a callback AddRef retains the temporary surface after enumeration');
+  assert.strictEqual(wat.test_ddes_ref(retainedTemporary), 1,
+    'enumeration releases only its own initial temporary reference');
+
+  console.log('PASS  DirectDraw EnumSurfaces enumerates live and creatable surfaces with native lifetimes');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);
