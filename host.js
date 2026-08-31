@@ -2276,10 +2276,10 @@ class WineAssembly {
         }
         // Every yield the WAT actually raises is handled here: 1 wait, 2 exit
         // (caught above as eip=0), 3 com_load_dll, 5 load_library, 6
-        // modal_dialog, 7 message_wait, 8 net_wait. Reason 4 (help_load) is
-        // named in thread-manager.js's map but is never set by any WAT or JS
-        // path, so there is nothing to port for it. The fallback below stays as
-        // a guard for anything added later.
+        // modal_dialog, 7 message_wait, 8 net_wait, 12 io_wait. Reason 4
+        // (help_load) is named in thread-manager.js's map but is never set by
+        // any WAT or JS path, so there is nothing to port for it. The fallback
+        // below stays as a guard for anything added later.
         if (r.yield === 1) {
           // A parked WaitForSingleObject/WaitForMultipleObjects. This used to
           // just clear the yield and let the guest re-poll, which is wrong in a
@@ -2324,6 +2324,20 @@ class WineAssembly {
         } else if (r.yield === 8) {
           await self.guestWorker.callExport('clear_yield');
           try { await self.guestWorker.callExport('vlan_pump'); } catch (_) {}
+        } else if (r.yield === 12) {
+          // io_wait: ReadFile parked on a provider-backed VFS entry (mounted
+          // zip/iso, dropped File, remote URL over Range). The brokered fs
+          // import already ran here on the main thread, so the pending-read
+          // record is ours to fill; clearing the yield re-enters the same call
+          // in the worker, which then takes the synchronous cache hit.
+          const pvfs = self._helpCtx && self._helpCtx.vfs;
+          const pending = pvfs && pvfs.pendingRead;
+          if (pending) {
+            try { await pvfs.fillPendingRead(pending); }
+            catch (e) { self.logToUI(`[io] ${pending.path}: ${e && e.message}`); }
+            pvfs.pendingRead = null;
+          }
+          await self.guestWorker.callExport('clear_yield');
         } else if (r.yield === 6) {
           // modal_dialog: the single-threaded loop does nothing special here
           // either — the WAT side drives the dialog — so neither does this.
