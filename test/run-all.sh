@@ -96,6 +96,8 @@ UNIT=(
   test/test-wasm-abi-diff.js
   test/test-watx-matrix.js
   test/test-watx-compile-worker.js
+  test/test-watx-differential.js
+  test/test-watx-rejections.js
   test/test-icon-extract.js
   test/test-heroes2-desktop-save.js
   test/test-wide-api.js
