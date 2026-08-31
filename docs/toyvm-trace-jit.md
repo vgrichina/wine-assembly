@@ -630,3 +630,106 @@ Three consequences, in order of how much they should change what gets built:
    a block that holds its own back edge, so for the rest, hoisting has to happen
    in a unit that spans blocks. Those are two different builds and should be
    costed as two, not merged into "the JIT".
+
+## Loop regions: what compiling a whole loop would actually cost
+
+The section above ends at "per-loop install is what makes the micro-ops worth
+anything", which is a claim about a build nobody has costed. This costs it, and
+still without writing a compiler: the region walk is a static pass over arena
+words the profiler already has.
+
+**Entry is not the obstacle it is usually assumed to be.** A region is installed
+at its *head* only, and every block it covers stays in the arena exactly as it
+was. Code that jumps into the middle of the loop dispatches ordinary blocks and
+never reaches the compiled version — it does not need to be stopped, because it
+cannot get in. So there is no entry guard, no on-stack replacement, and no
+requirement that the region have one predecessor.
+
+**Exits are the obstacle,** and they scale with the number of edges leaving the
+region rather than with its size. Each one has to spill registers promoted into
+wasm locals back to the globals, materialise the flag records the dead-flag pass
+elided, and set `$ip`/`$gip` to wherever control is going. A `dec cx / jnz` loop
+has one such edge; a loop containing five calls has at least five more.
+
+So the measurement is the **exit count of the hot loops**, not their number.
+`--coverage=N` now prints it: for each block holding a back edge it takes the
+natural loop (blocks reachable from the head that reach the head again), counts
+edges leaving it, and counts `call`/`int` inside it.
+
+```bash
+node tools/toyvm/trace-jit.js /tmp/demos/1994-a-addy_ii/ADDY_II.EXE \
+  --dispatches=12m --sample-from=0.5 --min-ops=1 --coverage=100 --tiers=0
+```
+
+Over `tools/toyvm/bench-set-20.txt`, hottest region per program, sorted by what
+share of the program's samples the region holds:
+
+| program | share | blocks | ops | **exits** | call/int |
+|---|---:|---:|---:|---:|---:|
+| DTM2 | 100.0% | 1 | 4 | 2 | 0 |
+| DEMO5 | 100.0% | 1 | 1 | 0 | 0 |
+| COMPOVRS | 100.0% | 8 | 98 | 7 | 0 |
+| CONTACT | 100.0% | 19 | 167 | 23 | 13 |
+| daretro | 99.7% | 1 | 4 | 1 | 0 |
+| DSTNFO | 87.7% | 21 | 148 | 35 | 13 |
+| DREAM | 68.1% | 22 | 211 | 35 | 13 |
+| CYCLE | 66.3% | 1 | 3 | 2 | 0 |
+| DRAGON | 64.6% | 2 | 24 | 1 | 0 |
+| ADDY_II | 64.6% | 14 | 178 | **1** | 0 |
+| CORE-ADD | 52.5% | 15 | 144 | 13 | 6 |
+| B-STEEL | 39.5% | 17 | 75 | 23 | 11 |
+| ACCIDENT | 17.0% | 8 | 32 | 3 | 1 |
+| ASYLUM | 16.7% | 10 | 89 | 15 | 9 |
+| BRW | 5.3% | 11 | 191 | 26 | 6 |
+| RUNDEMO | 1.7% | 7 | 35 | 15 | 7 |
+
+CMA_SHRT and CONTAGIO have no loop region at all (below); DHADREN and COPPER
+land no samples in a live block at all, which is the self-modifying decline this
+file already documents.
+
+**The distribution is bimodal and the split is `call`.** Every call-free region
+in the table has **0–7 exits**, and those are the ones holding 64–100% of their
+program. Every region containing a call has **13–35**. There is no middle.
+
+That makes the first cut obvious and small: **compile call-free natural loops.**
+ADDY_II is the shape that argument was made for — 14 blocks, 178 ops, **one**
+exit, 64.6% of the program — and DRAGON's 2 blocks / 24 ops / 1 exit is the
+same. A single exit means one writeback path, which is close to the cheapest
+version of this that could exist. The call-bearing half is where the OSR-shaped
+machinery would be needed, and it can be declined by the matcher without losing
+the programs above.
+
+Two limits to read the table with:
+
+- **The region walk cannot cross `call`.** CMA_SHRT and CONTAGIO show no loop
+  region and are nonetheless 100% covered by four-to-seven-op blocks ending in
+  `ret` — they are loops whose back edge is in a *caller*, driving a callee that
+  the profiler sees as a hot straight-line block. A call-free-loop matcher would
+  not fire on them either, so the table and the matcher agree; but read "no
+  region" as "the loop is not visible at this granularity", not "no loop".
+- **DEMO5's zero-exit region is `jmp_spin`,** a one-op parking loop. That is
+  the spin collapse's territory, already built, and not a compiler beneficiary.
+
+### Two instrument bugs this found, both in reading branch targets
+
+Neither was in the VM; both were in this file's static reader, and both produced
+confident wrong numbers first.
+
+1. **A fused branch does not start with `j`.** The classifier tested
+   `/^j/.test(op.name)`, which misses `cmp_mi16_jnz` — so DRAGON's hot loop came
+   back with **zero exits** when its only way out is exactly that op. The fix is
+   structural rather than by name: an operand that holds the address of a known
+   block head *is* a branch target. Guest ip operands cannot collide with that —
+   they are 16-bit, the arena sits above `0x1000000`.
+2. **`TAKEN_AT` indexes the guest ip, not the arena word.** It is what
+   `loop-match.js` matches block ips against; the arena address sits one slot in
+   front of it, and the tail is `arenaTaken guestTaken [arenaFall] guestFall` —
+   four words for a plain conditional, three for a traced twin whose
+   fall-through is stitched in behind it. This matters because an edge whose
+   target the compile did not emit is written as arena address **zero** (the
+   branch handlers read that as "hand back to the host"), and those handbacks
+   are how most loops actually leave. Counting them needs the right slot.
+
+Fixing (1) also moved the back-edge shares in the section above by a point or
+two — DRAGON's `back` went 65.0% → 66.4% — since the classifier was missing
+fused back edges too. The conclusions there are unchanged.

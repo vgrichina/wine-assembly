@@ -276,6 +276,7 @@ async function jitTiers(exe, {
   // at least minOps ops), because coverage over blocks the pipeline would
   // decline is not coverage.
   let coverageOut = null;
+  let coverageLoops = null;
   if (coverage) {
     const compilable = real.filter(b => inspect(b).t.ops.length >= (minOps || 1));
     const marks = [1, 2, 5, 10, 25, 50, 100].filter(n => n <= Math.max(coverage, 1));
@@ -322,14 +323,54 @@ async function jitTiers(exe, {
     //
     // So scan every op: any branch whose arena target lands at or before this
     // block's own head is a back edge, wherever it sits.
+    // Arena address -> owning block, over every region compiled during the run.
+    // Built before the classifier because that is what finds a branch target:
+    // NAMES cannot. A fused pair is called `cmp_mi16_jnz` and does not start
+    // with `j`, and its arena target is not `args[0]` either -- the compare's
+    // operands come first. Both facts cost a wrong answer before this line
+    // existed: DRAGON's 64.6% loop reported ZERO exits because the only way out
+    // of it is a fused `cmp_mi16_jnz`. So the test is structural instead: an
+    // operand that is the address of a known block head IS a branch target.
+    // Guest ip operands cannot collide with it -- they are 16-bit, the arena
+    // sits above 0x1000000.
+    const headByAddr = new Map();
+    for (const [, progs] of rr.regions) {
+      for (const p of progs) for (const [, addr] of p.blocks) headByAddr.set(addr, { addr, prog: p });
+    }
+    const targetsOf = (t) => {
+      const out = new Set();
+      for (const op of t.ops) for (const a of op.args) if (headByAddr.has(a)) out.add(a);
+      return out;
+    };
+    // An edge whose target this compile did not emit is written as arena
+    // address ZERO, which the branch handlers read as "hand back to the host".
+    // That is a real exit and the membership test above cannot see it -- it is
+    // how a loop leaves for code that was never hot enough to compile, which is
+    // to say it is how most loops leave. `TAKEN_AT` gives the exact operand
+    // slot per handler, so this does not have to guess which zero is an edge.
+    //
+    // `TAKEN_AT` indexes the GUEST ip of the taken edge (that is what
+    // loop-match.js matches block ips against); the arena word sits one slot in
+    // front of it. A branch's tail is `arenaTaken guestTaken [arenaFall]
+    // guestFall`, four words for a plain conditional and three for a traced
+    // twin whose fall-through is stitched in behind it -- so the length of the
+    // tail says whether there is a second arena slot to check.
+    const handbacksOf = (t) => {
+      let n = 0;
+      for (const op of t.ops) {
+        const at = TAKEN_AT.get(op.fn);
+        if (at === undefined) continue;
+        if (op.args[at - 1] === 0) n++;
+        if (op.args.length - (at - 1) === 4 && op.args[at + 1] === 0) n++;
+      }
+      return n;
+    };
     const cls = (b) => {
       const t = inspect(b).t;
       let self = false, back = false;
-      for (const op of t.ops) {
-        if (!/^j/.test(op.name) || !op.args.length) continue;
-        const to = op.args[0];
+      for (const to of targetsOf(t)) {
         if (to === b.addr) self = true;
-        else if (to < b.addr && to >= b.prog.arenaBase) back = true;
+        else if (to < b.addr) back = true;
       }
       return self ? 'self' : back ? 'back' : 'straight';
     };
@@ -346,6 +387,122 @@ async function jitTiers(exe, {
         + (k === 'self' ? '   <- self loop: micro-ops carry across iterations'
           : k === 'back' ? '   <- has a back edge' : ''));
     }
+    // LOOP REGIONS, and what each one would cost to compile as a unit.
+    //
+    // Entry is not the problem people expect it to be: a region is installed at
+    // its HEAD only and every block it covers stays in the arena untouched, so
+    // anything jumping into the middle dispatches the ordinary blocks and never
+    // sees the compiled version. No entry guard is needed at all.
+    //
+    // EXITS are the cost, and they scale with the number of edges leaving the
+    // region rather than with its size. Each one has to spill promoted
+    // registers back to the globals, materialise elided flag records, and set
+    // $ip/$gip to where control is going. A counted `dec cx / jnz` loop has one
+    // and is nearly free; a loop containing a call has one per call site. So
+    // this counts exits, not blocks -- that distribution is what says whether a
+    // loop-region compiler is a small build or a large one.
+    const succCache = new Map();
+    const succOf = (blk) => {
+      if (succCache.has(blk.addr)) return succCache.get(blk.addr);
+      const t = readTrace(blk.prog.words, (blk.addr - blk.prog.arenaBase) >> 2);
+      const out = targetsOf(t);
+      // A block ends at jmp/ret/call/int/end. `jmp`'s target is already in the
+      // scan above; the rest leave for somewhere this pass cannot name, which
+      // is an exit whether or not it is a loop exit.
+      const opaque = !/^jmp/.test(t.end);
+      const calls = t.ops.filter(o => /^(call|int)/.test(o.name)).length;
+      // The extent matters as much as the successors. A traced conditional
+      // stitches its fall-through in behind it, so ONE readTrace here covers
+      // arena words that the profiler attributes to several block heads --
+      // charging the region only the samples landing exactly on its head would
+      // credit a 64.6% loop with 0.0% of its own program.
+      const end = blk.addr + ((t.nextWord - ((blk.addr - blk.prog.arenaBase) >> 2)) << 2);
+      const v = { out, opaque, calls, ops: t.ops.length, end, handbacks: handbacksOf(t) };
+      succCache.set(blk.addr, v);
+      return v;
+    };
+    const reachCache = new Map();
+    const reach = (from) => {                 // forward reachability, bounded
+      if (reachCache.has(from)) return reachCache.get(from);
+      const seen = new Set([from]), work = [from];
+      while (work.length && seen.size < 64) {
+        const a = work.pop();
+        const blk = headByAddr.get(a);
+        if (!blk) continue;
+        for (const s of succOf(blk).out) {
+          if (seen.has(s) || !headByAddr.has(s)) continue;
+          seen.add(s); work.push(s);
+        }
+      }
+      reachCache.set(from, seen);
+      return seen;
+    };
+    // The natural loop of a back edge: blocks reachable from the head that can
+    // also reach the head again. Anything else hanging off the head is code the
+    // loop leaves to, not code it runs every iteration.
+    // Only the blocks that carry the program: the regions below are quadratic
+    // in region size and there is no question a cold loop answers.
+    const loops = [];
+    for (const b of real.slice(0, 40)) {
+      const t = inspect(b).t;
+      const edges = [...targetsOf(t)].filter(a => a <= b.addr);
+      if (!edges.length) continue;
+      const head = Math.min(...edges);
+      if (loops.some(l => l.head === head)) continue;
+      const fwd = reach(head);
+      const region = [...fwd].filter(a => a === head || reach(a).has(head)).sort((x, y) => x - y);
+      const set = new Set(region);
+      // Every block of a cycle is a back-edge target of some other block in it,
+      // so one loop is discovered once per member and lands here as several
+      // rows with identical bodies and identical shares. Key on the REGION.
+      const sig = region.join(',');
+      if (loops.some(l => l.sig === sig)) continue;
+      let exits = 0, calls = 0, ops = 0, samples = 0;
+      const counted = new Set();
+      for (const a of region) {
+        const blk = headByAddr.get(a);
+        if (!blk) continue;
+        const s = succOf(blk);
+        ops += s.ops; calls += s.calls; exits += s.handbacks;
+        if (s.opaque) exits++;
+        for (const to of s.out) if (!set.has(to)) exits++;
+        for (const x of ranked) {
+          if (x.addr < a || x.addr >= s.end || counted.has(x)) continue;
+          counted.add(x); samples += x.samples;
+        }
+      }
+      loops.push({ head, sig, blocks: region.length, exits, calls, ops,
+        share: 100 * samples / total,
+        // Every op the region can leave through, so a zero-exit row can be
+        // checked rather than believed: a loop with no exit at all is either a
+        // slice-bounded spin or a bug in the region walk.
+        outs: [...new Set(region.flatMap(a => {
+          const blk = headByAddr.get(a);
+          return blk ? [...succOf(blk).out].filter(x => !set.has(x)) : [];
+        }))] });
+    }
+    loops.sort((a, b) => b.share - a.share);
+    if (loops.length) {
+      log('  loop regions (installed at the head; mid-loop entries take the');
+      log('  ordinary blocks, so no entry guard -- exits are the cost):');
+      log('    share  head        blocks  ops  exits  call/int');
+      for (const l of loops.slice(0, 8)) {
+        log(`    ${l.share.toFixed(1).padStart(5)}%  `
+          + `0x${l.head.toString(16).padEnd(9)} ${String(l.blocks).padStart(6)}  `
+          + `${String(l.ops).padStart(3)}  ${String(l.exits).padStart(5)}  `
+          + `${String(l.calls).padStart(8)}`);
+      }
+      const t0 = loops[0], b0 = headByAddr.get(t0.head);
+      if (b0) {
+        const t = readTrace(b0.prog.words, (b0.addr - b0.prog.arenaBase) >> 2);
+        log(`    top loop body: ${t.ops.map(o => (TAKEN_AT.has(o.fn)
+          ? `${o.name}[${o.args.slice(TAKEN_AT.get(o.fn) - 1)
+            .map(a => (a >>> 0).toString(16)).join(',')}]`
+          : o.name)).join(' ')}`);
+      }
+      coverageLoops = loops;
+    }
+
     const buckets = [[1, 1], [2, 3], [4, 7], [8, 15], [16, 1e9]];
     const sized = real.map(b => ({ ops: inspect(b).t.ops.length, samples: b.samples }));
     log('  share by block size:');
@@ -357,7 +514,8 @@ async function jitTiers(exe, {
       log(`    ${(hi === 1e9 ? `${lo}+` : `${lo}-${hi}`).padStart(5)} ops  `
         + `${pct.toFixed(1).padStart(5)}%  ${'#'.repeat(Math.round(pct / 2))}`);
     }
-    coverageOut = { compilable: compilable.length, blocks: ranked.length, curve, allShare };
+    coverageOut = { compilable: compilable.length, blocks: ranked.length, curve, allShare,
+      loops: coverageLoops ? coverageLoops.slice(0, 8) : [] };
   }
   const wanted = minOps ? real.find(b => inspect(b).t.ops.length >= minOps) : real[0];
   const hot = wanted || real[0] || ranked[0];
