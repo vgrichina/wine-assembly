@@ -46,6 +46,7 @@ finish one, add what you learned.
 |---|---|
 | Diablo II Shareware demo | [diablo2-demo.md](diablo2-demo.md) |
 | Diablo Shareware | [diablo-shareware.md](diablo-shareware.md) |
+| Diablo retail CD | [diablo-retail.md](diablo-retail.md) |
 | Grand Theft Auto 2 Wild Demo | [gta2-demo.md](gta2-demo.md) |
 | Half-Life: Uplink | [half-life-uplink.md](half-life-uplink.md) |
 | Heroes of Might and Magic III (demo) | [heroes3-demo.md](heroes3-demo.md) |
