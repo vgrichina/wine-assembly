@@ -49,6 +49,13 @@
   ;; or get it wrong, which is the entire point.
   ;; ============================================================
 
+  ;; The low string-constant pool and the MapVirtualKey byte tables. Neither
+  ;; had a _SIZE global, so neither was visible to wat-memory-map.js or to any
+  ;; overlap gate; 57 data segments lived here in no region at all.
+  (region.declare-fixed $STRING_CONSTANTS (base 0x00000100) (size 0x00000280) (align 0x00000100)
+    (owner "01-header.wat:882"))
+  (region.declare-fixed $VK_SCAN_TABLES (base 0x00000380) (size 0x00000080) (align 0x00000080)
+    (owner "09a7-handlers-dispatch.wat:1944"))
   (region.declare-fixed $UPDATE_RECT (base 0x00002000) (size 0x00001000) (align 0x00001000)
     (owner "01-header.wat:1647"))
   (region.declare-fixed $UPDATE_FLAGS (base 0x00003000) (size 0x00000100) (align 0x00001000)
@@ -152,14 +159,25 @@
     (owner "01-header.wat:1686"))
   (region.declare-fixed $OWNER_TABLE (base 0x00010B00) (size 0x00000400) (align 0x00000100)
     (owner "01-header.wat:1691"))
+  ;; The reserved page just below GUEST_BASE. Four undeclared string blocks
+  ;; interleaved with the declared tables that already lived here; each is
+  ;; bounded by the next declared region, so the extents are not guesses.
+  (region.declare-fixed $USER_DIALOG_STRINGS (base 0x00011000) (size 0x00000270) (align 0x00001000)
+    (owner "01-header.wat:1133"))
   (region.declare-fixed $DX_VERSION_INFO (base 0x00011270) (size 0x0000005C) (align 0x00000010)
     (owner "01-header.wat:3457"))
+  (region.declare-fixed $ORDINAL_NAMES_WSOCK32 (base 0x00011300) (size 0x00000100) (align 0x00000100)
+    (owner "01-header.wat:968"))
   (region.declare-fixed $DI_DIK_VK_TABLE (base 0x00011400) (size 0x00000100) (align 0x00000100)
     (owner "09a8-handlers-directx.wat:6309"))
+  (region.declare-fixed $ORDINAL_NAMES_OLEAUT32 (base 0x00011500) (size 0x00000080) (align 0x00000100)
+    (owner "01-header.wat:988"))
   (region.declare-fixed $RICHEDIT_FORMAT_TABLE (base 0x00011580) (size 0x00000400) (align 0x00000010)
     (owner "01-header.wat:2178"))
   (region.declare-fixed $RICHEDIT_PARA_TABLE (base 0x00011980) (size 0x00000400) (align 0x00000010)
     (owner "01-header.wat:2182"))
+  (region.declare-fixed $RESERVED_PAGE_STRINGS (base 0x00011D80) (size 0x00000280) (align 0x00000080)
+    (owner "01-header.wat:1002"))
   (region.declare-fixed $GUEST_BASE (base 0x00012000) (size 0x03C00000) (align 0x00001000)
     (owner "01-header.wat:1449"))
   (region.declare-fixed $GUEST_HEAP_BASE (base 0x03D12000) (size 0x00100000) (align 0x00001000)

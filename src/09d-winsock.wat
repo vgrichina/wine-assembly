@@ -1606,7 +1606,7 @@
       (if (i32.and (i32.eq (local.get $entity) (i32.const 0x200))
                    (i32.eq (local.get $id) (i32.const 1)))
         (then
-          (local.set $descr (call $strlen (i32.const 0x11D90)))
+          (local.set $descr (call $strlen (region.addr $RESERVED_PAGE_STRINGS 0x10)))
           (local.set $need (i32.add (i32.const 92) (i32.add (local.get $descr) (i32.const 1))))
           (global.set $eax (call $wsctl_need
             (local.get $resp_len_ga) (local.get $cap) (local.get $need)))
@@ -1630,7 +1630,7 @@
               (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 32))) (i32.const 1))  ;; oper up
               (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 88))) (local.get $descr))
               (call $wsctl_copy_str
-                (i32.add (local.get $arg4) (i32.const 92)) (i32.const 0x11D90))))
+                (i32.add (local.get $arg4) (i32.const 92)) (region.addr $RESERVED_PAGE_STRINGS 0x10))))
           (br $done)))
     )
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))

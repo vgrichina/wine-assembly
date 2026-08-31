@@ -267,8 +267,8 @@
     ;; caller asking for ICC_LINK_CLASS (0x8000) gets FALSE and quits. The
     ;; classes themselves are registered from the DLL's DllMain, so answering
     ;; natively costs nothing and matches how a newer comctl32 would behave.
-    (if (call $str_eq (local.get $name_wa) (i32.const 0x11E30))
-      (then (return (call $lookup_api_id (i32.const 0x11E30))))) ;; InitCommonControlsEx
+    (if (call $str_eq (local.get $name_wa) (region.addr $RESERVED_PAGE_STRINGS 0xB0))
+      (then (return (call $lookup_api_id (region.addr $RESERVED_PAGE_STRINGS 0xB0))))) ;; InitCommonControlsEx
     (i32.const -1))
 
   ;; WinSock 1.1 commonly imports WSOCK32 by ordinal. Resolve ordinals for
@@ -328,50 +328,50 @@
     ;; Authentic Win98 SE KERNEL32.DLL: ordinal 99 is unnamed, RVA 0x1e260.
     ;; Its native body takes one BOOL refresh flag and returns the current
     ;; TIME_ZONE_ID_* classification (0 unknown, 1 standard, 2 daylight).
-    (if (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x11DB0))
+    (if (call $dll_name_match (local.get $dll_name_ga) (region.addr $RESERVED_PAGE_STRINGS 0x30))
       (then
         (if (i32.eq (local.get $ordinal) (i32.const 99))
-          (then (return (call $lookup_api_id (i32.const 0x11DBD))))) ;; KERNEL32_Ordinal99
+          (then (return (call $lookup_api_id (region.addr $RESERVED_PAGE_STRINGS 0x3D))))) ;; KERNEL32_Ordinal99
       ))
     (if (i32.or
-          (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x11300))
+          (call $dll_name_match (local.get $dll_name_ga) (region.addr $ORDINAL_NAMES_WSOCK32 0x0))
           (call $guest_name_is_ws2_32_ci (local.get $dll_name_ga)))
       (then
-        (if (i32.eq (local.get $ordinal) (i32.const 115)) (then (return (call $lookup_api_id (i32.const 0x1130C))))) ;; WSAStartup
-        (if (i32.eq (local.get $ordinal) (i32.const 116)) (then (return (call $lookup_api_id (i32.const 0x11317))))) ;; WSACleanup
-        (if (i32.eq (local.get $ordinal) (i32.const 111)) (then (return (call $lookup_api_id (i32.const 0x11322))))) ;; WSAGetLastError
-        (if (i32.eq (local.get $ordinal) (i32.const 23))  (then (return (call $lookup_api_id (i32.const 0x11332))))) ;; socket
-        (if (i32.eq (local.get $ordinal) (i32.const 3))   (then (return (call $lookup_api_id (i32.const 0x11339))))) ;; closesocket
-        (if (i32.eq (local.get $ordinal) (i32.const 4))   (then (return (call $lookup_api_id (i32.const 0x11345))))) ;; connect
-        (if (i32.eq (local.get $ordinal) (i32.const 19))  (then (return (call $lookup_api_id (i32.const 0x1134D))))) ;; send
-        (if (i32.eq (local.get $ordinal) (i32.const 16))  (then (return (call $lookup_api_id (i32.const 0x11352))))) ;; recv
-        (if (i32.eq (local.get $ordinal) (i32.const 52))  (then (return (call $lookup_api_id (i32.const 0x11357))))) ;; gethostbyname
-        (if (i32.eq (local.get $ordinal) (i32.const 9))   (then (return (call $lookup_api_id (i32.const 0x11365))))) ;; htons
-        (if (i32.eq (local.get $ordinal) (i32.const 10))  (then (return (call $lookup_api_id (i32.const 0x1136B))))) ;; inet_addr
-        (if (i32.eq (local.get $ordinal) (i32.const 18))  (then (return (call $lookup_api_id (i32.const 0x11375))))) ;; select
-        (if (i32.eq (local.get $ordinal) (i32.const 21))  (then (return (call $lookup_api_id (i32.const 0x1137C))))) ;; setsockopt
-        (if (i32.eq (local.get $ordinal) (i32.const 12))  (then (return (call $lookup_api_id (i32.const 0x11387))))) ;; ioctlsocket
-        (if (i32.eq (local.get $ordinal) (i32.const 1))   (then (return (call $lookup_api_id (i32.const 0x11393))))) ;; accept
-        (if (i32.eq (local.get $ordinal) (i32.const 2))   (then (return (call $lookup_api_id (i32.const 0x1139A))))) ;; bind
-        (if (i32.eq (local.get $ordinal) (i32.const 13))  (then (return (call $lookup_api_id (i32.const 0x1139F))))) ;; listen
-        (if (i32.eq (local.get $ordinal) (i32.const 22))  (then (return (call $lookup_api_id (i32.const 0x113A6))))) ;; shutdown
-        (if (i32.eq (local.get $ordinal) (i32.const 15))  (then (return (call $lookup_api_id (i32.const 0x113AF))))) ;; ntohs
-        (if (i32.eq (local.get $ordinal) (i32.const 11))  (then (return (call $lookup_api_id (i32.const 0x113B5))))) ;; inet_ntoa
-        (if (i32.eq (local.get $ordinal) (i32.const 151)) (then (return (call $lookup_api_id (i32.const 0x113BF))))) ;; __WSAFDIsSet
-        (if (i32.eq (local.get $ordinal) (i32.const 112)) (then (return (call $lookup_api_id (i32.const 0x113CC))))) ;; WSASetLastError
+        (if (i32.eq (local.get $ordinal) (i32.const 115)) (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0xC))))) ;; WSAStartup
+        (if (i32.eq (local.get $ordinal) (i32.const 116)) (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x17))))) ;; WSACleanup
+        (if (i32.eq (local.get $ordinal) (i32.const 111)) (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x22))))) ;; WSAGetLastError
+        (if (i32.eq (local.get $ordinal) (i32.const 23))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x32))))) ;; socket
+        (if (i32.eq (local.get $ordinal) (i32.const 3))   (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x39))))) ;; closesocket
+        (if (i32.eq (local.get $ordinal) (i32.const 4))   (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x45))))) ;; connect
+        (if (i32.eq (local.get $ordinal) (i32.const 19))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x4D))))) ;; send
+        (if (i32.eq (local.get $ordinal) (i32.const 16))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x52))))) ;; recv
+        (if (i32.eq (local.get $ordinal) (i32.const 52))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x57))))) ;; gethostbyname
+        (if (i32.eq (local.get $ordinal) (i32.const 9))   (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x65))))) ;; htons
+        (if (i32.eq (local.get $ordinal) (i32.const 10))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x6B))))) ;; inet_addr
+        (if (i32.eq (local.get $ordinal) (i32.const 18))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x75))))) ;; select
+        (if (i32.eq (local.get $ordinal) (i32.const 21))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x7C))))) ;; setsockopt
+        (if (i32.eq (local.get $ordinal) (i32.const 12))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x87))))) ;; ioctlsocket
+        (if (i32.eq (local.get $ordinal) (i32.const 1))   (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x93))))) ;; accept
+        (if (i32.eq (local.get $ordinal) (i32.const 2))   (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x9A))))) ;; bind
+        (if (i32.eq (local.get $ordinal) (i32.const 13))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0x9F))))) ;; listen
+        (if (i32.eq (local.get $ordinal) (i32.const 22))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0xA6))))) ;; shutdown
+        (if (i32.eq (local.get $ordinal) (i32.const 15))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0xAF))))) ;; ntohs
+        (if (i32.eq (local.get $ordinal) (i32.const 11))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0xB5))))) ;; inet_ntoa
+        (if (i32.eq (local.get $ordinal) (i32.const 151)) (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0xBF))))) ;; __WSAFDIsSet
+        (if (i32.eq (local.get $ordinal) (i32.const 112)) (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0xCC))))) ;; WSASetLastError
         ;; Names beyond this point live in the 0x11D80 block — see 01-header.wat.
-        (if (i32.eq (local.get $ordinal) (i32.const 14))   (then (return (call $lookup_api_id (i32.const 0x11D80))))) ;; ntohl
-        (if (i32.eq (local.get $ordinal) (i32.const 5))    (then (return (call $lookup_api_id (i32.const 0x11E1C))))) ;; getpeername
-        (if (i32.eq (local.get $ordinal) (i32.const 57))   (then (return (call $lookup_api_id (i32.const 0x11E10))))) ;; gethostname
-        (if (i32.eq (local.get $ordinal) (i32.const 101))  (then (return (call $lookup_api_id (i32.const 0x11570))))) ;; WSAAsyncSelect
-        (if (i32.eq (local.get $ordinal) (i32.const 1001)) (then (return (call $lookup_api_id (i32.const 0x11D86))))) ;; WsControl
+        (if (i32.eq (local.get $ordinal) (i32.const 14))   (then (return (call $lookup_api_id (region.addr $RESERVED_PAGE_STRINGS 0x0))))) ;; ntohl
+        (if (i32.eq (local.get $ordinal) (i32.const 5))    (then (return (call $lookup_api_id (region.addr $RESERVED_PAGE_STRINGS 0x9C))))) ;; getpeername
+        (if (i32.eq (local.get $ordinal) (i32.const 57))   (then (return (call $lookup_api_id (region.addr $RESERVED_PAGE_STRINGS 0x90))))) ;; gethostname
+        (if (i32.eq (local.get $ordinal) (i32.const 101))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_OLEAUT32 0x70))))) ;; WSAAsyncSelect
+        (if (i32.eq (local.get $ordinal) (i32.const 1001)) (then (return (call $lookup_api_id (region.addr $RESERVED_PAGE_STRINGS 0x6))))) ;; WsControl
       ))
     ;; WINMM. Welcome98 imports PlaySound purely by ordinal; the name is
     ;; resolved from the real Win98 winmm.dll export table rather than guessed
     ;; (tools/pe-exports.js --ordinal=2).
-    (if (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x113DC))
+    (if (call $dll_name_match (local.get $dll_name_ga) (region.addr $ORDINAL_NAMES_WSOCK32 0xDC))
       (then
-        (if (i32.eq (local.get $ordinal) (i32.const 2)) (then (return (call $lookup_api_id (i32.const 0x113E6))))) ;; PlaySoundA
+        (if (i32.eq (local.get $ordinal) (i32.const 2)) (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_WSOCK32 0xE6))))) ;; PlaySoundA
       ))
     ;; Authentic Win98 DSOUND exports. Diablo II's D2Sound imports both by
     ;; ordinal: 2 enumerates the default driver, then 1 creates it. DSOUND is
@@ -395,16 +395,16 @@
           (then (return (i32.const 877)))) ;; InitCommonControls
       ))
     ;; OLEAUT32. Kodak Imaging imports the VARIANT/BSTR set by ordinal only.
-    (if (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x11500))
+    (if (call $dll_name_match (local.get $dll_name_ga) (region.addr $ORDINAL_NAMES_OLEAUT32 0x0))
       (then
-        (if (i32.eq (local.get $ordinal) (i32.const 2))  (then (return (call $lookup_api_id (i32.const 0x1150D))))) ;; SysAllocString
-        (if (i32.eq (local.get $ordinal) (i32.const 4))  (then (return (call $lookup_api_id (i32.const 0x1151C))))) ;; SysAllocStringLen
-        (if (i32.eq (local.get $ordinal) (i32.const 6))  (then (return (call $lookup_api_id (i32.const 0x1152E))))) ;; SysFreeString
-        (if (i32.eq (local.get $ordinal) (i32.const 7))  (then (return (call $lookup_api_id (i32.const 0x1153C))))) ;; SysStringLen
-        (if (i32.eq (local.get $ordinal) (i32.const 8))  (then (return (call $lookup_api_id (i32.const 0x11549))))) ;; VariantInit
-        (if (i32.eq (local.get $ordinal) (i32.const 9))  (then (return (call $lookup_api_id (i32.const 0x11555))))) ;; VariantClear
-        (if (i32.eq (local.get $ordinal) (i32.const 10)) (then (return (call $lookup_api_id (i32.const 0x11562))))) ;; VariantCopy
-        (if (i32.eq (local.get $ordinal) (i32.const 420)) (then (return (call $lookup_api_id (i32.const 0x11E50))))) ;; OleCreateFontIndirect
+        (if (i32.eq (local.get $ordinal) (i32.const 2))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_OLEAUT32 0xD))))) ;; SysAllocString
+        (if (i32.eq (local.get $ordinal) (i32.const 4))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_OLEAUT32 0x1C))))) ;; SysAllocStringLen
+        (if (i32.eq (local.get $ordinal) (i32.const 6))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_OLEAUT32 0x2E))))) ;; SysFreeString
+        (if (i32.eq (local.get $ordinal) (i32.const 7))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_OLEAUT32 0x3C))))) ;; SysStringLen
+        (if (i32.eq (local.get $ordinal) (i32.const 8))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_OLEAUT32 0x49))))) ;; VariantInit
+        (if (i32.eq (local.get $ordinal) (i32.const 9))  (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_OLEAUT32 0x55))))) ;; VariantClear
+        (if (i32.eq (local.get $ordinal) (i32.const 10)) (then (return (call $lookup_api_id (region.addr $ORDINAL_NAMES_OLEAUT32 0x62))))) ;; VariantCopy
+        (if (i32.eq (local.get $ordinal) (i32.const 420)) (then (return (call $lookup_api_id (region.addr $RESERVED_PAGE_STRINGS 0xD0))))) ;; OleCreateFontIndirect
       ))
     (i32.const -1))
 

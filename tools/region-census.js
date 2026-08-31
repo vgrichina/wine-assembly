@@ -43,6 +43,20 @@
 //
 // Everything else is reported only under --loose, which exists to show why it
 // is not the default. Read the direction of the number, not its magnitude.
+//
+// ONE EXPLICIT EXEMPTION, and why it has to exist. The BASE rule assumes a
+// region's base is a distinctive number. Wave 2 declared the low string pool
+// ($STRING_CONSTANTS at 0x100) and the MapVirtualKey tables ($VK_SCAN_TABLES
+// at 0x380, ending 0x400) — real regions covering 57 previously undeclared
+// data segments, but at addresses that are also three of the most ordinary
+// integers in an x86 emulator. Counting them added 113 sites in one commit,
+// none of them the map: buffer sizes, loop bounds, 0x100 as "256". Worse, the
+// per-file ratchet would then refuse any future edit that merely writes 256 in
+// hex. So these three VALUES are exempt from the BASE/END rule, by value and
+// not by region — an INTERIOR hit inside those regions still counts, and every
+// other region's accounting is untouched. This is the same judgement
+// INTERIOR_FLOOR already makes: the rule only holds where a number that looks
+// like an address is one.
 'use strict';
 
 const fs = require('fs');
@@ -94,10 +108,13 @@ function census(options = {}) {
   const INTERIOR_FLOOR = 0x07000000;
   const INTERIOR_MAX = 0x10000;
   const LOOSE = options.loose ?? flag('loose');
+  // See the header: region bases that are also ordinary integers.
+  const NOISE_BASES = new Set([0x100, 0x380, 0x400]);
   const byBase = new Map();
   for (const d of ordered) {
-    byBase.set(d.base, d);
-    if (!byBase.has(d.base + d.size)) byBase.set(d.base + d.size, d);
+    if (!NOISE_BASES.has(d.base)) byBase.set(d.base, d);
+    const end = d.base + d.size;
+    if (!NOISE_BASES.has(end) && !byBase.has(end)) byBase.set(end, d);
   }
   const classify = (v) => {
     const exact = byBase.get(v);

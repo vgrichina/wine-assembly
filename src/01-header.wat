@@ -871,78 +871,88 @@
   (export "memory" (memory 0))
 
   ;; String constants at WASM offset 0x100
-  (data (i32.const 0x100) "win.ini\00Help\00[Contents]\00[Back]\00")
+  ;; STRING_CONSTANTS — the low WAT string-constant pool. 0x280 bytes of
+  ;; NUL-terminated literals: the ini/help paths, the Find/Open/Save/Font
+  ;; common-dialog captions, the MessageBox button labels, the FPU and ordinal
+  ;; scratch buffers $win32_dispatch fills in. 171 of the tree's 221 data
+  ;; segments used to sit at absolute addresses in NO declared region at all,
+  ;; and this pool was most of them -- with no _SIZE global it was invisible to
+  ;; tools/wat-memory-map.js and to every overlap gate.
+  ;; It ends at VK_SCAN_TABLES; the decoder scratch at 0x1000 is beyond both.
+  (global $STRING_CONSTANTS i32 (i32.const 0x00000100))
+  (global $STRING_CONSTANTS_SIZE i32 (i32.const 0x00000280))
+  (data (region.addr $STRING_CONSTANTS 0x0) "win.ini\00Help\00[Contents]\00[Back]\00")
   ;; EXE name buffer at 0x120 (max 128 bytes), default "app.exe"
-  (data (i32.const 0x120) "app.exe\00")
+  (data (region.addr $STRING_CONSTANTS 0x20) "app.exe\00")
   ;; WAT-built find/replace dialog labels (consumed by $create_findreplace_dialog).
   ;; All NUL-terminated, lengths recorded next to the offset constants below.
-  (data (i32.const 0x1A0) "Find what:\00")     ;; +0x00, len 10
-  (data (i32.const 0x1AB) "Match case\00")     ;; +0x0B, len 10
-  (data (i32.const 0x1B6) "Direction\00")      ;; +0x16, len 9
-  (data (i32.const 0x1C0) "Up\00")             ;; +0x20, len 2
-  (data (i32.const 0x1C3) "Down\00")           ;; +0x23, len 4
-  (data (i32.const 0x1C8) "Find Next\00")      ;; +0x28, len 9
-  (data (i32.const 0x1D2) "Cancel\00")         ;; +0x32, len 6
-  (data (i32.const 0x1D9) "OK\00")             ;; +0x39, len 2  (ShellAbout dialog)
-  (data (i32.const 0x1DC) "About \00")         ;; +0x3C, len 6  (ShellAbout title prefix)
-  (data (i32.const 0x1E3) "Find\00")           ;; +0x43, len 4  (Find dialog title)
+  (data (region.addr $STRING_CONSTANTS 0xA0) "Find what:\00")     ;; +0x00, len 10
+  (data (region.addr $STRING_CONSTANTS 0xAB) "Match case\00")     ;; +0x0B, len 10
+  (data (region.addr $STRING_CONSTANTS 0xB6) "Direction\00")      ;; +0x16, len 9
+  (data (region.addr $STRING_CONSTANTS 0xC0) "Up\00")             ;; +0x20, len 2
+  (data (region.addr $STRING_CONSTANTS 0xC3) "Down\00")           ;; +0x23, len 4
+  (data (region.addr $STRING_CONSTANTS 0xC8) "Find Next\00")      ;; +0x28, len 9
+  (data (region.addr $STRING_CONSTANTS 0xD2) "Cancel\00")         ;; +0x32, len 6
+  (data (region.addr $STRING_CONSTANTS 0xD9) "OK\00")             ;; +0x39, len 2  (ShellAbout dialog)
+  (data (region.addr $STRING_CONSTANTS 0xDC) "About \00")         ;; +0x3C, len 6  (ShellAbout title prefix)
+  (data (region.addr $STRING_CONSTANTS 0xE3) "Find\00")           ;; +0x43, len 4  (Find dialog title)
   ;; -- Open/Save common dialog labels --
-  (data (i32.const 0x1E8) "Open\00")           ;; +0x48, len 4  (title + button)
-  (data (i32.const 0x1ED) "Save As\00")        ;; +0x4D, len 7
-  (data (i32.const 0x1F5) "Save\00")           ;; +0x55, len 4  (Save button)
-  (data (i32.const 0x1FA) "File name:\00")     ;; +0x5A, len 10
-  (data (i32.const 0x205) "Look in:\00")       ;; +0x65, len 8
-  (data (i32.const 0x20E) "C:\\*\00")          ;; +0x6E, len 4  (default find pattern)
-  (data (i32.const 0x213) "C:\\\00")           ;; +0x73, len 3  (default initial dir)
-  (data (i32.const 0x217) "..\00")             ;; +0x77, len 2  (parent dir entry)
-  (data (i32.const 0x21A) "Upload...\00")      ;; +0x7A, len 9
-  (data (i32.const 0x224) "Download\00")       ;; +0x84, len 8
-  (data (i32.const 0x22D) "Not implemented yet\00")  ;; +0x8D, len 19 (stub dialog msg)
-  (data (i32.const 0x241) "Page Setup\00")     ;; +0xA1, len 10
-  (data (i32.const 0x24C) "Print\00")          ;; +0xAC, len 5
-  (data (i32.const 0x252) "Color\00")          ;; +0xB2, len 5
-  (data (i32.const 0x258) "Font\00")           ;; +0xB8, len 4
-  (data (i32.const 0x25D) "Face:\00")          ;; +0xBD, len 5
-  (data (i32.const 0x263) "Style:\00")         ;; +0xC3, len 6
-  (data (i32.const 0x26A) "Size:\00")          ;; +0xCA, len 5
-  (data (i32.const 0x270) "MS Sans Serif\00")  ;; +0xD0, len 13
-  (data (i32.const 0x27E) "Arial\00")          ;; +0xDE, len 5
-  (data (i32.const 0x284) "Courier New\00")    ;; +0xE4, len 11
-  (data (i32.const 0x290) "Times New Roman\00");; +0xF0, len 15
-  (data (i32.const 0x2A0) "Regular\00")        ;; +0x100, len 7
-  (data (i32.const 0x2A8) "Bold\00")           ;; +0x108, len 4
-  (data (i32.const 0x2AD) "Italic\00")         ;; +0x10D, len 6
-  (data (i32.const 0x2B4) "Bold Italic\00")    ;; +0x114, len 11
-  (data (i32.const 0x2C0) "8\00")              ;; +0x120
-  (data (i32.const 0x2C2) "10\00")             ;; +0x122
-  (data (i32.const 0x2C5) "12\00")             ;; +0x125
-  (data (i32.const 0x2C8) "14\00")             ;; +0x128
-  (data (i32.const 0x2CB) "18\00")             ;; +0x12B
+  (data (region.addr $STRING_CONSTANTS 0xE8) "Open\00")           ;; +0x48, len 4  (title + button)
+  (data (region.addr $STRING_CONSTANTS 0xED) "Save As\00")        ;; +0x4D, len 7
+  (data (region.addr $STRING_CONSTANTS 0xF5) "Save\00")           ;; +0x55, len 4  (Save button)
+  (data (region.addr $STRING_CONSTANTS 0xFA) "File name:\00")     ;; +0x5A, len 10
+  (data (region.addr $STRING_CONSTANTS 0x105) "Look in:\00")       ;; +0x65, len 8
+  (data (region.addr $STRING_CONSTANTS 0x10E) "C:\\*\00")          ;; +0x6E, len 4  (default find pattern)
+  (data (region.addr $STRING_CONSTANTS 0x113) "C:\\\00")           ;; +0x73, len 3  (default initial dir)
+  (data (region.addr $STRING_CONSTANTS 0x117) "..\00")             ;; +0x77, len 2  (parent dir entry)
+  (data (region.addr $STRING_CONSTANTS 0x11A) "Upload...\00")      ;; +0x7A, len 9
+  (data (region.addr $STRING_CONSTANTS 0x124) "Download\00")       ;; +0x84, len 8
+  (data (region.addr $STRING_CONSTANTS 0x12D) "Not implemented yet\00")  ;; +0x8D, len 19 (stub dialog msg)
+  (data (region.addr $STRING_CONSTANTS 0x141) "Page Setup\00")     ;; +0xA1, len 10
+  (data (region.addr $STRING_CONSTANTS 0x14C) "Print\00")          ;; +0xAC, len 5
+  (data (region.addr $STRING_CONSTANTS 0x152) "Color\00")          ;; +0xB2, len 5
+  (data (region.addr $STRING_CONSTANTS 0x158) "Font\00")           ;; +0xB8, len 4
+  (data (region.addr $STRING_CONSTANTS 0x15D) "Face:\00")          ;; +0xBD, len 5
+  (data (region.addr $STRING_CONSTANTS 0x163) "Style:\00")         ;; +0xC3, len 6
+  (data (region.addr $STRING_CONSTANTS 0x16A) "Size:\00")          ;; +0xCA, len 5
+  (data (region.addr $STRING_CONSTANTS 0x170) "MS Sans Serif\00")  ;; +0xD0, len 13
+  (data (region.addr $STRING_CONSTANTS 0x17E) "Arial\00")          ;; +0xDE, len 5
+  (data (region.addr $STRING_CONSTANTS 0x184) "Courier New\00")    ;; +0xE4, len 11
+  (data (region.addr $STRING_CONSTANTS 0x190) "Times New Roman\00");; +0xF0, len 15
+  (data (region.addr $STRING_CONSTANTS 0x1A0) "Regular\00")        ;; +0x100, len 7
+  (data (region.addr $STRING_CONSTANTS 0x1A8) "Bold\00")           ;; +0x108, len 4
+  (data (region.addr $STRING_CONSTANTS 0x1AD) "Italic\00")         ;; +0x10D, len 6
+  (data (region.addr $STRING_CONSTANTS 0x1B4) "Bold Italic\00")    ;; +0x114, len 11
+  (data (region.addr $STRING_CONSTANTS 0x1C0) "8\00")              ;; +0x120
+  (data (region.addr $STRING_CONSTANTS 0x1C2) "10\00")             ;; +0x122
+  (data (region.addr $STRING_CONSTANTS 0x1C5) "12\00")             ;; +0x125
+  (data (region.addr $STRING_CONSTANTS 0x1C8) "14\00")             ;; +0x128
+  (data (region.addr $STRING_CONSTANTS 0x1CB) "18\00")             ;; +0x12B
   ;; "24" does not fit before the 0x2D0 buffer -- its terminator would land on
   ;; that buffer's first byte -- so it sits after <ord> instead.
-  (data (i32.const 0x2E6) "24\00")             ;; +0x146
+  (data (region.addr $STRING_CONSTANTS 0x1E6) "24\00")             ;; +0x146
   ;; Buffer for ordinal-import crash messages: "KERNEL32.#NNNNN\0" (max 16 bytes)
-  (data (i32.const 0x2D0) "KERNEL32.#00000\00")  ;; +0x1D0, filled in by $win32_dispatch
+  (data (region.addr $STRING_CONSTANTS 0x1D0) "KERNEL32.#00000\00")  ;; +0x1D0, filled in by $win32_dispatch
   ;; Placeholder name for RESOLVED ordinal imports. thunk+0 holds the ordinal
   ;; tag (bit 31 set), so dispatcher can't treat it as a name RVA for strlen.
-  (data (i32.const 0x2E0) "<ord>\00")
+  (data (region.addr $STRING_CONSTANTS 0x1E0) "<ord>\00")
   ;; FPU unimplemented opcode message — passed to $crash_unimplemented when an
   ;; x87 escape opcode is decoded but the (group, reg, rm) tuple has no handler.
-  (data (i32.const 0x2F0) "FPU_UNIMPL\00")
+  (data (region.addr $STRING_CONSTANTS 0x1F0) "FPU_UNIMPL\00")
   ;; CRT exports that should stay host-dispatched even when msvcrt.dll is loaded.
-  (data (i32.const 0x300) "ceil\00sqrt\00sin\00pow\00_CIpow\00")
+  (data (region.addr $STRING_CONSTANTS 0x200) "ceil\00sqrt\00sin\00pow\00_CIpow\00")
   ;; Import-hint correction strings. Funtris has a stale USER32 import name
   ;; ("GetMessageA") with the MessageBoxA export hint.
-  (data (i32.const 0x319) "MessageBoxA\00USER32.dll\00GetMessageA\00")
+  (data (region.addr $STRING_CONSTANTS 0x219) "MessageBoxA\00USER32.dll\00GetMessageA\00")
   ;; MessageBox button labels — referenced by $create_msgbox_dialog.
-  (data (i32.const 0x340) "Abort\00")        ;; len 5  — MB_ABORTRETRYIGNORE
-  (data (i32.const 0x346) "Retry\00")        ;; len 5  — MB_ABORTRETRYIGNORE / MB_RETRYCANCEL
-  (data (i32.const 0x34C) "Ignore\00")       ;; len 6  — MB_ABORTRETRYIGNORE
-  (data (i32.const 0x353) "Yes\00")          ;; len 3  — MB_YESNO / MB_YESNOCANCEL
-  (data (i32.const 0x357) "No\00")           ;; len 2  — MB_YESNO / MB_YESNOCANCEL
-  (data (i32.const 0x35A) "Try Again\00")    ;; len 9  — MB_CANCELTRYCONTINUE
-  (data (i32.const 0x364) "Continue\00")     ;; len 8  — MB_CANCELTRYCONTINUE
-  (data (i32.const 0x36D) "uxtheme.dll\00")  ;; optional XP theming DLL
+  (data (region.addr $STRING_CONSTANTS 0x240) "Abort\00")        ;; len 5  — MB_ABORTRETRYIGNORE
+  (data (region.addr $STRING_CONSTANTS 0x246) "Retry\00")        ;; len 5  — MB_ABORTRETRYIGNORE / MB_RETRYCANCEL
+  (data (region.addr $STRING_CONSTANTS 0x24C) "Ignore\00")       ;; len 6  — MB_ABORTRETRYIGNORE
+  (data (region.addr $STRING_CONSTANTS 0x253) "Yes\00")          ;; len 3  — MB_YESNO / MB_YESNOCANCEL
+  (data (region.addr $STRING_CONSTANTS 0x257) "No\00")           ;; len 2  — MB_YESNO / MB_YESNOCANCEL
+  (data (region.addr $STRING_CONSTANTS 0x25A) "Try Again\00")    ;; len 9  — MB_CANCELTRYCONTINUE
+  (data (region.addr $STRING_CONSTANTS 0x264) "Continue\00")     ;; len 8  — MB_CANCELTRYCONTINUE
+  (data (region.addr $STRING_CONSTANTS 0x26D) "uxtheme.dll\00")  ;; optional XP theming DLL
   ;; Stable strings returned by glGetString. Extensions is intentionally empty
   ;; until an optional extension has a complete implementation.
   (data (region.addr $TT_FONT_STRING_STORAGE 0x60) "Wine-Assembly\00")
@@ -951,35 +961,55 @@
   (data (region.addr $TT_FONT_STRING_STORAGE 0xA0) "\00")
   ;; WinSock 1.1 ordinal imports used by Win9x DLLs. The DLL loader maps
   ;; supported ordinals to these normal API-table names.
-  (data (i32.const 0x11300) "WSOCK32.dll\00WSAStartup\00WSACleanup\00WSAGetLastError\00socket\00closesocket\00connect\00send\00recv\00gethostbyname\00htons\00inet_addr\00select\00setsockopt\00ioctlsocket\00accept\00bind\00listen\00shutdown\00ntohs\00inet_ntoa\00__WSAFDIsSet\00WSASetLastError\00")
+  ;; ORDINAL_NAMES_WSOCK32 — the names behind WSOCK32's and WINMM's ordinal
+  ;; imports. A by-ordinal import carries no name, so $dll_ordinal_api_id maps
+  ;; the ordinal to one of these strings and hashes it. Bounded by
+  ;; DI_DIK_VK_TABLE at 0x11400.
+  (global $ORDINAL_NAMES_WSOCK32 i32 (i32.const 0x00011300))
+  (global $ORDINAL_NAMES_WSOCK32_SIZE i32 (i32.const 0x00000100))
+  (data (region.addr $ORDINAL_NAMES_WSOCK32 0x0) "WSOCK32.dll\00WSAStartup\00WSACleanup\00WSAGetLastError\00socket\00closesocket\00connect\00send\00recv\00gethostbyname\00htons\00inet_addr\00select\00setsockopt\00ioctlsocket\00accept\00bind\00listen\00shutdown\00ntohs\00inet_ntoa\00__WSAFDIsSet\00WSASetLastError\00")
 
   ;; WINMM ordinal-import names, in the free space right after the WSOCK32
   ;; block. $system_ordinal_api_id addresses these by absolute offset, so
   ;; append here rather than inserting above — tools/data_offsets.js prints
   ;; the resulting addresses.
-  (data (i32.const 0x113DC) "winmm.dll\00PlaySoundA\00")
+  (data (region.addr $ORDINAL_NAMES_WSOCK32 0xDC) "winmm.dll\00PlaySoundA\00")
 
   ;; OLEAUT32 ordinal-import names. Kodak Imaging imports the whole VARIANT
   ;; and BSTR set by ordinal only; the numbers come from the real Win98
   ;; oleaut32.dll export table (tools/pe-exports.js --ordinal=...).
   ;; NB 0x11400..0x11500 is DI_DIK_VK_TABLE in 09a8-handlers-directx.wat, which
   ;; concatenates later and would silently overwrite anything placed there.
-  (data (i32.const 0x11500) "oleaut32.dll\00SysAllocString\00SysAllocStringLen\00SysFreeString\00SysStringLen\00VariantInit\00VariantClear\00VariantCopy\00")
+  ;; ORDINAL_NAMES_OLEAUT32 — the same idea for oleaut32's BSTR/VARIANT
+  ;; entry points plus WSAAsyncSelect. It fills 0x11500..0x11580 exactly, the
+  ;; hole between DI_DIK_VK_TABLE and RICHEDIT_FORMAT_TABLE. Kodak Imaging
+  ;; lost these imports once when they were placed on top of another block --
+  ;; the later segment wins silently, which is what a declared extent stops.
+  (global $ORDINAL_NAMES_OLEAUT32 i32 (i32.const 0x00011500))
+  (global $ORDINAL_NAMES_OLEAUT32_SIZE i32 (i32.const 0x00000080))
+  (data (region.addr $ORDINAL_NAMES_OLEAUT32 0x0) "oleaut32.dll\00SysAllocString\00SysAllocStringLen\00SysFreeString\00SysStringLen\00VariantInit\00VariantClear\00VariantCopy\00")
   ;; More WSOCK32 ordinal names. The 0x11300 block ends flush against the
   ;; winmm block at 0x113DC, so later additions live in the free run above the
   ;; richedit tables; the DLL name itself is still matched from 0x11300.
   ;; This one fills the 18-byte gap between the oleaut32 block (ends 0x1156E)
   ;; and RICHEDIT_FORMAT_TABLE at 0x11580 — there is no room to grow it.
-  (data (i32.const 0x11570) "WSAAsyncSelect\00")
-  (data (i32.const 0x11D80) "ntohl\00WsControl\00")
+  (data (region.addr $ORDINAL_NAMES_OLEAUT32 0x70) "WSAAsyncSelect\00")
+  ;; RESERVED_PAGE_STRINGS — the rest of the reserved page, 0x11D80 up to
+  ;; GUEST_BASE: the remaining ordinal-import names, the module names
+  ;; GetModuleHandle matches, the Win16 built-in module list, the system
+  ;; directory, the Hearts NDDE share record and the shell's Run / Shut Down
+  ;; dialog text (09c3-controls.wat).
+  (global $RESERVED_PAGE_STRINGS i32 (i32.const 0x00011D80))
+  (global $RESERVED_PAGE_STRINGS_SIZE i32 (i32.const 0x00000280))
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x0) "ntohl\00WsControl\00")
   ;; if_descr for the one adapter WsControl reports (src/09d-winsock.wat).
-  (data (i32.const 0x11D90) "Virtual LAN Adapter\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x10) "Virtual LAN Adapter\00")
   ;; Console window caption; SetConsoleTitle overwrites it in place.
-  (data (i32.const 0x11DA4) "Console\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x24) "Console\00")
   ;; Win98 KERNEL32 ordinal 99 is an unnamed timezone-cache classifier.  Keep
   ;; its diagnostic/API name separate from GetTimeZoneInformation: the native
   ;; ordinal takes a BOOL refresh flag, not an output-structure pointer.
-  (data (i32.const 0x11DB0) "KERNEL32.dll\00KERNEL32_Ordinal99\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x30) "KERNEL32.dll\00KERNEL32_Ordinal99\00")
   ;; Modules whose exports we dispatch statically: they have no mapped PE
   ;; image and no DLL-table entry, so GetModuleHandle has to recognize them by
   ;; name. Lower case and without the ".dll" suffix; the matcher accepts
@@ -987,25 +1017,25 @@
   ;; ORDER MATTERS: everything from index $STATIC_SYS_DLL_FIRST_DX onwards is
   ;; part of DirectX and answers the file-version query with the DirectX
   ;; version below, so new non-DirectX names belong before "dplayx".
-  (data (i32.const 0x11DD0) "ole32\00dplayx\00ddraw\00dsound\00d3drm\00\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x50) "ole32\00dplayx\00ddraw\00dsound\00d3drm\00\00")
   ;; Where those modules claim to live, and the suffix appended to the stem.
-  (data (i32.const 0x11DF4) "C:\\WINDOWS\\SYSTEM\\\00")
-  (data (i32.const 0x11E08) ".dll\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x74) "C:\\WINDOWS\\SYSTEM\\\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x88) ".dll\00")
   ;; Two more WSOCK32 ordinal names, in the gap that runs to 0x11E30. Jazz
   ;; Jackrabbit 2 imports its whole WinSock set by ordinal and calls
   ;; gethostname during startup, so an unmapped ordinal 57 traps before the
   ;; game reaches its first frame.
-  (data (i32.const 0x11E10) "gethostname\00getpeername\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x90) "gethostname\00getpeername\00")
   ;; Exports we answer natively even when the real DLL is loaded — see
   ;; $native_override_export_api_id in src/08b-dll-loader.wat.
-  (data (i32.const 0x11E30) "InitCommonControlsEx\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0xB0) "InitCommonControlsEx\00")
   ;; One space, measured by the SysLink layout loop for inter-word advance.
-  (data (i32.const 0x11E48) " \00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0xC8) " \00")
   ;; OLEAUT32 ordinal 420 (see $system_ordinal_api_id).
-  (data (i32.const 0x11E50) "OleCreateFontIndirect\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0xD0) "OleCreateFontIndirect\00")
   ;; Win16 module names, matched against an NE imported-name table entry by
   ;; $win16_module_id. NE name tables are upper case, so the compare is exact.
-  (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00DDEML\00SHELLABOUT\00NDDEAPI\00NDDEGETWINDOW\00WIN87EM\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0xF0) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00DDEML\00SHELLABOUT\00NDDEAPI\00NDDEGETWINDOW\00WIN87EM\00")
   ;; The machine's NetDDE share database. A DDE share maps a name that clients
   ;; on other machines ask for onto the local application and topic that
   ;; actually serves it, and on a real Win98 box it is written at install time
@@ -1089,72 +1119,80 @@
     "\11GETMODULEFILENAME\31\10"
     "\14GETPRIVATEPROFILEINT\7f\10"
     "\00")
-  (data (i32.const 0x11EE0) "Hearts$\00MSHearts\00Hearts\00\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x160) "Hearts$\00MSHearts\00Hearts\00\00")
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
   ;; dialog helpers, but apps can disturb that scratch/null-page area during
   ;; execution; MessageBox must copy from stable USER-owned storage.
-  (data (i32.const 0x11000) "OK\00")
-  (data (i32.const 0x11003) "Cancel\00")
-  (data (i32.const 0x1100A) "Abort\00")
-  (data (i32.const 0x11010) "Retry\00")
-  (data (i32.const 0x11016) "Ignore\00")
-  (data (i32.const 0x1101D) "Yes\00")
-  (data (i32.const 0x11021) "No\00")
-  (data (i32.const 0x11024) "Try Again\00")
-  (data (i32.const 0x1102E) "Continue\00")
+  ;; USER_DIALOG_STRINGS — the MessageBox button labels, the common-dialog
+  ;; captions and the Print/Colour dialog text, mirrored in the WAT-owned
+  ;; reserved page just below guest memory. The low STRING_CONSTANTS copies
+  ;; are kept for older helpers, but apps can disturb that scratch area at
+  ;; run time; these must come from storage nothing else writes. Runs up to
+  ;; DX_VERSION_INFO.
+  (global $USER_DIALOG_STRINGS i32 (i32.const 0x00011000))
+  (global $USER_DIALOG_STRINGS_SIZE i32 (i32.const 0x00000270))
+  (data (region.addr $USER_DIALOG_STRINGS 0x0) "OK\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x3) "Cancel\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0xA) "Abort\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x10) "Retry\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x16) "Ignore\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x1D) "Yes\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x21) "No\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x24) "Try Again\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x2E) "Continue\00")
 
   ;; Open/Save common-dialog strings also live in the stable reserved page.
   ;; The legacy low-page copies above are scratch-adjacent and can be
   ;; disturbed by long-running apps before they invoke GetOpenFileNameA.
-  (data (i32.const 0x11037) "Open\00")
-  (data (i32.const 0x1103C) "Save As\00")
-  (data (i32.const 0x11044) "Save\00")
-  (data (i32.const 0x11049) "File name:\00")
-  (data (i32.const 0x11054) "Look in:\00")
-  (data (i32.const 0x1105D) "C:\\*\00")
-  (data (i32.const 0x11062) "C:\\\00")
-  (data (i32.const 0x11066) "..\00")
-  (data (i32.const 0x11069) "Upload...\00")
-  (data (i32.const 0x11073) "Download\00")
-  (data (i32.const 0x1107C) "Files of type:\00")
-  (data (i32.const 0x110C6) "Microsoft Windows\0AWindows 98\0ACopyright (C) 1981-1998 Microsoft Corp.\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x37) "Open\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x3C) "Save As\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x44) "Save\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x49) "File name:\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x54) "Look in:\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x5D) "C:\\*\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x62) "C:\\\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x66) "..\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x69) "Upload...\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x73) "Download\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x7C) "Files of type:\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0xC6) "Microsoft Windows\0AWindows 98\0ACopyright (C) 1981-1998 Microsoft Corp.\00")
   ;; Find/Replace labels live in the stable USER-owned string page because
   ;; the modeless dialog can outlive app use of the low scratch page.
-  (data (i32.const 0x11120) "Find what:\00")
-  (data (i32.const 0x1112B) "Replace with:\00")
-  (data (i32.const 0x11139) "Match case\00")
-  (data (i32.const 0x11144) "Direction\00")
-  (data (i32.const 0x1114E) "Up\00")
-  (data (i32.const 0x11151) "Down\00")
-  (data (i32.const 0x11156) "Find Next\00")
-  (data (i32.const 0x11160) "Replace\00")
-  (data (i32.const 0x11168) "Replace All\00")
-  (data (i32.const 0x11174) "Cancel\00")
-  (data (i32.const 0x1117B) "Find\00")
-  (data (i32.const 0x11180) "Replace\00")
-  (data (i32.const 0x11188) "Printer: Web Printer\00")
-  (data (i32.const 0x1119D) "Page range\00")
-  (data (i32.const 0x111A8) "All\00")
-  (data (i32.const 0x111AC) "From:\00")
-  (data (i32.const 0x111B2) "To:\00")
-  (data (i32.const 0x111B6) "Copies:\00")
-  (data (i32.const 0x111BE) "Margins (inches)\00")
-  (data (i32.const 0x111CF) "Left:\00")
-  (data (i32.const 0x111D5) "Top:\00")
-  (data (i32.const 0x111DA) "Right:\00")
-  (data (i32.const 0x111E1) "Bottom:\00")
-  (data (i32.const 0x111E9) "Paper: Letter 8.5 x 11 in\00")
-  (data (i32.const 0x11203) "1.00\00")
-  (data (i32.const 0x11208) "Pages\00")
-  (data (i32.const 0x1120E) "1\00")
-  (data (i32.const 0x11210) "9999\00")
-  (data (i32.const 0x11220) "WINSPOOL\00")
-  (data (i32.const 0x11229) "Web Printer\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x120) "Find what:\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x12B) "Replace with:\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x139) "Match case\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x144) "Direction\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x14E) "Up\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x151) "Down\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x156) "Find Next\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x160) "Replace\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x168) "Replace All\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x174) "Cancel\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x17B) "Find\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x180) "Replace\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x188) "Printer: Web Printer\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x19D) "Page range\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x1A8) "All\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x1AC) "From:\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x1B2) "To:\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x1B6) "Copies:\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x1BE) "Margins (inches)\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x1CF) "Left:\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x1D5) "Top:\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x1DA) "Right:\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x1E1) "Bottom:\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x1E9) "Paper: Letter 8.5 x 11 in\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x203) "1.00\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x208) "Pages\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x20E) "1\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x210) "9999\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x220) "WINSPOOL\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x229) "Web Printer\00")
   ;; ChooseColor labels from the classic partial color-dialog template.
-  (data (i32.const 0x11235) "Basic colors:\00")
-  (data (i32.const 0x11243) "Custom colors:\00")
-  (data (i32.const 0x11252) "Define Custom Colors >>\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x235) "Basic colors:\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x243) "Custom colors:\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x252) "Define Custom Colors >>\00")
 
   ;; A complete VS_VERSIONINFO block (header + VS_FIXEDFILEINFO, no string
   ;; tables) reporting DirectX 6.1a — dplayx.dll 4.06.03.0518, the version

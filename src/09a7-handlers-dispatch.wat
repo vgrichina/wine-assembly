@@ -1937,7 +1937,13 @@
   ;; Real PS/2 set-1 scancodes; the previous (uCode-0x20) approximation produced
   ;; bogus values (e.g. Z=0x3A) that GetKeyNameTextA couldn't decode, so the
   ;; Pinball Player Controls dialog rendered "?" for the default flipper keys.
-  (data (i32.const 0x380)
+  ;; VK_SCAN_TABLES — the two MapVirtualKey lookup tables, +0x00 vkey->scan
+  ;; for 'A'..'Z' and +0x20 scan->vkey for scan 0x00..0x58. Byte arrays, not
+  ;; strings, which is why they are their own region rather than a tail on
+  ;; STRING_CONSTANTS.
+  (global $VK_SCAN_TABLES i32 (i32.const 0x00000380))
+  (global $VK_SCAN_TABLES_SIZE i32 (i32.const 0x00000080))
+  (data (region.addr $VK_SCAN_TABLES 0x00)
     "\1e\30\2e\20\12\21\22\23\17\24\25\26\32\31\18\19\10\13\1f\14\16\2f\11\2d\15\2c")
 
   ;; Reverse table: PS/2 set-1 scancode → VK (uMapType=1). Indexed by scancode
@@ -1946,7 +1952,7 @@
   ;; this table every entry collapses to vk=0. Numpad scancodes (0x47..0x53)
   ;; map to VK_NUMPAD*/_DECIMAL/_ADD/_SUBTRACT/_MULTIPLY/_DIVIDE — the arrow
   ;; vkeys come from extended (0xE0-prefixed) scancodes, not the base table.
-  (data (i32.const 0x3A0)
+  (data (region.addr $VK_SCAN_TABLES 0x20)
     "\00\1b\31\32\33\34\35\36\37\38"   ;; 0x00..0x09
     "\39\30\bd\bb\08\09\51\57\45\52"   ;; 0x0a..0x13
     "\54\59\55\49\4f\50\db\dd\0d\11"   ;; 0x14..0x1d
@@ -1974,7 +1980,7 @@
             ;; Letters A-Z: vkeys 0x41-0x5A -> real PS/2 set-1 scancodes via table
             (if (i32.and (i32.ge_u (local.get $uCode) (i32.const 0x41)) (i32.le_u (local.get $uCode) (i32.const 0x5A)))
               (then
-                (local.set $result (i32.load8_u (i32.add (i32.const 0x380) (i32.sub (local.get $uCode) (i32.const 0x41)))))
+                (local.set $result (i32.load8_u (i32.add (region.addr $VK_SCAN_TABLES 0x00) (i32.sub (local.get $uCode) (i32.const 0x41)))))
                 (br $vk0_done)
               )
             )
@@ -2028,13 +2034,13 @@
           (br $done)
         )
       )
-      ;; Type 1: scan code -> vkey (reverse table at 0x3A0, scan 0x00..0x58).
+      ;; Type 1: scan code -> vkey (reverse table at VK_SCAN_TABLES+0x20, scan 0x00..0x58).
       ;; Pinball walks scan 0..0xFF at dialog init and pairs each with
       ;; GetKeyNameTextA to build the Player Controls combobox.
       (if (i32.eq (local.get $uMapType) (i32.const 1))
         (then
           (if (i32.le_u (local.get $uCode) (i32.const 0x58))
-            (then (local.set $result (i32.load8_u (i32.add (i32.const 0x3A0) (local.get $uCode))))))
+            (then (local.set $result (i32.load8_u (i32.add (region.addr $VK_SCAN_TABLES 0x20) (local.get $uCode))))))
           (br $done)
         )
       )

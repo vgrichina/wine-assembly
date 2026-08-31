@@ -8,6 +8,7 @@ const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileWatSnapshot } = require('../lib/compile-wat');
 const { loadDll } = require('../lib/dll-loader');
+const { REGIONS } = require('../lib/region-map.generated');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -112,7 +113,7 @@ async function main() {
     'large DLL executable section should map from the intact staging buffer');
 
   const g2w = guest => (guest >>> 0) - imageBase + 0x12000;
-  assert.strictEqual(Buffer.from(memory.buffer, 0x11300, 11).toString('ascii'), 'WSOCK32.dll',
+  assert.strictEqual(Buffer.from(memory.buffer, REGIONS.ORDINAL_NAMES_WSOCK32.base, 11).toString('ascii'), 'WSOCK32.dll',
     'static WinSock ordinal map should contain the DLL name');
   assert.strictEqual(Buffer.from(memory.buffer,
     g2w((second.loadAddr >>> 0) + 0x1130), 11).toString('ascii'), 'WSOCK32.dll',

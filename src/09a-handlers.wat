@@ -533,7 +533,7 @@
             ;; modules with the image base; GetModuleHandle must agree or
             ;; MSVC's encoded-pointer startup waits up to 60 seconds for a
             ;; KERNEL32 module that can never appear in the DLL table.
-            (if (call $dll_name_match (local.get $arg0) (i32.const 0x11DB0))
+            (if (call $dll_name_match (local.get $arg0) (region.addr $RESERVED_PAGE_STRINGS 0x30))
               (then (local.set $result (global.get $image_base)))
               (else
                 (local.set $idx (call $guest_name_is_static_system_dll (local.get $arg0)))
@@ -15762,8 +15762,8 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (call $gs16 (i32.add (local.get $devnames) (i32.const 2)) (i32.const 16))
     (call $gs16 (i32.add (local.get $devnames) (i32.const 4)) (i32.const 28))
     (call $gs16 (i32.add (local.get $devnames) (i32.const 6)) (i32.const 0))
-    (call $memcpy (i32.add (call $g2w (local.get $devnames)) (i32.const 8)) (i32.const 0x11220) (i32.const 8)) ;; WINSPOOL
-    (call $memcpy (i32.add (call $g2w (local.get $devnames)) (i32.const 16)) (i32.const 0x11229) (i32.const 12)) ;; Web Printer
+    (call $memcpy (i32.add (call $g2w (local.get $devnames)) (i32.const 8)) (region.addr $USER_DIALOG_STRINGS 0x220) (i32.const 8)) ;; WINSPOOL
+    (call $memcpy (i32.add (call $g2w (local.get $devnames)) (i32.const 16)) (region.addr $USER_DIALOG_STRINGS 0x229) (i32.const 12)) ;; Web Printer
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (local.get $devmode))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (local.get $devnames))
     (global.set $printer_hdc (call $gdi_printer_dc_alloc))
@@ -15822,9 +15822,9 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (call $gs16 (i32.add (local.get $devnames) (i32.const 2)) (i32.const 13))     ;; wDeviceOffset
     (call $gs16 (i32.add (local.get $devnames) (i32.const 4)) (i32.const 25))     ;; wOutputOffset
     (call $gs16 (i32.add (local.get $devnames) (i32.const 6)) (i32.const 0))      ;; wDefault
-    (call $memcpy (i32.add (local.get $dn_w) (i32.const 8)) (i32.const 0x11220) (i32.const 8))
+    (call $memcpy (i32.add (local.get $dn_w) (i32.const 8)) (region.addr $USER_DIALOG_STRINGS 0x220) (i32.const 8))
     (call $acm_widen_in_place (i32.add (local.get $devnames) (i32.const 8)) (i32.const 8))
-    (call $memcpy (i32.add (local.get $dn_w) (i32.const 26)) (i32.const 0x11229) (i32.const 11))
+    (call $memcpy (i32.add (local.get $dn_w) (i32.const 26)) (region.addr $USER_DIALOG_STRINGS 0x229) (i32.const 11))
     (call $acm_widen_in_place (i32.add (local.get $devnames) (i32.const 26)) (i32.const 11))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (local.get $devmode))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (local.get $devnames))
