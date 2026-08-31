@@ -747,7 +747,7 @@
           (then
             ;; "1/1/01\0"
             (i32.store (local.get $buf) (i32.const 0x2f312f31))
-            (i32.store16 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x3130))
+            (i32.store16 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x3130))  ;; ASCII "01", not an address
             (i32.store8 (i32.add (local.get $buf) (i32.const 6)) (i32.const 0)))
           (else
             (global.set $eax (select (i32.const 24) (i32.const 7) (local.get $long)))
@@ -3741,20 +3741,20 @@
   (func $control_class_name_ptr (param $hwnd i32) (result i32)
     (local $class i32)
     (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
-    (if (i32.eq (local.get $class) (i32.const 1)) (then (return (i32.const 0x3100)))) ;; Button
+    (if (i32.eq (local.get $class) (i32.const 1)) (then (return (region.addr $CLASS_NAME_STRINGS 0x00)))) ;; Button
     (if (i32.or (i32.eq (local.get $class) (i32.const 2))
                 (i32.or (i32.eq (local.get $class) (i32.const 24))
                         (i32.eq (local.get $class) (i32.const 25))))
-      (then (return (i32.const 0x3108)))) ;; Edit / RichEdit-backed edit
-    (if (i32.eq (local.get $class) (i32.const 3)) (then (return (i32.const 0x310D)))) ;; Static
-    (if (i32.eq (local.get $class) (i32.const 4)) (then (return (i32.const 0x3114)))) ;; ListBox
-    (if (i32.eq (local.get $class) (i32.const 5)) (then (return (i32.const 0x3126)))) ;; ComboBox
-    (if (i32.eq (local.get $class) (i32.const 7)) (then (return (i32.const 0x311C)))) ;; ScrollBar
-    (if (i32.eq (local.get $class) (i32.const 8)) (then (return (i32.const 0x316A)))) ;; SysTreeView32
-    (if (i32.eq (local.get $class) (i32.const 17)) (then (return (i32.const 0x312F)))) ;; progress
-    (if (i32.eq (local.get $class) (i32.const 18)) (then (return (i32.const 0x3141)))) ;; SysListView32
-    (if (i32.eq (local.get $class) (i32.const 19)) (then (return (i32.const 0x3158)))) ;; trackbar
-    (if (i32.eq (local.get $class) (i32.const 21)) (then (return (i32.const 0x3274)))) ;; toolbar
+      (then (return (region.addr $CLASS_NAME_STRINGS 0x08)))) ;; Edit / RichEdit-backed edit
+    (if (i32.eq (local.get $class) (i32.const 3)) (then (return (region.addr $CLASS_NAME_STRINGS 0x0D)))) ;; Static
+    (if (i32.eq (local.get $class) (i32.const 4)) (then (return (region.addr $CLASS_NAME_STRINGS 0x14)))) ;; ListBox
+    (if (i32.eq (local.get $class) (i32.const 5)) (then (return (region.addr $CLASS_NAME_STRINGS 0x26)))) ;; ComboBox
+    (if (i32.eq (local.get $class) (i32.const 7)) (then (return (region.addr $CLASS_NAME_STRINGS 0x1C)))) ;; ScrollBar
+    (if (i32.eq (local.get $class) (i32.const 8)) (then (return (region.addr $CLASS_NAME_STRINGS 0x6A)))) ;; SysTreeView32
+    (if (i32.eq (local.get $class) (i32.const 17)) (then (return (region.addr $CLASS_NAME_STRINGS 0x2F)))) ;; progress
+    (if (i32.eq (local.get $class) (i32.const 18)) (then (return (region.addr $CLASS_NAME_STRINGS 0x41)))) ;; SysListView32
+    (if (i32.eq (local.get $class) (i32.const 19)) (then (return (region.addr $CLASS_NAME_STRINGS 0x58)))) ;; trackbar
+    (if (i32.eq (local.get $class) (i32.const 21)) (then (return (region.addr $CLASS_NAME_STRINGS 0x174)))) ;; toolbar
     (i32.const 0))
 
   ;; The name a window's class was actually registered under, as a WASM

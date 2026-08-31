@@ -10588,7 +10588,7 @@
     (call $gs32 (i32.add (local.get $formatetc) (i32.const 8)) (i32.const 1))  ;; DVASPECT_CONTENT
     (call $gs32 (i32.add (local.get $formatetc) (i32.const 12)) (i32.const -1))
     (call $gs32 (i32.add (local.get $formatetc) (i32.const 16)) (i32.const 8)) ;; TYMED_ISTORAGE
-    (local.set $id (call $clipfmt_intern (i32.const 0x32B0))) ;; Embed Source
+    (local.set $id (call $clipfmt_intern (region.addr $OLE_STRINGS 0x00))) ;; Embed Source
     (if (local.get $id)
       (then
         (call $gs16 (local.get $formatetc) (local.get $id))
@@ -10596,7 +10596,7 @@
           (then (local.set $found (i32.const 1))))))
     (if (i32.eqz (local.get $found))
       (then
-        (local.set $id (call $clipfmt_intern (i32.const 0x32C0))) ;; Embedded Object
+        (local.set $id (call $clipfmt_intern (region.addr $OLE_STRINGS 0x10))) ;; Embedded Object
         (if (local.get $id)
           (then
             (call $gs16 (local.get $formatetc) (local.get $id))
@@ -10715,7 +10715,7 @@
     (local $label_g i32) (local $type i32) (local $cb i32) (local $type_g i32)
     (local $cb_g i32) (local $added i32)
     (local.set $clsid_key (call $host_reg_open_key
-      (i32.const 0x80000000) (i32.const 0x32F0) (i32.const 0))) ;; HKCR\CLSID
+      (i32.const 0x80000000) (region.addr $OLE_STRINGS 0x40) (i32.const 0))) ;; HKCR\CLSID
     (if (i32.eqz (local.get $clsid_key)) (then (return (i32.const 0))))
     (local.set $array (call $heap_alloc (i32.const 1024)))  ;; up to 64 classes
     (local.set $name_g (call $heap_alloc (i32.const 256)))
@@ -10742,7 +10742,7 @@
       (if (local.get $sub)
         (then
           (local.set $ins (call $host_reg_open_key
-            (local.get $sub) (i32.const 0x3300) (i32.const 0))) ;; Insertable
+            (local.get $sub) (region.addr $OLE_STRINGS 0x50) (i32.const 0))) ;; Insertable
           (if (local.get $ins)
             (then
               (drop (call $host_reg_close_key (local.get $ins)))
@@ -10775,17 +10775,17 @@
     (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (local.get $count))
     (if (i32.eqz (local.get $added))
       (then (drop (call $wnd_send_message (local.get $list) (i32.const 0x0180)
-        (i32.const 0) (call $wat_str_to_heap (i32.const 0x3370) (i32.const 28))))))
+        (i32.const 0) (call $wat_str_to_heap (region.addr $OLE_STRINGS 0xC0) (i32.const 28))))))
     (local.get $count))
 
   (func $create_insert_object_dialog (param $dlg i32) (param $owner i32) (param $params i32)
     (local $ctx i32) (local $list i32)
     (local.set $ctx (call $insertobj_ctx_alloc (local.get $params)))
     (call $host_register_dialog_frame
-      (local.get $dlg) (local.get $owner) (i32.const 0x3310)
+      (local.get $dlg) (local.get $owner) (region.addr $OLE_STRINGS 0x60)
       (i32.const 320) (i32.const 200) (i32.const 1))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
-    (call $title_table_set (local.get $dlg) (i32.const 0x3310) (i32.const 13))
+    (call $title_table_set (local.get $dlg) (region.addr $OLE_STRINGS 0x60) (i32.const 13))
     (call $wnd_set_owner (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
     (call $defwndproc_do_nccalcsize (local.get $dlg))
@@ -10798,7 +10798,7 @@
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
             (i32.const 12) (i32.const 10) (i32.const 100) (i32.const 14)
             (i32.const 0x50000000)
-            (call $wat_str_to_heap (i32.const 0x3320) (i32.const 12))))
+            (call $wat_str_to_heap (region.addr $OLE_STRINGS 0x70) (i32.const 12))))
     (local.set $list (call $ctrl_create_child (local.get $dlg) (i32.const 4) (i32.const 0x500)
                        (i32.const 12) (i32.const 28) (i32.const 190) (i32.const 120)
                        (i32.const 0x50810001) (i32.const 0)))
@@ -10811,11 +10811,11 @@
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x501)
             (i32.const 212) (i32.const 28) (i32.const 96) (i32.const 18)
             (i32.const 0x50000009) ;; BS_AUTORADIOBUTTON | WS_GROUP
-            (call $wat_str_to_heap (i32.const 0x3330) (i32.const 10))))
+            (call $wat_str_to_heap (region.addr $OLE_STRINGS 0x80) (i32.const 10))))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x502)
             (i32.const 212) (i32.const 50) (i32.const 100) (i32.const 18)
             (i32.const 0x50000009)
-            (call $wat_str_to_heap (i32.const 0x3340) (i32.const 16))))
+            (call $wat_str_to_heap (region.addr $OLE_STRINGS 0x90) (i32.const 16))))
     (drop (call $wnd_send_message (local.get $list) (i32.const 0x0186)
       (i32.const 0) (i32.const 0)))   ;; LB_SETCURSEL 0
     (drop (call $wnd_send_message (local.get $dlg) (i32.const 0x0111)
@@ -10823,11 +10823,11 @@
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
             (i32.const 212) (i32.const 112) (i32.const 90) (i32.const 22)
             (i32.const 0x50000001)
-            (call $wat_str_to_heap (i32.const 0x3358) (i32.const 2))))
+            (call $wat_str_to_heap (region.addr $OLE_STRINGS 0xA8) (i32.const 2))))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
             (i32.const 212) (i32.const 140) (i32.const 90) (i32.const 22)
             (i32.const 0x50000000)
-            (call $wat_str_to_heap (i32.const 0x3360) (i32.const 6)))))
+            (call $wat_str_to_heap (region.addr $OLE_STRINGS 0xB0) (i32.const 6)))))
 
   ;; Copy the selected class into the caller's struct and report which button
   ;; ended the dialog. OLEUI_OK is 1 and OLEUI_CANCEL is 2 -- the modal pump
@@ -10954,7 +10954,7 @@
       (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
       ;; "StaticMetafile" and "StaticDib" share their first six characters.
       (local.set $ch (call $gl8 (i32.add
-        (select (i32.const 0x32D0) (i32.const 0x32E0)
+        (select (region.addr $OLE_STRINGS 0x20) (region.addr $OLE_STRINGS 0x30)
           (i32.eq (local.get $data1) (i32.const 0x315)))
         (local.get $i))))
       (call $gs16 (i32.add (local.get $out) (i32.shl (local.get $i) (i32.const 1)))

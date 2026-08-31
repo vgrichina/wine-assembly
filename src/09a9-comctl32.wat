@@ -208,7 +208,7 @@
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 20)
       (local.get $text_wa) (local.get $id)))
     (call $host_set_parent (local.get $hwnd) (local.get $parent))
-    (call $host_set_window_class (local.get $hwnd) (i32.const 0x3260))
+    (call $host_set_window_class (local.get $hwnd) (region.addr $CLASS_NAME_STRINGS 0x160))
     (local.get $hwnd))
 
   ;; CreateStatusWindowA(style, lpszText, hwndParent, wID) — 4 args, returns HWND
@@ -255,7 +255,7 @@
       (i32.const 0) (local.get $arg2)))
     (call $wnd_set_parent (local.get $hwnd) (local.get $arg0))
     (call $host_set_parent (local.get $hwnd) (local.get $arg0))
-    (call $host_set_window_class (local.get $hwnd) (i32.const 0x3274))
+    (call $host_set_window_class (local.get $hwnd) (region.addr $CLASS_NAME_STRINGS 0x174))
     (local.set $state (call $toolbar_ensure_state (local.get $hwnd)))
     (local.set $sw (call $g2w (local.get $state)))
     (if (local.get $button_w) (then (i32.store offset=4 (local.get $sw) (local.get $button_w))))

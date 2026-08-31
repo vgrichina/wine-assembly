@@ -1763,7 +1763,7 @@
         (return)))
     (local.set $src (call $g2w (local.get $arg0)))
     (local.set $dst (call $g2w (local.get $arg1)))
-    (if (call $wide_ascii_eq (local.get $src) (i32.const 0x3180))
+    (if (call $wide_ascii_eq (local.get $src) (region.addr $CLASS_NAME_STRINGS 0x80))
       (then
         (i32.store (local.get $dst) (i32.const 0xDA51DA01))
         (i64.store (i32.add (local.get $dst) (i32.const 4)) (i64.const 0))
@@ -1771,7 +1771,7 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
-    (if (call $wide_ascii_eq (local.get $src) (i32.const 0x31A0))
+    (if (call $wide_ascii_eq (local.get $src) (region.addr $CLASS_NAME_STRINGS 0xA0))
       (then
         (i32.store (local.get $dst) (i32.const 0xDA57A71C))
         (i64.store (i32.add (local.get $dst) (i32.const 4)) (i64.const 0))

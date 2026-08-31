@@ -53,8 +53,19 @@
     (owner "01-header.wat:1647"))
   (region.declare-fixed $UPDATE_FLAGS (base 0x00003000) (size 0x00000100) (align 0x00001000)
     (owner "01-header.wat:1649"))
-  (region.declare-fixed $CLASS_NAME_STRINGS (base 0x00003100) (size 0x00000080) (align 0x00000100)
-    (owner "01-header.wat:1633"))
+  ;; WIDENED 0x80 -> 0x1A0 (wave 2). The declaration covered only as far as
+  ;; "SysLink"; the class-name block runs to the RGB555 masks at 0x32A0, so
+  ;; everything past 0x3180 -- the DirectAnimation names, SysTreeView32, the
+  ;; statusbar/toolbar classes -- sat outside every region and outside every
+  ;; gate. The three blocks that follow used to be undeclared data segments.
+  (region.declare-fixed $CLASS_NAME_STRINGS (base 0x00003100) (size 0x000001A0) (align 0x00000100)
+    (owner "01-header.wat:1658"))
+  (region.declare-fixed $DIB_DEFAULT_RGB555_MASKS (base 0x000032A0) (size 0x0000000C) (align 0x00000010)
+    (owner "01-header.wat:1214"))
+  (region.declare-fixed $OLE_STRINGS (base 0x000032B0) (size 0x000000E0) (align 0x00000010)
+    (owner "01-header.wat:1222"))
+  (region.declare-fixed $ENV_DEFAULTS (base 0x00003390) (size 0x000000C0) (align 0x00000010)
+    (owner "01-header.wat:1252"))
   (region.declare-fixed $WND_BG_BRUSH_TABLE (base 0x00003500) (size 0x00000400) (align 0x00000100)
     (owner "01-header.wat:1635"))
   (region.declare-fixed $WND_CLASS_CURSOR_TABLE (base 0x00003900) (size 0x00000400) (align 0x00000100)
@@ -387,3 +398,28 @@
     (owner "01-header.wat:2344"))
   (region.declare-fixed $THREAD_RPC (base 0x1FF00000) (size 0x00100000) (align 0x00001000)
     (owner "01-header.wat:2350"))
+
+  ;; ============================================================
+  ;; SPANS — address-range LIMITS, not storage.
+  ;;
+  ;; A span names a boundary somebody's arithmetic tests against. It owns no
+  ;; bytes, so it is TRANSPARENT to the overlap check: the regions it bounds
+  ;; live inside it, which is the whole point and the one thing no other head
+  ;; can express. It is never allocated and never shaken, and it has no
+  ;; $NAME/$NAME_SIZE globals behind it — there is nothing to store — so
+  ;; tools/check-region-decls.js neither requires nor reads one.
+  ;; ============================================================
+
+  ;; $g2w's direct guest window (docs/watx-region-safety-design.md §5.1). A
+  ;; guest address translates by the flat `ga - image_base + GUEST_BASE` rule
+  ;; only while the result lands below this limit; past it $g2w falls through to
+  ;; the DIB window, then the sparse VirtualAlloc map, then NULL_SENTINEL. The
+  ;; window is a UNION of regions — $GUEST_BASE, the guest heap, the stack, the
+  ;; thunk zone, PE staging, the DLL tables and the whole WAT-private high map —
+  ;; so it cannot be declared with any head that participates in the overlap
+  ;; sweep. Its end is $VIRTUAL_BACKING_BASE's base: everything at or above
+  ;; 0x08000000 is backing store reached through a translation, never directly.
+  ;; Written as the bare literal 0x8000000 three times in 03-registers.wat until
+  ;; this declaration; those three sites now spell it (region.end $DIRECT_WINDOW).
+  (region.declare-span $DIRECT_WINDOW (base 0x00000000) (end 0x08000000)
+    (owner "03-registers.wat:81,177,179 — $g2w / $g2w_affine_span direct-window limit"))

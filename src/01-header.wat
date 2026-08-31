@@ -1180,66 +1180,81 @@
   ;; Dialog-template string class names. Win32 templates may use either
   ;; builtin ordinal classes (0x80..0x85) or string names.
   (data (region.addr $CLASS_NAME_STRINGS 0) "Button\00")
-  (data (i32.const 0x3108) "Edit\00")
-  (data (i32.const 0x310D) "Static\00")
-  (data (i32.const 0x3114) "ListBox\00")
-  (data (i32.const 0x311C) "ScrollBar\00")
-  (data (i32.const 0x3126) "ComboBox\00")
-  (data (i32.const 0x312F) "msctls_progress32\00")
-  (data (i32.const 0x3141) "SysListView32\00")
-  (data (i32.const 0x3150) "Slider1\00")
-  (data (i32.const 0x3158) "msctls_trackbar32\00")
-  (data (i32.const 0x316A) "SysTreeView32\00")
-  (data (i32.const 0x3178) "SysLink\00")
-  (data (i32.const 0x3180) "DirectAnimation.DAView\00")
-  (data (i32.const 0x31A0) "DirectAnimation.DAStatics\00")
-  (data (i32.const 0x31C0) "ImportImage\00")
-  (data (i32.const 0x31D0) "ImportSound\00")
-  (data (i32.const 0x31E0) "ModifiableBehavior\00")
-  (data (i32.const 0x31F8) "NumberB\00")
-  (data (i32.const 0x3200) "StringB\00")
-  (data (i32.const 0x3208) "Compose2\00")
-  (data (i32.const 0x3214) "DetectCollision\00")
-  (data (i32.const 0x3228) "StartModel\00")
-  (data (i32.const 0x3234) "Tick\00")
-  (data (i32.const 0x323C) "Pause\00")
-  (data (i32.const 0x3244) "SetRenderTimeout\00")
-  (data (i32.const 0x3260) "msctls_statusbar32\00")
-  (data (i32.const 0x3274) "ToolbarWindow32\00")
-  (data (i32.const 0x3288) "MS Sans Serif\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x08) "Edit\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x0D) "Static\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x14) "ListBox\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x1C) "ScrollBar\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x26) "ComboBox\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x2F) "msctls_progress32\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x41) "SysListView32\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x50) "Slider1\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x58) "msctls_trackbar32\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x6A) "SysTreeView32\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x78) "SysLink\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x80) "DirectAnimation.DAView\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0xA0) "DirectAnimation.DAStatics\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0xC0) "ImportImage\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0xD0) "ImportSound\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0xE0) "ModifiableBehavior\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0xF8) "NumberB\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x100) "StringB\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x108) "Compose2\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x114) "DetectCollision\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x128) "StartModel\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x134) "Tick\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x13C) "Pause\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x144) "SetRenderTimeout\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x160) "msctls_statusbar32\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x174) "ToolbarWindow32\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0x188) "MS Sans Serif\00")
   ;; Default 16-bpp BI_RGB channel masks (RGB555). BI_BITFIELDS callers carry
   ;; their own validated mask triplet; DirectDraw explicitly requests RGB565.
-  (data (i32.const 0x32A0) "\00\7c\00\00\e0\03\00\00\1f\00\00\00")
+  ;; Three dwords, and NOT a string -- its own region rather than a tail on
+  ;; CLASS_NAME_STRINGS, which is what the block on either side of it is.
+  (global $DIB_DEFAULT_RGB555_MASKS i32 (i32.const 0x000032A0))
+  (global $DIB_DEFAULT_RGB555_MASKS_SIZE i32 (i32.const 0x0000000C))
+  (data (region.addr $DIB_DEFAULT_RGB555_MASKS 0) "\00\7c\00\00\e0\03\00\00\1f\00\00\00")
 
+  ;; OLE_STRINGS: the clipboard-format names, the two server-less ProgIDs and
+  ;; the Insert Object dialog's own text, 0x32B0 up to ENV_DEFAULTS. A
+  ;; separate region from the class names because 09a7b-ole.wat is what reads
+  ;; every one of them.
+  (global $OLE_STRINGS i32 (i32.const 0x000032B0))
+  (global $OLE_STRINGS_SIZE i32 (i32.const 0x000000E0))
   ;; The two registered clipboard formats that carry an embedded OLE object.
   ;; OleCreateFromData looks for these on a source data object and declines with
   ;; DV_E_FORMATETC when neither is there, which is what sends a container down
   ;; its static-picture path instead.
-  (data (i32.const 0x32B0) "Embed Source\00")      ;; 0x32B0 Embed Source
-  (data (i32.const 0x32C0) "Embedded Object\00")   ;; 0x32C0 Embedded Object
+  (data (region.addr $OLE_STRINGS 0x00) "Embed Source\00")      ;; 0x32B0 Embed Source
+  (data (region.addr $OLE_STRINGS 0x10) "Embedded Object\00")   ;; 0x32C0 Embedded Object
   ;; ProgIDs of the two server-less object classes OLE defines itself.
-  (data (i32.const 0x32D0) "StaticMetafile\00")    ;; 0x32D0 StaticMetafile
-  (data (i32.const 0x32E0) "StaticDib\00")         ;; 0x32E0 StaticDib
+  (data (region.addr $OLE_STRINGS 0x20) "StaticMetafile\00")    ;; 0x32D0 StaticMetafile
+  (data (region.addr $OLE_STRINGS 0x30) "StaticDib\00")         ;; 0x32E0 StaticDib
 
   ;; Insert Object dialog. The object-type list is built by walking
   ;; HKEY_CLASSES_ROOT\CLSID for subkeys that carry an Insertable key, which is
   ;; how Windows decides what may be embedded.
-  (data (i32.const 0x32F0) "CLSID\00")             ;; 0x32F0 CLSID
-  (data (i32.const 0x3300) "Insertable\00")        ;; 0x3300 Insertable
-  (data (i32.const 0x3310) "Insert Object\00")     ;; 0x3310 Insert Object
-  (data (i32.const 0x3320) "Object Type:\00")      ;; 0x3320 Object Type:
-  (data (i32.const 0x3330) "Create New\00")        ;; 0x3330 Create New
-  (data (i32.const 0x3340) "Create from File\00")  ;; 0x3340 Create from File
-  (data (i32.const 0x3358) "OK\00")                ;; 0x3358 OK
-  (data (i32.const 0x3360) "Cancel\00")            ;; 0x3360 Cancel
+  (data (region.addr $OLE_STRINGS 0x40) "CLSID\00")             ;; 0x32F0 CLSID
+  (data (region.addr $OLE_STRINGS 0x50) "Insertable\00")        ;; 0x3300 Insertable
+  (data (region.addr $OLE_STRINGS 0x60) "Insert Object\00")     ;; 0x3310 Insert Object
+  (data (region.addr $OLE_STRINGS 0x70) "Object Type:\00")      ;; 0x3320 Object Type:
+  (data (region.addr $OLE_STRINGS 0x80) "Create New\00")        ;; 0x3330 Create New
+  (data (region.addr $OLE_STRINGS 0x90) "Create from File\00")  ;; 0x3340 Create from File
+  (data (region.addr $OLE_STRINGS 0xA8) "OK\00")                ;; 0x3358 OK
+  (data (region.addr $OLE_STRINGS 0xB0) "Cancel\00")            ;; 0x3360 Cancel
   ;; Shown when no server is registered, which is the state of a machine with
   ;; no OLE applications installed -- Windows shows an empty list there too.
-  (data (i32.const 0x3370) "(no object types registered)\00") ;; 0x3370 (no object types registered)
+  (data (region.addr $OLE_STRINGS 0xC0) "(no object types registered)\00") ;; 0x3370 (no object types registered)
 
+  ;; ENV_DEFAULTS: 192 bytes, exactly the run below. $env_ensure copies it
+  ;; into the guest heap and then appends LAUNCH_ENV_OVERRIDES over its final
+  ;; NUL, so the two together are the environment an app is handed.
+  (global $ENV_DEFAULTS i32 (i32.const 0x00003390))
+  (global $ENV_DEFAULTS_SIZE i32 (i32.const 0x000000C0))
   ;; ENV_DEFAULTS — the process environment a freshly booted Win98 hands an
   ;; app, as one "NAME=VALUE\0"... run ending in a second NUL. Copied into the
   ;; guest heap on first use; see $env_ensure.
-  (data (i32.const 0x3390) "COMSPEC=C:\\COMMAND.COM\00TEMP=C:\\WINDOWS\\TEMP\00TMP=C:\\WINDOWS\\TEMP\00windir=C:\\WINDOWS\00SystemDrive=C:\00APPDATA=C:\\WINDOWS\\Application Data\00USERPROFILE=C:\\WINDOWS\00PATH=C:\\WINDOWS;C:\\WINDOWS\\COMMAND\00\00")
+  (data (region.addr $ENV_DEFAULTS 0) "COMSPEC=C:\\COMMAND.COM\00TEMP=C:\\WINDOWS\\TEMP\00TMP=C:\\WINDOWS\\TEMP\00windir=C:\\WINDOWS\00SystemDrive=C:\00APPDATA=C:\\WINDOWS\\Application Data\00USERPROFILE=C:\\WINDOWS\00PATH=C:\\WINDOWS;C:\\WINDOWS\\COMMAND\00\00")
 
   ;; ============================================================
   ;; MEMORY MAP
@@ -1634,8 +1649,14 @@
   (global $WND_RECORDS   i32 (i32.const 0x00007000))
   (global $WND_RECORDS_SIZE i32 (i32.const 0x00001800))
   (global $MAX_WINDOWS   i32 (i32.const 256))
+  ;; CLASS_NAME_STRINGS: the built-in control class names dialog templates and
+  ;; GetClassNameA answer with, plus the DirectAnimation coclass/behaviour
+  ;; names $handle_CLSIDFromProgID matches. It was declared 0x80 bytes, which
+  ;; covered only as far as "SysLink" -- the block actually runs to the RGB555
+  ;; mask triplet at 0x32A0, so more than half of it was outside any region
+  ;; and every name past 0x3180 was a raw literal nothing could check.
   (global $CLASS_NAME_STRINGS i32 (i32.const 0x00003100))
-  (global $CLASS_NAME_STRINGS_SIZE i32 (i32.const 0x00000080))
+  (global $CLASS_NAME_STRINGS_SIZE i32 (i32.const 0x000001A0))
   (global $WND_BG_BRUSH_TABLE i32 (i32.const 0x00003500))
   (global $WND_BG_BRUSH_TABLE_SIZE i32 (i32.const 0x00000400))
   ;; WNDCLASS.hCursor, resolved per window at creation exactly like the class
