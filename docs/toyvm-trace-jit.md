@@ -1459,3 +1459,73 @@ lowered fall-through arm the `CONT`/`$smc` test the interpreter's transfer
 protocol applies to *both* edges) changes nothing, and `--head-exit=slice`
 (leave through `$slice_exit` instead of resolving `$gip` at the head) changes
 nothing.
+
+## CORRECTION 2: CONTACT is the lowering after all, and here is why it looked otherwise
+
+The section above concluded that CONTACT's fault is in the region install
+protocol, because its *degenerate* region — verbatim handler bodies, unfolded
+operands, no promotion, interpreter transfer protocol, no loop — also diverged.
+That reading was wrong, and the mistake is worth more than the conclusion was.
+
+**Most of this corpus never terminates.** A demo runs its effect until somebody
+presses a key, so a run ends when the dispatch budget does and the frame is a
+snapshot of an animation in progress. `region-jit.js` charges `$steps` in one
+lump per straight line rather than one per op — its own code says so — so the
+two arms stop a few instructions apart having done the same work. A few
+instructions apart in a plasma loop is a different picture.
+
+CONTACT's baseline frame is a function of the budget and nothing else:
+
+| `--dispatches` | baseline frame | `--no-lower` region | lowered region |
+|---|---|---|---|
+| 8m | `b8852c82` 61112px | **IDENTICAL** | `7dc0c28d` 51014px |
+| 11m | `0f74ca91` 61036px | **IDENTICAL** | `7dc0c28d` 51014px |
+| 11.5m | `7468af39` 61079px | — | `7dc0c28d` 51014px |
+| 12m | `447d0738` 61081px | `dc683527` 61081px | `7dc0c28d` 51014px |
+
+The unlowered region tracks the interpreter frame for frame and misses only at
+12M, on the same pixel count — that is the phase artifact, not a fault. The
+degenerate arm behaves the same way: at 11M, `--passes= --no-promote --no-lower
+--once` is **IDENTICAL**. Every "failure" of an unlowered arm in the previous
+section was measured at 12M and was this.
+
+And the lowered arm gives itself away in the same table: **`7dc0c28d` at every
+budget from 3M to 12M.** It is not drawing a different frame, it is drawing the
+*same* frame forever while the interpreter moves on. The guest stops making
+progress.
+
+So both programs are one story after all, and it is the story the first
+correction told about ACCIDENT: **branch lowering is the fault, in both.** What
+the second correction got right was the process — the multi-flag ladder rows
+were never run — and what it got wrong was treating a single budget's frame hash
+as a verdict.
+
+**The rule that falls out, and it now lives in the tooling.** For a program that
+does not terminate, frame equality at one dispatch budget is not a correctness
+test. `tools/toyvm/region-census.js` confirms every differing frame at three
+further budgets before reporting it, and refuses a confirmation whose baseline
+had not drawn anything yet (two black frames match trivially — that is what
+first cleared ACCIDENT, which is genuinely stuck at 0px against 18447). It
+reports `phase` for differed-then-agreed, and `frozen` for a region that drew
+the identical frame at every budget while the interpreter moved on.
+
+## Corpus census on the post-WATX tree
+
+`sweep-dos.js` over all 199 programs, re-run after the WATX compiler cutover so
+nothing is compared across it:
+
+```
+outcomes: benched 146, no-samples 22, branchy 19, shells:timeout 7, padding 5
+geomean over 175 programs that ran >=1M dispatches (baseline tailcall):
+  repl_tailcall +8.4%, calls -4.5%, switch +5.1%
+```
+
+- **interpreter: clean.** Zero `arms-disagree` and zero `nondeterministic` over
+  199 programs × 4 dispatch shells. Every shell computes the same thing.
+- **micro-ops: clean.** Zero `mismatch`. The 19 `branchy` are inconclusive by
+  construction — the op list transfers control somewhere other than its own end,
+  so tier 0 takes an edge the straight-line tiers fall through and the arms did
+  not run the same program. `no-samples` and `padding` mean no trace was lifted.
+- The 7 `shells:timeout` are higher than the single one on the pre-cutover run,
+  and that run was not sharing the box with a region census. Treat the count as
+  a load artifact until it is reproduced on a quiet machine.
