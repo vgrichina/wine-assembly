@@ -15,14 +15,10 @@ async function main() {
   const ctx = { getMemory: () => memory.buffer, renderer: null, resourceJson: {} };
   const base = createHostImports(ctx);
   base.host.memory = memory;
-  base.host.create_thread = () => 0;
-  base.host.exit_thread = () => 0;
-  base.host.terminate_thread = () => 0;
-  base.host.create_event = () => 0;
-  base.host.set_event = () => 0;
-  base.host.reset_event = () => 0;
-  base.host.wait_single = () => 0;
-  base.host.wait_multiple = () => 0;
+  // The thread and synchronization imports come from lib/host-imports.js: its
+  // defaults are a real process-local kernel-object table, so CreateMutexA/
+  // OpenMutexA below exercise the same create/open/name contract the
+  // ThreadManager-backed hosts implement.
   base.host.com_create_instance = () => 0x80004002;
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, base);
