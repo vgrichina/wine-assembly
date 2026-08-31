@@ -273,27 +273,60 @@
     (if (i32.eqz (global.get $DX_VTBL_DDRAW))
       (then (call $dx_sync_thread_vtables))))
 
-  ;; DirectDraw display mode (set by SetDisplayMode)
-  (global $dx_display_w (mut i32) (i32.const 640))
-  (global $dx_display_h (mut i32) (i32.const 480))
-  (global $dx_display_bpp (mut i32) (i32.const 16))
-  (func $dx_display_w_get (result i32) (global.get $dx_display_w))
-  (func $dx_display_h_get (result i32) (global.get $dx_display_h))
-  (func $dx_display_bpp_get (result i32) (global.get $dx_display_bpp))
+  ;; DirectDraw display/cooperative state is process state, not thread state.
+  ;; Mutable WebAssembly globals are private to each instance, so keeping these
+  ;; values in globals made a cross-thread SendMessage callback update only the
+  ;; HWND owner's copy. Allegro does exactly that while selecting a video mode:
+  ;; its caller then observed the old 16bpp mode and rejected every DirectDraw
+  ;; driver. Keep the canonical values in shared memory so owner-thread window
+  ;; dispatch and the calling DirectDraw thread see the same device state.
+  ;;
+  ;;   +0/+4/+8  display width/height/bpp (zero means 640/480/16 default)
+  ;;   +12       display mode has been selected
+  ;;   +16       cooperative-level HWND
+  ;;   +20       exclusive/fullscreen flag
+  ;;   +24       primary palette WASM address
+  (global $DX_PROCESS_STATE i32 (i32.const 0x07F0CE90))
+  (global $DX_PROCESS_STATE_SIZE i32 (i32.const 0x0000001C))
+
+  (func $dx_display_w_get (result i32)
+    (local $v i32)
+    (local.set $v (i32.atomic.load offset=0 (global.get $DX_PROCESS_STATE)))
+    (if (result i32) (local.get $v) (then (local.get $v)) (else (i32.const 640))))
+  (func $dx_display_h_get (result i32)
+    (local $v i32)
+    (local.set $v (i32.atomic.load offset=4 (global.get $DX_PROCESS_STATE)))
+    (if (result i32) (local.get $v) (then (local.get $v)) (else (i32.const 480))))
+  (func $dx_display_bpp_get (result i32)
+    (local $v i32)
+    (local.set $v (i32.atomic.load offset=8 (global.get $DX_PROCESS_STATE)))
+    (if (result i32) (local.get $v) (then (local.get $v)) (else (i32.const 16))))
+  (func $dx_display_mode_get (result i32)
+    (i32.atomic.load offset=12 (global.get $DX_PROCESS_STATE)))
+  (func $dx_coop_hwnd_get (result i32)
+    (i32.atomic.load offset=16 (global.get $DX_PROCESS_STATE)))
+  (func $dx_exclusive_get (result i32)
+    (i32.atomic.load offset=20 (global.get $DX_PROCESS_STATE)))
+  (func $dx_primary_pal_get (result i32)
+    (i32.atomic.load offset=24 (global.get $DX_PROCESS_STATE)))
   (func $dx_display_w_set (param $v i32)
-    (global.set $dx_display_w (local.get $v)))
+    (i32.atomic.store offset=0 (global.get $DX_PROCESS_STATE) (local.get $v)))
   (func $dx_display_h_set (param $v i32)
-    (global.set $dx_display_h (local.get $v)))
+    (i32.atomic.store offset=4 (global.get $DX_PROCESS_STATE) (local.get $v)))
   (func $dx_display_bpp_set (param $v i32)
-    (global.set $dx_display_bpp (local.get $v)))
+    (i32.atomic.store offset=8 (global.get $DX_PROCESS_STATE) (local.get $v)))
+  (func $dx_display_mode_set (param $v i32)
+    (i32.atomic.store offset=12 (global.get $DX_PROCESS_STATE) (local.get $v)))
+  (func $dx_coop_hwnd_set (param $v i32)
+    (i32.atomic.store offset=16 (global.get $DX_PROCESS_STATE) (local.get $v)))
+  (func $dx_exclusive_set (param $v i32)
+    (i32.atomic.store offset=20 (global.get $DX_PROCESS_STATE) (local.get $v)))
+  (func $dx_primary_pal_set (param $v i32)
+    (i32.atomic.store offset=24 (global.get $DX_PROCESS_STATE) (local.get $v)))
   ;; 1 once SetDisplayMode has actually chosen a mode. The width/height above
   ;; carry a default, so they cannot answer "is a mode in effect?" on their
   ;; own — and that question decides whether GetSystemMetrics reports the mode
   ;; or the host window ($system_metric in 09a-handlers.wat).
-  (global $dx_display_mode_set (mut i32) (i32.const 0))
-  (func $dx_display_mode_get (result i32) (global.get $dx_display_mode_set))
-  (func $dx_display_mode_set (param $v i32)
-    (global.set $dx_display_mode_set (local.get $v)))
 
   ;; Running tally of bytes allocated to DirectDraw surfaces. MCM measures
   ;; GetAvailableVidMem delta across CreateSurface/Release to detect texture
@@ -309,23 +342,15 @@
   ;; and give DirectDraw their later visible form. Rendering through main_hwnd
   ;; in that case puts the primary surface at the desktop's top-left instead
   ;; of in the game window.
-  (global $dx_coop_hwnd (mut i32) (i32.const 0))
-  (func $dx_coop_hwnd_get (result i32) (global.get $dx_coop_hwnd))
-  (func $dx_coop_hwnd_set (param $v i32)
-    (global.set $dx_coop_hwnd (local.get $v)))
   ;; DDSCL_EXCLUSIVE was granted, i.e. the app owns the whole screen and its
   ;; primary surface *is* the display. Windows the app stacks over the game
   ;; window then share that one framebuffer: they show through wherever they
   ;; do not draw. Storm puts every Diablo menu on a screen-sized WS_POPUP
   ;; SDlgDialog owned by the game window, so an opaque COLOR_BTNFACE backing
   ;; on those erases the presented frame entirely.
-  (global $dx_exclusive_fullscreen (mut i32) (i32.const 0))
-  (func $dx_exclusive_get (result i32) (global.get $dx_exclusive_fullscreen))
-  (func $dx_exclusive_set (param $v i32)
-    (global.set $dx_exclusive_fullscreen (local.get $v)))
   (func $dx_target_hwnd (result i32)
-    (if (result i32) (global.get $dx_coop_hwnd)
-      (then (global.get $dx_coop_hwnd))
+    (if (result i32) (call $dx_coop_hwnd_get)
+      (then (call $dx_coop_hwnd_get))
       (else (global.get $main_hwnd))))
 
   ;; DirectInput mouse tracking (for relative dx/dy)
@@ -432,10 +457,6 @@
 
   ;; WASM address of the palette data for the primary surface (256 RGBQUAD entries)
   ;; Set by IDirectDrawSurface::SetPalette
-  (global $dx_primary_pal_wa (mut i32) (i32.const 0))
-  (func $dx_primary_pal_get (result i32) (global.get $dx_primary_pal_wa))
-  (func $dx_primary_pal_set (param $v i32)
-    (global.set $dx_primary_pal_wa (local.get $v)))
 
   ;; DX_OBJECTS entry address of the primary surface created most recently.
   ;; An app that changes display mode mid-run creates a second primary without
@@ -865,7 +886,7 @@
             (local.set $pal (i32.load
               (i32.add (global.get $DX_SURF_PAL) (i32.shl (local.get $slot) (i32.const 2)))))))))
     (if (local.get $pal) (then (return (local.get $pal))))
-    (global.get $dx_primary_pal_wa))
+    (call $dx_primary_pal_get))
 
   ;; Return a guest pointer to a COM wrapper that reports the given vtbl and
   ;; points to the given DX_OBJECTS slot. If slot's primary wrapper already
@@ -1185,7 +1206,7 @@
       (else
         (call $gs32 (local.get $arg2) (local.get $obj_guest))
         (global.set $dx_ddraw_this (local.get $obj_guest))
-        (global.set $dx_coop_hwnd (i32.const 0))
+        (call $dx_coop_hwnd_set (i32.const 0))
         (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IDirectX7_DirectInputCreate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1352,7 +1373,7 @@
     ;; *lplpDD = obj_guest
     (call $gs32 (local.get $arg1) (local.get $obj_guest))
     (global.set $dx_ddraw_this (local.get $obj_guest))
-    (global.set $dx_coop_hwnd (i32.const 0))
+    (call $dx_coop_hwnd_set (i32.const 0))
     (global.set $eax (i32.const 0)) ;; DD_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))) ;; stdcall 3 args
 
@@ -1416,7 +1437,7 @@
         (return)))
     (call $gs32 (local.get $arg1) (local.get $obj_guest))
     (global.set $dx_ddraw_this (local.get $obj_guest))
-    (global.set $dx_coop_hwnd (i32.const 0))
+    (call $dx_coop_hwnd_set (i32.const 0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
@@ -1734,25 +1755,25 @@
     ;; Determine surface dimensions
     (if (i32.and (local.get $caps) (i32.const 0x200)) ;; PRIMARY
       (then
-        (local.set $w (global.get $dx_display_w))
-        (local.set $h (global.get $dx_display_h))
-        (local.set $bpp (global.get $dx_display_bpp))
+        (local.set $w (call $dx_display_w_get))
+        (local.set $h (call $dx_display_h_get))
+        (local.set $bpp (call $dx_display_bpp_get))
         (local.set $flags (i32.const 1))) ;; flag=primary
       (else
         ;; Use dimensions from DDSURFACEDESC if provided
         (local.set $w (i32.load (i32.add (local.get $ddsd_wa) (i32.const 12))))
         (local.set $h (i32.load (i32.add (local.get $ddsd_wa) (i32.const 8))))
-        (if (i32.eqz (local.get $w)) (then (local.set $w (global.get $dx_display_w))))
-        (if (i32.eqz (local.get $h)) (then (local.set $h (global.get $dx_display_h))))
+        (if (i32.eqz (local.get $w)) (then (local.set $w (call $dx_display_w_get))))
+        (if (i32.eqz (local.get $h)) (then (local.set $h (call $dx_display_h_get))))
         ;; Use pixel format bpp from DDSURFACEDESC if DDSD_PIXELFORMAT (0x1000) is set
         (if (i32.and (i32.load (i32.add (local.get $ddsd_wa) (i32.const 4))) (i32.const 0x1000))
           (then
             (local.set $bpp (i32.load (i32.add (local.get $ddsd_wa) (i32.const 84)))))
           (else
-            (local.set $bpp (global.get $dx_display_bpp))))
+            (local.set $bpp (call $dx_display_bpp_get))))
         ;; Fallback: textures built from our (stub) EnumTextureFormats have ddpf
         ;; populated with zeros, so dwRGBBitCount=0. Use display bpp.
-        (if (i32.eqz (local.get $bpp)) (then (local.set $bpp (global.get $dx_display_bpp))))
+        (if (i32.eqz (local.get $bpp)) (then (local.set $bpp (call $dx_display_bpp_get))))
         (local.set $flags (i32.const 4)))) ;; flag=offscreen
     (local.set $fmt (call $dx_surf_fmt_default (local.get $bpp)))
     (if (i32.and (i32.load offset=4 (local.get $ddsd_wa)) (i32.const 0x1000))
@@ -1839,7 +1860,7 @@
     (if (i32.and (local.get $caps) (i32.const 0x200))
       (then (if (call $dx_target_hwnd) (then
         (if (i32.or
-              (i32.ne (global.get $dx_exclusive_fullscreen) (i32.const 0))
+              (i32.ne (call $dx_exclusive_get) (i32.const 0))
               (i32.eqz (i32.and
                 (call $wnd_get_style (call $dx_target_hwnd))
                 (i32.const 0x00C00000)))) ;; !WS_CAPTION
@@ -1948,6 +1969,10 @@
     (if (i32.eq (local.get $r) (i32.const 3)) (then (return (i32.const 1152))))
     (if (i32.eq (local.get $r) (i32.const 4)) (then (return (i32.const 1280))))
     (if (i32.eq (local.get $r) (i32.const 5)) (then (return (call $enum_mode_host_w))))
+    ;; DirectDraw on Win9x exposes the palettized mode used by DOS-era and
+    ;; early Windows cinematics. Keep it after the existing table so adding it
+    ;; cannot change the preferred order of a game's ordinary resolution menu.
+    (if (i32.eq (local.get $r) (i32.const 6)) (then (return (i32.const 320))))
     (i32.const 640))
   (func $enum_mode_res_h (param $r i32) (result i32)
     (if (i32.eq (local.get $r) (i32.const 1)) (then (return (i32.const 600))))
@@ -1955,11 +1980,14 @@
     (if (i32.eq (local.get $r) (i32.const 3)) (then (return (i32.const 864))))
     (if (i32.eq (local.get $r) (i32.const 4)) (then (return (i32.const 1024))))
     (if (i32.eq (local.get $r) (i32.const 5)) (then (return (call $enum_mode_host_h))))
+    (if (i32.eq (local.get $r) (i32.const 6)) (then (return (i32.const 200))))
     (i32.const 480))
 
   ;; Helper: fill DDSD for mode index $enum_modes_idx and jump to callback.
-  ;; Mode table: six resolutions × 8/16/32 bpp — idx/3 picks the resolution,
-  ;; idx%3 the depth.
+  ;; Mode table: the existing six resolutions × 8/16/32 bpp, followed by one
+  ;; 320x200x8 entry. idx/3 picks the resolution and idx%3 the depth, so index
+  ;; 18 selects low-resolution slot 6 at its 8bpp member without advertising
+  ;; historically inauthentic 16/32bpp variants.
   ;;
   ;; Every one of them is advertised, canvas size notwithstanding. This list is
   ;; what a game's own resolution menu offers — RCT validates the mode it is
@@ -1974,7 +2002,7 @@
     (local $pitch i32) (local $idx i32)
     (local.set $idx (global.get $enum_modes_idx))
     ;; If past end of table, done — return DD_OK to caller
-    (if (i32.ge_u (local.get $idx) (i32.const 18))
+    (if (i32.ge_u (local.get $idx) (i32.const 19))
       (then
         (global.set $eip (global.get $enum_modes_ret))
         (global.set $eax (i32.const 0))  ;; DD_OK
@@ -2549,14 +2577,14 @@
     (call $zero_memory (local.get $wa) (i32.const 108))
     (i32.store (local.get $wa) (i32.const 108))
     (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x1006))
-    (i32.store (i32.add (local.get $wa) (i32.const 8)) (global.get $dx_display_h))
-    (i32.store (i32.add (local.get $wa) (i32.const 12)) (global.get $dx_display_w))
+    (i32.store (i32.add (local.get $wa) (i32.const 8)) (call $dx_display_h_get))
+    (i32.store (i32.add (local.get $wa) (i32.const 12)) (call $dx_display_w_get))
     (i32.store (i32.add (local.get $wa) (i32.const 16))
-      (i32.and (i32.add (i32.mul (global.get $dx_display_w) (i32.const 2)) (i32.const 3)) (i32.const 0xFFFFFFFC)))
+      (i32.and (i32.add (i32.mul (call $dx_display_w_get) (i32.const 2)) (i32.const 3)) (i32.const 0xFFFFFFFC)))
     ;; Pixel format
     (i32.store (i32.add (local.get $wa) (i32.const 72)) (i32.const 32))
     (i32.store (i32.add (local.get $wa) (i32.const 76)) (i32.const 0x40))
-    (i32.store (i32.add (local.get $wa) (i32.const 84)) (global.get $dx_display_bpp))
+    (i32.store (i32.add (local.get $wa) (i32.const 84)) (call $dx_display_bpp_get))
     (i32.store (i32.add (local.get $wa) (i32.const 88)) (i32.const 0xF800))
     (i32.store (i32.add (local.get $wa) (i32.const 92)) (i32.const 0x07E0))
     (i32.store (i32.add (local.get $wa) (i32.const 96)) (i32.const 0x001F))
@@ -2600,7 +2628,7 @@
   ;; RestoreDisplayMode — the surfaces stay as they are, but the mode is no
   ;; longer in effect, so the screen metrics go back to the host window.
   (func $handle_IDirectDraw_RestoreDisplayMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $dx_display_mode_set (i32.const 0))
+    (call $dx_display_mode_set (i32.const 0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
@@ -2609,10 +2637,10 @@
     (local $entry i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (i32.store (i32.add (local.get $entry) (i32.const 8)) (local.get $arg1)) ;; store hwnd
-    (global.set $dx_coop_hwnd (local.get $arg1))
+    (call $dx_coop_hwnd_set (local.get $arg1))
     ;; DDSCL_EXCLUSIVE = 0x10 (Diablo passes 0x13 = EXCLUSIVE|FULLSCREEN|
     ;; ALLOWREBOOT). Dropping back to DDSCL_NORMAL clears it again.
-    (global.set $dx_exclusive_fullscreen
+    (call $dx_exclusive_set
       (i32.ne (i32.and (local.get $arg2) (i32.const 0x10)) (i32.const 0)))
     ;; Taking the screen exclusively puts the device window on it: real
     ;; DirectDraw sizes that window to the display and brings it forward, so
@@ -2644,7 +2672,7 @@
   (func $install_default_dx_palette
     (local $pal_guest i32) (local $pal_wa i32) (local $i i32)
     (local $r i32) (local $g i32) (local $b i32) (local $lum i32)
-    (if (i32.ne (global.get $dx_primary_pal_wa) (i32.const 0)) (then (return)))
+    (if (i32.ne (call $dx_primary_pal_get) (i32.const 0)) (then (return)))
     (local.set $pal_guest (call $heap_alloc (i32.const 1024)))
     (local.set $pal_wa (call $g2w (local.get $pal_guest)))
     (call $zero_memory (local.get $pal_wa) (i32.const 1024))
@@ -2670,7 +2698,7 @@
       (i32.store8 (i32.add (i32.add (local.get $pal_wa) (i32.shl (local.get $i) (i32.const 2))) (i32.const 2)) (local.get $lum))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $gl)))
-    (global.set $dx_primary_pal_wa (local.get $pal_wa)))
+    (call $dx_primary_pal_set (local.get $pal_wa)))
 
   (func $handle_IDirectDraw_SetDisplayMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $vtbl i32) (local $target_hwnd i32) (local $changed i32)
@@ -2691,14 +2719,14 @@
     ;; same cycle.
     (local.set $changed
       (i32.or
-        (i32.ne (global.get $dx_display_w) (local.get $arg1))
+        (i32.ne (call $dx_display_w_get) (local.get $arg1))
         (i32.or
-          (i32.ne (global.get $dx_display_h) (local.get $arg2))
-          (i32.ne (global.get $dx_display_bpp) (local.get $arg3)))))
-    (global.set $dx_display_w (local.get $arg1))
-    (global.set $dx_display_h (local.get $arg2))
-    (global.set $dx_display_bpp (local.get $arg3))
-    (global.set $dx_display_mode_set (i32.const 1))
+          (i32.ne (call $dx_display_h_get) (local.get $arg2))
+          (i32.ne (call $dx_display_bpp_get) (local.get $arg3)))))
+    (call $dx_display_w_set (local.get $arg1))
+    (call $dx_display_h_set (local.get $arg2))
+    (call $dx_display_bpp_set (local.get $arg3))
+    (call $dx_display_mode_set (i32.const 1))
     (if (i32.le_u (local.get $arg3) (i32.const 8))
       (then (call $install_default_dx_palette)))
     ;; Resize the cooperative window to match the display mode so the back-canvas
@@ -3711,7 +3739,7 @@
     (local $obj_guest i32) (local $pal_wa i32)
     (local.set $pal_wa (call $dx_surf_pal_get (call $dx_from_this (local.get $arg0))))
     (if (i32.eqz (local.get $pal_wa))
-      (then (local.set $pal_wa (global.get $dx_primary_pal_wa))))
+      (then (local.set $pal_wa (call $dx_primary_pal_get))))
     (if (i32.eqz (local.get $pal_wa))
       (then
         (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
@@ -3842,7 +3870,8 @@
 
   ;; Lock(this, lpDestRect, lpDDSD, dwFlags, hEvent) — 5 args
   (func $handle_IDirectDrawSurface_Lock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $wa i32) (local $dib_guest i32)
+    (local $entry i32) (local $wa i32) (local $dib_wa i32) (local $dib_guest i32)
+    (local $left i32) (local $top i32) (local $bpp i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (call $host_dx_trace (i32.const 1) (call $dx_slot_of (local.get $entry))
       (i32.load (i32.add (local.get $entry) (i32.const 28)))
@@ -3857,9 +3886,23 @@
     (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.load16_u (i32.add (local.get $entry) (i32.const 14))))
     (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.load16_u (i32.add (local.get $entry) (i32.const 12))))
     (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
-    ;; lpSurface — guest address of DIB
-    (local.set $dib_guest
-      (call $w2g (i32.load (i32.add (local.get $entry) (i32.const 20)))))
+    ;; lpSurface points at the upper-left pixel of lpDestRect, while lPitch
+    ;; remains the full surface stride. Callers can therefore treat (0,0) as
+    ;; the requested rectangle's origin without losing the parent pitch.
+    (local.set $dib_wa (i32.load (i32.add (local.get $entry) (i32.const 20))))
+    (if (local.get $arg1)
+      (then
+        (local.set $left (call $gl32 (local.get $arg1)))
+        (local.set $top (call $gl32 (i32.add (local.get $arg1) (i32.const 4))))
+        (local.set $bpp (i32.load16_u (i32.add (local.get $entry) (i32.const 16))))
+        (local.set $dib_wa
+          (i32.add (local.get $dib_wa)
+            (i32.add
+              (i32.mul (local.get $top)
+                (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
+              (i32.div_u (i32.mul (local.get $left) (local.get $bpp))
+                         (i32.const 8)))))))
+    (local.set $dib_guest (call $w2g (local.get $dib_wa)))
     (i32.store (i32.add (local.get $wa) (i32.const 36)) (local.get $dib_guest))
     (call $dx_fill_surface_pixel_format (i32.add (local.get $wa) (i32.const 72)) (local.get $entry))
     (global.set $eax (i32.const 0))
@@ -3931,7 +3974,10 @@
         ;; overwritten by) the display palette.
         (local.set $surf_entry (call $dx_from_this (local.get $arg0)))
         (call $dx_surf_pal_set (local.get $surf_entry) (local.get $pal_wa))
-        (global.set $dx_primary_pal_wa (local.get $pal_wa))))
+        (if (i32.ne
+              (i32.and (i32.load offset=28 (local.get $surf_entry)) (i32.const 1))
+              (i32.const 0))
+          (then (call $dx_primary_pal_set (local.get $pal_wa))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -4070,12 +4116,12 @@
     (i32.store16 (i32.add (local.get $bmi_wa) (i32.const 12)) (i32.const 1)) ;; biPlanes
     (i32.store16 (i32.add (local.get $bmi_wa) (i32.const 14)) (local.get $bpp))
     ;; For 8bpp, convert PALETTEENTRY (R,G,B,flags) → RGBQUAD (B,G,R,0)
-    (if (i32.and (i32.le_u (local.get $bpp) (i32.const 8)) (i32.ne (global.get $dx_primary_pal_wa) (i32.const 0)))
+    (if (i32.and (i32.le_u (local.get $bpp) (i32.const 8)) (i32.ne (call $dx_primary_pal_get) (i32.const 0)))
       (then
         (local.set $i (i32.const 0))
         (block $pd (loop $pl
           (br_if $pd (i32.ge_u (local.get $i) (i32.const 256)))
-          (local.set $val (i32.load (i32.add (global.get $dx_primary_pal_wa)
+          (local.set $val (i32.load (i32.add (call $dx_primary_pal_get)
             (i32.shl (local.get $i) (i32.const 2)))))
           ;; swap byte0 (R) and byte2 (B), keep byte1 (G), clear byte3
           (i32.store (i32.add (i32.add (local.get $bmi_wa) (i32.const 40))
@@ -4158,7 +4204,7 @@
   ;; grey slab over the game instead. Start it at the presented frame.
   (func $dx_seed_overlay_surface (param $hwnd i32)
     (local $entry i32)
-    (if (i32.eqz (global.get $dx_exclusive_fullscreen)) (then (return)))
+    (if (i32.eqz (call $dx_exclusive_get)) (then (return)))
     (if (i32.eqz (local.get $hwnd)) (then (return)))
     (if (i32.eq (local.get $hwnd) (call $dx_target_hwnd)) (then (return)))
     (local.set $entry (call $dx_primary_entry))
@@ -4174,7 +4220,7 @@
   ;; each present: that is what one shared framebuffer means.
   (func $dx_reseed_overlays (param $entry_wa i32)
     (local $i i32) (local $hwnd i32) (local $target i32)
-    (if (i32.eqz (global.get $dx_exclusive_fullscreen)) (then (return)))
+    (if (i32.eqz (call $dx_exclusive_get)) (then (return)))
     (local.set $target (call $dx_target_hwnd))
     (if (i32.eqz (local.get $target)) (then (return)))
     (local.set $i (i32.const 0))
@@ -4214,7 +4260,7 @@
     (local.set $pitch (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 18))))
     (local.set $dib_wa (i32.load (i32.add (local.get $entry_wa) (i32.const 20))))
     (call $host_dx_trace (i32.const 5) (call $dx_slot_of (local.get $entry_wa))
-      (local.get $bpp) (local.get $dib_wa) (global.get $dx_primary_pal_wa))
+      (local.get $bpp) (local.get $dib_wa) (call $dx_primary_pal_get))
     ;; Present DirectDraw's own canonical DIB directly. The host keeps a
     ;; derived canvas for this 0x200000+slot surface and coalesces repeated
     ;; Unlock uploads until composition. This avoids copying 640x480 through
@@ -4242,7 +4288,7 @@
     ;; 640x480 screen over a smaller window: dx_tunnel and dx_twist showed
     ;; caption and menus with an empty grey client while the frame sat in the
     ;; primary's top-left. Blit the sub-rect under the client area instead.
-    (if (i32.and (i32.eqz (global.get $dx_exclusive_fullscreen))
+    (if (i32.and (i32.eqz (call $dx_exclusive_get))
                  (i32.ne (local.get $target_hwnd) (i32.const 0)))
       (then
         (local.set $cl (call $client_rect_get_l (local.get $target_hwnd)))
@@ -4406,7 +4452,7 @@
             (i32.ne (local.get $src_wa) (i32.const 0)))
           (i32.and
             (i32.ne (local.get $pal_wa) (i32.const 0))
-            (i32.eq (local.get $pal_wa) (global.get $dx_primary_pal_wa))))
+            (i32.eq (local.get $pal_wa) (call $dx_primary_pal_get))))
       (then
         (local.set $prim (call $dx_primary_entry))
         (if (local.get $prim)
@@ -5583,14 +5629,40 @@
       (then (i32.add (local.get $v) (i32.const 0x30)))
       (else (i32.add (local.get $v) (i32.const 0x37)))))
 
+  ;; Canonical identity fields for the objects exposed by EnumObjects and
+  ;; GetObjectInfo. Keeping these out of either API's control flow makes a
+  ;; dwType returned by enumeration usable verbatim with DIPH_BYID.
+  (func $di_object_offset (param $kind i32) (param $index i32) (result i32)
+    (if (result i32) (i32.eq (local.get $kind) (i32.const 2))
+      (then
+        (if (result i32) (i32.lt_u (local.get $index) (i32.const 3))
+          (then (i32.shl (local.get $index) (i32.const 2)))
+          (else (i32.add (i32.const 12)
+                  (i32.sub (local.get $index) (i32.const 3))))))
+      (else (local.get $index))))
+
+  (func $di_object_type (param $kind i32) (param $index i32) (result i32)
+    (i32.or
+      (select (i32.const 1) (i32.const 4)
+        (i32.and (i32.eq (local.get $kind) (i32.const 2))
+                 (i32.lt_u (local.get $index) (i32.const 3))))
+      (i32.shl (local.get $index) (i32.const 8))))
+
+  (func $di_object_exists (param $kind i32) (param $index i32) (result i32)
+    (if (result i32) (i32.eq (local.get $kind) (i32.const 2))
+      (then (i32.lt_u (local.get $index) (i32.const 6)))
+      (else
+        (i32.and
+          (i32.eq (local.get $kind) (i32.const 1))
+          (i32.and (i32.lt_u (local.get $index) (i32.const 256))
+                   (i32.ne (call $di_dik_to_vk_strict (local.get $index))
+                           (i32.const 0)))))))
+
   ;; DIDEVICEOBJECTINSTANCEA. Mouse offsets match DIMOUSESTATE; keyboard
   ;; offsets are DIK scan codes, which is the standard c_dfDIKeyboard layout.
-  (func $di_fill_object_instance
-        (param $dst i32) (param $kind i32) (param $index i32) (param $version i32)
-    (local $size i32) (local $data1 i32) (local $ofs i32) (local $obj_type i32)
-    (local.set $size
-      (select (i32.const 292) (i32.const 316)
-        (i32.le_u (local.get $version) (i32.const 0x0300))))
+  (func $di_fill_object_instance_size
+        (param $dst i32) (param $kind i32) (param $index i32) (param $size i32)
+    (local $data1 i32)
     (call $zero_memory (call $g2w (local.get $dst)) (local.get $size))
     (call $gs32 (local.get $dst) (local.get $size))
     (if (i32.eq (local.get $kind) (i32.const 2))
@@ -5598,9 +5670,6 @@
         (if (i32.lt_u (local.get $index) (i32.const 3))
           (then
             (local.set $data1 (i32.add (i32.const 0xA36D02E0) (local.get $index)))
-            (local.set $ofs (i32.shl (local.get $index) (i32.const 2)))
-            (local.set $obj_type
-              (i32.or (i32.const 1) (i32.shl (local.get $index) (i32.const 8))))
             (if (i32.eqz (local.get $index))
               (then (call $gs32 (i32.add (local.get $dst) (i32.const 32)) (i32.const 0x78612D58))) ;; X-ax
               (else (if (i32.eq (local.get $index) (i32.const 1))
@@ -5613,18 +5682,12 @@
                 (i32.store16 (call $g2w (i32.add (local.get $dst) (i32.const 36))) (i32.const 0x006C))))) ;; l
           (else
             (local.set $data1 (i32.const 0xA36D02F0))
-            (local.set $ofs (i32.add (i32.const 12) (i32.sub (local.get $index) (i32.const 3))))
-            (local.set $obj_type
-              (i32.or (i32.const 4) (i32.shl (local.get $index) (i32.const 8))))
             (call $gs32 (i32.add (local.get $dst) (i32.const 32)) (i32.const 0x74747542)) ;; Butt
             (call $gs32 (i32.add (local.get $dst) (i32.const 36)) (i32.const 0x30206E6F)) ;; on 0
             (i32.store8 (call $g2w (i32.add (local.get $dst) (i32.const 39)))
               (i32.add (i32.const 0x30) (i32.sub (local.get $index) (i32.const 3)))))))
       (else
         (local.set $data1 (i32.const 0x55728220)) ;; GUID_Key
-        (local.set $ofs (local.get $index))
-        (local.set $obj_type
-          (i32.or (i32.const 4) (i32.shl (local.get $index) (i32.const 8))))
         (call $gs32 (i32.add (local.get $dst) (i32.const 32)) (i32.const 0x2079654B)) ;; "Key "
         (i32.store8 (call $g2w (i32.add (local.get $dst) (i32.const 36))) (i32.const 0x30))
         (i32.store8 (call $g2w (i32.add (local.get $dst) (i32.const 37))) (i32.const 0x78))
@@ -5633,8 +5696,17 @@
         (i32.store8 (call $g2w (i32.add (local.get $dst) (i32.const 39)))
           (call $di_hex_digit (i32.and (local.get $index) (i32.const 15))))))
     (call $di_fill_object_guid (i32.add (local.get $dst) (i32.const 4)) (local.get $data1))
-    (call $gs32 (i32.add (local.get $dst) (i32.const 20)) (local.get $ofs))
-    (call $gs32 (i32.add (local.get $dst) (i32.const 24)) (local.get $obj_type)))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 20))
+      (call $di_object_offset (local.get $kind) (local.get $index)))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 24))
+      (call $di_object_type (local.get $kind) (local.get $index))))
+
+  (func $di_fill_object_instance
+        (param $dst i32) (param $kind i32) (param $index i32) (param $version i32)
+    (call $di_fill_object_instance_size
+      (local.get $dst) (local.get $kind) (local.get $index)
+      (select (i32.const 292) (i32.const 316)
+        (i32.le_u (local.get $version) (i32.const 0x0300)))))
 
   (func $di_enum_finish (param $frame i32)
     (global.set $eip (call $gl32 (i32.add (local.get $frame) (i32.const 4))))
@@ -6319,9 +6391,55 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; GetObjectInfo — stub
+  ;; GetObjectInfo(this, pdidoi, dwObj, dwHow). The system keyboard and mouse
+  ;; use their standard data formats, so offsets are DIK_* values or DIMOFS_*.
+  ;; They are legacy non-HID devices and consequently have no BYUSAGE match.
   (func $handle_IDirectInputDevice_GetObjectInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x80004001))
+    (local $entry i32) (local $kind i32) (local $size i32)
+    (local $index i32) (local $match i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $size (call $gl32 (local.get $arg1)))
+    (if (i32.or
+          (i32.and (i32.ne (local.get $size) (i32.const 292))
+                   (i32.ne (local.get $size) (i32.const 316)))
+          (i32.or (i32.lt_u (local.get $arg3) (i32.const 1))
+                  (i32.gt_u (local.get $arg3) (i32.const 3))))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DIERR_INVALIDPARAM
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $kind (i32.load offset=8 (local.get $entry)))
+    (block $not_found
+      (loop $objects
+        (if (i32.ge_u (local.get $index) (i32.const 256))
+          (then (br $not_found)))
+        (if (call $di_object_exists (local.get $kind) (local.get $index))
+          (then
+            (if (i32.eq (local.get $arg3) (i32.const 1)) ;; DIPH_BYOFFSET
+              (then
+                (local.set $match
+                  (i32.eq (local.get $arg2)
+                    (call $di_object_offset (local.get $kind) (local.get $index))))))
+            (if (i32.eq (local.get $arg3) (i32.const 2)) ;; DIPH_BYID
+              (then
+                (local.set $match
+                  (i32.eq (local.get $arg2)
+                    (call $di_object_type (local.get $kind) (local.get $index))))))
+            (if (local.get $match)
+              (then
+                (call $di_fill_object_instance_size
+                  (local.get $arg1) (local.get $kind) (local.get $index) (local.get $size))
+                (global.set $eax (i32.const 0)) ;; DI_OK
+                (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+                (return)))))
+        (local.set $index (i32.add (local.get $index) (i32.const 1)))
+        (br $objects)))
+    (global.set $eax (i32.const 0x80070002)) ;; DIERR_OBJECTNOTFOUND
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; GetDeviceInfo(this, DIDEVICEINSTANCEA*) accepts the full structure and
@@ -7124,7 +7242,7 @@
     (local.set $entry_wa (call $dx_from_this (local.get $obj_guest)))
     (i32.store (i32.add (local.get $entry_wa) (i32.const 8)) (local.get $arg2))
     (global.set $dx_ddraw_this (local.get $obj_guest))
-    (global.set $dx_coop_hwnd (local.get $arg2))
+    (call $dx_coop_hwnd_set (local.get $arg2))
     (call $gs32 (local.get $pp_dd) (local.get $obj_guest))
     (global.set $eax (i32.const 0)) ;; DD_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 32))))

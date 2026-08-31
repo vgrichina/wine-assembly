@@ -72,6 +72,14 @@ const extraWat = `
       (local.get $obj) (local.get $caps) (i32.const 0)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_di_get_object_info")
+        (param $obj i32) (param $info i32) (param $which i32) (param $how i32)
+        (result i32)
+    (global.set $esp (i32.const 0x074fe000))
+    (call $handle_IDirectInputDevice_GetObjectInfo
+      (local.get $obj) (local.get $info) (local.get $which)
+      (local.get $how) (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_di_mouse_seed_delta") (param $dx i32) (param $dy i32)
     (i32.atomic.store offset=0 (global.get $DI_MOUSE_INPUT_STATE) (local.get $dx))
     (i32.atomic.store offset=4 (global.get $DI_MOUSE_INPUT_STATE) (local.get $dy)))
@@ -229,6 +237,60 @@ const extraWat = `
     wat.guest_read32(caps), wat.guest_read32(caps + 8) >>> 0,
     wat.guest_read32(caps + 12), wat.guest_read32(caps + 20),
   ], [44, 0x0202, 3, 3], 'GetCapabilities reports legacy mouse type, axes, and buttons');
+
+  // Microsoft defines GetObjectInfo as a lookup over the current data-format
+  // offset, the dwType returned by EnumObjects, or packed HID usage. These
+  // descriptors must therefore be byte-for-byte compatible with enumeration.
+  const objectInfo = 0x00410900;
+  wat.guest_write32(objectInfo, 316);
+  wat.guest_write32(objectInfo + 316, 0xfeedface);
+  assert.strictEqual(wat.test_di_get_object_info(mouse, objectInfo, 8, 1) >>> 0, 0,
+    'DIPH_BYOFFSET finds the mouse wheel');
+  assert.deepStrictEqual([
+    wat.guest_read32(objectInfo), wat.guest_read32(objectInfo + 4) >>> 0,
+    wat.guest_read32(objectInfo + 20), wat.guest_read32(objectInfo + 24),
+  ], [316, 0xa36d02e2, 8, 0x201],
+  'GetObjectInfo reuses the enumerated Z-axis descriptor');
+  assert.strictEqual(wat.guest_read32(objectInfo + 316) >>> 0, 0xfeedface,
+    'full object descriptor does not overwrite the following byte range');
+
+  wat.guest_write32(objectInfo, 316);
+  assert.strictEqual(wat.test_di_get_object_info(mouse, objectInfo, 0x404, 2) >>> 0, 0,
+    'DIPH_BYID accepts a dwType returned by EnumObjects');
+  assert.deepStrictEqual([
+    wat.guest_read32(objectInfo + 4) >>> 0,
+    wat.guest_read32(objectInfo + 20), wat.guest_read32(objectInfo + 24),
+  ], [0xa36d02f0, 13, 0x404], 'button 1 keeps its GUID, offset, and object ID');
+
+  wat.guest_write32(objectInfo, 316);
+  assert.strictEqual(wat.test_di_get_object_info(keyboard, objectInfo, 1, 1) >>> 0, 0,
+    'keyboard offsets use the standard DIK scan-code data format');
+  assert.deepStrictEqual([
+    wat.guest_read32(objectInfo + 4) >>> 0,
+    wat.guest_read32(objectInfo + 20), wat.guest_read32(objectInfo + 24),
+  ], [0x55728220, 1, 0x104], 'DIK_ESCAPE matches the enumerated key descriptor');
+
+  wat.guest_write32(objectInfo, 292);
+  wat.guest_write32(objectInfo + 292, 0xcafebabe);
+  assert.strictEqual(wat.test_di_get_object_info(mouse, objectInfo, 1, 2) >>> 0, 0,
+    'DirectX 3 DIDEVICEOBJECTINSTANCE_DX3 is accepted');
+  assert.deepStrictEqual([
+    wat.guest_read32(objectInfo), wat.guest_read32(objectInfo + 20),
+    wat.guest_read32(objectInfo + 24), wat.guest_read32(objectInfo + 292) >>> 0,
+  ], [292, 0, 1, 0xcafebabe], 'DX3 output is caller-sized and bounded');
+
+  assert.strictEqual(wat.test_di_get_object_info(mouse, 0, 0, 1) >>> 0, 0x80004003,
+    'null descriptor returns E_POINTER');
+  wat.guest_write32(objectInfo, 123);
+  assert.strictEqual(wat.test_di_get_object_info(mouse, objectInfo, 0, 1) >>> 0, 0x80070057,
+    'invalid descriptor size returns DIERR_INVALIDPARAM');
+  wat.guest_write32(objectInfo, 316);
+  assert.strictEqual(wat.test_di_get_object_info(mouse, objectInfo, 0, 0) >>> 0, 0x80070057,
+    'DIPH_DEVICE is invalid for object lookup');
+  assert.strictEqual(wat.test_di_get_object_info(mouse, objectInfo, 99, 1) >>> 0, 0x80070002,
+    'an unknown data-format offset returns DIERR_OBJECTNOTFOUND');
+  assert.strictEqual(wat.test_di_get_object_info(mouse, objectInfo, 0x00010002, 3) >>> 0,
+    0x80070002, 'legacy system devices have no DIPH_BYUSAGE object');
 
   // Both transitions happened before DirectInput polled. A live-state-only
   // implementation sees released -> released and permanently loses the click.
