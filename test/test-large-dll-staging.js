@@ -3,14 +3,10 @@
 'use strict';
 
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
-const { compileWatSnapshot } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 const { loadDll } = require('../lib/dll-loader');
-const { REGIONS } = require('../lib/region-map.generated');
-
-const ROOT = path.join(__dirname, '..');
+const { REGIONS, GUEST_BASE, g2w: regionG2w } = require('../lib/region-map.generated');
 
 function makeMinimalDll(totalSize, options = {}) {
   const bytes = Buffer.alloc(totalSize);
@@ -66,8 +62,9 @@ function makeMinimalDll(totalSize, options = {}) {
 }
 
 async function main() {
-  const wasm = await compileWatSnapshot(file =>
-    fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
+  // The full src tree, through the canonical compiler: the legacy compileWat
+  // path lowers the tree's region-symbolic operands to traps (commit 24b79256).
+  const wasm = compileSrcWasm();
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const ctx = {
     exports: null,
@@ -107,19 +104,19 @@ async function main() {
     'large DLL metadata should occupy the next table entry');
 
   const imageBase = e.get_image_base() >>> 0;
-  const entryWa = (second.dllMain >>> 0) - imageBase + 0x12000;
+  const entryWa = regionG2w(second.dllMain, imageBase);
   assert.deepStrictEqual(Array.from(new Uint8Array(memory.buffer, entryWa, 8)),
     [0xb8, 1, 0, 0, 0, 0xc2, 0x0c, 0],
     'large DLL executable section should map from the intact staging buffer');
 
-  const g2w = guest => (guest >>> 0) - imageBase + 0x12000;
+  const g2w = guest => regionG2w(guest, imageBase);
   assert.strictEqual(Buffer.from(memory.buffer, REGIONS.ORDINAL_NAMES_WSOCK32.base, 11).toString('ascii'), 'WSOCK32.dll',
     'static WinSock ordinal map should contain the DLL name');
   assert.strictEqual(Buffer.from(memory.buffer,
     g2w((second.loadAddr >>> 0) + 0x1130), 11).toString('ascii'), 'WSOCK32.dll',
     'synthetic large DLL should retain its import descriptor name');
   const iatThunk = dv.getUint32(g2w((second.loadAddr >>> 0) + 0x1150), true);
-  const thunkWa = 0x07112000;
+  const thunkWa = REGIONS.THUNK_BASE.base;
   assert.strictEqual(iatThunk, 0x07100000,
     'WSOCK32 ordinal import should point at the first host thunk');
   assert.strictEqual(dv.getUint32(thunkWa, true), 0x80000073,
