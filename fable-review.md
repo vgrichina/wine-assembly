@@ -261,6 +261,38 @@ dead tools (item 12), `decode-diff` tier row (A.5), menu-font side effect and
 magic 21 (A.8), D3D-worker parity + FPS A/B (A.2), MODE1/2048 CUE support
 (M5), the remaining 361 census literals (banked, ratcheted).
 
+## Pass-4 addendum — dated verification ticks
+
+**By 16:20 (+7 commits, HEAD `afd2ecb4`)** the review→fix loop reached
+inside a half hour: the coordinator dispatched three compiler-TODO agents,
+and the first deliverable — an *independent* wabt differential oracle for
+the WATX encoder — **found a HIGH within minutes of existing**:
+`(v128.const <shape> ...)` in standard-WAT spelling silently emits the wrong
+constant (the shape token is read as lane 0, `parseInt('i8x16')` → NaN →
+the documented default 0; every lane shifts, the 16th is dropped, and wider
+shapes truncate each lane to one byte — it compiles, validates, and runs
+with a constant nobody wrote). The shipped tree is unaffected — `src/*.wat`
+uses WATX's byte-wise spelling, which is correct — and the finder posted a
+runnable reproducer and deliberately did *not* fix it (outside their claim);
+open at tick time. This is the exact class the Pass-3 A.1/rec-8 lineage
+predicted: an encoder correct against itself needs an oracle that isn't
+itself. The toyvm region-JIT saga also closed its root cause: `readTrace`
+ran past loop/fused terminators and read the *next* block as this block's
+fall-through — **11 of 15 corpus region bugs were this one defect**
+(`8bd1cd39`, write-up `6e21058a`, plus `afd2ecb4` separating
+stopped-elsewhere from computed-wrong). Wave-3 pre-steps landed two honest
+region findings: harness rendezvous cells are now declared `$TEST_SCRATCH`
+storage (`57d33f78`), and the GDI region tests had been scribbling their
+RECT/POINT scratch **on top of `$CONSOLE_TEXT`'s bytes** (`5be01584`) —
+exactly the aliasing the declared map exists to make impossible; and
+`region.addr` is now legal in a global initializer (`639d12cd`), unblocking
+the alias retirement flagged in wave 1. `16ac72a8` fixes Liquid War's
+DirectInput startup (guest callbacks now transfer instead of resuming the
+interrupted block). Pass-4 recommendations: none picked up yet — the three
+dispatched agents are compiler-side; the BYO-media Tier-1 fixes (H1
+materialize, H2 truncation, H3 ISO names, M4 schema wipe) have no owner on
+the board yet.
+
 ---
 
 # Pass 3 — 2026-08-30
