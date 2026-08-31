@@ -910,6 +910,34 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     return null;
   }
 
+  // ── Explicit statement-level (drop) (migration gap G8) ─────────────────────
+  // A bare `(drop)` — no operand of its own — is the CONSUMER of the value the previous
+  // sibling statement left on the stack. That is how standard WAT and Wine-Assembly's own
+  // legacy compiler (lib/compile-wat.js, which has no auto-drop at all — `drop` is a plain
+  // 0x1A opcode-table entry) spell "call this i32-returning function for its effect only"
+  // inside a void function:
+  //
+  //     (call $host_gdi_set_dib_to_device …)   ;; (result i32)
+  //     (drop)
+  //
+  // WATX's statement compiler synthesizes a drop for any non-final statement that leaves a
+  // value, so before this it emitted its own drop AND then compiled the explicit one on
+  // top, and the second underflowed the stack. The site is src/09a8-handlers-directx.wat:
+  // 4449, and it is load-bearing — deleting it makes the LEGACY build fail validation
+  // ("expected 0 elements on the stack for fallthru, found 1" in $dx_blit_entry_rect_to_hdc).
+  //
+  // Deliberate scope: this suppresses the synthesized drop only when an explicit consumer
+  // is right there. A value left with NO consumer is still auto-dropped exactly as before —
+  // that is the status quo every WATX source in the tree is written against, and promoting
+  // it to an error is a separate, much larger change.
+  function isBareDrop(node) {
+    return Array.isArray(node) && V(node[1]) === 'drop' && (node.length - 1) === 1;
+  }
+  // Should the compiler synthesize a drop for `stmt`, given the sibling that follows it?
+  function needsAutoDrop(stmt, nextStmt, func) {
+    return exprProducesValue(stmt, func) && !isBareDrop(nextStmt);
+  }
+
   function exprProducesValue(expr, func) {
     if (!expr) return false;
     if (!Array.isArray(expr)) {
@@ -1998,7 +2026,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
           for (let mi = 0; mi < multi.length; mi++) {
             compileExpr(multi[mi], func, depth + 1, bytes);
             // Drop intermediate values (only keep last if non-void block)
-            if (mi < multi.length - 1 && exprProducesValue(multi[mi], func)) {
+            if (mi < multi.length - 1 && needsAutoDrop(multi[mi], multi[mi + 1], func)) {
               bytes.push(OP.drop);
             } else if (mi === multi.length - 1 && isVoidIf && exprProducesValue(multi[mi], func)) {
               bytes.push(OP.drop);
@@ -2019,7 +2047,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
           for (let mi = 0; mi < multi.length; mi++) {
             compileExpr(multi[mi], func, depth + 1, bytes);
             // Drop intermediate values (only keep last if non-void block)
-            if (mi < multi.length - 1 && exprProducesValue(multi[mi], func)) {
+            if (mi < multi.length - 1 && needsAutoDrop(multi[mi], multi[mi + 1], func)) {
               bytes.push(OP.drop);
             } else if (mi === multi.length - 1 && isVoidIf && exprProducesValue(multi[mi], func)) {
               bytes.push(OP.drop);
@@ -2092,7 +2120,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         const isLast = (i === (expr.length - 1) - 1);
         // Drop each statement's value; keep only the last one, and only for a
         // value-producing block.
-        if (exprProducesValue(expr[i + 1], func) && !(isLast && producesValue)) {
+        if (needsAutoDrop(expr[i + 1], expr[i + 2], func) && !(isLast && producesValue)) {
           bytes.push(OP.drop);
         }
       }
@@ -2118,7 +2146,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         compileExpr(expr[i + 1], func, depth + 1, bytes);
         const isLast = (i === (expr.length - 1) - 1);
         // Drop every statement's value; keep the last one only for a typed loop.
-        if (exprProducesValue(expr[i + 1], func) && !(isLast && declared !== null)) {
+        if (needsAutoDrop(expr[i + 1], expr[i + 2], func) && !(isLast && declared !== null)) {
           bytes.push(OP.drop);
         }
       }
@@ -2273,7 +2301,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       for (let i = 1; i < (expr.length - 1); i++) {
         compileExpr(expr[i + 1], func, depth, bytes);
         // Drop intermediate values (only keep last)
-        if (i < (expr.length - 1) - 1 && exprProducesValue(expr[i + 1], func)) {
+        if (i < (expr.length - 1) - 1 && needsAutoDrop(expr[i + 1], expr[i + 2], func)) {
           bytes.push(OP.drop);
         }
       }
@@ -2305,7 +2333,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       // Compile body
       for (let i = 3; i < (expr.length - 1); i++) {
         compileExpr(expr[i + 1], func, depth, bytes);
-        if (i < (expr.length - 1) - 1 && exprProducesValue(expr[i + 1], func)) bytes.push(OP.drop);
+        if (i < (expr.length - 1) - 1 && needsAutoDrop(expr[i + 1], expr[i + 2], func)) bytes.push(OP.drop);
       }
       
       // Call region_exit()
@@ -2783,7 +2811,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     // Headless form (no leading symbol) — keep the conservative compile-children behavior.
     for (let i = 1; i < (expr.length - 1); i++) {
       compileExpr(expr[i + 1], func, depth, bytes);
-      if (i < (expr.length - 1) - 1 && exprProducesValue(expr[i + 1], func)) bytes.push(OP.drop);
+      if (i < (expr.length - 1) - 1 && needsAutoDrop(expr[i + 1], expr[i + 2], func)) bytes.push(OP.drop);
     }
     return bytes;
   }
@@ -3450,7 +3478,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       for (let i = 0; i < ufi.body.length; i++) {
         compileExpr(ufi.body[i], ufi, 0, bodyBytes);
         const isLast = (i === ufi.body.length - 1);
-        if (!isLast && exprProducesValue(ufi.body[i], ufi)) {
+        if (!isLast && needsAutoDrop(ufi.body[i], ufi.body[i + 1], ufi)) {
           // Drop intermediate values — not the return value
           bodyBytes.push(OP.drop);
         } else if (isLast && isVoidFunc && exprProducesValue(ufi.body[i], ufi)) {

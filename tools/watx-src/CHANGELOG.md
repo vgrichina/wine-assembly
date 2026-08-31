@@ -126,3 +126,50 @@ warnings — the six classes above contribute no errors at all. The G6 regressio
 was re-run against a scratch copy of the compiler with only that fix reverted:
 the standard-order module fails validation and the missing-lane module compiles,
 validates and silently reads lane 0, exactly as the census described.
+
+## 2026-08-31 — G8: an explicit `(drop)` is the consumer, not a second dropper
+
+Closes the seventh WATX-side gap class from `docs/watx-migration-gaps.md`. The
+census originally filed G8 as a Wine-source defect ("the `(drop)` at
+`src/09a8-handlers-directx.wat:4449` is dead, delete it"); that verdict was
+reversed at `3aa8310f` after it was shown that `lib/compile-wat.js` has **no
+auto-drop of any kind** — `drop` is a plain opcode-table entry (`0x1A`) — and
+that the line is load-bearing: `$host_gdi_set_dib_to_device` is `(result i32)`
+and the enclosing `$dx_blit_entry_rect_to_hdc` has no result, so deleting it
+makes the *shipped* legacy module fail validation with "expected 0 elements on
+the stack for fallthru, found 1".
+
+WATX's statement compiler synthesized a drop for every value-producing statement
+in a statement sequence and then compiled the explicit `(drop)` on top of it, so
+the two fought and the second underflowed ("not enough arguments on the stack for
+drop"). The fix is a one-token lookahead: `needsAutoDrop(stmt, nextStmt, func)`
+in `compiler-codegen.js` suppresses the synthesized drop when the *next* sibling
+is a bare `(drop)`, which is then compiled normally and consumes the value. It
+is wired into every statement sequence — function body, `begin`, `block`, `loop`,
+both `if` arms and the remaining statement-list loops — not just the function
+body, so the shape works wherever it is written.
+
+Design decision, deliberately documented in the suite rather than changed: a
+value-producing statement with **no** explicit `(drop)` after it is still
+auto-dropped exactly as before. That is the status quo every WATX source in the
+tree is written against, and promoting it to a hard error is a separate and much
+larger change. One drop consumes one value: a *second* bare `(drop)` with nothing
+left, and a bare `(drop)` after a void call, are both rejected by wasm validation
+rather than silently absorbed — both are asserted.
+
+New suite `test/watx-compiler-explicit-drop.test.js` (33 checks, added to the
+provenance checker's `REQUIRED_FILES`) covers the `09a8:4449` shape in function
+body, trailing, `begin`, `block`, `loop` and `if`-arm position; the two
+no-regression auto-drop cases; the two rejection cases; and the untouched
+`(drop EXPR)` operand form. It fails on the pre-fix compiler with exactly the
+six underflow errors described above.
+
+Milestone 2 exit gate, with this landed: the real Wine-Assembly source closure
+compiles **completely unmodified** — driven from `src/main.watx`'s `(include …)`
+list, zero neutralizations, zero in-memory patches — in both modes:
+`tailCalls: true` → 984,312 bytes, `tailCalls: false` → 984,761 bytes, 0 warnings
+each, and both binaries pass `new WebAssembly.Module()`.
+
+New manifest digest:
+
+  812bb3b0163fd10ef29d6f0e2f1fa9cfde6aff8d5529c4da18d827d94d980235
