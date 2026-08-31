@@ -645,6 +645,44 @@ that subsystem keeps growing unreviewed (`29dab90a` writable C:\ overlay,
 `34b4f08f`/`a5b2928c` installer chain launches from the caller's VFS,
 `853cf729` installer UI flows in both browser modes).
 
+**By 08:00 (+13 commits, HEAD `c8d2c8e2`)** the differential matrix earned its
+keep: an audit of the six remaining code-body diffs found **six shipped
+Wine-source defects of the G5 class** — a bare instruction in the else slot of
+an else-less `(if)`, which `lib/compile-wat.js` silently discards and WATX
+compiles as the else arm; *both* are wrong, differently, and the disagreement
+is what surfaced them. The headline: `$menu_group_set_disabled` **never wrote
+MF_GRAYED** — one paren at `09c5:1338` closed the state-remembering `if` early,
+so EnableMenuItem walked the group, returned the previous state, and changed
+nothing; `483f305a` fixes it and corrects
+`test-d3dim-globe-render-menu.js`, whose expectations had encoded the broken
+behavior. `95e7263b` restored two more dropped tails (the palette-less 8bpp
+texel greyscale fallback in `09ab`, a treeview free in `09c2`). Five of six
+are fixed; the sixth (`09a5:225` in `$handle_CreateWindowExA`, matrix body
+#2496, 3633 B legacy vs 3642 B WATX) is the **last real code-body diff** and
+waits on its file's owner, who also has an uncommitted working-tree edit the
+board isolated as regressing the new globe test. Note the residual hazard:
+`compile-wat.js` is unchanged this window and still discards bare tails
+silently — WATX now warns on the positional else (`155ff750`) and the matrix
+diffs the bodies, but the matrix lives in the UNIT tier
+(`test-watx-matrix.js`), not `build.sh`. Milestone 3 went ACCEPTANCE GREEN
+after two more compiler-fidelity fixes (`3fdae908`: exports emitted in
+declaration order, and negative hex i64 literals were being **zeroed**), and
+round-4 review hardening landed (strict whole-token numeric literals; a test
+failing on *both* matrix columns is now MATRIX RED instead of silent green,
+`f2f99acd`). Milestone 4 was answered with numbers, honestly
+(`8e5ac289`+`55ed2211`): a disposable Worker compiles the full 11.29 MB /
+60-include closure in node and Chrome with byte-identical outputs, ~1.5 s
+cold, **249 MB (tail) / 265 MB (compat) peak RSS — ~2.5× the plan's sub-100 MB
+mobile target, which the doc keeps OPEN** while noting the number matches
+what scaling the Android corpus predicts and that compiler memory is released
+before Wine's 512 MB allocation; the Safari/iOS half of the gate is
+explicitly not done. toyvm: regions now compile their branches
+(`776c20dd`), refuse guest code rewritten under them (`9b67633d`), and were
+priced against four other wasm engines (`c9a73d30`); one live OPEN —
+ACCIDENT.EXE's region diverges at 12 M dispatches. My items re-checked, all
+unchanged: **A.9 still 18 dead-splice tests, A.10 still six untracked
+manifest rows, rec 8 still absent from `build.sh`**.
+
 **New in this window, ranked.**
 
 **A.1 FIXED `d5cf1afb`: `bundle-browser.js` now discovers modules by walking
