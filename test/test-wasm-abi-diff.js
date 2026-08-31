@@ -17,10 +17,19 @@
 //   * a module against itself is a full MATCH, exit 0;
 //   * a module whose type section is REORDERED (every index rewritten) still
 //     matches — the positive control for structural signature resolution;
-//   * one targeted negative control per section class, each of which must be
-//     reported against the right section name and exit 1;
+//   * one targeted negative control per ACCEPTANCE section class, each of
+//     which must be reported against the right section name and exit 1;
+//   * per-body encoding differences are a DIAGNOSTIC: reported, but not
+//     fatal, because docs/watx-migration-plan.md says byte equality is not
+//     the criterion and a different compiler may legitimately choose a
+//     different local grouping or LEB width. --strict-code makes them fatal
+//     again for same-compiler determinism checks, and both halves are tested;
 //   * the tail-call scan finds a real `return_call` and does NOT fire on a
-//     module whose only 0x12/0x13 bytes sit inside immediates and data.
+//     module whose only 0x12/0x13 bytes sit inside immediates and data;
+//   * an invalid module is rejected before any comparison, so the structural
+//     decoder cannot report MATCH on something no engine would accept;
+//   * the vacuous-name-map warning fires exactly when neither module carries
+//     a name section.
 //
 // Runs in milliseconds; no build artifacts required.
 
@@ -90,6 +99,9 @@ function buildModule(overrides) {
     dataOffset: 0x100,
     dataBytes: 'hello',
     funcNames: ['imported_log', 'add', 'noop', 'caller'],
+    noNameSection: false,
+    dropLastBody: false,
+    bodyOrder: [0, 1, 2],   // indices into [add, noop, caller]
     tailCall: false,
   }, overrides || {});
 
@@ -142,10 +154,18 @@ function buildModule(overrides) {
   // a br_table label), which is exactly the false positive a byte-grep hits.
   const bodyAdd = body([0x20, 0x00, 0x20, 0x01, 0x6a]);
   const bodyNoop = body([0x41, 0x12, 0x1a, 0x41, 0x13, 0x1a]);
+  // Calls the imported `host.log` (#0, () -> ()), so this body typechecks in
+  // any function whose signature is v_v — which lets the declaration-order
+  // fixture reorder bodies to match and still be a VALID module. An invalid
+  // fixture proves nothing, and the CLI now rejects one outright.
   const bodyCaller = o.tailCall
-    ? body([0x12, ...uleb(2)])                 // return_call #2
-    : body([0x10, ...uleb(2)]);                // call #2
-  const codeSec = section(10, vec([bodyAdd, bodyNoop, bodyCaller]));
+    ? body([0x12, ...uleb(0)])                 // return_call #0
+    : body([0x10, ...uleb(0)]);                // call #0
+  const allBodies = [bodyAdd, bodyNoop, bodyCaller];
+  const bodies = o.dropLastBody
+    ? [bodyAdd, bodyNoop]
+    : o.bodyOrder.map(i => allBodies[i]);
+  const codeSec = section(10, vec(bodies));
 
   const dataSec = section(11, vec([
     [...uleb(0), 0x41, ...sleb(o.dataOffset), 0x0b, ...str(o.dataBytes)],
@@ -162,7 +182,8 @@ function buildModule(overrides) {
   return Buffer.from([
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     ...typeSec, ...importSec, ...funcSec, ...tableSec, ...globalSec,
-    ...exportSec, ...elemSec, ...codeSec, ...dataSec, ...nameSec,
+    ...exportSec, ...elemSec, ...codeSec, ...dataSec,
+    ...(o.noNameSection ? [] : nameSec),
   ]);
 }
 
@@ -179,18 +200,27 @@ function write(name, bytes) {
 
 // Run the CLI and return { code, out } so exit codes are tested for real, not
 // inferred from the library result.
+// stderr is piped rather than inherited: several checks here deliberately feed
+// the tool a broken module, and letting those rejections print would make a
+// passing run look like a failing one.
 function runCli(args) {
+  const opts = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] };
   try {
-    const out = execFileSync('node', [TOOL, ...args], { encoding: 'utf8' });
+    const out = execFileSync('node', [TOOL, ...args], opts);
     return { code: 0, out };
   } catch (error) {
     return { code: error.status, out: `${error.stdout || ''}${error.stderr || ''}` };
   }
 }
 
+// Only ACCEPTANCE sections decide a verdict; a diagnostic that differs is
+// information, not a failure.
+const differingAcceptance = result =>
+  result.acceptanceSections.filter(s => s.diffs.length).map(s => s.name);
+
 function expectMatch(label, a, b) {
   const result = diffWasmAbi(a, b);
-  const bad = result.sections.filter(s => s.diffs.length);
+  const bad = result.acceptanceSections.filter(s => s.diffs.length);
   assert.ok(result.match, `${label}: expected MATCH, got DIFF in ` +
     `${bad.map(s => `${s.name}: ${s.diffs[0]}`).join('; ')}`);
   const cli = runCli([a, b, '--quiet']);
@@ -206,7 +236,7 @@ function expectDiffIn(label, a, b, expected) {
   const want = Array.isArray(expected) ? expected : [expected];
   const primary = want[0];
   const result = diffWasmAbi(a, b);
-  const differing = result.sections.filter(s => s.diffs.length).map(s => s.name);
+  const differing = differingAcceptance(result);
   assert.ok(!result.match, `${label}: expected a DIFF, got a full MATCH`);
   assert.deepStrictEqual(differing.slice().sort(), want.slice().sort(),
     `${label}: expected exactly [${want.join(', ')}] to differ, ` +
@@ -216,7 +246,7 @@ function expectDiffIn(label, a, b, expected) {
   assert.ok(new RegExp(`^DIFF\\s+${primary}`, 'm').test(cli.out),
     `${label}: CLI output did not name section "${primary}"\n${cli.out}`);
   checks++;
-  const first = result.sections.find(s => s.name === primary).diffs[0];
+  const first = result.acceptanceSections.find(s => s.name === primary).diffs[0];
   console.log(`  ok  ${label} — DIFF ${primary}: ${first}`);
 }
 
@@ -272,9 +302,15 @@ expectDiffIn('global initializer changed', base,
 
 // Function #1 is exported, so reordering the declarations moves a signature
 // under an existing export name — reported in both places, which is exactly
-// what the plan's function-order invariant is there to catch.
+// what the plan's function-order invariant is there to catch. The bodies move
+// with the signatures so the fixture stays a valid module; the resulting body
+// difference is only a diagnostic, which is why `expectDiffIn` compares
+// acceptance sections and this control is still exactly [functions, exports].
 expectDiffIn('function declaration order changed', base,
-  write('neg-func-order', buildModule({ funcDecls: ['v_v', 'ii_i', 'v_v'] })),
+  write('neg-func-order', buildModule({
+    funcDecls: ['v_v', 'ii_i', 'v_v'],
+    bodyOrder: [1, 0, 2],
+  })),
   ['functions', 'exports']);
 
 expectDiffIn('name-to-index map permuted', base,
@@ -299,7 +335,7 @@ const tailModule = write('tailcall', buildModule({ tailCall: true }));
 const tailDecoded = decodeWasm(tailModule);
 assert.strictEqual(tailDecoded.tailCalls.length, 1, 'expected one return_call site');
 assert.strictEqual(tailDecoded.tailCalls[0].op, 'return_call');
-assert.strictEqual(tailDecoded.tailCalls[0].target, 2);
+assert.strictEqual(tailDecoded.tailCalls[0].target, 0);
 checks++;
 console.log('  ok  a real return_call is found and its target decoded');
 
@@ -317,17 +353,114 @@ assert.ok(/FAIL\s+--require-no-tailcalls/.test(dirty.out), dirty.out);
 checks++;
 console.log('  ok  --require-no-tailcalls fails when a return_call is present');
 
-// A tail-call artifact and its lowered twin: same ABI, different code. This is
-// the exact shape of build/wine-assembly.wasm vs build/wine-assembly.compat.wasm.
+console.log('acceptance vs diagnostic');
+
+// A tail-call artifact and its lowered twin: same ABI, different body bytes.
+// This is the exact shape of build/wine-assembly.wasm vs
+// build/wine-assembly.compat.wasm, and it must PASS by default — the plan says
+// byte equality is welcome but is not the criterion.
 const lowered = write('lowered', buildModule({ tailCall: false }));
 const pair = diffWasmAbi(tailModule, lowered);
-const pairDiffs = pair.sections.filter(s => s.diffs.length).map(s => s.name);
-assert.deepStrictEqual(pairDiffs, ['code'],
-  `tail-call vs lowered twin must differ only in code, got ${pairDiffs.join(', ')}`);
+assert.deepStrictEqual(differingAcceptance(pair), [],
+  'tail-call vs lowered twin must have no acceptance diff, got ' +
+  `[${differingAcceptance(pair).join(', ')}]`);
+assert.ok(pair.match, 'tail-call vs lowered twin must MATCH by default');
+assert.strictEqual(pair.bodyDiffs, 1, 'exactly one body should differ');
+const bodySection = pair.sections.find(s => s.name === 'code-bodies');
+assert.strictEqual(bodySection.acceptance, false,
+  'code-bodies must be a diagnostic by default');
+assert.ok(bodySection.diffs.length, 'the body difference must still be REPORTED');
 assert.strictEqual(pair.tailCalls.a, 1);
 assert.strictEqual(pair.tailCalls.b, 0);
 checks++;
-console.log('  ok  tail-call artifact vs lowered twin differs only in code');
+console.log('  ok  tail-call vs lowered twin: acceptance MATCH, body diff reported');
+
+const pairCli = runCli([tailModule, lowered]);
+assert.strictEqual(pairCli.code, 0, 'default verdict on the lowering pair must be exit 0');
+assert.ok(/^NOTE\s+code-bodies/m.test(pairCli.out),
+  `expected a NOTE line for code-bodies\n${pairCli.out}`);
+assert.ok(/^ABI MATCH \(1 body encodings differ; diagnostic only\)$/m.test(pairCli.out),
+  `verdict line must disclose the diagnostic\n${pairCli.out}`);
+checks++;
+console.log('  ok  CLI reports code-bodies as NOTE and still exits 0');
+
+// --strict-code is the same-compiler determinism check: the same pair must now
+// fail, and code-bodies must be an acceptance section.
+const strict = diffWasmAbi(tailModule, lowered, { strictCode: true });
+assert.ok(!strict.match, '--strict-code must fail on differing body bytes');
+assert.deepStrictEqual(differingAcceptance(strict), ['code-bodies']);
+const strictCli = runCli([tailModule, lowered, '--strict-code']);
+assert.strictEqual(strictCli.code, 1, '--strict-code must exit 1 here');
+assert.ok(/^DIFF\s+code-bodies/m.test(strictCli.out), strictCli.out);
+checks++;
+console.log('  ok  --strict-code promotes code-bodies to fatal (exit 1)');
+
+// ...and must still pass on an identical pair, or it would be useless as a
+// determinism check.
+assert.strictEqual(runCli([base, base, '--strict-code']).code, 0,
+  '--strict-code must pass on identical modules');
+checks++;
+console.log('  ok  --strict-code passes on identical modules');
+
+// A count difference IS fatal even though bodies are not: a compiler is free
+// to encode a body differently, never to emit a different number of functions.
+const shortModule = write('short-funcs', buildModule({
+  funcDecls: ['ii_i', 'v_v'],
+  funcNames: ['imported_log', 'add', 'noop'],
+  elemEntries: [1, 2],
+  dropLastBody: true,
+}));
+const countPair = diffWasmAbi(base, shortModule);
+assert.ok(differingAcceptance(countPair).includes('code'),
+  `a function-count change must be an acceptance diff, got ` +
+  `[${differingAcceptance(countPair).join(', ')}]`);
+assert.ok(countPair.sections.find(s => s.name === 'code').diffs
+  .some(d => /count/.test(d)), 'the code section must name the count');
+checks++;
+console.log('  ok  function/code COUNT stays an acceptance item');
+
+console.log('validation and name-map warning');
+
+// A structural decoder will happily report MATCH on garbage, so the CLI
+// validates first.
+const garbage = path.join(tmpDir, 'garbage.wasm');
+fs.writeFileSync(garbage, Buffer.from([0x00, 0x61, 0x73, 0x6d, 1, 0, 0, 0, 0xff, 0xff]));
+assert.ok(!WebAssembly.validate(fs.readFileSync(garbage)), 'fixture must be invalid');
+const bad = runCli([garbage, garbage]);
+assert.strictEqual(bad.code, 2, `invalid input must exit 2, got ${bad.code}`);
+assert.ok(/not a valid WebAssembly module/.test(bad.out), bad.out);
+assert.ok(/--no-validate/.test(bad.out),
+  'the rejection must name the escape hatch');
+checks++;
+console.log('  ok  an invalid module is rejected before comparison (exit 2)');
+
+// The escape hatch must actually skip validation — here the decoder then hits
+// the truncation itself, which is a decode error (2), not a silent MATCH.
+const skipped = runCli([garbage, garbage, '--no-validate']);
+assert.notStrictEqual(skipped.code, 0,
+  '--no-validate must not turn garbage into a MATCH');
+assert.ok(!/not a valid WebAssembly module/.test(skipped.out),
+  '--no-validate must skip the validate step');
+checks++;
+console.log('  ok  --no-validate skips validation without faking a MATCH');
+
+// The name map is vacuous when neither module has a name section — the state
+// every current wine artifact is in — and the tool must say so out loud.
+const noNames = write('no-names', buildModule({ noNameSection: true }));
+assert.strictEqual(decodeWasm(noNames).funcNames.size, 0);
+const namedResult = diffWasmAbi(base, base);
+assert.strictEqual(namedResult.nameMapVacuous, false,
+  'a module WITH names must not be flagged vacuous');
+const vacuous = diffWasmAbi(noNames, noNames);
+assert.strictEqual(vacuous.nameMapVacuous, true);
+const vacuousCli = runCli([noNames, noNames]);
+assert.strictEqual(vacuousCli.code, 0);
+assert.ok(/^WARNING: neither module has a name section/m.test(vacuousCli.out),
+  `expected the vacuous-name-map warning\n${vacuousCli.out}`);
+assert.ok(!/^WARNING: neither module has a name section/m.test(runCli([base, base]).out),
+  'the warning must not fire when a name section is present');
+checks++;
+console.log('  ok  vacuous name-map warning fires only when no name section exists');
 
 // --sections narrows the comparison, so a caller can gate on the ABI alone.
 const abiOnly = diffWasmAbi(tailModule, lowered, {
@@ -335,7 +468,7 @@ const abiOnly = diffWasmAbi(tailModule, lowered, {
 });
 assert.ok(abiOnly.match, '--sections ABI subset must match across the lowering');
 checks++;
-console.log('  ok  --sections subset ignores the expected code difference');
+console.log('  ok  --sections subset narrows the comparison');
 
 fs.rmSync(tmpDir, { recursive: true, force: true });
 console.log(`\nPASS test-wasm-abi-diff (${checks} checks)`);

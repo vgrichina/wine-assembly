@@ -5,6 +5,7 @@
 //
 //   node tools/wasm-abi-diff.js a.wasm b.wasm [--max=N] [--quiet]
 //                                             [--require-no-tailcalls]
+//                                             [--strict-code] [--no-validate]
 //                                             [--sections=imports,data]
 //
 // WHY THIS EXISTS: Milestone 3 of docs/watx-migration-plan.md gates the
@@ -21,43 +22,71 @@
 //   memories, data segments (offset/length/bytes), code and function counts,
 //   and the presence of tail-call opcodes across every code body.
 //
+// ACCEPTANCE vs DIAGNOSTIC. The plan says outright that byte equality is
+// welcome but is NOT the criterion, so the verdict must not be decided by
+// anything a valid compiler may legitimately encode differently. Per-function
+// code BODY bytes are exactly that: local grouping, LEB width and instruction
+// selection are all free choices, and a WATX artifact will differ in them
+// while being ABI-identical. So body comparison is a DIAGNOSTIC — always
+// decoded, always reported, never fatal by default. What is fatal is the
+// section list above plus the function and code COUNTS.
+//
+//   --strict-code promotes the body comparison back to an acceptance item.
+//   Use it for same-compiler determinism checks ("does this build twice to
+//   the same bytes"), never for a cross-compiler gate.
+//
+// The tail-call census is always printed and is an acceptance-report item,
+// but census EQUALITY is deliberately not part of the verdict: a tail-call
+// artifact and its compatibility twin are supposed to disagree there. Gate on
+// it explicitly with --require-no-tailcalls, which exits non-zero if EITHER
+// module contains a tail call — the check for `build/*.compat.wasm`.
+//
 // The tail-call scan is a real instruction walk, not a byte grep: 0x12 and
 // 0x13 occur constantly inside LEB immediates and 16-byte v128 constants, so
-// a grep reports tail calls in every module ever built. --require-no-tailcalls
-// exits non-zero if EITHER module contains one, which is the check for a
-// compatibility artifact (`build/*.compat.wasm`).
+// a grep reports tail calls in every module ever built.
 //
-// Exit code 0 on a full ABI match, 1 on any diff (or a failed
+// Both inputs are run through WebAssembly.validate() before anything is
+// compared, because this decoder is structural and will happily report MATCH
+// on two modules that no engine would accept. --no-validate skips that when
+// the module uses a proposal this Node build has not shipped.
+//
+// Exit code 0 on a full ABI match, 1 on any acceptance diff (or a failed
 // --require-no-tailcalls), 2 on error — so it chains in a shell.
 //
 // Importable: require('./wasm-abi-diff').{decodeWasm, diffWasmAbi}
 //
 // MEASURED, tail-call vs compatibility artifact (2026-08-31, build at HEAD
 // e87d8325 + shared WIP): `node tools/wasm-abi-diff.js build/wine-assembly.wasm
-// build/wine-assembly.compat.wasm` reports exactly ONE differing section, and
-// it is the expected one:
+// build/wine-assembly.compat.wasm` exits 0 — every acceptance section matches:
 //
-//   * code — DIFF: 422 of 8142 bodies differ, each by 1-2 bytes, and the
-//     tail-call census reads "A 448 sites in 422 functions, B 0 sites in 0
-//     functions". That is the lowering itself: `return_call f` (0x12 + a
+//   * imports, exports, types, functions, globals, tables, elements,
+//     memories, data, code(counts) — all MATCH. That is the set of invariants
+//     the plan actually gates on, and the reason this tool exists: the two
+//     artifacts are not byte-equal and never will be, but their ABI is.
+//   * code-bodies — DIAGNOSTIC, 422 of 8142 bodies differ, each by 1-2 bytes,
+//     and the tail-call census reads "A 448 sites in 422 functions, B 0 sites
+//     in 0 functions". That is the lowering itself: `return_call f` (0x12 + a
 //     funcidx LEB) becomes `call f` + `return` (0x10 + the same LEB + 0x0f),
 //     so exactly the 422 functions that used a tail call grow by one byte per
-//     site. Function COUNT is identical (8142 both sides).
-//   * imports, exports, types, functions, globals, tables, elements,
-//     memories, data — all MATCH. That is the set of invariants the plan
-//     actually gates on, and the reason this tool exists: the two artifacts
-//     are not byte-equal and never will be, but their ABI is.
+//     site. Function COUNT is identical (8142 both sides), which is what the
+//     verdict checks.
 //
-// Anything else differing between those two artifacts is a bug in the
-// lowering, not an encoding difference.
+// Under --strict-code that pair reports `code-bodies` as a DIFF and exits 1,
+// which is correct and is why --strict-code is not the default.
 //
-// Note on the name map: `lib/compile-wat.js` emits no `name` custom section
-// today (section ids present are 1,2,3,4,6,7,9,10,11), so every function
-// renders as `<unnamed>` and the name-to-index comparison is vacuously equal
-// on current artifacts. It is still compared, because the plan's
-// function-order invariant exists precisely so `func-index.js` and friends do
-// not name the wrong code, and a future emitter that adds names must not
-// permute them.
+// KNOWN LIMITATION — the name map is vacuous today, and that matters more now
+// that body bytes are diagnostic. `lib/compile-wat.js` emits no `name` custom
+// section (section ids present are 1,2,3,4,6,7,9,10,11), so every function
+// renders as `<unnamed>`. Combined with resolved-signature comparison, that
+// means SWAPPING TWO FUNCTIONS OF THE SAME SIGNATURE is invisible to the
+// acceptance set: nothing in the decoded ABI distinguishes them, and the one
+// thing that would — the body bytes — is a diagnostic. Element targets and
+// export indices still pin any function reachable through the handler table or
+// an export, so the blind spot is same-signature internal helpers. The tool
+// prints a WARNING when neither module carries a name section. The real fix is
+// for the compiler to emit a name section or a sidecar index map; that is out
+// of this tool's scope, and until then treat a `code-bodies` diagnostic on a
+// pair you expected to be identical as a finding, not as noise.
 
 const fs = require('fs');
 
@@ -694,19 +723,27 @@ function renderTypes(m) {
 }
 
 const SECTIONS = ['imports', 'exports', 'types', 'functions', 'globals',
-  'tables', 'elements', 'memories', 'data', 'code'];
+  'tables', 'elements', 'memories', 'data', 'code', 'code-bodies'];
 
 function diffWasmAbi(fileA, fileB, options) {
   options = options || {};
   const max = options.max === undefined ? 10 : options.max;
+  const strictCode = !!options.strictCode;
   const want = options.sections ? new Set(options.sections) : null;
   const a = typeof fileA === 'string' || Buffer.isBuffer(fileA) ? decodeWasm(fileA) : fileA;
   const b = typeof fileB === 'string' || Buffer.isBuffer(fileB) ? decodeWasm(fileB) : fileB;
 
   const results = [];
-  const add = (name, diffs, note) => {
+  // `acceptance: false` sections are decoded and reported but never decide the
+  // verdict — see the ACCEPTANCE vs DIAGNOSTIC note in the header.
+  const add = (name, diffs, note, acceptance) => {
     if (want && !want.has(name)) return;
-    results.push({ name, diffs, note: note || null });
+    results.push({
+      name,
+      diffs,
+      note: note || null,
+      acceptance: acceptance === undefined ? true : acceptance,
+    });
   };
 
   add('imports', compareLists(renderImports(a), renderImports(b), 'import', max));
@@ -721,35 +758,63 @@ function diffWasmAbi(fileA, fileB, options) {
   add('memories', compareLists(renderMemories(a), renderMemories(b), 'memory', max));
   add('data', compareLists(renderData(a), renderData(b), 'data', max));
 
-  const codeDiffs = [];
+  // Counts are an acceptance item: a compiler is free to encode a body
+  // differently, but it is not free to emit a different number of functions.
+  const countDiffs = [];
   if (a.codeCount !== b.codeCount) {
-    codeDiffs.push(`function count: ${a.codeCount} vs ${b.codeCount}`);
+    countDiffs.push(`code section function count: ${a.codeCount} vs ${b.codeCount}`);
   }
+  if (a.funcTypeIndices.length !== b.funcTypeIndices.length) {
+    countDiffs.push(`declared function count: ${a.funcTypeIndices.length} vs ` +
+      `${b.funcTypeIndices.length}`);
+  }
+  if (a.importedFuncCount !== b.importedFuncCount) {
+    countDiffs.push(`imported function count: ${a.importedFuncCount} vs ` +
+      `${b.importedFuncCount}`);
+  }
+  add('code', countDiffs, 'function and code counts only; body bytes are the ' +
+    'code-bodies diagnostic');
+
+  // Bodies are the diagnostic half. Local grouping, LEB width and instruction
+  // selection are all a compiler's free choice, so a difference here is
+  // information, not a failure — unless --strict-code says this is a
+  // same-compiler determinism check.
+  const bodyDetail = [];
   let bodyDiffs = 0;
-  const firstBodies = [];
   for (let i = 0; i < Math.min(a.codeBodies.length, b.codeBodies.length); i++) {
     const x = a.codeBodies[i];
     const y = b.codeBodies[i];
     if (x.bodyHash !== y.bodyHash || x.locals !== y.locals) {
       bodyDiffs++;
-      if (firstBodies.length < max) {
+      if (bodyDetail.length < max + 1) {
         const name = a.funcNames.get(x.index) || `#${x.index}`;
-        firstBodies.push(`body ${name}: ${x.size}B/${x.bodyHash} vs ` +
+        bodyDetail.push(`body ${name}: ${x.size}B/${x.bodyHash} vs ` +
           `${y.size}B/${y.bodyHash}`);
       }
     }
   }
-  if (bodyDiffs) {
-    codeDiffs.push(`${bodyDiffs} of ${a.codeBodies.length} bodies differ`);
-    codeDiffs.push(...firstBodies);
-  }
-  add('code', codeDiffs, 'body bytes are expected to differ between a ' +
-    'tail-call and a compatibility artifact');
+  const bodyLines = bodyDiffs
+    ? [`${bodyDiffs} of ${a.codeBodies.length} bodies differ`].concat(bodyDetail)
+    : [];
+  add('code-bodies', bodyLines,
+    strictCode
+      ? 'fatal under --strict-code (same-compiler determinism check)'
+      : 'diagnostic: encoding differences are permitted by the plan; ' +
+        '--strict-code makes this fatal',
+    strictCode);
 
+  const acceptance = results.filter(s => s.acceptance);
   return {
     a, b,
+    strictCode,
     sections: results,
-    match: results.every(s => s.diffs.length === 0),
+    acceptanceSections: acceptance,
+    diagnosticSections: results.filter(s => !s.acceptance),
+    match: acceptance.every(s => s.diffs.length === 0),
+    bodyDiffs,
+    // True when neither module carries a name section: same-signature function
+    // swaps are then invisible to the acceptance set. See the header.
+    nameMapVacuous: a.funcNames.size === 0 && b.funcNames.size === 0,
     tailCalls: {
       a: a.tailCalls.length,
       b: b.tailCalls.length,
@@ -774,18 +839,44 @@ if (require.main === module) {
   const files = argv.filter(x => !x.startsWith('--'));
   if (files.length !== 2) {
     console.error('usage: node tools/wasm-abi-diff.js a.wasm b.wasm [--max=N] ' +
-      '[--quiet] [--require-no-tailcalls] [--sections=imports,data,...]');
+      '[--quiet] [--require-no-tailcalls] [--strict-code] [--no-validate] ' +
+      '[--sections=imports,data,...]');
     console.error(`sections: ${SECTIONS.join(', ')}`);
     process.exit(2);
   }
   const quiet = argv.includes('--quiet');
   const requireNoTailcalls = argv.includes('--require-no-tailcalls');
+  const strictCode = argv.includes('--strict-code');
   const sectionsArg = opt('sections', '');
+
+  // Validate BEFORE decoding. This decoder is structural: it will happily
+  // report a clean MATCH on two modules that no engine would accept, and
+  // "the ABI matches" is a meaningless statement about a module that cannot
+  // instantiate.
+  if (!argv.includes('--no-validate')) {
+    for (const file of files) {
+      let bytes;
+      try {
+        bytes = fs.readFileSync(file);
+      } catch (error) {
+        console.error(`${file}: ${error.message}`);
+        process.exit(2);
+      }
+      if (!WebAssembly.validate(bytes)) {
+        console.error(`${file}: not a valid WebAssembly module ` +
+          '(WebAssembly.validate failed). Comparing it would report an ABI ' +
+          'that no engine will accept. If this Node build simply lacks a ' +
+          'proposal the module uses, re-run with --no-validate.');
+        process.exit(2);
+      }
+    }
+  }
 
   let result;
   try {
     result = diffWasmAbi(files[0], files[1], {
       max: Number(opt('max', 10)),
+      strictCode,
       sections: sectionsArg ? sectionsArg.split(',').map(s => s.trim()).filter(Boolean) : null,
     });
   } catch (error) {
@@ -798,8 +889,12 @@ if (require.main === module) {
     console.log(`B: ${files[1]}`);
     console.log('');
     for (const s of result.sections) {
+      const tag = s.acceptance ? '' : ' [diagnostic]';
       if (s.diffs.length === 0) {
-        console.log(`MATCH  ${s.name}`);
+        console.log(`MATCH  ${s.name}${tag}`);
+      } else if (!s.acceptance) {
+        console.log(`NOTE   ${s.name}${tag}${s.note ? `  (${s.note})` : ''}`);
+        for (const d of s.diffs) console.log(`         ${d}`);
       } else {
         console.log(`DIFF   ${s.name}${s.note ? `  (${s.note})` : ''}`);
         for (const d of s.diffs) console.log(`         ${d}`);
@@ -809,6 +904,12 @@ if (require.main === module) {
     console.log(`tail-calls: A ${result.tailCalls.a} sites in ` +
       `${result.tailCalls.aFuncs} functions, B ${result.tailCalls.b} sites in ` +
       `${result.tailCalls.bFuncs} functions`);
+    if (result.nameMapVacuous) {
+      console.log('WARNING: neither module has a name section, so the ' +
+        'name-to-index comparison is vacuous — two functions with the same ' +
+        'signature could be swapped without any acceptance section noticing. ' +
+        'Read the code-bodies diagnostic above before trusting a MATCH.');
+    }
   }
 
   let failed = !result.match;
@@ -822,6 +923,11 @@ if (require.main === module) {
         'return_call/return_call_indirect');
     }
   }
-  if (!quiet) console.log(result.match ? 'ABI MATCH' : 'ABI DIFF');
+  if (!quiet) {
+    const suffix = result.bodyDiffs && !strictCode
+      ? ` (${result.bodyDiffs} body encodings differ; diagnostic only)`
+      : '';
+    console.log(result.match ? `ABI MATCH${suffix}` : 'ABI DIFF');
+  }
   process.exit(failed ? 1 : 0);
 }
