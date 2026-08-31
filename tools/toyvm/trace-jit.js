@@ -1115,24 +1115,46 @@ function foldSeg(body) {
 // string ops are exactly that shape, which is what BRW's `lodsb32 ... stosb32`
 // body is made of. So: a call is safe only if it is named here as touching no
 // general register, and anything unrecognised declines the whole promotion.
-const REG_SAFE = new RegExp('^(' + [
-  'rd(8|16|32)b?', 'wr(8|16|32)b?',      // memory, addressed by a value we pass in
-  'lin', 'sget', 'sbase', 'segbase', 'segd32',  // segmentation: segment globals only
+// ...and a call that IS recognised still says which registers it may reach, so
+// the pass can drop those from the promotion instead of abandoning it. That
+// distinction is the difference between a region JIT that runs and one that
+// does not: measured on five demos, every single hot loop declined outright --
+// daretro on `$cxdec`, DRAGON and CYCLE on `$push16`, ADDY_II on `$sset` -- and
+// a loop written around a `LOOP` instruction or a `push` is not an exotic
+// shape, it is the ordinary one. Excluding CX and SP costs those two registers
+// and promotes the other six.
+const SEG_BASES = isa.SEG.map(s => `${s}b`);
+const SAFE_CALLS = [
+  [/^rd(8|16|32)b?$/, []], [/^wr(8|16|32)b?$/, []],  // memory, addressed by a value we pass in
+  [/^(lin|sget|sbase|segbase|segd32)$/, []],         // segmentation: segment globals only
   // The flag record. rec_* takes its inputs as parameters and writes only
   // $fa/$fb/$fu/$fw/$fr/$fcf/$fop, which are not general registers.
-  'flags_\\w+', 'rec_\\w+', 'get_\\w+', 'cond\\w*',
-  'sh_\\w+', 'off_add', 'pow2',          // pure arithmetic kernels
-  'slice_exit', 'jlook',                 // ip/halt only
-  'port_in', 'port_out',                 // leave to the host, take no register
-].join('|') + ')$');
+  [/^(flags_\w+|rec_\w+|get_\w+|cond\w*)$/, []],
+  [/^(sh_\w+|off_add|pow2)$/, []],                   // pure arithmetic kernels
+  [/^(slice_exit|jlook)$/, []],                      // ip/halt only
+  [/^(port_in|port_out)$/, []],                      // leave to the host, take no register
+  // The stack helpers move SP themselves and address through SS. Neither may
+  // be promoted while one of these is in the body; everything else still can.
+  [/^(push|pop)(16|32)$/, ['sp', 'ssb']],
+  // `loop` and the REP counters read and write CX behind the pass's back.
+  [/^(cx16|ecx32|cxdec|ecxdec)$/, ['cx']],
+  // A segment load. The index can be dynamic, so every segment base is out.
+  [/^sset$/, SEG_BASES],
+];
 
 function promoteRegs(bodies, regs) {
   const joined = bodies.join('\n');
+  const banned = new Set();
   for (const m of joined.matchAll(/\(call \$([a-z0-9_]+)/gi)) {
-    if (!REG_SAFE.test(m[1])) return { declined: `$${m[1]} may touch a register` };
+    const hit = SAFE_CALLS.find(([re]) => re.test(m[1]));
+    if (!hit) return { declined: `$${m[1]} may touch a register` };
+    for (const r of hit[1]) banned.add(r);
   }
-  const used = regs.filter(r => joined.includes(`$${r}`));
-  if (!used.length) return { declined: 'no register in the body' };
+  const used = regs.filter(r => !banned.has(r) && joined.includes(`$${r}`));
+  if (!used.length) {
+    return { declined: banned.size ? `every register in the body is held by a helper (${[...banned].join(' ')})`
+      : 'no register in the body' };
+  }
   const rw = (s) => {
     let out = s;
     for (const r of used) {
