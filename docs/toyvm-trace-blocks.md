@@ -17,6 +17,50 @@ The handler-pair census in
 paid: **3.25 dispatches per block transfer**. Fusion removed a dispatch from
 that ratio. This removes a transfer.
 
+### ...and what removing one is actually worth: ~0.4%
+
+Read the paragraph above as an argument for *why the mechanism should help*, not
+as a prediction of how much. The two prices in it come from
+`tools/bench-loops.js`, which is (a) the **main emulator's** harness, not this
+VM, and (b) a hand-encoded periodic loop, which is perfectly branch-predicted by
+construction. `CLAUDE.md` says of that tool, in as many words: *never quote a
+microbench % as an app %*. Multiplying 9ns/35ns into "a quarter of block time"
+and calling it a program-level opportunity is exactly that error.
+
+The A/B that prices it properly already exists — `--no-trace-blocks` is this
+feature's off switch, and `notrace` is an arm suffix in `bench-dos.js`. Over the
+twenty programs of `tools/toyvm/bench-set-20.txt`, 12M dispatches, seven
+interleaved reps per arm with the starting arm rotated, minimum of seven, box at
+load 4.2 rising to 6.0:
+
+```bash
+node tools/toyvm/bench-dos.js $(grep -v '^#' tools/toyvm/bench-set-20.txt) \
+  --variants=tailcall,tailcall+notrace --reps=7 --dispatches=12m
+```
+
+| | geomean vs traced | programs where notrace won |
+|---|---:|---:|
+| `tailcall` (fall-through chained) | baseline | — |
+| `tailcall+notrace` | **−0.4% min / −0.3% paired** | 7 of 20 |
+
+**So the feature is worth about four tenths of one percent**, and the honest
+statement is weaker still: per-program deltas ran from −6.7% to +14.2% while
+*within-arm* spread ran 5–71%, so this measurement bounds the effect as small
+without establishing its sign. Every arm agreed on dispatch count and frame
+hash, so the comparison itself is sound; it is the effect that is tiny.
+
+Two things this does **not** say. It prices only the *fall-through* edge of a
+conditional — taken edges and unconditional transfers still pay full freight, so
+full block chaining could be worth more than this. And a per-transfer cost that
+is real in isolation can still round to nothing in a program: at 3.25 dispatches
+per transfer, only some fraction of which are fall-through edges, there is
+simply not much of the run standing in front of this lever.
+
+The general lesson is the one this repo keeps re-learning, most recently in
+[interpreter-dispatch-perf.md](interpreter-dispatch-perf.md) and the page-compile
+verdict: **removing a cost on paper is not the same as the run getting faster.**
+A mechanism argument earns a measurement, not a number.
+
 ## What it does
 
 A conditional branch used to end the block. Its two edges were both arena
