@@ -126,6 +126,35 @@ const jsonOf = r => {
   ck('--only=tests runs no ABI pairs', j && j.abi === undefined);
 }
 
+// --- 4b. THE PINNABLE PREDICATE MUST NOT DEMAND A LITERAL `--no-build`.
+//         run.js has derived --no-build from $WINE_ASSEMBLY_WASM since 4aeb0970,
+//         so the environment is what pins a test, not the flag; grepping for the
+//         flag excluded ~80% of the tests that spawn run.js for a reason that had
+//         stopped being true. test-about-cancel.js is a real tracked test that
+//         spawns run.js and never types --no-build: exactly the shape that used
+//         to be refused, and the check is written against a live file rather than
+//         a fixture so it stays honest about what the tree contains.
+//
+//         The two genuine exclusions must survive, and are asserted alongside it.
+{
+  const r = runTool(['--skip-build', '--only=tests', '--json',
+    `--a-dir=${empty}`, `--b-dir=${empty}`,
+    '--tests=test-about-cancel.js,test-wm-setcursor-on-show.js,test-watx-matrix-no-such-file.js']);
+  const j = jsonOf(r);
+  const [envPinned, hardCoded, missingFile] = (j && j.tests) || [];
+
+  ck('the sample env-pinned test really has no literal --no-build',
+    !/--no-build/.test(fs.readFileSync(path.join(ROOT, 'test', 'test-about-cancel.js'), 'utf8')));
+  ck('a test that spawns run.js without --no-build IS pinnable',
+    !!envPinned && !envPinned.unusable, envPinned && envPinned.unusable);
+  ck('...and a hard-coded --wasm= is still refused',
+    !!hardCoded && /hard-codes --wasm=/.test(hardCoded.unusable || ''), hardCoded && hardCoded.unusable);
+  ck('...and a missing file is still refused',
+    !!missingFile && /no such test file/.test(missingFile.unusable || ''));
+  ck('none of the three ran (both artifact dirs are empty)',
+    j && j.tests.every(t => !t.a || t.a.skipped === true));
+}
+
 // --- 5. one real curated test, run against both (identical) sides. This is the
 //        end-to-end proof that $WINE_ASSEMBLY_WASM reaches test/run.js: the
 //        stub module above cannot boot a guest, so both columns must FAIL. If

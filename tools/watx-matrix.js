@@ -329,15 +329,38 @@ function reportAbi(rows) {
 // Section 3 — the test matrix
 // ---------------------------------------------------------------------------
 
-// A test that hard-codes --wasm= or never passes --no-build ignores the pinned
+// A test that hard-codes --wasm= or never spawns run.js at all ignores the pinned
 // artifact and silently scores the same module on both sides. Refusing it is
 // the difference between a matrix and a pair of identical columns.
+//
+// THIS PREDICATE USED TO DEMAND A LITERAL `--no-build` IN THE TEST'S TEXT, and
+// that requirement had been obsolete since 4aeb0970: run.js DERIVES --no-build
+// from $WINE_ASSEMBLY_WASM (`NO_BUILD = hasFlag('no-build') || !!ENV_WASM`), and
+// the environment reaches it however deep the spawn chain is. So the flag was
+// never what made a test pinnable — the env var was — and grepping for it
+// excluded every test that simply never bothered to type it. Measured over test/
+// at the time of this change: 244 files spawn run.js, 10 of them hard-code
+// --wasm= without forwarding the environment, and of the 234 that remain only 47
+// contain the literal `--no-build`. The gate was drawing from 20% of the eligible
+// pool for a reason that had stopped being true. (An earlier measurement of the
+// same ratio read 40 of 217; the tree grows, the ratio does not move much.)
+//
+// What still makes the widened pool safe to trust is 1c3e5104: a pinned artifact
+// that is missing or does not compile is now FATAL in run.js rather than a quiet
+// fall-back to compiling from src/. Before that, admitting a test which does not
+// say --no-build would have risked exactly the failure this predicate exists to
+// prevent — a column that compiled its own module and agreed with the other one
+// by construction.
+//
+// Residual limitation, and it is a text grep so it cannot do better: a test that
+// spawns run.js with a REPLACED env (rather than {...process.env, ...}) drops the
+// pin, and nothing here can see that. Such a test scores the canonical build in
+// both columns. If one turns up, exclude it by name from the curated list.
 function checkTestIsPinnable(file) {
   const full = path.join(ROOT, 'test', file);
   if (!fs.existsSync(full)) return `no such test file test/${file}`;
   const text = fs.readFileSync(full, 'utf8');
   if (!/run\.js/.test(text)) return 'does not spawn test/run.js, so no artifact can be pinned';
-  if (!/--no-build/.test(text)) return 'never passes --no-build, so it recompiles from src/';
   if (/--wasm=/.test(text) && !/WINE_ASSEMBLY_WASM/.test(text)) {
     return 'hard-codes --wasm=, which overrides $WINE_ASSEMBLY_WASM';
   }
