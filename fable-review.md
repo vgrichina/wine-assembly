@@ -228,7 +228,7 @@ is i+3 (`gl-command-stream.js:60`); `LINE_STRIP/LOOP` ignore flat entirely.
 now name provoking `i+3` explicitly, `gl-command-stream.js:141-153` — and
 `6cc2dcaa` deleted the dead immediate replay path outright.)*
 
-**3.9 The MW3 folds — good, with one gate too wide.** H436/H440/H441 are now
+**3.9 The MW3 folds — gate split FIXED `fab6546d`.** H436/H440/H441 are now
 address-independent byte proofs: H440 compares its entire 19-byte body
 literally (`07-decoder.wat:638-675`), H436 and H441 anchor four dwords and then
 FNV-1a the whole body (`:586-636` == `0xe93ce905` over 0xAD bytes; `:677-718`
@@ -237,11 +237,12 @@ identical loop, and the handler replays exactly those bytes, so folding it is
 correct. The tests (`test/test-mw3-*-run.js`) are true differentials —
 `set_loop_copy_emit(0)` vs `(1)` on the same build, `deepStrictEqual` on memory
 + 8 registers + flags, with overlap and near-miss cases — the standard every
-fold should be held to. Two things off: the `LOOP_PROCESS_STATE` opt-in that
-enables them (`07b:74-80`, atomic, in the map) is the *same* flag that turns on
-the generic `COPY_RUN`/avg matchers at `07b:1545,1679,1846,1984,2213` for every
-MW3 block, and the header at `07b:66-68` still calls their Storm divergence
-unresolved. **AoE span proof FIXED `6bbf1543`:** the cheap register-layout
+fold should be held to. The process-shared state word now has independent bits:
+production `set_loop_copy_emit` enables only those three exact MW3 folds, while
+the generic `COPY_RUN`/avg recognizers remain default-off behind the explicit
+`set_loop_generic_copy_emit` test/benchmark gate. The regression turns the
+production bit on and proves a generic bounded-copy block is recognized but
+not lowered. **AoE span proof FIXED `6bbf1543`:** the cheap register-layout
 anchors are now followed by FNV-1a over every byte of the authentic 0x6b-byte
 AoE I or 0x6a-byte AoE II prefix; an interior-byte mutation that the sampled
 matcher accepted is pinned as a near miss in the differential regression.
@@ -359,7 +360,8 @@ Pass 1.
   silent-stub ratchet with a content hash, DLL table bound on both sides.
 - The MW3 folds set a new bar: byte-hash predicates, address independence,
   and differential tests against the scalar path with overlap and near-miss
-  cases. Apply it backward to `aoe_span_prefix` and forward to every fold.
+  cases. `6bbf1543` applied it backward to `aoe_span_prefix`; keep applying it
+  forward to every fold.
 - Every new Win32 handler in the window sets `$last_error` on its failure
   path; console and mutex are real subsystems, not shims.
 - Both spawn paths and the Worker stack zero-fill use `guest_to_wasm`
@@ -396,9 +398,10 @@ Pass 1.
 8. `bundle-browser.js --check` in `build.sh`; fix the absolute `--out`. (§P3-4)
 9. One version string: generate `?v=` from `SOURCE_VERSION` at deploy, and
    make `guest-worker.js` import the same list. (3.10)
-10. The COPY opt-in should enable the three proved folds only; the generic
+10. ~~The COPY opt-in should enable the three proved folds only; the generic
     `COPY_RUN` matchers get their own flag until the Storm divergence is
-    resolved. ~~Hash `aoe_span_prefix`'s whole body.~~ (`6bbf1543`; 3.9)
+    resolved. Hash `aoe_span_prefix`'s whole body.~~ (`fab6546d`, `6bbf1543`;
+    3.9)
 
 **Tier 3 — carried from Pass 2, still the right list:** items 8 (symbolic
 handler/api ids — 442 handlers and 3,071 apis addressed by literal), 9 (`run.js
