@@ -26,6 +26,8 @@ async function run() {
   first.writeFile(ignored, Uint8Array.from([9, 9]), 2);
   const save = first.createFile('C:\\Save\\Game00.sav', 0x40000000, 2);
   first.writeFile(save, Uint8Array.from([1, 2, 3, 4]), 4);
+  const savedWriteTime = { lo: 0x89abcdef, hi: 0x01bf53eb };
+  assert.strictEqual(first.setFileTimes(save, null, null, savedWriteTime), 0);
   await Promise.resolve();
   assert.strictEqual(storage.length, 1, 'only opted-in save paths reach browser storage');
 
@@ -37,6 +39,8 @@ async function run() {
   });
   assert.strictEqual(restored.restored, 1, 'a later process restores the saved file');
   assert.deepStrictEqual(Array.from(second.files.get('c:\\save\\game00.sav').data), [1, 2, 3, 4]);
+  assert.deepStrictEqual(second.files.get('c:\\save\\game00.sav').lastWriteTime, savedWriteTime,
+    'persistent files keep their Win32 last-write timestamp');
 
   second.deleteFile('c:\\save\\game00.sav');
   restored.flush();

@@ -417,6 +417,7 @@ UNIT=(
   test/test-button-auto-check.js
   test/test-char-lower-w.js
   test/test-compare-file-time.js
+  test/test-file-times.js
   test/test-command-line-a-stability.js
   test/test-console-screen-buffers.js
   test/test-created-dialog-main-promotion.js

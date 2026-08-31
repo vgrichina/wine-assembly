@@ -10400,11 +10400,24 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
 
-  ;; 427: SetFileTime — STUB: unimplemented
-  ;; SetFileTime(hFile, lpCreationTime, lpLastAccessTime, lpLastWriteTime) — no-op
+  ;; SetFileTime(hFile, lpCreationTime, lpLastAccessTime, lpLastWriteTime).
+  ;; NULL leaves that timestamp unchanged; the VFS also honors the all-ones
+  ;; sentinel old Win32 software uses to suppress automatic time updates.
   (func $handle_SetFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))  ;; TRUE = success
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
+    (local $err i32)
+    (local.set $err (call $host_fs_file_time
+      (local.get $arg0) (i32.const 1)
+      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg3) (then (call $g2w (local.get $arg3))) (else (i32.const 0)))))
+    (if (local.get $err)
+      (then
+        (global.set $last_error (local.get $err))
+        (global.set $eax (i32.const 0)))
+      (else
+        (global.set $last_error (i32.const 0))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 428: LocalFileTimeToFileTime. The emulator does not model a timezone, so
@@ -12244,29 +12257,23 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 519: GetFileTime(hFile, lpCreationTime, lpLastAccessTime, lpLastWriteTime)
-  ;; Minimal VFS timestamp surface. The current virtual FS does not persist
-  ;; per-file mtimes, but MFC document save paths require this API to succeed
-  ;; after CreateFileA. Return a stable FILETIME near the simulated clock.
+  ;; GetFileTime(hFile, lpCreationTime, lpLastAccessTime, lpLastWriteTime).
+  ;; File timestamps belong to the VFS entry, so enumeration and subsequent
+  ;; opens observe exactly what SetFileTime stored (not a fresh clock sample).
   (func $handle_GetFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $lo i32) (local $hi i32)
-    ;; Base: 2000-01-01 = 0x01BF53EB256D4000, add ticks*10000 (100ns units).
-    (local.set $lo
-      (i32.add (i32.const 0x256D4000) (i32.mul (call $host_get_ticks) (i32.const 10000))))
-    (local.set $hi (i32.const 0x01BF53EB))
-    (if (local.get $arg1)
+    (local $err i32)
+    (local.set $err (call $host_fs_file_time
+      (local.get $arg0) (i32.const 0)
+      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg3) (then (call $g2w (local.get $arg3))) (else (i32.const 0)))))
+    (if (local.get $err)
       (then
-        (call $gs32 (local.get $arg1) (local.get $lo))
-        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (local.get $hi))))
-    (if (local.get $arg2)
-      (then
-        (call $gs32 (local.get $arg2) (local.get $lo))
-        (call $gs32 (i32.add (local.get $arg2) (i32.const 4)) (local.get $hi))))
-    (if (local.get $arg3)
-      (then
-        (call $gs32 (local.get $arg3) (local.get $lo))
-        (call $gs32 (i32.add (local.get $arg3) (i32.const 4)) (local.get $hi))))
-    (global.set $eax (i32.const 1))
+        (global.set $last_error (local.get $err))
+        (global.set $eax (i32.const 0)))
+      (else
+        (global.set $last_error (i32.const 0))
+        (global.set $eax (i32.const 1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
