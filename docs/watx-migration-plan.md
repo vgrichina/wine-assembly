@@ -66,7 +66,7 @@ is built artifacts.
 | Make WATX build in a browser without a custom JS stack | Done for the Android corpus. Production streaming, a 128 KiB-stack test and a Chrome Worker test pass. | Browser compilation is feasible, but Wine still needs its own browser-memory gate. |
 | Reduce compiler memory below 100 MB | Not done. The last 6.81 MB Android benchmark reached 178.36 MB maximum RSS; Wine's clean audited source is 10.23 MB. | Treat peak memory, especially iOS Safari, as an open cutover gate. Never allocate Wine's 512 MB shared memory until the compiler Worker has terminated. |
 | Vendor WATX into Wine-Assembly | Done 2026-08-31 in commit `903ca110`: 11 files vendored from the `590238be` working tree with per-file SHA-256 in `PROVENANCE.md`, a `check-watx-provenance.js` build gate, and all six suites passing with `../android-emu` verified absent. | This repository owns its copy now. Milestone 1 exit gate met. |
-| Compile the complete Wine source through WATX | Not done. | This is milestone 2. The first compiler syntax gap is fixed and the historical surplus close is gone from HEAD (see finding 1); the corpus-driven gap census is next. |
+| Compile the complete Wine source through WATX | Census complete 2026-08-31 (`4108c76c`): the closure compiles and validates in both modes after 8 gap classes are neutralized in scratch — see [watx-migration-gaps.md](watx-migration-gaps.md). The neutralizations are the milestone-2 work list; the emitted modules are proof of reach, not a candidate build. | Close the six WATX-side classes (atomics first, 144 sites) and the two Wine-source ones, then re-run unneutralized. |
 | Adopt layouts and macros | Not started, correctly. | Defer until after the compiler cutover. |
 
 The clean audited Wine tree contains 59 source parts, 10,227,829 bytes,
@@ -268,9 +268,19 @@ For every gap:
 4. Re-run both WATX modes and the legacy build after every class of change.
 
 Standard folded `br_table`, the first known item, was closed on 2026-08-25.
-Expected later audit areas include numeric locals, folded operand ordering,
-anonymous/inline exports, named `call_indirect` types, SIMD lane/memory
-immediates and all generated code.
+
+The full census ran 2026-08-31 against the vendored compiler snapshot and is
+recorded in [watx-migration-gaps.md](watx-migration-gaps.md) (commit
+`4108c76c`): eight gap classes, after which the entire closure compiles and
+`WebAssembly.Module`-validates in both modes with zero warnings. Six classes
+are WATX work (atomics — 144 sites, the largest by far; ~20 missing SIMD table
+entries; `v128` memargs; labeled `block (result T)`; standard lane-immediate
+position — where `extract_lane` currently degrades **silently** to lane 0;
+`i8x16.shuffle` lane bytes) and two are Wine-source fixes (a detached `(else)`
+in `09e-win16-api.wat` that is a real latent behavior bug the legacy compiler
+swallows, and one bare `(drop)`). Neither generated file needed any change.
+The predicted numeric-locals / folded-ordering / inline-export gaps did not
+materialize.
 
 Exit gate: WATX emits validating tail and compatibility modules from the entire
 current source closure with zero ignored forms and zero warnings downgraded from
@@ -290,6 +300,19 @@ Add a binary-section comparison tool and a four-artifact build command. Compare:
 - data-segment offsets, lengths and bytes;
 - code/function counts; and
 - absence of tail-call opcodes in both compatibility artifacts.
+
+The comparator exists: `tools/wasm-abi-diff.js` (commits `35a405fb`,
+`de455967`) implements this list with code-body bytes as diagnostic-only
+(`--strict-code` restores them for same-compiler determinism),
+`WebAssembly.validate()` on both inputs first, and `--require-no-tailcalls`
+for compat artifacts. On the legacy pair it reports ABI MATCH with exactly the
+422 lowered bodies as the only encoding difference. Known limitation, printed
+as a warning: current artifacts carry no name section, so two same-signature
+internal functions swapping is invisible to the acceptance set — backing the
+function-order invariant with compiler-emitted name metadata (or a sidecar
+index map) is open work. Related census hazard: 1,334 functions are written
+`(func (export "x") ...)` with no `$name`, so WATX synthesizes names that
+differ in spelling from the legacy build — compare indices, not names.
 
 Then execute the same test layers against legacy and WATX artifacts:
 
