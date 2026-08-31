@@ -6005,7 +6005,8 @@
     (call $gs32 (global.get $esp) (local.get $desc))
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
-    (global.set $eip (call $gl32 (i32.add (local.get $frame) (i32.const 8)))))
+    (global.set $eip (call $gl32 (i32.add (local.get $frame) (i32.const 8))))
+    (global.set $steps (i32.const 0)))
 
   (func $di_enum_dispatch
     (local $frame i32) (local $kind i32) (local $filter i32) (local $index i32)

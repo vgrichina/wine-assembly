@@ -25983,5 +25983,40 @@
     "nargs": 3,
     "convention": "cdecl",
     "hash": 490034907
+  },
+  {
+    "id": 3108,
+    "name": "_open",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 284197870
+  },
+  {
+    "id": 3109,
+    "name": "_close",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 2909630938
+  },
+  {
+    "id": 3110,
+    "name": "_read",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 346717030
+  },
+  {
+    "id": 3111,
+    "name": "_lseek",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 3877830014
+  },
+  {
+    "id": 3112,
+    "name": "_filelength",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 2904511636
   }
 ]

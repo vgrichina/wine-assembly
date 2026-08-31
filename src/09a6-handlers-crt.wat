@@ -585,6 +585,87 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  (func $crt_open_access (param $flags i32) (result i32)
+    (if (result i32) (i32.and (local.get $flags) (i32.const 2)) ;; _O_RDWR
+      (then (i32.const 0xC0000000)) ;; GENERIC_READ | GENERIC_WRITE
+      (else
+        (if (result i32) (i32.and (local.get $flags) (i32.const 1)) ;; _O_WRONLY
+          (then (i32.const 0x40000000)) ;; GENERIC_WRITE
+          (else (i32.const 0x80000000)))))) ;; GENERIC_READ
+
+  (func $crt_open_creation (param $flags i32) (result i32)
+    (if (result i32) (i32.and (local.get $flags) (i32.const 0x100)) ;; _O_CREAT
+      (then
+        (if (result i32) (i32.and (local.get $flags) (i32.const 0x400)) ;; _O_EXCL
+          (then (i32.const 1)) ;; CREATE_NEW
+          (else
+            (if (result i32) (i32.and (local.get $flags) (i32.const 0x200)) ;; _O_TRUNC
+              (then (i32.const 2)) ;; CREATE_ALWAYS
+              (else (i32.const 4)))))) ;; OPEN_ALWAYS
+      (else
+        (if (result i32) (i32.and (local.get $flags) (i32.const 0x200)) ;; _O_TRUNC
+          (then (i32.const 5)) ;; TRUNCATE_EXISTING
+          (else (i32.const 3)))))) ;; OPEN_EXISTING
+
+  (func $handle__open (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $handle i32)
+    (local.set $handle (call $host_fs_create_file
+      (call $g2w (local.get $arg0))
+      (call $crt_open_access (local.get $arg1))
+      (call $crt_open_creation (local.get $arg1))
+      (i32.const 0x80)
+      (i32.const 0)))
+    (if (i32.eq (local.get $handle) (i32.const -1))
+      (then (local.set $handle (i32.const -1)))
+      (else
+        (if (i32.and (local.get $arg1) (i32.const 8)) ;; _O_APPEND
+          (then (drop (call $host_fs_set_file_pointer
+            (local.get $handle) (i32.const 0) (i32.const 2)))))))
+    (global.set $eax (local.get $handle))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle__close (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (if (result i32) (call $host_fs_close_handle (local.get $arg0))
+        (then (i32.const 0))
+        (else (i32.const -1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle__read (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $bytes_ga i32) (local $bytes_wa i32)
+    (local.set $bytes_ga (i32.sub (global.get $esp) (i32.const 4)))
+    (local.set $bytes_wa (call $g2w (local.get $bytes_ga)))
+    (i32.store (local.get $bytes_wa) (i32.const 0))
+    (global.set $eax
+      (if (result i32) (call $host_fs_read_file
+            (local.get $arg0) (local.get $arg1) (local.get $arg2)
+            (local.get $bytes_ga))
+        (then (i32.load (local.get $bytes_wa)))
+        (else (i32.const -1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle__lseek (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_fs_set_file_pointer
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle__filelength (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $pos i32) (local $end i32)
+    (local.set $pos (call $host_fs_set_file_pointer
+      (local.get $arg0) (i32.const 0) (i32.const 1)))
+    (local.set $end (call $host_fs_set_file_pointer
+      (local.get $arg0) (i32.const 0) (i32.const 2)))
+    (if (i32.ne (local.get $pos) (i32.const -1))
+      (then (drop (call $host_fs_set_file_pointer
+        (local.get $arg0) (local.get $pos) (i32.const 0)))))
+    (global.set $eax (local.get $end))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   (func $handle_fflush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg0)
       (then
