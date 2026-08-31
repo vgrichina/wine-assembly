@@ -81,8 +81,8 @@ at the bottom of this file, not left to whoever is editing.
 ```sha256
 cc9dfe2962214e5da09162844e98d359b825009a8388bb7726edaed729b37ee2  tools/watx.js
 1b93cca731ffc63803cdd6042115bbb66da1ff8cbe6fac86ae99fd8c12485aaa  tools/watx-src/compiler-parser.js
-adc53dbf4aad93f30429a69527ca8d4b7b6db53c6abe8b57b7244ca40ba1b3e4  tools/watx-src/compiler-stages.js
-aa1511273ba806be3c8e25e87867d1c18510ac6dfbc31a897d544a7ece42d26a  tools/watx-src/compiler-codegen.js
+1ad89c3a24ada89480224955cda275a6b3c480cc6dda1c14457ca79f7874ccc5  tools/watx-src/compiler-stages.js
+af8ac57c39aac74c8b69d625f24e16f39ab6128a1c94fb5f620b5dcc92ed7fee  tools/watx-src/compiler-codegen.js
 40f9bc10c5405f4930619bff535d4d435cb68a3e6bb762d32bc32058b99af453  tools/watx-src/compiler.js
 293c1a233359bf142bf5badceb3399c92b79a653a86085681142b2037d80fce4  test/watx-compiler-wine-parity.test.js
 aaea455c646e4db3e1b60c034b32bda842c06babd29d8de3b810d73181ecf2c8  test/watx-compiler-production.test.js
@@ -96,6 +96,8 @@ afd4baa36b08662bbba4bc6c0ae6fa695165f9b8a2bfe2d4798d78bdfb3cadbe  test/watx-comp
 c8b1f6a5361212e835ba7f4478800008c41c53041f380bf21b6a6a11cfb43e5d  test/watx-compiler-block-result.test.js
 5958957d1baeef1f1fd3fe7c1b5a9c67a5cb53a4665196a71d818d732298ed88  test/watx-compiler-lanes.test.js
 59123677f802de8f7aeb41b81d7b9b9b5bc36f334d455e136b3c936cd3afebde  test/watx-compiler-explicit-drop.test.js
+12e037286e30324c2e6f20d9c77a333a89c2701a8f320ef7365f093d64f49a3d  test/watx-compiler-export-order.test.js
+b4a3a18fc470fabb84c7136716ae1f579ef14b929cb716f6e7c48ebfa1449298  test/watx-compiler-i64-literal.test.js
 ```
 
 Every hash above matches the android-emu working tree byte for byte except
@@ -140,6 +142,6 @@ without re-sealing. Both lines are rewritten together by
 CHANGELOG already names the new digest.
 
 ```seal
-manifest-sha256   812bb3b0163fd10ef29d6f0e2f1fa9cfde6aff8d5529c4da18d827d94d980235
-changelog-sha256  abfd7d0bd1dd7e80ded8869d9300a408baaaed3c0dbe4fb3eab289522b49d8c0
+manifest-sha256   bf54906c2ea0aba43a09042177295a9660fa8846fb8168db9be08a4354f20bcd
+changelog-sha256  d4ac76e51af7729a3c7050fefb67b883b4e370e7074b1530e54559d0471d0768
 ```

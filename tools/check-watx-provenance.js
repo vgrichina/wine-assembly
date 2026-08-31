@@ -90,6 +90,9 @@ const REQUIRED_FILES = [
   'test/watx-compiler-block-result.test.js',
   'test/watx-compiler-lanes.test.js',
   'test/watx-compiler-explicit-drop.test.js',
+  // Milestone 3 differential-gate fixes (docs/watx-migration-plan.md §M3).
+  'test/watx-compiler-export-order.test.js',
+  'test/watx-compiler-i64-literal.test.js',
 ];
 
 function fail(msg) {

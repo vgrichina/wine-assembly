@@ -128,10 +128,22 @@ function encodeSLEB128Big(value) {
 // Parse an integer literal (decimal or 0x hex, optional sign) as a BigInt,
 // normalized to the signed two's-complement i64 value so SLEB128 stays <= 10
 // bytes (e.g. 0xFFF8000000000000 -> -2251799813685248).
+// A SIGN IN FRONT OF A HEX LITERAL HAS TO BE PEELED OFF BY HAND. BigInt('-0x10')
+// throws — the BigInt constructor accepts a sign only on a decimal string — and
+// this used to `return 0n` from the catch, so `(i64.const -0x1EE54E5E1FEE3030)`
+// (src/09a7b-ole.wat:3801, the OLE compound-file magic 0xE11AB1A1E011CFD0)
+// compiled to a silent zero and the container it writes had no signature at all.
+// An unparseable literal is now a hard error rather than a plausible-looking 0.
 function parseI64Literal(s) {
-  s = String(s).trim();
+  s = String(s).trim().replace(/_/g, '');
+  const neg = s.startsWith('-');
+  const body = (neg || s.startsWith('+')) ? s.slice(1) : s;
   let v;
-  try { v = BigInt(s); } catch (_) { return 0n; }
+  // BigInt('-5') would happily absorb a SECOND sign, so reject one here: the peel above
+  // consumed the only sign a literal is allowed to have.
+  if (body === '' || body.startsWith('-') || body.startsWith('+')) throw new Error(`Invalid i64 literal '${s}'`);
+  try { v = BigInt(body); } catch (_) { throw new Error(`Invalid i64 literal '${s}'`); }
+  if (neg) v = -v;
   const MOD = 1n << 64n;
   v = ((v % MOD) + MOD) % MOD;        // wrap into [0, 2^64)
   if (v >= (1n << 63n)) v -= MOD;     // to signed
@@ -608,7 +620,8 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
   const inlineExportDecls = checkResult?.inlineExportDecls ? checkResult.inlineExportDecls.slice() : [];
   let anonymousFuncId = 0;
   if (!indexedFuncDecls) {
-    for (const form of forms) {
+    for (let formIndex = 0; formIndex < forms.length; formIndex++) {
+      const form = forms[formIndex];
       if (Array.isArray(form) && V(form[1]) === 'func') {
       let cursor = 1;
       const explicitName = V(form[cursor + 1])?.startsWith('$') ? V(form[(cursor++) + 1]) : null;
@@ -637,7 +650,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
           } else if (kind === 'effects') {
             effectsClause = part;
           } else if (kind === 'export') {
-            inlineExportDecls.push({ exportName: (V(part[2]) || '').replace(/"/g, ''), kind: 'func', ref: name });
+            inlineExportDecls.push({ exportName: (V(part[2]) || '').replace(/"/g, ''), kind: 'func', ref: name, formIndex });
           } else {
             body.push(part);
           }
@@ -662,22 +675,36 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     if (!funcDeclByName.has(fd.name)) funcDeclByName.set(fd.name, fd);
   }
   
-  // Collect exports
+  // Collect exports.
+  //
+  // The emitted export section must follow SOURCE DECLARATION order across
+  // kinds, not group by kind: standard WAT (and lib/compile-wat.js, the legacy
+  // compiler this output is differentially compared against) emits one entry
+  // per export in the order it was written, so a `(export "memory" (memory 0))`
+  // declared before every function lands at index 0. Inline `(func $f (export
+  // "f") ...)` clauses and top-level `(export ...)` / `(wasm-export ...)` forms
+  // are therefore interleaved by the index of the top-level form that carried
+  // them, and a stable sort keeps several exports on one form in written order.
   const exportDecls = inlineExportDecls.slice();
-  for (const form of forms) {
+  for (let formIndex = 0; formIndex < forms.length; formIndex++) {
+    const form = forms[formIndex];
     if (Array.isArray(form) && V(form[1]) === 'wasm-export') {
       const exportName = (V(form[2]) || '').replace(/"/g, '');
       const funcRef = V(form[3]) || '';
-      exportDecls.push({ exportName, kind: 'func', ref: funcRef });
+      exportDecls.push({ exportName, kind: 'func', ref: funcRef, formIndex });
     } else if (Array.isArray(form) && V(form[1]) === 'export') {
       const exportName = (V(form[2]) || '').replace(/"/g, '');
       const desc = form[3];
       if (!Array.isArray(desc) || !['func','memory','table','global'].includes(V(desc[1]))) {
         throw new Error(`Invalid export '${exportName}'`);
       }
-      exportDecls.push({ exportName, kind: V(desc[1]), ref: V(desc[2]) ?? '0' });
+      exportDecls.push({ exportName, kind: V(desc[1]), ref: V(desc[2]) ?? '0', formIndex });
     }
   }
+  // Array.prototype.sort is stable (ES2019+), so equal keys keep insertion
+  // order. An entry with no recorded position (a caller that built the list by
+  // hand) sorts ahead of everything, preserving the historical arrangement.
+  exportDecls.sort((a, b) => (a.formIndex ?? -1) - (b.formIndex ?? -1));
 
   // Explicit globals. The optional WATX region runtime globals are prepended
   // only in legacy mode, keeping exact declaration indices available to WAT.

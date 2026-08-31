@@ -180,7 +180,7 @@ function checkTypes(forms, options = {}) {
           } else if (kind === "effects") {
             effectsClause = part;
           } else if (kind === "export") {
-            inlineExportDecls.push({exportName:(V(A(part,1)) || "").replace(/"/g, ""),kind:"func",ref:name});
+            inlineExportDecls.push({exportName:(V(A(part,1)) || "").replace(/"/g, ""),kind:"func",ref:name,formIndex:fi});
           } else {
             body.push(part);
           }

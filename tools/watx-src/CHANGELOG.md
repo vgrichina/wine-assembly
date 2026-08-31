@@ -173,3 +173,68 @@ each, and both binaries pass `new WebAssembly.Module()`.
 New manifest digest:
 
   812bb3b0163fd10ef29d6f0e2f1fa9cfde6aff8d5529c4da18d827d94d980235
+
+## 2026-08-31 — M3: exports follow declaration order; negative hex `i64.const`
+
+Two fixes found by the Milestone 3 four-artifact differential
+(`node tools/watx-matrix.js`, `docs/watx-migration-plan.md` §M3), which compares
+this compiler's artifact against `lib/compile-wat.js`'s section by section.
+
+**1. The export section is emitted in SOURCE DECLARATION order, interleaved
+across kinds.** WATX collected exports in two phases — every inline
+`(func $f (export "f") …)` clause first, then every top-level `(export …)` /
+`(wasm-export …)` form — which grouped the section by *where the export was
+written* instead of by declaration position. Standard WAT, and the legacy
+compiler this output is differentially compared against, emit one entry per
+export in written order, so `src/01-header.wat:870`'s
+`(export "memory" (memory 0))` — declared ahead of every function in the closure
+— is export #0 there and was export #1430 here. Both artifacts exported all 1431
+entries, but the section compares POSITIONALLY, so every entry was misaligned by
+one and the gate was red on exports alone.
+
+The fix records the index of the top-level form each export came from
+(`formIndex`, set in both `compiler-stages.js`'s checker and `compiler-codegen.js`'s
+standalone fallback) and stably sorts the collected list by it. It is a general
+declaration-order rule, deliberately **not** a "memory first" special case — the
+new suite interleaves memory first, memory last, memory in the middle, globals,
+inline clauses and `wasm-export` forms to pin that down. The synthesized implicit
+`memory` export that historical WATX modules with no memory form receive still
+comes first, unchanged, and is asserted.
+
+**2. A negatively-signed hexadecimal `i64.const` compiled to a silent zero.**
+`BigInt('-0x10')` throws — the constructor takes a sign only on a decimal string
+— and `parseI64Literal` returned `0n` from its catch, so the literal became
+`i64.const 0` with no error and a module that still validated. This is in the
+tree: `src/09a7b-ole.wat:3801` writes the OLE compound-file magic as
+`(i64.const -0x1EE54E5E1FEE3030)` — `0xE11AB1A1E011CFD0`, the little-endian
+`D0 CF 11 E0 A1 B1 1A E1` signature every CFB reader checks for, and the same
+constant `:4075` compares against on read — so `$ole_cfb_serialize` wrote eight
+zero bytes there and the container carried no signature at all. The sign is now
+peeled by hand before `BigInt`, a second sign is rejected, and an unparseable
+literal is a **hard error** instead of a plausible-looking 0, since the silence
+is what made this expensive to find. `i32.const` was never affected — it goes
+through `parseInt`, which handles `-0x…`.
+
+New suites `test/watx-compiler-export-order.test.js` (17 checks) and
+`test/watx-compiler-i64-literal.test.js` (21 checks), both added to the
+provenance checker's `REQUIRED_FILES` (17 → 19). Run against the pre-fix
+compiler they fail 5 and 4 checks respectively; the twelve pre-existing suites
+are unchanged.
+
+Measured on the real closure: the export section now MATCHes entry for entry in
+both modes, the two `$ole_cfb_*` bodies become byte-identical, and
+`node tools/watx-matrix.js --only=abi` reports **MATRIX GREEN** with 6 of 8142
+code bodies remaining as diagnostics. Those six are **not** compiler defects:
+one (`$next`) is a `return_call_indirect` type INDEX renumber over an identical
+signature, which the ABI tool tolerates by design (types are compared as a set);
+the other five are the Wine source writing a bare instruction in the else slot of
+an `(if COND (then …) X)` with no `(else …)` wrapper. Legacy silently DISCARDS
+`X`; WATX compiles it as the else arm. A census over `WAT_FILES` finds 12 such
+tails, of which the 10 in `if`s that have no `(else …)` are the divergence — see
+the report on `messageboard.txt` for the site list. That is a source defect of
+the G5 class, not something to paper over here, so no compiler change was made
+for it.
+
+New manifest digest:
+
+  bf54906c2ea0aba43a09042177295a9660fa8846fb8168db9be08a4354f20bcd
