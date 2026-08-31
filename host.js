@@ -1228,8 +1228,10 @@ class WineAssembly {
         // so that fallback would compile a module that fails validation, or
         // worse, one that traps mid-app.
         if (typeof window !== 'undefined' && window.watxLauncher) {
-          const bytes = await window.watxLauncher.compile({
-            tailCalls,
+          // compile(mode, options): tailCalls is mode; version/noStore are
+          // fetch options — in the first argument they are silently ignored
+          // and the source fetch loses its ?v= cache-buster.
+          const bytes = await window.watxLauncher.compile({ tailCalls }, {
             version: WineAssembly.SOURCE_VERSION,
             noStore: debugFetch,
           });
