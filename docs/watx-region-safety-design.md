@@ -131,9 +131,12 @@ layout, or nothing downstream — byte identity, the shake test, a diffable
    `tools/check-wat-manifest.js` gates. Not by name, not by size: those change
    under an unrelated rename or a capacity bump.
 2. A cursor starts at `ALLOC_FLOOR`, declared once per module:
-   `(region.floor 0x00001000)`. Wine's floor is `0x1000` — below it live
-   `NULL_SENTINEL` at `0xF0` and the decoder scratch, which are pinned by
-   `$g2w`'s sink behaviour.
+   `(region.floor 0x00000100)`. Wine's floor is `0x100` — below it lives
+   `NULL_SENTINEL` at `0xF0`, pinned by `$g2w`'s sink behaviour. (This section
+   originally said `0x1000`; wave 2 declared the real low string pool —
+   `$STRING_CONSTANTS` at `0x100`, `$VK_SCAN_TABLES` at `0x380` — and a floor
+   above them makes first-fit unable to reproduce the map, so §8.1 and
+   `tools/region-alloc.js` moved it to `0x100`.)
 3. Each region is placed at the first cursor position at or above the cursor
    that satisfies its `(align N)`, and the cursor advances past it. First-fit
    *above the cursor*, never backfilling into an earlier gap — backfilling makes
