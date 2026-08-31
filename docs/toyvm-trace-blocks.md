@@ -168,3 +168,41 @@ the corpus diff would stop being a check at exactly the moment it was needed.
 Fusion solved that by charging the removed step inline, but there is no handler
 left to charge it in when the whole op goes away. It needs a different answer
 before it is worth attempting.
+
+### There is a parity-free variant, and it is too small to build
+
+The paragraph above assumes the `jmp`'s *dispatch* goes. It does not have to.
+A `jmp` twin could keep the dispatch and the step and drop only the **transfer**
+— becoming the one-operand op the traced Jcc's not-taken edge already is:
+
+```wat
+(global.set $gip (local.get $t0))
+(if (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0)))
+  (then (call $slice_exit)))
+```
+
+with the target block compiled inline behind it. Step parity is then automatic
+rather than argued: same dispatches, same order, same `$steps`. It needs no new
+mechanism at all — the same `TRACE` swap, the same `blocks.has` guard against
+compiling a second copy.
+
+**The beneficiary is too small.** `--handler-hist`, core ten, 8M dispatches,
+exact and load-independent:
+
+| program | `jmp` share | | program | `jmp` share |
+|---|---|---|---|---|
+| ACCIDENT | 4.6% | | RUNDEMO | 2.5% |
+| BRW | 4.3% | | DEMO5 | 2.2% |
+| B-STEEL | 3.0% | | CONTAGIO | 2.0% |
+| DHADREN | 2.9% | | CYCLE | 1.8% |
+| | | | DTM2 | 0.7% |
+| | | | CMA_SHRT | 0.5% |
+
+Mean ~2.4%, against **4.5–28.4%** for the traced Jcc in the table above — a
+fifth of the population, for the same saving per hit. At `bench-loops.js`'s
+prices (a transfer is ~9ns on top of an ~8ns dispatch) that is ~1.3% of
+interpreter time: below this box's noise floor, and below several things already
+rejected. And it is not even strictly-less-work, for the reason §"what it is
+worth" gives — it moves code in the arena, and locality can go either way.
+
+Recorded rather than built.
