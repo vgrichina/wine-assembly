@@ -11,11 +11,61 @@ const fs = require('fs');
 const path = require('path');
 const { compileWat } = require('../lib/compile-wat');
 const { createHostImports } = require('../lib/host-imports');
-const { GuestThreadHost } = require('../lib/guest-thread-host');
+const { GuestThreadHost, WorkerLink } = require('../lib/guest-thread-host');
 
 const root = path.join(__dirname, '..');
 
 async function main() {
+  // DLL bootstrap is another Worker protocol boundary. Safari/WebKit rejects
+  // the complete message if a host callback survives anywhere in its object
+  // graph, even when a Win16 app has no PE DLLs to load.
+  {
+    const host = new GuestThreadHost({
+      memory: null, module: null, sigs: {}, hostImports: {},
+    });
+    let message = null;
+    host.link = {
+      _ask: async value => {
+        message = value;
+        structuredClone(value);
+        return { results: [] };
+      },
+    };
+    const bytes = Uint8Array.of(0x4D, 0x5A);
+    const exeBytes = Uint8Array.of(0x4E, 0x45);
+    const configs = [{
+      name: 'CARDS.DLL', path: 'C:\\WINDOWS\\SYSTEM\\CARDS.DLL', bytes,
+      provider: { read() {} },
+    }];
+    const opts = {
+      exeName: 'WEP16_RODENT.EXE', extraArgs: '-test', maxBlocks: 1234,
+      registerDllResources() {}, advanceGuestTime() {},
+      nested: { callback() {} },
+    };
+    await host.loadDlls(configs, exeBytes, opts);
+    assert.deepStrictEqual(Object.keys(message.configs[0]).sort(), ['bytes', 'name', 'path']);
+    assert.deepStrictEqual(message.opts, {
+      exeName: 'WEP16_RODENT.EXE', extraArgs: '-test', maxBlocks: 1234,
+    });
+    assert.strictEqual(message.configs[0].bytes, bytes);
+    assert.strictEqual(message.exeBytes, exeBytes);
+    assert.strictEqual(configs[0].provider.read instanceof Function, true,
+      'marshalling must not mutate the caller config');
+    assert.strictEqual(opts.advanceGuestTime instanceof Function, true,
+      'marshalling must not mutate the caller options');
+
+    const link = new WorkerLink({
+      slot: 7, memory: null, module: null, sigs: {}, broker: {},
+    });
+    link.worker = {
+      postMessage() { throw new Error('The object can not be cloned.'); },
+    };
+    await assert.rejects(link._ask({ t: 'loadDlls' }, 1000),
+      /worker 7 could not post loadDlls: The object can not be cloned/);
+    assert.strictEqual(link._pending.size, 0,
+      'a synchronous structured-clone failure must clear the pending request');
+  }
+
   const module = await WebAssembly.compile(await compileWat(file =>
     fs.promises.readFile(path.join(root, 'src', file), 'utf8')));
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
@@ -70,7 +120,7 @@ async function main() {
     host.stop();
   }
 
-  console.log('PASS guest Worker initializes a thread stack in sparse high memory');
+  console.log('PASS guest Worker clone boundary and sparse high-memory stack');
 }
 
 main().catch(error => { console.error(error); process.exit(1); });
