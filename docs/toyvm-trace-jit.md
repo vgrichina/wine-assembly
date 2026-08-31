@@ -553,17 +553,80 @@ selects, and precisely where tier 2→3's 1.52x and the 2.83x ladder were
 measured. The tier ratios are not wrong; they were measured on the thin end of
 the distribution.
 
+### Size is the wrong axis for the micro-op question
+
+The table above invites the conclusion "micro-ops are population-capped at 6%",
+and that conclusion does not follow. The micro-op passes do not pay in
+proportion to block size. They pay when something computed per op and per
+iteration — the segment base, the effective address, a register round-tripping
+through the register-file globals — becomes something computed once and carried.
+A 3-op block run a million times as a loop body is a better micro-op target than
+a 12-op block run once, and a size histogram cannot tell those apart.
+
+The design consequence is the sharp one: **the compilation unit has to contain
+the back edge.** A block-granular install must spill promoted registers to the
+globals at every block exit, so for a 3-op loop body `promoteRegs` loads into
+locals and immediately spills, once per iteration, and buys nothing. The
+hoisting only pays if the compiled function contains the loop, which is what the
+main emulator's `LUT_RUN`/`RECT_RUN`/`RLE_RUN` folds do.
+
+So `--coverage` also classifies each block by whether it *contains* a back edge:
+
+| class | meaning |
+|---|---|
+| `self` | a branch targets this block's own head — the loop is this one block |
+| `back` | a branch targets an earlier arena address — a loop closing inside this block |
+| `straight` | neither |
+
+**Read the classifier's limits before reading its numbers**, because getting
+this wrong twice is what produced the table:
+
+- The back edge is usually **not the terminator**. This VM compiles through
+  conditional branches, so for `dec cx; jnz top` the fall-through — the loop
+  *exit* — is stitched in behind the branch and the block continues; the back
+  edge is a side exit in the middle of the block. A terminator-only classifier
+  scored DTM2 100% and B-STEEL 90.6% straight-line for this reason alone. Every
+  op is scanned now, not just the last.
+- It still **undercounts multi-block loops**. Only the block holding the back
+  edge is marked; the other blocks of the same loop read as `straight` even
+  though they run every iteration.
+
+Mean over the 18 programs that yielded samples: **31% of program time is in a
+block that contains its own back edge**, and the distribution is strongly
+bimodal — six programs at 0%, four at ~100% (DEMO5, COMPOVRS, CONTACT,
+daretro), the rest scattered between.
+
+That bimodality is the finding, and it is more useful than the mean:
+
+- Where the loop **fits in one block**, micro-ops can pay under a plain
+  block-granular install, with no guards and no deopt.
+- Where the loop **spans blocks** — most of the corpus — a block-sized
+  compilation unit cannot hoist anything across the back edge, and getting the
+  micro-op value there requires compiling the whole loop as one unit. That is a
+  region, with a side exit and an entry guard. Which is to say the argument
+  against trace-shaped compilation in
+  [toyvm-trace-blocks.md](toyvm-trace-blocks.md) applies to *general* tracing,
+  not to loop-region compilation, and this is the measurement that separates
+  them.
+
+And one caution that applies to every number in this section: *hot* means
+*repeatedly executed*, so a block with a large sample share is in a loop
+whether or not this classifier can see the edge. Coverage is close to an upper
+bound on loop residency already; the classifier is answering the narrower
+question of whether the loop fits in one compilation unit.
+
 Three consequences, in order of how much they should change what gets built:
 
-1. **Tier 1 has the population and the micro-ops do not.** Stitching addresses
-   ~60% of program time (the 2–7 op mass); micro-ops address ~29% at the most
-   generous reading (4+ ops) and ~6% at the strict one (8+). Any further
-   micro-op pass is optimising a sliver until block coverage exists.
+1. **Tier 1 stitching has the population unconditionally.** It pays per op,
+   needs nothing hoisted across a back edge, and reaches the whole 66–100%
+   coverage. It is the part of the ladder that works at block granularity.
 2. **The 1-op blocks are 19% and are a different problem entirely.** A one-op
    block is a dispatch plus a block transfer, so there is no body to compile —
    it is exactly the shape the spin-loop collapse already targets, and DEMO5 is
    100% one-op blocks. Look there, not at the compiler.
-3. **Coverage is a reason to install per block, not per trace.** The top five
-   blocks are already ~70%; there is no need for multi-block traces, guards or
-   deopt to reach most of a program. See the note on translation blocks in
-   [toyvm-trace-blocks.md](toyvm-trace-blocks.md).
+3. **Per-block install reaches most of a program; per-loop install is what
+   makes the micro-ops worth anything.** The top five blocks are already ~70%,
+   so stitching needs no traces, guards or deopt. But only ~31% of time sits in
+   a block that holds its own back edge, so for the rest, hoisting has to happen
+   in a unit that spans blocks. Those are two different builds and should be
+   costed as two, not merged into "the JIT".

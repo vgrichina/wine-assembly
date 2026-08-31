@@ -301,6 +301,51 @@ async function jitTiers(exe, {
     // program whose samples sit in 1-3 op blocks is reachable by stitching and
     // largely out of reach of micro-ops, and that is a fact about the program,
     // not about the compiler. This histogram is what says which one we have.
+    // ...and WHETHER IT IS A LOOP, which is the axis that actually decides what
+    // the micro-op passes are worth. Their value is not proportional to block
+    // size: it is that a computation done per-op, per-iteration -- the segment
+    // base, the effective address, a register round-tripping through the
+    // register-file globals -- becomes one that is done once and then carried.
+    // A 3-op block executed a million times as a loop body is a better micro-op
+    // target than a 12-op block executed once, and a size histogram cannot tell
+    // those apart. Classified off the terminator's arena target: `self` branches
+    // back to its own head, `back` to an earlier address (a loop back edge that
+    // spans blocks), `fwd` forward, and everything else exits.
+    // The back edge is NOT necessarily the terminator, and looking only at the
+    // terminator gets this badly wrong. This VM compiles *through* a
+    // conditional branch: for `dec cx; jnz top` the fall-through (the loop
+    // EXIT) is stitched in behind the branch and the block keeps going, so the
+    // back edge is a side exit sitting in the MIDDLE of the block while the
+    // block terminates on whatever ends the exit path -- a `ret`, a `jmp`, or
+    // nothing at all. A terminator-only classifier scored 90% of B-STEEL and
+    // 100% of DTM2 as straight-line `exit` for exactly this reason.
+    //
+    // So scan every op: any branch whose arena target lands at or before this
+    // block's own head is a back edge, wherever it sits.
+    const cls = (b) => {
+      const t = inspect(b).t;
+      let self = false, back = false;
+      for (const op of t.ops) {
+        if (!/^j/.test(op.name) || !op.args.length) continue;
+        const to = op.args[0];
+        if (to === b.addr) self = true;
+        else if (to < b.addr && to >= b.prog.arenaBase) back = true;
+      }
+      return self ? 'self' : back ? 'back' : 'straight';
+    };
+    const byCls = new Map();
+    for (const b of real) {
+      const k = cls(b);
+      byCls.set(k, (byCls.get(k) || 0) + b.samples);
+    }
+    log('  share by terminator:');
+    for (const k of ['self', 'back', 'straight']) {
+      const pct = 100 * (byCls.get(k) || 0) / total;
+      if (!pct) continue;
+      log(`    ${k.padStart(8)}  ${pct.toFixed(1).padStart(5)}%  ${'#'.repeat(Math.round(pct / 2))}`
+        + (k === 'self' ? '   <- self loop: micro-ops carry across iterations'
+          : k === 'back' ? '   <- has a back edge' : ''));
+    }
     const buckets = [[1, 1], [2, 3], [4, 7], [8, 15], [16, 1e9]];
     const sized = real.map(b => ({ ops: inspect(b).t.ops.length, samples: b.samples }));
     log('  share by block size:');
