@@ -40,6 +40,13 @@ not stuck.
   because their original homogeneous coordinates cannot be reconstructed.
 - MCM enables `D3DRENDERSTATE_COLORKEYENABLE` and uses packed 16-bit source
   colour keys. A keyed sample is discarded before both colour and Z writes.
+- MCM owns both a 640x480 race viewport and a 128x128 texture viewport on the
+  same Direct3D device. `SetViewport` configures the addressed viewport object;
+  it must not replace the device's cached transform rectangle when that object
+  is inactive. Doing so changes the projection scale from `(320,240)` to
+  `(64,64)` and compresses the rider and terrain toward the upper-left while
+  long camera-near polygons fan across the rest of the frame. Selecting a
+  viewport with `SetCurrentViewport` now restores that object's saved rectangle.
 - The HUD uses paired system/video-memory surfaces. For example, the traced
   64x64 gauge source and destination were slots 406 and 407 with identical
   pixels. `IDirect3DTexture::Load` must copy the source-key flag and packed key

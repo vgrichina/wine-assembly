@@ -31,6 +31,31 @@ const extraWat = String.raw`
       (i32.const 0) (local.get $surface) (local.get $out) (global.get $DX_VTBL_D3DDEV3))
     (global.get $eax))
 
+  (func (export "test_diptex_create_viewport") (result i32)
+    (call $dx_create_com_obj (i32.const 23) (i32.const 0x54000000)))
+
+  (func (export "test_diptex_attach_viewport") (param $device i32) (param $viewport i32)
+    (i32.store offset=8 (call $dx_from_this (local.get $viewport)) (local.get $device)))
+
+  (func (export "test_diptex_set_current_viewport") (param $device i32) (param $viewport i32)
+    (call $d3dim_set_current_viewport (local.get $device) (local.get $viewport)))
+
+  (func (export "test_diptex_set_viewport") (param $viewport i32) (param $desc i32)
+    (call $d3dim_viewport_set (local.get $viewport) (local.get $desc)))
+
+  (func (export "test_diptex_viewport_state")
+      (param $device i32) (param $index i32) (result i32)
+    (call $gl32 (i32.add
+      (call $d3ddev_state (local.get $device))
+      (i32.add (global.get $D3DIM_OFF_VP_RECT) (i32.mul (local.get $index) (i32.const 4))))))
+
+  (func (export "test_diptex_current_viewport") (param $device i32) (result i32)
+    (call $gl32 (i32.add (call $d3ddev_state (local.get $device))
+      (global.get $D3DIM_OFF_CUR_VP))))
+
+  (func (export "test_diptex_viewport_slot") (param $viewport i32) (result i32)
+    (call $dx_slot_of (call $dx_from_this (local.get $viewport))))
+
   (func (export "test_diptex_dib") (param $surface i32) (result i32)
     (i32.load offset=20 (call $dx_from_this (local.get $surface))))
 
@@ -242,6 +267,46 @@ function writeFloat(wat, addr, value) {
   const device = wat.guest_read32(devOut) >>> 0;
   assert(device);
   const rtDib = wat.test_diptex_dib(rt) >>> 0;
+
+  // D3D viewport rectangles belong to viewport objects, not globally to the
+  // device. MCM configures a 128x128 texture viewport after its 640x480 race
+  // viewport; updating the inactive object must not compress every subsequent
+  // world projection into the upper-left corner. Selecting either viewport
+  // must restore that object's saved rectangle into the transform cache.
+  const largeViewport = wat.test_diptex_create_viewport() >>> 0;
+  const smallViewport = wat.test_diptex_create_viewport() >>> 0;
+  const vpDesc = 0x410200;
+  const setViewportDesc = (width, height) => {
+    wat.guest_write32(vpDesc, 80);
+    wat.guest_write32(vpDesc + 4, 0);
+    wat.guest_write32(vpDesc + 8, 0);
+    wat.guest_write32(vpDesc + 12, width);
+    wat.guest_write32(vpDesc + 16, height);
+  };
+  wat.test_diptex_attach_viewport(device, largeViewport);
+  wat.test_diptex_attach_viewport(device, smallViewport);
+  wat.test_diptex_set_current_viewport(device, largeViewport);
+  setViewportDesc(640, 480);
+  wat.test_diptex_set_viewport(largeViewport, vpDesc);
+  setViewportDesc(128, 128);
+  wat.test_diptex_set_viewport(smallViewport, vpDesc);
+  assert.deepStrictEqual([
+    wat.test_diptex_current_viewport(device),
+    wat.test_diptex_viewport_slot(largeViewport),
+    wat.test_diptex_viewport_state(device, 2),
+    wat.test_diptex_viewport_state(device, 3),
+  ], [wat.test_diptex_viewport_slot(largeViewport), wat.test_diptex_viewport_slot(largeViewport), 640, 480],
+  'inactive texture viewport replaced the race transform viewport');
+  wat.test_diptex_set_current_viewport(device, smallViewport);
+  assert.deepStrictEqual([
+    wat.test_diptex_viewport_state(device, 2),
+    wat.test_diptex_viewport_state(device, 3),
+  ], [128, 128], 'selecting the texture viewport did not restore its rectangle');
+  wat.test_diptex_set_current_viewport(device, largeViewport);
+  assert.deepStrictEqual([
+    wat.test_diptex_viewport_state(device, 2),
+    wat.test_diptex_viewport_state(device, 3),
+  ], [640, 480], 'reselecting the race viewport did not restore its rectangle');
 
   // D3DLVERTEX is eight DWORDs: xyz, a reserved DWORD, diffuse, specular,
   // then uv. MCM writes that authentic 32-byte layout. A 28-byte stride makes
