@@ -314,9 +314,8 @@ assert(globalValue('COM_WRAPPERS_AUX_SIZE') >= globalValue('COM_WRAPPERS_AUX_MAX
 assert.strictEqual(globalValue('DX_VTBL_REGISTRY_SIZE'),
   (globalValue('DX_VTBL_REGISTRY_COUNT') + 1) * 4,
   'DX_VTBL_REGISTRY_SIZE must cover its count and every vtable pointer');
-assert(globalValue('WIN16_DYNAMIC_MODULES') * globalValue('WIN16_APP_DLL_STRIDE') <=
-       globalValue('WIN16_APP_DLL_STAGING_SIZE'),
-  'WIN16 app-local DLL slots exceed WIN16_APP_DLL_STAGING_SIZE');
+assert(globalValue('WIN16_APP_DLL_STAGING_SIZE') >= globalValue('WIN16_APP_DLL_STRIDE'),
+  'Win16 reusable app-DLL staging must accept at least the legacy 1MB image');
 assert(globalValue('WIN16_DLL_STAGING') +
        globalValue('WIN16_DYNAMIC_BASE') * globalValue('WIN16_DLL_STAGING_STRIDE') <=
        regionByName.get('PE_STAGING').end,

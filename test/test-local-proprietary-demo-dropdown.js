@@ -152,8 +152,10 @@ assert.strictEqual(civ2Win16.exe,
   'test/binaries/candidates/civilization-2-win16/cd/CIV2/CIV2.EXE');
 assert.strictEqual(civ2Mge.exe,
   'test/binaries/candidates/civilization-2-mge-win32/installed/civ2.exe');
-assert.deepStrictEqual(civ2Win16.win16Modules, ['WING'],
-  'the Win16 dropdown stages the retail WinG library loaded at runtime');
+assert.deepStrictEqual(civ2Win16.win16Modules,
+  ['WING', 'CIV2ART', 'CV', 'INTRO', 'MK', 'PV', 'SS', 'TILES',
+    'TIMERDLL', 'WONDER'],
+  'the Win16 dropdown stages WinG and every resource-only artwork library');
 assert(civ2Mge.dlls.some(file => /\/XDaemon\.dll$/i.test(file)),
   'the Win32 dropdown seeds the MGE network helper DLL');
 for (const app of [civ2Win16, civ2Mge]) {

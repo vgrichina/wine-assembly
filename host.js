@@ -26,7 +26,7 @@ function claimAudioSession() {
 if (typeof window !== 'undefined') window.claimAudioSession = claimAudioSession;
 
 class WineAssembly {
-  static SOURCE_VERSION = '246';
+  static SOURCE_VERSION = '247';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   static _nextProcessId = 1000;
 
@@ -1395,11 +1395,40 @@ class WineAssembly {
 
     const dir = url.replace(/[^\\\/]*$/, '');
     const files = new Map();
+    const vfs = this._helpCtx && this._helpCtx.vfs;
+    const mountedDir = /^[a-z]:[\\\/]/i.test(dir)
+      ? dir.toLowerCase().replace(/\//g, '\\').replace(/\\+$/, '')
+      : null;
+    // Imported folders/discs have no HTTP directory to probe. Discover the
+    // app-local NE modules beside the selected executable directly from the
+    // already-mounted BYOM VFS; resource-only DLLs (notably Civ II's artwork
+    // packs) do not appear in the executable's import table.
+    const mountedExtras = [];
+    if (vfs && mountedDir) {
+      for (const path of vfs.files.keys()) {
+        const slash = path.lastIndexOf('\\');
+        if (slash < 0 || path.slice(0, slash) !== mountedDir) continue;
+        const leaf = path.slice(slash + 1);
+        if (/\.(?:dll|vbx)$/i.test(leaf)) mountedExtras.push(leaf.replace(/\.[^.]+$/, ''));
+      }
+    }
+    const extraNames = [...new Set([...(this._win16ExtraModules || []), ...mountedExtras])];
+    this._win16ExtraModules = extraNames;
     const candidates = [...new Set([...(_stageable(exeBytes) || []),
-                                    ...(this._win16ExtraModules || [])])];
+                                    ...extraNames])];
     await Promise.all(candidates.flatMap(name =>
       VfsSeed.win16FileCandidates(name).map(async file => {
         if (files.has(name)) return;
+        if (vfs && mountedDir) {
+          const mountedPath = mountedDir + '\\' + file.toLowerCase();
+          if (vfs.files.has(mountedPath)) {
+            try {
+              const bytes = await vfs.materialize(mountedPath);
+              if (!files.has(name)) files.set(name, bytes);
+              return;
+            } catch (_) { /* fall through to the ordinary URL lookup */ }
+          }
+        }
         try {
           const bytes = await WineAssembly.fetchAssetBytes(dir + file);
           if (!files.has(name)) files.set(name, bytes);
@@ -1412,12 +1441,12 @@ class WineAssembly {
 
     if (this.guestWorker) {
       const result = await this.guestWorker.loadWin16Dlls(
-        exeBytes, [...files], this._win16ExtraModules || []);
+        exeBytes, [...files], extraNames);
       for (const line of (result && result.lines) || []) console.log(line);
     } else {
       _loadWin16Dlls(exports, this.memory, exeBytes, dir,
         (_dir, name) => files.get(name) || null, (m) => console.log(m),
-        this._win16ExtraModules || []);
+        extraNames);
     }
   }
 
@@ -1427,7 +1456,14 @@ class WineAssembly {
     const bytes = this._win16Modules && this._win16Modules.get(String(name).toUpperCase());
     const exports = this.instance && this.instance.exports;
     if (!bytes || !exports || !exports.win16_dll_staging) return false;
-    new Uint8Array(this.memory.buffer).set(bytes, exports.win16_dll_staging(id));
+    const room = exports.win16_app_dll_staging_size
+      ? exports.win16_app_dll_staging_size()
+      : 0x00100000;
+    if (bytes.length > room) return false;
+    const base = exports.win16_dll_staging(id);
+    const memory = new Uint8Array(this.memory.buffer);
+    memory.fill(0, base, base + room);
+    memory.set(bytes, base);
     return true;
   }
 

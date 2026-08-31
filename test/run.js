@@ -1763,7 +1763,14 @@ async function main() {
         const p = path.join(dir, f);
         if (!fs.existsSync(p)) continue;
         const bytes = fs.readFileSync(p);
-        new Uint8Array(ctx.getMemory()).set(bytes, ctx.exports.win16_dll_staging(id));
+        const room = ctx.exports.win16_app_dll_staging_size
+          ? ctx.exports.win16_app_dll_staging_size()
+          : 0x00100000;
+        if (bytes.length > room) return false;
+        const base = ctx.exports.win16_dll_staging(id);
+        const memory = new Uint8Array(ctx.getMemory());
+        memory.fill(0, base, base + room);
+        memory.set(bytes, base);
         return true;
       }
       return false;
@@ -3511,7 +3518,7 @@ async function main() {
         if (fs.existsSync(p)) return fs.readFileSync(p);
       }
       return null;
-    }, (m) => console.log(m));
+    }, (m) => console.log(m), (ASSET_ENTRY && ASSET_ENTRY.win16Modules) || []);
   const requiredDlls = detectRequiredDlls(exeBytes);
 
   // Initialize DirectX COM vtable thunks (must be after load_pe sets image_base)

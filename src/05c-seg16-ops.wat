@@ -122,10 +122,11 @@
 
   ;; ---- Effective addresses ----
   ;;
-  ;; info = base | index<<4 | seg<<8, with 0xF meaning "no register". The sum
-  ;; wraps inside the segment before the base is added, which is what makes
-  ;; `[bp-2]` with a small BP address the top of the segment rather than the
-  ;; segment below it.
+  ;; info = base | index<<4 | seg<<8 | addr32<<11, with 0xF meaning "no
+  ;; register". A normal 16-bit-address sum wraps inside the segment before
+  ;; the base is added, which is what makes `[bp-2]` with a small BP address
+  ;; the top of the segment rather than the segment below it. An address-size
+  ;; override keeps the full 32-bit offset while still applying the selector.
   (func $ea16_compute (param $info i32) (param $disp i32) (result i32)
     (local $off i32)
     (if (i32.ne (i32.and (local.get $info) (i32.const 0xF)) (i32.const 0xF))
@@ -133,9 +134,12 @@
     (if (i32.ne (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)) (i32.const 0xF))
       (then (local.set $off (i32.add (local.get $off)
         (call $get_reg (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)))))))
+    (local.set $off (i32.add (local.get $off) (local.get $disp)))
     (i32.add
       (call $seg16_base (i32.and (i32.shr_u (local.get $info) (i32.const 8)) (i32.const 7)))
-      (i32.and (i32.add (local.get $off) (local.get $disp)) (i32.const 0xFFFF))))
+      (if (result i32) (i32.and (local.get $info) (i32.const 0x800))
+        (then (local.get $off))
+        (else (i32.and (local.get $off) (i32.const 0xFFFF))))))
 
   ;; 363: compute a 16-bit segmented EA into ea_temp, then fall through to the
   ;; handler that consumes it — the same contract as $th_compute_ea_sib.

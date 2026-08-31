@@ -149,12 +149,43 @@ const extraWat = String.raw`
 
   (func (export "test_civ16_hmemcpy_byte") (param $index i32) (result i32)
     (call $gl8 (i32.add (i32.const 0x00120400) (local.get $index))))
+
+  (func (export "test_civ16_text_extent_point") (result i32)
+    (local $hdc i32)
+    (call $test_civ16_setup)
+    ;; GetDC(NULL) supplies a real shared GDI DC and its Win16 handle mapping.
+    (global.set $esp (i32.const 0x00110100))
+    (call $gs16 (i32.const 0x00110100) (i32.const 0x0010))
+    (call $gs16 (i32.const 0x00110102) (call $win16_index_to_sel (i32.const 1)))
+    (call $gs16 (i32.const 0x00110104) (i32.const 0))
+    (call $win16_GetDC)
+    (local.set $hdc (global.get $eax))
+    (call $gs8 (i32.const 0x00110500) (i32.const 0x43)) ;; C
+    (call $gs8 (i32.const 0x00110501) (i32.const 0x69)) ;; i
+    (call $gs8 (i32.const 0x00110502) (i32.const 0x76)) ;; v
+    (call $gs8 (i32.const 0x00110503) (i32.const 0))
+    (call $gs16 (i32.const 0x00110600) (i32.const 0xDEAD))
+    (call $gs16 (i32.const 0x00110602) (i32.const 0xBEEF))
+    (global.set $esp (i32.const 0x00110100))
+    (call $gs16 (i32.const 0x00110100) (i32.const 0x0010))
+    (call $gs16 (i32.const 0x00110102) (call $win16_index_to_sel (i32.const 1)))
+    ;; Pascal rightmost first: lpSize, count, lpString, hDC.
+    (call $gs16 (i32.const 0x00110104) (i32.const 0x0600))
+    (call $gs16 (i32.const 0x00110106) (call $win16_index_to_sel (i32.const 2)))
+    (call $gs16 (i32.const 0x00110108) (i32.const 3))
+    (call $gs16 (i32.const 0x0011010A) (i32.const 0x0500))
+    (call $gs16 (i32.const 0x0011010C) (call $win16_index_to_sel (i32.const 2)))
+    (call $gs16 (i32.const 0x0011010E) (local.get $hdc))
+    (drop (call $win16_gdi (i32.const 471)))
+    (global.get $eax))
+  (func (export "test_civ16_text_extent_word") (param $offset i32) (result i32)
+    (call $gl16 (i32.add (i32.const 0x00110600) (local.get $offset))))
 `;
 
 (async () => {
   const { exports: e } = await bootRenderHarness({
     extraWat,
-    fonts: 'none',
+    fonts: 'bitmap',
     extraHostOverrides: { get_ticks: () => 0x12345678 },
   });
 
@@ -206,12 +237,12 @@ const extraWat = String.raw`
   [42, 0x01000000, 0x08000000, 0x00008000, 0x04000000, 4096],
   'MemManInfo should report coherent byte, page-count, and page-size fields');
 
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 24; i++) {
     assert.strictEqual(e.test_civ16_dynamic_module(i), 13 + i,
       `app-local Win16 module ${i + 1} should receive its own id`);
   }
-  assert.strictEqual(e.test_civ16_dynamic_module(6), 0,
-    'the reserved staging range has exactly six app-local module slots');
+  assert.strictEqual(e.test_civ16_dynamic_module(24), 0,
+    'the dynamic module registry has room for Civ II artwork DLLs');
 
   assert.strictEqual(e.test_civ16_hmemcpy() >>> 0, 0x00110110,
     'hmemcpy should pop its 12 Pascal argument bytes and far return');
@@ -219,7 +250,15 @@ const extraWat = String.raw`
     [0x11, 0x22, 0x33, 0x44, 0x55],
     'hmemcpy should copy the requested bytes between Win16 far selectors');
 
-  console.log('PASS Civ II Win16 selector, ToolHelp stack, timers, DLL capacity, and hmemcpy');
+  const extent = e.test_civ16_text_extent_point() >>> 0;
+  assert.strictEqual(extent, 1,
+    'GDI.471 GetTextExtentPoint should report success');
+  assert.notStrictEqual(e.test_civ16_text_extent_word(0), 0xDEAD,
+    'GDI.471 should narrow cx into the Win16 SIZE');
+  assert.notStrictEqual(e.test_civ16_text_extent_word(2), 0xBEEF,
+    'GDI.471 should narrow cy into the Win16 SIZE');
+
+  console.log('PASS Civ II Win16 selector, ToolHelp, timers, DLL capacity, hmemcpy, and text extent');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

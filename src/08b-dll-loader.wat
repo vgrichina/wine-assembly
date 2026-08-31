@@ -513,8 +513,16 @@
                           (i32.add (local.get $load_addr)
                             (i32.add (local.get $entry) (i32.const 2)))))))))
               (else
-                (local.set $api_id (call $system_ordinal_api_id
-                  (local.get $dll_name_ptr) (i32.and (local.get $entry) (i32.const 0xFFFF))))
+                ;; A DLL import needs the same WAT-first, host-fallback ordinal
+                ;; resolver as the main executable.  Calling only the static
+                ;; WAT table here made host-mapped system exports (notably the
+                ;; authentic DPLAYX ordinal set) turn into ORD diagnostics
+                ;; when imported by a loaded DLL, even though the identical
+                ;; import from an EXE resolved correctly.
+                (local.set $api_id (call $resolve_import_ordinal
+                  (local.get $dll_name_ptr)
+                  (call $g2w (local.get $dll_name_ptr))
+                  (i32.and (local.get $entry) (i32.const 0xFFFF))))
                 (if (i32.ne (local.get $api_id) (i32.const -1))
                   (then
                     (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))

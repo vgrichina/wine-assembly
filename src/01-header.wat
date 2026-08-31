@@ -1298,7 +1298,7 @@
   ;; 0x00011EAC   84B    Free
   ;; 0x00011F00  166B    Run-dialog strings (src/09c3-controls.wat), ends 0x11FA6
   ;; --- High WAT-private tables ---
-  ;; 0x079C5000   8KB    WIN16_SEG_TABLE (511 selectors × 16 bytes + scratch)
+  ;; 0x079DA000  16KB    WIN16_SEG_TABLE (960 selectors × 16 bytes + scratch)
   ;; 0x079C7000   4KB    free (former undersized WIN16_THUNK_TABLE placement)
   ;; 0x079D0000  32KB    GDI_NEAREST_CACHE (4096 × {colour tag, palette index})
   ;; 0x079D8000   8KB    WIN16_THUNK_TABLE (2048 entries × 4 bytes)
@@ -1417,7 +1417,7 @@
   ;; 0x03C12000  1MB     Former low main stack slot, now free for guest heap
   ;; 0x03D12000  ...     Guest heap grows upward; VirtualAlloc reserves grow downward from thread cache
   ;; 0x03E12000  256KB   Former IAT thunk zone, now free for guest heap
-  ;; 0x04A00000   6MB    WIN16_APP_DLL_STAGING (6 app modules × 1MB)
+  ;; 0x04A00000   6MB    WIN16_APP_DLL_STAGING (one reusable app-module image)
   ;; 0x05000000 32MB     Thread cache (8 slots × 4MB decoded-thread arenas)
   ;; 0x07012000  1MB     Main guest stack (ESP starts at top 0x07112000)
   ;; 0x07112000 256KB    IAT thunk zone
@@ -3206,24 +3206,23 @@
   (global $clipboard_fmt_counter (mut i32) (i32.const 0))
 
   ;; ---- Win16 / NE loader state (src/08c-ne-loader.wat) ----
-  ;; WIN16_SEG_TABLE has one spare entry past WIN16_SEG_MAX, used as scratch by
-  ;; $win16_apply_relocs for the entry-table segment out-parameter.
-  ;; 511 entries x 16 bytes + 1 scratch, which is exactly the 8KB between here
-  ;; and WIN16_THUNK_TABLE. It was 128 entries at 0x07E08400, which is 0x800
-  ;; from WIN16_THUNK_TABLE and could not grow in place; the obvious-looking
-  ;; space at 0x07E03000 turned out to be inside API_HASH_TABLE, whose size
-  ;; global says 32KB rather than the 12KB its comment claims. This address was
-  ;; checked with tools/wat-memory-map.js.
+  ;; WIN16_SEG_TABLE has one spare entry at WIN16_SEG_MAX, used as scratch by
+  ;; $win16_apply_relocs for the entry-table segment out-parameter. The table
+  ;; was moved after WIN16_THUNK_TABLE when its original 8KB slot became too
+  ;; small; tools/wat-memory-map.js verifies the 16KB placement.
   ;;
   ;; Every GlobalAlloc costs a whole selector, because a selector is what a
   ;; Win16 global handle *is* — so the ceiling here is an out-of-memory limit,
   ;; not a bookkeeping one. Rattler Race makes 140 global allocations loading
   ;; its form and ran out at 255, and VB reports that as its error 7 with an
-  ;; empty message box. Slot MAX is the handle table, at guest 0x01FF0000, and
-  ;; the arena ends at 32MB — well clear of the guest heap at 0x03C12000.
-  (global $WIN16_SEG_TABLE i32 (i32.const 0x079C5000))
-  (global $WIN16_SEG_TABLE_SIZE i32 (i32.const 0x00002000))
-  (global $WIN16_SEG_MAX   i32 (i32.const 510))
+  ;; empty message box. Civilization II keeps more than 300 global blocks live
+  ;; after loading roughly 180 executable/DLL segments, so the former 510-slot
+  ;; arena likewise failed with linear memory left. Slot MAX remains the hidden
+  ;; handle/resource page; at guest 0x03CF0000 it ends immediately below
+  ;; GUEST_HEAP_BASE after g2w translation.
+  (global $WIN16_SEG_TABLE i32 (i32.const 0x079DA000))
+  (global $WIN16_SEG_TABLE_SIZE i32 (i32.const 0x00004000))
+  (global $WIN16_SEG_MAX   i32 (i32.const 959))
   ;; One entry per distinct (module, ordinal) the task and its DLLs import.
   ;; 256 was not enough once a DLL as large as VBRUN100 was in the picture, and
   ;; the table has room for 2048 — still only 8KB of thunk segment used out of
@@ -3300,6 +3299,10 @@
   ;; handle spaces. The table itself is the one arena slot no selector can
   ;; name — index WIN16_SEG_MAX — which is why it needs no address here.
   (global $win16_handle_next (mut i32) (i32.const 0))
+  ;; Resource handles need the module as well as the NE type/id key. The
+  ;; descriptor table is reset with the ordinary Win16 handle table.
+  (global $win16_res_handle_next (mut i32) (i32.const 0))
+  (global $WIN16_RES_HANDLE_MAX i32 (i32.const 1024))
   (global $WIN16_HANDLE_MAX i32 (i32.const 4096))
   ;; Indices start here so a small integer an app writes where a handle goes --
   ;; COLOR_WINDOW+1 in a class background -- can never collide with one.
@@ -3329,13 +3332,12 @@
   ;; KB, and there are at most nine module ids.
   (global $WIN16_DLL_STAGING i32 (i32.const 0x07592000))
   (global $WIN16_DLL_STAGING_STRIDE i32 (i32.const 0x00040000))
-  ;; Where the modules an application ships with itself are staged, one
-  ;; megabyte each. PAGE_DIR ends at 0x04920000 and THREAD_CACHE_BASE begins at
-  ;; 0x05000000, leaving a complete six-slot WAT-private span here. The former
-  ;; 0x07A00000 placement held only four slots before API_HASH_TABLE began at
-  ;; 0x07E00000; growing it in place would overwrite every high console/GDI/DX
-  ;; table. They get their own area because their size is the app's business
-  ;; rather than the system's: VBRUN100.DLL alone is 265KB.
+  ;; Reusable staging for a module an application ships with itself. Once an
+  ;; NE has loaded, its executable segments live in the selector arena and a
+  ;; private 64KB metadata copy preserves its header/resource tables, so the
+  ;; next LoadLibrary may reuse all six megabytes. Resource-only Civ II packs
+  ;; are as large as 3.9MB; fixed one-megabyte-per-id slots cannot represent
+  ;; them and also cap the process at six names for no Windows-level reason.
   (global $WIN16_APP_DLL_STAGING i32 (i32.const 0x04A00000))
   (global $WIN16_APP_DLL_STAGING_SIZE i32 (i32.const 0x00600000))
   (global $WIN16_APP_DLL_STRIDE  i32 (i32.const 0x00100000))

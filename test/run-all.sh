@@ -70,6 +70,7 @@ UNIT=(
   test/test-zip-mount.js
   test/test-media-sniff.js
   test/test-media-cue-import.js
+  test/test-media-autorun-inf.js
   test/test-save-bundle.js
   test/test-flush-view-of-file.js
   test/test-heap-free-block-validation.js
@@ -601,6 +602,7 @@ E2E=(
   test/test-win98-audio-web.js
   test/test-explorer98-web.js
   test/test-local-candidate-desktop-web.js
+  test/test-civ2-local-web.js
   test/test-win16-web.js
   test/test-worker-guest.js
   test/test-win16-dialog.js

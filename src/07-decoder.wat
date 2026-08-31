@@ -1391,9 +1391,23 @@
         (else (global.set $mr_base (local.get $rm))))
       (global.set $mr_disp (i32.add (global.get $mr_disp) (call $d_fetch32))))
 
-    ;; Centralized segment-override application for all memory EAs.
-    ;; Emitter-side calls remain in place but become idempotent no-ops.
-    (call $apply_seg_override))
+    ;; A 32-bit address-size override in 16-bit code still uses segmented
+    ;; addressing. Its default is SS for an EBP/ESP base and DS otherwise;
+    ;; importantly this must replace, not inherit, $mr_seg. Civ II puts an
+    ;; FS:[BX] access immediately before 67 [ESI-4], so retaining the prior
+    ;; decode's FS selector reads its clipping table as bitmap metadata.
+    (if (global.get $code16)
+      (then
+        (global.set $mr_seg
+          (if (result i32)
+            (i32.or (i32.eq (global.get $mr_base) (i32.const 4))
+                    (i32.eq (global.get $mr_base) (i32.const 5)))
+            (then (i32.const 2)) (else (i32.const 3))))
+        (call $modrm16_apply_seg))
+      (else
+        ;; Centralized segment-override application for flat memory EAs.
+        ;; Emitter-side calls remain in place but become idempotent no-ops.
+        (call $apply_seg_override))))
 
   ;; 16-bit ModRM addressing, for a 16-bit task. The eight rm forms map onto
   ;; base/index directly:
@@ -1483,18 +1497,23 @@
   ;; If SIB (index set) or base-only [reg+disp]: emits compute_ea_sib handler and returns sentinel 0xEADEAD.
   ;; If absolute: returns mr_disp directly.
   ;; (callers that want a fast [reg+disp] opcode check $mr_simple_base before calling this.)
-  ;; Pack the EA registers for the 16-bit compute handler: base | index<<4 |
-  ;; seg<<8, with 0xF standing for "no register".
+  ;; Pack the EA registers for the segmented compute handler: base | index<<4 |
+  ;; seg<<8, with 0xF standing for "no register". Bit 11 distinguishes a
+  ;; 32-bit address-size override in a 16-bit code segment: the selector base
+  ;; still applies, but the offset must not wrap at 16 bits.
   (func $ea16_info (result i32)
     (i32.or
       (i32.or
-        (if (result i32) (i32.ne (global.get $mr_base) (i32.const -1))
-          (then (global.get $mr_base)) (else (i32.const 0xF)))
-        (i32.shl
-          (if (result i32) (i32.ne (global.get $mr_index) (i32.const -1))
-            (then (global.get $mr_index)) (else (i32.const 0xF)))
-          (i32.const 4)))
-      (i32.shl (global.get $mr_seg) (i32.const 8))))
+        (i32.or
+          (if (result i32) (i32.ne (global.get $mr_base) (i32.const -1))
+            (then (global.get $mr_base)) (else (i32.const 0xF)))
+          (i32.shl
+            (if (result i32) (i32.ne (global.get $mr_index) (i32.const -1))
+              (then (global.get $mr_index)) (else (i32.const 0xF)))
+            (i32.const 4)))
+        (i32.shl (global.get $mr_seg) (i32.const 8)))
+      (if (result i32) (i32.eqz (global.get $d_addr16))
+        (then (i32.const 0x800)) (else (i32.const 0)))))
 
   ;; Pack the EA registers for the 32-bit SIB handlers: base | index<<4 |
   ;; scale<<8, with 0xF standing for "no register" — the word handlers 149,

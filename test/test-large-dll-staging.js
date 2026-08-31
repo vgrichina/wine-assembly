@@ -26,7 +26,8 @@ function makeMinimalDll(totalSize, options = {}) {
   bytes.writeUInt16LE(0x210e, pe + 22);
 
   bytes.writeUInt16LE(0x010b, opt);
-  const rawSize = options.wsockStartupOrdinal ? 0x400 : 0x200;
+  const systemOrdinal = options.wsockStartupOrdinal || options.dplayLobbyOrdinal;
+  const rawSize = systemOrdinal ? 0x400 : 0x200;
   bytes.writeUInt32LE(rawSize, opt + 4);
   bytes.writeUInt32LE(0x1000, opt + 16);
   bytes.writeUInt32LE(0x1000, opt + 20);
@@ -38,7 +39,7 @@ function makeMinimalDll(totalSize, options = {}) {
   bytes.writeUInt32LE(0x200, opt + 60);
   bytes.writeUInt16LE(2, opt + 68);
   bytes.writeUInt32LE(16, opt + 92);
-  if (options.wsockStartupOrdinal) {
+  if (systemOrdinal) {
     bytes.writeUInt32LE(0x1100, opt + 104);
     bytes.writeUInt32LE(40, opt + 108);
   }
@@ -50,13 +51,15 @@ function makeMinimalDll(totalSize, options = {}) {
   bytes.writeUInt32LE(0x200, section + 20);
   bytes.writeUInt32LE(0x60000020, section + 36);
   Buffer.from([0xb8, 1, 0, 0, 0, 0xc2, 0x0c, 0]).copy(bytes, 0x200);
-  if (options.wsockStartupOrdinal) {
+  if (systemOrdinal) {
+    const dllName = options.dplayLobbyOrdinal ? 'DPLAYX.dll' : 'WSOCK32.dll';
+    const ordinal = options.dplayLobbyOrdinal ? 4 : 115;
     bytes.writeUInt32LE(0x1140, 0x300); // OriginalFirstThunk
     bytes.writeUInt32LE(0x1130, 0x30c); // DLL name RVA
     bytes.writeUInt32LE(0x1150, 0x310); // FirstThunk
-    bytes.write('WSOCK32.dll\0', 0x330, 'ascii');
-    bytes.writeUInt32LE(0x80000073, 0x340); // WSAStartup ordinal 115
-    bytes.writeUInt32LE(0x80000073, 0x350);
+    bytes.write(`${dllName}\0`, 0x330, 'ascii');
+    bytes.writeUInt32LE((0x80000000 | ordinal) >>> 0, 0x340);
+    bytes.writeUInt32LE((0x80000000 | ordinal) >>> 0, 0x350);
   }
   return bytes;
 }
@@ -65,7 +68,13 @@ async function main() {
   const wasm = await compileWatSnapshot(file =>
     fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
-  const ctx = { exports: null, getMemory: () => memory.buffer, renderer: null, resourceJson: {} };
+  const ctx = {
+    exports: null,
+    getMemory: () => memory.buffer,
+    renderer: null,
+    resourceJson: {},
+    apiTable: require('../src/api_table.json'),
+  };
   const imports = createHostImports(ctx);
   imports.host.memory = memory;
   const module = await WebAssembly.compile(wasm);
@@ -116,6 +125,16 @@ async function main() {
     'host thunk should retain the source WSOCK32 ordinal');
   assert.strictEqual(dv.getUint32(thunkWa + 4, true), 923,
     'WSOCK32 ordinal 115 should resolve to the existing WSAStartup API ID');
+
+  const third = loadDll(e, memory.buffer,
+    makeMinimalDll(0x600, { dplayLobbyOrdinal: true }));
+  const dplayIatThunk = dv.getUint32(g2w((third.loadAddr >>> 0) + 0x1150), true);
+  assert.strictEqual(dplayIatThunk, 0x07100008,
+    'DPLAYX ordinal imported by a loaded DLL should point at the next host thunk');
+  assert.strictEqual(dv.getUint32(thunkWa + 8, true), 0x80000004,
+    'DPLAYX host thunk should retain DirectPlayLobbyCreateA ordinal 4');
+  assert.strictEqual(dv.getUint32(thunkWa + 12, true), 1235,
+    'loaded-DLL ordinal fallback should resolve DPLAYX #4 to DirectPlayLobbyCreateA');
 
   const wsadata = e.guest_alloc(400) >>> 0;
   const wsadataWa = g2w(wsadata);
