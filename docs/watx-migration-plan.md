@@ -356,10 +356,25 @@ the WATX-built emulator runs real guests correctly), compat pairs carry zero
 `return_call`, and the sole acceptance diff is export-section *order*: the
 legacy emitter writes exports in declaration order (`memory` first, from
 `01-header.wat`) while WATX groups by kind and emits the memory export last.
-Same 1,431 entries either side. Eight of 8,142 code bodies also encode
-differently (diagnostic; classification in progress). The export-order fix
-belongs in the vendored compiler — preserve declaration order, no
-special-casing.
+Same 1,431 entries either side. The export-order fix landed in `3fdae908`
+(declaration-order emission, no special-casing, plus a real WATX bug found in
+the audit: `parseI64Literal` silently returned 0 for negative hex `i64`
+literals — the OLE compound-file magic among them — now a hard error path with
+hand-peeled sign). **MATRIX GREEN** as of that commit: every acceptance
+section matches in both modes, no `return_call` in either compat artifact,
+9/9 curated tests pass on all four artifacts.
+
+The body audit classified all eight diffs. Two were type-index renumbers
+(equivalent by design), and six are **Wine-source defects**: a bare tail
+expression sitting in the else slot of an else-less `if`, which the legacy
+compiler silently discards and WATX compiles as the else arm. The dropped
+code includes `$menu_group_set_disabled`'s MF_GRAYED store (the function is
+a no-op in every shipped build), two `$heap_free` calls in `$tv_insert`, and
+the d3dim greyscale texture fallback. G5's precedent applies: fix the source
+so the intent is explicit and both compilers agree, measuring each behavior
+change. A census found 12 bare-tail-in-`if` sites total; the 6 inside `if`s
+that already have an `(else …)` compile identically under both compilers and
+need no change.
 
 Performance checks come after behavioral equality. On a quiet machine, compare
 fixed-duration guest progress and retired operations, not batches per second.
@@ -466,8 +481,10 @@ Conversions happen in place in the single source tree — no `.watx` twin files.
       to `concat-wat.js`, gate strict and wired into the build.)
 - [x] Full Wine source compiles in both WATX modes. (`aba5ff7f` — unmodified
       closure at HEAD, zero warnings, both modes validate)
-- [ ] Four-artifact ABI/data/table comparison is green. (tooling landed
-      `4aeb0970`; sole acceptance diff is export-section order, fix in flight)
+- [x] Four-artifact ABI/data/table comparison is green. (`3fdae908` — MATRIX
+      GREEN: exports/imports/types/functions/globals/tables/elements/memories/
+      data all match both modes; 6 diagnostic body diffs remain, all Wine-source
+      bare-tail-in-else-less-`if` defects the legacy compiler drops)
 - [ ] Full behavior matrix is green for both WATX artifacts.
 - [ ] Chromium and Safari forced-source builds are green.
 - [ ] WATX memory high-water mark is acceptable on the target mobile device.
