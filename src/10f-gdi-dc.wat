@@ -21,6 +21,34 @@
       (if (i32.eq (i32.load (local.get $p)) (local.get $hdc))
         (then
           (global.set $gdi_dc_state_hint (local.get $p))
+          ;; A legacy hwnd+0x40000/0xC0000 DC can be touched before the
+          ;; corresponding window record exists. That creates an otherwise
+          ;; generic DC record with no window binding; once the hwnd is live,
+          ;; upgrade the existing record instead of returning the stale empty
+          ;; clip forever.
+          (if (i32.eqz (i32.load offset=92 (local.get $p)))
+            (then
+              (if (i32.and (i32.ge_u (local.get $hdc) (i32.const 0x00050000))
+                    (i32.lt_u (local.get $hdc) (i32.const 0x000D0000)))
+                (then
+                  (local.set $hwnd (i32.sub (local.get $hdc) (i32.const 0x00040000)))
+                  (if (i32.ne (call $wnd_table_find (local.get $hwnd)) (i32.const -1))
+                    (then (local.set $binding (local.get $hwnd))))))
+              (if (i32.and (i32.ge_u (local.get $hdc) (i32.const 0x000D0000))
+                    (i32.lt_u (local.get $hdc) (i32.const 0x001D0000)))
+                (then
+                  (local.set $hwnd (i32.sub (local.get $hdc) (i32.const 0x000C0000)))
+                  (if (i32.ne (call $wnd_table_find (local.get $hwnd)) (i32.const -1))
+                    (then (local.set $binding
+                      (i32.or (local.get $hwnd) (i32.const 0x80000000)))))))
+              (if (local.get $binding)
+                (then
+                  (i32.store offset=92 (local.get $p) (local.get $binding))
+                  (if (i32.lt_s (local.get $binding) (i32.const 0))
+                    (then (call $dc_apply_window_clip
+                      (local.get $hdc) (i32.and (local.get $binding) (i32.const 0x7FFFFFFF))))
+                    (else (call $dc_apply_client_clip
+                      (local.get $hdc) (local.get $binding))))))))
           (return (local.get $p))))
       (if (i32.and (i32.eqz (local.get $empty)) (i32.eqz (i32.load (local.get $p))))
         (then (local.set $empty (local.get $p))))
@@ -73,6 +101,18 @@
         (call $gdi_table_mark_bump (i32.const 2) (i32.add (i32.div_u
           (i32.sub (local.get $empty) (global.get $GDI_DC_STATE_TABLE))
           (global.get $GDI_DC_STATE_STRIDE)) (i32.const 1)))
+        ;; Lazy-adopted legacy window DCs bypass $host_alloc_window_dc, so they
+        ;; also bypassed the normal visible-region setup. VBRUN queries
+        ;; GetClipBox on these hwnd+0x40000 client DCs before deciding how much
+        ;; of its AutoRedraw bitmap to copy; without a real USER clip it saw
+        ;; NULLREGION and copied a degenerate 1x1 rectangle.
+        (if (local.get $binding)
+          (then
+            (if (i32.lt_s (local.get $binding) (i32.const 0))
+              (then (call $dc_apply_window_clip
+                (local.get $hdc) (i32.and (local.get $binding) (i32.const 0x7FFFFFFF))))
+              (else (call $dc_apply_client_clip
+                (local.get $hdc) (local.get $binding))))))
         (return (local.get $empty))))
     (i32.const 0))
 
@@ -1838,6 +1878,53 @@
     (i32.store offset=72 (local.get $desc) (local.get $origin_x))
     (i32.store offset=76 (local.get $desc) (local.get $origin_y))
     (i32.const 1))
+
+  ;; Win16 VB controls such as ThunderPictureBox commonly draw into a memory
+  ;; DC that owns an AutoRedraw bitmap, then rely on the runtime/window system
+  ;; to expose that backing bitmap when the visible child is painted. If the
+  ;; child wndproc later does only BeginPaint/EndPaint, the bitmap is complete
+  ;; but never reaches the compositor. Attach a just-written memory bitmap as
+  ;; the own surface for a visible custom child with the same extent.
+  (func $gdi_win16_autopresent_child_bitmap (param $hdc i32) (result i32)
+    (local $dc i32) (local $bmp i32) (local $w i32) (local $h i32) (local $surface i32)
+    (local $i i32) (local $hwnd i32) (local $wh i32)
+    (if (i32.eqz (call $win16_vbrun100_loaded))
+      (then (return (i32.const 0))))
+    (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+    (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
+    ;; Only memory DCs qualify. Window DCs already present through their
+    ;; top-level owner surface and must not be detached into child layers.
+    (if (i32.ne (i32.load offset=92 (local.get $dc)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $bmp (call $gdi_dc_bitmap_record (local.get $hdc)))
+    (if (i32.eqz (local.get $bmp)) (then (return (i32.const 0))))
+    (local.set $w (i32.load offset=8 (local.get $bmp)))
+    (local.set $h (i32.load offset=12 (local.get $bmp)))
+    (local.set $surface (i32.load offset=40 (local.get $bmp)))
+    (if (i32.or (i32.le_s (local.get $w) (i32.const 1))
+                (i32.le_s (local.get $h) (i32.const 1)))
+      (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $hwnd (call $wnd_slot_hwnd (local.get $i)))
+      (if (i32.and
+            (i32.and
+              (i32.and
+                (i32.ne (local.get $hwnd) (i32.const 0))
+                (i32.ne (call $wnd_get_parent (local.get $hwnd)) (i32.const 0)))
+              (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 0)))
+            (call $wnd_is_effectively_visible (local.get $hwnd)))
+        (then
+          (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
+          (if (i32.and
+                (i32.eq (i32.and (local.get $wh) (i32.const 0xFFFF)) (local.get $w))
+                (i32.eq (i32.shr_u (local.get $wh) (i32.const 16)) (local.get $h)))
+            (then
+              (return (call $host_gdi_surface_attach
+                (local.get $surface) (local.get $hwnd)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
 
   (func $gdi_line_descriptor_supported (param $desc i32) (result i32)
     (local $style i32) (local $width i32) (local $unit_mapping i32)

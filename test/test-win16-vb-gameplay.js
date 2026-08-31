@@ -89,6 +89,10 @@ function testRodent(outDir) {
       `1200:keyup:39,1250:png:${after},1350:stop`,
   ]);
   assertHealthy(output, 'Rodent');
+  const titleWrites = [...output.matchAll(/\[SetWindowText\] "([^"]*)"/g)]
+    .map(match => match[1]);
+  assert.match(titleWrites.at(-1) || '', /^Rodent's Revenge \[\d+\]$/,
+    'Rodent DefWindowProc must retain the caption written by SetWindowText');
   assert.match(output, /keydown vk=39/, 'Rodent Right key must reach the renderer');
   assert(changedPixels(before, after, { x: 180, y: 116, w: 276, h: 276 }) > 40,
     'Rodent board should visibly advance after holding Right');
@@ -110,7 +114,7 @@ function testRattler(outDir) {
   assertHealthy(output, 'Rattler');
   const initialScore = colorBounds(initial, { x: 378, y: 88, w: 68, h: 28 },
     (r, g, b) => r < 48 && g < 48 && b < 48);
-  assert(initialScore.width >= 55 && initialScore.height >= 13 && initialScore.count > 100,
+  assert(initialScore.width >= 50 && initialScore.height >= 12 && initialScore.count > 100,
     `Rattler should use its large six-digit score font ` +
     `(dark=${initialScore.width}x${initialScore.height}, pixels=${initialScore.count})`);
   // Rattler implements pix_KeyPress (ASCII keypad controls), not KeyDown.

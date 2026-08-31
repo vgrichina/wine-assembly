@@ -4864,11 +4864,13 @@
   (func $win16_ctrl_lparam32 (param $class i32) (param $message i32)
         (param $lparam i32) (result i32)
     (local $convert i32)
-    ;; WM_SETTEXT carries a string for every built-in control class. A guest
-    ;; subclass commonly forwards it to the saved native procedure, so handle
-    ;; it here as well as in the class-specific LB_/CB_ cases below.
-    (if (i32.and (i32.ne (local.get $class) (i32.const 0))
-                 (i32.eq (local.get $message) (i32.const 0x000C)))
+    ;; WM_SETTEXT carries a string for every window, including a top-level
+    ;; form whose control class is zero. A guest window procedure commonly
+    ;; forwards it to DefWindowProc/CallWindowProc, so convert the packed
+    ;; selector:offset before the 32-bit default procedure sees it. Passing the
+    ;; packed value through made it read an empty string and immediately clear
+    ;; the valid caption SetWindowText had just installed (Rodent's Revenge).
+    (if (i32.eq (local.get $message) (i32.const 0x000C))
       (then (local.set $convert (i32.const 1))))
     (if (i32.eq (local.get $class) (i32.const 4))
       (then
@@ -4921,6 +4923,8 @@
       (then
         (local.set $hwnd32 (call $win16_h32 (local.get $hwnd)))
         (local.set $class (call $ctrl_table_get_class (local.get $hwnd32)))
+        (local.set $lparam (call $win16_ctrl_lparam32
+          (local.get $class) (local.get $message) (local.get $lparam)))
         ;; USER returns a sentinel rather than a callable far procedure when a
         ;; Win16 app subclasses one of the controls implemented by the WAT
         ;; runtime. Some libraries keep that value and later pass it back to
@@ -4929,8 +4933,6 @@
         ;;
         (if (local.get $class)
           (then
-            (local.set $lparam (call $win16_ctrl_lparam32
-              (local.get $class) (local.get $message) (local.get $lparam)))
             (call $win16_call32_begin (i32.const 4))
             ;; This is the procedure *under* the guest subclass, so bypass the
             ;; window table (which still names that subclass) and invoke the
@@ -5260,19 +5262,10 @@
           (if (call $win16_is_far_proc (local.get $proc))
             (then
               (call $nc_flags_set (local.get $child) (i32.const 7))
-              ;; Give the child its background HERE, at the moment it becomes
-              ;; exposed, instead of leaving the erase seed (bit 1) for its
-              ;; first BeginPaint. USER erases when a window is shown, before
-              ;; the app draws into it; deferring it to the first paint
-              ;; inverts that order for anything the app draws outside its own
-              ;; paint cycle, and the class-brush fill then wipes it out.
-              ;; Rodent's Revenge is the visible case: VBRUN stamps the
-              ;; stopwatch into its 32x32 picture child and the deferred fill
-              ;; (COLOR_WINDOW+1, so white) landed on top -- 605 px of a 1024
-              ;; px square against the reviewed Win98 capture. Erasing first
-              ;; still leaves IdleWild's IWINFO pane on its native white
-              ;; class background (test-win16-wep1-gameplay); only the order
-              ;; changes.
+              ;; Give the child its background at the moment it becomes
+              ;; exposed. Deferring the erase until the first BeginPaint can
+              ;; invert Win16/VB's paint order and wipe custom child contents
+              ;; that were already drawn into their visible client surface.
               (if (call $wnd_get_bg_brush (local.get $child))
                 (then
                   (drop (call $host_erase_background (local.get $child)
@@ -5380,7 +5373,12 @@
                   (i32.add (local.get $hwnd) (i32.const 0x40000)) (i32.const 0)))))
         (drop (call $wnd_set_style (local.get $hwnd)
           (i32.or (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))))
-        (call $win16_rearm_visible_child_erases (local.get $hwnd))
+        ;; Re-arm deferred child creation work only on an actual hidden-to-
+        ;; visible transition. VB calls ShowWindow on its already-visible form
+        ;; after promoting it; reseeding the whole subtree there schedules a
+        ;; second background pass over completed picture-control artwork.
+        (if (i32.eqz (local.get $was_visible))
+          (then (call $win16_rearm_visible_child_erases (local.get $hwnd))))
         (global.set $paint_pending (i32.const 1))
         (call $invalidate_hwnd (local.get $hwnd)))
       (else
@@ -5751,6 +5749,7 @@
   ;; did nothing at all until this was here.
   (func $win16_DefWindowProc
     (local $hwnd i32) (local $message i32) (local $wparam i32) (local $lparam i32)
+    (local $class i32)
     (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 4))))
     (local.set $message (call $win16_arg16 (i32.const 3)))
     (local.set $wparam (call $win16_arg16 (i32.const 2)))
@@ -5766,6 +5765,9 @@
     ;; the default procedure is on the 32-bit side, where a 16-bit handle names
     ;; nothing. The invariant is that the 16-bit side holds narrow handles and
     ;; this side holds wide ones, and every crossing converts.
+    (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
+    (local.set $lparam (call $win16_ctrl_lparam32
+      (local.get $class) (local.get $message) (local.get $lparam)))
     (call $win16_call32_begin (i32.const 4))
     (call $handle_DefWindowProcA (local.get $hwnd) (local.get $message)
       (call $win16_msg_wparam32 (local.get $message) (local.get $wparam))
@@ -5962,8 +5964,10 @@
       (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
     (local.set $tmp (global.get $GUEST_STACK))
     (call $win16_call32_begin (i32.const 2))
+    (global.set $win16_beginpaint_call32 (i32.const 1))
     (call $handle_BeginPaint (local.get $hwnd) (local.get $tmp)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $win16_beginpaint_call32 (i32.const 0))
     (call $win16_call32_end)
     (global.set $eax (call $win16_h16 (global.get $eax)))
     (call $gs16 (local.get $dst) (global.get $eax))
@@ -7665,10 +7669,28 @@
   ;; GDI.77 GetClipBox(hDC, lpRect) -> the clip region's bounding box and its
   ;; complexity. The rectangle comes back narrowed like every other.
   (func $win16_GetClipBox
-    (local $hdc i32) (local $dst i32) (local $tmp i32)
+    (local $hdc i32) (local $dst i32) (local $tmp i32) (local $hwnd i32)
     (local.set $dst (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
     (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    ;; Legacy Win16 USER/VBRUN code can pass the old direct client/window DC
+    ;; encodings (hwnd+0x40000 / hwnd+0xC0000) to GDI. Those DCs are retained,
+    ;; so if they were first touched while the window was hidden their system
+    ;; clip remains empty. Refresh immediately before GetClipBox, because that
+    ;; return rectangle often drives how much of an AutoRedraw bitmap VBRUN
+    ;; presents to the visible window.
+    (if (i32.and (i32.ge_u (local.get $hdc) (i32.const 0x00050000))
+          (i32.lt_u (local.get $hdc) (i32.const 0x000D0000)))
+      (then
+        (local.set $hwnd (i32.sub (local.get $hdc) (i32.const 0x00040000)))
+        (if (i32.ne (call $wnd_table_find (local.get $hwnd)) (i32.const -1))
+          (then (call $dc_apply_client_clip (local.get $hdc) (local.get $hwnd))))))
+    (if (i32.and (i32.ge_u (local.get $hdc) (i32.const 0x000D0000))
+          (i32.lt_u (local.get $hdc) (i32.const 0x001D0000)))
+      (then
+        (local.set $hwnd (i32.sub (local.get $hdc) (i32.const 0x000C0000)))
+        (if (i32.ne (call $wnd_table_find (local.get $hwnd)) (i32.const -1))
+          (then (call $dc_apply_window_clip (local.get $hdc) (local.get $hwnd))))))
     (local.set $tmp (global.get $GUEST_STACK))
     (call $win16_call32_begin (i32.const 2))
     (call $handle_GetClipBox (local.get $hdc) (local.get $tmp)
@@ -8317,7 +8339,7 @@
     (call $handle_BitBlt (local.get $dst) (local.get $x) (local.get $y)
       (local.get $w) (local.get $h) (i32.const 0))
     (call $win16_call32_end)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 20)))
 
   ;; USER.407 CreateIcon(hInstance, nWidth, nHeight, nPlanes, nBitsPixel,

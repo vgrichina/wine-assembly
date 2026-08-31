@@ -395,10 +395,14 @@
               (local.get $arg3) (local.get $arg4) (local.get $src)
               (local.get $sx) (local.get $sy) (local.get $pattern) (local.get $rop)))))
         (if (local.get $ok)
-          (then (call $gdi_geometry_present (local.get $arg0) (local.get $dst)
-            (local.get $dx) (local.get $dy)
-            (i32.add (local.get $dx) (local.get $arg3))
-            (i32.add (local.get $dy) (local.get $arg4))))))
+          (then
+            (if (global.get $win16_in_call32)
+              (then (drop (call $gdi_win16_autopresent_child_bitmap
+                (local.get $arg0)))))
+            (call $gdi_geometry_present (local.get $arg0) (local.get $dst)
+              (local.get $dx) (local.get $dy)
+              (i32.add (local.get $dx) (local.get $arg3))
+              (i32.add (local.get $dy) (local.get $arg4))))))
       (else (local.set $ok (i32.const 0))))
     (global.set $eax (local.get $ok))
     (global.set $esp (i32.add (global.get $esp) (i32.const 40))) (return)

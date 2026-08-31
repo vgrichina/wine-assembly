@@ -161,6 +161,27 @@
       (i64.eq (i64.load offset=1 (local.get $slot))
               (i64.const 0x504C45484C4F4F54))))
 
+  ;; True only for Visual Basic 1 programs whose runtime is currently loaded.
+  ;; That lets USER/GDI keep VB PictureBox compatibility paths away from other
+  ;; Win16 games that also use custom child windows and same-sized work bitmaps.
+  (func $win16_vbrun100_loaded (result i32)
+    (local $i i32) (local $slot i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $WIN16_DYNAMIC_MODULES)))
+      (local.set $slot (call $win16_dynamic_module_slot (local.get $i)))
+      (if (i32.and
+            (i32.eq (i32.load8_u (local.get $slot)) (i32.const 8))
+            (i32.and
+              (i64.eq (i64.load offset=1 (local.get $slot))
+                      (i64.const 0x3030314E55524256))
+              (i32.ne (call $win16_dll_loaded
+                (i32.add (global.get $WIN16_DYNAMIC_BASE) (local.get $i)))
+                (i32.const 0))))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   ;; An app-local name gets its id the first time anything asks about it, which
   ;; is while the task's own fixups are being applied — long before the host
   ;; has had a chance to stage the file. Assigning it here rather than waiting

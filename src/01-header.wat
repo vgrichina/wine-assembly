@@ -3258,6 +3258,11 @@
   ;; not the same claim once a task can call 32-bit code.
   ;; Segment ids follow the ModRM sreg encoding: 0=ES, 1=CS, 2=SS, 3=DS.
   (global $code16 (mut i32) (i32.const 0))
+  ;; Set only while a Win16 API thunk is reusing the shared Win32 BeginPaint
+  ;; implementation. $win16_call32_begin has to present a 32-bit frame to that
+  ;; handler, so $code16 is not a reliable way for it to recognize Win16 USER
+  ;; paint semantics.
+  (global $win16_beginpaint_call32 (mut i32) (i32.const 0))
   (global $sreg_es (mut i32) (i32.const 0))
   (global $sreg_cs (mut i32) (i32.const 0))
   (global $sreg_ss (mut i32) (i32.const 0))

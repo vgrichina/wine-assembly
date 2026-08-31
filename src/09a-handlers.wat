@@ -5130,11 +5130,18 @@
     ;; after the cards and wiped four of them off the table. See $handle_BeginPaint
     ;; for where the background is decided instead.
     ;;
-    ;; bErase is still recorded, because BeginPaint has to report it back as
-    ;; ps.fErase: an app that asked for an erase and has no class brush is the
-    ;; app that paints its own background. bErase = FALSE never clears a
+    ;; Win32 bErase is still recorded, because BeginPaint has to report it back
+    ;; as ps.fErase: an app that asked for an erase and has no class brush is
+    ;; the app that paints its own background. bErase = FALSE never clears a
     ;; pending erase -- the flag accumulates until a paint consumes it.
-    (if (local.get $arg2)
+    ;;
+    ;; Keep Win16 on its historical USER path. Windows 3.x games including
+    ;; Klotski use InvalidateRect(TRUE) as a continuous redraw request while
+    ;; also painting with window DCs outside BeginPaint. Turning every request
+    ;; into a new queued erase wipes that artwork once per pump iteration.
+    (if (i32.and
+          (i32.eqz (global.get $code16))
+          (local.get $arg2))
       (then (call $nc_flags_set (local.get $arg0) (i32.const 2))))
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
@@ -7257,6 +7264,22 @@
 	        (i32.store offset=16 (call $g2w (local.get $arg1)) (i32.and (local.get $cs) (i32.const 0xFFFF)))
 	        (i32.store offset=20 (call $g2w (local.get $arg1)) (i32.shr_u (local.get $cs) (i32.const 16)))
 	        (local.set $partial (i32.const 0))))
+    ;; Win16/VBRUN paint code commonly probes GetClipBox immediately after
+    ;; BeginPaint and uses that rectangle to copy an AutoRedraw backing bitmap
+    ;; to the visible HDC. Keep its historical update rect in the app clip
+    ;; before applying the USER/system clip; moving it solely into the system
+    ;; clip made Tic Tac Drop see a 1x1 paint box and copy only one pixel of
+    ;; its completed board.
+    (if (i32.and
+          (i32.or (global.get $code16) (global.get $win16_beginpaint_call32))
+          (local.get $partial))
+      (then
+        (drop (call $host_gdi_intersect_clip_rect
+          (local.get $hdc)
+          (i32.load (local.get $wa))
+          (i32.load offset=4 (local.get $wa))
+          (i32.load offset=8 (local.get $wa))
+          (i32.load offset=12 (local.get $wa))))))
     ;; WAT-owned visible clipping: client bounds, parent, CLIPCHILDREN and
     ;; CLIPSIBLINGS establish USER's system clip. The update rectangle is part
     ;; of that same system region, not the application-selected clip:
@@ -7265,7 +7288,10 @@
     ;; rectangle at a time; keeping rcPaint in the app clip let those selects
     ;; erase Hearts' three already-dealt opponent hands outside the update.
     (call $dc_apply_client_clip (local.get $hdc) (local.get $arg0))
-    (if (local.get $partial)
+    (if (i32.and
+          (i32.eqz
+            (i32.or (global.get $code16) (global.get $win16_beginpaint_call32)))
+          (local.get $partial))
       (then
         (drop (call $gdi_dc_system_clip_rect
           (local.get $hdc)
@@ -7323,10 +7349,22 @@
             (i32.ne (i32.and (call $nc_flags_test (local.get $arg0))
                              (i32.const 8)) (i32.const 0))
             (i32.and
-              (i32.ne (i32.and (call $nc_flags_test (local.get $arg0))
-                               (i32.const 2)) (i32.const 0))
               (i32.ne (i32.and (call $wnd_get_style (local.get $arg0))
-                               (i32.const 0x40000000)) (i32.const 0)))))
+                               (i32.const 0x40000000)) (i32.const 0))
+              (i32.or
+                (global.get $code16)
+                (i32.and
+                  (i32.ne (i32.and (call $nc_flags_test (local.get $arg0))
+                                   (i32.const 2)) (i32.const 0))
+                  ;; A Win16 custom child (VB ThunderPictureBox et al.) can
+                  ;; draw into its visible DC before it validates with
+                  ;; BeginPaint. Treating that later BeginPaint as a request
+                  ;; to repaint the class brush puts USER's background on top
+                  ;; of the app pixels. WAT-native controls paint through
+                  ;; their own path rather than the Win16 BeginPaint thunk, and
+                  ;; first exposure is already erased when the parent becomes
+                  ;; visible.
+                  (i32.eqz (global.get $win16_beginpaint_call32)))))))
       (then
         (call $nc_flags_clear (local.get $arg0) (i32.const 2))
         (local.set $desc (global.get $GDI_LINE_DESC))
@@ -7362,9 +7400,15 @@
     ;; 20 times a second, so the burning DIABLO logo and the pentagram
     ;; cursors were wiped a moment after each frame was drawn and the menu
     ;; flickered between lit and dark.
-    (if (i32.eqz (local.get $brush))
+    (if (i32.and
+          (i32.eqz (local.get $brush))
+          (i32.or
+            (global.get $code16)
+            (local.get $erase_pending)))
       (then (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 1))))
-    (if (local.get $erase_pending)
+    (if (i32.and
+          (i32.eqz (global.get $code16))
+          (local.get $erase_pending))
       (then (call $nc_flags_clear (local.get $arg0) (i32.const 2))))
     (global.set $eax (local.get $hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
@@ -9300,10 +9344,17 @@ nW — STUB: unimplemented
           (i32.load offset=4 (local.get $rect))
           (i32.load offset=8 (local.get $rect))
           (i32.load offset=12 (local.get $rect))))))
-    ;; The return is a region type, not a BOOL: SIMPLEREGION (2) for the one
-    ;; rectangle we track, NULLREGION (1) when nothing is pending. ERROR (0)
-    ;; is reserved for a bad window, and a caller that tests for it -- Storm
-    ;; does -- treats anything else as "there is something to copy".
+    ;; Win16 USER returned this runtime's historical BOOL-shaped result here.
+    ;; Several VB-era libraries check only zero/non-zero instead of the Win32
+    ;; region complexity constants; preserve that ABI for thunked callers.
+    (if (global.get $code16)
+      (then
+        (global.set $eax (select (i32.const 1) (i32.const 0) (local.get $rv)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Win32 returns a region type: SIMPLEREGION (2) for the one rectangle we
+    ;; track, NULLREGION (1) when nothing is pending. ERROR (0) is reserved for
+    ;; a bad window, and Storm treats anything else as pending content.
     (if (i32.eqz (call $wnd_table_get (local.get $arg0)))
       (then
         (global.set $eax (i32.const 0))

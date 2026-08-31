@@ -4521,8 +4521,20 @@
           (local.get $hdc) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
           (i32.const 1)))))
     (call $dc_clip_to_parent_client (local.get $hdc) (local.get $hwnd))
-    (call $dc_exclude_children_for_clip
-      (local.get $hdc) (local.get $hwnd) (i32.const 0) (i32.const 0))
+    ;; Win16/VBRUN can present AutoRedraw content from a parent legacy client
+    ;; DC into areas occupied by child picture controls. Keep that exception
+    ;; narrow: non-VB Win16 games still rely on WS_CLIPCHILDREN to stop parent
+    ;; drawing from covering their child controls and custom panes.
+    (if (i32.or
+          (i32.eqz (global.get $code16))
+          (i32.or
+            (i32.eqz (call $win16_vbrun100_loaded))
+            (i32.or
+              (i32.lt_u (local.get $hdc) (i32.const 0x00050000))
+              (i32.ge_u (local.get $hdc) (i32.const 0x000D0000)))))
+      (then
+        (call $dc_exclude_children_for_clip
+          (local.get $hdc) (local.get $hwnd) (i32.const 0) (i32.const 0))))
     (call $dc_exclude_siblings_for_clip (local.get $hdc) (local.get $hwnd)))
 
   (func $dc_apply_client_erase_clip (param $hdc i32) (param $hwnd i32)
