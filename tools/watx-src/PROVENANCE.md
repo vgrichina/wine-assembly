@@ -82,7 +82,7 @@ at the bottom of this file, not left to whoever is editing.
 cc9dfe2962214e5da09162844e98d359b825009a8388bb7726edaed729b37ee2  tools/watx.js
 17a14c6c447cdee48dcbd6212047d86c88087c50277b141b8d44136672732280  tools/watx-src/compiler-parser.js
 5c6641524ffdc8b97db247c4b3fb0d7fe4526df071186a3dcaf903dba2f2e0e9  tools/watx-src/compiler-stages.js
-48f7bbf0201ace095baf0fcf4763e5672aaf78624b65f29f38cef7d75ddf83a7  tools/watx-src/compiler-codegen.js
+a2196f660a659100e29d49285889177a01634eb50273538e47151cc6060210ce  tools/watx-src/compiler-codegen.js
 b85a780ec3d53fa0a9a9b335839504f24c5ca7288a75885c2c0823b8bd9dd550  tools/watx-src/compiler.js
 293c1a233359bf142bf5badceb3399c92b79a653a86085681142b2037d80fce4  test/watx-compiler-wine-parity.test.js
 aaea455c646e4db3e1b60c034b32bda842c06babd29d8de3b810d73181ecf2c8  test/watx-compiler-production.test.js
@@ -100,7 +100,7 @@ c8b1f6a5361212e835ba7f4478800008c41c53041f380bf21b6a6a11cfb43e5d  test/watx-comp
 a1b425dc42f4fd3458cf983710c00c028c11f99afab51bd9b5c90046df0ae15b  test/watx-compiler-i64-literal.test.js
 9fe942a56d279a77840a9ca6d04c358186c9a51ffae9bff0ca5fe02b5269f4c4  test/watx-compiler-literals.test.js
 4bcc836d2a63143457c4f8edb5678920bf204db13201d58580fbe64499aed21b  test/watx-compiler-type-index.test.js
-d82a6af700b911e520b266416bc76bf7261344a90938b596f062cea9db3fa076  test/watx-compiler-regions.test.js
+3c3fe13c63933d12446b22aad6334fe62e57b21c9968336ef9db11d5848f7ccb  test/watx-compiler-regions.test.js
 07596a8750d10d747487c59aae5ae57cf664f42cfb32de4e43143a4bf635dadc  test/watx-compiler-alloc.test.js
 ```
 
@@ -146,6 +146,6 @@ without re-sealing. Both lines are rewritten together by
 CHANGELOG already names the new digest.
 
 ```seal
-manifest-sha256   4db2a8f0b64e9ffe4af6372dc9d5c65af2b1f2619de8bf1b92d5ffe762ecd469
-changelog-sha256  a527200db9c5eaf8a85b55ae8c97ebaa96de6e9dbe185faba2cd7439935d16dc
+manifest-sha256   72b5cc4a809076c4cb769a32e6b3ccaac869fb83b1bbb86d7c577e32096200d7
+changelog-sha256  413b4c7382007a3ce95858372fa121d49c9477bad39adad48c8cb3e57c23a376
 ```

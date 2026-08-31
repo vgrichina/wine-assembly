@@ -522,5 +522,80 @@ mustFail('a segment at (region.size $R)',
     Buffer.from(abs.wasmBinary).equals(Buffer.from(rel.wasmBinary)), rel.error || abs.error);
 }
 
+console.log('── (7) GLOBAL INITIALIZERS: the mirror that follows its region ──');
+//
+// docs/watx-region-safety-design.md §6. Every region in wine-assembly has a
+// `(global $NAME i32 (i32.const 0x…))` mirror behind it, and that mirror is
+// what ~1100 `global.get` sites read. While the initializer is a LITERAL the
+// map cannot move at all: an allocated region would relocate and every consumer
+// would keep reading the old address, silently. So the three region constants
+// are legal in a global initializer, resolved through the same
+// `regionConstValue` the instruction and data-segment positions use — which is
+// what makes the bounds rule and the span refusal hold here too.
+{
+  const R = `(region.floor 0x1000)
+(region.declare $A (size 0x100) (align 0x100))
+(region.declare $B (size 0x40) (align 0x40))`;
+  const r = build(`${R}
+(global $A_AT i32 (region.addr $A 0))
+(global $A_MID i32 (region.addr $A 0x20))
+(global $A_SZ i32 (region.size $A))
+(global $B_END i32 (region.end $B))
+(func $f (result i32) (effects heap) (global.get $A_AT)) (wasm-export "f" $f)
+(func $g (result i32) (effects heap) (global.get $A_MID)) (wasm-export "g" $g)
+(func $h (result i32) (effects heap) (global.get $A_SZ)) (wasm-export "h" $h)
+(func $i (result i32) (effects heap) (global.get $B_END)) (wasm-export "i" $i)`);
+  ck('a region-constant global initializer compiles', r.success === true, r.error);
+  if (r.success) {
+    const x = new WebAssembly.Instance(new WebAssembly.Module(r.wasmBinary), {}).exports;
+    // $A is the first allocated region above the floor; $B follows it.
+    ck('(region.addr $A 0) is the allocated base', x.f() === 0x1000, x.f());
+    ck('(region.addr $A OFF) adds the offset', x.g() === 0x1020, x.g());
+    ck('(region.size $A) is the extent', x.h() === 0x100, x.h());
+    ck('(region.end $B) is base+size', x.i() === 0x1140, x.i());
+  }
+}
+{
+  // The property that makes converting a mirror a NO-OP while its region is
+  // still pinned: the symbolic initializer emits the literal's bytes. That is
+  // the oracle a 173-global conversion wave is checked against.
+  const lit = build(`(region.declare-fixed $R (base 0x1000) (size 0x100))
+(global $R_AT i32 (i32.const 0x1000))
+(func $f (result i32) (effects heap) (global.get $R_AT)) (wasm-export "f" $f)`);
+  const sym = build(`(region.declare-fixed $R (base 0x1000) (size 0x100))
+(global $R_AT i32 (region.addr $R 0))
+(func $f (result i32) (effects heap) (global.get $R_AT)) (wasm-export "f" $f)`);
+  ck('a symbolic mirror emits the literal mirror\'s bytes',
+    lit.success && sym.success &&
+    Buffer.from(lit.wasmBinary).equals(Buffer.from(sym.wasmBinary)), sym.error || lit.error);
+}
+{
+  // A mutable mirror works too — several of wine-assembly's are `(mut i32)`
+  // cursors seeded at a region's base ($console_text_base).
+  const r = build(`(region.declare-fixed $R (base 0x1000) (size 0x100))
+(global $CUR (mut i32) (region.addr $R 0))
+(func $f (result i32) (effects heap) (global.get $CUR)) (wasm-export "f" $f)`);
+  ck('a mutable global may be seeded from a region', r.success === true, r.error);
+}
+mustFail('a global initialized past its region',
+  `(region.declare-fixed $R (base 0x1000) (size 0x10))
+   (global $BAD i32 (region.addr $R 0x10))
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  "runs past the region's");
+mustFail('a global initialized off a span',
+  `(region.declare-span $W (base 0x0) (size 0x1000) (owner "x"))
+   (global $BAD i32 (region.addr $W 0))
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'is a span');
+mustFail('a global naming a region that does not exist',
+  `(global $BAD i32 (region.addr $NOPE 0))
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'unknown region');
+mustFail('an f32 global initialized from a region',
+  `(region.declare-fixed $R (base 0x1000) (size 0x10))
+   (global $BAD f32 (region.addr $R 0))
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'which is an i32, not a f32');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

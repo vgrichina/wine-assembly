@@ -768,3 +768,51 @@ conversion re-verifies `IDENTICAL` under the paired HEAD-vs-HEAD+file oracle.
 New manifest digest:
 
   4db2a8f0b64e9ffe4af6372dc9d5c65af2b1f2619de8bf1b92d5ffe762ecd469
+
+## 2026-08-31 — a region constant may initialize a global
+
+One change to `compiler-codegen.js`, and it is the thing standing between the
+region allocator and a map that can actually move.
+
+```wat
+(global $WND_RECORDS      i32 (region.addr $WND_RECORDS 0))
+(global $WND_RECORDS_SIZE i32 (region.size $WND_RECORDS))
+(global $console_text_base (mut i32) (region.addr $CONSOLE_TEXT 0))
+```
+
+Every region in wine-assembly's map has a `(global $NAME i32 (i32.const 0x…))`
+mirror behind it, and that mirror — not the declaration — is what the code
+reads: ~1100 `global.get` sites across `src/`. While the initializer is a
+literal the map is nailed down, because an allocated region would relocate and
+every one of those sites would keep reading the address it used to be at, with
+nothing to say so. `region.addr` was legal in an instruction operand and in a
+data-segment offset but rejected in a global initializer, which is the one
+position that mattered.
+
+The three region constants — `region.addr`, `region.size`, `region.end` — are
+now accepted there, resolved through the **same** `regionConstValue` the other
+two positions use. That is deliberate rather than convenient: the offset bounds
+check on `(region.addr $R OFF)` and the refusal to compute an address off a span
+hold in a global initializer for free, because there is one implementation to
+hold them.
+
+Three narrow rules, all of them about not inventing meaning:
+
+- **i32 only.** An address is an i32. An `f32`/`f64`/`i64` global initialized
+  from a region is a hard error naming the type, not a silent conversion.
+- **Mutable globals are allowed.** Several of Wine's mirrors are `(mut i32)`
+  cursors seeded at a region's base (`$console_text_base`), and a seed is a
+  constant like any other.
+- **Nothing else changed.** A literal initializer takes exactly the path it
+  always did; `REGION_CONST_HEADS` names the three heads in one place so the
+  three positions cannot drift apart.
+
+`test/watx-compiler-regions.test.js` grows to 140 checks: the four resolutions
+against an allocated pair, a mutable seed, the byte-identity oracle that makes
+converting a mirror a no-op while its region is still pinned, and four
+rejections (past the region's extent, off a span, an undeclared region, a
+non-i32 global).
+
+New manifest digest:
+
+  72b5cc4a809076c4cb769a32e6b3ccaac869fb83b1bbb86d7c577e32096200d7

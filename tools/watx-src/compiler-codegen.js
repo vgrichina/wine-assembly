@@ -505,6 +505,13 @@ const BUILTIN_REGION_EXIT = '$__region_exit';
 // tree can be absorbed by an off-by-a-stride bug and stay green.
 const REGION_SHAKE_PRIMES = [4099, 8209, 12289, 16411, 20483, 24593, 28687, 32771, 36871, 40961];
 
+// The three region forms that are a compile-time CONSTANT rather than an
+// instruction. They are legal in every constant position — an instruction
+// operand, a data-segment offset, and a global initializer — because a region's
+// address is known before any of the three are emitted. Named once so the
+// positions cannot drift apart.
+const REGION_CONST_HEADS = new Set(['region.addr', 'region.size', 'region.end']);
+
 function normalizeRegionShake(value) {
   if (value === undefined || value === null || value === false || value === '') return null;
   const text = String(value).trim();
@@ -1573,7 +1580,25 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     const type = mutable ? V(typeForm[2]) : V(typeForm);
     const init = form[i + 1];
     if (!['i32','i64','f32','f64'].includes(type)) throw new Error(`Unsupported global type '${type}' for ${name}`);
-    if (!Array.isArray(init) || V(init[1]) !== `${type}.const`) throw new Error(`Global ${name} requires a ${type}.const initializer`);
+    // A global initializer may also be a REGION constant. That is what makes a
+    // `(global $WND_RECORDS i32 …)` mirror follow an allocated region instead of
+    // pinning it: without this the mirror is a literal, the literal is what all
+    // 1000-odd `global.get` sites read, and the map cannot move at all.
+    // (docs/watx-region-safety-design.md §6.) i32 only — an address is an i32
+    // here, and there is no meaning to give the float or i64 cases.
+    const regionInit = Array.isArray(init) && REGION_CONST_HEADS.has(V(init[1]));
+    if (regionInit && type !== 'i32') {
+      const e = new Error(`Global ${name}: (${V(init[1])} ...) yields an address, ` +
+        `which is an i32, not a ${type}`);
+      const loc = watxFormLoc(form);
+      if (loc !== undefined) { e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc); }
+      throw e;
+    }
+    if (!regionInit && (!Array.isArray(init) || V(init[1]) !== `${type}.const`)) {
+      throw new Error(`Global ${name} requires a ${type}.const initializer` +
+        (type === 'i32' ? ` or a region constant (region.addr $R OFF), ` +
+          `(region.size $R), (region.end $R)` : ''));
+    }
     if (globalNameSet.has(name)) throw new Error(`Duplicate global '${name}'`);
     globalNameSet.add(name);
     globalDecls.push({ name, type, mutable, init });
@@ -4334,6 +4359,15 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       } else if (g.runtime === 'save') {
         content.byte(OP.i32_const);
         content.sleb(0);
+      }
+      else if (g.init && Array.isArray(g.init) && REGION_CONST_HEADS.has(V(g.init[1]))) {
+        // A region-constant initializer. Resolved through the SAME
+        // `regionConstValue` the instruction and data-segment positions use, so
+        // the bounds rule on `(region.addr $R OFF)` — and the refusal to compute
+        // an address off a span — hold here too.
+        content.byte(OP.i32_const);
+        content.sleb(regionConstValue(g.init, 0,
+          `initializer of global ${g.name || '(anonymous)'}`));
       }
       else {
         const where = `initializer of global ${g.name || '(anonymous)'}`;
