@@ -32,6 +32,12 @@ const isa = require('./isa');
 // ---------------------------------------------------------------------------
 const HANDLERS = [];
 
+// A branch handler index -> the same branch with its not-taken edge compiled
+// inline behind it. Filled by genBranches() for the plain forms and by
+// genFusedBranches() for the fused ones, so the compiler never has to know
+// either naming scheme. See jccTraceBody().
+const TRACE = new Map();
+
 // Lazy flags are on. This is the A/B switch for them, and it is a GENERATION-time
 // variable rather than a runtime one: the whole point of the change is that a
 // compare stores its inputs instead of computing six bits, so the two arms have
@@ -449,9 +455,33 @@ const jccBody = (expr) => `
     (else ${GO('(local.get $t2)', '(local.get $t3)')}))
 `;
 
+// The same branch, with the NOT-TAKEN edge compiled inline behind it instead of
+// jumped to. Three operands rather than four: the fall-through's arena address
+// is gone, because it is the very next word.
+//
+// What that removes is the block transfer, which `tools/bench-loops.js` prices
+// at ~9ns on top of the ~8ns dispatch -- a load of the successor's address, a
+// store to $ip, and an indirect call the branch predictor has no history for.
+// The dispatch itself stays, and so does everything the dispatch decides:
+// $gip is still published, the budget and the self-patch flag are still tested
+// at exactly this point, and the step is still charged by $next on the way in.
+// So a traced run retires the same dispatches, in the same order, with the same
+// slice boundaries as an untraced one -- which is what makes the corpus diff a
+// real check on this (see docs/toyvm-trace-blocks.md).
+const jccTraceBody = (expr) => `
+  ${ops(3)}
+  (if ${expr}
+    (then ${GO('(local.get $t0)', '(local.get $t1)')})
+    (else
+      (global.set $gip (local.get $t2))
+      (if (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0)))
+        (then ${SLICE_EXIT}))))
+`;
+
 function genBranches() {
   for (const [cc, expr] of Object.entries(CONDS)) {
-    h(`j${cc}`, 4, jccBody(expr));
+    const idx = h(`j${cc}`, 4, jccBody(expr));
+    TRACE.set(idx, h(`j${cc}_t`, 3, jccTraceBody(expr)));
   }
 
   // Unconditional jump: one successor, so two operands.
@@ -2855,12 +2885,21 @@ function genFusedBranches() {
       // interrupt injection point and every frame -- bit-identical to the
       // unfused build, which is what makes the corpus diff a real check on
       // this rather than a vague "it still runs".
+      const half = spec ? spec[cc] : null;
       const idx = h(`${alu}_j${cc}`, a.args + j.args, `
   ${a.body}
   (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
-  ${spec ? jccBody(spec[cc]) : j.body}
+  ${half ? jccBody(half) : j.body}
 `);
       FUSE.set(a.index * 65536 + j.index, idx);
+      // The traced twin of the pair. Without it, extending a block through a
+      // conditional would cost the fusion that pair already earned -- the two
+      // optimisations meet on exactly the same two instructions.
+      TRACE.set(idx, h(`${alu}_j${cc}_t`, a.args + j.args - 1, `
+  ${a.body}
+  (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+  ${jccTraceBody(half || CONDS[cc])}
+`));
     }
   }
 }
@@ -3151,6 +3190,15 @@ function prepareTables() {
   if (TABLES_READY) return;
   TABLES_READY = true;
   genNoFlagVariants();
+  // The dispatch census indexes both its tables by handler number, and a
+  // handler past the end of them writes into whatever follows in linear
+  // memory. See the comment on HIST_SLOTS: this went unnoticed for a whole
+  // table growth because the overrun only shows up on a program that actually
+  // executes a high-numbered handler.
+  if (HANDLERS.length > isa.HIST_SLOTS) {
+    throw new Error(`${HANDLERS.length} handlers but isa.HIST_SLOTS is `
+      + `${isa.HIST_SLOTS}; --handler-hist would write out of bounds`);
+  }
   ARITY.length = 0;
   for (const x of HANDLERS) ARITY.push(x.args);
 }
@@ -3170,11 +3218,13 @@ function buildHandlers(lazy, fuseCond) {
   prepareTables();   // so the shape check compares two FINISHED tables
   const before = HANDLERS.map(x => `${x.name}/${x.args}`).join(',');
   const fuseBefore = [...FUSE.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
+  const traceBefore = [...TRACE.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
   LAZY = lazy;
   FUSE_COND = fuseCond;
   CONDS = makeConds(bit);
   HANDLERS.length = 0;
   FUSE.clear();
+  TRACE.clear();
   NOFLAG.clear();
   // genShifts()/genDoubleShifts() append to this rather than returning, so a
   // rebuild that does not clear it emits both arms' shift helpers -- same
@@ -3194,6 +3244,8 @@ function buildHandlers(lazy, fuseCond) {
   }
   const fuseAfter = [...FUSE.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
   if (fuseAfter !== fuseBefore) throw new Error('the flag scheme changed the fusion table');
+  const traceAfter = [...TRACE.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
+  if (traceAfter !== traceBefore) throw new Error('the flag scheme changed the trace table');
 }
 
 // The first six handlers were written by hand to prove the gate; genAlu()
@@ -5151,6 +5203,9 @@ module.exports = {
   // it can only do if it knows how many operand words each handler eats.
   ARITY, prepareTables,
   FUSE,
+  // A branch handler -> the same branch with its not-taken edge inline behind
+  // it. The compiler swaps it in when it extends a block through a conditional.
+  TRACE,
   // A handler index -> the same handler without its flag write, and what every
   // handler does to the flag state. The compiler walks a finished block
   // backwards with these and swaps in the variant where the write is dead.

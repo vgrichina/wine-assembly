@@ -17,7 +17,7 @@
 
 const isa = require('./isa');
 const { decodeOne, H } = require('./decode');
-const { ARITY, FUSE, NOFLAG, FLAG_EFFECTS, prepareTables } = require('./emit');
+const { ARITY, FUSE, TRACE, NOFLAG, FLAG_EFFECTS, prepareTables } = require('./emit');
 
 function compileProgram(readByte, cs, entryIp, opts = {}) {
   // ARITY, NOFLAG and FLAG_EFFECTS are filled on first use rather than at
@@ -79,6 +79,11 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // Carry that liveness ACROSS a block edge instead of giving up at the block
   // end. `--no-crossflags` is the A/B partner and restores the per-block walk.
   const crossFlags = deadFlags && opts.crossFlags !== false;
+  // Compile THROUGH a conditional branch: the taken edge stays a side exit and
+  // the not-taken edge is laid out inline behind it, so the common direction
+  // pays no block transfer. `--no-trace-blocks` is the A/B partner.
+  // Never under oneInsn, where a block is one instruction by definition.
+  const traceBlocks = opts.traceBlocks !== false && !opts.oneInsn;
   const traceDeadFlags = opts.traceDeadFlags || null;
 
   // Rewrite a finished block's last two ops into one, when a fused handler for
@@ -113,6 +118,82 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     }
   };
 
+  // The op boundaries of one word range, or null when the arity table and the
+  // arena disagree about where they are -- in which case nothing here may
+  // rewrite a word, because the positions are not opcodes. Same refusal as
+  // fuseTail, and for the same reason.
+  const opsOf = (start, end) => {
+    const at = [];
+    let i = start;
+    for (; i < end;) { at.push(i); i += 1 + ARITY[words[i]]; }
+    return i === end ? at : null;
+  };
+
+  // Blocks whose successors include the block laid out immediately after them,
+  // through a traced conditional's not-taken edge. That edge is the one control
+  // edge with no fixup, so the flag-liveness pass would otherwise miss it.
+  const fallEdge = new Set();
+
+  // Extend a block THROUGH the conditional branch it just ended on: swap the
+  // branch for the twin that has no fall-through arena operand, register the
+  // fall-through address as a block head at the word after it, and keep
+  // decoding. The not-taken edge then costs no block transfer at all -- it is
+  // the next word.
+  //
+  // Returns the guest ip to carry on decoding at, or -1 to end the block.
+  //
+  // Three things it will not do:
+  //  * extend past a block that wrote memory. That is the decryptor rule from
+  //    the main loop, in its blunt form: what follows such a block is very
+  //    often the bytes it just wrote, and decoding them now bakes the
+  //    ciphertext into the trace.
+  //  * extend into a block that already exists. Falling into a compiled block
+  //    is exactly what the arena is for, and emitting a second copy of it here
+  //    would end the same way COMPOVRS did -- two copies, blocks ending in
+  //    different places, interrupts landing on different instructions.
+  //  * extend without room. The tail of a full arena is a handback, and there
+  //    is no point starting a trace that cannot finish an instruction.
+  let tracedBlocks = 0;
+  const extendThrough = (start, wroteMem) => {
+    if (!traceBlocks || wroteMem) return -1;
+    if (!opsOf(start, words.length)) return -1;
+    // Fuse the pair FIRST. The compare and the branch are the same two
+    // instructions both transformations want, and fusing after the swap would
+    // leave fuseTail looking for a pair whose plain branch is no longer there.
+    if (fuse) fuseTail(start);
+    const at = opsOf(start, words.length);
+    if (!at || !at.length) return -1;
+    const q = at[at.length - 1];
+    const t = TRACE.get(words[q]);
+    if (t === undefined) return -1;
+    // Branch operands are [arenaTaken][guestTaken][arenaFall][guestFall] and
+    // they are always last, whatever the fused first half ate in front of them.
+    const gFall = words[q + ARITY[words[q]]];
+    const aFall = q + ARITY[words[q]] - 1;
+    if (blocks.has(gFall)) return -1;
+    if (words.length + 16 > maxWords) return -1;
+
+    words[q] = t;
+    words.splice(aFall, 1);
+    // The fall-through's fixup goes with the operand it pointed at, and any
+    // fixup past it moved down one. Both are at the end of the list: this
+    // branch is the last thing that pushed one.
+    for (let k = fixups.length - 1; k >= 0 && fixups[k].wordIndex >= aFall; k--) {
+      if (fixups[k].wordIndex === aFall) fixups.splice(k, 1);
+      else fixups[k].wordIndex--;
+    }
+    // The fall-through is a real block head from here on, so anything else that
+    // jumps to it lands in the middle of this trace rather than compiling a
+    // second copy -- and the wasm decoder stops there for the same reason.
+    blocks.set(gFall, arenaBase + words.length * 4);
+    markHead(gFall);
+    fallEdge.add(blockStarts.length - 1);
+    blockIps.push(gFall);
+    blockStarts.push(words.length);
+    tracedBlocks++;
+    return gFall;
+  };
+
   // Swap every op whose flag write nothing reads for the copy of itself that
   // does not write them. Runs AFTER fuseTail, on the final word list: a fused
   // compare-and-branch reads the record its own half just made and then never
@@ -129,15 +210,6 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // successor reads them before overwriting them, which is a fixpoint over the
   // whole region rather than a per-block walk -- see dropDeadFlagsRegion.
   let deadFlagCount = 0;
-  // The op boundaries of one block, or null when the arity table and the arena
-  // disagree about where they are -- in which case nothing here may rewrite a
-  // word, because the positions are not opcodes. Same refusal as fuseTail.
-  const opsOf = (start, end) => {
-    const at = [];
-    let i = start;
-    for (; i < end;) { at.push(i); i += 1 + ARITY[words[i]]; }
-    return i === end ? at : null;
-  };
   // Walk one block backwards from `liveOut`, swapping in flagless handlers, and
   // return the liveness entering it. `edge` is true when the block's own
   // terminator resumes at a successor this compile emitted, which is what lets
@@ -220,12 +292,16 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     let wrote = false;
     let bulkWrote = false;
     let refusedAt = -1;
+    // The block head extendThrough() just opened inside this very block. The
+    // "we already emitted this one, jump to it" test below has to skip it, or
+    // the trace's first act would be to jump to itself.
+    let justOpened = -1;
     for (;;) {
       if (words.length > maxWords) { words.push(H.end, cur); break; }
 
       // Reaching the head of a block we already emitted: jump to it rather than
       // emitting a second copy of an entire loop body.
-      if (cur !== blockIp && blocks.has(cur)) {
+      if (cur !== blockIp && cur !== justOpened && blocks.has(cur)) {
         words.push(H.jmp, 0, cur);
         fixups.push({ wordIndex: words.length - 2, ip: cur });
         break;
@@ -286,7 +362,14 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
           if (wd.exports.dc_wrote()) wrote = true;
           if (wd.exports.dc_bulk()) bulkWrote = true;
           cur = wd.exports.dc_stop_ip();
-          if (wd.exports.dc_stopped() === 1) break;   // STOP.ENDED
+          if (wd.exports.dc_stopped() === 1) {        // STOP.ENDED
+            // Whatever ended it, the same question applies: was that a
+            // conditional we can carry on behind? The swap reads the emitted
+            // words, so it does not care which decoder produced them.
+            const nx = extendThrough(blockStart, wrote || bulkWrote);
+            if (nx < 0) break;
+            justOpened = nx; cur = nx; continue;
+          }
           if (opts.oneInsn) { words.push(H.end, cur); break; }
           // Anything else -- an unimplemented opcode, a full arena, a block head
           // reached -- goes back to the top of the loop, which handles each of
@@ -332,7 +415,11 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       }
 
       cur = d.nextIp;
-      if (d.endsBlock) break;
+      if (d.endsBlock) {
+        const nx = extendThrough(blockStart, wrote || bulkWrote);
+        if (nx < 0) break;
+        justOpened = nx; cur = nx; continue;
+      }
       // opts.oneInsn is the trap flag's compiler: with TF set the CPU owes the
       // guest an INT 1 after EVERY instruction, so the block has to be exactly
       // one long. A branch already ended it above and wrote $gip itself; this
@@ -401,6 +488,10 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
         if (t === undefined) { succ[b] = null; continue; }
         if (succ[b]) succ[b].push(t);
       }
+      // The not-taken edge of a traced conditional. It is the one control edge
+      // with no fixup -- it is "the next word" -- so it has to be added by
+      // hand or the walk would think the block had only its taken successor.
+      for (const b of fallEdge) if (succ[b] && b + 1 < nb) succ[b].push(b + 1);
       for (let b = 0; b < nb; b++) known[b] = !!(succ[b] && succ[b].length);
     }
 
@@ -448,6 +539,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     unimplemented: [...unimplemented],
     entryAddr: blocks.get(entry),
     deadFlags: deadFlagCount,
+    tracedBlocks,
     arenaBase,
     byteLength: words.length * 4,
   };

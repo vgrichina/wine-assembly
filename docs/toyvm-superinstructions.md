@@ -175,4 +175,7 @@ It also does not touch the block transfer, which at 3.25 ops per block is a
 large share of the remaining cost. The trace-JIT answer there is to compile
 *through* a conditional branch, emitting the taken edge as a side exit and
 letting the not-taken path fall through inline, so the common direction pays no
-transfer at all.
+transfer at all. **That is in, and it is written up in
+[toyvm-trace-blocks.md](toyvm-trace-blocks.md)** — including why it keeps the
+same dispatch count, and so keeps the corpus diff usable, when tracing through
+an unconditional `jmp` would not.

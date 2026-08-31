@@ -70,6 +70,7 @@ async function main() {
     nofusecond: { fuseCond: false },
     nodeadflags: { deadFlags: false },
     nocrossflags: { crossFlags: false },
+    notrace: { traceBlocks: false },
     nowasmdecode: { wasmDecode: false },
     nocache: { noCache: true },
   };

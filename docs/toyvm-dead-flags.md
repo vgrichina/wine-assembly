@@ -272,6 +272,8 @@ compile time even though the `ret` itself is not. Threading that through would
 close the largest remaining class.
 
 Past that it is no longer a liveness question but a shape one: the trace
-extension in [toyvm-superinstructions.md](toyvm-superinstructions.md), which
-compiles *through* a conditional branch and so removes the block edge instead of
-reasoning across it.
+extension in [toyvm-trace-blocks.md](toyvm-trace-blocks.md), which compiles
+*through* a conditional branch and so removes the block edge instead of
+reasoning across it. That one is in, and the two compose without either knowing
+about the other — a traced fall-through is simply two blocks in one region, and
+the region-level liveness pass was already walking those.

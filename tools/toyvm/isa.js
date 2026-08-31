@@ -181,12 +181,19 @@ const CODE_BITMAP_SIZE = GUEST_RAM_SIZE >> 3;      // one bit per byte
 // Sized for the real handler count with headroom, and reserved unconditionally
 // so there is only ever one memory layout -- two layouts would mean the
 // instrumented build measures a different machine than the one that ships.
-// 1024 slots keeps the pair index a shift rather than a multiply.
+// A power of two keeps the pair index a shift rather than a multiply.
 //
-// The 4MB pair table costs address space, not memory: a wasm memory is one
+// The 16MB pair table costs address space, not memory: a wasm memory is one
 // large mapping and pages materialize when first touched, so a run without
 // --handler-hist never faults a single one of them in.
-const HIST_SLOTS = 1024;                           // >= HANDLERS.length, power of two
+//
+// **This has to be >= HANDLERS.length and there is nothing between them that
+// says so.** It was 1024 while the table grew past it to 1148 (the flagless
+// variants) and the only symptom was that `--handler-hist` crashed with
+// `memory access out of bounds`, and only on a program that happened to
+// execute a handler with a high index -- so the census looked fine for weeks.
+// emit.js asserts the relationship now, at table-build time.
+const HIST_SLOTS = 2048;                           // >= HANDLERS.length, power of two
 const HIST_BASE = (CODE_BITMAP + CODE_BITMAP_SIZE + 0xFFFF) & ~0xFFFF;
 const HIST_PAIRS = HIST_BASE + HIST_SLOTS * 4;     // [prev * HIST_SLOTS + cur]
 const HIST_SIZE = HIST_SLOTS * 4 + HIST_SLOTS * HIST_SLOTS * 4;

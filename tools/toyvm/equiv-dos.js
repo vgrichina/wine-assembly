@@ -44,8 +44,18 @@ function normalize(out, allowArena) {
     let l = raw;
     if (/^\S.*variant=/.test(l)) continue;               // header, carries wall time
     l = l.replace(/, \d+ flagless ops of \d+/, '');
+    l = l.replace(/, \d+ traced edges/, '');
     l = l.replace(/[\d.]+[KM]\/s in wasm \(\d+% of wall\)/, 'RATE');
-    if (allowArena) l = l.replace(/\(\d+KB of arena, \d+ recycles\)/, '(ARENA)');
+    if (allowArena) {
+      // A switch that changes how many words a block occupies moves the arena
+      // layout, and with it the boundary the arena is recycled at -- so the
+      // number of times a region is recompiled, and the number of self-patch
+      // breaks that recompile notices, are downstream of the same choice. What
+      // must NOT move is on the other lines: the frame, the pixels, the
+      // console, the interrupts and the stopping cs:ip.
+      l = l.replace(/\d+ traces \(\d+KB of arena, \d+ recycles\)/, 'ARENA');
+      l = l.replace(/^\s*\d+ self-modify breaks/, '  SMC');
+    }
     keep.push(l.trimEnd());
   }
   return keep.join('\n').trim();
