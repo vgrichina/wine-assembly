@@ -39,9 +39,12 @@ const DECLS = path.join(ROOT, 'src', '00-regions.wat');
 // synthetic module has to declare the real size.
 const MEMORY_PAGES = 8192;
 
-// The floor. Below it live NULL_SENTINEL at 0xF0 and the decoder scratch, which
-// $g2w's sink behaviour pins; nothing there may be allocated.
-const ALLOC_FLOOR = 0x1000;
+// The floor. Below it lives NULL_SENTINEL at 0xF0, which $g2w's sink behaviour
+// pins; nothing there may be allocated. It sits at 0x100 — not 0x1000 — because
+// the low string pool is a real declared region now ($STRING_CONSTANTS at
+// 0x100, $VK_SCAN_TABLES at 0x380 since wave 2), and a floor above them makes
+// first-fit unable to reproduce the map.
+const ALLOC_FLOOR = 0x100;
 
 const hex = (n) => `0x${(n >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
 const alignUp = (n, a) => Math.ceil(n / a) * a;

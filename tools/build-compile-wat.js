@@ -99,10 +99,15 @@ function selectedRegionShake() {
 function reportRegionLayout(layout, shake) {
   if (!layout) return;
   const hx = (n) => `0x${(n >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
-  const pinned = layout.regions.length - layout.allocated;
+  // A span (region.declare-span) is a named address limit, not storage — it is
+  // neither pinned nor allocated, so it gets its own count in the banner.
+  const spans = layout.regions.filter(r => r.kind === 'span').length;
+  const pinned = layout.regions.length - layout.allocated - spans;
   if (!shake) {
     console.log(`Region layout: CANONICAL — ${layout.regions.length} regions ` +
-      `(${pinned} pinned/derived, ${layout.allocated} allocated), floor ${hx(layout.floor)}`);
+      `(${pinned} pinned/derived, ${layout.allocated} allocated` +
+      (spans ? `, ${spans} span${spans === 1 ? '' : 's'}` : '') +
+      `), floor ${hx(layout.floor)}`);
     return;
   }
   // Nothing to move is not a passing shake, it is a shake that measured
