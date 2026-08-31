@@ -5,9 +5,12 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { createHostImports } = require('../lib/host-imports');
 const { ThreadManager } = require('../lib/thread-manager');
 const {
   INHERITED_WASM_GLOBALS,
+  THREAD_PRIMITIVE_IMPORTS,
+  adoptThreadPrimitives,
   createInheritedWasmGlobals,
   recordInheritedWasmGlobal,
   inheritedWasmCalls,
@@ -18,6 +21,23 @@ const ROOT = path.join(__dirname, '..');
 const setters = INHERITED_WASM_GLOBALS.map(rule => rule.setter);
 assert.strictEqual(new Set(setters).size, setters.length,
   'the inherited-global table must not contain duplicate setters');
+
+assert(THREAD_PRIMITIVE_IMPORTS.includes('terminate_thread'),
+  'CreateThread worker imports must adopt TerminateThread from the process host');
+{
+  const memory = new ArrayBuffer(64 * 1024);
+  const baseHost = createHostImports({ getMemory: () => memory, renderer: null, resourceJson: {} }).host;
+  assert.strictEqual(typeof baseHost.terminate_thread, 'function',
+    'base host imports must expose TerminateThread before ThreadManager is installed');
+
+  const workerHost = {};
+  const mainHost = Object.fromEntries(THREAD_PRIMITIVE_IMPORTS.map(name => [
+    name, () => name,
+  ]));
+  adoptThreadPrimitives(workerHost, mainHost);
+  assert.strictEqual(workerHost.terminate_thread(), 'terminate_thread',
+    'TerminateThread must be callable from spawned WASM instances');
+}
 
 for (const setter of [
   'set_cpu_mmx', 'set_winver', 'set_bp', 'set_watchpoint_size', 'set_watchpoint',
