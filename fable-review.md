@@ -709,6 +709,59 @@ narrowed to region *edges*; still open), and fixed a real `splitBranch`
 top-level-`(if` cut on the way. A.9 (18), A.10 (six), rec 8: unchanged
 again.
 
+**By 15:00 (+35 commits, HEAD `71bee6c7`) the one-way door was taken.**
+`23ed9639` flipped `DEFAULT_COMPILER = 'watx'` at byte identity with the
+rollback exercised; then the M6 region work deliberately killed that
+rollback — wave-1 `region.addr` spellings compile to `unreachable` under
+legacy, so `24b79256` made `WINE_WAT_COMPILER=legacy` a hard error and the
+plan now says rolling back means reverting commits, not setting an env var.
+**Deploy is NOT done — live site sign-off is explicitly pending the user.**
+Before the door: the sixth bare-tail defect closed (`957208b1`, verified —
+one paren at `09a5:224` moved so the five window-seed statements at
+`:225-229` run inside the guard; WATX warning census 2→0). A correction to
+my 13:00 paragraph, which repeated the fd session's phrasing: the shipped
+build did **not** permanently lose the window style — all five seeds repeat
+unconditionally at `:277`/`:407` after the host call, so the defect was what
+the host read *during* `host_create_window`, an ordering bug, not a lost
+store. M3 finished honestly: 8 apps × screenshot pairs at 0/307200 px,
+Safari 26.4 compiles the closure in a Worker byte-identical to node, and a
+**CORRECTION worth quoting** — the earlier "40 of 45 both-fail tests pass at
+clean HEAD" reading was 40 *SKIPs* from missing fixtures (a worktree with
+only tracked binaries; a missing fixture exits 0), exactly the 3.5 SKIP
+failure mode this review documented; re-swept with 10,295 symlinks
+provisioned: 45/45 fail on *both* artifacts identically, zero behavioral
+difference, and "full behavior matrix green" stays unticked because those
+45 are ordinary app-area reds. Gate integrity also hardened: a pinned
+`--wasm`/`$WINE_ASSEMBLY_WASM` that cannot be honored is now **fatal** in
+`run.js` instead of silently compiling from src (`1c3e5104`) — the pin was a
+promise honored in name only. Then M6 proper: `src/00-regions.wat` declares
+all 160 fixed regions, `check-region-decls --strict` and a per-file
+`region-census --gate` **ratchet** are wired into `build.sh:27,31`, the
+allocator got laws and a shake mode (`6e894591`, though the real map cannot
+shake yet — 512 MB is full), the JS mirror is generated
+(`lib/region-map.generated.js`, `b0c869b1`), and a five-agent symbolization
+fan-out converted ~100 raw literals to `region.addr` across font/truetype/
+GL/core/JS files with byte-identity proofs per commit. Two caveats the
+fan-out itself surfaced: the census is 50–90 % false positives in some
+clusters (flag constants at 0x1000/0x2000/0x4000 — it is a candidate
+finder, as this repo's tools usually are), and a **fifth shared-worktree
+contamination incident, the worst kind yet: the wave's byte-identity
+oracle itself was polluted** — the "canonical" wasm pair had a peer's
+uncommitted keyboard-hook host import baked in, so HEAD blobs alone
+compiled to *different* bytes all the way back to the cutover; `7afc6890`
+root-caused it and the oracle is now drift-immune (paired HEAD vs
+HEAD+file). Open wiring items on named owners: `index.html` needs the
+region-map script tag before `mem-utils.js` (browser-blocking, file
+peer-dirty), `$CLASS_NAME_STRINGS` is declared 0x80 bytes but its block
+runs past 0x3240, and the sub-field alias retirement is blocked by
+`wat-memory-map.js`'s regex reader. toyvm: CMA_SHRT divergence **fixed**
+(`4e0bedd3`, regions leave after an unlowered transfer), the ACCIDENT 0.94x
+was retracted as a warm-up artifact (really 2.2–2.4×, `7f3f01a4`), regions
+mark CODE_BITMAP (`2ec3f34b`), and the ladder now says lowering is the
+common factor (`71bee6c7`). `600be0ed` adds TerminateThread for installers.
+A.9 (18), A.10 (six untracked, unchanged despite the fd ping — owners
+still silent), rec 8: all unchanged.
+
 **New in this window, ranked.**
 
 **A.1 FIXED `d5cf1afb`: `bundle-browser.js` now discovers modules by walking
