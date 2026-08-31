@@ -299,6 +299,12 @@ Exit gate: WATX emits validating tail and compatibility modules from the entire
 current source closure with zero ignored forms and zero warnings downgraded from
 hard errors.
 
+**Exit gate met 2026-08-31** at compiler commit `aba5ff7f`: all eight census
+classes closed (G1–G4, G6–G7 in `7ffa5af7`; G5 as the Wine-source else fix in
+`65961f32`; G8 reassigned to WATX and closed in `aba5ff7f`), after which the
+unmodified closure at HEAD compiles from `src/main.watx` in both modes —
+984,312 B tail / 984,761 B compat — with zero warnings, and both validate.
+
 ## Milestone 3 — Differential compiler gate
 
 Add a binary-section comparison tool and a four-artifact build command. Compare:
@@ -339,6 +345,21 @@ Then execute the same test layers against legacy and WATX artifacts:
 
 Extend `test/run.js --wasm=... --no-build` usage into reusable matrix tooling so
 tests never accidentally rebuild and test the wrong compiler's artifact.
+
+The matrix tool exists: `tools/watx-matrix.js` (commit `4aeb0970`) builds all
+four artifacts into `build/legacy/` and `build/watx/`, runs the ABI gate on
+both pairs, and pins a nine-test behavior matrix to each artifact via
+`WINE_ASSEMBLY_WASM` (which `test/run.js` now honors as an implicit
+`--wasm= --no-build`). First full run 2026-08-31: **all nine behavioral tests
+pass on both artifacts** (Win32, Win16, DirectDraw, threads and VFS coverage —
+the WATX-built emulator runs real guests correctly), compat pairs carry zero
+`return_call`, and the sole acceptance diff is export-section *order*: the
+legacy emitter writes exports in declaration order (`memory` first, from
+`01-header.wat`) while WATX groups by kind and emits the memory export last.
+Same 1,431 entries either side. Eight of 8,142 code bodies also encode
+differently (diagnostic; classification in progress). The export-order fix
+belongs in the vendored compiler — preserve declaration order, no
+special-casing.
 
 Performance checks come after behavioral equality. On a quiet machine, compare
 fixed-duration guest progress and retired operations, not batches per second.
@@ -443,8 +464,10 @@ Conversions happen in place in the single source tree — no `.watx` twin files.
 - [x] `src/main.watx` is the single source-order manifest. (`38ef42b4`)
 - [x] Every source fragment parses independently. (`b1c221d8` — wrapper moved
       to `concat-wat.js`, gate strict and wired into the build.)
-- [ ] Full Wine source compiles in both WATX modes.
-- [ ] Four-artifact ABI/data/table comparison is green.
+- [x] Full Wine source compiles in both WATX modes. (`aba5ff7f` — unmodified
+      closure at HEAD, zero warnings, both modes validate)
+- [ ] Four-artifact ABI/data/table comparison is green. (tooling landed
+      `4aeb0970`; sole acceptance diff is export-section order, fix in flight)
 - [ ] Full behavior matrix is green for both WATX artifacts.
 - [ ] Chromium and Safari forced-source builds are green.
 - [ ] WATX memory high-water mark is acceptable on the target mobile device.
