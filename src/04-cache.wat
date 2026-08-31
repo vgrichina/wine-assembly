@@ -896,6 +896,13 @@
   ;; ============================================================
   ;; FORTH INNER INTERPRETER
   ;; ============================================================
+  (func $dispatch_bad (param $fn i32)
+    (call $host_log_i32 (i32.const 0xCAC4BAD0))
+    (call $host_log_i32 (local.get $fn))
+    (call $host_log_i32 (global.get $eip))
+    (global.set $thread_alloc (global.get $THREAD_BASE))
+    (call $clear_cache))
+
   (func $next
     (local $fn i32) (local $op i32)
     (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
@@ -914,12 +921,7 @@
     ;; than trapping with wasm "table index out of bounds".
     (if (i32.ge_u (local.get $fn) (i32.const 443))
       (then
-        (call $host_log_i32 (i32.const 0xCAC4BAD0))
-        (call $host_log_i32 (local.get $fn))
-        (call $host_log_i32 (global.get $eip))
-        (global.set $thread_alloc (global.get $THREAD_BASE))
-        (call $clear_cache)
-        (return)))
+        (return_call $dispatch_bad (local.get $fn))))
     (if (global.get $handler_hist_enabled)
       (then (call $handler_hist_record (local.get $fn))))
     ;; A tail call, so the chain runs at constant stack depth. Nothing follows

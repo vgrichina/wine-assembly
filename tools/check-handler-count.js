@@ -26,9 +26,14 @@ const elemStart = tbl.indexOf('(elem');
 const elemBlock = tbl.slice(elemStart);
 const elemCount = (elemBlock.match(/^\s*\$th_[A-Za-z0-9_]+/gm) || []).length;
 
-const guardMatch = cache.match(/i32\.ge_u \(local\.get \$fn\) \(i32\.const (\d+)\)\)[\s\S]{0,200}0xCAC4BAD0/);
-if (!guardMatch) { console.error('[check-handler-count] could not find CAC4BAD0 guard in 04-cache.wat'); process.exit(2); }
+const guardMatch = cache.match(/i32\.ge_u \(local\.get \$fn\) \(i32\.const (\d+)\)\)[\s\S]{0,240}(?:0xCAC4BAD0|return_call \$dispatch_bad)/);
+if (!guardMatch) { console.error('[check-handler-count] could not find dispatch-bad guard in 04-cache.wat'); process.exit(2); }
 const guardValue = +guardMatch[1];
+
+if (!/\(func \$dispatch_bad[\s\S]{0,240}0xCAC4BAD0/.test(cache)) {
+  console.error('[check-handler-count] could not find CAC4BAD0 recovery body in $dispatch_bad');
+  process.exit(2);
+}
 
 const ok = tableSize === elemCount && elemCount === guardValue;
 const line = `handler table=${tableSize} elem entries=${elemCount} cache guard=${guardValue}`;

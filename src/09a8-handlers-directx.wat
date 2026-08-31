@@ -277,11 +277,23 @@
   (global $dx_display_w (mut i32) (i32.const 640))
   (global $dx_display_h (mut i32) (i32.const 480))
   (global $dx_display_bpp (mut i32) (i32.const 16))
+  (func $dx_display_w_get (result i32) (global.get $dx_display_w))
+  (func $dx_display_h_get (result i32) (global.get $dx_display_h))
+  (func $dx_display_bpp_get (result i32) (global.get $dx_display_bpp))
+  (func $dx_display_w_set (param $v i32)
+    (global.set $dx_display_w (local.get $v)))
+  (func $dx_display_h_set (param $v i32)
+    (global.set $dx_display_h (local.get $v)))
+  (func $dx_display_bpp_set (param $v i32)
+    (global.set $dx_display_bpp (local.get $v)))
   ;; 1 once SetDisplayMode has actually chosen a mode. The width/height above
   ;; carry a default, so they cannot answer "is a mode in effect?" on their
   ;; own — and that question decides whether GetSystemMetrics reports the mode
   ;; or the host window ($system_metric in 09a-handlers.wat).
   (global $dx_display_mode_set (mut i32) (i32.const 0))
+  (func $dx_display_mode_get (result i32) (global.get $dx_display_mode_set))
+  (func $dx_display_mode_set (param $v i32)
+    (global.set $dx_display_mode_set (local.get $v)))
 
   ;; Running tally of bytes allocated to DirectDraw surfaces. MCM measures
   ;; GetAvailableVidMem delta across CreateSurface/Release to detect texture
@@ -298,6 +310,9 @@
   ;; in that case puts the primary surface at the desktop's top-left instead
   ;; of in the game window.
   (global $dx_coop_hwnd (mut i32) (i32.const 0))
+  (func $dx_coop_hwnd_get (result i32) (global.get $dx_coop_hwnd))
+  (func $dx_coop_hwnd_set (param $v i32)
+    (global.set $dx_coop_hwnd (local.get $v)))
   ;; DDSCL_EXCLUSIVE was granted, i.e. the app owns the whole screen and its
   ;; primary surface *is* the display. Windows the app stacks over the game
   ;; window then share that one framebuffer: they show through wherever they
@@ -305,6 +320,9 @@
   ;; SDlgDialog owned by the game window, so an opaque COLOR_BTNFACE backing
   ;; on those erases the presented frame entirely.
   (global $dx_exclusive_fullscreen (mut i32) (i32.const 0))
+  (func $dx_exclusive_get (result i32) (global.get $dx_exclusive_fullscreen))
+  (func $dx_exclusive_set (param $v i32)
+    (global.set $dx_exclusive_fullscreen (local.get $v)))
   (func $dx_target_hwnd (result i32)
     (if (result i32) (global.get $dx_coop_hwnd)
       (then (global.get $dx_coop_hwnd))
@@ -415,6 +433,9 @@
   ;; WASM address of the palette data for the primary surface (256 RGBQUAD entries)
   ;; Set by IDirectDrawSurface::SetPalette
   (global $dx_primary_pal_wa (mut i32) (i32.const 0))
+  (func $dx_primary_pal_get (result i32) (global.get $dx_primary_pal_wa))
+  (func $dx_primary_pal_set (param $v i32)
+    (global.set $dx_primary_pal_wa (local.get $v)))
 
   ;; DX_OBJECTS entry address of the primary surface created most recently.
   ;; An app that changes display mode mid-run creates a second primary without
