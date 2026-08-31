@@ -41,8 +41,8 @@ forms and zero warnings downgraded from hard errors"*:
 - **Met, conditionally.** Both modules validate and there are zero warnings.
 - **The condition is the neutralization list.** Ten neutralizations (N1–N10
   below, one retired) had to be applied in the scratch copy to get there. They
-  map to the eight gap classes of the table: six WATX-side (G1–G4, G6, G7) and
-  two Wine-source (G5, G8); N1, the module-wrapper strip, is plan §2.2
+  map to the eight gap classes of the table: seven WATX-side (G1–G4, G6–G8) and
+  one Wine-source (G5); N1, the module-wrapper strip, is plan §2.2
   structural work rather than a gap class. Closing those for real *is* the
   Milestone 2 work list, and it is short.
 - Not yet demonstrated (Milestone 3's job, not this census): decoded-ABI
@@ -69,10 +69,34 @@ preference: *accept valid standard WAT unconditionally*.
 | G2 | **SIMD ops missing from the opcode table** — saturating add/sub, `avgr_u`, `bitmask`, `extmul_*`, `dot_i16x8_s`, `f32x4.convert_i32x4_u`, `i32x4.trunc_sat_f32x4_u`. (The `_s` twins of the last two are missing too; they simply are not used yet.) | 20 | `src/06c-mmx.wat` — `(i8x16.add_sat_u …)`, `(i32x4.dot_i16x8_s …)` | `EMIT: Unknown form head 'i8x16.add_sat_s'` | **WATX.** All are standard fixed-width SIMD. This is table-entry work, not design work. | One module per shape, each computing a value whose saturation/rounding is observable (e.g. `i8x16.add_sat_u` of `0xF0`+`0x30` must be `0xFF`, not `0x20`), asserted from JS. |
 | G3 | **SIMD memory immediates** — `v128.load` / `v128.store` accept no `offset=` / `align=`. The ops themselves exist. | 2 | `src/07b-loop-match.wat:2368` — `(v128.load offset=16 (local.get $src_wa))` | `EMIT: Unknown symbol 'offset=16' in function $th_mmx_mask_copy32` | **WATX.** Standard memarg parsing simply is not wired to the v128 memory ops. | Store a known 32-byte pattern, read it back with `(v128.load offset=16 …)` and assert the second half, so a dropped offset fails rather than passing by luck. |
 | G4 | **Labeled `block` with an explicit `(result T)` signature.** `compiler-codegen.js:1836` forces a labeled block to `void` on purpose ("its br targets do not carry a result value") and never parses a `(result T)` clause on `block`/`loop`. | 1 | `src/09a-handlers.wat:2873` — `(block $c (result i32) … (br $c (i32.const 0x43)) …)` | `EMIT: Unknown form head 'result' in $module_file_name` | **WATX.** `(block $l (result T) …)` with value-carrying `br` is core WAT, and the comment shows the current behaviour is a deliberate simplification, not an oversight. `if` already handles `(result T)` (502 sites in the tree rely on it). | A labeled `(block $l (result i32) (br_if $l (i32.const 7) cond) (i32.const 9))` exercised on both paths, plus the `loop` twin. |
-| G5 | **Detached `(else …)` — a real Wine source defect.** The `if` at `src/09e-win16-api.wat:1006` is closed one paren early on line 1028, so its `(else …)` ends up as the third child of the enclosing `(then …)`. The legacy compiler swallows it; WATX does not. | 1 | `src/09e-win16-api.wat:1028-1029` — `(br $owner_scan)))))` then `(else (local.set $mod (call $win16_h32 …)))` | `EMIT: Unknown form head 'else' in $win16_GetModuleFileName` | **Wine source.** One paren. Note this is a *behaviour* fix, not cosmetics: today the `(local.set $mod …)` almost certainly runs unconditionally instead of as the else arm. Land it standalone with legacy artifact hashes recorded either side, and re-check Win16 `GetModuleFileName` for DLL selectors (VBRUN100 path). | Not a compiler gap — WATX is already correct. Add instead the negative test: `(if c (then a)) (else b)` at statement level must be a hard error. |
+| G5 | **Detached `(else …)` — a real Wine source defect.** The `if` at `src/09e-win16-api.wat:1006` is closed one paren early on line 1028, so its `(else …)` ends up as the third child of the enclosing `(then …)`. The legacy compiler swallows it; WATX does not. | 1 | `src/09e-win16-api.wat:1028-1029` — `(br $owner_scan)))))` then `(else (local.set $mod (call $win16_h32 …)))` | `EMIT: Unknown form head 'else' in $win16_GetModuleFileName` | **Wine source. FIXED at `65961f32` (2026-08-31).** One paren, and the behaviour suspicion is confirmed, not "almost certainly": `lib/compile-wat.js:1414` inlines a standalone `else`'s children, so the `(local.set $mod …)` did run unconditionally and clobbered the segment-owner scan. Probed with a live DLL selector as `hModule` — before `eax=10 "C:\app.exe"`, after `eax=15 "C:\VBRUN100.DLL"`, i.e. the VBRUN100 path was broken exactly as the function's own comment feared. Artifacts `c22dab1c…`→`db2f187a…` / `49a847d7…`→`806cde6c…`, +1 byte each (the `0x05` opcode never emitted before); all 28 `test-win16-*.js` unchanged either side. | Not a compiler gap — WATX is already correct. Add instead the negative test: `(if c (then a)) (else b)` at statement level must be a hard error. |
 | G6 | **SIMD lane immediates are in the wrong position.** Standard WAT puts the lane index first, right after the opcode: `(i32x4.replace_lane 3 VEC VAL)`. WATX reads `(op VEC LANE VAL)` (`compiler-codegen.js:1412-1434`). | 88 (all 88 sites in the tree are standard-form; zero use the WATX order) | `src/06c-mmx.wat:71` — `(i64x2.replace_lane 1 (i64x2.splat …) (call $xmm_hi_get …))` | Compiled "successfully", then `WebAssembly.Module(): function #869 failed: i64x2.replace_lane[0] expected type v128, found i32.const of type i32` | **WATX.** *This is the most dangerous class in the census.* Wine's actual standard lane-first forms all fail validation loudly — `replace_lane` and `extract_lane` alike, since the lane constant lands as an `i32` operand where a `v128` is expected (externally reproduced on a minimal `i64x2.extract_lane 1` module). The silent hazard is the adjacent malformed shape: an `extract_lane` whose lane immediate is missing or unreadable in the position WATX parses (`immVal()` defaults to `0`) still validates, and every lane read becomes lane 0. The compiler's own comment at `compiler-codegen.js:1385` records having been bitten by exactly that before. Accept the lane immediate in either position, and hard-error on a missing one instead of defaulting. | For each `extract_lane` shape, build a vector with distinct lanes and assert `extract_lane 1` ≠ `extract_lane 0`, in standard operand order — a default-to-zero regression must fail. Repeat for `replace_lane`. |
 | G7 | **`i8x16.shuffle` lane bytes are in the wrong position.** Same shape as G6: standard WAT is `(i8x16.shuffle l0…l15 a b)`, WATX wants `(i8x16.shuffle a b l0…l15)`. | 9 | `src/06c-mmx.wat:288` — `(i8x16.shuffle 0 16 1 17 2 18 3 19 0 0 0 0 0 0 0 0 …)` | `WebAssembly.Module(): function #879 failed: i8x16.shuffle[0] expected type v128, found i32.const of type i32` | **WATX.** Same one-line fix family as G6. | `punpcklbw`-style shuffle of two known vectors written lanes-first, asserting the interleaved result byte for byte. |
-| G8 | **Bare `(drop)` as a stack statement.** WATX auto-drops the value of a non-final statement, so an explicit `(drop)` after a value-returning `(call …)` underflows. wat2wasm accepts the pair. | 1 | `src/09a8-handlers-directx.wat:4449` — `(call $host_gdi_set_dib_to_device …)` followed by `(drop)` | `WebAssembly.Module(): function #3497 failed: not enough arguments on the stack for drop (need 1, got 0)` | **Wine source** (preferred) — delete the redundant `(drop)`, since WATX's auto-drop already covers it and the line is dead in the legacy build too. Fixing it in WATX would require modelling a real operand stack across sibling statements, which is a much larger change for one site. | Negative test: a bare `(drop)` with nothing to drop must be a hard **compile**-time error naming the function, not a validation failure a hundred kilobytes later. |
+| G8 | **Bare `(drop)` as a stack statement.** WATX auto-drops the value of a non-final statement, so an explicit `(drop)` after a value-returning `(call …)` underflows. wat2wasm accepts the pair. | 1 | `src/09a8-handlers-directx.wat:4449` — `(call $host_gdi_set_dib_to_device …)` followed by `(drop)` | `WebAssembly.Module(): function #3497 failed: not enough arguments on the stack for drop (need 1, got 0)` | **WATX** — *corrected 2026-08-31, see the G8 note below.* The original verdict here was "Wine source, delete the redundant `(drop)`"; that is wrong and acting on it breaks the shipped build. | Negative test: a bare `(drop)` with nothing to drop must be a hard **compile**-time error naming the function, not a validation failure a hundred kilobytes later. |
+
+### G8 correction: the `(drop)` is load-bearing
+
+The census recorded G8 as a Wine-source fix on the reasoning that "the line is
+dead in the legacy build too". It is not. Verified 2026-08-31:
+
+- `lib/compile-wat.js` has **no auto-drop of any kind**. The only occurrence of
+  the word in the file is a comment at line 1340; `drop` is a plain opcode-table
+  entry (`0x1A`, line 39) and a bare `(drop)` emits a real wasm `drop`.
+- `$host_gdi_set_dib_to_device` is `(result i32)` (`src/01-header.wat:541`) and
+  the enclosing `$dx_blit_entry_rect_to_hdc` (`src/09a8-handlers-directx.wat:4379`)
+  has no result, so that `i32` has to go somewhere.
+- Deleting line 4449 and rebuilding fails validation outright:
+  `Compiling function #3497 failed: expected 0 elements on the stack for
+  fallthru, found 1`, and `tools/wasm-func-name.js 3497` names
+  `$dx_blit_entry_rect_to_hdc`.
+
+So the two compilers genuinely disagree about statement-level stack discipline,
+and the shipped source is the one standard WAT agrees with — `wat2wasm` accepts
+`(call …) (drop)` for the same reason the legacy compiler does. **Do not delete
+this line.** The site is correct as written; closing G8 means teaching WATX not
+to auto-drop a value an explicit `(drop)` is already there to consume. N10 in
+the neutralization list below was therefore a neutralization in the same sense
+as N3–N9 — it reached the next error, it did not describe a fix.
 
 ### Two classes the plan expected that turned out to be non-gaps
 
@@ -98,7 +122,7 @@ Applied to the scratch copy, in the order applied. Seven of the ten are
 | N7 | Re-attach the detached `(else …)` | **Wine source** (G5) | One paren, behaviour-changing |
 | N8 | Move 88 lane immediates to WATX position | WATX (G6) | Accept either position |
 | N9 | Move 9 `i8x16.shuffle` lane lists | WATX (G7) | Accept either position |
-| N10 | Delete the bare `(drop)` | **Wine source** (G8) | One line |
+| N10 | Delete the bare `(drop)` | **WATX** (G8) | Reach-the-next-error only; the line is load-bearing, see the G8 correction above |
 
 None of N3-N10 is semantics-preserving as written — they exist to reach the next
 error, not to produce a runnable module. The 984 KB artifacts above prove the
