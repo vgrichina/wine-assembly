@@ -79,9 +79,15 @@ function collectGlobals() {
 const KNOWN_CLAUSES = new Set(['base', 'size', 'end', 'align', 'owner', 'within']);
 const NUMERIC_CLAUSES = new Set(['base', 'size', 'end', 'align']);
 
+// The --file= CLI flag is read only when this script IS the CLI: importers
+// (tools/region-census.js) have their own --file= meaning a file to census,
+// and honoring argv here made collectDeclarations() parse that file as the
+// declaration set — 0 regions, confidently wrong output.
 function collectDeclarations(overrideFile) {
   const fileArg = overrideFile ||
-    (process.argv.find(a => a.startsWith('--file=')) || '').slice('--file='.length);
+    (require.main === module
+      ? (process.argv.find(a => a.startsWith('--file=')) || '').slice('--file='.length)
+      : '');
   const file = fileArg ? path.resolve(fileArg) : path.join(SRC, DECLS);
   const text = fs.readFileSync(file, 'utf8');
   const decls = [];
