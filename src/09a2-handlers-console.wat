@@ -15,6 +15,82 @@
       (then (i64.store (global.get $CONSOLE_TITLE_STORAGE)
         (i64.const 0x00656c6f736e6f43))))) ;; "Console\0", little-endian
 
+  ;; DuplicateHandle must create a distinct process handle, not merely copy the
+  ;; small GetStdHandle number. Standard-console aliases live in shared memory
+  ;; so a handle created by one browser Worker is valid in every guest thread.
+  ;; The complete token is stored in the slot: a closed generation therefore
+  ;; stays invalid even after that slot is reused.
+  (func $console_handle_resolve (param $handle i32) (result i32)
+    (local $slot i32) (local $rec i32)
+    (if (i32.ne (i32.and (local.get $handle) (i32.const 0xFFFF0000))
+                (global.get $CONSOLE_HANDLE_TAG))
+      (then (return (local.get $handle))))
+    (local.set $slot (i32.and (local.get $handle) (i32.const 31)))
+    (if (i32.ge_u (local.get $slot) (global.get $CONSOLE_HANDLE_COUNT))
+      (then (return (i32.const 0))))
+    (local.set $rec (i32.add (global.get $CONSOLE_HANDLE_TABLE)
+      (i32.mul (local.get $slot) (global.get $CONSOLE_HANDLE_STRIDE))))
+    (if (i32.ne (i32.atomic.load (local.get $rec)) (local.get $handle))
+      (then (return (i32.const 0))))
+    (i32.atomic.load offset=4 (local.get $rec)))
+
+  (func $console_handle_duplicate (param $handle i32) (result i32)
+    (local $canonical i32) (local $slot i32) (local $rec i32)
+    (local $generation i32) (local $token i32)
+    (local.set $canonical (call $console_handle_resolve (local.get $handle)))
+    (if (i32.or (i32.lt_u (local.get $canonical) (i32.const 1))
+                (i32.gt_u (local.get $canonical) (i32.const 3)))
+      (then (return (i32.const 0))))
+    (local.set $generation
+      (i32.add
+        (i32.atomic.rmw.add
+          (i32.add (global.get $CONSOLE_HANDLE_TABLE) (i32.const 248))
+          (i32.const 1))
+        (i32.const 1)))
+    (local.set $slot (i32.const 0))
+    (block $full (loop $scan
+      (br_if $full (i32.ge_u (local.get $slot) (global.get $CONSOLE_HANDLE_COUNT)))
+      (local.set $rec (i32.add (global.get $CONSOLE_HANDLE_TABLE)
+        (i32.mul (local.get $slot) (global.get $CONSOLE_HANDLE_STRIDE))))
+      ;; -1 is an unpublished reservation. Store the canonical stream only
+      ;; after winning the slot, then publish the complete token atomically.
+      (if (i32.eqz
+            (i32.atomic.rmw.cmpxchg (local.get $rec)
+              (i32.const 0) (i32.const -1)))
+        (then
+          (i32.atomic.store offset=4 (local.get $rec) (local.get $canonical))
+          (local.set $token
+            (i32.or (global.get $CONSOLE_HANDLE_TAG)
+              (i32.or
+                (i32.shl (i32.and (local.get $generation) (i32.const 0x7ff))
+                  (i32.const 5))
+                (local.get $slot))))
+          (i32.atomic.store (local.get $rec) (local.get $token))
+          (return (local.get $token))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; -1 is not an alias, 0 is a stale alias, 1 closes this alias only.
+  (func $console_handle_close (param $handle i32) (result i32)
+    (local $slot i32) (local $rec i32)
+    (if (i32.ne (i32.and (local.get $handle) (i32.const 0xFFFF0000))
+                (global.get $CONSOLE_HANDLE_TAG))
+      (then (return (i32.const -1))))
+    (local.set $slot (i32.and (local.get $handle) (i32.const 31)))
+    (if (i32.ge_u (local.get $slot) (global.get $CONSOLE_HANDLE_COUNT))
+      (then (return (i32.const 0))))
+    (local.set $rec (i32.add (global.get $CONSOLE_HANDLE_TABLE)
+      (i32.mul (local.get $slot) (global.get $CONSOLE_HANDLE_STRIDE))))
+    (if (i32.ne
+          (i32.atomic.rmw.cmpxchg (local.get $rec)
+            (local.get $handle) (i32.const -1))
+          (local.get $handle))
+      (then (return (i32.const 0))))
+    (i32.atomic.store offset=4 (local.get $rec) (i32.const 0))
+    (i32.atomic.store (local.get $rec) (i32.const 0))
+    (i32.const 1))
+
   ;; Shared screen-buffer record:
   ;;   +0 magic, +4 backing guest allocation (0 for the original buffer),
   ;;   +8 text WA, +12 attributes WA, +16 width, +20 height,
@@ -41,6 +117,7 @@
   ;; private CreateConsoleScreenBuffer handles encode slots 1..7.
   (func $console_buffer_record (param $handle i32) (result i32)
     (local $slot i32) (local $rec i32)
+    (local.set $handle (call $console_handle_resolve (local.get $handle)))
     (call $console_buffers_init)
     (if (i32.or (i32.eq (local.get $handle) (i32.const 2))
           (i32.or (i32.eq (local.get $handle) (i32.const 3))
@@ -867,7 +944,7 @@
   ;; FlushConsoleInputBuffer(hConsoleInput) → BOOL. Draining through the same
   ;; queue helper also resets the wake event seen by blocked browser Workers.
   (func $handle_FlushConsoleInputBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.ne (local.get $arg0) (i32.const 1))
+    (if (i32.ne (call $console_handle_resolve (local.get $arg0)) (i32.const 1))
       (then
         (global.set $last_error (i32.const 6))
         (global.set $eax (i32.const 0))

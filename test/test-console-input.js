@@ -95,6 +95,34 @@ const extraWat = String.raw`
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
 
+  (func (export "test_call_DuplicateConsoleHandle")
+        (param $handle i32) (param $target i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DuplicateHandle
+      (i32.const -1) (local.get $handle) (i32.const -1)
+      (local.get $target) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_call_CloseHandle") (param $handle i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CloseHandle
+      (local.get $handle) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_call_GetFileType") (param $handle i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetFileType
+      (local.get $handle) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
   ;; Tab expansion lives in the character writer, so drive it directly.
   (func (export "test_put_chars") (param $a i32) (param $b i32) (param $c i32)
     (call $console_cells_ensure)
@@ -339,6 +367,41 @@ function readAnsi(e, buf, n) {
   assert.strictEqual(e.test_call_FlushConsoleInputBuffer(1), 1);
   assert.strictEqual(e.test_console_count(), 0, 'valid flush did not drain the queue');
 
+  // DuplicateHandle returns independent process handles for the same console
+  // input object. Closing one alias must not close another (or stdin itself),
+  // and a stale generation must not revive when the slot is reused.
+  const duplicateOut = e.test_alloc(4) >>> 0;
+  assert.strictEqual(e.test_call_DuplicateConsoleHandle(1, duplicateOut), 1);
+  const duplicate = e.test_peek32(duplicateOut) >>> 0;
+  assert.notStrictEqual(duplicate, 1, 'DuplicateHandle copied the stdin number');
+  assert.strictEqual(duplicate & 0xffff0000, 0x00320000,
+    'duplicated stdin does not use the console-alias handle class');
+  assert.strictEqual(e.test_call_GetFileType(duplicate), 2,
+    'duplicated stdin is not FILE_TYPE_CHAR');
+
+  assert.strictEqual(e.test_call_DuplicateConsoleHandle(duplicate, duplicateOut), 1);
+  const secondDuplicate = e.test_peek32(duplicateOut) >>> 0;
+  assert.notStrictEqual(secondDuplicate, duplicate,
+    'duplicating an alias did not allocate an independent handle');
+
+  e.test_console_push(0x43, 0x43);
+  assert.strictEqual(e.test_call_FlushConsoleInputBuffer(duplicate), 1);
+  assert.strictEqual(e.test_console_count(), 0,
+    'duplicated stdin did not address the shared input queue');
+  assert.strictEqual(e.test_call_CloseHandle(duplicate), 1);
+
+  e.test_console_push(0x44, 0x44);
+  assert.strictEqual(e.test_call_FlushConsoleInputBuffer(duplicate), 0,
+    'closed console alias remained usable');
+  assert.strictEqual(e.test_console_count(), 1,
+    'stale alias consumed console input');
+  assert.strictEqual(e.test_call_FlushConsoleInputBuffer(secondDuplicate), 1,
+    'closing one alias invalidated another alias');
+  assert.strictEqual(e.test_console_count(), 0);
+  assert.strictEqual(e.test_call_CloseHandle(secondDuplicate), 1);
+  assert.strictEqual(e.test_call_FlushConsoleInputBuffer(1), 1,
+    'closing aliases invalidated the original stdin handle');
+
   // --- an empty queue parks ReadConsoleInput too ---------------------------
   e.test_console_reset();
   // A park leaves EAX alone — the call has not returned to the guest yet — so
@@ -354,7 +417,7 @@ function readAnsi(e, buf, n) {
   assert.strictEqual(e.test_cell_char(1), 32, 'the tab is padded with spaces');
   assert.strictEqual(e.test_cell_char(8), 0x78);
 
-  console.log('PASS  console input queue: line/raw reads, peek vs read, tab stops');
+  console.log('PASS  console input queue: reads, mouse, handle aliases, flush, tab stops');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);
