@@ -688,17 +688,17 @@
         (if (local.get $face_guest)
           (then (return (call $g2w (local.get $face_guest)))))))
     (if (i32.eq (local.get $handle) (i32.const 0x3001A))
-      (then (return (i32.const 0x07F0A5A0)))) ;; Terminal
+      (then (return (region.addr $GDI_BITMAP_FONT_STATIC 0x110)))) ;; Terminal
     (if (i32.eq (local.get $handle) (i32.const 0x3001B))
-      (then (return (i32.const 0x07F0A534)))) ;; Courier
+      (then (return (region.addr $GDI_BITMAP_FONT_STATIC 0xA4)))) ;; Courier
     (if (i32.eq (local.get $handle) (i32.const 0x3001D))
-      (then (return (i32.const 0x07F0A520)))) ;; System
+      (then (return (region.addr $GDI_BITMAP_FONT_STATIC 0x90)))) ;; System
     (if (i32.eq (local.get $handle) (i32.const 0x30020))
-      (then (return (i32.const 0x07F0A528)))) ;; Fixedsys
+      (then (return (region.addr $GDI_BITMAP_FONT_STATIC 0x98)))) ;; Fixedsys
     (if (i32.or (i32.eq (local.get $handle) (i32.const 0x30021))
           (i32.eq (local.get $handle) (i32.const 0x30022)))
-      (then (return (i32.const 0x07F0A564)))) ;; Tahoma
-    (i32.const 0x07F0A53C)) ;; MS Sans Serif/default variable face
+      (then (return (region.addr $GDI_BITMAP_FONT_STATIC 0xD4)))) ;; Tahoma
+    (region.addr $GDI_BITMAP_FONT_STATIC 0xAC)) ;; MS Sans Serif/default variable face
 
   ;; Serialize the actual WAT-owned LOGFONT rather than a provider-side alias.
   (func $gdi_font_write_logfont (param $handle i32) (param $dest i32)
