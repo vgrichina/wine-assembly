@@ -43,6 +43,47 @@ node tools/toyvm/spin-census.js --dir=/tmp/demos --dispatches=2m
 | multi-block inner loops | 36.1% | 48.0% |
 | **…stream-shaped** | **10.0%** | **24.8%** |
 
+**That last row is an upper bound and the real predicate is a third of it.**
+`tools/toyvm/loop-match.js` summarizes each loop from
+[handler-effects.js](../tools/toyvm/handler-effects.js) — induction variables,
+memory streams, trip count, leftover side effects — and applies the fold's
+actual conditions:
+
+```
+199 programs, 10007 inner-loop sites
+matched 1480 sites, 11124 samples -- 8.1% of the run
+  LUT_RUN 4.2%   SCAN_RUN 2.8%   FILL_RUN 0.8%   COPY_RUN 0.2%
+```
+
+8.1% corpus-wide, and **2.9% on the core ten** against the coarse test's 10.0%.
+A 3.4x over-count is exactly the failure `tools/match-loops.js` exists to
+prevent for the production interpreter, whose own note is that a loose regex
+reads stack-counter loops as `lut`. Quote the predicate, not the shape guess.
+
+The decline histogram is the work list:
+
+```
+   1737  in_8            \  a port read: a real loop with a real exit
+    930  retf_imm         |
+    903  ret              |  1834 sites where the "loop" spans a function
+    603  call_rel         |  boundary -- see the caveat below
+    229  call_far        /
+    704  touches the stack
+    544  no memory stream
+    344  mixed access widths
+    291  writes a segment register
+```
+
+**Read the `ret`/`call` rows sceptically.** A `ret` inside a loop body more
+likely means the backward-edge interval stitched across a function boundary
+than that a real loop contains a return. That subset wants re-reading before it
+is treated as headroom. And per §4.4 of
+[loop-idiom-superops-design.md](loop-idiom-superops-design.md) a loop
+containing a call is not Design B's territory either — a body op that can
+re-enter the emulator must disqualify the block, because a wrapper holds `ip`
+across iterations and a nested decode can flush the arena underneath it. Loops
+with calls are an inlining problem, not a loop-lowering one.
+
 "Stream-shaped" is deliberately coarse — a memory write, plus an induction
 variable or a memory read, and *nothing* that leaves the loop's own control (no
 call, no interrupt, no port, no return). It says the ops are the right kind, not
@@ -122,7 +163,54 @@ Three sites in 199 programs is not a general primitive, so this is written down
 rather than built. If it happens, it should fall out of the counted-loop case of
 the stream fold above, not be a special case of its own.
 
+## The other two designs, and why one of them looks better
+
+Folding an idiom is Design A in
+[loop-idiom-superops-design.md](loop-idiom-superops-design.md). Two alternatives
+apply here and both are cheaper to be right about.
+
+**Design B — wrap the loop, run the same ops.** No shape library: if a block
+branches to its own head, a wrapper op drives the body in a native loop. It
+removes, per iteration, N copies of the `$next` preamble *plus one trip through
+the back edge* — the branch handler returning out to `$run`, the run preamble,
+a `cache_lookup` — and that back-edge round trip is its largest single item. It
+keeps one indirect dispatch per op, so it cannot approach A where A fires; but
+it **cannot be semantically wrong**, since it runs the same ops in the same
+order, and it fires on every loop rather than on 8.1% of them. Its payoff is
+largest on short bodies, and the toy VM's are short: 2-7 ops is typical here.
+
+**Design C — B on the `switch` shell.** The toy VM already has a dispatch shell
+that is one giant `br_table` with every handler body inlined into a single
+function, so it pays no call frame, no stack-limit check and no interrupt check
+per op. B's own accounting says it removes everything except the indirect
+*call* — and a `switch` build has no indirect call, only an indirect branch
+inside one function. So B-on-switch strictly dominates B-on-tailcall.
+
+Read [toyvm-dispatch-shootout.md](toyvm-dispatch-shootout.md) before assuming a
+number: `switch` measured +11.9% corpus geomean but **+5.4% on the programs
+that actually rendered**, bimodally (DSTNFO +40.1%, COPPER −26.0%, both
+reproduced), because inlining every body into one function makes the result
+depend on whether that program's hot handlers fit the engine's budgets.
+
+**Why the hoisting is worth doing here when it failed before.**
+[toyvm-superinstructions.md](toyvm-superinstructions.md) rejected a block-head
+"charge the whole block's steps at once" op on the grounds that DTM2 runs 3.25
+ops per block transfer — one added dispatch to save 3.25 decrements. Inside a
+loop the wrapper is one dispatch amortized over *iterations x ops*: a 5-op loop
+running 100 times is 500. Same idea, different arithmetic, and that difference
+is the entire argument.
+
+**But keep the two hoists apart.** The per-iteration bookkeeping — steps, halt
+test, `ip` advance, arena bound check, back edge — is structural and needs no
+semantics. Hoisting the *memory* bounds check needs the address range, which is
+A's stream analysis. The memory half of the idea rides on the matcher; the
+dispatch half does not.
+
 ## Status
 
-Nothing here is built. The census is, and it is the thing that says which of
-these to build first: the stream family at 24.8%, not the spin widening at 0.0%.
+Nothing is folded. Two tools are built and are what the decision rests on:
+`tools/toyvm/handler-effects.js` (what each handler touches, 87.2% readable)
+and `tools/toyvm/loop-match.js` (the predicate, 8.1%).
+
+The order that follows from the numbers: **B or C first**, because they fire on
+every loop and cannot be wrong, then A on the shapes that match.
