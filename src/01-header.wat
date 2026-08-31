@@ -2370,6 +2370,21 @@
   (global $SHARED_COUNTERS i32 (i32.const 0x07F0CE40))
   (global $SHARED_COUNTERS_SIZE i32 (i32.const 0x00000010))
   (global $CLASS_ATOM_BASE i32 (i32.const 0xC000))
+  ;; Twelve dwords of cross-thread scratch that belong to the TEST HARNESS, not
+  ;; to the emulator. No WAT reads them; test/test-wat-locks.js,
+  ;; test-wat-window-tables.js and test-wat-user-threading.js use them as the
+  ;; barrier and bump cells their worker threads rendezvous on, over the one
+  ;; shared memory.
+  ;;
+  ;; This exists because those tests used to address the HOLES between declared
+  ;; regions — 0x07F0CA00 (which is in fact $LOCK_TABLE's unused eighth lock
+  ;; line, not "spare bytes past" it) and 0x07F0CE50. A hole is only free by
+  ;; accident, and the region allocator is about to start filling them, at which
+  ;; point a barrier write silently lands in whatever moved in. Storage a test
+  ;; writes to is storage: it gets a name, an extent and a place in the overlap
+  ;; sweep like everything else.
+  (global $TEST_SCRATCH i32 (i32.const 0x07F0CEB0))
+  (global $TEST_SCRATCH_SIZE i32 (i32.const 0x00000030))
   ;; The COM aux-wrapper bump cursor. It was a mutable global, which means a
   ;; private copy per instance handing out the same aux slot twice — the same
   ;; shape of bug $heap_ptr had. Under $LOCK_DX, so plain loads are fine.

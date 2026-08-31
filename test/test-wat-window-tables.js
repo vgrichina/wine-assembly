@@ -21,15 +21,16 @@
 const path = require('path');
 const fs = require('fs');
 const { Worker, isMainThread, workerData, parentPort } = require('worker_threads');
-// $WND_RECORDS and $CLASS_RECORDS, from the map declared in
-// src/00-regions.wat. The three 0x07F0CA0x cells stay literal: they are spare
-// bytes this test and test-wat-locks.js agree to share, not a declared region.
+// $WND_RECORDS, $CLASS_RECORDS and $TEST_SCRATCH, from the map declared in
+// src/00-regions.wat. The rendezvous cells used to be 0x07F0CA04-0x07F0CA0C,
+// left literal as "spare bytes"; they sit inside $LOCK_TABLE's unused eighth
+// lock line, and the allocator is about to stop leaving holes free by accident.
 const RegionMap = require('../lib/region-map.generated.js');
 
 const IMAGE_BASE = 0x400000;
-const BARRIER = 0x07F0CA04;      // same spare cell test-wat-locks.js uses
-const ROUND_CELL = 0x07F0CA08;   // round number the main thread is handing out
-const DONE_CELL = 0x07F0CA0C;    // workers that have finished the current round
+const BARRIER = RegionMap.BASE.TEST_SCRATCH + 4;      // same cell test-wat-locks.js uses
+const ROUND_CELL = RegionMap.BASE.TEST_SCRATCH + 8;   // round number the main thread is handing out
+const DONE_CELL = RegionMap.BASE.TEST_SCRATCH + 12;   // workers that have finished the current round
 const WND_RECORDS = RegionMap.BASE.WND_RECORDS;  // 256 entries x 24 bytes
 const WND_RECORD_SIZE = 24;
 const MAX_WINDOWS = 256;

@@ -29,9 +29,17 @@ const path = require('path');
 const fs = require('fs');
 const { Worker, isMainThread, workerData, parentPort } = require('worker_threads');
 
+const RegionMap = require('../lib/region-map.generated.js');
+
 const IMAGE_BASE = 0x400000;
-const BUMP_CELL = 0x07F0CA00;   // spare bytes past LOCK_TABLE, below GDI_REGION_TABLE
-const BARRIER = 0x07F0CA04;
+// $TEST_SCRATCH — the harness's OWN cells, from the map in src/00-regions.wat.
+// These were 0x07F0CA00/0x07F0CA04, described as "spare bytes past LOCK_TABLE";
+// they are in fact inside $LOCK_TABLE, on its unused eighth lock line. The two
+// cells here are the same two test-wat-window-tables.js uses, by offset, on
+// purpose: the tests run in separate processes, and one named region beats two
+// hand-picked holes.
+const BUMP_CELL = RegionMap.BASE.TEST_SCRATCH + 0;
+const BARRIER = RegionMap.BASE.TEST_SCRATCH + 4;
 
 // One instance per OS thread, all over the same memory. createHostImports needs
 // a context; nothing here draws, so the stubs are enough.

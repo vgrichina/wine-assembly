@@ -1,7 +1,7 @@
 {
   "recorded": "2026-08-31",
   "note": "Per-file counts of raw literals inside declared regions. This is a RATCHET: counts may fall, never rise. `converted` regions must stay at 0.",
-  "total": 361,
+  "total": 355,
   "converted": [],
   "byFile": {
     "src/09a7c-mixer.wat": 19,
@@ -45,7 +45,6 @@
     "test/test-mw3-grid-filter-run.js": 3,
     "test/test-pe-zero-original-first-thunk.js": 3,
     "test/test-wat-memory-map.js": 3,
-    "test/test-wat-window-tables.js": 3,
     "test/test-wavein-audio.js": 3,
     "lib/guest-worker.js": 2,
     "src/06-fpu.wat": 2,
@@ -67,7 +66,6 @@
     "test/test-wat-gdi-bitmap.js": 2,
     "test/test-wat-gdi-region.js": 2,
     "test/test-wat-gdi-state.js": 2,
-    "test/test-wat-locks.js": 2,
     "test/test-win16-civ2-apis.js": 2,
     "test/test-x86-ops.js": 2,
     "lib/host-imports.js": 1,
@@ -110,7 +108,6 @@
     "test/test-wat-drive-types.js": 1,
     "test/test-wat-gdi-raster-handlers.js": 1,
     "test/test-wat-gdi-scalable-text.js": 1,
-    "test/test-wat-user-threading.js": 1,
     "test/test-wave-out-get-id.js": 1,
     "test/test-win16-wep-gameplay.js": 1,
     "test/test-win32-dde-progman.js": 1,

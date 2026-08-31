@@ -334,6 +334,12 @@
     (owner "01-header.wat:1926"))
   (region.declare-fixed $DX_PROCESS_STATE (base 0x07F0CE90) (size 0x0000001C) (align 0x00000010)
     (owner "09a8-handlers-directx.wat:294"))
+  ;; Harness-only. The three worker-thread tests rendezvous on these cells; no
+  ;; WAT reads them. Declared for the reason everything else here is: they used
+  ;; to be raw addresses picked out of the holes between regions, and a hole is
+  ;; free only until the allocator fills it.
+  (region.declare-fixed $TEST_SCRATCH (base 0x07F0CEB0) (size 0x00000030) (align 0x00000010)
+    (owner "01-header.wat:2373"))
   (region.declare-fixed $LOOP_PROCESS_STATE (base 0x07F0CEE0) (size 0x00000004) (align 0x00000010)
     (owner "07b-loop-match.wat:76"))
   (region.declare-fixed $TV_VIEW_TABLE (base 0x07F0CF00) (size 0x00000100) (align 0x00000100)

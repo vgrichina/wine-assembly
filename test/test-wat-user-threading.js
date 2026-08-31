@@ -10,15 +10,26 @@ const path = require('path');
 const fs = require('fs');
 const { Worker, isMainThread, workerData, parentPort } = require('worker_threads');
 
+const RegionMap = require('../lib/region-map.generated.js');
+
 const IMAGE_BASE = 0x400000;
-const BARRIER = 0x07F0CE50;
+// $TEST_SCRATCH, $TIMER_TABLE and $TIMER_SHARED, from the map declared in
+// src/00-regions.wat.
+//
+// BARRIER was 0x07F0CE50 — the 16-byte hole past $SHARED_COUNTERS, free only by
+// accident. TIMER_SHARED was 0x079CC080, which is WRONG and has been for as
+// long as $TIMER_SHARED has lived at 0x07F20100 (see the "Placed after
+// TIMER_SHARED rather than at 0x079C9C00" note in src/01-header.wat): the
+// address is in the hole ahead of $WND_THREAD_TABLE, so the two timer checks
+// here were reading a count the emulator never wrote. That is the drift this
+// whole migration exists to delete, caught by reading the map instead of a
+// literal.
+const BARRIER = RegionMap.BASE.TEST_SCRATCH + 16;
 const NAME = 0x00020000;
 const WNDCLASS = 0x00020100;
 const MSG_GUEST = 0x500000;
-// $TIMER_TABLE, from the map declared in src/00-regions.wat. BARRIER above
-// stays literal: it is a spare cell past $SHARED_COUNTERS, not a region.
-const TIMER_TABLE = require('../lib/region-map.generated.js').BASE.TIMER_TABLE;
-const TIMER_SHARED = 0x079CC080;
+const TIMER_TABLE = RegionMap.BASE.TIMER_TABLE;
+const TIMER_SHARED = RegionMap.BASE.TIMER_SHARED;
 
 async function boot(wasmBytes, memory, tid) {
   const { createHostImports } = require('../lib/host-imports');
