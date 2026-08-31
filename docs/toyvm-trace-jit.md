@@ -1627,3 +1627,74 @@ the work list.
 **None of the speed columns in either census are quotable** — both ran on a box
 at load 4+, and the fix also changed region shape, so the throughput picture has
 to be re-measured on a quiet machine.
+
+## Measuring phase instead of arguing about it
+
+Four of the six survivors above were never defects. The check that cleared them
+is worth stating on its own, because "confirm at more budgets" — what
+`region-census.js` did — cannot decide the question and no amount of extra
+budgets makes it able to.
+
+The interpreter stops dispatch-exact. A region charges `$steps` in one lump per
+straight line, so its last entry overshoots, and the two arms stop thousands of
+dispatches apart: 13087 apart on COMPOVRS.EXE, whose changed pixels were then a
+320x5 band — about the 1400 writes that delta buys. The delta is not even signed
+consistently across budgets (-3228 at 4M, +13087 at 8M), so a budget where the
+arms happen to agree is luck, not evidence. Nor can the gap be closed by asking
+the interpreter for the region's exact dispatch count: it too stops only at a
+block boundary, and a request for 8054341 dispatches ran 8062431 of them.
+
+So `region-jit.js` measures the noise floor instead. On a differing frame it
+re-runs the *interpreter* at the region's dispatch count and counts the pixels
+the baseline moved **by itself** over that gap. That is how much picture this
+program repaints in the distance between the two stops:
+
+```
+COMPOVRS.EXE   baseline drifts 1816px over the 13087 dispatch gap;
+               baseline vs region is 1131px   -> PHASE, not a defect
+CARRIE.EXE     baseline drifts    4px over the    79 dispatch gap;
+               baseline vs region is 52101px  -> BEYOND THE NOISE FLOOR
+```
+
+A difference at or under the baseline's own drift is phase; one three orders of
+magnitude above it is the region computing something else. It has its own exit
+code (6) so the census stops counting it as a bug. On the six survivors it
+cleared `acme-sns`, `COMPOVRS`, `UNTITLED` and `AUTUMN` — the last two differ
+only in interrupt *count* (125203/125197, 455/464) with a pixel-identical
+frame — and held `CARRIE` and `BMGLP`.
+
+## CARRIE.EXE: the region is right and the install is not
+
+`CARRIE.EXE` is the sharper of the two. Its region is frame-IDENTICAL under
+`--no-succ` and wrong with the successor list supplied, while `--succ-only`
+(the list compiled, no region installed) is also frame-identical. So neither
+half is wrong on its own; the combination is.
+
+`--succ-take=N` bisects the list. The ladder is **not monotonic**:
+
+```
+take=11 IDENTICAL   take=12 PHASE   take=13 IDENTICAL   take=14 IDENTICAL
+take=15 47545px     take=17 52101px ... take=20 52101px
+```
+
+so successor 14 (`0xa74`, the taken edge of a `cmp_mi8_jnz`) is what tips it,
+and `--why` now prints that provenance. Compiling one more block changes no
+guest semantics at all — it changes the arena layout and which blocks exist —
+which makes this a layout dependence somewhere in the install, not a wrong op.
+
+The obvious suspect was the one this file already names: a transfer that
+`splitBranch` could not lower keeps the interpreter's `GO` with a
+**profiling-run arena address** baked into it, and CARRIE's region has seven of
+them. Resolving that address live instead (`$jlook` of the `$gip` the `GO` has
+just published, layout-independent by construction; `--keep-go-arena` is the
+A/B) changed CARRIE's frame **not at all**. The theory is dead: after an
+unlowered transfer the region does `(br $out)`, and the epilogue re-resolves
+`$ip` from `$gip` before anything reads it, so the stale constant really is
+inert on that path.
+
+What remains unexplained is why more compiled blocks change the answer at all.
+CARRIE reports 1929 self-modify breaks in both arms, so the next place to look
+is the interaction between the region's install-time byte guard and the
+`covered` ranges `guardBytes` contributes — it silently skips a block whose
+span it cannot find, and a region whose code is only partly covered is invisible
+to the self-modify check that is supposed to retire it.
