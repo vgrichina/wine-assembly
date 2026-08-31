@@ -103,3 +103,30 @@ reads synchronously.
   batch-clock stall, not a renderer bug (see CLAUDE.md on Diablo's intro).
 - Escape at the title/menu exits the app cleanly (`[Exit] code=0`) — don't use
   Esc to "skip intros" in scripted runs.
+
+## Driven to gameplay headlessly (2026-08-31, clean 45857dee)
+
+The shareware recipe in diablo-shareware.md transfers to retail unchanged —
+same batch numbers, same geometry (retail's "New Single Player Hero" screen
+lists Warrior/Rogue/Sorcerer but the Warrior row still takes the
+`dblclick:320:298`). Verified end to end: flaming main menu → Choose Class →
+name entry → the burning-cathedral loading screen (~batch 44000, progress bar
+moving) → **Warrior standing in Tristram at ~batch 50000** with the full
+control panel, both orbs and the potion belt. One run, ~10 minutes wall:
+
+```sh
+timeout -s KILL 800 node test/run.js --exe=DIR/diablo.exe \
+  --vfs-include='*.snp,*.ini' --iso=DIABLO.ISO --quiet-api \
+  --tick-ms-per-batch=20 --repaint-every=200 --no-close --max-batches=53000 \
+  --input='38400:click:620:20,38800:click:620:20,39200:click:620:20,39500:click:620:20,39700:click:620:20,39900:click:620:20,40500:click:320:214,41300:dblclick:320:298,42200:click:425:331,42400:keypress:97,42500:keypress:98,42900:click:350:444,50000:png:/tmp/town.png'
+```
+
+**If the menu renders near-black with only faint text, check a clean build
+before blaming a commit.** The whole title/menu pipeline (art, palette,
+SetEntries fade) was verified correct on clean 45857dee the same night the
+shared worktree's build — carrying an in-flight DirectDraw process-state
+refactor — drew it almost black in both CLI and browser. A worktree build of
+plain HEAD is a two-minute check
+(`node tools/concat-wat.js && node tools/build-compile-wat.js`, then the title
+run with `--no-build`) and it settled in one step what a commit hunt could
+not.
