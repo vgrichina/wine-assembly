@@ -6,6 +6,8 @@ const fs = require('fs');
 const path = require('path');
 const { createCanvas } = require('../lib/canvas-compat');
 const { Win98Renderer } = require('../lib/renderer');
+// $DI_MOUSE_INPUT_STATE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const renderer = new Win98Renderer(createCanvas(1280, 960));
 const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
@@ -45,7 +47,7 @@ assert.strictEqual(renderer._mouseX, 440,
 assert.strictEqual(renderer._mouseY, 280,
   'relative Y should start at the guest cursor and cross the presentation transform once');
 const diWords = new Int32Array(memory.buffer);
-const diMouseState = 0x07F20400 >>> 2;
+const diMouseState = RegionMap.BASE.DI_MOUSE_INPUT_STATE >>> 2;
 assert.deepStrictEqual([diWords[diMouseState], diWords[diMouseState + 1]], [20, -10],
   'physical relative motion should enter the process-shared DirectInput accumulator');
 const move = renderer.inputQueue.find(event => event && event.msg === 0x0200);

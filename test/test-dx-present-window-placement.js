@@ -26,6 +26,8 @@ const fs = require('fs');
 const path = require('path');
 const { Canvas } = require('../lib/canvas-compat');
 const { createHostImports } = require('../lib/host-imports');
+// $DX_OBJECTS, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const ROOT = path.join(__dirname, '..');
 const hwnd = 0x77;
@@ -41,7 +43,7 @@ const DEST_Y = CLIENT.y - WIN.y;   // 5
 const memory = new ArrayBuffer(128 * 1024 * 1024);
 const bytes = new Uint8Array(memory);
 const dv = new DataView(memory);
-const DX_OBJECTS = 0x07F60000;
+const DX_OBJECTS = RegionMap.BASE.DX_OBJECTS;
 
 // A greyscale palette, so an 8bpp pixel reads back as its own colour index.
 const palWa = 0x30000;

@@ -15,7 +15,9 @@ const BARRIER = 0x07F0CE50;
 const NAME = 0x00020000;
 const WNDCLASS = 0x00020100;
 const MSG_GUEST = 0x500000;
-const TIMER_TABLE = 0x0000AC00;
+// $TIMER_TABLE, from the map declared in src/00-regions.wat. BARRIER above
+// stays literal: it is a spare cell past $SHARED_COUNTERS, not a region.
+const TIMER_TABLE = require('../lib/region-map.generated.js').BASE.TIMER_TABLE;
 const TIMER_SHARED = 0x079CC080;
 
 async function boot(wasmBytes, memory, tid) {

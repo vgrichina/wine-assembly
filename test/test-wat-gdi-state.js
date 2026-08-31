@@ -8,6 +8,9 @@ const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
 const { mountBundledFonts } = require('./render-helper');
+// $WINDOW_RECT_SCRATCH and $GDI_LINE_DESC, from the map declared in
+// src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 async function main() {
   const root = path.join(__dirname, '..');
@@ -124,7 +127,7 @@ async function main() {
   assert.strictEqual(wat.test_gdi_dc_set_rop2(hdcA, 7), 13);
   assert.strictEqual(wat.test_gdi_dc_get_rop2(hdcA), 7);
 
-  const clipRect = 0x07EF12D0;
+  const clipRect = RegionMap.BASE.WINDOW_RECT_SCRATCH;
   const memoryView = new DataView(memory.buffer);
   const readClipRect = () => [0, 4, 8, 12].map(offset =>
     memoryView.getInt32(clipRect + offset, true));
@@ -223,7 +226,7 @@ async function main() {
   const text = wat.guest_alloc(2) >>> 0;
   wat.guest_write16(text, 0x58); // "X\0"
   assert.strictEqual(wat.test_call_TextOutA(hdcA, 1, 1, text, 1), 1);
-  const descriptor = 0x07EF1000;
+  const descriptor = RegionMap.BASE.GDI_LINE_DESC;
   assert.strictEqual(wat.test_gdi_surface_descriptor(hdcA, descriptor), 1);
   const bits = new Uint8Array(memory.buffer);
   const bitsWa = new DataView(memory.buffer).getUint32(descriptor, true);

@@ -4,6 +4,8 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $GDI_LINE_DESC, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const extraWat = String.raw`
   (func (export "test_alloc_screen_dc") (result i32)
@@ -23,7 +25,7 @@ const extraWat = String.raw`
     extraWat, width: 64, height: 48,
   });
   const hdc = wat.test_alloc_screen_dc() >>> 0;
-  const desc = 0x07EF1000;
+  const desc = RegionMap.BASE.GDI_LINE_DESC;
   assert(hdc, 'screen DC allocation should succeed');
   assert.strictEqual(wat.test_gdi_surface_descriptor(hdc, desc), 1);
   assert.strictEqual(wat.test_call_SetPixel(hdc, 63, 47, 0x000000ff) >>> 0,

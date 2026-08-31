@@ -25,6 +25,8 @@ const assert = require('assert');
 const path = require('path');
 const { Canvas } = require('../lib/canvas-compat');
 const { createHostImports } = require('../lib/host-imports');
+// $DX_OBJECTS, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 // The chooser only considers offscreen surfaces of at least 320x200 -- below
 // that a surface is a sprite or a texture, not a frame.
@@ -35,7 +37,7 @@ const H = 200;
 const memory = new ArrayBuffer(128 * 1024 * 1024);
 const bytes = new Uint8Array(memory);
 const dv = new DataView(memory);
-const DX_OBJECTS = 0x07F60000;
+const DX_OBJECTS = RegionMap.BASE.DX_OBJECTS;
 
 // Greyscale palette, so an 8bpp pixel reads back as its own colour index.
 const palWa = 0x30000;

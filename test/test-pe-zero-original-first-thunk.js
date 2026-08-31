@@ -6,6 +6,8 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
+// $GUEST_BASE and $THUNK_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -73,7 +75,7 @@ function makePeWithFirstThunkLookup() {
   assert.strictEqual(wat.load_pe(pe.length) >>> 0, 0x401000);
 
   const view = new DataView(memory.buffer);
-  const iatWa = 0x12000 + 0x1140;
+  const iatWa = RegionMap.GUEST_BASE + 0x1140;
   const thunkGuest = wat.get_thunk_base() >>> 0;
   assert.strictEqual(view.getUint32(iatWa, true), thunkGuest,
     'FirstThunk lookup entry must be replaced with a host API thunk');
@@ -81,7 +83,7 @@ function makePeWithFirstThunkLookup() {
   const apiTable = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'api_table.json'), 'utf8'));
   const api = apiTable.find(entry => entry.name === 'GetModuleHandleA');
   assert(api);
-  assert.strictEqual(view.getUint32(0x07112000, true), 0x1190,
+  assert.strictEqual(view.getUint32(RegionMap.BASE.THUNK_BASE, true), 0x1190,
     'thunk metadata should retain the IMAGE_IMPORT_BY_NAME RVA');
   assert.strictEqual(view.getUint32(0x07112004, true), api.id,
     'FirstThunk fallback should resolve the normal API ID');
@@ -92,15 +94,15 @@ function makePeWithFirstThunkLookup() {
     'the same stripped image should load through the dynamic DLL path');
   assert.strictEqual(wat.get_num_thunks() >>> 0, dllThunkIndex + 1,
     'the dynamic DLL loader should resolve a zero-OFT descriptor');
-  const dllIatWa = 0x12000 + (dllBase - 0x400000) + 0x1140;
+  const dllIatWa = RegionMap.GUEST_BASE + (dllBase - 0x400000) + 0x1140;
   assert.strictEqual(view.getUint32(dllIatWa, true),
     (wat.get_thunk_base() + dllThunkIndex * 8) >>> 0,
     'DLL FirstThunk lookup entry must be replaced with a host API thunk');
-  assert.strictEqual(view.getUint32(0x07112000 + dllThunkIndex * 8 + 4, true), api.id,
+  assert.strictEqual(view.getUint32(RegionMap.BASE.THUNK_BASE + dllThunkIndex * 8 + 4, true), api.id,
     'DLL FirstThunk fallback should resolve the normal API ID');
 
   assert.deepStrictEqual(
-    [...new Uint8Array(memory.buffer, 0x12000 + 0x2000, 0x1000)],
+    [...new Uint8Array(memory.buffer, RegionMap.GUEST_BASE + 0x2000, 0x1000)],
     new Array(0x1000).fill(0),
     'an uninitialized section with PointerToRawData=0 must be zero-filled');
 

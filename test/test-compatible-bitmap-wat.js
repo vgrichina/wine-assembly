@@ -4,13 +4,15 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $GDI_LINE_DESC, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 (async () => {
   const harness = await bootRenderHarness();
   const { exports: wat, host, gdi, memory } = harness;
   const bytes = new Uint8Array(memory.buffer);
   const dv = new DataView(memory.buffer);
-  const descriptor = 0x07EF1000;
+  const descriptor = RegionMap.BASE.GDI_LINE_DESC;
 
   const createBitmap = (w, h) => {
     const bitmap = wat.test_call_CreateCompatibleBitmap(0, w, h) >>> 0;

@@ -6,7 +6,8 @@ const assert = require('assert');
 const { EXE_PATCHES, applyExeCompatibilityPatches } = require('../lib/app-profiles');
 
 const imageBase = 0x400000;
-const guestBase = 0x12000;
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const guestBase = require('../lib/region-map.generated.js').GUEST_BASE;
 const memory = new ArrayBuffer(0x220000);
 const bytes = new Uint8Array(memory);
 const wasmExports = {

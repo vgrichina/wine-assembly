@@ -21,15 +21,19 @@
 const path = require('path');
 const fs = require('fs');
 const { Worker, isMainThread, workerData, parentPort } = require('worker_threads');
+// $WND_RECORDS and $CLASS_RECORDS, from the map declared in
+// src/00-regions.wat. The three 0x07F0CA0x cells stay literal: they are spare
+// bytes this test and test-wat-locks.js agree to share, not a declared region.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const IMAGE_BASE = 0x400000;
 const BARRIER = 0x07F0CA04;      // same spare cell test-wat-locks.js uses
 const ROUND_CELL = 0x07F0CA08;   // round number the main thread is handing out
 const DONE_CELL = 0x07F0CA0C;    // workers that have finished the current round
-const WND_RECORDS = 0x00007000;  // 256 entries x 24 bytes
+const WND_RECORDS = RegionMap.BASE.WND_RECORDS;  // 256 entries x 24 bytes
 const WND_RECORD_SIZE = 24;
 const MAX_WINDOWS = 256;
-const CLASS_RECORDS = 0x0000A000; // 64 entries x 48 bytes
+const CLASS_RECORDS = RegionMap.BASE.CLASS_RECORDS; // 64 entries x 48 bytes
 const CLASS_RECORD_SIZE = 48;
 const MAX_CLASSES = 64;
 // Class names are written here, one 32-byte name per thread. It has to be at or

@@ -17,6 +17,8 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $DIB_BACKING_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 (async () => {
   const { exports: wat, memory } = await bootRenderHarness();
@@ -38,7 +40,7 @@ const { bootRenderHarness } = require('./render-helper');
   const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
   assert(bitmap && bitsGa && hdc, 'CreateDIBSection/DC failed');
   wat.test_call_SelectObject(hdc, bitmap);
-  const bits = 0x1C000000 + (bitsGa - 0x50000000);
+  const bits = RegionMap.BASE.DIB_BACKING_BASE + (bitsGa - 0x50000000);
   const stride = W * 4;
 
   const FACE = 0xC0C0C0;

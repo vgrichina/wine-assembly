@@ -11,7 +11,8 @@ const { createHostImports } = require('../lib/host-imports');
 const IMAGE_BASE = 0x400000;
 const RSRC_RVA = 0x16000;
 const DATA_RVA = 0x17000;
-const GUEST_WASM_BASE = 0x12000;
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const GUEST_WASM_BASE = require('../lib/region-map.generated.js').GUEST_BASE;
 const g2w = guest => guest - IMAGE_BASE + GUEST_WASM_BASE;
 
 (async () => {

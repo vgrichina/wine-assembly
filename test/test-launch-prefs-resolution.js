@@ -22,7 +22,8 @@ const { LAUNCH_PREFS, applyLaunchPreferences } = require('../lib/app-profiles');
 
 const ROOT = path.join(__dirname, '..');
 const IMAGE_BASE = 0x400000;
-const GUEST_BASE = 0x12000;
+// From the map declared in src/00-regions.wat.
+const GUEST_BASE = require('../lib/region-map.generated.js').GUEST_BASE;
 const RCT_RES_BYTE = 0x0056fd6b;
 
 let pass = 0, fail = 0;

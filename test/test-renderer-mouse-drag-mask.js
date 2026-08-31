@@ -6,6 +6,8 @@
 
 const assert = require('assert');
 const { Win98Renderer } = require('../lib/renderer');
+// $DI_MOUSE_INPUT_STATE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const canvas = {
   getContext() {
@@ -58,7 +60,7 @@ assert.strictEqual(move.wParam & 0x0001, 0x0001, 'drag move should include MK_LB
 r.handleMouseUp(80, 90, 1);
 assert.strictEqual(r.getAsyncKeyState(0x01), 0, 'GetAsyncKeyState after consumed mouseup should report not held');
 const directInputWords = new Int32Array(directInputMemory.buffer);
-const directInputBase = 0x07F20400 >>> 2;
+const directInputBase = RegionMap.BASE.DI_MOUSE_INPUT_STATE >>> 2;
 assert.deepStrictEqual([
   Atomics.load(directInputWords, directInputBase + 2),
   Atomics.load(directInputWords, directInputBase + 3),

@@ -8,6 +8,8 @@
 
 const assert = require('assert');
 const { ThreadManager } = require('../lib/thread-manager');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 async function main() {
   const memory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
@@ -33,7 +35,7 @@ async function main() {
     },
     guest_to_wasm: guestToWasm,
   };
-  assert(sparseBase - mainExports.get_image_base() + 0x12000 >= memory.buffer.byteLength,
+  assert(RegionMap.g2w(sparseBase, mainExports.get_image_base()) >= memory.buffer.byteLength,
     'fixture must put the obsolete image-relative view outside linear memory');
   const fakeThread = {
     esp: 0,

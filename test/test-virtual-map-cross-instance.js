@@ -6,6 +6,12 @@ const fs = require('fs');
 const path = require('path');
 const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
+// $VIRTUAL_MAP_STATE, $VIRTUAL_MAP_TABLE and $VIRTUAL_BACKING_BASE, from the
+// map declared in src/00-regions.wat. (The bare 0x2000/0x3000/0x4000/0x5000
+// below are allocation SIZES, not the regions the census reads them as.)
+const RegionMap = require('../lib/region-map.generated.js');
+const MAP_STATE = RegionMap.BASE.VIRTUAL_MAP_STATE;
+const MAP_TABLE = RegionMap.BASE.VIRTUAL_MAP_TABLE;
 
 const extraWat = String.raw`
   (func (export "test_virtual_reset")
@@ -115,12 +121,12 @@ async function main() {
     'committing a reservation later must preserve its guest address');
 
   const state = new DataView(memory.buffer);
-  const mapCount = state.getUint32(0x07f02400, true);
+  const mapCount = state.getUint32(MAP_STATE, true);
   assert.strictEqual(mapCount, 1,
     'adjacent heap and graphics backing should coalesce into one sparse map');
-  assert.strictEqual(state.getUint32(0x07f02410, true), heapBlock,
+  assert.strictEqual(state.getUint32(MAP_TABLE, true), heapBlock,
     'the coalesced sparse map should begin at the worker heap reservation');
-  assert.strictEqual(state.getUint32(0x07f02414, true), graphicsSize + 0x00100000,
+  assert.strictEqual(state.getUint32(MAP_TABLE + 4, true), graphicsSize + 0x00100000,
     'the coalesced sparse map should cover each reservation exactly once');
 
   // Storm's image preload performs more than 2048 short-lived reserve/commit
@@ -134,9 +140,9 @@ async function main() {
     assert.strictEqual(main.test_virtual_free(block) >>> 0, 1,
       `MEM_RELEASE ${i} should succeed`);
   }
-  assert.strictEqual(state.getUint32(0x07f02400, true), 0,
+  assert.strictEqual(state.getUint32(MAP_STATE, true), 0,
     'released sparse mappings must recover their table slots');
-  assert.strictEqual(state.getUint32(0x07f02404, true), 0x08000000,
+  assert.strictEqual(state.getUint32(MAP_STATE + 4, true), RegionMap.BASE.VIRTUAL_BACKING_BASE,
     'LIFO sparse releases must recover their topmost backing extent');
 
   // MSVBVM60 reserves once, then commits the same base with successively
@@ -155,9 +161,9 @@ async function main() {
     'growing a same-base commit must preserve the generated prefix');
   assert.strictEqual(main.test_virtual_read32(thunkBase + 0x5258) >>> 0, 0x55667788,
     'the grown tail must translate through the same coherent mapping');
-  assert.strictEqual(state.getUint32(0x07f02400, true), 1,
+  assert.strictEqual(state.getUint32(MAP_STATE, true), 1,
     'progressive same-base commits must not append overlapping sparse maps');
-  assert.strictEqual(state.getUint32(0x07f02414, true), 0x6000,
+  assert.strictEqual(state.getUint32(MAP_TABLE + 4, true), 0x6000,
     'the coherent map must grow to the largest committed size');
 
   // MSVC's small-block heap commits three adjacent 64 KiB runs, decommits
@@ -179,9 +185,9 @@ async function main() {
     'overlapping prefix and extended tail must share one backing translation');
   assert.strictEqual(main.test_virtual_read32(arenaBase + 0x30000) >>> 0, 0x55667788,
     'the non-overlapping extension must remain writable');
-  assert.strictEqual(state.getUint32(0x07f02400, true), 1,
+  assert.strictEqual(state.getUint32(MAP_STATE, true), 1,
     'a partial-tail commit must not append an overlapping sparse map');
-  assert.strictEqual(state.getUint32(0x07f02414, true), 0x3b000,
+  assert.strictEqual(state.getUint32(MAP_TABLE + 4, true), 0x3b000,
     'the arena map must grow only through the recommitted tail');
 
   // JigSawedME exposed a stale title-table value whose bytes spell "ACTR".

@@ -32,7 +32,9 @@ const IMAGE_BASE = 0x400000;
 // A guest address well clear of anything: no PE is loaded here, so the whole
 // guest range is scratch. g2w(0x500000) = 0x112000.
 const CS_GUEST = 0x500000;
-const CS_WASM = CS_GUEST - IMAGE_BASE + 0x12000;
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const CS_WASM =
+  require('../lib/region-map.generated.js').g2w(CS_GUEST, IMAGE_BASE);
 
 // $current_thread_id, which is what OwningThread holds: init_thread(tid) sets it
 // to tid + 1, so the guest's main thread is 1.

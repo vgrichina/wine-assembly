@@ -13,8 +13,10 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $DX_OBJECTS, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
-const DX_OBJECTS = 0x07F60000;
+const DX_OBJECTS = RegionMap.BASE.DX_OBJECTS;
 const DX_ENTRY_SIZE = 32;
 
 function makePrimary(dv, slot, bpp, bitsWa) {

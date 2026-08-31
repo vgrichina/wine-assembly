@@ -10,13 +10,15 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $GDI_LINE_DESC, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 (async () => {
   const harness = await bootRenderHarness();
   const { exports: wat, memory } = harness;
   const bytes = new Uint8Array(memory.buffer);
   const dv = new DataView(memory.buffer);
-  const descriptor = 0x07EF1000;
+  const descriptor = RegionMap.BASE.GDI_LINE_DESC;
   const PATCOPY = 0x00F00021;
   const W = 71, H = 96;                 // FreeCell's card metrics
   const GREEN = 0x00007F00;             // its table colour, COLORREF 0x00BBGGRR

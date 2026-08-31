@@ -10,6 +10,9 @@ const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
 const apiTable = require('../src/api_table.json');
+// $VIRTUAL_MAP_STATE and $VIRTUAL_MAP_TABLE, from the map declared in
+// src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -52,10 +55,11 @@ async function main() {
   const { instance } = await WebAssembly.instantiate(wasm, imports);
 
   const mapView = new DataView(memory.buffer);
-  mapView.setUint32(0x07F02400, 1, true);
-  mapView.setUint32(0x07F02410, 0x4e300000, true);
-  mapView.setUint32(0x07F02414, 0x00010000, true);
-  mapView.setUint32(0x07F02418, 0x10000000, true);
+  const mapTable = RegionMap.BASE.VIRTUAL_MAP_TABLE;
+  mapView.setUint32(RegionMap.BASE.VIRTUAL_MAP_STATE, 1, true);
+  mapView.setUint32(mapTable, 0x4e300000, true);
+  mapView.setUint32(mapTable + 4, 0x00010000, true);
+  mapView.setUint32(mapTable + 8, 0x10000000, true);
   assert.strictEqual(instance.exports.guest_to_wasm(0x4e306050) >>> 0, 0x10006050,
     'GPU host translator resolves a real Quake-style sparse vertex pointer');
 

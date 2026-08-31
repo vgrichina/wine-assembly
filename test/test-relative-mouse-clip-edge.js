@@ -4,6 +4,8 @@
 const assert = require('assert');
 const { createCanvas } = require('../lib/canvas-compat');
 const { Win98Renderer } = require('../lib/renderer');
+// $DI_MOUSE_INPUT_STATE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const renderer = new Win98Renderer(createCanvas(1280, 960));
 const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
@@ -38,7 +40,7 @@ renderer.handleRelativeMouseMove(0, -40);
 assert.deepStrictEqual([renderer._mouseX, renderer._mouseY], [420, 50],
   'the virtual Win32 cursor remains confined to the guest ClipCursor edge');
 const words = new Int32Array(memory.buffer);
-const state = 0x07F20400 >>> 2;
+const state = RegionMap.BASE.DI_MOUSE_INPUT_STATE >>> 2;
 assert.deepStrictEqual([words[state], words[state + 1]], [0, -40],
   'DirectInput preserves both complete scaled deltas after the cursor reaches the edge');
 

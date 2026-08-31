@@ -7,6 +7,8 @@ const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
+// $WINDOW_RECT_SCRATCH, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 async function main() {
   const root = path.join(__dirname, '..');
@@ -27,7 +29,7 @@ async function main() {
   const { instance } = await WebAssembly.instantiate(wasm, imports);
   const wat = instance.exports;
   const dv = new DataView(memory.buffer);
-  const rectPtr = 0x07EF12D0;
+  const rectPtr = RegionMap.BASE.WINDOW_RECT_SCRATCH;
   let passed = 0;
 
   function check(name, fn) {

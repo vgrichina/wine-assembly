@@ -12,7 +12,8 @@ const { Canvas } = require('../lib/canvas-compat');
 const NativeDataView = global.DataView;
 let dataViews = 0;
 let dxTableTypeReads = 0;
-const DX_TABLE = 0x07F60000;
+// $DX_OBJECTS, from the map declared in src/00-regions.wat.
+const DX_TABLE = require('../lib/region-map.generated.js').BASE.DX_OBJECTS;
 const DX_TABLE_BYTES = 4096 * 32;
 global.DataView = class CountingDataView extends NativeDataView {
   constructor(...args) {

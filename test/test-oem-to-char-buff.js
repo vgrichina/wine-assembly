@@ -7,6 +7,8 @@ const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
 const apiTable = require('../src/api_table.json');
+// $THUNK_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -47,7 +49,7 @@ async function main() {
   const bytes = new Uint8Array(memory.buffer);
   const source = e.guest_alloc(16) >>> 0;
   const destination = e.guest_alloc(16) >>> 0;
-  const thunkWa = 0x07112000;
+  const thunkWa = RegionMap.BASE.THUNK_BASE;
   const thunkGuest = (thunkWa - guestBase + imageBase) >>> 0;
   const dv = new DataView(memory.buffer);
   const savedName = dv.getUint32(thunkWa, true);

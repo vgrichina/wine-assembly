@@ -12,6 +12,9 @@ const path = require('path');
 const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
 const { GuestThreadHost, WorkerLink } = require('../lib/guest-thread-host');
+// $PAGE_INDEX_ARENA and $GUEST_BASE, from the map declared in
+// src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const root = path.join(__dirname, '..');
 
@@ -90,8 +93,9 @@ async function main() {
       0x07500000, 0x07501000, 1, 1);
     // A 1MB private low-heap chunk starting here would cross PAGE_INDEX_ARENA
     // after g2w translation, forcing guest_alloc onto the sparse arena.
-    const pageIndexArena = 0x04100000;
-    const nearLowHeapEnd = imageBase + pageIndexArena - 0x12000 - 0x80000;
+    const pageIndexArena = RegionMap.BASE.PAGE_INDEX_ARENA;
+    const nearLowHeapEnd =
+      imageBase + pageIndexArena - RegionMap.GUEST_BASE - 0x80000;
     await host.callExport('heap_init', nearLowHeapEnd);
 
     const thread = await host.spawnThread({

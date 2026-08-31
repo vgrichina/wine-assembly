@@ -7,10 +7,12 @@ const fs = require('fs');
 const path = require('path');
 const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const IMAGE_BASE = 0x400000;
 const CS_GUEST = 0x500000;
-const CS_WASM = CS_GUEST - IMAGE_BASE + 0x12000;
+const CS_WASM = RegionMap.g2w(CS_GUEST, IMAGE_BASE);
 
 async function instantiate(wasmBytes, memory, tid) {
   const ctx = {

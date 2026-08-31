@@ -15,7 +15,8 @@ const { createFilesystemImports } = require('../lib/filesystem');
 const { bootRenderHarness } = require('./render-helper');
 
 const IMAGE_BASE = 0x400000;
-const GUEST_BASE = 0x12000;
+// From the map declared in src/00-regions.wat.
+const GUEST_BASE = require('../lib/region-map.generated.js').GUEST_BASE;
 
 // A stand-in for the emulator: flat linear memory and a bump guest_alloc, which
 // is all the mapping path touches.

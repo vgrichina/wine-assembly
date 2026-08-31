@@ -4,8 +4,10 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $GDI_LINE_DESC, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
-const DESCRIPTOR = 0x07EF1000;
+const DESCRIPTOR = RegionMap.BASE.GDI_LINE_DESC;
 
 (async () => {
   const { exports: e, memory, host, gdi } = await bootRenderHarness();

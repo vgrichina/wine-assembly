@@ -4,11 +4,13 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $GDI_LINE_DESC, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 (async () => {
   const { exports: wat, memory, gdi } = await bootRenderHarness();
   const dv = new DataView(memory.buffer);
-  const desc = 0x07EF1000;
+  const desc = RegionMap.BASE.GDI_LINE_DESC;
 
   const screenDc = wat.test_call_GetDC(0) >>> 0;
   assert(screenDc, 'screen DC must exist for alias regression');

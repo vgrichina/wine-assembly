@@ -11,6 +11,8 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 const {
   g2w, g2wSpan, readStrA, DIB_GUEST_BASE, DIB_GUEST_CAPACITY,
 } = require('../lib/mem-utils');
@@ -67,7 +69,7 @@ const {
     'the first guest byte backed by THREAD_RPC must use only the null sentinel span');
 
   // Ordinary image-relative addresses must be untouched by the new branch.
-  assert.strictEqual(g2w(imageBase, imageBase, memory), 0x12000,
+  assert.strictEqual(g2w(imageBase, imageBase, memory), RegionMap.GUEST_BASE,
     'the direct guest window should still translate as before');
 
   console.log('9/9 checks passed');

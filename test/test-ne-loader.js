@@ -171,7 +171,9 @@ async function testFile(inst, memory, name) {
 
   // Segment bytes: every segment must be placed at its own 64KB slot with the
   // file's contents, checked at both ends so a short copy is caught.
-  const GUEST_BASE = 0x12000, ARENA = 0x00100000;
+  // $GUEST_BASE, from the map declared in src/00-regions.wat.
+  const GUEST_BASE = require('../lib/region-map.generated.js').GUEST_BASE;
+  const ARENA = 0x00100000;
   for (let i = 0; i < info.segs.length; i++) {
     const s = info.segs[i];
     const base = inst.exports.win16_seg_base(i + 1);

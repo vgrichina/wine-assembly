@@ -7,6 +7,8 @@ const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
+// $DIB_BACKING_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 async function main() {
   const root = path.join(__dirname, '..');
@@ -52,7 +54,7 @@ async function main() {
     return {
       bitmap, hdc, width, height, bpp, topDown,
       stride: ((width * bpp + 31) >> 5) << 2,
-      bits: 0x1C000000 + (bitsGa - 0x50000000),
+      bits: RegionMap.BASE.DIB_BACKING_BASE + (bitsGa - 0x50000000),
     };
   }
 

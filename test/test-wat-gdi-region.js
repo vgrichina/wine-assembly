@@ -7,12 +7,18 @@ const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
+// $GDI_REGION_BANDS, from the map declared in src/00-regions.wat. The two
+// scratch cells below are left as literals on purpose: they sit inside the
+// span declared as $CONSOLE_TEXT and this test names them for a different
+// use, so spelling them from the map would assert a sharing the declarations
+// do not state.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
 const RECT_SCRATCH = 0x07E09000;
 const POINT_SCRATCH = 0x07E0A000;
-const GDI_REGION_BANDS = 0x07E1C000;
+const GDI_REGION_BANDS = RegionMap.BASE.GDI_REGION_BANDS;
 const GDI_REGION_MAX_RECTS = 208;
 const GDI_REGION_RECT_STRIDE = GDI_REGION_MAX_RECTS * 16;
 

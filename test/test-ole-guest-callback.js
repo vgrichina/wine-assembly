@@ -11,6 +11,8 @@ const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
 const apiTable = require('../src/api_table.json');
+// $THUNK_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -124,7 +126,7 @@ async function main() {
   const callApi = name => {
     const api = apiTable.find(entry => entry.name === name);
     assert(api, `${name} must exist in api_table.json`);
-    const thunkWa = 0x07112000;
+    const thunkWa = RegionMap.BASE.THUNK_BASE;
     const thunkGuest = (thunkWa - guestBase + imageBase) >>> 0;
     const view = new DataView(memory.buffer);
     const savedName = view.getUint32(thunkWa, true);

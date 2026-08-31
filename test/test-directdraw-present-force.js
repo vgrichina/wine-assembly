@@ -20,6 +20,8 @@ const fs = require('fs');
 const path = require('path');
 const { Canvas } = require('../lib/canvas-compat');
 const { createHostImports } = require('../lib/host-imports');
+// $DX_OBJECTS, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const W = 64;
 const H = 8;
@@ -29,7 +31,7 @@ const memory = new ArrayBuffer(128 * 1024 * 1024);
 const bytes = new Uint8Array(memory);
 const dv = new DataView(memory);
 const slot = 3;
-const entry = 0x07F60000 + slot * 32;
+const entry = RegionMap.BASE.DX_OBJECTS + slot * 32;
 const bits = 0x20000;
 const hwnd = 0x77;
 const canvas = new Canvas(W, H);
