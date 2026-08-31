@@ -1294,10 +1294,12 @@
   ;; 0x00011EAC   84B    Free
   ;; 0x00011F00  166B    Run-dialog strings (src/09c3-controls.wat), ends 0x11FA6
   ;; --- High WAT-private tables ---
-  ;; 0x07E00000 32KB     API dispatch hash table
-  ;; 0x07E08000  1KB     TEXT_SCRATCH (Unicode-to-ANSI conversion)
-  ;; 0x07E08400  2KB     WIN16_SEG_TABLE (128 selectors x 16 bytes + 1 scratch)
-  ;; 0x07E08C00  1KB     WIN16_THUNK_TABLE (256 entries x 4 bytes)
+  ;; 0x079C5000   8KB    WIN16_SEG_TABLE (511 selectors × 16 bytes + scratch)
+  ;; 0x079C7000   4KB    free (former undersized WIN16_THUNK_TABLE placement)
+  ;; 0x079D0000  32KB    GDI_NEAREST_CACHE (4096 × {colour tag, palette index})
+  ;; 0x079D8000   8KB    WIN16_THUNK_TABLE (2048 entries × 4 bytes)
+  ;; 0x07E00000  32KB    API dispatch hash table
+  ;; 0x07E08000   1KB    TEXT_SCRATCH (Unicode-to-ANSI conversion)
   ;; 0x07E09000 12KB     CONSOLE_TEXT (6144 cells × 2 bytes)
   ;; 0x07E0C000 12KB     CONSOLE_ATTR (6144 cells × 2 bytes)
   ;; 0x07E10000 16KB     DIB_PAGE_USED
@@ -1308,7 +1310,6 @@
   ;; 0x079C9C00  1KB     WND_HINSTANCE_TABLE (256 × 4-byte creating HINSTANCE)
   ;; 0x079CC400  1KB     WND_THREAD_TABLE (256 × 4-byte owning thread id)
   ;; 0x079CC800 8320B    THREAD_MSG_QUEUES (8 tids × 64-entry MSG ring)
-  ;; 0x079D0000 32KB     GDI_NEAREST_CACHE (4096 × {colour tag, palette index})
   ;; 0x07EEC000 13KB     GDI_REGION_WORK (4 x 208 RECT buffers)
   ;; 0x07EF0000 2KB      GDI_DC_CLIP_TABLE (256 x {HDC, owned HRGN})
   ;; 0x07EF0800 2KB      GDI_DC_SAVE_TABLE (256 x {HDC, meta guest pointer})
@@ -1399,7 +1400,7 @@
   ;; 0x07FEB000  4KB     D3DIM auxiliary strings/caches/state
   ;; --- Remaining DX tables in high memory, outside guest address space ---
   ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
-  ;; 0x07FFA000 15.74KB  COM_WRAPPERS_AUX (2015 entries × 8 bytes, ends 0x07FFDEF8)
+  ;; 0x07FFA000 15.75KB  COM_WRAPPERS_AUX (2015 × 8B + 4B tail pad, ends 0x07FFDEFC)
   ;; 0x07FFDEFC  260B    DX_VTBL_REGISTRY (64 pointers + count, ends at VSOCK_TABLE)
   ;; 0x07FFE000  8KB     VSOCK_TABLE    (64 sockets × 128 bytes, ends 0x08000000)
   ;; 0x00012000  60MB    Guest address space (PE sections + DLLs + large data)
@@ -1410,13 +1411,14 @@
   ;; 0x03C12000  1MB     Former low main stack slot, now free for guest heap
   ;; 0x03D12000  ...     Guest heap grows upward; VirtualAlloc reserves grow downward from thread cache
   ;; 0x03E12000  256KB   Former IAT thunk zone, now free for guest heap
+  ;; 0x04A00000   6MB    WIN16_APP_DLL_STAGING (6 app modules × 1MB)
   ;; 0x05000000 32MB     Thread cache (8 slots × 4MB decoded-thread arenas)
   ;; 0x07012000  1MB     Main guest stack (ESP starts at top 0x07112000)
   ;; 0x07112000 256KB    IAT thunk zone
   ;; 0x07152000 256KB    Block cache indexes (8 slots × 4096 entries × 8 bytes)
   ;; 0x07192000  8MB     PE staging area (supports PEs up to 8MB)
   ;; 0x07992000  512B    DLL table (16 DLLs × 32 bytes)
-  ;; 0x07992200  256B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
+  ;; 0x07992200  128B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
   ;; 0x07992300   64B    DLL path table (16 guest string pointers)
   ;; 0x07992400  ...     File mapping zone (MapViewOfFile allocations)
   ;; 0x08000000 320MB    VirtualAlloc backing pool for sparse high guest maps
@@ -1491,7 +1493,21 @@
   ;; them.
   (global $PAGE_CHUNK_BYTES i32 (i32.const 0x4000))
   (global $DLL_TABLE_SIZE i32 (i32.const 0x00000200))
-  (global $DLL_RSRC_TABLE_SIZE i32 (i32.const 0x00000200))
+  (global $DLL_RSRC_TABLE_SIZE i32 (i32.const 0x00000080))
+  (global $DLL_PATH_TABLE_SIZE i32 (i32.const 0x00000040))
+  ;; Fixed bases declared in later WAT parts still publish their extents here,
+  ;; so the memory-map gate can prove that they neither overlap nor run past
+  ;; the memory. The two string-storage roots intentionally own several named
+  ;; subfields/data segments; those aliases are audited explicitly by the gate.
+  (global $WIN16_BUILTIN_NAMES_SIZE i32 (i32.const 0x00000200))
+  (global $GDI_NEAREST_CACHE_SIZE i32 (i32.const 0x00008000))
+  (global $CP1252_TO_CP437_SIZE i32 (i32.const 0x00000100))
+  (global $CP437_TO_CP1252_SIZE i32 (i32.const 0x00000100))
+  (global $DX_VTBL_REGISTRY_SIZE i32 (i32.const 0x00000104))
+  (global $GDI_BITMAP_FONT_STATIC i32 (i32.const 0x07F0A490))
+  (global $GDI_BITMAP_FONT_STATIC_SIZE i32 (i32.const 0x00000170))
+  (global $TT_FONT_STRING_STORAGE i32 (i32.const 0x07F0BF00))
+  (global $TT_FONT_STRING_STORAGE_SIZE i32 (i32.const 0x00000100))
   ;; Guest-space thunk bounds (set by PE loader: THUNK_BASE/END - GUEST_BASE + image_base)
   (global $thunk_guest_base (mut i32) (i32.const 0))
   (global $thunk_guest_end  (mut i32) (i32.const 0))
@@ -1733,6 +1749,7 @@
   ;; 32-bit handle that 16-bit handle i names, 0 for a free slot; 0-4 stay
   ;; reserved for the standard handles a DOS program assumes it starts with.
   (global $WIN16_FILE_TABLE i32 (i32.const 0x079C9400))
+  (global $WIN16_FILE_TABLE_SIZE i32 (i32.const 0x00000400))
   (global $WIN16_FILE_MAX i32 (i32.const 256))
   ;; Which class record each window was created from, one byte per window slot
   ;; (0xFF = none), and the cbClsExtra bytes that belong to that class. Class
@@ -1836,6 +1853,7 @@
   ;; separate WASM instances that share this memory but not their globals, so a
   ;; per-instance negative lookup cache has to revalidate against this counter.
   (global $GDI_OBJECT_GEN i32 (i32.const 0x07EF1730))
+  (global $GDI_OBJECT_GEN_SIZE i32 (i32.const 0x00000004))
   (global $GDI_OBJECT_TABLE i32 (i32.const 0x07EF7800))
   (global $GDI_OBJECT_TABLE_SIZE i32 (i32.const 0x00003000))
   (global $GDI_OBJECT_COUNT i32 (i32.const 256))
@@ -1848,6 +1866,7 @@
   ;; per-instance high-water mark would read 0 in a worker and hand out slot 0
   ;; on top of a live record.
   (global $GDI_WINDOW_SURFACE_HWM i32 (i32.const 0x07EF1734))
+  (global $GDI_WINDOW_SURFACE_HWM_SIZE i32 (i32.const 0x00000004))
   (global $GDI_WINDOW_SURFACE_TABLE i32 (i32.const 0x07EFA800))
   (global $GDI_WINDOW_SURFACE_TABLE_SIZE i32 (i32.const 0x00002000))
   (global $GDI_WINDOW_SURFACE_COUNT i32 (i32.const 256))
@@ -1946,6 +1965,7 @@
   ;; reserve; Storm generates its blitters into ordinary HeapAlloc memory,
   ;; which falls in neither. 0x10000000 >> 12 = 65536 pages = 8KB of bitmap.
   (global $CODE_PAGE_BITMAP i32 (i32.const 0x07F12000))
+  (global $CODE_PAGE_BITMAP_SIZE i32 (i32.const 0x00002000))
   (global $CODE_PAGE_BITMAP_PAGES i32 (i32.const 65536))
   (global $HANDLER_PAIR_HIST_COUNTS i32 (i32.const 0x04000000))
   (global $HANDLER_PAIR_HIST_COUNTS_SIZE i32 (i32.const 0x00100000))
@@ -2246,6 +2266,7 @@
   ;; handful. Overflow just means that section is not tracked, i.e. today's
   ;; behaviour.
   (global $CS_TABLE i32 (i32.const 0x07F0CA40))
+  (global $CS_TABLE_SIZE i32 (i32.const 0x00000400))
   (global $CS_TABLE_ENTRIES i32 (i32.const 256))
   (global $LOCK_VIRTUAL_MAP i32 (i32.const 0x07F0C840))
   (global $LOCK_DX i32 (i32.const 0x07F0C880))
@@ -3140,7 +3161,9 @@
   ;; app corrupted windows it never touched. Cells are capped by
   ;; $CONSOLE_MAX_CELLS so a SetConsoleScreenBufferSize cannot walk off the end.
   (global $CONSOLE_TEXT i32 (i32.const 0x07E09000))
+  (global $CONSOLE_TEXT_SIZE i32 (i32.const 0x00003000))
   (global $CONSOLE_ATTR i32 (i32.const 0x07E0C000))
+  (global $CONSOLE_ATTR_SIZE i32 (i32.const 0x00003000))
   (global $CONSOLE_MAX_CELLS i32 (i32.const 6144))
   ;; Console input queue. $CONSOLE_ATTR's 6144 cells end at 0x07E0F000, which
   ;; leaves one free page before DIB_PAGE_USED.
@@ -3157,6 +3180,7 @@
   ;; the keyboard and the thread that calls ReadConsole are usually different
   ;; threads, and a global would give each of them its own empty queue.
   (global $CONSOLE_INPUT i32 (i32.const 0x07E0F000))
+  (global $CONSOLE_INPUT_SIZE i32 (i32.const 0x00001000))
   ;; 102 × 20B ends at +0x818, within the original +0x820 ring end, leaving the shared
   ;; screen-buffer table at +0x840 untouched.
   (global $CONSOLE_INPUT_MAX i32 (i32.const 102))
@@ -3192,12 +3216,16 @@
   ;; empty message box. Slot MAX is the handle table, at guest 0x01FF0000, and
   ;; the arena ends at 32MB — well clear of the guest heap at 0x03C12000.
   (global $WIN16_SEG_TABLE i32 (i32.const 0x079C5000))
+  (global $WIN16_SEG_TABLE_SIZE i32 (i32.const 0x00002000))
   (global $WIN16_SEG_MAX   i32 (i32.const 510))
   ;; One entry per distinct (module, ordinal) the task and its DLLs import.
   ;; 256 was not enough once a DLL as large as VBRUN100 was in the picture, and
-  ;; the table is now beside the segment table with room for 2048 — still only
-  ;; 8KB of thunk segment used out of the 64KB that selector owns.
-  (global $WIN16_THUNK_TABLE i32 (i32.const 0x079C7000))
+  ;; the table has room for 2048 — still only 8KB of thunk segment used out of
+  ;; the 64KB that selector owns. It cannot remain beside the segment table:
+  ;; 0x079C8000 begins WND_Z_ORDER_TABLE. The first complete 8KB gap is after
+  ;; GDI_NEAREST_CACHE instead.
+  (global $WIN16_THUNK_TABLE i32 (i32.const 0x079D8000))
+  (global $WIN16_THUNK_TABLE_SIZE i32 (i32.const 0x00002000))
   (global $WIN16_THUNK_MAX i32 (i32.const 2048))
   ;; Each selector index owns one 64KB slot. The arena sits above the PE guest
   ;; image start: an NE task sets image_base to 0, so nothing else is mapped
@@ -3296,10 +3324,14 @@
   (global $WIN16_DLL_STAGING i32 (i32.const 0x07592000))
   (global $WIN16_DLL_STAGING_STRIDE i32 (i32.const 0x00040000))
   ;; Where the modules an application ships with itself are staged, one
-  ;; megabyte each, above the 32-bit DLL tables and below the virtual-alloc
-  ;; backing store. They get their own area because their size is the app's
-  ;; business rather than the system's: VBRUN100.DLL alone is 265KB.
-  (global $WIN16_APP_DLL_STAGING i32 (i32.const 0x07A00000))
+  ;; megabyte each. PAGE_DIR ends at 0x04920000 and THREAD_CACHE_BASE begins at
+  ;; 0x05000000, leaving a complete six-slot WAT-private span here. The former
+  ;; 0x07A00000 placement held only four slots before API_HASH_TABLE began at
+  ;; 0x07E00000; growing it in place would overwrite every high console/GDI/DX
+  ;; table. They get their own area because their size is the app's business
+  ;; rather than the system's: VBRUN100.DLL alone is 265KB.
+  (global $WIN16_APP_DLL_STAGING i32 (i32.const 0x04A00000))
+  (global $WIN16_APP_DLL_STAGING_SIZE i32 (i32.const 0x00600000))
   (global $WIN16_APP_DLL_STRIDE  i32 (i32.const 0x00100000))
   (global $WIN16_CONT_OFFSET i32 (i32.const 0xFF00))
   ;; The second continuation slot: CreateWindow calls the WH_CALLWNDPROC hook

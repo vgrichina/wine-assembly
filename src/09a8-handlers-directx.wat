@@ -74,7 +74,7 @@
   ;; primary wrappers so $dx_from_this works for aux guest ptrs too. Dedup'd
   ;; by (slot, vtbl) via linear scan.
   (global $COM_WRAPPERS_AUX  i32 (i32.const 0x07FFA000))
-  (global $COM_WRAPPERS_AUX_SIZE i32 (i32.const 0x00003F00))
+  (global $COM_WRAPPERS_AUX_SIZE i32 (i32.const 0x00003EFC))
   (global $COM_WRAPPERS_AUX_MAX i32 (i32.const 2015))
   ;; The aux-wrapper cursor lives at $COM_AUX_NEXT_SHARED, not in a global: a
   ;; mutable global is per-instance, and every guest thread is its own instance
