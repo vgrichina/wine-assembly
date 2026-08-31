@@ -110,6 +110,7 @@ UNIT=(
   test/test-io-wait-threads.js
   test/test-mm-timer-callback.js
   test/test-run-budget-completes-resume.js
+  test/test-run-pinned-wasm.js
   test/test-cmp-memory-jb.js
   test/test-browser-waveout-pump.js
   test/test-browser-worker-dx-present.js

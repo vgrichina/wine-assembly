@@ -92,6 +92,9 @@ const getArgs = name => {
     .map(value => value.trim()).filter(Boolean);
 };
 const hasFlag = name => args.includes(`--${name}`);
+// Was `--name=...` written at all? Distinct from getArg(), which cannot tell an
+// absent option from one that was given its default value.
+const argHas = name => args.some(a => a.startsWith(`--${name}=`));
 
 // WINE_ASSEMBLY_WASM=PATH pins one prebuilt artifact for this process and every
 // test that spawns it. Several tests already read that variable and forward it
@@ -562,6 +565,14 @@ const MATCHED_APP = (() => {
 const ASSET_ENTRY = MATCHED_APP && MATCHED_APP.entry;
 const ASSET_ENTRY_ID = MATCHED_APP && MATCHED_APP.id;
 const WASM_PATH = getArg('wasm', ENV_WASM || path.join(ROOT, 'build', 'wine-assembly.wasm')); // --wasm=FILE (or $WINE_ASSEMBLY_WASM): isolated prebuilt used with --no-build
+// Was a SPECIFIC artifact asked for, as opposed to falling back on the canonical
+// build/wine-assembly.wasm? A pin is a promise about WHICH module is under test —
+// the whole basis of the legacy-vs-WATX differential (tools/watx-matrix.js), where
+// one test file is run twice against two artifacts. Silently substituting a
+// different module for a pin does not produce a worse run, it produces a
+// MEANINGLESS one that still reports a verdict, so a pin that cannot be honoured
+// is fatal here (see main()). Nothing changes when no pin is given.
+const WASM_PINNED = argHas('wasm') || !!ENV_WASM;
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 const PNG_CANVAS = hasFlag('png-canvas'); // --png-canvas: always capture the composited screen, never a raw DX surface
 // --dump-image=0xGUESTADDR:W:H:PITCH:BPP:FILE.png (repeatable, comma-separated)
@@ -852,6 +863,18 @@ function buildHandlerNameList() {
 
 async function main() {
   let wasmBytes;
+  // A PIN THAT CANNOT BE HONOURED IS FATAL. This used to fall through to the
+  // `else` and compile from src/, so `--wasm=/typo/path.wasm` (or a stale
+  // $WINE_ASSEMBLY_WASM) ran the CANONICAL build and reported a perfectly normal
+  // verdict about a module nobody asked for. Under tools/watx-matrix.js both
+  // columns then compile the same source and agree with each other by
+  // construction — a green differential that measured one compiler twice.
+  if (WASM_PINNED && !fs.existsSync(WASM_PATH)) {
+    console.error(`run.js: pinned wasm artifact does not exist: ${WASM_PATH}`);
+    console.error(`run.js: refusing to silently compile from src/ instead — ` +
+      `${argHas('wasm') ? '--wasm=' : '$WINE_ASSEMBLY_WASM'} names which module is under test.`);
+    process.exit(2);
+  }
   if (NO_BUILD && fs.existsSync(WASM_PATH)) {
     wasmBytes = fs.readFileSync(WASM_PATH);
   } else {
@@ -3089,7 +3112,21 @@ async function main() {
 
   const imports = { host: h };
 
-  const wasmModule = await WebAssembly.compile(wasmBytes);
+  // A CORRUPT PINNED ARTIFACT MUST NOT READ AS A PASS. The rejection from
+  // WebAssembly.compile() lands in the `main().catch` at the bottom of this file,
+  // which prints the error and deliberately leaves the exit code at 0 so guest
+  // threads still get stopped — fine for a guest-level fault mid-run, wrong here:
+  // a caller that pinned an artifact and got exit 0 has been told the artifact
+  // works. Fail loudly, before any of that machinery exists to be cleaned up.
+  let wasmModule;
+  try {
+    wasmModule = await WebAssembly.compile(wasmBytes);
+  } catch (e) {
+    if (!WASM_PINNED) throw e;
+    console.error(`run.js: pinned wasm artifact failed to compile: ${WASM_PATH}`);
+    console.error(`run.js: ${e && e.message ? e.message : e}`);
+    process.exit(1);
+  }
   const instance = await WebAssembly.instantiate(wasmModule, imports);
   ctx.exports = instance.exports;
   // A run that is stopped from outside still knows things worth having. The
