@@ -10445,19 +10445,16 @@ HookEx — no next hook in chain, return 0
     (if (i32.eqz (global.get $eax))
       (then
         (local.set $lazy (call $host_fs_read_pending))
-        ;; Only the main guest thread may park. A spawned thread brokers its
-        ;; host imports to the main thread and gets an immediate number back —
-        ;; nothing on that path fills a chunk or clears a yield, so parking
-        ;; there is a hang, not a wait. Container mounts that a worker thread
-        ;; will read must be pre-materialized (vfs.materialize) or backed by a
-        ;; provider that reads synchronously; anything else fails here loudly
-        ;; instead of stopping the thread forever.
-        (if (i32.and
-              (i32.eq (local.get $lazy) (i32.const 1))
-              (i32.eq (global.get $current_thread_id) (i32.const 1)))
+        ;; Any guest thread may park. The main thread's park is serviced by
+        ;; the host run loop; a spawned thread's by its scheduler — the
+        ;; cooperative runSlice and the Worker slice-result handler both fill
+        ;; the pending chunk and clear the yield (lib/thread-manager.js), so
+        ;; the same call re-runs and takes the cache hit. Storm reads its
+        ;; 500MB CD archive on a reader thread, which is why "main thread
+        ;; only" was a Data File Error, not a safety margin.
+        (if (i32.eq (local.get $lazy) (i32.const 1))
           (then (call $io_block (i32.const 24)))
-          ;; 2 = the fill failed for good; 1 on a spawned thread = the mount
-          ;; contract above was broken. Both complete the call as a real Win32
+          ;; 2 = the fill failed for good: complete the call as a real Win32
           ;; read failure rather than a silent zero-byte success.
           (else
             (if (local.get $lazy)

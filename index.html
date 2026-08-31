@@ -661,6 +661,12 @@
     body.no-debug.exclusive-fullscreen #log,
     body.no-debug.exclusive-fullscreen #taskbar,
     body.no-debug.exclusive-fullscreen #desktop-icons { display: none !important; }
+    /* Desktop icons are DOM elements stacked ABOVE the canvas, so on an
+       exclusive-fullscreen surface they would float over the game. The debug
+       page keeps its toolbars for debugging, but the icons are launcher
+       furniture, not a debugging aid — hide them in every mode, the same rule
+       the media-import button applies to itself. */
+    body.exclusive-fullscreen #desktop-icons { display: none !important; }
     body.exclusive-fullscreen #browser-fullscreen-consent { display: flex; }
     body.no-debug.exclusive-fullscreen canvas {
       position: relative !important;
@@ -1368,7 +1374,7 @@ Resource-aware Win98 emulator
   <script src="lib/media-library.js?v=2"></script>
   <script src="lib/media-import.js?v=2"></script>
   <script src="lib/media-import-ui.js?v=3"></script>
-  <script src="lib/browser-shell.js?v=22"></script>
+  <script src="lib/browser-shell.js?v=23"></script>
   <script src="lib/pe.js?v=1"></script>
   <script src="lib/process-boot.js?v=3"></script>
   <script src="lib/app-profiles.js?v=1"></script>
@@ -1388,13 +1394,13 @@ Resource-aware Win98 emulator
   <script src="lib/debug-thread-state.js?v=7"></script>
   <script src="lib/host-imports.js?v=211"></script>
   <script src="lib/compile-wat.js?v=169"></script>
-  <script src="lib/thread-manager.js?v=184"></script>
+  <script src="lib/thread-manager.js?v=186"></script>
   <script src="lib/vlan-wire.js?v=1"></script>
   <script src="lib/vlan-rtc.js?v=1"></script>
   <script src="lib/vlan-lobby.js?v=1"></script>
   <script src="lib/guest-rpc.js?v=8"></script>
   <script src="lib/guest-thread-host.js?v=10"></script>
-  <script src="host.js?v=261"></script>
+  <script src="host.js?v=263"></script>
   <script src="lib/recorder.js?v=172"></script>
   <script src="lib/perf-hud.js?v=1"></script>
   <script>

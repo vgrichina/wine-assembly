@@ -26,7 +26,7 @@ function claimAudioSession() {
 if (typeof window !== 'undefined') window.claimAudioSession = claimAudioSession;
 
 class WineAssembly {
-  static SOURCE_VERSION = '248';
+  static SOURCE_VERSION = '250';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   static _nextProcessId = 1000;
 
@@ -1115,6 +1115,10 @@ class WineAssembly {
       // every window an app owns -- whichever thread put it up -- answers to
       // the one range test that teardown and input routing both use.
       hwndBase: () => self._hwndBase || 0x10001,
+      // For servicing a spawned thread's io_wait park (a provider-backed
+      // ReadFile off a mounted ISO). Read late: the VFS is attached to the
+      // help context after init().
+      getVfs: () => (self._helpCtx && self._helpCtx.vfs) || null,
       hasMessage: () => !!(self.renderer && self.renderer.inputQueue && self.renderer.inputQueue.length),
       now: () => self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now(),
       resolveThreadSendExternalYield: async (link, r) => {

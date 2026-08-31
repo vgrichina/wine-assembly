@@ -68,6 +68,23 @@ volumeSpaceSize total (new `fs_volume_size` host import);
 `GetVolumeInformation` fs name = `"CDFS"`. Regression tests in
 test/test-iso-mount.js.
 
+### "Data File Error" in the browser is not the fold check
+
+The browser chain-launched game passed the XOR fold (adoptFrom carries the
+drive-type/volume maps) and still raised **"Data File Error — Diablo cannot
+read a required data file"**. That dialog is storm failing to *read*
+`diabdat.mpq`, and the read fails on the thread, not the file: storm reads its
+MPQs on a spawned reader thread, in the browser the ISO entry is
+provider-backed (async File API) so every non-resident chunk read parks on the
+io_wait yield (12) — and `$handle_ReadFile` used to complete that park as
+ERROR_READ_FAULT on any thread but the main one, because neither scheduler
+serviced a spawned thread's park. Now the WAT parks on any thread and both
+ThreadManager backends fill the pending chunk and clear the yield (worker:
+`_runWorkerThread` yield-12 branch; cooperative: `runSlice` starts the async
+fill and re-enters on the slice after it lands). Regression:
+test/test-io-wait-threads.js. The CLI never sees this — its ISO provider
+reads synchronously.
+
 ## Disc layout notes
 
 - `DIABDAT.MPQ` (517MB, LBA 2961 — contiguous, so `dd bs=2048 skip=2961` carves

@@ -3478,6 +3478,10 @@ async function main() {
     faultUnmapped: FAULT_NULL,
     inheritedWasmGlobals,
     now: () => (tickState.batch * TICK_MS_PER_BATCH) | 0,
+    // For a spawned thread's io_wait park (yield 12). CLI providers usually
+    // read synchronously, so this mostly matters to tests that mount an
+    // async provider to mimic the browser's File-backed ISO reads.
+    getVfs: () => ctx.vfs || null,
     hasMessage: () => !!(
       inputEvent ||
       (crossThreadMsgs && crossThreadMsgs.length) ||
