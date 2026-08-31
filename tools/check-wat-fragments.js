@@ -2,7 +2,7 @@
 /**
  * Per-fragment WAT parenthesis gate (Milestone 2.2 of docs/watx-migration-plan.md).
  *
- * NOT YET WIRED INTO tools/build.sh — run it by hand:
+ * Wired into tools/build.sh's gate section. Also runnable by hand:
  *
  *   node tools/check-wat-fragments.js            # gate every file in WAT_FILES
  *   node tools/check-wat-fragments.js --verbose  # also print the clean files
@@ -16,21 +16,17 @@
  * the migration plan survived. This checker holds each fragment to its own
  * balance instead.
  *
- * TEMPORARY modeled exception (today's layout, deliberately not "fixed" here):
- * the outer (module ...) wrapper still lives in the source. src/01-header.wat
- * opens it and src/13-exports.wat closes it, so those two — AND ONLY THOSE TWO,
- * FOREVER — carry an expected net +1 / -1. Milestone 2.2 moves the wrapper into
- * tools/concat-wat.js; when that lands, delete the two WRAPPER entries below and
- * every fragment must net to 0.
+ * STRICT: every fragment must net to zero. There are no exceptions and no
+ * mechanism for adding one. The source-level `(module ...)` wrapper that used
+ * to make src/01-header.wat net +1 and src/13-exports.wat net -1 is gone —
+ * tools/concat-wat.js adds it around build/combined.wat instead, and
+ * lib/compile-wat.js consumes bare top-level module fields directly. If a
+ * fragment fails here, fix the fragment.
  *
- * The exception is a frozen allow-list, not a mechanism: the gate hard-fails if
- * WRAPPER_EXPECTED_DEPTH ever names a file other than those two, so it cannot be
- * used to bless a new instance of the structure the plan wants removed.
- *
- * Rejected in every file, wrapper or not:
+ * Rejected in every file:
  *   - a mid-file negative-depth dip (a closer with no opener before it), even
  *     if a later opener makes the totals balance again;
- *   - any final depth other than the modeled one;
+ *   - any final depth other than zero;
  *   - an unterminated string or block comment.
  *
  * Exit 0 when every fragment passes, 1 otherwise.
@@ -42,25 +38,9 @@ const path = require('path');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 
-// Expected final depth per file. Absent => 0 (a self-contained fragment).
-// TEMPORARY: these two entries model the source-level (module ...) wrapper that
-// Milestone 2.2 has not removed yet. Delete both when the wrapper moves into
-// tools/concat-wat.js; nothing else may ever be added here.
-const WRAPPER_EXPECTED_DEPTH = {
-  'src/01-header.wat': 1,   // opens (module
-  'src/13-exports.wat': -1, // closes it
-};
-
-// The only two files the wrapper exception may ever cover. Adding a third entry
-// above would let the gate bless exactly the structure Milestone 2.2 removes,
-// so that is a hard failure rather than a config change.
-const WRAPPER_ALLOWED_FILES = ['src/01-header.wat', 'src/13-exports.wat'];
-
-// Minimum depth a file may legally reach mid-stream. Only the wrapper closer
-// is allowed below zero, and only by the one level it is closing.
-function minDepthFor(expectedDepth) {
-  return expectedDepth < 0 ? expectedDepth : 0;
-}
+// No fragment may ever dip below zero: a closer with no opener before it is a
+// structural error even when a later opener makes the totals balance again.
+const MIN_DEPTH = 0;
 
 /**
  * Blank out WAT strings and (; block comments ;) and ;; line comments while
@@ -140,13 +120,11 @@ function structuralLines(lines) {
   return { lines: result, errors };
 }
 
-/** Balance one fragment against its expected net depth. */
+/** Balance one fragment on its own: it must open and close every paren it uses. */
 function checkFragment(relPath) {
   const abs = path.join(REPO_ROOT, relPath);
   const lines = fs.readFileSync(abs, 'utf-8').split('\n');
   const structural = structuralLines(lines);
-  const expected = WRAPPER_EXPECTED_DEPTH[relPath] || 0;
-  const floor = minDepthFor(expected);
   const errors = structural.errors.slice();
 
   let depth = 0;
@@ -160,11 +138,11 @@ function checkFragment(relPath) {
         depth++;
       } else if (ch === ')') {
         depth--;
-        if (depth < floor && !reportedDip) {
+        if (depth < MIN_DEPTH && !reportedDip) {
           reportedDip = true;
           errors.push({
             line: i + 1,
-            msg: `surplus ) — depth went to ${depth} (floor ${floor})`,
+            msg: `surplus ) — depth went to ${depth} (floor ${MIN_DEPTH})`,
             text: lines[i].trimEnd().slice(0, 120),
           });
         }
@@ -172,15 +150,14 @@ function checkFragment(relPath) {
     }
   }
 
-  if (depth !== expected) {
+  if (depth !== 0) {
     errors.push({
       line: lines.length,
-      msg: `final depth ${depth}, expected ${expected}` +
-        (expected === 0 ? '' : ' (modeled (module ...) wrapper)'),
+      msg: `final depth ${depth}, expected 0 — this fragment must balance on its own`,
     });
   }
 
-  return { file: relPath, depth, expected, lines: lines.length, errors };
+  return { file: relPath, depth, lines: lines.length, errors };
 }
 
 function main() {
@@ -198,18 +175,6 @@ function main() {
     files = WAT_FILES.map(f => (f.includes('/') ? f : `src/${f}`));
   }
 
-  // The wrapper exception is frozen. If it ever grows a third member, fail
-  // loudly instead of quietly accepting a new unbalanced fragment.
-  const rogue = Object.keys(WRAPPER_EXPECTED_DEPTH)
-    .filter(f => !WRAPPER_ALLOWED_FILES.includes(f));
-  if (rogue.length) {
-    console.error('FAIL check-wat-fragments: the (module ...) wrapper exception is frozen to');
-    console.error(`  ${WRAPPER_ALLOWED_FILES.join(' and ')}, but WRAPPER_EXPECTED_DEPTH also names:`);
-    for (const f of rogue) console.error(`    ${f}`);
-    console.error('  Every other fragment must balance on its own — fix the fragment, not the table.');
-    process.exit(1);
-  }
-
   let failed = 0;
   for (const f of files) {
     const r = checkFragment(f);
@@ -221,8 +186,7 @@ function main() {
         if (e.text) console.error(`    ${e.text}`);
       }
     } else if (verbose) {
-      const note = r.expected === 0 ? 'balanced' : `net ${r.expected >= 0 ? '+' : ''}${r.expected} (modeled wrapper)`;
-      console.log(`ok   ${r.file}  ${r.lines} lines, ${note}`);
+      console.log(`ok   ${r.file}  ${r.lines} lines, balanced`);
     }
   }
 
@@ -230,13 +194,9 @@ function main() {
     console.error(`\ncheck-wat-fragments: ${failed} of ${files.length} fragment(s) unbalanced`);
     process.exit(1);
   }
-  const modeled = files.filter(f => f in WRAPPER_EXPECTED_DEPTH);
-  console.log(`check-wat-fragments: ${files.length} fragments OK` +
-    (modeled.length
-      ? ` (${modeled.length} TEMPORARY wrapper exception(s): ${modeled.join(', ')} — remove when Milestone 2.2 moves (module ...) into tools/concat-wat.js)`
-      : ''));
+  console.log(`check-wat-fragments: ${files.length} fragments OK (all self-balanced, no exceptions)`);
 }
 
 if (require.main === module) main();
 
-module.exports = { checkFragment, structuralLines, WRAPPER_EXPECTED_DEPTH };
+module.exports = { checkFragment, structuralLines };

@@ -5488,4 +5488,5 @@
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (i32.load offset=12 (call $g2w (local.get $state))))
 
-)
+  ;; NO closing paren for `(module` here — this fragment is self-balanced.
+  ;; See the banner at the top of src/01-header.wat.

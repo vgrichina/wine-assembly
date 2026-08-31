@@ -9,6 +9,12 @@ mkdir -p build
 # src/*.wat glob — a part that lands in src/ but not in WAT_FILES is silently
 # absent from the build while still appearing in build/combined.wat.
 node tools/check-wat-manifest.js
+# Every src/*.wat fragment must balance its own parentheses. check-parens.js only
+# proves the CONCATENATION balances, so a stray closer in one file cancelled by a
+# missing one in another passes it — that is exactly how the surplus close in
+# 10d-gdi-region-path.wat survived. Since the (module ...) wrapper moved into
+# tools/concat-wat.js there are no exceptions: any nonzero net is a bug.
+node tools/check-wat-fragments.js
 # Fixed WAT tables share one flat linear-memory address space. A collision is
 # valid WAT and compiles cleanly, then silently cross-corrupts unrelated state
 # at runtime, so the sized-region/data-segment map is a shipping gate.

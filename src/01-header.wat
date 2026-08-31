@@ -1,4 +1,12 @@
-(module
+  ;; ============================================================
+  ;; NO `(module` OPENER HERE, AND NONE ANYWHERE IN src/.
+  ;; Every src/*.wat fragment balances its own parentheses; the outer
+  ;; (module ...) wrapper is supplied by the consumer:
+  ;;   - lib/compile-wat.js treats bare top-level forms as module fields;
+  ;;   - tools/concat-wat.js wraps build/combined.wat for standard-WAT tools.
+  ;; tools/check-wat-fragments.js gates this — every fragment must net zero.
+  ;; The authoritative source order is src/main.watx.
+  ;; ============================================================
   ;; ============================================================
   ;; Wine-Assembly: Windows 98 PE interpreter in raw WAT
   ;; Forth-style threaded code x86 interpreter — full i486 ISA

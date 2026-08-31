@@ -5,6 +5,14 @@
 // module, so tools that map index->name (func-index.js) start naming the wrong
 // function. tools/check-wat-manifest.js proves the two lists agree; this makes
 // them literally the same list.
+//
+// The source parts carry NO `(module ...)` wrapper of their own (Milestone 2.2
+// of docs/watx-migration-plan.md): every src/*.wat fragment balances its own
+// parentheses so it can be parsed independently, and tools/check-wat-fragments.js
+// gates that. lib/compile-wat.js consumes bare top-level module fields directly,
+// but the standard-WAT consumers of combined.wat (wat2wasm, check-parens,
+// func-index, grep-for-structure) want a complete module, so the wrapper is
+// added HERE, around the concatenation.
 'use strict';
 
 const fs = require('fs');
@@ -17,10 +25,13 @@ const OUT = path.join(ROOT, 'build', 'combined.wat');
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 const out = fs.openSync(OUT, 'w');
 try {
+  fs.writeSync(out, '(module\n');
   for (const file of WAT_FILES) {
     fs.writeSync(out, fs.readFileSync(path.join(ROOT, 'src', file)));
   }
+  fs.writeSync(out, ')\n');
 } finally {
   fs.closeSync(out);
 }
-console.log(`Wrote ${path.relative(ROOT, OUT)} from ${WAT_FILES.length} parts (WAT_FILES order)`);
+console.log(`Wrote ${path.relative(ROOT, OUT)} from ${WAT_FILES.length} parts ` +
+  `(WAT_FILES order, (module ...) wrapper added here)`);
