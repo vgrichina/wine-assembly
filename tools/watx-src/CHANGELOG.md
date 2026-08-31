@@ -371,3 +371,79 @@ Emitted bytes unchanged again — the closure is byte-identical in both modes,
 New manifest digest:
 
   bc39bed62a34e2428addd835615e87fcc5a5e2906205cbec688e05bf61db4817
+
+## 2026-08-31 — type-section order parity: `(type N)` names the same index legacy names
+
+The last body-encoding difference between the legacy and WATX artifacts that was
+not a source defect. Body #355 — `$next`, the threaded-code dispatcher — encoded
+
+    13 00 00   ;; return_call_indirect (type 0) (table 0)   lib/compile-wat.js
+    13 01 00   ;; return_call_indirect (type 1) (table 0)   WATX
+
+for the one line `(return_call_indirect (type $handler_t) …)` at
+`src/04-cache.wat:938`. Both indices resolved to the identical signature
+`(i32) -> ()`, so both modules validated and both dispatched correctly; only the
+bytes differed.
+
+A `(type N)` operand is a POSITIONAL reference into the type section, so this was
+never about that one instruction — it was about the order in which the two
+compilers intern signatures. `lib/compile-wat.js` interns in a fixed order: a
+first sub-pass over every top-level `(type ...)` declaration, then ONE
+source-order pass in which imports and function definitions are interned as they
+are encountered. WATX interned lazily and in a different order — all imports,
+then the region builtins, then all functions, then whatever a `call_indirect`
+demanded — and never interned a named `(type ...)` declaration at all until
+something referenced one. Two consequences, both now fixed:
+
+  * `$handler_t` is declared in `src/02-thread-table.wat` before any import, so
+    legacy gives it type 0. Under WATX it lost index 0 to the first import
+    (`(i32 i32) -> ()`) and landed at 1 — the byte above.
+  * imports sorted ahead of functions, which permuted nine further entries
+    (indices 15–23 of the shipped module's 74-entry section).
+
+`generateWasm` grows one pass, `internTypesInDeclarationOrder`, placed just before
+the first `getTypeIdx` call. Sub-pass A interns every entry of `namedTypes` in
+declaration order (Map insertion order is source order). Sub-pass B interns
+imports and functions interleaved. It cannot walk `forms` for that interleaving:
+by the time the emitter runs, the `(func ...)` forms have been consumed and only
+the imports are still top-level — the earlier attempt measured
+`forms funcs=0 decls=8141` and correctly declined. So the checker in
+`compiler-stages.js`, the one pass where both kinds are still visible, now
+records a `declOrder` array of `"import"`/`"func"` tags alongside `functionDecls`
+and returns it in both of its result shapes; the emitter walks that with a cursor
+into each declaration array. When there is no `checkResult` (a caller invoking
+`generateWasm` directly) the function forms ARE still present and the fallback
+walk over `forms` reproduces the same sequence. If the tag counts do not match
+the declaration counts the pass declines rather than mis-pairing a cursor — the
+historical order still produces a correct module, it just may not reproduce
+legacy's numbering.
+
+Nothing downstream depends on the order, because `getTypeIdx` dedups: every later
+call returns the entry this pass created. Duplicate signatures therefore still
+collapse to one entry, which is also what `lib/compile-wat.js` does through its
+`sigKey` map — keeping the duplicates would have been the divergence, not the
+parity.
+
+Result: the two compilers now emit **byte-identical modules** in both modes —
+984347 B tail `01daf6ccfbd115e3` and 984796 B compat `0ee6414668129ac4` from both
+`lib/compile-wat.js` and WATX, with `tools/watx-matrix.js --only=abi` reporting
+MATRIX GREEN and zero differing bodies (it had reported body #355 differing on
+every previous run).
+
+New suite `test/watx-compiler-type-index.test.js` (16 checks) reads the emitted
+binary directly — the type section and the raw operand of the one
+`call_indirect`/`return_call_indirect` in a body — and pins: a named type
+declared before any import takes index 0 and a `return_call_indirect (type $t)`
+encodes it; declaration order among distinct named types; duplicate-signature
+dedup, with a reference through EITHER name and through an equivalent INLINE
+signature resolving to the same entry; imports and functions interleaved in
+source order rather than grouped; a working round trip through
+`WebAssembly.Instance`; and that an undeclared type name is still a hard error
+rather than a silently interned new entry.
+
+The suite joins `REQUIRED_FILES` in `tools/check-watx-provenance.js` (17 → 18
+pinned suites), so the seal covers it.
+
+New manifest digest:
+
+  d2c06462422e7a908639c137f94c0f3c17d940061944edef32e71420531ebe94

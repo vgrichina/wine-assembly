@@ -3346,6 +3346,62 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     return idx;
   }
 
+  // ── Type-section ordering (parity with lib/compile-wat.js) ──
+  // A (type N) operand is a *positional* reference into the type section, so
+  // two compilers that intern the same set of signatures in a different order
+  // emit different bytes for the same source. lib/compile-wat.js interns in a
+  // fixed order: a first sub-pass over every top-level (type ...) declaration,
+  // then one source-order pass in which imports and function definitions are
+  // interned as they are encountered. Reproduce that here.
+  //
+  // Nothing downstream depends on the order — getTypeIdx dedups, so every
+  // later call still returns the entry this pass created. All this decides is
+  // which index each signature lands on, which is what makes $next's
+  // `return_call_indirect (type $handler_t)` encode `(type 0)` in both.
+  (function internTypesInDeclarationOrder() {
+    // Sub-pass A: top-level (type $t (func ...)) declarations, in source order.
+    for (const sig of namedTypes.values()) {
+      const s = parseIndirectSig([watxFormLoc(sig), 'type', ...sig.slice(2)]);
+      getTypeIdx(s.params, s.results);
+    }
+
+    // Sub-pass B: imports and function definitions interleaved in source order.
+    // By the time this runs the (func ...) forms have already been consumed —
+    // `forms` still holds the imports but no functions — so the interleaving
+    // comes from checkResult.declOrder, the sequence the checker recorded in
+    // the one pass where both kinds were still visible. The fallback walk over
+    // `forms` covers callers that invoke generateWasm without a checkResult,
+    // where the function forms ARE still present.
+    let order = checkResult?.declOrder;
+    if (!order) {
+      order = [];
+      for (const form of forms) {
+        if (!Array.isArray(form)) continue;
+        const h = V(form[1]);
+        if ((h === 'wasm-import' || h === 'import') && Array.isArray(form[4]) && V(form[4][1]) === 'func') order.push('import');
+        else if (h === 'func') order.push('func');
+      }
+    }
+    // A cursor pairs each entry of `order` with a declaration, so a sequence
+    // that does not account for exactly the declarations we have would
+    // mis-pair them. Decline instead of guessing: the import-then-function
+    // order below still produces a correct module, it just may not reproduce
+    // legacy's numbering.
+    let nImports = 0, nFuncs = 0;
+    for (const kind of order) { if (kind === 'import') nImports++; else nFuncs++; }
+    if (nImports !== importDecls.length || nFuncs !== funcDecls.length) return;
+    let ii = 0, fj = 0;
+    for (const kind of order) {
+      if (kind === 'import') {
+        const imp = importDecls[ii++];
+        getTypeIdx(imp.params, imp.results);
+      } else {
+        const fd = funcDecls[fj++];
+        getTypeIdx(fd.params.map(p => valtypeOf(p.type)), fd.results.map(r => valtypeOf(r)));
+      }
+    }
+  })();
+
   // Import type indices
   const importTypeIdxs = importDecls.map(imp => getTypeIdx(imp.params, imp.results));
   

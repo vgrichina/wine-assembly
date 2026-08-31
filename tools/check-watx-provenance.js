@@ -95,6 +95,9 @@ const REQUIRED_FILES = [
   'test/watx-compiler-i64-literal.test.js',
   // Round 4 external review: strict numeric literals + the positional-else warning.
   'test/watx-compiler-literals.test.js',
+  // Type-section ORDER parity: a (type N) operand is positional, so the two
+  // compilers must intern signatures in the same order (body #355, $next).
+  'test/watx-compiler-type-index.test.js',
 ];
 
 function fail(msg) {

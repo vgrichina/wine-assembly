@@ -145,6 +145,12 @@ function checkTypes(forms, options = {}) {
   var errors = [], warnings = [];
   var layouts = new Map(), fieldsByLayout = new Map(), functions = new Map(), regions = new Set(["static"]), importSigs = new Map();
   var functionDecls = [], inlineExportDecls = [], anonymousFuncId = 0;
+  // Source order of the two declaration kinds that own a function signature.
+  // The emitter needs the *interleaving* of imports and functions to number the
+  // type section the way lib/compile-wat.js does, and by the time it runs the
+  // (func ...) forms are no longer top-level forms it can see. This single pass
+  // is the last place both are visible together, so record the sequence here.
+  var declOrder = [];
   function fieldKey(layoutName, fieldName) { return layoutName + "\u0000" + fieldName; }
   function loc(form) {
     if (form && (watxFormLoc(form) !== undefined || form.line)) return { line: watxNodeLine(form), col: watxNodeCol(form) };
@@ -190,6 +196,7 @@ function checkTypes(forms, options = {}) {
       }
       var fd = {name:name,params:params,results:results,locals:[],body:body,effectsClause:effectsClause,form:form,hasEffects:!!effectsClause};
       functionDecls.push(fd);
+      declOrder.push("func");
       if (!fd.hasEffects && name.indexOf("$__")!==0) addWarning("Function "+name+" missing (effects ...) clause", form);
       functions.set(name, fd);
     }
@@ -198,7 +205,7 @@ function checkTypes(forms, options = {}) {
         for (var i=2;i<N(sig);i++) { var sigPart=A(sig,i); if (Array.isArray(sigPart)) { var k2=V(A(sigPart,0));
           if (k2==="param") { for (var j=1;j<N(sigPart);j++){var iv=V(A(sigPart,j))||"i32";if(iv.charAt(0)!=="$")ip.push(iv);} }
           else if (k2==="result") { for (var j=1;j<N(sigPart);j++) ir.push(V(A(sigPart,j))||"i32"); } } }
-        importSigs.set(funcName, {params:ip,results:ir}); } }
+        importSigs.set(funcName, {params:ip,results:ir}); declOrder.push("import"); } }
     if (head === "with-region") { var rn = V(A(form,1)); if(rn) regions.add(rn); }
   }
   function stackType(t) { if(typeof t==="number"){if(t===0x7f)return"i32";if(t===0x7e)return"i64";if(t===0x7d)return"f32";if(t===0x7c)return"f64";if(t===0x7b)return"v128";}
@@ -302,10 +309,10 @@ function checkTypes(forms, options = {}) {
   // Required production diagnostics are emitted by codegen with exact opcode
   // context. Advisory type warnings are disabled there, so avoid a duplicate
   // full-module body walk.
-  if(options.requiredOnly)return {errors:errors,warnings:warnings,layouts:layouts,functions:functions,regions:regions,importSigs:importSigs,functionDecls:functionDecls,inlineExportDecls:inlineExportDecls};
+  if(options.requiredOnly)return {errors:errors,warnings:warnings,layouts:layouts,functions:functions,regions:regions,importSigs:importSigs,functionDecls:functionDecls,inlineExportDecls:inlineExportDecls,declOrder:declOrder};
   for(var entry of functions){var name=entry[0],funcInfo=entry[1];
     try{checkFuncBody(funcInfo);}catch(e){console.warn("[WATX checker] Error checking "+name+":",e.message);addWarning("Type checker internal error in "+name+": "+e.message,funcInfo.form);}}
   if(errors.length>0)console.log("[WATX checker] "+errors.length+" error(s), "+warnings.length+" warning(s)");
   var foldedWarnings=errors.map(function(e){var r={};for(var k in e)r[k]=e[k];r.msg="[TYPE ERROR] "+e.msg;r.isTypeError=true;return r;}).concat(warnings);
-  return {errors:errors,warnings:foldedWarnings,layouts:layouts,functions:functions,regions:regions,importSigs:importSigs,functionDecls:functionDecls,inlineExportDecls:inlineExportDecls};
+  return {errors:errors,warnings:foldedWarnings,layouts:layouts,functions:functions,regions:regions,importSigs:importSigs,functionDecls:functionDecls,inlineExportDecls:inlineExportDecls,declOrder:declOrder};
 }
