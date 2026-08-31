@@ -583,16 +583,18 @@
       (if (i32.gt_u (local.get $need) (local.get $chunk))
         (then (local.set $chunk
           (i32.and (i32.add (local.get $need) (i32.const 0xFFF)) (i32.const 0xFFFFF000)))))
-      ;; Overflow, and the boundary where low guest memory would run into the
-      ;; emulator's own decoded-code metadata — either way the caller spills to
-      ;; the sparse high arena instead. PAGE_INDEX_ARENA is the first cache
-      ;; region. THREAD_CACHE_BASE is too late: an AoE2 campaign heap grew into
-      ;; the page indexes at 0x04100000 and turned valid block entries into zero.
+      ;; Overflow, and the end of the low heap's own region — either way the
+      ;; caller spills to the sparse high arena instead. This used to stop at
+      ;; $PAGE_INDEX_ARENA, i.e. at whatever the map happened to put next, which
+      ;; is how an AoE2 campaign heap once grew into the page indexes and turned
+      ;; valid block entries into zero. The extent is declared now
+      ;; (src/00-regions.wat), so the bound is the region's end and the two
+      ;; cannot drift apart no matter where the allocator puts either one.
       (if (i32.lt_u (i32.add (local.get $cursor) (local.get $chunk)) (local.get $cursor))
         (then (return (i32.const 0))))
       (if (i32.gt_u
             (call $g2w (i32.add (local.get $cursor) (local.get $chunk)))
-            (global.get $PAGE_INDEX_ARENA))
+            (region.end $GUEST_HEAP_BASE))
         (then (return (i32.const 0))))
       ;; Claim it, or lose the race and recompute against the winner's cursor.
       (br_if $reserved

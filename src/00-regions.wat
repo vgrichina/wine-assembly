@@ -184,7 +184,14 @@
     (owner "01-header.wat:1002"))
   (region.declare-fixed $GUEST_BASE (base 0x00012000) (size 0x03C00000) (align 0x00001000)
     (owner "01-header.wat:1449"))
-  (region.declare-derived $GUEST_HEAP_BASE (base (g2w 0x04100000)) (size 0x00100000) (align 0x00001000)
+  ;; WIDENED 0x100000 -> 0x3EE000 (wave 3). The low heap never fitted in 1MB:
+  ;; $heap_low_reserve hands out 1MB chunks and stopped only when the next
+  ;; chunk would reach $PAGE_INDEX_ARENA, which the hand-placed map happened to
+  ;; put 4MB further up. The room a table grows into belongs in its own (size),
+  ;; where a bound is checked, not in an anonymous hole beside it — reclaiming
+  ;; that hole moved the page indexes down to 0x03E12000 and left the heap with
+  ;; one chunk, which is a broken emulator, not a broken declaration.
+  (region.declare-derived $GUEST_HEAP_BASE (base (g2w 0x04100000)) (size 0x003EE000) (align 0x00001000)
     (owner "01-header.wat:1453"))
   (region.declare $HANDLER_PAIR_HIST_COUNTS (size 0x00100000) (align 0x00001000)
     (owner "01-header.wat:1986"))

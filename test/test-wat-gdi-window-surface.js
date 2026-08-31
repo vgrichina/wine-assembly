@@ -7,6 +7,10 @@ const { createCanvas } = require('../lib/canvas-compat');
 const { createHostImports } = require('../lib/host-imports');
 const { mountBundledFonts } = require('./render-helper');
 const { compileSrcWasm } = require('./compile-src');
+// The WAT-private tables this test pokes are ALLOCATED regions since wave 3:
+// their addresses are chosen by the compiler and change whenever anything
+// earlier in the map changes size. Read them, never retype them.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const HWND = 0x10001;
 const CHILD = 0x10002;
@@ -239,15 +243,15 @@ async function main() {
   wat.wnd_set_style_export(SECOND_CHILD, 0x54000000);
   const wndSlot = hwnd => {
     for (let slot = 0; slot < 256; slot++) {
-      if (dv.getUint32(0x7000 + slot * 24, true) === hwnd) return slot;
+      if (dv.getUint32(RegionMap.BASE.WND_RECORDS + slot * 24, true) === hwnd) return slot;
     }
     return -1;
   };
   const childSlot = wndSlot(CHILD);
   const secondChildSlot = wndSlot(SECOND_CHILD);
   assert(childSlot >= 0 && secondChildSlot >= 0, 'sibling windows need table slots');
-  dv.setInt32(0x079C8000 + childSlot * 4, 100, true);
-  dv.setInt32(0x079C8000 + secondChildSlot * 4, 200, true);
+  dv.setInt32(RegionMap.BASE.WND_Z_ORDER_TABLE +childSlot * 4, 100, true);
+  dv.setInt32(RegionMap.BASE.WND_Z_ORDER_TABLE +secondChildSlot * 4, 200, true);
   assert.strictEqual(wat.wnd_z_get(CHILD), 100);
   assert.strictEqual(wat.wnd_z_get(SECOND_CHILD), 200);
   assert.strictEqual(wat.wnd_get_parent(CHILD), HWND);
@@ -261,14 +265,14 @@ async function main() {
   const siblingDc = wat.test_call_GetDC(CHILD) >>> 0;
   let systemClip = 0;
   for (let slot = 0; slot < 256; slot++) {
-    const entry = 0x07F0C000 + slot * 8;
+    const entry = RegionMap.BASE.GDI_DC_SYSTEM_CLIP_TABLE + slot * 8;
     if (dv.getUint32(entry, true) === siblingDc) {
       systemClip = dv.getUint32(entry + 4, true);
       break;
     }
   }
   assert(systemClip, 'child DC needs a retained USER system clip');
-  const systemClipRecord = 0x07F0D000 + ((systemClip & 0xFF) - 1) * 32;
+  const systemClipRecord = RegionMap.BASE.GDI_REGION_TABLE + ((systemClip & 0xFF) - 1) * 32;
   const systemClipRects = dv.getUint32(systemClipRecord + 28, true);
   const systemClipBox = [8, 12, 16, 20].map(offset =>
     dv.getInt32(systemClipRecord + offset, true));
@@ -277,7 +281,7 @@ async function main() {
     `(rects=${systemClipRects}, box=${systemClipBox.join(',')})`);
   assert.strictEqual(wat.test_gdi_dc_clip_point_visible(siblingDc, 3, 1), 0,
     'a higher-z overlapping sibling must be excluded from the child DC');
-  dv.setInt32(0x079C8000 + childSlot * 4, 300, true);
+  dv.setInt32(RegionMap.BASE.WND_Z_ORDER_TABLE +childSlot * 4, 300, true);
   wat.dc_apply_client_clip(siblingDc, CHILD);
   assert.strictEqual(wat.test_gdi_dc_clip_point_visible(siblingDc, 3, 1), 1,
     'raising the child above its sibling must restore the overlap');
