@@ -8711,6 +8711,17 @@
                               (i32.const 0xFFFF)))
     (call $win16_api_return (select (i32.const 10) (i32.const 6) (local.get $scale))))
 
+  ;; GDI.345 GetTextAlign(hDC) -> current alignment flags.
+  (func $win16_GetTextAlign
+    (local $hdc i32)
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_GetTextAlign (local.get $hdc)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 2)))
+
   ;; GDI.346 SetTextAlign(hDC, wFlags) -> the previous alignment.
   (func $win16_SetTextAlign
     (local $hdc i32) (local $flags i32)
@@ -9488,6 +9499,8 @@
       (then (call $win16_poly (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 50))
       (then (call $win16_CreateBrushIndirect) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 345))
+      (then (call $win16_GetTextAlign) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 346))
       (then (call $win16_SetTextAlign) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 351))

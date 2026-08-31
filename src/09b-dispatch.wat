@@ -317,6 +317,18 @@
         ;; Clear pending_child_create — the full create chain is now synchronous.
         ;; (pending_child_size is kept; it flows through the message loop.)
         (global.set $pending_child_create (i32.const 0))
+        ;; A CBT hook is allowed to observe a system control without subclassing
+        ;; it. Its WAT-native marker is not guest code: WM_CREATE was already
+        ;; delivered by CreateWindowEx, so return the HWND exactly like the
+        ;; ordinary native-control path and leave its queued WM_SIZE intact.
+        (if (i32.eq
+              (call $wnd_table_get (global.get $child_cbt_saved_hwnd))
+              (global.get $WNDPROC_CTRL_NATIVE))
+          (then
+            (global.set $eax (global.get $child_cbt_saved_hwnd))
+            (global.set $eip (global.get $child_cbt_saved_ret))
+            (global.set $steps (i32.const 0))
+            (return)))
         ;; Push saved_size + saved_hwnd + saved_ret on stack for CACA0027.
         ;; The child CreateWindowEx path used to keep WM_SIZE in a single
         ;; global pending slot; burst-created custom children would overwrite

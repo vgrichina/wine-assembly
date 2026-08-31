@@ -180,6 +180,30 @@ const extraWat = String.raw`
     (global.get $eax))
   (func (export "test_civ16_text_extent_word") (param $offset i32) (result i32)
     (call $gl16 (i32.add (i32.const 0x00110600) (local.get $offset))))
+
+  (func (export "test_civ16_text_align") (result i32)
+    (local $hdc i32)
+    (call $test_civ16_setup)
+    (global.set $esp (i32.const 0x00110100))
+    (call $gs16 (i32.const 0x00110100) (i32.const 0x0010))
+    (call $gs16 (i32.const 0x00110102) (call $win16_index_to_sel (i32.const 1)))
+    (call $gs16 (i32.const 0x00110104) (i32.const 0))
+    (call $win16_GetDC)
+    (local.set $hdc (global.get $eax))
+    ;; Set TA_RIGHT|TA_TOP through 346, then read it back through Civ's next
+    ;; imported call, GDI.345 GetTextAlign.
+    (global.set $esp (i32.const 0x00110100))
+    (call $gs16 (i32.const 0x00110100) (i32.const 0x0010))
+    (call $gs16 (i32.const 0x00110102) (call $win16_index_to_sel (i32.const 1)))
+    (call $gs16 (i32.const 0x00110104) (i32.const 6))
+    (call $gs16 (i32.const 0x00110106) (local.get $hdc))
+    (drop (call $win16_gdi (i32.const 346)))
+    (global.set $esp (i32.const 0x00110100))
+    (call $gs16 (i32.const 0x00110100) (i32.const 0x0010))
+    (call $gs16 (i32.const 0x00110102) (call $win16_index_to_sel (i32.const 1)))
+    (call $gs16 (i32.const 0x00110104) (local.get $hdc))
+    (drop (call $win16_gdi (i32.const 345)))
+    (global.get $eax))
 `;
 
 (async () => {
@@ -257,8 +281,10 @@ const extraWat = String.raw`
     'GDI.471 should narrow cx into the Win16 SIZE');
   assert.notStrictEqual(e.test_civ16_text_extent_word(2), 0xBEEF,
     'GDI.471 should narrow cy into the Win16 SIZE');
+  assert.strictEqual(e.test_civ16_text_align(), 6,
+    'GDI.345 GetTextAlign should return the alignment set through GDI.346');
 
-  console.log('PASS Civ II Win16 selector, ToolHelp, timers, DLL capacity, hmemcpy, and text extent');
+  console.log('PASS Civ II Win16 selector, ToolHelp, timers, DLL capacity, hmemcpy, text extent, and text alignment');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

@@ -18,11 +18,14 @@ const ONLY = String(process.env.CIV2_WEB_APP || '').trim();
 const DIAGNOSTIC = process.env.CIV2_WEB_DIAGNOSTIC === '1';
 const WAIT_MS = Number(process.env.CIV2_WEB_WAIT_MS || 45000);
 const THREADED = process.env.CIV2_WEB_THREADS !== '0';
+const SCREENSHOT = String(process.env.CIV2_WEB_SCREENSHOT || '').trim();
+const TRACE_API = String(process.env.CIV2_WEB_TRACE_API || '')
+  .split(',').map(name => name.trim()).filter(Boolean);
 const CASES = [
   {
     id: 'civ2_win16',
     exe: 'test/binaries/candidates/civilization-2-win16/cd/CIV2/CIV2.EXE',
-    startupClass: 'MSWindowClass',
+    title: /Civ2 Diplomatic Heralds/i,
   },
   {
     id: 'civ2_mge',
@@ -105,7 +108,7 @@ async function runCase(browser, baseUrl, spec) {
   page.on('pageerror', error => problems.push((error && error.stack) || String(error)));
   page.on('console', message => {
     const text = message.text();
-    if (DIAGNOSTIC &&
+    if ((DIAGNOSTIC || TRACE_API.length) &&
         /\[API\]|\[threads\]|\[win16\]|\[fs\]|\[FS\]|CreateWindow|MessageBox|UNIMPLEMENTED|RuntimeError|trap/i.test(text)) {
       console.log(`[${spec.id}] ${text}`);
     }
@@ -114,10 +117,11 @@ async function runCase(browser, baseUrl, spec) {
     }
   });
   await page.setViewport({ width: 1100, height: 820, deviceScaleFactor: 1 });
-  await page.evaluateOnNewDocument(diagnostic => {
+  await page.evaluateOnNewDocument(({ diagnostic, traceApi }) => {
     localStorage.removeItem('wine-assembly.threads');
     if (diagnostic) globalThis.__waTraceCategories = new Set(['fs', 'win16']);
-  }, DIAGNOSTIC);
+    if (traceApi.length) globalThis.__waTraceApiNames = new Set(traceApi);
+  }, { diagnostic: DIAGNOSTIC, traceApi: TRACE_API });
   await page.goto(`${baseUrl}/index.html?debug&no-log&civ2-web=${Date.now()}`,
     { waitUntil: 'load', timeout: 60000 });
   await page.waitForFunction(id => typeof launchApp === 'function' &&
@@ -136,34 +140,35 @@ async function runCase(browser, baseUrl, spec) {
   await page.waitForFunction(id => runningApps.some(item => item && item.name === id &&
     item.wine && item.wine.instance), { timeout: 90000 }, spec.id);
 
-  // MGE's opening Heralds controller exposes three owner-drawn MSControlClass
-  // children. The bottom control is the same one the reported browser launch
-  // clicked before the real game window was created. Win16's corresponding
-  // controls are its now-working language selector, which is the success
-  // boundary for the reported resource-loader failure.
-  if (spec.id === 'civ2_mge') {
+  // Both releases start behind owner-drawn MSControlClass launchers. MGE's
+  // action is the bottom control. Win16 has two language radios followed by
+  // OK and Cancel on the same bottom row, so select the left-hand control.
+  if (spec.id === 'civ2_mge' || spec.id === 'civ2_win16') {
     await page.waitForFunction(() => Object.values(sharedRenderer.windows || {})
       .filter(win => win && win.className === 'MSControlClass').length >= 3,
-    { timeout: 30000 });
-    await page.evaluate(() => {
+    { timeout: Math.max(30000, WAIT_MS) });
+    await page.evaluate(id => {
       const controls = Object.values(sharedRenderer.windows || {})
         .filter(win => win && win.className === 'MSControlClass')
         .sort((a, b) => (a.y | 0) - (b.y | 0));
-      const target = controls[controls.length - 1];
+      const bottomY = controls.reduce((max, win) => Math.max(max, win.y | 0), -0x80000000);
+      const bottom = controls.filter(win => Math.abs((win.y | 0) - bottomY) <= 2)
+        .sort((a, b) => (a.x | 0) - (b.x | 0));
+      const target = id === 'civ2_win16' ? bottom[0] : controls[controls.length - 1];
       for (const event of [
         { type: 'mouse', hwnd: target.hwnd, msg: 0x0084, wParam: 0, lParam: 0 },
         { type: 'mouse', hwnd: target.hwnd, msg: 0x0201, wParam: 1, lParam: 0 },
         { type: 'mouse', hwnd: target.hwnd, msg: 0x0202, wParam: 0, lParam: 0 },
       ]) sharedRenderer.inputQueue.push(event);
       sharedRenderer._wakeMessageWait();
-    });
+    }, spec.id);
   }
 
   try {
     await page.waitForFunction(({ id, title, startupClass, expectWorker }) => {
       const app = runningApps.find(item => item && item.name === id);
       const titleRe = title ? new RegExp(title, 'i') : null;
-      return !!(app && app.wine && app.wine.running &&
+      return !!(app && app.wine &&
         (!expectWorker || app.wine.guestWorker) &&
         Object.values(sharedRenderer.windows || {}).some(win => win && win.visible &&
           (startupClass ? win.className === startupClass : titleRe.test(win.title || ''))));
@@ -177,7 +182,15 @@ async function runCase(browser, baseUrl, spec) {
     throw error;
   }
 
+  // Window creation precedes its first paint/message work. Give that work a
+  // full Worker slice so a trap immediately after the title cannot pass as a
+  // successful launch.
+  await new Promise(resolve => setTimeout(resolve, 1500));
   const state = await snapshot(page, spec.id);
+  if (SCREENSHOT) await page.screenshot({ path: SCREENSHOT, fullPage: true });
+  if (DIAGNOSTIC || SCREENSHOT) {
+    console.log(`[${spec.id}] state:\n${JSON.stringify(state, null, 2)}`);
+  }
   assert.strictEqual(state.running, true, `${spec.id} stopped after creating its window`);
   assert.strictEqual(state.worker, THREADED,
     `${spec.id} did not use the requested execution backend`);
@@ -186,6 +199,7 @@ async function runCase(browser, baseUrl, spec) {
     : spec.title.test(win.title)),
   `${spec.id} did not reach its startup window: ${JSON.stringify(state.windows)}`);
   assert.strictEqual(problems.length, 0, `${spec.id} browser failures:\n${problems.join('\n')}`);
+
   await page.close();
   return state;
 }
