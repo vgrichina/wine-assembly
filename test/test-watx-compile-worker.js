@@ -27,6 +27,10 @@ const assert = require('assert');
 
 const launcher = require(path.join(__dirname, '..', 'lib', 'watx-launcher.js'));
 
+// The snapshot holds UTF-8 bytes, not strings (lib/watx-launcher.js header):
+// an "edit one file" fixture therefore appends bytes.
+const append = (bytes, text) => Buffer.concat([Buffer.from(bytes), Buffer.from(text, 'utf8')]);
+
 let checks = 0;
 function check(label, cond, detail) {
   checks++;
@@ -43,12 +47,12 @@ async function main() {
   const snapshot = await launcher.fetchSources();
   check('compiler bundle is the four vendored stages',
     snapshot.compiler.length === 4 &&
-    snapshot.compiler.every(f => f.text.length > 1000),
+    snapshot.compiler.every(f => f.bytes instanceof Uint8Array && f.bytes.byteLength > 1000),
     snapshot.compiler.map(f => path.basename(f.name)).join(','));
   check('manifest parsed from src/main.watx', snapshot.manifest.length >= 50,
     `${snapshot.manifest.length} includes`);
-  check('every include resolved to text',
-    snapshot.manifest.every(n => typeof snapshot.sources[n] === 'string' && snapshot.sources[n].length),
+  check('every include resolved to UTF-8 bytes (never a UTF-16 string)',
+    snapshot.manifest.every(n => snapshot.sources[n] instanceof Uint8Array && snapshot.sources[n].byteLength),
     `${(snapshot.bytes / 1e6).toFixed(2)} MB total`);
   check('manifest order matches lib/compile-wat.js WAT_FILES',
     JSON.stringify(snapshot.manifest) ===
@@ -65,21 +69,34 @@ async function main() {
 
   const editedSource = {
     ...snapshot,
-    sources: { ...snapshot.sources, [snapshot.manifest[0]]: snapshot.sources[snapshot.manifest[0]] + '\n;; edit\n' },
+    sources: { ...snapshot.sources, [snapshot.manifest[0]]: append(snapshot.sources[snapshot.manifest[0]], '\n;; edit\n') },
   };
   check('a one-line source edit changes the key',
     (await launcher.cacheKey(editedSource, { tailCalls: true })) !== keyTail);
 
   const editedCompiler = {
     ...snapshot,
-    compiler: snapshot.compiler.map((f, i) => (i === 0 ? { ...f, text: f.text + '\n// edit\n' } : f)),
+    compiler: snapshot.compiler.map((f, i) => (i === 0 ? { ...f, bytes: append(f.bytes, '\n// edit\n') } : f)),
   };
   check('a compiler edit changes the key',
     (await launcher.cacheKey(editedCompiler, { tailCalls: true })) !== keyTail);
 
-  const editedEntry = { ...snapshot, entry: snapshot.entry + '\n;; edit\n' };
+  const editedEntry = { ...snapshot, entryBytes: append(snapshot.entryBytes, '\n;; edit\n') };
   check('a manifest edit changes the key',
     (await launcher.cacheKey(editedEntry, { tailCalls: true })) !== keyTail);
+
+  // The digest is over UTF-8, so moving the snapshot from strings to bytes did
+  // NOT renumber the key space: a hand-built text-form snapshot of the same
+  // content still hashes to the same key, and any persisted cache survives.
+  const asText = {
+    ...snapshot,
+    compiler: snapshot.compiler.map(f => ({ name: f.name, text: launcher.toText(f.bytes) })),
+    entry: launcher.toText(snapshot.entryBytes),
+    entryBytes: undefined,
+    sources: Object.fromEntries(snapshot.manifest.map(n => [n, launcher.toText(snapshot.sources[n])])),
+  };
+  check('the key is unchanged by the bytes representation (text form hashes the same)',
+    (await launcher.cacheKey(asText, { tailCalls: true })) === keyTail);
 
   const artifacts = {};
   for (const tailCalls of [true, false]) {
@@ -110,6 +127,21 @@ async function main() {
       `exit code ${code}`);
   }
 
+  console.log('== the snapshot survived being handed over ==');
+  // The bytes are posted as TRANSFERABLE ArrayBuffers, which detach whatever
+  // is transferred. The launcher therefore transfers per-attempt COPIES: if it
+  // ever transferred the snapshot's own arrays, the second mode above would
+  // have compiled from zero-length sources, and re-reading them here would
+  // break the fetch-once rule. Prove the parent still owns its bytes.
+  check('parent snapshot is not detached after two compiles',
+    snapshot.entryBytes.byteLength > 0 &&
+    snapshot.manifest.every(n => snapshot.sources[n].byteLength > 0) &&
+    snapshot.compiler.every(f => f.bytes.byteLength > 0),
+    `${(snapshot.bytes / 1e6).toFixed(2)} MB still resident`);
+  check('both modes really compiled from the same snapshot',
+    artifacts['tail-call'].sourceBytes === snapshot.bytes &&
+    artifacts['compatibility'].sourceBytes === snapshot.bytes);
+
   console.log('== the two modes really differ ==');
   check('compatibility artifact is not byte-identical to the tail-call one',
     artifacts['tail-call'].byteLength !== artifacts['compatibility'].byteLength ||
@@ -125,8 +157,8 @@ async function main() {
     ...snapshot,
     sources: {
       ...snapshot.sources,
-      [snapshot.manifest[0]]: snapshot.sources[snapshot.manifest[0]] +
-        '\n(func $watx_m4_deliberately_broken (result i32) (i32.add (i32.const 1)))\n',
+      [snapshot.manifest[0]]: append(snapshot.sources[snapshot.manifest[0]],
+        '\n(func $watx_m4_deliberately_broken (result i32) (i32.add (i32.const 1)))\n'),
     },
   };
   let brokenHandle = null;
@@ -147,6 +179,20 @@ async function main() {
   } else {
     check('worker is terminated on the failure path too', false, 'no worker was spawned');
   }
+
+  console.log('== the host.js path: the launcher reads its own snapshot ==');
+  // With no `snapshot` option the launcher reads the closure itself, and then
+  // nobody else can hold it — so it transfers its own buffers instead of
+  // copying them. That is the browser path, and it must produce the same
+  // module as the copied-snapshot path above, not merely a valid one.
+  const owned = await launcher.compileDetailed({ tailCalls: true }, {
+    noMemo: true, timeoutMs: 240000,
+  });
+  check('a launcher-owned snapshot compiles (buffers transferred, not copied)',
+    owned.valid === true, `${owned.byteLength} B`);
+  check('the transferred-snapshot build is byte-identical to the copied one',
+    Buffer.from(owned.bytes).equals(Buffer.from(artifacts['tail-call'].bytes)));
+  check('and lands on the same cache key', owned.cacheKey === keyTail);
 
   console.log('== memoisation and failed-promise reset ==');
   launcher._reset();
