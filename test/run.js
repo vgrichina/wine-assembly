@@ -2040,7 +2040,22 @@ async function main() {
     // so it cannot be trusted to notice a sprite moving between its columns.
     base.gdi.presentBestDxOffscreen(true);
   };
-  dxPresentHook = () => presentDxIfDirty(0);
+  // ...but only if the upload is followed by a composite. presentBestDxOffscreen
+  // writes into the target window's canvas/frame layer, not into renderer.canvas,
+  // and renderer.canvas is what every capture serializes. The --png action ran
+  // renderer.repaint() and *then* canvasToPng, so on any batch where the 100ms
+  // rate limit had suppressed the present, the composite ran against the old
+  // layer and the upload arrived too late to reach the picture: the capture
+  // showed the previous finished frame. Because the limiter is keyed to the host
+  // wall clock, whether that happened depended on machine load and on nothing in
+  // the guest -- test-d3dim-globe-render-menu.js captures each of Globe's three
+  // fill modes five batches after selecting it and intermittently photographed
+  // the mode before (identical handler histogram, different PNG, on this box at
+  // load ~8). Present first, composite second, then serialize.
+  dxPresentHook = () => {
+    presentDxIfDirty(0);
+    if (renderer && typeof renderer.repaint === 'function') renderer.repaint();
+  };
   if (typeof h.dx_trace === 'function') {
     const rawDxTrace = h.dx_trace;
     // kind 5 = Present, 6 = Flip. Every other kind (Lock/Unlock/Blt/SetEntries)
