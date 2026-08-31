@@ -88,6 +88,32 @@
   ;; Compiled pages evicted by another page landing in their directory slot.
   (global $cache_evicts (mut i32) (i32.const 0))
 
+  ;; Every WASM instance has its own decoded-code directory and arena, while
+  ;; all instances execute bytes from the same guest memory. A Win32
+  ;; FlushInstructionCache therefore has to reach farther than the caller's
+  ;; local $invalidate_code_range. Offset +4 in SHARED_COUNTERS is a process
+  ;; generation; each instance compares it once at run() entry and performs a
+  ;; safe full local flush before executing its next slice. The caller records
+  ;; the generation immediately because its requested range is retired below.
+  (global $code_cache_generation_seen (mut i32) (i32.const 0))
+
+  (func $process_code_cache_invalidate (param $ga i32) (param $len i32)
+    (local $generation i32)
+    (local.set $generation
+      (i32.add
+        (i32.atomic.rmw.add offset=4
+          (global.get $SHARED_COUNTERS) (i32.const 1))
+        (i32.const 1)))
+    (global.set $code_cache_generation_seen (local.get $generation))
+    ;; NULL means the whole process cache. A wrapping range likewise covers
+    ;; the top of the address space and is safer as a complete flush than as
+    ;; the empty unsigned interval $invalidate_code_range would otherwise see.
+    (if (i32.or
+          (i32.eqz (local.get $ga))
+          (i32.lt_u (i32.add (local.get $ga) (local.get $len)) (local.get $ga)))
+      (then (global.set $thread_flush_pending (i32.const 1)))
+      (else (call $invalidate_code_range (local.get $ga) (local.get $len)))))
+
   ;; Throw away every scrap of decoded code for this thread. Compiled chunks
   ;; live in the arena $thread_arena_flush_if_safe rewinds, and every caller is
   ;; either that flush or the corruption recovery in $next -- both mean no chunk

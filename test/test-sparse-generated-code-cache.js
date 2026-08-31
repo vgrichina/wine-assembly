@@ -23,6 +23,17 @@ const extraWat = String.raw`
   ;; (docs/page-compile-design.md section 4).
   (func (export "test_sparse_cache_lookup") (param $guest i32) (result i32)
     (call $page_probe (local.get $guest)))
+  (func (export "test_sparse_guest_to_wasm") (param $guest i32) (result i32)
+    (call $g2w (local.get $guest)))
+  (func (export "test_sparse_last_error") (result i32)
+    (global.get $last_error))
+  (func (export "test_call_FlushInstructionCache")
+      (param $process i32) (param $base i32) (param $size i32) (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_FlushInstructionCache
+      (local.get $process) (local.get $base) (local.get $size)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
 `;
 
 async function main() {
@@ -34,18 +45,22 @@ async function main() {
   });
 
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
-  const context = { exports: null, getMemory: () => memory.buffer };
-  const imports = createHostImports(context);
-  imports.host.memory = memory;
-  imports.host.exit = () => {};
-  imports.host.log = () => {};
-  imports.host.log_i32 = () => {};
-  imports.host.crash_unimplemented = () => {};
-  imports.host.wait_multiple = () => 0;
-  imports.host.shell_execute = () => 33;
-  const { instance } = await WebAssembly.instantiate(bytes, imports);
+  const instantiate = async () => {
+    const context = { exports: null, getMemory: () => memory.buffer };
+    const imports = createHostImports(context);
+    imports.host.memory = memory;
+    imports.host.exit = () => {};
+    imports.host.log = () => {};
+    imports.host.log_i32 = () => {};
+    imports.host.crash_unimplemented = () => {};
+    imports.host.wait_multiple = () => 0;
+    imports.host.shell_execute = () => 33;
+    const { instance } = await WebAssembly.instantiate(bytes, imports);
+    context.exports = instance.exports;
+    return instance;
+  };
+  const instance = await instantiate();
   const e = instance.exports;
-  context.exports = e;
 
   const exe = fs.readFileSync(path.join(__dirname, 'binaries', 'notepad.exe'));
   new Uint8Array(memory.buffer).set(exe, e.get_staging());
@@ -123,7 +138,70 @@ async function main() {
   assert.strictEqual(executeSpanning(), 0x1a1b1c1d,
     'rewriting the tail of a page-spanning block must invalidate it');
 
-  console.log('PASS  sparse generated-code writes invalidate decoded blocks');
+  // FlushInstructionCache is process-wide on Win98. Our real Worker backend
+  // has one decoded-code cache per WASM instance over the same guest bytes, so
+  // this uses two instances to catch the deceptively easy local-only fix.
+  const worker = await instantiate();
+  const w = worker.exports;
+  w.init_thread(1, e.get_image_base(), e.get_code_start(), e.get_code_end(),
+    e.get_thunk_base(), e.get_thunk_end(), e.get_num_thunks(), e.get_rsrc_rva());
+  const sharedCode = 0x4ff80000;
+  assert.strictEqual(e.test_sparse_map_for_code(sharedCode, 0x1000) >>> 0, sharedCode);
+  assert.strictEqual(w.test_sparse_map_for_code(sharedCode, 0x1000) >>> 0, sharedCode);
+  const sharedWa = e.test_sparse_guest_to_wasm(sharedCode) >>> 0;
+  const sharedBytes = new Uint8Array(memory.buffer);
+  const workerStack = (stack - 0x1000) >>> 0;
+  const codeFor = value => Uint8Array.from([0xb8, ...le32(value), 0xc3]);
+  const executeShared = (wat, valueStack) => {
+    wat.set_esp(valueStack);
+    wat.guest_write32(valueStack, 0);
+    wat.set_eip(sharedCode);
+    wat.run(1000);
+    assert.strictEqual(wat.get_eip() >>> 0, 0);
+    return wat.get_eax() >>> 0;
+  };
+
+  sharedBytes.set(codeFor(0x10203040), sharedWa);
+  assert.strictEqual(executeShared(e, stack), 0x10203040);
+  assert.strictEqual(executeShared(w, workerStack), 0x10203040);
+  assert.notStrictEqual(e.test_sparse_cache_lookup(sharedCode) >>> 0, 0);
+  assert.notStrictEqual(w.test_sparse_cache_lookup(sharedCode) >>> 0, 0);
+
+  // Patch through the shared backing store, deliberately bypassing every x86
+  // store helper. An invalid process handle must neither claim success nor
+  // publish an invalidation; the second instance therefore still runs its old
+  // decoded immediate until the valid flush below.
+  sharedBytes.set(codeFor(0x50607080), sharedWa);
+  assert.strictEqual(e.test_call_FlushInstructionCache(0x1234, sharedCode, 5), 0);
+  assert.strictEqual(e.test_sparse_last_error(), 6);
+  assert.strictEqual(executeShared(w, workerStack), 0x10203040,
+    'invalid process handles do not flush another instance');
+
+  const workerClears = w.get_cache_clears();
+  assert.strictEqual(e.test_call_FlushInstructionCache(-1, sharedCode + 1, 4), 1);
+  assert.strictEqual(e.test_sparse_cache_lookup(sharedCode) >>> 0, 0,
+    'the calling instance retires the exact decoded range immediately');
+  assert.strictEqual(executeShared(e, stack), 0x50607080);
+  assert.strictEqual(executeShared(w, workerStack), 0x50607080,
+    'a sibling Worker observes the process flush before its next slice');
+  assert.strictEqual(w.get_cache_clears(), workerClears + 1,
+    'a sibling Worker drops its complete instance-local cache');
+
+  // NULL requests the whole cache. It is deferred to the next safe block
+  // boundary in the caller and broadcast to every sibling instance.
+  const mainClears = e.get_cache_clears();
+  const workerFullClears = w.get_cache_clears();
+  assert.strictEqual(e.test_call_FlushInstructionCache(-1, 0, 0), 1);
+  assert.strictEqual(executeShared(e, stack), 0x50607080);
+  assert.strictEqual(executeShared(w, workerStack), 0x50607080);
+  assert.strictEqual(e.get_cache_clears(), mainClears + 1);
+  assert.strictEqual(w.get_cache_clears(), workerFullClears + 1);
+
+  const processHandle = (0x000e2000 | (e.get_process_id() & 0xfff)) >>> 0;
+  assert.strictEqual(e.test_call_FlushInstructionCache(processHandle, sharedCode, 0), 1,
+    'OpenProcess handles accept a successful empty range');
+
+  console.log('PASS  sparse writes and process-wide FlushInstructionCache invalidate decoded blocks');
 }
 
 main().catch(error => {

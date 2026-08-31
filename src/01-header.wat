@@ -1345,7 +1345,8 @@
   ;; 0x07F0C800 64B      HEAP_SHARED (low-heap chunk cursor, heap_base)
   ;; 0x07F0C840 512B     LOCK_TABLE (cross-instance mutexes, one 64B line each)
   ;; 0x07F0CA40 1KB      CS_TABLE (256 CRITICAL_SECTIONs, WASM addresses)
-  ;; 0x07F0CE40 16B      SHARED_COUNTERS (process-wide allocators; +0 class atom)
+  ;; 0x07F0CE40 16B      SHARED_COUNTERS (process-wide state; +0 class atom,
+  ;;                                     +4 decoded-code cache generation)
   ;; 0x07F0CE60 16B      GDI_TABLE_MARKS (high-water slot counts, 3 used)
   ;; The three TV_* tables below were at 0x07F0C900/0x07F0C904/0x07F0CA00 on
   ;; main. They move here on the merge into the threads branch, which grew

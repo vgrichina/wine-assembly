@@ -9,7 +9,7 @@
     (local $thread i32)
     (local $hc_i i32) (local $hc_slot i32)
     (local $prev_eip i32) (local $prev_esp i32)
-    (local $saved_budget i32)
+    (local $saved_budget i32) (local $shared_cache_generation i32)
     ;; A global rather than a local because $branch_end spends it too — see the
     ;; comment on $block_budget in 01-header.wat. Saved and restored because
     ;; run() is re-entrant: a COM class-factory callback is driven by calling
@@ -18,6 +18,18 @@
     ;; loop whatever the nested one left behind, and it would halt early.
     (local.set $saved_budget (global.get $block_budget))
     (global.set $block_budget (local.get $max_blocks))
+    ;; FlushInstructionCache broadcasts through shared memory because decoded
+    ;; blocks are instance-local. Check once per host/Worker slice, not once per
+    ;; x86 block; the API is rare and a slice boundary is the first point at
+    ;; which another Worker can observe the caller's memory writes anyway.
+    (local.set $shared_cache_generation
+      (i32.atomic.load offset=4 (global.get $SHARED_COUNTERS)))
+    (if (i32.ne (local.get $shared_cache_generation)
+                (global.get $code_cache_generation_seen))
+      (then
+        (global.set $code_cache_generation_seen
+          (local.get $shared_cache_generation))
+        (global.set $thread_flush_pending (i32.const 1))))
     (block $halt (loop $main
       (if (i32.eqz (global.get $eip))
         (then (global.set $last_run_halt (i32.const 2)) (br $halt)))
@@ -40,6 +52,11 @@
           (if (global.get $page_chunk_deferred)
             (then (call $page_chunk_reclaim_deferred)))
           (br $main)))
+      ;; A complete cache flush can only recycle its arena between decoded
+      ;; blocks. This also services an arena-pressure flush promptly instead of
+      ;; waiting until a later cache miss happens to call $decode_block.
+      (if (global.get $thread_flush_pending)
+        (then (drop (call $thread_arena_flush_if_safe))))
       ;; Browser input can arrive while slot 0 is part-way through a long real-
       ;; Worker slice. Repaint publication is intentionally held until a slice
       ;; boundary so WM_PAINT erase/text sequences cannot flicker, but waiting
@@ -2647,6 +2664,8 @@
       (i32.mul (local.get $tid) (global.get $PAGE_INDEX_STRIDE))))
     (global.set $page_index_next (i32.const 0))
     (call $page_dir_reset)
+    (global.set $code_cache_generation_seen
+      (i32.atomic.load offset=4 (global.get $SHARED_COUNTERS)))
     (global.set $image_base (local.get $img_base))
     ;; Resource lookup state is instance-local: the loading instance populates
     ;; $rsrc_rva, every other one starts at zero. A cooperative thread is handed

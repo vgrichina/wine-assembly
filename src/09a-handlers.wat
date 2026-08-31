@@ -2761,10 +2761,25 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; FlushInstructionCache(hProcess, lpBaseAddress, dwSize). Guest code is
-  ;; interpreted from linear memory, so writes are visible without a host-side
-  ;; instruction-cache operation. Match Windows' successful BOOL result.
+  ;; FlushInstructionCache(hProcess, lpBaseAddress, dwSize). The browser's x86
+  ;; bytes are coherent, but its decoded threaded-code caches are per WASM
+  ;; instance. Retire the caller's range and publish a process generation so
+  ;; real Workers discard their local stale translations on the next slice.
   (func $handle_FlushInstructionCache (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.and
+          (i32.ne (local.get $arg0) (i32.const -1))
+          (i32.ne (i32.and (local.get $arg0) (i32.const 0xfffff000))
+                  (i32.const 0x000e2000)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; A NULL base requests the complete process cache. A non-NULL zero-length
+    ;; range is a successful no-op, matching the absence of bytes to flush.
+    (if (i32.or (i32.eqz (local.get $arg1)) (local.get $arg2))
+      (then (call $process_code_cache_invalidate
+        (local.get $arg1) (local.get $arg2))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
