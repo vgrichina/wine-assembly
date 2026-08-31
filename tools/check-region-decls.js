@@ -93,7 +93,10 @@ const NUMERIC_CLAUSES = new Set(['size', 'end', 'align']);
 // (tools/region-census.js) have their own --file= meaning a file to census,
 // and honoring argv here made collectDeclarations() parse that file as the
 // declaration set — 0 regions, confidently wrong output.
-function collectDeclarations(overrideFile) {
+// `shake` asks for the SHAKEN placement (§8) instead of the canonical one, so a
+// generated mirror can be made to match a shaken artifact. Nothing in the build
+// passes it; only tools/region-shake-smoke.js does.
+function collectDeclarations(overrideFile, shake) {
   const fileArg = overrideFile ||
     (require.main === module
       ? (process.argv.find(a => a.startsWith('--file=')) || '').slice('--file='.length)
@@ -103,7 +106,7 @@ function collectDeclarations(overrideFile) {
   // Where the regions actually landed. Asked of the compiler (tools/region-layout.js)
   // rather than read out of the clauses, because since wave 3 most bases are the
   // allocator's choice and simply are not written down anywhere.
-  const placed = require('./region-layout.js').layout();
+  const placed = require('./region-layout.js').layout(shake ? { shake } : {});
   const decls = [];
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {

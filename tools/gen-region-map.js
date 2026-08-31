@@ -43,8 +43,12 @@ const hex = (n) => {
   return `0x${digits.slice(0, 4)}_${digits.slice(4)}`;
 };
 
-function render() {
-  const decls = collectDeclarations();
+// `shake` renders the mirror for a SHAKEN layout instead of the canonical one.
+// The JS side and the wasm must agree about where a region is, so a shaken
+// artifact needs a shaken mirror or every host import reads the wrong bytes;
+// tools/region-shake-smoke.js is what pairs them.
+function render(shake) {
+  const decls = collectDeclarations(undefined, shake);
   const globals = collectGlobals();
 
   // A declaration this generator cannot read is a mirror entry that would be
@@ -125,8 +129,24 @@ function render() {
   lines.push('    GUEST_BASE, g2w, g2wOffset,');
   lines.push('  });');
   lines.push('');
-  lines.push('  if (typeof module !== \'undefined\' && module.exports) module.exports = api;');
-  lines.push('  if (root) root.RegionMap = api;');
+  // A shaken wasm artifact (§8) has a different map, and every host import
+  // reads guest memory through THIS mirror, so the two have to be swapped as a
+  // pair. $WINE_REGION_MAP names the mirror to use instead — set only by
+  // tools/region-shake-smoke.js, node-side only, and never by the build.
+  lines.push('  const override = typeof process !== \'undefined\' && process.env &&');
+  lines.push('    process.env.WINE_REGION_MAP;');
+  lines.push('  // Not itself: the shaken mirror carries this same line, and');
+  lines.push('  // requiring itself would hand back a half-built module. Compared');
+  lines.push('  // through realpath, because on macOS the temp directory a shaken');
+  lines.push('  // mirror lives in is /var/... as given and /private/var/... as');
+  lines.push('  // __filename, and a plain resolve() calls those two files.');
+  lines.push('  const real = (p) => { try { return require(\'fs\').realpathSync(p); } catch (e) { return p; } };');
+  lines.push('  const target = override && typeof require !== \'undefined\'');
+  lines.push('    ? real(require(\'path\').resolve(override)) : null;');
+  lines.push('  const resolved = (target && target !== real(__filename)) ? require(target) : api;');
+  lines.push('');
+  lines.push('  if (typeof module !== \'undefined\' && module.exports) module.exports = resolved;');
+  lines.push('  if (root) root.RegionMap = resolved;');
   lines.push('})(typeof globalThis !== \'undefined\' ? globalThis :');
   lines.push('   typeof self !== \'undefined\' ? self : this);');
   lines.push('');
@@ -144,8 +164,26 @@ function render() {
   return { text: lines.join('\n'), count: ordered.length };
 }
 
+const argValue = (name) => {
+  const hit = process.argv.find(a => a.startsWith(`--${name}=`));
+  return hit ? hit.slice(name.length + 3) : null;
+};
+
 function main() {
-  const { text, count } = render();
+  const shake = argValue('shake');
+  const outTo = argValue('out');
+  const { text, count } = render(shake);
+  if (outTo) {
+    fs.writeFileSync(path.resolve(outTo), text);
+    console.log(`gen-region-map: wrote ${outTo} (${count} regions` +
+      (shake ? `, SHAKEN ${shake}` : '') + ')');
+    return;
+  }
+  if (shake) {
+    console.error('gen-region-map: --shake renders a NON-CANONICAL mirror; ' +
+      'pass --out=PATH so it cannot be committed as the real one');
+    process.exit(1);
+  }
   const check = process.argv.includes('--check');
   const current = fs.existsSync(OUT) ? fs.readFileSync(OUT, 'utf8') : null;
 
