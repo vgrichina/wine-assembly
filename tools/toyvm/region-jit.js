@@ -550,6 +550,23 @@ function guardBytes(rr, pick) {
   return out;
 }
 
+// The state trace-jit's snapshot bench seeds its arms from: the whole guest
+// memory as the profiling run left it, plus every CPU and machine global. Both
+// `--agree` and the install gate below start from exactly this, so a gate
+// verdict and an agreement verdict are about the same seeded state.
+function snapshotFor(rr, pick) {
+  const hot = { bip: pick.headIp, memSnapshot: rr.vm.mem.slice(), regSnapshot: {},
+    machineSnapshot: {} };
+  for (const g of require('./emit').STATE) {
+    if (rr.vm.exports[`get_${g}`]) hot.regSnapshot[g] = rr.vm.raw(g);
+  }
+  for (const g of require('./emit').MACHINE_STATE) {
+    const get = rr.vm.exports[`mget_${g}`];
+    if (get) hot.machineSnapshot[g] = get();
+  }
+  return hot;
+}
+
 // --- running it -------------------------------------------------------------
 
 async function once(exe, o, extra) {
@@ -638,17 +655,73 @@ async function main() {
   // MISMATCH here is a lowering bug; ALL THREE MATCH moves the search to the
   // control flow this file supplies.
   if (flag('agree')) {
-    const hot = { bip: pick.headIp, memSnapshot: rr.vm.mem.slice(), regSnapshot: {},
-      machineSnapshot: {} };
-    for (const g of require('./emit').STATE) {
-      if (rr.vm.exports[`get_${g}`]) hot.regSnapshot[g] = rr.vm.raw(g);
-    }
-    for (const g of require('./emit').MACHINE_STATE) {
-      const get = rr.vm.exports[`mget_${g}`];
-      if (get) hot.machineSnapshot[g] = get();
-    }
-    await benchTiers(exe, hot, pick.ops, { iters: Number(arg('agree-iters', 200)), reps: 1 });
+    await benchTiers(exe, snapshotFor(rr, pick), pick.ops,
+      { iters: Number(arg('agree-iters', 200)), reps: 1 });
     return;
+  }
+
+  // THE GATE. Everything below this point installs the region into a whole-app
+  // run, which is a slow and — as ACCIDENT.EXE showed — occasionally a wrong
+  // thing to do. Before paying for that, ask the cheap question the whole-run
+  // comparison cannot answer on its own: over THESE ops, from a state the app
+  // really reached, does the compiled lowering (a) compute the same thing as
+  // the shipped interpreter, and (b) run faster than it?
+  //
+  // Both halves are the snapshot bench `--agree` already wires up, so the gate
+  // costs one extra build of the tiers and a few hundred iterations. What it
+  // measures is trace-jit's tier 3 — the same op lowering this file emits, but
+  // straight-line, with no loop protocol around it. That makes the ratio a
+  // proxy, not a promise: it prices the BODY, and says nothing about the
+  // prologue, the spills or the per-entry block-cache resolve, which is
+  // precisely why a region that clears the gate can still lose end to end. A
+  // region that FAILS it, though, cannot win — the body is already behind
+  // before the loop protocol charges anything.
+  //
+  // THE ITERATION COUNT IS PART OF THE VERDICT, and getting it wrong is how
+  // this gate was nearly justified by a number that was not real. ACCIDENT's
+  // 0x2d41 region benched at 0.94x of the interpreter over 200 iterations,
+  // which read as "the compiled body loses" and was the original reason to
+  // build the gate at all. It is a warm-up artifact: the same region over 4000
+  // iterations is 2.19x and 2.38x on two consecutive runs. Below roughly a
+  // thousand iterations the arms are still being tiered up by the host engine
+  // and the ratio measures the wasm compiler, not the lowering. Hence the
+  // default, and hence the count in the printed line -- a gate verdict without
+  // its iteration count beside it cannot be checked.
+  //
+  // A MISMATCH ONLY COUNTS WHEN THE ARMS RAN THE SAME PROGRAM. The bench runs
+  // the op list end to end: the interpreter arm walks arena words, so a branch
+  // word inside the list JUMPS, while every compiled arm was emitted as a
+  // straight line and falls through it. Where that branch is actually taken the
+  // two arms are two different programs and the bench duly reports MISMATCH --
+  // all three compiled arms agreeing with each other and only arm 0 differing,
+  // which is the signature. CYCLE, BRW and CMA_SHRT are all multi-block picks
+  // and all three were being declined for exactly this; CYCLE is
+  // frame-IDENTICAL end to end, so that was a false positive, not a find.
+  //
+  // The test is therefore on the DISAGREEMENT, not on the region: an op list
+  // with an internal transfer downgrades a mismatch to INCONCLUSIVE instead of
+  // a decline. It does not downgrade a pass -- ACCIDENT's 0x2d41 region has an
+  // internal branch that is never taken from this seed, agrees, and is judged
+  // on its ratio like any other.
+  const gateAt = Number(arg('gate', 1));
+  const gateIters = count(arg('gate-iters'), 4000);
+  const branchy = pick.ops.slice(0, -1).some(isTransfer);
+  if (!flag('no-gate')) {
+    const g = await benchTiers(exe, snapshotFor(rr, pick), pick.ops,
+      { iters: gateIters, reps: 2, log: () => {} });
+    const ratio = g.agree ? g.speedup.t03 : 0;
+    console.log(`  gate (${gateIters} snapshot iterations): ${g.agree
+      ? `tier 3 is ${ratio.toFixed(2)}x of the interpreter`
+      : branchy ? 'INCONCLUSIVE -- the arms disagree, and the op list branches '
+        + 'internally, so they did not run the same program'
+        : 'the lowering DISAGREES with the interpreter over these ops'}`);
+    if ((!g.agree && !branchy) || (g.agree && ratio < gateAt)) {
+      console.log(`  DECLINED: ${g.agree
+        ? `${ratio.toFixed(2)}x is below the ${gateAt.toFixed(2)}x bar`
+        : 'a region that computes something else is not faster'}`
+        + ' -- not installing (--no-gate overrides)');
+      process.exit(5);
+    }
   }
 
   const guarded = guardBytes(rr, pick);

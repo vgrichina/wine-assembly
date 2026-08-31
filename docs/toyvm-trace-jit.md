@@ -1084,3 +1084,44 @@ was exactly that shape. Lowering it changes the run (dispatches, handbacks and
 interrupt count all move) but does not fix the divergence, so the stale address
 was a second bug and not this one. The four demos whose frames match still
 match with it lowered.
+
+## The install gate, and the number that justified it evaporating
+
+The paragraph above ends by proposing a snapshot-bench gate in front of the
+installer, on the strength of ACCIDENT's region benching at **0.94x** of the
+interpreter. The gate is now in (`region-jit.js`, on by default, `--no-gate` to
+run anyway, `--gate=RATIO` to move the bar) — but that 0.94x was not real, and
+the correction matters more than the feature.
+
+**0.94x was a warm-up artifact.** It was measured over the `--agree` default of
+200 iterations. The same region over 4000 iterations is **2.19x** and **2.38x**
+on two consecutive runs, and 2.35–2.36x on every run since. Below roughly a
+thousand iterations the arms are still being tiered up by the host engine, so
+the ratio prices V8's compiler rather than the lowering. `--gate-iters` defaults
+to 4000 for that reason, and the printed line carries its own iteration count,
+because a gate verdict without one cannot be checked.
+
+**A mismatch only counts when both arms ran the same program.** The bench runs
+an op list end to end: the interpreter arm walks arena words, so a branch word
+*inside* the list jumps, while every compiled arm was emitted as a straight line
+and falls through it. Where that branch is taken, the two arms are two different
+programs and the bench correctly reports MISMATCH — with all three compiled arms
+agreeing with each other and only arm 0 differing, which is the signature. The
+first version of the gate declined CYCLE, BRW and CMA_SHRT for exactly this, and
+CYCLE is frame-IDENTICAL end to end: a false positive, not a find. So the
+downgrade is on the *disagreement*, not on the region — an op list with an
+internal transfer turns a mismatch into INCONCLUSIVE, and leaves a pass alone
+(ACCIDENT's 0x2d41 has an internal branch that is never taken from this seed,
+agrees, and is judged on its ratio like anything else).
+
+**What it declines today: nothing.** Across the core-10 set plus DRAGON and
+ADDY_II, every region that the gate can judge passes it (DRAGON 1.59x, ADDY_II
+2.39x, ACCIDENT 2.36x) and every region it cannot judge is reported
+INCONCLUSIVE. That is the honest state: the gate is a regression check for
+lowering work, not a filter that is currently catching anything. It costs about
+20ms on a 12M-dispatch run.
+
+A second divergent region turned up while sweeping for it: **CMA_SHRT**, whose
+region is 100% of samples and whose frame differs — the same family as ACCIDENT
+and RUNDEMO, and a better bisect target than either, since nothing else in that
+run is competing for time.
