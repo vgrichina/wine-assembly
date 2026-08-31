@@ -549,6 +549,39 @@ amended away) — the shared-dirty-tree cost is now visible in history, and both
 were caught and corrected by their authors within minutes. The toyvm
 dead-flags work (`98612ab2`, `c5fb121f`) stays toyvm-only; no `src/` risk.
 
+**By midnight (+33 commits, HEAD `a670a669`)** every Tier-1 recommendation is
+struck through: the fix sessions recorded 3.3, 3.4, 3.5 and item 14 closed and
+crossed out recs 1–5 themselves, and each survives re-verification. 3.3: one
+declarative 21-setter table in `lib/worker-imports.js` (MMX included, via
+`get_cpu_mmx`) applied identically by both spawn paths, with
+`test-worker-wasm-globals.js` diffing the backends — plus the
+`forwardGuestLogs` rename with CLI opt-in (`acc7334a`). 3.4: the ratchet
+classifier now hashes all 524 quiet bodies (any handler with no call, branch,
+trap or store), prints its replacement pin, and a clean-checkout audit rejects
+pin-only catch-up commits. 3.5: `SKIP` is a real protocol — exit 77 via a
+preloaded `test/skip-exit.js`, its own runner column, and
+`check-test-timeouts.js` fails the manifest on child budgets above the 300 s
+cap (17 were quietly impossible). 3.2 is genuinely done now too: both of
+H441's reshaped fast branches invalidate before their raw stores
+(`07b:3322,3336`). And last tick's WaitMessage qualifier was answered in code
+within hours — `42f10d02` leaves yield-7 parked and `resumeMessageWait` checks
+at the top of each Worker slice. Beyond the scoreboard: `32590db9` makes
+`FlushInstructionCache` real cross-Worker (range/full decoded-code
+invalidation plus a shared generation, with a two-instance stale-block
+regression) — the SMC-across-Workers hazard 3.2 gestured at, now closed at
+the API too; `941c3cf5` fixes a real pump gap (the CACA0004 modal-dialog loop
+never delivered WM_TIMER — mIRC's installer scan hung on a live 25 ms timer);
+Civ2 runs from local media (`1b1b5069`, a large Win16 push); AUTORUN.INF +
+worker io_wait (`29c8b016`); and the toyvm trace-JIT grew a tier-3 micro-op
+lowering *and* honest accounting — `a670a669` bills compile cost against
+speedup and reports that 4 of its 9 core-ten traces never repay one compile.
+Still open: 3.10 version counters, 3.12, Pass-2 items 8/9/12/18, A.2
+parity/FPS A/B + MCM reopen, A.5, A.8, rec 8 (`bundle-browser.js --check` is
+still not in `build.sh` — re-checked), and the BYO-media subsystem review.
+Process: a third stale-shared-index incident (19 foreign reversal entries,
+caught and restored before staging) — the pattern now has a name on the board
+and authors check for it.
+
 **New in this window, ranked.**
 
 **A.1 FIXED `d5cf1afb`: `bundle-browser.js` now discovers modules by walking
