@@ -76,6 +76,11 @@ node tools/check-silent-stubs.js
 # app then looks merely slower. Gate it here, where whoever added the import is
 # already standing.
 node tools/gen-host-import-sigs.js --check
+# The committed browser bundle of the toy VM must be reproducible from source.
+# It inlines every tools/toyvm module verbatim, so a source edit that skips
+# regeneration ships old code to the page while every test stays green on the
+# committed bytes — that drift went unnoticed across whole commit windows twice.
+node tools/toyvm/bundle-browser.js --check
 # Every handler's stdcall epilogue, checked against api_table.json's nargs —
 # the values are derived from the table now, not typed. `--sync` rewrites any
 # that drift.
