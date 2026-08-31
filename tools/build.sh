@@ -60,6 +60,11 @@ node tools/gen-host-import-sigs.js --check
 # the values are derived from the table now, not typed. `--sync` rewrites any
 # that drift.
 node tools/esp-epilogue.js --check
+# The WATX compiler under tools/watx-src/ is a vendored copy of ../android-emu,
+# and a vendored copy is only trustworthy while somebody can say what it is a
+# copy OF. Fail if any imported file's bytes no longer match the SHA-256 the
+# import recorded, so a silent edit or an unlogged re-sync cannot ship.
+node tools/check-watx-provenance.js
 
 echo "Concatenating WAT parts..."
 # From WAT_FILES, not a shell glob: combined.wat must be the same sequence the
