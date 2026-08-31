@@ -945,10 +945,10 @@
   (data (i32.const 0x36D) "uxtheme.dll\00")  ;; optional XP theming DLL
   ;; Stable strings returned by glGetString. Extensions is intentionally empty
   ;; until an optional extension has a complete implementation.
-  (data (i32.const 0x07F0BF60) "Wine-Assembly\00")
-  (data (i32.const 0x07F0BF70) "WebGL fixed function\00")
-  (data (i32.const 0x07F0BF88) "1.1 Wine-Assembly\00")
-  (data (i32.const 0x07F0BFA0) "\00")
+  (data (region.addr $TT_FONT_STRING_STORAGE 0x60) "Wine-Assembly\00")
+  (data (region.addr $TT_FONT_STRING_STORAGE 0x70) "WebGL fixed function\00")
+  (data (region.addr $TT_FONT_STRING_STORAGE 0x88) "1.1 Wine-Assembly\00")
+  (data (region.addr $TT_FONT_STRING_STORAGE 0xA0) "\00")
   ;; WinSock 1.1 ordinal imports used by Win9x DLLs. The DLL loader maps
   ;; supported ordinals to these normal API-table names.
   (data (i32.const 0x11300) "WSOCK32.dll\00WSAStartup\00WSACleanup\00WSAGetLastError\00socket\00closesocket\00connect\00send\00recv\00gethostbyname\00htons\00inet_addr\00select\00setsockopt\00ioctlsocket\00accept\00bind\00listen\00shutdown\00ntohs\00inet_ntoa\00__WSAFDIsSet\00WSASetLastError\00")
@@ -1052,7 +1052,7 @@
   ;; Every name here is one a game in the corpus actually asks for: Visual
   ;; Basic's Declare statement is a GetProcAddress by name, and a NULL comes
   ;; back to the program as "Sub or Function not defined".
-  (data (i32.const 0x079CA000)
+  (data (region.addr $WIN16_BUILTIN_NAMES 0)
     "\0dCREATERECTRGN\40\30"
     "\15CREATERECTRGNINDIRECT\41\30"
     "\0eGETSTOCKOBJECT\57\30"
@@ -1163,7 +1163,7 @@
   ;;   +0x06 "VS_VERSION_INFO" UTF-16 + NUL, then 2 bytes of padding
   ;;   +0x28 VS_FIXEDFILEINFO: signature, struct version, file/product
   ;;         version, flags mask, flags, VOS__WINDOWS32, VFT_DLL, dates
-  (data (i32.const 0x11270)
+  (data (region.addr $DX_VERSION_INFO 0)
     "\5c\00\34\00\00\00"
     "V\00S\00_\00V\00E\00R\00S\00I\00O\00N\00_\00I\00N\00F\00O\00\00\00"
     "\00\00"
@@ -1176,7 +1176,7 @@
 
   ;; Dialog-template string class names. Win32 templates may use either
   ;; builtin ordinal classes (0x80..0x85) or string names.
-  (data (i32.const 0x3100) "Button\00")
+  (data (region.addr $CLASS_NAME_STRINGS 0) "Button\00")
   (data (i32.const 0x3108) "Edit\00")
   (data (i32.const 0x310D) "Static\00")
   (data (i32.const 0x3114) "ListBox\00")

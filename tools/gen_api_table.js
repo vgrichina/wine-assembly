@@ -1348,8 +1348,14 @@ for (const entry of table) {
   hashMap.set(entry.hash, entry.name);
 }
 
-const HASH_TABLE_ADDR = 0x07E00000; // must match $API_HASH_TABLE in 01-header.wat
-const HASH_TABLE_SIZE = 0x00008000; // must match $API_HASH_TABLE_SIZE
+// The map, read from the declaration rather than retyped
+// (docs/watx-region-safety-design.md §5 pattern 11). The emitted segment is
+// byte-identical to the hand-copied 0x07E00000/0x00008000 it replaces; what
+// changes is that this generator can no longer disagree with
+// src/00-regions.wat about where $API_HASH_TABLE is or how big it is.
+const { REGIONS } = require('../lib/region-map.generated.js');
+const HASH_TABLE_ADDR = REGIONS.API_HASH_TABLE.base;
+const HASH_TABLE_SIZE = REGIONS.API_HASH_TABLE.size;
 if (table.length * 8 > HASH_TABLE_SIZE) {
   console.error(`API hash table needs ${table.length * 8} bytes, exceeds ${HASH_TABLE_SIZE}-byte region`);
   process.exit(1);
