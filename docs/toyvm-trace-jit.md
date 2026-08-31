@@ -273,6 +273,70 @@ arms can report makes every comparison fail on formatting rather than on state.
 Adding `esb=…` to the row declared B-STEEL's arms to disagree while every
 register in it was equal.
 
+### Measured: the core ten, nine of them
+
+`--bench --min-ops=6 --sample-from=0.5`, default 7 interleaved reps, **run twice
+as two independent passes** so the spread is visible rather than asserted. Load
+averaged 5.8–6.3, so the absolute ns are not quotable; the ratios are, and the
+two passes are what says so.
+
+| program | trace | share | 0→1 | 1→2 | 2→3 | **0→3** | pass B |
+|---|---|---|---|---|---|---|---|
+| BRW | 43 ops | 8.2% | 1.61 | 1.04 | **3.11** | **5.19x** | 4.94x |
+| B-STEEL | 6 ops | 15.6% | 2.43 | 1.37 | 1.06 | **3.53x** | 3.38x |
+| CYCLE | 7 ops | 0.5% | 1.95 | 1.23 | 1.10 | **2.64x** | 2.65x |
+| ACCIDENT | 9 ops | 1.9% | 1.83 | 1.14 | 1.01 | **2.11x** | 2.13x |
+| DTM2 | 2 ops | 51.3% | 1.61 | 0.98 | 1.28 | **2.04x** | 2.05x |
+| CMA_SHRT | 7 ops | 99.7% | 1.14 | 0.99 | 1.77 | **1.99x** | 1.92x |
+| RUNDEMO | 7 ops | 1.9% | 1.48 | 1.01 | 1.19 | **1.76x** | 1.75x |
+| CONTAGIO | 15 ops | 80.4% | 1.12 | 1.12 | 1.36 | **1.69x** | 1.86x |
+| DEMO5 | 1 op | 100.0% | 1.39 | 0.99 | 1.01 | **1.38x** | 1.38x |
+| | | | | | | **2.28x** geomean | 2.28x |
+
+Seven of the nine reproduce inside 2%. CONTAGIO (1.69/1.86) and BRW (5.19/4.94)
+are the two that move, and both move less than the gap to their neighbours.
+
+**Tier 2 is worth nothing.** Register folding and dead-flag elimination came out
+at 0.98–1.42x with a median of **1.04x**, and three programs are at or below
+1.00. Everything the JIT earns is in tier 1 (removing the dispatch, the operand
+load and the `$ip` advance) and tier 3 (folding the address br_table, the wide
+register file, and promoting registers into wasm locals). That is a result about
+where to spend effort, and it points at tier 3.
+
+**The long trace wins biggest.** BRW's 43-op body gets 3.11x from tier 3 alone;
+the two traces that get nothing from it (ACCIDENT 1.01x, DEMO5 1.01x) are 9 and
+1 ops. More body is more to fold across, which is the argument for extending
+traces rather than optimizing short ones harder.
+
+#### What this is *not*: a program speedup
+
+Every number above prices **one trace**. Multiplying it out against that trace's
+share of samples gives the whole-program bound if the JIT compiled that trace and
+nothing else:
+
+| | trace | program bound |
+|---|---|---|
+| CMA_SHRT | 1.99x | **1.99x** (99.7% of samples) |
+| DEMO5 | 1.38x | 1.38x |
+| CONTAGIO | 1.69x | 1.49x |
+| DTM2 | 2.04x | 1.35x |
+| B-STEEL | 3.53x | 1.13x |
+| BRW | 5.19x | **1.07x** (8.2% of samples) |
+| ACCIDENT / RUNDEMO / CYCLE | 2.11 / 1.76 / 2.64x | 1.01 / 1.01 / 1.00x |
+| | **2.28x** geomean | **1.24x** geomean |
+
+BRW is the whole point in one row: the biggest trace win in the set is worth 7%
+to the program, because 92% of its samples are somewhere else. **2.28x on the
+trace is 1.24x on the program**, and the difference is coverage, not code
+quality — which says the next work is compiling *more* traces, not compiling one
+of them better. That is what makes Option A (installing a compiled trace into a
+free `$handlers` slot at runtime) the thing to build next rather than another
+tier-3 pass.
+
+Three of the nine sit on traces holding 0.5–1.9% of samples. They demonstrate
+that the compiler is correct on those shapes; they say nothing about those
+programs, and the share column is in the table so that cannot be misread.
+
 ### The corpus sweep: what it settles and what it does not
 
 `sweep-dos.js --dir=/tmp/demos --variants=tailcall`, all 199 programs.

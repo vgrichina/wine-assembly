@@ -86,13 +86,21 @@ async function findHotTrace(exe, { budget, slice, cpu, sampleAfter = 0, sampleFr
     }
   }
   heads.sort((a, b) => a.addr - b.addr);
+  // Each block's extent ends where the next one begins. Without that bound the
+  // search is a plain lower bound and charges a sample landing in FREED arena
+  // space to whichever live block happens to precede it -- which is not a rare
+  // corner: a self-modifying program recycles regions constantly, and DHADREN
+  // takes 77808 self-modify breaks in 15M dispatches. A misattributed sample is
+  // worse than a dropped one, because it produces a plausible hot block.
   const owner = (at) => {
-    let lo = 0, hi = heads.length - 1, best = null;
+    let lo = 0, hi = heads.length - 1, best = -1;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
-      if (heads[mid].addr <= at) { best = heads[mid]; lo = mid + 1; } else hi = mid - 1;
+      if (heads[mid].addr <= at) { best = mid; lo = mid + 1; } else hi = mid - 1;
     }
-    return best;
+    if (best < 0) return null;
+    const end = best + 1 < heads.length ? heads[best + 1].addr : Infinity;
+    return at < end ? heads[best] : null;
   };
 
   const perBlock = new Map();
@@ -106,7 +114,13 @@ async function findHotTrace(exe, { budget, slice, cpu, sampleAfter = 0, sampleFr
     total += n;
   }
   const ranked = [...perBlock.values()].sort((a, b) => b.samples - a.samples);
-  return { r, ranked, total };
+  // Kept so a decline can say WHICH of the two very different things happened:
+  // a program that barely dispatched, or one whose compiled code was thrown
+  // away underneath the samples. `heads` is built from the regions that still
+  // exist when the run stops, so a self-modifying program can retire millions
+  // of dispatches and leave nothing for a sample to land in.
+  const why = { samples: [...samples.values()].reduce((a, b) => a + b, 0), heads: heads.length };
+  return { r, ranked, total, why };
 }
 
 // Walk arena words from a block head into (handler, operands) pairs. Stops at
@@ -145,9 +159,18 @@ async function jitTiers(exe, {
     + `${slice} per sample`
     + (sampleAfter ? `, first ${(sampleAfter / 1e6).toFixed(1)}M not sampled` : '')
     + (sampleFrom ? `, last ${((1 - sampleFrom) * 100).toFixed(0)}% of the run profiled` : '') + '\n');
-  const { r: rr, ranked, total } = await findHotTrace(exe,
+  const { r: rr, ranked, total, why } = await findHotTrace(exe,
     { budget, slice, cpu, sampleAfter, sampleFrom });
-  if (!ranked.length) { log('no samples landed in a known block'); return { ok: false, reason: 'no-samples' }; }
+  if (!ranked.length) {
+    log(`no samples landed in a known block -- ${why.samples} sample(s) taken over `
+      + `${rr.dispatched} dispatches, ${why.heads} compiled block(s) still live at exit`
+      + `, ${rr.smcBreaks || 0} self-modify break(s)`);
+    if (why.samples && !why.heads) {
+      log('  the program ran and its compiled code was thrown away underneath the');
+      log('  samples -- self-modifying or overlaid code, not an idle program.');
+    }
+    return { ok: false, reason: 'no-samples', why };
+  }
 
   log(`${total} samples over ${ranked.length} blocks\n`);
   log('  share  cs:ip        arena      ops  ends with');
