@@ -2662,7 +2662,7 @@
       (param $thunk_gs i32) (param $thunk_ge i32) (param $num_th i32)
       (param $main_rsrc_rva i32)
     (local $pe_off i32)
-    (global.set $THREAD_BASE (i32.add (i32.const 0x05000000)
+    (global.set $THREAD_BASE (i32.add (region.addr $THREAD_CACHE_BASE 0)
       (i32.mul (local.get $tid) (i32.const 0x400000))))
     (global.set $THREAD_END  (i32.add (global.get $THREAD_BASE) (i32.const 0x400000)))
     (global.set $thread_alloc (global.get $THREAD_BASE))

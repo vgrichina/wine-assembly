@@ -11,7 +11,7 @@
       (local.set $cur (i32.load8_u (local.get $wa)))
       (if (i32.eq (local.get $cur) (local.get $ch))
         (then
-          (global.set $eax (i32.add (i32.sub (local.get $wa) (i32.const 0x12000)) (global.get $image_base)))
+          (global.set $eax (i32.add (i32.sub (local.get $wa) (region.addr $GUEST_BASE 0)) (global.get $image_base)))
           (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
           (return)))
       (br_if $d (i32.eqz (local.get $cur)))
@@ -50,7 +50,7 @@
       (br $l)))
     ;; Convert WASM addr back to guest addr, or 0 if not found
     (if (local.get $last)
-      (then (global.set $eax (i32.add (i32.sub (local.get $last) (i32.const 0x12000)) (global.get $image_base))))
+      (then (global.set $eax (i32.add (i32.sub (local.get $last) (region.addr $GUEST_BASE 0)) (global.get $image_base))))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
@@ -229,7 +229,7 @@
       (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
       (br $l)))
     (if (local.get $last)
-      (then (global.set $eax (i32.add (i32.sub (local.get $last) (i32.const 0x12000)) (global.get $image_base))))
+      (then (global.set $eax (i32.add (i32.sub (local.get $last) (region.addr $GUEST_BASE 0)) (global.get $image_base))))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
