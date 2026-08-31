@@ -30,10 +30,10 @@ const extraWat = String.raw`
     (global.get $eax))
   (func (export "test_dx_surface_dib_wa") (param $surface i32) (result i32)
     (i32.load offset=20 (call $dx_from_this (local.get $surface))))
-  (func (export "test_dx_surface_lock") (param $surface i32) (param $desc i32) (result i32)
+  (func (export "test_dx_surface_lock") (param $surface i32) (param $rect i32) (param $desc i32) (result i32)
     (global.set $esp (i32.const 0x30000))
     (call $handle_IDirectDrawSurface_Lock
-      (local.get $surface) (i32.const 0) (local.get $desc) (i32.const 0)
+      (local.get $surface) (local.get $rect) (local.get $desc) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.get $eax))
   (func (export "test_dx_surface_release") (param $surface i32) (result i32)
@@ -52,6 +52,7 @@ const extraWat = String.raw`
   const caps = 0x410300;
   const attachedOut = 0x410304;
   const lockDesc = 0x410400;
+  const lockRect = 0x410500;
 
   // The concrete vtable values only need to be non-zero for this direct
   // handler test; dx_from_this resolves objects through their wrapper slot.
@@ -68,10 +69,21 @@ const extraWat = String.raw`
   const primaryDibWa = wat.test_dx_surface_dib_wa(primary) >>> 0;
   assert(primaryDibWa >= 0x1C000000 && primaryDibWa < 0x20000000,
     `DirectDraw pixels must use the dedicated DIB backing, got WASM 0x${primaryDibWa.toString(16)}`);
-  assert.strictEqual(wat.test_dx_surface_lock(primary, lockDesc) >>> 0, 0);
+  assert.strictEqual(wat.test_dx_surface_lock(primary, 0, lockDesc) >>> 0, 0);
   const lockedGuest = wat.guest_read32(lockDesc + 36) >>> 0;
   assert(lockedGuest >= 0x50000000 && lockedGuest < 0x54000000,
     `Lock must return the DIB guest mapping, got 0x${lockedGuest.toString(16)}`);
+
+  wat.guest_write32(lockRect, 37);
+  wat.guest_write32(lockRect + 4, 29);
+  wat.guest_write32(lockRect + 8, 137);
+  wat.guest_write32(lockRect + 12, 69);
+  assert.strictEqual(wat.test_dx_surface_lock(primary, lockRect, lockDesc) >>> 0, 0);
+  assert.strictEqual(wat.guest_read32(lockDesc + 36) >>> 0,
+    (lockedGuest + 29 * 1280 + 37 * 2) >>> 0,
+    'locking a subrectangle must return its upper-left pixel, not the surface base');
+  assert.strictEqual(wat.guest_read32(lockDesc + 16) >>> 0, 1280,
+    'a subrectangle lock must retain the full-surface pitch');
 
   assert.strictEqual(wat.test_dx_backbuffer_desc(primary, queryDesc) >>> 0, 0);
   assert(wat.guest_read32(queryDesc + 4) & 0x20,
@@ -93,7 +105,7 @@ const extraWat = String.raw`
   assert((wat.gdi_dib_arena_stat(0) >>> 0) < usedBeforeRelease,
     'releasing a DirectDraw surface should return its DIB pages');
 
-  console.log('PASS  DirectDraw surface descriptions preserve attached back buffers');
+  console.log('PASS  DirectDraw surface descriptions preserve back buffers and subrectangle Lock pointers');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

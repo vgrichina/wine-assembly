@@ -50,6 +50,8 @@ const extraWat = String.raw`
       (local.get $surface) (local.get $pal) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_ddpf_palette_data") (param $pal i32) (result i32)
+    (i32.load offset=20 (call $dx_from_this (local.get $pal))))
   (func (export "test_ddpf_get_palette") (param $surface i32) (param $out i32) (result i32)
     (global.set $esp (i32.const 0x30000))
     (call $handle_IDirectDrawSurface_GetPalette
@@ -134,7 +136,25 @@ const createSurface = (wat, desc, out, bpp, caps) => {
   const palette = wat.guest_read32(palOut) >>> 0;
   assert(palette, 'CreatePalette should publish an object');
 
+  // An offscreen surface owns its palette, but it is not the display. This
+  // distinction must survive process-shared DirectDraw state: in Worker mode
+  // a secondary thread attaching an artwork palette must not turn the primary
+  // framebuffer neon green/black by replacing its display palette.
+  const displayPalette = 0x123456;
+  wat.test_dx_set_primary_palette_wa(displayPalette);
   assert.strictEqual(wat.test_ddpf_set_palette(surf8, palette) >>> 0, 0);
+  assert.strictEqual(wat.get_dx_primary_pal_wa() >>> 0, displayPalette,
+    'attaching an offscreen palette must not replace the display palette');
+
+  // The corresponding positive path matters too: attaching that palette to
+  // the actual primary surface must publish it as the display palette.
+  wat.test_dx_set_process_state(32, 32, 8, 1, 0, 0, displayPalette);
+  const primary8 = createSurface(wat, desc, out, 8, 0x200); // PRIMARYSURFACE
+  assert.strictEqual(wat.test_ddpf_set_palette(primary8, palette) >>> 0, 0);
+  assert.strictEqual(wat.get_dx_primary_pal_wa() >>> 0,
+    wat.test_ddpf_palette_data(palette) >>> 0,
+    'attaching a primary-surface palette must publish the display palette');
+
   for (let i = 0; i < 256; i++) wat.guest_write32(entriesOut + i * 4, 0xDEADBEEF);
   assert.strictEqual(wat.test_ddpf_get_palette(surf8, palOut + 8) >>> 0, 0);
   const fetched = wat.guest_read32(palOut + 8) >>> 0;

@@ -12,7 +12,7 @@ const directDrawWat = fs.readFileSync(
 const extraWat = String.raw`
   (func (export "test_dx_target_seed") (param $main i32) (param $cooperative i32)
     (global.set $main_hwnd (local.get $main))
-    (global.set $dx_coop_hwnd (local.get $cooperative)))
+    (call $dx_coop_hwnd_set (local.get $cooperative)))
   (func (export "test_dx_target_get") (result i32)
     (call $dx_target_hwnd))
 `;
@@ -30,7 +30,7 @@ const extraWat = String.raw`
   assert.strictEqual(wat.test_dx_target_get() >>> 0, visibleGameForm,
     'the cooperative-level HWND must override an earlier hidden application window');
 
-  assert(/\$handle_IDirectDraw_SetCooperativeLevel[\s\S]*?global\.set \$dx_coop_hwnd \(local\.get \$arg1\)/.test(directDrawWat),
+  assert(/\$handle_IDirectDraw_SetCooperativeLevel[\s\S]*?call \$dx_coop_hwnd_set \(local\.get \$arg1\)/.test(directDrawWat),
     'SetCooperativeLevel must retain its HWND as the DirectDraw presentation owner');
   assert(/Under DDSCL_NORMAL[\s\S]*?(?:call \$dx_exclusive_get|global\.get \$dx_exclusive_fullscreen)[\s\S]*?call \$wnd_get_style \(call \$dx_target_hwnd\)[\s\S]*?host_move_window \(call \$dx_target_hwnd\)/.test(directDrawWat),
     'primary-surface creation must resize only exclusive or borderless cooperative windows');

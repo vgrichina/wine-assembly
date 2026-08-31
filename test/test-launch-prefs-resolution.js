@@ -106,10 +106,10 @@ for (const [w, h] of [[640, 480], [800, 600], [1024, 768]]) {
   ok(new RegExp(`i32\\.const ${w}`).test(dx) && new RegExp(`i32\\.const ${h}`).test(dx),
     `${w}x${h} is in the mode table`);
 }
-// idx/3 picks the resolution, idx%3 the depth — six resolutions, three depths,
-// the sixth being the host screen itself.
-ok(/i32\.ge_u \(local\.get \$idx\) \(i32\.const 18\)/.test(dx),
-  'the enumeration runs to 18 entries (6 resolutions x 3 depths)');
+// Keep the existing six resolutions x three depths in their original order;
+// one appended 320x200x8 entry serves low-resolution Win9x cinematics.
+ok(/i32\.ge_u \(local\.get \$idx\) \(i32\.const 19\)/.test(dx),
+  'the enumeration runs to 19 entries (18 existing + 320x200x8)');
 ok(/func \$enum_mode_host_w/.test(dx) && /func \$enum_mode_host_h/.test(dx),
   'the host screen is one of the advertised resolutions');
 ok(/i32\.const 0xFFF8/.test(dx) && /\$enum_mode_clamp/.test(dx),
