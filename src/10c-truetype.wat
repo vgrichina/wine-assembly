@@ -3370,7 +3370,7 @@
   (global $TT_SUBST_TABLE i32 (i32.const 0x07F0B400))
   (global $TT_SUBST_TABLE_SIZE i32 (i32.const 0x00000800))
 
-  (data (i32.const 0x07F0B400)
+  (data (region.addr $TT_SUBST_TABLE 0)
     "Arial\00"
       "C:\\WINDOWS\\FONTS\\ARIAL.TTF\00"
       "C:\\WINDOWS\\FONTS\\ARIALBD.TTF\00"
@@ -3419,7 +3419,7 @@
   (global $TT_SUBST_ALIAS_TABLE i32 (i32.const 0x07F0BC00))
   (global $TT_SUBST_ALIAS_TABLE_SIZE i32 (i32.const 0x00000300))
 
-  (data (i32.const 0x07F0BC00)
+  (data (region.addr $TT_SUBST_ALIAS_TABLE 0)
     "Verdana\00"
       "C:\\WINDOWS\\FONTS\\VERDANA.TTF\00"
       "C:\\WINDOWS\\FONTS\\VERDANAB.TTF\00"
@@ -3450,13 +3450,13 @@
   ;; it is the same shape of answer, and it is what lets this layer promise
   ;; that every face resolves to a file we ship.
   (global $TT_SUBST_DEFAULT i32 (i32.const 0x07F0BF00))
-  (data (i32.const 0x07F0BF00) "Arial\00")
+  (data (region.addr $TT_FONT_STRING_STORAGE 0x00) "Arial\00")
   ;; Win 3.x compatibility alias used by applications written before the
   ;; TrueType family names settled. Keep it out of enumeration, but resolve
   ;; it to the same installed face as Times New Roman.
   (global $TT_SUBST_TMS_RMN i32 (i32.const 0x07F0BF08))
   (global $TT_SUBST_TIMES_NEW_ROMAN i32 (i32.const 0x07F0BF10))
-  (data (i32.const 0x07F0BF08) "Tms Rmn\00Times New Roman\00")
+  (data (region.addr $TT_FONT_STRING_STORAGE 0x08) "Tms Rmn\00Times New Roman\00")
 
   ;; ---- fonts that are simply installed -----------------------------------
   ;;
@@ -3476,9 +3476,9 @@
   ;; and registering one would put "Liberation Sans" in front of a guest that
   ;; asked what fonts exist, which is a face Windows 98 never had.
   (global $TT_FONT_DIR_PATTERN i32 (i32.const 0x07F0BF20))
-  (data (i32.const 0x07F0BF20) "C:\\WINDOWS\\FONTS\\*.TTF\00")
+  (data (region.addr $TT_FONT_STRING_STORAGE 0x20) "C:\\WINDOWS\\FONTS\\*.TTF\00")
   (global $TT_FONT_DIR_PREFIX i32 (i32.const 0x07F0BF40))
-  (data (i32.const 0x07F0BF40) "C:\\WINDOWS\\FONTS\\\00")
+  (data (region.addr $TT_FONT_STRING_STORAGE 0x40) "C:\\WINDOWS\\FONTS\\\00")
   (global $tt_font_dir_scanned (mut i32) (i32.const 0))
 
   (func $tt_subst_fold (param $byte i32) (result i32)
