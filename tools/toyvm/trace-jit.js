@@ -139,6 +139,7 @@ function readTrace(mem32, addrWordIdx, maxOps = 512) {
 async function jitTiers(exe, {
   budget = 15e6, slice = 20000, cpu = 386, top = 6, sampleAfter = 0, sampleFrom = 0,
   bench = false, iters = 20000, reps = 7, cx = 8, log = () => {},
+  passes = { constprop: true, regfold: true, deadflags: true },
 } = {}) {
   log(`profiling ${path.basename(exe)} -- ${(budget / 1e6).toFixed(0)}M dispatches, `
     + `${slice} per sample`
@@ -227,7 +228,7 @@ async function jitTiers(exe, {
 
   let bres;
   try {
-    bres = await benchTiers(exe, hot, t.ops, { iters, reps, log });
+    bres = await benchTiers(exe, hot, t.ops, { iters, reps, log, passes });
   } catch (e) {
     // Two very different failures used to share this label. `unfoldable` is a
     // handler body whose operand preamble drifted from ops()'s shape, which
@@ -246,7 +247,8 @@ async function jitTiers(exe, {
 async function main() {
   const exe = process.argv[2];
   if (!exe || exe.startsWith('--')) {
-    console.log('usage: node tools/toyvm/trace-jit.js <file.exe> [--bench] [--json] [--dispatches=] [--top=]');
+    console.log('usage: node tools/toyvm/trace-jit.js <file.exe> [--bench] [--json] [--dispatches=] [--top=]'
+      + '\n       [--passes=constprop,regfold,deadflags]  which of tier 2\'s passes to run');
     process.exit(2);
   }
   const json = flag('json');
@@ -261,6 +263,17 @@ async function main() {
     iters: count(arg('iters'), 20000),
     reps: Number(arg('reps', 7)),
     cx: Number(arg('cx', 8)),
+    passes: (() => {
+      const spec = arg('passes', 'constprop,regfold,deadflags').split(',').filter(Boolean);
+      const known = ['constprop', 'regfold', 'deadflags'];
+      for (const p of spec) {
+        if (!known.includes(p)) { console.error(`unknown pass ${p}; known: ${known.join(', ')}`); process.exit(2); }
+      }
+      // regfold cannot run without constprop -- see emitTier2.
+      const on = Object.fromEntries(known.map(k => [k, spec.includes(k)]));
+      if (on.regfold) on.constprop = true;
+      return on;
+    })(),
     log: json ? () => {} : console.log,
   });
   if (json) console.log(JSON.stringify({ exe, ...res }));
@@ -414,8 +427,18 @@ function killDeadFlags(ops) {
   return live;
 }
 
-function emitTier2(ops) {
-  const live = killDeadFlags(ops);
+// `passes` selects which of tier 2's three optimizations actually run, so each
+// can be priced on its own against tier 1. `regfold` implies `constprop`: the
+// register-file br_table only folds once the index it is given is a constant,
+// which is what const propagation makes it.
+//
+// This exists because the interpreter can have ONE of these passes without
+// being a trace JIT at all. A handler whose register index is pinned to a
+// constant is just another entry in the handler table, swapped in by the
+// compiler the way a fused or traced twin is -- so `--passes=regfold` is the
+// ceiling for that idea, measured on real traces instead of guessed at.
+function emitTier2(ops, passes = { constprop: true, regfold: true, deadflags: true }) {
+  const live = passes.deadflags ? killDeadFlags(ops) : ops.map(() => true);
   const bodies = [];
   let killed = 0, folded = 0, propagated = 0;
   for (const [i, op] of ops.entries()) {
@@ -429,10 +452,14 @@ function emitTier2(ops) {
         killed++;
       }
     }
-    const p = propagateConsts(b, op.args.length);
-    b = p.out; propagated += p.n;
-    const r = foldRegisterFile(b);
-    b = r.out; folded += r.changed;
+    if (passes.constprop || passes.regfold) {
+      const p = propagateConsts(b, op.args.length);
+      b = p.out; propagated += p.n;
+    }
+    if (passes.regfold) {
+      const r = foldRegisterFile(b);
+      b = r.out; folded += r.changed;
+    }
     bodies.push(`;; ${op.name}${live[i] ? '' : '  [flags dead]'}\n${b}`);
   }
   return { wat: bodies.join('\n'), killed, folded, propagated };
@@ -514,13 +541,16 @@ function straightLineProgram(ops, base) {
   return words;
 }
 
-async function benchTiers(exe, hot, ops, { iters, reps, log = console.log }) {
+async function benchTiers(exe, hot, ops, { iters, reps, log = console.log,
+  passes = { constprop: true, regfold: true, deadflags: true } }) {
   const { makeVm } = require('./vm');
   const { compileWat } = require(path.join(__dirname, '..', '..', 'lib', 'compile-wat.js'));
 
   const t1 = emitTier1(ops, {});
-  const t2 = emitTier2(ops);
+  const t2 = emitTier2(ops, passes);
   log(`\ntier 1: ${ops.length} bodies stitched, operands folded`);
+  const passName = ['constprop', 'regfold', 'deadflags'].filter(p => passes[p]).join('+') || 'none';
+  log(`tier 2 passes: ${passName}`);
   log(`tier 2: + ${t2.propagated} operand constants propagated, `
     + `${t2.folded} register-file calls folded to direct globals, `
     + `${t2.killed} dead flag computations removed`);
@@ -543,7 +573,10 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log }) {
   for (const [name, src] of [['tier 1  stitched', t1.wat], ['tier 2  optimized', t2.wat]]) {
     const file = `trace-${name.split(' ')[1]}.wat`;
     const bytes = await compileWat(() => moduleWat(src),
-      { files: [file], cacheKey: `trace-jit:${name}:${hot.bip}` });
+      // The pass set is part of the key: two `--passes=` runs produce different
+      // tier-2 modules for the same trace, and a cache hit across them would
+      // silently benchmark the previous one.
+      { files: [file], cacheKey: `trace-jit:${name}:${hot.bip}:${passName}` });
     const memory = new WebAssembly.Memory({ initial: isa.MEM_PAGES, maximum: isa.MEM_PAGES });
     // These MUST match makeVm's defaults exactly. They did not: the shipped
     // interpreter answers a 16-bit port read with 0xFFFF and this answered

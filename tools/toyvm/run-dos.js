@@ -161,7 +161,7 @@ async function runDos(o) {
     traceInt = false, traceFault = false, traceEntry = 0, traceV86 = false,
     noCache = false, smcFlush = false, wasmDecode = true, fuse = true,
     lazyFlags = true, fuseCond = true, deadFlags = true, crossFlags = true,
-    traceBlocks = true, spinLoops = true, traceDeadFlags = false,
+    traceBlocks = true, spinLoops = true, regSpec = false, traceDeadFlags = false,
     smcCensus = false, watch = [],
     stopText = null,
     traceIo = null,
@@ -230,6 +230,10 @@ async function runDos(o) {
     tempFiles = null,
   } = o;
   setCpuLevel(cpu);
+  // Before anything can finish the handler table, because the twins ARE table
+  // entries. Asking for them once the table is built is a caller ordering bug
+  // and throws rather than quietly running without them.
+  if (regSpec) require('./emit').enableRegSpec(true);
 
   const machine = new Machine(new Uint8Array(0), {
     log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound, svga,
@@ -337,6 +341,7 @@ async function runDos(o) {
 
   const session = new DosSession(vm, machine, {
     slice, noCache, smcFlush, wasmDecode, fuse, deadFlags, crossFlags, traceBlocks, spinLoops,
+    regSpec,
     traceDeadFlags: traceDeadFlags ? ((s) => log(s)) : null,
     mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
     stuckWork,
@@ -541,7 +546,7 @@ async function runDos(o) {
   const {
     dispatched, handbacks, ints, irqs, smcBreaks, traps, icebps, stuckAt, blockedOn32, badSelector,
     compiles, compiledWords, arenaResets, unimplemented, regions, jtab, smcSites, retiredPatches,
-    deadFlagsDropped, tracedBlocks, spinBlocks,
+    deadFlagsDropped, tracedBlocks, spinBlocks, specOps,
   } = session.stats();
 
   if (bestPng) keepBest();
@@ -559,7 +564,7 @@ async function runDos(o) {
     guestSecs: Number(guestNs) / 1e9,
     guestCpuSecs: guestCpuUs / 1e6,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets, deadFlagsDropped,
-    tracedBlocks, spinBlocks,
+    tracedBlocks, spinBlocks, specOps,
     smcBreaks, traps, icebps, smcSites, retiredPatches,
     stuckAt, blockedOn32, badSelector, ranOutOfTime,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
@@ -738,6 +743,12 @@ async function main() {
     // two arms retire the same steps and reach the same frame, and differ only
     // in the dispatch count it took to get there.
     spinLoops: !flag('no-spin'),
+    // Swap each register access on a runtime index for the twin that has the
+    // register as a literal. OPT-IN: the two arms dispatch the same handlers in
+    // the same order and differ only in whether the register file is reached
+    // through a br_table, and the difference measured as a null. See
+    // docs/toyvm-reg-specialization.md.
+    regSpec: flag('reg-spec'),
     // Every op that lost its flag write, with the whole block it was in. A
     // wrong answer is always a later op wrongly believed to overwrite the
     // flags, and the block is the only place that shows which one.
@@ -871,7 +882,10 @@ async function main() {
     // ...and how many one-branch loops back to their own head were collapsed
     // instead of run. These retire the same STEPS as before -- see
     // docs/toyvm-spin-loops.md -- so the count is the only thing that moves.
-    + `${r.spinBlocks ? `, ${r.spinBlocks} spin loops` : ''})`
+    + `${r.spinBlocks ? `, ${r.spinBlocks} spin loops` : ''}`
+    // ...and how many ops had their register index pinned to a literal. Also
+    // step-neutral: the same handler runs, reaching the same register.
+    + `${r.specOps ? `, ${r.specOps} regs pinned` : ''})`
     // A handful of these is a packed program unpacking itself and is expected.
     // Thousands, against a compile count that keeps climbing, is recompile
     // thrash: a program storing data into a paragraph a region happens to have

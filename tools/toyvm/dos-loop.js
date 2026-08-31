@@ -53,7 +53,7 @@ const { STUB_SEG, STUB_OFF, STUB_BYTE } = require('./dos');
 class CodeCache {
   constructor(vm, { noCache = false, smcFlush = false, watch = [],
                     wasmDecode = true, fuse = true, deadFlags = true, crossFlags = true,
-                    traceBlocks = true, spinLoops = true,
+                    traceBlocks = true, spinLoops = true, regSpec = false,
                     traceDeadFlags = null } = {}) {
     // Watchpoints, as [lo, hi] linear byte ranges. They ride the CODE_BITMAP
     // rather than adding a range test to $wr8, because $wr8 is on the hot path
@@ -104,6 +104,8 @@ class CodeCache {
     // differ only in how many dispatches it took.
     this.spinLoops = spinLoops;
     this.spinBlocks = 0;
+    this.regSpec = regSpec;
+    this.specOps = 0;
     this.traceDeadFlags = traceDeadFlags;
     this.deadFlagsDropped = 0;
     this.noCache = noCache;
@@ -308,11 +310,13 @@ class CodeCache {
       codeBase, mask, d32, benign: this.benign, wasmDecoder: this.wasmDecoder,
       fuse: this.fuse, deadFlags: this.deadFlags, crossFlags: this.crossFlags,
       traceBlocks: this.traceBlocks, spinLoops: this.spinLoops,
+      regSpec: this.regSpec,
       traceDeadFlags: this.traceDeadFlags,
     });
     this.deadFlagsDropped += prog.deadFlags || 0;
     this.tracedBlocks += prog.tracedBlocks || 0;
     this.spinBlocks += prog.spinBlocks || 0;
+    this.specOps += prog.specOps || 0;
     new Int32Array(vm.mem.buffer, prog.arenaBase, prog.words.length).set(prog.words);
     this.arenaNext += prog.words.length * 4;
     this.compiles++;
@@ -377,7 +381,7 @@ class DosSession {
     const {
       slice = 2e6, noCache = false, smcFlush = false, mouse = [0, 0],
       wasmDecode = true, fuse = true, deadFlags = true, crossFlags = true,
-      traceBlocks = true, spinLoops = true, traceDeadFlags = null,
+      traceBlocks = true, spinLoops = true, regSpec = false, traceDeadFlags = null,
       // One timer interrupt per this many dispatches. 100k is about 10ms of a
       // real 486, so it lands near the 18.2Hz the BIOS programs -- and a demo
       // that reprogrammed the PIT for music gets a slower clock than it asked
@@ -422,7 +426,7 @@ class DosSession {
     this.hooks = hooks;
     this.cache = new CodeCache(vm,
       { noCache, smcFlush, watch, wasmDecode, fuse, deadFlags, crossFlags,
-        traceBlocks, spinLoops, traceDeadFlags });
+        traceBlocks, spinLoops, regSpec, traceDeadFlags });
 
     this.dispatched = 0;
     this.handbacks = 0;
@@ -966,6 +970,7 @@ class DosSession {
       deadFlagsDropped: this.cache.deadFlagsDropped,
       tracedBlocks: this.cache.tracedBlocks,
       spinBlocks: this.cache.spinBlocks,
+      specOps: this.cache.specOps,
       arenaResets: this.cache.arenaResets, unimplemented: this.cache.unimplemented,
       regions: this.cache.regions, jtab: this.cache.jtab,
     };

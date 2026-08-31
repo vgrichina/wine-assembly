@@ -72,6 +72,7 @@ async function main() {
     nocrossflags: { crossFlags: false },
     notrace: { traceBlocks: false },
     nospin: { spinLoops: false },
+    regspec: { regSpec: true },
     nowasmdecode: { wasmDecode: false },
     nocache: { noCache: true },
   };
@@ -89,6 +90,13 @@ async function main() {
   };
   const variants = arg('variants', VARIANTS.join(',')).split(',').filter(Boolean);
   variants.forEach(armOpts);   // fail on a bad arm before any program runs
+  // The register twins are handler-table entries, so they have to be generated
+  // for the WHOLE process -- both arms share one module. Which is fine for an
+  // A/B: the arms then differ in whether the compiler USES them, which is the
+  // question, and neither arm is measuring a different module size.
+  if (variants.some(v => v.split('+').includes('regspec'))) {
+    require('./emit').enableRegSpec(true);
+  }
   const reps = Number(arg('reps', 5));
   const budget = count(arg('dispatches'), 20e6);
   const cpu = Number(arg('cpu', 386));

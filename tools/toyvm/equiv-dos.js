@@ -46,6 +46,7 @@ function normalize(out, allowArena) {
     l = l.replace(/, \d+ flagless ops of \d+/, '');
     l = l.replace(/, \d+ traced edges/, '');
     l = l.replace(/, \d+ spin loops/, '');
+    l = l.replace(/, \d+ regs pinned/, '');
     l = l.replace(/[\d.]+[KM]\/s in wasm \(\d+% of wall\)/, 'RATE');
     if (allowArena) {
       // A switch that changes how many words a block occupies moves the arena

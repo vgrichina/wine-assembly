@@ -17,7 +17,8 @@
 
 const isa = require('./isa');
 const { decodeOne, H } = require('./decode');
-const { ARITY, FUSE, TRACE, SPIN, NOFLAG, FLAG_EFFECTS, prepareTables } = require('./emit');
+const { ARITY, FUSE, TRACE, SPIN, SPEC, applyExtract, NOFLAG, FLAG_EFFECTS,
+  prepareTables } = require('./emit');
 
 function compileProgram(readByte, cs, entryIp, opts = {}) {
   // ARITY, NOFLAG and FLAG_EFFECTS are filled on first use rather than at
@@ -89,6 +90,13 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // instruction and the loop therefore does NOT run to the end of the slice.
   // `--no-spin` is the A/B partner.
   const spinLoops = opts.spinLoops !== false && !opts.oneInsn;
+  // Swap each register-file access on a runtime index for the twin that has
+  // the register as a literal. Safe under oneInsn too -- it changes no control
+  // flow and no step accounting. OFF unless the twins were generated: opting
+  // in is `--reg-spec`, and docs/toyvm-reg-specialization.md says why it is not
+  // the default. `SPEC` is empty when they were not, so this is also self-
+  // disabling rather than depending on the caller to agree with emit.js.
+  const regSpec = opts.regSpec === true && SPEC.size > 0;
   const traceDeadFlags = opts.traceDeadFlags || null;
 
   // Rewrite a finished block's last two ops into one, when a fused handler for
@@ -554,6 +562,32 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     }
   }
 
+  // Register specialization, LAST -- after fusion, tracing, spin collapse and
+  // the flag pass, because each of those swaps a handler and this pins the one
+  // that ends up there. Nothing looks a handler up after this point.
+  //
+  // The swap is the value the handler was going to compute anyway: read the
+  // arena word the register index comes out of, run the same extraction the
+  // body ran, and store the twin that has that register as a literal. Arity is
+  // unchanged and the operand stays in the arena (the twin still steps over
+  // it), so the arena, the dispatch sequence and $steps are all identical.
+  let specOps = 0;
+  if (regSpec) {
+    for (let b = 0; b < blockStarts.length; b++) {
+      const end = b + 1 < blockStarts.length ? blockStarts[b + 1] : words.length;
+      const at = opsOf(blockStarts[b], end);
+      if (!at) continue;                     // arity and arena disagree: touch nothing
+      for (const p of at) {
+        const s = SPEC.get(words[p]);
+        if (s === undefined) continue;
+        const reg = applyExtract(s, words[p + 1 + s.operand]);
+        if (reg < 0 || reg > 7) continue;    // not a register index after all
+        words[p] = s.twins[reg];
+        specOps++;
+      }
+    }
+  }
+
   // Hand the bitmap back the way it was found. Clearing the bits this compile
   // set, rather than the whole 8KB, because the next compile is usually a few
   // blocks and the wipe would dominate it.
@@ -575,6 +609,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     deadFlags: deadFlagCount,
     tracedBlocks,
     spinBlocks,
+    specOps,
     arenaBase,
     byteLength: words.length * 4,
   };

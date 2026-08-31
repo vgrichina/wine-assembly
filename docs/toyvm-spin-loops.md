@@ -172,3 +172,7 @@ by evidence rather than ambition:
 - **The port poll.** `in_8 -> cmp_ri8_jz` cannot be collapsed, but 2.15M crossings
   into JS for a retrace bit can be answered inside wasm. That is a host-interface
   change, not a compiler one.
+
+The next idea after this one — pinning the register a handler reaches, which
+the same twin-swap machinery makes almost free to express — was tried and did
+not pay. [toyvm-reg-specialization.md](toyvm-reg-specialization.md).

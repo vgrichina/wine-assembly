@@ -3281,6 +3281,220 @@ function genNoFlagVariants() {
   }
 }
 
+// --- Register specialization ------------------------------------------------
+//
+// A guest register lives in a wasm global, and a handler reaches one by calling
+// $rget16/$rset8/... with an index. When that index is a literal the engine
+// inlines the helper and folds its br_table to a single `global.get`. When it
+// comes out of the arena it cannot -- and it comes out of the arena for 36-72%
+// of the dispatches in the core-ten set (`tools/toyvm/reg-index-census.js`).
+//
+// The index is nonetheless a compile-time constant: it is a word the COMPILER
+// wrote. So the same trick the fused, traced and spin twins use works here --
+// keep eight twins of the handler, one per register, each with the index
+// replaced by a literal, and let the compiler store the right one.
+//
+// THE SAFETY ARGUMENT IS ONE SENTENCE. A twin is the original body with an
+// expression replaced by the value that expression was going to evaluate to.
+// It is not an optimization of the handler's semantics at all, so it cannot
+// change them -- and the compiler recomputes that value from the same arena
+// word the handler would have read. Same dispatches, same order, same $steps,
+// same arity, same arena. The corpus diff stays a strict check.
+//
+// The whole risk is therefore concentrated in one place: whether the JS that
+// recomputes the index agrees with the WAT that used to compute it. That is why
+// the index expression is not pattern-matched against a list of known shapes
+// but RESOLVED -- backwards through the local that holds it, to the operand
+// word it came from, through a four-operator subset (`and`/`or`/`shl`/`shr_u`
+// against a constant). Anything outside that subset declines the handler.
+//
+// `SPEC`: handler index -> { operand, ops, twins }. `operand` is the arena word
+// to read, `ops` the little program that turns it into a register number, and
+// `twins` the eight specialized handlers.
+// OFF BY DEFAULT, and the reason is measured rather than cautious: see
+// docs/toyvm-reg-specialization.md. The transformation is correct -- 199/199 of
+// the demo corpus is bit-identical with it on -- but it prices as a NULL, and
+// the 464 twins fill the handler table to 2045 of the 2048 the pair census
+// allows. Three free entries is not a state to leave a table in for a change
+// that buys nothing, so generation is gated too: with the flag off the table is
+// exactly what it was. `--reg-spec` turns both halves on.
+let REG_SPEC_ON = false;
+// Must be called before anything finishes the table. Flipping it afterwards
+// cannot work by appending -- genNoFlagVariants() and genRegSpec() would run a
+// second time and the table would hold two of everything -- so this refuses
+// rather than corrupting it quietly.
+function enableRegSpec(on) {
+  if (!!on === REG_SPEC_ON) return;
+  if (TABLES_READY) throw new Error('enableRegSpec() after the handler table was built');
+  REG_SPEC_ON = !!on;
+}
+const SPEC = new Map();
+const REG_ACCESSORS = ['rget32', 'rset32', 'rget16', 'rset16', 'rget8', 'rset8'];
+const SPEC_SET = require('./reg-spec-set');
+
+// The balanced s-expression starting at `i`, which must be at its `(`.
+function sexpAt(s, i) {
+  let d = 0;
+  for (let j = i; j < s.length; j++) {
+    if (s[j] === '(') d++;
+    else if (s[j] === ')') { d--; if (d === 0) return s.slice(i, j + 1); }
+  }
+  return null;
+}
+
+// Split an already-balanced `(op A B)` into [A, B]; null if it is not two
+// s-expression arguments.
+function twoArgs(expr) {
+  const head = /^\(i32\.\w+\s+/.exec(expr);
+  if (!head) return null;
+  const a = sexpAt(expr, head[0].length);
+  if (a === null) return null;
+  let k = head[0].length + a.length;
+  while (k < expr.length && /\s/.test(expr[k])) k++;
+  const b = sexpAt(expr, k);
+  if (b === null) return null;
+  return [a, b];
+}
+
+// Every point in a body where a $tN is given a value, in body order. Two kinds:
+// an operand load out of the arena (which is the base case the resolver wants
+// to reach) and any other expression (which it recurses into).
+//
+// A FUSED body is two bodies concatenated, so it has two operand preambles and
+// $t0 means a different arena word in each half. That is why definitions carry
+// a position and the resolver asks for the latest one BEFORE the use, rather
+// than building a map keyed on the local alone.
+function indexDefs(body) {
+  const defs = [];
+  let consumed = 0;
+  const re = /\(local\.set \$t(\d+) \(i32\.load offset=(\d+) \(global\.get \$ip\)\)\)|\(global\.set \$ip \(i32\.add \(global\.get \$ip\) \(i32\.const (\d+)\)\)\)|\(local\.set \$t(\d+) /g;
+  for (let m; (m = re.exec(body)) !== null;) {
+    if (m[1] !== undefined) {
+      defs.push({ pos: m.index, local: Number(m[1]), operand: consumed + Number(m[2]) / 4 });
+    } else if (m[3] !== undefined) {
+      consumed += Number(m[3]) / 4;
+    } else {
+      const val = sexpAt(body, m.index + m[0].length);
+      defs.push({ pos: m.index, local: Number(m[4]), expr: val });
+    }
+  }
+  return defs;
+}
+
+// An index expression -> { operand, ops } or null. `ops` is applied in order by
+// applyExtract below, and `null` means "this handler is not specializable",
+// never "assume identity".
+function resolveIndex(expr, pos, defs, depth = 0) {
+  if (depth > 8) return null;
+  expr = expr.trim();
+  let m = /^\(local\.get \$t(\d+)\)$/.exec(expr);
+  if (m) {
+    const local = Number(m[1]);
+    let best = null;
+    for (const d of defs) if (d.local === local && d.pos < pos && (!best || d.pos > best.pos)) best = d;
+    if (!best) return null;
+    if (best.operand !== undefined) return { operand: best.operand, ops: [] };
+    return resolveIndex(best.expr, best.pos, defs, depth + 1);
+  }
+  m = /^\(i32\.(and|or|shl|shr_u)\s/.exec(expr);
+  if (!m) return null;
+  const args = twoArgs(expr);
+  if (!args) return null;
+  const op = m[1];
+  const cst = a => { const c = /^\(i32\.const\s+(-?\w+)\)$/.exec(a.trim()); return c ? Number(c[1]) : null; };
+  // Only a constant on ONE side, and for the shifts it has to be the right
+  // side -- `(shl 7 x)` is not the same program as `(shl x 7)`.
+  let base = null, n = cst(args[1]);
+  if (n !== null) base = args[0];
+  else if ((op === 'and' || op === 'or') && cst(args[0]) !== null) { n = cst(args[0]); base = args[1]; }
+  if (base === null || n === null || !Number.isFinite(n)) return null;
+  const inner = resolveIndex(base, pos, defs, depth + 1);
+  if (!inner) return null;
+  return { operand: inner.operand, ops: [...inner.ops, { op, n }] };
+}
+
+function applyExtract(spec, word) {
+  let v = word | 0;
+  for (const o of spec.ops) {
+    if (o.op === 'and') v &= o.n;
+    else if (o.op === 'or') v |= o.n;
+    else if (o.op === 'shl') v <<= o.n;
+    else v >>>= o.n;
+  }
+  return v;
+}
+
+// Every register access in a body, as { start, end, arg }. `start`/`end` bound
+// the INDEX argument, which is what a twin replaces.
+function regIndexSites(body) {
+  const out = [];
+  for (const a of REG_ACCESSORS) {
+    const needle = `(call $${a} `;
+    for (let at = 0;;) {
+      const i = body.indexOf(needle, at);
+      if (i < 0) break;
+      at = i + needle.length;
+      let j = at;
+      while (j < body.length && body[j] !== '(') j++;
+      const arg = sexpAt(body, j);
+      if (arg === null) return null;
+      out.push({ start: j, end: j + arg.length, arg });
+    }
+  }
+  return out.sort((x, y) => x.start - y.start);
+}
+
+// Build the eight twins of one handler, or return null with the reason it
+// declined. Declining is always safe; getting it wrong is not, so every
+// unfamiliar shape declines.
+function specializeHandler(hx) {
+  const body = hx.body;
+  const sites = regIndexSites(body);
+  if (!sites) return { why: 'unbalanced body' };
+  const defs = indexDefs(body);
+  let spec = null;
+  const dyn = [];
+  for (const s of sites) {
+    if (/^\(i32\.const\s+\d+\)$/.test(s.arg.trim())) continue;   // already folded
+    const r = resolveIndex(s.arg, s.start, defs);
+    if (!r) return { why: `index ${s.arg.trim()} does not resolve` };
+    if (r.operand >= hx.args) return { why: 'index resolves outside the operands' };
+    const key = JSON.stringify(r);
+    if (spec === null) spec = { key, r };
+    else if (spec.key !== key) return { why: 'two different register indices' };
+    dyn.push(s);
+  }
+  if (!dyn.length) return { why: 'no dynamic register access' };
+  const twins = [];
+  for (let reg = 0; reg < 8; reg++) {
+    let out = body;
+    for (let k = dyn.length - 1; k >= 0; k--) {
+      out = out.slice(0, dyn[k].start) + `(i32.const ${reg})` + out.slice(dyn[k].end);
+    }
+    twins.push(h(`${hx.name}_x${reg}`, hx.args, out));
+  }
+  return { spec: { operand: spec.r.operand, ops: spec.r.ops, twins } };
+}
+
+function genRegSpec() {
+  if (!REG_SPEC_ON) return;
+  const byName = new Map(HANDLERS.map((x, i) => [x.name, i]));
+  for (const name of SPEC_SET) {
+    const i = byName.get(name);
+    if (i === undefined) {
+      throw new Error(`reg-spec-set.js names ${name}, which is not a handler; `
+        + 're-run tools/toyvm/reg-index-census.js against the current table');
+    }
+    const r = specializeHandler(HANDLERS[i]);
+    if (r.why) throw new Error(`cannot specialize ${name}: ${r.why}`);
+    SPEC.set(i, r.spec);
+    // The twins inherit the parent's flag behaviour -- they differ by a
+    // constant, not by a flag write -- and giving them an entry keeps the
+    // compiler's backward walk from bailing out if it ever sees one.
+    for (const t of r.spec.twins) FLAG_EFFECTS[t] = FLAG_EFFECTS[i];
+  }
+}
+
 // Operand words per handler index. Filled by prepareTables() rather than at
 // require time, because the variants are generated late (see below) and the
 // compiler holds this array by reference.
@@ -3295,6 +3509,9 @@ function prepareTables() {
   if (TABLES_READY) return;
   TABLES_READY = true;
   genNoFlagVariants();
+  // After the flagless twins, so a handler that got one is specialized in its
+  // flagless form too -- `dec_r16_nf` is in the set and `dec_r16` is not.
+  genRegSpec();
   // The dispatch census indexes both its tables by handler number, and a
   // handler past the end of them writes into whatever follows in linear
   // memory. See the comment on HIST_SLOTS: this went unnoticed for a whole
@@ -3325,6 +3542,8 @@ function buildHandlers(lazy, fuseCond) {
   const fuseBefore = [...FUSE.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
   const traceBefore = [...TRACE.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
   const spinBefore = [...SPIN.entries()].map(([k, v]) => `${k}:${v.twin}/${v.takenAt}`).sort().join(',');
+  const specBefore = [...SPEC.entries()]
+    .map(([k, v]) => `${k}:${v.operand}/${JSON.stringify(v.ops)}/${v.twins.join('.')}`).sort().join(',');
   LAZY = lazy;
   FUSE_COND = fuseCond;
   CONDS = makeConds(bit);
@@ -3333,6 +3552,7 @@ function buildHandlers(lazy, fuseCond) {
   TRACE.clear();
   SPIN.clear();
   NOFLAG.clear();
+  SPEC.clear();
   // genShifts()/genDoubleShifts() append to this rather than returning, so a
   // rebuild that does not clear it emits both arms' shift helpers -- same
   // function names twice, and the handler table's ARITY check cannot see it.
@@ -3355,6 +3575,9 @@ function buildHandlers(lazy, fuseCond) {
   if (traceAfter !== traceBefore) throw new Error('the flag scheme changed the trace table');
   const spinAfter = [...SPIN.entries()].map(([k, v]) => `${k}:${v.twin}/${v.takenAt}`).sort().join(',');
   if (spinAfter !== spinBefore) throw new Error('the flag scheme changed the spin table');
+  const specAfter = [...SPEC.entries()]
+    .map(([k, v]) => `${k}:${v.operand}/${JSON.stringify(v.ops)}/${v.twins.join('.')}`).sort().join(',');
+  if (specAfter !== specBefore) throw new Error('the flag scheme changed the register-spec table');
 }
 
 // The first six handlers were written by hand to prove the gate; genAlu()
@@ -5319,6 +5542,9 @@ module.exports = {
   // instead of running it. The compiler swaps it in when the taken edge goes
   // back to the branch's own block head.
   SPIN,
+  // A handler index -> the eight twins of it with the register index pinned to
+  // a literal, plus which arena word holds that index and how to read it out.
+  SPEC, applyExtract, enableRegSpec,
   // A handler index -> the same handler without its flag write, and what every
   // handler does to the flag state. The compiler walks a finished block
   // backwards with these and swaps in the variant where the write is dead.

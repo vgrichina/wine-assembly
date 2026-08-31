@@ -186,3 +186,12 @@ the top row stops being a fusion candidate and starts being a program waiting:
 one op branching to its own head, 4-58% of the dispatches in four of the core
 ten. Those are not fused, they are not run at all —
 [toyvm-spin-loops.md](toyvm-spin-loops.md).
+
+**The one that did not work is worth reading too.** A handler reaches a guest
+register through a `br_table` on an index the compiler itself wrote into the
+arena, for 36-72% of the dispatches in that same set, and eight twins per
+handler pin it to a literal. It is correct — 199/199 of the corpus is
+bit-identical with it on — and it makes the VM no faster, which is the whole of
+[toyvm-reg-specialization.md](toyvm-reg-specialization.md): a negative result,
+the four noisy measurements that had to be thrown away before it was legible,
+and why it ships off.
