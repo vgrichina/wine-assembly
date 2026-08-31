@@ -716,8 +716,8 @@ async function main() {
     coverage: Number(arg('coverage', 0)),
     cx: Number(arg('cx', 8)),
     passes: (() => {
-      const spec = arg('passes', 'constprop,regfold,deadflags').split(',').filter(Boolean);
-      const known = ['constprop', 'regfold', 'deadflags'];
+      const spec = arg('passes', 'constprop,regfold,deadflags,inline').split(',').filter(Boolean);
+      const known = ['constprop', 'regfold', 'deadflags', 'inline'];
       for (const p of spec) {
         if (!known.includes(p)) { console.error(`unknown pass ${p}; known: ${known.join(', ')}`); process.exit(2); }
       }
@@ -1144,6 +1144,47 @@ const SAFE_CALLS = [
   [/^sset$/, SEG_BASES],
 ];
 
+// The four counter helpers, written out as expressions over the same globals
+// they call. These are the bodies in emit.js verbatim, with the trailing
+// `(call $cx16)` of `$cxdec` expanded in place; a `(block (result i32) ...)`
+// gives the two-statement ones somewhere to put the store.
+//
+// WHY BOTHER, when a call to one of these is already on the allow-list: because
+// being on it costs CX. `$cxdec` and friends read and write `$cx` behind
+// promoteRegs' back, so the pass bans CX from promotion for the whole body --
+// and CX is the induction variable of every counted loop in the corpus, the one
+// register that is written every iteration. Inlining is not about the call
+// overhead; it is about turning `(global.get $cx)` into text the promotion pass
+// can see and rewrite into a local.
+//
+// Nothing else changes: the expansion sits exactly where the call sat, so the
+// evaluation order is the one the handler wrote, and every store still lands on
+// `$cx` unless promotion later rewrites all of them together.
+const CX16 = '(i32.and (global.get $cx) (i32.const 0xFFFF))';
+const COUNTER_INLINE = [
+  ['cx16', CX16],
+  ['ecx32', '(global.get $cx)'],
+  ['cxdec', `(block (result i32)
+    (global.set $cx (i32.or (i32.and (global.get $cx) (i32.const 0xFFFF0000))
+                            (i32.and (i32.sub (global.get $cx) (i32.const 1))
+                                     (i32.const 0xFFFF))))
+    ${CX16})`],
+  ['ecxdec', `(block (result i32)
+    (global.set $cx (i32.sub (global.get $cx) (i32.const 1)))
+    (global.get $cx))`],
+];
+
+function inlineCounters(body) {
+  let out = body, changed = 0;
+  for (const [name, text] of COUNTER_INLINE) {
+    const call = `(call $${name})`;
+    if (!out.includes(call)) continue;
+    changed += out.split(call).length - 1;
+    out = out.split(call).join(text);
+  }
+  return { out, changed };
+}
+
 function promoteRegs(bodies, regs) {
   const joined = bodies.join('\n');
   const banned = new Set();
@@ -1275,11 +1316,17 @@ function emitTier3(ops, passes) {
   // one, and $sset is not on the allow-list, so a body that could change a base
   // has already declined. Hoisting them is what makes a promoted address
   // computation entirely locals.
+  // Last, because it is only worth doing once everything above has folded: the
+  // counter helpers, inlined so CX can be promoted with the rest.
+  let inlined = 0;
+  bodies = passes.inline === false ? bodies : bodies.map((b) => {
+    const r = inlineCounters(b); inlined += r.changed; return r.out;
+  });
   const p = passes.promote === false
     ? { declined: 'promotion turned off' }
     : promoteRegs(bodies, isa.REG16.concat(isa.SEG.map(s => `${s}b`)));
   return {
-    ...t2, eaFolded, eaA32, eaDynamic, segFolded, segDynamic, arith, folded,
+    ...t2, eaFolded, eaA32, eaDynamic, segFolded, segDynamic, arith, folded, inlined,
     promoted: p.declined ? null : p.used,
     declined: p.declined || null,
     // The per-op bodies, still separated. A region compiler needs to interleave
@@ -1468,6 +1515,7 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
     + `${t3.arith} constant expressions evaluated, `
     + `${t3.segFolded} segment br_tables folded `
     + `(${t3.segDynamic} had a dynamic segment), `
+    + `${t3.inlined} counter helper call(s) inlined, `
     + (t3.promoted ? `${t3.promoted.length} values in locals: ${t3.promoted.join(' ')}`
       : `NO register promotion -- ${t3.declined}`));
 
@@ -1689,7 +1737,7 @@ module.exports = {
   jitTiers, benchTiers,
   findHotTrace, readTrace, foldOperands, emitTier1, emitTier2,
   foldRegisterFile, killDeadFlags, moduleWat, memHash, straightLineProgram,
-  emitTier3, foldEa, promoteRegs,
+  emitTier3, foldEa, promoteRegs, inlineCounters,
 };
 
 if (require.main === module) main().catch(e => { console.error(e.stack || String(e)); process.exit(1); });

@@ -1125,3 +1125,37 @@ A second divergent region turned up while sweeping for it: **CMA_SHRT**, whose
 region is 100% of samples and whose frame differs — the same family as ACCIDENT
 and RUNDEMO, and a better bisect target than either, since nothing else in that
 run is competing for time.
+
+## Inlining the counter helpers, so CX can be promoted
+
+`$cxdec`, `$cx16` and their 32-bit twins are on `promoteRegs`' allow-list, but
+being on it **costs CX**: they read and write `$cx` behind the pass's back, so a
+body containing one has CX banned from promotion entirely — and CX is the
+induction variable of every counted loop and every REP in the corpus, the one
+register written on every iteration.
+
+`inlineCounters` (tier 3, `--passes=…,inline`, on by default) expands the four
+helpers into the same expressions over the same globals, with a
+`(block (result i32) …)` holding the store for the two that have one. The point
+is not the call overhead — it is that `(global.get $cx)` in plain text is
+something the promotion pass can see and rewrite into a local.
+
+It does what it is for, and that part is deterministic: on ACME-SNS the region
+body goes from 38 `global.get $cx` to 15 and gains 29 `local.get $Lcx`, and the
+promoted set gains CX on every region that contains a counter call (rage,
+ACME-SNS, IHANMUU, ADDY_II, ACCIDENT). Two calls per iteration disappear from
+the SpiderMonkey Ion disassembly (61 → 59 calls in `$region_0`).
+
+**No speedup is measurable on this box.** The whole-run A/B on ADDY_II spans
+−0.0% to −5.7% *within* one arm at load 5–7, and the snapshot-bench ratio for
+the same region ranges 2.76–4.82x across three runs of the identical build. Both
+instruments are wider than any effect being looked for. The structural claim
+above is checkable and true; the timing question is open and needs a quiet
+machine.
+
+There is a reason to expect the effect to be small where it was measured, too:
+ADDY_II's region has **7 in-body exits** and ACME-SNS's has **18**, and every
+exit re-runs the epilogue that stores each promoted local back to its global.
+Promoting one more register adds a store per exit against the loads and stores
+it saves per use. The regions where this should pay are the ones with few exits
+and a hot counter — which is a selection criterion, not a pass.

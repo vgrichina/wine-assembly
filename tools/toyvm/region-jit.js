@@ -271,6 +271,22 @@ function fallThroughIp(op) {
 // Anything that can publish a new $gip, which after call inlining is more than
 // TAKEN_AT knows about: `ret` reads its target off the guest stack and so has no
 // operand tail at all, and `call_rel` has one in a different shape.
+// One reading of `--passes=`, shared by the region build and by the snapshot
+// bench behind `--agree` and the gate. They have to agree: a gate that judged a
+// differently-optimized body than the one about to be installed would be
+// answering a question nobody asked.
+function passSpec() {
+  const spec = arg('passes', 'constprop,regfold,ea,seg,inline').split(',').filter(Boolean);
+  const known = ['constprop', 'regfold', 'deadflags', 'ea', 'seg', 'inline'];
+  for (const p of spec) {
+    if (!known.includes(p)) {
+      console.error(`unknown pass ${p}; known: ${known.join(', ')}`);
+      process.exit(2);
+    }
+  }
+  return Object.fromEntries(known.map(k => [k, spec.includes(k)]));
+}
+
 function isTransfer(op) {
   return TAKEN_AT.has(op.fn) || /^(call_rel(32)?|ret(32)?)$/.test(op.name);
 }
@@ -387,12 +403,7 @@ function buildRegion(ops, nexts, headIp, name) {
   // `--passes=` is the other half of that bisector: `--passes=` alone builds the
   // region out of tier-1 bodies (operands folded, nothing else), so a region
   // that is right there and wrong with a pass on names the pass.
-  const spec = arg('passes', 'constprop,regfold,ea,seg').split(',').filter(Boolean);
-  const t3 = emitTier3(ops, {
-    constprop: spec.includes('constprop'), regfold: spec.includes('regfold'),
-    deadflags: spec.includes('deadflags'), promote: !flag('no-promote'),
-    ea: spec.includes('ea'), seg: spec.includes('seg'),
-  });
+  const t3 = emitTier3(ops, { ...passSpec(), promote: !flag('no-promote') });
   const parts = [];
   let pending = 0;            // ops retired since $steps was last charged
   let exits = 0;
@@ -528,6 +539,7 @@ function buildRegion(ops, nexts, headIp, name) {
     name, body, locals: t3.locals, exits,
     promoted: t3.promoted, declined: t3.promoted ? null : t3.declined,
     eaFolded: t3.eaFolded, segFolded: t3.segFolded, folded: t3.folded,
+    inlined: t3.inlined,
   };
 }
 
@@ -638,6 +650,7 @@ async function main() {
   if (region.declined && !region.body) { console.log(`declined: ${region.declined}`); process.exit(3); }
   console.log(`  ${region.exits} in-body exit(s), ${region.eaFolded} addresses folded, `
     + `${region.folded} register-file calls folded, `
+    + `${region.inlined} counter call(s) inlined, `
     + (region.promoted ? `${region.promoted.length} values in locals: ${region.promoted.join(' ')}`
       : `NO register promotion -- ${region.declined}`));
   if (flag('dump')) {
@@ -656,7 +669,7 @@ async function main() {
   // control flow this file supplies.
   if (flag('agree')) {
     await benchTiers(exe, snapshotFor(rr, pick), pick.ops,
-      { iters: Number(arg('agree-iters', 200)), reps: 1 });
+      { iters: Number(arg('agree-iters', 200)), reps: 1, passes: passSpec() });
     return;
   }
 
@@ -708,7 +721,7 @@ async function main() {
   const branchy = pick.ops.slice(0, -1).some(isTransfer);
   if (!flag('no-gate')) {
     const g = await benchTiers(exe, snapshotFor(rr, pick), pick.ops,
-      { iters: gateIters, reps: 2, log: () => {} });
+      { iters: gateIters, reps: 2, log: () => {}, passes: passSpec() });
     const ratio = g.agree ? g.speedup.t03 : 0;
     console.log(`  gate (${gateIters} snapshot iterations): ${g.agree
       ? `tier 3 is ${ratio.toFixed(2)}x of the interpreter`
