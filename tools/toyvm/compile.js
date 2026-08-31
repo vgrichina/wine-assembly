@@ -301,8 +301,24 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     // are laid out in decode order and a self-modifying program recycles the
     // whole region -- so an arena constant baked into it would point at
     // whatever this run happened to compile there.
-    if (opts.regionAt && opts.regionAt.has(blockIp)) {
-      words.push(opts.regionAt.get(blockIp));
+    // Keyed by `cs:ip`, not by ip. An offset is not an address: RUNDEMO.EXE has
+    // a block at 0xbb in more than one code segment, and installing a region on
+    // the bare offset put a loop from one segment in front of unrelated code in
+    // another. The machine stopped at cs 0 having taken 1.93M handbacks -- so it
+    // does not fail quietly, but it fails a long way from the cause.
+    // The segment half of the key is the block cache's own program key --
+    // linear code base, plus a `d` for a 32-bit descriptor -- and not `cs`.
+    // Two selectors can name one base, one base can be reached through both a
+    // 16-bit and a 32-bit descriptor, and the caller identifies the region by
+    // whatever key it read out of the cache. Keying on `cs` here looked right
+    // and matched nothing: the region silently never ran, and the only symptom
+    // was a run that was neither faster nor different.
+    const regionKey = `${d32 ? `${codeBase}d` : codeBase}:${blockIp}`;
+    if (opts.regionAt && opts.regionAt.has(regionKey)) {
+      // The map holds an ORDINAL (which region), not a table index: only the
+      // built module knows where its regions landed, and it says so through
+      // `regionBase`.
+      words.push((opts.regionBase || 0) + opts.regionAt.get(regionKey));
       // ...but the successors still have to be compiled. The decoder finds the
       // rest of a program by walking out of each block it decodes, and a region
       // replaces that walk with one word, so nothing downstream of the region
@@ -311,7 +327,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       // it saves dispatches (DRAGON.EXE: 1493 handbacks against the
       // interpreter's 301). The region knows its own exit addresses, so it
       // supplies them.
-      for (const ip of (opts.regionSucc && opts.regionSucc.get(blockIp)) || []) pending.push(ip);
+      for (const ip of (opts.regionSucc && opts.regionSucc.get(regionKey)) || []) pending.push(ip);
       continue;
     }
 

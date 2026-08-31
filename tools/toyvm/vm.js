@@ -51,6 +51,15 @@ async function makeVm(variant, opts = {}) {
   const { wat, bytes } = await buildModule(variant,
     { hist: !!opts.hist, lazyFlags: opts.lazyFlags !== false, fuseCond: opts.fuseCond !== false,
       regions: opts.regions || null });
+  // WHERE THE REGIONS LANDED IN THE TABLE. Regions are appended after the
+  // ordinary handlers, so their index is HANDLERS.length + n -- but only as
+  // measured against the table THIS module was built with. HANDLERS is rebuilt
+  // by prepareTables() and its length depends on the build options, so a caller
+  // that read it before the build can be one out: the instrumented build has a
+  // different count, and installing a region at a stale index puts an ordinary
+  // handler where the loop should be. Measured as a region that silently never
+  // ran while the run around it looked healthy.
+  const regionBase = require('./emit').HANDLERS.length;
   const module = await WebAssembly.compile(bytes);
   const memory = new WebAssembly.Memory({ initial: isa.MEM_PAGES, maximum: isa.MEM_PAGES });
   // Ports are a host concern: the VM has no peripherals, and the few a demo
@@ -93,7 +102,7 @@ async function makeVm(variant, opts = {}) {
   const raw = (r) => ex[`get_${r}`]();
 
   return {
-    variant, wat, bytes, exports: ex, mem,
+    variant, wat, bytes, exports: ex, mem, regionBase,
     get, set, raw,
     getAll() {
       const o = {};

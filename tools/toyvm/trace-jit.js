@@ -1131,7 +1131,9 @@ const SAFE_CALLS = [
   // $fa/$fb/$fu/$fw/$fr/$fcf/$fop, which are not general registers.
   [/^(flags_\w+|rec_\w+|get_\w+|cond\w*)$/, []],
   [/^(sh_\w+|off_add|pow2)$/, []],                   // pure arithmetic kernels
-  [/^(slice_exit|jlook)$/, []],                      // ip/halt only
+  // ip/halt only. rpush/rpop are the shadow return stack, which is a cache over
+  // guest ip -> arena address and holds no guest register.
+  [/^(slice_exit|jlook|rpush|rpop)$/, []],
   [/^(port_in|port_out)$/, []],                      // leave to the host, take no register
   // The stack helpers move SP themselves and address through SS. Neither may
   // be promoted while one of these is in the body; everything else still can.
@@ -1269,7 +1271,9 @@ function emitTier3(ops, passes) {
   // one, and $sset is not on the allow-list, so a body that could change a base
   // has already declined. Hoisting them is what makes a promoted address
   // computation entirely locals.
-  const p = promoteRegs(bodies, isa.REG16.concat(isa.SEG.map(s => `${s}b`)));
+  const p = passes.promote === false
+    ? { declined: 'promotion turned off' }
+    : promoteRegs(bodies, isa.REG16.concat(isa.SEG.map(s => `${s}b`)));
   return {
     ...t2, eaFolded, eaA32, eaDynamic, segFolded, segDynamic, arith, folded,
     promoted: p.declined ? null : p.used,

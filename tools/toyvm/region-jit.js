@@ -105,31 +105,77 @@ function count(s, d) {
 // records, per op, the guest ip control must be at for the region to keep
 // going. Whether that ip is the branch's taken edge or its fall-through does
 // not matter here and is not asked -- anything else exits.
-function chainFrom(head, headByAddr, traceAt, maxOps, why) {
+function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3) {
   const ops = [], nexts = [], spans = [];
   const seen = new Set();
+  // The inlined call frames still open, innermost last. Only the return ADDRESS
+  // is tracked -- the guest's own frame is built and torn down by the ops.
+  const retStack = [];
   let cur = head;
   for (;;) {
-    if (seen.has(cur)) { why(`0x${head.toString(16)}: walk revisited 0x${cur.toString(16)}`); return null; }
-    seen.add(cur);
+    // A block may legitimately appear twice once calls are inlined (one helper
+    // called from two places in the loop), so the revisit test is on the block
+    // AND the call depth, not the block alone.
+    const key = `${cur}@${retStack.length}`;
+    if (seen.has(key)) { why(`0x${head.toString(16)}: walk revisited 0x${cur.toString(16)}`); return null; }
+    seen.add(key);
     const blk = headByAddr.get(cur);
     if (!blk) { why(`0x${head.toString(16)}: 0x${cur.toString(16)} is not a block head`); return null; }
     const t = traceAt(blk);
-    // `call`/`int`/`ret` are the next stage's problem, not this one's. A region
-    // that exited on every call would be worth nothing, and inlining them needs
-    // the store analysis (docs/toyvm-trace-jit.md, "Can the guard be proved
-    // dead").
-    const bad = t.ops.find(o => /^(call|int|into|ret)/.test(o.name));
+    // `int` still ends the walk: it hands the machine to the host by design and
+    // there is nothing to inline. `call` and `ret` do not, any more -- see
+    // below.
+    const bad = t.ops.find(o => /^(int|into)/.test(o.name));
     if (bad) { why(`0x${head.toString(16)}: 0x${cur.toString(16)} contains ${bad.name}`); return null; }
-    if (t.end !== 'jmp') { why(`0x${head.toString(16)}: 0x${cur.toString(16)} ends ${t.end}, not jmp`); return null; }
     for (const op of t.ops) { ops.push(op); nexts.push(fallThroughIp(op)); }
     spans.push([cur, cur + ((t.nextWord - ((cur - blk.prog.arenaBase) >> 2)) << 2)]);
     const last = t.ops[t.ops.length - 1];
+
+    // A DIRECT CALL IS AN EDGE LIKE ANY OTHER, and inlining it is the whole
+    // reason to bother: the exit census found that call-free hot regions cover
+    // 64-100% of their program while the call-bearing ones are where the rest of
+    // the corpus lives, and a region's whole-program win is capped by its share
+    // (Amdahl). CYCLE's region body is 1.63x on its own and buys 0% end to end
+    // at a 17.6% share; nothing about the body will fix that, only covering more
+    // of the program will.
+    //
+    // Nothing about the call is elided. `call_rel` still pushes the return
+    // address and still records it on the shadow stack, and the matching `ret`
+    // still pops both -- so the guest stack is byte-identical to the
+    // interpreter's at every point, and a callee that reads its own return
+    // address, or rearranges the stack, or never returns, is not a special
+    // case. What inlining removes is the two block transfers, not the frame.
+    // Operands are [arenaTarget][guestTarget][retIp][arenaRet].
+    if (/^call_rel(32)?$/.test(last.name)) {
+      if (retStack.length >= maxDepth) { why(`0x${head.toString(16)}: calls nested deeper than ${maxDepth}`); return null; }
+      retStack.push({ ip: last.args[2], arena: last.args[3] });
+      nexts[nexts.length - 1] = last.args[1];
+      cur = last.args[0];
+      if (!headByAddr.has(cur)) { why(`0x${head.toString(16)}: callee 0x${(cur >>> 0).toString(16)} is not a block head`); return null; }
+      if (ops.length > maxOps) { why(`0x${head.toString(16)}: over ${maxOps} ops without closing`); return null; }
+      continue;
+    }
+    // ...and the matching return is the same edge run backwards. `ret` reads
+    // its target off the guest stack, so unlike a branch it has no operand to
+    // read it from -- the walk supplies it, and the exit test that follows is
+    // exactly the guard that makes that safe: a callee that returned somewhere
+    // else leaves the region instead of being believed.
+    if (/^ret(32)?$/.test(last.name)) {
+      const frame = retStack.pop();
+      if (!frame) { why(`0x${head.toString(16)}: ${last.name} with no inlined call to return to`); return null; }
+      nexts[nexts.length - 1] = frame.ip;
+      cur = frame.arena;
+      if (cur === head) return { ops, nexts, spans, headIp: frame.ip };
+      if (!headByAddr.has(cur)) { why(`0x${head.toString(16)}: return to 0x${(cur >>> 0).toString(16)} is not a block head`); return null; }
+      if (ops.length > maxOps) { why(`0x${head.toString(16)}: over ${maxOps} ops without closing`); return null; }
+      continue;
+    }
+    if (t.end !== 'jmp') { why(`0x${head.toString(16)}: 0x${cur.toString(16)} ends ${t.end}, not jmp`); return null; }
     const at = TAKEN_AT.get(last.fn);
     if (at === undefined) { why(`0x${head.toString(16)}: terminator ${last.name} has no edge tail`); return null; }
     // The terminator's arena target sits one slot in front of its guest ip.
     const tgt = last.args[at - 1];
-    if (tgt === head) return { ops, nexts, spans, headIp: last.args[at] };
+    if (tgt === head && !retStack.length) return { ops, nexts, spans, headIp: last.args[at] };
     if (ops.length > maxOps) { why(`0x${head.toString(16)}: over ${maxOps} ops without closing`); return null; }
     if (!headByAddr.has(tgt)) {
       why(`0x${head.toString(16)}: ${last.name} leaves to 0x${(tgt >>> 0).toString(16)}, not a block head`);
@@ -148,8 +194,10 @@ function pickRegion(rr, ranked, minOps, maxOps = 400) {
   // a two-op tail whose `jmp` goes BACK to the real head, twenty ops earlier.
   // So follow the back edge to the head and judge the loop there.
   const headByAddr = new Map();
-  for (const [, progs] of rr.regions) {
-    for (const p of progs) for (const [, addr] of p.blocks) headByAddr.set(addr, { addr, prog: p });
+  // The key of `regions` is the code segment, and it has to be carried: a
+  // region is installed at cs:ip, never at a bare offset.
+  for (const [cs, progs] of rr.regions) {
+    for (const p of progs) for (const [, addr] of p.blocks) headByAddr.set(addr, { addr, prog: p, cs });
   }
   const traceAt = (blk) => readTrace(blk.prog.words, (blk.addr - blk.prog.arenaBase) >> 2);
   // Every candidate head that was rejected, and by which rule. `--why` prints
@@ -183,7 +231,7 @@ function pickRegion(rr, ranked, minOps, maxOps = 400) {
       // blocks, not just the ones that landed on the head word.
       const samples = ranked.filter(x => chain.spans.some(([a, e]) => x.addr >= a && x.addr < e))
         .reduce((n, x) => n + x.samples, 0);
-      return { block: blk, ops: chain.ops, nexts: chain.nexts,
+      return { block: blk, cs: blk.cs, ops: chain.ops, nexts: chain.nexts,
         blocks: chain.spans.length, headIp: chain.headIp, samples };
     }
   }
@@ -207,9 +255,18 @@ function fallThroughIp(op) {
 
 // Both guest edges of every branch in the region: the taken ip and, when the
 // operand tail carries one, the fall-through ip.
+// Anything that can publish a new $gip, which after call inlining is more than
+// TAKEN_AT knows about: `ret` reads its target off the guest stack and so has no
+// operand tail at all, and `call_rel` has one in a different shape.
+function isTransfer(op) {
+  return TAKEN_AT.has(op.fn) || /^(call_rel(32)?|ret(32)?)$/.test(op.name);
+}
+
 function successorIps(ops) {
   const out = new Set();
   for (const op of ops) {
+    // A call names both its callee and its return point.
+    if (/^call_rel(32)?$/.test(op.name)) { out.add(op.args[1]); out.add(op.args[2]); continue; }
     const at = TAKEN_AT.get(op.fn);
     if (at === undefined) continue;
     out.add(op.args[at]);
@@ -223,7 +280,11 @@ function buildRegion(ops, nexts, headIp, name) {
   prepareTables();
   // deadflags off: see the header. constprop and regfold are safe -- neither
   // reasons about what happens after the trace.
-  const t3 = emitTier3(ops, { constprop: true, regfold: true, deadflags: false });
+  // `--no-promote` keeps the registers in globals. It is a bisector, not a
+  // tuning knob: it separates "the region's control flow is wrong" from "a
+  // promoted register was read stale", which look identical from the outside.
+  const t3 = emitTier3(ops, { constprop: true, regfold: true, deadflags: false,
+    promote: !flag('no-promote') });
   const parts = [];
   let pending = 0;            // ops retired since $steps was last charged
   let exits = 0;
@@ -242,7 +303,7 @@ function buildRegion(ops, nexts, headIp, name) {
   for (const [i, op] of ops.entries()) {
     pending++;
     const isLast = i === ops.length - 1;
-    const branch = TAKEN_AT.has(op.fn);
+    const branch = isTransfer(op);
     // $steps is only ever READ by a branch handler (it is what makes a slice
     // end), so charging it just before one is exact rather than approximate:
     // the guest sees the same budget at the same instruction as it would have
@@ -376,14 +437,45 @@ async function main() {
 
   const install = {
     jitRegions: [region],
-    // The index is the position after the last ordinary handler.
-    regionAt: new Map([[pick.headIp, HANDLERS.length]]),
+    // WHICH region, not where it sits in the table: only the built module knows
+    // that, and it reports it as `vm.regionBase`.
+    regionAt: new Map([[`${pick.cs}:${pick.headIp}`, 0]]),
     // Every guest ip a branch in the region names, so the decoder still walks
     // out of a block whose body it never decodes. Over-approximating is free:
     // an address that turns out to be unreachable just gets compiled and never
     // entered, which is what a decoder that guesses a fall-through already does.
-    regionSucc: new Map([[pick.headIp, successorIps(pick.ops)]]),
+    regionSucc: new Map([[`${pick.cs}:${pick.headIp}`, successorIps(pick.ops)]]),
   };
+
+  // HOW MANY TIMES DOES ONE ENTRY GO ROUND? This is the number that decides
+  // whether a region is worth installing at all, and nothing else reported here
+  // can stand in for it. A region pays its prologue and epilogue -- the register
+  // spills -- plus a block-cache resolve on the way out, ONCE PER ENTRY, and
+  // saves a dispatch per op ONCE PER ITERATION. A loop with a trip count of
+  // three cannot win however good its body is.
+  //
+  // The handler histogram counts dispatches per handler and a region IS a
+  // handler, so its slot is the entry count exactly. Iterations are estimated
+  // from the region's sample share, so read the trip count as an order of
+  // magnitude, not a measurement. It runs on an instrumented build, which is
+  // why it is a separate run and never one of the timed ones.
+  if (flag('trips')) {
+    const h = await once(exe, o, { ...install, hist: 1 });
+    const u32 = new Uint32Array(h.r.vm.mem.buffer);
+    const entries = u32[(isa.HIST_BASE >> 2) + h.r.vm.regionBase];
+    if (flag('why')) {
+      let best = 0, at = -1, sum = 0;
+      for (let i = 0; i < isa.HIST_SLOTS; i++) {
+        const n = u32[(isa.HIST_BASE >> 2) + i];
+        sum += n;
+        if (n > best) { best = n; at = i; }
+      }
+      console.log(`  hist: ${sum} counted, busiest slot ${at} x${best}`);
+    }
+    const iters = (share / 100) * h.dispatched / pick.ops.length;
+    console.log(`  ${entries} region entries, ~${(iters / Math.max(1, entries)).toFixed(1)}`
+      + ` iterations per entry (estimated from the ${share.toFixed(1)}% share)`);
+  }
 
   // Interleaved, order rotated, minima -- the method every timing tool in this
   // directory uses, for the reason docs/loop-microbench-harness.md gives.

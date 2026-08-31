@@ -321,6 +321,7 @@ class CodeCache {
       traceDeadFlags: this.traceDeadFlags,
       regionAt: this.regionAt,
       regionSucc: this.regionSucc,
+      regionBase: vm.regionBase,
     });
     this.deadFlagsDropped += prog.deadFlags || 0;
     this.tracedBlocks += prog.tracedBlocks || 0;
