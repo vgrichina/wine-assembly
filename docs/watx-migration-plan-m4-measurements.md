@@ -163,6 +163,16 @@ the vendored compiler, not to this plumbing.
   Wine memory is allocated** (§3, the 45 MB → 22 MB agent reading after
   termination). The Safari/iOS half of the gate is not.
 
+  **Update 2026-08-31 — desktop Safari is now green.** Real Safari 26.4
+  (WebKit 605.1.15) compiled the same closure in a real browser `Worker`, both
+  modes, and the artifacts both validate *and* instantiate: 983,990 B tail
+  (566 ms) and 984,439 B compat (540 ms), zero warnings, byte counts identical
+  to node's in the same worktree. Details, plus why `jsc` is not admissible
+  evidence about Safari and why `safaridriver` was not used, are in
+  `docs/watx-migration-plan.md` §"Milestone 4". Safari still exposes no memory
+  API, so this is a pass/fail, exactly as predicted above, and the **iOS device**
+  half remains unmeasured.
+
 ## 6. Reproducing
 
 ```bash

@@ -422,6 +422,13 @@ belong to this shared worktree's uncommitted `src/*.wat` edits (the peer-owned
 are red at clean HEAD too: `test-win16-dialog`, `test-notepad-typing-latency`,
 `test-web-hearts-lan`, `test-win16-hearts-menus`, `test-win16-hearts-vlan`.
 
+> **CORRECTION 2026-08-31** — the two sentences above are wrong and the next
+> status block replaces them. That clean worktree had only the **45 tracked**
+> files of `test/binaries`; the corpus is otherwise untracked, so 40 of its 45
+> "passes" were `SKIP … not found` lines exiting 0. A `SKIP` is exit 0 and is
+> indistinguishable from a pass to any exit-code sweep. **Provision a worktree's
+> `test/binaries` before reading a single number out of it.**
+
 Honest coverage note: `checkTestIsPinnable` in `tools/watx-matrix.js` still
 requires a literal `--no-build`, but since `4aeb0970` `run.js` derives
 `NO_BUILD` from `$WINE_ASSEMBLY_WASM` itself, so the 177 tests it rejects for
@@ -454,6 +461,40 @@ clean, but a run in which 45 of 129 tests are red for tree-state reasons is
 not the "full behavior matrix is green" the gate asks for. Repeat this sweep
 once the uncommitted `src/*.wat` work is committed and the five HEAD-red tests
 are resolved or explicitly allow-listed.
+
+Status 2026-08-31, the 45 re-run in a **provisioned** clean worktree. Detached
+at `0d718678`, `node_modules` symlinked, and every untracked file of the main
+checkout's `test/binaries` recursively symlinked in (10,295 links) plus the
+root `binaries` alias and the one ignored `dist/` fixture — verified by
+`test-notepad-menu` passing 12/12 there and by **zero `SKIP` lines in all 45
+logs**, against 40 of 45 in the earlier unprovisioned attempt. Four artifacts
+built there with `node tools/watx-matrix.js --only=abi`: **MATRIX GREEN**,
+legacy tail `6f39a983` 983,981 B / WATX tail `1fbf3231` 983,990 B, compat
+`387c3ccf` / `b21ca713`, 2 of 8,141 diagnostic body diffs (the `$next` type
+renumber and the then-open positional-else site later closed by `957208b1`).
+
+| | pass both | fail both | asymmetric |
+|---|---|---|---|
+| 45 previously-failing e2e tests, legacy vs WATX | 0 | **45** | **0** |
+
+Symmetry was checked three ways, not one: identical exit code (42 × `1`, 3 ×
+SIGKILL-at-240s — `test-vlan-match`, `test-vlan-tetrinet`,
+`test-win16-hearts-vlan` on both columns), identical `FAIL`-line count per
+test, and an identical first `AssertionError` message per test. **0 of 45
+differ on any of the three.** So the differential answer is unchanged and
+stronger than before: WATX introduces no behavioral difference on the hardest
+45 tests in the pool.
+
+What *did* change is the baseline reading. All 45 are red at clean HEAD with
+the corpus present — not five. They are ordinary HEAD reds (`test-mspaint-
+statusbar` wants `pos=0,327 size=263x23` and HEAD renders `pos=0,331
+size=267x23`; `test-mspaint-tools` is 20/21 on one text-tool probe;
+`test-win16-dialog` passes ten checks then trips "the dialog is gone from the
+table"), i.e. app-behavior work belonging to whoever owns those areas, and
+nothing to do with either compiler. The behavior-matrix checklist row therefore
+**stays unticked**, now for an honest reason: the differential is clean
+(83 pass-both + 45 fail-both + 0 asymmetric across the whole 129), but 45 red
+tests are not a green matrix, and they are a Wine-side backlog, not a WATX one.
 
 Performance checks come after behavioral equality. On a quiet machine, compare
 fixed-duration guest progress and retired operations, not batches per second.
@@ -494,6 +535,52 @@ Requirements:
 - Do not accept "works on desktop Chrome" as proof that the old sub-100-MB
   mobile target is unnecessary. If Safari cannot complete reliably, further
   reduce WATX peak memory before cutover.
+
+Status 2026-08-31, the **Safari** half (the Chromium half is
+[`docs/watx-migration-plan-m4-measurements.md`](watx-migration-plan-m4-measurements.md)
+§1 and §3). Real Safari 26.4 (WebKit 605.1.15) on this box compiled the whole
+HEAD closure from source, in `lib/watx-compile-worker.js` running as a real
+browser `Worker`, in **both dispatch modes**, from a clean detached worktree
+served over loopback:
+
+| mode | bytes | `WebAssembly.validate` | `new WebAssembly.Module` | compile | warnings |
+|---|---|---|---|---|---|
+| tail-call | 983,990 | ✅ | ✅ accepted | 566 ms | 0 |
+| compatibility | 984,439 | ✅ | ✅ accepted | 540 ms | 0 |
+
+Both byte counts are exactly what node built in the same worktree, so Safari is
+running the same build and not a different one. 60 includes, 11.29 MB, fetched
+in 149 ms. Compile time matches Chrome's (554/481 ms) and is ~3× faster than
+node's ~1470 ms — the same unexplained-but-favourable direction already noted
+for Chrome. **Validating is not the gate; instantiating is** — this probe also
+hands each artifact to `new WebAssembly.Module`, because that is where an
+engine that merely *parses* a feature would refuse it.
+
+Two things worth keeping:
+
+- **JavaScriptCore ships tail calls; its `jsc` shell does not enable them.**
+  Running the same closure under
+  `/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc`
+  — the engine inside Safari 26.4 — the tail artifact validates false and
+  `new WebAssembly.Module` says *"wasm tail calls are not enabled, in function
+  at index 130"*, while Safari itself accepts it. The shell has no
+  `--useWasmTailCalls` option to turn it back on. So the shell is a fine
+  smoke-test for *compiling* the closure (it did, 577/483 ms, 223 MB max RSS)
+  and is **not** admissible evidence about what Safari supports.
+- **`safaridriver` is installed and answers `/status` `ready:true`, yet refuses
+  to create a session** — *"You must enable 'Allow remote automation' in the
+  Developer section of Safari Settings"*. Nothing here was enabled to work
+  around it; the result above was taken without WebDriver, by serving the page
+  and `open -a Safari <url>` with the page POSTing its own result back (the
+  same talk-back shape `tools/ios-selftest-server.js` uses for the phone). If a
+  scripted Safari run is ever wanted, the one-time manual step is
+  `safaridriver --enable` (asks for an admin password) plus Safari → Settings →
+  Advanced → *Show features for web developers*, then Develop → *Allow Remote
+  Automation*.
+
+Still open and untouched by this: **real iOS Safari on a device**, which is the
+memory row, not this one, and which measurements §5 explains cannot be read
+from this box at all.
 
 Exit gate: artifact-first launch and forced source compilation both pass in the
 supported browsers; compiler memory is released before Wine memory allocation.
@@ -659,7 +746,11 @@ Conversions happen in place in the single source tree — no `.watx` twin files.
       data all match both modes; 6 diagnostic body diffs remain, all Wine-source
       bare-tail-in-else-less-`if` defects the legacy compiler drops)
 - [ ] Full behavior matrix is green for both WATX artifacts.
-- [ ] Chromium and Safari forced-source builds are green.
+- [x] Chromium and Safari forced-source builds are green. (headless Chrome 151
+      in `docs/watx-migration-plan-m4-measurements.md` §1/§3; real Safari 26.4
+      2026-08-31, both modes, in a browser Worker, validated *and* instantiated,
+      byte-identical to the same worktree's node build — see the Milestone 4
+      status block. Real iOS on a device is the memory row below, not this one.)
 - [ ] WATX memory high-water mark is acceptable on the target mobile device.
 - [ ] Canonical build and deployment use WATX artifacts.
 - [ ] Legacy rollback has been exercised.
