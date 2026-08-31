@@ -2,6 +2,8 @@
   ;; C RUNTIME / STRING FUNCTION HANDLERS
   ;; ============================================================
 
+  (global $msvcrt_errno_ptr (mut i32) (i32.const 0))
+
   ;; _mbschr(str, ch) — cdecl, find first occurrence of byte in MBCS string
   (func $handle__mbschr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $ch i32) (local $cur i32)
@@ -529,6 +531,260 @@
       (else (global.set $eax (i32.const -1))))
     (call $heap_free (local.get $scratch))
     ;; cdecl: the caller removes all four arguments.
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; Minimal MSVCRT FILE* stream support. We use the VFS handle itself as the
+  ;; stream pointer, which is sufficient for old games that only log and load
+  ;; byte streams through their matching CRT imports.
+  (func $handle_fopen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $mode i32) (local $access i32) (local $creation i32) (local $handle i32)
+    (local.set $mode (if (result i32) (local.get $arg1)
+      (then (call $gl8 (local.get $arg1))) (else (i32.const 0))))
+    (local.set $access (i32.const 0xC0000000)) ;; GENERIC_READ | GENERIC_WRITE
+    (local.set $creation (i32.const 3))        ;; OPEN_EXISTING
+    (if (i32.eq (local.get $mode) (i32.const 0x77)) ;; w
+      (then (local.set $creation (i32.const 2))))   ;; CREATE_ALWAYS
+    (if (i32.eq (local.get $mode) (i32.const 0x61)) ;; a
+      (then (local.set $creation (i32.const 4))))   ;; OPEN_ALWAYS
+    (local.set $handle (call $host_fs_create_file
+      (call $g2w (local.get $arg0))
+      (local.get $access)
+      (local.get $creation)
+      (i32.const 0x80)
+      (i32.const 0)))
+    (if (i32.eq (local.get $handle) (i32.const -1))
+      (then (local.set $handle (i32.const 0)))
+      (else
+        (if (i32.eq (local.get $mode) (i32.const 0x61))
+          (then (drop (call $host_fs_set_file_pointer
+            (local.get $handle) (i32.const 0) (i32.const 2)))))))
+    (global.set $eax (local.get $handle))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $crt_stream_write (param $stream i32) (param $buf i32) (param $len i32) (result i32)
+    (local $bytes_ga i32) (local $bytes_wa i32)
+    (local.set $bytes_ga (i32.sub (global.get $esp) (i32.const 4)))
+    (local.set $bytes_wa (call $g2w (local.get $bytes_ga)))
+    (i32.store (local.get $bytes_wa) (i32.const 0))
+    (if (i32.or (i32.eqz (local.get $stream)) (i32.eqz (local.get $buf)))
+      (then (return (i32.const -1))))
+    (if (call $host_fs_write_file
+          (local.get $stream) (local.get $buf) (local.get $len)
+          (local.get $bytes_ga))
+      (then (return (i32.load (local.get $bytes_wa)))))
+    (i32.const -1)
+  )
+
+  (func $handle_fclose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (if (result i32) (call $host_fs_close_handle (local.get $arg0))
+        (then (i32.const 0))
+        (else (i32.const -1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_fflush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0)
+      (then
+        (global.set $eax
+          (select
+            (i32.const 0)
+            (i32.const -1)
+            (i32.ne
+              (call $host_fs_set_file_pointer
+                (local.get $arg0) (i32.const 0) (i32.const 1))
+              (i32.const -1)))))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_fputs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $len i32) (local $written i32)
+    (local.set $len (if (result i32) (local.get $arg0)
+      (then (call $guest_strlen (local.get $arg0))) (else (i32.const 0))))
+    (local.set $written (call $crt_stream_write
+      (local.get $arg1) (local.get $arg0) (local.get $len)))
+    (global.set $eax
+      (select (i32.const 0) (i32.const -1) (i32.ge_s (local.get $written) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_fwrite (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $total i32) (local $written i32)
+    (if (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $total (i32.mul (local.get $arg1) (local.get $arg2)))
+    (local.set $written (call $crt_stream_write
+      (local.get $arg3) (local.get $arg0) (local.get $total)))
+    (global.set $eax
+      (if (result i32) (i32.lt_s (local.get $written) (i32.const 0))
+        (then (i32.const 0))
+        (else (i32.div_u (local.get $written) (local.get $arg1)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_fprintf (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $scratch i32) (local $written i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $scratch (call $heap_alloc (i32.const 65536)))
+    (if (i32.eqz (local.get $scratch))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $written
+      (call $wsprintf_impl (local.get $scratch) (local.get $arg1)
+        (i32.add (global.get $esp) (i32.const 12))))
+    (if (i32.ge_s (local.get $written) (i32.const 0))
+      (then (local.set $written (call $crt_stream_write
+        (local.get $arg0) (local.get $scratch) (local.get $written)))))
+    (call $heap_free (local.get $scratch))
+    (global.set $eax (local.get $written))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle__errno (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (global.get $msvcrt_errno_ptr))
+      (then
+        (global.set $msvcrt_errno_ptr (call $heap_alloc (i32.const 4)))
+        (call $gs32 (global.get $msvcrt_errno_ptr) (i32.const 0))))
+    (global.set $eax (global.get $msvcrt_errno_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $crt_copy_finddata_a (param $dst i32) (param $src i32)
+    (local $i i32) (local $ch i32)
+    (if (i32.or (i32.eqz (local.get $dst)) (i32.eqz (local.get $src)))
+      (then (return)))
+    ;; struct _finddata_t: attrib, time_create/access/write, size, name[260].
+    ;; WIN32_FIND_DATAA: attrs at +0, size high/low at +28/+32, cFileName at +44.
+    (call $gs32 (local.get $dst) (call $gl32 (local.get $src)))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 4)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 12)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 16))
+      (call $gl32 (i32.add (local.get $src) (i32.const 32))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 260)))
+      (local.set $ch (call $gl8
+        (i32.add (i32.add (local.get $src) (i32.const 44)) (local.get $i))))
+      (call $gs8
+        (i32.add (i32.add (local.get $dst) (i32.const 20)) (local.get $i))
+        (local.get $ch))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $copy (local.get $ch))))
+  )
+
+  (func $handle__findfirst (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $scratch i32) (local $handle i32)
+    (local.set $scratch (call $heap_alloc (i32.const 320)))
+    (if (i32.eqz (local.get $scratch))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $handle (call $host_fs_find_first_file
+      (call $g2w (local.get $arg0)) (local.get $scratch) (i32.const 0)))
+    (if (i32.eq (local.get $handle) (i32.const -1))
+      (then
+        (call $heap_free (local.get $scratch))
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (call $crt_copy_finddata_a (local.get $arg1) (local.get $scratch))
+    (call $heap_free (local.get $scratch))
+    (global.set $eax (local.get $handle))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle__findnext (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $scratch i32) (local $ok i32)
+    (local.set $scratch (call $heap_alloc (i32.const 320)))
+    (if (i32.eqz (local.get $scratch))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $ok (call $host_fs_find_next_file
+      (local.get $arg0) (local.get $scratch) (i32.const 0)))
+    (if (local.get $ok)
+      (then
+        (call $crt_copy_finddata_a (local.get $arg1) (local.get $scratch))
+        (global.set $eax (i32.const 0)))
+      (else (global.set $eax (i32.const -1))))
+    (call $heap_free (local.get $scratch))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle__findclose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (if (result i32) (call $host_fs_find_close (local.get $arg0))
+        (then (i32.const 0))
+        (else (i32.const -1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_getenv (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32)
+    (local.set $entry (call $env_find (local.get $arg0) (i32.const 0)))
+    (global.set $eax
+      (if (result i32) (local.get $entry)
+        (then (i32.add (i32.add (local.get $entry)
+          (call $env_name_len (local.get $entry))) (i32.const 1)))
+        (else (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle__stat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $attrs i32) (local $scratch i32) (local $find i32)
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $attrs (call $host_fs_get_file_attributes
+      (call $g2w (local.get $arg0)) (i32.const 0)))
+    (if (i32.eq (local.get $attrs) (i32.const -1))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (memory.fill (call $g2w (local.get $arg1)) (i32.const 0) (i32.const 64))
+    ;; _stat: st_mode at +6, st_size at +20, times at +24/+28/+32.
+    (call $gs16 (i32.add (local.get $arg1) (i32.const 6))
+      (if (result i32) (i32.and (local.get $attrs) (i32.const 0x10))
+        (then (i32.const 0x41ff)) ;; _S_IFDIR | broad rwx perms
+        (else (i32.const 0x81b6)))) ;; _S_IFREG | 0666
+    (local.set $scratch (call $heap_alloc (i32.const 320)))
+    (if (local.get $scratch)
+      (then
+        (local.set $find (call $host_fs_find_first_file
+          (call $g2w (local.get $arg0)) (local.get $scratch) (i32.const 0)))
+        (if (i32.ne (local.get $find) (i32.const -1))
+          (then
+            (call $gs32 (i32.add (local.get $arg1) (i32.const 20))
+              (call $gl32 (i32.add (local.get $scratch) (i32.const 32))))
+            (drop (call $host_fs_find_close (local.get $find)))))
+        (call $heap_free (local.get $scratch))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle__beginthread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_create_thread
+      (local.get $arg0) (local.get $arg2) (local.get $arg1)
+      (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (global.get $eax))
+      (then (global.set $eax (i32.const -1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 

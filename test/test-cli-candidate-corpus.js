@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { compileWatSnapshot } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -209,7 +209,7 @@ async function main() {
   let wasmPath = null;
   if (!dryRun) {
     try {
-      const bytes = await compileWatSnapshot(file => fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
+      const bytes = compileSrcWasm();
       await WebAssembly.compile(bytes);
       wasmDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-candidate-wasm-'));
       wasmPath = path.join(wasmDirectory, 'candidate-corpus.wasm');

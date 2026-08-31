@@ -9,7 +9,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { PNG } = require('pngjs');
-const { compileWatSnapshot } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -47,7 +47,7 @@ async function main() {
   const vfsRoot = path.join(temp, 'vfs');
 
   try {
-    const wasm = await compileWatSnapshot(file => fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
+    const wasm = compileSrcWasm();
     await WebAssembly.compile(wasm);
     fs.writeFileSync(wasmPath, wasm);
 

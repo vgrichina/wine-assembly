@@ -25892,5 +25892,96 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 3095,
+    "name": "fopen",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 1305020869
+  },
+  {
+    "id": 3096,
+    "name": "fclose",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 3286153975
+  },
+  {
+    "id": 3097,
+    "name": "fflush",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 2543369153
+  },
+  {
+    "id": 3098,
+    "name": "fputs",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 868636443
+  },
+  {
+    "id": 3099,
+    "name": "fwrite",
+    "nargs": 4,
+    "convention": "cdecl",
+    "hash": 2331012192
+  },
+  {
+    "id": 3100,
+    "name": "fprintf",
+    "nargs": -1,
+    "convention": "cdecl",
+    "hash": 2474450678
+  },
+  {
+    "id": 3101,
+    "name": "_errno",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 813481990
+  },
+  {
+    "id": 3102,
+    "name": "_findfirst",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 1269717821
+  },
+  {
+    "id": 3103,
+    "name": "_findnext",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 1072841780
+  },
+  {
+    "id": 3104,
+    "name": "_findclose",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 529923911
+  },
+  {
+    "id": 3105,
+    "name": "getenv",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 1306389850
+  },
+  {
+    "id": 3106,
+    "name": "_stat",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 334179396
+  },
+  {
+    "id": 3107,
+    "name": "_beginthread",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 490034907
   }
 ]
