@@ -64,6 +64,29 @@ async function main() {
     e.test_call_GetLastError() === 0,
     String(e.test_call_GetLastError()));
 
+  // The default synchronization imports are the host side of
+  // CreateSemaphore/ReleaseSemaphore, which $handle_CreateSemaphoreA/W and
+  // $handle_ReleaseSemaphore return verbatim as EAX. Win32 rejects the
+  // out-of-range counts rather than repairing them, and a rejected release
+  // must leave the count exactly as it was.
+  const h = base.host;
+  check('CreateSemaphore rejects a non-positive maximum', h.create_semaphore(0, 0) === 0);
+  check('CreateSemaphore rejects a negative initial count', h.create_semaphore(-1, 4) === 0);
+  check('CreateSemaphore rejects an initial count above the maximum',
+    h.create_semaphore(5, 4) === 0);
+
+  const sem = h.create_semaphore(1, 2);
+  check('CreateSemaphore accepts counts inside the documented range', sem !== 0);
+  check('a signaled semaphore satisfies a wait', h.wait_single(sem, 0) === 0);
+  check('the wait consumed the only count', h.wait_single(sem, 0) === 0x102);
+  check('ReleaseSemaphore rejects a non-positive release count',
+    h.release_semaphore(sem, 0, 0) === 0 && h.release_semaphore(sem, -1, 0) === 0);
+  check('a rejected release leaves the count unchanged', h.wait_single(sem, 0) === 0x102);
+  check('ReleaseSemaphore rejects a release past the maximum',
+    h.release_semaphore(sem, 3, 0) === 0);
+  check('ReleaseSemaphore signals the semaphore again', h.release_semaphore(sem, 1, 0) === 1);
+  check('the released count satisfies the next wait', h.wait_single(sem, 0) === 0);
+
   console.log(`--- kernel32-last-error: ${pass} passed, ${fail} failed`);
   if (fail) process.exit(1);
 }
