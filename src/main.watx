@@ -1,0 +1,84 @@
+;; ============================================================
+;; src/main.watx — THE source manifest for Wine-Assembly.
+;;
+;; This file is the ONE hand-maintained source order (Milestone 2.1 of
+;; docs/watx-migration-plan.md). Everything else that needs the order derives
+;; from it or is gated against it:
+;;
+;;   - lib/compile-wat.js  WAT_FILES  — the legacy compiler's list. It is
+;;     VERIFIED against this file by tools/check-wat-manifest.js, which runs
+;;     first in tools/build.sh. Editing one without the other fails the build.
+;;   - tools/concat-wat.js — writes build/combined.wat from WAT_FILES, adding
+;;     the outer (module ...) wrapper that no source fragment carries.
+;;
+;; TO ADD OR REORDER A PART: edit the include list HERE first, then mirror it
+;; into WAT_FILES. Filename order (LC_ALL=C sort) is also enforced.
+;;
+;; Include paths are relative to src/ — the same strings WAT_FILES holds — so a
+;; driver populates the compiler's vfs by reading src/<name> for each key.
+;;
+;; No fragment below contains a (module ...) wrapper: each balances its own
+;; parentheses (gated by tools/check-wat-fragments.js), which is what lets the
+;; WATX compiler's include resolver splice them as top-level module fields and
+;; what lets lib/compile-wat.js parse each part independently.
+;; ============================================================
+(include "01-header.wat")
+(include "01b-api-hashes.generated.wat")
+(include "02-thread-table.wat")
+(include "03-registers.wat")
+(include "04-cache.wat")
+(include "05-alu.wat")
+(include "05b-string-ops.wat")
+(include "05c-seg16-ops.wat")
+(include "06-fpu.wat")
+(include "06b-core-handlers.wat")
+(include "06c-mmx.wat")
+(include "07-decoder.wat")
+(include "07b-loop-match.wat")
+(include "08-pe-loader.wat")
+(include "08b-dll-loader.wat")
+(include "08c-ne-loader.wat")
+(include "09a-handlers.wat")
+(include "09a2-handlers-console.wat")
+(include "09a3-handlers-audio.wat")
+(include "09a4-handlers-gdi.wat")
+(include "09a5-handlers-window.wat")
+(include "09a6-handlers-crt.wat")
+(include "09a7-handlers-dispatch.wat")
+(include "09a7b-ole.wat")
+(include "09a7c-mixer.wat")
+(include "09a8-handlers-directx.wat")
+(include "09a8b-handlers-opengl.wat")
+(include "09a9-comctl32.wat")
+(include "09aa-handlers-d3dim.wat")
+(include "09ab-handlers-d3dim-core.wat")
+(include "09ad-handlers-d3d9.wat")
+(include "09b-dispatch.wat")
+(include "09b2-dispatch-table.generated.wat")
+(include "09c-help.wat")
+(include "09c0-window-table.wat")
+(include "09c2-treeview.wat")
+(include "09c3-controls.wat")
+(include "09c4-defwndproc.wat")
+(include "09c5-menu.wat")
+(include "09c6-winhelp-core.wat")
+(include "09c7-winhelp-hlp.wat")
+(include "09c8-winhelp-cnt.wat")
+(include "09c9-winhelp-ui.wat")
+(include "09d-winsock.wat")
+(include "09d2-tapi.wat")
+(include "09e-win16-api.wat")
+(include "09e2-win16-dialog.wat")
+(include "09f-win16-ddeml.wat")
+(include "10-helpers.wat")
+(include "10a-gdi-bitmap.wat")
+(include "10b-gdi-font.wat")
+(include "10c-truetype.wat")
+(include "10c1-truetype-hint.wat")
+(include "10d-gdi-region-path.wat")
+(include "10e-gdi-metafile.wat")
+(include "10f-gdi-dc.wat")
+(include "10g-gdi-raster.wat")
+(include "11-seh.wat")
+(include "12-wsprintf.wat")
+(include "13-exports.wat")
