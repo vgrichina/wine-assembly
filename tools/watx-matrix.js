@@ -94,8 +94,9 @@ const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
-const { compileWat, WAT_FILES } = require(path.join(ROOT, 'lib', 'compile-wat.js'));
+const { compileWat } = require(path.join(ROOT, 'lib', 'compile-wat.js'));
 const { diffWasmAbi } = require(path.join(__dirname, 'wasm-abi-diff.js'));
+const { watxSourceClosure, compileClosure } = require(path.join(__dirname, 'watx-closure.js'));
 
 // ---------------------------------------------------------------------------
 // The curated fast list.
@@ -189,53 +190,12 @@ async function buildLegacy(dir) {
   return results;
 }
 
-// The WATX compiler takes one source string plus a VFS the (include ...) forms
-// resolve against. src/main.watx is the authoritative entry point once
-// Milestone 2.2 lands it; until then we synthesize the same closure from
-// WAT_FILES so this gate can run and report today.
-//
-// The synthesized form has to strip the (module ...) wrapper: it opens in
-// 01-header.wat and closes in 13-exports.wat, so no individual file parses on
-// its own. Both tokens are blanked in place (not deleted) so every line and
-// column in a WATX error still points at the real source position.
-function watxSourceClosure() {
-  const mainFile = path.join(SRC, 'main.watx');
-  const vfs = new Map();
-  if (fs.existsSync(mainFile)) {
-    for (const f of fs.readdirSync(SRC)) {
-      if (!/\.(wat|watx)$/.test(f)) continue;
-      const text = fs.readFileSync(path.join(SRC, f), 'utf8');
-      vfs.set(f, text);
-      vfs.set(`src/${f}`, text);
-      vfs.set(`./${f}`, text);
-    }
-    return { source: fs.readFileSync(mainFile, 'utf8'), vfs, entry: 'src/main.watx' };
-  }
-
-  const files = WAT_FILES.slice();
-  const texts = files.map(f => fs.readFileSync(path.join(SRC, f), 'utf8'));
-
-  const openAt = texts[0].indexOf('(module');
-  if (openAt < 0) throw new Error(`watx-matrix: no "(module" in src/${files[0]}`);
-  texts[0] = texts[0].slice(0, openAt) + ' '.repeat('(module'.length) +
-    texts[0].slice(openAt + '(module'.length);
-
-  const last = texts.length - 1;
-  const closeAt = texts[last].lastIndexOf(')');
-  if (closeAt < 0) throw new Error(`watx-matrix: no closing ")" in src/${files[last]}`);
-  texts[last] = texts[last].slice(0, closeAt) + ' ' + texts[last].slice(closeAt + 1);
-
-  files.forEach((f, i) => vfs.set(f, texts[i]));
-  return {
-    source: files.map(f => `(include "${f}")`).join('\n') + '\n',
-    vfs,
-    entry: 'synthesized from lib/compile-wat.js WAT_FILES (src/main.watx absent)',
-  };
-}
+// The closure and the compile options both live in tools/watx-closure.js so the
+// canonical build (tools/build-compile-wat.js under WINE_WAT_COMPILER=watx)
+// compiles the identical thing this gate certifies. See that file for why.
 
 function buildWatx(dir) {
   fs.mkdirSync(dir, { recursive: true });
-  const { compile } = require(path.join(__dirname, 'watx.js'));
   const results = {};
   let closure;
   try {
@@ -249,12 +209,7 @@ function buildWatx(dir) {
     const key = compat ? 'compat' : 'tail';
     let r;
     try {
-      r = compile(closure.source, closure.vfs, {
-        mode: 'production',
-        standardWat: true,
-        runtimeBuiltins: false,
-        tailCalls: !compat,
-      });
+      r = compileClosure(closure, { tailCalls: !compat });
     } catch (e) {
       results[key] = { ok: false, error: String(e.message || e), stage: 'THROW' };
       continue;
