@@ -1779,18 +1779,28 @@
     (call $dx_surf_fmt_set (local.get $entry) (local.get $fmt))
     ;; *lplpDDSurface = obj
     (call $gs32 (local.get $arg2) (local.get $obj))
-    ;; Primary surface → resize the cooperative window so its back-canvas
-    ;; matches the primary dimensions. Fall back to main_hwnd for callers that
-    ;; never selected a cooperative window.
-    ;; Apps like donut create a WS_POPUP window at size 0,0 and never call
-    ;; SetDisplayMode — without this, SetDIBitsToDevice clips to the 1x1 back-canvas.
+    ;; An exclusive primary owns the display, so its cooperative window follows
+    ;; the surface dimensions. Keep the same fallback for borderless callers
+    ;; such as donut, which create a 0x0 WS_POPUP and never call SetDisplayMode.
+    ;;
+    ;; Under DDSCL_NORMAL the primary is the desktop, not the application's
+    ;; client area. Resizing an ordinary captioned window to the 640x480 primary
+    ;; broke windowed D3DRM samples: Globe asked for 300x300 and created a
+    ;; viewport for that client, then this path enlarged only its window and
+    ;; left the rendered scene stranded in one corner.
     (if (i32.and (local.get $caps) (i32.const 0x200))
       (then (global.set $dx_primary_wa (local.get $entry))))
     (if (i32.and (local.get $caps) (i32.const 0x200))
       (then (if (call $dx_target_hwnd) (then
-        (call $host_move_window (call $dx_target_hwnd)
-          (i32.const 0) (i32.const 0)
-          (local.get $w) (local.get $h) (i32.const 0))))))
+        (if (i32.or
+              (i32.ne (global.get $dx_exclusive_fullscreen) (i32.const 0))
+              (i32.eqz (i32.and
+                (call $wnd_get_style (call $dx_target_hwnd))
+                (i32.const 0x00C00000)))) ;; !WS_CAPTION
+          (then
+            (call $host_move_window (call $dx_target_hwnd)
+              (i32.const 0) (i32.const 0)
+              (local.get $w) (local.get $h) (i32.const 0))))))))
     ;; If primary with back buffer count > 0, create back buffer and link it
     (if (i32.and
           (i32.ne (i32.and (local.get $caps) (i32.const 0x200)) (i32.const 0))  ;; PRIMARY
@@ -1800,7 +1810,14 @@
         (if (local.get $back_obj) (then
           (local.set $back_entry (call $dx_from_this (local.get $back_obj)))
           (call $zero_memory (call $dx_surf_meta_ptr (local.get $back_entry)) (i32.const 8))
-          (i32.store (call $dx_surf_meta_ptr (local.get $back_entry)) (i32.const 0x1c))
+          ;; The attached back buffer inherits the primary chain's allocation
+          ;; and rendering caps.  Only its FRONT/PRIMARY identity changes.
+          ;; SDK samples query this exact object and reject a hardware device
+          ;; when VIDEOMEMORY or 3DDEVICE has been discarded here.
+          (i32.store (call $dx_surf_meta_ptr (local.get $back_entry))
+            (i32.or
+              (i32.and (local.get $caps) (i32.const -513)) ;; ~DDSCAPS_PRIMARYSURFACE
+              (i32.const 0x4)))                           ;; DDSCAPS_BACKBUFFER
           (i32.store16 (i32.add (local.get $back_entry) (i32.const 12)) (local.get $w))
           (i32.store16 (i32.add (local.get $back_entry) (i32.const 14)) (local.get $h))
           (i32.store16 (i32.add (local.get $back_entry) (i32.const 16)) (local.get $bpp))
@@ -3678,9 +3695,9 @@
     (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.load16_u (i32.add (local.get $entry) (i32.const 12))))
     (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
     (call $dx_fill_surface_pixel_format (i32.add (local.get $wa) (i32.const 72)) (local.get $entry))
-    ;; Caps — DDSCAPS_PRIMARYSURFACE for primary; else DDSCAPS_VIDEOMEMORY|DDSCAPS_OFFSCREENPLAIN.
-    ;; Apps gate z-buffer / render-target acceptance on DDSCAPS_VIDEOMEMORY when a hardware
-    ;; device is selected — returning SYSTEMMEMORY would cause CreateZBuffer to reject.
+    ;; Return the caps recorded from the creation descriptor. Applications use
+    ;; these to decide whether a 3D render target really resides in video
+    ;; memory, so synthesizing a generic surface class here is not equivalent.
     (if (i32.and (i32.load (i32.add (local.get $entry) (i32.const 28))) (i32.const 1))
       (then
         (if (i32.load (i32.add (local.get $entry) (i32.const 8)))
@@ -3689,13 +3706,9 @@
             ;; linked by CreateSurface for PRIMARY|FLIP|COMPLEX requests.
             (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x102F))
             (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 1))
-            (i32.store (i32.add (local.get $wa) (i32.const 104)) (i32.const 0x218)))
-          (else
-            (i32.store (i32.add (local.get $wa) (i32.const 104)) (i32.const 0x200)))))
-      (else
-        (if (i32.and (i32.load (i32.add (local.get $entry) (i32.const 28))) (i32.const 2))
-          (then (i32.store (i32.add (local.get $wa) (i32.const 104)) (i32.const 0x1C)))
-          (else (i32.store (i32.add (local.get $wa) (i32.const 104)) (i32.const 0x4040))))))
+            ))))
+    (i32.store (i32.add (local.get $wa) (i32.const 104))
+      (i32.load (call $dx_surf_meta_ptr (local.get $entry))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 

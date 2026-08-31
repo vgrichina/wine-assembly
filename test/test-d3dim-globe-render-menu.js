@@ -4,6 +4,8 @@
 // Exercise Globe's actual Render dropdown, not synthetic WM_COMMAND posts.
 // The menu checks prove every option reached the app; the three captures prove
 // FILLMODE also reaches the software rasterizer instead of stopping at state.
+// Globe uses DDSCL_NORMAL: its 640x480 primary is the desktop and must not
+// enlarge the app's requested 300x300 captioned window behind its viewport.
 
 const assert = require('assert');
 const fs = require('fs');
@@ -30,17 +32,18 @@ const solid = path.join(dir, 'solid.png');
 // separator, Point, Wireframe, Solid, separator, Dithering, Anti-aliasing,
 // separator, Point Filtering, Bi-Linear Filtering.
 const actions = [
-  `94:click:66:31,95:mousemove:90:52,96:menu-dump:hover,97:click:90:52`,
-  `98:click:66:31,99:mousemove:90:72,100:menu-dump:hover,101:click:90:72`,
-  `102:click:66:31,103:mousemove:90:92,104:menu-dump:hover,105:click:90:92`,
-  `106:click:66:31,107:mousemove:90:132,108:menu-dump:hover,109:click:90:132`,
-  `110:click:66:31,111:mousemove:90:172,112:menu-dump:hover,113:click:90:172,118:png:${point}`,
-  `119:click:66:31,120:mousemove:90:192,121:menu-dump:hover,122:click:90:192,127:png:${wire}`,
-  `128:click:66:31,129:mousemove:90:212,130:menu-dump:hover,131:click:90:212,136:png:${solid}`,
-  `137:click:66:31,138:mousemove:90:252,139:menu-dump:hover,140:click:90:252`,
-  `141:click:66:31,142:mousemove:90:272,143:menu-dump:hover,144:click:90:272`,
-  `145:click:66:31,146:mousemove:90:312,147:menu-dump:hover,148:click:90:312`,
-  `149:click:66:31,150:mousemove:90:332,151:menu-dump:hover,152:click:90:332`,
+  `94:click:86:51,95:mousemove:110:72,96:menu-dump:hover,97:click:110:72`,
+  `98:click:86:51,99:mousemove:110:92,100:menu-dump:hover,101:click:110:92`,
+  `102:click:86:51,103:mousemove:110:112,104:menu-dump:hover,105:click:110:112`,
+  `106:click:86:51,107:mousemove:110:152,108:menu-dump:hover,109:click:110:152`,
+  `110:click:86:51,111:mousemove:110:192,112:menu-dump:hover,113:click:110:192,118:png:${point}`,
+  `119:click:86:51,120:mousemove:110:212,121:menu-dump:hover,122:click:110:212,127:png:${wire}`,
+  `128:click:86:51,129:mousemove:110:232,130:menu-dump:hover,131:click:110:232,136:png:${solid}`,
+  `137:click:86:51,138:mousemove:110:272,139:menu-dump:hover,140:click:110:272`,
+  `141:click:86:51,142:mousemove:110:292,143:menu-dump:hover,144:click:110:292`,
+  `145:click:86:51,146:mousemove:110:332,147:menu-dump:hover,148:click:110:332`,
+  `149:click:86:51,150:mousemove:110:352,151:menu-dump:hover,152:click:110:352`,
+  '153:click:86:51,154:menu-dump:final,155:click:10:400',
   '158:dump-windows:after,160:stop',
 ].join(',');
 
@@ -48,8 +51,8 @@ function litClientPixels(file) {
   const png = PNG.sync.read(fs.readFileSync(file));
   let lit = 0;
   // Exclude caption/menu/chrome; Globe's client is black except for geometry.
-  for (let y = 42; y < Math.min(477, png.height); y++) {
-    for (let x = 4; x < Math.min(637, png.width); x++) {
+  for (let y = 62; y < Math.min(316, png.height); y++) {
+    for (let x = 24; x < Math.min(316, png.width); x++) {
       const off = (y * png.width + x) * 4;
       if (png.data[off] || png.data[off + 1] || png.data[off + 2]) lit++;
     }
@@ -87,8 +90,25 @@ try {
       s.includes(`"${label}"`));
     assert(line, `real pointer path did not reach Render -> ${label}`);
   }
+  const menuLines = out.split('\n').filter(s => s.includes('menu-dump:hover:'));
+  const beforeHover = hover => menuLines.find(s => s.includes(`hover=${hover}`)) || '';
+  const checked = (line, item) => new RegExp(`#${item} id=\\d+ flags=0x4(?: |$)`).test(line);
+  assert(checked(beforeHover(1), 0), 'Flat selection was not reflected by the menu checkmark');
+  assert(checked(beforeHover(2), 1), 'Gouraud selection was not reflected by the menu checkmark');
+  assert(checked(beforeHover(4), 2), 'Phong selection was not reflected by the menu checkmark');
+  assert(!checked(beforeHover(6), 4), 'Lighting toggle did not clear its menu checkmark');
+  assert(checked(beforeHover(7), 6), 'Point selection was not reflected by the menu checkmark');
+  assert(checked(beforeHover(8), 7), 'Wireframe selection was not reflected by the menu checkmark');
+  assert(checked(beforeHover(10), 8), 'Solid selection was not reflected by the menu checkmark');
+  assert(checked(beforeHover(11), 10), 'Dithering toggle did not set its menu checkmark');
+  assert(checked(beforeHover(13), 11), 'Anti-aliasing toggle did not set its menu checkmark');
+  assert(checked(beforeHover(14), 13), 'Point filtering selection was not reflected by the menu checkmark');
+  const finalMenu = out.split('\n').find(s => s.includes('menu-dump:final:')) || '';
+  assert(checked(finalMenu, 14), 'Bi-Linear filtering selection was not reflected by the menu checkmark');
   assert(/window:after .*title="Globe Direct3DRM Example"/.test(out),
     'Globe closed or crashed while exercising Render options');
+  assert(/window:after .*size=300x300 .*title="Globe Direct3DRM Example"/.test(out),
+    'DDSCL_NORMAL primary surface resized Globe instead of preserving its viewport-sized window');
   assert(!/RuntimeError|UNHANDLED EXCEPTION|\[Exit\]/.test(out),
     'a Render option trapped or exited the application');
 

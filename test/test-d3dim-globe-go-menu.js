@@ -37,8 +37,8 @@ try {
     '--max-batches=124',
     '--quiet-api',
     '--no-build',
-    `--input=94:png:${before},95:click:20:31,96:mousemove:80:112,`
-      + `97:menu-dump:hover,98:click:80:112,104:png:${after},`
+    `--input=94:png:${before},95:click:40:51,96:mousemove:100:132,`
+      + `97:menu-dump:hover,98:click:100:132,104:png:${after},`
       + `112:png:${later},120:png:${latest},121:dump-windows:after,122:stop`,
   ], {
     cwd: ROOT,

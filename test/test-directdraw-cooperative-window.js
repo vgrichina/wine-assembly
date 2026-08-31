@@ -32,8 +32,8 @@ const extraWat = String.raw`
 
   assert(/\$handle_IDirectDraw_SetCooperativeLevel[\s\S]*?global\.set \$dx_coop_hwnd \(local\.get \$arg1\)/.test(directDrawWat),
     'SetCooperativeLevel must retain its HWND as the DirectDraw presentation owner');
-  assert(/Primary surface[\s\S]*?host_move_window \(call \$dx_target_hwnd\)/.test(directDrawWat),
-    'primary-surface creation must resize the cooperative window');
+  assert(/Under DDSCL_NORMAL[\s\S]*?(?:call \$dx_exclusive_get|global\.get \$dx_exclusive_fullscreen)[\s\S]*?call \$wnd_get_style \(call \$dx_target_hwnd\)[\s\S]*?host_move_window \(call \$dx_target_hwnd\)/.test(directDrawWat),
+    'primary-surface creation must resize only exclusive or borderless cooperative windows');
   assert(/\$handle_IDirectDraw_SetDisplayMode[\s\S]*?local\.set \$target_hwnd \(call \$dx_target_hwnd\)[\s\S]*?host_move_window \(local\.get \$target_hwnd\)/.test(directDrawWat),
     'SetDisplayMode must resize the cooperative window');
   assert(/\$dx_present[\s\S]*?host_gdi_surface_attach \(local\.get \$surface_id\) \(local\.get \$target_hwnd\)/.test(directDrawWat),

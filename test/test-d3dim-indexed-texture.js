@@ -169,6 +169,7 @@ const extraWat = String.raw`
       (i32.const 0) (i32.const 2) (i32.const 1)
       (i32.const 1) (i32.const 3) (i32.const 0)
       (i32.const 2) (i32.const 2) (i32.const 0)
+      (i32.const 0) (i32.const 0)
       (i32.const 0)
       (i32.const 0) (f32.const 0.0) (f32.const 0.0) (f32.const 1.0) (i32.const 0xffffffff) (f32.const 0.5)
       (i32.const 4) (f32.const 1.0) (f32.const 0.0) (f32.const 1.0) (i32.const 0xffffffff) (f32.const 0.5)
@@ -443,6 +444,56 @@ function writeFloat(wat, addr, value) {
     }
   };
 
+  // Globe exposes both of these states in its Render menu. The emulated
+  // device advertises them in dwRasterCaps, so changing the state must reach
+  // pixels rather than merely changing the application's menu checkmark.
+  for (let i = 0; i < 4; i++) mem.setUint16(texDib + i * 2, 0x8410, true);
+  for (let i = 0; i < 3; i++) wat.guest_write32(vertices + i * VERTEX_STRIDE + 16, 0xff777777);
+  wat.test_diptex_set_rs(device, 2, 0);  // ANTIALIAS=NONE
+  wat.test_diptex_set_rs(device, 26, 0); // DITHERENABLE=FALSE
+  clearRt(0x001f);
+  wat.test_diptex_draw(device, vertices, indices);
+  const undithered = Array.from({ length: 64 }, (_, i) => mem.getUint16(rtDib + i * 2, true));
+  wat.test_diptex_set_rs(device, 26, 1);
+  clearRt(0x001f);
+  wat.test_diptex_draw(device, vertices, indices);
+  const dithered = Array.from({ length: 64 }, (_, i) => mem.getUint16(rtDib + i * 2, true));
+  assert.notDeepStrictEqual(dithered, undithered,
+    'D3DRENDERSTATE_DITHERENABLE never reached RGB565 quantization');
+  assert(new Set(dithered.filter(p => p !== 0x001f)).size >
+      new Set(undithered.filter(p => p !== 0x001f)).size,
+    'dithered triangle did not distribute quantization across a Bayer pattern');
+
+  for (let i = 0; i < 4; i++) mem.setUint16(texDib + i * 2, 0xffff, true);
+  for (let i = 0; i < 3; i++) wat.guest_write32(vertices + i * VERTEX_STRIDE + 16, 0xffffffff);
+  wat.test_diptex_set_rs(device, 26, 0);
+  clearRt(0x001f);
+  wat.test_diptex_draw(device, vertices, indices);
+  const hardEdge = mem.getUint16(rtDib + 2 * 16, true);
+  const hardInterior = mem.getUint16(rtDib + 2 * 16 + 2, true);
+  wat.test_diptex_set_rs(device, 2, 1); // D3DANTIALIAS_SORTDEPENDENT
+  clearRt(0x001f);
+  wat.test_diptex_draw(device, vertices, indices);
+  const smoothEdge = mem.getUint16(rtDib + 2 * 16, true);
+  const smoothInterior = mem.getUint16(rtDib + 2 * 16 + 2, true);
+  assert.notStrictEqual(smoothEdge, hardEdge,
+    'D3DRENDERSTATE_ANTIALIAS did not blend a polygon boundary');
+  assert.notStrictEqual(smoothEdge, 0x001f,
+    'anti-aliased boundary discarded the polygon instead of blending it');
+  assert.strictEqual(smoothInterior, hardInterior,
+    'anti-aliasing changed interior pixels instead of only polygon boundaries');
+
+  // Restore the original texture, vertices and menu-state defaults for the
+  // clipping/filter/blend/depth cases below.
+  mem.setUint16(texDib + 0, 0xf800, true);
+  mem.setUint16(texDib + 2, 0x07e0, true);
+  mem.setUint16(texDib + 4, 0x001f, true);
+  mem.setUint16(texDib + 6, 0xffe0, true);
+  vertex(0, 0, 0, 0.05, 0.05);
+  vertex(1, 7, 0, 0.95, 0.05);
+  vertex(2, 0, 7, 0.05, 0.95);
+  wat.test_diptex_set_rs(device, 2, 0);
+
   // Positive RHW only proves that a transformed vertex remains in front of
   // the eye. Direct3D's near plane is clip-z=0: this third vertex has w=1 but
   // z/w=-.5, so the triangle must stop halfway down the target. Classifying
@@ -714,7 +765,7 @@ function writeFloat(wat, addr, value) {
   assert.notStrictEqual(mem.getUint16(zDib + 2 * 16 + 2 * 2, true), 0x2222,
     'opaque texture sample did not update attached depth');
 
-  console.log(`PASS D3DIM legacy LVERTEX layout, homogeneous depth clipping, and Texture2 indexed triangles use color keys, FVF UV sets, perspective/filter/address states, declared formats, blending, and attached reversed-Z (${textured.size} texture colours)`);
+  console.log(`PASS D3DIM legacy LVERTEX layout, homogeneous depth clipping, and Texture2 indexed triangles use dither/edge-AA, color keys, FVF UV sets, perspective/filter/address states, declared formats, blending, and attached reversed-Z (${textured.size} texture colours)`);
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);
