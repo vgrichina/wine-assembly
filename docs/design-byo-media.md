@@ -283,8 +283,8 @@ questions: ISO is still the easiest mount.
           │       tens of KB … 1MB      │
           └──────┬───────────────┬──────┘
                  ▼               ▼
-          download file     PUT /saves/<code>/<app>
-          "memory card" —   berrry KV ▪ opt-in ▪
+          download file     POST /api/data/wine-saves-<app>
+          "memory card" —   berrry account ▪ opt-in ▪
           works today       cross-device ▪ LWW
 ```
 
@@ -298,20 +298,35 @@ questions: ISO is still the easiest mount.
   the result" means persisting the **complete per-import overlay** (or the
   installer's recorded mutation set), with save-specific filtering applied
   later. The installed tree then becomes a synthesized `apps.js`-style entry.
-- **Save sync**: berrry as used today is static hosting behind an owner-keyed
-  deploy API (`tools/deploy-berrry.js`) — visitors cannot write to it, and the
-  deploy key can never ship to browsers. Sync needs a trivial dynamic
-  endpoint (PUT/GET keyed by sync code, size-capped at a few MB) on berrry or
-  elsewhere. Saves are tiny — INIs are bytes, even a Diablo save is a few
-  hundred KB — so size is a non-issue. Big media never syncs: ISOs are
-  content, not state; reference them by hash and reattach saves on re-import.
-- **Identity**: a random 128-bit sync code shown once as phrase/QR.
-  It cannot live only in localStorage (Safari's purge would wipe the key with
-  the saves) — the user keeps the phrase, or a **server-set HTTP cookie**,
-  which is exempt from Safari's script-writable-storage eviction.
+- **Save sync**: berrry has a **production per-user data API** that deployed
+  apps call same-origin (docs: `GET /api/nomcp/docs/backend` on berrry.app;
+  the owner-keyed deploy API in `tools/deploy-berrry.js` is a separate,
+  unrelated surface): `POST/GET/PUT/DELETE /api/data/:key` stores JSON *or*
+  binary (multipart or a raw Content-Type) privately per authenticated berrry
+  user, with `GET /api/data/:key/metadata` giving `updatedAt` for
+  last-write-wins. So the sync target is `/api/data/wine-saves-<appId>` with
+  the bundle as `application/zip` — no server to build. `lib/save-sync.js`
+  speaks this protocol with a configurable base (default same-origin);
+  `tools/save-sync-server.js` *emulates* the same API shape so headless tests
+  exercise the identical client code. Saves are tiny — INIs are bytes, even a
+  Diablo save is a few hundred KB — so size is a non-issue. Big media never
+  syncs: ISOs are content, not state; reference them by hash and reattach
+  saves on re-import.
+- **Identity**: the user's berrry account. `GET /api/auth/user` says who is
+  signed in (401 otherwise); sign-in is a redirect to `/api/auth/login`,
+  which bounces back to the app, and the session cookie is server-set — the
+  durable slot Safari's purge doesn't touch. Saves follow the account across
+  devices; no sync-code phrase to lose. Signed-out users keep the full local
+  experience plus the export-file path below.
 - **Zero-server fallback first**: export/import the save bundle as a
   downloaded `.zip` — the retro "memory card" gesture; sync is then the same
   bundle PUT to an endpoint. Last-write-wins with timestamps is fine.
+  Implemented in `lib/save-bundle.js` (a deterministic store-only zip holding
+  `manifest.json` + `vfs/…` + `registry.json` + `ini.json`, every member
+  SHA-256'd and every path re-checked against the running app's own
+  `persistFiles` globs on import), driven headlessly by `test/run.js
+  --export-saves=FILE` / `--import-saves=FILE` and inspected by
+  `tools/save-bundle.js`.
 
 ## What lives where, and what survives
 
@@ -323,7 +338,7 @@ questions: ISO is still the easiest mount.
  written C:\ files     OPFS            KB … MB      reload ✓   purge ✗ *
  registry ▪ INI        localStorage    KB           reload ✓   purge ✗ *
  save bundle           berrry ▪ file   KB … 1MB     everything ✓
- sync code             cookie+phrase   16 bytes     purge ✓  (server-set)
+ sync identity         berrry session  cookie       purge ✓  (server-set)
 
  * Safari's 7-day ITP purge — softened by navigator.storage.persist()
    and home-screen install; the save bundle is the belt-and-braces.
@@ -597,3 +612,105 @@ make during the phase that hits it, not a reason to redesign now:
 6. **Provider failure → Win32 errors (①)** — rejected fetch, short 206,
    changed ETag, revoked File, ejection: each needs a stable error code and
    `GetLastError` mapping, with cancellation and retry policy.
+
+## Overlay semantics (⑤) — the mini-design risk item 3 asked for
+
+Implemented by `lib/vfs-overlay.js` (tracker) over `lib/overlay-store.js`
+(async repository). This section is the contract; the tests in
+`test/test-vfs-overlay.js` are its executable form.
+
+**The overlay is a journal, not a second filesystem.** `VirtualFS` is one flat
+`Map` that mounts populate, so there is no union-mount lookup to implement —
+what has to survive a reload is the *difference* the guest made. One record per
+normalized path, last-write-wins, in three kinds:
+
+```
+ file      bytes + attrs + FILETIMEs      created or modified
+ dir       (no bytes)                     CreateDirectory
+ whiteout  (no bytes)                     DeleteFile / RemoveDirectory
+```
+
+- **Keys are `vfs._resolvePath()` output** — the same lowercasing, `/`→`\`,
+  `.`/`..`-collapsing function the VFS itself indexes by. Case-insensitive
+  collisions therefore cannot drift from VirtualFS's rule, because it *is*
+  VirtualFS's rule; a second normalizer in the store would be a second answer.
+- **Hydration order is base mounts → `file`/`dir` records → whiteouts.**
+  Whiteouts last is what makes a delete stick: a `FindFirstFile` over a mounted
+  container after hydration cannot resurrect a deleted file, because the replay
+  removed it from `files` *and* `dirs` after the mount put it there. A whiteout
+  for a path the base does not carry is a no-op, so replay is idempotent.
+- **Rename is whiteout(src) + file(dst)**, recorded in that single batch.
+  Enumeration stays consistent because both halves replay in the same phase.
+- **Scope is the writable drives only** (default `c`). A path on a
+  `readOnlyDrives` drive is never recorded — `D:\` is the mounted disc, and
+  its content is content, not state.
+
+**Read-only mounts refuse writes.** `VirtualFS` already declines
+`createFile`-for-write, `writeFile`, `setEndOfFile`, `deleteFile`,
+`createDirectory`, `removeDirectory`, `moveFile` and `copyFile` onto a
+read-only drive. What was missing is *why*: the overlay latches
+`ERROR_WRITE_PROTECT` (19) — the code Win9x returns for a write to
+write-protected media — on `vfs.lastFsError` and on `overlay.lastError`.
+It is not yet visible to the guest's `GetLastError`: `$handle_CreateFileA`
+sets `$last_error` on success only, and there is no host→WAT error import to
+set it from JS. That import is the follow-up; inventing a silent one here
+would have been a stub that lies.
+
+**Copy-on-write over a provider-backed base file** (a zip mounted under
+`C:\Program Files\…`) has three cases, and the middle one is the honest
+failure the risk register asked for:
+
+1. *Bytes already resident* (chunk-cache hit, or a synchronous provider):
+   the existing `entry.data` getter/setter pair already copies on write —
+   reading materializes, writing drops the provider. Nothing new is needed.
+2. *Bytes not resident*: the open **fails** with `ERROR_NOT_READY` (21) and a
+   loud host log naming the path, rather than materializing. It cannot be
+   parked: parking must happen in WAT before the handler pops its stdcall
+   frame (`src/09b-dispatch.wat`), `$handle_CreateFileA` has no pending status
+   to observe, and a "pending" throw that unwinds nested Wasm is forbidden by
+   risk item 1. A `CreateFile`-side parking contract is the fix when an app
+   demands it; until then the failure is visible, not silent.
+3. *Pre-materialize*: mount code that knows a file will be written calls
+   `await vfs.materialize(path)` from the async side before launch. This is
+   the documented escape hatch for case 2.
+
+**Persistence is batched and its failures are held, not dropped.** Dirty paths
+accumulate; `flush()` snapshots the set, reads the bytes, and hands one batch
+to the store. The guest never sees a store failure — its write already
+succeeded in RAM — so the host must: `flush()` resolves to
+`{written, removed, failed, errors}` and `overlay.errors` keeps every failure
+(quota exhaustion, a `VfsPendingError` from a still-lazy entry, a store
+reject). Silence there would be a "kept" import that quietly kept nothing.
+
+**Crash consistency** (risk item 4, in the small): the Node store writes blobs
+first and the index last, and the index goes to a temp file that is then
+renamed. A torn flush loses the newest batch and never the index. Every record
+carries its `size`, so a missing or short blob is reported at hydrate time
+rather than mounted as a truncated file.
+
+**Relationship to `lib/vfs-persistence.js`**: unchanged and still the right
+thing for a *registered* app's saves — an explicit `persistFiles` glob list, a
+per-file cap, synchronous localStorage. The overlay is the other mode: an
+arbitrary import has no globs and no `apps.js` entry, so "run the installer,
+keep the result" persists everything the guest wrote, with no size cap beyond
+the backend's own quota. Both can be attached to one VFS; they wrap disjoint
+concerns and each delegates to the original method.
+
+**The browser seam.** `attach(vfs, {store})` takes any object implementing the
+repository interface:
+
+```js
+ list()                -> Promise<Array<{path, kind, attrs, size, times}>>
+ read(path)            -> Promise<Uint8Array|null>
+ writeBatch(records)   -> Promise<{written, removed}>
+ remove(path)          -> Promise<void>
+```
+
+`lib/overlay-store.js` ships two: `memoryStore()` (tests, and the private-
+browsing fallback where OPFS is unavailable) and `nodeDirStore(dir)` (the CLI
+`--overlay-dir=DIR`, which is what lets an installer be tested headlessly end
+to end — run once to install, run again to prove the tree came back). The
+**OPFS store is phase ④'s to supply**: it is a third implementation of these
+four methods, wired as `attach(vfs, {store: opfsStore(importId)})`. There is
+deliberately no OPFS stub here — `assertStore()` throws naming the missing
+method, so a half-wired backend fails at attach rather than at eviction time.

@@ -240,6 +240,14 @@ const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operatio
 // exist are invisible to the CLI without these.
 const REG_IMPORT = getArg('reg-import', '');
 const REG_EXPORT = getArg('reg-export', '');
+// --import-saves=FILE / --export-saves=FILE: the same state as a *save bundle*
+// (lib/save-bundle.js) — the app's persistFiles matches plus the registry/INI
+// store, in one zip. --reg-export carries only the second half, so a game whose
+// state lives in a .sav file round-trips through this pair and not that one.
+// Both need --app=ID: the bundle is keyed by app id and the persistFiles globs
+// that decide what may be written come from lib/apps.js, never from the bundle.
+const IMPORT_SAVES = getArg('import-saves', '');
+const EXPORT_SAVES = getArg('export-saves', '');
 const TRACE_WIN16 = hasFlag('trace-win16'); // --trace-win16: log every Win16 (NE) API call and its result
 // --trace-win16=dde: only the DDEML offers and answers. The full trace is
 // large enough to change the timing of anything involving two processes, so a
@@ -397,6 +405,13 @@ const DUMP_BACKCANVAS = hasFlag('dump-backcanvas'); // --dump-backcanvas: save b
 const DUMP_VFS = hasFlag('dump-vfs');     // --dump-vfs: list all VFS files at end
 const SAVE_VFS = getArg('save-vfs', null); // --save-vfs=DIR: extract VFS files to directory
 const SAVE_VFS_SUFFIX = getArg('save-vfs-suffix', null); // --save-vfs-suffix=.gid: restrict extraction
+// --overlay-dir=DIR: the writable C:\ overlay of docs/design-byo-media.md ⑤,
+// persisted to a host directory. Everything the guest writes is journalled and
+// replayed on the next run, so an installer can be run headlessly once and its
+// installed tree is simply there the second time. Unlike the browser's
+// localStorage persistFiles path this has no glob list and no per-file cap.
+const OVERLAY_DIR = getArg('overlay-dir', null);
+let vfsOverlay = null;
 const VFS_DRIVE = getArg('vfs-drive', null); // --vfs-drive=D: mirror the EXE + explicit --vfs-include files on read-only D:\
 const VFS_INCLUDE = getArgs('vfs-include'); // --vfs-include=GLOB: mount matching files relative to the EXE directory
 // --vfs-mount=HOSTPATH=GUESTPATH: mount one host file at an exact guest path.
@@ -481,6 +496,11 @@ const ISO_LAUNCH = (() => {
   }
   throw new Error(`--iso-exe=${ISO_EXE} not found in ${ISO_MOUNTS.join(', ')}`);
 })();
+// --cue=PATH (repeatable): attach a mixed-mode CUE/BIN table of contents to
+// the CD-ROM drive. Pair this with --iso for the data track. Audio BIN files
+// stay on the host and are read only when an MCI cdaudio play reaches them.
+const CUE_MOUNTS = getArgs('cue');
+const CUE_DRIVE = getArg('cue-drive', null);
 // --dll-seed=PATH[,PATH]: preload one more DLL as if the app registry had
 // listed it in `dlls:`. LoadLibraryA resolves a guest path against modules
 // that are already loaded and never opens the VFS itself, so a plugin the app
@@ -3751,6 +3771,43 @@ async function main() {
       }
     }
 
+    if (CUE_MOUNTS.length) {
+      const { mountCue } = require('../lib/cdrom');
+      let drive = (CUE_DRIVE || ISO_DRIVE || 'D').replace(/:$/, '').toUpperCase();
+      for (const cuePath of CUE_MOUNTS) {
+        const absoluteCue = path.resolve(cuePath);
+        const directory = path.dirname(absoluteCue);
+        const resolveTrack = name => path.resolve(directory, ...String(name).split('/'));
+        const result = mountCue(ctx.vfs, fs.readFileSync(absoluteCue, 'utf8'), {
+          drive,
+          volumeLabel: (ctx.vfs.volumeLabels && ctx.vfs.volumeLabels.get(drive.toLowerCase())) || 'AUDIO_CD',
+          trackSize: name => fs.statSync(resolveTrack(name)).size,
+          loadTrack: name => fs.promises.readFile(resolveTrack(name)),
+        });
+        console.log(`[cue] mounted ${cuePath} -> ${result.root} ` +
+          `tracks=${result.firstTrack}-${result.lastTrack} (${result.audioTracks.length} audio, lazy)`);
+        drive = String.fromCharCode(drive.charCodeAt(0) + 1);
+      }
+    }
+
+    // The writable C:\ overlay (docs/design-byo-media.md ⑤). Attached after
+    // every base mount and before the guest runs, because the replay order is
+    // base mounts → overlay files/dirs → whiteouts: a file the guest deleted
+    // last session must be removed *after* the mount put it back.
+    if (OVERLAY_DIR) {
+      const { nodeDirStore } = require('../lib/overlay-store');
+      const VfsOverlay = require('../lib/vfs-overlay');
+      vfsOverlay = VfsOverlay.attach(ctx.vfs, {
+        store: nodeDirStore(OVERLAY_DIR),
+        log: line => console.log(line),
+      });
+      const hydrated = await vfsOverlay.hydrate();
+      console.log(`[overlay] ${OVERLAY_DIR}: hydrated ${hydrated.files} file(s), ` +
+        `${hydrated.dirs} dir(s), ${hydrated.whiteouts} whiteout(s)` +
+        (vfsOverlay.errors.length ? `, ${vfsOverlay.errors.length} error(s)` : ''));
+      for (const error of vfsOverlay.errors) console.log(`[overlay] ${error.message}`);
+    }
+
     // A --reg-import snapshot stands in for the browser's localStorage: it is
     // loaded before the app manifest so manifest defaults still win, exactly
     // as they do on a browser profile that already has the key.
@@ -3762,6 +3819,27 @@ async function main() {
         console.log(`[reg] imported ${n} entries from ${REG_IMPORT}`);
       } catch (e) {
         console.error(`--reg-import failed: ${e.message}`);
+        process.exit(1);
+      }
+    }
+
+    // A save bundle restores both halves at once, and it restores them before
+    // the guest runs so the app finds its saves where it left them.
+    if (IMPORT_SAVES) {
+      try {
+        const saveBundle = require('../lib/save-bundle');
+        if (!APP_ENTRY) throw new Error('--import-saves needs --app=ID for its persistFiles globs');
+        const result = saveBundle.importBundle(
+          new Uint8Array(fs.readFileSync(IMPORT_SAVES)), {
+            vfs: ctx.vfs,
+            appId: APP_ID,
+            patterns: APP_ENTRY.persistFiles || [],
+            mode: hasFlag('import-saves-replace') ? 'replace' : 'merge',
+          });
+        console.log(`[saves] imported ${result.files.length} files and ` +
+          `${result.storeKeys} store keys from ${IMPORT_SAVES} (${result.mode})`);
+      } catch (e) {
+        console.error(`--import-saves failed: ${e.message}`);
         process.exit(1);
       }
     }
@@ -8097,6 +8175,30 @@ if (VERBOSE) {
     fs.writeFileSync(REG_EXPORT, JSON.stringify(snap, null, 2));
     console.log(`[reg] exported ${Object.keys(snap).length} entries to ${REG_EXPORT}`);
   }
+  // --export-saves writes the memory card: the app's persistFiles matches plus
+  // the registry/INI store, hashed and zipped. Feed it back with --import-saves,
+  // hand it to tools/save-bundle.js, or sync it with lib/save-sync.js.
+  if (EXPORT_SAVES) {
+    try {
+      const saveBundle = require('../lib/save-bundle');
+      if (!APP_ENTRY) throw new Error('--export-saves needs --app=ID for its persistFiles globs');
+      const patterns = APP_ENTRY.persistFiles || [];
+      if (!patterns.length) {
+        console.log(`[saves] --app=${APP_ID} declares no persistFiles; ` +
+          `the bundle carries registry/INI state only`);
+      }
+      const bytes = saveBundle.exportBundle({ appId: APP_ID, vfs: ctx.vfs, patterns });
+      fs.writeFileSync(EXPORT_SAVES, Buffer.from(bytes));
+      const listed = saveBundle.inspectBundle(bytes);
+      console.log(`[saves] exported ${listed.files.length} files ` +
+        `(${listed.totalFileBytes} bytes) + ${listed.registryKeys} registry keys ` +
+        `to ${EXPORT_SAVES}`);
+      for (const f of listed.files) console.log(`[saves]   ${f.path} (${f.size} bytes)`);
+    } catch (e) {
+      console.error(`--export-saves failed: ${e.message}`);
+      process.exitCode = 1;
+    }
+  }
   if (traceHostNames && traceHostNames.has('com_create_instance') &&
       ctx.sharedCom && ctx.sharedCom.lastCallback) {
     const c = ctx.sharedCom.lastCallback;
@@ -8357,6 +8459,16 @@ if (VERBOSE) {
     for (const d of ctx.vfs.dirs) {
       console.log(`  ${d}\\`);
     }
+  }
+
+  // The overlay batches dirty paths and never writes from inside a guest
+  // batch; this is where the batch lands. A run killed with SIGKILL loses the
+  // journal, which is the documented cost of not writing through every write.
+  if (vfsOverlay) {
+    const flushed = await vfsOverlay.flush();
+    console.log(`[overlay] flushed ${flushed.written} record(s) to ${OVERLAY_DIR}` +
+      (flushed.failed ? `, ${flushed.failed} failed` : ''));
+    for (const error of vfsOverlay.errors) console.log(`[overlay] ${error.message}`);
   }
 
   if (SAVE_VFS && ctx.vfs) {

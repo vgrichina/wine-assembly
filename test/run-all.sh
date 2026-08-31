@@ -63,6 +63,8 @@ UNIT=(
   test/test-vfs.js
   test/test-vfs-lazy-entry.js
   test/test-zip-mount.js
+  test/test-media-sniff.js
+  test/test-save-bundle.js
   test/test-flush-view-of-file.js
   test/test-heap-free-block-validation.js
   test/test-vfs-host-files.js
@@ -288,6 +290,7 @@ UNIT=(
   test/test-shell-window.js
   test/test-sib-load8-handler.js
   test/test-thread-resource-sync.js
+  test/test-vfs-overlay.js
   test/test-vfs-persistence.js
   test/test-vk-key-scan.js
   test/test-wait-for-input-idle.js
@@ -435,6 +438,7 @@ UNIT=(
   test/test-d3d9-shader-unsupported.js
   test/test-d3d9-swap-chain.js
   test/test-destroy-main-window-recreation.js
+  test/test-create-window-failure.js
   test/test-directdraw-surface3-desc.js
   test/test-directplay-lobby-address.js
   test/test-edit-unicode-text.js
@@ -483,6 +487,7 @@ UNIT=(
   test/test-window-from-point.js
   test/test-fnstsw-test-jcc.js
   test/test-winsparkle-stubs.js
+  test/test-worker-load-dll-clone.js
   test/test-worker-sparse-thread-stack.js
 )
 
@@ -757,6 +762,9 @@ E2E=(
   test/test-mw3-gameplay.js
   test/test-shadow-warrior-dosbox.js
   test/test-ultima4-dosbox.js
+  # Two emulator processes: one installs with --overlay-dir, one proves the
+  # installed tree came back. Byte-exact, ~30s.
+  test/test-vfs-overlay-installer.js
 )
 
 SMOKE=(
