@@ -258,21 +258,27 @@ them bumped in this window); `host.js?v=248` (`index.html:1379`) vs
 their own (`sigs?v=3`, `guest-worker.js?v=10`). A worker can load a different
 build of the GL encoder than the page that spawned it.
 
-**3.11 Small correctness items.** `IDirectSound3DListener_GetAllParameters`
-(`09a8:5057`) writes 64 bytes and overwrites `dwSize` without reading the
-caller's — the COM dwSize rule Pass 1 established; `SetAllParameters` (`:5117`)
-never validates it. `createMutex` for a named existing object returns
-`handle|0x80000000` through `create_event` (WAT masks it, `09a:12025`) while
-`createEvent` signals `ERROR_ALREADY_EXISTS` a different way — two conventions
-for one condition. `FlushConsoleInputBuffer` (`09a2:648`) accepts only
-handle==1, so a `DuplicateHandle`d stdin fails. `ToAscii` (`09a:8116`) reads a
-garbage `hkl` from esp+24. `CreateWindowExW`'s predicted-handle bookkeeping is
-**FIXED `3bdb921f`**: the ANSI core marks the HWND it actually allocates before
-creation callbacks, and top-level/child rejection at `WM_NCCREATE` or
-`WM_CREATE` now returns NULL and performs Win98's `WM_NCDESTROY`-only abort.
-A non-main Worker thread in `WaitMessage`/`GetMessage` is
-`clear_yield`ed every slice (`thread-manager.js:1277-1282`) and re-enters — a
-busy poll at one RPC per slice.
+**3.11 Small correctness items — FIXED.** DirectSound 3D buffer/listener
+`GetAllParameters` and `SetAllParameters` now validate the caller's exact
+64-byte structure contract and reject null/short/oversized inputs without
+touching adjacent memory (`391fe732`, `test-directsound3d-listener.js`). Named
+mutex creation uses bit 31 only as private host-return metadata, strips it from
+the issued handle, and reports `ERROR_ALREADY_EXISTS` through `last_error`
+(`1e76e8ab`, `test-open-mutex-w.js`). `ToAscii` delegates to the shared
+translator without reading a nonexistent sixth argument and corrects the
+stdcall frame to five arguments (`5c7b14a5`, `test-to-ascii.js`).
+
+Standard console streams now have process-shared, generation-tagged
+`DuplicateHandle` aliases rather than returning the same small handle number;
+`FlushConsoleInputBuffer`, output routing, `GetFileType`, and `CloseHandle`
+resolve them, while closing one alias leaves sibling aliases and the original
+stream alive and makes the stale generation fail (`4a812854`,
+`test-console-input.js`). `CreateWindowExA/W` marks the HWND actually allocated
+before callbacks and honors `WM_NCCREATE`/`WM_CREATE` rejection with the
+Win98 `WM_NCDESTROY` abort sequence (`3bdb921f`). Finally, `WaitMessage` parks
+with its call frame live until queue work arrives, then completes exactly once;
+Worker slices no longer clear and re-enter it as a busy poll (`5237ac44`,
+`test-getmessage-teardown-quit.js`).
 
 **3.12 Duplication and drift, new.** `readSyncObjectName` + `win32ThreadId` +
 the mutex/event trampolines are verbatim in `host.js:807-838` and
