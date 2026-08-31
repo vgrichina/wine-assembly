@@ -3012,9 +3012,11 @@
             (i32.shl (i32.and (local.get $px) (i32.const 0xFF)) (i32.const 16))
             (i32.and (local.get $px) (i32.const 0xFF00)))
           (i32.and (i32.shr_u (local.get $px) (i32.const 16)) (i32.const 0xFF))))))
-      (return (i32.or (i32.const 0xFF000000)
-        (i32.or (i32.shl (local.get $c) (i32.const 16))
-          (i32.or (i32.shl (local.get $c) (i32.const 8)) (local.get $c))))))))
+        ;; No palette bound: sample the index as greyscale rather than as
+        ;; transparent black.
+        (else (return (i32.or (i32.const 0xFF000000)
+          (i32.or (i32.shl (local.get $c) (i32.const 16))
+            (i32.or (i32.shl (local.get $c) (i32.const 8)) (local.get $c)))))))))
     (i32.const 0))
 
   ;; Hot span sampler with immutable surface metadata already loaded by the

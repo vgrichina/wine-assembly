@@ -429,9 +429,10 @@
                                 (i32.store8
                                   (i32.add (call $g2w (local.get $text_copy_g)) (local.get $text_len))
                                   (i32.const 0))
-                                (i32.store offset=28 (local.get $base) (local.get $text_copy_g)))))))
-                    (call $heap_free (local.get $notify_g))))))))
-        (drop (i32.const 0)))))
+                                (i32.store offset=28 (local.get $base) (local.get $text_copy_g))))))))
+                    ;; Free the notify block unconditionally — the copy above
+                    ;; already took anything the parent handed back.
+                    (call $heap_free (local.get $notify_g))))))))))
     ;; Link into parent's child list.
     (if (local.get $hParent)
       (then
@@ -1486,7 +1487,7 @@
 	                          (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
 	                          (drop (call $host_gdi_set_bk_color (local.get $hdc) (i32.const 0x00FFFFFF)))
 		                          (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000))))))))))))
-        (nop)))
+        ))
       (global.set $tv_debug_paint_rows (local.get $row))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $items)))
