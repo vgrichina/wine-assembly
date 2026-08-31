@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 442 funcref)
+  (table $handlers 443 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -500,4 +500,5 @@
     $th_fnstsw_test_ah_jcc    ;; 439: FNSTSW AX + TEST AH,imm8 + Jcc
     $th_rgb565_colorkey_run   ;; 440: MW3 counted RGB565 color-key row
     $th_mw3_grid_filter_run   ;; 441: MW3 in-place 16-bit terrain/grid filter row
+    $th_lar                   ;; 442: LAR r16/32,r/m16 (selector access rights)
   )

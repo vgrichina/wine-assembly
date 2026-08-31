@@ -41,6 +41,8 @@ UNIT=(
   test/test-check-parens.js
   test/test-boot-cursor.js
   test/test-x86-ops.js
+  test/test-lar-opcode.js
+  test/test-win16-lfs-opcode.js
   test/test-lut-run-generalized.js
   test/test-mmx-mask-copy-run.js
   test/test-copy32-bounded-run.js
@@ -53,6 +55,7 @@ UNIT=(
   test/test-shift-equivalence.js
   test/test-ne-loader.js
   test/test-win16-exec.js
+  test/test-win16-civ2-apis.js
   test/test-fs-prefix.js
   test/test-create-directory-last-error.js
   test/test-unhandled-exception-filter.js
@@ -64,6 +67,7 @@ UNIT=(
   test/test-vfs-lazy-entry.js
   test/test-zip-mount.js
   test/test-media-sniff.js
+  test/test-media-cue-import.js
   test/test-save-bundle.js
   test/test-flush-view-of-file.js
   test/test-heap-free-block-validation.js
@@ -91,6 +95,7 @@ UNIT=(
   test/test-static-dx-version.js
   test/test-midi-mci.js
   test/test-mci-get-device-id.js
+  test/test-cd-audio-mci.js
   test/test-thread-manager.js
   test/test-worker-metadata-refresh.js
   test/test-mm-timer-callback.js

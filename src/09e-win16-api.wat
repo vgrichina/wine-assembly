@@ -524,6 +524,172 @@
       (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0)))))
     (call $win16_api_return (i32.const 4)))
 
+  ;; KERNEL.348 hmemcpy(void far *dst, const void far *src, long count).
+  ;; The Win16 export is Pascal, so count is the rightmost argument nearest
+  ;; the far return, followed by src and dst as offset/selector word pairs.
+  ;; Huge buffers are backed by consecutive arena segments; guest_memmove uses
+  ;; guest-linear addresses and already preserves overlap while crossing page
+  ;; boundaries, which is precisely the operation exposed here.
+  (func $win16_hmemcpy
+    (local $dst i32) (local $src i32) (local $count i32)
+    (local.set $count (call $win16_arg32 (i32.const 0)))
+    (local.set $src (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
+    (local.set $dst (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 5)) (call $win16_arg16 (i32.const 4))))
+    (call $guest_memmove (local.get $dst) (local.get $src) (local.get $count))
+    (call $win16_api_return (i32.const 12)))
+
+  ;; Windows 3.1 SDK TOOLHELP.62 ModuleFindHandle. MODULEENTRY is the
+  ;; documented packed 276-byte structure: DWORD size, a ten-byte module
+  ;; name, handle/usage words, a 256-byte path, and the private walk cursor.
+  (func $win16_ModuleFindHandle
+    (local $entry i32) (local $module i32) (local $i i32) (local $base i32)
+    (local $n i32) (local $ch i32)
+    (local.set $module (call $win16_arg16 (i32.const 0)))
+    (local.set $entry (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (global.set $eax (i32.const 0))
+    (global.set $edx (i32.const 0))
+    (if (i32.and (i32.ne (local.get $module) (i32.const 0))
+                 (i32.ge_u (call $gl32 (local.get $entry)) (i32.const 276)))
+      (then
+        (call $zero_memory (call $g2w (i32.add (local.get $entry) (i32.const 4)))
+          (i32.const 272))
+        (call $gs16 (i32.add (local.get $entry) (i32.const 14)) (local.get $module))
+        (call $gs16 (i32.add (local.get $entry) (i32.const 16)) (i32.const 1))
+        (call $win16_call32_begin (i32.const 3))
+        (call $handle_GetModuleFileNameA (i32.const 0)
+          (i32.add (local.get $entry) (i32.const 18)) (i32.const 256)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (if (global.get $eax)
+          (then
+            ;; Derive szModule from the returned path: basename, uppercase,
+            ;; without the extension, capped at the SDK's eight-character
+            ;; module-name limit plus its terminator.
+            (block $scanned (loop $scan
+              (br_if $scanned (i32.ge_u (local.get $i) (i32.const 255)))
+              (local.set $ch (call $gl8 (i32.add
+                (i32.add (local.get $entry) (i32.const 18)) (local.get $i))))
+              (br_if $scanned (i32.eqz (local.get $ch)))
+              (if (i32.or (i32.eq (local.get $ch) (i32.const 0x5C))
+                          (i32.or (i32.eq (local.get $ch) (i32.const 0x2F))
+                                  (i32.eq (local.get $ch) (i32.const 0x3A))))
+                (then (local.set $base (i32.add (local.get $i) (i32.const 1)))))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $scan)))
+            (block $named (loop $name
+              (br_if $named (i32.ge_u (local.get $n) (i32.const 9)))
+              (local.set $ch (call $gl8 (i32.add
+                (i32.add (i32.add (local.get $entry) (i32.const 18))
+                         (local.get $base)) (local.get $n))))
+              (br_if $named (i32.or (i32.eqz (local.get $ch))
+                                    (i32.eq (local.get $ch) (i32.const 0x2E))))
+              (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61))
+                           (i32.le_u (local.get $ch) (i32.const 0x7A)))
+                (then (local.set $ch (i32.sub (local.get $ch) (i32.const 0x20)))))
+              (call $gs8 (i32.add (i32.add (local.get $entry) (i32.const 4))
+                                  (local.get $n)) (local.get $ch))
+              (local.set $n (i32.add (local.get $n) (i32.const 1)))
+              (br $name)))
+            (global.set $eax (local.get $module))))))
+    (call $win16_api_return (i32.const 6)))
+
+  ;; TOOLHELP.72 MemManInfo. Counts are 4 KiB pages; the two LinearSpace
+  ;; fields and LargestFreeBlock are bytes, as defined by the SDK structure.
+  ;; Report the emulator's fixed 128 MiB address space with a conservative
+  ;; half free instead of exposing host-memory details to the Win16 task.
+  (func $win16_MemManInfo
+    (local $info i32)
+    (local.set $info (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $edx (i32.const 0))
+    (if (i32.ge_u (call $gl32 (local.get $info)) (i32.const 42))
+      (then
+        (call $gs32 (i32.add (local.get $info) (i32.const 4)) (i32.const 0x01000000))
+        (call $gs32 (i32.add (local.get $info) (i32.const 8)) (i32.const 0x00004000))
+        (call $gs32 (i32.add (local.get $info) (i32.const 12)) (i32.const 0x00004000))
+        (call $gs32 (i32.add (local.get $info) (i32.const 16)) (i32.const 0x08000000))
+        (call $gs32 (i32.add (local.get $info) (i32.const 20)) (i32.const 0x00004000))
+        (call $gs32 (i32.add (local.get $info) (i32.const 24)) (i32.const 0x00004000))
+        (call $gs32 (i32.add (local.get $info) (i32.const 28)) (i32.const 0x00008000))
+        (call $gs32 (i32.add (local.get $info) (i32.const 32)) (i32.const 0x04000000))
+        (call $gs32 (i32.add (local.get $info) (i32.const 36)) (i32.const 0))
+        (call $gs16 (i32.add (local.get $info) (i32.const 40)) (i32.const 4096))
+        (global.set $eax (i32.const 1))))
+    (call $win16_api_return (i32.const 4)))
+
+  ;; TOOLHELP.67 StackTraceCSIPFirst and .68 StackTraceNext.
+  ;; STACKTRACEENTRY is the documented packed 20-byte structure. Civ II uses
+  ;; these calls while formatting its own diagnostic stack; a missing
+  ;; TOOLHELP.DLL used to turn that ordinary walk into an emulator trap.
+  (func $win16_toolhelp_stack_fill (param $entry i32) (param $ss i32)
+        (param $bp i32) (param $cs i32) (param $ip i32) (result i32)
+    (local $index i32) (local $seg i32)
+    (if (i32.lt_u (call $gl32 (local.get $entry)) (i32.const 20))
+      (then (return (i32.const 0))))
+    (local.set $index (call $win16_sel_to_index (local.get $cs)))
+    (if (i32.eqz (call $win16_seg_base (local.get $index)))
+      (then (return (i32.const 0))))
+    (local.set $seg (i32.load offset=12
+      (i32.add (global.get $WIN16_SEG_TABLE)
+        (i32.mul (local.get $index) (i32.const 16)))))
+    (call $gs16 (i32.add (local.get $entry) (i32.const 4)) (global.get $sreg_ds)) ;; hTask
+    (call $gs16 (i32.add (local.get $entry) (i32.const 6)) (local.get $ss))
+    (call $gs16 (i32.add (local.get $entry) (i32.const 8)) (local.get $bp))
+    (call $gs16 (i32.add (local.get $entry) (i32.const 10)) (local.get $cs))
+    (call $gs16 (i32.add (local.get $entry) (i32.const 12)) (local.get $ip))
+    (call $gs16 (i32.add (local.get $entry) (i32.const 14)) (global.get $sreg_ds)) ;; hModule
+    (call $gs16 (i32.add (local.get $entry) (i32.const 16)) (local.get $seg))
+    (call $gs16 (i32.add (local.get $entry) (i32.const 18)) (i32.const 0)) ;; FRAME_FAR
+    (i32.const 1))
+
+  (func $win16_StackTraceCSIPFirst
+    (local $entry i32)
+    (local.set $entry (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 5)) (call $win16_arg16 (i32.const 4))))
+    (global.set $eax (call $win16_toolhelp_stack_fill (local.get $entry)
+      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 0))
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (global.set $edx (i32.const 0))
+    (call $win16_api_return (i32.const 12)))
+
+  (func $win16_StackTraceNext
+    (local $entry i32) (local $ss i32) (local $bp i32) (local $stack i32)
+    (local $next_bp i32) (local $next_ip i32) (local $next_cs i32)
+    (local.set $entry (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $ss (call $gl16 (i32.add (local.get $entry) (i32.const 6))))
+    (local.set $bp (call $gl16 (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $stack (call $win16_far_to_guest (local.get $ss) (local.get $bp)))
+    (local.set $next_bp (call $gl16 (local.get $stack)))
+    (local.set $next_ip (call $gl16 (i32.add (local.get $stack) (i32.const 2))))
+    (local.set $next_cs (call $gl16 (i32.add (local.get $stack) (i32.const 4))))
+    (if (i32.or (i32.le_u (local.get $next_bp) (local.get $bp))
+                (i32.eqz (call $win16_seg_base
+                  (call $win16_sel_to_index (local.get $next_cs)))))
+      (then (global.set $eax (i32.const 0)))
+      (else (global.set $eax (call $win16_toolhelp_stack_fill (local.get $entry)
+        (local.get $ss) (local.get $next_bp) (local.get $next_cs)
+        (local.get $next_ip)))))
+    (global.set $edx (i32.const 0))
+    (call $win16_api_return (i32.const 4)))
+
+  (func $win16_toolhelp (param $module i32) (param $ordinal i32) (result i32)
+    (if (i32.eqz (call $win16_dynamic_module_is_toolhelp (local.get $module)))
+      (then (return (i32.const 0))))
+    (if (i32.eq (local.get $ordinal) (i32.const 62))
+      (then (call $win16_ModuleFindHandle) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 72))
+      (then (call $win16_MemManInfo) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 67))
+      (then (call $win16_StackTraceCSIPFirst) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 68))
+      (then (call $win16_StackTraceNext) (return (i32.const 1))))
+    (i32.const 0))
+
   ;; USER.430 lstrcmp / USER.471 lstrcmpi(lpString1, lpString2) -> <0, 0, >0.
   ;; Case folding is ASCII only, which is what the code pages these apps run
   ;; under amount to for the comparisons they make.
@@ -700,7 +866,8 @@
     ;; A DLL may likewise pass one of its own selectors (VBRUN100 does this),
     ;; so resolve live selectors through the loader's segment-owner records.
     ;; Only non-selector handles go through the 16->32 handle table.
-    (if (i32.ne (local.get $raw_mod) (i32.const 0))
+    (if (i32.and (i32.ne (local.get $raw_mod) (i32.const 0))
+                 (i32.ne (local.get $raw_mod) (global.get $sreg_ds)))
       (then
         (local.set $index (call $win16_sel_to_index (local.get $raw_mod)))
         (if (call $win16_seg_base (local.get $index))
@@ -2423,6 +2590,8 @@
       (then (call $win16_lread (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 349))
       (then (call $win16_hread) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 348))
+      (then (call $win16_hmemcpy) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 169))
       (then (call $win16_GetFreeSpace) (return (i32.const 1))))
     ;; AllocCStoDSAlias, AllocDStoCSAlias, AllocAlias and AllocSelector all
@@ -9342,6 +9511,26 @@
   (func $win16_mmsystem (param $ordinal i32) (result i32)
     (local $name i32) (local $flags i32) (local $dev i32) (local $msg i32)
     (local $p1 i32) (local $p2 i32)
+    ;; 605/606 timeBeginPeriod/timeEndPeriod(uPeriod). Browser scheduling has
+    ;; no host timer quantum to change; accepting and balancing the request is
+    ;; the documented success path and keeps multimedia clients portable.
+    (if (i32.or (i32.eq (local.get $ordinal) (i32.const 605))
+                (i32.eq (local.get $ordinal) (i32.const 606)))
+      (then
+        (global.set $eax (i32.const 0))
+        (call $win16_api_return (i32.const 2))
+        (return (i32.const 1))))
+    ;; 607 timeGetTime() uses the same host-backed guest clock as Win32.
+    (if (i32.eq (local.get $ordinal) (i32.const 607))
+      (then
+        (call $win16_call32_begin (i32.const 0))
+        (call $handle_timeGetTime (i32.const 0) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+        (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+        (call $win16_api_return (i32.const 0))
+        (return (i32.const 1))))
     ;; 201 midiOutGetNumDevs() — how many MIDI output devices there are. Chip's
     ;; Challenge asks before it decides whether to play its music.
     (if (i32.eq (local.get $ordinal) (i32.const 201))
@@ -9803,6 +9992,8 @@
     (if (i32.eq (local.get $module) (i32.const 8))
       (then (if (call $win16_commdlg (local.get $ordinal))
               (then (call $win16_trace_ret) (return)))))
+    (if (call $win16_toolhelp (local.get $module) (local.get $ordinal))
+      (then (call $win16_trace_ret) (return)))
 
     ;; Anything not implemented reports itself and stops, on the same reasoning
     ;; as the 32-bit fail-fast stubs. The three logs are the marker, the packed

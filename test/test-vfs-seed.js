@@ -77,6 +77,13 @@ check('a Win16 module name is tried as every suffix under every case', () => {
     'cards.DLL', 'cards.dll', 'cards.VBX', 'cards.vbx', 'cards.EXE',
     'CARDS.DLL', 'CARDS.dll', 'CARDS.VBX', 'CARDS.vbx', 'CARDS.EXE',
   ]);
+  // LoadLibrary supplies a filename rather than the suffix-free module name.
+  // It must still find the sibling file, not search for WING.DLL.DLL.
+  assert.deepStrictEqual(win16FileCandidates('wing.dll'), [
+    'wing.DLL', 'wing.dll', 'wing.VBX', 'wing.vbx', 'wing.EXE',
+    'WING.DLL', 'WING.dll', 'WING.VBX', 'WING.vbx', 'WING.EXE',
+  ]);
+  assert.ok(!win16FileCandidates('wing.dll').some(c => /\.dll\.(?:dll|vbx|exe)$/i.test(c)));
   // .IW is deliberately absent: staging IdleWild's six screen-saver libraries
   // makes it run out of module slots and stop, where not finding them costs
   // only the previews.
@@ -98,7 +105,7 @@ check('neither host still spells the candidates itself', () => {
 check('the page loads the module before host.js needs it', () => {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const seed = html.indexOf('lib/vfs-seed.js');
-  const host = html.indexOf('host.js');
+  const host = html.indexOf('<script src="host.js');
   assert.ok(seed > 0, 'index.html never loads lib/vfs-seed.js — VfsSeed is undefined at launch');
   assert.ok(seed < host, 'vfs-seed.js must be loaded before host.js');
 });

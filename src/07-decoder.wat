@@ -1439,9 +1439,9 @@
   (func $modrm16_apply_seg
     (if (global.get $d_seg)
       (then
-        (if (i32.gt_u (global.get $d_seg) (i32.const 4))
+        (if (i32.gt_u (global.get $d_seg) (i32.const 5))
           (then
-            (call $host_log_i32 (i32.const 0xCA165E67)) ;; FS/GS in a 16-bit task
+            (call $host_log_i32 (i32.const 0xCA165E67)) ;; GS in a 16-bit task
             (call $host_log_i32 (global.get $d_seg))
             (unreachable)))
         (global.set $mr_seg (i32.sub (global.get $d_seg) (i32.const 1)))
@@ -4450,6 +4450,48 @@
       (if (i32.eq (local.get $op) (i32.const 0x0F))
         (then
           (local.set $op (call $d_fetch8))
+
+          ;; 0x0F 0x02: LAR r16/32, r/m16. The source is always a selector
+          ;; word; prefix_66 (already inverted for a 16-bit code segment)
+          ;; selects the destination width.
+          (if (i32.eq (local.get $op) (i32.const 0x02))
+            (then
+              (call $decode_modrm)
+              (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                (then
+                  (call $te (i32.const 442)
+                    (i32.or
+                      (i32.shl (local.get $prefix_66) (i32.const 9))
+                      (i32.or (i32.shl (global.get $mr_reg) (i32.const 4))
+                              (global.get $mr_val)))))
+                (else
+                  (call $apply_seg_override)
+                  (local.set $a (call $emit_sib_or_abs))
+                  (call $te (i32.const 442)
+                    (i32.or (i32.const 0x100)
+                      (i32.or
+                        (i32.shl (local.get $prefix_66) (i32.const 9))
+                        (i32.shl (global.get $mr_reg) (i32.const 4)))))
+                  (call $te_raw (local.get $a))))
+              (br $decode)))
+
+          ;; 0x0F 0xB4: LFS r16, m16:16. The WinG runtime distributed on the
+          ;; Civilization II CD uses this to walk a far bitmap pointer. FS is
+          ;; a normal protected-mode data selector here, not Win32's TIB.
+          (if (i32.and (global.get $code16)
+                       (i32.eq (local.get $op) (i32.const 0xB4)))
+            (then
+              (call $decode_modrm)
+              (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                (then
+                  (call $host_log_i32 (i32.const 0x0FB4))
+                  (call $host_log_i32 (i32.const 0xBADC0DE0))
+                  (unreachable)))
+              (local.set $a (call $emit_sib_or_abs))
+              (call $te (i32.const 376)
+                (i32.or (i32.const 0x40) (global.get $mr_reg)))
+              (call $te_raw (local.get $a))
+              (br $decode)))
 
           ;; 0x0F 0x40-0x4F: CMOVcc r32, r/m32 (or r16 with 66h)
           (if (i32.and (i32.ge_u (local.get $op) (i32.const 0x40)) (i32.le_u (local.get $op) (i32.const 0x4F)))

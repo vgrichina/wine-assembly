@@ -21,6 +21,7 @@ const proprietaryLocalIds = [
   'deus_ex_demo', 'icewind_dale_demo',
   'baldurs_gate_noninteractive_demo', 'baldurs_gate_interactive_demo',
   'baldurs_gate_chapters_1_2_demo',
+  'civ2_win16', 'civ2_mge',
 ];
 
 for (const id of proprietaryLocalIds) {
@@ -145,12 +146,43 @@ for (const vfsPath of [
 assert.deepStrictEqual(baldursInteractive.persistFiles, baldursChapters.persistFiles,
   'both playable Baldur previews persist character and save-game state');
 
+const civ2Win16 = APPS.civ2_win16;
+const civ2Mge = APPS.civ2_mge;
+assert.strictEqual(civ2Win16.exe,
+  'test/binaries/candidates/civilization-2-win16/cd/CIV2/CIV2.EXE');
+assert.strictEqual(civ2Mge.exe,
+  'test/binaries/candidates/civilization-2-mge-win32/installed/civ2.exe');
+assert.deepStrictEqual(civ2Win16.win16Modules, ['WING'],
+  'the Win16 dropdown stages the retail WinG library loaded at runtime');
+assert(civ2Mge.dlls.some(file => /\/XDaemon\.dll$/i.test(file)),
+  'the Win32 dropdown seeds the MGE network helper DLL');
+for (const app of [civ2Win16, civ2Mge]) {
+  assert(app.localFileManifest.endsWith('/.wine-assembly-browser.json'),
+    'Civ II reads its ignored prepared file inventory at launch');
+  assert(app.cdAudio && /\.cue$/i.test(app.cdAudio.cue),
+    'Civ II mounts its authentic mixed-mode disc for CD audio');
+}
+
 // If the ignored fixtures are present, every dropdown fetch must resolve now.
 for (const id of proprietaryLocalIds) {
   if (!fs.existsSync(path.join(root, APPS[id].exe))) continue;
   for (const file of [...APPS[id].files, ...(APPS[id].dlls || [])]) {
     assert(fs.existsSync(path.join(root, urlOf(file))),
       `${id} local dropdown asset is missing: ${urlOf(file)}`);
+  }
+}
+
+for (const id of ['civ2_win16', 'civ2_mge']) {
+  const browserManifest = path.join(root, APPS[id].localFileManifest);
+  if (!fs.existsSync(browserManifest)) continue;
+  const local = JSON.parse(fs.readFileSync(browserManifest, 'utf8'));
+  assert.strictEqual(local.schemaVersion, 1);
+  assert(local.files.length > 50, `${id} prepared browser inventory includes game data`);
+  assert(Object.keys(local.trackSizes).length > 1,
+    `${id} prepared browser inventory includes CD track sizes`);
+  for (const file of local.files) {
+    assert(fs.existsSync(path.join(path.dirname(browserManifest), file.url)),
+      `${id} browser inventory asset is missing: ${file.url}`);
   }
 }
 
@@ -190,5 +222,12 @@ for (const candidateId of [
   const recipe = manifest.candidates.find(candidate => candidate.id === candidateId);
   assert(recipe && recipe.localOnly,
     `${candidateId} fetch recipe remains local-only`);
+}
+for (const candidateId of ['civilization-2-win16', 'civilization-2-mge-win32']) {
+  const recipe = manifest.candidates.find(candidate => candidate.id === candidateId);
+  assert(recipe && recipe.localOnly && recipe.browser,
+    `${candidateId} remains local-only and emits a browser inventory`);
+  assert(recipe.browser.cue === recipe.cli.cue,
+    `${candidateId} browser and CLI use the same authentic CUE`);
 }
 console.log('PASS  proprietary previews are complete localhost-only dropdown apps');

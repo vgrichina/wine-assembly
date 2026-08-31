@@ -499,7 +499,8 @@ const ISO_LAUNCH = (() => {
 // --cue=PATH (repeatable): attach a mixed-mode CUE/BIN table of contents to
 // the CD-ROM drive. Pair this with --iso for the data track. Audio BIN files
 // stay on the host and are read only when an MCI cdaudio play reaches them.
-const CUE_MOUNTS = getArgs('cue');
+const CUE_MOUNTS = args.filter(value => value.startsWith('--cue='))
+  .map(value => value.slice('--cue='.length)).filter(Boolean);
 const CUE_DRIVE = getArg('cue-drive', null);
 // --dll-seed=PATH[,PATH]: preload one more DLL as if the app registry had
 // listed it in `dlls:`. LoadLibraryA resolves a guest path against modules

@@ -100,6 +100,7 @@ Storage Policy" (webkit.org/blog/14403), MDN "Origin private file system".
  │  CONTAINER MOUNTS                                            │
  │                                                              │
  │   iso9660   →  D:\                   read-only ▪ range reads │
+ │   cue/bin   →  D:\ + CD-DA          data ranges ▪ lazy PCM │
  │   zip       →  C:\Program Files\<name>\           read-only  │
  │   bare exe  →  C:\                     today's apps.js path  │
  └──────────────────────────────┬───────────────────────────────┘
@@ -260,7 +261,39 @@ and `GetVolumeInformationA` returning the PVD's volume label (and serial, if
 cheap). Real CD checks can also probe volume serials, `GetLogicalDrives`,
 `GetDiskFreeSpaceA`, root enumeration, MCI CD audio, or raw device opens —
 those stay fail-fast until a real app demands one. Read-only, so no overlay
-questions: ISO is still the easiest mount.
+questions: ISO is still the easiest mount. `GetLogicalDrives`, fabricated
+free-space geometry and raw device opens remain follow-ups; MCI CD audio is
+implemented by the mixed-mode path below.
+
+### Mixed-mode CUE/BIN — data and soundtrack are one disc
+
+A Redump-style PC game is a set, not one file: a small `.cue`, one raw
+MODE1/2352 data BIN, and one or more raw AUDIO BINs (or a shared BIN with
+several indexed tracks). The picker and drop handler therefore analyze all
+files from one selection together. Each CUE consumes the safe relative names
+it references; a missing or ambiguous part is rejected with a request to
+select the complete set rather than importing the BINs as unrelated files.
+
+The raw data track is not copied into a synthesized ISO. A provider view maps
+each 2352-byte mode-1 sector to its 2048-byte user-data payload at offset 16,
+and `iso9660` parses/mounts that virtual stream at `D:\`. This preserves the
+same chunk-cache and parked-read behavior as a standalone ISO. The CUE table
+of contents is attached to that same CD-ROM drive.
+
+Audio BINs remain unopened at analysis and mount time. MCI `cdaudio`
+open/status/play/pause/resume/stop/close calls use the CUE's MSF/TMSF track
+positions; playback reads only the requested backing BIN and decodes raw
+44.1kHz signed 16-bit stereo PCM onto the Wave mixer bus. A kept set is one
+IndexedDB catalog row with multiple OPFS part files. Original part names are
+stored in the row, so a reload can resolve the CUE again even though the OPFS
+filenames themselves are opaque. Existing schema-1 single-file library rows
+remain valid.
+
+The same multi-file selection rule covers offline installers: a setup `.exe`
+and numbered `.bin` files sharing its full basename are one import, stored
+together and mounted beside one another on `C:\`. This is the generic path for
+GOG-style offline packages; it does not depend on a title-specific catalog
+entry.
 
 ## Writes — the overlay and the save bundle
 
@@ -360,7 +393,11 @@ it in the Win98 style it already draws.
 ### One interaction: drop anything, sniff it, ask one question
 
 ```
- dropped bytes ──▶ sniff magic
+ selected files ─▶ group any .cue with its referenced .bin files
+                    │
+                    ├─ CUE/BIN set         ──▶ mixed CD dialog ──▶ D:\ + CD-DA
+                    ▼
+                  sniff magic
                     │
                     ├─ "CD001" @ 0x8001 ──▶ ISO dialog ──▶ D:\ + tray CD
                     ├─ "PK.." zip        ──▶ ZIP dialog ──▶ folder + icon

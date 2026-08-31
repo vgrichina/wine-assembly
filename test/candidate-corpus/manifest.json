@@ -1147,6 +1147,136 @@
       }
     },
     {
+      "id": "civilization-2-win16",
+      "name": "Sid Meier's Civilization II",
+      "kind": "game",
+      "version": "1.0 original multilingual retail CD-ROM (Win16)",
+      "executables": [
+        "cd/CIV2/CIV2.EXE"
+      ],
+      "sourcePage": "https://archive.org/details/20240816_20240816_0053",
+      "license": "proprietary commercial retail CD-ROM; local ignored compatibility testing only; do not redistribute or deploy",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/20240816_20240816_0053/Sid%20Meier%27s%20Civilization%20II%20%28USA%29%20%28En%2CFr%2CDe%29.zip",
+          "sha1": "fb525316c09bb41034dc4368f0b6bd4ca4caa42e",
+          "type": "archive"
+        }
+      ],
+      "postExtract": [
+        {
+          "type": "extractRawMode1Cd",
+          "image": "Sid Meier's Civilization II (USA) (En,Fr,De) (Track 01).bin",
+          "into": "cd"
+        },
+        {
+          "type": "expandSzdd",
+          "from": "cd/WING/WING.DL_",
+          "into": "cd/CIV2/WING.DLL"
+        }
+      ],
+      "browser": {
+        "exe": "cd/CIV2/CIV2.EXE",
+        "fileRoot": "cd/CIV2",
+        "cue": "Sid Meier's Civilization II (USA) (En,Fr,De).cue"
+      },
+      "cli": {
+        "maxBatches": 160,
+        "batchSize": 5000,
+        "cue": "Sid Meier's Civilization II (USA) (En,Fr,De).cue",
+        "vfsInclude": [
+          "**/*"
+        ]
+      }
+    },
+    {
+      "id": "civilization-2-mge-win32",
+      "name": "Civilization II: Multiplayer Gold Edition",
+      "kind": "game",
+      "version": "1.0 USA retail CD-ROM (Win32)",
+      "executables": [
+        "installed/civ2.exe"
+      ],
+      "sourcePage": "https://archive.org/details/20240816_20240816_0053",
+      "license": "proprietary commercial retail CD-ROM; local ignored compatibility testing only; do not redistribute or deploy",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/20240816_20240816_0053/Civilization%20II%20-%20Multiplayer%20Gold%20Edition%20%28USA%29.zip",
+          "sha1": "093426898e4fcd5397985079b0cf4b1aa77f6340",
+          "type": "archive"
+        }
+      ],
+      "postExtract": [
+        {
+          "type": "extractRawMode1Cd",
+          "image": "Civilization II - Multiplayer Gold Edition (USA) (Track 01).bin",
+          "into": "cd"
+        },
+        {
+          "type": "unshield",
+          "cab": "cd/data1.cab",
+          "into": "installed-extracted",
+          "group": "Program Executable Files"
+        },
+        {
+          "type": "unshield",
+          "cab": "cd/data1.cab",
+          "into": "installed-extracted",
+          "group": "Sound Files"
+        },
+        {
+          "type": "unshield",
+          "cab": "cd/data1.cab",
+          "into": "installed-extracted",
+          "group": "Support Files - English"
+        },
+        {
+          "type": "unshield",
+          "cab": "cd/data1.cab",
+          "into": "installed-extracted",
+          "group": "Program Support Files"
+        },
+        {
+          "type": "copyTree",
+          "from": "installed-extracted/Program_Executable_Files",
+          "into": "installed"
+        },
+        {
+          "type": "copyTree",
+          "from": "installed-extracted/Sound_Files",
+          "into": "installed"
+        },
+        {
+          "type": "copyTree",
+          "from": "installed-extracted/Support_Files_-_English",
+          "into": "installed"
+        },
+        {
+          "type": "copyTree",
+          "from": "installed-extracted/Program_Support_Files",
+          "into": "installed"
+        }
+      ],
+      "browser": {
+        "exe": "installed/civ2.exe",
+        "fileRoot": "installed",
+        "cue": "Civilization II - Multiplayer Gold Edition (USA).cue"
+      },
+      "cli": {
+        "maxBatches": 800,
+        "batchSize": 50000,
+        "cue": "Civilization II - Multiplayer Gold Edition (USA).cue",
+        "dlls": [
+          "installed/XDaemon.dll"
+        ],
+        "vfsInclude": [
+          "**/*"
+        ]
+      }
+    },
+    {
       "id": "far-manager-170",
       "name": "Far Manager",
       "kind": "console application",

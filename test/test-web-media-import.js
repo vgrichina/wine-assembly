@@ -171,6 +171,43 @@ async function main() {
     assert.strictEqual(await btnDisplay('single-app app-running'), 'none',
       'the button hides while a single-app page runs its app');
 
+    // A kept CUE set is several OPFS files under one catalog row. Exercise
+    // that storage shape independently of the ZIP launch below: original
+    // filenames must survive opaque OPFS names or the CUE cannot resolve its
+    // tracks after reload.
+    const bundleStorage = await page.evaluate(async () => {
+      const lib = await window.mediaLibrary.MediaLibrary.open();
+      const cueText = 'FILE "track01.bin" BINARY\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n';
+      const row = await lib.addBundle([
+        { name: 'game.cue', source: new File([cueText], 'picked-cue') },
+        { name: 'track01.bin', source: new File([new Uint8Array([1, 2, 3, 4])], 'picked-bin') },
+      ], { name: 'game.cue', kind: 'cue' });
+      const files = await lib.filesFor(row.id);
+      const plans = await window.mediaImport.analyzeFiles(files);
+      const bytes = Array.from(new Uint8Array(await files[1].source.arrayBuffer()));
+      await lib.remove(row.id);
+      const remaining = await lib.list();
+      lib.close();
+      return {
+        names: files.map(file => file.name),
+        sizes: files.map(file => file.size),
+        bytes,
+        rowSize: row.size,
+        partCount: row.parts.length,
+        restoredKind: plans[0] && plans[0].kind,
+        restoredTracks: plans[0] && plans[0].parsedCue.tracks.length,
+        remaining: remaining.length,
+      };
+    });
+    assert.deepStrictEqual(bundleStorage.names, ['game.cue', 'track01.bin']);
+    assert.deepStrictEqual(bundleStorage.sizes, [65, 4]);
+    assert.deepStrictEqual(bundleStorage.bytes, [1, 2, 3, 4]);
+    assert.strictEqual(bundleStorage.rowSize, 69);
+    assert.strictEqual(bundleStorage.partCount, 2);
+    assert.strictEqual(bundleStorage.restoredKind, 'cue');
+    assert.strictEqual(bundleStorage.restoredTracks, 1);
+    assert.strictEqual(bundleStorage.remaining, 0, 'removing a bundle removes its one catalog row');
+
     await uploadThroughInput(page, fixture.zipPath);
 
     await page.waitForFunction(() => !!document.querySelector('.wa-media-modal'), { timeout: 30000 });

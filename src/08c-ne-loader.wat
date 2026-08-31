@@ -122,18 +122,20 @@
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_NDDEAPI))  (then (return (i32.const 11))))
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_WIN87EM))  (then (return (i32.const 12))))
     ;; Then the ones this task brought with it. A Win16 game is routinely three
-    ;; or four NE files -- Tetris alone imports ABOUTTET for its about box, and
+    ;; several NE files -- Tetris alone imports ABOUTTET for its about box, and
     ;; the Entertainment Pack ships IWLIB and WEPUTIL beside the games -- and
     ;; none of those can be a name in this list, because the list is compiled
     ;; and they are whatever the app happens to be made of. The host stages
-    ;; them and writes their names here; ids run from 12.
+    ;; them and writes their names here; ids run from 13.
     (call $win16_dynamic_module_id (local.get $pstr)))
 
-  ;; Up to four app-local modules, each a Pascal string in its own 16-byte
-  ;; slot. Four because a staging slot is 256KB and the space between
-  ;; WIN16_DLL_STAGING and DLL_TABLE holds sixteen of them, twelve of which are
-  ;; spoken for by the system modules and the emulated ones.
-  (global $WIN16_DYNAMIC_MODULES i32 (i32.const 4))
+  ;; Up to six app-local modules, each a Pascal string in its own 16-byte slot.
+  ;; Their one-megabyte staging slots exactly fill the reserved range from
+  ;; WIN16_APP_DLL_STAGING (0x04A00000) to the thread cache at 0x05000000.
+  ;; Civilization II statically names four modules and then loads
+  ;; WING.DLL dynamically, so four slots cannot represent an ordinary retail
+  ;; installation even though plenty of the reserved staging range remains.
+  (global $WIN16_DYNAMIC_MODULES i32 (i32.const 6))
   ;; The first id an app-local module can take. Everything below it is a module
   ;; this emulator answers for itself, so the host neither stages nor loads it.
   (global $WIN16_DYNAMIC_BASE i32 (i32.const 13))
@@ -143,6 +145,23 @@
     (i32.add (call $g2w (i32.add (global.get $WIN16_ARENA)
                                  (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))
              (i32.add (i32.const 0x8400) (i32.mul (local.get $i) (i32.const 16)))))
+
+  ;; TOOLHELP is a documented Windows 3.1 service DLL, but it is imported like
+  ;; any other app-local NE module and therefore receives a dynamic id. Match
+  ;; the Pascal module name in its slot so the API dispatcher can provide the
+  ;; small documented subset an app needs without bundling Microsoft's DLL.
+  (func $win16_dynamic_module_is_toolhelp (param $module_id i32) (result i32)
+    (local $slot i32)
+    (if (i32.or (i32.lt_u (local.get $module_id) (global.get $WIN16_DYNAMIC_BASE))
+                (i32.ge_u (local.get $module_id)
+                  (i32.add (global.get $WIN16_DYNAMIC_BASE)
+                           (global.get $WIN16_DYNAMIC_MODULES))))
+      (then (return (i32.const 0))))
+    (local.set $slot (call $win16_dynamic_module_slot
+      (i32.sub (local.get $module_id) (global.get $WIN16_DYNAMIC_BASE))))
+    (i32.and (i32.eq (i32.load8_u (local.get $slot)) (i32.const 8))
+      (i64.eq (i64.load offset=1 (local.get $slot))
+              (i64.const 0x504C45484C4F4F54))))
 
   ;; An app-local name gets its id the first time anything asks about it, which
   ;; is while the task's own fixups are being applied — long before the host
@@ -1047,7 +1066,8 @@
     (local.set $index (call $win16_sel_to_index (global.get $sreg_cs)))
     (local.set $id (i32.const 1))
     (block $done (loop $scan
-      (br_if $done (i32.gt_u (local.get $id) (i32.const 15)))
+      (br_if $done (i32.ge_u (local.get $id)
+        (i32.add (global.get $WIN16_DYNAMIC_BASE) (global.get $WIN16_DYNAMIC_MODULES))))
       (local.set $rec (call $win16_dll_rec (local.get $id)))
       (local.set $n (i32.load offset=12 (local.get $rec)))
       (local.set $base (i32.load offset=4 (local.get $rec)))
@@ -1065,7 +1085,8 @@
     (local.set $index (call $win16_sel_to_index (global.get $sreg_cs)))
     (local.set $id (i32.const 1))
     (block $done (loop $scan
-      (br_if $done (i32.gt_u (local.get $id) (i32.const 15)))
+      (br_if $done (i32.ge_u (local.get $id)
+        (i32.add (global.get $WIN16_DYNAMIC_BASE) (global.get $WIN16_DYNAMIC_MODULES))))
       (local.set $rec (call $win16_dll_rec (local.get $id)))
       (local.set $n (i32.load offset=12 (local.get $rec)))
       (local.set $base (i32.load offset=4 (local.get $rec)))
@@ -1096,7 +1117,8 @@
       (call $win16_sel_to_index (i32.shr_u (local.get $proc) (i32.const 16))))
     (local.set $id (i32.const 1))
     (block $task (loop $scan
-      (br_if $task (i32.gt_u (local.get $id) (i32.const 15)))
+      (br_if $task (i32.ge_u (local.get $id)
+        (i32.add (global.get $WIN16_DYNAMIC_BASE) (global.get $WIN16_DYNAMIC_MODULES))))
       (local.set $rec (call $win16_dll_rec (local.get $id)))
       (local.set $n (i32.load offset=12 (local.get $rec)))
       (local.set $base (i32.load offset=4 (local.get $rec)))

@@ -76,8 +76,8 @@ open 'http://127.0.0.1:8000/index.html?debug'
 The `DX-Ball 1.09` option is deliberately debug-only. The prepared files stay
 under gitignored `test/binaries/candidates/` and are not part of deployment.
 
-The runner rejects DOS, NE, and non-x86 files before invoking Wine-Assembly;
-only PE32/i386 executables enter the survey. It compiles one immutable WAT
+The runner rejects DOS and non-x86 files before invoking Wine-Assembly;
+Win16 NE and PE32/i386 executables enter the survey. It compiles one immutable WAT
 snapshot and reuses that snapshot for every local candidate. The default
 survey reports `READY`, `BLOCKED`, `SKIP`, or `HARNESS` and exits successfully
 when applications merely hit expected compatibility gaps. `--strict` turns
@@ -94,3 +94,10 @@ freeware and shareware remain local research fixtures, and Dependency Walker
 is explicitly internal-only because its upstream terms forbid bundling it with
 another product. None of these files should enter public deployment merely
 because the fetcher can recover them.
+
+The two Civilization II entries are commercial-retail compatibility fixtures,
+not redistributable game packages. Their pinned Redump-oriented Archive.org
+ZIPs prepare Track 01 into a local `cd/` tree and retain the CUE plus all raw
+CD-audio tracks. The CLI attaches that CUE lazily through MCI, so launching the
+game does not load the soundtrack. GOG does not currently sell a Civilization
+II release, so there is no GOG package recipe to maintain yet.

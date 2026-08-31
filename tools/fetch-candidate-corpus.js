@@ -173,6 +173,52 @@ function extractRawMode1Cd(image, destination) {
   }
 }
 
+// Microsoft Compress's SZDD form is the format used by Win3.x setup media for
+// files named *.DL_, *.EX_, and similar. It is a 4 KiB LZSS window with flag
+// bits consumed least-significant first. Keeping the tiny decoder here makes
+// pinned retail recipes reproducible without requiring a host msexpand build.
+function expandSzdd(source, destination) {
+  const input = fs.readFileSync(source);
+  const magic = Buffer.from([0x53, 0x5A, 0x44, 0x44, 0x88, 0xF0, 0x27, 0x33]);
+  if (input.length < 14 || !input.subarray(0, 8).equals(magic) || input[8] !== 0x41) {
+    throw new Error(`${source} is not an SZDD mode-A stream`);
+  }
+  const expected = input.readUInt32LE(10);
+  if (!expected || expected > 0x7FFFFFFF) throw new Error(`${source} has an invalid SZDD size`);
+  const output = Buffer.allocUnsafe(expected);
+  const window = Buffer.alloc(4096, 0x20);
+  let windowPos = 0xFF0;
+  let inPos = 14;
+  let outPos = 0;
+  while (outPos < expected) {
+    if (inPos >= input.length) throw new Error(`${source} has a truncated SZDD flag byte`);
+    const flags = input[inPos++];
+    for (let bit = 0; bit < 8 && outPos < expected; bit++) {
+      if (flags & (1 << bit)) {
+        if (inPos >= input.length) throw new Error(`${source} has a truncated SZDD literal`);
+        const value = input[inPos++];
+        output[outPos++] = value;
+        window[windowPos] = value;
+        windowPos = (windowPos + 1) & 0xFFF;
+      } else {
+        if (inPos + 1 >= input.length) throw new Error(`${source} has a truncated SZDD match`);
+        const low = input[inPos++];
+        const packed = input[inPos++];
+        const match = low | ((packed & 0xF0) << 4);
+        const length = (packed & 0x0F) + 3;
+        for (let i = 0; i < length && outPos < expected; i++) {
+          const value = window[(match + i) & 0xFFF];
+          output[outPos++] = value;
+          window[windowPos] = value;
+          windowPos = (windowPos + 1) & 0xFFF;
+        }
+      }
+    }
+  }
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.writeFileSync(destination, output);
+}
+
 function runPostExtract(candidate, destination) {
   for (const [index, step] of (candidate.postExtract || []).entries()) {
     if (step.type === 'extractArchive') {
@@ -225,6 +271,10 @@ function runPostExtract(candidate, destination) {
       assertSafeRelative(step.image, `${candidate.id}.postExtract[${index}].image`);
       assertSafeRelative(step.into, `${candidate.id}.postExtract[${index}].into`);
       extractRawMode1Cd(path.join(destination, step.image), path.join(destination, step.into));
+    } else if (step.type === 'expandSzdd') {
+      assertSafeRelative(step.from, `${candidate.id}.postExtract[${index}].from`);
+      assertSafeRelative(step.into, `${candidate.id}.postExtract[${index}].into`);
+      expandSzdd(path.join(destination, step.from), path.join(destination, step.into));
     } else if (step.type === 'writeText') {
       assertSafeRelative(step.file, `${candidate.id}.postExtract[${index}].file`);
       if (typeof step.text !== 'string') {
@@ -352,6 +402,59 @@ function runPostExtract(candidate, destination) {
   }
 }
 
+function walkBrowserFiles(directory, relative = '', output = []) {
+  for (const entry of fs.readdirSync(path.join(directory, relative), { withFileTypes: true })) {
+    const name = relative ? path.join(relative, entry.name) : entry.name;
+    if (entry.isDirectory()) walkBrowserFiles(directory, name, output);
+    else if (entry.isFile()) output.push(name);
+  }
+  return output;
+}
+
+// Browser app entries cannot enumerate an ignored retail tree at runtime.
+// Preparation therefore writes a tiny, untracked inventory beside the local
+// fixture. It contains paths and sizes only; no proprietary bytes enter git.
+function writeBrowserManifest(candidate, destination) {
+  const browser = candidate.browser;
+  if (!browser) return;
+  assertSafeRelative(browser.fileRoot, `${candidate.id}.browser.fileRoot`);
+  assertSafeRelative(browser.exe, `${candidate.id}.browser.exe`);
+  assertSafeRelative(browser.cue, `${candidate.id}.browser.cue`);
+
+  const fileRoot = path.join(destination, browser.fileRoot);
+  const executable = path.normalize(browser.exe);
+  if (!fs.statSync(fileRoot).isDirectory()) {
+    throw new Error(`${candidate.id}.browser.fileRoot is not a directory`);
+  }
+  if (!fs.statSync(path.join(destination, executable)).isFile()) {
+    throw new Error(`${candidate.id}.browser.exe is not a file`);
+  }
+  const files = walkBrowserFiles(fileRoot).sort((a, b) => a.localeCompare(b))
+    .map(relative => {
+      const fixtureRelative = path.join(browser.fileRoot, relative);
+      if (path.normalize(fixtureRelative) === executable) return null;
+      return {
+        url: fixtureRelative.split(path.sep).join('/'),
+        vfsPath: 'c:\\' + relative.split(path.sep).join('\\'),
+      };
+    }).filter(Boolean);
+
+  const cuePath = path.join(destination, browser.cue);
+  const cue = fs.readFileSync(cuePath, 'utf8');
+  const trackSizes = {};
+  for (const match of cue.matchAll(/^\s*FILE\s+(?:"([^"]+)"|(\S+))\s+\S+/gmi)) {
+    const name = match[1] || match[2];
+    assertSafeRelative(name, `${candidate.id}.browser CUE FILE`);
+    trackSizes[name] = fs.statSync(path.join(path.dirname(cuePath), name)).size;
+  }
+  if (!Object.keys(trackSizes).length) {
+    throw new Error(`${candidate.id}.browser.cue has no FILE entries`);
+  }
+
+  fs.writeFileSync(path.join(destination, '.wine-assembly-browser.json'),
+    `${JSON.stringify({ schemaVersion: 1, files, trackSizes }, null, 2)}\n`);
+}
+
 async function fetchCandidate(candidate) {
   const fixture = fixtureId(candidate);
   assertSafeRelative(fixture, `${candidate.id}.fixture`);
@@ -370,10 +473,12 @@ async function fetchCandidate(candidate) {
       throw new Error(`cannot prepare missing candidate fixture: ${path.relative(ROOT, destination)}`);
     }
     runPostExtract(candidate, destination);
+    writeBrowserManifest(candidate, destination);
     console.log(`PREP   ${candidate.id}: ${path.relative(ROOT, destination)}`);
     return { kept: 1 };
   }
   if (fs.existsSync(provenanceFile) && !force) {
+    writeBrowserManifest(candidate, destination);
     console.log(`KEEP   ${candidate.id}: ${path.relative(ROOT, destination)}`);
     return { kept: 1 };
   }
@@ -409,6 +514,7 @@ async function fetchCandidate(candidate) {
       provenance.push({ url: pkg.url, sha1: actual, type: pkg.type, into, destination: pkg.destination || null });
     }
     runPostExtract(candidate, destination);
+    writeBrowserManifest(candidate, destination);
     fs.writeFileSync(provenanceFile, `${JSON.stringify({
       id: candidate.id,
       name: candidate.name,
