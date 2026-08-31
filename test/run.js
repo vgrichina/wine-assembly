@@ -3358,6 +3358,12 @@ async function main() {
       workerUrl: path.join(ROOT, 'lib', 'guest-worker.js'),
       localMainExports: () => instance.exports,
       countCalls: RPC_CENSUS,
+      // Guest log hooks stay Worker-local in an ordinary run: forwarding all
+      // three hooks adds several postMessages per API. An explicit diagnostic
+      // flag, however, must see worker-thread output just as cooperative mode
+      // does. This includes log_i32-only loop/Win16/FPU traces.
+      forwardGuestLogs: VERBOSE || TRACE_API || TRACE_API_COUNTS ||
+        TRACE_LOOPMATCH || TRACE_WIN16 || TRACE_WIN16_DDE || TRACE_FPU,
       // The audit runs inside each worker, against its own instance: this
       // process's get_esp() belongs to the main thread and cannot see a
       // worker's stack at all. Arities come from the same table

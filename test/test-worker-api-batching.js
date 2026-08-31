@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const RPC = require('../lib/guest-rpc');
 const D3D = require('../lib/d3d-command-stream');
+const { GuestThreadHost, WorkerLink } = require('../lib/guest-thread-host');
 const { createWindowHost } = require('../lib/host-window');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -49,7 +50,7 @@ const sigs = {
 let posted = 0;
 const quiet = RPC.createWorkerImports(memory, sigs, () => { posted++; }, {
   slot: 0,
-  forwardGlLogs: false,
+  forwardGuestLogs: false,
 });
 quiet.imports.host.log(0, 0);
 quiet.imports.host.log_i32(0xC0DE0001);
@@ -69,7 +70,7 @@ assert.deepStrictEqual(quiet.stats, { sync: 0, async: 1, local: 3 },
 const tracedMessages = [];
 const traced = RPC.createWorkerImports(memory, sigs, message => tracedMessages.push(message), {
   slot: 0,
-  forwardGlLogs: true,
+  forwardGuestLogs: true,
 });
 traced.imports.host.log(0, 0);
 traced.imports.host.log_i32(0xC0DE0001);
@@ -78,6 +79,30 @@ assert.strictEqual(tracedMessages.length, 3,
   'verbose/API-trace mode must preserve all three logging hooks');
 assert(tracedMessages.every(message => message.t === 'call'),
   'enabled logging remains ordered fire-and-forget transport');
+
+const legacyMessages = [];
+const legacy = RPC.createWorkerImports(memory, sigs, message => legacyMessages.push(message), {
+  slot: 0,
+  forwardGlLogs: true,
+});
+legacy.imports.host.log_i32(0xC0DE0001);
+assert.strictEqual(legacyMessages.length, 1,
+  'cached callers using the old transport option remain compatible');
+
+const linkOptions = {
+  slot: 1, memory, module: {}, sigs, broker: {}, workerUrl: 'unused',
+};
+assert.strictEqual(new WorkerLink({ ...linkOptions, forwardGuestLogs: true }).forwardGuestLogs, true,
+  'WorkerLink accepts the accurately named diagnostic transport option');
+assert.strictEqual(new WorkerLink({ ...linkOptions, forwardGlLogs: true }).forwardGuestLogs, true,
+  'WorkerLink preserves the cached OpenGL-era option as an input alias');
+assert.strictEqual(new GuestThreadHost({
+  memory, module: {}, sigs, hostImports: {}, forwardGuestLogs: true,
+}).forwardGuestLogs, true, 'GuestThreadHost forwards the complete guest diagnostic channel');
+
+const cliSource = fs.readFileSync(path.join(ROOT, 'test', 'run.js'), 'utf8');
+assert(cliSource.includes('forwardGuestLogs: VERBOSE || TRACE_API || TRACE_API_COUNTS ||'),
+  'CLI Worker diagnostics must opt into transport when explicit trace flags are active');
 
 const keyboardMemory = new ArrayBuffer(1024);
 const renderer = {
