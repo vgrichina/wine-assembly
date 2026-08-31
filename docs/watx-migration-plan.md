@@ -584,6 +584,19 @@ Still open and untouched by this: **real iOS Safari on a device**, which is the
 memory row, not this one, and which measurements §5 explains cannot be read
 from this box at all.
 
+**Wired into the page 2026-08-31.** `host.js`'s source-compile branch calls
+`window.watxLauncher.compile` and hard-errors when the launcher is absent
+(`a4210b60`); `index.html` loads `lib/watx-launcher.js` before `host.js`
+(`fbb481f0`) and `lib/region-map.generated.js` before every lib script
+(`9ae617cb` — `filesystem.js` reads the `RegionMap` global at
+script-evaluation time, and the page had been missing that tag since the
+wave-1 JS-mirror conversion). Headless-Chrome smoke of `?compile-wat`:
+sol launches from the in-browser-compiled module, guest EIP sampled in its
+message loop, 60 fps page, zero long tasks. The legacy query switch this
+milestone asked to keep did not survive the M6 retirement — with
+`lib/compile-wat.js` unable to compile the symbolized tree at all (§5.1),
+there is nothing valid for a browser A/B switch to select, so none exists.
+
 Exit gate: artifact-first launch and forced source compilation both pass in the
 supported browsers; compiler memory is released before Wine memory allocation.
 
@@ -592,7 +605,10 @@ supported browsers; compiler memory is released before Wine memory allocation.
 - Switch `tools/build.sh` to make WATX outputs canonical without changing their
   filenames or runtime selection.
 - Keep the legacy compiler and differential command through at least one full
-  release cycle.
+  release cycle. *(Superseded: the M6 symbolization retired the legacy compiler
+  for full-tree builds ahead of that schedule — see §5.1's retirement banner.
+  The differential command's `--skip-build` artifact-directory comparison
+  remains valid.)*
 - Update `CLAUDE.md`, build documentation and debugging tools to use the single
   WATX include manifest.
 - Make function-index tools consume compiler-produced name metadata rather than
@@ -652,11 +668,12 @@ WATX rather than silently ignoring it: replicated dispatch is a
 `lib/compile-wat.js` source transform with no WATX implementation, so accepting
 the flag would hand back a different module than the one requested.
 
-**The default is still `legacy`.** The flip is a one-line change to
-`DEFAULT_COMPILER` in `tools/build-compile-wat.js`, deliberately kept that small
-so it is as easy to undo as to make. It has not been made, and the cutover rows
-in the checklist below stay unticked until it is — and until the deploy, which
-needs explicit sign-off.
+**The default was `legacy` when this section was written.** The flip was a
+one-line change to `DEFAULT_COMPILER` in `tools/build-compile-wat.js`,
+deliberately kept that small so it was as easy to undo as to make. It was made
+at byte identity on 2026-08-31 (see the checklist), and the retirement banner
+above describes what became of the selector after that. The deploy still needs
+explicit sign-off.
 
 ### 5.2 Rollback drill, exercised 2026-08-31
 
@@ -779,7 +796,10 @@ Conversions happen in place in the single source tree — no `.watx` twin files.
 - [x] Legacy rollback has been exercised. (Drill at `ff829446` §5.2 pre-flip
       with divergent bytes both ways; re-exercised at the flip:
       `WINE_WAT_COMPILER=legacy bash tools/build.sh` green, artifacts
-      byte-identical to the WATX build.)
+      byte-identical to the WATX build. Rollback-by-flag was then retired at
+      `24b79256` when the M6 symbolization made the tree uncompilable by the
+      legacy compiler; rolling back now means reverting the symbolization
+      commits, per docs/watx-region-safety-design.md §11.)
 - [ ] First layout migration lands separately after cutover.
 
 ## Audit verification
