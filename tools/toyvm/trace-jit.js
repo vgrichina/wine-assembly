@@ -36,7 +36,7 @@
 const fs = require('fs');
 const path = require('path');
 const isa = require('./isa');
-const { HANDLERS } = require('./emit');
+const { HANDLERS, EA_ARMS } = require('./emit');
 const { runDos } = require('./run-dos');
 
 function arg(name, fallback) {
@@ -169,9 +169,13 @@ async function jitTiers(exe, {
     return Array.from(r.vm.mem.slice(lin, lin + n));
   };
 
-  const hot = ranked[0];
-  const t = readTrace(hot.prog.words, (hot.addr - hot.prog.arenaBase) >> 2);
-  const bytes = guestBytes(rr, hot.cs, hot.bip, 16);
+  // The hottest BLOCK is often one or two ops -- a `jmp` parking loop, a lone
+  // `ret`, a two-op poll -- and a two-op trace prices the harness rather than
+  // the code. `--min-ops=N` takes the hottest block with at least N ops
+  // instead, which is how a LOOP BODY gets benchmarked: the micro-op passes
+  // have nothing to work on until there is an address computation and a
+  // register stream in view. Falls back to the hottest block rather than
+  // refusing, so the padding check still gets its say.
   // Three signatures of a trace compiled out of unwritten memory, because one
   // was not enough. The first version only caught a run of identical
   // (handler, operands) pairs, and cchop.exe walked straight past it with an
@@ -179,14 +183,38 @@ async function jitTiers(exe, {
   // `add [bx+si],al` at *advancing* addresses, so the operands differ even
   // though the handler never does. Zero bytes and a run of one handler are
   // each sufficient on their own.
-  const zeros = bytes.filter(b => b === 0).length;
-  const distinctOps = new Set(t.ops.map(o => o.fn)).size;
-  const uniform = t.ops.length > 8
-    && (new Set(t.ops.map(o => `${o.fn}:${o.args.join()}`)).size <= 2
-      // hit the readTrace cap without ever reaching a terminator, and did it
-      // with one or two handlers: a straight run, not a loop body.
-      || (t.end === 'too-long' && distinctOps <= 2)
-      || zeros >= 12);
+  const inspect = (b) => {
+    const t = readTrace(b.prog.words, (b.addr - b.prog.arenaBase) >> 2);
+    const bytes = guestBytes(rr, b.cs, b.bip, 16);
+    const zeros = bytes.filter(x => x === 0).length;
+    const distinctOps = new Set(t.ops.map(o => o.fn)).size;
+    const uniform = t.ops.length > 8
+      && (new Set(t.ops.map(o => `${o.fn}:${o.args.join()}`)).size <= 2
+        // hit the readTrace cap without ever reaching a terminator, and did it
+        // with one or two handlers: a straight run, not a loop body.
+        || (t.end === 'too-long' && distinctOps <= 2)
+        || zeros >= 12);
+    return { t, bytes, uniform, padding: uniform || bytes.every(x => x === 0) };
+  };
+
+  // The hottest BLOCK is often one or two ops -- a `jmp` parking loop, a lone
+  // `ret`, a two-op poll -- and a two-op trace prices the harness rather than
+  // the code. `--min-ops=N` takes the hottest block with at least N ops
+  // instead, which is how a LOOP BODY gets benchmarked: the micro-op passes
+  // have nothing to work on until there is an address computation and a
+  // register stream in view.
+  //
+  // It MUST skip padding while it does so, and that is not a refinement. An
+  // unwritten region decodes into a very long straight run, so "at least N ops"
+  // selects FOR padding: raising the floor to 8 turned 10 of 14 programs in a
+  // scan into `padding` declines that the default selection would not have hit.
+  // Falls back to the hottest block, which then gets the padding verdict
+  // printed against it as before.
+  const minOps = Number(arg('min-ops', 0));
+  const hot = (minOps
+    ? ranked.find((b) => { const i = inspect(b); return i.t.ops.length >= minOps && !i.padding; })
+    : null) || ranked[0];
+  const { t, bytes, padding } = inspect(hot);
   const share = 100 * hot.samples / total;
   const trace = {
     cs: hot.cs, ip: hot.bip, ops: t.ops.length, end: t.end,
@@ -196,7 +224,7 @@ async function jitTiers(exe, {
   log(`\nhottest trace ${hot.cs.toString(16)}:${hot.bip.toString(16)} `
     + `-- ${t.ops.length} ops, ${share.toFixed(1)}% of samples`);
   log(`  guest bytes: ${trace.bytes}`);
-  if (uniform || bytes.every(b => b === 0)) {
+  if (padding) {
     log('  *** this is decoded PADDING, not code -- the compiler walked into an');
     log('  *** unwritten region. Not a JIT benchmark. Pick another program.');
     return { ok: false, reason: 'padding', trace };
@@ -407,6 +435,161 @@ function foldRegisterFile(body) {
   return { out, changed };
 }
 
+// --- micro-ops: the level below the x86-shaped op ---------------------------
+//
+// A threaded word is one x86-ish operation. That shape is convenient for the
+// decoder and wrong for an optimizer: it hides an addressing-mode br_table, a
+// register-file br_table and a flag word inside a handler body, and an
+// optimizer cannot see through any of them. Lowering to micro-ops that DO NOT
+// match x86 -- an address is an add, a register is a value, a flag write is a
+// statement that may not be needed -- is what makes those visible.
+//
+// These two passes are the first two lowerings, and they compose in one
+// direction only: $ea's arms are what read $bx/$si/$bp/$di raw, so a register
+// cannot be promoted to a local until the address computation stops going
+// through the br_table that reads it behind the optimizer's back.
+
+// `(call $ea (i32.const K) D)` -> arm K's expression, with $d substituted.
+// Declines arm 9 (32-bit addressing), which is a call to $ea32 rather than an
+// expression, and declines a non-constant index rather than guessing: a wrong
+// addressing form is not a slow fold, it is a store to the wrong address.
+// $ea32's body, with the packed operand known. Mirrors the helper in emit.js
+// field for field; the field layout itself comes from isa.EA_A32 rather than
+// being restated, so a change to the encoding cannot leave this behind.
+function ea32Expr(i, disp) {
+  const A = isa.EA_A32;
+  let a = disp;
+  if (!(i & A.NO_BASE)) {
+    a = `(i32.add ${a} (global.get $${isa.REG16[(i >>> A.BASE_SHIFT) & 7]}))`;
+  }
+  if (!(i & A.NO_INDEX)) {
+    const scale = (i >>> A.SCALE_SHIFT) & 3;
+    const idx = `(global.get $${isa.REG16[(i >>> A.INDEX_SHIFT) & 7]})`;
+    a = `(i32.add ${a} ${scale ? `(i32.shl ${idx} (i32.const ${scale}))` : idx})`;
+  }
+  return a;
+}
+
+// The register-file calls tier 2's fold does not cover. Kept separate from
+// foldRegisterFile so tier 2's published numbers keep meaning what they meant:
+// these only become reachable once $ea has stopped hiding the 32-bit accesses
+// behind it, so they belong to the micro-op tier and not to tier 2.
+function foldRegisterFileWide(body) {
+  let out = body, changed = 0;
+  for (const kind of ['rget32', 'rset32', 'rset8']) {
+    for (;;) {
+      const hit = findCalls(out, kind).find(c => CONST.test(c.args[0].trim()));
+      if (!hit) break;
+      const idx = Number(CONST.exec(hit.args[0].trim())[1]);
+      let repl;
+      if (kind === 'rget32') repl = `(global.get $${isa.REG16[idx]})`;
+      else if (kind === 'rset32') repl = `(global.set $${isa.REG16[idx]} ${hit.args[1]})`;
+      else {
+        // 8-bit writes leave the rest of the register alone, and 4-7 are the
+        // high bytes AH/CH/DH/BH rather than four more registers.
+        const r = isa.REG16[idx < 4 ? idx : idx - 4];
+        repl = idx < 4
+          ? `(global.set $${r} (i32.or (i32.and (global.get $${r}) (i32.const 0xFFFFFF00))`
+            + ` (i32.and ${hit.args[1]} (i32.const 0xFF))))`
+          : `(global.set $${r} (i32.or (i32.and (global.get $${r}) (i32.const 0xFFFF00FF))`
+            + ` (i32.shl (i32.and ${hit.args[1]} (i32.const 0xFF)) (i32.const 8))))`;
+      }
+      out = out.slice(0, hit.start) + repl + out.slice(hit.end);
+      changed++;
+    }
+  }
+  return { out, changed };
+}
+
+function foldEa(body) {
+  let out = body, changed = 0, a32 = 0, dynamic = 0;
+  // Left to right, keeping a cursor past what has already been handled: a call
+  // this pass declines must not stop the ones after it in the same body, and a
+  // 32-bit addressing form sitting in front of three foldable 16-bit ones is
+  // the common case in a 386 demo.
+  for (let from = 0; ;) {
+    const hit = findCalls(out, 'ea').find(c => c.start >= from);
+    if (!hit) break;
+    const lit = CONST.exec(hit.args[0].trim());
+    if (!lit) { dynamic++; from = hit.end; continue; }
+    const packed = Number(lit[1]);
+    const arm = EA_ARMS[packed & 15];
+    if (arm === undefined) { dynamic++; from = hit.end; continue; }
+    let repl;
+    if (/\$ea32/.test(arm)) {
+      // 386 addressing is foldable too, and in this corpus it is the case that
+      // matters: BRW's 17 address computations are ALL this form. The arm is a
+      // call rather than an expression only because base/index/scale do not fit
+      // in a br_table -- but they are packed into the same constant operand, so
+      // with the operand known the whole thing is base + index*scale + disp
+      // with the registers named. Unlike the 16-bit arms it is deliberately not
+      // wrapped to 64K, which is the entire point of the encoding.
+      repl = ea32Expr(packed, hit.args[1]);
+      a32++;
+    } else {
+      // The arms are written as statements for the br_table (`(return X)`);
+      // here the call sits in expression position, so the wrapper comes off.
+      const expr = arm.trim().replace(/^\(return\s+/, '').replace(/\)$/, '');
+      repl = expr.split('(local.get $d)').join(hit.args[1]);
+    }
+    out = out.slice(0, hit.start) + repl + out.slice(hit.end);
+    changed++;
+    from = hit.start + repl.length;
+  }
+  return { out, changed, a32, dynamic };
+}
+
+// Guest registers into wasm locals. Every access has to be visible first: one
+// surviving $rget/$rset/$ea/$push/$pop/$cx16 reaches the globals behind this
+// pass's back, and a promoted register would then be read stale. So the pass
+// FAILS CLOSED on any of them -- an unpromoted loop is slow, a half-promoted
+// one computes something else.
+// An ALLOW-list, not a deny-list, and for a reason this project has already
+// paid for once: a deny-list spelled `$out` does not match `$port_out`, and the
+// spin census scored a VGA palette write as a loop over nothing until it was
+// inverted. The same trap is worse here. A helper that touches SI or DI behind
+// this pass's back does not make the loop slow, it makes it wrong -- and the
+// string ops are exactly that shape, which is what BRW's `lodsb32 ... stosb32`
+// body is made of. So: a call is safe only if it is named here as touching no
+// general register, and anything unrecognised declines the whole promotion.
+const REG_SAFE = new RegExp('^(' + [
+  'rd(8|16|32)', 'wr(8|16|32)',          // memory, addressed by a value we pass in
+  'lin', 'sget', 'sbase', 'segbase', 'segd32',  // segmentation: segment globals only
+  // The flag record. rec_* takes its inputs as parameters and writes only
+  // $fa/$fb/$fu/$fw/$fr/$fcf/$fop, which are not general registers.
+  'flags_\\w+', 'rec_\\w+', 'get_\\w+', 'cond\\w*',
+  'sh_\\w+', 'off_add', 'pow2',          // pure arithmetic kernels
+  'slice_exit', 'jlook',                 // ip/halt only
+  'port_in', 'port_out',                 // leave to the host, take no register
+].join('|') + ')$');
+
+function promoteRegs(bodies, regs) {
+  const joined = bodies.join('\n');
+  for (const m of joined.matchAll(/\(call \$([a-z0-9_]+)/gi)) {
+    if (!REG_SAFE.test(m[1])) return { declined: `$${m[1]} may touch a register` };
+  }
+  const used = regs.filter(r => joined.includes(`$${r}`));
+  if (!used.length) return { declined: 'no register in the body' };
+  const rw = (s) => {
+    let out = s;
+    for (const r of used) {
+      out = out.split(`(global.get $${r})`).join(`(local.get $L${r})`);
+      out = out.split(`(global.set $${r} `).join(`(local.set $L${r} `);
+    }
+    return out;
+  };
+  return {
+    used,
+    bodies: bodies.map(rw),
+    locals: used.map(r => `(local $L${r} i32)`).join(' '),
+    // Loaded once before the loop and stored once after it, so the cost is paid
+    // per ENTRY rather than per iteration -- which is the whole reason a loop is
+    // a better subject for this than a straight-line trace.
+    pro: used.map(r => `(local.set $L${r} (global.get $${r}))`).join('\n'),
+    epi: used.map(r => `(global.set $${r} (local.get $L${r}))`).join('\n'),
+  };
+}
+
 const WRITES_FLAGS = /\(call \$(flags_\w+|sh_\w+)\b/;
 const READS_FLAGS = /\(global\.get \$flags\)/;
 
@@ -462,7 +645,38 @@ function emitTier2(ops, passes = { constprop: true, regfold: true, deadflags: tr
     }
     bodies.push(`;; ${op.name}${live[i] ? '' : '  [flags dead]'}\n${b}`);
   }
-  return { wat: bodies.join('\n'), killed, folded, propagated };
+  return { wat: bodies.join('\n'), bodies, killed, folded, propagated };
+}
+
+// Tier 3: the same trace lowered past its x86 shape. Two more passes, in the
+// only order they compose in -- fold the addressing-mode br_table, which makes
+// every register access visible, then move the registers into wasm locals for
+// the length of the loop.
+function emitTier3(ops, passes) {
+  const t2 = emitTier2(ops, passes);
+  let eaFolded = 0, eaA32 = 0, eaDynamic = 0;
+  let bodies = t2.bodies.map((b) => {
+    const r = foldEa(b);
+    eaFolded += r.changed; eaA32 += r.a32; eaDynamic += r.dynamic;
+    return r.out;
+  });
+  // Register-file calls that only became foldable once $ea stopped hiding them.
+  let folded = t2.folded;
+  bodies = bodies.map((b) => {
+    const r = foldRegisterFile(b); folded += r.changed;
+    const w = foldRegisterFileWide(r.out); folded += w.changed;
+    return w.out;
+  });
+  const p = promoteRegs(bodies, isa.REG16);
+  return {
+    ...t2, eaFolded, eaA32, eaDynamic, folded,
+    promoted: p.declined ? null : p.used,
+    declined: p.declined || null,
+    wat: (p.declined ? bodies : p.bodies).join('\n'),
+    locals: p.declined ? '' : p.locals,
+    pro: p.declined ? '' : p.pro,
+    epi: p.declined ? '' : p.epi,
+  };
 }
 
 // --- the three arms ---------------------------------------------------------
@@ -477,7 +691,8 @@ function emitTier2(ops, passes = { constprop: true, regfold: true, deadflags: tr
 // also has to pay for leaving the trace, and this says nothing about it.
 const { helpers, LOCALS, STATE, EXTRA_GLOBALS } = require('./emit');
 
-function moduleWat(body) {
+function moduleWat(body, extra = {}) {
+  const { locals = '', pro = '', epi = '' } = extra;
   const globals = STATE.map(g => `(global $${g} (mut i32) (i32.const 0))`).join('\n');
   const accessors = STATE.map(g => `
 (func (export "get_${g}") (result i32) (global.get $${g}))
@@ -492,12 +707,14 @@ ${EXTRA_GLOBALS}
 (type $void (func))
 ${accessors}
 ${helpers()}
-(func (export "spin") (param $k i32) ${LOCALS}
+(func (export "spin") (param $k i32) ${LOCALS} ${locals}
+${pro}
   (block $done (loop $l
     (br_if $done (i32.eqz (local.get $k)))
 ${body}
     (local.set $k (i32.sub (local.get $k) (i32.const 1)))
-    (br $l))))
+    (br $l)))
+${epi})
 )`;
 }
 
@@ -548,12 +765,18 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log,
 
   const t1 = emitTier1(ops, {});
   const t2 = emitTier2(ops, passes);
+  const t3 = emitTier3(ops, passes);
   log(`\ntier 1: ${ops.length} bodies stitched, operands folded`);
   const passName = ['constprop', 'regfold', 'deadflags'].filter(p => passes[p]).join('+') || 'none';
   log(`tier 2 passes: ${passName}`);
   log(`tier 2: + ${t2.propagated} operand constants propagated, `
     + `${t2.folded} register-file calls folded to direct globals, `
     + `${t2.killed} dead flag computations removed`);
+  log(`tier 3: + ${t3.eaFolded} address br_tables folded `
+    + `(${t3.eaA32} were 32-bit addressing, ${t3.eaDynamic} had a dynamic index), `
+    + `${t3.folded - t2.folded} further register-file calls folded, `
+    + (t3.promoted ? `${t3.promoted.length} registers in locals: ${t3.promoted.join(' ')}`
+      : `NO register promotion -- ${t3.declined}`));
 
   const arms = [];
   // tier 0 -- the shipped interpreter over the same ops
@@ -570,13 +793,17 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log,
     go: (k) => { for (let i = 0; i < k; i++) vm0.exports.run(base, ops.length * 8); },
   });
 
-  for (const [name, src] of [['tier 1  stitched', t1.wat], ['tier 2  optimized', t2.wat]]) {
+  for (const [name, src, extra] of [
+    ['tier 1  stitched', t1.wat, {}],
+    ['tier 2  optimized', t2.wat, {}],
+    ['tier 3  micro-ops', t3.wat, { locals: t3.locals, pro: t3.pro, epi: t3.epi }],
+  ]) {
     const file = `trace-${name.split(' ')[1]}.wat`;
-    const bytes = await compileWat(() => moduleWat(src),
+    const bytes = await compileWat(() => moduleWat(src, extra),
       // The pass set is part of the key: two `--passes=` runs produce different
       // tier-2 modules for the same trace, and a cache hit across them would
       // silently benchmark the previous one.
-      { files: [file], cacheKey: `trace-jit:${name}:${hot.bip}:${passName}` });
+      { files: [file], cacheKey: `trace-jit:${name}:${hot.bip}:${passName}:v2` });
     const memory = new WebAssembly.Memory({ initial: isa.MEM_PAGES, maximum: isa.MEM_PAGES });
     // These MUST match makeVm's defaults exactly. They did not: the shipped
     // interpreter answers a 16-bit port read with 0xFFFF and this answered
@@ -660,11 +887,21 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log,
   const t1ns = best.get('tier 1  stitched'), t2ns = best.get('tier 2  optimized');
   log(`\n  tier 0 -> 1  ${(b0 / t1ns).toFixed(2)}x   (dispatch, operand load, ip advance)`);
   log(`  tier 1 -> 2  ${(t1ns / t2ns).toFixed(2)}x   (register folding + dead flags)`);
+  const t3ns = best.get('tier 3  micro-ops');
   log(`  tier 0 -> 2  ${(b0 / t2ns).toFixed(2)}x   total`);
+  log(`  tier 2 -> 3  ${(t2ns / t3ns).toFixed(2)}x   (address folding, wide register file, registers in locals)`);
+  log(`  tier 0 -> 3  ${(b0 / t3ns).toFixed(2)}x   total`);
   return {
     agree: true, fingerprints,
-    ns: { tier0: b0, tier1: t1ns, tier2: t2ns },
-    speedup: { t01: b0 / t1ns, t12: t1ns / t2ns, t02: b0 / t2ns },
+    ns: { tier0: b0, tier1: t1ns, tier2: t2ns, tier3: t3ns },
+    speedup: {
+      t01: b0 / t1ns, t12: t1ns / t2ns, t02: b0 / t2ns,
+      t23: t2ns / t3ns, t03: b0 / t3ns,
+    },
+    micro: {
+      eaFolded: t3.eaFolded, eaA32: t3.eaA32, eaDynamic: t3.eaDynamic,
+      promoted: t3.promoted, declined: t3.declined,
+    },
     opt: { propagated: t2.propagated, folded: t2.folded, killed: t2.killed },
     iters, reps,
   };
@@ -674,6 +911,7 @@ module.exports = {
   jitTiers, benchTiers,
   findHotTrace, readTrace, foldOperands, emitTier1, emitTier2,
   foldRegisterFile, killDeadFlags, moduleWat, memHash, straightLineProgram,
+  emitTier3, foldEa, promoteRegs,
 };
 
 if (require.main === module) main().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
