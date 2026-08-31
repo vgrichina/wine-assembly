@@ -5961,18 +5961,52 @@
   ;; GetProperty / SetProperty. DirectInput encodes predefined properties as
   ;; small REFGUID values; DIPROP_BUFFERSIZE is (REFGUID)1 and its value is the
   ;; DIPROPDWORD.dwData at +16. Keep the configured queue capacity in misc1.
+  (func $di_valid_device_dword_property (param $header i32) (result i32)
+    (if (result i32) (i32.eqz (local.get $header))
+      (then (i32.const 0))
+      (else
+        (i32.and
+          (i32.and
+            (i32.eq (call $gl32 (local.get $header)) (i32.const 20))
+            (i32.eq (call $gl32 (i32.add (local.get $header) (i32.const 4)))
+                    (i32.const 16)))
+          (i32.and
+            (i32.eqz (call $gl32 (i32.add (local.get $header) (i32.const 8))))
+            (i32.eqz (call $gl32 (i32.add (local.get $header) (i32.const 12)))))))))
+
   (func $handle_IDirectInputDevice_GetProperty (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32)
+    (if (i32.eqz (call $di_valid_device_dword_property (local.get $arg2)))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DIERR_INVALIDPARAM
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (i32.ne (local.get $arg1) (i32.const 1)) ;; DIPROP_BUFFERSIZE
+      (then
+        (global.set $eax (i32.const 0x80004001)) ;; DIERR_UNSUPPORTED
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (call $gs32 (i32.add (local.get $arg2) (i32.const 16))
+      (i32.load offset=12 (local.get $entry)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectInputDevice_SetProperty (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32)
-    (if (i32.and (i32.eq (local.get $arg1) (i32.const 1))
-                 (i32.ne (local.get $arg2) (i32.const 0)))
+    (if (i32.eqz (call $di_valid_device_dword_property (local.get $arg2)))
       (then
-        (local.set $entry (call $dx_from_this (local.get $arg0)))
-        (i32.store offset=12 (local.get $entry)
-          (call $gl32 (i32.add (local.get $arg2) (i32.const 16))))))
+        (global.set $eax (i32.const 0x80070057)) ;; DIERR_INVALIDPARAM
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (i32.ne (local.get $arg1) (i32.const 1)) ;; DIPROP_BUFFERSIZE
+      (then
+        (global.set $eax (i32.const 0x80004001)) ;; DIERR_UNSUPPORTED
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (i32.store offset=12 (local.get $entry)
+      (call $gl32 (i32.add (local.get $arg2) (i32.const 16))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 

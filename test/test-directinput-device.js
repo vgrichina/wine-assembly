@@ -116,11 +116,19 @@ const extraWat = `
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
   (func (export "test_di_set_buffer_size")
-        (param $obj i32) (param $property i32)
+        (param $obj i32) (param $property_id i32) (param $property i32) (result i32)
     (global.set $esp (i32.const 0x074ff000))
     (call $handle_IDirectInputDevice_SetProperty
-      (local.get $obj) (i32.const 1) (local.get $property)
-      (i32.const 0) (i32.const 0) (i32.const 0)))
+      (local.get $obj) (local.get $property_id) (local.get $property)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_di_get_property")
+        (param $obj i32) (param $property_id i32) (param $property i32) (result i32)
+    (global.set $esp (i32.const 0x074ff000))
+    (call $handle_IDirectInputDevice_GetProperty
+      (local.get $obj) (local.get $property_id) (local.get $property)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_di_buffer_size") (param $obj i32) (result i32)
     (i32.load offset=12 (call $dx_from_this (local.get $obj))))
 `;
@@ -365,10 +373,28 @@ const extraWat = `
   const property = 0x00410300;
   wat.guest_write32(property, 20);      // DIPROPDWORD.dwSize
   wat.guest_write32(property + 4, 16);  // DIPROPHEADER.dwHeaderSize
+  wat.guest_write32(property + 8, 0);   // whole device
+  wat.guest_write32(property + 12, 0);  // DIPH_DEVICE
   wat.guest_write32(property + 16, 2);  // dwData = buffer capacity
-  wat.test_di_set_buffer_size(mouse, property);
+  assert.strictEqual(wat.test_di_set_buffer_size(mouse, 1, property) >>> 0, 0,
+    'SetProperty accepts a well-formed DIPROP_BUFFERSIZE device property');
   assert.strictEqual(wat.test_di_buffer_size(mouse), 2,
     'DIPROP_BUFFERSIZE is retained on the DirectInput device');
+  wat.guest_write32(property + 16, 0xfeedface);
+  assert.strictEqual(wat.test_di_get_property(mouse, 1, property) >>> 0, 0,
+    'GetProperty returns DIPROP_BUFFERSIZE');
+  assert.strictEqual(wat.guest_read32(property + 16), 2,
+    'GetProperty round-trips the configured queue capacity');
+  assert.strictEqual(wat.test_di_get_property(mouse, 2, property) >>> 0, 0x80004001,
+    'an unmodeled DirectInput property fails honestly with DIERR_UNSUPPORTED');
+  wat.guest_write32(property + 12, 1); // DIPH_BYOFFSET is invalid for buffer size
+  assert.strictEqual(wat.test_di_get_property(mouse, 1, property) >>> 0, 0x80070057,
+    'DIPROP_BUFFERSIZE requires DIPH_DEVICE');
+  wat.guest_write32(property + 12, 0);
+  wat.guest_write32(property + 4, 12);
+  assert.strictEqual(wat.test_di_set_buffer_size(mouse, 1, property) >>> 0, 0x80070057,
+    'SetProperty rejects a malformed DIPROPHEADER');
+  wat.guest_write32(property + 4, 16);
   wat.test_di_mouse_queue_event((5 << 28) | 1);
   wat.test_di_mouse_queue_event((6 << 28) | 2);
   wat.test_di_mouse_queue_event((5 << 28) | 3);
