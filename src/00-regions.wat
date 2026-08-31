@@ -21,10 +21,14 @@
   ;; hex literal emits.
   ;;
   ;; DECLARATIONS EMIT NOTHING. This whole file adds zero bytes to the shipped
-  ;; wasm: the canonical artifacts are byte-identical with and without it
-  ;; (tail 984347 B 01daf6ccfbd115e3, compat 984796 B 0ee6414668129ac4). It is
-  ;; also invisible to lib/compile-wat.js, which ignores unknown top-level
-  ;; forms, so WINE_WAT_COMPILER=legacy still builds the same bytes.
+  ;; wasm: a declaration is compile-time-only under WATX, and the canonical
+  ;; artifacts were byte-identical with and without it when the set landed
+  ;; (tail 984347 B 01daf6ccfbd115e3, compat 984796 B 0ee6414668129ac4).
+  ;; The `WINE_WAT_COMPILER=legacy` rollback that used to be quoted here is
+  ;; RETIRED (24b79256, docs/watx-region-safety-design.md §11): declarations
+  ;; alone were legacy-safe, but the region spellings the tree now uses in
+  ;; expression and data position compile to `unreachable` under the legacy
+  ;; path, so it is a hard error rather than a second opinion.
   ;;
   ;; RELATIONSHIP TO THE EXISTING GLOBALS. Each declaration mirrors a
   ;; `(global $NAME i32 ...)` / `(global $NAME_SIZE i32 ...)` pair, which is
@@ -34,10 +38,11 @@
   ;; any disagreement, so this file cannot rot into a decorative second opinion.
   ;; `(owner ...)` names the source location of the base global.
   ;;
-  ;; This is a declaration set only. Converting consumers to address regions by
-  ;; name is Milestone 6 step 2 and has NOT happened: nothing in src/ uses a
-  ;; region symbol or region.addr yet, which is what keeps the legacy rollback
-  ;; alive (see docs/watx-region-safety-design.md §6).
+  ;; Converting consumers to address regions by name is Milestone 6 stage B and
+  ;; is UNDER WAY: wave 1 (2026-08-31) symbolized ~96 sites across src/ and
+  ;; lib/, and wave 2 added the regions this map was missing entirely. So both
+  ;; `$NAME` in expression position and `(data (region.addr $NAME OFF) ...)`
+  ;; now appear in src/ — see docs/watx-region-safety-design.md §5 and §13.
   ;;
   ;; TO ADD A REGION: declare its $NAME/$NAME_SIZE globals where the feature
   ;; lives, as before, then add the mirror here. The build fails if you skip it
@@ -56,6 +61,13 @@
     (owner "01-header.wat:1643"))
   (region.declare-fixed $CLASS_EXTRA_TABLE (base 0x00003D00) (size 0x00000100) (align 0x00000100)
     (owner "01-header.wat:1793"))
+  ;; The two Win16 name tables in the hole after CLASS_EXTRA_TABLE. Both were
+  ;; raw (data (i32.const ...)) segments in no region at all; each is sized to
+  ;; exactly the bytes its segment emits, so growing one is a compile error.
+  (region.declare-fixed $WIN16_FONT_FACES (base 0x00003E00) (size 0x00000030) (align 0x00000100)
+    (owner "09e-win16-api.wat:9232"))
+  (region.declare-fixed $WIN16_MMSYSTEM_NAMES (base 0x00003E30) (size 0x0000005D) (align 0x00000010)
+    (owner "09e-win16-api.wat:10008"))
   (region.declare-fixed $DIALOG_STATE_TABLE (base 0x00004000) (size 0x00001000) (align 0x00001000)
     (owner "01-header.wat:2113"))
   (region.declare-fixed $WINDOW_UNICODE_TABLE (base 0x00005000) (size 0x00000100) (align 0x00001000)
@@ -68,6 +80,11 @@
     (owner "01-header.wat:2963"))
   (region.declare-fixed $SHARED_DLG_PUMP_HWND (base 0x0000510C) (size 0x00000004)
     (owner "01-header.wat:2972"))
+  ;; Host-supplied environment overrides. The 240-byte extent is the bound
+  ;; $test_launch_env_add already enforced as a bare literal; it now reads the
+  ;; region's own size, so the two cannot disagree.
+  (region.declare-fixed $LAUNCH_ENV_OVERRIDES (base 0x00005110) (size 0x000000F0) (align 0x00000010)
+    (owner "01-header.wat:2991"))
   (region.declare-fixed $WINDOW_EXTRA_TABLE (base 0x00005200) (size 0x00001000) (align 0x00000100)
     (owner "01-header.wat:2124"))
   (region.declare-fixed $PAINT_SCRATCH (base 0x00006E00) (size 0x00000100) (align 0x00000100)
@@ -88,6 +105,12 @@
     (owner "01-header.wat:2088"))
   (region.declare-fixed $WND_DLG_RECORDS (base 0x0000B160) (size 0x00002000) (align 0x00000010)
     (owner "01-header.wat:2105"))
+  ;; Four dwords of cross-instance waveOut identity in the 16-byte hole
+  ;; between WND_DLG_RECORDS and SCROLL_TABLE. Declared rather than spelled
+  ;; (region.end $WND_DLG_RECORDS): it is its own object, and an adjacency is
+  ;; not an address (docs/watx-region-safety-design.md 5.1).
+  (region.declare-fixed $WAVE_OUT_SHARED (base 0x0000D160) (size 0x00000010) (align 0x00000010)
+    (owner "01-header.wat:2578"))
   (region.declare-fixed $SCROLL_TABLE (base 0x0000D170) (size 0x00001800) (align 0x00000010)
     (owner "01-header.wat:2138"))
   (region.declare-fixed $FLASH_TABLE (base 0x0000E970) (size 0x00000100) (align 0x00000010)

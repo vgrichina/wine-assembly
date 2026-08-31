@@ -9227,7 +9227,10 @@
   ;; Like LineDDA, the callback is guest code, so this cannot be a loop: each
   ;; face gives the interpreter the task back and is picked up again on the far
   ;; return, and a callback that answers zero ends the enumeration.
+  ;; 48 bytes: the face-name run in 01-header.wat, ending in the empty string
+  ;; that terminates it. Sized exactly, so a sixth face is a compile error.
   (global $WIN16_FONT_FACES i32 (i32.const 0x00003E00))
+  (global $WIN16_FONT_FACES_SIZE i32 (i32.const 0x00000030))
   (global $win16_ef_proc (mut i32) (i32.const 0))
   (global $win16_ef_data (mut i32) (i32.const 0))
   (global $win16_ef_ret  (mut i32) (i32.const 0))
@@ -10001,7 +10004,12 @@
   ;; is written down here — see the MMSYSTEM list in src/01-header.wat.
   ;; Answers 0 for a name it does not know, which is what GetProcAddress
   ;; reports when a module does not export something.
-  (global $WIN16_MMSYSTEM_NAMES i32 (i32.const 0x3E30))
+  ;; 93 bytes: five length-prefixed names, each followed by its ordinal word,
+  ;; then the zero length byte that ends the list. Exactly the extent of the
+  ;; (data ...) in 01-header.wat, so adding a sixth entry is a compile error
+  ;; here rather than a silent write into whatever follows.
+  (global $WIN16_MMSYSTEM_NAMES i32 (i32.const 0x00003E30))
+  (global $WIN16_MMSYSTEM_NAMES_SIZE i32 (i32.const 0x0000005D))
   (global $WIN16_BUILTIN_NAMES i32 (i32.const 0x079CA000))
 
   ;; The KERNEL/USER/GDI half of the same idea, over its own table. That table

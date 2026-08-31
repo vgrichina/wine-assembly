@@ -325,7 +325,7 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     (if (i32.or (i32.eqz (local.get $arg0))
-                (i32.ne (local.get $arg0) (i32.load (i32.const 0xD160))))
+                (i32.ne (local.get $arg0) (i32.load (region.addr $WAVE_OUT_SHARED 0))))
       (then
         (global.set $eax (i32.const 5)) ;; MMSYSERR_INVALHANDLE
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
@@ -361,13 +361,13 @@
     ;; Open via host
     (local.set $handle (call $host_wave_out_open
       (local.get $rate) (local.get $ch) (local.get $bits) (local.get $cbType)))
-    ;; Store callback info in shared memory at 0xD160 (cross-thread accessible)
+    ;; Store callback info in WAVE_OUT_SHARED (cross-thread accessible)
     ;; +0: handle, +4: callback, +8: instance, +12: cb_type
     (global.set $wave_out_handle (local.get $handle))
-    (i32.store (i32.const 0xD160) (local.get $handle))
-    (i32.store (i32.const 0xD164) (local.get $arg3))
-    (i32.store (i32.const 0xD168) (local.get $arg4))
-    (i32.store (i32.const 0xD16C) (local.get $cbType))
+    (i32.store (region.addr $WAVE_OUT_SHARED 0) (local.get $handle))
+    (i32.store (region.addr $WAVE_OUT_SHARED 4) (local.get $arg3))
+    (i32.store (region.addr $WAVE_OUT_SHARED 8) (local.get $arg4))
+    (i32.store (region.addr $WAVE_OUT_SHARED 12) (local.get $cbType))
     ;; If phwo != NULL, store handle
     (if (local.get $arg0)
       (then (call $gs32 (local.get $arg0) (local.get $handle))))
@@ -387,11 +387,11 @@
   (func $handle_waveOutClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; Flush deferred WHDR_DONE slot
     (i32.store (i32.const 0xAD98) (i32.const 0))
-    (if (i32.eq (i32.load (i32.const 0xD16C)) (i32.const 1))
+    (if (i32.eq (i32.load (region.addr $WAVE_OUT_SHARED 12)) (i32.const 1))
       (then
         ;; CALLBACK_WINDOW: MM_WOM_CLOSE(hwnd, hwo, 0)
         (drop (call $post_queue_push
-          (i32.load (i32.const 0xD164))
+          (i32.load (region.addr $WAVE_OUT_SHARED 4))
           (i32.const 0x03BC)
           (local.get $arg0)
           (i32.const 0)))))
@@ -399,7 +399,7 @@
     (global.set $wave_out_handle (i32.const 0))
     ;; Invalidate the cross-instance handle too.  waveOutGetID may execute in
     ;; a native Miles worker whose own mutable global is not the opener's.
-    (i32.store (i32.const 0xD160) (i32.const 0))
+    (i32.store (region.addr $WAVE_OUT_SHARED 0) (i32.const 0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )

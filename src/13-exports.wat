@@ -3417,9 +3417,9 @@
     (if (i32.gt_u
           (i32.add (global.get $launch_env_len)
             (i32.add (local.get $name_len) (i32.add (local.get $value_len) (i32.const 3))))
-          (i32.const 240))
+          (global.get $LAUNCH_ENV_OVERRIDES_SIZE))
       (then (return (i32.const 0))))
-    (local.set $p (i32.add (i32.const 0x5110) (global.get $launch_env_len)))
+    (local.set $p (i32.add (region.addr $LAUNCH_ENV_OVERRIDES 0) (global.get $launch_env_len)))
     (block $name_done (loop $copy_name
       (br_if $name_done (i32.ge_u (local.get $i) (local.get $name_len)))
       (i32.store8 (i32.add (local.get $p) (local.get $i))
@@ -3440,7 +3440,7 @@
     (global.set $launch_env_len
       (i32.add (global.get $launch_env_len)
         (i32.add (local.get $name_len) (i32.add (local.get $value_len) (i32.const 2)))))
-    (i32.store8 (i32.add (i32.const 0x5110) (global.get $launch_env_len)) (i32.const 0))
+    (i32.store8 (i32.add (region.addr $LAUNCH_ENV_OVERRIDES 0) (global.get $launch_env_len)) (i32.const 0))
     (i32.const 1))
 
   ;; sscanf — exercised by test/test-sscanf.js. Varargs are a guest array of

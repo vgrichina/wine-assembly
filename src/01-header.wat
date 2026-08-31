@@ -1020,7 +1020,10 @@
   ;; Not at 0x11500: that is the oleaut32 ordinal-name block above, and the
   ;; later segment wins, so placing them together cost Kodak Imaging its
   ;; BSTR/VARIANT imports.
-  (data (i32.const 0x3E00) "System\00MS Sans Serif\00Fixedsys\00Courier\00Terminal\00\00")
+  ;; 48 bytes ending in the empty string that terminates the run; its own
+  ;; region (globals in 09e-win16-api.wat, which reads it) because it is
+  ;; neither a class name nor part of the reserved page.
+  (data (region.addr $WIN16_FONT_FACES 0) "System\00MS Sans Serif\00Fixedsys\00Courier\00Terminal\00\00")
   ;; MMSYSTEM entry points asked for by name rather than imported. A module
   ;; this emulator answers for has no export table to read, so GetProcAddress
   ;; needs the name-to-ordinal mapping written down — see
@@ -1031,7 +1034,7 @@
   ;; length ends the list. Upper case, because $win16_cstr_to_pstr folds the
   ;; caller's name that way before any lookup — the same form the tables in
   ;; src/win16-ordinals.generated.json use.
-  (data (i32.const 0x3E30)
+  (data (region.addr $WIN16_MMSYSTEM_NAMES 0)
     "\0cSNDPLAYSOUND\02\00"
     "\0eMCISENDCOMMAND\bd\02"
     "\11MCIGETERRORSTRING\c2\02"
@@ -2566,6 +2569,14 @@
   ;; thread, matching USER's per-registering-thread WM_HOTKEY delivery.
   (global $hotkey_head (mut i32) (i32.const 0))
   (global $guid_counter (mut i32) (i32.const 0))
+  ;; WAVE_OUT_SHARED — the open waveOut device's identity in LINEAR MEMORY, so
+  ;; every guest-thread instance sees the same one; the mutable globals below
+  ;; are per-instance and a native audio worker's copies are all zero.
+  ;; Four dwords, exactly as $handle_waveOutOpen writes them:
+  ;;   +0 handle   +4 callback   +8 callback instance   +12 callback type
+  ;; It fills the 16-byte hole between WND_DLG_RECORDS and SCROLL_TABLE.
+  (global $WAVE_OUT_SHARED i32 (i32.const 0x0000D160))
+  (global $WAVE_OUT_SHARED_SIZE i32 (i32.const 0x00000010))
   ;; waveOut audio state
   (global $wave_out_handle (mut i32) (i32.const 0))
   (global $wave_out_callback (mut i32) (i32.const 0))
@@ -2972,6 +2983,13 @@
   ;; "Completed" page).
   (global $SHARED_DLG_PUMP_HWND i32 (i32.const 0x0000510C))
   (global $SHARED_DLG_PUMP_HWND_SIZE i32 (i32.const 0x00000004))
+  ;; LAUNCH_ENV_OVERRIDES — host-supplied "NAME=VALUE\0" entries appended to
+  ;; the ENV_DEFAULTS template by $env_ensure (10-helpers.wat) and filled by
+  ;; the test_launch_env_add export (13-exports.wat). The 240-byte extent is
+  ;; the bound that export already enforces before it copies, so the region is
+  ;; exactly as large as the code says it is; it runs up to WINDOW_EXTRA_TABLE.
+  (global $LAUNCH_ENV_OVERRIDES i32 (i32.const 0x00005110))
+  (global $LAUNCH_ENV_OVERRIDES_SIZE i32 (i32.const 0x000000F0))
   ;; WAT-built MessageBox/common-dialog state has the same cross-instance
   ;; requirement as DialogBoxParam above. Browser Worker mode renders and
   ;; hit-tests through a main-thread shadow instance, while the API call is
