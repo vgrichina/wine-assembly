@@ -274,6 +274,50 @@ async function main() {
     ctx.vfs = saved;
   });
 
+  test('GetVolumeInformationA names the filesystem CDFS on the mounted letter', () => {
+    // Diablo's CD check XOR-folds the fs-name string, BytesPerSector and the
+    // drive type into a constant, so "CDFS" here is load-bearing, not garnish.
+    const dv = new DataView(memory.buffer);
+    const fsNameGA = 0x2400;
+    mem.fill(0, at(stackGA), at(stackGA) + 64);
+    dv.setUint32(at(stackGA) + 28, fsNameGA, true); // 7th stdcall arg: lpFileSystemNameBuffer
+    mem.fill(0xcc, at(fsNameGA), at(fsNameGA) + 16);
+    writeAnsi(rootGA, 'E:\\');
+    assert.strictEqual(
+      exports.test_call_GetVolumeInformationA(rootGA, bufGA, 32, stackGA, 0), 1);
+    let end = mem.indexOf(0, at(fsNameGA));
+    assert.strictEqual(
+      Buffer.from(mem.subarray(at(fsNameGA), end)).toString('ascii'), 'CDFS');
+    mem.fill(0xcc, at(fsNameGA), at(fsNameGA) + 16);
+    writeAnsi(rootGA, 'C:\\');
+    assert.strictEqual(
+      exports.test_call_GetVolumeInformationA(rootGA, bufGA, 32, stackGA, 0), 1);
+    end = mem.indexOf(0, at(fsNameGA));
+    assert.strictEqual(
+      Buffer.from(mem.subarray(at(fsNameGA), end)).toString('ascii'), 'FAT',
+      'an unmounted letter keeps the FAT answer');
+  });
+
+  test('GetDiskFreeSpaceA reports the disc\'s CDFS geometry, and C: keeps its own', () => {
+    const dv = new DataView(memory.buffer);
+    const spcGA = 0x2500, bpsGA = 0x2504, freeGA = 0x2508, totalGA = 0x250c;
+    writeAnsi(rootGA, 'E:\\');
+    assert.strictEqual(
+      exports.test_call_GetDiskFreeSpaceA(rootGA, spcGA, bpsGA, freeGA, totalGA), 1);
+    assert.strictEqual(dv.getUint32(at(spcGA), true), 1, 'one sector per cluster');
+    assert.strictEqual(dv.getUint32(at(bpsGA), true), 2048, '2048-byte sectors');
+    assert.strictEqual(dv.getUint32(at(freeGA), true), 0, 'a pressed disc has nothing free');
+    assert.strictEqual(dv.getUint32(at(totalGA), true), image.volumeSpaceSize >>> 0,
+      'total clusters are the PVD volume space size');
+    writeAnsi(rootGA, 'C:\\');
+    assert.strictEqual(
+      exports.test_call_GetDiskFreeSpaceA(rootGA, spcGA, bpsGA, freeGA, totalGA), 1);
+    assert.strictEqual(dv.getUint32(at(bpsGA), true), 512,
+      'the fixed disk keeps 512-byte sectors');
+    assert.strictEqual(dv.getUint32(at(spcGA), true), 8,
+      'the fixed disk keeps 8 sectors per cluster');
+  });
+
   console.log(`${passed} passed, ${failed} failed`);
   if (failed) process.exit(1);
 }

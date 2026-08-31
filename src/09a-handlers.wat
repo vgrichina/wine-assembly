@@ -11758,13 +11758,39 @@ HookEx — no next hook in chain, return 0
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 483: GetDiskFreeSpaceA(lpRoot, lpSectorsPerCluster, lpBytesPerSector, lpFreeClusters, lpTotalClusters)
+  ;; 483: GetDiskFreeSpace{A,W}(lpRoot, lpSectorsPerCluster, lpBytesPerSector,
+  ;; lpFreeClusters, lpTotalClusters). What the root names decides the answer:
+  ;; a mounted CD-ROM reports Win98 CDFS geometry — 2048-byte sectors, one
+  ;; sector per cluster, nothing free, and the disc's own block count — because
+  ;; era CD checks read exactly these numbers (Diablo XOR-folds BytesPerSector
+  ;; with the drive type and the filesystem name and compares the fold against
+  ;; a constant, so 512-byte sectors here read as "not a CD"). Anything else is
+  ;; the fixed disk: ~2GB free of ~4GB at 8 sectors/cluster, 512 bytes/sector.
+  (func $disk_free_space (param $root i32) (param $spc i32) (param $bps i32)
+                         (param $free i32) (param $total i32) (param $wide i32)
+    (local $root_wa i32)
+    (local.set $root_wa
+      (if (result i32) (local.get $root)
+        (then (call $g2w (local.get $root)))
+        (else (i32.const 0))))
+    (if (i32.eq (call $host_fs_drive_type (local.get $root_wa) (local.get $wide))
+                (i32.const 5)) ;; DRIVE_CDROM
+      (then
+        (if (local.get $spc) (then (call $gs32 (local.get $spc) (i32.const 1))))
+        (if (local.get $bps) (then (call $gs32 (local.get $bps) (i32.const 2048))))
+        (if (local.get $free) (then (call $gs32 (local.get $free) (i32.const 0))))
+        (if (local.get $total)
+          (then (call $gs32 (local.get $total)
+            (call $host_fs_volume_size (local.get $root_wa) (local.get $wide))))))
+      (else
+        (if (local.get $spc) (then (call $gs32 (local.get $spc) (i32.const 8))))
+        (if (local.get $bps) (then (call $gs32 (local.get $bps) (i32.const 512))))
+        (if (local.get $free) (then (call $gs32 (local.get $free) (i32.const 524288))))
+        (if (local.get $total) (then (call $gs32 (local.get $total) (i32.const 1048576)))))))
+
   (func $handle_GetDiskFreeSpaceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Report ~2GB free on a ~4GB disk (8 sectors/cluster, 512 bytes/sector)
-    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 8))))     ;; SectorsPerCluster
-    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 512))))   ;; BytesPerSector
-    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 524288)))) ;; FreeClusters (~2GB)
-    (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 1048576)))) ;; TotalClusters (~4GB)
+    (call $disk_free_space (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
@@ -12717,12 +12743,13 @@ HookEx — no next hook in chain, return 0
   )
 
   ;; 537: GetDiskFreeSpaceW(lpRootPathName, ...) — every value this call
-  ;; returns is a number written through a caller pointer, and the one string
-  ;; it takes names a drive we answer the same way for either encoding, so
-  ;; the A implementation is the whole implementation.
+  ;; returns is a number written through a caller pointer; only the root
+  ;; string's encoding differs, and $disk_free_space takes that as a flag.
   (func $handle_GetDiskFreeSpaceW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_GetDiskFreeSpaceA (local.get $arg0) (local.get $arg1)
-      (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (call $disk_free_space (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 1))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
 
   ;; 538: SearchPathW(lpPath, lpFileName, lpExtension, nBufferLength,
@@ -12948,16 +12975,37 @@ HookEx — no next hook in chain, return 0
     ;; FILE_CASE_PRESERVED_NAMES | FILE_CASE_SENSITIVE_SEARCH
     (if (local.get $fs_flags)
       (then (call $gs32 (local.get $fs_flags) (i32.const 0x00000003))))
+    ;; The filesystem name is part of era CD checks: Diablo XOR-folds the first
+    ;; four bytes of this string into the constant it compares, so a mounted
+    ;; CD-ROM must say "CDFS" the way Win98 does, not "FAT".
     (if (local.get $fs_name)
       (then
-        (if (local.get $wide)
+        (if (i32.eq (call $host_fs_drive_type
+              (if (result i32) (local.get $root)
+                (then (call $g2w (local.get $root)))
+                (else (i32.const 0)))
+              (local.get $wide))
+              (i32.const 5)) ;; DRIVE_CDROM
           (then
-            (i32.store16 (call $g2w (local.get $fs_name)) (i32.const 0x46))          ;; 'F'
-            (i32.store16 offset=2 (call $g2w (local.get $fs_name)) (i32.const 0x41)) ;; 'A'
-            (i32.store16 offset=4 (call $g2w (local.get $fs_name)) (i32.const 0x54)) ;; 'T'
-            (i32.store16 offset=6 (call $g2w (local.get $fs_name)) (i32.const 0)))
+            (if (local.get $wide)
+              (then
+                (i32.store16 (call $g2w (local.get $fs_name)) (i32.const 0x43))          ;; 'C'
+                (i32.store16 offset=2 (call $g2w (local.get $fs_name)) (i32.const 0x44)) ;; 'D'
+                (i32.store16 offset=4 (call $g2w (local.get $fs_name)) (i32.const 0x46)) ;; 'F'
+                (i32.store16 offset=6 (call $g2w (local.get $fs_name)) (i32.const 0x53)) ;; 'S'
+                (i32.store16 offset=8 (call $g2w (local.get $fs_name)) (i32.const 0)))
+              (else
+                (i32.store (call $g2w (local.get $fs_name)) (i32.const 0x53464443))     ;; "CDFS"
+                (i32.store8 offset=4 (call $g2w (local.get $fs_name)) (i32.const 0)))))
           (else
-            (i32.store (call $g2w (local.get $fs_name)) (i32.const 0x00544146))))))  ;; "FAT"
+            (if (local.get $wide)
+              (then
+                (i32.store16 (call $g2w (local.get $fs_name)) (i32.const 0x46))          ;; 'F'
+                (i32.store16 offset=2 (call $g2w (local.get $fs_name)) (i32.const 0x41)) ;; 'A'
+                (i32.store16 offset=4 (call $g2w (local.get $fs_name)) (i32.const 0x54)) ;; 'T'
+                (i32.store16 offset=6 (call $g2w (local.get $fs_name)) (i32.const 0)))
+              (else
+                (i32.store (call $g2w (local.get $fs_name)) (i32.const 0x00544146)))))))) ;; "FAT"
     (i32.const 1))
 
   (func $handle_GetVolumeInformationA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

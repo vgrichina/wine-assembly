@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 219,
+  "count": 220,
   "sigs": {
     "log": {
       "params": [
@@ -1441,6 +1441,15 @@
       ]
     },
     "fs_volume_serial": {
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "fs_volume_size": {
       "params": [
         "i32",
         "i32"

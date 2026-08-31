@@ -501,6 +501,17 @@
   ;; GetVolumeInformationA reads its last three arguments straight off the
   ;; guest stack, so a caller here supplies the stack pointer to read them
   ;; from: $stack must address 32 zeroed guest bytes.
+  (func (export "test_call_GetDiskFreeSpaceA")
+        (param $root i32) (param $spc i32) (param $bps i32)
+        (param $free i32) (param $total i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetDiskFreeSpaceA
+      (local.get $root) (local.get $spc) (local.get $bps)
+      (local.get $free) (local.get $total) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
   (func (export "test_call_GetVolumeInformationA")
         (param $root i32) (param $name_buf i32) (param $name_size i32)
         (param $stack i32) (param $serial i32) (result i32)

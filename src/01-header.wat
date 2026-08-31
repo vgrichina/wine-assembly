@@ -737,6 +737,10 @@
   (import "host" "fs_volume_serial" (func $host_fs_volume_serial (param i32 i32) (result i32)))
   ;; fs_volume_serial(rootWA, isWide) → the mounted volume's serial number, or
   ;; 0 when no mount claims the letter.
+  (import "host" "fs_volume_size" (func $host_fs_volume_size (param i32 i32) (result i32)))
+  ;; fs_volume_size(rootWA, isWide) → the mounted volume's total size in
+  ;; 2048-byte logical blocks (an ISO's own volumeSpaceSize field), or 0 when
+  ;; no mounted media claims the letter.
   (import "host" "fs_search_path" (func $host_fs_search_path (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; fs_search_path(pathWA, fileNameWA, extWA, bufLen, bufGA, filePartPtrGA, isWide) → len or 0
   (import "host" "fs_get_short_path_name" (func $host_fs_get_short_path_name (param i32 i32 i32 i32) (result i32)))
