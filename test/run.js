@@ -24,6 +24,8 @@ const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions'
 const { APPS } = require('../lib/apps');
 const { CliVideoRecorder } = require('../lib/cli-recorder');
 const { createBatchClock } = require('../lib/batch-clock');
+// Fixed memory-map addresses, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 let PNG;
 try { ({ PNG } = require('pngjs')); } catch (_) {}
 let createCanvas, Win98Renderer;
@@ -1612,7 +1614,7 @@ async function main() {
   ];
 
   // DX_OBJECTS lives in high WASM memory on this branch.
-  // Matches src/09a8-handlers-directx.wat ($DX_OBJECTS = 0x07F60000).
+  // $DX_OBJECTS, from the map declared in src/00-regions.wat.
   const DX_TYPE_NAMES = { 1:'DDraw', 2:'DDSurface', 3:'DDPalette', 4:'DSound', 5:'DSBuffer',
     6:'DInput', 7:'DIDev', 8:'D3D', 9:'D3D3', 20:'D3DDev3', 23:'D3DVp3', 24:'D3DLight', 25:'D3DMat3',
     26:'DPlay3', 27:'DPlayLobby2' };
@@ -1624,7 +1626,7 @@ async function main() {
       slot = dv.getUint32(wa + 4, true);
     } catch (_) { return null; }
     if (slot >= 4096) return null;
-    const entry = 0x07F60000 + slot * 32;
+    const entry = RegionMap.BASE.DX_OBJECTS + slot * 32;
     const type = dv.getUint32(entry, true);
     if (!type) return null;
     const rc = dv.getUint32(entry + 4, true);
@@ -2168,7 +2170,7 @@ async function main() {
         const esp = e.get_esp() >>> 0;
         const imageBase = e.get_image_base() >>> 0;
         const dv = new DataView(memory.buffer);
-        const g2w = addr => addr - imageBase + 0x12000;
+        const g2w = addr => RegionMap.g2w(addr, imageBase);
         const cs = dv.getUint32(g2w((esp + 4) >>> 0), true) >>> 0;
         const state = () => ({
           lock: dv.getInt32(g2w((cs + 4) >>> 0), true),
@@ -2191,7 +2193,7 @@ async function main() {
         const esp = e.get_esp();
         const imageBase = e.get_image_base();
         const dv = new DataView(memory.buffer);
-        const g2w = addr => addr - imageBase + 0x12000;
+        const g2w = addr => RegionMap.g2w(addr, imageBase);
         const msgPtr = dv.getUint32(g2w(esp + 4), true);
         const msgHwnd = dv.getUint32(g2w(msgPtr), true);
         const msgMsg = dv.getUint32(g2w(msgPtr + 4), true);
@@ -2215,7 +2217,7 @@ async function main() {
         const esp = e.get_esp();
         const imageBase = e.get_image_base();
         const dv = new DataView(memory.buffer);
-        const g2w = addr => addr - imageBase + 0x12000;
+        const g2w = addr => RegionMap.g2w(addr, imageBase);
         const ret = dv.getUint32(g2w(esp), true);
         const stackVals = [];
         for (let i = 0; i < 8; i++) {
@@ -2256,7 +2258,7 @@ async function main() {
       const esp = e.get_esp();
       const imageBase = e.get_image_base();
       const dv = new DataView(memory.buffer);
-      const g2w = addr => addr - imageBase + 0x12000;
+      const g2w = addr => RegionMap.g2w(addr, imageBase);
       const fmtCtx = { dv, g2w, memory: memory.buffer, readStr, hex };
 
       const entry = apiByName.get(t);
@@ -2691,7 +2693,7 @@ async function main() {
       if (TRACE_API && lastApiEntry) {
         const dv = new DataView(memory.buffer);
         const imageBase = instance.exports.get_image_base();
-        const fmtCtx = { dv, g2w: addr => addr - imageBase + 0x12000, memory: memory.buffer, readStr, hex };
+        const fmtCtx = { dv, g2w: addr => RegionMap.g2w(addr, imageBase), memory: memory.buffer, readStr, hex };
         const eax = instance.exports.get_eax();
         const typedRet = fmtApiRet(lastApiEntry, eax, fmtCtx);
         const outInfo = lastApiArgs ? fmtApiOutParams(lastApiEntry, lastApiArgs, fmtCtx) : '';
@@ -2702,7 +2704,7 @@ async function main() {
       if (TRACE_API && lastApiName === 'SendMessageA' && lastTreeItemTrace) {
         try {
           const imageBase = instance.exports.get_image_base();
-          const textValue = readStr(lastTreeItemTrace.textGuest - imageBase + 0x12000,
+          const textValue = readStr(RegionMap.g2w(lastTreeItemTrace.textGuest, imageBase),
             Math.min(lastTreeItemTrace.textMax, 1024));
           logs.push(`  TVITEMA.text=${JSON.stringify(textValue)}`);
         } catch (_) {}
@@ -3307,7 +3309,7 @@ async function main() {
       const e = workerExports();
       if (!e || !e.get_esp || !e.get_image_base) return null;
       const imageBase = e.get_image_base();
-      const g2w = addr => addr - imageBase + 0x12000;
+      const g2w = addr => RegionMap.g2w(addr, imageBase);
       return {
         esp: e.get_esp(),
         ctx: { dv: new DataView(memory.buffer), g2w, memory: memory.buffer, readStr, hex },
@@ -3389,7 +3391,7 @@ async function main() {
             + ` ESI=${hex(e.get_esi())} EDI=${hex(e.get_edi())}`;
           if (traceEipDumps.length) {
             const imageBase = e.get_image_base();
-            const g2w = addr => addr - imageBase + 0x12000;
+            const g2w = addr => RegionMap.g2w(addr, imageBase);
             const dv = new DataView(memory.buffer);
             for (const d of traceEipDumps) {
               const bytes = [];
@@ -6327,6 +6329,9 @@ async function main() {
         const dv = new DataView(memory.buffer);
         const u8 = new Uint8Array(memory.buffer);
         const items = [];
+        // 0x07F00000 stays a literal: it is not a declared region base, only the
+        // exclusive end of the one below it, and spelling it region.end would
+        // encode an adjacency the allocator is free to change.
         const table = we.treeview_get_table_base ? (we.treeview_get_table_base() >>> 0) : 0x07F00000;
         const slots = we.treeview_get_slot_limit ? (we.treeview_get_slot_limit() | 0) : 32;
         for (let i = 0; i < slots; i++) {
@@ -7418,7 +7423,7 @@ async function main() {
       }
       if (fired && TRACE_API) {
         const mem32 = new Uint32Array(memory.buffer);
-        const g2wOff = 0x12000 - instance.exports.get_image_base();
+        const g2wOff = RegionMap.g2wOffset(instance.exports.get_image_base());
         const trampVal = mem32[(0xa5a058 + g2wOff) >> 2];
         console.log(`[mm_timer] fired at batch ${batch}, EIP=${hex(instance.exports.get_eip())}, [0xa5a058]=${hex(trampVal)}`);
       }
@@ -8173,8 +8178,8 @@ if (VERBOSE) {
 
   if (DUMP_VIRTUAL_MAPS) {
     const dv = new DataView(memory.buffer);
-    const state = 0x07F02400;
-    const table = 0x07F02410;
+    const state = RegionMap.BASE.VIRTUAL_MAP_STATE;
+    const table = RegionMap.BASE.VIRTUAL_MAP_TABLE;
     const count = dv.getUint32(state, true);
     const backingTop = dv.getUint32(state + 4, true);
     const reservationTop = dv.getUint32(state + 8, true);
@@ -8590,11 +8595,11 @@ if (VERBOSE) {
   // line of output whenever you are chasing memory that "should" hold data.
   if (DUMP_VMAP) {
     const dv2 = new DataView(memory.buffer);
-    const count = dv2.getUint32(0x07F02400, true) >>> 0;
+    const count = dv2.getUint32(RegionMap.BASE.VIRTUAL_MAP_STATE, true) >>> 0;
     console.log(`Virtual map: ${count} mapping(s)`);
     const maps = [];
     for (let i = 0; i < count; i++) {
-      const rec = 0x07F02410 + i * 16;
+      const rec = RegionMap.BASE.VIRTUAL_MAP_TABLE + i * 16;
       const b = dv2.getUint32(rec, true) >>> 0;
       const sz = dv2.getUint32(rec + 4, true) >>> 0;
       const back = dv2.getUint32(rec + 8, true) >>> 0;
@@ -8625,9 +8630,9 @@ if (VERBOSE) {
   const getDxSurfaceManifest = () => {
     const mem = new Uint8Array(memory.buffer);
     const dv = new DataView(memory.buffer);
-    const DX_BASE = 0x07F60000;
+    const DX_BASE = RegionMap.BASE.DX_OBJECTS;
     const DX_SLOTS = 4096; // matches $DX_MAX in src/09a8-handlers-directx.wat
-    const DX_SURF_PAL = 0x07F32000; // matches $DX_SURF_PAL: per-surface palette data addr
+    const DX_SURF_PAL = RegionMap.BASE.DX_SURF_PAL; // per-surface palette data addr
     let paletteWa = 0;
     for (let slot = 0; slot < DX_SLOTS; slot++) {
       const entry = DX_BASE + slot * 32;
@@ -8805,7 +8810,7 @@ if (VERBOSE) {
       const [addrStr, wStr, hStr, pitchStr, bppStr, outPath] = spec.split(':');
       const guest = parseInt(addrStr, 16) >>> 0;
       const surface = {
-        dib: (guest - imgBase + 0x12000) >>> 0,
+        dib: RegionMap.g2w(guest, imgBase),
         w: parseInt(wStr, 10) | 0,
         h: parseInt(hStr, 10) | 0,
         pitch: parseInt(pitchStr, 10) | 0,
@@ -8901,7 +8906,7 @@ if (VERBOSE) {
     fs.mkdirSync(DUMP_DDRAW, { recursive: true });
     const mem = new Uint8Array(memory.buffer);
     const dv = new DataView(memory.buffer);
-    const DX_BASE = 0x07F60000;
+    const DX_BASE = RegionMap.BASE.DX_OBJECTS;
     const DX_SLOTS = 4096; // matches $DX_MAX in src/09a8-handlers-directx.wat
     const manifest = [];
     // Read the primary palette WASM addr by scanning palette-type entries in
