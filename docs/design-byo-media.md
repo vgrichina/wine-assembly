@@ -1,9 +1,10 @@
 # Bring Your Own Media — design
 
-Status: **design only, nothing built.** How the browser build grows from
-"server-supplied apps" to "drop in your own ISOs, installers, zips and game
-folders" — the storage backends, the lazy VFS machinery, the containers, save
-sync, and the UI. Written 2026-08-30.
+Status: **design, with phases ①–③ in flight.** How the browser build grows
+from "server-supplied apps" to "drop in your own ISOs, installers, zips and
+game folders" — the storage backends, the lazy VFS machinery, the containers,
+save sync, and the UI. Written 2026-08-30; corrected the same day from an
+external (codex) review — see the risk register at the end.
 
 ## Where we start from
 
@@ -30,8 +31,8 @@ So: read-mostly, server-supplied media, tiny opt-in persistence.
 | Backend | Safari | Fit |
 |---|---|---|
 | **OPFS** (origin-private file system) | Yes, since 15.2; sync handles worker-only | **The byte store.** Real files, byte-range read/write/truncate, no base64 |
-| **IndexedDB** | Yes | Library metadata (names, types, hashes); stores Blobs natively, but async-only and slower for big blobs |
-| **Cache API** | Yes | URL-keyed chunk cache for *remote* media; not a general FS |
+| **IndexedDB** | Yes | Library metadata (names, types, hashes); stores Blobs natively, async-only — a transactional object store, not byte-range I/O |
+| **Cache API** | Yes | Chunk cache for *remote* media — but `Cache.put()` rejects 206 responses, so chunks must be wrapped as synthetic 200s keyed by a synthetic URL (media id + validator + offset + length), or simply kept in OPFS/IDB |
 | **localStorage** | Yes | ~5MB, sync, base64 — keep for registry/INI only |
 | File System Access pickers (`showOpenFilePicker` etc.) | **No** — Chrome/Edge only | Can't rely on it; `<input type=file>` + drag-drop is the portable import path |
 
@@ -47,18 +48,23 @@ read OPFS synchronously, and the main guest thread goes through the existing
 - **Chrome/Edge**: up to 60% of total disk.
 - **Firefox**: best-effort 10% of disk capped at 10GB; up to 50% with
   persistent storage.
-- **Safari 17+**: roughly 60% of disk in Safari proper (a 1TiB Mac gives an
-  origin ~600GiB), ~15% inside another app's WebView. Older Safari was in the
-  low-GB range.
+- **Safari 17+**: policy ceiling of roughly 60% of disk in Safari proper,
+  ~15% inside another app's WebView. These are *ceilings, not allocations* —
+  `navigator.storage.estimate().quota` is approximate, varies with free disk
+  and browsing mode, and doesn't guarantee that much can actually be written.
+  Older Safari started around 1GiB and could prompt for more.
 
 **Safari's two real gotchas**, both mitigable:
 
 - **7-day eviction**: with ITP on, all script-writable storage (OPFS and
   IndexedDB included) is wiped if the user hasn't interacted with the site in
   7 days of Safari use. `navigator.storage.persist()` (fully supported since
-  Safari 17) exempts the origin — call it in the import flow, and read
-  `navigator.storage.estimate()` to show the budget. A home-screen-installed
-  web app is also exempt.
+  Safari 17) *requests* eviction protection — it can return `false`, so the
+  import flow must await the result and surface failure, not treat the call
+  as durability. Home-screen installation improves retention (separate
+  interaction accounting) but is not a categorical exemption either. Read
+  `navigator.storage.estimate()` to show the budget — and label it "site
+  storage available", because it is origin headroom, not disk free space.
 - **Private browsing**: OPFS is unavailable; detect and fall back to
   session-only in-memory.
 
@@ -79,7 +85,7 @@ Storage Policy" (webkit.org/blog/14403), MDN "Origin private file system".
  │                                                              │
  │   File object        https:// + Range      OPFS copy         │
  │   session-only       streamed remote       "keep this"       │
- │   zero-copy slice    Cache API chunks      survives reload   │
+ │   no-copy import     cached chunks         survives reload   │
  └──────────────────────────────┬───────────────────────────────┘
                                 ▼
  ┌──────────────────────────────────────────────────────────────┐
@@ -107,14 +113,26 @@ Storage Policy" (webkit.org/blog/14403), MDN "Origin private file system".
  └──────────────────────────────────────────────────────────────┘
 ```
 
-Everything above `VirtualFS` is new; everything below it doesn't change. The
-guest never learns any of this exists.
+Everything above `VirtualFS` is new, and the guest never learns any of it
+exists. But "below it doesn't change" is only true for the *interface* —
+`entry.data` has many direct consumers (ReadFile, `_lread`, MapViewOfFile
+and mapped-view writeback, copy/truncate/write, DLL and resource loading,
+audio) and each must either support the parked read or force
+pre-materialization; see the risk register.
 
 ## The keystone: how a lazy read meets a synchronous guest
 
 The guest's `ReadFile` is synchronous WAT; every interesting source is async.
-The bridge is the `yield_reason` mechanism that already exists —
-`_fetchMissingFile` in `host.js` does this exact dance today:
+The bridge is the `yield_reason` mechanism — but note this is *harder than
+prior art*: `_fetchMissingFile` in `host.js` only starts a fetch and mounts
+the file later (its consumers don't need the bytes in the same turn), and a
+JS host import cannot suspend and resume its Wasm caller. Parking must happen
+in WAT, before the handler pops its stdcall frame, with EIP reset to the
+thunk (`src/09b-dispatch.wat` documents the constraint). The continuation
+contract: a pending status the handler observes, unchanged file position,
+restored ESP, EIP at the thunk for retry, per-thread/per-handle keyed pending
+state (never one global), request dedup, and an error latch so a failed fill
+completes the call with a Win32 error instead of retrying forever.
 
 ```
  guest (WAT, synchronous)               host JS (async world)
@@ -141,8 +159,12 @@ The bridge is the `yield_reason` mechanism that already exists —
                               not one yield per ReadFile
 ```
 
-Worker guest threads get a shortcut: OPFS `createSyncAccessHandle` is
-synchronous in a worker, so their reads never yield at all.
+Worker guest threads do NOT get a free shortcut today: they broker every
+host import through `lib/guest-rpc.js` to the main thread and expect an
+immediate numeric result, so worker-local OPFS (`createSyncAccessHandle` is
+synchronous in a worker) would need a separate worker-side filesystem import
+implementation with provider/handle ownership and shared-position sync. It's
+the right end state, not a given.
 
 The lazy VFS entry carries a provider expressing both read shapes:
 `readRange(off, len)` for ISO files and stored zip entries, and
@@ -170,20 +192,34 @@ on a mounted ISO mounts the same way).
    directly, like ISO                                 mounts a remote zip
 ```
 
-- **Parsing is tail-first**: EOCD scan in the last ~64KB, then the central
-  directory gives every entry's name, offset, sizes and method. One Range
-  fetch mounts a remote zip; one small `slice()` mounts a local one.
+- **Parsing is tail-first**: EOCD scan over the trailing 65,557 bytes
+  (22-byte EOCD + max 65,535-byte comment), then read the central directory —
+  which may lie *outside* that tail, so the general remote case is a tail
+  fetch plus a directory fetch; one-request mounting is an optimization. The
+  central directory's offset points at the *local* file header — the reader
+  must skip that header's own filename/extra fields to find the payload.
 - **Decompression is native**: `DecompressionStream('deflate-raw')` handles
-  method 8 in every current browser including Safari. Accept methods 0
-  (stored) and 8 (deflate); anything else gets a clear "unsupported method"
-  error, never a guess.
+  method 8 — but it arrived in Safari 16.4, a later floor than OPFS's 15.2;
+  accept that floor (or ship an inflater fallback). Accept methods 0 (stored)
+  and 8 (deflate); anything else gets a clear "unsupported method" error,
+  never a guess.
+- **Archives are untrusted input**: verify CRC-32 after inflation; enforce a
+  hard materialization budget against the declared uncompressed size (zip
+  bombs); reject encrypted entries and unknown required GP flags; sanitize
+  paths (no absolute/UNC/device names, no `..` — "Zip Slip"), and define
+  collision behavior after Win32 case-folding and folder unwrapping. Name
+  encoding: GP bit 11 → UTF-8, else the 0x7075 Unicode Path extra field, else
+  CP437-ish fallback.
 - **Lazy granularity differs from ISO**: a deflated entry cannot be
   range-read — the lazy unit is "materialize the whole entry on first open",
-  LRU-cached. Era files are small enough that this is the right trade.
+  LRU-cached, subject to the materialization budget above (installers can
+  carry videos and nested archives; refuse before allocating).
 - Mount at `C:\Program Files\<zipname>\`; a single top-level folder gets
   unwrapped. Then scan for `.exe`s and offer launch candidates (same shape as
   `test/candidate-corpus/manifest.json`).
-- Zip64 (>4GB) explicitly out of scope until a real file needs it.
+- Zip64 out of scope — but its triggers are broader than ">4GB": 65,535+
+  entries and 0xFFFF/0xFFFFFFFF sentinel values in any count/size/offset
+  field. Detect the sentinels and reject explicitly.
 
 ## ISO 9660 — the friendliest container
 
@@ -199,15 +235,28 @@ on a mounted ISO mounts the same way).
                                             no decompression, ever
 ```
 
-Every file is one contiguous run of sectors — the ideal case for range reads,
-local or remote (`fetch` with `Range: bytes=N-M`; needs `Accept-Ranges` and,
-cross-origin, CORS — this is how v86/js-dos-style sites stream disk images).
-Parse the PVD at sector 16, walk directory records (Joliet supplement for
-long names), create lazy entries under `D:\`.
+Files are *typically* one contiguous run of blocks — the ideal case for range
+reads, local or remote (`fetch` with `Range: bytes=N-M`; `Accept-Ranges` is
+advisory, so correctness means checking for a 206, validating
+`Content-Range`, and handling a server that answers with the whole file as a
+200; cross-origin also needs CORS — this is how v86/js-dos-style sites stream
+disk images). But contiguity is not a format guarantee: multi-extent files
+(record flag bit 7) and interleaved file units exist, and the parser must
+detect and explicitly reject them, never silently truncate. Parsing details
+that matter: sector 16 starts the volume descriptor *sequence* (a boot record
+may precede the PVD — scan until the type-255 terminator); Joliet is a full
+supplementary descriptor with its own UCS-2BE root tree, walked *instead of*
+the PVD's; offsets use the PVD's Logical Block Size field, not a hardcoded
+2048; honor each record's Extended Attribute Record length; strip `;1`
+version suffixes; records never cross sector boundaries (a zero length byte
+skips to the next sector). Create lazy entries under `D:\`.
 
-The drive-identity surface is small: `GetDriveType → DRIVE_CDROM`, and
-`GetVolumeInformationA` returning the PVD's volume label — what era CD-checks
-actually read. Read-only, so no overlay questions: ISO is the easiest mount.
+The *first-milestone* drive-identity surface: `GetDriveType → DRIVE_CDROM`,
+and `GetVolumeInformationA` returning the PVD's volume label (and serial, if
+cheap). Real CD checks can also probe volume serials, `GetLogicalDrives`,
+`GetDiskFreeSpaceA`, root enumeration, MCI CD audio, or raw device opens —
+those stay fail-fast until a real app demands one. Read-only, so no overlay
+questions: ISO is still the easiest mount.
 
 ## Writes — the overlay and the save bundle
 
@@ -239,10 +288,16 @@ actually read. Read-only, so no overlay questions: ISO is the easiest mount.
           works today       cross-device ▪ LWW
 ```
 
-- The OPFS mirror slots into the existing
-  `vfs-persistence.attach(vfs, {storage})` seam and removes the 2MB
-  localStorage cap — which is what makes "run the installer, keep the result"
-  real. The installed tree becomes a synthesized `apps.js`-style entry.
+- The OPFS mirror reuses the *wrapping* idea of
+  `vfs-persistence.attach(vfs, {storage})` but is not a drop-in `storage`
+  swap: that seam assumes synchronous Web Storage calls and serializes whole
+  `entry.data` buffers. OPFS needs an async persistence repository — dirty
+  extents, batched flush with error state, startup hydration, unload flush.
+- The `persistFiles` allow-list is for *registered* apps' saves. An arbitrary
+  installer has no `apps.js` entry and no globs — "run the installer, keep
+  the result" means persisting the **complete per-import overlay** (or the
+  installer's recorded mutation set), with save-specific filtering applied
+  later. The installed tree then becomes a synthesized `apps.js`-style entry.
 - **Save sync**: berrry as used today is static hosting behind an owner-keyed
   deploy API (`tools/deploy-berrry.js`) — visitors cannot write to it, and the
   deploy key can never ship to browsers. Sync needs a trivial dynamic
@@ -474,6 +529,28 @@ guest's own file dialogs see the same drives. Every state shown here reads
 from the same IndexedDB library index the mount layer uses — the UI holds no
 state of its own, so the CLI and the browser stay two views of one model.
 
+Integration realities the mocks gloss over (from review):
+
+- DOM windows are a *second window manager*: they don't participate in guest
+  z-order, focus, modal capture, or the renderer-owned taskbar
+  (`renderer.updateTaskbar()` rebuilds task buttons from guest windows only).
+  Either add a shared shell-window registry or keep these panels visually
+  outside the taskbar/window metaphor. And Eject/Properties/My Media must
+  stay reachable *while a guest runs* — exactly when the canvas owns input.
+- Imported apps need a **dynamic registry**: desktop icons are built once
+  from static `apps.js`, launch rejects unknown ids
+  (`lib/browser-shell.js`), and `loadExe`/`resources-icon.js` assume URLs to
+  fetch. A synthesized entry needs a launch descriptor that accepts
+  bytes/providers, and the icon extractor needs a bytes entry point.
+- The drop target must be wired on `#screen-wrap`/capture-phase listeners
+  with `preventDefault()` (the canvas already overlays the desktop icons),
+  with an explicit policy for drops while a guest owns the canvas.
+- "One decision" is the goal, not the guarantee: archives with several exes,
+  or none, need a candidate-picker step; folder imports need
+  `webkitdirectory` + drag-drop traversal (with no iOS folder story).
+- Phone mode hides the taskbar entirely in-game, so the CD-tray affordance
+  needs a persistent mobile control or a pause/shell gesture.
+
 ## Build order
 
 ```
@@ -492,3 +569,31 @@ provider (`fs.read`), so `test/run.js --iso=` / `--zip=` exercises the
 identical code headlessly — CLI parity is what keeps all of this testable
 (and gives `tools/iso-dir.js` / a zip lister for free, per the
 build-tools-not-scripts rule).
+
+## Risk register (codex review, 2026-08-30)
+
+Architectural cautions not yet resolved by the design; each is a decision to
+make during the phase that hits it, not a reason to redesign now:
+
+1. **Parking contract completeness (①)** — every `entry.data` consumer must
+   be classified: parked-read capable (ReadFile) or pre-materialize at
+   CreateFile/MapViewOfFile time (`_lread`, mappings and writeback, module/
+   resource/audio loads, copy/truncate/write). A "pending" throw that unwinds
+   nested Wasm is never acceptable.
+2. **Worker-thread I/O (①)** — `lib/guest-rpc.js` brokers imports to the
+   main thread and expects an immediate numeric result; worker-local OPFS is
+   a separate follow-up project (worker-side FS imports, handle ownership,
+   shared position sync).
+3. **Overlay semantics (⑤)** — read-only mount under a writable C: needs
+   whiteouts, rename/delete-through rules, case-insensitive collision
+   handling, and copy-on-write that cannot synchronously materialize a large
+   uncached provider file. Needs its own mini-design before ⑤ starts.
+4. **Crash consistency (④)** — IDB metadata and OPFS content can't share a
+   transaction: imports need staged states (`copying → complete`), content
+   validators, orphan cleanup, schema versioning.
+5. **32-bit ceilings** — enumeration publishes a zero high-DWORD size and
+   provider offsets pass through i32 in places; state explicit max media/
+   entry/seek/mapping sizes before advertising multi-GB images.
+6. **Provider failure → Win32 errors (①)** — rejected fetch, short 206,
+   changed ETag, revoked File, ejection: each needs a stable error code and
+   `GetLastError` mapping, with cancellation and retry policy.
