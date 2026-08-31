@@ -275,12 +275,16 @@ recorded in [watx-migration-gaps.md](watx-migration-gaps.md) (commit
 `WebAssembly.Module`-validates in both modes with zero warnings. Six classes
 are WATX work (atomics — 144 sites, the largest by far; ~20 missing SIMD table
 entries; `v128` memargs; labeled `block (result T)`; standard lane-immediate
-position — where `extract_lane` currently degrades **silently** to lane 0;
-`i8x16.shuffle` lane bytes) and two are Wine-source fixes (a detached `(else)`
+position — where a missing lane immediate currently defaults **silently** to
+lane 0 instead of erroring, though Wine's own standard-form sites all fail
+validation loudly; `i8x16.shuffle` lane bytes) and two are Wine-source fixes
+(a detached `(else)`
 in `09e-win16-api.wat` that is a real latent behavior bug the legacy compiler
 swallows, and one bare `(drop)`). Neither generated file needed any change.
 The predicted numeric-locals / folded-ordering / inline-export gaps did not
-materialize.
+materialize. The census scaffolding passed `standardWat: true` to reproduce;
+that flag stays temporary census scaffolding and is not part of the migration
+contract — base-language forms must compile without it, per 2.3's rule.
 
 Exit gate: WATX emits validating tail and compatibility modules from the entire
 current source closure with zero ignored forms and zero warnings downgraded from
