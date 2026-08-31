@@ -484,6 +484,7 @@ UNIT=(
   test/test-showwindow-dialog-promotion.js
   test/test-system-enum-dispatch.js
   test/test-thread-manager-sparse-stack.js
+  test/test-dialog-timer-pump.js
   test/test-timer-message-pump.js
   test/test-to-unicode.js
   test/test-token-security.js

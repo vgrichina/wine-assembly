@@ -763,6 +763,72 @@
             (global.set $eip (local.get $arg4))
             (global.set $steps (i32.const 0))
             (return)))
+        ;; WM_TIMER is a synthesized low-priority message: USER only creates
+        ;; it after paint, posted, and hardware-input work is exhausted.  This
+        ;; modal pump used to stop after those three sources, so a timer armed
+        ;; by a dialog procedure remained live forever.  mIRC 5.9 finishes
+        ;; scanning its installer payload, arms a 25ms hwnd timer, and then
+        ;; waits at "Scanning files... 0%" for exactly this missing dispatch.
+        (local.set $arg4 (call $w2g (call $paint_scratch_take)))
+        (if (call $timer_check_due (local.get $arg4) (i32.const 1))
+          (then
+            (local.set $arg0 (call $gl32 (local.get $arg4)))
+            (local.set $arg1 (call $gl32 (i32.add (local.get $arg4) (i32.const 4))))
+            (local.set $arg2 (call $gl32 (i32.add (local.get $arg4) (i32.const 8))))
+            (local.set $arg3 (call $gl32 (i32.add (local.get $arg4) (i32.const 12))))
+            ;; A multimedia timer carries dwUser in MSG.hwnd and calls a
+            ;; five-argument TimeProc rather than a window procedure.
+            (if (i32.eq (local.get $arg1) (i32.const 0x7FF0))
+              (then
+                (global.set $esp (i32.sub (global.get $esp) (i32.const 24)))
+                (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))
+                (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $arg2))
+                (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0))
+                (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (local.get $arg0))
+                (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (i32.const 0))
+                (call $gs32 (i32.add (global.get $esp) (i32.const 20)) (i32.const 0))
+                (global.set $dlg_callback_yield_pending (i32.const 1))
+                (global.set $eip (local.get $arg3))
+                (global.set $steps (i32.const 0))
+                (return)))
+            ;; SetTimer may nominate a TimerProc in lParam.  Its four stdcall
+            ;; arguments are hwnd, WM_TIMER, id, and the tick count.
+            (if (local.get $arg3)
+              (then
+                (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
+                (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))
+                (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $arg0))
+                (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $arg1))
+                (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (local.get $arg2))
+                (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (global.get $tick_count))
+                (global.set $dlg_callback_yield_pending (i32.const 1))
+                (global.set $eip (local.get $arg3))
+                (global.set $steps (i32.const 0))
+                (return)))
+            ;; Ordinary hwnd timer: dispatch by the target's current wndproc,
+            ;; matching the posted-message path immediately above.
+            (local.set $arg4 (call $wnd_table_get (local.get $arg0)))
+            (if (i32.ge_u (local.get $arg4) (i32.const 0xFFFF0000))
+              (then
+                (drop (call $wat_wndproc_dispatch
+                  (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+                (global.set $eip (global.get $dlg_loop_thunk))
+                (global.set $steps (i32.const 0))
+                (return)))
+            (if (i32.eqz (local.get $arg4))
+              (then (local.set $arg4 (global.get $dlg_proc))))
+            (if (i32.lt_u (local.get $arg4) (global.get $image_base))
+              (then (local.set $arg4 (global.get $dlg_proc))))
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
+            (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $arg0))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $arg1))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (local.get $arg2))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $arg3))
+            (global.set $dlg_callback_yield_pending (i32.const 1))
+            (global.set $eip (local.get $arg4))
+            (global.set $steps (i32.const 0))
+            (return)))
         ;; No input — yield to host and come back
         (global.set $yield_flag (i32.const 1))
         (global.set $eip (global.get $dlg_loop_thunk))
