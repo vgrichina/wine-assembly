@@ -1215,15 +1215,30 @@ class WineAssembly {
             console.warn(`[host] unable to load ${artifact}; compiling WAT sources`, error);
           }
         }
-        const bytes = await compileWatSnapshot(
-          async file => {
-            const response = await fetch(`src/${file}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions);
-            if (!response.ok) throw new Error(`Unable to load ${file}: HTTP ${response.status}`);
-            return response.text();
-          },
-          { tailCalls, cacheKey: `${WineAssembly.SOURCE_VERSION}:browser:${attempt}` }
-        );
-        return WebAssembly.compile(bytes);
+        // Source compile goes through the WATX compiler Worker — the
+        // Milestone 4 wiring from lib/watx-launcher.js's header. The Worker
+        // is already terminated when compile() resolves (it does so in a
+        // finally), so its heap is gone BEFORE init() allocates the
+        // 8192-page shared memory. Do not move this call later.
+        //
+        // There is no legacy fallback behind it: the in-page
+        // compileWatSnapshot path was retired with the M6 symbolization
+        // (commit 24b79256) — the src tree now spells region-symbolic
+        // operands that lib/compile-wat.js lowers to `unreachable` traps,
+        // so that fallback would compile a module that fails validation, or
+        // worse, one that traps mid-app.
+        if (typeof window !== 'undefined' && window.watxLauncher) {
+          const bytes = await window.watxLauncher.compile({
+            tailCalls,
+            version: WineAssembly.SOURCE_VERSION,
+            noStore: debugFetch,
+          });
+          return WebAssembly.compile(bytes);
+        }
+        throw new Error('wine-assembly artifacts missing and lib/watx-launcher.js is not ' +
+          'loaded (in-page legacy source compilation is retired); run `bash tools/build.sh` ' +
+          'to produce build/wine-assembly.wasm, or load lib/watx-launcher.js before host.js ' +
+          '(see docs/watx-region-safety-design.md §11)');
       })();
       WineAssembly._wasmModulePromise = modulePromise;
       modulePromise.catch(() => {

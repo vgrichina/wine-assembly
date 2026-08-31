@@ -16,7 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('../test/compile-src.js');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
@@ -108,7 +108,7 @@ async function main() {
     process.exit(2);
   }
 
-  const wasm = await compileWat(file => fs.promises.readFile(path.join(SRC, file), 'utf8'));
+  const wasm = compileSrcWasm();
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const ctx = { getMemory: () => memory.buffer, renderer: null, resourceJson: {} };
   const imports = createHostImports(ctx);

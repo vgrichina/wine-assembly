@@ -6,7 +6,7 @@ const path = require('path');
 const { createCanvas } = require('../lib/canvas-compat');
 const { Win98Renderer } = require('../lib/renderer');
 const { createHostImports } = require('../lib/host-imports');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('../test/compile-src.js');
 const SRC_DIR = path.join(__dirname, '..', 'src');
 
 const args = process.argv.slice(2);
@@ -20,7 +20,7 @@ const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
 const BATCH_SIZE = parseInt(getArg('batch-size', '1000'));
 
 async function main() {
-  const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
+  const wasmBytes = compileSrcWasm();
   const exeBytes = fs.readFileSync(EXE_PATH);
 
   // Create node-canvas and renderer
@@ -30,14 +30,27 @@ async function main() {
   // Resource parsing lives in WAT.
   let stopped = false;
 
+  const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const base = createHostImports({
-    getMemory: () => instance.exports.memory.buffer,
+    getMemory: () => memory.buffer,
     renderer,
     onExit: (code) => { stopped = true; },
   });
+  base.host.memory = memory;
+
+  // No threads/COM in this renderer — same stub set as tools/headless-run.js.
+  const threadStubs = {
+    create_thread: () => 0, exit_thread: () => {}, create_event: () => 0,
+    set_event: () => 0, reset_event: () => 0, wait_single: () => 0,
+    wait_multiple: () => 0, com_create_instance: () => 0x80004002,
+    has_dll_file: () => 0,
+  };
+  for (const [name, fn] of Object.entries(threadStubs)) {
+    if (!base.host[name]) base.host[name] = fn;
+  }
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, { host: base.host });
-  const mem = new Uint8Array(instance.exports.memory.buffer);
+  const mem = new Uint8Array(memory.buffer);
   mem.set(exeBytes, instance.exports.get_staging());
   const entry = instance.exports.load_pe(exeBytes.length);
   console.log('PE loaded. Entry: 0x' + (entry >>> 0).toString(16).padStart(8, '0'));

@@ -6,9 +6,8 @@ const fs = require('fs');
 const path = require('path');
 const { createCanvas } = require('../lib/canvas-compat');
 const { Win98Renderer } = require('../lib/renderer');
-const { parseResources } = require('../lib/resources');
 const { createHostImports } = require('../lib/host-imports');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('../test/compile-src.js');
 
 const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
@@ -38,21 +37,29 @@ async function runApp(wasmModule, app, renderer, appIndex) {
     return;
   }
   const exeBytes = fs.readFileSync(exePath);
-  const resourceJson = parseResources(exeBytes);
-  renderer.loadResources(resourceJson);
 
   let stopped = false;
-  const memory = new WebAssembly.Memory({ initial: 1024 });
+  const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const hwndBase = 0x10001 + appIndex * 0x10000;
 
   const ctx = {
     getMemory: () => memory.buffer,
     renderer,
-    resourceJson,
     onExit: () => { stopped = true; },
   };
   const base = createHostImports(ctx);
   base.host.memory = memory;
+
+  // No threads/COM in this renderer — same stub set as tools/headless-run.js.
+  const threadStubs = {
+    create_thread: () => 0, exit_thread: () => {}, create_event: () => 0,
+    set_event: () => 0, reset_event: () => 0, wait_single: () => 0,
+    wait_multiple: () => 0, com_create_instance: () => 0x80004002,
+    has_dll_file: () => 0,
+  };
+  for (const [name, fn] of Object.entries(threadStubs)) {
+    if (!base.host[name]) base.host[name] = fn;
+  }
 
   // Override show_window to log but not inject WM_CLOSE
   base.host.show_window = (hwnd, cmd) => {
@@ -124,7 +131,7 @@ async function runApp(wasmModule, app, renderer, appIndex) {
 }
 
 async function main() {
-  const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
+  const wasmBytes = compileSrcWasm();
   const wasmModule = await WebAssembly.compile(wasmBytes);
   const canvas = createCanvas(WIDTH, HEIGHT);
   const renderer = new Win98Renderer(canvas);

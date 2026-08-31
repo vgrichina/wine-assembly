@@ -40,7 +40,7 @@ const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { g2w: translateGuest } = require('../lib/mem-utils');
 const { loadDlls, detectRequiredDlls, shouldReportNtForDlls } = require('../lib/dll-loader');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('../test/compile-src.js');
 
 let createCanvas, Win98Renderer;
 try {
@@ -112,7 +112,7 @@ async function main() {
   if (NO_BUILD && fs.existsSync(prebuilt)) {
     wasmBytes = fs.readFileSync(prebuilt);
   } else {
-    wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
+    wasmBytes = compileSrcWasm();
   }
 
   const exeBytes = fs.readFileSync(EXE_PATH);

@@ -455,8 +455,21 @@ function reportTests(rows) {
 (async () => {
   const report = { self: SELF, only: ONLY, bLabel: B_LABEL, failures: [] };
 
-  note(SKIP_BUILD ? 'reusing artifacts on disk' : 'building four artifacts');
-  const a = SKIP_BUILD ? adoptExisting(A_DIR) : await buildLegacy(A_DIR);
+  // The legacy compiler was retired for full-tree builds (commit 24b79256,
+  // docs/watx-region-safety-design.md §11): the tree now contains
+  // region-symbolic spellings it lowers to `unreachable`, so a freshly built
+  // legacy column would be a trap-laden module certified against nothing.
+  // Comparing two PREBUILT artifact directories (--skip-build) is still valid.
+  if (!SKIP_BUILD) {
+    console.error('watx-matrix: building the legacy column is retired — the src tree contains');
+    console.error('region-symbolic spellings lib/compile-wat.js compiles to runtime traps.');
+    console.error('Use --skip-build with artifact directories, or see the M3 history in');
+    console.error('docs/watx-migration-plan.md; the differential gate completed its purpose');
+    console.error('at the byte-identity cutover (23ed9639).');
+    process.exit(1);
+  }
+  note('reusing artifacts on disk');
+  const a = adoptExisting(A_DIR);
   let b;
   if (SKIP_BUILD) b = adoptExisting(B_DIR);
   else if (SELF) b = await buildLegacy(B_DIR);
