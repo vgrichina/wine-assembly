@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 213,
+  "count": 215,
   "sigs": {
     "log": {
       "params": [
@@ -1699,6 +1699,22 @@
       ]
     },
     "wave_out_reset": {
+      "params": [
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "wave_out_pause": {
+      "params": [
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "wave_out_restart": {
       "params": [
         "i32"
       ],

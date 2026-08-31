@@ -477,15 +477,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 801: waveOutPause — return MMSYSERR_NOERROR
+  ;; waveOutPause freezes queued playback, its byte cursor and WOM_DONE timing.
   (func $handle_waveOutPause (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $host_wave_out_pause (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 802: waveOutRestart — return MMSYSERR_NOERROR
+  ;; waveOutRestart resumes the unplayed tail of every queued buffer.
   (func $handle_waveOutRestart (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $host_wave_out_restart (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 

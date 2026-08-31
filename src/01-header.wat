@@ -779,6 +779,9 @@
   ;; wave_out_schedule_done(handle, waveHdrWA, waveHdrGA, byteLength) → schedules WHDR_DONE/WOM_DONE
   (import "host" "wave_out_reset" (func $host_wave_out_reset (param i32) (result i32)))
   ;; wave_out_reset(handle) → cancels queued playback and flushes WHDR_DONE callbacks
+  (import "host" "wave_out_pause" (func $host_wave_out_pause (param i32) (result i32)))
+  (import "host" "wave_out_restart" (func $host_wave_out_restart (param i32) (result i32)))
+  ;; Pause freezes playback/cursor/completions; restart resumes queued PCM.
   (import "host" "wave_out_close" (func $host_wave_out_close (param i32) (result i32)))
   ;; wave_out_close(handle) → 0=ok
   (import "host" "wave_in_open" (func $host_wave_in_open (param i32 i32 i32 i32 i32 i32) (result i32)))

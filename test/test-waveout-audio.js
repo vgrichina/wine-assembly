@@ -32,8 +32,9 @@ class FakeBufferSource extends FakeNode {
     this.stops = [];
     this.loop = false;
   }
-  start(time) {
+  start(time, offset = 0) {
     this.starts.push(time);
+    this.offset = offset;
     this.owner.started.push(this);
   }
   stop(time) {
@@ -120,6 +121,31 @@ try {
   ac.currentTime += 0.5;
   assert.strictEqual(h.wave_out_get_pos(handle), bytesPerSec / 2, 'stream position should follow elapsed audio time');
 
+  assert.strictEqual(h.wave_out_pause(handle), 0, 'waveOutPause accepts a live stream');
+  const pausedAt = h.wave_out_get_pos(handle);
+  assert.strictEqual(pausedAt, bytesPerSec / 2, 'pause captures the current byte cursor');
+  assert.strictEqual(ctx._voices._map[handle].sources.size, 0,
+    'pause stops every scheduled Web Audio source');
+  assert(ac.started.slice(0, 2).every(src => src.stops.length > 0),
+    'pause actually stops both queued source nodes');
+  ac.currentTime += 2;
+  assert.strictEqual(h.wave_out_get_pos(handle), pausedAt,
+    'the waveOut byte cursor does not advance while paused');
+  assert.strictEqual(h.wave_out_pause(handle), 0, 'pausing twice is harmless');
+
+  assert.strictEqual(h.wave_out_restart(handle), 0, 'waveOutRestart resumes a paused stream');
+  const resumed = ac.started.slice(2);
+  assert.strictEqual(resumed.length, 2, 'restart schedules the partial and untouched queued buffers');
+  assert(Math.abs(resumed[0].offset - 0.5) < 0.000001,
+    'restart skips the already-played half of the current buffer');
+  assert.strictEqual(resumed[0].starts[0], ac.currentTime,
+    'the remaining current buffer resumes immediately');
+  assert.strictEqual(resumed[1].starts[0], ac.currentTime + 0.5,
+    'the untouched second buffer remains queued after the partial tail');
+  ac.currentTime += 0.25;
+  assert.strictEqual(h.wave_out_get_pos(handle), bytesPerSec * 0.75,
+    'the byte cursor continues from the paused position after restart');
+
   ac.currentTime += 4;
   assert.strictEqual(h.wave_out_get_pos(handle), oneSecond * 2, 'stream position should clamp to submitted bytes');
 
@@ -130,11 +156,14 @@ try {
 
   ac.currentTime = 30;
   h.wave_out_write(handle, pcmPtr, oneSecond);
-  assert.strictEqual(ac.started[2].starts[0], 30, 'stream restart should schedule from current audio time');
+  const restarted = ac.started[ac.started.length - 1];
+  assert.strictEqual(restarted.starts[0], 30, 'stream restart should schedule from current audio time');
 
   h.wave_out_close(handle);
   assert(!ctx._voices._map[handle], 'wave_out_close should release the stream voice');
-  assert(ac.started[2].stops.length > 0, 'wave_out_close should stop the restarted stream source');
+  assert(restarted.stops.length > 0, 'wave_out_close should stop the restarted stream source');
+  assert.strictEqual(h.wave_out_pause(0xBAD), 5,
+    'waveOutPause rejects an invalid handle instead of silently succeeding');
 
   console.log('PASS  waveOut stream position follows the audio clock');
   console.log('PASS  waveOut stop/close cancels queued stream sources');
@@ -171,7 +200,14 @@ try {
   clockMs = 500;
   assert.strictEqual(pacedImports.host.wave_out_get_pos(pacedHandle), bytesPerSec / 2, 'simulated host position should follow host audio clock');
   assert.strictEqual(pacedCtx.pumpAudioCompletions(), 0, 'simulated host should wait until buffer duration elapses');
-  clockMs = 1000;
+  assert.strictEqual(pacedImports.host.wave_out_pause(pacedHandle), 0);
+  clockMs = 1500;
+  assert.strictEqual(pacedImports.host.wave_out_get_pos(pacedHandle), bytesPerSec / 2,
+    'headless waveOut position also freezes while paused');
+  assert.strictEqual(pacedCtx.pumpAudioCompletions(), 0,
+    'headless WOM_DONE stays pending while paused past its original deadline');
+  assert.strictEqual(pacedImports.host.wave_out_restart(pacedHandle), 0);
+  clockMs = 2000;
   assert.strictEqual(pacedCtx.pumpAudioCompletions(), 1, 'simulated host should complete at buffer duration');
   assert.deepStrictEqual(pacedPosted, [[pacedHwnd, MM_WOM_DONE, pacedHandle, pacedWaveHdrGA]], 'simulated host should post MM_WOM_DONE at due time');
   assert.strictEqual(pacedDv.getUint32(pacedWaveHdrWA + 16, true), WHDR_PREPARED | WHDR_DONE, 'simulated host completion should clear WHDR_INQUEUE');
@@ -197,7 +233,7 @@ try {
     'CALLBACK_FUNCTION should wait for the audio clock');
   assert.deepStrictEqual(functionCalls, [],
     'CALLBACK_FUNCTION must not interrupt an in-flight waveOutWrite');
-  clockMs = 2000;
+  clockMs = 3000;
   assert.strictEqual(pacedCtx.pumpAudioCompletions(), 1,
     'CALLBACK_FUNCTION should complete at buffer duration');
   assert.deepStrictEqual(functionCalls, [[functionHandle, functionHdrGA]],
@@ -242,10 +278,24 @@ try {
   assert.strictEqual(browserDv.getUint32(waveHdrWA + 16, true), WHDR_PREPARED | WHDR_INQUEUE, 'browser WHDR_DONE should wait for audio clock');
   queuedTimers.shift().fn();
   assert.strictEqual(signaled, 0, 'early timer poll should not signal before currentTime reaches due time');
+  browserAc.currentTime += 0.25;
+  assert.strictEqual(browserImports.host.wave_out_pause(browserHandle), 0);
+  const browserPausedAt = browserImports.host.wave_out_get_pos(browserHandle);
   browserAc.currentTime += 1;
+  queuedTimers.shift().fn();
+  assert.strictEqual(signaled, 0, 'paused browser stream must not signal WOM_DONE');
+  assert.strictEqual(browserImports.host.wave_out_get_pos(browserHandle), browserPausedAt,
+    'browser cursor remains frozen while the AudioContext clock advances');
+  assert.strictEqual(browserImports.host.wave_out_restart(browserHandle), 0);
+  const resumedBrowserSource = browserAc.started[browserAc.started.length - 1];
+  assert(Math.abs(resumedBrowserSource.offset - 0.25) < 0.000001,
+    'browser restart resumes inside the partially played AudioBuffer');
+  browserAc.currentTime += 0.75;
   queuedTimers.shift().fn();
   assert.strictEqual(signaled, 1, 'browser WOM_DONE should signal at buffer end');
   assert.strictEqual(browserDv.getUint32(waveHdrWA + 16, true), WHDR_PREPARED | WHDR_DONE, 'browser completion should set WHDR_DONE and clear WHDR_INQUEUE');
+  assert.strictEqual(browserCtx._voices._map[browserHandle].streamChunks.length, 0,
+    'completed WAVEHDR releases its retained decoded PCM');
   browserImports.host.wave_out_close(browserHandle);
   console.log('PASS  browser waveOut completion waits for the AudioContext clock');
 
@@ -324,6 +374,8 @@ try {
   assert.strictEqual(resetDv.getUint32(resetHdrWA1 + 16, true), WHDR_PREPARED | WHDR_DONE, 'waveOutReset should mark first header done');
   assert.strictEqual(resetDv.getUint32(resetHdrWA2 + 16, true), WHDR_PREPARED | WHDR_DONE, 'waveOutReset should mark second header done');
   assert.strictEqual(resetCtx._voices._map[resetHandle].sources.size, 0, 'waveOutReset should drop queued stream sources');
+  assert.strictEqual(resetCtx._voices._map[resetHandle].streamChunks.length, 0,
+    'waveOutReset should release decoded PCM for every queued buffer');
   assert.strictEqual(resetCtx._voices._map[resetHandle].timers.size, 0, 'waveOutReset should clear completion timers');
   assert(resetAc.started.slice(-2).every(src => src.stops.length > 0), 'waveOutReset should stop scheduled Web Audio sources');
   assert.strictEqual(resetImports.host.wave_out_get_pos(resetHandle), 0, 'waveOutReset should reset the stream cursor');

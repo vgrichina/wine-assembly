@@ -129,6 +129,7 @@ UNIT=(
   test/test-vlan-rtc.js
   test/test-wsa-startup-data.js
   test/test-waveout-audio.js
+  test/test-waveout-pause-handlers.js
   test/test-wavein-audio.js
   test/test-audio-mixer.js
   test/test-directsound-loop-refresh.js

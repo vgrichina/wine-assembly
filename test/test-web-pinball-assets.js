@@ -319,8 +319,9 @@ assert(webApp.includes('lib/guest-rpc.js?v=7'), 'web host should cache-bust trac
 assert(webApp.includes('lib/guest-thread-host.js?v=8'), 'web host should cache-bust inherited Worker globals');
 assert(webApp.includes('lib/dll-loader.js?v=170'), 'web host should cache-bust sparse DllMain stack translation');
 assert(webApp.includes('lib/debug-thread-state.js?v=7'), 'web host should cache-bust live Worker status diagnostics');
-assert(webApp.includes('host.js?v=253'), 'web host should cache-bust host.js after file-time host wiring');
-assert(hostJs.includes("static SOURCE_VERSION = '242'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(webApp.includes('lib/host-audio.js?v=2'), 'web host should cache-bust waveOut pause/restart scheduling');
+assert(webApp.includes('host.js?v=254'), 'web host should cache-bust host.js after waveOut host wiring');
+assert(hostJs.includes("static SOURCE_VERSION = '243'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');
 assert(hostJs.includes('fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions)'),
