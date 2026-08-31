@@ -762,6 +762,31 @@ common factor (`71bee6c7`). `600be0ed` adds TerminateThread for installers.
 A.9 (18), A.10 (six untracked, unchanged despite the fd ping — owners
 still silent), rec 8: all unchanged.
 
+**By 15:30, on user direction ("if owners are silent they abandoned"), the
+whole open-items list above is CLOSED — most of it by the owners in a burst,
+the remainder by this session.** A.10: all six tests are tracked
+(`f2c4bb43` reviewed and kept the three stranded ones). A.9: m6-test-infra's
+`6cafd7d3`/`aa36a10a` moved every full-tree `compileWat` in `test/` to
+`compileSrcWasm` with the fragment *appended*, taking the census from 18 to
+one real site plus one comment; the last one — `test-compile-wat-unknown-name`,
+whose injected ghost had been silently dropped so all three assertions passed
+**vacuously** — is fixed by this session (`96bb3bc3`, append; the ghost
+genuinely fails the build again, 3/3). The browser-blocking `index.html`
+region-map tag landed (`9ae617cb` — every browser launch had been dead since
+wave-1) and the M4 Worker wiring is in `host.js:1219`. And rec 8 is CLOSED by
+this session (`b967a547`): `bundle-browser.js --check` rebuilds the bundle in
+memory and fails on any difference, wired into `build.sh` beside the other
+gates — and its **first run caught two live breaks**: `vm.js` had grown a
+`require('crypto')` the browser shim could not resolve (the emit-decoder
+failure mode of A.1, one dependency later — the committed bundle loaded only
+because it predated the dependency), and the committed bundle was 21 KB
+stale. The shim now serves a deterministic FNV `createHash` (the hash only
+keys `compileWat` memoization), the bundle is regenerated, and
+`test-toyvm-browser-bundle` runs the program to "HI". Every finding this
+review has carried as "open, owner silent" is now closed; what remains open
+is the analytical tail (3.10, 3.12, Pass-2 items 8/9/12/18, A.2, A.5, A.8)
+and the BYO-media review.
+
 **New in this window, ranked.**
 
 **A.1 FIXED `d5cf1afb`: `bundle-browser.js` now discovers modules by walking
