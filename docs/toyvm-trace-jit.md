@@ -319,6 +319,41 @@ the two traces that get nothing from it (ACCIDENT 1.01x, DEMO5 1.01x) are 9 and
 1 ops. More body is more to fold across, which is the argument for extending
 traces rather than optimizing short ones harder.
 
+#### What this is *not*: a JIT number
+
+**The compile is not in any of it.** The timing loop starts after the module is
+emitted, compiled and instantiated, so every ratio above prices *compiled-code
+throughput*. A JIT also has to pay for the compile and earn it back, and the
+tool now measures that too:
+
+| | build | break-even | ops it runs in 15M | pays back |
+|---|---|---|---|---|
+| CONTAGIO | 16.6ms | 1.72M ops | 12.07M | 7.0x |
+| CMA_SHRT | 19.5ms | 2.21M | 14.96M | 6.8x |
+| DTM2 | 16.3ms | 1.41M | 7.70M | 5.5x |
+| DEMO5 | 18.1ms | 5.17M | 15.00M | 2.9x |
+| B-STEEL | 15.6ms | 2.26M | 2.35M | 1.0x |
+| **BRW** | 18.7ms | 1.75M | 1.23M | **0.70x** |
+| ACCIDENT | 15.9ms | 2.60M | 0.28M | 0.11x |
+| RUNDEMO | 16.8ms | 3.65M | 0.28M | 0.08x |
+| CYCLE | 14.9ms | 2.25M | 0.08M | 0.04x |
+
+**BRW is the whole argument in one row, twice.** It has the biggest speedup in
+the set at 5.2x, it is worth 7% to its program, and it **does not repay its own
+compile** over an entire 15M-dispatch run. A hit counter that fires a compile on
+that trace loses time. Four of the nine are in that position and they are exactly
+the low-share traces — no amount of extra speedup fixes them, because the trace
+does not execute enough for the speedup to be collected.
+
+Read the absolute build cost as an upper bound rather than a property of the
+design: this path emits WAT text, runs it through the project's own JS compiler
+and hands the bytes to the engine, which is not what an in-VM implementation
+would do. What survives that caveat is the *shape* — break-even is around a
+million guest ops, which is the same order as how much a typical core-ten trace
+runs in a whole profiling window. That is uncomfortably close, and it is the
+strongest argument in this document for making the compile cheap before making
+the compiled code faster.
+
 #### What this is *not*: a program speedup
 
 Every number above prices **one trace**. Multiplying it out against that trace's

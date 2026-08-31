@@ -219,7 +219,7 @@ footer code { font-size: 12.5px; }
   <h1>Nine Traces, Four Tiers</h1>
   <p class="lede">A trace JIT over threaded code, measured on ten DOS demos from
   1993&ndash;95. Compiling the hottest trace is worth
-  <strong>2.16&times; on that trace</strong> and
+  <strong>2.10&times; on that trace</strong> and
   <strong>1.22&times; on the program</strong>. The gap between those two
   numbers is the entire result &mdash; it says the next work is coverage, not code
   quality.</p>
@@ -228,7 +228,7 @@ footer code { font-size: 12.5px; }
 <div class="thesis">
   <div class="fig">
     <p class="k">Hottest trace</p>
-    <p class="v hot">2.16&times;</p>
+    <p class="v hot">2.10&times;</p>
     <p class="n">Geometric mean over 9 programs, tier&nbsp;3 against the
     shipped interpreter running the same ops.</p>
   </div>
@@ -248,7 +248,7 @@ footer code { font-size: 12.5px; }
 <p class="thesis-note">2 independent pass(es), 7 interleaved
 reps each, min of reps. Absolute nanoseconds are deliberately not shown: this box
 runs loaded, which the ratios survive and the timings do not. Generated
-2026-08-31 06:44Z by <code>tools/toyvm/report-core10.js</code>.</p>
+2026-08-31 07:04Z by <code>tools/toyvm/report-core10.js</code>.</p>
 
 <section>
   <h2>What each tier removes</h2>
@@ -273,7 +273,7 @@ runs loaded, which the ratios survive and the timings do not. Generated
       <p>Handler bodies concatenated into one function; every operand becomes an
       <code>i32.const</code>. Removes a dispatch, an operand load and an
       <code>$ip</code> advance per op.</p></div>
-      <div class="gain">1.55&times;</div>
+      <div class="gain">1.50&times;</div>
     </div>
     <div class="rung free">
       <div class="t">2</div>
@@ -281,7 +281,7 @@ runs loaded, which the ratios survive and the timings do not. Generated
       <p>Register-file calls resolved to direct globals; flag computations nothing reads
       are dropped. The pass that looks most like a classical optimizer, and the one that
       buys least.</p></div>
-      <div class="gain">1.06&times;</div>
+      <div class="gain">1.07&times;</div>
     </div>
     <div class="rung pays">
       <div class="t">3</div>
@@ -312,87 +312,87 @@ runs loaded, which the ratios survive and the timings do not. Generated
         <td class="name">BRW</td>
         <td>43 ops</td>
         <td><span class="gauge"><i style="width:3px;height:3px"></i></span>8.2%</td>
-        <td>1.73</td>
-        <td>1.07</td>
-        <td>2.86</td>
-        <td class="barcell big"><span>5.29&times;</span><span class="bar"><i style="width:100%"></i></span></td>
-        <td class="mut">5.08</td>
+        <td>1.46</td>
+        <td>1.12</td>
+        <td>3.05</td>
+        <td class="barcell big"><span>4.95&times;</span><span class="bar"><i style="width:100%"></i></span></td>
+        <td class="mut">5.01</td>
         <td>1.07&times;</td>
       </tr>
       <tr>
         <td class="name">B-STEEL</td>
         <td>6 ops</td>
         <td><span class="gauge"><i style="width:4px;height:4px"></i></span>15.6%</td>
-        <td>2.49</td>
-        <td>1.08</td>
+        <td>2.21</td>
+        <td>1.16</td>
         <td class="mut">1.03</td>
-        <td class="barcell big"><span>2.77&times;</span><span class="bar"><i style="width:52%"></i></span></td>
-        <td class="mut">3.04</td>
+        <td class="barcell big"><span>2.65&times;</span><span class="bar"><i style="width:53%"></i></span></td>
+        <td class="mut">2.81</td>
         <td>1.11&times;</td>
       </tr>
       <tr>
         <td class="name">CYCLE</td>
         <td>7 ops</td>
         <td><span class="gauge"><i style="width:2px;height:2px"></i></span>0.5%</td>
-        <td>1.83</td>
+        <td>1.78</td>
         <td>1.24</td>
-        <td>1.08</td>
-        <td class="barcell big"><span>2.44&times;</span><span class="bar"><i style="width:46%"></i></span></td>
-        <td class="mut">2.22</td>
+        <td class="mut">1.03</td>
+        <td class="barcell big"><span>2.27&times;</span><span class="bar"><i style="width:46%"></i></span></td>
+        <td class="mut">2.46</td>
         <td class="mut">1.00&times;</td>
       </tr>
       <tr>
         <td class="name">DTM2</td>
         <td>1 ops</td>
         <td><span class="gauge"><i style="width:7px;height:7px"></i></span>51.3%</td>
-        <td>1.68</td>
-        <td>1.05</td>
-        <td>1.25</td>
-        <td class="barcell big"><span>2.21&times;</span><span class="bar"><i style="width:42%"></i></span></td>
-        <td class="mut">1.55</td>
-        <td>1.39&times;</td>
+        <td>1.59</td>
+        <td class="mut">0.99</td>
+        <td>1.28</td>
+        <td class="barcell big"><span>2.02&times;</span><span class="bar"><i style="width:41%"></i></span></td>
+        <td class="mut">1.47</td>
+        <td>1.35&times;</td>
       </tr>
       <tr>
         <td class="name">ACCIDENT</td>
         <td>8 ops</td>
         <td><span class="gauge"><i style="width:2px;height:2px"></i></span>1.9%</td>
-        <td>1.64</td>
-        <td>1.09</td>
-        <td>1.12</td>
-        <td class="barcell big"><span>2.01&times;</span><span class="bar"><i style="width:38%"></i></span></td>
-        <td class="mut">2.10</td>
+        <td>1.67</td>
+        <td>1.15</td>
+        <td class="mut">1.02</td>
+        <td class="barcell big"><span>1.97&times;</span><span class="bar"><i style="width:40%"></i></span></td>
+        <td class="mut">1.80</td>
         <td class="mut">1.01&times;</td>
-      </tr>
-      <tr>
-        <td class="name">CMA_SHRT</td>
-        <td>7 ops</td>
-        <td><span class="gauge"><i style="width:12px;height:12px"></i></span>99.7%</td>
-        <td class="mut">1.12</td>
-        <td class="mut">0.98</td>
-        <td>1.62</td>
-        <td class="barcell big"><span>1.77&times;</span><span class="bar"><i style="width:33%"></i></span></td>
-        <td class="mut">1.83</td>
-        <td>1.76&times;</td>
       </tr>
       <tr>
         <td class="name">CONTAGIO</td>
         <td>14 ops</td>
         <td><span class="gauge"><i style="width:10px;height:10px"></i></span>80.4%</td>
-        <td>1.21</td>
-        <td class="mut">1.02</td>
-        <td>1.39</td>
-        <td class="barcell big"><span>1.72&times;</span><span class="bar"><i style="width:32%"></i></span></td>
-        <td class="mut">1.60</td>
-        <td>1.51&times;</td>
+        <td class="mut">1.19</td>
+        <td class="mut">1.03</td>
+        <td>1.48</td>
+        <td class="barcell big"><span>1.82&times;</span><span class="bar"><i style="width:37%"></i></span></td>
+        <td class="mut">1.78</td>
+        <td>1.57&times;</td>
+      </tr>
+      <tr>
+        <td class="name">CMA_SHRT</td>
+        <td>7 ops</td>
+        <td><span class="gauge"><i style="width:12px;height:12px"></i></span>99.7%</td>
+        <td class="mut">1.10</td>
+        <td class="mut">0.99</td>
+        <td>1.67</td>
+        <td class="barcell big"><span>1.82&times;</span><span class="bar"><i style="width:37%"></i></span></td>
+        <td class="mut">1.82</td>
+        <td>1.82&times;</td>
       </tr>
       <tr>
         <td class="name">RUNDEMO</td>
         <td>6 ops</td>
         <td><span class="gauge"><i style="width:2px;height:2px"></i></span>1.9%</td>
-        <td>1.46</td>
-        <td class="mut">1.02</td>
-        <td>1.07</td>
-        <td class="barcell big"><span>1.58&times;</span><span class="bar"><i style="width:30%"></i></span></td>
+        <td>1.44</td>
+        <td class="mut">1.00</td>
+        <td>1.09</td>
+        <td class="barcell big"><span>1.57&times;</span><span class="bar"><i style="width:32%"></i></span></td>
         <td class="mut">1.61</td>
         <td class="mut">1.01&times;</td>
       </tr>
@@ -400,18 +400,18 @@ runs loaded, which the ratios survive and the timings do not. Generated
         <td class="name">DEMO5</td>
         <td>1 ops</td>
         <td><span class="gauge"><i style="width:12px;height:12px"></i></span>100.0%</td>
-        <td>1.24</td>
-        <td class="mut">1.04</td>
-        <td class="mut">1.04</td>
-        <td class="barcell big"><span>1.34&times;</span><span class="bar"><i style="width:25%"></i></span></td>
-        <td class="mut">1.31</td>
-        <td>1.34&times;</td>
+        <td>1.32</td>
+        <td class="mut">1.00</td>
+        <td class="mut">0.99</td>
+        <td class="barcell big"><span>1.31&times;</span><span class="bar"><i style="width:27%"></i></span></td>
+        <td class="mut">1.34</td>
+        <td>1.31&times;</td>
       </tr>
       <tr class="total">
         <td class="name">geomean</td><td></td><td></td>
-        <td>1.55</td><td>1.06</td><td>1.31</td>
-        <td class="hot">2.16&times;</td>
-        <td>2.07&times;</td>
+        <td>1.50</td><td>1.07</td><td>1.31</td>
+        <td class="hot">2.10&times;</td>
+        <td>2.05&times;</td>
         <td>1.22&times;</td>
       </tr>
     </tbody>
@@ -425,11 +425,116 @@ runs loaded, which the ratios survive and the timings do not. Generated
   <div class="callout">
     <h3>BRW is the report in one row</h3>
     <p>Its 43-op body is the biggest trace win in the set at
-    <strong>5.29&times;</strong> &mdash; and it is worth
+    <strong>4.95&times;</strong> &mdash; and it is worth
     <strong>1.07&times;</strong> to the program, because
     92% of its samples are somewhere else.</p>
     <p>The lesson is not that the compiler needs another pass. It is that one trace is not
     a program.</p>
+  </div>
+</section>
+
+<section>
+  <h2>What the speedup costs</h2>
+  <p class="sub">every ratio above is steady state</p>
+
+  <p>The timing loop starts <em>after</em> the module is built. So the table above
+  describes compiled-code throughput; a JIT also has to pay for the compile and earn it
+  back. Measured here, that build is
+  <strong>14.91&ndash;19.47&nbsp;ms</strong>
+  per trace, and break-even lands around a million guest ops:</p>
+
+  <div class="scroll">
+  <table>
+    <thead>
+      <tr><th>Program</th><th>Build</th><th>Break-even</th>
+      <th>Ops it actually runs</th><th>Pays back</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="name">CONTAGIO</td>
+        <td>16.6 ms</td>
+        <td>1.72M ops</td>
+        <td>12.07M ops</td>
+        <td class="big ">7.0&times; over</td>
+      </tr>
+      <tr>
+        <td class="name">CMA_SHRT</td>
+        <td>19.5 ms</td>
+        <td>2.21M ops</td>
+        <td>14.96M ops</td>
+        <td class="big ">6.8&times; over</td>
+      </tr>
+      <tr>
+        <td class="name">DTM2</td>
+        <td>16.3 ms</td>
+        <td>1.41M ops</td>
+        <td>7.70M ops</td>
+        <td class="big ">5.5&times; over</td>
+      </tr>
+      <tr>
+        <td class="name">DEMO5</td>
+        <td>18.1 ms</td>
+        <td>5.17M ops</td>
+        <td>15.00M ops</td>
+        <td class="big ">2.9&times; over</td>
+      </tr>
+      <tr>
+        <td class="name">B-STEEL</td>
+        <td>15.6 ms</td>
+        <td>2.26M ops</td>
+        <td>2.35M ops</td>
+        <td class="big ">1.0&times; over</td>
+      </tr>
+      <tr>
+        <td class="name">BRW</td>
+        <td>18.7 ms</td>
+        <td>1.75M ops</td>
+        <td>1.23M ops</td>
+        <td class="big hot">never (0.70&times;)</td>
+      </tr>
+      <tr>
+        <td class="name">ACCIDENT</td>
+        <td>15.9 ms</td>
+        <td>2.60M ops</td>
+        <td>278k ops</td>
+        <td class="big hot">never (0.11&times;)</td>
+      </tr>
+      <tr>
+        <td class="name">RUNDEMO</td>
+        <td>16.8 ms</td>
+        <td>3.65M ops</td>
+        <td>280k ops</td>
+        <td class="big hot">never (0.08&times;)</td>
+      </tr>
+      <tr>
+        <td class="name">CYCLE</td>
+        <td>14.9 ms</td>
+        <td>2.25M ops</td>
+        <td>80k ops</td>
+        <td class="big hot">never (0.04&times;)</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout">
+    <h3>5 of the 9 clear it;
+    4 never do</h3>
+    <p>The ones that do not are the low-share traces &mdash; they do not execute enough,
+    across an entire 15.00M-dispatch window, to repay a single compile. That is
+    the coverage story again from the other direction: a trace worth
+    4.95&times; that
+    runs 1.23M ops
+    is not worth compiling at all.</p>
+    <p><strong>BRW is on that list.</strong> The biggest speedup in the
+    set, 4.95&times;, pays back only 0.70&times; &mdash;
+    it does not earn its own compile back over the whole run. A hit counter that fires a
+    compile on this trace loses time.</p>
+    <p>One caveat on the absolute figure. This build path is the <em>harness's</em> &mdash;
+    emit WAT text, run it through the project's own JS compiler, hand the bytes to the
+    engine. A real in-VM implementation would not do it that way, so read these as an
+    upper bound on compile cost and an order of magnitude, not as a property of the
+    design.</p>
   </div>
 </section>
 
@@ -446,7 +551,7 @@ runs loaded, which the ratios survive and the timings do not. Generated
   <h2>What this says to build next</h2>
   <p class="sub">coverage, not another pass</p>
 
-  <p>2.16&times; on the trace and 1.22&times; on the program is a statement
+  <p>2.10&times; on the trace and 1.22&times; on the program is a statement
   about <em>coverage</em>. The compiled code is already fast; it does not run often enough,
   and a fifth tier would move the first number and barely touch the second.</p>
 

@@ -1122,6 +1122,12 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
     ['tier 3  micro-ops', t3.wat, { locals: t3.locals, pro: t3.pro, epi: t3.epi }],
   ]) {
     const file = `trace-${name.split(' ')[1]}.wat`;
+    // Everything from here to the end of instantiate is what a REAL jit would
+    // have to pay before the first fast op runs, and none of it is inside the
+    // timing loop below. Measured here so the report can say what the tiers
+    // cost as well as what they save -- a speedup with no compile cost beside
+    // it is a throughput number wearing a JIT's name.
+    const buildStart = process.hrtime.bigint();
     const bytes = await compileWat(() => moduleWat(src, extra),
       // The pass set is part of the key: two `--passes=` runs produce different
       // tier-2 modules for the same trace, and a cache hit across them would
@@ -1144,9 +1150,10 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
         fmath: (op) => { throw new Error(`fmath(${op}) in a JIT trace: teach this tool the FPU`); },
       },
     });
+    const buildNs = Number(process.hrtime.bigint() - buildStart);
     const ex = inst.exports;
     arms.push({
-      name, mem: new Uint8Array(memory.buffer), exports: ex,
+      name, mem: new Uint8Array(memory.buffer), exports: ex, buildNs,
       go: (k) => { for (let i = 0; i < k; i++) ex.spin(1); },
     });
   }
@@ -1241,7 +1248,30 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
   log(`  tier 0 -> 2  ${(b0 / t2ns).toFixed(2)}x   total`);
   log(`  tier 2 -> 3  ${(t2ns / t3ns).toFixed(2)}x   (address folding, wide register file, registers in locals)`);
   log(`  tier 0 -> 3  ${(b0 / t3ns).toFixed(2)}x   total`);
+
+  // What the speedup COSTS. Every ratio above is steady state: the timing loop
+  // starts after the module is built, so on its own the table describes
+  // compiled-code throughput and not a JIT, which has to earn its compile back
+  // before the first saved nanosecond counts for anything.
+  //
+  // Break-even is in ITERATIONS OF THIS TRACE, which is the unit a compile
+  // policy is actually written in ("compile after N hits"). Note the build
+  // measured here is this harness's -- emit the WAT, run it through the
+  // project's own compiler, hand it to the engine -- and a real in-VM
+  // implementation would not do it this way; read it as an order of magnitude
+  // and an upper bound, not as the cost of the design.
+  const t3arm = arms.find(a => a.name.startsWith('tier 3'));
+  const perIter = ops.length;
+  const savedPerIter = (b0 - t3ns) * perIter;
+  const breakEven = savedPerIter > 0 ? t3arm.buildNs / savedPerIter : Infinity;
+  log(`\n  tier 3 build ${(t3arm.buildNs / 1e6).toFixed(1)} ms`
+    + `  (NOT in the timings above -- they start after it)`);
+  log(`  break-even   ${Number.isFinite(breakEven)
+    ? `${Math.ceil(breakEven).toLocaleString()} iterations of this trace `
+      + `(~${Math.ceil(breakEven * perIter).toLocaleString()} guest ops)`
+    : 'never -- tier 3 is not faster here'}`);
   return {
+    build: { tier3Ns: t3arm.buildNs, breakEvenIters: breakEven },
     // `bytes` is a live view of a 128MB guest memory and must not escape: it
     // is here only so a mismatch can name the first differing address, and
     // JSON.stringify on it fails with `Invalid string length`.

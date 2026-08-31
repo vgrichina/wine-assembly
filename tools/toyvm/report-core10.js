@@ -37,7 +37,7 @@ const geomean = (xs) => (xs.length
 // and nothing else. Amdahl over the trace's share of samples.
 const programBound = (share, ratio) => 1 / ((1 - share) + share / ratio);
 
-async function measure(set, { passes, reps, iters }) {
+async function measure(set, { passes, reps, iters, budget }) {
   const runs = [];
   for (let p = 0; p < passes; p++) {
     const pass = [];
@@ -47,8 +47,9 @@ async function measure(set, { passes, reps, iters }) {
       let res;
       try {
         res = await jitTiers(exe, {
-          bench: true, minOps: 6, sampleFrom: 0.5, reps, iters, log: () => {},
+          bench: true, minOps: 6, sampleFrom: 0.5, reps, iters, budget, log: () => {},
         });
+        res.budget = budget;
       } catch (e) {
         res = { ok: false, reason: 'error', detail: e.message };
       }
@@ -69,6 +70,13 @@ function rows(runs) {
     }
     const share = r.trace.share / 100;
     const other = rest.map(p => p[i]).filter(x => x && x.ok).map(x => x.speedup.t03);
+    // Break-even against how much this trace ACTUALLY runs. The profiler
+    // dispatches `budget` ops and this trace is `share` of them, so the trace
+    // retires roughly share*budget ops over the whole window -- and if that is
+    // under the break-even, compiling it never pays for itself no matter how
+    // fast the compiled code is.
+    const breakEvenOps = r.build.breakEvenIters * r.trace.ops;
+    const opsInRun = share * (r.budget || 15e6);
     return {
       name: r.name,
       ok: true,
@@ -80,6 +88,10 @@ function rows(runs) {
       t03: r.speedup.t03,
       others: other,
       bound: programBound(share, r.speedup.t03),
+      buildMs: r.build.tier3Ns / 1e6,
+      breakEvenOps,
+      opsInRun,
+      paysBack: opsInRun / breakEvenOps,
     };
   });
 }
@@ -126,6 +138,23 @@ function tableHtml(rs) {
         <td>${altGeo.length ? `${x2(geomean(altGeo))}&times;` : '&mdash;'}</td>
         <td>${g('bound')}&times;</td>
       </tr>`;
+}
+
+const M = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : `${Math.round(n / 1e3)}k`);
+
+// Compile cost against how much the trace actually executes. `paysBack` under
+// 1.0 means the trace never runs enough, in a whole profiling window, to repay
+// one compile -- which no amount of speedup fixes.
+function payback(ok, meta) {
+  return ok.slice().sort((a, b) => b.paysBack - a.paysBack).map(r => `      <tr>
+        <td class="name">${esc(r.name)}</td>
+        <td>${r.buildMs.toFixed(1)} ms</td>
+        <td>${M(r.breakEvenOps)} ops</td>
+        <td>${M(r.opsInRun)} ops</td>
+        <td class="big ${r.paysBack >= 1 ? '' : 'hot'}">${r.paysBack >= 1
+    ? `${r.paysBack.toFixed(1)}&times; over`
+    : `never (${r.paysBack.toFixed(2)}&times;)`}</td>
+      </tr>`).join('\n');
 }
 
 function declinedHtml(rs) {
@@ -276,6 +305,51 @@ ${tableHtml(rs)}
 </section>
 
 <section>
+  <h2>What the speedup costs</h2>
+  <p class="sub">every ratio above is steady state</p>
+
+  <p>The timing loop starts <em>after</em> the module is built. So the table above
+  describes compiled-code throughput; a JIT also has to pay for the compile and earn it
+  back. Measured here, that build is
+  <strong>${x2(Math.min(...ok.map(r => r.buildMs)))}&ndash;${x2(Math.max(...ok.map(r => r.buildMs)))}&nbsp;ms</strong>
+  per trace, and break-even lands around a million guest ops:</p>
+
+  <div class="scroll">
+  <table>
+    <thead>
+      <tr><th>Program</th><th>Build</th><th>Break-even</th>
+      <th>Ops it actually runs</th><th>Pays back</th></tr>
+    </thead>
+    <tbody>
+${payback(ok, meta)}
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout">
+    <h3>${ok.filter(r => r.paysBack >= 1).length} of the ${ok.length} clear it;
+    ${ok.filter(r => r.paysBack < 1).length} never do</h3>
+    <p>The ones that do not are the low-share traces &mdash; they do not execute enough,
+    across an entire ${M(meta.budget)}-dispatch window, to repay a single compile. That is
+    the coverage story again from the other direction: a trace worth
+    ${x2(ok.filter(r => r.paysBack < 1).sort((a, b) => b.t03 - a.t03)[0].t03)}&times; that
+    runs ${M(ok.filter(r => r.paysBack < 1).sort((a, b) => b.t03 - a.t03)[0].opsInRun)} ops
+    is not worth compiling at all.</p>
+    ${best.paysBack < 1
+    ? `<p><strong>${esc(best.name)} is on that list.</strong> The biggest speedup in the
+    set, ${x2(best.t03)}&times;, pays back only ${best.paysBack.toFixed(2)}&times; &mdash;
+    it does not earn its own compile back over the whole run. A hit counter that fires a
+    compile on this trace loses time.</p>`
+    : ''}
+    <p>One caveat on the absolute figure. This build path is the <em>harness's</em> &mdash;
+    emit WAT text, run it through the project's own JS compiler, hand the bytes to the
+    engine. A real in-VM implementation would not do it that way, so read these as an
+    upper bound on compile cost and an order of magnitude, not as a property of the
+    design.</p>
+  </div>
+</section>
+
+<section>
   <h2>Declined</h2>
   <p class="sub">a named reason, never a silent zero</p>
   ${declinedHtml(rs)}
@@ -329,6 +403,9 @@ async function main() {
   const passes = Number(arg('passes', 2));
   const reps = Number(arg('reps', 7));
   const iters = Number(arg('iters', 20000));
+  // The profiling window. It is reported, not just used, because break-even is
+  // measured against how much the trace runs inside it.
+  const budget = Number(arg('dispatches', 15e6));
   const set = fs.readFileSync(setFile, 'utf8').split('\n')
     .map(s => s.trim()).filter(s => s && !s.startsWith('#'));
 
@@ -342,11 +419,11 @@ async function main() {
     // and must not silently produce different numbers either.
     data = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
   } else {
-    const runs = await measure(set, { passes, reps, iters });
+    const runs = await measure(set, { passes, reps, iters, budget });
     data = {
       when: new Date().toISOString().replace('T', ' ').slice(0, 16) + 'Z',
       set: path.relative(ROOT, setFile),
-      passes, reps, iters,
+      passes, reps, iters, budget,
       rows: rows(runs),
     };
     fs.writeFileSync(dataFile, `${JSON.stringify(data, null, 2)}\n`);
