@@ -1,12 +1,31 @@
 #!/usr/bin/env node
 'use strict';
 
+// Compiles the two canonical artifacts, build/wine-assembly.wasm (tail calls)
+// and build/wine-assembly.compat.wasm (no tail calls).
+//
+// WHICH COMPILER produces them is selectable — Milestone 5 of
+// docs/watx-migration-plan.md:
+//
+//   WINE_WAT_COMPILER=legacy   lib/compile-wat.js          (default, today)
+//   WINE_WAT_COMPILER=watx     tools/watx.js via src/main.watx
+//
+// `--compiler=NAME` overrides the environment for a one-off build. Both modes
+// write the SAME two paths, so nothing downstream — tests, host.js, the deploy
+// manifest — has to know which compiler ran, and rollback is one env var rather
+// than a revert. tools/build.sh runs every gate in either mode.
+//
+// The default stays `legacy` until the cutover commit flips it; that flip is
+// deliberately a one-line change here so it is trivial to make and to undo.
+
 const fs = require('fs');
 const path = require('path');
 const { compileWat } = require('../lib/compile-wat');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
+
+const DEFAULT_COMPILER = 'legacy';
 
 function getArg(name, fallback = null) {
   const prefix = `--${name}=`;
@@ -29,16 +48,70 @@ function parseReplicatedDispatch() {
 const OUT = path.resolve(ROOT, getArg('out', path.join('build', 'wine-assembly.wasm')));
 const COMPAT_OUT = path.resolve(ROOT, getArg('compat-out', path.join('build', 'wine-assembly.compat.wasm')));
 
+// Reports WHERE the choice came from as well as what it is: a build log that
+// only says "watx" cannot distinguish a deliberate flip from a stray exported
+// variable in somebody's shell, and that is exactly the question after a bad
+// deploy.
+function selectedCompiler() {
+  const fromArg = getArg('compiler', null);
+  const source = fromArg !== null ? '--compiler'
+    : process.env.WINE_WAT_COMPILER ? 'WINE_WAT_COMPILER'
+    : 'default';
+  const name = (fromArg !== null ? fromArg : (process.env.WINE_WAT_COMPILER || DEFAULT_COMPILER)).trim();
+  if (name !== 'legacy' && name !== 'watx') {
+    console.error(`build-compile-wat: compiler must be "legacy" or "watx" (got ${JSON.stringify(name)} from ${source})`);
+    process.exit(1);
+  }
+  return { name, source };
+}
+
+async function compileLegacy(replicatedDispatch) {
+  const read = (file) => fs.promises.readFile(path.join(SRC, file), 'utf8');
+  return {
+    bytes: await compileWat(read, { replicatedDispatch }),
+    compatBytes: await compileWat(read, { tailCalls: false, replicatedDispatch }),
+  };
+}
+
+// The WATX path drives the vendored compiler over src/main.watx's (include ...)
+// closure, through the SAME helper tools/watx-matrix.js uses, so the bytes this
+// ships are the bytes that gate certified. It has no --dispatch knob: replicated
+// dispatch is a legacy-compiler source transform, so asking for it here would
+// silently produce a different module than requested rather than fail.
+function compileWatx(replicatedDispatch) {
+  if (replicatedDispatch !== false) {
+    console.error('build-compile-wat: --dispatch/--replicated-dispatch is a lib/compile-wat.js transform ' +
+      'and is not implemented in the WATX path; drop it or use WINE_WAT_COMPILER=legacy.');
+    process.exit(1);
+  }
+  const { watxSourceClosure, compileClosure } = require(path.join(__dirname, 'watx-closure.js'));
+  const closure = watxSourceClosure();
+  console.log(`WATX entry: ${closure.entry}`);
+  const out = {};
+  for (const [key, tailCalls] of [['bytes', true], ['compatBytes', false]]) {
+    const r = compileClosure(closure, { tailCalls });
+    if (!r || !r.success || !r.wasmBinary) {
+      const where = r && r.file ? ` at ${r.file}:${r.line || '?'}:${r.col || '?'}` : '';
+      console.error(`WATX compile failed (tailCalls=${tailCalls})${where}: ` +
+        String((r && (r.error || r.message)) || 'compile() returned no binary'));
+      process.exit(1);
+    }
+    for (const d of (r.diagnostics || [])) {
+      const at = d.file ? ` (${d.file}:${d.line || '?'})` : '';
+      console.warn(`WATX ${d.type || 'diagnostic'}${at}: ${d.message || JSON.stringify(d)}`);
+    }
+    out[key] = Buffer.from(r.wasmBinary);
+  }
+  return out;
+}
+
 (async () => {
   const replicatedDispatch = parseReplicatedDispatch();
-  const bytes = await compileWat(
-    (file) => fs.promises.readFile(path.join(SRC, file), 'utf8'),
-    { replicatedDispatch }
-  );
-  const compatBytes = await compileWat(
-    (file) => fs.promises.readFile(path.join(SRC, file), 'utf8'),
-    { tailCalls: false, replicatedDispatch }
-  );
+  const compiler = selectedCompiler();
+  console.log(`Compiler: ${compiler.name} (from ${compiler.source})`);
+  const { bytes, compatBytes } = compiler.name === 'watx'
+    ? compileWatx(replicatedDispatch)
+    : await compileLegacy(replicatedDispatch);
   // compileWat emits bytes without validating operand stacks, so a WAT edit
   // that leaves a function's result value unproduced — one paren too few, and
   // an (if) that should yield i32 yields nothing — used to "build" fine and

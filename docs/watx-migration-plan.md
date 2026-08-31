@@ -457,6 +457,100 @@ changes.
 Exit gate: the deployed artifact is WATX-built, the full deployment smoke passes,
 and rollback has been exercised once.
 
+### 5.1 The compiler selector
+
+`tools/build-compile-wat.js` — the one step `tools/build.sh` calls to produce the
+two shipped artifacts — takes the compiler as an input:
+
+```sh
+bash tools/build.sh                            # legacy (the default, today)
+WINE_WAT_COMPILER=watx   bash tools/build.sh    # WATX, from src/main.watx
+WINE_WAT_COMPILER=legacy bash tools/build.sh    # explicit rollback
+node tools/build-compile-wat.js --compiler=watx # one-off, overrides the env
+```
+
+Four properties make this a rollback rather than a fork:
+
+- **Same paths.** Both modes write `build/wine-assembly.wasm` and
+  `build/wine-assembly.compat.wasm`. Nothing downstream — `test/run.js`,
+  `host.js`, the deploy manifest — learns which compiler ran, so there is no
+  second code path to keep alive and no artifact selection to get wrong.
+- **Same gates.** Every gate in `build.sh` runs unchanged in either mode,
+  including the ones that read the *compiled* module: `wasm-data.js --overlaps`
+  inspects whichever artifact was just written.
+- **Same `combined.wat`.** It is still written from `WAT_FILES` in both modes.
+  It is the grep / `check-parens` / `func-index` surface and was never itself
+  compiled, so the tooling that reads it is unaffected by the selector.
+- **One closure, two consumers.** `tools/watx-closure.js` holds the
+  `src/main.watx` include closure *and* the four compile options
+  (`production`, `standardWat`, no runtime builtins, tail-call mode).
+  `tools/watx-matrix.js` and the build both require it, so the bytes the
+  Milestone 3 gate certifies are by construction the bytes the build ships —
+  the two cannot drift into certifying one module and shipping another.
+
+The selector rejects an unknown name, and rejects `--dispatch=replicated` under
+WATX rather than silently ignoring it: replicated dispatch is a
+`lib/compile-wat.js` source transform with no WATX implementation, so accepting
+the flag would hand back a different module than the one requested.
+
+**The default is still `legacy`.** The flip is a one-line change to
+`DEFAULT_COMPILER` in `tools/build-compile-wat.js`, deliberately kept that small
+so it is as easy to undo as to make. It has not been made, and the cutover rows
+in the checklist below stay unticked until it is — and until the deploy, which
+needs explicit sign-off.
+
+### 5.2 Rollback drill, exercised 2026-08-31
+
+Run at `fd1b0244` in an isolated worktree. Every leg is a full
+`bash tools/build.sh`, and each is followed by three curated tests from
+`tools/watx-matrix.js`'s list, pinned to the canonical artifact with
+`WINE_ASSEMBLY_WASM` so nothing rebuilds underneath the measurement.
+
+| leg | command | `wine-assembly.wasm` | `.compat.wasm` |
+|---|---|---|---|
+| baseline (pre-change) | `bash tools/build.sh` | 983,981 B `6f39a983` | 984,430 B `387c3ccf` |
+| 1. legacy (post-change, default) | `bash tools/build.sh` | 983,981 B `6f39a983` | 984,430 B `387c3ccf` |
+| 2. watx | `WINE_WAT_COMPILER=watx bash tools/build.sh` | 983,990 B `1fbf3231` | 984,439 B `b21ca713` |
+| 3. rollback | `WINE_WAT_COMPILER=legacy bash tools/build.sh` | 983,981 B `6f39a983` | 984,430 B `387c3ccf` |
+
+Read the table as three claims:
+
+- **The selector is inert when off.** Legs baseline and 1 are byte-identical, so
+  adding the switch changed nothing about the shipped build.
+- **The WATX artifacts are the certified ones.** Leg 2 matches `build/watx/`
+  from a fresh `node tools/watx-matrix.js` run exactly — the same two hashes,
+  which is the point of the shared closure module. The +9 bytes over legacy are
+  the two known diagnostic body diffs (`09a5-handlers-window.wat:216`, and the
+  benign `$next` type renumber); the WATX build prints that first one as a
+  warning on every run, which is the intended behaviour until it becomes a hard
+  error.
+- **Rollback is exact, not approximate.** Leg 3 restores the baseline hashes
+  from one env var, with no revert, no source change and no artifact surgery.
+
+Smoke after each leg (`test-cli-vfs-include.js`, `test-tapi-line-init.js`,
+`test-class-menu-from-dll.js`): 3/3 PASS on the WATX artifact and 3/3 PASS on the
+rolled-back legacy artifact.
+
+Gates at the same commit: `bash tools/build.sh` exit 0 in **both** modes;
+`node tools/watx-matrix.js` MATRIX GREEN (four artifacts, both ABI pairs match,
+9/9 curated tests pass in both columns, `build/watx` hashes unchanged by the
+closure refactor); `node tools/watx-matrix.js --self` MATRIX GREEN;
+`node test/test-watx-matrix.js` 43/0.
+
+One gate is knowingly red at this commit for an unrelated reason and was worked
+around only in the local validation loop, never in the committed change:
+`tools/check-test-manifest.sh` names six `test/run-all.sh` rows whose files are
+untracked in the shared checkout (`test-abedemo-gameplay.js`,
+`test-aoe2-gameplay.js`, `test-browser-critical-section-yield.js`,
+`test-directdraw-enum-lowres.js`, `test-keyboard-hook.js`,
+`test-mem-utils-hidden-shared-buffer.js`). They exist in the main worktree and
+were symlinked in so the remaining gates could run; the rows are somebody else's
+to commit.
+
+**Not done, deliberately:** the deploy. `tools/deploy-berrry.js` was not run and
+not modified. Shipping a WATX-built artifact to the live app is the step that
+needs explicit sign-off, and it is what closes the Milestone 5 exit gate.
+
 ## Milestone 6 — Phase 2: adopt WATX features for maintainability
 
 Only after cutover. The headline goal of phase 2 is **memory-region safety**:

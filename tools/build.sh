@@ -81,7 +81,17 @@ node tools/concat-wat.js
 # parentheses and out-of-scope branch labels before a WAT edit ships.
 node tools/check-parens.js build/combined.wat --no-diff --quiet
 
-echo "Compiling with lib/compile-wat.js..."
+# WHICH compiler produces build/wine-assembly.wasm is selectable — Milestone 5
+# of docs/watx-migration-plan.md. Both modes write the same canonical paths and
+# every gate above and below runs unchanged, so rollback is this one env var:
+#
+#   bash tools/build.sh                              # legacy (default today)
+#   WINE_WAT_COMPILER=watx   bash tools/build.sh      # WATX, from src/main.watx
+#   WINE_WAT_COMPILER=legacy bash tools/build.sh      # explicit rollback
+#
+# build/combined.wat is written from WAT_FILES in BOTH modes: it is the grep /
+# check-parens / func-index surface and is never itself compiled.
+echo "Compiling (WINE_WAT_COMPILER=${WINE_WAT_COMPILER:-legacy})..."
 node tools/build-compile-wat.js
 
 # Two (data ...) segments that cover the same byte: the later one wins at
