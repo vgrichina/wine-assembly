@@ -1296,11 +1296,25 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
           bytes.uleb(localIdx);
           return bytes;
         }
-        // Could be a numeric literal that tokenized as symbol
-        if (/^-?[0-9]/.test(V(expr))) {
-          const n = watxParseIntLiteral(V(expr), `bare literal in function ${func.name}`);
-          bytes.byte(OP.i32_const);
-          bytes.sleb(n);
+        // Could be a numeric literal that tokenized as symbol. A LEADING PLUS is
+        // one of those: the tokenizer starts a number only on a digit or a '-',
+        // so `+42` arrives as the symbol '+42'. The `.const` heads accept a
+        // plus-signed literal, so a bare atom in operand position accepts one
+        // too — the alternative was rejecting `+42` here as an unknown symbol
+        // while `(i32.const +42)` compiled, which is an inconsistency with no
+        // rationale behind it. The same int/float split as the number-atom path
+        // above, so `+1.5` is a float rather than an integer-literal error.
+        if (/^[+-]?[0-9]/.test(V(expr))) {
+          const val = V(expr);
+          const where = `bare literal in function ${func.name}`;
+          const isHex = /^[+-]?0[xX]/.test(val);
+          if (!isHex && (val.includes('.') || val.includes('e') || val.includes('E'))) {
+            bytes.byte(OP.f32_const);
+            bytes.f32(watxParseFloatLiteral(val, where));
+          } else {
+            bytes.byte(OP.i32_const);
+            bytes.sleb(watxParseIntLiteral(val, where));
+          }
           return bytes;
         }
         // Static region symbol -> its base address (memory allocated in WATX via

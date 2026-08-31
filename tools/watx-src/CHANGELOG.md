@@ -345,3 +345,29 @@ the only warning the closure prints is the single 09a5 site above. All fifteen
 New manifest digest:
 
   da59b4bab1dde12f248f44f814cd435ebec72d30675ffa581ea21220ac292029
+
+## 2026-08-31 — a bare `+42` operand atom is a literal, like `(i32.const +42)`
+
+Round-5 external review, LOW, follow-up to the entry above.
+
+The tokenizer starts a number only on a digit or a `-`, so a plus-signed literal
+written as a BARE atom in operand position (`(i32.add +42 …)`, a WATX spelling —
+standard WAT always writes the `.const` form) arrived as the SYMBOL `+42` and was
+rejected as an unknown symbol, while `(i32.const +42)` compiled fine. Not a
+silent miscompile, and no site in the closure writes one, but an inconsistency
+with no rationale behind it. The bare-atom fallback now accepts a leading `+`,
+and applies the same int/float split as the number-atom path beside it, so
+`+1.5` is a float rather than an integer-literal error and a bare hex atom
+containing `E` stays an integer.
+
+`test/watx-compiler-literals.test.js` grows a bare-atom table (`42`, `-42`,
+`+42`, `0x2a`, `+0x2a`, `-0x2a`, `1_000`, `+1_000`, plus `0xE1`, `+1.5` and the
+rejection of `+4zz`): 83 → 94 checks.
+
+Emitted bytes unchanged again — the closure is byte-identical in both modes,
+984320 B tail `d7c03355`, 984769 B compat `bfd6315c`, and the whole
+`watx-compiler-*` set is green.
+
+New manifest digest:
+
+  bc39bed62a34e2428addd835615e87fcc5a5e2906205cbec688e05bf61db4817

@@ -194,6 +194,33 @@ function constValue(type, literal) { return evalWat(constFn(type, literal)); }
   const f32 = constValue('f32', '1.25');
   ck('(f32.const 1.25) == 1.25', f32.value === 1.25, f32.error || f32.value);
 
+  // A BARE atom in operand position is a WATX spelling (standard WAT always
+  // writes the .const form), and it has its own literal path. The tokenizer
+  // starts a number only on a digit or a '-', so `+42` arrives as a SYMBOL and
+  // used to be rejected as an unknown one while `(i32.const +42)` compiled --
+  // an inconsistency with no rationale, now closed in both directions.
+  const bare = [
+    ['42', 42], ['-42', -42], ['+42', 42], ['0x2a', 42], ['+0x2a', 42], ['-0x2a', -42],
+    ['1_000', 1000], ['+1_000', 1000],
+  ];
+  for (const [lit, want] of bare) {
+    const r = evalWat(`(memory 1 1)\n(func $m (export "m") (result i32) (i32.add ${lit} (i32.const 0)))`);
+    ck(`a bare ${lit} atom == ${want}`, r.value === want, r.error || r.value);
+  }
+  // ...and a bare hex atom containing E is an INTEGER, not the float branch,
+  // where parseFloat('0xE1') would have been a silent 0.
+  const bareHexE = evalWat(
+    '(memory 1 1)\n(func $m (export "m") (result i32) (i32.add 0xE1 (i32.const 0)))');
+  ck('a bare 0xE1 atom is 225, not a silent 0', bareHexE.value === 225, bareHexE.error || bareHexE.value);
+  // A bare float atom still takes the float branch, plus sign or not.
+  const bareFloat = evalWat(
+    '(memory 1 1)\n(func $m (export "m") (result f32) (f32.add +1.5 (f32.const 0)))');
+  ck('a bare +1.5 atom is a float, not an integer-literal error',
+    bareFloat.value === 1.5, bareFloat.error || bareFloat.value);
+  const bareJunk = evalWat(
+    '(memory 1 1)\n(func $m (export "m") (result i32) (i32.add +4zz (i32.const 0)))');
+  ck('a bare +4zz atom is rejected', !!bareJunk.error, bareJunk.value);
+
   // Memarg, both keys, including a separator inside the offset.
   const mem = evalWat(
     '(memory 1 1)\n' +

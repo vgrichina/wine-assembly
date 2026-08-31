@@ -180,6 +180,68 @@ const jsonOf = r => {
     j && j.text.some(l => /BASELINE FAIL \(excused/.test(l)));
 }
 
+// --- 5b2. ASYMMETRY IS NOT A BASELINE FAILURE, and the allow-list cannot excuse
+//          it. `--allow-baseline-fail` exists for a test knowingly red at HEAD
+//          for an unrelated reason -- which means red on BOTH artifacts. A row
+//          that fails on legacy and PASSES on the other column is a divergence
+//          between the compilers, the same finding as a regression pointing the
+//          other way, and excusing it would hide exactly what this gate is for.
+//
+//          test/watx-matrix-fixture-side-sensitive.js is the only test here whose
+//          verdict depends on WHICH artifact was pinned (it fails under a
+//          directory named fail-side), so it is what makes an asymmetric row
+//          reachable at all -- every real curated test passes on both stub
+//          artifacts or fails on both.
+{
+  const failSide = mkSide('fail-side', 'a');
+  const passSide = mkSide('pass-side', 'a');
+  const FIX = 'watx-matrix-fixture-side-sensitive.js';
+
+  // legacy FAIL / B PASS, no flag.
+  const bare = runTool(['--skip-build', '--only=tests', '--json',
+    `--a-dir=${failSide}`, `--b-dir=${passSide}`, '--timeout=60', `--tests=${FIX}`]);
+  const jb = jsonOf(bare);
+  const rb = jb && jb.tests[0];
+  ck('the side-sensitive fixture really is side-sensitive',
+    !!rb && rb.a.pass === false && rb.b.pass === true,
+    rb && `${rb.unusable || ''} a=${rb.a && rb.a.pass} b=${rb.b && rb.b.pass}`);
+  ck('legacy-FAIL / B-PASS is flagged asymmetric, not a baseline failure',
+    !!rb && rb.asymmetric === true && rb.baselineExcused === false);
+  ck('legacy-FAIL / B-PASS is red', bare.code === 1 && jb && jb.ok === false, bare.code);
+
+  // ...and the same row WITH the flag must stay red.
+  const excused = runTool(['--skip-build', '--only=tests', '--json',
+    `--a-dir=${failSide}`, `--b-dir=${passSide}`, '--timeout=60', `--tests=${FIX}`,
+    `--allow-baseline-fail=${FIX}`]);
+  const je = jsonOf(excused);
+  const re = je && je.tests[0];
+  ck('--allow-baseline-fail CANNOT excuse an asymmetric row',
+    excused.code === 1 && je && je.ok === false, excused.code);
+  ck('...and the row is still not marked excused', !!re && re.baselineExcused === false);
+  ck('...with a failure line naming the disagreement',
+    je && je.failures.some(f => /fails on legacy but PASSES on/.test(f)),
+    je && JSON.stringify(je.failures));
+  ck('...and no baseline-failure verdict is claimed for it',
+    je && je.baselineFailures === undefined, je && JSON.stringify(je.baselineFailures));
+
+  // The opposite direction is the ordinary regression, red with or without the flag.
+  const reg = runTool(['--skip-build', '--only=tests', '--json',
+    `--a-dir=${passSide}`, `--b-dir=${failSide}`, '--timeout=60', `--tests=${FIX}`,
+    `--allow-baseline-fail=${FIX}`]);
+  const jr = jsonOf(reg);
+  ck('legacy-PASS / B-FAIL stays a REGRESSION even when allow-listed',
+    reg.code === 1 && jr && jr.ok === false && jr.tests[0].regression === true, reg.code);
+
+  // And a genuinely symmetric failure on the same fixture is still excusable,
+  // so the tightening did not simply disable the flag.
+  const sym = runTool(['--skip-build', '--only=tests', '--json',
+    `--a-dir=${failSide}`, `--b-dir=${failSide}`, '--timeout=60', `--tests=${FIX}`,
+    `--allow-baseline-fail=${FIX}`]);
+  const js = jsonOf(sym);
+  ck('a genuinely symmetric failure is still excusable',
+    sym.code === 0 && js && js.ok === true && js.tests[0].baselineExcused === true, sym.code);
+}
+
 // --- 5c. the allow-list is per test name, not a global off switch.
 {
   const r = runTool(['--skip-build', '--only=tests', '--json',

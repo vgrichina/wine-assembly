@@ -79,6 +79,12 @@
 // --allow-baseline-fail=test-foo.js is the deliberate escape hatch for a test
 // that is knowingly red at HEAD for an unrelated reason; each excused test is
 // printed, so the exemption is visible in the report rather than silent.
+//
+// The flag CANNOT excuse an asymmetric row. "Knowingly red at HEAD for an
+// unrelated reason" means red on BOTH artifacts; a test that fails on legacy and
+// PASSES on WATX is a divergence between the compilers — the same finding as a
+// regression, pointing the other way — so the excusal requires the second column
+// to have failed too, and an asymmetric row stays red in either direction.
 // ═══════════════════════════════════════════════════════════════════════════
 
 const fs = require('fs');
@@ -420,7 +426,17 @@ function runTestMatrix(a, b) {
     // Without this a symmetric crash (red on BOTH columns) scored no regression
     // and printed MATRIX GREEN.
     row.baselineFail = !!(row.a && row.a.skipped !== true && !row.a.pass);
-    row.baselineExcused = row.baselineFail && ALLOW_BASELINE_FAIL.has(file);
+    // A row that fails on legacy and PASSES on watx is not a baseline failure at
+    // all — it is a difference between the compilers, in the direction the
+    // regression rule does not cover, and it is exactly as interesting as the
+    // other direction. Excusing it would let --allow-baseline-fail hide a real
+    // divergence: the flag exists for a test that is red at HEAD for an unrelated
+    // reason, which means red on BOTH artifacts. So the excusal requires the
+    // second column to have failed too.
+    row.asymmetric = !!(row.baselineFail && row.b && row.b.skipped !== true && row.b.pass);
+    row.baselineExcused = row.baselineFail && !row.asymmetric &&
+      row.b && row.b.skipped !== true && !row.b.pass &&
+      ALLOW_BASELINE_FAIL.has(file);
     rows.push(row);
   }
   return rows;
@@ -438,6 +454,7 @@ function reportTests(rows) {
   for (const row of rows) {
     if (row.unusable) { say(`  ${row.test.padEnd(38)} UNUSABLE  ${row.unusable}`); continue; }
     const flag = row.regression ? '  <== REGRESSION'
+      : row.asymmetric ? `  <== DIVERGENCE (fails on legacy, passes on ${B_LABEL})`
       : row.baselineExcused ? '  <== BASELINE FAIL (excused by --allow-baseline-fail)'
       : row.baselineFail ? '  <== BASELINE FAIL (red on legacy)'
       : '';
@@ -497,6 +514,11 @@ function reportTests(rows) {
     for (const row of rows) {
       if (row.unusable) report.failures.push(`test ${row.test}: unusable — ${row.unusable}`);
       else if (row.regression) report.failures.push(`test ${row.test}: passes on legacy, fails on ${B_LABEL}`);
+      else if (row.asymmetric) {
+        report.failures.push(`test ${row.test}: fails on legacy but PASSES on ${B_LABEL}` +
+          ` — the two compilers disagree, in the direction the regression rule does not cover;` +
+          ` --allow-baseline-fail cannot excuse this, it is for a test red on BOTH artifacts`);
+      }
       else if (row.baselineFail && !row.baselineExcused) {
         report.baselineFailures = report.baselineFailures || [];
         report.baselineFailures.push(row.test);
