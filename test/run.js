@@ -93,7 +93,14 @@ const getArgs = name => {
 };
 const hasFlag = name => args.includes(`--${name}`);
 
-const NO_BUILD = hasFlag('no-build');      // --no-build: skip auto-build
+// WINE_ASSEMBLY_WASM=PATH pins one prebuilt artifact for this process and every
+// test that spawns it. Several tests already read that variable and forward it
+// as `--no-build --wasm=`; reading it here means a test that only passes
+// `--no-build` (the common shape) is pinned too, which is what makes the
+// legacy-vs-WATX matrix (tools/watx-matrix.js) able to run the SAME test file
+// against two different artifacts. An explicit --wasm= still wins.
+const ENV_WASM = process.env.WINE_ASSEMBLY_WASM || '';
+const NO_BUILD = hasFlag('no-build') || !!ENV_WASM; // --no-build: skip auto-build
 const NO_CLOSE = hasFlag('no-close');      // --no-close: don't inject WM_CLOSE
 const NO_RENDERER = hasFlag('no-renderer'); // --no-renderer: skip CLI canvas/renderer (guest-state diagnostics)
 const NO_MMX = hasFlag('no-mmx');          // --no-mmx: report a 486DX from CPUID so guests take scalar paths
@@ -554,7 +561,7 @@ const MATCHED_APP = (() => {
 // arbitrary EXE outside the registry still mounts no companions implicitly.
 const ASSET_ENTRY = MATCHED_APP && MATCHED_APP.entry;
 const ASSET_ENTRY_ID = MATCHED_APP && MATCHED_APP.id;
-const WASM_PATH = getArg('wasm', path.join(ROOT, 'build', 'wine-assembly.wasm')); // --wasm=FILE: isolated prebuilt used with --no-build
+const WASM_PATH = getArg('wasm', ENV_WASM || path.join(ROOT, 'build', 'wine-assembly.wasm')); // --wasm=FILE (or $WINE_ASSEMBLY_WASM): isolated prebuilt used with --no-build
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 const PNG_CANVAS = hasFlag('png-canvas'); // --png-canvas: always capture the composited screen, never a raw DX surface
 // --dump-image=0xGUESTADDR:W:H:PITCH:BPP:FILE.png (repeatable, comma-separated)
