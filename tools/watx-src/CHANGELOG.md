@@ -963,3 +963,38 @@ No `src/*.wat` uses `(start …)`, and the canonical artifacts are unchanged:
 New manifest digest:
 
   0f3d663396e77d9e69f1c378f02be71d82fb715e559bfe9e7a1c01f3d7e5e41e
+
+## 2026-08-31 — `\u{…}` escapes stored the letter `u`
+
+WATX had no case for the spec's Unicode escape at all. `\u{1F600}` fell through
+to the "unknown escape" branch of both string decoders, which stores the escaped
+character as a byte: out came `u`, followed by `{1F600}` copied across
+literally. Seven wrong bytes where four belong, with no diagnostic, into a data
+segment that then loads at a fixed guest address.
+
+Both decoders share one `decodeUnicodeEscape` now, because there are two string
+paths — `decodeWatStringBytes` for `(data …)` segments, `unescapeStr` for the
+WATX string pool — and the same escape must not mean two things. The codepoint
+is encoded UTF-8, as the spec requires, and `\hh` keeps meaning one raw byte
+beside it (they share the escape switch, so that is pinned by a test rather than
+left to reading).
+
+Five malformed spellings are rejected instead of guessed: no brace, no closing
+brace, non-hexadecimal digits, past `10FFFF`, and a **surrogate half**. The last
+is the interesting one — a surrogate is not a Unicode scalar value and has no
+UTF-8 encoding, so `String.fromCodePoint` would hand back a lone surrogate that
+`TextEncoder` silently replaces with U+FFFD. That is the same class of quiet
+wrong constant this entry exists to remove, arrived at from the other direction.
+In a data segment the error carries the segment's location through `dataErr`.
+
+`watx-compiler-literals` 94 → 102. The encoding assertion reads the bytes back
+out of an instantiated module and compares against Node's own UTF-8 encoding of
+the same text — one-, two-, three- and four-byte codepoints in one segment — so
+it tests the encoding rather than restating it.
+
+No `src/*.wat` data string uses `\u`, and the artifacts are unchanged:
+`71ea98f134a486cd` / `d569961e3e7d6325`.
+
+New manifest digest:
+
+  bddda2054299ac1fd640a7f7b0c76111a9ca491272a717df0b0b7e2592610fac

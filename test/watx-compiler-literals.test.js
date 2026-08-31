@@ -383,5 +383,58 @@ function warningsFrom(src) {
     w.warnings.join(' | '));
 }
 
+// ── \u{…} escapes in strings ──────────────────────────────────────────────────
+// A string literal is a numeric literal's close cousin, and this was the same
+// failure: WATX had no case for `\u{…}` at all, so the escape fell through to
+// the "unknown escape" branch, stored the single byte `u`, and copied `{1F600}`
+// across literally — seven wrong bytes where four belong, silently, in a data
+// segment that then loads at a fixed guest address.
+//
+// The assertion reads the bytes back out of an instantiated module's memory and
+// compares against Node's own UTF-8 encoding of the same text, so it tests the
+// encoding rather than restating it: one-, two-, three- and four-byte
+// codepoints in one segment.
+{
+  const want = Array.from(Buffer.from('Aé中\u{1f600}', 'utf8'));
+  const r = build('(memory 1 1)\n(export "mem" (memory 0))\n' +
+                  '(data (i32.const 256) "\\u{41}\\u{e9}\\u{4e2d}\\u{1f600}")');
+  ck('a data segment with \\u{…} escapes compiles', r.success === true, r.error);
+  if (r.success) {
+    let got = null, err = null;
+    try {
+      const X = new WebAssembly.Instance(new WebAssembly.Module(r.wasmBinary), {}).exports;
+      got = Array.from(new Uint8Array(X.mem.buffer, 256, want.length));
+    } catch (e) { err = String(e.message || e); }
+    ck('...and stores the UTF-8 encoding of each codepoint, not the literal characters',
+       got !== null && got.join(',') === want.join(','), err || (got && got.join(',')));
+  }
+  // \hh must keep meaning a raw BYTE — the whole point of the data-string
+  // decoder — and it shares the escape switch with \u, so it is pinned here.
+  const raw = build('(memory 1 1)\n(export "mem" (memory 0))\n(data (i32.const 256) "\\00\\ff\\u{41}")');
+  if (raw.success) {
+    const X = new WebAssembly.Instance(new WebAssembly.Module(raw.wasmBinary), {}).exports;
+    const b = Array.from(new Uint8Array(X.mem.buffer, 256, 3));
+    ck('NO REGRESSION: \\hh still stores one raw byte beside a \\u{…}', b.join(',') === '0,255,65', b.join(','));
+  } else ck('NO REGRESSION: \\hh still stores one raw byte beside a \\u{…}', false, raw.error);
+}
+
+// A malformed \u{…} is a compile error, never a best guess: every one of these
+// used to store plausible-looking wrong bytes and say nothing.
+for (const [name, lit] of [
+  ['\\u with no brace', '\\uABCD'],
+  ['\\u{ with no closing brace', '\\u{41'],
+  ['a non-hexadecimal codepoint', '\\u{zz}'],
+  ['a codepoint past 10FFFF', '\\u{110000}'],
+  // A surrogate half is not a scalar value and has no UTF-8 encoding;
+  // String.fromCodePoint would yield a lone surrogate that the encoder silently
+  // replaces with U+FFFD, which is a wrong constant arrived at quietly.
+  ['a surrogate half', '\\u{d800}'],
+]) {
+  let r;
+  try { r = build(`(memory 1 1)\n(data (i32.const 256) "${lit}")`); }
+  catch (e) { r = { success: false, error: String(e.message || e) }; }
+  ck(`${name} is rejected`, r.success === false, r.success);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

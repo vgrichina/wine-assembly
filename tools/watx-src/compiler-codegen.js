@@ -683,15 +683,51 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     for (let i = 0; i < s.length; i++) {
       if (s[i] === '\\' && i + 1 < s.length) {
         const n = s[++i];
+        // Same `\u{…}` rule as the data-segment decoder, through the same
+        // helper: a WATX pool string is UTF-8 encoded on the way out, so an
+        // undecoded escape here stored the literal characters `u{1F600}` too.
+        if (n === 'u') {
+          const { cp, next } = decodeUnicodeEscape(s, i, (m) => new Error(`in a string literal: ${m}`));
+          out += String.fromCodePoint(cp);
+          i = next;
+          continue;
+        }
         out += n === 'n' ? '\n' : n === 't' ? '\t' : n === 'r' ? '\r'
              : n === '0' ? '\0' : n === '\\' ? '\\' : n === '"' ? '"' : n;
       } else out += s[i];
     }
     return out;
   }
+  // A `\u{…}` escape names a Unicode SCALAR VALUE, and the spec says to store its
+  // UTF-8 encoding. WATX used to have no case for it at all, so `\u{1F600}` fell
+  // through to the "unknown escape" branch, stored the byte `u`, and then copied
+  // `{1F600}` across literally — seven wrong bytes where four belong, with no
+  // diagnostic. Shared by both string decoders so the two spellings cannot drift.
+  // Returns the codepoint and the index just past the closing brace.
+  function decodeUnicodeEscape(s, i, fail) {
+    // s[i] is 'u'; the spec's grammar requires a brace immediately after it.
+    if (s[i + 1] !== '{') throw fail(`\\u must be followed by a braced codepoint, as \\u{1F600}`);
+    const close = s.indexOf('}', i + 2);
+    if (close < 0) throw fail(`\\u{ escape has no closing '}'`);
+    const digits = s.slice(i + 2, close);
+    if (!/^[0-9a-fA-F]+$/.test(digits)) {
+      throw fail(`\\u{${digits}} is not a hexadecimal codepoint`);
+    }
+    const cp = parseInt(digits, 16);
+    // A surrogate half is not a scalar value; UTF-8 has no encoding for one, and
+    // String.fromCodePoint would hand back a lone surrogate that the encoder
+    // silently replaces with U+FFFD — a wrong constant, quietly, again.
+    if (cp > 0x10FFFF) throw fail(`\\u{${digits}} is past the last codepoint (max 10FFFF)`);
+    if (cp >= 0xD800 && cp <= 0xDFFF) {
+      throw fail(`\\u{${digits}} is a surrogate half, which is not a Unicode scalar value and has no UTF-8 encoding`);
+    }
+    return { cp, next: close };
+  }
+
   // Standard WAT strings use \hh byte escapes (not C-style octal escapes).
   // Data segments need the exact byte stream, including non-UTF8 bytes.
-  function decodeWatStringBytes(raw) {
+  function decodeWatStringBytes(raw, mkErr) {
+    const fail = mkErr || ((m) => new Error(`in a data string: ${m}`));
     let s = raw || '""';
     if (s[0] === '"') s = s.slice(1, s[s.length - 1] === '"' ? -1 : s.length);
     const out = [];
@@ -707,6 +743,14 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         out.push(parseInt(a + b, 16)); i += 2; continue;
       }
       i++;
+      // `\u{…}` is checked BEFORE the two-hex-digit rule can misread it — it
+      // cannot, since `u` is not a hex digit, but the ordering is the reason.
+      if (s[i] === 'u') {
+        const { cp, next } = decodeUnicodeEscape(s, i, fail);
+        out.push(...WATX_UTF8_ENCODER.encode(String.fromCodePoint(cp)));
+        i = next;
+        continue;
+      }
       const escaped = { n: 10, r: 13, t: 9, '\\': 92, '"': 34 }[s[i]];
       out.push(escaped === undefined ? (s.charCodeAt(i) & 0xff) : escaped);
     }
@@ -1478,7 +1522,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     for (; i < (form.length - 1); i++) {
       const fragment=form[i + 1];
       if (T(fragment) !== 'string') throw new Error('Data payload must contain string fragments');
-      appendArray(bytes, decodeWatStringBytes(V(fragment)));
+      appendArray(bytes, decodeWatStringBytes(V(fragment), (m) => dataErr(`data string: ${m}`)));
     }
     // §4.4: a region-relative segment. The offset is checked against the
     // region's extent INCLUDING the segment's own length — the bound that an
