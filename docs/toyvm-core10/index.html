@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nine Traces, Four Tiers &mdash; toyvm trace JIT</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bitter:wght@500;700&family=JetBrains+Mono:wght@400;500;700&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+/* Spec sheet, not screenshot. This is a measurement document about a compiler,
+   so the palette is instrument neutrals with exactly one signal colour and one
+   steel for data encoding. The neutral carries a slight blue bias toward that
+   steel, so nothing here is an inherited mid-grey.
+
+   Read by tools/toyvm/report-core10.js and inlined into the generated page, so
+   the report stays a single file that opens from the filesystem as well as it
+   does over the dev server. */
+
+:root {
+  --ground:  #f6f6f4;
+  --panel:   #ffffff;
+  --sunk:    #eeeeec;
+  --rule:    #dcdcd6;
+  --rule-2:  #c3c3bb;
+  --ink:     #17171b;
+  --dim:     #5d5d68;
+  --faint:   #8b8b95;
+  --signal:  #ad2110;
+  --steel:   #35618c;
+  --steel-w: #b9cfe4;
+  --good:    #2c6e49;
+  --bar-bg:  #e4e4e0;
+
+  --slab: "Bitter", Georgia, "Times New Roman", serif;
+  --sans: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+/* The default "system" setting stamps nothing on the root element, so this is
+   the branch most viewers actually get. Only tokens are redefined. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:  #131317;
+    --panel:   #1c1c22;
+    --sunk:    #0e0e12;
+    --rule:    #2d2d36;
+    --rule-2:  #40404c;
+    --ink:     #e9e9ec;
+    --dim:     #9c9ca8;
+    --faint:   #6e6e7b;
+    --signal:  #ff7057;
+    --steel:   #83aad6;
+    --steel-w: #2c4560;
+    --good:    #6fbf8f;
+    --bar-bg:  #26262e;
+  }
+}
+:root[data-theme="dark"] {
+  --ground:  #131317;
+  --panel:   #1c1c22;
+  --sunk:    #0e0e12;
+  --rule:    #2d2d36;
+  --rule-2:  #40404c;
+  --ink:     #e9e9ec;
+  --dim:     #9c9ca8;
+  --faint:   #6e6e7b;
+  --signal:  #ff7057;
+  --steel:   #83aad6;
+  --steel-w: #2c4560;
+  --good:    #6fbf8f;
+  --bar-bg:  #26262e;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 0 22px 96px;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1000px; margin: 0 auto; }
+h1, h2, h3 { font-family: var(--slab); text-wrap: balance; }
+p { max-width: 68ch; }
+code, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+a { color: var(--steel); }
+
+/* ---------- masthead ---------- */
+header { padding: 58px 0 30px; border-bottom: 2px solid var(--rule-2); }
+.eyebrow {
+  font-family: var(--mono); font-size: 11.5px; font-weight: 500;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--signal); margin: 0 0 16px;
+}
+h1 {
+  font-weight: 700; font-size: clamp(30px, 5.4vw, 50px);
+  line-height: 1.1; letter-spacing: -0.015em; margin: 0 0 18px;
+}
+.lede { max-width: 64ch; color: var(--dim); font-size: 17.5px; margin: 0; }
+.lede strong { color: var(--ink); font-weight: 600; }
+
+/* ---------- the thesis: two numbers ---------- */
+.thesis {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr));
+  gap: 1px; background: var(--rule); border: 1px solid var(--rule);
+  margin: 40px 0 12px;
+}
+.fig { background: var(--panel); padding: 24px 26px 26px; }
+.fig .k {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.11em;
+  text-transform: uppercase; color: var(--faint); margin: 0 0 10px;
+}
+.fig .v {
+  font-family: var(--mono); font-weight: 700;
+  font-size: clamp(38px, 7vw, 56px); line-height: 1;
+  letter-spacing: -0.03em; margin: 0 0 8px;
+}
+.fig .v.hot { color: var(--signal); }
+.fig .v.cool { color: var(--steel); }
+.fig .v em { font-style: normal; color: var(--faint); font-weight: 400; font-size: 0.42em; }
+.fig .n { margin: 0; font-size: 14.5px; color: var(--dim); max-width: 34ch; }
+.thesis-note {
+  font-size: 14.5px; color: var(--dim); margin: 0 0 46px;
+  padding-left: 2px; max-width: 78ch;
+}
+
+/* ---------- section furniture ---------- */
+section { margin: 52px 0 0; }
+h2 { font-size: 25px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 6px; padding-top: 8px; }
+.sub {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.13em;
+  text-transform: uppercase; color: var(--faint);
+  margin: 0 0 20px; padding-bottom: 12px; border-bottom: 1px solid var(--rule);
+}
+
+/* ---------- the lowering ladder ---------- */
+.ladder { display: grid; gap: 10px; margin: 26px 0 8px; }
+.rung {
+  display: grid; grid-template-columns: 44px 1fr auto; gap: 18px;
+  align-items: start; background: var(--panel);
+  border: 1px solid var(--rule); border-left: 3px solid var(--steel-w);
+  padding: 16px 18px;
+}
+.rung.pays { border-left-color: var(--steel); }
+.rung.free { border-left-color: var(--rule-2); }
+.rung .t { font-family: var(--mono); font-weight: 700; font-size: 20px; color: var(--faint); line-height: 1.3; }
+.rung.pays .t { color: var(--steel); }
+.rung h3 { margin: 0 0 4px; font-size: 17px; font-weight: 500; }
+.rung p { margin: 0; font-size: 14.5px; color: var(--dim); max-width: 58ch; }
+.rung .gain { font-family: var(--mono); font-weight: 700; font-size: 19px; white-space: nowrap; padding-top: 2px; }
+.rung.pays .gain { color: var(--steel); }
+.rung.free .gain { color: var(--faint); }
+
+/* ---------- data table ---------- */
+.scroll { overflow-x: auto; margin: 24px 0 10px; border: 1px solid var(--rule); }
+table { border-collapse: collapse; width: 100%; min-width: 760px; background: var(--panel); }
+th, td { padding: 9px 12px; text-align: right; border-bottom: 1px solid var(--rule); }
+th {
+  font-family: var(--mono); font-size: 11px; font-weight: 500;
+  letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--faint); background: var(--sunk); white-space: nowrap;
+}
+th:first-child, td:first-child { text-align: left; }
+td { font-family: var(--mono); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+td.name { font-family: var(--sans); font-size: 15px; font-weight: 600; }
+tbody tr:last-child td { border-bottom: none; }
+tr.total td { background: var(--sunk); font-weight: 700; border-top: 2px solid var(--rule-2); }
+td.big { font-weight: 700; }
+.hot { color: var(--signal); }
+.mut { color: var(--faint); }
+
+/* inline ratio bar, drawn under the number rather than beside it */
+.barcell { position: relative; min-width: 108px; }
+.bar { position: absolute; left: 12px; right: 12px; bottom: 5px; height: 3px; background: var(--bar-bg); }
+.bar i { display: block; height: 100%; background: var(--steel); }
+.barcell span { position: relative; }
+
+/* share gauge: a dot whose fill says how much of the program this trace is */
+.gauge {
+  display: inline-grid; place-items: center;
+  width: 15px; height: 15px; border-radius: 50%;
+  border: 1.5px solid var(--rule-2); vertical-align: -3px; margin-right: 7px;
+}
+.gauge i { display: block; border-radius: 50%; background: var(--steel); }
+
+/* ---------- callout ---------- */
+.callout {
+  background: var(--panel); border: 1px solid var(--rule);
+  border-top: 3px solid var(--signal); padding: 22px 24px; margin: 26px 0;
+}
+.callout h3 { margin: 0 0 8px; font-size: 18px; font-weight: 700; }
+.callout p { margin: 0 0 10px; font-size: 15px; }
+.callout p:last-child { margin-bottom: 0; }
+
+/* ---------- code ---------- */
+pre {
+  background: var(--sunk); border: 1px solid var(--rule);
+  padding: 14px 16px; overflow-x: auto; margin: 18px 0;
+  font-family: var(--mono); font-size: 13px; line-height: 1.55;
+}
+pre .del { color: var(--signal); }
+pre .ins { color: var(--good); }
+
+footer {
+  margin-top: 62px; padding-top: 20px; border-top: 1px solid var(--rule);
+  color: var(--faint); font-size: 13.5px;
+}
+footer code { font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">toyvm &middot; trace jit &middot; core ten</p>
+  <h1>Nine Traces, Four Tiers</h1>
+  <p class="lede">A trace JIT over threaded code, measured on ten DOS demos from
+  1993&ndash;95. Compiling the hottest trace is worth
+  <strong>2.16&times; on that trace</strong> and
+  <strong>1.22&times; on the program</strong>. The gap between those two
+  numbers is the entire result &mdash; it says the next work is coverage, not code
+  quality.</p>
+</header>
+
+<div class="thesis">
+  <div class="fig">
+    <p class="k">Hottest trace</p>
+    <p class="v hot">2.16&times;</p>
+    <p class="n">Geometric mean over 9 programs, tier&nbsp;3 against the
+    shipped interpreter running the same ops.</p>
+  </div>
+  <div class="fig">
+    <p class="k">Whole program</p>
+    <p class="v cool">1.22&times;</p>
+    <p class="n">The same 9, weighted by how much of each program that
+    trace actually is. Amdahl, not pessimism.</p>
+  </div>
+  <div class="fig">
+    <p class="k">Measurable at all</p>
+    <p class="v">9<em> / 10</em></p>
+    <p class="n">Every decline below is a named reason, never a silent zero.</p>
+  </div>
+</div>
+
+<p class="thesis-note">2 independent pass(es), 7 interleaved
+reps each, min of reps. Absolute nanoseconds are deliberately not shown: this box
+runs loaded, which the ratios survive and the timings do not. Generated
+2026-08-31 06:44Z by <code>tools/toyvm/report-core10.js</code>.</p>
+
+<section>
+  <h2>What each tier removes</h2>
+  <p class="sub">and what it is worth</p>
+
+  <p>The interpreter is Forth-style threaded code: an arena of
+  <code>[handler][operands&hellip;]</code> words dispatched through a table. Each tier
+  strips one layer of that machinery from a hot trace and compiles what is left into a
+  standalone wasm function.</p>
+
+  <div class="ladder">
+    <div class="rung">
+      <div class="t">0</div>
+      <div><h3>Interpreter</h3>
+      <p>The shipped VM running the same ops from the same register file and the same
+      megabyte of guest memory. The baseline every ratio is against.</p></div>
+      <div class="gain">&mdash;</div>
+    </div>
+    <div class="rung pays">
+      <div class="t">1</div>
+      <div><h3>Bodies stitched, operands folded</h3>
+      <p>Handler bodies concatenated into one function; every operand becomes an
+      <code>i32.const</code>. Removes a dispatch, an operand load and an
+      <code>$ip</code> advance per op.</p></div>
+      <div class="gain">1.55&times;</div>
+    </div>
+    <div class="rung free">
+      <div class="t">2</div>
+      <div><h3>Register folding, dead flags</h3>
+      <p>Register-file calls resolved to direct globals; flag computations nothing reads
+      are dropped. The pass that looks most like a classical optimizer, and the one that
+      buys least.</p></div>
+      <div class="gain">1.06&times;</div>
+    </div>
+    <div class="rung pays">
+      <div class="t">3</div>
+      <div><h3>Micro-ops</h3>
+      <p>Address <code>br_table</code> folded to arithmetic, segment lookup folded to its
+      shadow base, constant expressions evaluated, registers promoted into wasm
+      locals.</p></div>
+      <div class="gain">1.31&times;</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Program by program</h2>
+  <p class="sub">--bench --min-ops=6 --sample-from=0.5 &middot; 7 interleaved reps &middot; min of reps</p>
+
+  <div class="scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>Program</th><th>Trace</th><th>Share of run</th>
+        <th>0&rarr;1</th><th>1&rarr;2</th><th>2&rarr;3</th>
+        <th>Tier 3 total</th><th>Other pass</th><th>Program bound</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="name">BRW</td>
+        <td>43 ops</td>
+        <td><span class="gauge"><i style="width:3px;height:3px"></i></span>8.2%</td>
+        <td>1.73</td>
+        <td>1.07</td>
+        <td>2.86</td>
+        <td class="barcell big"><span>5.29&times;</span><span class="bar"><i style="width:100%"></i></span></td>
+        <td class="mut">5.08</td>
+        <td>1.07&times;</td>
+      </tr>
+      <tr>
+        <td class="name">B-STEEL</td>
+        <td>6 ops</td>
+        <td><span class="gauge"><i style="width:4px;height:4px"></i></span>15.6%</td>
+        <td>2.49</td>
+        <td>1.08</td>
+        <td class="mut">1.03</td>
+        <td class="barcell big"><span>2.77&times;</span><span class="bar"><i style="width:52%"></i></span></td>
+        <td class="mut">3.04</td>
+        <td>1.11&times;</td>
+      </tr>
+      <tr>
+        <td class="name">CYCLE</td>
+        <td>7 ops</td>
+        <td><span class="gauge"><i style="width:2px;height:2px"></i></span>0.5%</td>
+        <td>1.83</td>
+        <td>1.24</td>
+        <td>1.08</td>
+        <td class="barcell big"><span>2.44&times;</span><span class="bar"><i style="width:46%"></i></span></td>
+        <td class="mut">2.22</td>
+        <td class="mut">1.00&times;</td>
+      </tr>
+      <tr>
+        <td class="name">DTM2</td>
+        <td>1 ops</td>
+        <td><span class="gauge"><i style="width:7px;height:7px"></i></span>51.3%</td>
+        <td>1.68</td>
+        <td>1.05</td>
+        <td>1.25</td>
+        <td class="barcell big"><span>2.21&times;</span><span class="bar"><i style="width:42%"></i></span></td>
+        <td class="mut">1.55</td>
+        <td>1.39&times;</td>
+      </tr>
+      <tr>
+        <td class="name">ACCIDENT</td>
+        <td>8 ops</td>
+        <td><span class="gauge"><i style="width:2px;height:2px"></i></span>1.9%</td>
+        <td>1.64</td>
+        <td>1.09</td>
+        <td>1.12</td>
+        <td class="barcell big"><span>2.01&times;</span><span class="bar"><i style="width:38%"></i></span></td>
+        <td class="mut">2.10</td>
+        <td class="mut">1.01&times;</td>
+      </tr>
+      <tr>
+        <td class="name">CMA_SHRT</td>
+        <td>7 ops</td>
+        <td><span class="gauge"><i style="width:12px;height:12px"></i></span>99.7%</td>
+        <td class="mut">1.12</td>
+        <td class="mut">0.98</td>
+        <td>1.62</td>
+        <td class="barcell big"><span>1.77&times;</span><span class="bar"><i style="width:33%"></i></span></td>
+        <td class="mut">1.83</td>
+        <td>1.76&times;</td>
+      </tr>
+      <tr>
+        <td class="name">CONTAGIO</td>
+        <td>14 ops</td>
+        <td><span class="gauge"><i style="width:10px;height:10px"></i></span>80.4%</td>
+        <td>1.21</td>
+        <td class="mut">1.02</td>
+        <td>1.39</td>
+        <td class="barcell big"><span>1.72&times;</span><span class="bar"><i style="width:32%"></i></span></td>
+        <td class="mut">1.60</td>
+        <td>1.51&times;</td>
+      </tr>
+      <tr>
+        <td class="name">RUNDEMO</td>
+        <td>6 ops</td>
+        <td><span class="gauge"><i style="width:2px;height:2px"></i></span>1.9%</td>
+        <td>1.46</td>
+        <td class="mut">1.02</td>
+        <td>1.07</td>
+        <td class="barcell big"><span>1.58&times;</span><span class="bar"><i style="width:30%"></i></span></td>
+        <td class="mut">1.61</td>
+        <td class="mut">1.01&times;</td>
+      </tr>
+      <tr>
+        <td class="name">DEMO5</td>
+        <td>1 ops</td>
+        <td><span class="gauge"><i style="width:12px;height:12px"></i></span>100.0%</td>
+        <td>1.24</td>
+        <td class="mut">1.04</td>
+        <td class="mut">1.04</td>
+        <td class="barcell big"><span>1.34&times;</span><span class="bar"><i style="width:25%"></i></span></td>
+        <td class="mut">1.31</td>
+        <td>1.34&times;</td>
+      </tr>
+      <tr class="total">
+        <td class="name">geomean</td><td></td><td></td>
+        <td>1.55</td><td>1.06</td><td>1.31</td>
+        <td class="hot">2.16&times;</td>
+        <td>2.07&times;</td>
+        <td>1.22&times;</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>The <em>share</em> column is the whole caveat, drawn as a gauge so it cannot be
+  skimmed past. A trace holding a couple of percent of its program's samples proves the
+  compiler is correct on that shape and says nothing about that program.</p>
+
+  <div class="callout">
+    <h3>BRW is the report in one row</h3>
+    <p>Its 43-op body is the biggest trace win in the set at
+    <strong>5.29&times;</strong> &mdash; and it is worth
+    <strong>1.07&times;</strong> to the program, because
+    92% of its samples are somewhere else.</p>
+    <p>The lesson is not that the compiler needs another pass. It is that one trace is not
+    a program.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Declined</h2>
+  <p class="sub">a named reason, never a silent zero</p>
+  <p><strong>DHADREN</strong> declined as <code>no-samples</code> &mdash; <span class="num">76</span> sample(s), <span class="num">280</span> live block(s) at exit.</p>
+  <p>A program whose compiled code is thrown away faster than samples can land in it has
+  no stable hot trace to compile. That is not a gap in the tool &mdash; it is the shape a
+  trace JIT is structurally worst at.</p>
+</section>
+
+<section>
+  <h2>What this says to build next</h2>
+  <p class="sub">coverage, not another pass</p>
+
+  <p>2.16&times; on the trace and 1.22&times; on the program is a statement
+  about <em>coverage</em>. The compiled code is already fast; it does not run often enough,
+  and a fifth tier would move the first number and barely touch the second.</p>
+
+  <p>What moves the second number is compiling more than one trace &mdash; and the
+  interpreter's own shape makes that unusually cheap. A handler is a <code>(func)</code>
+  with no parameters and no results that ends in <code>(return_call $next)</code>. A
+  compiled trace has exactly that signature, so it can be installed into a free slot of the
+  handler table and reached by ordinary dispatch, by patching one word at the trace
+  head:</p>
+
+<pre>arena:  [ <span class="del">th_cmp_ri8_jz</span> ][ operands&hellip; ]
+                 &darr;
+        [ <span class="ins">th_compiled_0417</span> ][ operands&hellip; ]</pre>
+
+  <p>No new dispatch mechanism, no separate entry path, no change to how blocks are found.
+  What it still needs is an entry guard, side exits, and invalidation when the guest writes
+  over compiled bytes.</p>
+</section>
+
+<footer>
+  <p>Generated by <code>node tools/toyvm/report-core10.js</code> from
+  <code>tools/toyvm/bench-set-core10.txt</code>. Raw measurements in
+  <code>data.json</code> beside this file.</p>
+  <p>Correctness gate: every arm must land on identical registers, identical segment bases
+  and an identical hash of the full first megabyte of guest memory before it is timed at
+  all. An arm that computes something else is not faster.</p>
+</footer>
+
+</div>
+</body>
+</html>

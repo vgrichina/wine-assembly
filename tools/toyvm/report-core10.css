@@ -1,0 +1,201 @@
+/* Spec sheet, not screenshot. This is a measurement document about a compiler,
+   so the palette is instrument neutrals with exactly one signal colour and one
+   steel for data encoding. The neutral carries a slight blue bias toward that
+   steel, so nothing here is an inherited mid-grey.
+
+   Read by tools/toyvm/report-core10.js and inlined into the generated page, so
+   the report stays a single file that opens from the filesystem as well as it
+   does over the dev server. */
+
+:root {
+  --ground:  #f6f6f4;
+  --panel:   #ffffff;
+  --sunk:    #eeeeec;
+  --rule:    #dcdcd6;
+  --rule-2:  #c3c3bb;
+  --ink:     #17171b;
+  --dim:     #5d5d68;
+  --faint:   #8b8b95;
+  --signal:  #ad2110;
+  --steel:   #35618c;
+  --steel-w: #b9cfe4;
+  --good:    #2c6e49;
+  --bar-bg:  #e4e4e0;
+
+  --slab: "Bitter", Georgia, "Times New Roman", serif;
+  --sans: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+/* The default "system" setting stamps nothing on the root element, so this is
+   the branch most viewers actually get. Only tokens are redefined. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:  #131317;
+    --panel:   #1c1c22;
+    --sunk:    #0e0e12;
+    --rule:    #2d2d36;
+    --rule-2:  #40404c;
+    --ink:     #e9e9ec;
+    --dim:     #9c9ca8;
+    --faint:   #6e6e7b;
+    --signal:  #ff7057;
+    --steel:   #83aad6;
+    --steel-w: #2c4560;
+    --good:    #6fbf8f;
+    --bar-bg:  #26262e;
+  }
+}
+:root[data-theme="dark"] {
+  --ground:  #131317;
+  --panel:   #1c1c22;
+  --sunk:    #0e0e12;
+  --rule:    #2d2d36;
+  --rule-2:  #40404c;
+  --ink:     #e9e9ec;
+  --dim:     #9c9ca8;
+  --faint:   #6e6e7b;
+  --signal:  #ff7057;
+  --steel:   #83aad6;
+  --steel-w: #2c4560;
+  --good:    #6fbf8f;
+  --bar-bg:  #26262e;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 0 22px 96px;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1000px; margin: 0 auto; }
+h1, h2, h3 { font-family: var(--slab); text-wrap: balance; }
+p { max-width: 68ch; }
+code, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+a { color: var(--steel); }
+
+/* ---------- masthead ---------- */
+header { padding: 58px 0 30px; border-bottom: 2px solid var(--rule-2); }
+.eyebrow {
+  font-family: var(--mono); font-size: 11.5px; font-weight: 500;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--signal); margin: 0 0 16px;
+}
+h1 {
+  font-weight: 700; font-size: clamp(30px, 5.4vw, 50px);
+  line-height: 1.1; letter-spacing: -0.015em; margin: 0 0 18px;
+}
+.lede { max-width: 64ch; color: var(--dim); font-size: 17.5px; margin: 0; }
+.lede strong { color: var(--ink); font-weight: 600; }
+
+/* ---------- the thesis: two numbers ---------- */
+.thesis {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr));
+  gap: 1px; background: var(--rule); border: 1px solid var(--rule);
+  margin: 40px 0 12px;
+}
+.fig { background: var(--panel); padding: 24px 26px 26px; }
+.fig .k {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.11em;
+  text-transform: uppercase; color: var(--faint); margin: 0 0 10px;
+}
+.fig .v {
+  font-family: var(--mono); font-weight: 700;
+  font-size: clamp(38px, 7vw, 56px); line-height: 1;
+  letter-spacing: -0.03em; margin: 0 0 8px;
+}
+.fig .v.hot { color: var(--signal); }
+.fig .v.cool { color: var(--steel); }
+.fig .v em { font-style: normal; color: var(--faint); font-weight: 400; font-size: 0.42em; }
+.fig .n { margin: 0; font-size: 14.5px; color: var(--dim); max-width: 34ch; }
+.thesis-note {
+  font-size: 14.5px; color: var(--dim); margin: 0 0 46px;
+  padding-left: 2px; max-width: 78ch;
+}
+
+/* ---------- section furniture ---------- */
+section { margin: 52px 0 0; }
+h2 { font-size: 25px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 6px; padding-top: 8px; }
+.sub {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.13em;
+  text-transform: uppercase; color: var(--faint);
+  margin: 0 0 20px; padding-bottom: 12px; border-bottom: 1px solid var(--rule);
+}
+
+/* ---------- the lowering ladder ---------- */
+.ladder { display: grid; gap: 10px; margin: 26px 0 8px; }
+.rung {
+  display: grid; grid-template-columns: 44px 1fr auto; gap: 18px;
+  align-items: start; background: var(--panel);
+  border: 1px solid var(--rule); border-left: 3px solid var(--steel-w);
+  padding: 16px 18px;
+}
+.rung.pays { border-left-color: var(--steel); }
+.rung.free { border-left-color: var(--rule-2); }
+.rung .t { font-family: var(--mono); font-weight: 700; font-size: 20px; color: var(--faint); line-height: 1.3; }
+.rung.pays .t { color: var(--steel); }
+.rung h3 { margin: 0 0 4px; font-size: 17px; font-weight: 500; }
+.rung p { margin: 0; font-size: 14.5px; color: var(--dim); max-width: 58ch; }
+.rung .gain { font-family: var(--mono); font-weight: 700; font-size: 19px; white-space: nowrap; padding-top: 2px; }
+.rung.pays .gain { color: var(--steel); }
+.rung.free .gain { color: var(--faint); }
+
+/* ---------- data table ---------- */
+.scroll { overflow-x: auto; margin: 24px 0 10px; border: 1px solid var(--rule); }
+table { border-collapse: collapse; width: 100%; min-width: 760px; background: var(--panel); }
+th, td { padding: 9px 12px; text-align: right; border-bottom: 1px solid var(--rule); }
+th {
+  font-family: var(--mono); font-size: 11px; font-weight: 500;
+  letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--faint); background: var(--sunk); white-space: nowrap;
+}
+th:first-child, td:first-child { text-align: left; }
+td { font-family: var(--mono); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+td.name { font-family: var(--sans); font-size: 15px; font-weight: 600; }
+tbody tr:last-child td { border-bottom: none; }
+tr.total td { background: var(--sunk); font-weight: 700; border-top: 2px solid var(--rule-2); }
+td.big { font-weight: 700; }
+.hot { color: var(--signal); }
+.mut { color: var(--faint); }
+
+/* inline ratio bar, drawn under the number rather than beside it */
+.barcell { position: relative; min-width: 108px; }
+.bar { position: absolute; left: 12px; right: 12px; bottom: 5px; height: 3px; background: var(--bar-bg); }
+.bar i { display: block; height: 100%; background: var(--steel); }
+.barcell span { position: relative; }
+
+/* share gauge: a dot whose fill says how much of the program this trace is */
+.gauge {
+  display: inline-grid; place-items: center;
+  width: 15px; height: 15px; border-radius: 50%;
+  border: 1.5px solid var(--rule-2); vertical-align: -3px; margin-right: 7px;
+}
+.gauge i { display: block; border-radius: 50%; background: var(--steel); }
+
+/* ---------- callout ---------- */
+.callout {
+  background: var(--panel); border: 1px solid var(--rule);
+  border-top: 3px solid var(--signal); padding: 22px 24px; margin: 26px 0;
+}
+.callout h3 { margin: 0 0 8px; font-size: 18px; font-weight: 700; }
+.callout p { margin: 0 0 10px; font-size: 15px; }
+.callout p:last-child { margin-bottom: 0; }
+
+/* ---------- code ---------- */
+pre {
+  background: var(--sunk); border: 1px solid var(--rule);
+  padding: 14px 16px; overflow-x: auto; margin: 18px 0;
+  font-family: var(--mono); font-size: 13px; line-height: 1.55;
+}
+pre .del { color: var(--signal); }
+pre .ins { color: var(--good); }
+
+footer {
+  margin-top: 62px; padding-top: 20px; border-top: 1px solid var(--rule);
+  color: var(--faint); font-size: 13.5px;
+}
+footer code { font-size: 12.5px; }

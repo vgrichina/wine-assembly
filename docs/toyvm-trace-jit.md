@@ -275,6 +275,17 @@ register in it was equal.
 
 ### Measured: the core ten, nine of them
 
+There is a rendered version of this section at
+[docs/toyvm-core10/](toyvm-core10/index.html), **generated** by
+`node tools/toyvm/report-core10.js` from the same `jitTiers()` the CLI calls —
+so it cannot drift from the code the way a hand-typed table does. Serve the repo
+with `node tools/dev-server.js` and open
+`http://127.0.0.1:8080/docs/toyvm-core10/`. Its raw measurements sit beside it in
+`data.json`, and `--no-run` re-renders the page from that file without
+re-benchmarking. The numbers below are one such run; expect the last digit to
+move with box load, which is exactly why the report shows two passes.
+
+
 `--bench --min-ops=6 --sample-from=0.5`, default 7 interleaved reps, **run twice
 as two independent passes** so the spread is visible rather than asserted. Load
 averaged 5.8–6.3, so the absolute ns are not quotable; the ratios are, and the

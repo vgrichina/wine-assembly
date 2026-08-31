@@ -153,6 +153,7 @@ function readTrace(mem32, addrWordIdx, maxOps = 512) {
 async function jitTiers(exe, {
   budget = 15e6, slice = 20000, cpu = 386, top = 6, sampleAfter = 0, sampleFrom = 0,
   bench = false, iters = 20000, reps = 7, cx = 8, log = () => {}, dumpWat = null, opsPrefix = 0,
+  minOps: optMinOps,
   passes = { constprop: true, regfold: true, deadflags: true },
 } = {}) {
   log(`profiling ${path.basename(exe)} -- ${(budget / 1e6).toFixed(0)}M dispatches, `
@@ -256,7 +257,10 @@ async function jitTiers(exe, {
   // Both relaxations are announced. A floor that quietly fell back reads in the
   // output exactly like a measurement that met it -- `--min-ops=6` picking a
   // 1-op trace is a different experiment from the one that was asked for.
-  const minOps = Number(arg('min-ops', 0));
+  // An option first, argv only as the fallback: there is a second caller now
+  // (report-core10.js) and reaching into process.argv from inside a library
+  // function makes it silently un-configurable from anywhere else.
+  const minOps = optMinOps !== undefined ? Number(optMinOps) : Number(arg('min-ops', 0));
   const real = ranked.filter(b => !inspect(b).padding);
   const wanted = minOps ? real.find(b => inspect(b).t.ops.length >= minOps) : real[0];
   const hot = wanted || real[0] || ranked[0];
@@ -1238,7 +1242,10 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
   log(`  tier 2 -> 3  ${(t2ns / t3ns).toFixed(2)}x   (address folding, wide register file, registers in locals)`);
   log(`  tier 0 -> 3  ${(b0 / t3ns).toFixed(2)}x   total`);
   return {
-    agree: true, fingerprints,
+    // `bytes` is a live view of a 128MB guest memory and must not escape: it
+    // is here only so a mismatch can name the first differing address, and
+    // JSON.stringify on it fails with `Invalid string length`.
+    agree: true, fingerprints: fingerprints.map(({ bytes, ...f }) => f),
     ns: { tier0: b0, tier1: t1ns, tier2: t2ns, tier3: t3ns },
     speedup: {
       t01: b0 / t1ns, t12: t1ns / t2ns, t02: b0 / t2ns,
