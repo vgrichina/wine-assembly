@@ -2000,6 +2000,15 @@
   ;; chance to get a background.
   (func $paint_flag_test_hwnd (param $hwnd i32) (result i32)
     (local $idx i32)
+    ;; Main-window invalidations use the historical global until the unified
+    ;; selector mirrors it into PAINT_FLAGS. The erase scan runs before that
+    ;; selector, so ignoring the global makes it hand WM_ERASEBKGND out ahead
+    ;; of the paint it belongs to. Hearts then clears the entire table through
+    ;; the compatibility erase HDC before its partial WM_PAINT can redraw it.
+    (if (i32.and
+          (i32.eq (local.get $hwnd) (global.get $main_hwnd))
+          (i32.ne (global.get $paint_pending) (i32.const 0)))
+      (then (return (i32.const 1))))
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
     (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $idx))))
@@ -5141,29 +5150,29 @@
         (else
           ;; UTF-16 string classes. Templates may name both builtin classes
           ;; ("ListBox") and common controls ("msctls_progress32").
-          (if (call $wide_ascii_eq (local.get $p) (i32.const 0x3100))
+          (if (call $wide_ascii_eq (local.get $p) (region.addr $CLASS_NAME_STRINGS 0x000))
             (then (local.set $class_enum (i32.const 1))))
-          (if (call $wide_ascii_eq (local.get $p) (i32.const 0x3108))
+          (if (call $wide_ascii_eq (local.get $p) (region.addr $CLASS_NAME_STRINGS 0x008))
             (then (local.set $class_enum (i32.const 2))))
-          (if (call $wide_ascii_eq (local.get $p) (i32.const 0x310D))
+          (if (call $wide_ascii_eq (local.get $p) (region.addr $CLASS_NAME_STRINGS 0x00D))
             (then (local.set $class_enum (i32.const 3))))
-          (if (call $wide_ascii_eq (local.get $p) (i32.const 0x3114))
+          (if (call $wide_ascii_eq (local.get $p) (region.addr $CLASS_NAME_STRINGS 0x014))
             (then (local.set $class_enum (i32.const 4))))
-          (if (call $wide_ascii_eq (local.get $p) (i32.const 0x311C))
+          (if (call $wide_ascii_eq (local.get $p) (region.addr $CLASS_NAME_STRINGS 0x01C))
             (then (local.set $class_enum (i32.const 7))))
-          (if (call $wide_ascii_eq (local.get $p) (i32.const 0x3126))
+          (if (call $wide_ascii_eq (local.get $p) (region.addr $CLASS_NAME_STRINGS 0x026))
             (then (local.set $class_enum (i32.const 5))))
-          (if (call $wide_ascii_prefix_eq (local.get $p) (i32.const 0x312F))
+          (if (call $wide_ascii_prefix_eq (local.get $p) (region.addr $CLASS_NAME_STRINGS 0x02F))
             (then (local.set $class_enum (i32.const 17))))
-          (if (call $wide_ascii_prefix_eq (local.get $p) (i32.const 0x316A)) ;; SysTreeView32
+          (if (call $wide_ascii_prefix_eq (local.get $p) (region.addr $CLASS_NAME_STRINGS 0x06A)) ;; SysTreeView32
             (then (local.set $class_enum (i32.const 8))))
-          (if (call $wide_ascii_prefix_eq (local.get $p) (i32.const 0x3141))
+          (if (call $wide_ascii_prefix_eq (local.get $p) (region.addr $CLASS_NAME_STRINGS 0x041))
             (then (local.set $class_enum (i32.const 18))))
-          (if (call $wide_ascii_eq (local.get $p) (i32.const 0x3150))
+          (if (call $wide_ascii_eq (local.get $p) (region.addr $CLASS_NAME_STRINGS 0x050))
             (then (local.set $class_enum (i32.const 19))))
-          (if (call $wide_ascii_prefix_eq (local.get $p) (i32.const 0x3158))
+          (if (call $wide_ascii_prefix_eq (local.get $p) (region.addr $CLASS_NAME_STRINGS 0x058))
             (then (local.set $class_enum (i32.const 19))))
-          (if (call $wide_ascii_eq (local.get $p) (i32.const 0x3178))
+          (if (call $wide_ascii_eq (local.get $p) (region.addr $CLASS_NAME_STRINGS 0x078))
             (then (local.set $class_enum (i32.const 28))))
           ;; "RichEdit", "RichEdit20A", etc. Compare the first four chars
           ;; case-insensitively: r i c h.
@@ -5318,7 +5327,7 @@
     (global.set $env_block (call $heap_alloc (global.get $env_cap)))
     (local.set $prev (i32.const 1))
     (block $done (loop $copy
-      (local.set $ch (i32.load8_u (i32.add (i32.const 0x3390) (local.get $i))))
+      (local.set $ch (i32.load8_u (i32.add (region.addr $ENV_DEFAULTS 0x000) (local.get $i))))
       (call $gs8 (i32.add (global.get $env_block) (local.get $i)) (local.get $ch))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br_if $done (i32.and (i32.eqz (local.get $ch)) (i32.eqz (local.get $prev))))
@@ -5332,7 +5341,7 @@
         (block $launch_done (loop $launch_copy
           (br_if $launch_done (i32.gt_u (local.get $j) (global.get $launch_env_len)))
           (call $gs8 (i32.add (global.get $env_block) (i32.add (local.get $i) (local.get $j)))
-            (i32.load8_u (i32.add (i32.const 0x5110) (local.get $j))))
+            (i32.load8_u (i32.add (region.addr $LAUNCH_ENV_OVERRIDES 0x000) (local.get $j))))
           (local.set $j (i32.add (local.get $j) (i32.const 1)))
           (br $launch_copy))))))
 
