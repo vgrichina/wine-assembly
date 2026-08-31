@@ -3023,13 +3023,18 @@
   ;; switches for an A/B because COPY_RUN remains disabled by default.
   (func (export "set_loop_emit") (param $flag i32)
     (global.set $loop_lut_emit_enabled (local.get $flag))
-    (call $loop_copy_emit_set (local.get $flag)))
+    (call $loop_copy_emit_set (local.get $flag))
+    (call $loop_generic_copy_emit_set (local.get $flag)))
   (func (export "set_loop_lut_emit") (param $flag i32)
     (global.set $loop_lut_emit_enabled (local.get $flag)))
   (func (export "set_loop_lut16_stack_emit") (param $flag i32)
     (global.set $loop_lut16_stack_emit_enabled (local.get $flag)))
   (func (export "set_loop_copy_emit") (param $flag i32)
     (call $loop_copy_emit_set (local.get $flag)))
+  ;; Unsafe generic COPY_RUN/AVG rollback switch. Production app policy uses
+  ;; set_loop_copy_emit for exact byte-proved folds and never enables this.
+  (func (export "set_loop_generic_copy_emit") (param $flag i32)
+    (call $loop_generic_copy_emit_set (local.get $flag)))
   (func (export "set_loop_aoe_fill_emit") (param $flag i32)
     (global.set $loop_aoe_fill_emit_enabled (local.get $flag))
     (call $clear_cache))

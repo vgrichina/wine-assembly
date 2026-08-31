@@ -100,15 +100,21 @@ const LOOP = Uint8Array.from([
   bytes.fill(0xcc, wa(baselineDst), wa(baselineDst) + copiedBytes + 8);
   bytes.fill(0xcc, wa(fusedDst), wa(fusedDst) + copiedBytes + 8);
 
-  e.set_loop_copy_emit(0);
+  // The production app gate enables only exact byte-proved folds. Even when
+  // it is on, the generic role matcher stays diagnostic-only until its own
+  // explicit test/benchmark gate is enabled.
+  e.set_loop_copy_emit(1);
+  e.set_loop_generic_copy_emit(0);
   const baseline = runAt(baselineCode, {
     src: baselineSrc, dst: baselineDst, bound: (baselineDst + distance) >>> 0,
   });
   const matchesAfterBaseline = e.test_copy32_matches();
   assert.strictEqual(matchesAfterBaseline, 1,
     'disabled lowering still recognizes the exact loop for diagnostics');
+  assert.strictEqual(e.test_copy32_runs(), 0,
+    'the production exact-fold gate does not enable generic COPY_RUN');
 
-  e.set_loop_copy_emit(1);
+  e.set_loop_generic_copy_emit(1);
   const fused = runAt(fusedCode, {
     src: fusedSrc, dst: fusedDst, bound: (fusedDst + distance) >>> 0,
   });
@@ -148,11 +154,11 @@ const LOOP = Uint8Array.from([
   const overlapInput = Uint8Array.from({ length: 48 }, (_, i) => (i * 11 + 7) & 0xff);
   bytes.set(overlapInput, wa(overlapBaseline));
   bytes.set(overlapInput, wa(overlapFused));
-  e.set_loop_copy_emit(0);
+  e.set_loop_generic_copy_emit(0);
   const overlapBaselineState = runAt(overlapBaselineCode, {
     src: overlapBaseline, dst: overlapBaseline + 1, bound: overlapBaseline + 21,
   });
-  e.set_loop_copy_emit(1);
+  e.set_loop_generic_copy_emit(1);
   const bytesBeforeOverlap = e.test_copy32_bytes();
   const overlapFusedState = runAt(overlapFusedCode, {
     src: overlapFused, dst: overlapFused + 1, bound: overlapFused + 21,

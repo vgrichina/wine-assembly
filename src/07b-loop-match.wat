@@ -68,15 +68,31 @@
   (global $loop_lut_emit_enabled (mut i32) (i32.const 1))
   ;; Benchmark/rollback gate for the Heroes III stack-table extension only.
   (global $loop_lut16_stack_emit_enabled (mut i32) (i32.const 1))
-  ;; COPY_RUN is app-opted-in on the main instance, but guest threads execute
-  ;; in separate WebAssembly instances. Keep its process gate in shared memory
-  ;; so every decoder sees the same value.
+  ;; Exact MW3 folds are app-opted-in on the main instance, but guest threads
+  ;; execute in separate WebAssembly instances. Keep both their process gate
+  ;; (bit 0) and the historically divergent generic COPY/AVG experiment gate
+  ;; (bit 1) in shared memory so every decoder sees the same value. Production
+  ;; only enables bit 0; bit 1 exists for focused semantic/benchmark A/Bs.
   (global $LOOP_PROCESS_STATE i32 (i32.const 0x07F0CEE0))
   (global $LOOP_PROCESS_STATE_SIZE i32 (i32.const 0x00000004))
   (func $loop_copy_emit_get (result i32)
-    (i32.atomic.load (global.get $LOOP_PROCESS_STATE)))
+    (i32.and (i32.atomic.load (global.get $LOOP_PROCESS_STATE)) (i32.const 1)))
   (func $loop_copy_emit_set (param $flag i32)
-    (i32.atomic.store (global.get $LOOP_PROCESS_STATE) (local.get $flag)))
+    (local $state i32)
+    (local.set $state (i32.atomic.load (global.get $LOOP_PROCESS_STATE)))
+    (i32.atomic.store (global.get $LOOP_PROCESS_STATE)
+      (if (result i32) (local.get $flag)
+        (then (i32.or (local.get $state) (i32.const 1)))
+        (else (i32.and (local.get $state) (i32.const 0xfffffffe))))))
+  (func $loop_generic_copy_emit_get (result i32)
+    (i32.and (i32.atomic.load (global.get $LOOP_PROCESS_STATE)) (i32.const 2)))
+  (func $loop_generic_copy_emit_set (param $flag i32)
+    (local $state i32)
+    (local.set $state (i32.atomic.load (global.get $LOOP_PROCESS_STATE)))
+    (i32.atomic.store (global.get $LOOP_PROCESS_STATE)
+      (if (result i32) (local.get $flag)
+        (then (i32.or (local.get $state) (i32.const 2)))
+        (else (i32.and (local.get $state) (i32.const 0xfffffffd))))))
   ;; Exact six-op AoE grid-fill lowering. Independently switchable for
   ;; same-process semantic and timing A/Bs; the production default is on.
   (global $loop_aoe_fill_emit_enabled (mut i32) (i32.const 1))
@@ -1573,7 +1589,7 @@
       (then
         (call $host_log_i32 (i32.const 0x100B0004))
         (call $host_log_i32 (local.get $start_eip))))
-    (if (i32.eqz (call $loop_copy_emit_get))
+    (if (i32.eqz (call $loop_generic_copy_emit_get))
       (then (return (i32.const 0))))
 
     (global.set $thread_alloc (local.get $tstart))
@@ -1707,7 +1723,7 @@
       (i32.add (global.get $loop_matched_blocks) (i32.const 1)))
     (global.set $loop_avg_matches
       (i32.add (global.get $loop_avg_matches) (i32.const 1)))
-    (if (i32.eqz (call $loop_copy_emit_get))
+    (if (i32.eqz (call $loop_generic_copy_emit_get))
       (then (return (i32.const 0))))
     (global.set $thread_alloc (local.get $tstart))
     (global.set $op_index_n (i32.const 0))
@@ -1874,7 +1890,7 @@
       (i32.add (global.get $loop_matched_blocks) (i32.const 1)))
     (global.set $loop_avg_matches
       (i32.add (global.get $loop_avg_matches) (i32.const 1)))
-    (if (i32.eqz (call $loop_copy_emit_get))
+    (if (i32.eqz (call $loop_generic_copy_emit_get))
       (then (return (i32.const 0))))
     (global.set $thread_alloc (local.get $tstart))
     (global.set $op_index_n (i32.const 0))
@@ -2012,7 +2028,7 @@
       (then
         (call $host_log_i32 (i32.const 0x100B0003))
         (call $host_log_i32 (local.get $start_eip))))
-    (if (i32.eqz (call $loop_copy_emit_get))
+    (if (i32.eqz (call $loop_generic_copy_emit_get))
       (then (return (i32.const 0))))
 
     (global.set $thread_alloc (local.get $tstart))
@@ -2241,7 +2257,7 @@
       (then
         (call $host_log_i32 (i32.const 0x100B0002))
         (call $host_log_i32 (local.get $start_eip))))
-    (if (i32.eqz (call $loop_copy_emit_get)) (then (return (i32.const 0))))
+    (if (i32.eqz (call $loop_generic_copy_emit_get)) (then (return (i32.const 0))))
 
     (local.set $fall (i32.load offset=8
       (call $loop_op_at (i32.sub (local.get $n) (i32.const 1)))))

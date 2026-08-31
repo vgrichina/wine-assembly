@@ -124,10 +124,10 @@ const ROUND_LOOP = Uint8Array.from([
   bytes.fill(0xcc, wa(d0), wa(d0) + count * 4);
   bytes.fill(0xcc, wa(d1), wa(d1) + count * 4);
 
-  e.set_loop_copy_emit(0);
+  e.set_loop_generic_copy_emit(0);
   const baseline = runAt(baselineCode, { a: a0, b: b0, dst: d0, count });
   assert.strictEqual(e.test_avg_matches(), 1, 'disabled gate still records recognition');
-  e.set_loop_copy_emit(1);
+  e.set_loop_generic_copy_emit(1);
   const fused = runAt(fusedCode, { a: a0, b: b0, dst: d1, count });
   assert.strictEqual(e.test_avg_matches(), 2, 'fresh enabled block recognizes once');
   assert(e.test_avg_runs() > 1, 'long row re-enters H435 at budget boundaries');
@@ -153,9 +153,9 @@ const ROUND_LOOP = Uint8Array.from([
   const overlap0 = (arena + 0x3000) >>> 0, overlap1 = (arena + 0x4000) >>> 0;
   const overlapInput = Uint8Array.from({ length: 96 }, (_, i) => (i * 29 + 3) & 0xff);
   bytes.set(overlapInput, wa(overlap0)); bytes.set(overlapInput, wa(overlap1));
-  e.set_loop_copy_emit(0);
+  e.set_loop_generic_copy_emit(0);
   runAt(overlapBaselineCode, { a: overlap0, b: overlap0 + 32, dst: overlap0 + 1, count: 8 });
-  e.set_loop_copy_emit(1);
+  e.set_loop_generic_copy_emit(1);
   runAt(overlapFusedCode, { a: overlap1, b: overlap1 + 32, dst: overlap1 + 1, count: 8 });
   assert.deepStrictEqual(
     Array.from(bytes.subarray(wa(overlap1), wa(overlap1) + 96)),
@@ -185,10 +185,10 @@ const ROUND_LOOP = Uint8Array.from([
       cf: e.test_avg_cf(), zf: e.test_avg_zf(), sf: e.test_avg_sf(), of: e.test_avg_of(),
     };
   }
-  e.set_loop_copy_emit(0);
+  e.set_loop_generic_copy_emit(0);
   const avsBaseline = runAvs(avsBaselineCode, avsD0);
   const avsMatches = e.test_avg_matches();
-  e.set_loop_copy_emit(1);
+  e.set_loop_generic_copy_emit(1);
   const avsFused = runAvs(avsFusedCode, avsD1);
   assert.strictEqual(e.test_avg_matches(), avsMatches + 1, 'AVS cursor average recognizes');
   assert.deepStrictEqual(avsFused, avsBaseline, 'AVS fusion preserves final state');
@@ -222,10 +222,10 @@ const ROUND_LOOP = Uint8Array.from([
       cf: e.test_avg_cf(), zf: e.test_avg_zf(), sf: e.test_avg_sf(), of: e.test_avg_of(),
     };
   }
-  e.set_loop_copy_emit(0);
+  e.set_loop_generic_copy_emit(0);
   const roundBaseline = runRound(roundBaselineCode, roundD0);
   const roundMatches = e.test_avg_matches();
-  e.set_loop_copy_emit(1);
+  e.set_loop_generic_copy_emit(1);
   const roundFused = runRound(roundFusedCode, roundD1);
   assert.strictEqual(e.test_avg_matches(), roundMatches + 1, 'rounded cursor average recognizes');
   assert.deepStrictEqual(roundFused, roundBaseline, 'rounded fusion preserves final state');
