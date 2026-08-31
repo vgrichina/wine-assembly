@@ -33,7 +33,59 @@ and the payloads must remain out of the repository and deployed site.
   or electronic distribution, so the corpus records only a checksum-pinned,
   local-only fetch recipe.
 
-## Grand Theft Auto demos and Rockstar Classics
+## ToyVM DOS game corpus
+
+This is a separate source collection from ToyVM's scene-demo corpus. The
+existing corpus is fetched from the Hornet scene archive by
+`tools/toyvm/fetch-demos.js` and the generated gallery offers Pouët lookup
+links. This collection is for official playable DOS game demos and shareware,
+including the companion files a game needs rather than selecting isolated
+executables from demo-scene archives.
+
+An official demo download is not automatically permission to republish it.
+Record the upstream page, exact archive URL and digest here first; keep the
+payload out of the repository and public corpus until its redistribution terms
+have been checked separately.
+
+### The Settlers II DOS demos
+
+Verified 2026-08-28. The [Settlers II downloads
+page](https://settlers2.net/download/) preserves six public DOS demo builds.
+The maintainer says the files came from Blue Byte's FTP server; the convenient
+ZIP files are modern repackagings, while the page also links original
+self-extracting distributions where they survive.
+
+| Release | Language | Preserved ZIP | Size | Notes |
+|---|---|---|---:|---|
+| *Die Siedler II: Erste Demo* v0.15 | German | [`S2DEMO15.ZIP`](https://settlers2.net/downloads/demo/s2demo15.zip) | 20.8 MB | First public pre-release build; includes extra images and video. |
+| *Die Siedler II: Erste Demo* v0.16 | German | [`S2DEMO16.ZIP`](https://settlers2.net/downloads/demo/s2demo16.zip) | 3.79 MB | Commonly preserved compact version of the first demo. |
+| *The Settlers II: Veni Vidi Vici* v1.01 | English | [`SETTLER2.ZIP`](https://settlers2.net/downloads/demo/settler2_v101.zip) | 50.0 MB | Playable demo with the intro video and files not needed to run it. |
+| *The Settlers II: Veni Vidi Vici* v1.02 | English | [`SETTLER2.ZIP`](https://settlers2.net/wp-content/uploads/2012/09/settler2_v102.zip) | 3.41 MB | Compact playable demo; the preferred first ToyVM game fixture. |
+| *The Settlers II: Mission CD* v1.51 | English | [`S2MISS.ZIP`](https://settlers2.net/wp-content/uploads/2012/09/s2miss.zip) | 9.91 MB | Includes a map editor limited to 15 minutes and unable to save. |
+| *The Settlers II: Gold Edition* v1.51 | English | [`S2GOLD.ZIP`](https://settlers2.net/wp-content/uploads/2012/09/s2gold.zip) | 9.75 MB | Closely related to the Mission CD demo, with a few differing files. |
+
+The v1.02 ZIP was downloaded and inspected locally. It is 3,579,784 bytes with
+SHA-256
+`b3b96739fc25e475c7f4ff610c1bef35df790bbf2aaf1d51dbe2261d65dd95b5`.
+It contains 181 entries and expands to 8,844,950 bytes. The launch path is
+`START.BAT` to `S2.EXE` (1,897,074 bytes), with `DOS4GW.EXE`, Miles sound
+drivers, maps, saved state, graphics, music and other files in sibling
+directories. A corpus importer must therefore retain the full extracted tree;
+`S2.EXE` alone is not a valid fixture.
+
+This is a DOS/4GW game, not a native Windows release. Its included readme asks
+for roughly 7 MB of XMS memory and VESA VBE support; its Windows 95 “Autorun”
+note describes launching the DOS program from Windows. The demo is a useful
+ToyVM target precisely because it broadens the corpus beyond tiny real-mode,
+single-file intros into a protected-mode, VESA, mouse, sound and filesystem
+workload. DOS Games Archive describes v1.02 as a playable demo containing the
+[tutorial and an exclusive single-player
+scenario](https://www.dosgamesarchive.com/download/the-settlers-ii-veni-vidi-vici).
+It is a demo, not shareware, and no explicit redistribution grant was found in
+the included `README.TXT`; keep the archive source-only unless a separate grant
+is established.
+
+### Grand Theft Auto demos and Rockstar Classics
 
 Verified 2026-08-30. The preserved official **Grand Theft Auto** DOS demo is
 the Liberty City, 24-bit high-resolution release. The exact 9,531,378-byte
