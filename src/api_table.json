@@ -25822,5 +25822,12 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 873642925
+  },
+  {
+    "id": 3090,
+    "name": "RegEnumKeyExA",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 3849730601
   }
 ]

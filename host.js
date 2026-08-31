@@ -1896,6 +1896,33 @@ class WineAssembly {
     });
   }
 
+  // A cooperative CreateThread owns a separate WASM instance but shares this
+  // browser turn. Its LoadLibrary yield cannot be serviced inside runSlice:
+  // resolving bytes is asynchronous, so do the same host work the CLI does
+  // after the scheduler hands control back. Without this, NSIS finishes most
+  // of Winamp's extraction and then parks forever on its first plug-in DLL.
+  async handleCooperativeThreadLoadLibraries() {
+    const manager = this.threadManager;
+    if (!manager || manager.backend !== 'cooperative' ||
+        typeof manager.threadsAwaitingLoadLibrary !== 'function') return 0;
+    const waiting = manager.threadsAwaitingLoadLibrary();
+    for (const thread of waiting) {
+      const exports = thread.instance && thread.instance.exports;
+      if (!exports) continue;
+      await ProcessBoot.handleLoadLibraryYield({
+        exports,
+        memoryBuffer: this.memory.buffer,
+        resourceHost: this,
+        log: console.log,
+        advanceGuestTime: ms => this._advanceGuestTickMs(ms,
+          this.hostCtx && this.hostCtx.sharedAudio),
+        findDll: (fileName, fullName) => this._findDllBytes(fileName, fullName, { exeDir: true }),
+      });
+      manager.publishWorkerGlobals(exports);
+    }
+    return waiting.length;
+  }
+
   // Finish (or cancel) a deferred last-window teardown. Called once per run
   // slice: a replacement top-level window cancels it, and the deadline
   // passing without one completes the stop.
@@ -2660,6 +2687,7 @@ class WineAssembly {
               }
             }
             if (perf) perf.mark('workers', performance.now() - perfThreadStart);
+            await self.handleCooperativeThreadLoadLibraries();
             const perfPresentStart2 = perf ? performance.now() : 0;
             if (self._presentDxIfDirty) self._presentDxIfDirty();
             if (self.renderer && self.renderer.flushRepaint) {

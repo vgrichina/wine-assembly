@@ -15799,6 +15799,46 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
+  ;; RegEnumKeyExA(hKey, index, name, &nameChars, reserved, class,
+  ;;               &classChars, &lastWriteTime) — 8 args stdcall.
+  ;; The storage backend already owns immediate-child ordering and ANSI copy
+  ;; semantics for RegEnumKeyA. Ex adds pointer-sized metadata around that same
+  ;; enumeration; Win9x's in-memory registry has no meaningful last-write time
+  ;; or class string here, so return deterministic empty values for both.
+  (func $handle_RegEnumKeyExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa_esp i32) (local $res i32) (local $class_g i32)
+    (local $class_len_g i32) (local $filetime_g i32)
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    (local.set $class_g (i32.load offset=24 (local.get $wa_esp)))
+    (local.set $class_len_g (i32.load offset=28 (local.get $wa_esp)))
+    (local.set $filetime_g (i32.load offset=32 (local.get $wa_esp)))
+    (local.set $res (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+    (if (i32.and (i32.eqz (local.get $arg4))
+          (i32.and (i32.ne (local.get $arg2) (i32.const 0))
+                   (i32.ne (local.get $arg3) (i32.const 0))))
+      (then
+        (local.set $res (call $host_reg_enum_key
+          (local.get $arg0) (local.get $arg1) (local.get $arg2)
+          (call $gl32 (local.get $arg3)) (i32.const 0)))
+        (if (i32.eqz (local.get $res))
+          (then
+            (call $gs32 (local.get $arg3)
+              (call $lstr_len (local.get $arg2) (i32.const 0)))
+            (if (local.get $class_len_g)
+              (then
+                (if (i32.and (local.get $class_g)
+                             (call $gl32 (local.get $class_len_g)))
+                  (then (call $gs8 (local.get $class_g) (i32.const 0))))
+                (call $gs32 (local.get $class_len_g) (i32.const 0))))
+            (if (local.get $filetime_g)
+              (then
+                (call $gs32 (local.get $filetime_g) (i32.const 0))
+                (call $gs32 (i32.add (local.get $filetime_g) (i32.const 4))
+                  (i32.const 0))))))))
+    (global.set $eax (local.get $res))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+  )
+
   ;; RegEnumValueA/W have eight arguments; args 5-7 are loaded from the guest stack.
   (func $handle_RegEnumValueA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa_esp i32)

@@ -440,6 +440,7 @@ UNIT=(
   test/test-baldurs-gate-compat-patches.js
   test/test-batch-clock.js
   test/test-browser-critical-section-yield.js
+  test/test-browser-cooperative-load-library.js
   test/test-browser-cooperative-crash-registers.js
   test/test-button-auto-check.js
   test/test-char-lower-w.js
@@ -609,6 +610,7 @@ E2E=(
   test/test-win98-audio-web.js
   test/test-explorer98-web.js
   test/test-local-candidate-desktop-web.js
+  test/test-installers-web.js
   test/test-civ2-local-web.js
   test/test-win16-web.js
   test/test-worker-guest.js
