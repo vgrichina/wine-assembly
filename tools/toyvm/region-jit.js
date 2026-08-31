@@ -129,9 +129,21 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3) {
     // below.
     const bad = t.ops.find(o => /^(int|into)/.test(o.name));
     if (bad) { why(`0x${head.toString(16)}: 0x${cur.toString(16)} contains ${bad.name}`); return null; }
-    for (const op of t.ops) { ops.push(op); nexts.push(fallThroughIp(op)); }
-    spans.push([cur, cur + ((t.nextWord - ((cur - blk.prog.arenaBase) >> 2)) << 2)]);
-    const last = t.ops[t.ops.length - 1];
+    // See fallArena: cut the block at the first branch whose fall-through lives
+    // somewhere other than the words behind it. Everything past that point is
+    // another block's code that readTrace ran into.
+    let cut = t.ops.length;
+    for (let i = 0; i < t.ops.length - 1; i++) {
+      const fa = fallArena(t.ops[i]);
+      if (fa === null) continue;
+      if (fa !== blk.prog.arenaBase + (t.ops[i + 1].at << 2)) { cut = i + 1; break; }
+    }
+    const tops = t.ops.slice(0, cut);
+    const truncated = cut < t.ops.length;
+    const endWord = truncated ? t.ops[cut].at : t.nextWord;
+    for (const op of tops) { ops.push(op); nexts.push(fallThroughIp(op)); }
+    spans.push([cur, cur + ((endWord - ((cur - blk.prog.arenaBase) >> 2)) << 2)]);
+    const last = tops[tops.length - 1];
 
     // A DIRECT CALL IS AN EDGE LIKE ANY OTHER, and inlining it is the whole
     // reason to bother: the exit census found that call-free hot regions cover
@@ -172,7 +184,10 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3) {
       if (ops.length > maxOps) { why(`0x${head.toString(16)}: over ${maxOps} ops without closing`); return null; }
       continue;
     }
-    if (t.end !== 'jmp') { why(`0x${head.toString(16)}: 0x${cur.toString(16)} ends ${t.end}, not jmp`); return null; }
+    // A truncated block ends at the branch the cut found, which IS a
+    // terminator; `t.end` describes the op readTrace ran on to and no longer
+    // applies.
+    if (!truncated && t.end !== 'jmp') { why(`0x${head.toString(16)}: 0x${cur.toString(16)} ends ${t.end}, not jmp`); return null; }
     const at = TAKEN_AT.get(last.fn);
     if (at === undefined) { why(`0x${head.toString(16)}: terminator ${last.name} has no edge tail`); return null; }
     // The terminator's arena target sits one slot in front of its guest ip.
@@ -264,6 +279,34 @@ function fallThroughIp(op) {
   const tail = op.args.length - (at - 1);
   if (tail !== 3 && tail !== 4) return null;
   return op.args[op.args.length - 1];
+}
+
+// WHERE A BRANCH'S FALL-THROUGH ACTUALLY LIVES, as an ARENA address, or null
+// when the operand tail does not name one.
+//
+// This is the difference between a block that ends at a branch and one that
+// carries its fall-through inline, and it is not a question a name test can
+// answer. `readTrace` stops on a handler whose NAME starts with jmp/jcc/call/
+// ret/int, and `loop`, `loop32` and every fused pair -- `dec_r8_jnz`, the
+// traced twins -- match none of those. So a "block" it hands back can run
+// straight past its own terminator and keep reading whatever arena words
+// happen to sit behind it, which are the NEXT BLOCK THE COMPILER DECODED and
+// not the branch's fall-through at all.
+//
+// Nothing noticed, because the region left at the unlowered branch and never
+// executed the tail. Lowering runs it inline, which is why lowering "broke"
+// eleven of the fifteen wrong frames in the corpus census while every
+// optimization switch was individually exonerated: the ops after the branch
+// were the wrong ops all along.
+//
+// A three-word tail is stitched-in by construction and needs no check. A
+// four-word tail names its fall-through block explicitly, so the words behind
+// the branch are its fall-through only if they start exactly there.
+function fallArena(op) {
+  const at = TAKEN_AT.get(op.fn);
+  if (at === undefined) return null;
+  if (op.args.length - (at - 1) !== 4) return null;
+  return op.args[at + 1];
 }
 
 // Both guest edges of every branch in the region: the taken ip and, when the
