@@ -171,20 +171,88 @@ apply here and both are cheaper to be right about.
 
 **Design B — wrap the loop, run the same ops.** No shape library: if a block
 branches to its own head, a wrapper op drives the body in a native loop. It
-removes, per iteration, N copies of the `$next` preamble *plus one trip through
-the back edge* — the branch handler returning out to `$run`, the run preamble,
-a `cache_lookup` — and that back-edge round trip is its largest single item. It
-keeps one indirect dispatch per op, so it cannot approach A where A fires; but
-it **cannot be semantically wrong**, since it runs the same ops in the same
-order, and it fires on every loop rather than on 8.1% of them. Its payoff is
-largest on short bodies, and the toy VM's are short: 2-7 ops is typical here.
+**cannot be semantically wrong**, since it runs the same ops in the same order,
+and it fires on far more than 8.1% of the corpus — a wrapper does not care about
+streams, aliasing or access widths, so the only disqualifier is a body op that
+re-enters the emulator. `loop-match.js` scores that population separately:
 
-**Design C — B on the `switch` shell.** The toy VM already has a dispatch shell
-that is one giant `br_table` with every handler body inlined into a single
-function, so it pays no call frame, no stack-limit check and no interrupt check
-per op. B's own accounting says it removes everything except the indirect
-*call* — and a `switch` build has no indirect call, only an indirect branch
-inside one function. So B-on-switch strictly dominates B-on-tailcall.
+```
+wrappable (B/C): 6005 sites, 57431 samples 41.6% of the run
+  mean body 15.5 ops behind one wrapper dispatch
+  not wrappable:   953 sites  ret        \
+                   934 sites  retf_imm    |  the backward-edge walk stitching
+                   609 sites  call_rel    |  across a function boundary
+```
+
+Ports are deliberately *allowed* — a port read leaves to the host and comes
+straight back without compiling anything, so it cannot flush the arena under a
+wrapper holding `ip` in a local.
+
+**And a generic wrapper is still worth approximately nothing, which is the
+finding.** The saving was supposed to be N `$next` preambles plus *one trip
+through the back edge* — the branch handler returning out to `$run`, the run
+preamble, a `cache_lookup` — and that round trip was its largest single item.
+**It does not exist in this VM.** Branch targets are resolved to arena addresses
+by a compile-time fixup, so `GO()` is:
+
+```wat
+(global.set $gip <guest>)
+(if <budget and smc ok> (then (global.set $ip <arena>)) (else (call $slice_exit)))
+```
+
+A back edge is a store to `$ip`. What is left for a wrapper to remove is the
+per-op preamble, which every shell spells the same way:
+
+```wat
+(global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+(if (global.get $halt) (then (return)))
+(local.set $fn (i32.load (global.get $ip)))
+(global.set $ip (i32.add (global.get $ip) (i32.const 4)))
+(return_call_indirect $h (type $void) (local.get $fn))
+```
+
+— a decrement, a test, an add. The indirect dispatch stays, once per op. That is
+the same trade [toyvm-superinstructions.md](toyvm-superinstructions.md) rejected
+for the block-head "charge the whole block's steps at once" op, and the same one
+the `$next` dispatch work measured at zero twice over: **the cost is the
+mispredicted indirect branch, not the bookkeeping around it.**
+
+**Design C — B on the `switch` shell** was the attempt to fix that, on the
+grounds that a `switch` build has no indirect *call*, only an indirect branch
+inside one function. It does not help either, and for the same reason: the
+branch is still there and still mispredicted. Read
+[toyvm-dispatch-shootout.md](toyvm-dispatch-shootout.md) before assuming a
+number from the shell alone — `switch` measured +11.9% corpus geomean but
+**+5.4% on the programs that actually rendered**, bimodally (DSTNFO +40.1%,
+COPPER −26.0%, both reproduced).
+
+So the only wrapper worth having is one that removes the dispatch, which means
+**inlining the body** — and that is codegen, not a table swap.
+
+**Inlining per body *shape*, statically, is capped too.** `loop-match.js
+--body-shapes` finds 500 distinct matched body shapes corpus-wide:
+
+```
+  top    4 shapes cover 38.3% of matched weight  (= 3.1% of the whole run)
+  top   16 shapes cover 81.8% of matched weight  (= 6.6% of the whole run)
+  top   32 shapes cover 94.0% of matched weight  (= 7.6% of the whole run)
+```
+
+32 generated handlers to reach 7.6% of the run, against a generic wrapper that
+covers 41.6% and buys nothing. And the hottest shapes are single-program — the
+top one is four sites in `daretro.exe`. A static shape library is the worst of
+both.
+
+That leaves the dispatch-removing wrapper **generated at run time**, per hot
+loop, which is [toyvm-trace-jit.md](toyvm-trace-jit.md)'s territory: its tier 3
+lowers the body to micro-ops that do not match x86 — the addressing-mode
+`br_table` folded away, the registers living in wasm locals for the length of
+the loop — and measures 1.16-1.23x on top of tier 2's own optimizer.
+
+(`--body-ops` sizes the other static option, a second dispatch site with a
+smaller arm set: 64 arms cover 98.1% of matched loop-body weight, so it is
+affordable. It is also pointless for the reason above — the arms would still be
+generic, so they would still read globals and still dispatch indirectly.)
 
 Read [toyvm-dispatch-shootout.md](toyvm-dispatch-shootout.md) before assuming a
 number: `switch` measured +11.9% corpus geomean but **+5.4% on the programs
@@ -212,5 +280,15 @@ Nothing is folded. Two tools are built and are what the decision rests on:
 `tools/toyvm/handler-effects.js` (what each handler touches, 87.2% readable)
 and `tools/toyvm/loop-match.js` (the predicate, 8.1%).
 
-The order that follows from the numbers: **B or C first**, because they fire on
-every loop and cannot be wrong, then A on the shapes that match.
+The order that followed from the population numbers was "B or C first, because
+they fire on every loop and cannot be wrong, then A on the shapes that match".
+**That order is withdrawn.** B and C fire on 41.6% and cannot be wrong, and also
+cannot pay: this VM resolves branch targets to arena addresses at compile time,
+so the back-edge round trip they were supposed to remove does not exist, and
+what is left is three trivial instructions per op with the mispredicted indirect
+dispatch untouched.
+
+What replaces it: the wrapper has to remove the dispatch, so it has to inline,
+so it has to be generated — at run time, because 500 body shapes defeat a static
+library. `handler-effects.js` and `loop-match.js` remain the right front end for
+picking *which* loop; the back end is [the trace JIT](toyvm-trace-jit.md).
