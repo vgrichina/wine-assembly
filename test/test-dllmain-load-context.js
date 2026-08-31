@@ -45,6 +45,7 @@ function captureSleepResume() {
   let esp = savedEsp;
   let runs = 0;
   let sleepPending = false;
+  let advancedMs = 0;
   const e = {
     memory,
     get_image_base: () => imageBase,
@@ -58,6 +59,7 @@ function captureSleepResume() {
       sleepPending = false;
       return value;
     },
+    get_sleep_timeout: () => 500,
     set_eip: value => { eip = value >>> 0; },
     set_esp: value => { esp = value >>> 0; },
     run: () => {
@@ -71,8 +73,10 @@ function captureSleepResume() {
     },
   };
 
-  callDllMain(e, 0x0069d000, 0x006c0aa0);
-  return { runs, eip, esp };
+  callDllMain(e, 0x0069d000, 0x006c0aa0, null, {
+    advanceGuestTime: ms => { advancedMs += ms; },
+  });
+  return { runs, eip, esp, advancedMs };
 }
 
 assert.deepStrictEqual(captureDllMainArgs({ lpReserved: 1 }),
@@ -91,7 +95,7 @@ assert.deepStrictEqual(captureDllMainArgs({ reason: 2 }, { sparseStack: true }),
   [0, 0x0069d000, 2, 0],
   'DLL_THREAD_ATTACH must push onto a sparse worker stack through guest_to_wasm');
 assert.deepStrictEqual(captureSleepResume(),
-  { runs: 2, eip: 0x00401000, esp: 0x00420000 },
-  'DllMain must resume after a cooperative Sleep before restoring caller state');
+  { runs: 2, eip: 0x00401000, esp: 0x00420000, advancedMs: 500 },
+  'DllMain must advance guest time and resume a cooperative Sleep before restoring caller state');
 
 console.log('PASS  DllMain receives the Windows static/dynamic load context');

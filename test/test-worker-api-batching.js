@@ -19,6 +19,26 @@ const ROOT = path.resolve(__dirname, '..');
 // fixed 512MB address space. SharedArrayBuffer reserves this virtually; the
 // test touches only one 256-byte control block.
 const memory = { buffer: new SharedArrayBuffer(8192 * 65536) };
+
+// DllMain runs synchronously inside the guest Worker. Its Sleep continuation
+// therefore advances the authoritative host clock through a data-only request,
+// then reads the published result locally before executing another x86 block.
+const clockMemory = { buffer: new SharedArrayBuffer(8192 * 65536) };
+let authoritativeTick = 125;
+const clockMain = RPC.createMainBroker(clockMemory, {}, {}, {});
+clockMain.publish({ tickMs: authoritativeTick });
+const clockWorker = RPC.createWorkerImports(clockMemory, {
+  get_ticks: { params: [], results: ['i32'] },
+}, message => {
+  assert.strictEqual(message.t, 'advanceGuestTime');
+  authoritativeTick += message.ms;
+  clockMain.serveClockAdvance(message.slot, authoritativeTick);
+});
+assert.strictEqual(clockWorker.imports.host.get_ticks(), 125);
+assert.strictEqual(clockWorker.advanceGuestTime(500), 625);
+assert.strictEqual(clockWorker.imports.host.get_ticks(), 625,
+  'Worker GetTickCount observes a synchronous DllMain Sleep before resuming');
+
 const sigs = {
   log: { params: ['i32', 'i32'], results: [] },
   log_i32: { params: ['i32'], results: [] },

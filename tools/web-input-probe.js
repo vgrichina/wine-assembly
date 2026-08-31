@@ -146,7 +146,13 @@ function startStaticServer() {
     if (file !== root && !file.startsWith(root + path.sep)) { res.writeHead(403); res.end('forbidden'); return; }
     fs.readFile(file, (error, data) => {
       if (error) { res.writeHead(error.code === 'ENOENT' ? 404 : 500); res.end(error.code || 'read error'); return; }
-      res.writeHead(200, { 'Content-Type': mimeType(file), 'Cache-Control': 'no-store' });
+      const isolationHeaders = THREADS ? {
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+      } : {};
+      res.writeHead(200, Object.assign({
+        'Content-Type': mimeType(file), 'Cache-Control': 'no-store',
+      }, isolationHeaders));
       res.end(data);
     });
   });

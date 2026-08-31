@@ -26,7 +26,7 @@ function claimAudioSession() {
 if (typeof window !== 'undefined') window.claimAudioSession = claimAudioSession;
 
 class WineAssembly {
-  static SOURCE_VERSION = '243';
+  static SOURCE_VERSION = '244';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   static _nextProcessId = 1000;
 
@@ -224,6 +224,19 @@ class WineAssembly {
     st.lastReturnedMs = tick;
     st.callsInBatch = (Number.isFinite(st.callsInBatch) ? st.callsInBatch : 0) + 1;
     return tick;
+  }
+
+  _advanceGuestTickMs(ms, sharedAudio) {
+    const requested = Number(ms);
+    const delta = Number.isFinite(requested)
+      ? Math.min(0x7FFFFFFF, Math.max(0, Math.floor(requested))) : 0;
+    if (!delta) return;
+    const st = this._guestTickState(sharedAudio);
+    const current = Math.max(Number.isFinite(st.batchMs) ? st.batchMs : 0,
+      Number.isFinite(st.lastReturnedMs) ? st.lastReturnedMs : 0);
+    const advanced = (current + delta) % 0x80000000;
+    st.batchMs = advanced;
+    st.lastReturnedMs = advanced;
   }
 
   _guestAudioClockMs(sharedAudio) {
@@ -1258,11 +1271,15 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=13',
+        workerUrl: 'lib/guest-worker.js?v=14',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
         tickMs: () => self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio),
+        advanceGuestTime: ms => {
+          self._advanceGuestTickMs(ms, self.hostCtx && self.hostCtx.sharedAudio);
+          return self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio);
+        },
       });
       await worker.start();
       this.guestWorker = worker;
@@ -1587,6 +1604,8 @@ class WineAssembly {
       results = await this.guestWorker.loadDlls(readyConfigs, exeBytes, opts);
       if (register) register(readyConfigs, results);
     } else {
+      opts.advanceGuestTime = ms => this._advanceGuestTickMs(ms,
+        this.hostCtx && this.hostCtx.sharedAudio);
       results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, readyConfigs, console.log, opts);
     }
     // Cooperative threads get their DLL set (and the DllMain entry caller) from
@@ -1640,6 +1659,8 @@ class WineAssembly {
       exeBytes: this._exeBytes || null,
       resourceHost: this,
       log: console.log,
+      advanceGuestTime: ms => this._advanceGuestTickMs(ms,
+        this.hostCtx && this.hostCtx.sharedAudio),
       findDll: (fileName, fullName) => this._findDllBytes(fileName, fullName, {
         vfsPaths: [fullName.toLowerCase(), 'c:\\' + fileName, 'c:\\plugins\\' + fileName],
       }),
@@ -1802,6 +1823,8 @@ class WineAssembly {
       memoryBuffer: this.memory.buffer,
       resourceHost: this,
       log: console.log,
+      advanceGuestTime: ms => this._advanceGuestTickMs(ms,
+        this.hostCtx && this.hostCtx.sharedAudio),
       findDll: (fileName, fullName) => this._findDllBytes(fileName, fullName, { exeDir: true }),
     });
   }
