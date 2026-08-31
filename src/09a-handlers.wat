@@ -2010,6 +2010,14 @@
   ;; 26: CloseHandle(hObject) — 1 arg stdcall, return TRUE
   (func $handle_CloseHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $console_result i32)
+    (local.set $console_result (call $console_handle_close (local.get $arg0)))
+    (if (i32.ge_s (local.get $console_result) (i32.const 0))
+      (then
+        (global.set $eax (local.get $console_result))
+        (if (i32.eqz (local.get $console_result))
+          (then (global.set $last_error (i32.const 6)))) ;; ERROR_INVALID_HANDLE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (local.set $console_result (call $console_buffer_close (local.get $arg0)))
     (if (i32.ge_s (local.get $console_result) (i32.const 0))
       (then
@@ -2786,9 +2794,12 @@
 
   ;; 50: GetFileType(hFile) — FILE_TYPE_CHAR=2 for console, FILE_TYPE_DISK=1 for files
   (func $handle_GetFileType (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $resolved i32)
+    (local.set $resolved (call $console_handle_resolve (local.get $arg0)))
     (global.set $eax
       (if (result i32) (i32.or
-            (i32.le_u (local.get $arg0) (i32.const 3))
+            (i32.and (i32.ge_u (local.get $resolved) (i32.const 1))
+                     (i32.le_u (local.get $resolved) (i32.const 3)))
             (i32.ne (call $console_buffer_record (local.get $arg0)) (i32.const 0)))
         (then (i32.const 2))   ;; FILE_TYPE_CHAR (console)
         (else (i32.const 1)))) ;; FILE_TYPE_DISK (regular file)
@@ -2806,7 +2817,7 @@
         (if (i32.and (global.get $eax) (i32.ne (local.get $arg3) (i32.const 0)))
           (then (call $gs32 (local.get $arg3) (local.get $arg2))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 1))
+    (if (i32.eq (call $console_handle_resolve (local.get $arg0)) (i32.const 1))
       (then
         (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (local.get $arg2))))
         (global.set $eax (i32.const 1))
@@ -10353,13 +10364,23 @@ HookEx — no next hook in chain, return 0
     ;; objects already use stable process-local IDs and may share their value.
     (if (local.get $arg3)
       (then
-        (local.set $duplicate (local.get $arg1))
-        (if (i32.eq (local.get $arg1) (i32.const 0xFFFFFFFE))
+        (if (i32.or
+              (i32.and (i32.ge_u (local.get $arg1) (i32.const 1))
+                       (i32.le_u (local.get $arg1) (i32.const 3)))
+              (i32.eq (i32.and (local.get $arg1) (i32.const 0xFFFF0000))
+                      (global.get $CONSOLE_HANDLE_TAG)))
           (then
-            (local.set $duplicate
-              (call $host_duplicate_current_thread (global.get $current_thread_id)))))
+            (local.set $duplicate (call $console_handle_duplicate (local.get $arg1))))
+          (else
+            (local.set $duplicate (local.get $arg1))
+            (if (i32.eq (local.get $arg1) (i32.const 0xFFFFFFFE))
+              (then
+                (local.set $duplicate
+                  (call $host_duplicate_current_thread (global.get $current_thread_id)))))))
         (if (local.get $duplicate)
           (then (call $gs32 (local.get $arg3) (local.get $duplicate))))))
+    (if (i32.eqz (local.get $duplicate))
+      (then (global.set $last_error (i32.const 6)))) ;; ERROR_INVALID_HANDLE
     (global.set $eax (i32.and
       (i32.ne (local.get $arg3) (i32.const 0))
       (i32.ne (local.get $duplicate) (i32.const 0))))
