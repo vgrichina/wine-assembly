@@ -582,6 +582,69 @@ Process: a third stale-shared-index incident (19 foreign reversal entries,
 caught and restored before staging) — the pattern now has a name on the board
 and authors check for it.
 
+**By 04:30 (+58 commits, HEAD `7ffa5af7`)** the window belongs to the WATX
+migration and to item 11. Item 11's OPEN list shrank from 12 DX enumerations
+to 8 in seven closures the fix sessions recorded in this doc themselves, and
+the sample I re-verified holds in code: viewport lights `14b75f42` (eleven
+LIGHT sites in `09aa`), EnumAttachedSurfaces `bfa0f9b3`, DirectInput
+enumeration/object-info/buffer-size `ba441430`/`c559b8fd`/`9c91f509`
+(reentrant `DIENUM_STOP` resume at `09a8:6086`), EnumSurfaces
+`f55bd764`+`c6a262e0` (a real CANBECREATED temporary-surface path,
+`09a8:2638-2711`) — each re-pinning the ratchet in its own commit (524→506;
+now **505** at HEAD after `34b4f08f` gave CreateProcessA a real body and
+`49305a19` ratcheted), with tier rows for the new tests
+(`run-all.sh:338-340,351-352`). The Pick/GetPickRecords WIP I was watching
+landed in `15b60e49` — before my last tick, so that watch item closes as
+already-stale. The WATX migration ran as a coordinated multi-milestone push:
+`src/main.watx` is now the authoritative source order gated against
+`WAT_FILES` (`38ef42b4`), the `(module)` wrapper moved out of the sources
+into `concat-wat.js` (`b1c221d8`) behind a strict per-fragment paren gate
+(`e5327df2`, wired at `build.sh:17`), the vendored compiler is
+provenance-sealed with REQUIRED_FILES hard-coded in code after a
+manifest-shrink exploit was found and closed (`f2ef3390`), a four-artifact
+differential matrix (`4aeb0970`) plus a decoded-ABI comparator (`35a405fb`,
+validation moved into the library on review follow-up, `ab5544f9`) gate
+legacy-vs-WATX identity, and all eight census gaps closed (`7ffa5af7`) — with
+two verdicts reversed by the agents' own adversarial checks: G5's detached
+`else` was *behavior-changing*, not cosmetic (`compile-wat.js` inlines a
+standalone else, so a Win16 module id was clobbered unconditionally on the
+VBRUN100 path; re-attached in `65961f32`, +1 byte, 28 Win16 tests identical),
+and G8's bare `(drop)` at `09a8:4449` is load-bearing (deletion proof:
+stack-verify failure in `$dx_blit_entry_rect_to_hdc`; census corrected
+`3aa8310f`). Two new findings of my own from the fallout. **A.9:**
+`b1c221d8` silently broke every `extraWat` test harness — the
+`source.replace(/\n\)\s*$/…)` splice matches nothing once the trailing paren
+is gone, so injected exports vanish and tests die with a misleading
+"`e.test_x` is not a function". `49305a19` fixed `render-helper.js` (covers
+186 tests), but **18 test files still carry a private copy of the dead
+splice** (verified by grep at tick time: `test-compile-wat-unknown-name`,
+`test-directdraw-surface3-desc`, `test-ole-storage`, `test-vsnprintf`, 14
+more) — one line each. **A.10:** `run-all.sh` at HEAD names six tests that
+exist only as untracked WIP in the shared worktree (`test-abedemo-gameplay`,
+`test-aoe2-gameplay`, `test-browser-critical-section-yield`,
+`test-directdraw-enum-lowres`, `test-keyboard-hook`,
+`test-mem-utils-hidden-shared-buffer` — all six re-verified untracked), so
+`check-test-manifest` is red on every clean checkout until their owners
+commit. Process: the stale-index pattern escalated to a fourth incident that
+left **HEAD unbuildable in a clean worktree for about two hours** — an
+index-collision commit swept half of the DX process-state conversion
+(committed `09a8` removed `$dx_coop_hwnd` while committed `09ad:197` still
+set it), caught on the board at 01:59 and finished properly by `e87d8325`,
+which also fixed the real regression the same WIP shipped: `36c78d79` gated
+BeginPaint's fErase on the erase-owed NC bit, but storm creates its menu
+dialog hidden and repaints only via `InvalidateRect(NULL, FALSE)`, so the bit
+never re-arms and Diablo's flaming menu went black; the board's
+clean-worktree bisection first proved the symptom dirty-tree-only, then
+caught it going live at the half-landing. Honesty note from toyvm: the "2x on
+daretro" in `041ab7cb` was retracted as an artifact of keying trace regions
+by bare ip (`3a4332bc`/`0559c6df` key by cs:ip; honest result across 7
+demos: +2.2% to −8.1%, a null). Still open: 3.10, 3.12, Pass-2 items
+8/9/12/18, A.2 parity/FPS A/B, A.5, A.8, the new A.9/A.10, rec 8
+(re-checked: no `bundle` reference in `build.sh`), and the BYO-media review —
+that subsystem keeps growing unreviewed (`29dab90a` writable C:\ overlay,
+`34b4f08f`/`a5b2928c` installer chain launches from the caller's VFS,
+`853cf729` installer UI flows in both browser modes).
+
 **New in this window, ranked.**
 
 **A.1 FIXED `d5cf1afb`: `bundle-browser.js` now discovers modules by walking
