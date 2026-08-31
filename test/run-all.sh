@@ -354,6 +354,7 @@ UNIT=(
   test/test-d3dim-pick-records.js
   test/test-d3dim-viewport-background-texture.js
   test/test-dx-blank-primary-holdover.js
+  test/test-dx-live-surface-index.js
   test/test-dx-present-window-placement.js
   test/test-dx-vtable-worker-sync.js
   test/test-disabled-dialog-controls.js

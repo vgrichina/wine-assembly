@@ -459,6 +459,16 @@
     (call $lock_acquire (global.get $LOCK_DX))
     (local.set $r (call $dx_alloc_locked (local.get $type)))
     (call $lock_release (global.get $LOCK_DX))
+    ;; Kind 21 publishes object allocation to the host-side live-surface
+    ;; index. Keep the import outside LOCK_DX: a real Worker import is an RPC
+    ;; and no thread may park while holding this spinlock.
+    (if (i32.and
+          (i32.ne (local.get $r) (i32.const 0))
+          (i32.eq (local.get $type) (i32.const 2))) ;; DDSurface only
+      (then (call $host_dx_trace
+        (i32.const 21)
+        (i32.div_u (i32.sub (local.get $r) (global.get $DX_OBJECTS)) (i32.const 32))
+        (local.get $type) (i32.const 0) (i32.const 0))))
     (local.get $r))
 
   (func $dx_alloc_locked (param $type i32) (result i32)
@@ -916,8 +926,17 @@
   ;; permanently retired: $dx_alloc skips slots with a live wrapper, even
   ;; when the DX_OBJECTS entry type is 0.
   (func $dx_free (param $entry_wa i32)
+    (local $type i32)
+    (local.set $type (i32.load (local.get $entry_wa)))
     ;; Zero the DX_OBJECTS entry type (marks it logically freed; wrapper stays).
-    (i32.store (local.get $entry_wa) (i32.const 0)))
+    (i32.store (local.get $entry_wa) (i32.const 0))
+    ;; Kind 22 lets the browser stop considering this slot immediately. A
+    ;; later recycled allocation publishes kind 21 again.
+    (if (i32.eq (local.get $type) (i32.const 2)) ;; DDSurface only
+      (then (call $host_dx_trace
+        (i32.const 22)
+        (i32.div_u (i32.sub (local.get $entry_wa) (global.get $DX_OBJECTS)) (i32.const 32))
+        (i32.const 0) (i32.const 0) (i32.const 0)))))
 
   ;; ── Init COM vtables ─────────────────────────────────────────
   ;; Allocate thunks for each COM method and populate the vtable blocks.

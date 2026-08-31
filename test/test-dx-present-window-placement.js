@@ -73,7 +73,7 @@ const renderer = {
 };
 
 let windowedDeviceHwnd = 0;
-const { gdi } = createHostImports({
+const { host, gdi } = createHostImports({
   getMemory: () => memory,
   exports: {
     get_main_hwnd: () => hwnd,
@@ -114,6 +114,7 @@ dv.setUint32(screenEntry, 0, true);   // release the primary
 windowedDeviceHwnd = deviceChild;
 const clientBits = 0x50000;
 makeSurface(2, CLIENT.w, CLIENT.h, clientBits);
+host.dx_trace(21, 2, 2, 0, 0); // common $dx_alloc DDSurface lifecycle record
 bytes[clientBits + 0] = 0x90;                     // its own (0,0)
 bytes[clientBits + CLIENT.w * CLIENT.h - 1] = 0x70; // and its bottom-right
 

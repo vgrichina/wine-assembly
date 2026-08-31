@@ -88,14 +88,14 @@ hour.
 | 4 | test-manifest gate | DONE | `build.sh:25`; 677 files, `QUARANTINE=()` empty (`run-all.sh:748`) |
 | 5 | DLL_TABLE bound | DONE, WAT side too | `08b-dll-loader.wat:31` refuses before any write; `01-header.wat:2548` |
 | 6 | `i32.and` gate | DONE | `build.sh:45`, green |
-| 7 | A/W + family divergences | DONE | EnumDisplaySettings `09a3:1243-1310` (`d079ab95`); GetCommandLineA cached `09a:549-553`; RegisterClipboardFormatW interns `10-helpers:3602`; RegSetValue shared `09a:10443` (`1cb53d8b`); GetTextExtentPointW wide `09a4:2241-2252`; CreateWindowExW wide CREATESTRUCT `09a:7648-7689`, `09a5:569-573` (`67bc959c`); listbox WM_VSCROLL/WHEEL `09c3:11530,11543` (`84fabc9b`); MoveWindow bRepaint `09a:5083-5087` — WM_MOVE still never posted (`:5140`) |
+| 7 | A/W + family divergences | DONE | EnumDisplaySettings `09a3:1243-1310` (`d079ab95`); GetCommandLineA cached `09a:549-553`; RegisterClipboardFormatW interns `10-helpers:3602`; RegSetValue shared `09a:10443` (`1cb53d8b`); GetTextExtentPointW wide `09a4:2241-2252`; CreateWindowExW wide CREATESTRUCT `09a:7648-7689`, `09a5:569-573` (`67bc959c`); listbox WM_VSCROLL/WHEEL `09c3:11530,11543` (`84fabc9b`); MoveWindow/SetWindowPos preserve repaint flags and derive changed-only WM_MOVE/WM_SIZE (`5d0abb15`, `test-movewindow-child-size.js`) |
 | 8 | symbolic handler/api ids | OPEN, grew | 371 bare literals in `07-decoder.wat` (+37 in `07b`), H440/H441 added as bare `:666,:706`; stale "handler 422/424" comments still at `07-decoder.wat:50,152,416,2132` and `13-exports.wat:3037,3045` (422/424 are now `$th_mmx_rr/_mr`); `0xCACA0010` hand-stored `09a8:985,1018` |
 | 9 | app-literal gate / `copySuperops` | PARTIAL | MW3 VAs are out of the decoder (byte-hash predicates, §P3-3.9); `browser-shell.js:566` honors the flag; **`test/run.js --app=mw3` still does not** (only `--copy-superops`, `:188,4035,7429`); no allowlist tool |
 | 10 | one globals table / hwnd base / `yr===9` | PARTIAL | `lib/worker-imports.js` exists but is a *ctx-key* list, not the WASM-global table; setter sets still diverge (§P3-3.3); hwnd base still two formulas (`thread-manager.js:416-418` vs `:1040`); duplicate `yr === 9` moved to `thread-manager.js:2276-2287` / `:2303-2309` (second still unreachable) |
 | 11 | silent stubs | PARTIAL | DONE: WaitMessage `09a:13588-13600` (`5237ac44`), ReleaseMutex `09a:12056-12071` (`1e76e8ab`), HeapCreate per-call `09a:2123`, CreateConsoleScreenBuffer `09a7:2914`, CreateIconFromResourceEx `09a:11456`, DirectDrawEnumerateA CACA `09a8:1043`, EnumDisplayModes `09a8:1833`. RegisterHotKey FIXED `2b27e407` (real registration list, modifier matching, WM_HOTKEY through the queue — `09a:11184-11238`). OPEN: hooks `09a7:488` / `09a:9348-9360`; DDE trio `09a:1188,1198,1245`; 12 DX enumerations returning 0 without a callback (`09a8:2410,5279,5357`…) — DirectPlayEnumerate[A] FIXED `0064c7fc`, pushing the real DPSPGUID_TCPIP provider through the guest callback (`09a7:2810-2905`), ratchet re-pinned in the same commit; 4 viewport lights in `09aa` |
 | 12 | dead code / tools / requires | PARTIAL | WAT dead list deleted (`71191bed`); `wat-func.js` still has no `--dead`; all 6 superseded tools present; 3 broken requires unchanged (`tools/trace-assert.js:6`, `render-desktop.js:9`, `test/call-func.js:10`); `win16-v86-compare.js:265` still greps `[CreateWindowEx` |
 | 13 | per-block counters / atomic gate | OPEN | `04-cache.wat:741,797`, `05-alu.wat:773`, `13-exports.wat:52-58` |
-| 14 | cached DataView / live-surface set | **WORSE** | `DX_SLOT_COUNT` 1024→**4096** (`host-imports.js:386`, `09a8:18`, `6fd7b657`); `_presentBestDxOffscreen :964-978` still walks every slot with a DataView each; GL `u32At` (`gl-command-stream.js:55-57`) now also called from the immediate path (`:129,144,215,219,231,240,269,271`) with `_memoryView()` 60 lines above it; `gl-compat.js:471-476` `_dv/_stackDv` per accessor |
+| 14 | cached DataView / live-surface set | DONE | GL command decoding caches one memory view (`f4e5b79b`). DirectDraw now caches its view too, bootstraps the 4096-slot table once, then walks an allocation/free/traffic-fed live set; the common WAT DX allocator covers DirectDraw and D3D9, including high recycled slots (`test-dx-live-surface-index.js`) |
 | 15 | SMC bitmap inline | OPEN | `03-registers.wat:374,393,404`; `$code_page_clear` deleted rather than wired |
 | 16 | `$mmx_binop` br_table | OPEN | `06c-mmx.wat:262` |
 | 17 | free lists / `_flush_if_safe` | OPEN | `13-exports.wat:64-68`; `04-cache.wat:889-896` now `fn >= 442` |
@@ -237,14 +237,21 @@ balance checker, and `02b`-style edits are exactly where it is reached for.
 Either its string/comment stripping (`:43-47`) is wrong or a part has a stray
 `)` the compiler tolerates; both are worth knowing.
 
-**3.8 Performance items went the wrong way, knowingly.** Item 14: the DX slot
-table grew to 4096 (`6fd7b657`) with the per-frame full walk untouched, so a
-60 fps DirectDraw app now builds up to ~4k `DataView`s per dirty frame — four
-times Pass 2. The GL immediate-mode compiler (`gl-command-stream.js:36-90,
-151-240`, good design) feeds `u32At` from eight new call sites and pushes a JS
-array per vertex (`:162`) that is copied twice (`:89,:187`); `_setColor`
-allocates per `glColor*` (`:137-149`). `gl-compat.js:298-309` does three
-`.slice(-1)` per draw. `renderer-input.js:303-306` now posts a `WM_NCHITTEST` on
+**3.8 Performance items went the wrong way, knowingly — PARTIAL.** The two
+memory-view/table regressions are now closed. `f4e5b79b` gives the buffered GL
+command path one identity-checked `DataView`. DirectDraw's fallback presenter
+now does one compatibility census of the 4096-slot table, then walks only an
+allocation/free/Lock/Blt/Present-fed live set with one cached view. The common
+`$dx_alloc`/`$dx_free` path publishes lifecycle records after releasing
+`LOCK_DX`, so DirectDraw and D3D9 surfaces created in real Workers are covered;
+freed/recycled high slots and an allocation observed before CreateSurface has
+filled its fields are regression-tested (`test-dx-live-surface-index.js`).
+
+Allocation leftovers remain. The GL immediate-mode compiler
+(`gl-command-stream.js:36-90,151-240`, good design) pushes a JS array per vertex
+(`:162`) that is copied twice (`:89,:187`); `_setColor` allocates per `glColor*`
+(`:137-149`). `gl-compat.js:298-309` does three `.slice(-1)` per draw.
+`renderer-input.js:303-306` now posts a `WM_NCHITTEST` on
 **every** mousemove ahead of `WM_SETCURSOR` (two posts per move into the 64-slot
 ring) and `:214-221` sends one synchronously before every button-down — an
 owner-thread round trip per click in Worker mode. Nit in the same file: flat
@@ -437,8 +444,8 @@ Pass 1.
 **Tier 3 — carried from Pass 2, still the right list:** items 8 (symbolic
 handler/api ids — 442 handlers and 3,071 apis addressed by literal), 9 (`run.js
 --app` honors `copySuperops`), 11 (13 DX enumerations, hotkeys, hooks, DDE),
-12 (three broken requires, six dead tools), 14 (live-surface set instead of a
-4096-slot walk; `_memoryView()` for `u32At`), 18 (split `09a`/`09c3` — both over
+12 (three broken requires, six dead tools), ~~14 (live-surface set instead of a
+4096-slot walk; `_memoryView()` for `u32At`)~~ **FIXED** (3.8), 18 (split `09a`/`09c3` — both over
 16k now), 20, 24.
 
 **Struck during verification.** Three reviewer claims did not survive: the
