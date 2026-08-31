@@ -858,3 +858,53 @@ registers living in wasm locals across iterations, which is the entire value of
 the micro-op tiers. Removing a guard removes a constraint on the register
 allocator, not four instructions — which is why "did this callee store anything"
 is worth a static pass.
+
+### Is the cost dispatch, or memory?
+
+Worth pinning down before designing around either, because "dispatch" is often
+used to mean three different things: the indirect-branch *mechanism*, the
+per-op *tax* (operand loads, `$ip` advance, register file through globals, the
+budget check), and the branch misprediction the mechanism suffers.
+
+`bench.js` already has the two extreme shapes — `alu` touches no memory at all,
+`mem` touches it on every op — so the question is one command. Box at load 3.5,
+6M dispatches, 5 interleaved reps, minima:
+
+| shape | tailcall | repl_tailcall | switch |
+|---|---:|---:|---:|
+| `alu` (no memory traffic) | **8.78 ns/dispatch** | 8.58 (−2.2%) | 8.33 (−5.1%) |
+| `mem` (every op reads and writes) | **9.40 ns/dispatch** | 9.80 (+4.2%) | 8.82 (−6.2%) |
+
+Two things fall out.
+
+**Guest memory traffic is not the dominant cost — 7%.** Adding a read, a
+read-modify and a write per iteration moves the per-op cost from 8.78ns to
+9.40ns. With the caveat that matters: `mem` streams a 2KB window, so this prices
+**L1-resident** memory. A demo blitting a 64000-byte framebuffer will miss cache
+and this shape cannot see that; a framebuffer-sized shape is missing from the
+harness.
+
+**Nor is the dispatch mechanism — 2-6%.** Swapping `return_call_indirect` for a
+replicated tail or a `br_table` moves these shapes by a few percent, in both
+directions. That is the same conclusion the corpus reached at +10.5% for
+`repl_tailcall`: real, worth having, not where the time is.
+
+So the ~8.8ns floor is the **per-op tax**, and it is what stitching removes:
+tier 0 → 1 is 1.97x precisely because it deletes the operand load, the `$ip`
+advance and the transfer together, without touching the work the op does. For
+the micro-op region design this cuts both ways — putting registers in locals
+attacks the tax directly, but **every micro-op added still costs ~8-9ns**, so a
+lowering that emits three micro-ops per x86 op has to eliminate more than it
+adds. Op count remains the first measurement, before any timing.
+
+Not separated by this experiment: **branch misprediction**, which is inside the
+8.8ns and cannot be split out by shape. The A/B that would isolate it is a
+single-handler loop against a rotating mix at equal op count — the predictor
+sees one target in the first and many in the second. Not built.
+
+One bug found while running it: `bench.js` parses `--dispatches` with a bare
+`Number()`, so the `12m` suffix every other tool in this directory accepts
+silently yields `NaN`, and the run reports `0.0 ms` and `NaN ns/dispatch`
+against every arm. And the `mixed` shape retires almost nothing (0.3ms for a
+6M-dispatch budget, `unresolved=2`) — it stops early, so its numbers are not
+comparable with the other two.
