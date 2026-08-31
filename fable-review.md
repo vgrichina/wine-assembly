@@ -256,9 +256,11 @@ never validates it. `createMutex` for a named existing object returns
 `createEvent` signals `ERROR_ALREADY_EXISTS` a different way — two conventions
 for one condition. `FlushConsoleInputBuffer` (`09a2:648`) accepts only
 handle==1, so a `DuplicateHandle`d stdin fails. `ToAscii` (`09a:8116`) reads a
-garbage `hkl` from esp+24. `CreateWindowExW` snapshots `$next_hwnd` before the A
-path runs (`09a:7648`), so a failed create sets the unicode bit on a slot that
-was never made. A non-main Worker thread in `WaitMessage`/`GetMessage` is
+garbage `hkl` from esp+24. `CreateWindowExW`'s predicted-handle bookkeeping is
+**FIXED `3bdb921f`**: the ANSI core marks the HWND it actually allocates before
+creation callbacks, and top-level/child rejection at `WM_NCCREATE` or
+`WM_CREATE` now returns NULL and performs Win98's `WM_NCDESTROY`-only abort.
+A non-main Worker thread in `WaitMessage`/`GetMessage` is
 `clear_yield`ed every slice (`thread-manager.js:1277-1282`) and re-enters — a
 busy poll at one RPC per slice.
 
