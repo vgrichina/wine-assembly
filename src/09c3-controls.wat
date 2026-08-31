@@ -16017,6 +16017,12 @@
           (then
             (drop (call $wat_wndproc_dispatch
               (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
+            ;; The modal pump paints one child per yield=6 slice. The damage
+            ;; notification that queued these paints may already have been
+            ;; composited after an earlier child, while the later painters
+            ;; write only to canonical shared memory. Publish every completed
+            ;; child so the final list/button pixels cannot remain off-screen.
+            (call $host_invalidate (local.get $hwnd))
             (global.set $eip (local.get $pump_eip))
             (global.set $steps (i32.const 0))
             (return (i32.const 1))))))

@@ -25,6 +25,10 @@ assert(endPaintWat.includes('(call $host_paint_end (local.get $arg0))'),
 assert(controlsWat.includes('(call $host_paint_begin (local.get $hwnd))') &&
   controlsWat.includes('(call $host_paint_end (local.get $hwnd))'),
   'WAT-native EDIT paint must bracket its fill and text as one publication');
+const modalPump = controlsWat.match(/\(func \$modal_pump_step[\s\S]*?\n  \)/);
+assert(modalPump && /\(drop \(call \$wat_wndproc_dispatch[\s\S]*?\n\s*\(call \$host_invalidate \(local\.get \$hwnd\)\)/
+  .test(modalPump[0]),
+  'modal native-control paint completion must request a canonical composite');
 assert(hostImports.includes('paint_begin: (hwnd) =>') &&
   hostImports.includes('paint_end: (hwnd) =>'),
   'host imports must forward paint transactions to the renderer');

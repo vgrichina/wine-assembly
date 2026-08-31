@@ -74,6 +74,91 @@ async function clickGuest(page, x, y) {
   await wait(150);
 }
 
+async function readOpenDialogVisual(page) {
+  return page.evaluate(() => {
+    const app = runningApps.find(item => item && item.name === 'dx_viewer');
+    const dialog = Object.values(sharedRenderer.windows || {}).find(win =>
+      win && win.visible && win.title === 'Open');
+    const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
+    if (!dialog || !dialog._backCanvas || !dialog.clientRect || !e) return null;
+    const localX = Math.max(0, (dialog.clientRect.x - dialog.x) | 0);
+    const localY = Math.max(0, (dialog.clientRect.y - dialog.y) | 0);
+    const width = Math.max(0, Math.min(dialog.clientRect.w | 0,
+      dialog._backCanvas.width - localX));
+    const height = Math.max(0, Math.min(dialog.clientRect.h | 0,
+      dialog._backCanvas.height - localY));
+    const pixels = dialog._backCanvas.getContext('2d')
+      .getImageData(localX, localY, width, height).data;
+    let opaque = 0;
+    let buttonFace = 0;
+    let white = 0;
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (pixels[i + 3]) opaque++;
+      if (pixels[i] >= 184 && pixels[i] <= 200 &&
+          pixels[i + 1] >= 184 && pixels[i + 1] <= 200 &&
+          pixels[i + 2] >= 184 && pixels[i + 2] <= 200 && pixels[i + 3]) buttonFace++;
+      if (pixels[i] > 240 && pixels[i + 1] > 240 && pixels[i + 2] > 240 && pixels[i + 3]) white++;
+    }
+    let listSamples = 0;
+    let listWhite = 0;
+    for (let y = 36; y < Math.min(height, 158); y += 2) {
+      for (let x = 16; x < Math.min(width, 258); x += 2) {
+        const i = (y * width + x) * 4;
+        listSamples++;
+        if (pixels[i] > 232 && pixels[i + 1] > 232 && pixels[i + 2] > 232 && pixels[i + 3]) {
+          listWhite++;
+        }
+      }
+    }
+    const direct = !!sharedRenderer._directPresentation;
+    const screen = direct ? sharedRenderer.canvas : sharedRenderer.presentationCanvas;
+    const screenPixels = screen.getContext('2d')
+      .getImageData(0, 0, screen.width, screen.height).data;
+    const viewport = direct ? null : sharedRenderer._exclusivePresentationViewport;
+    const scaleX = viewport ? viewport.dstW / Math.max(1, viewport.cropW) : 1;
+    const scaleY = viewport ? viewport.dstH / Math.max(1, viewport.cropH) : 1;
+    let compared = 0;
+    let displayMatches = 0;
+    for (let y = 2; y < height - 2; y += 4) {
+      for (let x = 2; x < width - 2; x += 4) {
+        const bi = (y * width + x) * 4;
+        if (!pixels[bi + 3]) continue;
+        const screenX = dialog.x + localX + x;
+        const screenY = dialog.y + localY + y;
+        const dx = Math.floor(viewport
+          ? viewport.dstX + (screenX - viewport.cropX) * scaleX : screenX);
+        const dy = Math.floor(viewport
+          ? viewport.dstY + (screenY - viewport.cropY) * scaleY : screenY);
+        if (dx < 0 || dy < 0 || dx >= screen.width || dy >= screen.height) continue;
+        const di = (dy * screen.width + dx) * 4;
+        compared++;
+        if (Math.abs(pixels[bi] - screenPixels[di]) <= 12 &&
+            Math.abs(pixels[bi + 1] - screenPixels[di + 1]) <= 12 &&
+            Math.abs(pixels[bi + 2] - screenPixels[di + 2]) <= 12) displayMatches++;
+      }
+    }
+    const pending = [];
+    for (let hwnd = dialog.hwnd; hwnd < dialog.hwnd + 20; hwnd++) {
+      const nc = e.nc_flags_test ? e.nc_flags_test(hwnd) | 0 : 0;
+      const paint = e.paint_flag_test ? e.paint_flag_test(hwnd) | 0 : 0;
+      if (nc || paint) pending.push({ hwnd, nc, paint,
+        id: e.ctrl_get_id ? e.ctrl_get_id(hwnd) | 0 : 0 });
+    }
+    return {
+      opaque, buttonFace, white, width, height, pending, compared, displayMatches,
+      listWhiteRatio: listSamples ? listWhite / listSamples : 0,
+      displayMatchRatio: compared ? displayMatches / compared : 0,
+      worker: !!app.wine.guestWorker,
+      slices: app.wine.guestWorker ? app.wine.guestWorker.sliceStats.slices : 0,
+      repaintScheduled: !!sharedRenderer._repaintScheduled,
+      repaintDeferred: !!sharedRenderer._workerRepaintDeferred,
+      repaintRaf: sharedRenderer._repaintRaf,
+      paintDepth: sharedRenderer._workerGdiPaintDepth | 0,
+      sliceDepth: sharedRenderer._workerGuestSliceDepth | 0,
+    };
+  });
+}
+
 async function runMode(browser, baseUrl, threaded) {
   const page = await browser.newPage();
   const problems = [];
@@ -114,12 +199,22 @@ async function runMode(browser, baseUrl, threaded) {
     return !!(app && app.wine && app.wine.running && viewer &&
       (!expectWorker || app.wine.guestWorker));
   }, { timeout: 90000 }, threaded);
-
   // File -> Open Mesh, choose visible row 6 (mslogo.x), then press Open.
   await clickGuest(page, 35, 51);
   await clickGuest(page, 100, 92);
   await page.waitForFunction(() => Object.values(sharedRenderer.windows || {})
     .some(win => win && win.visible && win.title === 'Open'), { timeout: 30000 });
+  let dialogVisual = null;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    dialogVisual = await readOpenDialogVisual(page);
+    if (dialogVisual && dialogVisual.buttonFace > 1000 && dialogVisual.listWhiteRatio > 0.65 &&
+        dialogVisual.displayMatchRatio > 0.8) break;
+    await wait(100);
+  }
+  assert(dialogVisual && dialogVisual.buttonFace > 1000 && dialogVisual.listWhiteRatio > 0.65 &&
+    dialogVisual.displayMatchRatio > 0.8,
+    `Open dialog controls are visually occluded in ${threaded ? 'threads' : 'cooperative'} mode: ` +
+    JSON.stringify(dialogVisual));
   await clickGuest(page, 100, 219);
   await page.waitForFunction(() => {
     const app = runningApps.find(item => item && item.name === 'dx_viewer');
