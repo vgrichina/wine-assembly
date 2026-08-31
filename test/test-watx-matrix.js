@@ -131,6 +131,12 @@ const jsonOf = r => {
 //        stub module above cannot boot a guest, so both columns must FAIL. If
 //        the pin did not work, run.js would fall back to the canonical build
 //        and both columns would pass, which is exactly the silent-green bug.
+//
+//        It is also the fabricated SYMMETRIC failure: red on legacy AND red on
+//        WATX. The regression rule alone scores that as "no regression" — which
+//        is correct as far as it goes, and used to be the whole gate, so this
+//        run printed MATRIX GREEN and exited 0 while a pinned test was crashing
+//        on both artifacts. The baseline rule is what makes it red.
 {
   const r = runTool(['--skip-build', '--only=tests', '--json',
     `--a-dir=${same}`, `--b-dir=${same}`, '--timeout=60',
@@ -141,8 +147,47 @@ const jsonOf = r => {
   ck('the pinned stub artifact reaches run.js (both sides fail on it)',
     !!row && row.a.pass === false && row.b.pass === false);
   ck('identical artifacts produce no regression', !!row && row.regression === false);
-  ck('a symmetric failure is not counted as a matrix failure',
-    j && j.ok === true && r.code === 0, r.code);
+  ck('a symmetric failure IS flagged as a baseline failure',
+    !!row && row.baselineFail === true && row.baselineExcused === false);
+  ck('a symmetric failure turns the verdict red', j && j.ok === false && r.code === 1, r.code);
+  ck('the baseline failure names the test', j && j.baselineFailures &&
+    j.baselineFailures.join(',') === 'test-cli-vfs-include.js', j && JSON.stringify(j.baselineFailures));
+  ck('the failure line says it fails on legacy',
+    j && j.failures.some(f => /^baseline failure: test-cli-vfs-include\.js fails on legacy/.test(f)),
+    j && JSON.stringify(j.failures));
+  ck('the verdict line is the distinct baseline wording, not a bare count',
+    j && j.text.some(l => /MATRIX RED — baseline failure: test-cli-vfs-include\.js fails on legacy/.test(l)),
+    j && j.text.filter(l => /MATRIX/.test(l)).join(' | '));
+}
+
+// --- 5b. the same run with the test allow-listed: green again, exit 0, and the
+//         exemption is PRINTED rather than silently applied.
+{
+  const r = runTool(['--skip-build', '--only=tests', '--json',
+    `--a-dir=${same}`, `--b-dir=${same}`, '--timeout=60',
+    '--tests=test-cli-vfs-include.js',
+    '--allow-baseline-fail=test-cli-vfs-include.js']);
+  const j = jsonOf(r);
+  const row = j && j.tests[0];
+  ck('--allow-baseline-fail restores exit 0', r.code === 0 && j && j.ok === true, r.code);
+  ck('the row is still marked as a baseline failure, just excused',
+    !!row && row.baselineFail === true && row.baselineExcused === true);
+  ck('no baseline failure is recorded when excused', j && j.baselineFailures === undefined);
+  ck('the excusal is printed in the report',
+    j && j.text.some(l => /baseline failure\(s\) excused by --allow-baseline-fail: test-cli-vfs-include\.js/.test(l)),
+    j && j.text.filter(l => /excused/.test(l)).join(' | '));
+  ck('an allow-listed test that is not run is not silently a pass',
+    j && j.text.some(l => /BASELINE FAIL \(excused/.test(l)));
+}
+
+// --- 5c. the allow-list is per test name, not a global off switch.
+{
+  const r = runTool(['--skip-build', '--only=tests', '--json',
+    `--a-dir=${same}`, `--b-dir=${same}`, '--timeout=60',
+    '--tests=test-cli-vfs-include.js',
+    '--allow-baseline-fail=test-some-other-test.js']);
+  const j = jsonOf(r);
+  ck('allow-listing a DIFFERENT test leaves the run red', r.code === 1 && j && j.ok === false, r.code);
 }
 
 // --- 6. argument hygiene.

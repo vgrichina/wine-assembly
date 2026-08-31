@@ -53,14 +53,32 @@
 //
 // Options:
 //   --tests=a.js,b.js   replace the curated list
+//   --allow-baseline-fail=a.js,b.js
+//                       tests that are KNOWN red on legacy and whose baseline
+//                       failure must not turn the matrix red (a printed note
+//                       records each one that was excused)
 //   --timeout=N         per-test SIGKILL bound in seconds (default 120)
 //   --max=N             ABI diff lines per section (default 10)
 //   --a-dir=D --b-dir=D artifact directories (default build/legacy and
 //                       build/watx, or build/legacy-self under --self)
 //
 // Exit: 0 all gates green; 1 a gate failed (WATX build, ABI acceptance diff,
-// a tail call in a compatibility artifact, or a test that passes on legacy and
-// fails on WATX); 2 usage or an internal error.
+// a tail call in a compatibility artifact, a test that passes on legacy and
+// fails on WATX, or a test that fails on LEGACY); 2 usage or an internal error.
+//
+// BASELINE FAILURES ARE ALSO RED. Attributing a pre-existing legacy failure to
+// the new compiler would be wrong, so the regression gate compares the two
+// columns rather than reading the WATX column alone — but that on its own let a
+// test which crashed SYMMETRICALLY (red on legacy AND red on WATX) print MATRIX
+// GREEN and exit 0, because neither column was better than the other. A pinned
+// test that cannot pass on the legacy artifact is measuring nothing at all, so
+// the gate now requires the legacy column green as well and names the test:
+//
+//   MATRIX RED — baseline failure: test-foo.js fails on legacy
+//
+// --allow-baseline-fail=test-foo.js is the deliberate escape hatch for a test
+// that is knowingly red at HEAD for an unrelated reason; each excused test is
+// printed, so the exemption is visible in the report rather than silent.
 // ═══════════════════════════════════════════════════════════════════════════
 
 const fs = require('fs');
@@ -114,13 +132,15 @@ const TEST_LIST = (() => {
   const raw = getArg('tests', '');
   return raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : FAST_TESTS;
 })();
+const ALLOW_BASELINE_FAIL = new Set(
+  getArg('allow-baseline-fail', '').split(',').map(s => s.trim()).filter(Boolean));
 
 if (!['all', 'abi', 'tests'].includes(ONLY)) {
   console.error(`watx-matrix: --only must be abi, tests or all (got ${ONLY})`);
   process.exit(2);
 }
 for (const a of argv) {
-  if (a.startsWith('--') && !/^--(json|skip-build|self|only|timeout|max|tests|a-dir|b-dir)(=|$)/.test(a)) {
+  if (a.startsWith('--') && !/^--(json|skip-build|self|only|timeout|max|tests|a-dir|b-dir|allow-baseline-fail)(=|$)/.test(a)) {
     console.error(`watx-matrix: unknown argument ${a}`);
     process.exit(2);
   }
@@ -395,6 +415,12 @@ function runTestMatrix(a, b) {
     // already red on legacy is somebody else's bug and must not be attributed
     // to the new compiler.
     row.regression = !!(row.a.pass && row.b.skipped !== true && !row.b.pass);
+    // ...and the OTHER half of that comparison: a test red on legacy is not
+    // evidence about WATX either way, so it cannot be allowed to pass silently.
+    // Without this a symmetric crash (red on BOTH columns) scored no regression
+    // and printed MATRIX GREEN.
+    row.baselineFail = !!(row.a && row.a.skipped !== true && !row.a.pass);
+    row.baselineExcused = row.baselineFail && ALLOW_BASELINE_FAIL.has(file);
     rows.push(row);
   }
   return rows;
@@ -411,10 +437,18 @@ function reportTests(rows) {
   say(`  ${'test'.padEnd(38)} ${'legacy'.padEnd(9)} ${B_LABEL.padEnd(9)}`);
   for (const row of rows) {
     if (row.unusable) { say(`  ${row.test.padEnd(38)} UNUSABLE  ${row.unusable}`); continue; }
-    const flag = row.regression ? '  <== REGRESSION' : '';
+    const flag = row.regression ? '  <== REGRESSION'
+      : row.baselineExcused ? '  <== BASELINE FAIL (excused by --allow-baseline-fail)'
+      : row.baselineFail ? '  <== BASELINE FAIL (red on legacy)'
+      : '';
     say(`  ${row.test.padEnd(38)} ${verdictOf(row.a).padEnd(9)} ${verdictOf(row.b).padEnd(9)}` +
       ` ${String(Math.round(row.a.ms || 0) / 1000)}s/${String(Math.round(row.b.ms || 0) / 1000)}s${flag}`);
+    if (row.a && row.a.tail && !row.a.pass) say(`      legacy: ${row.a.tail}`);
     if (row.b && row.b.tail && !row.b.pass) say(`      ${B_LABEL}: ${row.b.tail}`);
+  }
+  const excused = rows.filter(r => r.baselineExcused).map(r => r.test);
+  if (excused.length) {
+    say(`  NOTE  ${excused.length} baseline failure(s) excused by --allow-baseline-fail: ${excused.join(', ')}`);
   }
   say('');
 }
@@ -463,6 +497,13 @@ function reportTests(rows) {
     for (const row of rows) {
       if (row.unusable) report.failures.push(`test ${row.test}: unusable — ${row.unusable}`);
       else if (row.regression) report.failures.push(`test ${row.test}: passes on legacy, fails on ${B_LABEL}`);
+      else if (row.baselineFail && !row.baselineExcused) {
+        report.baselineFailures = report.baselineFailures || [];
+        report.baselineFailures.push(row.test);
+        report.failures.push(`baseline failure: ${row.test} fails on legacy` +
+          ` (code ${row.a.code}) — the matrix cannot compare compilers on a test that does not pass` +
+          ` on the baseline artifact; re-run with --allow-baseline-fail=${row.test} to excuse it`);
+      }
       else if (row.b && row.b.skipped) report.failures.push(`test ${row.test}: not run (${B_LABEL} artifact missing)`);
     }
   }
@@ -470,6 +511,13 @@ function reportTests(rows) {
   say('== verdict ==');
   if (report.failures.length === 0) {
     say(`  MATRIX GREEN — legacy and ${B_LABEL} agree on every checked section`);
+  } else if (report.baselineFailures && report.baselineFailures.length) {
+    // Name the baseline case distinctly: "the baseline is broken" is a different
+    // report from "the new compiler regressed something", and reads as one.
+    say(`  MATRIX RED — baseline failure: ${report.baselineFailures.join(', ')} fails on legacy` +
+      (report.failures.length > report.baselineFailures.length
+        ? ` (+${report.failures.length - report.baselineFailures.length} other failure(s))` : ''));
+    for (const f of report.failures) say(`    ${f}`);
   } else {
     say(`  MATRIX RED — ${report.failures.length} failure(s)`);
     for (const f of report.failures) say(`    ${f}`);
