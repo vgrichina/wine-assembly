@@ -148,5 +148,60 @@ if (resolves.success) {
   }
 }
 
+// --- The start section (id 8) ------------------------------------------------
+// `(start $f)` used to be parsed and DROPPED — the string `start` appeared
+// nowhere in the compiler, so the form fell off the end of the top-level scan
+// like a comment. The module loaded and validated, and the one function the
+// author asked to run before anything else never ran. That is invisible from
+// outside: "start ran and its effect was subtle" and "start was never wired"
+// look identical unless you check for the effect on an untouched instance.
+//
+// So the assertion is behavioural, not structural: instantiate and read the
+// global WITHOUT calling anything. A structural check on section 8 alone would
+// also pass on a section emitted with the wrong function index.
+{
+  const r = build(`
+(memory 1 1)
+(global $g (mut i32) (i32.const 0))
+(func $init (global.set $g (i32.const 0x5a)))
+(start $init)
+(func $get (export "get") (result i32) (global.get $g))`);
+  ck('a module with (start $f) compiles', r.success === true, r.error);
+  if (r.success) {
+    // Section ids in emitted order — start must be section 8, between exports (7)
+    // and elements (9), or a decoder rejects the module outright.
+    const ids = [];
+    const b = r.wasmBinary;
+    let p = 8;
+    while (p < b.length) {
+      const id = b[p]; let q = p + 1, size = 0, sh = 0, x;
+      do { x = b[q++]; size |= (x & 0x7f) << sh; sh += 7; } while (x & 0x80);
+      ids.push(id); p = q + size;
+    }
+    ck('...and emits a start section (id 8)', ids.includes(8), ids.join(','));
+    ck('...in ascending section order', ids.join(',') === ids.slice().sort((a, c) => a - c).join(','), ids.join(','));
+    let X = null, err = null;
+    try { X = new WebAssembly.Instance(new WebAssembly.Module(b), {}).exports; }
+    catch (e) { err = e.message; }
+    ck('...and the module instantiates', !err, err);
+    // THE check: nothing has been called, so a 0x5a here can only be the start
+    // function having run at instantiate.
+    if (X) ck('...and the start function RAN before any call', X.get() === 0x5a, '0x' + X.get().toString(16));
+  }
+}
+
+// A start declaration that cannot be honoured is a compile error naming it,
+// never a dropped form and never a problem the engine reports at instantiate.
+for (const [name, src] of [
+  ['an unknown function', '(func $a (nop))\n(start $nope)'],
+  ['two (start …) forms', '(func $a (nop))\n(func $b (nop))\n(start $a)\n(start $b)'],
+  ['a start function with a result', '(func $a (result i32) (i32.const 1))\n(start $a)'],
+  ['a start function with a parameter', '(func $a (param $x i32) (nop))\n(start $a)'],
+]) {
+  let r;
+  try { r = build(src); } catch (e) { r = { success: false, error: String(e.message || e) }; }
+  ck(`(start …) rejects ${name}`, r.success === false, r.success);
+}
+
 console.log(`\nwatx-compiler-export-order: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

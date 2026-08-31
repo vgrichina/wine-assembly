@@ -4549,6 +4549,60 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     appendSection(allBytes, 7, content);
   }
 
+  // Section 8: Start section — the function the engine runs at instantiate.
+  //
+  // `(start $f)` used to be PARSED AND DROPPED: the string `start` did not occur
+  // anywhere in the compiler, so the form fell off the end of the top-level scan
+  // like a comment and no start section was emitted. The module loaded, it
+  // validated, and the one function the author asked to run before anything else
+  // simply never ran — with nothing to look at, because the difference between
+  // "start ran and did nothing" and "start was never wired" is invisible from
+  // outside. (watx-differential's stripEmptySections carries a matching scar:
+  // a start section's whole payload is a one-byte function index, so `08 01 00`
+  // looks exactly like an empty vector and a module whose start never ran once
+  // reported as byte-identical to wabt's.)
+  //
+  // The index space is the one every other section already uses — imports first,
+  // then defined functions — so this is `funcIndexMap` and nothing else.
+  {
+    let startDecl = null;
+    for (const form of forms) {
+      if (!Array.isArray(form) || V(form[1]) !== 'start') continue;
+      if (startDecl !== null) {
+        const e = new Error(`Only one (start …) declaration is allowed`);
+        const loc = watxFormLoc(form);
+        if (loc !== undefined) { e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc); }
+        throw e;
+      }
+      startDecl = form;
+    }
+    if (startDecl !== null) {
+      const ref = V(startDecl[2]);
+      const fail = (msg) => {
+        const e = new Error(`(start ${ref ?? ''}): ${msg}`);
+        const loc = watxFormLoc(startDecl);
+        if (loc !== undefined) { e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc); }
+        return e;
+      };
+      if (watxFormLength(startDecl) !== 2 || ref == null) {
+        throw fail('expected exactly one function reference');
+      }
+      const idx = /^\d+$/.test(ref) ? parseInt(ref) : funcIndexMap.get(ref);
+      if (idx === undefined) throw fail(`unknown function '${ref}'`);
+      // The wasm spec requires the start function to take no parameters and
+      // return nothing; an engine rejects a mismatch, so name it here instead.
+      const fd = funcDeclByName.get(ref);
+      if (fd && (fd.params.length > 0 || fd.results.length > 0)) {
+        throw fail(`a start function must take no parameters and return nothing, ` +
+                   `but '${ref}' is declared (param ${fd.params.map(p => p.type).join(' ') || '—'}) ` +
+                   `(result ${fd.results.join(' ') || '—'})`);
+      }
+      const content = new BinaryWriter();
+      content.uleb(idx);
+      appendSection(allBytes, 8, content);
+    }
+  }
+
   // Section 9: Element section (populate table 0 with handler func indices at slots 0..n)
   if (elemSegments.length > 0) {
     const content = new BinaryWriter();

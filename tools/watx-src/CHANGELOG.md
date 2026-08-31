@@ -926,3 +926,40 @@ byte-identical against a clean worktree build at the same HEAD (`c409c554`):
 New manifest digest:
 
   490113af46201c26a37ea33db1acf145e0bd2bf169488a9143524626dc46ec35
+
+## 2026-08-31 — `(start $f)` was parsed and dropped
+
+The string `start` did not occur anywhere in the compiler. `(start $f)` fell off
+the end of the top-level form scan like a comment: no start section was emitted,
+the module loaded, it validated, and the one function the author asked to run
+before anything else **never ran**.
+
+That is the worst shape a bug can take, because it is invisible from outside —
+"start ran and its effect was subtle" and "start was never wired" look identical
+unless you go looking for the effect on an instance nothing has called yet. The
+differential oracle carries a matching scar in `stripEmptySections`: a start
+section's entire payload is a one-byte function index, so `08 01 00` reads
+exactly like an empty vector, and a module whose start function never ran once
+reported as *byte-identical* to wabt's.
+
+The section is emitted now — id 8, between exports and elements, resolved
+through the same `funcIndexMap` every other section uses, so the index space
+(imports first, then defined functions) cannot drift from the export and element
+sections. Four ways of asking for something impossible are located errors rather
+than an engine complaint at instantiate: an unknown function, a second `(start
+…)`, and a start function declared with parameters or with a result (the spec
+requires `[] -> []`).
+
+`watx-compiler-export-order` 17 → 26, in that suite because a start section is a
+section-emission question. The assertion is **behavioural**: instantiate, then
+read a mutable global without calling anything — a structural check for section
+8 would pass just as happily on a section carrying the wrong function index. The
+section-id list is checked to stay ascending alongside it, since a start section
+emitted out of order is a module every decoder refuses.
+
+No `src/*.wat` uses `(start …)`, and the canonical artifacts are unchanged:
+`71ea98f134a486cd` / `d569961e3e7d6325`.
+
+New manifest digest:
+
+  0f3d663396e77d9e69f1c378f02be71d82fb715e559bfe9e7a1c01f3d7e5e41e
