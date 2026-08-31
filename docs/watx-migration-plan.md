@@ -394,6 +394,67 @@ where the shipped build silently never applies a class-registered window's
 style. Diagnostic body-diff residue: 2 of 8,142 (that site, plus the benign
 `$next` type renumber). MATRIX GREEN throughout.
 
+Status 2026-08-31, layers 4–6 (screenshots, broad sweep, browser). All three
+ran against the four artifacts of one `node tools/watx-matrix.js --only=abi`
+build (legacy tail `23a5d6ce` 984,311 B / WATX tail `d7c03355` 984,320 B),
+pinned through `WINE_ASSEMBLY_WASM`, with nothing rebuilt in between.
+
+*Layer 4 — screenshots.* Eight apps across subsystems, each run three times on
+the same command line: legacy twice as the determinism control, then WATX.
+`tools/png-diff.js` reports **0 of 307,200 pixels differing on every control
+and every cross pair**, max channel delta 0 — notepad98, calc, sol (a full
+deal, Game #17280), winmine, wep16_pipe (Win16/NE), dx_ddex3 (DirectDraw),
+scr_win98 (screensaver) and dx_globe (d3dim, 15,000 batches). Every capture
+was eyeballed for content first: a blank teal desktop diffs to zero just as
+happily as a real frame, and calc and dx_globe both needed more batches
+before `--png` had anything on it.
+
+*Layer 5 — broad sweep.* 129 e2e tests (the pinnable pool minus the long
+gameplay/installer titles) run once per column, 258 runs. Outcomes: **83 pass
+on both, 45 fail on both, 1 diverged and re-ran red on both when run serially**
+(`test-arena-dosbox`, whose last-window-title assertion is wall-clock gated —
+both columns retire the identical 13,331 API calls in its 2,200 batches). Zero
+WATX-only failures; every one of the 45 symmetric failures prints the same
+number of `FAIL` lines on both columns. Those 45 are **not** a HEAD baseline:
+rebuilt in a detached clean worktree at `fd1b0244`, 40 of the 45 pass, so they
+belong to this shared worktree's uncommitted `src/*.wat` edits (the peer-owned
+`09a5-handlers-window.wat` change already reported as regressing tests). Five
+are red at clean HEAD too: `test-win16-dialog`, `test-notepad-typing-latency`,
+`test-web-hearts-lan`, `test-win16-hearts-menus`, `test-win16-hearts-vlan`.
+
+Honest coverage note: `checkTestIsPinnable` in `tools/watx-matrix.js` still
+requires a literal `--no-build`, but since `4aeb0970` `run.js` derives
+`NO_BUILD` from `$WINE_ASSEMBLY_WASM` itself, so the 177 tests it rejects for
+that reason **are** pinnable — measured, not assumed (a test with no
+`--no-build` fails against a deliberately corrupt artifact). The genuinely
+unpinnable sets are 42 e2e / 451 unit tests that never spawn `run.js` (they
+compile WAT in process via `bootRenderHarness`) and 8 e2e that hard-code
+`--wasm=`. Loosening that predicate would take the eligible e2e pool from 40
+to 217.
+
+*Layer 6 — browser.* No artifact selector exists in `host.js`
+(`getWasmModule()` fetches `build/wine-assembly[.compat].wasm` or falls back to
+source), and `host.js`/`index.html` are peer-dirty, so instead of editing them
+or swapping the shipped artifact the run redirects `fetch` from
+`--before-load` and reports the URL actually taken back through
+`--report-eval`. Both columns launched notepad98 in headless Chrome and drew
+the window: `["build/legacy/wine-assembly.wasm?v=250"]` and
+`["build/watx/wine-assembly.wasm?v=250"]`, screenshots differing in 49 pixels
+in one 6x10 box — the taskbar clock. Functional only; no timing was taken.
+
+Two robustness findings, neither WATX's: `test/run.js` **silently falls back to
+compiling from `src/`** when the pinned `--wasm=`/`$WINE_ASSEMBLY_WASM` path
+does not exist (`if (NO_BUILD && fs.existsSync(WASM_PATH))`), so a typo in a
+matrix path scores the working tree on both columns with nothing printed; and
+it **exits 0 after a WASM `CompileError`**, so a corrupt artifact reads as a
+pass to anything that only checks the exit code.
+
+The behavior-matrix checklist row stays unticked: the differential result is
+clean, but a run in which 45 of 129 tests are red for tree-state reasons is
+not the "full behavior matrix is green" the gate asks for. Repeat this sweep
+once the uncommitted `src/*.wat` work is committed and the five HEAD-red tests
+are resolved or explicitly allow-listed.
+
 Performance checks come after behavioral equality. On a quiet machine, compare
 fixed-duration guest progress and retired operations, not batches per second.
 Investigate any material code-size, startup or guest-throughput difference
