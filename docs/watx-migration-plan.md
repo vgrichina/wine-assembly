@@ -1,6 +1,6 @@
 # WATX migration plan
 
-Status: active plan, not yet started in this repository
+Status: active — phase 1 in progress (M0 and M1 complete)
 Audited: 2026-08-25
 Last updated: 2026-08-31
 Audit baseline: Wine-Assembly `0876e5c0`; prepared WATX fork `../android-emu` at `590238be`
@@ -38,6 +38,24 @@ Do not start by converting structures to layouts or introducing macros. First
 make today's standard WAT compile through both compilers with equivalent
 behavior. WATX syntax features come only after the WATX artifact is canonical.
 
+The migration is two phases with a hard boundary:
+
+- **Phase 1 — binary fidelity (milestones 0–5).** The existing source compiles
+  through both compilers with equivalent behavior and matching decoded ABI,
+  tables, globals and data. No WATX-only syntax appears in `src/` during this
+  phase; the goal is that the WATX artifact is indistinguishable in behavior
+  from the legacy one, then becomes canonical.
+- **Phase 2 — maintainability (milestone 6).** Only after cutover, adopt WATX
+  features to make the code safer to maintain — **memory-region safety first**:
+  the fixed memory map becomes declared, compiler-checked structure instead of
+  hand-synchronized hex constants. Layouts and macros follow where diagnostics
+  show they pay.
+
+There is only ever **one source tree**. Files are converted in place; no
+parallel `.wat`/`.watx` copy of any source part is created or maintained at any
+point, in either phase. The only thing duplicated during the migration interval
+is built artifacts.
+
 ## What changed since the original sessions
 
 | Original recommendation | Current status | Consequence |
@@ -47,8 +65,8 @@ behavior. WATX syntax features come only after the WATX artifact is canonical.
 | Add `tailCalls: false` lowering | Direct lowering is done and tested. Indirect lowering is implemented but lacks a focused parity regression. | Add that regression, then continue producing both existing artifact names from one source tree. |
 | Make WATX build in a browser without a custom JS stack | Done for the Android corpus. Production streaming, a 128 KiB-stack test and a Chrome Worker test pass. | Browser compilation is feasible, but Wine still needs its own browser-memory gate. |
 | Reduce compiler memory below 100 MB | Not done. The last 6.81 MB Android benchmark reached 178.36 MB maximum RSS; Wine's clean audited source is 10.23 MB. | Treat peak memory, especially iOS Safari, as an open cutover gate. Never allocate Wine's 512 MB shared memory until the compiler Worker has terminated. |
-| Vendor WATX into Wine-Assembly | Not done. | This is milestone 1. Record provenance and own the fork here afterward. |
-| Compile the complete Wine source through WATX | Not done. | This is milestone 2. The first compiler syntax gap is fixed; source normalization still starts with the surplus close below. |
+| Vendor WATX into Wine-Assembly | Done 2026-08-31 in commit `903ca110`: 11 files vendored from the `590238be` working tree with per-file SHA-256 in `PROVENANCE.md`, a `check-watx-provenance.js` build gate, and all six suites passing with `../android-emu` verified absent. | This repository owns its copy now. Milestone 1 exit gate met. |
+| Compile the complete Wine source through WATX | Not done. | This is milestone 2. The first compiler syntax gap is fixed and the historical surplus close is gone from HEAD (see finding 1); the corpus-driven gap census is next. |
 | Adopt layouts and macros | Not started, correctly. | Defer until after the compiler cutover. |
 
 The clean audited Wine tree contains 59 source parts, 10,227,829 bytes,
@@ -65,6 +83,12 @@ not equivalent to compiling Wine-Assembly itself.
    clean Wine commit `0876e5c0` finds one surplus `)` in
    `src/10d-gdi-region-path.wat` at its line 2849. The legacy parser tolerates
    unmatched closing tokens; WATX correctly refuses them.
+
+   Resolved at HEAD, and not by the neutral edit this plan prescribed: commit
+   `1166907c` (2026-08-30, "Gate WAT structure and restore geometric joins")
+   removed it as part of a real fix — the surplus closer had been terminating an
+   `(if` early and orphaning a `(return)` in the round-join path, so removing it
+   changed behavior. The fragment-balance gate below now proves the file clean.
 2. With that token removed only in the audit's in-memory input, the original
    prepared compiler reached emission and rejected Wine's standard folded form:
 
@@ -146,6 +170,11 @@ claimed, prove it by hash for both variants.
 Exit gate: one command builds the clean legacy baseline twice and produces the
 same hashes both times.
 
+**Met 2026-08-31** (commit `903ca110`): `tools/watx-baseline.sh` double-built a
+clean worktree at Wine `c6a262e0` (node v23.10.0) into `build/legacy/` with
+identical SHA-256 both runs (`f585a47d…` tail, `8cd6a8b1…` compat). Canonical
+artifacts untouched.
+
 ## Milestone 1 — Vendor and pin the prepared compiler
 
 Vendor these components from `../android-emu` commit `590238be`:
@@ -187,6 +216,15 @@ Wine's existing folded `br_table` forms to compile.
 Exit gate: all vendored compiler suites pass from this repository with no
 sibling checkout present.
 
+**Met 2026-08-31** (commit `903ca110`): wine-parity 22, production PASS,
+emit-stack 5, br-table 14, bulk-memory 15, simd 37 — re-verified from a
+location where `../android-emu` does not resolve. `PROVENANCE.md` pins per-file
+SHA-256 (the `br_table` patch was uncommitted at vendor time, so the base
+commit alone does not reproduce four of the files); `check-watx-provenance.js`
+runs in the `tools/build.sh` gate section. One documented test adaptation:
+the emit-stack suite's build-path check reads this repo's build scripts instead
+of android-emu's `tools/build.js`.
+
 ## Milestone 2 — Make the current source strict and WATX-compilable
 
 ### 2.1 One source manifest
@@ -204,10 +242,15 @@ generated sources. Preserve filename order.
   final close from `13-exports.wat`.
 - Make `tools/concat-wat.js` add the outer module wrapper when producing
   `build/combined.wat` for standard WAT/debug tools.
-- Add a gate that parses every included fragment independently and rejects
-  surplus or missing parentheses before either compiler runs.
-- Fix the known `10d-gdi-region-path.wat` surplus close as an isolated,
-  behavior-neutral change with legacy artifact hashes recorded before/after.
+- ~~Add a gate that parses every included fragment independently~~ Done
+  2026-08-31 in commit `e5327df2`: `tools/check-wat-fragments.js` checks all 60
+  fragments (58 self-balanced; the `01-header`/`13-exports` wrapper pair is a
+  frozen, explicitly TEMPORARY allow-list that fails on any third entrant, and a
+  mid-file negative-depth dip is rejected even when it nets to zero). Standalone
+  for now — wire into `tools/build.sh` together with the wrapper removal above.
+- ~~Fix the known `10d-gdi-region-path.wat` surplus close~~ Resolved by
+  `1166907c` before this plan started executing (see finding 1 — it was a real
+  bug fix, not a neutral cleanup).
 
 The legacy compiler already accepts unwrapped top-level forms, so both compilers
 can consume the same normalized fragments.
@@ -324,32 +367,47 @@ changes.
 Exit gate: the deployed artifact is WATX-built, the full deployment smoke passes,
 and rollback has been exercised once.
 
-## Milestone 6 — Adopt WATX features incrementally
+## Milestone 6 — Phase 2: adopt WATX features for maintainability
 
-Only after cutover:
+Only after cutover. The headline goal of phase 2 is **memory-region safety**:
+today the fixed memory map is hand-synchronized hex constants spread across
+`01-header.wat`, JS mirrors and check tools (`wat-memory-map.js`,
+`check-shared-constants`), and nothing stops a WAT edit from silently reading
+across a region boundary. The phase-2 endpoint is that every fixed region is
+*declared* — base, size, owner — and the compiler enforces what the check
+tools today only lint: overlap-freedom, in-bounds constant addressing, and
+JS/WAT constant agreement generated from one declaration.
 
-1. Introduce layouts for one fixed-memory structure at a time.
-2. Replace raw field offsets with `offset-of`, field loads/stores and typed array
-   addressing while keeping the existing explicit base address.
-3. Run memory-map, focused subsystem and screenshot tests after each conversion.
-4. Add small macros for repeated handler epilogues and address calculations only
-   after diagnostics show useful expansion locations.
+In order:
 
-Good early layout candidates are WND records, control geometry, timers, DC
-state and DirectX object records because they repeat offsets across many files.
+1. Design and add `region.declare-fixed` to the vendored compiler: validates a
+   declared base and size **without relocating anything** — Wine's bases are an
+   ABI shared with JavaScript, tests and guest-address translation. It needs
+   its own overlap tests before first use. Do **not** use the existing
+   `region.declare-static`: the prepared implementation allocates from address
+   1024 and would move the map.
+2. Convert the memory map one region at a time to declarations; generate the JS
+   constant mirror from the same source so it cannot drift.
+3. Introduce layouts for one fixed-memory structure at a time. Replace raw
+   field offsets with `offset-of`, field loads/stores and typed array
+   addressing while keeping the existing explicit base address. Good early
+   candidates: WND records, control geometry, timers, DC state and DirectX
+   object records — they repeat offsets across many files.
+4. Run memory-map, focused subsystem and screenshot tests after each
+   conversion.
+5. Add small macros for repeated handler epilogues and address calculations
+   only after diagnostics show useful expansion locations.
 
-Do **not** use `region.declare-static` for the existing map: the prepared WATX
-implementation allocates those regions from address 1024, whereas Wine's bases
-are an ABI shared with JavaScript, tests and guest-address translation. A future
-`region.declare-fixed` may validate a declared base without relocating it, but
-it needs its own design and overlap tests before use.
+Conversions happen in place in the single source tree — no `.watx` twin files.
 
 ## Completion checklist
 
-- [ ] Prepared WATX compiler vendored with provenance.
-- [ ] Compiler regression suites run entirely inside this repository.
+- [x] Prepared WATX compiler vendored with provenance. (`903ca110`)
+- [x] Compiler regression suites run entirely inside this repository. (`903ca110`)
 - [ ] `src/main.watx` is the single source-order manifest.
-- [ ] Every source fragment parses independently.
+- [ ] Every source fragment parses independently. (Gate exists — `e5327df2` —
+      and passes with the temporary wrapper exception; done when the wrapper
+      moves to `concat-wat.js`.)
 - [ ] Full Wine source compiles in both WATX modes.
 - [ ] Four-artifact ABI/data/table comparison is green.
 - [ ] Full behavior matrix is green for both WATX artifacts.
