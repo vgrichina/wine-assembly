@@ -715,11 +715,14 @@ mod('simd-lanes', `
     () => ex.anytrue(0), () => ex.narrow(16),
   ], { memoryExport: 'mem', memoryBytes: 64 });
 
-// KNOWN BUG, kept as a live witness. See tools/watx-repro/v128-const-shape.js
-// and the board entry of 2026-08-31: WATX's v128.const branch reads 16 operands
-// from expr[2] and masks each to a byte, with no idea the shape token exists.
-// Not deleted, and not silenced — the runner asserts this entry STILL diverges
-// and tells you to remove the marker when it stops.
+// FIXED at 4ffdf4b3 ("A SIMD constant with a shape token is not 16 bytes"), and
+// this is now a plain regression test. It was a `expectDivergence` witness for
+// about ten minutes: the emitter read 16 operands from expr[2] and masked each
+// to a byte with no idea the shape token existed, so the token became lane 0,
+// every lane shifted, the last was dropped, and a wider shape truncated each
+// lane to a single byte — silently. The marker came off because the suite
+// FAILED on the fix, which is the point of asserting a known bug rather than
+// deleting the module that shows it.
 mod('simd-const-shape', `
 (memory 1 1)
 (export "mem" (memory 0))
@@ -730,7 +733,7 @@ mod('simd-const-shape', `
 (func $store (v128.store (i32.const 0) (v128.const i8x16 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16)))
 (export "c8" (func $c8)) (export "c32" (func $c32)) (export "store" (func $store))`,
   (ex) => [() => ex.c8(), () => ex.c32(), () => { ex.store(); return 'stored'; }],
-  { memoryExport: 'mem', memoryBytes: 32, expectDivergence: 'v128.const shape token is ignored — tools/watx-repro/v128-const-shape.js' });
+  { memoryExport: 'mem', memoryBytes: 32 });
 
 // ── Globals: every type, mutable and not, and their initializers ──────────
 mod('globals', `
