@@ -67,14 +67,20 @@ function watxSourceClosure() {
 // certified, so the build and the gate must pass exactly these. Only the
 // tail-call mode varies, and only because the two shipped artifacts differ in
 // precisely that.
-function compileClosure(closure, { tailCalls }) {
+// `regionShake` is the one exception to "the caller does not choose": it is a
+// deliberate NON-canonical build (docs/watx-region-safety-design.md §8) whose
+// whole purpose is to move the memory map and see what breaks, and it reaches
+// the region allocator and nothing else. Absent, it is not passed at all.
+function compileClosure(closure, { tailCalls, regionShake }) {
   const { compile } = require(path.join(__dirname, 'watx.js'));
-  return compile(closure.source, closure.vfs, {
+  const options = {
     mode: 'production',
     standardWat: true,
     runtimeBuiltins: false,
     tailCalls: !!tailCalls,
-  });
+  };
+  if (regionShake) options.regionShake = regionShake;
+  return compile(closure.source, closure.vfs, options);
 }
 
 module.exports = { watxSourceClosure, compileClosure };

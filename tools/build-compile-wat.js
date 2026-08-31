@@ -68,6 +68,14 @@ function selectedCompiler() {
 }
 
 async function compileLegacy(replicatedDispatch) {
+  // lib/compile-wat.js ignores every region form (that is what keeps the
+  // rollback alive), so a shake asked of it would silently produce canonical
+  // bytes under a name that says otherwise.
+  if (selectedRegionShake()) {
+    console.error('build-compile-wat: WINE_REGION_SHAKE has no meaning for the legacy compiler, ' +
+      'which ignores region declarations entirely; use the WATX path.');
+    process.exit(1);
+  }
   const read = (file) => fs.promises.readFile(path.join(SRC, file), 'utf8');
   return {
     bytes: await compileWat(read, { replicatedDispatch }),
@@ -80,6 +88,47 @@ async function compileLegacy(replicatedDispatch) {
 // ships are the bytes that gate certified. It has no --dispatch knob: replicated
 // dispatch is a legacy-compiler source transform, so asking for it here would
 // silently produce a different module than requested rather than fail.
+// The shake (docs/watx-region-safety-design.md §8) is requested per build and
+// reaches the region allocator only:
+//
+//   WINE_REGION_SHAKE=gap|rotate|reverse|pad|0xSEED bash tools/build.sh
+//
+// A shaken build is deliberately NOT canonical, which is why the layout is
+// printed in the banner: an artifact whose provenance cannot be read off the
+// build log is one somebody will eventually ship.
+function selectedRegionShake() {
+  const fromArg = getArg('region-shake', null);
+  const source = fromArg !== null ? '--region-shake'
+    : process.env.WINE_REGION_SHAKE ? 'WINE_REGION_SHAKE'
+    : null;
+  const value = (fromArg !== null ? fromArg : (process.env.WINE_REGION_SHAKE || '')).trim();
+  if (!value || value === '0' || value === 'off' || value === 'none') return null;
+  return { value, source };
+}
+
+function reportRegionLayout(layout, shake) {
+  if (!layout) return;
+  const hx = (n) => `0x${(n >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
+  const pinned = layout.regions.length - layout.allocated;
+  if (!shake) {
+    console.log(`Region layout: CANONICAL — ${layout.regions.length} regions ` +
+      `(${pinned} pinned/derived, ${layout.allocated} allocated), floor ${hx(layout.floor)}`);
+    return;
+  }
+  // Nothing to move is not a passing shake, it is a shake that measured
+  // nothing — and it emits the canonical bytes, so it would read as a green run
+  // of the whole pool against a map that never moved. Refuse instead.
+  if (layout.allocated === 0) {
+    console.error(`build-compile-wat: WINE_REGION_SHAKE=${shake.value} was requested, but 0 of ` +
+      `${layout.regions.length} regions are allocated — every one is declare-fixed or derived, and ` +
+      `the shake never moves a pin. This build would emit the canonical bytes and prove nothing. ` +
+      `Convert regions to (region.declare ...) first.`);
+    process.exit(1);
+  }
+  console.log(`Region layout: SHAKEN (${layout.shake}) — ${layout.shaken} of ${layout.regions.length} ` +
+    `regions permuted, floor ${hx(layout.floor)}. THIS ARTIFACT IS NOT CANONICAL.`);
+}
+
 function compileWatx(replicatedDispatch) {
   if (replicatedDispatch !== false) {
     console.error('build-compile-wat: --dispatch/--replicated-dispatch is a lib/compile-wat.js transform ' +
@@ -88,10 +137,13 @@ function compileWatx(replicatedDispatch) {
   }
   const { watxSourceClosure, compileClosure } = require(path.join(__dirname, 'watx-closure.js'));
   const closure = watxSourceClosure();
+  const shake = selectedRegionShake();
   console.log(`WATX entry: ${closure.entry}`);
+  if (shake) console.log(`WATX region shake: ${shake.value} (from ${shake.source})`);
   const out = {};
   for (const [key, tailCalls] of [['bytes', true], ['compatBytes', false]]) {
-    const r = compileClosure(closure, { tailCalls });
+    const r = compileClosure(closure, { tailCalls, regionShake: shake ? shake.value : null });
+    if (tailCalls && r && r.success) reportRegionLayout(r.regions, shake);
     if (!r || !r.success || !r.wasmBinary) {
       const where = r && r.file ? ` at ${r.file}:${r.line || '?'}:${r.col || '?'}` : '';
       console.error(`WATX compile failed (tailCalls=${tailCalls})${where}: ` +

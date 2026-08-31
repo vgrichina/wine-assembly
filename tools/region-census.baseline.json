@@ -1,7 +1,7 @@
 {
   "recorded": "2026-08-31",
   "note": "Per-file counts of raw literals inside declared regions. This is a RATCHET: counts may fall, never rise. `converted` regions must stay at 0.",
-  "total": 648,
+  "total": 662,
   "converted": [],
   "byFile": {
     "src/10b-gdi-font.wat": 38,
@@ -32,6 +32,7 @@
     "test/test-peek-message-filter.js": 6,
     "test/test-process-boot-yields.js": 6,
     "test/watx-compiler-regions.test.js": 6,
+    "test/watx-compiler-alloc.test.js": 14,
     "lib/mem-utils.js": 5,
     "src/09a8-handlers-directx.wat": 5,
     "test/test-large-dll-staging.js": 5,
