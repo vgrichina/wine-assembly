@@ -7,8 +7,11 @@ hash to; this file records what we did to them afterwards.
 Rules:
 
 - Every change to a file listed in PROVENANCE.md's `sha256` block gets an entry
-  here **and** an updated hash in the same commit. `tools/check-watx-provenance.js`
-  fails the build otherwise.
+  here **and** an updated hash in the same commit. This is enforced, not asked:
+  `tools/check-watx-provenance.js` seals the manifest against this file, so an
+  entry must quote the new manifest digest or the build gate goes red. Run
+  `node tools/check-watx-provenance.js --update` and it prints the digest to
+  paste.
 - Prefer accepting valid standard WAT unconditionally over adding a
   `standardWat`-gated path (migration plan, §2.3).
 - Every compiler change lands with a minimal regression in one of the
@@ -26,3 +29,19 @@ Only adaptation: `test/watx-compiler-emit-stack.test.js` check (1) now reads
 unchanged.
 
 No compiler behavior change.
+
+Manifest digest: `b8dc6490e2fbb757fb08f6acef0c0f860eb549e809003950804afc96ae893256`
+
+## 2026-08-31 — seal the manifest against this changelog
+
+No vendored file changed; the digest above covers the same bytes the import
+recorded. What changed is the enforcement.
+
+External review found the changelog rule was procedural: the gate compared
+recorded hashes against file bytes, so editing a compiler file *and*
+hand-editing its hash in PROVENANCE.md left the build green with nothing
+written down. `tools/check-watx-provenance.js` now checks, on every normal
+verify, that PROVENANCE.md's `seal` block matches its own manifest, that this
+file quotes the current manifest digest, and that this file's bytes match the
+sealed changelog hash. Moving either end without the other is now a build
+failure.

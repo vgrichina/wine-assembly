@@ -75,7 +75,8 @@ explanatory comments. Later divergence is recorded in
 
 `node tools/check-watx-provenance.js` fails if any file below no longer hashes
 to its recorded value. When a change here is deliberate, update the hash **and**
-add a CHANGELOG entry in the same commit.
+add a CHANGELOG entry in the same commit — that pairing is enforced by the seal
+at the bottom of this file, not left to whoever is editing.
 
 ```sha256
 cc9dfe2962214e5da09162844e98d359b825009a8388bb7726edaed729b37ee2  tools/watx.js
@@ -109,3 +110,22 @@ node test/watx-compiler-simd.test.js          # 37 passed, 0 failed
 Re-run in a clean worktree under `/private/tmp` with no `../android-emu`
 reachable from it — same six results — which is the milestone's exit gate:
 the suites pass from this repository with no sibling checkout present.
+
+## The seal
+
+A list of hashes catches an edit to a vendored file. It does not catch editing
+a compiler file *and* its recorded hash together, which is the change most
+worth explaining and the one that would otherwise leave no trace.
+
+`manifest-sha256` is the digest of the `sha256` block above; the CHANGELOG entry
+for each change must quote it verbatim, and `changelog-sha256` pins the
+CHANGELOG bytes that did so. Every link is checked on a normal verify, so the
+manifest cannot move without a changelog entry, and the changelog cannot move
+without re-sealing. Both lines are rewritten together by
+`node tools/check-watx-provenance.js --update`, which refuses to write until the
+CHANGELOG already names the new digest.
+
+```seal
+manifest-sha256   b8dc6490e2fbb757fb08f6acef0c0f860eb549e809003950804afc96ae893256
+changelog-sha256  35cfe0ab87317600148af21dbd197390548ee301a5d442b6a857de3929eb4ebb
+```

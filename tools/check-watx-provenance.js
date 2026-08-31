@@ -12,13 +12,39 @@
 // test/watx-compiler-*.test.js suites do that. This one only answers "are these
 // the bytes we recorded".
 //
-// Usage:
-//   node tools/check-watx-provenance.js            # verify
-//   node tools/check-watx-provenance.js --update    # rewrite the recorded hashes
+// ── Why there is a seal, and not just a list of hashes ───────────────────────
+// Comparing recorded hashes against file bytes catches an edit to a vendored
+// file. It does NOT catch the edit that matters more: changing a compiler file
+// AND hand-editing its hash in PROVENANCE.md, which leaves the gate green and
+// no written record of what changed or why. "Also add a CHANGELOG entry" was a
+// rule a human could simply not follow.
 //
-// --update is for a deliberate change: it rewrites the block, then still fails
-// if CHANGELOG.md has not been touched more recently than the file you changed,
-// so the note cannot be forgotten.
+// So the two documents are chained:
+//
+//   manifest (the sha256 block)
+//        │  sha256 of its normalized lines
+//        ▼
+//   manifest-sha256 ──── must appear verbatim in ────► CHANGELOG.md
+//        │                                                  │
+//        │ recorded in PROVENANCE's seal                     │ sha256
+//        ▼                                                  ▼
+//   ................. seal block in PROVENANCE.md ...........
+//
+// Touch any vendored file and the manifest digest changes, so CHANGELOG.md must
+// name the new digest — which changes CHANGELOG's own hash, which the seal
+// records. There is no way to move one end without moving the other, and every
+// link is checked on a normal verify, not only under --update.
+//
+// The digest depends on the manifest alone, never on the changelog, so the
+// chain is a line and not a fixpoint: compute, write the entry, re-record.
+//
+// Usage:
+//   node tools/check-watx-provenance.js            # verify (the build gate)
+//   node tools/check-watx-provenance.js --update    # re-record hashes + seal
+//
+// --update refuses to write until CHANGELOG.md already names the new manifest
+// digest, and prints the digest to paste. It writes both hashes together or
+// neither, so the seal is never half-applied.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -75,22 +101,59 @@ if (missing.length) {
        missing.join('\n  '));
 }
 
+// The manifest digest is taken over normalized `<hash>  <file>` lines, so
+// reflowing whitespace or reordering the block's blank lines cannot change it
+// while the recorded content stays the same.
+const digestOf = (list, hashFor) =>
+  crypto.createHash('sha256')
+    .update(list.map((e) => `${hashFor(e)}  ${e.file}`).join('\n'))
+    .digest('hex');
+
+const recordedDigest = digestOf(entries, (e) => e.hash);   // what PROVENANCE says
+const actualDigest = digestOf(entries, (e) => actual.get(e.file)); // what the files are
+
+const changelogText = fs.readFileSync(CHANGELOG, 'utf8');
+const changelogHash = sha256(CHANGELOG);
+
+// The seal: two labelled lines binding the manifest to the changelog.
+const SEAL_RE = /```seal\r?\n([\s\S]*?)```/;
+const readSeal = (text) => {
+  const m = SEAL_RE.exec(text);
+  if (!m) return null;
+  const get = (label) => {
+    const hit = new RegExp('^' + label + '\\s+([0-9a-f]{64})$', 'm').exec(m[1]);
+    return hit ? hit[1] : null;
+  };
+  return { manifest: get('manifest-sha256'), changelog: get('changelog-sha256') };
+};
+
+const sealText = (manifestDigest, clogHash) =>
+  '```seal\n' +
+  `manifest-sha256   ${manifestDigest}\n` +
+  `changelog-sha256  ${clogHash}\n` +
+  '```';
+
 if (UPDATE) {
+  // Refuse to record anything until the changelog explains this exact manifest.
+  if (!changelogText.includes(actualDigest)) {
+    fail(
+      'nothing was written. The new manifest digest is:\n\n' +
+      `  ${actualDigest}\n\n` +
+      'Add a dated entry to tools/watx-src/CHANGELOG.md saying what changed and\n' +
+      'why, quoting that digest verbatim in it, then run --update again.\n' +
+      (drifted.length
+        ? 'Changed files:\n  ' + drifted.map((d) => d.file).join('\n  ')
+        : 'No vendored file changed; the manifest itself was edited.')
+    );
+  }
   let block = '';
   for (const e of entries) block += `${actual.get(e.file)}  ${e.file}\n`;
-  fs.writeFileSync(PROVENANCE, doc.replace(fence[1], block));
-  console.log(`check-watx-provenance: rewrote ${drifted.length} hash(es) in ` +
-              path.relative(ROOT, PROVENANCE));
-  if (drifted.length) {
-    // The hash is now honest; the human-readable reason may not be.
-    const clogMtime = fs.statSync(CHANGELOG).mtimeMs;
-    const stale = drifted.filter((d) => fs.statSync(path.join(ROOT, d.file)).mtimeMs > clogMtime);
-    if (stale.length) {
-      fail('hashes updated, but CHANGELOG.md is older than these changed files:\n  ' +
-           stale.map((d) => d.file).join('\n  ') +
-           '\nAdd a dated entry to tools/watx-src/CHANGELOG.md saying what changed and why.');
-    }
-  }
+  let out = doc.replace(fence[1], block);
+  const newSeal = sealText(actualDigest, changelogHash);
+  out = SEAL_RE.test(out) ? out.replace(SEAL_RE, newSeal) : out.trimEnd() + '\n\n' + newSeal + '\n';
+  fs.writeFileSync(PROVENANCE, out);
+  console.log(`check-watx-provenance: re-recorded ${drifted.length} file hash(es) and the seal ` +
+              `in ${path.relative(ROOT, PROVENANCE)}`);
   process.exit(0);
 }
 
@@ -104,4 +167,46 @@ if (drifted.length) {
   );
 }
 
-console.log(`check-watx-provenance: OK (${entries.length} vendored files match PROVENANCE.md)`);
+// ── The seal ─────────────────────────────────────────────────────────────────
+// Reached only when every vendored file matches its recorded hash. What is left
+// to prove is that the RECORD was not edited on its own.
+const seal = readSeal(doc);
+if (!seal || !seal.manifest || !seal.changelog) {
+  fail(
+    `no usable \`\`\`seal block in ${path.relative(ROOT, PROVENANCE)}.\n` +
+    'It must contain a manifest-sha256 and a changelog-sha256 line; without\n' +
+    'them a hand-edited hash cannot be told from a recorded one. Run\n' +
+    '`node tools/check-watx-provenance.js --update` to write it.'
+  );
+}
+
+if (seal.manifest !== recordedDigest) {
+  fail(
+    'PROVENANCE.md\'s hash manifest does not match its own seal — the recorded\n' +
+    'hashes were edited without re-sealing:\n' +
+    `  seal says     ${seal.manifest}\n` +
+    `  manifest is   ${recordedDigest}\n` +
+    'Add a CHANGELOG.md entry quoting the new digest, then run --update.'
+  );
+}
+
+if (!changelogText.includes(recordedDigest)) {
+  fail(
+    'tools/watx-src/CHANGELOG.md does not mention the current manifest digest\n' +
+    `  ${recordedDigest}\n` +
+    'so nothing in this repository explains what the recorded compiler bytes are.\n' +
+    'Every manifest change must land with a dated CHANGELOG entry quoting its digest.'
+  );
+}
+
+if (seal.changelog !== changelogHash) {
+  fail(
+    'tools/watx-src/CHANGELOG.md changed without re-sealing PROVENANCE.md:\n' +
+    `  seal says     ${seal.changelog}\n` +
+    `  changelog is  ${changelogHash}\n` +
+    'Run `node tools/check-watx-provenance.js --update`.'
+  );
+}
+
+console.log(`check-watx-provenance: OK (${entries.length} vendored files match PROVENANCE.md, ` +
+            'manifest sealed against CHANGELOG.md)');
