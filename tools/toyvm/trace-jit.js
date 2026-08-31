@@ -36,7 +36,7 @@
 const fs = require('fs');
 const path = require('path');
 const isa = require('./isa');
-const { HANDLERS, EA_ARMS } = require('./emit');
+const { HANDLERS, EA_ARMS, TAKEN_AT } = require('./emit');
 const { runDos } = require('./run-dos');
 
 function arg(name, fallback) {
@@ -253,10 +253,28 @@ async function jitTiers(exe, {
   hot.regSnapshot = {};
   for (const g of STATE) if (rr.vm.exports[`get_${g}`]) hot.regSnapshot[g] = rr.vm.raw(g);
   hot.regSnapshot.cx = cx;
+  // The machine the trace ran ON, not just the state it ran with. Without this
+  // the generated arms sit at every default: 8086 reserved flag bits, a
+  // real-mode address mask, empty descriptor tables. See MACHINE_STATE.
+  hot.machineSnapshot = {};
+  for (const g of MACHINE_STATE) {
+    const get = rr.vm.exports[`mget_${g}`];
+    if (get) hot.machineSnapshot[g] = get();
+  }
 
   let bres;
   try {
-    bres = await benchTiers(exe, hot, t.ops, { iters, reps, log, passes, dumpWat });
+    // One trim, applied before the arms diverge, so all four run the identical
+    // op sequence -- which is the only reason their fingerprints can be
+    // compared at all.
+    const trimmed = trimExit(t.ops);
+    if (trimmed.dropped) {
+      log(`  (trace exits by ${trimmed.dropped}, which cannot be made to fall `
+        + `through -- benching the ${trimmed.ops.length} ops before it)`);
+      trace.exit = trimmed.dropped;
+      trace.ops = trimmed.ops.length;
+    }
+    bres = await benchTiers(exe, hot, trimmed.ops, { iters, reps, log, passes, dumpWat });
   } catch (e) {
     // Two very different failures used to share this label. `unfoldable` is a
     // handler body whose operand preamble drifted from ops()'s shape, which
@@ -313,20 +331,43 @@ async function main() {
 // and therefore has an exact, uniform shape. Folding it is a text substitution,
 // which is the whole reason tier 1 is cheap: no per-handler work, no new
 // backend, the same body strings emitSwitch already inlines.
+// A handler does NOT necessarily have one flat preamble. A FUSED handler is two
+// bodies concatenated -- `cmp_rm8_jz` is `cmp_rm8` then `jz` -- and each half
+// carries its own ops(n): the second half loads `$t0` from `offset=0` again,
+// correctly, because the first half already advanced `$ip` past its own
+// operands. `$t` names restart too.
+//
+// Assuming one flat preamble therefore refused every fused handler in the
+// corpus, which is the hottest shape there is: `cmp_rm8_jz` following itself is
+// 57.7% of RUNDEMO's dispatches. It cost DTM2 and ACCIDENT their whole
+// measurement, reported as `unfoldable`.
+//
+// So walk the body in order, carrying the cumulative advance the way the
+// interpreter does: an operand load at `offset=D` after N words of advance is
+// argument `N + D/4`, whichever half it is in. The single-segment case is the
+// same walk with one segment. Advances are dropped -- a trace has no next op to
+// find -- and control-flow writes to `$ip` (`(global.set $ip (local.get $t1))`,
+// how a branch is taken) do not match the advance shape and are left alone.
+const IP_USE = new RegExp(
+  '\\(local\\.set \\$t(\\d+) \\(i32\\.load offset=(\\d+) \\(global\\.get \\$ip\\)\\)\\)'
+  + '|\\(global\\.set \\$ip \\(i32\\.add \\(global\\.get \\$ip\\) \\(i32\\.const (\\d+)\\)\\)\\)', 'g');
+
 function foldOperands(body, args) {
-  let out = body;
-  for (let i = 0; i < args.length; i++) {
-    const load = new RegExp(
-      `\\(local\\.set \\$t${i} \\(i32\\.load offset=${i * 4} \\(global\\.get \\$ip\\)\\)\\)`);
-    if (!load.test(out)) return null;              // shape drifted -- refuse rather than guess
-    out = out.replace(load, `(local.set $t${i} (i32.const ${args[i] | 0}))`);
+  let out = '', last = 0, base = 0, folded = 0, m;
+  IP_USE.lastIndex = 0;
+  while ((m = IP_USE.exec(body)) !== null) {
+    out += body.slice(last, m.index);
+    last = m.index + m[0].length;
+    if (m[3] !== undefined) { base += Number(m[3]) / 4; continue; }
+    const idx = base + Number(m[2]) / 4;
+    // Out of range means the walk has lost track of where $ip is, not that the
+    // program is odd. Refuse rather than bake a neighbouring op's operand in.
+    if (!Number.isInteger(idx) || idx < 0 || idx >= args.length) return null;
+    out += `(local.set $t${m[1]} (i32.const ${args[idx] | 0}))`;
+    folded++;
   }
-  // The thread pointer only exists to find the next op. A trace has no next op
-  // to find, so the advance goes too.
-  out = out.replace(
-    new RegExp(`\\(global\\.set \\$ip \\(i32\\.add \\(global\\.get \\$ip\\) \\(i32\\.const ${args.length * 4}\\)\\)\\)`),
-    '');
-  return out;
+  if (args.length && !folded) return null;         // shape drifted -- refuse rather than guess
+  return out + body.slice(last);
 }
 
 // Straight-line by construction: see the note in benchTiers about why every
@@ -823,7 +864,7 @@ function emitTier3(ops, passes) {
 // So this prices dispatch and code quality over a real op mix, and it does NOT
 // price side exits. That is the honest limit of the measurement: a trace JIT
 // also has to pay for leaving the trace, and this says nothing about it.
-const { helpers, LOCALS, STATE, EXTRA_GLOBALS } = require('./emit');
+const { helpers, LOCALS, STATE, EXTRA_GLOBALS, MACHINE_STATE, machineAccessors } = require('./emit');
 
 function moduleWat(body, extra = {}) {
   const { locals = '', pro = '', epi = '' } = extra;
@@ -840,6 +881,7 @@ ${globals}
 ${EXTRA_GLOBALS}
 (type $void (func))
 ${accessors}
+${machineAccessors()}
 ${helpers()}
 (func (export "spin") (param $k i32) ${LOCALS} ${locals}
 ${pro}
@@ -865,28 +907,78 @@ function memHash(mem) {
 // target is repointed at its own fall-through, and the trailing jmp closes the
 // loop. This is the tier-0 arm and it is what the other two are generated from,
 // so all three run one identical op sequence.
+// The trace's last op, when it leaves the trace by a route that cannot be made
+// to fall through.
+//
+// A Jcc is repointed at its own fall-through and a bare `jmp` becomes an `end`,
+// so both stay. A `ret`, a `call_far`, a `jmp_m16` cannot: tier 0 FOLLOWS them
+// and goes on executing other blocks, while tiers 1-3 have nothing to follow
+// and simply re-run the body. The two arms are then running different code and
+// the comparison is meaningless -- which is exactly what it reported, as five
+// of the core ten `mismatch`ing with tier 0's SP 20000 pops away from the rest.
+//
+// So drop it, in every arm at once, and say so. What is priced is the trace
+// BODY, which is what this page has always claimed to price: "this does not
+// price side exits" was already true of the branches that stayed.
+const CANNOT_FALL_THROUGH = /^(ret|call|int|iret|hlt|jmp_far|jmp_m)/;
+
+function trimExit(ops) {
+  if (ops.length < 2) return { ops, dropped: null };
+  const name = HANDLERS[ops[ops.length - 1].fn].name;
+  if (!CANNOT_FALL_THROUGH.test(name)) return { ops, dropped: null };
+  return { ops: ops.slice(0, -1), dropped: name };
+}
+
 function straightLineProgram(ops, base) {
   const words = [];
   const starts = [];
   for (const op of ops) { starts.push(words.length); words.push(op.fn, ...op.args); }
+  // Lay the terminator down BEFORE repointing anything, so a branch that is
+  // itself the last op has somewhere to fall through TO. Sending it to `base`
+  // instead -- which is what "the next op, or offset 0" did -- turns the arena
+  // into a self-loop that runs until the step budget is gone, and tier 0 then
+  // does thousands of times the work of the other arms. It read as an 18.5x
+  // speedup on daretro, which is how it was caught.
+  const endFn = HANDLERS.findIndex(x => x.name === 'end');
+  const endAt = words.length;
+  words.push(endFn, 0);
   ops.forEach((op, i) => {
     const w = starts[i];
     const h = HANDLERS[op.fn];
-    const nextArena = base + (starts[i + 1] === undefined ? 0 : starts[i + 1]) * 4;
-    const nextGuest = ops[i + 1] ? 0 : 0;
-    if (h.args === 4 && /^(jz|jnz|jae|jb|ja|jbe|jl|jg|jle|jge|js|jns|jo|jno|jp|jnp|loop)/.test(h.name)) {
-      words[w + 1] = nextArena; words[w + 2] = nextGuest;      // taken -> fall through
-      words[w + 3] = nextArena; words[w + 4] = nextGuest;
-    } else if (h.name === 'jmp') {
+    const nextArena = base + (starts[i + 1] === undefined ? endAt : starts[i + 1]) * 4;
+    const nextGuest = 0;
+    if (h.name === 'jmp') {
       // Terminate rather than loop. Budgeting the interpreter by dispatch count
       // cannot express "k iterations": any op costing more than one dispatch
       // (a rep prefix, a bail) cuts the last iteration short, and a partial
       // iteration is a different computation. Ending the trace makes one run()
       // exactly one iteration, and every arm is then driven one iteration per
       // call so they all pay the same host-call overhead.
-      words[w] = HANDLERS.findIndex(x => x.name === 'end');
+      //
+      // This has to be tested BEFORE TAKEN_AT: a bare `jmp` has an entry there
+      // too (it is a spin candidate), and letting that win reintroduces exactly
+      // the self-loop described above.
+      words[w] = endFn;
       words[w + 1] = 0;
       words.length = w + 2;
+      return;
+    }
+    // Which operand holds the taken edge is emit.js's own bookkeeping, and it
+    // publishes it: TAKEN_AT covers a plain Jcc, a FUSED one (`cmp_rm8_jz`,
+    // whose taken edge sits after the ALU's operands), the traced twins and the
+    // spin twins, in one map that cannot drift from the handler table.
+    //
+    // Matching on `args === 4` and a list of Jcc names instead missed every one
+    // of those twins -- `cmp_rm8_jz_t` has five operands and a name no entry in
+    // the list is a prefix of -- so tier 0 took the branch out of the trace
+    // while the other arms fell through it. That is DTM2's whole mismatch, on
+    // the single op its hot trace consists of.
+    const takenAt = TAKEN_AT.get(op.fn);
+    if (takenAt !== undefined) {
+      words[w + takenAt] = nextArena; words[w + takenAt + 1] = nextGuest;
+      // A plain (untraced) branch also carries its not-taken edge explicitly;
+      // a traced twin does not, because the fall-through is the next word.
+      if (h.args >= takenAt + 3) { words[w + takenAt + 2] = nextArena; words[w + takenAt + 3] = nextGuest; }
     }
   });
   return words;
@@ -982,6 +1074,14 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
     const mem = arm.vm ? arm.vm.mem : arm.mem;
     mem.set(snapshotMem);
     const ex = arm.vm ? arm.vm.exports : arm.exports;
+    // Machine settings BEFORE the guest state: a segment setter recomputes its
+    // shadow base through $sbase, and in protected mode that reads the
+    // descriptor tables. Seeding `ds` against an empty GDT resolves to the
+    // wrong base and every later memory access in the arm addresses somewhere
+    // else.
+    for (const [g, v] of Object.entries(hot.machineSnapshot || {})) {
+      if (ex[`mset_${g}`]) ex[`mset_${g}`](v);
+    }
     for (const [g, v] of Object.entries(snapshotRegs)) if (ex[`set_${g}`]) ex[`set_${g}`](v);
     if (arm.afterSeed) arm.afterSeed();
   };

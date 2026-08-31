@@ -5294,6 +5294,29 @@ ${isa.SEG.map(r => `(global $${r}b (mut i32) (i32.const 0))`).join('\n')}
 (global $ldtb (mut i32) (i32.const 0))
 (global $tr (mut i32) (i32.const 0))`;
 
+// The MACHINE's state, as opposed to the guest's.
+//
+// STATE is architectural -- registers, segments, flags. These are the settings
+// the machine was configured into and that a handler reads on ordinary paths:
+// the flag word's reserved and defined masks, the shift-count mask, how wide
+// the address bus is, the descriptor tables, the stack width.
+//
+// They all have DEFAULTS, and a default is exactly what a running program has
+// moved away from: `set_cpu` lowers $f_res from its 8086 value, an XMS handle
+// opens $linmask, entering protected mode fills $gdtb. So anything that rebuilds
+// a module around helpers() -- tools/toyvm/trace-jit.js does -- has to copy
+// these across too, or it computes the same instruction against a different
+// machine. That was worth a whole reserved bit of the flags word (0xF246 vs
+// 0x7246) and scored the run a mismatch with no hint as to which field moved.
+const MACHINE_STATE = ['f_res', 'f_def', 'shmask', 'linmask', 'cr0', 'vm86',
+  'gdtb', 'gdtl', 'd32', 'spm', 'ldt', 'ldtb', 'tr'];
+
+// Emitted into BOTH modules, under names of their own so they cannot collide
+// with the hand-written get_cr0/get_linmask exports that already exist.
+const machineAccessors = () => MACHINE_STATE.map(g => `
+(func (export "mget_${g}") (result i32) (global.get $${g}))
+(func (export "mset_${g}") (param $v i32) (global.set $${g} (local.get $v)))`).join('');
+
 function preamble() {
   const globals = STATE
     .map(g => `(global $${g} (mut i32) (i32.const 0))`).join('\n');
@@ -5375,6 +5398,7 @@ ${isa.SEG.map(r => `(func (export "get_${r}b") (result i32) (global.get $${r}b))
     (i32.ge_u (local.get $level) (i32.const 186)))))
 (type $void (func))
 ${accessors}
+${machineAccessors()}
 `;
 }
 
@@ -5629,6 +5653,8 @@ module.exports = {
   // The $ea br_table's arms, so a JIT tier can fold the call once its index is
   // a constant instead of keeping a second copy that drifts.
   EA_ARMS,
+  MACHINE_STATE,
+  machineAccessors,
   // A handler index -> the same handler without its flag write, and what every
   // handler does to the flag state. The compiler walks a finished block
   // backwards with these and swaps in the variant where the write is dead.
