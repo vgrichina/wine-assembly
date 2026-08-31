@@ -44,7 +44,7 @@ async function bootInstance(wasmBytes, memory, tid) {
   };
   const base = createHostImports(ctx);
   base.host.memory = memory;
-  for (const stub of ['create_thread', 'exit_thread', 'create_event', 'set_event',
+  for (const stub of ['create_thread', 'exit_thread', 'terminate_thread', 'create_event', 'set_event',
     'reset_event', 'wait_single', 'wait_multiple']) base.host[stub] = () => 0;
   const { instance } = await WebAssembly.instantiate(wasmBytes, base);
   ctx.exports = instance.exports;
@@ -124,9 +124,9 @@ function duplicates(values) {
 
 (async () => {
   console.log('WAT cross-instance locks, two OS threads\n');
-  const { compileWat } = require('../lib/compile-wat');
+  const { compileSrcWasm } = require('./compile-src');
   const SRC = path.join(__dirname, '..', 'src');
-  const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC, f), 'utf-8'));
+  const wasmBytes = compileSrcWasm();
 
   {
     // Long enough to swamp the barrier's wake skew. At 20,000 iterations each

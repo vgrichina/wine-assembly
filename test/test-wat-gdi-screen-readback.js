@@ -8,7 +8,7 @@ const path = require('path');
 const { createCanvas } = require('../lib/canvas-compat');
 const { createHostImports } = require('../lib/host-imports');
 const { Win98Renderer } = require('../lib/renderer');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 
 const ROOT = path.join(__dirname, '..');
 const RED = 0x000000ff;
@@ -26,6 +26,7 @@ async function instantiate(wasm, renderer) {
   base.host.memory = memory;
   base.host.create_thread = () => 0;
   base.host.exit_thread = () => 0;
+  base.host.terminate_thread = () => 0;
   base.host.create_event = () => 0;
   base.host.set_event = () => 0;
   base.host.reset_event = () => 0;
@@ -63,8 +64,7 @@ function fill(wat, hdc, width, height, color) {
 }
 
 async function main() {
-  const wasm = await compileWat(file =>
-    fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
+  const wasm = compileSrcWasm();
   const renderer = new Win98Renderer(createCanvas(32, 24));
   const appA = await instantiate(wasm, renderer);
   const appB = await instantiate(wasm, renderer);

@@ -19,21 +19,20 @@ const path = require('path');
 const { createCanvas } = require('../lib/canvas-compat');
 const { createHostImports } = require('../lib/host-imports');
 const { Win98Renderer } = require('../lib/renderer');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 
 const ROOT = path.join(__dirname, '..');
 const HWND = 0x10001;
 const WHITE = 0x00ffffff;
 
 async function boot(width, height) {
-  const wasm = await compileWat(file =>
-    fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
+  const wasm = compileSrcWasm();
   const renderer = new Win98Renderer(createCanvas(640, 480));
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const ctx = { getMemory: () => memory.buffer, renderer, resourceJson: {}, exports: null };
   const base = createHostImports(ctx);
   base.host.memory = memory;
-  for (const name of ['create_thread', 'exit_thread', 'create_event', 'set_event',
+  for (const name of ['create_thread', 'exit_thread', 'terminate_thread', 'create_event', 'set_event',
                       'reset_event', 'wait_single', 'wait_multiple']) {
     base.host[name] = () => 0;
   }

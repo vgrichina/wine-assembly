@@ -12,7 +12,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 
 const AF_INET = 2;
 const SOCK_STREAM = 1;
@@ -22,8 +22,7 @@ const FIONBIO = 0x8004667e | 0;
 const ip2int = ip => ip.split('.').reduce((a, o) => ((a << 8) | (Number(o) & 255)) >>> 0, 0) >>> 0;
 
 async function compile() {
-  const root = path.join(__dirname, '..');
-  return compileWat(f => fs.promises.readFile(path.join(root, 'src', f), 'utf8'));
+  return compileSrcWasm();
 }
 
 async function makeNode(wasm, wire, ip) {
@@ -35,6 +34,7 @@ async function makeNode(wasm, wire, ip) {
     memory,
     create_thread: () => 0,
     exit_thread: () => 0,
+    terminate_thread: () => 0,
     create_event: () => 0,
     set_event: () => 0,
     reset_event: () => 0,

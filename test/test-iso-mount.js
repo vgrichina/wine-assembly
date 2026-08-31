@@ -18,7 +18,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const { VirtualFS } = require(path.join(ROOT, 'lib', 'filesystem'));
 const iso9660 = require(path.join(ROOT, 'lib', 'iso9660'));
-const { compileWat } = require(path.join(ROOT, 'lib', 'compile-wat'));
+const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require(path.join(ROOT, 'lib', 'host-imports'));
 const { makeTestIso, LABEL } = require(path.join(__dirname, 'fixtures', 'make-test-iso'));
 
@@ -189,8 +189,7 @@ async function main() {
 
   // --- drive identity, as the guest sees it -------------------------------
 
-  const wasmBytes = await compileWat(file =>
-    fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
+  const wasmBytes = compileSrcWasm();
   const module = await WebAssembly.compile(wasmBytes);
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const guestVfs = new VirtualFS();
@@ -200,7 +199,7 @@ async function main() {
   const ctx = { getMemory: () => memory.buffer, renderer: null, resourceJson: {}, vfs: guestVfs };
   const imports = createHostImports(ctx);
   imports.host.memory = memory;
-  for (const name of ['create_thread', 'exit_thread', 'create_event', 'set_event',
+  for (const name of ['create_thread', 'exit_thread', 'terminate_thread', 'create_event', 'set_event',
                       'reset_event', 'wait_single', 'wait_multiple']) {
     imports.host[name] = () => 0;
   }

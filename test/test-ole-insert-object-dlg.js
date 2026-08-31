@@ -18,7 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 const { setRegValue } = require('../lib/storage');
 
 const CLSID_TEXT = '{00000315-0000-0000-C000-000000000046}';
@@ -29,12 +29,12 @@ const LB_SETCURSEL = 0x0186;
 
 async function main() {
   const root = path.join(__dirname, '..');
-  const wasm = await compileWat(file => fs.promises.readFile(path.join(root, 'src', file), 'utf8'));
+  const wasm = compileSrcWasm();
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const ctx = { getMemory: () => memory.buffer, renderer: null, resourceJson: {} };
   const base = createHostImports(ctx);
   base.host.memory = memory;
-  for (const n of ['create_thread', 'exit_thread', 'create_event', 'set_event',
+  for (const n of ['create_thread', 'exit_thread', 'terminate_thread', 'create_event', 'set_event',
                    'reset_event', 'wait_single', 'wait_multiple']) base.host[n] = () => 0;
   base.host.com_create_instance = () => 0x80004002;
   const { instance } = await WebAssembly.instantiate(wasm, base);

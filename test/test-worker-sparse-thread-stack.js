@@ -9,7 +9,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
 const { GuestThreadHost, WorkerLink } = require('../lib/guest-thread-host');
 
@@ -66,8 +66,7 @@ async function main() {
       'a synchronous structured-clone failure must clear the pending request');
   }
 
-  const module = await WebAssembly.compile(await compileWat(file =>
-    fs.promises.readFile(path.join(root, 'src', file), 'utf8')));
+  const module = await WebAssembly.compile(compileSrcWasm());
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const ctx = {
     getMemory: () => memory.buffer,

@@ -5,7 +5,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
 
 const IMAGE_BASE = 0x400000;
@@ -20,7 +20,7 @@ async function instantiate(wasmBytes, memory, tid) {
   };
   const imports = createHostImports(ctx);
   imports.host.memory = memory;
-  for (const name of ['create_thread', 'exit_thread', 'create_event',
+  for (const name of ['create_thread', 'exit_thread', 'terminate_thread', 'create_event',
     'set_event', 'reset_event', 'wait_single', 'wait_multiple']) {
     imports.host[name] = () => 0;
   }
@@ -32,8 +32,7 @@ async function instantiate(wasmBytes, memory, tid) {
 
 (async () => {
   const src = path.join(__dirname, '..', 'src');
-  const wasmBytes = await compileWat(file =>
-    fs.promises.readFile(path.join(src, file), 'utf8'));
+  const wasmBytes = compileSrcWasm();
   const memory = new WebAssembly.Memory({
     initial: 8192, maximum: 8192, shared: true,
   });

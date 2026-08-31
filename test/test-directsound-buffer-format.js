@@ -9,7 +9,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 
 const ROOT = path.join(__dirname, '..');
 const extraWat = String.raw`
@@ -39,12 +39,10 @@ const extraWat = String.raw`
 `;
 
 async function main() {
-  const wasm = await compileWat(async file => {
-    const source = await fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8');
-    return file === '13-exports.wat'
-      ? source.replace(/\n\)\s*$/, `\n${extraWat}\n)\n`)
-      : source;
-  });
+  // Plain append: src fragments are self-balanced, so there is no trailing `)`
+  // for the old splice to match — it silently dropped the fragment.
+  const wasm = compileSrcWasm((file, source) =>
+    file === '13-exports.wat' ? `${source}\n${extraWat}\n` : source);
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const imports = createHostImports({
     getMemory: () => memory.buffer,
@@ -53,7 +51,7 @@ async function main() {
   });
   imports.host.memory = memory;
   Object.assign(imports.host, {
-    create_thread: () => 0, exit_thread: () => 0,
+    create_thread: () => 0, exit_thread: () => 0, terminate_thread: () => 0,
     create_event: () => 0, set_event: () => 0, reset_event: () => 0,
     wait_single: () => 0, wait_multiple: () => 0,
     com_create_instance: () => 0x80004002,

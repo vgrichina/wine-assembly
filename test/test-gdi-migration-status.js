@@ -5,7 +5,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 
 const ROOT = path.join(__dirname, '..');
 const header = fs.readFileSync(path.join(ROOT, 'src', '01-header.wat'), 'utf8');
@@ -97,7 +97,7 @@ assert.deepStrictEqual([...watSource.matchAll(rawPointerAnd)].map(match => match
   'pointer values in logical i32.and expressions must be normalized with i32.ne');
 
 (async () => {
-  const wasm = await compileWat(file => fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
+  const wasm = compileSrcWasm();
   assert(wasm.length > 0, 'WAT must remain linkable after removing JS imports');
   await WebAssembly.compile(wasm);
   console.log(`PASS  JS GDI bridge is restricted to ${PERMANENT_NON_TEXT_BRIDGE.length} presentation imports and ${CANVAS_TEXT_POLICY.length} text imports`);

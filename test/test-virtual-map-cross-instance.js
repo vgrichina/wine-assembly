@@ -4,7 +4,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
 
 const extraWat = String.raw`
@@ -61,11 +61,10 @@ const extraWat = String.raw`
 
 async function main() {
   const srcDir = path.join(__dirname, '..', 'src');
-  const wasmBytes = await compileWat(async filename => {
-    const source = await fs.promises.readFile(path.join(srcDir, filename), 'utf8');
-    if (filename !== '13-exports.wat') return source;
-    return source.replace(/\n\)\s*$/, `\n${extraWat}\n)\n`);
-  });
+  // Plain append: src fragments are self-balanced now, so there is no trailing
+  // `)` to splice before — the old regex matched nothing and dropped extraWat.
+  const wasmBytes = compileSrcWasm((filename, source) =>
+    filename === '13-exports.wat' ? `${source}\n${extraWat}\n` : source);
   const memory = new WebAssembly.Memory({
     initial: 8192, maximum: 8192, shared: true,
   });
@@ -81,6 +80,7 @@ async function main() {
     imports.host.memory = memory;
     imports.host.create_thread = () => 0;
     imports.host.exit_thread = () => 0;
+    imports.host.terminate_thread = () => 0;
     imports.host.create_event = () => 0;
     imports.host.set_event = () => 0;
     imports.host.reset_event = () => 0;

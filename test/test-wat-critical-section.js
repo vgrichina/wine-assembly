@@ -48,8 +48,8 @@ async function bootInstance(wasmBytes, memory, tid) {
   };
   const base = createHostImports(ctx);
   base.host.memory = memory;
-  for (const stub of ['create_thread', 'exit_thread', 'create_event', 'set_event',
-    'reset_event', 'wait_single', 'wait_multiple']) base.host[stub] = () => 0;
+  for (const stub of ['create_thread', 'exit_thread', 'terminate_thread', 'create_event',
+    'set_event', 'reset_event', 'wait_single', 'wait_multiple']) base.host[stub] = () => 0;
   const { instance } = await WebAssembly.instantiate(wasmBytes, base);
   ctx.exports = instance.exports;
   instance.exports.init_thread(tid, IMAGE_BASE, 0, 0, 0, 0, 0);
@@ -64,9 +64,8 @@ function check(ok, label, detail) {
 
 (async () => {
   console.log('CRITICAL_SECTION handlers, two guest thread identities\n');
-  const { compileWat } = require('../lib/compile-wat');
-  const SRC = path.join(__dirname, '..', 'src');
-  const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC, f), 'utf-8'));
+  const { compileSrcWasm } = require('./compile-src');
+  const wasmBytes = compileSrcWasm();
 
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   // tid 0 is the guest's main thread. Its Enter never parks by design (it runs

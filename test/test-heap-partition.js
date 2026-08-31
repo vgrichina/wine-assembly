@@ -26,7 +26,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
 
 const SRC = path.join(__dirname, '..', 'src');
@@ -42,8 +42,7 @@ function check(ok, label, detail) {
 
 // One module, N instances, one memory — exactly how a guest thread is born.
 async function boot(count) {
-  const wasmBytes = await compileWat(f =>
-    fs.promises.readFile(path.join(SRC, f), 'utf-8'));
+  const wasmBytes = compileSrcWasm();
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const instances = [];
   for (let i = 0; i < count; i++) {
@@ -54,7 +53,7 @@ async function boot(count) {
     };
     const base = createHostImports(ctx);
     base.host.memory = memory;
-    for (const stub of ['create_thread', 'exit_thread', 'create_event', 'set_event',
+    for (const stub of ['create_thread', 'exit_thread', 'terminate_thread', 'create_event', 'set_event',
       'reset_event', 'wait_single', 'wait_multiple']) base.host[stub] = () => 0;
     const { instance } = await WebAssembly.instantiate(wasmBytes, base);
     ctx.exports = instance.exports;

@@ -27,7 +27,7 @@ async function boot(wasmBytes, memory, tid) {
   };
   const base = createHostImports(ctx);
   base.host.memory = memory;
-  for (const stub of ['create_thread', 'exit_thread', 'create_event', 'set_event',
+  for (const stub of ['create_thread', 'exit_thread', 'terminate_thread', 'create_event', 'set_event',
     'reset_event', 'wait_single', 'wait_multiple']) base.host[stub] = () => 0;
   const { instance } = await WebAssembly.instantiate(wasmBytes, base);
   ctx.exports = instance.exports;
@@ -94,9 +94,9 @@ async function pair(wasmBytes, memory, jobA, jobB, extra = {}) {
 
 (async () => {
   console.log('USER shared state, two OS threads\n');
-  const { compileWat } = require('../lib/compile-wat');
+  const { compileSrcWasm } = require('./compile-src');
   const src = path.join(__dirname, '..', 'src');
-  const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(src, f), 'utf8'));
+  const wasmBytes = compileSrcWasm();
 
   {
     const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
