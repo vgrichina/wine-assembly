@@ -800,3 +800,61 @@ indirect count is zero everywhere. **The first version of this section would
 have concluded that inlining was unavailable.** Third branch-reading bug in this
 file, same shape as the other two: a name pattern standing in for a structural
 fact.
+
+#### Can the guard be proved dead instead of executed?
+
+An inlined `ret` still pops the guest stack and checks what it got, because the
+callee might have rewritten its own return address. The question is whether that
+check can be *removed* rather than merely made cheap — and the answer is a
+static property the census can already report: **did the callee perform a
+general store at all?**
+
+The distinction that makes this tractable is one `handler-effects.js` already
+draws. A `push` is a `stack` effect; a `mov [di],al` is a `memWrite`. A push
+writes *below* the return slot by construction — SP has been decremented — so no
+amount of pushing can clobber the word the `ret` is about to read. Only a
+general store can, and only if its effective address lands there.
+
+So `--coverage` reports each leaf callee as `<ops>op/<stores>st`:
+
+| program | leaf callees (ops / general stores) |
+|---|---|
+| RUNDEMO | 9/**0**, 45/**0**, 54/**0**, 57/11 |
+| CONTACT | 8/**0** |
+| CYCLE | 288/**0** |
+| DREAM | 21/8, 21/8, 5/**0**, 216/20 |
+| B-STEEL | 4/3, 14/4, 4/**0** |
+| BRW | 8/1 |
+| DSTNFO | 59/5, 171/21 |
+
+**Store-free leaf callees are common, not exotic.** Three of RUNDEMO's four,
+CONTACT's only one, CYCLE's 288-op one, one of DREAM's four and one of
+B-STEEL's three touch memory only through the stack. For those the return
+address provably still holds what the call pushed, the guard is dead code, and
+the inlined `ret` collapses to the SP adjustment — the callee becomes straight
+inline code with no exit and no materialization point.
+
+Two caveats before that is a rule:
+
+- **SP balance is a second obligation.** No stores means the *value* at the
+  return slot is unchanged; it does not mean the `ret` reads that slot. A callee
+  that leaves SP somewhere else pops a different word. For a callee whose only
+  stack traffic is push/pop that is statically checkable by counting; anything
+  that computes into SP keeps the guard.
+- **A store-bearing callee is not automatically disqualified,** it just needs a
+  real argument rather than a count. In real mode a store's segment is known per
+  op, and the demo shape is stores through `ES` at `0xA000` against a stack in
+  `SS` — no overlap, so no aliasing. That is a segment-base comparison at region
+  entry, one check for the whole loop, and it is the same kind of check the
+  shadow stack already makes on `CS`. Measuring it needs the mode→segment map
+  and is not in this table.
+
+**The payoff is not the compare.** A load, a compare and a branch is a few
+instructions; if that were all a guard cost, it would not be worth removing.
+What a guard actually costs is that it is a **materialization point**: at every
+exit the compiled region must be able to write back promoted registers, elided
+flag records and the right `$ip`. Guards inside a loop body are what stop
+registers living in wasm locals across iterations, which is the entire value of
+the micro-op tiers. Removing a guard removes a constraint on the register
+allocator, not four instructions — which is why "did this callee store anything"
+is worth a static pass.

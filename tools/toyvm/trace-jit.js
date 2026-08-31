@@ -37,6 +37,7 @@ const fs = require('fs');
 const path = require('path');
 const isa = require('./isa');
 const { HANDLERS, EA_ARMS, TAKEN_AT } = require('./emit');
+const { effectsOf } = require('./handler-effects');
 const { runDos } = require('./run-dos');
 
 function arg(name, fallback) {
@@ -438,6 +439,22 @@ async function jitTiers(exe, {
       return v;
     };
     const reachCache = new Map();
+    // GENERAL stores only. `handler-effects.js` reports a push/pop as `stack`
+    // and a `mov [di],al` as `memWrite`, and the difference is the whole
+    // question here: a push writes BELOW the return slot by construction, so it
+    // can never be what clobbers it, while a general store goes wherever its
+    // effective address says. A callee with no general store cannot have
+    // rewritten the return address the inlined `ret` is about to check.
+    const effCache = new Map();
+    const storesIn = (blk) => {
+      const t = readTrace(blk.prog.words, (blk.addr - blk.prog.arenaBase) >> 2);
+      let n = 0;
+      for (const op of t.ops) {
+        if (!effCache.has(op.fn)) effCache.set(op.fn, effectsOf(HANDLERS[op.fn]));
+        if (effCache.get(op.fn).memWrite.length) n++;
+      }
+      return n;
+    };
     const reach = (from) => {                 // forward reachability, bounded
       if (reachCache.has(from)) return reachCache.get(from);
       const seen = new Set([from]), work = [from];
@@ -498,14 +515,15 @@ async function jitTiers(exe, {
       // is a subgraph of its own with calls inside it is a second region.
       const sized = [...callees].filter(c => headByAddr.has(c)).map((c) => {
         const body = reach(c);
-        let n = 0, inner = 0;
+        let n = 0, inner = 0, stores = 0;
         for (const a of body) {
           const b2 = headByAddr.get(a);
           if (!b2) continue;
           const s2 = succOf(b2);
           n += s2.ops; inner += s2.direct.length + s2.indirect + s2.ints;
+          stores += storesIn(b2);
         }
-        return { at: c, blocks: body.size, ops: n, leaf: inner === 0 };
+        return { at: c, blocks: body.size, ops: n, leaf: inner === 0, stores };
       });
       loops.push({ head, sig, blocks: region.length, exits, calls, ops,
         share: 100 * samples / total,
@@ -537,7 +555,7 @@ async function jitTiers(exe, {
         const leaves = l.callees.filter(c => c.leaf);
         log(`    0x${l.head.toString(16)} call sites: `
           + `${l.directN} direct (${l.callees.length} target(s), ${leaves.length} leaf, `
-          + `${leaves.map(c => c.ops).join('/') || '-'} ops), `
+          + `${leaves.map(c => `${c.ops}op/${c.stores}st`).join(' ') || '-'}), `
           + `${l.indirect} indirect, ${l.ints} int`
           + (l.uncompiled ? `, ${l.uncompiled} never compiled` : ''));
       }
