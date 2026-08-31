@@ -43,6 +43,11 @@ function parseReplicatedDispatch() {
 const OUT = path.resolve(ROOT, getArg('out', path.join('build', 'wine-assembly.wasm')));
 const COMPAT_OUT = path.resolve(ROOT, getArg('compat-out', path.join('build', 'wine-assembly.compat.wasm')));
 
+// Opt-in third artifact carrying a wasm `name` section. Off unless asked for,
+// so the two canonical files above are byte-for-byte what they were.
+const WANT_NAMES = process.argv.includes('--names') || process.env.WINE_WAT_NAMES === '1';
+const NAMED_OUT = path.resolve(ROOT, getArg('named-out', path.join('build', 'wine-assembly.named.wasm')));
+
 // Reports WHERE the choice came from as well as what it is: a build log that
 // only says "watx" cannot distinguish a deliberate flip from a stray exported
 // variable in somebody's shell, and that is exactly the question after a bad
@@ -151,6 +156,29 @@ function compileWatx(replicatedDispatch) {
     }
     out[key] = Buffer.from(r.wasmBinary);
   }
+  // A THIRD, optional artifact: the same module with a wasm `name` custom
+  // section. Opt in with WINE_WAT_NAMES=1 or --names.
+  //
+  // Why it is a separate file and not a flag on the canonical one: an
+  // instantiation failure or a trap reports a function INDEX and nothing else
+  // (`Compiling function #3849 failed: …`), which is why tools/func-index.js
+  // exists at all; a name section puts the answer in the artifact so node,
+  // DevTools and every profiler print `$handle_CreateWindowExA`. But the
+  // canonical artifacts' byte-identity is how every compiler change is proved
+  // safe, and ~100KB of names would take that instrument away. So this writes
+  // build/wine-assembly.named.wasm ALONGSIDE and replaces nothing — the two
+  // canonical files are compiled without the option and are unaffected.
+  if (WANT_NAMES) {
+    const r = compileClosure(closure, {
+      tailCalls: true, regionShake: shake ? shake.value : null, nameSection: 'wine-assembly',
+    });
+    if (!r || !r.success || !r.wasmBinary) {
+      console.error('WATX name-section compile failed: ' +
+        String((r && (r.error || r.message)) || 'compile() returned no binary'));
+      process.exit(1);
+    }
+    out.namedBytes = Buffer.from(r.wasmBinary);
+  }
   return out;
 }
 
@@ -158,7 +186,7 @@ function compileWatx(replicatedDispatch) {
   const replicatedDispatch = parseReplicatedDispatch();
   const compiler = selectedCompiler();
   console.log(`Compiler: ${compiler.name} (from ${compiler.source})`);
-  const { bytes, compatBytes } = compileWatx(replicatedDispatch);
+  const { bytes, compatBytes, namedBytes } = compileWatx(replicatedDispatch);
   // compileWat emits bytes without validating operand stacks, so a WAT edit
   // that leaves a function's result value unproduced — one paren too few, and
   // an (if) that should yield i32 yields nothing — used to "build" fine and
@@ -186,6 +214,15 @@ function compileWatx(replicatedDispatch) {
   const compatSt = await fs.promises.stat(COMPAT_OUT);
   console.log(`Build complete: ${path.relative(ROOT, OUT)} (${st.size} bytes)`);
   console.log(`Build complete: ${path.relative(ROOT, COMPAT_OUT)} (${compatSt.size} bytes)`);
+  if (namedBytes) {
+    // Validated like the other two, and for the same reason: a custom section
+    // the decoder refuses would otherwise only surface wherever it is loaded.
+    new WebAssembly.Module(namedBytes);
+    await fs.promises.writeFile(NAMED_OUT, Buffer.from(namedBytes));
+    const namedSt = await fs.promises.stat(NAMED_OUT);
+    console.log(`Build complete: ${path.relative(ROOT, NAMED_OUT)} (${namedSt.size} bytes, ` +
+      `with a wasm name section — NOT canonical, do not ship or hash-compare this one)`);
+  }
 })().catch((err) => {
   console.error(err && err.stack || err);
   process.exit(1);

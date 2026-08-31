@@ -231,5 +231,54 @@ for (const [name, src] of [
   ck(`NO REGRESSION: ${name} still compiles`, r.success === true, r.error);
 }
 
+// --- The wasm `name` custom section (opt-in) ---------------------------------
+// An instantiation failure or a trap reports a function INDEX and nothing else
+// — `Compiling function #3849 failed: …` in a ~3900-function module naming no
+// file, no function and no line, which is why tools/func-index.js exists. A name
+// section puts the answer in the artifact.
+//
+// It is OFF by default and that is load-bearing, not timidity: the canonical
+// artifacts' byte-identity is how every compiler change is proved safe, and
+// ~195KB of names would take that instrument away. So the first assertion is
+// that the default emits exactly the bytes it emitted before.
+{
+  const src = `
+(memory 1 1)
+(func $inner_helper (result i32) (unreachable))
+(func $outer_thing (export "boom") (result i32) (call $inner_helper))`;
+  const hex = (b) => Buffer.from(b).toString('hex');
+  const plain = build(src);
+  const off = build(src, { nameSection: false });
+  const named = build(src, { nameSection: true });
+  ck('nameSection defaults OFF: the bytes are unchanged',
+     plain.success && off.success && hex(plain.wasmBinary) === hex(off.wasmBinary));
+  ck('nameSection:true compiles', named.success === true, named.error);
+  if (named.success) {
+    const mod = new WebAssembly.Module(named.wasmBinary);
+    const secs = WebAssembly.Module.customSections(mod, 'name');
+    ck('...and emits exactly one custom section called "name"', secs.length === 1, secs.length);
+    ck('...which is not empty', secs.length === 1 && secs[0].byteLength > 0);
+
+    // THE check, and the reason a structural one is not enough: a name section
+    // built from a reconstruction of the index space can name a plausible WRONG
+    // function with total confidence. Trapping inside a known callee and reading
+    // the engine's own stack proves the indices line up with reality.
+    let stack = '';
+    try { new WebAssembly.Instance(mod, {}).exports.boom(); }
+    catch (e) { stack = String(e.stack || ''); }
+    ck('...and a trap stack names the function that trapped',
+       /inner_helper/.test(stack), stack.split('\n')[1]);
+    ck('...and its caller', /outer_thing/.test(stack), stack.split('\n')[2]);
+
+    // The negative half: without the section those same frames are anonymous,
+    // so the check above is measuring the section and not something else.
+    let plainStack = '';
+    try { new WebAssembly.Instance(new WebAssembly.Module(plain.wasmBinary), {}).exports.boom(); }
+    catch (e) { plainStack = String(e.stack || ''); }
+    ck('NEGATIVE: without the section the same frames are unnamed',
+       !/inner_helper/.test(plainStack), plainStack.split('\n')[1]);
+  }
+}
+
 console.log(`\nwatx-compiler-export-order: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

@@ -1063,3 +1063,49 @@ in `src/` at the time and a working-tree build would have measured those instead
 New manifest digest:
 
   356d8f714b66112d322c188fef807fef1a42d62e7b8263aa7a0e6fef947e6717
+
+## 2026-08-31 — an optional wasm `name` section (research TODO #2)
+
+An instantiation failure or a trap reports a function **index** and nothing
+else — `Compiling function #3849 failed: expected 1 elements on the stack for
+fallthru` in a module of 8,386 functions concatenated from sixty-one files,
+naming no file, no function and no line. `tools/func-index.js` and
+`tools/wasm-func-name.js` exist only to translate that by re-deriving the index
+space from the source. A name section puts the answer *in the artifact*, so
+node, DevTools and every profiler print `$handle_CreateWindowExA` instead of
+`wasm-function[3849]`.
+
+`options.nameSection` (default **false**) emits custom section 0 with the module
+name and the function-name map. Off by default is load-bearing, not timidity:
+the canonical artifacts' byte-identity is the instrument every change in this
+changelog was proved with, and ~195KB of names would take it away.
+
+The map is built from `funcIndexMap` **itself** — imports, then the runtime
+builtins, then defined functions — never from a second walk that agrees with it
+today. That is the whole point: a name section built from a reconstruction can
+name a plausible *wrong* function with total confidence, which is worse than no
+section at all. Entries are sorted by index, as the spec requires, rather than
+assumed to arrive in order. Local names are skipped; they multiply the size for
+a payoff a stack trace does not need.
+
+Opt-in surface: `tools/build-compile-wat.js --names` (or `WINE_WAT_NAMES=1`)
+writes `build/wine-assembly.named.wasm` **alongside** the canonical pair,
+validated like the other two and labelled non-canonical in the build log.
+`compileClosure` gained a `nameSection` option that is only ever set when asked.
+
+Verified against the real closure: 8,386 names = 221 imports + 8,165 defined,
+exactly the counts `tools/wasm-func-name.js` derives independently from the WAT,
+with sampled indices agreeing by name (`2795 → $handle_OleRun`,
+`4193 → $d3dim_fvf_stride`). Building **with** `--names` leaves the canonical
+artifacts at `71ea98f134a486cd` / `d569961e3e7d6325`. One honest limitation: a
+function with no source identifier is named `$__anonymous_N`, where the
+source-walking tool reports its export string instead.
+
+`watx-compiler-export-order` 33 → 40. The assertion is a real trap stack naming
+the callee and its caller, with a negative case showing the same frames
+anonymous without the section — a structural check for "a section exists" would
+pass on a section carrying the wrong indices.
+
+New manifest digest:
+
+  f0067c83ae8d5428d65ed1c0de0b1002dd2edfe7c2133d19941008e2cf2a8613

@@ -4856,6 +4856,62 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     appendSection(allBytes, 11, content);
   }
 
+  // ── Custom section 0: the "name" section (opt-in) ───────────────────────────
+  // What this buys: an instantiation failure or a trap stack reports a FUNCTION
+  // INDEX and nothing else — `Compiling function #3849 failed: …` in a
+  // ~3900-function module concatenated from two dozen files, naming no file, no
+  // function and no line. `tools/func-index.js` exists solely to translate that
+  // by walking build/combined.wat the same way the compiler does. A name section
+  // puts the answer in the artifact, so the engine, DevTools and every profiler
+  // print `$handle_CreateWindowExA` instead of `wasm-function[3849]`.
+  //
+  // OFF BY DEFAULT, and that is not timidity: names are ~100KB of custom section
+  // on this module, and the canonical build's byte-identity gate is how every
+  // compiler change in this changelog was proved safe. An option that quietly
+  // changed the shipped bytes would take that instrument away.
+  //
+  // The index space is `funcIndexMap` itself — imports, then the runtime
+  // builtins, then defined functions — rather than a second walk that agrees
+  // with it today. That is the whole point: a name section built from a
+  // reconstruction is a name section that can lie, and a lying one is worse than
+  // none, because it names a plausible wrong function with total confidence.
+  if (options.nameSection) {
+    const nameBytes = (w, s) => {
+      const utf8 = WATX_UTF8_ENCODER.encode(s);
+      w.uleb(utf8.length);
+      w.append(utf8);
+    };
+    const content = new BinaryWriter(1024 * 64);
+    content.uleb(4); content.append(WATX_UTF8_ENCODER.encode('name'));
+
+    // Subsection 0: module name.
+    {
+      const sub = new BinaryWriter();
+      nameBytes(sub, typeof options.nameSection === 'string' ? options.nameSection : 'wine-assembly');
+      appendSection(content, 0, sub);
+    }
+    // Subsection 1: the function-name map. The spec requires it sorted by index
+    // and free of duplicates, so it is built from the map's entries and sorted —
+    // never assumed to come out in order.
+    {
+      const entries = [];
+      for (const [name, idx] of funcIndexMap) {
+        if (typeof idx !== 'number') continue;
+        // Strip the leading '$'; a wasm name is the identifier, not its sigil.
+        entries.push([idx, name.startsWith('$') ? name.slice(1) : name]);
+      }
+      entries.sort((a, b) => a[0] - b[0]);
+      const sub = new BinaryWriter(1024 * 64);
+      sub.uleb(entries.length);
+      for (const [idx, name] of entries) { sub.uleb(idx); nameBytes(sub, name); }
+      appendSection(content, 1, sub);
+    }
+    // Local names are deliberately skipped: they multiply the section's size for
+    // a payoff a stack trace does not need, and the question this exists to
+    // answer is "which function is #3849".
+    appendSection(allBytes, 0, content);
+  }
+
   const binary = allBytes.finish();
   return {
     binary,
