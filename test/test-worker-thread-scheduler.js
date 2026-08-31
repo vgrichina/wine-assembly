@@ -209,6 +209,24 @@ function makeManager(backend, extraOpts) {
   }
 
   {
+    // WaitMessage leaves its stdcall frame live while yield reason 7 is set.
+    // The Worker itself checks its USER queue and the shared browser-input bit
+    // before each slice; clearing here would make it re-enter WaitMessage once
+    // per scheduler turn even while both queues are empty.
+    const backend = makeBackend([[{ yield: 7 }]]);
+    const tm = makeManager(backend);
+    const h = tm.createThread(0x401500, 0, 0, 0);
+    await tm.runWorkerSlices(1000);
+    await tm.runWorkerSlices(1000);
+    check(!backend.links[0].exports.includes('clear_yield'),
+      'an idle Worker WaitMessage remains parked instead of being re-entered',
+      backend.links[0].exports.join(','));
+    check(tm.threads.get(h).lastYield === 7,
+      'the parked message-wait state remains visible to scheduler diagnostics',
+      `${tm.threads.get(h).lastYield}`);
+  }
+
+  {
     // Browser input is a wake source for MsgWaitForMultipleObjects, not for
     // ordinary WaitForMultipleObjects. Diablo waits for two Storm MPQ jobs
     // here; returning nCount because a paint is queued lets it consume the
