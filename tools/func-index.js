@@ -44,7 +44,14 @@ function scan(source) {
       // dead function ($cdecl_return) look like 26% of RollerCoaster Tycoon.
       // Match the module/name pair first, then look ahead for the (func.
       const importPair = code.match(/\(import\s+"[^"]*"\s+"([^"]*)"(.*)$/);
-      const importFunc = importPair
+      // ...but only for an import that has not already said what it is. A
+      // memory/table/global import is not a function, and the line under it is
+      // usually the first function import — the lookahead counted that one
+      // twice and shifted every index by one. Seen on a toyvm module, where
+      // `(import "host" "memory" (memory ...))` sits directly above the host
+      // functions, which named `run` as the compiled JIT region.
+      const kind = importPair && importPair[2].match(/\((func|memory|table|global|tag)\b/);
+      const importFunc = importPair && (!kind || kind[1] === 'func')
         && (importPair[2] + (lines[i + 1] || '').replace(/;;.*$/, '')).match(/\(func\s+(\$[^\s)]+)/);
       if (importFunc) {
         imports.push({ name: importFunc[1], line: i + 1, host: importPair[1] });

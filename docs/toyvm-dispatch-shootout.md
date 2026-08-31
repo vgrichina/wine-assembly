@@ -994,8 +994,14 @@ busy, and it comes back on a quiet one.
   the cursor, and mirroring the keys into the BIOS ring at 0040:001E did not
   either (DINO is flat 32-bit and writes over that region itself). Two programs,
   so it is recorded rather than built.
-* Run the matrix on SpiderMonkey and JavaScriptCore, not just node's V8, and on
-  `wasm3`/`iwasm` as a non-JIT control. Every number here is one engine.
+* Run the *dispatch* matrix on SpiderMonkey and JavaScriptCore, not just node's
+  V8. Every number in this file is still one engine. The JIT-tier matrix has
+  been run across five (node, SpiderMonkey, JavaScriptCore, d8, bun) plus each
+  one's baseline-only compiler — see "Five engines" in
+  [toyvm-trace-jit.md](toyvm-trace-jit.md) and `tools/toyvm/engine-bench.js`,
+  which reruns any bundle it wrote. `wasm3`/`iwasm` as a true non-JIT control is
+  still open: these modules import a memory and three host functions, so it
+  needs a harness rather than a flag.
 * A `typed` handler table (`(ref null $handler_t)`) — the same change
   [performance-summary.md](performance-summary.md) §6 lists as lever 2 for the
   production interpreter. Needs the `0x70` funcref byte in `lib/compile-wat.js`

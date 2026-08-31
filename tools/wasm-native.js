@@ -65,12 +65,17 @@ function findTool(envVar, candidates, hint) {
 
 // Function indices count imports first, then definitions in source order --
 // the same walk tools/func-index.js does, so the names cannot drift apart.
-function nameTable() {
-  if (!fs.existsSync(COMBINED)) {
-    console.error(`${COMBINED} is missing; run bash tools/build.sh first.`);
+// `--wat=` points the name table at some other module's source, so this works
+// on anything we compile and not just the shipped build -- e.g. a toyvm module
+// with a JIT region in it (tools/toyvm/region-jit.js --emit=).
+function nameTable(watPath) {
+  if (!fs.existsSync(watPath)) {
+    console.error(watPath === COMBINED
+      ? `${COMBINED} is missing; run bash tools/build.sh first.`
+      : `${watPath} is missing (--wat=)`);
     process.exit(1);
   }
-  const { imports, defined } = scan(fs.readFileSync(COMBINED, 'utf8'));
+  const { imports, defined } = scan(fs.readFileSync(watPath, 'utf8'));
   const byIndex = new Map();
   imports.forEach((f, i) => byIndex.set(i, f.name));
   defined.forEach((f, i) => byIndex.set(imports.length + i, f.name));
@@ -131,7 +136,8 @@ function main() {
     '/usr/local/bin/sm', '/opt/homebrew/bin/sm',
   ], 'Install it with:  npx jsvu@latest --engines=spidermonkey');
 
-  const names = nameTable();
+  const watPath = path.resolve(arg('wat', COMBINED));
+  const names = nameTable(watPath);
   const bin = keep ? path.resolve(keep) : path.join(os.tmpdir(), `wasm-native-${process.pid}.bin`);
 
   const segs = extract(sm, wasmPath, tier, bin);
@@ -163,7 +169,7 @@ function main() {
     if (index === null) {
       const key = wanted.startsWith('$') ? wanted : `$${wanted}`;
       if (!names.byName.has(key)) {
-        console.error(`${key} is not a function in build/combined.wat`);
+        console.error(`${key} is not a function in ${path.relative(ROOT, watPath)}`);
         process.exit(1);
       }
       index = names.byName.get(key);
@@ -194,7 +200,18 @@ function main() {
       const m = l.match(/^\s*([0-9a-f]+):\t(.*)$/);
       if (!m) continue;
       const off = parseInt(m[1], 16) - begin;
-      lines.push(`  ${off.toString(16).padStart(4, ' ')}:  ${m[2]}`);
+      // Name the call targets. A direct call reads as a bare address, and
+      // "does this handler still call out, and to what" is most of what this
+      // tool is asked -- the answer is in the same segment table that found
+      // this function. A target inside no segment is a runtime stub (trap,
+      // instance call, GC barrier) and stays unnamed.
+      const call = m[2].match(/\b(?:bl|callq?)\s+(?:\*?)0x([0-9a-f]+)/);
+      const hit = call && segs.find(s => {
+        const t = parseInt(call[1], 16);
+        return t >= s[1] && t < s[2];
+      });
+      lines.push(`  ${off.toString(16).padStart(4, ' ')}:  ${m[2]}`
+        + (hit ? `   ; ${names.byIndex.get(hit[0]) || `#${hit[0]}`}` : ''));
     }
     for (const l of lines.slice(0, limit)) console.log(l);
     if (lines.length > limit) {

@@ -154,7 +154,7 @@ function readTrace(mem32, addrWordIdx, maxOps = 512) {
 async function jitTiers(exe, {
   budget = 15e6, slice = 20000, cpu = 386, top = 6, sampleAfter = 0, sampleFrom = 0,
   bench = false, iters = 20000, reps = 7, cx = 8, log = () => {}, dumpWat = null, opsPrefix = 0,
-  minOps: optMinOps, coverage = 0,
+  minOps: optMinOps, coverage = 0, bundle = null,
   passes = { constprop: true, regfold: true, deadflags: true },
 } = {}) {
   log(`profiling ${path.basename(exe)} -- ${(budget / 1e6).toFixed(0)}M dispatches, `
@@ -677,7 +677,7 @@ async function jitTiers(exe, {
       ops = ops.slice(0, opsPrefix);
       log(`  (--ops-prefix=${opsPrefix}: benching a PREFIX, not the trace -- timings are meaningless)`);
     }
-    bres = await benchTiers(exe, hot, ops, { iters, reps, log, passes, dumpWat });
+    bres = await benchTiers(exe, hot, ops, { iters, reps, log, passes, dumpWat, bundle });
   } catch (e) {
     // Two very different failures used to share this label. `unfoldable` is a
     // handler body whose operand preamble drifted from ops()'s shape, which
@@ -1435,6 +1435,7 @@ function straightLineProgram(ops, base) {
 }
 
 async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpWat = null,
+  bundle = null,
   passes = { constprop: true, regfold: true, deadflags: true } }) {
   const opts = { dumpWat };
   const { makeVm } = require('./vm');
@@ -1467,6 +1468,12 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
       : `NO register promotion -- ${t3.declined}`));
 
   const arms = [];
+  // `bundle` collects everything a DIFFERENT engine would need to run these
+  // same arms: the module bytes, the memory and register snapshot, and the
+  // arena the interpreter arm executes. Nothing here changes the measurement;
+  // it exists so tools/toyvm/engine-bench.js can hand the identical work to
+  // SpiderMonkey, JavaScriptCore and d8 instead of only ever asking node's V8.
+  const bundleArms = [];
   // tier 0 -- the shipped interpreter over the same ops
   const vm0 = await makeVm('tailcall', {});
   const base = isa.THREAD_BASE;
@@ -1480,6 +1487,7 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
     afterSeed: () => new Int32Array(vm0.mem.buffer, base, words.length).set(words),
     go: (k) => { for (let i = 0; i < k; i++) vm0.exports.run(base, ops.length * 8); },
   });
+  bundleArms.push({ name: 'tier0', bytes: vm0.bytes, entry: 'run' });
 
   for (const [name, src, extra] of [
     ['tier 1  stitched', t1.wat, {}],
@@ -1521,6 +1529,23 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
       name, mem: new Uint8Array(memory.buffer), exports: ex, buildNs,
       go: (k) => { for (let i = 0; i < k; i++) ex.spin(1); },
     });
+    bundleArms.push({ name: name.split(' ')[0] + name.split(' ')[1], bytes, entry: 'spin' });
+  }
+
+  if (bundle) {
+    fs.mkdirSync(bundle, { recursive: true });
+    for (const a of bundleArms) {
+      fs.writeFileSync(path.join(bundle, `${a.name}.wasm`), Buffer.from(a.bytes));
+    }
+    fs.writeFileSync(path.join(bundle, 'mem.bin'), Buffer.from(hot.memSnapshot.buffer,
+      hot.memSnapshot.byteOffset, hot.memSnapshot.byteLength));
+    fs.writeFileSync(path.join(bundle, 'arena.bin'), Buffer.from(Int32Array.from(words).buffer));
+    fs.writeFileSync(path.join(bundle, 'state.json'), JSON.stringify({
+      arms: bundleArms.map(a => ({ name: a.name, entry: a.entry })),
+      regs: hot.regSnapshot, machine: hot.machineSnapshot || {},
+      arenaBase: base, budget: ops.length * 8, ops: ops.length, pages: isa.MEM_PAGES,
+    }, null, 1));
+    log(`bundle written to ${bundle}`);
   }
 
   // Identical starting state for every arm: the guest memory and registers as
