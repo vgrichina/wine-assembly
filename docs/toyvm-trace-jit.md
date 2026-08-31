@@ -1406,3 +1406,56 @@ The body dump is `--dump`. `--dump-wat` is not a flag, it writes nothing, and it
 fails silently — so the `/tmp/region-<exe>.wat` left over from an earlier session
 reads as the current build's output. A diff of two arms taken that way showed
 them identical when they are not.
+
+### ACCIDENT, narrowed further (and one theory that nearly held)
+
+Pin the region with `--head=0x2d41` so the profiling budget stops choosing a
+different loop, and the divergence is there from the smallest budget that finds
+it at all:
+
+| `--dispatches` | frame | ints base/region |
+|---|---|---|
+| 3m and below | no self-loop region found | — |
+| 4m | DIFFERS | 73/**71** |
+| 6m | DIFFERS | 102/**90** |
+| 8m | DIFFERS | 1206/**110** |
+| 12m | DIFFERS | 1567/**148** |
+
+The earliest symptom is two missing interrupts out of 73, and it compounds from
+there: between 6M and 8M dispatches the baseline breaks out of this loop (its
+`ints` jump ten-fold as the loader starts making DOS calls) and the region arm
+never does.
+
+Two facts about the region make that shape sensible. `--agree` runs the
+interpreter and all three tiers over its 34 ops from one seeded state and
+reports **ALL THREE MATCH**, so the bodies are not in question. And the block
+has no conditional exit of its own: op 13 is the `loop`, ops 14–33 are its
+fall-through, and op 34 is a `jmp` back to the head. **It is an infinite loop
+that only something outside it can break** — which is why an interrupt that does
+not arrive leaves the guest in it forever, and why `smc 1/0` is a downstream
+reading rather than a cause (the region arm records *zero* self-modify breaks
+because its guest never reaches the code that patches itself).
+
+That suggested interrupt pacing, and at 4M dispatches it looks exactly right:
+
+| arm (at `--dispatches=4m`) | frame | ints |
+|---|---|---|
+| default | DIFFERS | 73/71 |
+| `--slice=2000` | DIFFERS | 75/72 |
+| `--irq-every=8k` | **IDENTICAL** | 304/304 |
+
+`--slice=2000` is the control that matters: `--irq-every=8k` caps the slice at
+2000 dispatches as a side effect, so without it the row would only say "shorter
+slices help". It does not help. The interrupt *rate* does.
+
+But it does not survive the full budget. At 12M no interrupt rate rescues it,
+and `--irq-every=25k` puts the region arm 5120 pixels into a frame the baseline
+draws 18447 of and leaves it stopped at `c002:bbbf` — an address the baseline
+never visits. So denser interrupts postpone the divergence rather than removing
+it, and pacing is at most half the story.
+
+Still dead, both re-tested properly this time: `--no-fallthrough-guard` (give the
+lowered fall-through arm the `CONT`/`$smc` test the interpreter's transfer
+protocol applies to *both* edges) changes nothing, and `--head-exit=slice`
+(leave through `$slice_exit` instead of resolving `$gip` at the head) changes
+nothing.
