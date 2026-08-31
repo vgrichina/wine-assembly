@@ -197,6 +197,22 @@ async function main() {
     bytesAt(scratchA, 10),
     [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x9c, 0x0d, 0x40]);
 
+  // Half-Life's software renderer reaches this indexed stack form during its
+  // first active frame. Keep the exact D9 5C 35 DC encoding covered: the SIB
+  // index is ESI, the base is EBP, and the signed displacement is -0x24.
+  runCode([
+    0xD9, 0x44, 0x35, 0xE8, // fld  dword ptr [ebp+esi-0x18]
+    0xD9, 0x5C, 0x35, 0xDC, // fstp dword ptr [ebp+esi-0x24]
+  ], () => {
+    const frame = imageBase + 0xCFF000;
+    e.set_ebp(frame);
+    e.set_esi(1);
+    dv.setFloat32(g2w(frame + 1 - 0x18), 17.25, true);
+    dv.setFloat32(g2w(frame + 1 - 0x24), 0, true);
+  });
+  testFloat('x87 SIB stack FLD/FSTP preserves float32',
+    dv.getFloat32(g2w(imageBase + 0xCFF000 + 1 - 0x24), true), 17.25);
+
   // VBRUN100 checks FXAM's C1 sign bit before evaluating a negative base.
   // The condition-code mask is C3:C2:C1:C0 at status bits 14,10,9,8.
   const fxamStatus = value => {
@@ -466,6 +482,27 @@ async function main() {
     0x83, 0xD0, 0x00,
   ]);
   test('SAHF CF=0', e.get_eax(), 0);
+
+  runCode([
+    0xB4, 0x00,       // mov ah, 0x00 (PF=0)
+    0x9E,             // sahf
+    0x0F, 0x9A, 0xC0, // setp al
+  ], () => e.set_eax(0));
+  test('SAHF PF=0 is visible to JP/SETP', e.get_eax() & 0xFF, 0);
+
+  runCode([
+    0xB4, 0x04,       // mov ah, 0x04 (PF=1)
+    0x9E,             // sahf
+    0x0F, 0x9A, 0xC0, // setp al
+  ], () => e.set_eax(0));
+  test('SAHF PF=1 is visible to JP/SETP', e.get_eax() & 0xFF, 1);
+
+  runCode([
+    0xB4, 0x70,       // mov ah, 0x70 (ZF/TOP-like bits set, PF=0)
+    0x9E,             // sahf
+    0x0F, 0x9A, 0xC0, // setp al
+  ], () => e.set_eax(0));
+  test('SAHF PF=0 survives AH status bits', e.get_eax() & 0xFF, 0);
 
   // LAHF: store flags to AH
   runCode([

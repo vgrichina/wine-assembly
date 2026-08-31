@@ -1213,6 +1213,13 @@ const extra = [
   { name: 'GdipCreateImageAttributes', nargs: 1 },
   { name: 'GdipSetImageAttributesColorMatrix', nargs: 6 },
   { name: 'GdipDisposeImageAttributes', nargs: 1 },
+  { name: 'SHGetFolderPathA', nargs: 5, args: [
+    { name: 'hwndOwner', type: 'HWND' },
+    { name: 'nFolder', type: 'DWORD' },
+    { name: 'hToken', type: 'HANDLE' },
+    { name: 'dwFlags', type: 'DWORD' },
+    { name: 'pszPath', type: 'LPSTR', out: true },
+  ], ret: 'HRESULT' },
   { name: 'SHGetFolderPathW', nargs: 5, args: [
     { name: 'hwndOwner', type: 'HWND' },
     { name: 'nFolder', type: 'DWORD' },
@@ -1250,6 +1257,9 @@ const extra = [
   { name: 'FindNextChangeNotification', nargs: 1, args: [
     { name: 'hChangeHandle', type: 'HANDLE' },
   ], ret: 'BOOL' },
+  // SHLWAPI — Cave Story resolves this dynamically during startup.
+  { name: 'PathRemoveFileSpecA', nargs: 1 },
+  { name: 'PathRemoveFileSpecW', nargs: 1 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {

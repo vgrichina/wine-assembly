@@ -699,23 +699,32 @@ class WineAssembly {
     // guest; anything that is not a registered exe keeps the base behaviour
     // (open http links in a tab, otherwise report success).
     h.shell_execute = (hwnd, opWa, fileWa, paramsWa, dirWa, nShow) => {
-      const file = fileWa ? self.readString(fileWa) : '';
+      const rawFile = fileWa ? self.readString(fileWa) : '';
+      let params = paramsWa ? self.readString(paramsWa) : '';
+      const parsedCommand = (() => {
+        const s = rawFile.trim();
+        const quoted = /^"([^"]+)"(?:\s+(.*))?$/.exec(s);
+        if (quoted) return { file: quoted[1], params: quoted[2] || '' };
+        const bare = /^([a-z]:\\\S+)(?:\s+(.*))?$/i.exec(s);
+        return bare ? { file: bare[1], params: bare[2] || '' } : { file: rawFile, params: '' };
+      })();
+      const file = parsedCommand.file;
+      if (!params && parsedCommand.params) params = parsedCommand.params;
       const op = opWa ? self.readString(opWa) : 'open';
-      const params = paramsWa ? self.readString(paramsWa) : '';
       const dir = dirWa ? self.readString(dirWa) : '';
       console.log(`[ShellExecute] hwnd=0x${hwnd.toString(16)} op="${op}" file="${file}" params="${params}"`);
       const shell = window.wineShell;
-      if (shell && /\.exe$/i.test(file)) {
+      if (shell && file) {
         // An absolute path names a concrete file on the caller's own
         // filesystem (a CD launcher handing off to the game its installer
         // just wrote); that beats the registered-app basename heuristic,
         // which could resolve "diablo.exe" to a different registered build.
         const absolute = /^[a-z]:\\/i.test(file);
-        if (absolute && shell.launchVfsExe && shell.launchVfsExe(file, self, dir)) {
+        if (absolute && shell.launchVfsExe && shell.launchVfsExe(file, self, dir, params)) {
           self.logToUI(`[ShellExecute] launching ${file} from the caller's filesystem`);
           return 33;
         }
-        if (shell.launchExe(file)) {
+        if (/\.exe$/i.test(file) && shell.launchExe(file)) {
           self.logToUI(`[ShellExecute] launching ${file}`);
           return 33;
         }

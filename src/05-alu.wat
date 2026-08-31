@@ -3116,10 +3116,16 @@
     (global.set $flag_sign_shift (i32.const 31))
     (global.set $flag_a (i32.and (local.get $ah) (i32.const 1)))  ;; CF = bit 0
     (global.set $flag_b (local.get $saved_of))  ;; OF preserved
-    (if (i32.and (local.get $ah) (i32.const 0x40))  ;; ZF = bit 6
-      (then (global.set $flag_res (i32.const 0)))
-      (else (if (i32.and (local.get $ah) (i32.const 0x80))  ;; SF = bit 7
-        (then (global.set $flag_res (i32.const 0x80000000)))
+    ;; The current lazy raw-flag encoding cannot represent ZF and PF
+    ;; independently. Preserve PF here because x87 reductions consume
+    ;; FNSTSW's C2 through `SAHF; JP/JNP`, and TOP bits can set AH bit 6 even
+    ;; when C2/PF is clear.
+    (if (i32.and (local.get $ah) (i32.const 0x80))  ;; SF = bit 7
+      (then (if (i32.and (local.get $ah) (i32.const 4))  ;; PF = bit 2
+        (then (global.set $flag_res (i32.const 0x80000003)))
+        (else (global.set $flag_res (i32.const 0x80000001)))))
+      (else (if (i32.and (local.get $ah) (i32.const 4))
+        (then (global.set $flag_res (i32.const 3)))
         (else (global.set $flag_res (i32.const 1))))))
     (return_call $next))
 

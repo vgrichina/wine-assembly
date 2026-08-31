@@ -6475,6 +6475,38 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
+  ;; SHGetFolderPathA(hwndOwner, nFolder, hToken, dwFlags, pszPath) -> HRESULT.
+  ;; ANSI forwarder for setup engines that dynamically resolve the A spelling.
+  (func $handle_SHGetFolderPathA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $saved_esp i32) (local $wide i32) (local $hr i32)
+    (local.set $saved_esp (global.get $esp))
+    (if (i32.eqz (local.get $arg4))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (local.set $wide (call $heap_alloc (i32.const 520)))
+    (if (i32.eqz (local.get $wide))
+      (then
+        (call $gs8 (local.get $arg4) (i32.const 0))
+        (global.set $eax (i32.const 0x8007000e)) ;; E_OUTOFMEMORY
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (call $handle_SHGetFolderPathW
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
+      (local.get $wide) (local.get $name_ptr))
+    (local.set $hr (global.get $eax))
+    (global.set $esp (local.get $saved_esp))
+    (if (i32.eqz (local.get $hr))
+      (then
+        (drop (call $wide_to_ansi (local.get $wide) (local.get $arg4) (i32.const 260))))
+      (else
+        (call $gs8 (local.get $arg4) (i32.const 0))))
+    (call $heap_free (local.get $wide))
+    (global.set $eax (local.get $hr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
   ;; 196: DragAcceptFiles(hwnd, fAccept) — no-op (no drag-drop support)
   (func $handle_DragAcceptFiles (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
@@ -6866,6 +6898,34 @@
       (br $cmp)))
     (i32.const 0))
 
+  ;; PathRemoveFileSpecA/W(pszPath) removes the final component in place and
+  ;; returns TRUE only when the string actually changed.
+  (func $path_remove_file_spec (param $path i32) (param $wide i32) (result i32)
+    (local $step i32) (local $off i32) (local $last i32) (local $ch i32)
+    (if (i32.eqz (local.get $path)) (then (return (i32.const 0))))
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (local.set $last (i32.const 0xffffffff))
+    (block $done (loop $scan
+      (local.set $ch (call $gl_char (i32.add (local.get $path) (local.get $off)) (local.get $wide)))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (if (i32.or (i32.eq (local.get $ch) (i32.const 0x5c))
+                  (i32.eq (local.get $ch) (i32.const 0x2f)))
+        (then (local.set $last (local.get $off))))
+      (local.set $off (i32.add (local.get $off) (local.get $step)))
+      (br $scan)))
+    (if (i32.eq (local.get $last) (i32.const 0xffffffff))
+      (then (return (i32.const 0))))
+    ;; Preserve drive roots: "C:\foo" becomes "C:\", not "C:".
+    (if (i32.and
+          (i32.eq (local.get $last) (i32.mul (local.get $step) (i32.const 2)))
+          (i32.eq (call $gl_char (i32.add (local.get $path) (local.get $step)) (local.get $wide)) (i32.const 0x3a)))
+      (then
+        (local.set $last (i32.add (local.get $last) (local.get $step)))))
+    (if (local.get $wide)
+      (then (i32.store16 (call $g2w (i32.add (local.get $path) (local.get $last))) (i32.const 0)))
+      (else (i32.store8 (call $g2w (i32.add (local.get $path) (local.get $last))) (i32.const 0))))
+    (i32.const 1))
+
   ;; One character at a guest address, ANSI or wide.
   (func $gl_char (param $p_g i32) (param $wide i32) (result i32)
     (if (local.get $wide) (then (return (call $gl16 (local.get $p_g)))))
@@ -6902,6 +6962,11 @@
   (func $handle_lstrcmpA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $lstr_cmp (local.get $arg0) (local.get $arg1) (i32.const 0) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  (func $handle_PathRemoveFileSpecA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $path_remove_file_spec (local.get $arg0) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 223: RegCloseKey(hKey) — 1 arg stdcall
@@ -8637,6 +8702,11 @@
   ;; GetWindowLongW — same as A for non-string indices
   (func $handle_GetWindowLongW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_GetWindowLongA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
+
+  (func $handle_PathRemoveFileSpecW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $path_remove_file_spec (local.get $arg0) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; Set/GetClassLongW — same scalar indices as A; class string fields are not
@@ -12169,8 +12239,9 @@ HookEx — no next hook in chain, return 0
     (if (local.get $arg1)
       (then (call $gs32 (local.get $arg1)
         (if (result i32)
-          (i32.eq (i32.and (local.get $arg0) (i32.const 0xFFFFF000))
-                  (i32.const 0x000E2000))
+          (i32.eq (local.get $arg0)
+            (i32.or (i32.const 0x000E2000)
+              (i32.and (call $current_process_id) (i32.const 0xFFF))))
           (then (i32.const 259))  ;; STILL_ACTIVE
           (else (i32.const 0))))))
     (global.set $eax (i32.const 1))
@@ -12179,10 +12250,50 @@ HookEx — no next hook in chain, return 0
 
   ;; 499: CreateProcessA — STUB: unimplemented
   (func $handle_CreateProcessA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Process launch is out-of-scope for the in-browser emulator. Decline the
-    ;; launch after installers have extracted their files; this avoids waiting
-    ;; on a fake child process that will never really run.
-    (global.set $eax (i32.const 0))
+    (local $pi i32) (local $launch_file i32) (local $launch_dir i32) (local $launch_result i32)
+    ;; Browser hosts can chain-launch an EXE from the caller's VFS through the
+    ;; same handoff ShellExecute uses. Headless hosts keep returning success,
+    ;; which models the launch boundary for installer extraction tests.
+    (local.set $launch_file (if (result i32) (local.get $arg0)
+      (then (local.get $arg0))
+      (else (local.get $arg1))))
+    (local.set $launch_dir (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    (if (i32.eqz (local.get $launch_file))
+      (then
+        (global.set $last_error (i32.const 2)) ;; ERROR_FILE_NOT_FOUND
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 44)))
+        (return)))
+    (local.set $launch_result (call $host_shell_execute
+      (i32.const 0) (i32.const 0)
+      (call $g2w (local.get $launch_file))
+      (i32.const 0)
+      (if (result i32) (local.get $launch_dir) (then (call $g2w (local.get $launch_dir))) (else (i32.const 0)))
+      (i32.const 1)))
+    (if (i32.le_u (local.get $launch_result) (i32.const 32))
+      (then
+        (global.set $last_error
+          (if (result i32) (local.get $launch_result)
+            (then (local.get $launch_result))
+            (else (i32.const 2))))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 44)))
+        (return)))
+    (local.set $pi (call $gl32 (i32.add (global.get $esp) (i32.const 40))))
+    (if (local.get $pi)
+      (then
+        (call $gs32 (local.get $pi) (i32.const 0x000E3001))       ;; hProcess
+        (call $gs32 (i32.add (local.get $pi) (i32.const 4)) (i32.const 0x000E3002)) ;; hThread
+        (call $gs32 (i32.add (local.get $pi) (i32.const 8)) (i32.const 0x3001))     ;; dwProcessId
+        (call $gs32 (i32.add (local.get $pi) (i32.const 12)) (i32.const 0x3002))))  ;; dwThreadId
+    (drop (local.get $arg0))
+    (drop (local.get $arg1))
+    (drop (local.get $arg2))
+    (drop (local.get $arg3))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (global.set $last_error (i32.const 0))
+    (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 44))) ;; stdcall, 10 args
   )
 
@@ -12199,8 +12310,18 @@ HookEx — no next hook in chain, return 0
 
   ;; 500: CreateProcessW — STUB: unimplemented
   (func $handle_CreateProcessW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $app i32) (local $cmd i32) (local $dir i32) (local $dir_w i32)
+    (local.set $app (call $shellexec_narrow_w (local.get $arg0)))
+    (local.set $cmd (call $shellexec_narrow_w (local.get $arg1)))
+    (local.set $dir_w (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    (local.set $dir (call $shellexec_narrow_w (local.get $dir_w)))
+    (if (local.get $dir)
+      (then (call $gs32 (i32.add (global.get $esp) (i32.const 32)) (local.get $dir))))
     (call $handle_CreateProcessA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (local.get $app) (local.get $cmd) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (if (local.get $app) (then (call $heap_free (local.get $app))))
+    (if (local.get $cmd) (then (call $heap_free (local.get $cmd))))
+    (if (local.get $dir) (then (call $heap_free (local.get $dir))))
   )
 
   ;; 501: HeapValidate — STUB: unimplemented

@@ -25829,5 +25829,50 @@
     "nargs": 8,
     "convention": "stdcall",
     "hash": 3849730601
+  },
+  {
+    "id": 3091,
+    "name": "PathRemoveFileSpecA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3739862482
+  },
+  {
+    "id": 3092,
+    "name": "PathRemoveFileSpecW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3907638672
+  },
+  {
+    "id": 3093,
+    "name": "SHGetFolderPathA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3899204400,
+    "args": [
+      {
+        "name": "hwndOwner",
+        "type": "HWND"
+      },
+      {
+        "name": "nFolder",
+        "type": "DWORD"
+      },
+      {
+        "name": "hToken",
+        "type": "HANDLE"
+      },
+      {
+        "name": "dwFlags",
+        "type": "DWORD"
+      },
+      {
+        "name": "pszPath",
+        "type": "LPSTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   }
 ]

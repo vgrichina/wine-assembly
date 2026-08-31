@@ -12,6 +12,13 @@ const extraWat = String.raw`
       (i32.const 0) (local.get $csidl) (i32.const 0) (i32.const 0)
       (local.get $buf) (i32.const 0))
     (global.get $eax))
+  (func (export "test_sh_get_folder_path_a") (param $csidl i32) (param $buf i32) (result i32)
+    (global.set $image_base (i32.const 0))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_SHGetFolderPathA
+      (i32.const 0) (local.get $csidl) (i32.const 0) (i32.const 0)
+      (local.get $buf) (i32.const 0))
+    (global.get $eax))
   (func (export "test_sh_get_special_folder_path_a")
       (param $csidl i32) (param $create i32) (param $buf i32) (result i32)
     (global.set $image_base (i32.const 0))
@@ -78,6 +85,12 @@ const extraWat = String.raw`
     'ANSI CSIDL_PROGRAM_FILES succeeds');
   assert.strictEqual(readAnsi(), 'C:\\Program Files',
     'ANSI API uses the same CSIDL mapping as SHGetFolderPathW');
+  assert.strictEqual(e.test_sh_get_folder_path_a(0x2b, buffer) | 0, 0,
+    'SHGetFolderPathA CSIDL_PROGRAM_FILES_COMMON succeeds');
+  assert.strictEqual(readAnsi(), 'C:\\Program Files\\Common Files',
+    'SHGetFolderPathA narrows the canonical CSIDL mapping');
+  assert.strictEqual(e.get_esp(), 0x00300018,
+    'five-argument ANSI SHGetFolderPathA stdcall pops return address plus arguments');
   assert.strictEqual(e.test_sh_get_special_folder_path_a(0x17, 1, buffer), 1,
     'ANSI fCreate succeeds');
   assert.strictEqual(readAnsi(), 'C:\\WINDOWS\\All Users\\Application Data');
