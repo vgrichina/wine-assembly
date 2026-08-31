@@ -339,7 +339,19 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       // it saves dispatches (DRAGON.EXE: 1493 handbacks against the
       // interpreter's 301). The region knows its own exit addresses, so it
       // supplies them.
-      for (const ip of (opts.regionSucc && opts.regionSucc.get(regionKey)) || []) pending.push(ip);
+      // ...but only the ones whose BYTES STILL MATCH. A successor is an address
+      // the PROFILING run reached, and it is supplied here at the moment the
+      // region is first installed, which can be far earlier in the program's
+      // life. This corpus is full of self-decrypting demos, so those bytes are
+      // routinely still ciphertext at install time, and pre-compiling them is
+      // how CARRIE.EXE and BMGLP.EXE drew the wrong picture. An entry carrying
+      // `bytes` is checked the same way the region's own guard is; one that
+      // fails is simply left for the decoder to find on demand later.
+      for (const s of (opts.regionSucc && opts.regionSucc.get(regionKey)) || []) {
+        if (typeof s === 'number') { pending.push(s); continue; }
+        if (s.bytes && !s.bytes.every((b, i) => readByte((s.lin + i) & mask) === b)) continue;
+        pending.push(s.ip);
+      }
       // ...and the bytes have to be marked as COMPILED, which is a separate
       // thing from having been checked. `covered` is what the host turns into
       // isa.CODE_BITMAP, and that bitmap is the entire self-modify detector:

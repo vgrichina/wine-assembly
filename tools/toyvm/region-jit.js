@@ -560,6 +560,7 @@ function buildRegion(rawOps, nexts, headIp, name) {
   const parts = [];
   let pending = 0;            // ops retired since $steps was last charged
   let exits = 0;
+  let unlowered = 0;          // transfers left on the interpreter's protocol
   // The back edge, used both mid-body and at the end. `$halt` covers everything
   // that ended the run from inside a handler -- a slice that expired through
   // $slice_exit, a self-modify break, an unimplemented op -- and none of those
@@ -628,6 +629,7 @@ function buildRegion(rawOps, nexts, headIp, name) {
       continue;
     }
     parts.push(resolveGoArena(t3.bodies3[i]));
+    if (branch) unlowered++;
     if (!branch) continue;
     if (isLast) continue;         // the back edge is tested below
     const fall = nexts[i];
@@ -714,7 +716,7 @@ function buildRegion(rawOps, nexts, headIp, name) {
   const body = flag('trap') ? '(unreachable)'
     : `${entry}\n${t3.pro}\n(block $out (loop $again\n${parts.join('\n')}\n))\n${t3.epi}\n${leave}`;
   return {
-    name, body, locals: t3.locals, exits,
+    name, body, locals: t3.locals, exits, unlowered,
     promoted: t3.promoted, declined: t3.promoted ? null : t3.declined,
     eaFolded: t3.eaFolded, segFolded: t3.segFolded, folded: t3.folded,
     inlined: t3.inlined, strippedArena: stripped,
@@ -733,8 +735,25 @@ function guardBytes(rr, pick) {
     // descriptor. Both name the same base.
     const codeBase = parseInt(String(blk.cs), 10);
     const start = (codeBase + blk.ip) & 0xFFFFF;
-    const span = (blk.prog.covered || []).find(([s]) => s === start);
-    if (!span) continue;
+    // AN EXACT START IS THE COMMON CASE AND NOT THE ONLY ONE. `covered` gets one
+    // entry per block the decoder walked, keyed on that block's own start -- but
+    // the arena is reset on every self-modify break, and after a reset a block
+    // that is still live in `pick.heads` may only be inside a range some LATER
+    // decode contributed. Silently skipping those (`continue`, which is what
+    // this did) costs the region both halves of its safety: the install-time
+    // byte guard never checks that block, and `regionCodeBits` never marks it,
+    // so a store into it raises no self-modify break and the stale compiled body
+    // keeps running over code that no longer exists. That is measurable, not
+    // theoretical -- BMGLP.EXE reports 338 FEWER breaks with its region than
+    // without, on a program that takes 51158 of them.
+    const covered = blk.prog.covered || [];
+    const span = covered.find(([s]) => s === start)
+      || (([s, e]) => (s === undefined ? null : [start, e]))(
+        covered.find(([s, e]) => start > s && start < e) || []);
+    // Still nothing: this block's bytes cannot be guarded, so the region cannot
+    // be installed safely. Declining is the whole point -- an unguardable region
+    // is exactly the one a self-modifying program will invalidate under.
+    if (!span) return null;
     out.push({ lin: span[0], bytes: Array.from(rr.vm.mem.slice(span[0], span[1])) });
   }
   return out;
@@ -963,10 +982,34 @@ async function main() {
     }
   }
 
+  // A REGION THAT COULD NOT LOWER ALL ITS TRANSFERS IS NOT SAFELY INSTALLABLE.
+  // Such a transfer keeps the interpreter's protocol inside the region's loop,
+  // and everything this file has failed to explain about a wrong frame has been
+  // one of those: CARRIE.EXE's region has seven, is entered exactly 3840 times
+  // either way, takes the same 1929 self-modify breaks and the same 6
+  // interrupts -- and draws a different screen depending on whether ONE extra
+  // successor block was compiled at install time, which changes no guest
+  // semantics at all. A region whose every edge is a `br` has no such
+  // dependence, and DRAGON and ADDY_II report identical dispatch and handback
+  // counts either way for exactly that reason. Lowering the rest is the real
+  // fix (`splitBranch` declines them); until then this trades coverage for a
+  // correct picture. `--allow-unlowered` overrides, and `--no-lower` (which
+  // unlowers everything on purpose) is exempt because it is a bisector.
+  if (region.unlowered && !flag('allow-unlowered') && !flag('no-lower') && !flag('no-gate')) {
+    console.log(`  declined: ${region.unlowered} transfer(s) could not be lowered,`
+      + ' so this region depends on the install-time arena (--allow-unlowered overrides)');
+    process.exit(3);
+  }
+
   const guarded = guardBytes(rr, pick);
-  console.log(`  guard: ${guarded.reduce((n, g) => n + g.bytes.length, 0)} guest byte(s) over `
-    + `${guarded.length}/${(pick.heads || []).length} block(s)`
-    + (guarded.length < (pick.heads || []).length ? ' -- UNGUARDED, see guardBytes()' : ''));
+  if (!guarded && !flag('no-gate')) {
+    console.log('  declined: a block of this region has no covered span, so its bytes'
+      + ' cannot be guarded (--no-gate overrides)');
+    process.exit(3);
+  }
+  console.log(`  guard: ${(guarded || []).reduce((n, g) => n + g.bytes.length, 0)} guest byte(s) over `
+    + `${(guarded || []).length}/${(pick.heads || []).length} block(s)`
+    + (!guarded ? ' -- UNGUARDABLE, running anyway under --no-gate' : ''));
 
   // `--emit=PREFIX` writes the two whole modules -- with the region and
   // without it -- as both .wat and .wasm. Nothing here runs them; they are for
@@ -993,13 +1036,45 @@ async function main() {
   // everywhere, so anything that still moves is the successors' doing, not the
   // compiled loop's.
   const succWhy = new Map();
-  const allSucc = successorIps(pick.ops, succWhy);
+  const knownBlocks = (pick.block && pick.block.prog && pick.block.prog.blocks) || new Map();
+  // OVER-APPROXIMATING THE SUCCESSOR LIST IS NOT FREE, whatever the comment on
+  // it used to say. Pre-compiling an edge the program has never taken decodes
+  // bytes that are not code yet, and this corpus is full of programs that
+  // decrypt themselves: BMGLP.EXE takes 51158 self-modify breaks, and its
+  // region's one never-taken fall-through (0x281) is the whole of its
+  // divergence -- supplied, the run reports 338 FEWER breaks than the
+  // interpreter and draws a different picture; withheld, it is frame-identical.
+  // An edge that is taken later costs one handback and is decoded on demand,
+  // exactly as the interpreter would decode it. `--succ-unseen` restores the
+  // old behaviour for the A/B.
+  const allSucc = successorIps(pick.ops, succWhy)
+    .filter(ip => flag('succ-unseen') || knownBlocks.has(ip));
+  // ...and each one carries the bytes the profiling run decoded it from, so
+  // compile.js can decline any whose code has not been written yet. Same span
+  // lookup as guardBytes; a successor with no covered span is passed as a bare
+  // ip, which is the old unchecked behaviour for that one address.
+  const succBytes = (ip) => {
+    const codeBase = parseInt(String(pick.cs), 10);
+    const start = (codeBase + ip) & 0xFFFFF;
+    const covered = (pick.block && pick.block.prog && pick.block.prog.covered) || [];
+    const span = covered.find(([s]) => s === start);
+    if (!span) return ip;
+    return { ip, lin: span[0], bytes: Array.from(rr.vm.mem.slice(span[0], span[1])) };
+  };
   const succList = allSucc.slice(0, Number(arg('succ-take', allSucc.length)));
   console.log(`  successors: ${allSucc.map((x, i) =>
     (i < succList.length ? '' : '-') + '0x' + x.toString(16)).join(' ')}`
     + (succList.length < allSucc.length ? `  (- = withheld by --succ-take=${succList.length})` : ''));
-  if (flag('why')) for (const [i, ip] of allSucc.entries()) {
-    console.log(`    [${i}] 0x${ip.toString(16)} <- ${succWhy.get(ip)}`);
+  if (flag('why')) {
+    // Whether the PROFILING run ever decoded a block at that address. A
+    // successor the interpreter never entered is not proof of a bad operand --
+    // an edge can simply not have been taken yet -- but a bad operand always
+    // looks like this, and it is the cheapest thing that separates the two.
+    const known = (pick.block && pick.block.prog && pick.block.prog.blocks) || new Map();
+    for (const [i, ip] of allSucc.entries()) {
+      console.log(`    [${i}] 0x${ip.toString(16)} <- ${succWhy.get(ip)}`
+        + (known.has(ip) ? '' : '   (NEVER DECODED in the profiling run)'));
+    }
   }
   const install = {
     jitRegions: flag('succ-only') ? null : [region],
@@ -1015,11 +1090,12 @@ async function main() {
     // wrong with the full list, so over-approximating is NOT always free and
     // the list has to be cut down to the address that does it.
     regionSucc: flag('no-succ') ? new Map()
-      : new Map([[`${pick.cs}:${pick.headIp}`, succList]]),
+      : new Map([[`${pick.cs}:${pick.headIp}`,
+        succList.map(ip => (flag('succ-unchecked') ? ip : succBytes(ip)))]]),
     // The guest bytes this region was compiled from, one entry per block the
     // walk covered. compile.js checks them before installing, so a program that
     // rewrites its own loop gets the decoder back instead of a stale region.
-    regionBytes: new Map([[`${pick.cs}:${pick.headIp}`, guardBytes(rr, pick)]]),
+    regionBytes: new Map([[`${pick.cs}:${pick.headIp}`, guarded || []]]),
     // ...and those same bytes marked as compiled code, so a store into them
     // still trips the self-modify check. `--no-region-code-bits` is the A/B.
     regionCodeBits: !flag('no-region-code-bits'),
@@ -1134,12 +1210,22 @@ async function main() {
     const { readFrame } = require('./run-dos');
     const px = (run) => readFrame(run.r.vm.mem, run.r.surface.geom).pixels;
     const nd = (a, b) => { let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++; return n; };
-    const matched = await once(exe, { ...o, budget: jitRun.dispatched }, {});
-    const [pb, pj, pm] = [px(baseRun), px(jitRun), px(matched)];
-    const drift = nd(pb, pm), gap = nd(pb, pj);
+    // ONE SAMPLE OF THE DRIFT IS NOT THE FLOOR. How much a demo repaints in a
+    // given number of dispatches is wildly uneven -- a dissolve advances in
+    // bursts and sits still in between -- so a single measurement taken across
+    // the gap can land in a quiet moment and report a floor of 4px for a
+    // program that moves thousands of pixels a few hundred dispatches later.
+    // Probe the same-sized gap at several nearby offsets and take the LARGEST.
+    const delta = jitRun.dispatched - baseRun.dispatched;
+    const probes = [jitRun.dispatched, baseRun.dispatched + 2 * delta,
+      baseRun.dispatched - delta].filter(d => d > 0);
+    const pb = px(baseRun), pj = px(jitRun);
+    let drift = 0;
+    for (const d of probes) drift = Math.max(drift, nd(pb, px(await once(exe, { ...o, budget: d }, {}))));
+    const gap = nd(pb, pj);
     const phase = gap <= Math.max(drift, 1) * 2;
-    console.log(`  phase check: baseline drifts ${drift}px over the ${jitRun.dispatched - baseRun.dispatched}`
-      + ` dispatch gap; baseline vs region is ${gap}px`
+    console.log(`  phase check: baseline drifts up to ${drift}px over ${probes.length}`
+      + ` probes of the ${delta} dispatch gap; baseline vs region is ${gap}px`
       + `  -> ${phase ? 'PHASE, not a defect' : '*** BEYOND THE NOISE FLOOR ***'}`);
     if (phase) { process.exitCode = 6; return; }
   }
