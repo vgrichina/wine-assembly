@@ -161,7 +161,7 @@ async function runDos(o) {
     traceInt = false, traceFault = false, traceEntry = 0, traceV86 = false,
     noCache = false, smcFlush = false, wasmDecode = true, fuse = true,
     lazyFlags = true, fuseCond = true, deadFlags = true, crossFlags = true,
-    traceBlocks = true, traceDeadFlags = false,
+    traceBlocks = true, spinLoops = true, traceDeadFlags = false,
     smcCensus = false, watch = [],
     stopText = null,
     traceIo = null,
@@ -336,7 +336,7 @@ async function runDos(o) {
   const ipSampleLog = [];          // flat [dispatched, ip, dispatched, ip, ...]
 
   const session = new DosSession(vm, machine, {
-    slice, noCache, smcFlush, wasmDecode, fuse, deadFlags, crossFlags, traceBlocks,
+    slice, noCache, smcFlush, wasmDecode, fuse, deadFlags, crossFlags, traceBlocks, spinLoops,
     traceDeadFlags: traceDeadFlags ? ((s) => log(s)) : null,
     mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
     stuckWork,
@@ -541,7 +541,7 @@ async function runDos(o) {
   const {
     dispatched, handbacks, ints, irqs, smcBreaks, traps, icebps, stuckAt, blockedOn32, badSelector,
     compiles, compiledWords, arenaResets, unimplemented, regions, jtab, smcSites, retiredPatches,
-    deadFlagsDropped, tracedBlocks,
+    deadFlagsDropped, tracedBlocks, spinBlocks,
   } = session.stats();
 
   if (bestPng) keepBest();
@@ -559,7 +559,7 @@ async function runDos(o) {
     guestSecs: Number(guestNs) / 1e9,
     guestCpuSecs: guestCpuUs / 1e6,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets, deadFlagsDropped,
-    tracedBlocks,
+    tracedBlocks, spinBlocks,
     smcBreaks, traps, icebps, smcSites, retiredPatches,
     stuckAt, blockedOn32, badSelector, ranOutOfTime,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
@@ -733,6 +733,11 @@ async function main() {
     // `--no-trace-blocks` is the A/B partner; the two arms retire the same
     // dispatches and differ only in how much arena they take.
     traceBlocks: !flag('no-trace-blocks'),
+    // Collapse a block that is one pure branch back to its own head instead of
+    // spinning it to the end of the slice. `--no-spin` is the A/B partner: the
+    // two arms retire the same steps and reach the same frame, and differ only
+    // in the dispatch count it took to get there.
+    spinLoops: !flag('no-spin'),
     // Every op that lost its flag write, with the whole block it was in. A
     // wrong answer is always a later op wrongly believed to overwrite the
     // flags, and the block is the only place that shows which one.
@@ -862,7 +867,11 @@ async function main() {
     + `${r.deadFlagsDropped ? `, ${r.deadFlagsDropped} flagless ops`
       + ` of ${r.compiledWords}` : ''}`
     // How many block edges were removed by compiling on through a conditional.
-    + `${r.tracedBlocks ? `, ${r.tracedBlocks} traced edges` : ''})`
+    + `${r.tracedBlocks ? `, ${r.tracedBlocks} traced edges` : ''}`
+    // ...and how many one-branch loops back to their own head were collapsed
+    // instead of run. These retire the same STEPS as before -- see
+    // docs/toyvm-spin-loops.md -- so the count is the only thing that moves.
+    + `${r.spinBlocks ? `, ${r.spinBlocks} spin loops` : ''})`
     // A handful of these is a packed program unpacking itself and is expected.
     // Thousands, against a compile count that keeps climbing, is recompile
     // thrash: a program storing data into a paragraph a region happens to have

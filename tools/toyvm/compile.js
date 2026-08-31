@@ -17,7 +17,7 @@
 
 const isa = require('./isa');
 const { decodeOne, H } = require('./decode');
-const { ARITY, FUSE, TRACE, NOFLAG, FLAG_EFFECTS, prepareTables } = require('./emit');
+const { ARITY, FUSE, TRACE, SPIN, NOFLAG, FLAG_EFFECTS, prepareTables } = require('./emit');
 
 function compileProgram(readByte, cs, entryIp, opts = {}) {
   // ARITY, NOFLAG and FLAG_EFFECTS are filled on first use rather than at
@@ -84,6 +84,11 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // pays no block transfer. `--no-trace-blocks` is the A/B partner.
   // Never under oneInsn, where a block is one instruction by definition.
   const traceBlocks = opts.traceBlocks !== false && !opts.oneInsn;
+  // Collapse a block that is one pure branch back to its own head. Never under
+  // oneInsn, where the trap flag owes the guest an INT 1 after every
+  // instruction and the loop therefore does NOT run to the end of the slice.
+  // `--no-spin` is the A/B partner.
+  const spinLoops = opts.spinLoops !== false && !opts.oneInsn;
   const traceDeadFlags = opts.traceDeadFlags || null;
 
   // Rewrite a finished block's last two ops into one, when a fused handler for
@@ -447,6 +452,35 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     }
   }
 
+  // Spin loops. A block that is ONE branch back to its own head runs forever
+  // inside the slice: the branch changes nothing but the flags it just read,
+  // and nothing else runs until the block boundary hands back. So swap the
+  // branch for the twin that charges the steps and hands back immediately --
+  // see jccSpinArm() in emit.js for why that is the same run, not a shorter one.
+  //
+  // "One branch" is the whole eligibility test, and it has to be. A second op
+  // in front of the branch could store, could read a port, could move a
+  // register the compare depends on -- and then the loop is a loop that ends.
+  // Fusion is what makes the test worth having anyway: `cmp [si],al / jz $` is
+  // two instructions and one fused op, which is exactly the shape the pair
+  // census finds spinning.
+  let spinBlocks = 0;
+  if (spinLoops) {
+    for (let b = 0; b < blockStarts.length; b++) {
+      const start = blockStarts[b];
+      const end = b + 1 < blockStarts.length ? blockStarts[b + 1] : words.length;
+      if (start + 1 + ARITY[words[start]] !== end) continue;
+      const s = SPIN.get(words[start]);
+      if (s === undefined) continue;
+      if (words[start + 1 + s.takenAt] !== blockIps[b]) continue;
+      if (ARITY[s.twin] !== ARITY[words[start]]) {
+        throw new Error(`spin twin of handler ${words[start]} has a different arity`);
+      }
+      words[start] = s.twin;
+      spinBlocks++;
+    }
+  }
+
   // Flag liveness over the finished region. Per block this is the same
   // backward walk as before; what is new is where it starts from.
   //
@@ -540,6 +574,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     entryAddr: blocks.get(entry),
     deadFlags: deadFlagCount,
     tracedBlocks,
+    spinBlocks,
     arenaBase,
     byteLength: words.length * 4,
   };

@@ -38,6 +38,19 @@ const HANDLERS = [];
 // either naming scheme. See jccTraceBody().
 const TRACE = new Map();
 
+// A branch handler index -> { twin, takenAt }: the same branch, but its TAKEN
+// edge collapses a spin loop instead of jumping back into it. Filled by the
+// same two generators as TRACE, and ONLY for branches that change nothing but
+// the flag record -- a bare `jmp`, a bare Jcc, or one fused with a `cmp` or a
+// `test`, which are the two ALU ops that discard their result. A fused
+// `dec_r16_jnz` is deliberately absent: that loop counts down and ends.
+//
+// `takenAt` is where the taken edge's guest-ip word sits in the operand list --
+// 1 for a plain Jcc, after the ALU's operands for a fused one -- so the compiler
+// can ask "does this branch go back to its own block head" without knowing
+// either operand layout. See jccSpinArm() and docs/toyvm-spin-loops.md.
+const SPIN = new Map();
+
 // Lazy flags are on. This is the A/B switch for them, and it is a GENERATION-time
 // variable rather than a runtime one: the whole point of the change is that a
 // compare stores its inputs instead of computing six bits, so the two arms have
@@ -478,17 +491,84 @@ const jccTraceBody = (expr) => `
         (then ${SLICE_EXIT}))))
 `;
 
+// The taken arm of a branch that closes a loop over nothing.
+//
+// A block whose ops all leave the machine exactly as they found it -- a `cmp`,
+// a `test`, and nothing else -- and which branches back to its own head cannot
+// stop. Nothing inside the slice can change what the compare reads: no store,
+// no port, and no interrupt, because interrupts are injected between slices and
+// never inside one. So once the branch is taken it is taken again, and again,
+// until the step budget runs out. That is the shape of every wait-for-retrace
+// and wait-for-timer-tick in the corpus, and the pair census says it is where
+// the dispatches are: 57.7% of RUNDEMO.EXE is `cmp_rm8_jz` following itself.
+//
+// So do not run it. Charge the steps it WOULD have spent and hand back.
+//
+// The arithmetic is what keeps this honest. An untraced loop turns while
+// `$steps >= 0` at the block transfer, spending S per turn, and stops holding
+// the first value below zero -- which is `(v % S) - S` and nothing else. Write
+// that, and $left, $gip, every register, the frame and the number of slices are
+// what they were: the ONLY difference is how many dispatches were retired
+// getting there. That is why the corpus can check this at all.
+//
+// The two early outs are the same two the block transfer has, tested in the
+// same order and with the same effect: a spent budget or a self-patched slice
+// hands back at once, with $steps untouched.
+const jccSpinArm = (steps) => `
+      (global.set $gip (local.get $t1))
+      (if (i32.eqz (i32.or (global.get $smc)
+                           (i32.lt_s (global.get $steps) (i32.const 0))))
+        (then (global.set $steps
+                (i32.sub (i32.rem_s (global.get $steps) (i32.const ${steps}))
+                         (i32.const ${steps})))))
+      ${SLICE_EXIT}`;
+
+const jccSpinBody = (expr, steps) => `
+  ${ops(4)}
+  (if ${expr}
+    (then ${jccSpinArm(steps)})
+    (else ${GO('(local.get $t2)', '(local.get $t3)')}))
+`;
+
+// ...and the traced twin, whose not-taken edge is the next word. A traced
+// branch can close a spin loop just as a plain one can -- the loop is the TAKEN
+// edge, and tracing only changed what happens on the other one.
+const jccSpinTraceBody = (expr, steps) => `
+  ${ops(3)}
+  (if ${expr}
+    (then ${jccSpinArm(steps)})
+    (else
+      (global.set $gip (local.get $t2))
+      (if (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0)))
+        (then ${SLICE_EXIT}))))
+`;
+
 function genBranches() {
   for (const [cc, expr] of Object.entries(CONDS)) {
     const idx = h(`j${cc}`, 4, jccBody(expr));
-    TRACE.set(idx, h(`j${cc}_t`, 3, jccTraceBody(expr)));
+    const tidx = h(`j${cc}_t`, 3, jccTraceBody(expr));
+    TRACE.set(idx, tidx);
+    // A bare `jz $` is one dispatch per turn, and $next charges the one step.
+    SPIN.set(idx, { twin: h(`j${cc}_spin`, 4, jccSpinBody(expr, 1)), takenAt: 1 });
+    SPIN.set(tidx, { twin: h(`j${cc}_t_spin`, 3, jccSpinTraceBody(expr, 1)), takenAt: 1 });
   }
 
   // Unconditional jump: one successor, so two operands.
-  h('jmp', 2, `
+  const jmpIdx = h('jmp', 2, `
   ${ops(2)}
   ${GO('(local.get $t0)', '(local.get $t1)')}
 `);
+  // `jmp $` is the purest spin there is, and the one a demo parks on when it
+  // is finished. The compiler only offers this twin for a block that is the
+  // jump and nothing else, so a `jmp` back to the head from further down a
+  // block -- a real loop with a body -- is not eligible and never sees it.
+  SPIN.set(jmpIdx, {
+    takenAt: 1,
+    twin: h('jmp_spin', 2, `
+  ${ops(2)}
+  ${jccSpinArm(1)}
+`),
+  });
 
   // LOOP decrements CX and branches on non-zero WITHOUT touching flags. It is
   // the shape every counted loop in real 16-bit code ends with, which is why
@@ -2895,11 +2975,36 @@ function genFusedBranches() {
       // The traced twin of the pair. Without it, extending a block through a
       // conditional would cost the fusion that pair already earned -- the two
       // optimisations meet on exactly the same two instructions.
-      TRACE.set(idx, h(`${alu}_j${cc}_t`, a.args + j.args - 1, `
+      const tidx = h(`${alu}_j${cc}_t`, a.args + j.args - 1, `
   ${a.body}
   (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
   ${jccTraceBody(half || CONDS[cc])}
-`));
+`);
+      TRACE.set(idx, tidx);
+      // The spin twin, for the pairs whose first half discards its result.
+      // `cmp` and `test` are the only two, and the census says they are also
+      // the ones that actually close these loops: `cmp_rm8_jz` following itself
+      // is 4-58% of the dispatches in four of the core ten. Two steps per turn
+      // here, not one -- the dispatch $next charges, plus the one the fused
+      // handler charges for the op it swallowed.
+      if (/^(cmp|test)_/.test(alu)) {
+        SPIN.set(idx, {
+          takenAt: a.args + 1,
+          twin: h(`${alu}_j${cc}_spin`, a.args + j.args, `
+  ${a.body}
+  (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+  ${jccSpinBody(half || CONDS[cc], 2)}
+`),
+        });
+        SPIN.set(tidx, {
+          takenAt: a.args + 1,
+          twin: h(`${alu}_j${cc}_t_spin`, a.args + j.args - 1, `
+  ${a.body}
+  (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+  ${jccSpinTraceBody(half || CONDS[cc], 2)}
+`),
+        });
+      }
     }
   }
 }
@@ -3219,12 +3324,14 @@ function buildHandlers(lazy, fuseCond) {
   const before = HANDLERS.map(x => `${x.name}/${x.args}`).join(',');
   const fuseBefore = [...FUSE.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
   const traceBefore = [...TRACE.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
+  const spinBefore = [...SPIN.entries()].map(([k, v]) => `${k}:${v.twin}/${v.takenAt}`).sort().join(',');
   LAZY = lazy;
   FUSE_COND = fuseCond;
   CONDS = makeConds(bit);
   HANDLERS.length = 0;
   FUSE.clear();
   TRACE.clear();
+  SPIN.clear();
   NOFLAG.clear();
   // genShifts()/genDoubleShifts() append to this rather than returning, so a
   // rebuild that does not clear it emits both arms' shift helpers -- same
@@ -3246,6 +3353,8 @@ function buildHandlers(lazy, fuseCond) {
   if (fuseAfter !== fuseBefore) throw new Error('the flag scheme changed the fusion table');
   const traceAfter = [...TRACE.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
   if (traceAfter !== traceBefore) throw new Error('the flag scheme changed the trace table');
+  const spinAfter = [...SPIN.entries()].map(([k, v]) => `${k}:${v.twin}/${v.takenAt}`).sort().join(',');
+  if (spinAfter !== spinBefore) throw new Error('the flag scheme changed the spin table');
 }
 
 // The first six handlers were written by hand to prove the gate; genAlu()
@@ -5206,6 +5315,10 @@ module.exports = {
   // A branch handler -> the same branch with its not-taken edge inline behind
   // it. The compiler swaps it in when it extends a block through a conditional.
   TRACE,
+  // A branch handler -> the same branch whose taken edge collapses a spin loop
+  // instead of running it. The compiler swaps it in when the taken edge goes
+  // back to the branch's own block head.
+  SPIN,
   // A handler index -> the same handler without its flag write, and what every
   // handler does to the flag state. The compiler walks a finished block
   // backwards with these and swaps in the variant where the write is dead.

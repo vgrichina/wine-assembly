@@ -265,11 +265,44 @@ lists them; widening the set is mechanical, but the remaining handlers are cold.
 
 The window is now the region rather than the block, and what still stops it is
 the handback whose resume point the compiler cannot see: a `ret`, an indirect
-jump, an unresolved edge. A `ret` is the one worth taking — the return address
-is on the shadow stack and `call_rel` already carries the arena address of its
-own return point as an operand, so a call site's successor block is known at
-compile time even though the `ret` itself is not. Threading that through would
-close the largest remaining class.
+jump, an unresolved edge.
+
+### `ret` looked like the one worth taking, and it is not available
+
+The reasoning that made it look easy: the return address is on the shadow stack,
+and `call_rel` already carries the arena address of its own return point as its
+fourth operand, so a call site's successor block *is* known at compile time even
+though the `ret` itself is not. Give a `ret` block the set of all return points
+in the region as its successors and the largest remaining conservative class
+closes.
+
+**It does not hold, and the reason is not subtle.** A `ret`'s resume point is
+not a property of the region it sits in:
+
+- Every block head this compile emits is published into the jump table and into
+  `CodeCache.regions`, and `entryFor` will hand the host *any* of them. So a
+  `ret` block can be entered from outside with an arbitrary shadow stack.
+- The shadow stack itself is global, not per-region. A `call_rel` in region A
+  pushes A's arena address; the callee's `ret` may live in region B and pop it.
+  B cannot enumerate A.
+- On an `$rpop` miss the handler slice-exits with `$gip` set to whatever address
+  was on the guest stack — a manufactured return, a callee that rearranged the
+  stack, a call whose return point was never compiled. That set is unbounded by
+  construction; it is the whole reason the miss path exists.
+
+So the successor set for a `ret` is not "the return points in this region", it
+is "any arena address any call anywhere has ever pushed, plus anything the guest
+puts on its stack". Marking the edge known would let `readsInX` drop a flag
+write on the slice-exit path, which is exactly where it must not.
+
+There is a second reason not to want it even if it were sound. The idiom this
+would pay for is a callee whose last flag write is dead — but the common shape
+is the opposite one: `xor ax,ax / ret` into a caller that does `call foo / jz`.
+Those flags are live *across* the return by design, so the case is frequently
+not dead to begin with.
+
+The remaining conservative classes therefore stay conservative. What is left is
+not a liveness problem.
 
 Past that it is no longer a liveness question but a shape one: the trace
 extension in [toyvm-trace-blocks.md](toyvm-trace-blocks.md), which compiles

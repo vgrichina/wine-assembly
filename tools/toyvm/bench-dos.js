@@ -71,6 +71,7 @@ async function main() {
     nodeadflags: { deadFlags: false },
     nocrossflags: { crossFlags: false },
     notrace: { traceBlocks: false },
+    nospin: { spinLoops: false },
     nowasmdecode: { wasmDecode: false },
     nocache: { noCache: true },
   };

@@ -151,6 +151,13 @@ bounds` on the first program tried. `HIST_SLOTS` is 2048 now, and `emit.js`
 asserts the relationship at table-build time so the next growth fails the build
 instead of the census.
 
+## What came next
+
+The `_t` twins are what let a *traced* branch also be a spin loop: the loop is
+the taken edge, and tracing only changed what happens on the other one. See
+[toyvm-spin-loops.md](toyvm-spin-loops.md), which does to the arena's most
+frequently dispatched op what this page does to its edges.
+
 ## What is next
 
 The unconditional `jmp` is the obvious remaining transfer and it is **not**

@@ -179,3 +179,10 @@ transfer at all. **That is in, and it is written up in
 [toyvm-trace-blocks.md](toyvm-trace-blocks.md)** — including why it keeps the
 same dispatch count, and so keeps the corpus diff usable, when tracing through
 an unconditional `jmp` would not.
+
+**And the census that justified fusion turned out to have a second answer in
+it.** Read the pair table for what is followed *by itself* 100% of the time and
+the top row stops being a fusion candidate and starts being a program waiting:
+one op branching to its own head, 4-58% of the dispatches in four of the core
+ten. Those are not fused, they are not run at all —
+[toyvm-spin-loops.md](toyvm-spin-loops.md).
