@@ -135,8 +135,16 @@ only because MW3's grid is not in a code page; the fold is byte-matched, so any
 binary containing the same 101 bytes gets the same omission. The sibling H440
 stays per-pixel `gs16` and is fine.
 
-**3.3 Worker instances get none of the debug/feature flags — bug, and the docs
-say otherwise.** The cooperative spawn (`thread-manager.js:1586-1650`) sets
+**3.3 Worker instances get none of the debug/feature flags — largely FIXED
+`3bb856a6`.** Spawn-time flags now ride a recorded inherited-globals channel:
+`thread-manager.js:76-91,168-178` records `set_fault_unmapped`,
+`set_callstack_enabled`, `set_trace_eip_range`, `set_cs_steal_after` and
+per-address `set_count`, plus arbitrary setters through
+`recordInheritedWasmGlobal` (`browser-shell.js:634-643` sends
+`set_winver`/`set_loop_copy_emit`), and `guest-worker.js:491-498` replays them
+at init. Remainders: `set_cpu_mmx` is still main-instance-only
+(`run.js:3142`), and the `forwardGlLogs` log gap below is board-claimed but
+uncommitted. Original finding for the record: The cooperative spawn (`thread-manager.js:1586-1650`) sets
 `set_cpu_mmx`, `set_fault_unmapped`, `set_count`, `set_trace_eip_range`,
 `set_cs_steal_after`; `initGuestThread` in `guest-worker.js:411-466` sets only
 bp/watch/callstack/tls/vlan/dll_count/esp/eip/fs/hwnd-base. So under
@@ -486,10 +494,43 @@ successes leave Viewer object selection inert — already has a 148-line real
 implementation sitting uncommitted in the dirty tree (not reviewed here).
 A.1's stale toyvm bundle stands untouched.
 
+**By the next morning (+54 commits, HEAD `f3ae5c76`)** the fix sessions began
+recording closures in this document themselves; this tick verified each in
+code rather than taking the tag. All hold: **3.6** (`8ed5ae8c` — the memory
+gate now fails any `0x07xxxxxx` global without a `_SIZE` or an alias entry,
+`test-wat-memory-map.js:246-263`, and converting the 55 invisible globals
+exposed three real layout errors, among them `COM_WRAPPERS_AUX`'s tail over
+`DX_VTBL_REGISTRY`'s first dword — so the retracted GTA2 relocation claim had
+found a real overlap, just not GTA2's crash); **3.9 + rec 10** (`fab6546d`
+gates all five generic COPY/avg recognizers behind default-off
+`loop_generic_copy_emit`, `07b:1592-2260`; `6bbf1543` FNV-hashes the full
+0x6b/0x6a-byte AoE prefixes); **3.11** (DS3D size validation `391fe732`;
+mutex bit-31 stripped + `last_error` `1e76e8ab`; ToAscii pads the missing hkl
+then delegates — net −4+28 is a correct five-arg frame; console aliases
+`4a812854`; rejection path anchored at `09a:13331`). One overstatement:
+"Worker slices no longer busy-poll `WaitMessage`" — the resume check did move
+in-worker (`resume_message_wait`, `guest-worker.js:148`), but the coordinator
+still issues one `clear_yield` per slice for a parked yield-7 thread
+(`thread-manager.js:1325-1330`). A.1 and most of 3.3 also closed (headings
+above). New and unreviewed: the **BYO-media subsystem** landed whole — design
+`ba7a2511`, read-only ZIP mount `3da72782`/`6a876ff0`, ISO 9660 CD-ROM
+`60407f55`, byte-provider VFS `4d7497ed`, writable C:\ overlay `29dab90a`,
+save-bundle export/import/sync `0995b5a7`/`b91e3738`, CLI + tier wiring
+`9c1003b9` — a full review of it is owed next pass. Process: two stale-index
+races in one evening (`29d1ecd0` silently reverted five console files, restored
+byte-identically by `4a812854`; a toyvm commit swept seven peer files and was
+amended away) — the shared-dirty-tree cost is now visible in history, and both
+were caught and corrected by their authors within minutes. The toyvm
+dead-flags work (`98612ab2`, `c5fb121f`) stays toyvm-only; no `src/` risk.
+
 **New in this window, ranked.**
 
-**A.1 The committed toyvm bundle is stale and can no longer be rebuilt — bug; still open at 15:21, three more `emit.js` changes behind (`f2dc80d2`,
-`4de53cb7`, `1860480e`).**
+**A.1 FIXED `d5cf1afb`: `bundle-browser.js` now discovers modules by walking
+relative `require` literals instead of a hand-kept list, and the bundle was
+regenerated — and stayed regenerated through four later toyvm commits
+(`c5fb121f`, `79188a8c`, `4ab65722`, `2e16725e`). Rec 8 stands: still no
+`--check` in `build.sh`, and the test still reads only the committed artifact.
+Original finding:**
 `docs/dos-corpus/live/toyvm-bundle.js` was last generated in `6b015971`, before
 the wasm decoder existed (678,721 B committed vs 699,901 B from HEAD, first
 difference at byte 103,097). Worse: `tools/toyvm/bundle-browser.js:37-49`
