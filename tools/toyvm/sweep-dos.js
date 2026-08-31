@@ -321,6 +321,18 @@ function markdown(rows, variants) {
   L.push('');
   L.push('outcomes: ' + Object.entries(tally).sort((a, b) => b[1] - a[1])
     .map(([k, n]) => `${k} ${n}`).join(', '));
+  // `branchy` and `mismatch` both mean the tier arms did not agree, and only
+  // one of them is a bug. Say which, next to the count, so nobody reads the
+  // tally as a defect list again.
+  if (tally.branchy || tally.mismatch) {
+    L.push('');
+    L.push('- `mismatch` — the arms ran the same program and computed different'
+      + ' state. A micro-op bug.');
+    L.push('- `branchy` — the op list transfers control somewhere other than its'
+      + ' own end, so tier 0 takes an edge the straight-line tiers fall through.'
+      + ' The arms ran *different programs*; the disagreement says nothing about'
+      + ' the tiers. Inconclusive, not a defect.');
+  }
 
   // Which opcodes the corpus is actually blocked on, ranked. This is the ISA
   // to-do list, ordered by how many programs each byte would unblock.
