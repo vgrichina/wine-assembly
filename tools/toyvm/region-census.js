@@ -70,6 +70,9 @@ const RE = {
 function classify(code, out) {
   if (code === 0) return 'identical';
   if (code === 4) return 'differs';
+  // exit 6: the frame differed, and region-jit's own phase check found the
+  // difference inside the noise floor the baseline shows over the same gap.
+  if (code === 6) return 'phase';
   if (code === 2) return /no samples/.test(out) ? 'no-samples' : 'no-loop';
   if (code === 3) return 'declined';
   // exit 5 is the speed gate: a region WAS built, it just did not beat the

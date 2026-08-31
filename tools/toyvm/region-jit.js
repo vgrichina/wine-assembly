@@ -365,6 +365,40 @@ function arenaSlots(fn) {
   return out;
 }
 
+// A TRANSFER THIS FILE COULD NOT LOWER STILL CARRIES THE PROFILING RUN'S ARENA
+// ADDRESS, and that address means nothing in the run the region is installed
+// into: blocks are laid out in decode order, and the two runs do not decode in
+// the same order. The `(br $out)` after such a transfer re-resolves $ip in the
+// epilogue, so the stale constant was thought to be inert -- but it is also
+// what the GO's own CONT selects on, so it decides whether the region publishes
+// $ip at all, and it is read as an address in the `then` arm. CARRIE.EXE is the
+// proof: 7 unlowered transfers, and compiling ONE extra successor block (which
+// shifts the layout and nothing else) turns a frame-identical run into a wrong
+// one -- non-monotonically, which is what a stale address that sometimes lands
+// on a valid block looks like.
+//
+// So resolve it live instead of zeroing it. Zeroing forces $slice_exit and a
+// handback on every such transfer (and broke DRAGON and ADDY_II back when the
+// region ran on past its own exit); `$jlook` of the $gip the GO has just
+// published is the same answer the epilogue computes, is layout-independent by
+// construction, and costs one hash lookup. `--keep-go-arena` is the A/B.
+// Both forms of the operand have to be caught: constprop folds an arena operand
+// that was only ever read once straight into the two places GO reads it, so
+// half of them are `(local.get $tN)` and half are a bare `(i32.const 16904168)`
+// -- and matching only the first left CARRIE.EXE exactly as wrong as before.
+const ARENA_EXPR = String.raw`(?:\(i32\.const \d+\)|\(local\.get \$t\d\))`;
+const GO_RE = new RegExp(
+  String.raw`\(if \(select \(i32\.const 0\) ${ARENA_EXPR}`
+  + String.raw`(\s*\(i32\.or \(global\.get \$smc\) \(i32\.lt_s \(global\.get \$steps\)`
+  + String.raw` \(i32\.const 0\)\)\)\)\s*\(then \(global\.set \$ip )${ARENA_EXPR}`, 'g');
+
+function resolveGoArena(body) {
+  if (flag('keep-go-arena')) return body;
+  const live = '(call $jlook (global.get $gip))';
+  return body.replace(GO_RE, (m, mid) =>
+    `(if (select (i32.const 0) ${live}${mid}${live}`);
+}
+
 function stripArenaOperands(ops) {
   let stripped = 0;
   const out = ops.map((op) => {
@@ -399,16 +433,23 @@ function isTransfer(op) {
   return TAKEN_AT.has(op.fn) || /^(call_rel(32)?|ret(32)?)$/.test(op.name);
 }
 
-function successorIps(ops) {
+// `why` (optional) collects ip -> which op and which role put it in the list.
+// A successor that turns out to be a bad address is a decode of code that is
+// not code, and the only way to argue about it is to know which branch named it.
+function successorIps(ops, why) {
   const out = new Set();
+  const note = (ip, op, role) => {
+    out.add(ip);
+    if (why && !why.has(ip)) why.set(ip, `${op.name}@0x${(op.gip || 0).toString(16)} ${role}`);
+  };
   for (const op of ops) {
     // A call names both its callee and its return point.
-    if (/^call_rel(32)?$/.test(op.name)) { out.add(op.args[1]); out.add(op.args[2]); continue; }
+    if (/^call_rel(32)?$/.test(op.name)) { note(op.args[1], op, 'callee'); note(op.args[2], op, 'return'); continue; }
     const at = TAKEN_AT.get(op.fn);
     if (at === undefined) continue;
-    out.add(op.args[at]);
+    note(op.args[at], op, 'taken');
     const fall = fallThroughIp(op);
-    if (fall !== null) out.add(fall);
+    if (fall !== null) note(fall, op, 'fall');
   }
   return [...out];
 }
@@ -586,7 +627,7 @@ function buildRegion(rawOps, nexts, headIp, name) {
       }
       continue;
     }
-    parts.push(t3.bodies3[i]);
+    parts.push(resolveGoArena(t3.bodies3[i]));
     if (!branch) continue;
     if (isLast) continue;         // the back edge is tested below
     const fall = nexts[i];
@@ -951,6 +992,15 @@ async function main() {
   // decoder walks the extra addresses and the guest runs the interpreter
   // everywhere, so anything that still moves is the successors' doing, not the
   // compiled loop's.
+  const succWhy = new Map();
+  const allSucc = successorIps(pick.ops, succWhy);
+  const succList = allSucc.slice(0, Number(arg('succ-take', allSucc.length)));
+  console.log(`  successors: ${allSucc.map((x, i) =>
+    (i < succList.length ? '' : '-') + '0x' + x.toString(16)).join(' ')}`
+    + (succList.length < allSucc.length ? `  (- = withheld by --succ-take=${succList.length})` : ''));
+  if (flag('why')) for (const [i, ip] of allSucc.entries()) {
+    console.log(`    [${i}] 0x${ip.toString(16)} <- ${succWhy.get(ip)}`);
+  }
   const install = {
     jitRegions: flag('succ-only') ? null : [region],
     // WHICH region, not where it sits in the table: only the built module knows
@@ -960,8 +1010,12 @@ async function main() {
     // out of a block whose body it never decodes. Over-approximating is free:
     // an address that turns out to be unreachable just gets compiled and never
     // entered, which is what a decoder that guesses a fall-through already does.
+    // `--succ-take=N` keeps only the first N of them, which is the bisector for
+    // the claim above: CARRIE.EXE is frame-identical under `--no-succ` and
+    // wrong with the full list, so over-approximating is NOT always free and
+    // the list has to be cut down to the address that does it.
     regionSucc: flag('no-succ') ? new Map()
-      : new Map([[`${pick.cs}:${pick.headIp}`, successorIps(pick.ops)]]),
+      : new Map([[`${pick.cs}:${pick.headIp}`, succList]]),
     // The guest bytes this region was compiled from, one entry per block the
     // walk covered. compile.js checks them before installing, so a program that
     // rewrites its own loop gets the decoder back instead of a stale region.
