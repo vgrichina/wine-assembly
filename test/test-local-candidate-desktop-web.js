@@ -116,12 +116,20 @@ const ALL_CANDIDATES = [
     stepsPerSlice: 1000,
     clicks: [
       {
-        guestX: 148, guestY: 193, holdMs: 120, waitMs: 30000,
+        guestX: 148, guestY: 193, holdMs: 120, waitMs: 1000,
         snapshotAfter: 'new-game-click',
+      },
+    ],
+    dialogClicks: [
+      {
+        controlId: 26, label: 'Easy', holdMs: 120, inputTimeoutMs: 60000,
+        waitMs: 45000,
+        snapshotAfter: 'easy-loaded',
       },
     ],
     minColors: 24,
     minDiff: 10000,
+    evalTimeoutMs: 60000,
     waitMs: 5000,
   },
   {
@@ -649,7 +657,7 @@ async function main() {
           nonBackground,
         },
       };
-    })()`);
+    })()`, app.evalTimeoutMs || 10000);
   }
 
   async function diffSince(before, app) {
@@ -696,7 +704,7 @@ async function main() {
         }
       }
       return { diff, windows: visible };
-    })()`);
+    })()`, app.evalTimeoutMs || 10000);
   }
 
   async function captureDiffBaseline(app, baselineName = '__candidateBaseline') {
@@ -740,7 +748,7 @@ async function main() {
       }
       window[${jsString(baselineName)}] = { rect, pixels, step };
       return { baselineName: ${jsString(baselineName)}, rect, sampleCount: Object.keys(pixels).length, step };
-    })()`);
+    })()`, app.evalTimeoutMs || 10000);
   }
 
   async function saveCanvasSnapshot(app, label) {
@@ -749,7 +757,7 @@ async function main() {
     const dataUrl = await evalExpr(`(() => {
       const canvas = document.getElementById('screen');
       return canvas.toDataURL('image/png');
-    })()`);
+    })()`, app.evalTimeoutMs || 10000);
     const b64 = String(dataUrl).replace(/^data:image\/png;base64,/, '');
     fs.writeFileSync(path.join(SCREENSHOT_DIR, `${app.id}-${label}.png`), Buffer.from(b64, 'base64'));
   }
@@ -1001,7 +1009,7 @@ async function main() {
     })()`);
   }
 
-  async function rendererMouseDown(x, y, forceDoubleClick = false) {
+  async function rendererMouseDown(x, y, forceDoubleClick = false, timeoutMs = 10000) {
     return evalExpr(`(() => {
       if (!sharedRenderer) throw new Error('renderer unavailable');
       const formatEvent = (evt) => evt ? ({
@@ -1036,10 +1044,10 @@ async function main() {
         afterLen: q.length,
         events: q.slice(beforeLen).map(formatEvent),
       };
-    })()`);
+    })()`, timeoutMs);
   }
 
-  async function rendererMouseUp(x, y) {
+  async function rendererMouseUp(x, y, timeoutMs = 10000) {
     return evalExpr(`(() => {
       if (!sharedRenderer) throw new Error('renderer unavailable');
       const formatEvent = (evt) => evt ? ({
@@ -1073,13 +1081,14 @@ async function main() {
         afterLen: q.length,
         events: q.slice(beforeLen).map(formatEvent),
       };
-    })()`);
+    })()`, timeoutMs);
   }
 
-  async function rendererClick(x, y, holdMs = 0, forceDoubleClick = false) {
-    const down = await rendererMouseDown(x, y, forceDoubleClick);
+  async function rendererClick(x, y, holdMs = 0, forceDoubleClick = false,
+    timeoutMs = 10000) {
+    const down = await rendererMouseDown(x, y, forceDoubleClick, timeoutMs);
     if (holdMs > 0) await wait(holdMs);
-    const up = await rendererMouseUp(x, y);
+    const up = await rendererMouseUp(x, y, timeoutMs);
     return {
       kind: 'click',
       x: x | 0,
@@ -1108,7 +1117,7 @@ async function main() {
     };
   }
 
-  async function rendererGuestClick(x, y, holdMs = 0) {
+  async function rendererGuestClick(x, y, holdMs = 0, timeoutMs = 10000) {
     const point = await evalExpr(`(() => {
       if (!sharedRenderer) throw new Error('renderer unavailable');
       const t = sharedRenderer._exclusiveTransform;
@@ -1121,10 +1130,57 @@ async function main() {
       }
       return { x: ${x | 0}, y: ${y | 0}, transform: t ? Object.assign({}, t) : null };
     })()`);
-    const action = await rendererClick(point.x, point.y, holdMs);
+    const action = await rendererClick(point.x, point.y, holdMs, false, timeoutMs);
     action.guest = { x: x | 0, y: y | 0 };
     action.canvas = { x: point.x | 0, y: point.y | 0 };
     return action;
+  }
+
+  async function rendererDialogControlClick(ctrlId, holdMs = 0, timeoutMs = 10000) {
+    await waitForDialogControl(ctrlId, 30000);
+    const target = await evalExpr(`(() => {
+      const app = runningApps[0];
+      const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
+      if (!e || !e.wnd_next_child_slot || !e.wnd_slot_hwnd || !e.ctrl_get_id ||
+          !e.wnd_window_screen_x || !e.wnd_window_screen_y ||
+          !e.wnd_screen_w || !e.wnd_screen_h) {
+        throw new Error('dialog control geometry helpers unavailable');
+      }
+      const wanted = ${ctrlId >>> 0};
+      const dialogs = Object.values((sharedRenderer && sharedRenderer.windows) || {})
+        .filter(w => w && w.visible && w.isDialog)
+        .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+      const find = (parent, seen = new Set()) => {
+        if (!parent || seen.has(parent)) return 0;
+        seen.add(parent);
+        let slot = 0;
+        while ((slot = e.wnd_next_child_slot(parent, slot)) !== -1) {
+          const child = e.wnd_slot_hwnd(slot) | 0;
+          slot++;
+          if (child && (e.ctrl_get_id(child) | 0) === wanted) return child;
+          const nested = find(child, seen);
+          if (nested) return nested;
+        }
+        return 0;
+      };
+      for (const dialog of dialogs) {
+        const hwnd = find(dialog.hwnd | 0);
+        if (!hwnd) continue;
+        const x = e.wnd_window_screen_x(hwnd) | 0;
+        const y = e.wnd_window_screen_y(hwnd) | 0;
+        const w = e.wnd_screen_w(hwnd) | 0;
+        const h = e.wnd_screen_h(hwnd) | 0;
+        if (w <= 0 || h <= 0) throw new Error('dialog control has empty geometry');
+        return { hwnd: hwnd >>> 0, controlId: wanted, x, y, w, h,
+          controlClass: e.ctrl_get_class(hwnd) | 0,
+          wndProc: e.wnd_get_proc_export ? (e.wnd_get_proc_export(hwnd) >>> 0) : 0,
+          guestX: x + Math.floor(w / 2), guestY: y + Math.floor(h / 2) };
+      }
+      throw new Error('dialog control ' + wanted + ' not found');
+    })()`);
+    const click = await rendererGuestClick(target.guestX, target.guestY, holdMs,
+      timeoutMs);
+    return { ...click, kind: 'dialog-click', target };
   }
 
   async function rendererGuestDoubleClick(x, y, holdMs = 0) {
@@ -1284,6 +1340,16 @@ async function main() {
         await wait(click.waitMs || app.actionWaitMs || 350);
       }
     }
+    if (app.dialogClicks) {
+      for (const click of app.dialogClicks) {
+        const action = await rendererDialogControlClick(click.controlId,
+          click.holdMs || 0, click.inputTimeoutMs || 10000);
+        action.label = click.label || '';
+        actions.push(action);
+        await wait(click.waitMs || app.actionWaitMs || 350);
+        if (click.snapshotAfter) await saveCanvasSnapshot(app, click.snapshotAfter);
+      }
+    }
     if (app.waitForGuestPixelAfterClicks) {
       await waitForGuestPixel(app.waitForGuestPixelAfterClicks);
     }
@@ -1433,6 +1499,11 @@ async function main() {
           `${app.label}: double-click should land inside the rendered app surface: ${summary}`);
         assert(action.second && (action.second.down || []).some(ev => ev.msg === 0x0203),
           `${app.label}: double-click should enqueue WM_LBUTTONDBLCLK: ${summary}`);
+      } else if (action.kind === 'dialog-click') {
+        assert(action.target && action.target.hwnd && action.target.w > 0 && action.target.h > 0,
+          `${app.label}: dialog click should resolve a live control rectangle: ${summary}`);
+        assert(!action.mapped || !action.mapped.outside,
+          `${app.label}: dialog click should land inside the rendered app surface: ${summary}`);
       } else if (action.kind === 'keytap') {
         assert(action.down && (action.down.afterLen > action.down.beforeLen ||
           (app.allowPolledKeys && action.down.asyncDown === true)),
