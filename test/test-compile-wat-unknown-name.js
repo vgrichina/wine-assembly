@@ -25,7 +25,11 @@ function build(extra, cacheKey) {
   return compileWat(async (f) => {
     const source = await fs.promises.readFile(path.join(SRC, f), 'utf-8');
     if (!extra || f !== '13-exports.wat') return source;
-    return source.replace(/\n\)\s*$/, `\n${extra}\n)\n`);
+    // Fragments are self-balanced since the (module ...) wrapper moved into
+    // the concatenator, so APPEND -- the old trailing-paren splice matches
+    // nothing and silently drops the injected ghost, making every case here
+    // pass vacuously.
+    return `${source}\n${extra}\n`;
   }, { cacheKey });
 }
 
