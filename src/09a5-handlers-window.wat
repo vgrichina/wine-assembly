@@ -1452,9 +1452,33 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
+  ;; Enter the installed thread WH_KEYBOARD callback while a queued hardware
+  ;; key message is being retrieved. The callback is stdcall KeyboardProc
+  ;; (nCode, wParam, lParam). CACA0011's KHK1 context restores the USER API's
+  ;; caller and its BOOL result after the callback pops those three arguments.
+  (func $keyboard_hook_begin
+      (param $ret i32) (param $ncode i32) (param $vkey i32) (param $lparam i32)
+    ;; Context below the callback frame: magic, saved USER caller EIP.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0x314B484B)) ;; "KHK1"
+    ;; KeyboardProc arguments, right-to-left.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $lparam))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $vkey))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ncode))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
+    (global.set $eip (global.get $keyboard_hook_proc))
+    (global.set $steps (i32.const 0)))
+
   ;; 73: GetMessageA
   (func $handle_GetMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $msg_ptr i32) (local $packed i32) (local $nc_rect i32)
+    (local $ret i32) (local $msg i32)
     (local $hotkey i32) (local $hotkey_msg i32)
     ;; Move the virtual wire before looking for a message. WSAAsyncSelect is a
     ;; promise that the app will be TOLD about socket activity, so a server
@@ -1544,7 +1568,8 @@
             (global.set $pending_input_lparam (call $host_check_input_lparam))))))
     (if (i32.ne (local.get $packed) (i32.const 0))
     (then
-    (local.set $hotkey_msg (i32.and (local.get $packed) (i32.const 0xFFFF)))
+    (local.set $msg (i32.and (local.get $packed) (i32.const 0xFFFF)))
+    (local.set $hotkey_msg (local.get $msg))
     (local.set $hotkey (call $hotkey_match
       (local.get $hotkey_msg) (i32.shr_u (local.get $packed) (i32.const 16))))
     (if (local.get $hotkey)
@@ -1568,8 +1593,23 @@
     (call $msg_store_input_tail
       (local.get $msg_ptr)
       (local.get $tmp)
-      (i32.and (local.get $packed) (i32.const 0xFFFF))
+      (local.get $msg)
       (global.get $pending_input_lparam))
+    (if (i32.and
+          (i32.ne (global.get $keyboard_hook_proc) (i32.const 0))
+          (i32.or
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x0100))
+                    (i32.eq (local.get $msg) (i32.const 0x0101)))
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x0104))
+                    (i32.eq (local.get $msg) (i32.const 0x0105)))))
+      (then
+        (local.set $ret (call $gl32 (global.get $esp)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (call $keyboard_hook_begin
+          (local.get $ret) (i32.const 0)
+          (i32.shr_u (local.get $packed) (i32.const 16))
+          (global.get $pending_input_lparam))
+        (return)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Drain posted message queue BEFORE pending WM_SIZE — apps like Solitaire
@@ -1742,6 +1782,7 @@
   (func $handle_PeekMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $packed i32) (local $msg i32) (local $tmp i32)
     (local $qidx i32) (local $qaddr i32) (local $qmsg i32) (local $nc_rect i32)
+    (local $ret i32)
     (local $hotkey i32)
     ;; Same reason as GetMessageA: an idle message pump is where a
     ;; WSAAsyncSelect server spends its time, so it has to move the wire.
@@ -1933,6 +1974,23 @@
               (local.get $tmp)
               (local.get $msg)
               (global.get $pending_input_lparam))
+            (if (i32.and
+                  (i32.ne (global.get $keyboard_hook_proc) (i32.const 0))
+                  (i32.or
+                    (i32.or (i32.eq (local.get $msg) (i32.const 0x0100))
+                            (i32.eq (local.get $msg) (i32.const 0x0101)))
+                    (i32.or (i32.eq (local.get $msg) (i32.const 0x0104))
+                            (i32.eq (local.get $msg) (i32.const 0x0105)))))
+              (then
+                (local.set $ret (call $gl32 (global.get $esp)))
+                (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+                (call $keyboard_hook_begin
+                  (local.get $ret)
+                  (select (i32.const 0) (i32.const 3)
+                    (i32.ne (i32.and (local.get $arg4) (i32.const 1)) (i32.const 0)))
+                  (i32.shr_u (local.get $packed) (i32.const 16))
+                  (global.get $pending_input_lparam))
+                (return)))
             (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
             (return)
