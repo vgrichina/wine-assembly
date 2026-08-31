@@ -106,6 +106,11 @@ function collectDeclarations() {
   return decls;
 }
 
+// Importable: tools/region-census.js reads the same declaration set, so the
+// odometer and the gate can never disagree about what a region is.
+module.exports = { collectDeclarations, collectGlobals };
+if (require.main !== module) return;
+
 const globals = collectGlobals();
 const decls = collectDeclarations();
 
