@@ -47,8 +47,11 @@
 //
 // Both inputs are run through WebAssembly.validate() before anything is
 // compared, because this decoder is structural and will happily report MATCH
-// on two modules that no engine would accept. --no-validate skips that when
-// the module uses a proposal this Node build has not shipped.
+// on two modules that no engine would accept. That check lives inside
+// diffWasmAbi(), not in the CLI, so an importing caller — the migration matrix
+// tooling above all — cannot get a weaker guarantee than a shell caller.
+// Pass {validate: false} (CLI: --no-validate) to skip it when the module uses
+// a proposal this Node build has not shipped.
 //
 // Exit code 0 on a full ABI match, 1 on any acceptance diff (or a failed
 // --require-no-tailcalls), 2 on error — so it chains in a shell.
@@ -318,8 +321,16 @@ function walkCode(r, endPos, sites, fnIndex) {
 // Module decoder
 // ---------------------------------------------------------------------------
 
+function toBuffer(input) {
+  if (typeof input === 'string') return fs.readFileSync(input);
+  if (Buffer.isBuffer(input)) return input;
+  if (input instanceof Uint8Array) return Buffer.from(input.buffer, input.byteOffset, input.length);
+  if (input instanceof ArrayBuffer) return Buffer.from(input);
+  throw new Error('expected a file path, Buffer, Uint8Array or ArrayBuffer');
+}
+
 function decodeWasm(input) {
-  const buf = typeof input === 'string' ? fs.readFileSync(input) : input;
+  const buf = toBuffer(input);
   if (buf.length < 8 || buf.readUInt32LE(0) !== 0x6d736100) {
     throw new Error('not a wasm module (bad magic)');
   }
@@ -479,6 +490,13 @@ function decodeWasm(input) {
     else if (d.id === 10) readCodeSection(d.sr, d.end, m, buf);
     else readDataSection(d.sr, d.end, m, buf);
   }
+
+  // Keep the source bytes on the decoded module so a caller that pre-decodes
+  // and then hands the object to diffWasmAbi still gets validated.
+  // Non-enumerable so it does not swamp a console.log of the module.
+  Object.defineProperty(m, 'sourceBytes', {
+    value: buf, enumerable: false, writable: false,
+  });
 
   return m;
 }
@@ -725,13 +743,52 @@ function renderTypes(m) {
 const SECTIONS = ['imports', 'exports', 'types', 'functions', 'globals',
   'tables', 'elements', 'memories', 'data', 'code', 'code-bodies'];
 
+// Name a side in an error message: the file path when there is one, otherwise
+// just "A"/"B", so a failure says which input was bad.
+function describeSide(input, letter) {
+  return typeof input === 'string' ? input : `side ${letter}`;
+}
+
+// Resolve one side to a decoded module, validating it first unless the caller
+// opted out. Validation lives HERE and not in the CLI on purpose: the whole
+// value of this comparator is that other code imports it, and a structural
+// decoder that skips validation will report a confident ABI MATCH on two
+// modules no engine would accept. A caller reaching for the library must not
+// get a weaker check than a caller reaching for the shell.
+function loadSide(input, label, validate) {
+  const preDecoded = input !== null && typeof input === 'object'
+    && !Buffer.isBuffer(input) && !(input instanceof Uint8Array)
+    && !(input instanceof ArrayBuffer);
+  const bytes = preDecoded ? (input.sourceBytes || null) : toBuffer(input);
+
+  if (validate) {
+    if (!bytes) {
+      const error = new Error(`${label}: cannot validate a pre-decoded module ` +
+        'that carries no source bytes. Pass the path or bytes instead, or ' +
+        'pass {validate: false} (CLI: --no-validate) to skip validation.');
+      error.code = 'ERR_WASM_UNVALIDATABLE';
+      throw error;
+    }
+    if (!WebAssembly.validate(bytes)) {
+      const error = new Error(`${label}: not a valid WebAssembly module ` +
+        '(WebAssembly.validate failed). Comparing it would report an ABI that ' +
+        'no engine will accept. If this Node build simply lacks a proposal the ' +
+        'module uses, pass {validate: false} (CLI: --no-validate).');
+      error.code = 'ERR_INVALID_WASM';
+      throw error;
+    }
+  }
+  return preDecoded ? input : decodeWasm(bytes);
+}
+
 function diffWasmAbi(fileA, fileB, options) {
   options = options || {};
   const max = options.max === undefined ? 10 : options.max;
   const strictCode = !!options.strictCode;
+  const validate = options.validate !== false;
   const want = options.sections ? new Set(options.sections) : null;
-  const a = typeof fileA === 'string' || Buffer.isBuffer(fileA) ? decodeWasm(fileA) : fileA;
-  const b = typeof fileB === 'string' || Buffer.isBuffer(fileB) ? decodeWasm(fileB) : fileB;
+  const a = loadSide(fileA, describeSide(fileA, 'A'), validate);
+  const b = loadSide(fileB, describeSide(fileB, 'B'), validate);
 
   const results = [];
   // `acceptance: false` sections are decoded and reported but never decide the
@@ -849,38 +906,25 @@ if (require.main === module) {
   const strictCode = argv.includes('--strict-code');
   const sectionsArg = opt('sections', '');
 
-  // Validate BEFORE decoding. This decoder is structural: it will happily
-  // report a clean MATCH on two modules that no engine would accept, and
-  // "the ABI matches" is a meaningless statement about a module that cannot
-  // instantiate.
-  if (!argv.includes('--no-validate')) {
-    for (const file of files) {
-      let bytes;
-      try {
-        bytes = fs.readFileSync(file);
-      } catch (error) {
-        console.error(`${file}: ${error.message}`);
-        process.exit(2);
-      }
-      if (!WebAssembly.validate(bytes)) {
-        console.error(`${file}: not a valid WebAssembly module ` +
-          '(WebAssembly.validate failed). Comparing it would report an ABI ' +
-          'that no engine will accept. If this Node build simply lacks a ' +
-          'proposal the module uses, re-run with --no-validate.');
-        process.exit(2);
-      }
-    }
-  }
-
+  // Validation lives in diffWasmAbi, so the shell and the library get the same
+  // guarantee; --no-validate is just the flag form of {validate: false}.
   let result;
   try {
     result = diffWasmAbi(files[0], files[1], {
       max: Number(opt('max', 10)),
       strictCode,
+      validate: !argv.includes('--no-validate'),
       sections: sectionsArg ? sectionsArg.split(',').map(s => s.trim()).filter(Boolean) : null,
     });
   } catch (error) {
-    console.error(String(error.stack || error.message || error));
+    // A rejected module is a normal outcome and its message says everything;
+    // a decode bug is not, and there the stack is the whole point.
+    const expected = error.code === 'ERR_INVALID_WASM'
+      || error.code === 'ERR_WASM_UNVALIDATABLE'
+      || error.code === 'ENOENT';
+    console.error(expected
+      ? String(error.message)
+      : String(error.stack || error.message || error));
     process.exit(2);
   }
 

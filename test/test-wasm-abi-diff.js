@@ -421,8 +421,8 @@ console.log('  ok  function/code COUNT stays an acceptance item');
 
 console.log('validation and name-map warning');
 
-// A structural decoder will happily report MATCH on garbage, so the CLI
-// validates first.
+// A structural decoder will happily report MATCH on garbage, so validation
+// runs first.
 const garbage = path.join(tmpDir, 'garbage.wasm');
 fs.writeFileSync(garbage, Buffer.from([0x00, 0x61, 0x73, 0x6d, 1, 0, 0, 0, 0xff, 0xff]));
 assert.ok(!WebAssembly.validate(fs.readFileSync(garbage)), 'fixture must be invalid');
@@ -433,6 +433,57 @@ assert.ok(/--no-validate/.test(bad.out),
   'the rejection must name the escape hatch');
 checks++;
 console.log('  ok  an invalid module is rejected before comparison (exit 2)');
+
+// The check has to live in the LIBRARY, not the CLI. Matrix tooling imports
+// diffWasmAbi directly, and a validation gate that only the shell path runs
+// hands every importing caller a confident MATCH on a module no engine would
+// accept — which is the failure this test exists to prevent regressing.
+assert.throws(() => diffWasmAbi(garbage, garbage), err =>
+  err.code === 'ERR_INVALID_WASM' && /not a valid WebAssembly module/.test(err.message),
+'the imported helper must reject an invalid module by default');
+checks++;
+console.log('  ok  imported diffWasmAbi() rejects an invalid module by default');
+
+// A module that is merely SEMANTICALLY invalid — well-formed enough for the
+// structural decoder, rejected by the engine — is the case a magic-number
+// check cannot catch. Here function #1 is declared (i32,i32)->(i32) but its
+// body returns nothing.
+const semantic = write('semantic-invalid', buildModule({
+  funcDecls: ['ii_i', 'v_v', 'v_v'],
+  bodyOrder: [1, 1, 2],
+}));
+assert.ok(!WebAssembly.validate(fs.readFileSync(semantic)),
+  'fixture must be structurally decodable but semantically invalid');
+assert.doesNotThrow(() => decodeWasm(semantic),
+  'the structural decoder alone must be happy with it — that is the point');
+assert.throws(() => diffWasmAbi(semantic, semantic), err =>
+  err.code === 'ERR_INVALID_WASM',
+'diffWasmAbi must reject a semantically invalid module the decoder accepts');
+checks++;
+console.log('  ok  a decodable-but-invalid module is rejected by the helper');
+
+// {validate: false} is the library form of --no-validate, and must actually
+// let the comparison proceed on that same module.
+const unchecked = diffWasmAbi(semantic, semantic, { validate: false });
+assert.ok(unchecked.match, '{validate:false} must compare without validating');
+checks++;
+console.log('  ok  {validate: false} is the library form of --no-validate');
+
+// Pre-decoded modules are validated too, via the bytes decodeWasm retains —
+// otherwise decoding first would silently be the way around the gate.
+assert.throws(() => diffWasmAbi(decodeWasm(semantic), decodeWasm(semantic)), err =>
+  err.code === 'ERR_INVALID_WASM',
+'a pre-decoded module must not bypass validation');
+checks++;
+console.log('  ok  pre-decoding does not bypass validation');
+
+// Buffers are accepted and validated like paths.
+assert.throws(() => diffWasmAbi(fs.readFileSync(garbage), fs.readFileSync(garbage)),
+  err => err.code === 'ERR_INVALID_WASM', 'a Buffer input must be validated');
+assert.ok(diffWasmAbi(fs.readFileSync(base), fs.readFileSync(base)).match,
+  'a valid Buffer pair must still match');
+checks++;
+console.log('  ok  Buffer inputs are validated and compared like paths');
 
 // The escape hatch must actually skip validation — here the decoder then hits
 // the truncation itself, which is a decode error (2), not a silent MATCH.
