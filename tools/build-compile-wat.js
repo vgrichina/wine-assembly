@@ -7,16 +7,18 @@
 // WHICH COMPILER produces them is selectable — Milestone 5 of
 // docs/watx-migration-plan.md:
 //
-//   WINE_WAT_COMPILER=legacy   lib/compile-wat.js          (default, today)
-//   WINE_WAT_COMPILER=watx     tools/watx.js via src/main.watx
+//   WINE_WAT_COMPILER=watx     tools/watx.js via src/main.watx (default)
+//   WINE_WAT_COMPILER=legacy   lib/compile-wat.js          (rollback)
 //
 // `--compiler=NAME` overrides the environment for a one-off build. Both modes
 // write the SAME two paths, so nothing downstream — tests, host.js, the deploy
 // manifest — has to know which compiler ran, and rollback is one env var rather
 // than a revert. tools/build.sh runs every gate in either mode.
 //
-// The default stays `legacy` until the cutover commit flips it; that flip is
-// deliberately a one-line change here so it is trivial to make and to undo.
+// The cutover flipped the default to `watx` on 2026-08-31, at the commit where
+// the two compilers emit BYTE-IDENTICAL modules in both modes (tail
+// 01daf6ccfbd115e3, compat 0ee6414668129ac4) — so the flip changed which
+// program runs, not which bytes ship. Rollback stays one env var.
 
 const fs = require('fs');
 const path = require('path');
@@ -25,7 +27,7 @@ const { compileWat } = require('../lib/compile-wat');
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
 
-const DEFAULT_COMPILER = 'legacy';
+const DEFAULT_COMPILER = 'watx';
 
 function getArg(name, fallback = null) {
   const prefix = `--${name}=`;

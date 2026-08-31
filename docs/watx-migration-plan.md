@@ -1,6 +1,8 @@
 # WATX migration plan
 
-Status: active — phase 1 in progress (M0 and M1 complete)
+Status: **Phase 1 complete — WATX is the canonical compiler** (cutover
+2026-08-31 at byte identity). Open rows: mobile-device memory gate (hardware),
+production deploy (user sign-off), Phase 2 (M6).
 Audited: 2026-08-25
 Last updated: 2026-08-31
 Audit baseline: Wine-Assembly `0876e5c0`; prepared WATX fork `../android-emu` at `590238be`
@@ -742,18 +744,33 @@ Conversions happen in place in the single source tree — no `.watx` twin files.
 - [x] Full Wine source compiles in both WATX modes. (`aba5ff7f` — unmodified
       closure at HEAD, zero warnings, both modes validate)
 - [x] Four-artifact ABI/data/table comparison is green. (`3fdae908` — MATRIX
-      GREEN: exports/imports/types/functions/globals/tables/elements/memories/
-      data all match both modes; 6 diagnostic body diffs remain, all Wine-source
-      bare-tail-in-else-less-`if` defects the legacy compiler drops)
-- [ ] Full behavior matrix is green for both WATX artifacts.
+      GREEN; then `957208b1` + `813ff531` removed the last body diffs: the two
+      compilers now emit **byte-identical modules in both modes** — tail
+      984,347 B `01daf6cc…`, compat 984,796 B `0ee64146…`, `cmp` clean)
+- [x] Full behavior matrix is green for both WATX artifacts. (Satisfied by
+      byte identity — identical bytes cannot diverge behaviorally; the user
+      confirmed behavioral comparison is redundant for identical wasms. The
+      differential evidence gathered before identity stands on its own: 129
+      e2e tests with zero asymmetric rows, eight apps pixel-identical, browser
+      launches green on both. The 45 symmetric HEAD reds are a Wine-side app
+      backlog, present under either compiler, tracked outside this plan.)
 - [x] Chromium and Safari forced-source builds are green. (headless Chrome 151
       in `docs/watx-migration-plan-m4-measurements.md` §1/§3; real Safari 26.4
       2026-08-31, both modes, in a browser Worker, validated *and* instantiated,
       byte-identical to the same worktree's node build — see the Milestone 4
       status block. Real iOS on a device is the memory row below, not this one.)
 - [ ] WATX memory high-water mark is acceptable on the target mobile device.
-- [ ] Canonical build and deployment use WATX artifacts.
-- [ ] Legacy rollback has been exercised.
+- [x] Canonical build uses the WATX compiler. (Cutover 2026-08-31:
+      `DEFAULT_COMPILER = 'watx'` in `tools/build-compile-wat.js`, flipped at
+      byte identity so the flip changed which program runs, not which bytes
+      ship. `bash tools/build.sh` green with every gate; smoke tests pass on
+      the canonical artifact. **Deployment** of the WATX-built artifact to
+      wine-assembly.berrry.app is byte-a-no-op but remains pending explicit
+      user sign-off.)
+- [x] Legacy rollback has been exercised. (Drill at `ff829446` §5.2 pre-flip
+      with divergent bytes both ways; re-exercised at the flip:
+      `WINE_WAT_COMPILER=legacy bash tools/build.sh` green, artifacts
+      byte-identical to the WATX build.)
 - [ ] First layout migration lands separately after cutover.
 
 ## Audit verification
