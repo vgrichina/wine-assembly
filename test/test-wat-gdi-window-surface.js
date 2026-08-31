@@ -3,12 +3,10 @@
 'use strict';
 
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
 const { createCanvas } = require('../lib/canvas-compat');
 const { createHostImports } = require('../lib/host-imports');
 const { mountBundledFonts } = require('./render-helper');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 
 const HWND = 0x10001;
 const CHILD = 0x10002;
@@ -16,8 +14,32 @@ const GRANDCHILD = 0x10003;
 const SECOND_CHILD = 0x10004;
 
 async function main() {
-  const root = path.join(__dirname, '..');
-  const wasm = await compileWat(file => fs.promises.readFile(path.join(root, 'src', file), 'utf8'));
+  const extraWat = String.raw`
+  (func (export "test_beginpaint_system_update_clip") (param $hwnd i32) (result i32)
+    (local $ps i32) (local $hdc i32) (local $clip i32) (local $ok i32)
+    (local.set $ps (global.get $GUEST_STACK))
+    (call $update_invalidate_rect (local.get $hwnd)
+      (i32.const 4) (i32.const 4) (i32.const 8) (i32.const 8))
+    (call $handle_BeginPaint (local.get $hwnd) (local.get $ps)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (local.set $hdc (call $gl32 (local.get $ps)))
+    ;; Simulate CARDS.DLL replacing the application clip while painting one
+    ;; card. USER's rcPaint system clip must still exclude (1,1).
+    (local.set $clip (call $gdi_rgn_alloc_rect
+      (i32.const 0) (i32.const 0) (i32.const 34) (i32.const 22)))
+    (drop (call $gdi_dc_clip_select (local.get $hdc) (local.get $clip)))
+    (local.set $ok (i32.and
+      (i32.eqz (call $gdi_dc_clip_point_visible
+        (local.get $hdc) (i32.const 1) (i32.const 1)))
+      (call $gdi_dc_clip_point_visible
+        (local.get $hdc) (i32.const 5) (i32.const 5))))
+    (call $handle_EndPaint (local.get $hwnd) (local.get $ps)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (drop (call $gdi_rgn_delete (local.get $clip)))
+    (local.get $ok))
+`;
+  const wasm = compileSrcWasm((file, source) =>
+    (file === '13-exports.wat' ? `${source}\n${extraWat}\n` : source));
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   let canvas = createCanvas(40, 30);
   let repaints = 0;
@@ -106,6 +128,9 @@ async function main() {
   wat.test_gdi_client_rect_set(HWND, 3, 5, 37, 27);
   wat.test_gdi_client_rect_set(CHILD, 0, 0, 20, 14);
   wat.test_gdi_client_rect_set(GRANDCHILD, 0, 0, 10, 10);
+
+  assert.strictEqual(wat.test_beginpaint_system_update_clip(HWND), 1,
+    'replacing the application clip during WM_PAINT must not escape rcPaint');
 
   const hdc = wat.test_call_GetDC(HWND) >>> 0;
   assert(hdc, 'GetDC must allocate a real window DC');

@@ -9,7 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const { GuestThreadHost } = require('../lib/guest-thread-host');
 const { createHostImports } = require('../lib/host-imports');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 
 let passed = 0, failed = 0;
 function check(ok, label, detail) {
@@ -23,8 +23,7 @@ function check(ok, label, detail) {
   // First exercise the real Worker and WAT dispatcher. The tiny WndProc returns
   // 0x12345678 with `ret 16`, exactly the stdcall shape USER expects.
   {
-    const src = path.join(__dirname, '..', 'src');
-    const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(src, f), 'utf8'));
+    const wasmBytes = compileSrcWasm();
     const module = await WebAssembly.compile(wasmBytes);
     const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
     const ctx = {
@@ -138,15 +137,28 @@ function check(ok, label, detail) {
     });
     check(dv.getUint32(cfWasm + 12, true) === 200
       && (dv.getUint32(cfWasm + 4, true) & 0x80000000) !== 0,
-    'cross-thread EM_GETCHARFORMAT patches the output buffer on the owner');
+      'cross-thread EM_GETCHARFORMAT patches the output buffer on the owner');
+
+    // DirectDraw calls made by an owner-thread WndProc must update the device
+    // state subsequently read by the parked sender. Liquid War creates its
+    // window on T1, then Allegro sends T1 a private mode-selection callback
+    // from the main thread. Per-instance globals made the callback appear to
+    // succeed while main still saw the default 640x480x16 mode.
+    await ex('test_dx_set_process_state')(
+      320, 200, 8, 1, 0x24681, 1, 0x520800);
+    const peer = await WebAssembly.instantiate(module, imports);
+    const peerState = Array.from({ length: 7 }, (_, field) =>
+      peer.exports.test_dx_get_process_state(field) >>> 0);
+    check(peerState.join(',') === '320,200,8,1,149121,1,5376000',
+      'owner-thread DirectDraw state is visible to another guest instance',
+      peerState.join(','));
     host.stop();
   }
 
   // CLI threaded mode keeps the guest main instance local. It uses the same
   // request/reply protocol through a local adapter rather than a slot-0 Worker.
   {
-    const src = path.join(__dirname, '..', 'src');
-    const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(src, f), 'utf8'));
+    const wasmBytes = compileSrcWasm();
     const module = await WebAssembly.compile(wasmBytes);
     const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
     const ctx = {
