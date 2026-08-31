@@ -1584,17 +1584,17 @@
   ;; Guest-space thunk bounds (set by PE loader: THUNK_BASE/END - GUEST_BASE + image_base)
   (global $thunk_guest_base (mut i32) (i32.const 0))
   (global $thunk_guest_end  (mut i32) (i32.const 0))
-  (global $THREAD_BASE  (mut i32) (i32.const 0x05000000))
+  (global $THREAD_BASE  (mut i32) (region.addr $THREAD_CACHE_BASE 0x00000000))
   ;; THREAD_END = THREAD_BASE + 0x400000. Per-thread partition limit; overflow
   ;; checks use this so main (tid=0) doesn't trample T1's thread cache region.
   ;; Updated in $init_thread per tid.
-  (global $THREAD_END   (mut i32) (i32.const 0x05400000))
+  (global $THREAD_END   (mut i32) (region.addr $THREAD_CACHE_BASE 0x00400000))
   ;; Per-thread page-compilation state. Worker threads are separate WASM
   ;; instances over the same memory, so every one of these is per-instance and
   ;; must be re-armed in $init_thread -- see the per-instance-globals rule that
   ;; already governs THREAD_BASE/THREAD_END above.
-  (global $PAGE_DIR   (mut i32) (i32.const 0x04900000))
-  (global $PAGE_INDEX (mut i32) (i32.const 0x04100000))
+  (global $PAGE_DIR   (mut i32) (region.addr $PAGE_DIR_BASE 0x00000000))
+  (global $PAGE_INDEX (mut i32) (region.addr $PAGE_INDEX_ARENA 0x00000000))
   ;; Bump allocator over this thread's 128 index slots, plus a free list so a
   ;; self-modifying app that drops and re-pages the same page repeatedly does
   ;; not exhaust the arena. A free slot stores the next free pointer in its
@@ -1897,14 +1897,14 @@
   ;; Two 80-byte surface descriptors for raster/blit destination and source.
   ;; The surface registry owns resolution; pixel kernels consume this scratch.
   (global $GDI_BLIT_DESC i32 (region.addr $GDI_BLIT_DESC 0))
-  (global $GDI_BLIT_DST_DESC i32 (i32.const 0x07EF1100))
-  (global $GDI_BLIT_SRC_DESC i32 (i32.const 0x07EF1150))
+  (global $GDI_BLIT_DST_DESC i32 (region.addr $GDI_BLIT_DESC 0x00000000))
+  (global $GDI_BLIT_SRC_DESC i32 (region.addr $GDI_BLIT_DESC 0x00000050))
   (global $GDI_BLIT_DESC_SIZE i32 (region.size $GDI_BLIT_DESC))
   ;; Bitmap creation handlers are synchronous. They share a parsed metadata
   ;; plan and an ANSI conversion buffer for LoadBitmapW resource names.
   (global $GDI_BITMAP_PLAN i32 (region.addr $GDI_BITMAP_PLAN 0))
   (global $GDI_BITMAP_PLAN_SIZE i32 (region.size $GDI_BITMAP_PLAN))
-  (global $GDI_RGB555_MASKS i32 (i32.const 0x000032A0))
+  (global $GDI_RGB555_MASKS i32 (region.addr $DIB_DEFAULT_RGB555_MASKS 0x00000000))
   (global $GDI_BITMAP_NAME i32 (region.addr $GDI_BITMAP_NAME 0))
   (global $GDI_BITMAP_NAME_SIZE i32 (region.size $GDI_BITMAP_NAME))
   ;; Window-coordinate resolution can run while a painter owns PAINT_SCRATCH.
@@ -2347,16 +2347,16 @@
   (global $CS_TABLE i32 (region.addr $CS_TABLE 0))
   (global $CS_TABLE_SIZE i32 (region.size $CS_TABLE))
   (global $CS_TABLE_ENTRIES i32 (i32.const 256))
-  (global $LOCK_VIRTUAL_MAP i32 (i32.const 0x07F0C840))
-  (global $LOCK_DX i32 (i32.const 0x07F0C880))
-  (global $LOCK_SOCKET i32 (i32.const 0x07F0C8C0))
+  (global $LOCK_VIRTUAL_MAP i32 (region.addr $LOCK_TABLE 0x00000000))
+  (global $LOCK_DX i32 (region.addr $LOCK_TABLE 0x00000040))
+  (global $LOCK_SOCKET i32 (region.addr $LOCK_TABLE 0x00000080))
   ;; The window and class tables. Both are claimed by a scan-then-claim — find
   ;; the first empty slot, then write into it — which two threads can run
   ;; through at the same instant and both pick the same slot. The loser's window
   ;; simply stops existing, and nothing reports it. One lock covers both because
   ;; nothing here takes them together (rule 2), and because a window claim and a
   ;; class claim are each a few hundred instructions of pure table arithmetic.
-  (global $LOCK_WND i32 (i32.const 0x07F0C9C0))
+  (global $LOCK_WND i32 (region.addr $LOCK_TABLE 0x00000180))
   ;; Process-wide allocators that were mutable globals — i.e. a private copy per
   ;; instance, handing out the same value twice. +0: the class atom counter. Two
   ;; instances each starting at 0xC000 give two DIFFERENT classes the SAME atom,
@@ -2396,23 +2396,23 @@
   ;; The COM aux-wrapper bump cursor. It was a mutable global, which means a
   ;; private copy per instance handing out the same aux slot twice — the same
   ;; shape of bug $heap_ptr had. Under $LOCK_DX, so plain loads are fine.
-  (global $COM_AUX_NEXT_SHARED i32 (i32.const 0x07F0C900))
+  (global $COM_AUX_NEXT_SHARED i32 (region.addr $LOCK_TABLE 0x000000C0))
   ;; The ephemeral-port cursor, for the same reason. Two instances each starting
   ;; at 49152 hand the same port to two sockets; $vsock_port_taken then rejects
   ;; the second bind, so the symptom is a connect that fails rather than a
   ;; crossed wire — still wrong, and invisible. 0 means "not seeded yet".
-  (global $VSOCK_NEXT_PORT_SHARED i32 (i32.const 0x07F0C940))
+  (global $VSOCK_NEXT_PORT_SHARED i32 (region.addr $LOCK_TABLE 0x00000100))
   ;; The next free thunk index, process-wide. $num_thunks is BOTH the count and
   ;; the next free index, and it is a per-instance global — so two instances that
   ;; both call GetProcAddress hand out the same thunk address, and the guest then
   ;; calls a thunk whose api id belongs to a different function. That is a jump
   ;; to nowhere with no bad pointer anywhere in the guest's own code.
   ;; $thunk_reserve allocates from here; $update_thunk_end keeps the two in step.
-  (global $THUNK_NEXT_SHARED i32 (i32.const 0x07F0C980))
+  (global $THUNK_NEXT_SHARED i32 (region.addr $LOCK_TABLE 0x00000140))
   ;; Where the heap starts when no PE was ever loaded — unit-test harnesses call
   ;; the WAT exports directly and still expect HeapAlloc to work. This was the
   ;; old initial value of the $heap_ptr global.
-  (global $HEAP_DEFAULT_BASE i32 (i32.const 0x03D12000))
+  (global $HEAP_DEFAULT_BASE i32 (region.addr $GUEST_HEAP_BASE 0x00000000))
   ;; Per-instance arena granularity. MSPaint's entire MFC boot is 215 HeapAllocs,
   ;; so one reservation per megabyte makes the shared cursor effectively cold.
   (global $HEAP_ARENA_CHUNK i32 (i32.const 0x00100000))
@@ -2461,7 +2461,7 @@
   (global $generated_code_end   (mut i32) (i32.const 0))
 
   ;; Thread cache bump allocator
-  (global $thread_alloc (mut i32) (i32.const 0x05000000))  ;; = THREAD_BASE
+  (global $thread_alloc (mut i32) (region.addr $THREAD_CACHE_BASE 0x00000000))  ;; = THREAD_BASE
 
   ;; ============================================================
   ;; CPU STATE
@@ -2594,7 +2594,7 @@
   ;; fill this before guest entry; $env_ensure merges it without forcing the
   ;; environment heap allocation to happen early.
   (global $launch_env_len (mut i32) (i32.const 0))
-  (global $exe_name_wa (mut i32) (i32.const 0x120))   ;; WASM addr of exe name string
+  (global $exe_name_wa (mut i32) (region.addr $STRING_CONSTANTS 0x00000020))   ;; WASM addr of exe name string
   (global $exe_name_len (mut i32) (i32.const 7))      ;; length of exe name
   ;; MSVCRT static data pointers (allocated on first use from heap)
   (global $msvcrt_fmode_ptr   (mut i32) (i32.const 0))
@@ -2775,7 +2775,7 @@
   (global $caret_visible (mut i32) (i32.const 0))     ;; ShowCaret-visible latch
   (global $caret_blink_time (mut i32) (i32.const 530)) ;; ms; Windows' default
 
-  (global $win_ini_name_ptr i32 (i32.const 0x100))   ;; WASM ptr to "win.ini\0" string constant
+  (global $win_ini_name_ptr i32 (region.addr $STRING_CONSTANTS 0x00000000))   ;; WASM ptr to "win.ini\0" string constant
   (global $main_hwnd    (mut i32) (i32.const 0))    ;; Main window handle
   (global $shell_hwnd   (mut i32) (i32.const 0))    ;; USER32 Set/GetShellWindow process state
   (global $next_hwnd    (mut i32) (i32.const 0x10001)) ;; HWND allocator
@@ -3446,7 +3446,7 @@
   ;; NE DLLs are staged above the task image, one 256KB slot per module id, in
   ;; the upper half of the 8MB PE staging area. A Win16 DLL is a few tens of
   ;; KB, and there are at most nine module ids.
-  (global $WIN16_DLL_STAGING i32 (i32.const 0x07592000))
+  (global $WIN16_DLL_STAGING i32 (region.addr $PE_STAGING 0x00400000))
   (global $WIN16_DLL_STAGING_STRIDE i32 (i32.const 0x00040000))
   ;; Reusable staging for a module an application ships with itself. Once an
   ;; NE has loaded, its executable segments live in the selector arena and a
@@ -3545,9 +3545,9 @@
   (global $win16_file_size (mut i32) (i32.const 0))
   (global $win16_res_len (mut i32) (i32.const 0))
   ;; NUL-separated, double-NUL terminated; see the data segment above.
-  (global $STATIC_SYS_DLL_NAMES i32 (i32.const 0x11DD0))
-  (global $STATIC_SYS_DIR i32 (i32.const 0x11DF4))
-  (global $STATIC_SYS_DLL_EXT i32 (i32.const 0x11E08))
+  (global $STATIC_SYS_DLL_NAMES i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000050))
+  (global $STATIC_SYS_DIR i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000074))
+  (global $STATIC_SYS_DLL_EXT i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000088))
   ;; Pseudo module handles for those names. They are deliberately outside
   ;; every mapped image so nothing mistakes one for a real base address; the
   ;; only operations defined on them are GetProcAddress (which resolves
@@ -3557,25 +3557,25 @@
   (global $STATIC_SYS_DLL_FIRST_DX i32 (i32.const 1))
   (global $DX_VERSION_INFO i32 (region.addr $DX_VERSION_INFO 0))
   (global $DX_VERSION_INFO_SIZE i32 (region.size $DX_VERSION_INFO))
-  (global $WIN16_NAME_KERNEL   i32 (i32.const 0x11E70))
-  (global $WIN16_NAME_USER     i32 (i32.const 0x11E77))
-  (global $WIN16_NAME_GDI      i32 (i32.const 0x11E7C))
-  (global $WIN16_NAME_KEYBOARD i32 (i32.const 0x11E80))
-  (global $WIN16_NAME_SOUND    i32 (i32.const 0x11E89))
-  (global $WIN16_NAME_SHELL    i32 (i32.const 0x11E8F))
-  (global $WIN16_NAME_MMSYSTEM i32 (i32.const 0x11E95))
-  (global $WIN16_NAME_COMMDLG  i32 (i32.const 0x11E9E))
-  (global $WIN16_NAME_CARDS    i32 (i32.const 0x11EA6))
+  (global $WIN16_NAME_KERNEL   i32 (region.addr $RESERVED_PAGE_STRINGS 0x000000F0))
+  (global $WIN16_NAME_USER     i32 (region.addr $RESERVED_PAGE_STRINGS 0x000000F7))
+  (global $WIN16_NAME_GDI      i32 (region.addr $RESERVED_PAGE_STRINGS 0x000000FC))
+  (global $WIN16_NAME_KEYBOARD i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000100))
+  (global $WIN16_NAME_SOUND    i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000109))
+  (global $WIN16_NAME_SHELL    i32 (region.addr $RESERVED_PAGE_STRINGS 0x0000010F))
+  (global $WIN16_NAME_MMSYSTEM i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000115))
+  (global $WIN16_NAME_COMMDLG  i32 (region.addr $RESERVED_PAGE_STRINGS 0x0000011E))
+  (global $WIN16_NAME_CARDS    i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000126))
   ;; Appended into the 84 bytes that were free after CARDS, so no earlier
   ;; offset moves — see tools/data_offsets.js, which is how to check that.
-  (global $WIN16_NAME_DDEML    i32 (i32.const 0x11EAC))
+  (global $WIN16_NAME_DDEML    i32 (region.addr $RESERVED_PAGE_STRINGS 0x0000012C))
   ;; Not a module — the one SHELL export reached by name rather than ordinal.
-  (global $WIN16_NAME_SHELLABOUT i32 (i32.const 0x11EB2))
-  (global $WIN16_NAME_NDDEAPI   i32 (i32.const 0x11EBD))
-  (global $WIN16_NAME_NDDEGETWINDOW i32 (i32.const 0x11EC5))
+  (global $WIN16_NAME_SHELLABOUT i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000132))
+  (global $WIN16_NAME_NDDEAPI   i32 (region.addr $RESERVED_PAGE_STRINGS 0x0000013D))
+  (global $WIN16_NAME_NDDEGETWINDOW i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000145))
   ;; The 80x87 emulator. Answered here rather than loaded — see $win16_win87em.
-  (global $WIN16_NAME_WIN87EM i32 (i32.const 0x11ED3))
-  (global $WIN16_DDE_SHARES i32 (i32.const 0x11EE0))
+  (global $WIN16_NAME_WIN87EM i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000153))
+  (global $WIN16_DDE_SHARES i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000160))
 
   ;; Console screen buffer state (for Telnet etc.)
   ;; Character data at 0x3000 (80×25×2 = 4000 bytes, UTF-16 LE)
@@ -3590,7 +3590,7 @@
   ;; written to the screen buffer. 0 until then — a process that never prints
   ;; gets no window, which is what Windows does too.
   (global $console_hwnd (mut i32) (i32.const 0))
-  (global $CONSOLE_TITLE i32 (i32.const 0x11DA4))
+  (global $CONSOLE_TITLE i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000024))
   (global $CONSOLE_TITLE_MAX i32 (i32.const 128))
   (global $console_cells_ready (mut i32) (i32.const 0))
   (global $console_cursor_visible (mut i32) (i32.const 1))
@@ -3600,14 +3600,14 @@
   ;; The backing pointers are mutable so handle-taking console APIs can operate
   ;; on an inactive buffer and restore the active one before browser painting.
   (global $console_loaded_handle (mut i32) (i32.const 0x00030001))
-  (global $console_text_base (mut i32) (i32.const 0x07E09000))
-  (global $console_attr_base (mut i32) (i32.const 0x07E0C000))
+  (global $console_text_base (mut i32) (region.addr $CONSOLE_TEXT 0x00000000))
+  (global $console_attr_base (mut i32) (region.addr $CONSOLE_ATTR 0x00000000))
   ;; $CONSOLE_INPUT's event ring ends at +0x820. The remaining page stores
   ;; eight shared 48-byte screen-buffer records starting at +0x840; +0x14 is
   ;; the active handle. Keeping this state in memory makes browser Workers see
   ;; the same handles and activation order.
-  (global $CONSOLE_BUFFER_TABLE i32 (i32.const 0x07E0F840))
-  (global $CONSOLE_BUFFER_ACTIVE i32 (i32.const 0x07E0F014))
+  (global $CONSOLE_BUFFER_TABLE i32 (region.addr $CONSOLE_INPUT 0x00000840))
+  (global $CONSOLE_BUFFER_ACTIVE i32 (region.addr $CONSOLE_INPUT 0x00000014))
   (global $CONSOLE_BUFFER_MAGIC i32 (i32.const 0x46554243)) ;; "CBUF"
   (global $CONSOLE_BUFFER_STRIDE i32 (i32.const 48))
   (global $CONSOLE_BUFFER_COUNT i32 (i32.const 8))
@@ -3615,7 +3615,7 @@
   ;; 31 process-shared standard-console handle aliases at +0xB00. Each record
   ;; is {generation-tagged handle, canonical stream 1/2/3}; the final dword of
   ;; the 256-byte run is the monotonically increasing generation source.
-  (global $CONSOLE_HANDLE_TABLE i32 (i32.const 0x07E0FB00))
+  (global $CONSOLE_HANDLE_TABLE i32 (region.addr $CONSOLE_INPUT 0x00000B00))
   (global $CONSOLE_HANDLE_COUNT i32 (i32.const 31))
   (global $CONSOLE_HANDLE_STRIDE i32 (i32.const 8))
   (global $CONSOLE_HANDLE_TAG i32 (i32.const 0x00320000))

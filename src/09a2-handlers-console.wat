@@ -5,7 +5,7 @@
   ;; The PE loader owns low staging memory, so keep mutable console-title state
   ;; beside the shared console records rather than in the overwritten 0x11xxx
   ;; system-string area. This 128-byte run ends before the DIB page allocator.
-  (global $CONSOLE_TITLE_STORAGE i32 (i32.const 0x07E0FA00))
+  (global $CONSOLE_TITLE_STORAGE i32 (region.addr $CONSOLE_INPUT 0x00000A00))
   (data (region.addr $CONSOLE_INPUT 0xA00) "Console\00")
 
   (func $console_title_ensure

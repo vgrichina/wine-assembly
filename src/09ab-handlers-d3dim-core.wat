@@ -115,17 +115,17 @@
   (global $D3DIM_AUX_SIZE i32 (region.size $D3DIM_AUX))
   (data (region.addr $D3DIM_AUX 0) "D3DIM:Execute opcode\00")
   (data (region.addr $D3DIM_AUX 0x20) "D3DIM:DrawPrimitive vtx/prim\00")
-  (global $D3DIM_UNIMPL_EXEC_OP i32 (i32.const 0x07FEB000))
-  (global $D3DIM_UNIMPL_DRAW    i32 (i32.const 0x07FEB020))
+  (global $D3DIM_UNIMPL_EXEC_OP i32 (region.addr $D3DIM_AUX 0x00000000))
+  (global $D3DIM_UNIMPL_DRAW    i32 (region.addr $D3DIM_AUX 0x00000020))
   ;; 512 i32 guest pointers, keyed by DX_OBJECTS slot. Each cached execute
   ;; buffer block is [buf_guest, buf_size, D3DSTATUS (24 bytes), original
   ;; bytes...]. D3DRM reads the status extents back through GetExecuteData to
   ;; decide whether its windowed render target needs another primary Blt.
-  (global $D3DIM_EB_CACHE_PTRS i32 (i32.const 0x07FEB040))
+  (global $D3DIM_EB_CACHE_PTRS i32 (region.addr $D3DIM_AUX 0x00000040))
   (global $D3DIM_EB_CACHE_MAX  i32 (i32.const 512))
   (global $D3DIM_EB_CACHE_HEADER i32 (i32.const 32))
   ;; D3D7 state blocks: 32 entries × [snapshot_guest, dev_slot, reserved].
-  (global $D3DIM_STATEBLOCKS i32 (i32.const 0x07FEB840))
+  (global $D3DIM_STATEBLOCKS i32 (region.addr $D3DIM_AUX 0x00000840))
   (global $D3DIM_STATEBLOCK_MAX i32 (i32.const 32))
   (global $d3dim_stateblock_record_dev (mut i32) (i32.const 0))
   (global $d3dim_dbg_vproj_count (mut i32) (i32.const 0))

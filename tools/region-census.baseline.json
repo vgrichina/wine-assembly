@@ -1,7 +1,7 @@
 {
   "recorded": "2026-08-31",
   "note": "Per-file counts of raw literals inside declared regions. This is a RATCHET: counts may fall, never rise. `converted` regions must stay at 0.",
-  "total": 353,
+  "total": 351,
   "converted": [],
   "byFile": {
     "src/09a7c-mixer.wat": 19,
@@ -25,9 +25,9 @@
     "test/test-peek-message-filter.js": 6,
     "test/test-process-boot-yields.js": 6,
     "lib/mem-utils.js": 5,
-    "src/09a8-handlers-directx.wat": 5,
     "lib/thread-manager.js": 4,
     "src/09a7b-ole.wat": 4,
+    "src/09a8-handlers-directx.wat": 4,
     "src/09c7-winhelp-hlp.wat": 4,
     "src/10-helpers.wat": 4,
     "src/10c-truetype.wat": 4,
@@ -70,7 +70,6 @@
     "lib/host-imports.js": 1,
     "lib/pe.js": 1,
     "lib/zip-mount.js": 1,
-    "src/01b-api-hashes.generated.wat": 1,
     "src/08c-ne-loader.wat": 1,
     "src/09aa-handlers-d3dim.wat": 1,
     "test/pe-dump.js": 1,

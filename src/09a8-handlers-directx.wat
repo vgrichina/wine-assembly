@@ -23,7 +23,7 @@
   (global $D3DIM_MATRICES i32 (region.addr $D3DIM_MATRICES 0))
   (global $D3DIM_MATRICES_SIZE i32 (region.size $D3DIM_MATRICES))
   (global $D3DIM_MATRIX_MAX i32 (i32.const 256))
-  (global $D3DIM_MATRIX_USED i32 (i32.const 0x07FEBF00))
+  (global $D3DIM_MATRIX_USED i32 (region.addr $D3DIM_AUX 0x00000F00))
   (global $DX_ENTRY_SIZE i32 (i32.const 32))
   ;; Per-surface palette: DX_MAX slots × 4 bytes, holding the WASM address of
   ;; the palette data last handed to that surface's SetPalette. The DX entry
@@ -6309,7 +6309,7 @@
   ;; on every poll, and an Allegro input thread polls continuously.
   (global $DI_DIK_VK_TABLE i32 (region.addr $DI_DIK_VK_TABLE 0))
   (global $DI_DIK_VK_TABLE_SIZE i32 (region.size $DI_DIK_VK_TABLE))
-  (data (i32.const 0x11400)
+  (data (region.addr $DI_DIK_VK_TABLE 0)
     "\00\1b\31\32\33\34\35\36\37\38\39\30\bd\bb\08\09"  ;; DIK 00-0F
     "\51\57\45\52\54\59\55\49\4f\50\db\dd\0d\11\41\53"  ;; DIK 10-1F
     "\44\46\47\48\4a\4b\4c\ba\de\c0\10\dc\5a\58\43\56"  ;; DIK 20-2F

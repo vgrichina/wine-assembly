@@ -3449,13 +3449,13 @@
   ;; never left the text undrawn. One default is a cruder rule than that, but
   ;; it is the same shape of answer, and it is what lets this layer promise
   ;; that every face resolves to a file we ship.
-  (global $TT_SUBST_DEFAULT i32 (i32.const 0x07F0BF00))
+  (global $TT_SUBST_DEFAULT i32 (region.addr $TT_FONT_STRING_STORAGE 0x00000000))
   (data (region.addr $TT_FONT_STRING_STORAGE 0x00) "Arial\00")
   ;; Win 3.x compatibility alias used by applications written before the
   ;; TrueType family names settled. Keep it out of enumeration, but resolve
   ;; it to the same installed face as Times New Roman.
-  (global $TT_SUBST_TMS_RMN i32 (i32.const 0x07F0BF08))
-  (global $TT_SUBST_TIMES_NEW_ROMAN i32 (i32.const 0x07F0BF10))
+  (global $TT_SUBST_TMS_RMN i32 (region.addr $TT_FONT_STRING_STORAGE 0x00000008))
+  (global $TT_SUBST_TIMES_NEW_ROMAN i32 (region.addr $TT_FONT_STRING_STORAGE 0x00000010))
   (data (region.addr $TT_FONT_STRING_STORAGE 0x08) "Tms Rmn\00Times New Roman\00")
 
   ;; ---- fonts that are simply installed -----------------------------------
@@ -3475,9 +3475,9 @@
   ;; opened: those are the vendored look-alikes mounted under Win98 filenames,
   ;; and registering one would put "Liberation Sans" in front of a guest that
   ;; asked what fonts exist, which is a face Windows 98 never had.
-  (global $TT_FONT_DIR_PATTERN i32 (i32.const 0x07F0BF20))
+  (global $TT_FONT_DIR_PATTERN i32 (region.addr $TT_FONT_STRING_STORAGE 0x00000020))
   (data (region.addr $TT_FONT_STRING_STORAGE 0x20) "C:\\WINDOWS\\FONTS\\*.TTF\00")
-  (global $TT_FONT_DIR_PREFIX i32 (i32.const 0x07F0BF40))
+  (global $TT_FONT_DIR_PREFIX i32 (region.addr $TT_FONT_STRING_STORAGE 0x00000040))
   (data (region.addr $TT_FONT_STRING_STORAGE 0x40) "C:\\WINDOWS\\FONTS\\\00")
   (global $tt_font_dir_scanned (mut i32) (i32.const 0))
 

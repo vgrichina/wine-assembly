@@ -67,6 +67,87 @@ const selected = (file) => !ONLY || ONLY.has(file) || ONLY.has(`src/${file}`);
 const LITERAL = /^(\s*\(global\s+(\$[A-Za-z0-9_]+)\s+(?:i32|\(mut\s+i32\))\s+)\(i32\.const\s+([^)\s]+)\)(\)\s*(?:;;.*)?)$/;
 const SYMBOLIC = /^(\s*\(global\s+(\$[A-Za-z0-9_]+)\s+(?:i32|\(mut\s+i32\))\s+)\(region\.(addr|size|end)\s+(\$[A-Za-z0-9_]+)(?:\s+([^)\s]+))?\)(\)\s*(?:;;.*)?)$/;
 
+// ALIASES — the globals that hold an address INSIDE a region under another
+// name. `--interior` finds candidates, but it cannot decide: most of its 213
+// hits are counts and message ids that land in a region by arithmetic accident
+// ($CLASS_ATOM_BASE = 0xC000 is an ATOM; $XTYP_POKE = 0x4090 is a DDE
+// transaction type). These are the ones that are genuinely a pointer into the
+// named region, checked one by one, and each is rewritten only after its
+// current literal is confirmed to equal base+offset — so a stale entry here is
+// an error, never a silent relocation.
+const ALIASES = [
+  ['THREAD_BASE', 'THREAD_CACHE_BASE', 0],
+  // Not the region's end: $THREAD_CACHE_BASE also holds the per-thread
+  // partitions above 0x400000, and $THREAD_END is where the MAIN thread's
+  // 4MB cache stops.
+  ['THREAD_END', 'THREAD_CACHE_BASE', 0x400000],
+  ['thread_alloc', 'THREAD_CACHE_BASE', 0],
+  ['PAGE_DIR', 'PAGE_DIR_BASE', 0],
+  ['PAGE_INDEX', 'PAGE_INDEX_ARENA', 0],
+  ['GDI_BLIT_DST_DESC', 'GDI_BLIT_DESC', 0x00],
+  ['GDI_BLIT_SRC_DESC', 'GDI_BLIT_DESC', 0x50],
+  ['GDI_RGB555_MASKS', 'DIB_DEFAULT_RGB555_MASKS', 0],
+  ['LOCK_VIRTUAL_MAP', 'LOCK_TABLE', 0x000],
+  ['LOCK_DX', 'LOCK_TABLE', 0x040],
+  ['LOCK_SOCKET', 'LOCK_TABLE', 0x080],
+  ['COM_AUX_NEXT_SHARED', 'LOCK_TABLE', 0x0C0],
+  ['VSOCK_NEXT_PORT_SHARED', 'LOCK_TABLE', 0x100],
+  ['THUNK_NEXT_SHARED', 'LOCK_TABLE', 0x140],
+  ['LOCK_WND', 'LOCK_TABLE', 0x180],
+  ['HEAP_DEFAULT_BASE', 'GUEST_HEAP_BASE', 0],
+  ['win_ini_name_ptr', 'STRING_CONSTANTS', 0x00],
+  ['exe_name_wa', 'STRING_CONSTANTS', 0x20],
+  ['WIN16_DLL_STAGING', 'PE_STAGING', 0x400000],
+  ['CONSOLE_TITLE', 'RESERVED_PAGE_STRINGS', 0x024],
+  ['STATIC_SYS_DLL_NAMES', 'RESERVED_PAGE_STRINGS', 0x050],
+  ['STATIC_SYS_DIR', 'RESERVED_PAGE_STRINGS', 0x074],
+  ['STATIC_SYS_DLL_EXT', 'RESERVED_PAGE_STRINGS', 0x088],
+  ['WIN16_NAME_KERNEL', 'RESERVED_PAGE_STRINGS', 0x0F0],
+  ['WIN16_NAME_USER', 'RESERVED_PAGE_STRINGS', 0x0F7],
+  ['WIN16_NAME_GDI', 'RESERVED_PAGE_STRINGS', 0x0FC],
+  ['WIN16_NAME_KEYBOARD', 'RESERVED_PAGE_STRINGS', 0x100],
+  ['WIN16_NAME_SOUND', 'RESERVED_PAGE_STRINGS', 0x109],
+  ['WIN16_NAME_SHELL', 'RESERVED_PAGE_STRINGS', 0x10F],
+  ['WIN16_NAME_MMSYSTEM', 'RESERVED_PAGE_STRINGS', 0x115],
+  ['WIN16_NAME_COMMDLG', 'RESERVED_PAGE_STRINGS', 0x11E],
+  ['WIN16_NAME_CARDS', 'RESERVED_PAGE_STRINGS', 0x126],
+  ['WIN16_NAME_DDEML', 'RESERVED_PAGE_STRINGS', 0x12C],
+  ['WIN16_NAME_SHELLABOUT', 'RESERVED_PAGE_STRINGS', 0x132],
+  ['WIN16_NAME_NDDEAPI', 'RESERVED_PAGE_STRINGS', 0x13D],
+  ['WIN16_NAME_NDDEGETWINDOW', 'RESERVED_PAGE_STRINGS', 0x145],
+  ['WIN16_NAME_WIN87EM', 'RESERVED_PAGE_STRINGS', 0x153],
+  ['WIN16_DDE_SHARES', 'RESERVED_PAGE_STRINGS', 0x160],
+  ['console_text_base', 'CONSOLE_TEXT', 0],
+  ['console_attr_base', 'CONSOLE_ATTR', 0],
+  ['CONSOLE_BUFFER_ACTIVE', 'CONSOLE_INPUT', 0x014],
+  ['CONSOLE_BUFFER_TABLE', 'CONSOLE_INPUT', 0x840],
+  ['CONSOLE_TITLE_STORAGE', 'CONSOLE_INPUT', 0xA00],
+  ['CONSOLE_HANDLE_TABLE', 'CONSOLE_INPUT', 0xB00],
+  ['D3DIM_UNIMPL_EXEC_OP', 'D3DIM_AUX', 0x000],
+  ['D3DIM_UNIMPL_DRAW', 'D3DIM_AUX', 0x020],
+  ['D3DIM_EB_CACHE_PTRS', 'D3DIM_AUX', 0x040],
+  ['D3DIM_STATEBLOCKS', 'D3DIM_AUX', 0x840],
+  ['D3DIM_MATRIX_USED', 'D3DIM_AUX', 0xF00],
+  ['GDI_BITMAP_FONT_SYSTEM_PATH', 'GDI_BITMAP_FONT_STATIC', 0x000],
+  ['GDI_BITMAP_FONT_SYSTEM_STATE', 'GDI_BITMAP_FONT_STATIC', 0x01C],
+  ['GDI_BITMAP_FONT_MS_SANS_PATH', 'GDI_BITMAP_FONT_STATIC', 0x020],
+  ['GDI_BITMAP_FONT_MS_SANS_STATE', 'GDI_BITMAP_FONT_STATIC', 0x044],
+  ['GDI_BITMAP_FONT_FIXED_PATH', 'GDI_BITMAP_FONT_STATIC', 0x048],
+  ['GDI_BITMAP_FONT_FIXED_STATE', 'GDI_BITMAP_FONT_STATIC', 0x068],
+  ['GDI_BITMAP_FONT_COURIER_PATH', 'GDI_BITMAP_FONT_STATIC', 0x06C],
+  ['GDI_BITMAP_FONT_COURIER_STATE', 'GDI_BITMAP_FONT_STATIC', 0x08C],
+  ['GDI_BITMAP_FONT_TERMINAL_PATH', 'GDI_BITMAP_FONT_STATIC', 0x120],
+  ['GDI_BITMAP_FONT_TERMINAL_STATE', 'GDI_BITMAP_FONT_STATIC', 0x140],
+  ['GDI_BITMAP_FONT_WESTERN', 'GDI_BITMAP_FONT_STATIC', 0x144],
+  ['GDI_FONT_MAPPER_FONT', 'GDI_BITMAP_FONT_STATIC', 0x150],
+  ['GDI_FONT_MAPPER_COMIC_SANS', 'GDI_BITMAP_FONT_STATIC', 0x158],
+  ['TT_SUBST_DEFAULT', 'TT_FONT_STRING_STORAGE', 0x00],
+  ['TT_SUBST_TMS_RMN', 'TT_FONT_STRING_STORAGE', 0x08],
+  ['TT_SUBST_TIMES_NEW_ROMAN', 'TT_FONT_STRING_STORAGE', 0x10],
+  ['TT_FONT_DIR_PATTERN', 'TT_FONT_STRING_STORAGE', 0x20],
+  ['TT_FONT_DIR_PREFIX', 'TT_FONT_STRING_STORAGE', 0x40],
+];
+
 function parseInt32(text) {
   const t = String(text).trim().replace(/_/g, '');
   if (!/^(0x[0-9a-fA-F]+|\d+)$/.test(t)) return null;
@@ -80,6 +161,8 @@ function main() {
   // 60 MB address space that also contains it.
   const sorted = [...decls].sort((a, b) => (b.base - a.base) || (a.size - b.size));
 
+  const aliases = [];      // in the curated ALIASES table: an interior pointer
+  const aliasErrors = [];  // ALIASES entry that no longer describes the tree
   const matched = [];    // name-matched: safe to rewrite
   const interior = [];   // lands inside a region, name says nothing: a lead only
   const stale = [];      // name-matched but the literal disagrees with the map
@@ -142,6 +225,27 @@ function main() {
           return;
         }
       }
+      const alias = ALIASES.find(a => a[0] === bare);
+      if (alias) {
+        const [, rname, off] = alias;
+        const region = byName.get(rname);
+        if (!region) {
+          aliasErrors.push(`${file}:${i + 1} ${name} names $${rname}, which is not declared`);
+          return;
+        }
+        const want = off === 'end' ? region.base + region.size : region.base + off;
+        if (value !== want) {
+          aliasErrors.push(`${file}:${i + 1} ${name} = ${hex(value)}, but ` +
+            `$${rname} + ${off === 'end' ? 'end' : hex(off)} is ${hex(want)}`);
+          return;
+        }
+        aliases.push({ ...where, region: rname, offset: off });
+        edits.set(file, (edits.get(file) || []).concat({
+          index: i,
+          text: `${head}(region.${off === 'end' ? `end $${rname}` : `addr $${rname} ${hex(off)}`})${tail}`,
+        }));
+        return;
+      }
       const inside = sorted.find(d => value >= d.base && value < d.base + d.size);
       if (inside) {
         interior.push({ ...where, region: inside.name, offset: value - inside.base });
@@ -163,9 +267,17 @@ function main() {
     console.error(`region-mirrors: STALE ${s.file}:${s.line} ${s.name} = ${hex(s.value)}, ` +
       `but $${s.region}'s ${s.kind} is ${hex(s.expected)}`);
   }
+  for (const e of aliasErrors) console.error(`region-mirrors: ALIAS ${e}`);
 
   if (has('check')) {
-    if (stale.length) return 1;
+    if (stale.length || aliasErrors.length) return 1;
+    if (aliases.length) {
+      for (const a of aliases) {
+        console.error(`region-mirrors: ${a.file}:${a.line} ${a.name} is still a literal ` +
+          `pointer into $${a.region}`);
+      }
+      return 1;
+    }
     if (matched.length) {
       for (const m of matched.slice(0, 20)) {
         console.error(`region-mirrors: ${m.file}:${m.line} ${m.name} is still a literal ` +
@@ -193,7 +305,7 @@ function main() {
   }
 
   if (has('rewrite')) {
-    if (stale.length) {
+    if (stale.length || aliasErrors.length) {
       console.error('region-mirrors: refusing to rewrite while a mirror disagrees with the map');
       return 1;
     }
@@ -205,14 +317,16 @@ function main() {
       fs.writeFileSync(full, lines.join('\n'));
       files++;
     }
-    console.log(`region-mirrors: rewrote ${matched.length} mirror(s) in ${files} file(s)`);
+    console.log(`region-mirrors: rewrote ${matched.length} mirror(s) and ` +
+      `${aliases.length} interior alias(es) in ${files} file(s)`);
     return 0;
   }
 
   const bases = matched.filter(m => m.kind === 'base').length;
   console.log(`region-mirrors: ${matched.length} literal mirror(s) (${bases} base, ` +
     `${matched.length - bases} size), ${already.length} already symbolic, ` +
-    `${stale.length} stale, ${interior.length} interior lead(s).`);
+    `${stale.length} stale, ${aliases.length} literal interior alias(es), ` +
+    `${interior.length} interior lead(s).`);
   const perFile = new Map();
   for (const m of matched) perFile.set(m.file, (perFile.get(m.file) || 0) + 1);
   for (const [f, n] of [...perFile].sort((a, b) => b[1] - a[1])) {
