@@ -17,6 +17,8 @@ const fs = require('fs');
 const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
 const { fontMounts } = require('../lib/font-substitutions');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const REPO = path.join(__dirname, '..');
 
@@ -36,7 +38,7 @@ const REPO = path.join(__dirname, '..');
   // exactly like "the text never drew". Always take a fresh view.
   const mem = () => new Uint8Array(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
-  const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
+  const wa = guest => RegionMap.g2w(guest, imageBase);
 
   const manifest = JSON.parse(fs.readFileSync(
     path.join(REPO, 'fonts', 'substitutions.json'), 'utf8'));

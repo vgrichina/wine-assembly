@@ -5,6 +5,8 @@
 const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require(path.join(__dirname, '..', 'lib/host-imports'));
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 async function main() {
   // Build if needed
@@ -42,7 +44,7 @@ async function main() {
   e.load_pe(exeBytes.length);
 
   const imageBase = e.get_image_base();
-  const g2w = addr => addr - imageBase + 0x12000;
+  const g2w = addr => RegionMap.g2w(addr, imageBase);
 
   function le32(v) { return [v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF]; }
 

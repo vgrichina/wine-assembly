@@ -4,6 +4,8 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $GUEST_BASE and $GDI_LINE_DESC, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 async function boot() {
   const harness = await bootRenderHarness();
@@ -149,7 +151,7 @@ function readBitmapObject(wat, handle, wide = false) {
   const rw = resource.wat;
   const rdv = resource.dv;
   const rbytes = resource.bytes;
-  const guestBaseWa = 0x00012000;
+  const guestBaseWa = RegionMap.GUEST_BASE;
   const root = guestBaseWa + 0x1000;
   const payload = guestBaseWa + 0x1100;
   rdv.setUint32(guestBaseWa + 0x3C, 0x80, true);
@@ -201,7 +203,7 @@ function readBitmapObject(wat, handle, wide = false) {
 
     const srcDc = rw.test_call_CreateCompatibleDC(0) >>> 0;
     assert.strictEqual(rw.test_call_SelectObject(srcDc, bitmap) >>> 0, 0x30007);
-    const srcDesc = 0x07EF1000;
+    const srcDesc = RegionMap.BASE.GDI_LINE_DESC;
     assert.strictEqual(rw.test_gdi_surface_descriptor(srcDc, srcDesc), 1);
     assert.strictEqual(rdv.getUint32(srcDesc + 68, true), bitmap,
       'surface descriptor must retain the selected bitmap handle');

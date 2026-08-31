@@ -6,6 +6,8 @@ const childProcess = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 async function main() {
   const root = path.join(__dirname, '..');
@@ -37,7 +39,7 @@ async function main() {
   new Uint8Array(memory.buffer).set(exe, e.get_staging());
   e.load_pe(exe.length);
   const imageBase = e.get_image_base() >>> 0;
-  const g2w = guest => (guest - imageBase + 0x12000) >>> 0;
+  const g2w = guest => RegionMap.g2w(guest, imageBase);
   const mem = new Uint8Array(memory.buffer);
   const dv = new DataView(memory.buffer);
   const le32 = value => [value, value >>> 8, value >>> 16, value >>> 24].map(v => v & 0xff);

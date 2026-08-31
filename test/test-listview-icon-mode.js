@@ -4,6 +4,8 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const extraWat = String.raw`
   (func (export "test_fill_desktop") (param $hdc i32) (param $w i32) (param $h i32)
@@ -24,7 +26,7 @@ const extraWat = String.raw`
   const { exports: e, memory, renderer } = await bootRenderHarness({ extraWat });
   const u8 = new Uint8Array(memory.buffer);
   const dv = new DataView(memory.buffer);
-  const wa = guest => guest - e.get_image_base() + 0x12000;
+  const wa = guest => RegionMap.g2w(guest, e.get_image_base());
   const writeString = text => {
     const guest = e.guest_alloc(text.length + 1);
     u8.set(Buffer.from(text + '\0', 'latin1'), wa(guest));

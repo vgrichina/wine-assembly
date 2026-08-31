@@ -18,19 +18,22 @@ const fs = require('fs');
 const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
 const { fontMounts, FONT_DIR } = require('../lib/font-substitutions');
+// $TT_SUBST_TABLE, $TT_SUBST_ALIAS_TABLE and $GUEST_BASE, from the map
+// declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const REPO = path.join(__dirname, '..');
 const STYLES = ['regular', 'bold', 'italic', 'boldItalic'];
 
 // The address and size the WAT table declares. Read rather than assumed so a
 // region move fails here instead of silently parsing whatever moved in.
-const TT_SUBST_TABLE = 0x07F0B400;
+const TT_SUBST_TABLE = RegionMap.BASE.TT_SUBST_TABLE;
 const TT_SUBST_TABLE_SIZE = 0x800;
 // Faces we substitute for but deliberately do not advertise live in a second
 // table with the same record format. They resolve like any other face and are
 // invisible to enumeration, which is what a Win98 machine without those fonts
 // installed looked like.
-const TT_SUBST_ALIAS_TABLE = 0x07F0BC00;
+const TT_SUBST_ALIAS_TABLE = RegionMap.BASE.TT_SUBST_ALIAS_TABLE;
 const TT_SUBST_ALIAS_TABLE_SIZE = 0x300;
 const UNADVERTISED = new Set([
   'Verdana', 'Lucida Console', 'Lucida Sans Unicode',
@@ -44,7 +47,7 @@ const manifest = JSON.parse(fs.readFileSync(
   const { exports: wat, memory, hostCtx } = await bootRenderHarness();
   const bytes = new Uint8Array(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
-  const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
+  const wa = guest => RegionMap.g2w(guest, imageBase);
 
   const readStr = at => {
     let end = at;

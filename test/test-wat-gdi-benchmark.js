@@ -6,6 +6,9 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
+// $GUEST_BASE and $DIB_BACKING_BASE, from the map declared in
+// src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const SAMPLE_COUNT = Math.max(3, Number(process.env.GDI_BENCH_SAMPLES) || 5);
 const SCALE = Math.max(0.1, Number(process.env.GDI_BENCH_SCALE) || 1);
@@ -44,8 +47,9 @@ function formatNumber(value) {
 
   const bytes = new Uint8Array(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
-  const toWasm = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
-  const dibToWasm = guest => (0x1C000000 + ((guest >>> 0) - 0x50000000)) >>> 0;
+  const toWasm = guest => RegionMap.g2w(guest, imageBase);
+  const dibToWasm = guest =>
+    (RegionMap.BASE.DIB_BACKING_BASE + ((guest >>> 0) - 0x50000000)) >>> 0;
   const allocZero = size => {
     const pointer = wat.guest_alloc(size) >>> 0;
     bytes.fill(0, toWasm(pointer), toWasm(pointer) + size);

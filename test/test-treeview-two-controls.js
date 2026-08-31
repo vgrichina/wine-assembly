@@ -12,6 +12,8 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const TVM_INSERTITEMA = 0x1100;
 const TVM_GETCOUNT = 0x1105;
@@ -27,7 +29,7 @@ const TVGN_CARET = 9;
   const { exports: e, memory } = await bootRenderHarness({});
   const u8 = new Uint8Array(memory.buffer);
   const dv = new DataView(memory.buffer);
-  const wa = g => (g - e.get_image_base() + 0x12000) >>> 0;
+  const wa = g => RegionMap.g2w(g, e.get_image_base());
 
   function writeStr(s) {
     const g = e.guest_alloc(s.length + 1) >>> 0;

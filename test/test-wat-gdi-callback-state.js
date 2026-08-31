@@ -7,6 +7,8 @@ const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 async function main() {
   const root = path.join(__dirname, '..');
@@ -30,7 +32,7 @@ async function main() {
   const ca = wat.guest_alloc(24) >>> 0;
   const out = wat.guest_alloc(24) >>> 0;
   const imageBase = wat.get_image_base() >>> 0;
-  const guestBase = 0x12000;
+  const guestBase = RegionMap.GUEST_BASE;
   const view = new DataView(memory.buffer);
   const read16 = ga => view.getUint16(guestBase + (ga - imageBase), true);
   assert.strictEqual(wat.test_call_GetColorAdjustment(hdc, out), 1);
@@ -78,7 +80,7 @@ async function main() {
   assert(wat.load_pe(exe.length));
   const callback = wat.guest_alloc(64) >>> 0;
   const points = wat.guest_alloc(4 + 8 * 16) >>> 0;
-  const callbackWa = 0x12000 + (callback - (wat.get_image_base() >>> 0));
+  const callbackWa = RegionMap.g2w(callback, wat.get_image_base());
   const callbackCode = [
     0x8b, 0x44, 0x24, 0x0c,       // mov eax,[esp+12] (LPARAM)
     0x8b, 0x08,                   // mov ecx,[eax] (count)

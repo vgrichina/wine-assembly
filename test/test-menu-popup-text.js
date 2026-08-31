@@ -19,6 +19,8 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const MF_STRING = 0x000;
 const MF_SEPARATOR = 0x800;
@@ -129,7 +131,7 @@ function check(label, fn) {
   // GetMenuString reads the same blob, so it used to hand back "#0065" too.
   check('GetMenuString returns the label, not the command id', () => {
     // menu_handle_copy_label writes to a WASM address, not a guest one.
-    const g2w = g => g - wat.get_image_base() + 0x12000;
+    const g2w = g => RegionMap.g2w(g, wat.get_image_base());
     const buf = wat.guest_alloc(64) >>> 0;
     const n = wat.menu_handle_copy_label(hmenu, 1, 0x400, g2w(buf), 64);
     assert.strictEqual(readAt(g2w(buf), n), 'Spectrum &Radar');

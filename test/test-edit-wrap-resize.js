@@ -12,6 +12,8 @@ const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
 const { mountBundledFonts } = require('./render-helper');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
@@ -62,7 +64,7 @@ async function main() {
   const e = instance.exports;
   const u8 = new Uint8Array(memory.buffer);
 
-  const wa = g => g - e.get_image_base() + 0x12000;
+  const wa = g => RegionMap.g2w(g, e.get_image_base());
   const writeStr = (s) => {
     const g = e.guest_alloc(s.length + 1);
     const p = wa(g);

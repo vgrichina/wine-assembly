@@ -4,6 +4,9 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $GUEST_BASE and $DIB_BACKING_BASE, from the map declared in
+// src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 (async () => {
   const { exports: wat, memory } = await bootRenderHarness();
@@ -25,7 +28,7 @@ const { bootRenderHarness } = require('./render-helper');
   const text = 'MMMMMMMMMMMM';
   const textGa = wat.guest_alloc(text.length + 1) >>> 0;
   const imageBase = wat.get_image_base() >>> 0;
-  const textWa = 0x12000 + (textGa - imageBase);
+  const textWa = RegionMap.g2w(textGa, imageBase);
   const bytes = new Uint8Array(memory.buffer);
   for (let i = 0; i < text.length; i++) bytes[textWa + i] = text.charCodeAt(i);
   bytes[textWa + text.length] = 0;
@@ -51,7 +54,7 @@ const { bootRenderHarness } = require('./render-helper');
   assert.strictEqual(wat.test_call_TextOutA(hdc, 50, 5, textGa, 1), 1);
 
   const bitsGa = wat.guest_read32(bitsOut) >>> 0;
-  const bitsWa = 0x1C000000 + (bitsGa - 0x50000000);
+  const bitsWa = RegionMap.BASE.DIB_BACKING_BASE + (bitsGa - 0x50000000);
   const rgb = (x, y) => {
     const p = bitsWa + (y * width + x) * 4;
     return [bytes[p + 2], bytes[p + 1], bytes[p]];

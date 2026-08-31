@@ -10,6 +10,8 @@ const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
@@ -92,7 +94,7 @@ async function main() {
   const e = instance.exports;
   const u8 = new Uint8Array(memory.buffer);
   const dv = new DataView(memory.buffer);
-  const wa = g => g - e.get_image_base() + 0x12000;
+  const wa = g => RegionMap.g2w(g, e.get_image_base());
 
   const checks = [];
   function check(name, pass, info = '') {

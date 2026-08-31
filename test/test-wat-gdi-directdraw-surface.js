@@ -4,8 +4,11 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $DX_OBJECTS, $GDI_LINE_DESC and $GUEST_BASE, from the map declared in
+// src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
-const DX_OBJECTS = 0x07F60000;
+const DX_OBJECTS = RegionMap.BASE.DX_OBJECTS;
 const DX_ENTRY_SIZE = 32;
 
 (async () => {
@@ -19,8 +22,8 @@ const DX_ENTRY_SIZE = 32;
   const height = 8;
   const stride = width * 4;
   const bitsGa = wat.guest_alloc(stride * height) >>> 0;
-  const bitsWa = 0x12000 + (bitsGa - (wat.get_image_base() >>> 0));
-  const desc = 0x07EF1000;
+  const bitsWa = RegionMap.g2w(bitsGa, wat.get_image_base());
+  const desc = RegionMap.BASE.GDI_LINE_DESC;
 
   bytes.fill(0xFF, bitsWa, bitsWa + stride * height);
   dv.setUint32(entry, 2, true); // DDSurface
@@ -78,9 +81,9 @@ const DX_ENTRY_SIZE = 32;
   const indexedEntry = DX_OBJECTS + indexedSlot * DX_ENTRY_SIZE;
   const indexedStride = 12;
   const indexedBitsGa = wat.guest_alloc(indexedStride * height) >>> 0;
-  const indexedBitsWa = 0x12000 + (indexedBitsGa - (wat.get_image_base() >>> 0));
+  const indexedBitsWa = RegionMap.g2w(indexedBitsGa, wat.get_image_base());
   const paletteGa = wat.guest_alloc(1024) >>> 0;
-  const paletteWa = 0x12000 + (paletteGa - (wat.get_image_base() >>> 0));
+  const paletteWa = RegionMap.g2w(paletteGa, wat.get_image_base());
   bytes.fill(0, paletteWa, paletteWa + 1024);
   bytes.set([0, 0, 0, 0], paletteWa); // black PALETTEENTRY
   bytes.set([255, 255, 255, 0], paletteWa + 4); // white

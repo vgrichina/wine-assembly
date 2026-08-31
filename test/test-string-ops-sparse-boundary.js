@@ -6,6 +6,8 @@ const fs = require('fs');
 const path = require('path');
 const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const extraWat = String.raw`
   (func (export "test_sparse_map") (param $guest i32) (param $size i32) (result i32)
@@ -47,7 +49,7 @@ async function main() {
   assert.strictEqual(e.test_sparse_map(dstMap2, 0x1000) >>> 0, dstMap2);
 
   const imageBase = e.get_image_base() >>> 0;
-  const direct = guest => guest - imageBase + 0x12000;
+  const direct = guest => RegionMap.g2w(guest, imageBase);
   const source = imageBase + 0x9000;
   const destination = dstMap1 + 0xff0;
   const values = [

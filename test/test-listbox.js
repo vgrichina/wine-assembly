@@ -20,6 +20,8 @@ const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
@@ -67,14 +69,14 @@ async function main() {
   // Helper to write a NUL-terminated string into a fresh guest_alloc buffer.
   const writeStr = (s) => {
     const g = e.guest_alloc(s.length + 1);
-    const wa = g - e.get_image_base() + 0x12000;
+    const wa = RegionMap.g2w(g, e.get_image_base());
     const u8 = new Uint8Array(memory.buffer);
     for (let i = 0; i < s.length; i++) u8[wa + i] = s.charCodeAt(i);
     u8[wa + s.length] = 0;
     return g;
   };
   const readStr = (g, max = 256) => {
-    const wa = g - e.get_image_base() + 0x12000;
+    const wa = RegionMap.g2w(g, e.get_image_base());
     const u8 = new Uint8Array(memory.buffer);
     let s = '';
     for (let i = 0; i < max && u8[wa + i]; i++) s += String.fromCharCode(u8[wa + i]);
@@ -138,7 +140,7 @@ async function main() {
   check('LB_GETSELCOUNT reports both selected rows', e.send_message(lb, 0x0190, 0, 0) === 2);
   check('LB_GETSELITEMS returns selected indexes',
     e.send_message(lb, 0x0191, items.length, selectedItems) === 2 &&
-    new DataView(memory.buffer).getUint32(selectedItems - e.get_image_base() + 0x12000, true) === 0 &&
+    new DataView(memory.buffer).getUint32(RegionMap.g2w(selectedItems, e.get_image_base()), true) === 0 &&
     new DataView(memory.buffer).getUint32(selectedItems - e.get_image_base() + 0x12004, true) === 2);
   check('listbox_get_sel export agrees', e.listbox_get_sel(lb, 0) === 1 && e.listbox_get_sel(lb, 2) === 1);
 

@@ -3,16 +3,15 @@
 'use strict';
 
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
-const { compileWatSnapshot } = require('../lib/compile-wat');
-
-const ROOT = path.join(__dirname, '..');
+const { compileSrcWasm } = require('./compile-src');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 async function main() {
-  const wasm = await compileWatSnapshot(file =>
-    fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
+  // The full src tree through the canonical compiler; the legacy compileWat
+  // path lowers the tree's region-symbolic operands to traps (24b79256).
+  const wasm = compileSrcWasm();
   const memory = new WebAssembly.Memory({
     initial: 8192, maximum: 8192, shared: true,
   });
@@ -37,7 +36,7 @@ async function main() {
   const e = instance.exports;
   const imageBase = e.get_image_base() >>> 0;
   const wsadata = e.guest_alloc(400) >>> 0;
-  const wa = wsadata - imageBase + 0x12000;
+  const wa = RegionMap.g2w(wsadata, imageBase);
   const bytes = new Uint8Array(memory.buffer, wa, 400);
   const dv = new DataView(memory.buffer, wa, 400);
 

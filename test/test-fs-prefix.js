@@ -7,6 +7,8 @@
 const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require(path.join(__dirname, '..', 'lib/host-imports'));
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 async function main() {
   const ROOT = path.join(__dirname, '..');
@@ -43,7 +45,7 @@ async function main() {
   e.load_pe(exeBytes.length);
 
   const imageBase = e.get_image_base();
-  const g2w = a => a - imageBase + 0x12000;
+  const g2w = a => RegionMap.g2w(a, imageBase);
   const fsBase = e.get_fs_base();
   if (!fsBase) { console.log('FAIL fs_base not initialized'); process.exit(1); }
 

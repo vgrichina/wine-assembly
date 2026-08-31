@@ -7,6 +7,9 @@ const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
+// $GUEST_BASE and $DIB_BACKING_BASE, from the map declared in
+// src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 async function main() {
   const root = path.join(__dirname, '..');
@@ -46,7 +49,7 @@ async function main() {
   }
 
   function wasmAddress(guestAddress) {
-    return (guestAddress - imageBase + 0x12000) >>> 0;
+    return RegionMap.g2w(guestAddress, imageBase);
   }
 
   function allocPoints(values) {
@@ -91,7 +94,7 @@ async function main() {
     return {
       bitmap,
       hdc,
-      bits: 0x1c000000 + (bitsGuest - 0x50000000),
+      bits: RegionMap.BASE.DIB_BACKING_BASE + (bitsGuest - 0x50000000),
       size: width * height * 4,
       width,
     };

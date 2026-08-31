@@ -3,13 +3,15 @@
 
 const assert = require('assert');
 const { callDllMain } = require('../lib/dll-loader');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 function captureDllMainArgs(options, { sparseStack = false } = {}) {
   const memory = new WebAssembly.Memory({ initial: 128 });
   const dv = new DataView(memory.buffer);
   const imageBase = 0x00400000;
   const savedEsp = sparseStack ? 0x07500000 : 0x00420000;
-  const contiguousG2w = guest => guest - imageBase + 0x12000;
+  const contiguousG2w = guest => RegionMap.g2w(guest, imageBase);
   const sparseBase = 0x074ff000;
   const sparseWa = 0x00050000;
   const g2w = guest => sparseStack

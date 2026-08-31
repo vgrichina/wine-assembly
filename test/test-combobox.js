@@ -18,6 +18,8 @@ const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
 const { Win98Renderer } = require('../lib/renderer');
 const { mountBundledFonts } = require('./render-helper');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
@@ -75,14 +77,14 @@ async function main() {
 
   const writeStr = (s) => {
     const g = e.guest_alloc(s.length + 1);
-    const wa = g - e.get_image_base() + 0x12000;
+    const wa = RegionMap.g2w(g, e.get_image_base());
     const u8 = new Uint8Array(memory.buffer);
     for (let i = 0; i < s.length; i++) u8[wa + i] = s.charCodeAt(i);
     u8[wa + s.length] = 0;
     return g;
   };
   const readStr = (g, max = 256) => {
-    const wa = g - e.get_image_base() + 0x12000;
+    const wa = RegionMap.g2w(g, e.get_image_base());
     const u8 = new Uint8Array(memory.buffer);
     let s = '';
     for (let i = 0; i < max && u8[wa + i]; i++) s += String.fromCharCode(u8[wa + i]);

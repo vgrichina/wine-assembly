@@ -11,6 +11,8 @@
 //   - canvas has many colors after repaint (proves WM_PAINT reached the
 //     combobox and listbox wndprocs and painted real GDI primitives)
 const { runRenderTest } = require('./render-helper');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 runRenderTest('combobox', async (h, check) => {
   const e = h.exports;
@@ -18,7 +20,7 @@ runRenderTest('combobox', async (h, check) => {
 
   const writeStr = (s) => {
     const g = e.guest_alloc(s.length + 1);
-    const wa = g - e.get_image_base() + 0x12000;
+    const wa = RegionMap.g2w(g, e.get_image_base());
     const u8 = new Uint8Array(memory.buffer);
     for (let i = 0; i < s.length; i++) u8[wa + i] = s.charCodeAt(i);
     u8[wa + s.length] = 0;

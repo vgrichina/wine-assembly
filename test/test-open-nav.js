@@ -20,6 +20,8 @@ const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
 const { Win98Renderer } = require('../lib/renderer');
 const { VirtualFS } = require('../lib/filesystem');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 let createCanvas;
 try { createCanvas = require('../lib/canvas-compat').createCanvas; } catch (_) {
@@ -87,7 +89,7 @@ try { createCanvas = require('../lib/canvas-compat').createCanvas; } catch (_) {
   const readItem = (idx) => {
     const dest = e.guest_alloc(64);
     const n = e.listbox_get_item_text(lb, idx, dest, 63);
-    const wa = dest - e.get_image_base() + 0x12000;
+    const wa = RegionMap.g2w(dest, e.get_image_base());
     let s = '';
     for (let i = 0; i < n; i++) s += String.fromCharCode(u8[wa + i]);
     return s;

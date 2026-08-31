@@ -15,6 +15,8 @@ const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const AF_INET = 2;
 const SOCK_STREAM = 1;
@@ -62,7 +64,7 @@ async function main() {
   const imageBase = wat.get_image_base() >>> 0;
   let passed = 0;
 
-  const wa = ga => (ga - imageBase + 0x12000) >>> 0;
+  const wa = ga => RegionMap.g2w(ga, imageBase);
 
   function check(name, fn) {
     fn();

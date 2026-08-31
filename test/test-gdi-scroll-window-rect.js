@@ -20,6 +20,8 @@ const { createCanvas } = require('../lib/canvas-compat');
 const { createHostImports } = require('../lib/host-imports');
 const { Win98Renderer } = require('../lib/renderer');
 const { compileSrcWasm } = require('./compile-src');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const ROOT = path.join(__dirname, '..');
 const HWND = 0x10001;
@@ -59,7 +61,7 @@ function putRect(wat, guestPtr, l, t, r, b) {
   wat.guest_write32(guestPtr + 4, t);
   wat.guest_write32(guestPtr + 8, r);
   wat.guest_write32(guestPtr + 12, b);
-  return guestPtr - wat.get_image_base() + 0x12000;
+  return RegionMap.g2w(guestPtr, wat.get_image_base());
 }
 
 function paintPattern(wat, hdc, w, h) {
