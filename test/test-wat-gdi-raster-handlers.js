@@ -4,6 +4,10 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// The fixed memory map, generated from src/00-regions.wat
+// (docs/watx-region-safety-design.md §6). $GUEST_BASE and $DIB_BACKING_BASE
+// were spelled out as raw literals in every guest→wasm translation below.
+const RegionMap = require('../lib/region-map.generated.js');
 
 (async () => {
   const { exports: wat, memory, gdi } = await bootRenderHarness();
@@ -33,7 +37,7 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.test_call_SelectObject(hdc, bitmap) >>> 0, 0x30007);
     return {
       bitmap, hdc, width, height, stride: width * 4,
-      bits: 0x1C000000 + (bitsGa - 0x50000000),
+      bits: RegionMap.BASE.DIB_BACKING_BASE + (bitsGa - 0x50000000),
       presentation: gdi.surfacePresentations.get(bitmap),
     };
   }
@@ -150,7 +154,7 @@ const { bootRenderHarness } = require('./render-helper');
     wat.guest_write16(dib + 14, 8);
     wat.guest_write32(dib + 32, 2);
     const imageBase = wat.get_image_base() >>> 0;
-    const wa = 0x12000 + (dib - imageBase);
+    const wa = RegionMap.GUEST_BASE + (dib - imageBase);
     bytes = new Uint8Array(memory.buffer);
     bytes.set([0x00, 0x00, 0xFF, 0, 0xFF, 0x00, 0x00, 0], wa + 40);
     bytes.set([0, 1, 0, 0, 1, 0, 0, 0], wa + 48);
@@ -174,7 +178,7 @@ const { bootRenderHarness } = require('./render-helper');
     wat.guest_write16(dib + 8, 1);
     wat.guest_write16(dib + 10, 1);
     const imageBase = wat.get_image_base() >>> 0;
-    const wa = 0x12000 + (dib - imageBase);
+    const wa = RegionMap.GUEST_BASE + (dib - imageBase);
     bytes.set([0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00], wa + 12);
     bytes.set([0x40, 0, 0, 0, 0x80, 0, 0, 0], wa + 18);
     const brush = wat.test_call_CreateDIBPatternBrushPt(dib, 0) >>> 0;
@@ -415,7 +419,7 @@ const { bootRenderHarness } = require('./render-helper');
     const imageBase = wat.get_image_base() >>> 0;
     const bmiGa = wat.guest_alloc(40 + 16 * 4) >>> 0;
     const bitsOutGa = wat.guest_alloc(4) >>> 0;
-    const bmiWa = 0x12000 + (bmiGa - imageBase);
+    const bmiWa = RegionMap.GUEST_BASE + (bmiGa - imageBase);
     bytes.fill(0, bmiWa, bmiWa + 40 + 16 * 4);
     wat.guest_write32(bmiGa, 40);
     wat.guest_write32(bmiGa + 4, 2);
@@ -428,7 +432,7 @@ const { bootRenderHarness } = require('./render-helper');
     bytes.set([0xC0, 0xC0, 0xC0, 0], bmiWa + 40 + 8 * 4);
     const bitmap = wat.test_call_CreateDIBSection(0, bmiGa, bitsOutGa) >>> 0;
     const bitsGa = wat.guest_read32(bitsOutGa) >>> 0;
-    const bitsWa = 0x1C000000 + (bitsGa - 0x50000000);
+    const bitsWa = RegionMap.BASE.DIB_BACKING_BASE + (bitsGa - 0x50000000);
     const indexed = wat.test_call_CreateCompatibleDC(0) >>> 0;
     assert(bitmap && indexed && bitsGa);
     wat.test_call_SelectObject(indexed, bitmap);
@@ -440,7 +444,7 @@ const { bootRenderHarness } = require('./render-helper');
     // longer present exactly, so GDI maps it to the nearest entry (white,
     // index 8) and compares source indexes rather than resolved RGB values.
     const maskPaletteGa = wat.guest_alloc(16 * 4) >>> 0;
-    const maskPaletteWa = 0x12000 + (maskPaletteGa - imageBase);
+    const maskPaletteWa = RegionMap.GUEST_BASE + (maskPaletteGa - imageBase);
     bytes.fill(0, maskPaletteWa, maskPaletteWa + 16 * 4);
     bytes.set([0xFF, 0xFF, 0xFF, 0], maskPaletteWa + 8 * 4);
     assert.strictEqual(wat.test_gdi_set_dib_color_table(
@@ -519,8 +523,8 @@ const { bootRenderHarness } = require('./render-helper');
     wat.guest_write16(bmiGa + 14, 4);
     wat.guest_write32(bmiGa + 32, 16);
     const imageBase = wat.get_image_base() >>> 0;
-    const bmiWa = 0x12000 + (bmiGa - imageBase);
-    const bitsWa = 0x12000 + (bitsGa - imageBase);
+    const bmiWa = RegionMap.GUEST_BASE + (bmiGa - imageBase);
+    const bitsWa = RegionMap.GUEST_BASE + (bitsGa - imageBase);
     // RGBQUAD index 1 = red, index 2 = green, index 3 = blue.
     bytes.set([0x00, 0x00, 0xFF, 0x00], bmiWa + 40 + 4);
     bytes.set([0x00, 0xFF, 0x00, 0x00], bmiWa + 40 + 8);
@@ -540,7 +544,7 @@ const { bootRenderHarness } = require('./render-helper');
     const bmiGa = wat.guest_alloc(40) >>> 0;
     const bitsGa = wat.guest_alloc(16) >>> 0;
     const imageBase = wat.get_image_base() >>> 0;
-    const bitsWa = 0x12000 + (bitsGa - imageBase);
+    const bitsWa = RegionMap.GUEST_BASE + (bitsGa - imageBase);
     wat.guest_write32(bmiGa, 40);
     wat.guest_write32(bmiGa + 4, 2);
     wat.guest_write16(bmiGa + 12, 1);
@@ -578,7 +582,7 @@ const { bootRenderHarness } = require('./render-helper');
     const bmiGa = wat.guest_alloc(40) >>> 0;
     const bitsGa = wat.guest_alloc(32) >>> 0;
     const imageBase = wat.get_image_base() >>> 0;
-    const bitsWa = 0x12000 + (bitsGa - imageBase);
+    const bitsWa = RegionMap.GUEST_BASE + (bitsGa - imageBase);
     wat.guest_write32(bmiGa, 40);
     wat.guest_write32(bmiGa + 4, 2);
     wat.guest_write16(bmiGa + 12, 1);
@@ -708,8 +712,8 @@ const { bootRenderHarness } = require('./render-helper');
     const bmiGa = wat.guest_alloc(40) >>> 0;
     const outGa = wat.guest_alloc(36) >>> 0;
     const imageBase = wat.get_image_base() >>> 0;
-    const bmiWa = 0x12000 + (bmiGa - imageBase);
-    const outWa = 0x12000 + (outGa - imageBase);
+    const bmiWa = RegionMap.GUEST_BASE + (bmiGa - imageBase);
+    const outWa = RegionMap.GUEST_BASE + (outGa - imageBase);
     wat.guest_write32(bmiGa, 40);
     wat.guest_write32(bmiGa + 8, 3);
     wat.guest_write16(bmiGa + 12, 1);
@@ -734,8 +738,8 @@ const { bootRenderHarness } = require('./render-helper');
     const imageBase = wat.get_image_base() >>> 0;
     const bmiGa = wat.guest_alloc(40) >>> 0;
     const outGa = wat.guest_alloc(16 * 4) >>> 0;
-    const bmiWa = 0x12000 + (bmiGa - imageBase);
-    const outWa = 0x12000 + (outGa - imageBase);
+    const bmiWa = RegionMap.GUEST_BASE + (bmiGa - imageBase);
+    const outWa = RegionMap.GUEST_BASE + (outGa - imageBase);
     for (let offset = 0; offset < 40; offset += 4) wat.guest_write32(bmiGa + offset, 0);
     wat.guest_write32(bmiGa, 40);
     wat.guest_write32(bmiGa + 4, 1);
@@ -772,8 +776,8 @@ const { bootRenderHarness } = require('./render-helper');
     const imageBase = wat.get_image_base() >>> 0;
     const bmiGa = wat.guest_alloc(40) >>> 0;
     const bitsGa = wat.guest_alloc(16 * 4) >>> 0;
-    const bmiWa = 0x12000 + (bmiGa - imageBase);
-    const bitsWa = 0x12000 + (bitsGa - imageBase);
+    const bmiWa = RegionMap.GUEST_BASE + (bmiGa - imageBase);
+    const bitsWa = RegionMap.GUEST_BASE + (bitsGa - imageBase);
     const dv = new DataView(memory.buffer);
     for (let offset = 0; offset < 40; offset += 4) wat.guest_write32(bmiGa + offset, 0);
     wat.guest_write32(bmiGa, 40);
@@ -811,9 +815,9 @@ const { bootRenderHarness } = require('./render-helper');
     const queryGa = wat.guest_alloc(18) >>> 0;
     const bitsOutGa = wat.guest_alloc(8) >>> 0;
     const ppvGa = wat.guest_alloc(4) >>> 0;
-    const infoWa = 0x12000 + (infoGa - imageBase);
-    const queryWa = 0x12000 + (queryGa - imageBase);
-    const bitsOutWa = 0x12000 + (bitsOutGa - imageBase);
+    const infoWa = RegionMap.GUEST_BASE + (infoGa - imageBase);
+    const queryWa = RegionMap.GUEST_BASE + (queryGa - imageBase);
+    const bitsOutWa = RegionMap.GUEST_BASE + (bitsOutGa - imageBase);
     bytes.fill(0, infoWa, infoWa + 18);
     bytes.fill(0, queryWa, queryWa + 18);
     wat.guest_write32(infoGa, 12);
@@ -825,7 +829,7 @@ const { bootRenderHarness } = require('./render-helper');
     const bitmap = wat.test_call_CreateDIBSection(0, infoGa, ppvGa) >>> 0;
     const bitsGa = wat.guest_read32(ppvGa) >>> 0;
     assert(bitmap && bitsGa, 'core DIB section creation failed');
-    const bitsWa = 0x1C000000 + (bitsGa - 0x50000000);
+    const bitsWa = RegionMap.BASE.DIB_BACKING_BASE + (bitsGa - 0x50000000);
     bytes[bitsWa] = 0x40;
     bytes[bitsWa + 4] = 0x80;
 
@@ -850,14 +854,14 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.test_gdi_set_dibits(
       0, copy, 0, 2, bitsOutWa, queryWa, 0), 2);
     const copyBitsGa = wat.guest_read32(copyPpvGa) >>> 0;
-    const copyBitsWa = 0x1C000000 + (copyBitsGa - 0x50000000);
+    const copyBitsWa = RegionMap.BASE.DIB_BACKING_BASE + (copyBitsGa - 0x50000000);
     assert.deepStrictEqual([...bytes.subarray(copyBitsWa, copyBitsWa + 8)],
       [0x40, 0, 0, 0, 0x80, 0, 0, 0]);
 
     const core32Ga = wat.guest_alloc(16) >>> 0;
-    const core32Wa = 0x12000 + (core32Ga - imageBase);
+    const core32Wa = RegionMap.GUEST_BASE + (core32Ga - imageBase);
     const core32BitsGa = wat.guest_alloc(src.width * src.height * 4) >>> 0;
-    const core32BitsWa = 0x12000 + (core32BitsGa - imageBase);
+    const core32BitsWa = RegionMap.GUEST_BASE + (core32BitsGa - imageBase);
     bytes.fill(0xCC, core32Wa, core32Wa + 16);
     wat.guest_write32(core32Ga, 12);
     wat.guest_write16(core32Ga + 4, 0);
@@ -880,7 +884,7 @@ const { bootRenderHarness } = require('./render-helper');
     const imageBase = wat.get_image_base() >>> 0;
     const bmiGa = wat.guest_alloc(52) >>> 0;
     const bitsOutGa = wat.guest_alloc(4) >>> 0;
-    const bmiWa = 0x12000 + (bmiGa - imageBase);
+    const bmiWa = RegionMap.GUEST_BASE + (bmiGa - imageBase);
     for (let offset = 0; offset < 52; offset += 4) wat.guest_write32(bmiGa + offset, 0);
     wat.guest_write32(bmiGa, 40);
     wat.guest_write32(bmiGa + 4, 2);
@@ -899,7 +903,7 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.test_call_SetPixel(hdc, 1, 1, 0x0000FF00), 0x0000FF00);
 
     const outGa = wat.guest_alloc(8) >>> 0;
-    const outWa = 0x12000 + (outGa - imageBase);
+    const outWa = RegionMap.GUEST_BASE + (outGa - imageBase);
     const dv = new DataView(memory.buffer);
     assert.strictEqual(wat.test_gdi_get_dibits(0, bitmap, 0, 2, outWa, bmiWa, 0), 2);
     assert.deepStrictEqual([0, 2, 4, 6].map(offset =>
@@ -907,7 +911,7 @@ const { bootRenderHarness } = require('./render-helper');
     [0, 0x07E0, 0xF800, 0]);
 
     const queryGa = wat.guest_alloc(52) >>> 0;
-    const queryWa = 0x12000 + (queryGa - imageBase);
+    const queryWa = RegionMap.GUEST_BASE + (queryGa - imageBase);
     wat.guest_write32(queryGa, 40);
     assert.strictEqual(wat.test_gdi_get_dibits(0, bitmap, 0, 0, 0, queryWa, 0), 2);
     assert.strictEqual(dv.getUint16(queryWa + 14, true), 16);
@@ -925,7 +929,7 @@ const { bootRenderHarness } = require('./render-helper');
     const bmiGa = wat.guest_alloc(48) >>> 0;
     const outGa = wat.guest_alloc(4) >>> 0;
     const imageBase = wat.get_image_base() >>> 0;
-    const bmiWa = 0x12000 + (bmiGa - imageBase);
+    const bmiWa = RegionMap.GUEST_BASE + (bmiGa - imageBase);
     wat.guest_write32(bmiGa, 40);
     wat.guest_write32(bmiGa + 4, 2);
     wat.guest_write32(bmiGa + 8, -1);
@@ -937,7 +941,7 @@ const { bootRenderHarness } = require('./render-helper');
     const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
     wat.test_call_SelectObject(hdc, bitmap);
     const colorsGa = wat.guest_alloc(8) >>> 0;
-    const colorsWa = 0x12000 + (colorsGa - imageBase);
+    const colorsWa = RegionMap.GUEST_BASE + (colorsGa - imageBase);
     assert.strictEqual(wat.test_gdi_get_dib_color_table(hdc, 0, 2, colorsWa), 2);
     assert.deepStrictEqual([...bytes.slice(colorsWa, colorsWa + 8)],
       [0x00, 0x00, 0xFF, 0x00, 0x00, 0xFF, 0x00, 0x00]);
@@ -948,8 +952,8 @@ const { bootRenderHarness } = require('./render-helper');
     const bmiGa = wat.guest_alloc(40) >>> 0;
     const bitsGa = wat.guest_alloc(16) >>> 0;
     const imageBase = wat.get_image_base() >>> 0;
-    const bmiWa = 0x12000 + (bmiGa - imageBase);
-    const bitsWa = 0x12000 + (bitsGa - imageBase);
+    const bmiWa = RegionMap.GUEST_BASE + (bmiGa - imageBase);
+    const bitsWa = RegionMap.GUEST_BASE + (bitsGa - imageBase);
     wat.guest_write32(bmiGa, 40);
     wat.guest_write32(bmiGa + 4, 2);
     wat.guest_write32(bmiGa + 8, -2);
@@ -973,8 +977,8 @@ const { bootRenderHarness } = require('./render-helper');
     const bmiGa = wat.guest_alloc(40) >>> 0;
     const bitsGa = wat.guest_alloc(48) >>> 0;
     const imageBase = wat.get_image_base() >>> 0;
-    const bmiWa = 0x12000 + (bmiGa - imageBase);
-    const bitsWa = 0x12000 + (bitsGa - imageBase);
+    const bmiWa = RegionMap.GUEST_BASE + (bmiGa - imageBase);
+    const bitsWa = RegionMap.GUEST_BASE + (bitsGa - imageBase);
     wat.guest_write32(bmiGa, 40);
     wat.guest_write32(bmiGa + 4, 2);
     wat.guest_write32(bmiGa + 8, 4);
@@ -1014,8 +1018,8 @@ const { bootRenderHarness } = require('./render-helper');
     const bmiGa = wat.guest_alloc(40) >>> 0;
     const bitsGa = wat.guest_alloc(48) >>> 0;
     const imageBase = wat.get_image_base() >>> 0;
-    const bmiWa = 0x12000 + (bmiGa - imageBase);
-    const bitsWa = 0x12000 + (bitsGa - imageBase);
+    const bmiWa = RegionMap.GUEST_BASE + (bmiGa - imageBase);
+    const bitsWa = RegionMap.GUEST_BASE + (bitsGa - imageBase);
     wat.guest_write32(bmiGa, 40);
     wat.guest_write32(bmiGa + 4, 2);
     wat.guest_write32(bmiGa + 8, -4);

@@ -27,6 +27,8 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 const { fontMounts } = require('../lib/font-substitutions');
 
 const REPO = path.join(__dirname, '..');
@@ -40,7 +42,7 @@ const TEXT = 'The quick brown fox jumps over the lazy dog';
   const mem = () => new Uint8Array(memory.buffer);
   const view = () => new DataView(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
-  const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
+  const wa = guest => RegionMap.g2w(guest, imageBase);
 
   const manifest = JSON.parse(fs.readFileSync(
     path.join(REPO, 'fonts', 'substitutions.json'), 'utf8'));

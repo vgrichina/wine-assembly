@@ -6,6 +6,8 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 (async () => {
   const canvasTextCalls = { bind: 0, mask: 0 };
@@ -50,7 +52,7 @@ const { bootRenderHarness } = require('./render-helper');
   assert(wat.load_pe(exe.length), 'PE load must initialize callback continuation thunks');
   const bytes = new Uint8Array(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
-  const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
+  const wa = guest => RegionMap.g2w(guest, imageBase);
   let passed = 0;
 
   const check = (name, fn) => {

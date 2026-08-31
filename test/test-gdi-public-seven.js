@@ -6,6 +6,8 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 const { fontMounts } = require('../lib/font-substitutions');
 
 (async () => {
@@ -94,7 +96,7 @@ const { fontMounts } = require('../lib/font-substitutions');
   const { exports: wat, memory, hostCtx } = harness;
   const bytes = new Uint8Array(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
-  const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
+  const wa = guest => RegionMap.g2w(guest, imageBase);
   const allocZero = size => {
     const pointer = wat.guest_alloc(size) >>> 0;
     bytes.fill(0, wa(pointer), wa(pointer) + size);

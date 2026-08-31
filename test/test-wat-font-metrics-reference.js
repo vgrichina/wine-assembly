@@ -38,6 +38,8 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const FIXTURE = path.join(__dirname, 'fixtures', 'font-metrics.json');
 if (!fs.existsSync(FIXTURE)) {
@@ -83,7 +85,7 @@ const PER_SIZE = process.argv.includes('--per-size');
   const bytes = new Uint8Array(memory.buffer);
   const view = new DataView(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
-  const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
+  const wa = guest => RegionMap.g2w(guest, imageBase);
   const allocZero = size => {
     const pointer = wat.guest_alloc(size) >>> 0;
     for (let offset = 0; offset < size; offset++) wat.guest_write8(pointer + offset, 0);

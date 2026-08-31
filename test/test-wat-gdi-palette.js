@@ -4,6 +4,8 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 (async () => {
   const harness = await bootRenderHarness();
@@ -12,7 +14,7 @@ const { bootRenderHarness } = require('./render-helper');
   const bytes = new Uint8Array(memory.buffer);
   const dv = new DataView(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
-  const wa = ga => (0x12000 + ((ga >>> 0) - imageBase)) >>> 0;
+  const wa = ga => RegionMap.g2w(ga, imageBase);
   let passed = 0;
 
   const check = (name, fn) => {

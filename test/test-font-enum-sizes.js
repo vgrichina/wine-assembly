@@ -23,6 +23,8 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+// $GUEST_BASE, from the map declared in src/00-regions.wat.
+const RegionMap = require('../lib/region-map.generated.js');
 
 // Deliberately not the sizes any picker offers -- a strike cached at 12px
 // would be indistinguishable from one the stock bootstrap made.
@@ -44,7 +46,7 @@ const BITMAP_FACES = ['Courier', 'MS Sans Serif', 'System', 'Terminal', 'Fixedsy
   const bytes = new Uint8Array(memory.buffer);
   const view = new DataView(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
-  const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
+  const wa = guest => RegionMap.g2w(guest, imageBase);
 
   const allocZero = size => {
     const pointer = wat.guest_alloc(size) >>> 0;
