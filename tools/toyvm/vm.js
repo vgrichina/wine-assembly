@@ -11,6 +11,7 @@
 // distinct one or the second variant silently gets the first one's bytes.
 
 const path = require('path');
+const crypto = require('crypto');
 const isa = require('./isa');
 const { emit } = require('./emit');
 const { decodeOne } = require('./decode');
@@ -27,9 +28,17 @@ const REGS = [...isa.REG16, ...isa.SEG, 'gip', 'flags'];
 // would hand the A/B whichever module was compiled first and report a 0%.
 async function buildModule(variant, opts = {}) {
   const wat = emit(variant, opts);
+  // A JIT region is program-specific, so its module must never be handed to
+  // another program: the key carries a hash of the region bodies themselves.
+  // compileWat memoizes on cacheKey and would otherwise return the previous
+  // program's compiled loop for this one, which reads as a wrong frame rather
+  // than as a cache bug.
+  const regionKey = (opts.regions && opts.regions.length)
+    ? `-r${crypto.createHash('sha256').update(opts.regions.map(r => r.body).join('|'))
+      .digest('hex').slice(0, 12)}` : '';
   const suffix = (opts.hist ? '-hist' : '')
     + (opts.lazyFlags === false ? '-eager' : '')
-    + (opts.fuseCond === false ? '-genericcond' : '');
+    + (opts.fuseCond === false ? '-genericcond' : '') + regionKey;
   const file = `toyvm-${variant}${suffix}.wat`;
   const bytes = await compileWat(
     (f) => { if (f !== file) throw new Error(`unexpected file ${f}`); return wat; },
@@ -40,7 +49,8 @@ async function buildModule(variant, opts = {}) {
 
 async function makeVm(variant, opts = {}) {
   const { wat, bytes } = await buildModule(variant,
-    { hist: !!opts.hist, lazyFlags: opts.lazyFlags !== false, fuseCond: opts.fuseCond !== false });
+    { hist: !!opts.hist, lazyFlags: opts.lazyFlags !== false, fuseCond: opts.fuseCond !== false,
+      regions: opts.regions || null });
   const module = await WebAssembly.compile(bytes);
   const memory = new WebAssembly.Memory({ initial: isa.MEM_PAGES, maximum: isa.MEM_PAGES });
   // Ports are a host concern: the VM has no peripherals, and the few a demo

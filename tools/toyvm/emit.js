@@ -5455,10 +5455,34 @@ function histBump() {
   return `${one(flat)}\n${one(pair)}\n(global.set $hprev (local.get $fn))`;
 }
 
+// A JIT-compiled loop region, injected as extra handler(s) at the END of the
+// table so every existing index keeps its meaning. Each is `{ name, locals,
+// body }` and is emitted exactly like a handler -- same signature, same
+// `(return_call $next)` tail -- so the compiler installs one by writing its
+// index into the arena and nothing else in the VM has to know it is different.
+//
+// Appending rather than rebuilding HANDLERS is deliberate: ARITY, FUSE, TRACE,
+// SPIN and SPEC are all keyed by index, and a region that shifted them would
+// silently repoint the fusion tables.
+function extraHandlers(opts) {
+  return opts.regions || [];
+}
+function tableSize(opts) {
+  return HANDLERS.length + extraHandlers(opts).length;
+}
+function elemNames(opts) {
+  return HANDLERS.map(x => `$${x.name}`).concat(extraHandlers(opts).map(x => `$${x.name}`))
+    .join(' ');
+}
+function regionFuncs(opts, tail) {
+  return extraHandlers(opts)
+    .map(x => `(func $${x.name} ${LOCALS} ${x.locals || ''}\n${x.body}\n${tail})\n`).join('');
+}
+
 function emitTailcall(opts = {}) {
   let s = preamble() + helpers();
-  s += `(table $h ${HANDLERS.length} funcref)\n`;
-  s += `(elem (i32.const 0) ${HANDLERS.map(x => `$${x.name}`).join(' ')})\n`;
+  s += `(table $h ${tableSize(opts)} funcref)\n`;
+  s += `(elem (i32.const 0) ${elemNames(opts)})\n`;
   const hist = opts.hist ? histBump() : '';
   s += `
 (func $next
@@ -5473,6 +5497,7 @@ function emitTailcall(opts = {}) {
   for (const x of HANDLERS) {
     s += `(func $${x.name} ${LOCALS}\n${x.body}\n(return_call $next))\n`;
   }
+  s += regionFuncs(opts, '(return_call $next)');
   s += runExport();
   return s + ')\n';
 }

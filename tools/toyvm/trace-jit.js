@@ -1252,6 +1252,11 @@ function emitTier3(ops, passes) {
     ...t2, eaFolded, eaA32, eaDynamic, segFolded, segDynamic, arith, folded,
     promoted: p.declined ? null : p.used,
     declined: p.declined || null,
+    // The per-op bodies, still separated. A region compiler needs to interleave
+    // its own control flow between them, which the joined `wat` has already
+    // made impossible. Named apart from t2's `bodies` so a caller cannot get
+    // the tier-2 array by accident.
+    bodies3: p.declined ? bodies : p.bodies,
     wat: (p.declined ? bodies : p.bodies).join('\n'),
     locals: p.declined ? '' : p.locals,
     pro: p.declined ? '' : p.pro,

@@ -54,7 +54,7 @@ class CodeCache {
   constructor(vm, { noCache = false, smcFlush = false, watch = [],
                     wasmDecode = true, fuse = true, deadFlags = true, crossFlags = true,
                     traceBlocks = true, spinLoops = true, regSpec = false,
-                    traceDeadFlags = null } = {}) {
+                    traceDeadFlags = null, regionAt = null, regionSucc = null } = {}) {
     // Watchpoints, as [lo, hi] linear byte ranges. They ride the CODE_BITMAP
     // rather than adding a range test to $wr8, because $wr8 is on the hot path
     // of every single store the guest makes and a watch that is off must cost
@@ -107,6 +107,13 @@ class CodeCache {
     this.regSpec = regSpec;
     this.specOps = 0;
     this.traceDeadFlags = traceDeadFlags;
+    // guest ip -> handler index of a JIT-compiled loop region installed there.
+    // Keyed by guest ip so it survives arena recycling; see the note in
+    // compile.js. Null on every ordinary run.
+    this.regionAt = regionAt;
+    // guest ip of a region -> the guest ips it can leave to, so the decoder
+    // still discovers the code downstream of a block it never decodes.
+    this.regionSucc = regionSucc;
     this.deadFlagsDropped = 0;
     this.noCache = noCache;
     this.regions = new Map();          // cs -> [prog]
@@ -312,6 +319,8 @@ class CodeCache {
       traceBlocks: this.traceBlocks, spinLoops: this.spinLoops,
       regSpec: this.regSpec,
       traceDeadFlags: this.traceDeadFlags,
+      regionAt: this.regionAt,
+      regionSucc: this.regionSucc,
     });
     this.deadFlagsDropped += prog.deadFlags || 0;
     this.tracedBlocks += prog.tracedBlocks || 0;
@@ -426,7 +435,8 @@ class DosSession {
     this.hooks = hooks;
     this.cache = new CodeCache(vm,
       { noCache, smcFlush, watch, wasmDecode, fuse, deadFlags, crossFlags,
-        traceBlocks, spinLoops, regSpec, traceDeadFlags });
+        traceBlocks, spinLoops, regSpec, traceDeadFlags,
+        regionAt: opts.regionAt || null, regionSucc: opts.regionSucc || null });
 
     this.dispatched = 0;
     this.handbacks = 0;

@@ -162,6 +162,13 @@ async function runDos(o) {
     noCache = false, smcFlush = false, wasmDecode = true, fuse = true,
     lazyFlags = true, fuseCond = true, deadFlags = true, crossFlags = true,
     traceBlocks = true, spinLoops = true, regSpec = false, traceDeadFlags = false,
+    // JIT loop regions: `regions` are the extra handler bodies to build the
+    // module with, `regionAt` maps guest ip -> the index the compiler should
+    // install there. Both come from tools/toyvm/region-jit.js; a plain run
+    // passes neither and is byte-identical to before.
+    // (named jitRegions, not regions: run-dos already reports the COMPILED
+    // regions the block cache holds, and the two are unrelated)
+    jitRegions = null, regionAt = null, regionSucc = null,
     smcCensus = false, watch = [],
     stopText = null,
     traceIo = null,
@@ -249,7 +256,7 @@ async function runDos(o) {
     portIn: (p, w) => machine.portIn(p, w),
     portOut: (p, v, w) => machine.portOut(p, v, w),
     hist: hist > 0 || histPairs > 0,
-    lazyFlags, fuseCond,
+    lazyFlags, fuseCond, regions: jitRegions,
   });
   // The decoder's CPU level and the module's FLAGS shape have to move together:
   // a build that decodes 386 encodings but reports an 8086 FLAGS register fails
@@ -341,7 +348,7 @@ async function runDos(o) {
 
   const session = new DosSession(vm, machine, {
     slice, noCache, smcFlush, wasmDecode, fuse, deadFlags, crossFlags, traceBlocks, spinLoops,
-    regSpec,
+    regSpec, regionAt, regionSucc,
     traceDeadFlags: traceDeadFlags ? ((s) => log(s)) : null,
     mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
     stuckWork,

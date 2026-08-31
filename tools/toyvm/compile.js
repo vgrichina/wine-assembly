@@ -291,6 +291,30 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     blocks.set(blockIp, arenaBase + words.length * 4);
     markHead(blockIp);
 
+    // A JIT-compiled loop region replaces the whole block: one word, the
+    // region handler's index, and nothing else. The region carries its own
+    // control flow and publishes $gip/$ip on the way out, so from here it is
+    // simply a block that happens to be one op long.
+    //
+    // Installed by GUEST ip, never by arena address. The region was built from
+    // an earlier run whose arena layout this one does not reproduce -- blocks
+    // are laid out in decode order and a self-modifying program recycles the
+    // whole region -- so an arena constant baked into it would point at
+    // whatever this run happened to compile there.
+    if (opts.regionAt && opts.regionAt.has(blockIp)) {
+      words.push(opts.regionAt.get(blockIp));
+      // ...but the successors still have to be compiled. The decoder finds the
+      // rest of a program by walking out of each block it decodes, and a region
+      // replaces that walk with one word, so nothing downstream of the region
+      // gets discovered: every exit from it then misses the block cache, hands
+      // back to the host, and the region ends up costing more round trips than
+      // it saves dispatches (DRAGON.EXE: 1493 handbacks against the
+      // interpreter's 301). The region knows its own exit addresses, so it
+      // supplies them.
+      for (const ip of (opts.regionSucc && opts.regionSucc.get(blockIp)) || []) pending.push(ip);
+      continue;
+    }
+
     let cur = blockIp;
     // Whether anything in this block stored to memory. A block that writes and
     // then branches BACKWARD is a copy, a fill or -- the case this exists for
