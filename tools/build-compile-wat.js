@@ -4,25 +4,18 @@
 // Compiles the two canonical artifacts, build/wine-assembly.wasm (tail calls)
 // and build/wine-assembly.compat.wasm (no tail calls).
 //
-// WHICH COMPILER produces them is selectable — Milestone 5 of
-// docs/watx-migration-plan.md:
-//
-//   WINE_WAT_COMPILER=watx     tools/watx.js via src/main.watx (default)
-//   WINE_WAT_COMPILER=legacy   lib/compile-wat.js          (rollback)
-//
-// `--compiler=NAME` overrides the environment for a one-off build. Both modes
-// write the SAME two paths, so nothing downstream — tests, host.js, the deploy
-// manifest — has to know which compiler ran, and rollback is one env var rather
-// than a revert. tools/build.sh runs every gate in either mode.
-//
-// The cutover flipped the default to `watx` on 2026-08-31, at the commit where
-// the two compilers emit BYTE-IDENTICAL modules in both modes (tail
-// 01daf6ccfbd115e3, compat 0ee6414668129ac4) — so the flip changed which
-// program runs, not which bytes ship. Rollback stays one env var.
+// The compiler is the vendored WATX compiler (tools/watx.js over
+// src/main.watx's include closure) — Milestone 5 of docs/watx-migration-plan.md
+// flipped the default on 2026-08-31 at the commit where WATX and
+// lib/compile-wat.js emitted byte-identical modules in both modes, and the M6
+// symbolization wave RETIRED the legacy rollback the same day
+// (docs/watx-region-safety-design.md §11): the tree now contains
+// region-symbolic spellings legacy compiles to runtime traps, so
+// WINE_WAT_COMPILER=legacy is a hard error rather than a footgun. Rolling the
+// compiler back now means reverting the symbolization commits.
 
 const fs = require('fs');
 const path = require('path');
-const { compileWat } = require('../lib/compile-wat');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
@@ -60,27 +53,24 @@ function selectedCompiler() {
     : process.env.WINE_WAT_COMPILER ? 'WINE_WAT_COMPILER'
     : 'default';
   const name = (fromArg !== null ? fromArg : (process.env.WINE_WAT_COMPILER || DEFAULT_COMPILER)).trim();
-  if (name !== 'legacy' && name !== 'watx') {
-    console.error(`build-compile-wat: compiler must be "legacy" or "watx" (got ${JSON.stringify(name)} from ${source})`);
+  if (name === 'legacy') {
+    // Retired 2026-08-31, deliberately, at the start of the M6 symbolization
+    // wave (docs/watx-region-safety-design.md §11): the tree now contains
+    // region-symbolic spellings — bare $REGION operands and
+    // (data (region.addr ...)) segments — that lib/compile-wat.js does not
+    // reject but compiles to `unreachable`, so a "rollback" build would
+    // instantiate cleanly and trap mid-app. Rolling back the compiler now
+    // means reverting the symbolization commits, not setting an env var.
+    console.error(`build-compile-wat: the legacy compiler is RETIRED (selected via ${source}).`);
+    console.error('The source tree contains region-symbolic WATX spellings that legacy');
+    console.error('silently compiles to runtime traps. See docs/watx-region-safety-design.md §11.');
+    process.exit(1);
+  }
+  if (name !== 'watx') {
+    console.error(`build-compile-wat: compiler must be "watx" (got ${JSON.stringify(name)} from ${source}; "legacy" is retired)`);
     process.exit(1);
   }
   return { name, source };
-}
-
-async function compileLegacy(replicatedDispatch) {
-  // lib/compile-wat.js ignores every region form (that is what keeps the
-  // rollback alive), so a shake asked of it would silently produce canonical
-  // bytes under a name that says otherwise.
-  if (selectedRegionShake()) {
-    console.error('build-compile-wat: WINE_REGION_SHAKE has no meaning for the legacy compiler, ' +
-      'which ignores region declarations entirely; use the WATX path.');
-    process.exit(1);
-  }
-  const read = (file) => fs.promises.readFile(path.join(SRC, file), 'utf8');
-  return {
-    bytes: await compileWat(read, { replicatedDispatch }),
-    compatBytes: await compileWat(read, { tailCalls: false, replicatedDispatch }),
-  };
 }
 
 // The WATX path drives the vendored compiler over src/main.watx's (include ...)
@@ -131,8 +121,8 @@ function reportRegionLayout(layout, shake) {
 
 function compileWatx(replicatedDispatch) {
   if (replicatedDispatch !== false) {
-    console.error('build-compile-wat: --dispatch/--replicated-dispatch is a lib/compile-wat.js transform ' +
-      'and is not implemented in the WATX path; drop it or use WINE_WAT_COMPILER=legacy.');
+    console.error('build-compile-wat: --dispatch/--replicated-dispatch was a lib/compile-wat.js transform ' +
+      'and does not exist in the WATX path (legacy is retired); drop it.');
     process.exit(1);
   }
   const { watxSourceClosure, compileClosure } = require(path.join(__dirname, 'watx-closure.js'));
@@ -163,9 +153,7 @@ function compileWatx(replicatedDispatch) {
   const replicatedDispatch = parseReplicatedDispatch();
   const compiler = selectedCompiler();
   console.log(`Compiler: ${compiler.name} (from ${compiler.source})`);
-  const { bytes, compatBytes } = compiler.name === 'watx'
-    ? compileWatx(replicatedDispatch)
-    : await compileLegacy(replicatedDispatch);
+  const { bytes, compatBytes } = compileWatx(replicatedDispatch);
   // compileWat emits bytes without validating operand stacks, so a WAT edit
   // that leaves a function's result value unproduced — one paren too few, and
   // an (if) that should yield i32 yields nothing — used to "build" fine and

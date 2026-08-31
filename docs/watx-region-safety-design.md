@@ -555,7 +555,10 @@ and dies mid-app. So:
 > deliberately at the start of stage B rather than as a side effect of some
 > region conversion.
 
-Until stage B begins, both modes stay green and both are gated.
+**The door was taken 2026-08-31**: wave 1 of the symbolization landed
+expression- and data-position region spellings (d1a22e79 onward), and
+`WINE_WAT_COMPILER=legacy` is now a hard error in `tools/build-compile-wat.js`.
+The migration plan's §5.1 selector is marked retired.
 
 ## 12. Failure-mode catalogue
 

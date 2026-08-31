@@ -29,6 +29,10 @@ node tools/check-region-decls.js --strict
 # may fall (bank it with --record), never rise, and a region marked converted
 # must stay at zero. This is what keeps the symbolization wave from regressing.
 node tools/region-census.js --gate
+# lib/region-map.generated.js is the JS mirror of the declarations — the one
+# copy Node, workers and the browser all read. A stale mirror is a silent
+# re-fork of the map into two truths, so hold it fresh here.
+node tools/gen-region-map.js --check
 # JS host-side guest-pointer translation must use the same DIB/RPC boundary as
 # WAT. A stale extra megabyte maps guest DIB addresses onto worker RPC slots.
 node test/test-wat-rpc-region.js
@@ -91,17 +95,15 @@ node tools/concat-wat.js
 # parentheses and out-of-scope branch labels before a WAT edit ships.
 node tools/check-parens.js build/combined.wat --no-diff --quiet
 
-# WHICH compiler produces build/wine-assembly.wasm is selectable — Milestone 5
-# of docs/watx-migration-plan.md. Both modes write the same canonical paths and
-# every gate above and below runs unchanged, so rollback is this one env var:
+# build/wine-assembly.wasm is compiled by the vendored WATX compiler. The
+# legacy lib/compile-wat.js rollback is RETIRED (2026-08-31, the M6
+# symbolization wave): the tree contains region-symbolic spellings legacy
+# compiles to runtime traps, so build-compile-wat.js hard-errors on
+# WINE_WAT_COMPILER=legacy. See docs/watx-region-safety-design.md §11.
 #
-#   bash tools/build.sh                              # WATX (default since 23ed9639)
-#   WINE_WAT_COMPILER=legacy bash tools/build.sh      # explicit rollback
-#   WINE_WAT_COMPILER=watx   bash tools/build.sh      # explicit WATX
-#
-# build/combined.wat is written from WAT_FILES in BOTH modes: it is the grep /
+# build/combined.wat is still written from WAT_FILES: it is the grep /
 # check-parens / func-index surface and is never itself compiled.
-echo "Compiling (WINE_WAT_COMPILER=${WINE_WAT_COMPILER:-watx})..."
+echo "Compiling (WATX)..."
 node tools/build-compile-wat.js
 
 # Two (data ...) segments that cover the same byte: the later one wins at

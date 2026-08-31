@@ -609,11 +609,20 @@ and rollback has been exercised once.
 
 ### 5.1 The compiler selector
 
+> **RETIRED 2026-08-31** — the M6 symbolization wave put region-symbolic
+> spellings (bare `$REGION` operands, `(data (region.addr …))` segments) into
+> the tree, which the legacy compiler compiles to `unreachable` traps rather
+> than rejecting. `WINE_WAT_COMPILER=legacy` is now a hard error in
+> `tools/build-compile-wat.js`, exactly as scheduled by
+> docs/watx-region-safety-design.md §11. Rolling the compiler back now means
+> reverting the symbolization commits, not setting an env var. The historical
+> selector, as it worked between the cutover and the retirement:
+
 `tools/build-compile-wat.js` — the one step `tools/build.sh` calls to produce the
-two shipped artifacts — takes the compiler as an input:
+two shipped artifacts — took the compiler as an input:
 
 ```sh
-bash tools/build.sh                            # legacy (the default, today)
+bash tools/build.sh                            # legacy (the default, then)
 WINE_WAT_COMPILER=watx   bash tools/build.sh    # WATX, from src/main.watx
 WINE_WAT_COMPILER=legacy bash tools/build.sh    # explicit rollback
 node tools/build-compile-wat.js --compiler=watx # one-off, overrides the env
