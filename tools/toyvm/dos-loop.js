@@ -52,7 +52,7 @@ const { STUB_SEG, STUB_OFF, STUB_BYTE } = require('./dos');
 // block map and cost nothing.
 class CodeCache {
   constructor(vm, { noCache = false, smcFlush = false, watch = [],
-                    wasmDecode = true, fuse = true, deadFlags = true,
+                    wasmDecode = true, fuse = true, deadFlags = true, crossFlags = true,
                     traceDeadFlags = null } = {}) {
     // Watchpoints, as [lo, hi] linear byte ranges. They ride the CODE_BITMAP
     // rather than adding a range test to $wr8, because $wr8 is on the hot path
@@ -89,6 +89,10 @@ class CodeCache {
     // is only dropped where the block proves nobody reads it, so the guest
     // cannot tell.
     this.deadFlags = deadFlags;
+    // Whether that liveness crosses a block edge. `--no-crossflags` keeps the
+    // elimination but stops the walk at the block end, which is the narrower
+    // question the first version of this asked.
+    this.crossFlags = crossFlags;
     this.traceDeadFlags = traceDeadFlags;
     this.deadFlagsDropped = 0;
     this.noCache = noCache;
@@ -291,7 +295,8 @@ class CodeCache {
       arenaBase: this.arenaNext,
       maxWords: (this.arenaEnd - this.arenaNext) >> 2,
       codeBase, mask, d32, benign: this.benign, wasmDecoder: this.wasmDecoder,
-      fuse: this.fuse, deadFlags: this.deadFlags, traceDeadFlags: this.traceDeadFlags,
+      fuse: this.fuse, deadFlags: this.deadFlags, crossFlags: this.crossFlags,
+      traceDeadFlags: this.traceDeadFlags,
     });
     this.deadFlagsDropped += prog.deadFlags || 0;
     new Int32Array(vm.mem.buffer, prog.arenaBase, prog.words.length).set(prog.words);
@@ -357,7 +362,8 @@ class DosSession {
   constructor(vm, machine, opts = {}) {
     const {
       slice = 2e6, noCache = false, smcFlush = false, mouse = [0, 0],
-      wasmDecode = true, fuse = true, deadFlags = true, traceDeadFlags = null,
+      wasmDecode = true, fuse = true, deadFlags = true, crossFlags = true,
+      traceDeadFlags = null,
       // One timer interrupt per this many dispatches. 100k is about 10ms of a
       // real 486, so it lands near the 18.2Hz the BIOS programs -- and a demo
       // that reprogrammed the PIT for music gets a slower clock than it asked
@@ -401,7 +407,7 @@ class DosSession {
     this.cells = cells;
     this.hooks = hooks;
     this.cache = new CodeCache(vm,
-      { noCache, smcFlush, watch, wasmDecode, fuse, deadFlags, traceDeadFlags });
+      { noCache, smcFlush, watch, wasmDecode, fuse, deadFlags, crossFlags, traceDeadFlags });
 
     this.dispatched = 0;
     this.handbacks = 0;

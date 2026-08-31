@@ -52,6 +52,8 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   const entry = d32 ? (entryIp >>> 0) : (entryIp & 0xFFFF);
 
   const blocks = new Map();      // guest IP -> arena address
+  const blockIps = [];           // emission order
+  const blockStarts = [];        // word index each of those starts at
   const words = [];
   const fixups = [];             // { wordIndex, ip }
   const pending = [entry];
@@ -74,6 +76,9 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // guest gets an INT 1 after every instruction and the interrupt frame carries
   // the flags word, so nothing inside a one-instruction block is dead.
   const deadFlags = opts.deadFlags !== false && !opts.oneInsn;
+  // Carry that liveness ACROSS a block edge instead of giving up at the block
+  // end. `--no-crossflags` is the A/B partner and restores the per-block walk.
+  const crossFlags = deadFlags && opts.crossFlags !== false;
   const traceDeadFlags = opts.traceDeadFlags || null;
 
   // Rewrite a finished block's last two ops into one, when a fused handler for
@@ -119,21 +124,33 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // They have to be: the next block may read them, and a handback at a block
   // end is where an interrupt gets injected and pushes FLAGS onto the guest
   // stack.
+  //
+  // With `crossFlags` the flags are live at the block end only if some
+  // successor reads them before overwriting them, which is a fixpoint over the
+  // whole region rather than a per-block walk -- see dropDeadFlagsRegion.
   let deadFlagCount = 0;
-  const dropDeadFlags = (start) => {
-    // Same walk, and the same refusal, as fuseTail: if the arity table and the
-    // arena disagree the positions are not op boundaries and rewriting one
-    // would corrupt an operand.
+  // The op boundaries of one block, or null when the arity table and the arena
+  // disagree about where they are -- in which case nothing here may rewrite a
+  // word, because the positions are not opcodes. Same refusal as fuseTail.
+  const opsOf = (start, end) => {
     const at = [];
     let i = start;
-    for (; i < words.length;) { at.push(i); i += 1 + ARITY[words[i]]; }
-    if (i !== words.length) return;
-    let live = true;
+    for (; i < end;) { at.push(i); i += 1 + ARITY[words[i]]; }
+    return i === end ? at : null;
+  };
+  // Walk one block backwards from `liveOut`, swapping in flagless handlers, and
+  // return the liveness entering it. `edge` is true when the block's own
+  // terminator resumes at a successor this compile emitted, which is what lets
+  // its slice-exit handback stop counting as a flag read.
+  // `rewrite` false answers the question without touching the arena, which is
+  // what the fixpoint below needs.
+  const walkBlock = (at, liveOut, edge, rewrite) => {
+    let live = liveOut;
     for (let k = at.length - 1; k >= 0; k--) {
       const p = at[k];
       let e = FLAG_EFFECTS[words[p]];
-      if (!e) return;
-      if (e.kills && !live) {
+      if (!e) return true;
+      if (rewrite && e.kills && !live) {
         const nf = NOFLAG.get(words[p]);
         if (nf !== undefined) {
           // The whole block, not just the op: a wrong answer here is always a
@@ -150,8 +167,16 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       }
       // Liveness of the flags entering this op, computed from the handler that
       // is there NOW -- dropping the write also drops whatever read fed it.
-      live = e.readsIn ? true : (e.kills ? false : live);
+      //
+      // Only the LAST op gets the across-an-edge answer, and only when the
+      // edge is known. A handback in the middle of a block resumes at that
+      // instruction's own guest address, which starts a compile this one
+      // cannot see; the terminator's resumes at a successor head, which is in
+      // this region and has just been walked.
+      const reads = (edge && k === at.length - 1) ? e.readsInX : e.readsIn;
+      live = reads ? true : (e.kills ? false : live);
     }
+    return live;
   };
 
   // The block-head bitmap wasm stops on. Kept across the whole compile and
@@ -174,6 +199,10 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     const blockIp = pending.pop();
     if (blocks.has(blockIp)) continue;
     const blockStart = words.length;
+    // Emission order, for the flag-liveness pass at the end. Blocks are laid
+    // out back to back, so block b spans [starts[b], starts[b+1]).
+    blockIps.push(blockIp);
+    blockStarts.push(blockStart);
     blocks.set(blockIp, arenaBase + words.length * 4);
     markHead(blockIp);
 
@@ -311,7 +340,6 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       if (opts.oneInsn) { words.push(H.end, cur); break; }
     }
     if (fuse) fuseTail(blockStart);
-    if (deadFlags) dropDeadFlags(blockStart);
     // The block's extent. `cur` can have wrapped past 0xFFFF on a segment that
     // runs to the top, in which case the tail is simply not marked -- a missed
     // mark costs a stale block, never a wrong one.
@@ -329,6 +357,75 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     const extent = refusedAt >= 0 ? cur + 1 : cur;
     if (extent > blockIp) {
       covered.push([(codeBase + blockIp) & mask, (codeBase + extent) & mask]);
+    }
+  }
+
+  // Flag liveness over the finished region. Per block this is the same
+  // backward walk as before; what is new is where it starts from.
+  //
+  // A block used to be walked with the flags LIVE at its end, because the next
+  // block might read them. It might -- but this compile emitted the next block
+  // too, so it can look. `liveOut` is the OR of the successors' `liveIn`, and
+  // the successors are exactly the control edges the block recorded as fixups:
+  // one for a `jmp`, two for a conditional, none at all for a `ret`, an
+  // indirect jump or a handback, which are the cases that stay conservative.
+  //
+  // Successor edges never leave the region: a fixup whose target this compile
+  // did not emit resolves to 0, which the branch handlers read as "hand back".
+  // That is also what makes the analysis survive self-modifying code -- the
+  // host drops a compiled region whole (dos-loop.js invalidateRange), so a
+  // guest that rewrites the successor throws away the predecessor that was
+  // compiled against it.
+  //
+  // Least fixpoint from "nothing is live": liveness is a may-read property, so
+  // starting at false and growing is the correct direction and terminates.
+  if (deadFlags && blockStarts.length) {
+    const nb = blockStarts.length;
+    const ipIndex = new Map();
+    for (let b = 0; b < nb; b++) ipIndex.set(blockIps[b], b);
+    const ends = blockStarts.map((s, b) => (b + 1 < nb ? blockStarts[b + 1] : words.length));
+    const opsAt = blockStarts.map((s, b) => opsOf(s, ends[b]));
+
+    // Successors, from the fixups that fall inside each block's words.
+    const succ = blockStarts.map(() => []);
+    const known = blockStarts.map(() => false);
+    if (crossFlags) {
+      const owner = new Int32Array(words.length).fill(-1);
+      for (let b = 0; b < nb; b++) for (let i = blockStarts[b]; i < ends[b]; i++) owner[i] = b;
+      for (const f of fixups) {
+        const b = owner[f.wordIndex];
+        if (b < 0) continue;
+        const t = ipIndex.get(f.ip);
+        // An unresolved edge leaves the region; the guest resumes somewhere
+        // this compile knows nothing about.
+        if (t === undefined) { succ[b] = null; continue; }
+        if (succ[b]) succ[b].push(t);
+      }
+      for (let b = 0; b < nb; b++) known[b] = !!(succ[b] && succ[b].length);
+    }
+
+    const liveIn = new Array(nb).fill(false);
+    const liveOut = new Array(nb).fill(true);
+    for (let pass = 0; pass < nb + 2; pass++) {
+      let changed = false;
+      for (let b = 0; b < nb; b++) {
+        let out = true;
+        if (known[b]) {
+          out = false;
+          for (const s of succ[b]) if (liveIn[s]) { out = true; break; }
+        }
+        liveOut[b] = out;
+        const at = opsAt[b];
+        const v = at ? walkBlock(at, out, known[b], false) : true;
+        if (v !== liveIn[b]) { liveIn[b] = v; changed = true; }
+      }
+      if (!changed) break;
+    }
+    // Rewrite once the answers have settled. Substituting can only make a
+    // block read less, so a predecessor that used the pre-rewrite answer was
+    // being conservative, never wrong.
+    for (let b = 0; b < nb; b++) {
+      if (opsAt[b]) walkBlock(opsAt[b], liveOut[b], known[b], true);
     }
   }
 

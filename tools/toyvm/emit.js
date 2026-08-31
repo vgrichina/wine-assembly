@@ -424,11 +424,19 @@ const bitFrom = (m, b) => {
 // The overrun is bounded by one block.
 const CONT = (arena) => `(select (i32.const 0) ${arena}
     (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0))))`;
+// The handback a block boundary takes when the budget ran out or the guest
+// patched itself. It is its own function ONLY so the flag analysis can name
+// it: this exit resumes the guest at $gip -- the successor block's own head --
+// whereas `end`, `iret` and a fault hand back into code the compiler cannot
+// see. Both set $halt, and the difference between them is the whole basis for
+// carrying flag liveness across a block edge (docs/toyvm-dead-flags.md).
+// Called, not inlined, because it is the cold arm of every branch.
+const SLICE_EXIT = '(call $slice_exit)';
 const GO = (arena, guest) => `
   (global.set $gip ${guest})
   (if ${CONT(arena)}
     (then (global.set $ip ${arena}))
-    (else (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))`;
+    (else ${SLICE_EXIT}))`;
 
 // A Jcc's body is its condition and nothing else, so it is built from the
 // condition rather than written out. genFusedBranches() rebuilds it with a
@@ -622,7 +630,7 @@ function genExtras() {
   (local.set $t7 (call $rpop (global.get $gip)))
   (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
-    (else (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))`;
+    (else (call $slice_exit)))`;
   h('ret', 0, RET_BODY);
   h('ret_imm', 1, `
   ${ops(1)}
@@ -631,7 +639,7 @@ function genExtras() {
   (local.set $t7 (call $rpop (global.get $gip)))
   (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
-    (else (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
+    (else (call $slice_exit)))
 `);
   // The same three, in a 32-bit code segment. The only difference is the width
   // of the return address on the stack -- but it is the difference between
@@ -648,7 +656,7 @@ function genExtras() {
   (local.set $t7 (call $rpop (global.get $gip)))
   (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
-    (else (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
+    (else (call $slice_exit)))
 `);
   h('ret_imm32', 1, `
   ${ops(1)}
@@ -657,7 +665,7 @@ function genExtras() {
   (local.set $t7 (call $rpop (global.get $gip)))
   (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
-    (else (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
+    (else (call $slice_exit)))
 `);
 
   // LEA computes the effective address and never touches memory -- which is
@@ -1755,7 +1763,7 @@ function genArithIO() {
                          (global.get $smc)))
   (if ${CONT('(local.get $t3)')}
     (then (global.set $ip (local.get $t3)))
-    (else (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))`;
+    (else (call $slice_exit)))`;
 
   // Far transfers and indirect jumps. All of them land on an address that is
   // data, so all of them leave the trace.
@@ -2837,7 +2845,7 @@ function genFusedBranches() {
     // hand back, fault or return early would strand $ip between the two
     // operand lists, and the resume would read the branch's operands as an
     // instruction.
-    if (/\$halt|\(return\)|\$fault|\$jlook/.test(a.body)) {
+    if (/\$halt|\$slice_exit|\(return\)|\$fault|\$jlook/.test(a.body)) {
       throw new Error(`${alu} can leave its handler early; it cannot be fused`);
     }
     for (const cc of Object.keys(CONDS)) {
@@ -2895,6 +2903,13 @@ const EVENT_RE = /(?:return_)?call \$([A-Za-z0-9_]+)|global\.(get|set) \$([A-Za-
 // back through `$jlook` only after its own compare has already overwritten the
 // record, so what the host sees is never the previous op's flags.
 const HOST_EXIT = /^(fault|jlook)$/;
+// The one host exit that is NOT that. `$slice_exit` is the budget-expired /
+// self-patched handback at a block boundary: it publishes $gip and the host
+// resumes the guest at that address, which is the head of a block this same
+// compile emitted and whose flag reads the compiler can therefore see. Held as
+// its own event so the walk can answer the question twice -- once counting it
+// as a read (the answer to use when the successor is unknown) and once not
+// (the answer to use when it is known). See docs/toyvm-dead-flags.md.
 // A body that can return early cannot be said to overwrite anything: the write
 // may be on the path not taken. Such a handler still READS what it reads; it
 // just does not count as a killer, so nothing in front of it is called dead.
@@ -2956,6 +2971,7 @@ function analyzeFlags(bodies) {
       const at = close[o] >= 0 ? close[o] : m.index;
       const sure = depthAt[m.index] <= 2 && !bails;
       if (m[1]) {
+        if (m[1] === 'slice_exit') { ev.push({ t: 'X', at }); continue; }
         if (HOST_EXIT.test(m[1])) { ev.push({ t: 'R', at }); continue; }
         if (!bodies.has(m[1])) continue;              // import, or $next
         if (FLAG_KILLERS.test(m[1])) ev.push({ t: sure ? 'CK' : 'C?', n: m[1], at });
@@ -2979,7 +2995,7 @@ function analyzeFlags(bodies) {
     for (const [n, ev] of events) {
       let r = reads.get(n), k = kills.get(n);
       for (const e of ev) {
-        if (e.t === 'R') r = true;
+        if (e.t === 'R' || e.t === 'X') r = true;
         else if (e.t === 'K') k = true;
         else if (e.t === 'CK') { r = r || reads.get(e.n); k = true; }
         else if (e.t === 'C') { r = r || reads.get(e.n); k = k || kills.get(e.n); }
@@ -2990,8 +3006,12 @@ function analyzeFlags(bodies) {
       if (k !== kills.get(n)) { kills.set(n, k); changed = true; }
     }
   }
-  const memo = new Map(), busy = new Set();
-  const readsIn = (n) => {
+  // `xRead` is whether a slice exit counts as a read of the flags entering the
+  // handler. It does when the compiler cannot see where the guest resumes;
+  // it does not when it can, which is the whole cross-block extension.
+  const memos = [new Map(), new Map()], busy = new Set();
+  const readsIn = (n, xRead = true) => {
+    const memo = memos[xRead ? 1 : 0];
     if (memo.has(n)) return memo.get(n);
     if (busy.has(n)) return reads.get(n);        // cycle: take the safe answer
     busy.add(n);
@@ -3003,9 +3023,10 @@ function analyzeFlags(bodies) {
     else {
       for (const e of events.get(n)) {
         if (e.t === 'R') { v = true; break; }
+        if (e.t === 'X') { if (xRead) { v = true; break; } continue; }
         if (e.t === 'K') break;
         if (e.t === 'C' || e.t === 'CK') {
-          if (readsIn(e.n)) { v = true; break; }
+          if (readsIn(e.n, xRead)) { v = true; break; }
           if (e.t === 'CK' || kills.get(e.n)) break;
         }
         // Conditional: it may read what we were entered with, and it may not
@@ -3026,7 +3047,7 @@ function analyzeFlags(bodies) {
     let seen = false;
     for (const e of events.get(n)) {
       if (seen) {
-        if (e.t === 'R') return true;
+        if (e.t === 'R' || e.t === 'X') return true;
         if (e.n && reads.get(e.n)) return true;
       } else if (e.t === 'K' || e.t === 'CK') {
         seen = true;
@@ -3038,7 +3059,7 @@ function analyzeFlags(bodies) {
   for (const n of bodies.keys()) {
     out.set(n, {
       reads: reads.get(n), kills: kills.get(n),
-      readsIn: readsIn(n), readsAfter: readsAfter(n),
+      readsIn: readsIn(n), readsInX: readsIn(n, false), readsAfter: readsAfter(n),
     });
   }
   return out;
@@ -3112,7 +3133,7 @@ function genNoFlagVariants() {
   FLAG_EFFECTS.length = 0;
   for (const x of HANDLERS) {
     const e = all.get(x.name);
-    FLAG_EFFECTS.push({ readsIn: e.readsIn, kills: e.kills });
+    FLAG_EFFECTS.push({ readsIn: e.readsIn, readsInX: e.readsInX, kills: e.kills });
   }
 }
 
@@ -3203,6 +3224,12 @@ function brTableFn(name, params, result, arms, idx = '(local.get $i)') {
 function helpers() {
   const R = isa.REG16;
   let s = '';
+
+  // See SLICE_EXIT: the budget-expired / self-patched handback, which resumes
+  // the guest at a block head the compiler can see. Its own function so the
+  // flag analysis can tell it from `end` and a fault, which cannot.
+  s += `(func $slice_exit
+  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))\n`;
 
   // The register file holds the FULL 32 bits. A 16-bit write leaves the upper
   // half alone and an 8-bit write leaves the other three bytes alone, exactly

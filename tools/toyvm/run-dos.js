@@ -160,7 +160,8 @@ async function runDos(o) {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6, seconds = 0,
     traceInt = false, traceFault = false, traceEntry = 0, traceV86 = false,
     noCache = false, smcFlush = false, wasmDecode = true, fuse = true,
-    lazyFlags = true, fuseCond = true, deadFlags = true, traceDeadFlags = false,
+    lazyFlags = true, fuseCond = true, deadFlags = true, crossFlags = true,
+    traceDeadFlags = false,
     smcCensus = false, watch = [],
     stopText = null,
     traceIo = null,
@@ -335,7 +336,7 @@ async function runDos(o) {
   const ipSampleLog = [];          // flat [dispatched, ip, dispatched, ip, ...]
 
   const session = new DosSession(vm, machine, {
-    slice, noCache, smcFlush, wasmDecode, fuse, deadFlags,
+    slice, noCache, smcFlush, wasmDecode, fuse, deadFlags, crossFlags,
     traceDeadFlags: traceDeadFlags ? ((s) => log(s)) : null,
     mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
     stuckWork,
@@ -722,6 +723,10 @@ async function main() {
     // frame for frame -- the two arms run the same ops, retire the same steps
     // and lay out the same arena.
     deadFlags: !flag('no-deadflags'),
+    // ...and whether that liveness question is asked across a block edge, from
+    // the successors this compile emitted, or gives up at the block end.
+    // `--no-crossflags` is the narrower arm.
+    crossFlags: !flag('no-crossflags'),
     // Every op that lost its flag write, with the whole block it was in. A
     // wrong answer is always a later op wrongly believed to overwrite the
     // flags, and the block is the only place that shows which one.
