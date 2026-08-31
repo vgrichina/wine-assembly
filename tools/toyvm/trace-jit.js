@@ -153,7 +153,7 @@ function readTrace(mem32, addrWordIdx, maxOps = 512) {
 async function jitTiers(exe, {
   budget = 15e6, slice = 20000, cpu = 386, top = 6, sampleAfter = 0, sampleFrom = 0,
   bench = false, iters = 20000, reps = 7, cx = 8, log = () => {}, dumpWat = null, opsPrefix = 0,
-  minOps: optMinOps,
+  minOps: optMinOps, coverage = 0,
   passes = { constprop: true, regfold: true, deadflags: true },
 } = {}) {
   log(`profiling ${path.basename(exe)} -- ${(budget / 1e6).toFixed(0)}M dispatches, `
@@ -262,6 +262,58 @@ async function jitTiers(exe, {
   // function makes it silently un-configurable from anywhere else.
   const minOps = optMinOps !== undefined ? Number(optMinOps) : Number(arg('min-ops', 0));
   const real = ranked.filter(b => !inspect(b).padding);
+
+  // COVERAGE. Every tier ratio this file prints is a ratio on ONE block, and a
+  // ratio on one block is worth `share` of a program -- DRAGON's hottest block
+  // runs 7.78x faster and is 2% of its samples, which is 1.02x. So the question
+  // that decides whether the tier work can matter at all is not how fast one
+  // block gets: it is how much of a program the top N compilable blocks add up
+  // to, and how fast that curve saturates. That is a pure profiling question --
+  // no module is built, nothing is timed -- so it is answered here, off the
+  // ranking that already exists, rather than by compiling N blocks to find out.
+  //
+  // `compilable` applies the same two filters selection does (not padding, and
+  // at least minOps ops), because coverage over blocks the pipeline would
+  // decline is not coverage.
+  let coverageOut = null;
+  if (coverage) {
+    const compilable = real.filter(b => inspect(b).t.ops.length >= (minOps || 1));
+    const marks = [1, 2, 5, 10, 25, 50, 100].filter(n => n <= Math.max(coverage, 1));
+    let cum = 0, i = 0;
+    const curve = [];
+    for (const n of marks) {
+      while (i < n && i < compilable.length) { cum += compilable[i].samples; i++; }
+      curve.push({ n, blocks: i, share: 100 * cum / total });
+    }
+    const allShare = 100 * compilable.reduce((s, b) => s + b.samples, 0) / total;
+    log(`\ncoverage -- ${compilable.length} compilable block(s) of ${ranked.length} `
+      + `(padding and <${minOps || 1}-op blocks excluded)`);
+    for (const c of curve) {
+      const bar = '#'.repeat(Math.round(c.share / 2));
+      log(`  top ${String(c.n).padStart(3)}  ${c.share.toFixed(1).padStart(5)}%  ${bar}`);
+    }
+    log(`  ALL     ${allShare.toFixed(1).padStart(5)}%   <- ceiling for any per-block JIT here`);
+    // WHERE the coverage lives, by block size, because the tiers do not all
+    // want the same thing. Tier 1 stitching pays off per OP -- it removes a
+    // dispatch, an operand load and an $ip advance from each -- so it takes a
+    // 2-op block happily. Tier 2/3 micro-ops need something to fold: an address
+    // computation, a register stream, a segment base used more than once. A
+    // program whose samples sit in 1-3 op blocks is reachable by stitching and
+    // largely out of reach of micro-ops, and that is a fact about the program,
+    // not about the compiler. This histogram is what says which one we have.
+    const buckets = [[1, 1], [2, 3], [4, 7], [8, 15], [16, 1e9]];
+    const sized = real.map(b => ({ ops: inspect(b).t.ops.length, samples: b.samples }));
+    log('  share by block size:');
+    for (const [lo, hi] of buckets) {
+      const s = sized.filter(x => x.ops >= lo && x.ops <= hi)
+        .reduce((a, x) => a + x.samples, 0);
+      const pct = 100 * s / total;
+      if (!pct) continue;
+      log(`    ${(hi === 1e9 ? `${lo}+` : `${lo}-${hi}`).padStart(5)} ops  `
+        + `${pct.toFixed(1).padStart(5)}%  ${'#'.repeat(Math.round(pct / 2))}`);
+    }
+    coverageOut = { compilable: compilable.length, blocks: ranked.length, curve, allShare };
+  }
   const wanted = minOps ? real.find(b => inspect(b).t.ops.length >= minOps) : real[0];
   const hot = wanted || real[0] || ranked[0];
   if (minOps && !wanted && real[0]) {
@@ -280,6 +332,7 @@ async function jitTiers(exe, {
     cs: hot.cs, ip: hot.bip, ops: t.ops.length, end: t.end,
     share, samples: total,
     bytes: bytes.map(b => b.toString(16).padStart(2, '0')).join(' '),
+    coverage: coverageOut,
   };
   // The trace's IDENTITY, for asking whether two programs are really running
   // the same loop. It must not be `bytes`: those are read out of guest memory
@@ -390,6 +443,7 @@ async function main() {
     reps: Number(arg('reps', 7)),
     dumpWat: arg('dump-wat', null),
     opsPrefix: Number(arg('ops-prefix', 0)),
+    coverage: Number(arg('coverage', 0)),
     cx: Number(arg('cx', 8)),
     passes: (() => {
       const spec = arg('passes', 'constprop,regfold,deadflags').split(',').filter(Boolean);

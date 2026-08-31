@@ -502,3 +502,68 @@ node tools/toyvm/trace-jit.js DEMO.EXE --bench --ops-prefix=2           # bisect
 `--sample-from` exists because this corpus ships compressed and a profile from
 dispatch zero finds the depacker rather than the demo — see
 [the shootout's §5.3](toyvm-dispatch-shootout.md#53-half-the-corpus-shares-one-hot-trace).
+
+## Coverage: what the tiers can reach, and why `--min-ops` was lying to us
+
+Every ratio above is a ratio on ONE block, and a ratio on one block is worth
+`share` of a program. So before asking how much faster a compiled block gets,
+ask how much of the program the compilable blocks add up to. `--coverage=N`
+answers that off the ranking that already exists — nothing is built and nothing
+is timed, so it costs one profiling pass:
+
+```bash
+node tools/toyvm/trace-jit.js DEMO.EXE --dispatches=12m --sample-from=0.5 \
+  --min-ops=1 --coverage=100
+```
+
+**Pass `--min-ops=1` when you want the coverage number.** This is the trap that
+produced a badly wrong reading of this whole area. `--min-ops=6` exists so the
+bench does not time a one-op parking loop, and it is right for that job — but
+run the coverage curve through it and it discards every block under six ops,
+which on DRAGON means 5 blocks of 16 and a **4.9%** ceiling. At `--min-ops=1`
+the same program's ceiling is **74.9%**, and its hottest block alone is 64.6%.
+The filter describes what the harness will consent to time, not what a compiler
+could reach, and reading one as the other made the JIT look structurally capped
+when it is not.
+
+Coverage saturates fast. Across the twenty programs of `bench-set-20.txt`, the
+top block is typically a third to two thirds of all samples and the top five
+reach 67–70%; per-program ceilings run 31–100%, mean about 85%.
+
+### Where that coverage lives, by block size
+
+This is the number that should drive tier work, because the tiers do not all
+want the same thing. Tier 1 stitching pays per *op* — one dispatch, one operand
+load and one `$ip` advance removed each — so a 2-op block is a fine customer.
+Tier 2/3 micro-ops need something to fold: an address computation, a register
+stream, a segment base used more than once. Mean share of samples, 18 programs
+that yielded samples, 12M dispatches, `--sample-from=0.5`:
+
+| block size | share of samples | reachable by |
+|---|---:|---|
+| 1 op | **19%** | stitching buys nothing; this is a dispatch + a transfer |
+| 2–3 ops | **37%** | stitching |
+| 4–7 ops | **23%** | stitching, and micro-ops have a little to work with |
+| 8–15 ops | **4%** | micro-ops |
+| 16+ ops | **2%** | micro-ops |
+
+**56% of program time is in blocks of three ops or fewer, and only 6% is in
+blocks of eight or more** — which is precisely the population `--min-ops=6`
+selects, and precisely where tier 2→3's 1.52x and the 2.83x ladder were
+measured. The tier ratios are not wrong; they were measured on the thin end of
+the distribution.
+
+Three consequences, in order of how much they should change what gets built:
+
+1. **Tier 1 has the population and the micro-ops do not.** Stitching addresses
+   ~60% of program time (the 2–7 op mass); micro-ops address ~29% at the most
+   generous reading (4+ ops) and ~6% at the strict one (8+). Any further
+   micro-op pass is optimising a sliver until block coverage exists.
+2. **The 1-op blocks are 19% and are a different problem entirely.** A one-op
+   block is a dispatch plus a block transfer, so there is no body to compile —
+   it is exactly the shape the spin-loop collapse already targets, and DEMO5 is
+   100% one-op blocks. Look there, not at the compiler.
+3. **Coverage is a reason to install per block, not per trace.** The top five
+   blocks are already ~70%; there is no need for multi-block traces, guards or
+   deopt to reach most of a program. See the note on translation blocks in
+   [toyvm-trace-blocks.md](toyvm-trace-blocks.md).
