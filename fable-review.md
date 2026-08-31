@@ -135,30 +135,23 @@ only because MW3's grid is not in a code page; the fold is byte-matched, so any
 binary containing the same 101 bytes gets the same omission. The sibling H440
 stays per-pixel `gs16` and is fine.
 
-**3.3 Worker instances get none of the debug/feature flags — largely FIXED
-`3bb856a6`.** Spawn-time flags now ride a recorded inherited-globals channel:
-`thread-manager.js:76-91,168-178` records `set_fault_unmapped`,
-`set_callstack_enabled`, `set_trace_eip_range`, `set_cs_steal_after` and
-per-address `set_count`, plus arbitrary setters through
-`recordInheritedWasmGlobal` (`browser-shell.js:634-643` sends
-`set_winver`/`set_loop_copy_emit`), and `guest-worker.js:491-498` replays them
-at init. Remainders: `set_cpu_mmx` is still main-instance-only
-(`run.js:3142`), and the `forwardGlLogs` log gap below is board-claimed but
-uncommitted. Original finding for the record: The cooperative spawn (`thread-manager.js:1586-1650`) sets
-`set_cpu_mmx`, `set_fault_unmapped`, `set_count`, `set_trace_eip_range`,
-`set_cs_steal_after`; `initGuestThread` in `guest-worker.js:411-466` sets only
-bp/watch/callstack/tls/vlan/dll_count/esp/eip/fs/hwnd-base. So under
-`--threads`, `--fault-null` reports unmapped accesses from the main thread only,
-`--count` never fires on a worker, MMX is whatever the module default is, and
-the new AoE decoder flags (`run.js:4041-4046` main, `:7430-7431` cooperative)
-are absent too. CLAUDE.md's `--fault-null` row says "Propagated to worker
-instances" — true of the cooperative backend only. This is the Pass-2 item 10
-table, still not built; `lib/worker-imports.js` (which now exists) is a ctx-key
-list and does not carry WASM globals. Side effect of the same class:
-`guest-rpc.js:280-283` makes `log`, `log_i32`, `log_api_exit` local no-ops in
-Workers unless `forwardGlLogs`, which `host.js:1256` sets only for
-verbose/trace-api — the `--host-census`-style `log_i32` markers from worker
-threads are gone in an ordinary browser run, under a flag whose name says GL.
+**3.3 Worker instances get none of the debug/feature flags — FIXED
+`3bb856a6`, `acc7334a`.** `lib/worker-imports.js` now owns one declarative
+21-setter runtime configuration. The same ordered snapshot is applied when
+`ThreadManager` creates a cooperative instance and when `guest-worker.js`
+initializes a real Worker instance. This includes MMX via `get_cpu_mmx` (so
+`--no-mmx` and its zero value survive), WinVer, bp/watch, fault handling,
+counting, tracing, and loop flags. `test/test-worker-wasm-globals.js` proves the
+two backends receive the same values, including `set_cpu_mmx(0)`; the CLI
+Worker lifecycle test covers the inherited fault/count/trace behavior.
+
+Requested Worker diagnostics now use the accurately named `forwardGuestLogs`
+channel. CLI verbose/API/count/loop-match/Win16/FPU diagnostic modes opt into
+it; ordinary runs intentionally keep `log`, `log_i32`, and `log_api_exit`
+local instead of adding RPC traffic. `forwardGlLogs` remains only as a legacy
+option/wire alias for cached callers. `test/test-worker-api-batching.js` covers
+the opt-in, the no-RPC fast path, the compatibility alias, and both Worker host
+constructors.
 
 **3.4 The stub ratchet is bypassed by process.** `tools/check-silent-stubs.js`
 is a real ratchet — `EXPECTED_COUNT=324` plus a sha256 of the sorted stub list
