@@ -7393,18 +7393,18 @@
     ;; come back TRUE; InvalidateRect(hwnd, NULL, FALSE) means "keep what is
     ;; on screen" and reports FALSE.
     ;;
-    ;; Both halves are load-bearing for Diablo. Dropping the brush test left
-    ;; the menu a black screen with five invisible buttons; dropping the
-    ;; erase-pending test made storm redraw the menu background on every one
-    ;; of the flame animation's own InvalidateRect(logo, NULL, FALSE) paints,
-    ;; 20 times a second, so the burning DIABLO logo and the pentagram
-    ;; cursors were wiped a moment after each frame was drawn and the menu
-    ;; flickered between lit and dark.
-    (if (i32.and
-          (i32.eqz (local.get $brush))
-          (i32.or
-            (global.get $code16)
-            (local.get $erase_pending)))
+    ;; The brush test is load-bearing for Diablo: dropping it left the menu a
+    ;; black screen with five invisible buttons. Do NOT additionally require
+    ;; erase_pending here (tried twice now): storm creates its 640x480 menu
+    ;; dialog hidden, shows it, and paints it only through the flame
+    ;; animation's InvalidateRect(NULL, FALSE) cycle — the erase-owed bit is
+    ;; consumed by the first paint and never set again, so gating fErase on it
+    ;; answers 0 to every later full-menu paint and storm never draws the
+    ;; background again: black menu with faint text (36c78d79 regressed this).
+    ;; Answering 1 whenever the class brush is NULL is what real USER's
+    ;; DefWindowProc contract degenerates to for these apps, and the verified
+    ;; retail-Diablo-to-Tristram run was made on exactly this shape.
+    (if (i32.eqz (local.get $brush))
       (then (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 1))))
     (if (i32.and
           (i32.eqz (global.get $code16))

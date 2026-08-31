@@ -4596,7 +4596,7 @@
   ;; transparent white text over it.
   (func $ownerdraw_prefill_allowed (param $hwnd i32) (result i32)
     (i32.eqz
-      (i32.and (i32.ne (global.get $dx_exclusive_fullscreen) (i32.const 0))
+      (i32.and (i32.ne (call $dx_exclusive_get) (i32.const 0))
         (i32.ne (call $wnd_top_level (local.get $hwnd)) (call $dx_target_hwnd)))))
 
   (func $dialog_default_idok_close (param $parent i32)

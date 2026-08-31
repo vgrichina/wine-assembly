@@ -194,7 +194,7 @@
       (local.set $hwnd (call $gl32 (i32.add (local.get $pp) (i32.const 28))))
       (local.set $windowed (call $gl32 (i32.add (local.get $pp) (i32.const 32))))))
     (if (i32.eqz (local.get $hwnd)) (then (local.set $hwnd (local.get $arg3))))
-    (if (local.get $hwnd) (then (global.set $dx_coop_hwnd (local.get $hwnd))))
+    (if (local.get $hwnd) (then (call $dx_coop_hwnd_set (local.get $hwnd))))
     (global.set $d3d9_windowed_hwnd
       (select (local.get $hwnd) (i32.const 0) (local.get $windowed)))
     ;; A windowed device may leave the back-buffer size at 0 — that means "the
@@ -207,8 +207,8 @@
           (local.set $cs (call $host_get_window_client_size (local.get $hwnd)))
           (local.set $w (i32.and (local.get $cs) (i32.const 0xFFFF)))
           (local.set $h (i32.shr_u (local.get $cs) (i32.const 16)))))
-      (if (i32.eqz (local.get $w)) (then (local.set $w (global.get $dx_display_w))))
-      (if (i32.eqz (local.get $h)) (then (local.set $h (global.get $dx_display_h))))))
+      (if (i32.eqz (local.get $w)) (then (local.set $w (call $dx_display_w_get))))
+      (if (i32.eqz (local.get $h)) (then (local.set $h (call $dx_display_h_get))))))
     ;; The device's render target is the surface we present from, so it carries
     ;; the primary flag — EndScene blits it to the window's back-canvas.
     (local.set $surf (call $d3d9_create_surface (local.get $w) (local.get $h) (i32.const 32) (i32.const 1)))
