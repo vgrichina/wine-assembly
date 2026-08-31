@@ -93,6 +93,7 @@ UNIT=(
   test/test-ole-clipboard-wrap.js
   test/test-ole-insert-object-dlg.js
   test/test-wat-dib-rle.js
+  test/test-wasm-abi-diff.js
   test/test-icon-extract.js
   test/test-heroes2-desktop-save.js
   test/test-wide-api.js
@@ -333,6 +334,7 @@ UNIT=(
   test/test-modal-common-dialog-worker.js
   test/test-sendmessagetimeout.js
   test/test-directdraw-cooperative-window.js
+  test/test-directdraw-enum-attached.js
   test/test-directdraw-enum-surfaces.js
   test/test-directdraw-enum-lowres.js
   test/test-directdraw-native-child-overlay.js
