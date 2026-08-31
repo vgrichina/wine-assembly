@@ -6,7 +6,7 @@
   ;; beside the shared console records rather than in the overwritten 0x11xxx
   ;; system-string area. This 128-byte run ends before the DIB page allocator.
   (global $CONSOLE_TITLE_STORAGE i32 (i32.const 0x07E0FA00))
-  (data (i32.const 0x07E0FA00) "Console\00")
+  (data (region.addr $CONSOLE_INPUT 0xA00) "Console\00")
 
   (func $console_title_ensure
     ;; load_pe clears mutable high-memory tables after WebAssembly data
