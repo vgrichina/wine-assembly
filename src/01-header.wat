@@ -1390,7 +1390,8 @@
   ;; 0x07F60000 128KB    DX_OBJECTS (4096 entries × 32 bytes)
   ;; 0x07F80000 32KB     COM_WRAPPERS (4096 entries × 8 bytes)
   ;; 0x07F88000 16KB     DX_SURF_FMT (4096 per-surface pixel-format kinds)
-  ;; 0x07F8C000 20KB     free
+  ;; 0x07F8C000 16KB     DX_SURF_OWNER (4096 DirectDraw owner slot+1 values)
+  ;; 0x07F90000  4KB     free
   ;; 0x07F16000 492KB    (packed apart from the gaps listed above -- former
   ;;                      HANDLER_PAIR_HIST_COUNTS home, too
   ;;                      small once the handler table passed 361. This block is

@@ -943,6 +943,10 @@
     ;; DirectDrawEnumerateA callback returned — set EAX=DD_OK and return to caller
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0007))
       (then
+        ;; EnumSurfaces keeps a typed, stack-resident iterator so callbacks
+        ;; may re-enter DirectDraw and enumeration can resume or cancel.
+        (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x53454444))
+          (then (call $dd_enum_surfaces_continue) (return)))
         ;; Pop the saved original return address
         (global.set $eip (call $gl32 (global.get $esp)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 4)))

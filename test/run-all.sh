@@ -333,6 +333,7 @@ UNIT=(
   test/test-modal-common-dialog-worker.js
   test/test-sendmessagetimeout.js
   test/test-directdraw-cooperative-window.js
+  test/test-directdraw-enum-surfaces.js
   test/test-directdraw-enum-lowres.js
   test/test-directdraw-native-child-overlay.js
   test/test-directdraw-stale-background-restore.js
