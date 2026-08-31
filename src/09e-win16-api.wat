@@ -1025,8 +1025,8 @@
                                               (local.get $id)))
                       (br $owner_done)))
                   (local.set $id (i32.add (local.get $id) (i32.const 1)))
-                  (br $owner_scan)))))
-          (else (local.set $mod (call $win16_h32 (local.get $raw_mod))))))))
+                  (br $owner_scan))))))
+          (else (local.set $mod (call $win16_h32 (local.get $raw_mod)))))))
     (if (i32.eq (i32.and (local.get $mod) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))
       (then
         (local.set $id (i32.and (local.get $mod) (i32.const 0xFFFF)))
