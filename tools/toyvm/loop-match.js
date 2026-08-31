@@ -195,16 +195,29 @@ async function matchOne(exe, { budget, slice, cpu, maxBlocks, maxOps }) {
       const key = names.join(' ');
       if (!shapes.has(key)) {
         const sum = summarize(body, words);
+        // What a WRAPPER needs, which is much less than what a FOLD needs.
+        // Design B/C runs the same ops in the same order, so it does not care
+        // about streams, widths, aliasing or induction variables at all -- the
+        // only thing that can break it is a body op that re-enters the
+        // emulator, because the wrapper holds `ip` in a local across iterations
+        // and a nested decode can flush the arena underneath it (loop-idiom
+        // -superops-design.md 4.4). A port read is NOT such an op: it leaves to
+        // the host and comes straight back without compiling anything.
+        const reenters = names.slice(0, -1).find(n => /^(call|ret|int|iret|hlt|jmp_far|end)/.test(n));
+        const faults = body.find(o => o.eff.escapes.some(x => /fault|gc/.test(x)));
         if (closer.eff.countDown) sum.countDown = true;
         const c = classify(sum, names);
         shapes.set(key, {
           names, blocks: b - t + 1, n: ops.length, sites: 0, samples: 0,
           verdict: c.verdict, why: c.why, sum,
+          wrappable: !reenters && !faults,
+          wrapWhy: reenters || (faults ? 'a fault' : null),
         });
       }
       const e = shapes.get(key);
       e.sites++;
       for (let k = t; k <= b; k++) e.samples += perBlock.get(mine[k].addr) || 0;
+      e.opIndices = ops.map(o => o.eff.index);
     }
   }
   return { exe: path.basename(exe), dispatched: r.dispatched, sampled, shapes: [...shapes.values()] };
@@ -242,6 +255,8 @@ async function main() {
   const verdicts = new Map(), whys = new Map();
   let tot = 0, matchedSamples = 0, matchedSites = 0, allSites = 0;
   const hits = [];
+  let wrapSamples = 0, wrapSites = 0, wrapOps = 0;
+  const wrapWhys = new Map();
 
   for (const exe of exes) {
     let c;
@@ -260,6 +275,8 @@ async function main() {
       } else {
         whys.set(s.why, (whys.get(s.why) || 0) + s.sites);
       }
+      if (s.wrappable) { wrapSamples += s.samples; wrapSites += s.sites; wrapOps += s.samples * (s.n - 1); }
+      else wrapWhys.set(s.wrapWhy, (wrapWhys.get(s.wrapWhy) || 0) + s.sites);
     }
   }
 
@@ -269,12 +286,74 @@ async function main() {
   for (const [v, n] of [...verdicts.entries()].sort((a, b) => b[1] - a[1])) {
     console.log(`  ${v.padEnd(10)} ${String(n).padStart(7)} samples  ${(100 * n / tot).toFixed(1)}%`);
   }
+  // The wrapper's population, which is a different and much larger one. Quote
+  // this for Design B/C and the fold's share for Design A; they are not
+  // alternatives measured on the same set.
+  console.log(`\nwrappable (B/C): ${wrapSites} sites, ${wrapSamples} samples `
+    + `${tot ? (100 * wrapSamples / tot).toFixed(1) : '--'}% of the run`
+    + `  -- ${(wrapSamples / (wrapSites || 1)).toFixed(1)} samples/site`);
+  console.log(`  mean body ${(wrapOps / (wrapSamples || 1)).toFixed(1)} ops behind one wrapper dispatch`);
+  for (const [w, n] of [...wrapWhys.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6)) {
+    console.log(`  not wrappable: ${String(n).padStart(5)} sites  ${w}`);
+  }
+
   if (flag('why')) {
     console.log('\ndeclines, by sites -- this histogram is the work list:');
     for (const [w, n] of [...whys.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20)) {
       console.log(`  ${String(n).padStart(6)}  ${w}`);
     }
   }
+  // How many DISTINCT handlers appear in a wrappable loop body? That number is
+  // the size of the second dispatch site a loop wrapper needs -- a br_table's
+  // arms cannot be re-entered from inside one, so a wrapper with its own
+  // dispatch needs its own copy of the arms it can reach. Copying all 1581
+  // doubles the one function the `switch` shell inlines everything into, which
+  // is exactly what makes that shell bimodal. Copying only the ops that occur
+  // in loop bodies bounds it, and an op outside the set simply declines the
+  // loop at compile time.
+  // How many distinct body SHAPES carry the weight? A wrapper with a generic
+  // dispatch loop must read guest state out of globals, because its arms are
+  // shared. A wrapper generated for ONE body shape can inline those exact ops,
+  // keep the induction variables in wasm locals, hoist the operand loads out of
+  // the loop and write back only at exit -- which is most of what a real JIT
+  // does to a loop, with no runtime codegen and no aliasing analysis, since it
+  // runs the same ops in the same order. That is only affordable if a handful
+  // of shapes covers the corpus, so this is the number that decides it.
+  if (flag('body-shapes')) {
+    const w = new Map();
+    for (const s of hits) w.set(s.names.join(' '), (w.get(s.names.join(' ')) || 0) + s.samples);
+    const rank = [...w.entries()].sort((a, b) => b[1] - a[1]);
+    const total = rank.reduce((a, [, n]) => a + n, 0) || 1;
+    console.log(`\n${rank.length} distinct matched body shapes, ${total} samples between them`);
+    for (const n of [4, 8, 16, 32, 64, rank.length]) {
+      if (n > rank.length) break;
+      const s = rank.slice(0, n).reduce((a, [, x]) => a + x, 0);
+      console.log(`  top ${String(n).padStart(4)} shapes cover ${(100 * s / total).toFixed(1)}% of matched weight`
+        + `  (= ${(100 * s / tot).toFixed(1)}% of the whole run)`);
+    }
+    console.log('  hottest shapes:');
+    for (const [k, n] of rank.slice(0, 8)) {
+      console.log(`    ${String(n).padStart(6)}  ${k}`);
+    }
+  }
+
+  if (flag('body-ops')) {
+    const w = new Map();
+    for (const s of hits.length ? hits : []) {
+      for (const i of s.opIndices || []) w.set(i, (w.get(i) || 0) + s.samples);
+    }
+    const rank = [...w.entries()].sort((a, b) => b[1] - a[1]);
+    const total = rank.reduce((a, [, n]) => a + n, 0) || 1;
+    console.log(`\n${rank.length} distinct handlers appear in matched loop bodies`);
+    let acc = 0;
+    for (const [n, k] of [[16, 0], [32, 0], [64, 0], [128, 0], [rank.length, 0]]) {
+      const s = rank.slice(0, n).reduce((a, [, x]) => a + x, 0);
+      console.log(`  top ${String(n).padStart(4)} arms cover ${(100 * s / total).toFixed(1)}% of matched loop-body weight`);
+      acc = k;
+    }
+    console.log('  hottest:', rank.slice(0, 12).map(([i]) => HANDLERS[i].name).join(' '));
+  }
+
   if (hits.length) {
     console.log('\nmatched shapes, hottest first:');
     for (const s of hits.sort((a, b) => b.samples - a.samples).slice(0, Number(arg('top', 15)))) {
