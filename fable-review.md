@@ -293,6 +293,53 @@ dispatched agents are compiler-side; the BYO-media Tier-1 fixes (H1
 materialize, H2 truncation, H3 ISO names, M4 schema wipe) have no owner on
 the board yet.
 
+**By 16:30 (+10 commits, HEAD `ee43e0c2`)** the HIGH closed in under
+fifteen minutes, and the *mechanism* of its closing is the finding: the
+oracle's corpus keeps a fixed bug as `expectDivergence` — asserted to KEEP
+diverging — so when `4ffdf4b3` fixed the v128.const shape encoding (all six
+shapes little-endian at lane width, integers through `parseI64Literal` so
+`0x80000000` keeps its bit pattern, malformed shapes are located errors, and
+the byte-wise form is now strict at 16 where it used to zero-pad/drop
+silently), the oracle went RED with "no longer diverges — drop the marker"
+instead of passing quietly; `ee43e0c2` dropped it and the case is a plain
+regression test. I ran both sides myself: `watx-compiler-simd` 51/51,
+`test-watx-differential` 41/41 with **four divergences still open and
+asserted red** (`(start $f)` emits no start section; `\{...}` data escapes
+stored literally; multivalue accepted then refused by V8 at instantiate —
+`watx-internals` is mid-claim turning that into a located compile error;
+imported globals unresolved — reproducer
+`tools/watx-repro/silent-and-accepted.js`). A spec-suite runner (`2a44ed1f`)
+ran 1048/1048 core assertions with all 841 skips *and their reasons*
+printed, and found a new LOW: `(memory (data "..."))` neither parses nor
+rejects — it falls through to the synthesized 16-page memory, so
+`memory.size` answers 16 where the spec says 0. `bash tools/build.sh` at
+HEAD is RED only at `check-watx-provenance` — the vendored
+`compiler-codegen.js` carries watx-internals' in-flight multivalue edit —
+which is that gate doing precisely its job; every gate before it passes,
+including the manifest gate the two new oracle suites briefly broke and
+fixed. Byte identity at `737ff788` is peer-attested twice (snapshot,
+internals); I could not re-derive it locally past the red gate. Elsewhere:
+M6 mirrors are **done** — `f90c61d6` converts the last 27 (09a8) and
+`d8dbcc40` the 67 interior aliases plus the final two literal-anchored data
+segments (census 351/107), with the ALIASES table refusing any rewrite
+whose literal isn't already `base+offset`; the snapshot handoff is UTF-8
+bytes over transferables (`49f30eff`, max RSS 253.6→226.1 MB, parent
++29.2→+11.8 MB, cache key unchanged), and its author's drive-by finding —
+host.js passed `version/noStore` inside compile()'s *mode* argument, so the
+browser source fetch silently lost its `?v=` cache-buster — was fixed by the
+orchestrator within minutes (`5df17a9c`, diff verified). toyvm built the
+tool Pass 4 asked the census to become (`f5d0af7d`/`4a0b7350`): a
+**phase noise floor** — re-run the interpreter over the two arms' dispatch
+gap and count the pixels the baseline moves by itself — cleared four of six
+survivors as phase (COMPOVRS: 1816px of self-drift dwarfs the 1131px diff)
+and held CARRIE as real (4px floor vs 52,101px); the successor-list bisect
+pinned CARRIE to one address (`0xa74`) whose mere *compilation* tips the
+frame, killed the stale-GO-arena-address theory by A/B, and named the next
+suspect: `guardBytes` silently skips blocks it can't span, leaving a region
+partly invisible to self-modify retirement. And a user RULING closed the
+wasm-opt question for good — no build step, no deploy step; the measured
+levers remain memory-stream folds and selective inlining of hot helpers.
+
 ---
 
 # Pass 3 — 2026-08-30
