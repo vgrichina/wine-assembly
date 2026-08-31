@@ -96,6 +96,7 @@ function colorCountInRect(png, rgb, left, top, right, bottom) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-far-manager-'));
   const wasmPath = path.join(temp, 'candidate.wasm');
   const framePath = path.join(temp, 'far-manager.png');
+  const parentFramePath = path.join(temp, 'far-manager-parent.png');
   try {
     const wasm = await compileWatSnapshot(file =>
       fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
@@ -159,8 +160,10 @@ function colorCountInRect(png, rgb, left, top, right, bottom) {
       `Far did not select app.exe through console mouse input (${selectedAppTeal} teal pixels)`);
 
     // A drive root has no navigable parent, so Far intentionally suppresses
-    // the enumerated `..` record there. Prove the row is not lost by entering
-    // a real child directory and observing Far enumerate its parent record.
+    // the enumerated `..` record there. Enter the initially selected Program
+    // Files directory and prove both the Win32 record and Far's visible parent
+    // row survive. GetCurrentDirectory must omit the trailing slash here;
+    // Far uses that Win32 distinction to tell a child from a drive root.
     const parentResult = spawnSync('node', [
       RUN,
       `--exe=${FAR}`,
@@ -169,10 +172,10 @@ function colorCountInRect(png, rgb, left, top, right, bottom) {
       '--no-build',
       '--quiet-api',
       '--trace-fs',
-      '--max-batches=360',
+      '--max-batches=180',
       '--batch-size=50000',
-      '--input=70:keydown:0x23,72:keyup:0x23,80:keydown:0x0d,82:keyup:0x0d,' +
-        '150:keydown:0x24,152:keyup:0x24,160:keydown:0x0d,162:keyup:0x0d',
+      '--input=80:keydown:0x0d,82:keyup:0x0d',
+      `--png=${parentFramePath}`,
     ], {
       cwd: ROOT,
       encoding: 'utf8',
@@ -184,15 +187,21 @@ function colorCountInRect(png, rgb, left, top, right, bottom) {
     if (parentResult.error) throw parentResult.error;
     assert(parentResult.status === 0,
       `Far parent-row run exited ${parentResult.status}\n${parentOutput.slice(-8000)}`);
-    const childCaption = parentOutput.search(/SetWindowText.*\{C:\\[^}]+\\\} - Far/i);
+    const childCaption = parentOutput.search(/SetWindowText.*\{C:\\[^}\\]+\} - Far/i);
     assert(childCaption >= 0,
       `Far did not enter a child directory through its root panel\n${parentOutput.slice(-8000)}`);
     assert(parentOutput.includes('[fs] FindFirstFile("C:\\program files\\*.*") → "."') &&
       parentOutput.includes('→ ".."'),
       `child-directory enumeration did not expose its parent record\n${parentOutput.slice(-8000)}`);
+    assert(fs.existsSync(parentFramePath), 'Far child directory did not produce a frame');
+    const parentPng = PNG.sync.read(fs.readFileSync(parentFramePath));
+    const selectedParentTeal = colorCountInRect(
+      parentPng, [0, 128, 128], 8, 55, 156, 69);
+    assert(selectedParentTeal > 1500,
+      `Far did not render its selected .. parent row (${selectedParentTeal} teal pixels)`);
 
     console.log(`PASS  Far Manager 1.70 lists files and accepts mouse/F9 (${blue} blue, ${selectedAppTeal} selected, ${menuYellow} menu pixels)`);
-    console.log('PASS  Far Manager hides root parent and enumerates subdirectory `..`');
+    console.log('PASS  Far Manager hides root parent and renders subdirectory `..`');
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }

@@ -304,11 +304,11 @@ test('relative path resolves against CWD', () => {
   assert.strictEqual(vfs._resolvePath('data.dat'), 'c:\\game\\data.dat');
 });
 
-test('setCurrentDirectory normalizes trailing backslash', () => {
+test('GetCurrentDirectory omits a trailing backslash except at a drive root', () => {
   const vfs = new VirtualFS();
   vfs.dirs.add('c:\\game');
   assert.strictEqual(vfs.setCurrentDirectory('C:\\game\\'), true);
-  assert.strictEqual(vfs.getCurrentDirectory(), 'c:\\game\\');
+  assert.strictEqual(vfs.getCurrentDirectory(), 'c:\\game');
   assert.strictEqual(vfs.setCurrentDirectory('C:\\'), true);
   assert.strictEqual(vfs.getCurrentDirectory(), 'c:\\');
 });
