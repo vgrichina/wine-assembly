@@ -991,6 +991,12 @@
     ;; enumerators retain the original saved-return-address form.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0011))
       (then
+        ;; DirectInput EnumDevices/EnumObjects callbacks leave their reentrant
+        ;; stack-resident DIEN frame at ESP after stdcall pops both arguments.
+        (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x4E454944))
+          (then
+            (call $di_enum_continue)
+            (return)))
         (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x434E5446))
           (then
             (call $gdi_font_enum_continue)

@@ -9,7 +9,7 @@
   ;; +4  refcount
   ;; +8  misc0 (DDraw: hwnd, DSBuffer: wave_handle, DIDev: device_type 1=kbd 2=mouse)
   ;; +12 width (u16) | height (u16); DIDev: DIPROP_BUFFERSIZE
-  ;; +16 bpp (u16) | pitch (u16)
+  ;; +16 bpp (u16) | pitch (u16); DIDev: parent DirectInput version
   ;; +20 dib_ptr (WASM addr of pixel data, 0 if none)
   ;; +24 color_key_low
   ;; +28 flags (surface type: 1=primary,2=backbuf,4=offscreen; 0x100=has_colorkey)
@@ -1449,13 +1449,15 @@
 
   ;; DirectInputCreateA(hInstance, dwVersion, lplpDI, pUnkOuter) → HRESULT
   (func $handle_DirectInputCreateA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj_guest i32)
+    (local $obj_guest i32) (local $entry i32)
     (local.set $obj_guest (call $dx_create_com_obj (i32.const 6) (global.get $DX_VTBL_DINPUT)))
     (if (i32.eqz (local.get $obj_guest))
       (then
         (global.set $eax (i32.const 0x80004005))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
+    (local.set $entry (call $dx_from_this (local.get $obj_guest)))
+    (i32.store offset=8 (local.get $entry) (local.get $arg1))
     (call $gs32 (local.get $arg2) (local.get $obj_guest))
     (global.set $eax (i32.const 0)) ;; DI_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))) ;; stdcall 4 args
@@ -1465,7 +1467,7 @@
   ;; as DirectInputCreateA — IDirectInput2/7 only append methods after the
   ;; v1 vtable, which is what $DX_VTBL_DINPUT already provides.
   (func $handle_DirectInputCreateEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $iid_dword i32) (local $obj_guest i32)
+    (local $iid_dword i32) (local $obj_guest i32) (local $entry i32)
     (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
     (if (i32.or (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg3)))
       (then
@@ -1498,6 +1500,8 @@
         (global.set $eax (i32.const 0x80004005)) ;; E_FAIL
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
+    (local.set $entry (call $dx_from_this (local.get $obj_guest)))
+    (i32.store offset=8 (local.get $entry) (local.get $arg1))
     (call $gs32 (local.get $arg3) (local.get $obj_guest))
     (global.set $eax (i32.const 0)) ;; DI_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
@@ -1506,7 +1510,7 @@
   ;; IDirectInput8 keeps the legacy methods at the front of its vtable, which
   ;; covers the device creation/input path currently implemented here.
   (func $handle_DirectInput8Create (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $iid_dword i32) (local $obj_guest i32)
+    (local $iid_dword i32) (local $obj_guest i32) (local $entry i32)
     (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
     (if (local.get $arg4)
       (then
@@ -1533,6 +1537,8 @@
         (global.set $eax (i32.const 0x80004005)) ;; E_FAIL
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
+    (local.set $entry (call $dx_from_this (local.get $obj_guest)))
+    (i32.store offset=8 (local.get $entry) (i32.const 0x0800))
     (call $gs32 (local.get $arg3) (local.get $obj_guest))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
@@ -5457,6 +5463,8 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
     (local.set $entry (call $dx_from_this (local.get $obj)))
+    (i32.store offset=16 (local.get $entry)
+      (i32.load offset=8 (call $dx_from_this (local.get $arg0))))
     ;; Detect keyboard vs mouse from GUID first dword. Unknown devices
     ;; (joysticks, etc.) are present but inert.
     (local.set $guid_first (call $gl32 (local.get $arg1)))
@@ -5498,6 +5506,8 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
     (local.set $entry (call $dx_from_this (local.get $obj)))
+    (i32.store offset=16 (local.get $entry)
+      (i32.load offset=8 (call $dx_from_this (local.get $arg0))))
     (local.set $guid_first (call $gl32 (local.get $arg1)))
     (i32.store (i32.add (local.get $entry) (i32.const 8)) (i32.const 0))
     (if (i32.eq (local.get $guid_first) (i32.const 0x6F1D2B61))
@@ -5508,12 +5518,258 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
-  ;; EnumDevices — call callback twice (keyboard + mouse), or just return ok
+  ;; DirectInput enumeration uses the generic CACA0011 callback-return thunk.
+  ;; The state is a typed frame on the guest stack, not mutable globals, so an
+  ;; enumeration callback may start another enumeration without corrupting the
+  ;; outer walk. Layout (624 bytes, descriptor begins at +40):
+  ;;   +0 "DIEN", +4 caller return, +8 callback, +12 pvRef, +16 kind,
+  ;;   +20 filter, +24 next index, +28 device kind, +32 flags, +36 DI version.
+  (global $DI_ENUM_FRAME_SIZE i32 (i32.const 624))
+
+  (func $di_fill_system_guid (param $dst i32) (param $data1 i32)
+    (call $gs32 (local.get $dst) (local.get $data1))
+    (i32.store16 (call $g2w (i32.add (local.get $dst) (i32.const 4))) (i32.const 0xD5A0))
+    (i32.store16 (call $g2w (i32.add (local.get $dst) (i32.const 6))) (i32.const 0x11CF))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 8)) (i32.const 0x4544C7BF))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 12)) (i32.const 0x00005453)))
+
+  (func $di_fill_object_guid (param $dst i32) (param $data1 i32)
+    (call $gs32 (local.get $dst) (local.get $data1))
+    (i32.store16 (call $g2w (i32.add (local.get $dst) (i32.const 4)))
+      (select (i32.const 0xD33C) (i32.const 0xC9F3)
+        (i32.eq (local.get $data1) (i32.const 0x55728220))))
+    (i32.store16 (call $g2w (i32.add (local.get $dst) (i32.const 6))) (i32.const 0x11CF))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 8)) (i32.const 0x4544C7BF))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 12)) (i32.const 0x00005453)))
+
+  (func $di_write_device_name (param $dst i32) (param $kind i32)
+    (if (i32.eq (local.get $kind) (i32.const 2))
+      (then
+        (call $gs32 (local.get $dst) (i32.const 0x73756F4D)) ;; "Mous"
+        (i32.store16 (call $g2w (i32.add (local.get $dst) (i32.const 4))) (i32.const 0x0065)))
+      (else
+        (call $gs32 (local.get $dst) (i32.const 0x6279654B)) ;; "Keyb"
+        (call $gs32 (i32.add (local.get $dst) (i32.const 4)) (i32.const 0x6472616F)) ;; "oard"
+        (i32.store8 (call $g2w (i32.add (local.get $dst) (i32.const 8))) (i32.const 0)))))
+
+  ;; DIDEVICEINSTANCEA. DirectX 3 callers receive the documented DX3 shape
+  ;; (560 bytes); DirectInput 5/7/8 callers receive the full 580-byte shape.
+  (func $di_fill_device_instance
+        (param $dst i32) (param $kind i32) (param $version i32) (param $size i32)
+    (local $dev_type i32)
+    (call $zero_memory (call $g2w (local.get $dst)) (local.get $size))
+    (call $gs32 (local.get $dst) (local.get $size))
+    (call $di_fill_system_guid (i32.add (local.get $dst) (i32.const 4))
+      (select (i32.const 0x6F1D2B60) (i32.const 0x6F1D2B61)
+        (i32.eq (local.get $kind) (i32.const 2))))
+    (call $di_fill_system_guid (i32.add (local.get $dst) (i32.const 20))
+      (select (i32.const 0x6F1D2B60) (i32.const 0x6F1D2B61)
+        (i32.eq (local.get $kind) (i32.const 2))))
+    (if (i32.ge_u (local.get $version) (i32.const 0x0800))
+      (then
+        (local.set $dev_type
+          (select (i32.const 0x0212) (i32.const 0x0413)
+            (i32.eq (local.get $kind) (i32.const 2)))))
+      (else
+        (local.set $dev_type
+          (select (i32.const 0x0202) (i32.const 0x0403)
+            (i32.eq (local.get $kind) (i32.const 2))))))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 36)) (local.get $dev_type))
+    (call $di_write_device_name (i32.add (local.get $dst) (i32.const 40)) (local.get $kind))
+    (call $di_write_device_name (i32.add (local.get $dst) (i32.const 300)) (local.get $kind)))
+
+  (func $di_hex_digit (param $v i32) (result i32)
+    (if (result i32) (i32.lt_u (local.get $v) (i32.const 10))
+      (then (i32.add (local.get $v) (i32.const 0x30)))
+      (else (i32.add (local.get $v) (i32.const 0x37)))))
+
+  ;; DIDEVICEOBJECTINSTANCEA. Mouse offsets match DIMOUSESTATE; keyboard
+  ;; offsets are DIK scan codes, which is the standard c_dfDIKeyboard layout.
+  (func $di_fill_object_instance
+        (param $dst i32) (param $kind i32) (param $index i32) (param $version i32)
+    (local $size i32) (local $data1 i32) (local $ofs i32) (local $obj_type i32)
+    (local.set $size
+      (select (i32.const 292) (i32.const 316)
+        (i32.le_u (local.get $version) (i32.const 0x0300))))
+    (call $zero_memory (call $g2w (local.get $dst)) (local.get $size))
+    (call $gs32 (local.get $dst) (local.get $size))
+    (if (i32.eq (local.get $kind) (i32.const 2))
+      (then
+        (if (i32.lt_u (local.get $index) (i32.const 3))
+          (then
+            (local.set $data1 (i32.add (i32.const 0xA36D02E0) (local.get $index)))
+            (local.set $ofs (i32.shl (local.get $index) (i32.const 2)))
+            (local.set $obj_type
+              (i32.or (i32.const 1) (i32.shl (local.get $index) (i32.const 8))))
+            (if (i32.eqz (local.get $index))
+              (then (call $gs32 (i32.add (local.get $dst) (i32.const 32)) (i32.const 0x78612D58))) ;; X-ax
+              (else (if (i32.eq (local.get $index) (i32.const 1))
+                (then (call $gs32 (i32.add (local.get $dst) (i32.const 32)) (i32.const 0x78612D59))) ;; Y-ax
+                (else (call $gs32 (i32.add (local.get $dst) (i32.const 32)) (i32.const 0x65656857)))))) ;; Whee
+            (if (i32.lt_u (local.get $index) (i32.const 2))
+              (then
+                (i32.store16 (call $g2w (i32.add (local.get $dst) (i32.const 36))) (i32.const 0x0073))) ;; s
+              (else
+                (i32.store16 (call $g2w (i32.add (local.get $dst) (i32.const 36))) (i32.const 0x006C))))) ;; l
+          (else
+            (local.set $data1 (i32.const 0xA36D02F0))
+            (local.set $ofs (i32.add (i32.const 12) (i32.sub (local.get $index) (i32.const 3))))
+            (local.set $obj_type
+              (i32.or (i32.const 4) (i32.shl (local.get $index) (i32.const 8))))
+            (call $gs32 (i32.add (local.get $dst) (i32.const 32)) (i32.const 0x74747542)) ;; Butt
+            (call $gs32 (i32.add (local.get $dst) (i32.const 36)) (i32.const 0x30206E6F)) ;; on 0
+            (i32.store8 (call $g2w (i32.add (local.get $dst) (i32.const 39)))
+              (i32.add (i32.const 0x30) (i32.sub (local.get $index) (i32.const 3)))))))
+      (else
+        (local.set $data1 (i32.const 0x55728220)) ;; GUID_Key
+        (local.set $ofs (local.get $index))
+        (local.set $obj_type
+          (i32.or (i32.const 4) (i32.shl (local.get $index) (i32.const 8))))
+        (call $gs32 (i32.add (local.get $dst) (i32.const 32)) (i32.const 0x2079654B)) ;; "Key "
+        (i32.store8 (call $g2w (i32.add (local.get $dst) (i32.const 36))) (i32.const 0x30))
+        (i32.store8 (call $g2w (i32.add (local.get $dst) (i32.const 37))) (i32.const 0x78))
+        (i32.store8 (call $g2w (i32.add (local.get $dst) (i32.const 38)))
+          (call $di_hex_digit (i32.shr_u (local.get $index) (i32.const 4))))
+        (i32.store8 (call $g2w (i32.add (local.get $dst) (i32.const 39)))
+          (call $di_hex_digit (i32.and (local.get $index) (i32.const 15))))))
+    (call $di_fill_object_guid (i32.add (local.get $dst) (i32.const 4)) (local.get $data1))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 20)) (local.get $ofs))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 24)) (local.get $obj_type)))
+
+  (func $di_enum_finish (param $frame i32)
+    (global.set $eip (call $gl32 (i32.add (local.get $frame) (i32.const 4))))
+    (global.set $esp (i32.add (local.get $frame) (global.get $DI_ENUM_FRAME_SIZE)))
+    (global.set $eax (i32.const 0)))
+
+  (func $di_enum_invoke (param $frame i32)
+    (local $desc i32)
+    (local.set $desc (i32.add (local.get $frame) (i32.const 40)))
+    (global.set $esp (i32.sub (local.get $frame) (i32.const 4)))
+    (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $frame) (i32.const 12))))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $desc))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
+    (global.set $eip (call $gl32 (i32.add (local.get $frame) (i32.const 8)))))
+
+  (func $di_enum_dispatch
+    (local $frame i32) (local $kind i32) (local $filter i32) (local $index i32)
+    (local $device_kind i32) (local $version i32) (local $flags i32) (local $obj_type i32)
+    (local $desc i32) (local $match i32)
+    (local.set $frame (global.get $esp))
+    (local.set $kind (call $gl32 (i32.add (local.get $frame) (i32.const 16))))
+    (local.set $filter (call $gl32 (i32.add (local.get $frame) (i32.const 20))))
+    (local.set $version (call $gl32 (i32.add (local.get $frame) (i32.const 36))))
+    (local.set $desc (i32.add (local.get $frame) (i32.const 40)))
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then
+        (local.set $flags (call $gl32 (i32.add (local.get $frame) (i32.const 32))))
+        (loop $devices
+          (local.set $index (call $gl32 (i32.add (local.get $frame) (i32.const 24))))
+          (if (i32.ge_u (local.get $index) (i32.const 2))
+            (then (call $di_enum_finish (local.get $frame)) (return)))
+          (call $gs32 (i32.add (local.get $frame) (i32.const 24))
+            (i32.add (local.get $index) (i32.const 1)))
+          (local.set $device_kind
+            (select (i32.const 2) (i32.const 1) (i32.eqz (local.get $index))))
+          (local.set $match (i32.eqz (local.get $filter)))
+          (if (i32.ge_u (local.get $version) (i32.const 0x0800))
+            (then
+              (if (i32.eq (local.get $device_kind) (i32.const 2))
+                (then (local.set $match (i32.or (local.get $match)
+                  (i32.or (i32.eq (local.get $filter) (i32.const 2))
+                          (i32.eq (local.get $filter) (i32.const 0x12))))))
+                (else (local.set $match (i32.or (local.get $match)
+                  (i32.or (i32.eq (local.get $filter) (i32.const 3))
+                          (i32.eq (local.get $filter) (i32.const 0x13))))))))
+            (else
+              (local.set $match (i32.or (local.get $match)
+                (i32.eq (local.get $filter)
+                  (select (i32.const 2) (i32.const 3)
+                    (i32.eq (local.get $device_kind) (i32.const 2))))))))
+          ;; Neither system device supports force feedback.
+          (if (i32.or (i32.eqz (local.get $match))
+                      (i32.ne (i32.and (local.get $flags) (i32.const 0x100)) (i32.const 0)))
+            (then (br $devices)))
+          (call $di_fill_device_instance (local.get $desc) (local.get $device_kind)
+            (local.get $version)
+            (select (i32.const 560) (i32.const 580)
+              (i32.le_u (local.get $version) (i32.const 0x0300))))
+          (call $di_enum_invoke (local.get $frame))
+          (return)))
+      (else
+        (local.set $device_kind (call $gl32 (i32.add (local.get $frame) (i32.const 28))))
+        (loop $objects
+          (local.set $index (call $gl32 (i32.add (local.get $frame) (i32.const 24))))
+          (if (i32.eq (local.get $device_kind) (i32.const 2))
+            (then
+              (if (i32.ge_u (local.get $index) (i32.const 6))
+                (then (call $di_enum_finish (local.get $frame)) (return)))
+              (call $gs32 (i32.add (local.get $frame) (i32.const 24))
+                (i32.add (local.get $index) (i32.const 1)))
+              (local.set $obj_type
+                (select (i32.const 1) (i32.const 4) (i32.lt_u (local.get $index) (i32.const 3)))))
+            (else
+              (loop $keys
+                (if (i32.ge_u (local.get $index) (i32.const 256))
+                  (then (call $di_enum_finish (local.get $frame)) (return)))
+                (call $gs32 (i32.add (local.get $frame) (i32.const 24))
+                  (i32.add (local.get $index) (i32.const 1)))
+                (if (i32.eqz (call $di_dik_to_vk_strict (local.get $index)))
+                  (then
+                    (local.set $index (i32.add (local.get $index) (i32.const 1)))
+                    (br $keys))))
+              (local.set $obj_type (i32.const 4))))
+          (if (i32.and (i32.ne (local.get $filter) (i32.const 0))
+                       (i32.eqz (i32.and (local.get $filter) (local.get $obj_type))))
+            (then (br $objects)))
+          (call $di_fill_object_instance (local.get $desc) (local.get $device_kind)
+            (local.get $index) (local.get $version))
+          (call $di_enum_invoke (local.get $frame))
+          (return)))))
+
+  ;; Resume after a guest callback. DirectInput treats zero as DIENUM_STOP;
+  ;; any nonzero value continues, as Win32 callback code commonly returns TRUE.
+  (func $di_enum_continue
+    (local $frame i32)
+    (local.set $frame (global.get $esp))
+    (if (i32.eqz (global.get $eax))
+      (then (call $di_enum_finish (local.get $frame)))
+      (else (call $di_enum_dispatch))))
+
+  ;; EnumDevices(this, dwDevType, callback, pvRef, dwFlags)
   (func $handle_IDirectInput_EnumDevices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Simplified: don't call the callback, just return success
-    ;; MARBLES creates devices by GUID, not by enumeration
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+    (local $ret i32) (local $frame i32) (local $entry i32) (local $version i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $version (i32.load offset=8 (local.get $entry)))
+    (if (i32.eqz (local.get $version)) (then (local.set $version (i32.const 0x0700))))
+    (if (i32.or (i32.eqz (local.get $arg2))
+          (i32.ne (i32.and (local.get $arg4) (i32.const 0xFEFAFEFE)) (i32.const 0)))
+      (then (global.set $eax (i32.const 0x80070057)) (return))) ;; DIERR_INVALIDPARAM
+    (if (i32.lt_u (local.get $version) (i32.const 0x0800))
+      (then
+        (if (i32.gt_u (local.get $arg1) (i32.const 4))
+          (then (global.set $eax (i32.const 0x80070057)) (return))))
+      (else
+        (if (i32.and (i32.gt_u (local.get $arg1) (i32.const 4))
+                     (i32.or (i32.lt_u (local.get $arg1) (i32.const 0x11))
+                             (i32.gt_u (local.get $arg1) (i32.const 0x1C))))
+          (then (global.set $eax (i32.const 0x80070057)) (return)))))
+    (global.set $esp (i32.sub (global.get $esp) (global.get $DI_ENUM_FRAME_SIZE)))
+    (local.set $frame (global.get $esp))
+    (call $gs32 (local.get $frame) (i32.const 0x4E454944)) ;; "DIEN"
+    (call $gs32 (i32.add (local.get $frame) (i32.const 4)) (local.get $ret))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 8)) (local.get $arg2))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 12)) (local.get $arg3))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 16)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 20)) (local.get $arg1))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 24)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 28)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 32)) (local.get $arg4))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 36)) (local.get $version))
+    (call $di_enum_dispatch))
 
   ;; GetDeviceStatus — always OK
   (func $handle_IDirectInput_GetDeviceStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -5526,6 +5782,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectInput_Initialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=8 (call $dx_from_this (local.get $arg0)) (local.get $arg2))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
@@ -5563,34 +5820,71 @@
     (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; GetCapabilities — return basic caps
+  ;; GetCapabilities — preserve the caller-selected DX3/full structure size
+  ;; and report the pre-DX8 device type when used through a Win98-era face.
   (func $handle_IDirectInputDevice_GetCapabilities (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $entry i32)
+    (local $wa i32) (local $entry i32) (local $size i32) (local $version i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (local.set $wa (call $g2w (local.get $arg1)))
     (local.set $entry (call $dx_from_this (local.get $arg0)))
-    ;; DIDEVCAPS: dwSize=44, dwFlags, dwDevType, dwAxes, dwButtons, dwPOVs
-    ;; Just zero it and set dwSize
-    (call $zero_memory (local.get $wa) (i32.const 44))
-    (i32.store (local.get $wa) (i32.const 44))
+    (local.set $size (call $gl32 (local.get $arg1)))
+    (if (i32.and (i32.ne (local.get $size) (i32.const 24))
+                 (i32.ne (local.get $size) (i32.const 44)))
+      (then
+        (global.set $eax (i32.const 0x80070057))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $version (i32.load offset=16 (local.get $entry)))
+    (if (i32.eqz (local.get $version)) (then (local.set $version (i32.const 0x0700))))
+    (call $zero_memory (local.get $wa) (local.get $size))
+    (i32.store (local.get $wa) (local.get $size))
     (if (i32.eq (i32.load (i32.add (local.get $entry) (i32.const 8))) (i32.const 1))
       (then
-        ;; Keyboard
-        (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x11)) ;; DI8DEVTYPE_KEYBOARD
+        (i32.store (i32.add (local.get $wa) (i32.const 8))
+          (select (i32.const 0x0413) (i32.const 0x0403)
+            (i32.ge_u (local.get $version) (i32.const 0x0800))))
         (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 256)))) ;; 256 keys
     (if (i32.eq (i32.load (i32.add (local.get $entry) (i32.const 8))) (i32.const 2))
       (then
-        ;; Mouse
-        (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x12)) ;; DI8DEVTYPE_MOUSE
+        (i32.store (i32.add (local.get $wa) (i32.const 8))
+          (select (i32.const 0x0212) (i32.const 0x0202)
+            (i32.ge_u (local.get $version) (i32.const 0x0800))))
         (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 3)) ;; 3 axes
         (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 3)))) ;; 3 buttons
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; EnumObjects — no-op
+  ;; EnumObjects(this, callback, pvRef, dwFlags)
   (func $handle_IDirectInputDevice_EnumObjects (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    ;; COM this + callback + ref + flags, plus the return address.
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+    (local $ret i32) (local $frame i32) (local $entry i32) (local $version i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
+      (then (global.set $eax (i32.const 0x80070057)) (return)))
+    ;; DIDFT_AXIS|BUTTON|POV|COLLECTION|NODATA are the documented filters.
+    (if (i32.ne (i32.and (local.get $arg3) (i32.const 0xFFFFFF20)) (i32.const 0))
+      (then (global.set $eax (i32.const 0x80070057)) (return)))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $version (i32.load offset=16 (local.get $entry)))
+    (if (i32.eqz (local.get $version)) (then (local.set $version (i32.const 0x0700))))
+    (global.set $esp (i32.sub (global.get $esp) (global.get $DI_ENUM_FRAME_SIZE)))
+    (local.set $frame (global.get $esp))
+    (call $gs32 (local.get $frame) (i32.const 0x4E454944)) ;; "DIEN"
+    (call $gs32 (i32.add (local.get $frame) (i32.const 4)) (local.get $ret))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 8)) (local.get $arg1))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 12)) (local.get $arg2))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 16)) (i32.const 2))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 20)) (local.get $arg3))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 24)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 28))
+      (i32.load offset=8 (local.get $entry)))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 32)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 36)) (local.get $version))
+    (call $di_enum_dispatch))
 
   ;; GetProperty / SetProperty. DirectInput encodes predefined properties as
   ;; small REFGUID values; DIPROP_BUFFERSIZE is (REFGUID)1 and its value is the
@@ -6030,8 +6324,28 @@
     (global.set $eax (i32.const 0x80004001))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  ;; GetDeviceInfo — stub
+  ;; GetDeviceInfo(this, DIDEVICEINSTANCEA*) accepts the full structure and
+  ;; the explicit DirectX 3 compatibility shape selected by the caller.
   (func $handle_IDirectInputDevice_GetDeviceInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $size i32) (local $version i32) (local $kind i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $size (call $gl32 (local.get $arg1)))
+    (if (i32.and (i32.ne (local.get $size) (i32.const 560))
+                 (i32.ne (local.get $size) (i32.const 580)))
+      (then
+        (global.set $eax (i32.const 0x80070057))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $kind (i32.load offset=8 (local.get $entry)))
+    (local.set $version (i32.load offset=16 (local.get $entry)))
+    (if (i32.eqz (local.get $version)) (then (local.set $version (i32.const 0x0700))))
+    (call $di_fill_device_instance (local.get $arg1) (local.get $kind)
+      (local.get $version) (local.get $size))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
