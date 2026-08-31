@@ -1887,7 +1887,7 @@
   ;; the own surface for a visible custom child with the same extent.
   (func $gdi_win16_autopresent_child_bitmap (param $hdc i32) (result i32)
     (local $dc i32) (local $bmp i32) (local $w i32) (local $h i32) (local $surface i32)
-    (local $i i32) (local $hwnd i32) (local $wh i32)
+    (local $i i32) (local $hwnd i32) (local $wh i32) (local $child_w i32) (local $child_h i32)
     (if (i32.eqz (call $win16_vbrun100_loaded))
       (then (return (i32.const 0))))
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
@@ -1916,9 +1916,21 @@
             (call $wnd_is_effectively_visible (local.get $hwnd)))
         (then
           (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
+          (local.set $child_w (i32.and (local.get $wh) (i32.const 0xFFFF)))
+          (local.set $child_h (i32.shr_u (local.get $wh) (i32.const 16)))
+          ;; VB1 sometimes keeps a one-pixel/right-bottom padded AutoRedraw
+          ;; bitmap for a PictureBox: Rodent's Revenge draws its 32x32
+          ;; stopwatch into a 34x34 memory bitmap, then the stale 32x32 child
+          ;; surface composites over the freshly-copied parent pixels unless
+          ;; the larger backing surface is adopted by the child. Keep the
+          ;; match tight so unrelated sprite sheets are not attached.
           (if (i32.and
-                (i32.eq (i32.and (local.get $wh) (i32.const 0xFFFF)) (local.get $w))
-                (i32.eq (i32.shr_u (local.get $wh) (i32.const 16)) (local.get $h)))
+                (i32.and
+                  (i32.ge_u (local.get $w) (local.get $child_w))
+                  (i32.le_u (local.get $w) (i32.add (local.get $child_w) (i32.const 2))))
+                (i32.and
+                  (i32.ge_u (local.get $h) (local.get $child_h))
+                  (i32.le_u (local.get $h) (i32.add (local.get $child_h) (i32.const 2)))))
             (then
               (return (call $host_gdi_surface_attach
                 (local.get $surface) (local.get $hwnd)))))))

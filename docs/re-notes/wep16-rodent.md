@@ -115,3 +115,16 @@ the v86 provenance); the 2026-08-22 wine-assembly capture beside it is a good
 before-image for this area. Native runs at 4-bit VGA, so the board reads tan and
 teal there against our olive and green — that difference is the palette, not a
 bug.
+
+## Stopwatch AutoRedraw padding (fixed 2026-08-31)
+
+The v86 reference shows the analog stopwatch only after gameplay starts. The
+VB1 runtime draws that 32x32 PictureBox through a 34x34 AutoRedraw memory
+bitmap, then copies it into the parent status strip. If the compositor keeps
+the previous 32x32 child surface attached, that stale white surface covers the
+fresh parent pixels and the clock appears as a blank square.
+
+`$gdi_win16_autopresent_child_bitmap` therefore accepts VBRUN100 child backing
+bitmaps up to two pixels larger than the child in each dimension. The match
+stays tight enough to avoid attaching unrelated sprite sheets, while covering
+Rodent's padded stopwatch bitmap.

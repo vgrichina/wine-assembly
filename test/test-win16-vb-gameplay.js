@@ -96,6 +96,11 @@ function testRodent(outDir) {
   assert.match(output, /keydown vk=39/, 'Rodent Right key must reach the renderer');
   assert(changedPixels(before, after, { x: 180, y: 116, w: 276, h: 276 }) > 40,
     'Rodent board should visibly advance after holding Right');
+  const clock = colorBounds(after, { x: 302, y: 84, w: 34, h: 34 },
+    (r, g, b) => r < 80 && g < 80 && b < 80);
+  assert(clock.count > 60 && clock.width > 16 && clock.height > 16,
+    `Rodent stopwatch must remain visible after gameplay starts ` +
+    `(dark bounds=${clock.width}x${clock.height}, pixels=${clock.count})`);
   console.log('PASS  Win16 Rodent starts a new game and responds to Right');
 }
 
