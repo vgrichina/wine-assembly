@@ -83,6 +83,12 @@ const REQUIRED_FILES = [
   'test/watx-compiler-br-table.test.js',
   'test/watx-compiler-bulk-memory.test.js',
   'test/watx-compiler-simd.test.js',
+  // Milestone 2 gap-closure suites (docs/watx-migration-gaps.md G1-G4, G6, G7).
+  'test/watx-compiler-atomics.test.js',
+  'test/watx-compiler-simd-ops.test.js',
+  'test/watx-compiler-simd-memarg.test.js',
+  'test/watx-compiler-block-result.test.js',
+  'test/watx-compiler-lanes.test.js',
 ];
 
 function fail(msg) {

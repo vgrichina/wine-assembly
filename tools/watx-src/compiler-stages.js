@@ -220,6 +220,9 @@ function checkTypes(forms, options = {}) {
       // SIMD (v128) first — scalar-returning extracts/reductions BEFORE the shape-prefix
       // fallback, so `(let $x (i32x4.extract_lane v 0))` types $x as i32, not v128.
       if(hd==="v128.any_true"||hd==="i8x16.all_true"||hd==="i16x8.all_true"||hd==="i32x4.all_true"||hd==="i64x2.all_true") return"i32";
+      // bitmask reduces a vector to a scalar mask (migration gap G2) -- must be checked
+      // before the shape-prefix fallback below, exactly like all_true/extract_lane.
+      if(hd==="i8x16.bitmask"||hd==="i16x8.bitmask"||hd==="i32x4.bitmask"||hd==="i64x2.bitmask") return"i32";
       if(hd==="i8x16.extract_lane_s"||hd==="i8x16.extract_lane_u"||hd==="i16x8.extract_lane_s"||hd==="i16x8.extract_lane_u"||hd==="i32x4.extract_lane") return"i32";
       if(hd==="i64x2.extract_lane") return"i64";
       if(hd==="f32x4.extract_lane") return"f32";
@@ -236,7 +239,16 @@ function checkTypes(forms, options = {}) {
       if(hd==="if"){if(T(A(expr,1))==="symbol"&&["i32","i64","f32","f64","v128"].indexOf(V(A(expr,1)))>=0)return stackType(V(A(expr,1)));return"i32";}
       if(hd==="select")return N(expr)>=3?synthesize(A(expr,1)):"i32";
       if(hd==="region.alloc"||hd==="set!"||hd==="local.set"||hd==="store.field"||hd==="store.elem"||hd==="store.field-elem")return"i32";
-      if(hd==="block"||hd==="loop"||hd==="begin"||hd==="with-region")return N(expr)>=2?synthesize(A(expr,N(expr)-1)):"i32";
+      // block/loop may carry a standard (result T) signature (migration gap G4); it wins
+      // over the "type of the last body expression" guess.
+      if(hd==="block"||hd==="loop"){
+        var lb=T(A(expr,1))==="symbol"&&V(A(expr,1))&&V(A(expr,1)).charAt(0)==="$";
+        var sig=A(expr,lb?2:1);
+        if(Array.isArray(sig)&&V(A(sig,0))==="result") return stackType(V(A(sig,1))||"i32");
+        if(sig&&!Array.isArray(sig)&&T(sig)==="symbol"&&VALTYPE_TOKENS.indexOf(V(sig))>=0) return stackType(V(sig));
+        return N(expr)>=2?synthesize(A(expr,N(expr)-1)):"i32";
+      }
+      if(hd==="begin"||hd==="with-region")return N(expr)>=2?synthesize(A(expr,N(expr)-1)):"i32";
       if(["nop","drop","br","br_if","return"].indexOf(hd)>=0)return"i32";return"i32";}
     function checkExpr(expr,expected,context){var actual=synthesize(expr);if(actual!==expected)addWarning("Type mismatch in "+context+": expected "+expected+", got "+actual,expr);}
     function walkExpr(expr){if(!Array.isArray(expr))return;var hd=V(A(expr,0));if(!hd)return;
@@ -252,7 +264,15 @@ function checkTypes(forms, options = {}) {
       if(hd==="with-region"){for(var i=3;i<N(expr);i++)if(Array.isArray(A(expr,i)))walkExpr(A(expr,i));return;}
       if(hd==="begin"||hd==="block"){for(var i=1;i<N(expr);i++)walkExpr(A(expr,i));return;}
       if(hd==="loop"){for(var i=2;i<N(expr);i++)walkExpr(A(expr,i));return;}
-      if(hd==="br_if"){var hl=T(A(expr,1))==="symbol"&&V(A(expr,1))&&V(A(expr,1)).charAt(0)==="$";var cond=hl?A(expr,2):A(expr,1);if(cond){checkExpr(cond,"i32","br_if condition");walkExpr(cond);}return;}
+      // br_if: the CONDITION is always the last operand. The standard folded form for a
+      // typed target block carries a branch value before it (migration gap G4), so
+      // reading argument 2 unconditionally would type-check the wrong expression.
+      if(hd==="br_if"){var hl=T(A(expr,1))==="symbol"&&V(A(expr,1))&&V(A(expr,1)).charAt(0)==="$";
+        var cond=hl?A(expr,N(expr)-1):A(expr,1);
+        if(hl&&N(expr)<3)cond=null;
+        if(cond){checkExpr(cond,"i32","br_if condition");walkExpr(cond);}
+        if(hl&&N(expr)>3)walkExpr(A(expr,2));
+        return;}
       // br_table accepts both standard folded WAT and the explicit WATX labels group:
       //   (br_table $l0 $l1 ... $default <i32-idx-expr>)
       //   (br_table (labels $l0 $l1 ...) $default <i32-idx-expr>)

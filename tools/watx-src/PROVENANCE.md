@@ -81,8 +81,8 @@ at the bottom of this file, not left to whoever is editing.
 ```sha256
 cc9dfe2962214e5da09162844e98d359b825009a8388bb7726edaed729b37ee2  tools/watx.js
 1b93cca731ffc63803cdd6042115bbb66da1ff8cbe6fac86ae99fd8c12485aaa  tools/watx-src/compiler-parser.js
-f66cef4b7f0456706196f046042692df1fd78e55f00196fd9346fde65a1f88b4  tools/watx-src/compiler-stages.js
-1143239ec045b8c8482a0604036fca0e5a06c1a9412ee5f1cb4cba77b1a2e0d5  tools/watx-src/compiler-codegen.js
+adc53dbf4aad93f30429a69527ca8d4b7b6db53c6abe8b57b7244ca40ba1b3e4  tools/watx-src/compiler-stages.js
+873234c0d998d03ebeefdbccae41c01ede9b19391b82d3fb38aecbad5be0e4c6  tools/watx-src/compiler-codegen.js
 40f9bc10c5405f4930619bff535d4d435cb68a3e6bb762d32bc32058b99af453  tools/watx-src/compiler.js
 293c1a233359bf142bf5badceb3399c92b79a653a86085681142b2037d80fce4  test/watx-compiler-wine-parity.test.js
 aaea455c646e4db3e1b60c034b32bda842c06babd29d8de3b810d73181ecf2c8  test/watx-compiler-production.test.js
@@ -90,6 +90,11 @@ a62f1ab8fc157e97fa0ed2bb9ce321464a0b792c4d218e6bbd649c29b06c6519  test/watx-comp
 5dc16a25724f8a77179a45cc5113de820c35dfaf2b620d8a940ba6c1aca275f8  test/watx-compiler-br-table.test.js
 afd4baa36b08662bbba4bc6c0ae6fa695165f9b8a2bfe2d4798d78bdfb3cadbe  test/watx-compiler-bulk-memory.test.js
 12ae3c4940039d44b02205d8144a94b321b93ca394b9923396d4da3fdcd54ecc  test/watx-compiler-simd.test.js
+8f3d40789b71d0b93892aa6117362ab5eb171101f794df680d95e34fe20a57e1  test/watx-compiler-atomics.test.js
+044022190b5888f5c69f2c480a7501bbeb75de543a7b9ec0c1c34c9a7def6036  test/watx-compiler-simd-ops.test.js
+29cf15495c2232e61c104e070054b26c8c63ac141fa29c3ce19c2cba014c8fea  test/watx-compiler-simd-memarg.test.js
+c8b1f6a5361212e835ba7f4478800008c41c53041f380bf21b6a6a11cfb43e5d  test/watx-compiler-block-result.test.js
+5958957d1baeef1f1fd3fe7c1b5a9c67a5cb53a4665196a71d818d732298ed88  test/watx-compiler-lanes.test.js
 ```
 
 Every hash above matches the android-emu working tree byte for byte except
@@ -134,6 +139,6 @@ without re-sealing. Both lines are rewritten together by
 CHANGELOG already names the new digest.
 
 ```seal
-manifest-sha256   b8dc6490e2fbb757fb08f6acef0c0f860eb549e809003950804afc96ae893256
-changelog-sha256  e63dcc3a915b71af5c4d77312cadf49950486c62c363e06e94f5db2b5792d100
+manifest-sha256   ad565a9e69ce06e0f3f1100f415409fa19385999341de232ba1afd167ab1192a
+changelog-sha256  a6ec384732cf71d48d6cc32d678958a0e77ffbda5e8a36cf8717112f4c08e38e
 ```

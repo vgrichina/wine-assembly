@@ -169,6 +169,10 @@ var WATX_SIMD_BINARY_OPS = null;
 var WATX_SIMD_UNARY_OPS = null;
 var WATX_SIMD_SHIFT_OPS = null;
 var WATX_SIMD_SPLAT_OPS = null;
+var WATX_SIMD_BITMASK_OPS = null;
+var WATX_SIMD_MEM_OPS = null;
+var WATX_SIMD_LANE_MEM_OPS = null;
+var WATX_ATOMIC_OPS = null;
 var WATX_LOAD_OPS = null;
 var WATX_STORE_OPS = null;
 
@@ -858,6 +862,54 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
   // ── Check if an expression produces a value on the Wasm stack ──
   // Returns false for void-returning calls, void if/block/loop, br, br_if, return, nop
+  // ── Shared memarg parser ────────────────────────────────────────────────────
+  // Consumes a run of standard `offset=N` / `align=N` symbols starting at logical
+  // argument index `argIdx` (1 = first operand after the head) and returns the resolved
+  // memarg plus the index of the first argument that is not a memarg. One parser serves
+  // the scalar loads/stores, the v128 memory ops (migration gap G3 — these previously
+  // hard-coded align=4 offset=0 and rejected `offset=16` outright) and the atomics.
+  //
+  // `requireNatural` is the threads proposal's rule: an atomic access MUST be naturally
+  // aligned, so an explicit `align=` that disagrees is a hard error rather than a hint
+  // the engine is free to reinterpret.
+  function parseMemarg(expr, argIdx, head, naturalAlign, requireNatural) {
+    let offset = 0, align = naturalAlign, i = argIdx, sawAlign = false;
+    while (T(expr[i + 1]) === 'symbol' && /^(offset|align)=/.test(V(expr[i + 1]))) {
+      const [key, raw] = V(expr[i + 1]).split('=');
+      i++;
+      const n = parseInt(raw);
+      if (!Number.isInteger(n) || n < 0) throw new Error(`Invalid ${key} memarg '${raw}' in ${head}`);
+      if (key === 'offset') offset = n;
+      else {
+        if (n === 0 || (n & (n - 1)) !== 0) throw new Error(`align=${n} must be a positive power of two in ${head}`);
+        align = Math.log2(n);
+        sawAlign = true;
+      }
+    }
+    if (requireNatural && sawAlign && align !== naturalAlign) {
+      throw new Error(
+        `${head}: atomic accesses require natural alignment — align=${1 << align} given, ` +
+        `align=${1 << naturalAlign} required`);
+    }
+    return { offset, align, next: i };
+  }
+
+  // ── block / loop signature ─────────────────────────────────────────────────
+  // Returns the declared result valtype of a `(block $l (result T) …)` / `(loop …)`,
+  // or null when the node is not a signature at all. Also accepts the bare-valtype
+  // spelling `if` already takes. An unknown type name is a hard error rather than a
+  // silent fall back to void — that fall-back is what migration gap G4 was.
+  function blockSignature(node, head) {
+    const named = ['i32', 'i64', 'f32', 'f64', 'v128'];
+    if (Array.isArray(node) && V(node[1]) === 'result') {
+      const t = V(node[2]);
+      if (!named.includes(t)) throw new Error(`${head}: unknown (result ${t}) type`);
+      return t;
+    }
+    if (!Array.isArray(node) && T(node) === 'symbol' && named.includes(V(node))) return V(node);
+    return null;
+  }
+
   function exprProducesValue(expr, func) {
     if (!expr) return false;
     if (!Array.isArray(expr)) {
@@ -871,7 +923,16 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     
     // Constants always produce values
     if (head === 'i32.const' || head === 'f32.const' || head === 'i64.const' || head === 'f64.const') return true;
-    
+
+    // Atomics (threads proposal). Loads, rmw, notify and wait all push a value; a fence
+    // pushes nothing; a store follows the same rule as the scalar stores — void in
+    // standard-WAT mode, the WATX i32 0 convention otherwise.
+    if (typeof head === 'string' && (head === 'atomic.fence' || head.indexOf('.atomic.') > 0)) {
+      if (head === 'atomic.fence') return false;
+      if (head.indexOf('.atomic.store') > 0) return !standardWat;
+      return true;
+    }
+
     // Arithmetic, comparison, unary, conversion ops produce values
     const valueOps = WATX_VALUE_OPS || (WATX_VALUE_OPS = new Set([
       'i32.add','i32.sub','i32.mul','i32.div_s','i32.div_u','i32.rem_s','i32.rem_u',
@@ -927,8 +988,13 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     if (typeof head === 'string' && (
         head.startsWith('v128.') || head.startsWith('i8x16.') || head.startsWith('i16x8.') ||
         head.startsWith('i32x4.') || head.startsWith('i64x2.') ||
-        head.startsWith('f32x4.') || head.startsWith('f64x2.'))) return true;
-    
+        head.startsWith('f32x4.') || head.startsWith('f64x2.'))) {
+      // v128.store / v128.storeN_lane follow the scalar store rule: void in standard-WAT
+      // mode, the legacy WATX i32 0 convention otherwise.
+      if (head.startsWith('v128.store')) return !standardWat;
+      return true;
+    }
+
     // call — depends on whether function has results
     if (head === 'call') {
       const funcName = V(expr[2]);
@@ -985,15 +1051,16 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       return exprProducesValue(thenE, func) && exprProducesValue(elseE, func);
     }
     
-    // loop — void in our compiler
-    if (head === 'loop') return false;
-    // block — an UNLABELED block yields the value of its last expression (like
-    // begin), so it can be used as a value (e.g. an if-arm). A LABELED block
-    // stays void: making it value-typed would require every br to it to carry
-    // the result value, which the break-style blocks throughout the codebase do
-    // not do.
-    if (head === 'block') {
+    // block / loop — an explicit `(result T)` signature (migration gap G4) makes either
+    // one a value. Without a signature the historical rule stands: a loop is void, and
+    // an UNLABELED block yields the value of its last expression (like begin) so it can
+    // be used as an if-arm, while a LABELED one stays void — value-typing it implicitly
+    // would require every br to it to carry a value, which the break-style blocks
+    // throughout the codebase do not do.
+    if (head === 'block' || head === 'loop') {
       const labeled = T(expr[2]) === 'symbol' && V(expr[2]).startsWith('$');
+      if (blockSignature(expr[labeled ? 3 : 2], head) !== null) return true;
+      if (head === 'loop') return false;
       if (labeled || (expr.length - 1) < 2) return false;
       return exprProducesValue(expr[expr.length - 1], func);
     }
@@ -1319,6 +1386,27 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       // Lane-narrowing (pairs of narrow-source lanes -> destination lanes)
       'i8x16.narrow_i16x8_s': 0x65, 'i8x16.narrow_i16x8_u': 0x66,
       'i16x8.narrow_i32x4_s': 0x85, 'i16x8.narrow_i32x4_u': 0x86,
+      // ── Migration gap G2: standard fixed-width SIMD ops that were absent ──
+      // Saturating add/sub. These are the reason the class matters: the unsaturated
+      // twin computes a DIFFERENT number for the same inputs (0xF0 + 0x30 is 0xFF here
+      // and 0x20 for i8x16.add), so a missing entry cannot be papered over.
+      'i8x16.add_sat_s': 0x6F, 'i8x16.add_sat_u': 0x70,
+      'i8x16.sub_sat_s': 0x72, 'i8x16.sub_sat_u': 0x73,
+      'i16x8.add_sat_s': 0x8F, 'i16x8.add_sat_u': 0x90,
+      'i16x8.sub_sat_s': 0x92, 'i16x8.sub_sat_u': 0x93,
+      // Rounding average (NEON URHADD) and the Q15 fixed-point multiply.
+      'i8x16.avgr_u': 0x7B, 'i16x8.avgr_u': 0x9B, 'i16x8.q15mulr_sat_s': 0x82,
+      // Widening multiply of one half of each source, and the i16 pairwise dot product.
+      'i16x8.extmul_low_i8x16_s':  0x9C, 'i16x8.extmul_high_i8x16_s': 0x9D,
+      'i16x8.extmul_low_i8x16_u':  0x9E, 'i16x8.extmul_high_i8x16_u': 0x9F,
+      'i32x4.extmul_low_i16x8_s':  0xBC, 'i32x4.extmul_high_i16x8_s': 0xBD,
+      'i32x4.extmul_low_i16x8_u':  0xBE, 'i32x4.extmul_high_i16x8_u': 0xBF,
+      'i64x2.extmul_low_i32x4_s':  0xDC, 'i64x2.extmul_high_i32x4_s': 0xDD,
+      'i64x2.extmul_low_i32x4_u':  0xDE, 'i64x2.extmul_high_i32x4_u': 0xDF,
+      'i32x4.dot_i16x8_s': 0xBA,
+      // i64x2 comparisons (signed only — the proposal defines no unsigned i64 compares).
+      'i64x2.eq':   0xD6, 'i64x2.ne':   0xD7,
+      'i64x2.lt_s': 0xD8, 'i64x2.gt_s': 0xD9, 'i64x2.le_s': 0xDA, 'i64x2.ge_s': 0xDB,
     });
     if (simdBinOps[head] !== undefined) {
       compileExpr(expr[2], func, depth, bytes);
@@ -1342,11 +1430,43 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       'i16x8.extend_low_i8x16_u':  0x89, 'i16x8.extend_high_i8x16_u': 0x8A,
       'i32x4.extend_low_i16x8_s':  0xA7, 'i32x4.extend_high_i16x8_s': 0xA8,
       'i32x4.extend_low_i16x8_u':  0xA9, 'i32x4.extend_high_i16x8_u': 0xAA,
+      // ── Migration gap G2 ──
+      'i64x2.extend_low_i32x4_s':  0xC7, 'i64x2.extend_high_i32x4_s': 0xC8,
+      'i64x2.extend_low_i32x4_u':  0xC9, 'i64x2.extend_high_i32x4_u': 0xCA,
+      // Pairwise widening add (NEON [SU]ADDLP).
+      'i16x8.extadd_pairwise_i8x16_s': 0x7C, 'i16x8.extadd_pairwise_i8x16_u': 0x7D,
+      'i32x4.extadd_pairwise_i16x8_s': 0x7E, 'i32x4.extadd_pairwise_i16x8_u': 0x7F,
+      // Float rounding.
+      'f32x4.ceil': 0x67, 'f32x4.floor': 0x68, 'f32x4.trunc': 0x69, 'f32x4.nearest': 0x6A,
+      'f64x2.ceil': 0x74, 'f64x2.floor': 0x75, 'f64x2.trunc': 0x7A, 'f64x2.nearest': 0x94,
+      // Width changes between the float shapes.
+      'f32x4.demote_f64x2_zero': 0x5E, 'f64x2.promote_low_f32x4': 0x5F,
+      // int <-> float converts. The _s / _u pair is a real behavioural fork: the same
+      // 0xFFFFFFFF lane is -1.0 signed and 4294967296.0 unsigned, so a table entry
+      // pointing at the wrong one of the pair is silent until the numbers are read.
+      'i32x4.trunc_sat_f32x4_s': 0xF8, 'i32x4.trunc_sat_f32x4_u': 0xF9,
+      'f32x4.convert_i32x4_s':   0xFA, 'f32x4.convert_i32x4_u':   0xFB,
+      'i32x4.trunc_sat_f64x2_s_zero': 0xFC, 'i32x4.trunc_sat_f64x2_u_zero': 0xFD,
+      'f64x2.convert_low_i32x4_s':    0xFE, 'f64x2.convert_low_i32x4_u':    0xFF,
     });
     if (simdUnaryOps[head] !== undefined) {
       compileExpr(expr[2], func, depth, bytes);
       bytes.byte(0xFD);
       bytes.uleb(simdUnaryOps[head]);
+      return bytes;
+    }
+
+    // bitmask — (v128) -> i32. Structurally a unary op, but its RESULT is a scalar, so
+    // it lives in its own table: the shape-prefix return-type inference below must not
+    // type it as v128 (that would sink an i32 into a v128 local and fail validation).
+    const simdBitmaskOps = WATX_SIMD_BITMASK_OPS || (WATX_SIMD_BITMASK_OPS = {
+      'i8x16.bitmask': 0x64, 'i16x8.bitmask': 0x84,
+      'i32x4.bitmask': 0xA4, 'i64x2.bitmask': 0xC4,
+    });
+    if (simdBitmaskOps[head] !== undefined) {
+      compileExpr(expr[2], func, depth, bytes);
+      bytes.byte(0xFD);
+      bytes.uleb(simdBitmaskOps[head]);
       return bytes;
     }
 
@@ -1401,8 +1521,55 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       return dflt;
     }
 
-    // Lane-immediate extract / replace: (v128) + lane -> scalar, or (v128, scalar) + lane -> v128.
-    // Encoded as: 0xFD subop LaneIdx. Lane index is one byte (0..15/7/3/1 per shape).
+    // ── Lane immediates (migration gaps G6 + G7) ────────────────────────────────
+    // Standard WAT puts the lane immediate FIRST, straight after the opcode:
+    //     (i32x4.replace_lane 3 VEC VAL)   (i64x2.extract_lane 1 VEC)
+    //     (i8x16.shuffle l0 l1 ... l15 A B)
+    // WATX historically wrote the vector operands first and the lane(s) after. BOTH
+    // orders are accepted, unconditionally and with no flag: standard WAT is what the
+    // real source trees are written in (all 88 lane sites in Wine-Assembly are
+    // lane-first), and the WATX order is what the existing arm-simd / raster trees use.
+    // Telling them apart is unambiguous — a lane immediate is always a bare number or an
+    // (iNN.const N) form, and a v128 operand can never be either.
+    function isLaneToken(tok) {
+      if (tok == null) return false;
+      if (Array.isArray(tok)) return V(tok[1]) === 'i32.const' || V(tok[1]) === 'i64.const';
+      return T(tok) === 'number';
+    }
+    // Strict lane immediate. `immVal` above defaults an unreadable immediate to 0 — and
+    // that default is how the 2026-08-12 "every lane reads lane 0" bug survived both
+    // compilation AND wasm validation, where it was misdiagnosed as a broken v128.load
+    // (see immVal's own comment). A lane index is never optional and is never a runtime
+    // value, so this throws instead of guessing, and range-checks the result.
+    function laneImm(tok, opName, laneCount, what) {
+      if (tok == null) {
+        throw new Error(`${opName}: missing its ${what} immediate (expected a constant 0..${laneCount - 1})`);
+      }
+      let n;
+      if (Array.isArray(tok)) {
+        const inner = V(tok[1]);
+        if (inner !== 'i32.const' && inner !== 'i64.const') {
+          throw new Error(`${opName}: ${what} immediate must be a compile-time constant, got a '${inner}' form`);
+        }
+        n = parseInt(V(tok[2]));
+      } else if (T(tok) === 'number') {
+        n = parseInt(V(tok));
+      } else {
+        throw new Error(`${opName}: ${what} immediate must be a compile-time constant, got '${V(tok)}'`);
+      }
+      if (!Number.isInteger(n) || n < 0 || n >= laneCount) {
+        throw new Error(`${opName}: ${what} immediate '${V(tok)}' is out of range 0..${laneCount - 1}`);
+      }
+      return n;
+    }
+    function lanesOfShape(shapeHead) {
+      if (shapeHead.indexOf('i8x16.') === 0) return 16;
+      if (shapeHead.indexOf('i16x8.') === 0) return 8;
+      if (shapeHead.indexOf('i32x4.') === 0 || shapeHead.indexOf('f32x4.') === 0) return 4;
+      return 2; // i64x2 / f64x2
+    }
+
+    // extract_lane: (v128) + lane -> scalar. Encoded 0xFD subop LaneIdx.
     const simdExtractOps = {
       'i8x16.extract_lane_s': 0x15, 'i8x16.extract_lane_u': 0x16,
       'i16x8.extract_lane_s': 0x18, 'i16x8.extract_lane_u': 0x19,
@@ -1410,42 +1577,56 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       'f32x4.extract_lane':   0x1F, 'f64x2.extract_lane':   0x21,
     };
     if (simdExtractOps[head] !== undefined) {
-      // (op vec lane)  -- lane accepts either bare literal (5) or (i32.const 5).
-      compileExpr(expr[2], func, depth, bytes);
-      const lane = immVal(expr[3], 0);
+      const laneFirst = isLaneToken(expr[2]);
+      const vecExpr = laneFirst ? expr[3] : expr[2];
+      const laneTok = laneFirst ? expr[2] : expr[3];
+      const lane = laneImm(laneTok, head, lanesOfShape(head), 'lane');
+      if (!vecExpr) throw new Error(`${head} is missing its vector operand`);
+      compileExpr(vecExpr, func, depth, bytes);
       bytes.byte(0xFD);
       bytes.uleb(simdExtractOps[head]);
-      bytes.byte(lane & 0xff);
+      bytes.byte(lane);
       return bytes;
     }
+    // replace_lane: (v128, scalar) + lane -> v128.
     const simdReplaceOps = {
       'i8x16.replace_lane': 0x17, 'i16x8.replace_lane': 0x1A,
       'i32x4.replace_lane': 0x1C, 'i64x2.replace_lane': 0x1E,
       'f32x4.replace_lane': 0x20, 'f64x2.replace_lane': 0x22,
     };
     if (simdReplaceOps[head] !== undefined) {
-      // (op vec lane scalar)  -- lane accepts bare literal or (i32.const N).
-      compileExpr(expr[2], func, depth, bytes);
-      const lane = immVal(expr[3], 0);
-      compileExpr(expr[4], func, depth, bytes);
+      const laneFirst = isLaneToken(expr[2]);
+      const vecExpr = laneFirst ? expr[3] : expr[2];
+      const laneTok = laneFirst ? expr[2] : expr[3];
+      const valExpr = expr[4];
+      const lane = laneImm(laneTok, head, lanesOfShape(head), 'lane');
+      if (!vecExpr) throw new Error(`${head} is missing its vector operand`);
+      if (!valExpr) throw new Error(`${head} is missing its replacement value operand`);
+      compileExpr(vecExpr, func, depth, bytes);
+      compileExpr(valExpr, func, depth, bytes);
       bytes.byte(0xFD);
       bytes.uleb(simdReplaceOps[head]);
-      bytes.byte(lane & 0xff);
+      bytes.byte(lane);
       return bytes;
     }
 
-    // i8x16.shuffle — 16 lane immediates after the subop.
-    //   (i8x16.shuffle a b l0 l1 ... l15)  each l in 0..31 (0..15=lanes of a, 16..31=b).
-    // Covers NEON EXT (rotation) as a compile-time constant shuffle.
+    // i8x16.shuffle — two vectors and 16 lane bytes, each 0..31 (0..15 = lanes of A,
+    // 16..31 = lanes of B). Standard WAT writes the lanes first; the WATX order put the
+    // vectors first. Both are accepted (gap G7), and a short or out-of-range lane list is
+    // a hard error rather than a silent pad with zeros.
     if (head === 'i8x16.shuffle') {
-      compileExpr(expr[2], func, depth, bytes);
-      compileExpr(expr[3], func, depth, bytes);
+      const laneFirst = isLaneToken(expr[2]);
+      const aExpr = laneFirst ? expr[18] : expr[2];
+      const bExpr = laneFirst ? expr[19] : expr[3];
+      const laneBase = laneFirst ? 2 : 4;
+      const lanes = [];
+      for (let i = 0; i < 16; i++) lanes.push(laneImm(expr[laneBase + i], head, 32, `lane ${i}`));
+      if (!aExpr || !bExpr) throw new Error(`${head} needs two vector operands alongside its 16 lane bytes`);
+      compileExpr(aExpr, func, depth, bytes);
+      compileExpr(bExpr, func, depth, bytes);
       bytes.byte(0xFD);
       bytes.uleb(0x0D);
-      for (let i = 0; i < 16; i++) {
-        const l = immVal(expr[4 + i], 0);
-        bytes.push(l & 0xff);
-      }
+      for (const l of lanes) bytes.push(l);
       return bytes;
     }
     // i8x16.swizzle (v128 vec, v128 idx) -> v128 — dynamic per-lane byte pick.
@@ -1457,26 +1638,77 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       return bytes;
     }
 
-    // v128.load / v128.store — memarg: align (log2, 4 for 16-byte-aligned) + offset (0).
-    // 16-byte align default matches full v128 natural alignment; guest raster/NEON
-    // callers ensure buffer alignment.
-    if (head === 'v128.load') {
-      compileExpr(expr[2], func, depth, bytes);
+    // ── v128 memory operations (migration gap G3) ───────────────────────────────
+    // These used to hard-code `align=4 offset=0` and reject a memarg outright
+    // ("Unknown symbol 'offset=16'"), so `(v128.load offset=16 …)` — ordinary standard
+    // WAT — could not be compiled at all. They now go through the same parseMemarg used
+    // by the scalar loads/stores. The whole v128 memory family is here, not just the
+    // plain load/store: the splat and widening loads, the zero-extending loads, and the
+    // per-lane load/store forms which carry a memarg AND a lane immediate.
+    //
+    // align= is a HINT on these (unlike the atomics), so a non-natural value is accepted
+    // and encoded as given; only a non-power-of-two is an error.
+    const simdMemOps = WATX_SIMD_MEM_OPS || (WATX_SIMD_MEM_OPS = {
+      // name: [subop, natural align log2, isStore]
+      'v128.load':         [0x00, 4, false],
+      'v128.load8x8_s':    [0x01, 3, false], 'v128.load8x8_u':   [0x02, 3, false],
+      'v128.load16x4_s':   [0x03, 3, false], 'v128.load16x4_u':  [0x04, 3, false],
+      'v128.load32x2_s':   [0x05, 3, false], 'v128.load32x2_u':  [0x06, 3, false],
+      'v128.load8_splat':  [0x07, 0, false], 'v128.load16_splat':[0x08, 1, false],
+      'v128.load32_splat': [0x09, 2, false], 'v128.load64_splat':[0x0A, 3, false],
+      'v128.load32_zero':  [0x5C, 2, false], 'v128.load64_zero': [0x5D, 3, false],
+      'v128.store':        [0x0B, 4, true],
+    });
+    if (simdMemOps[head] !== undefined) {
+      const [subop, natural, isStore] = simdMemOps[head];
+      const ma = parseMemarg(expr, 1, head, natural, false);
+      let operand = ma.next;
+      if (!expr[operand + 1]) throw new Error(`${head} is missing its address operand`);
+      compileExpr(expr[(operand++) + 1], func, depth, bytes);
+      if (isStore) {
+        if (!expr[operand + 1]) throw new Error(`${head} is missing its value operand`);
+        compileExpr(expr[operand + 1], func, depth, bytes);
+      }
       bytes.byte(0xFD);
-      bytes.uleb(0x00);
-      bytes.push(0x04, 0x00);
+      bytes.uleb(subop);
+      bytes.uleb(ma.align);
+      bytes.uleb(ma.offset);
+      // Legacy WATX convention: stores yield i32 0 so expression trees compose. Standard
+      // WAT mode leaves the stack alone, matching the scalar stores.
+      if (isStore && !standardWat) {
+        bytes.byte(OP.i32_const);
+        bytes.sleb(0);
+      }
       return bytes;
     }
-    if (head === 'v128.store') {
-      compileExpr(expr[2], func, depth, bytes);
-      compileExpr(expr[3], func, depth, bytes);
+    // Per-lane memory ops: memarg, then a lane immediate, then (addr) or (addr, vec).
+    //   (v128.load32_lane offset=4 3 ADDR VEC)  /  (v128.store32_lane offset=4 3 ADDR VEC)
+    const simdLaneMemOps = WATX_SIMD_LANE_MEM_OPS || (WATX_SIMD_LANE_MEM_OPS = {
+      // name: [subop, natural align log2, lane count, isStore]
+      'v128.load8_lane':   [0x54, 0, 16, false], 'v128.load16_lane':  [0x55, 1, 8, false],
+      'v128.load32_lane':  [0x56, 2,  4, false], 'v128.load64_lane':  [0x57, 3, 2, false],
+      'v128.store8_lane':  [0x58, 0, 16, true],  'v128.store16_lane': [0x59, 1, 8, true],
+      'v128.store32_lane': [0x5A, 2,  4, true],  'v128.store64_lane': [0x5B, 3, 2, true],
+    });
+    if (simdLaneMemOps[head] !== undefined) {
+      const [subop, natural, laneCount, isStore] = simdLaneMemOps[head];
+      const ma = parseMemarg(expr, 1, head, natural, false);
+      let operand = ma.next;
+      const lane = laneImm(expr[operand + 1], head, laneCount, 'lane');
+      operand++;
+      if (!expr[operand + 1]) throw new Error(`${head} is missing its address operand`);
+      compileExpr(expr[(operand++) + 1], func, depth, bytes);
+      if (!expr[operand + 1]) throw new Error(`${head} is missing its vector operand`);
+      compileExpr(expr[operand + 1], func, depth, bytes);
       bytes.byte(0xFD);
-      bytes.uleb(0x0B);
-      bytes.push(0x04, 0x00);
-      // WATX convention: stores yield i32 0 (siblings do the same). Keeps expression
-      // trees composable without special-casing v128.store as a void form.
-      bytes.byte(OP.i32_const);
-      bytes.sleb(0);
+      bytes.uleb(subop);
+      bytes.uleb(ma.align);
+      bytes.uleb(ma.offset);
+      bytes.byte(lane);
+      if (isStore && !standardWat) {
+        bytes.byte(OP.i32_const);
+        bytes.sleb(0);
+      }
       return bytes;
     }
 
@@ -1828,14 +2060,25 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     // ── block ──
     if (head === 'block') {
       const label = V(expr[2])?.startsWith('$') ? V(expr[2]) : null;
-      const bodyStart = label ? 2 : 1;
+      let bodyStart = label ? 2 : 1;
+      // Migration gap G4: a standard `(block $l (result T) …)` signature. This used to
+      // be unparsed and every LABELED block was forced to void on purpose ("its br
+      // targets do not carry a result value"), which rejected core WAT that `if` had
+      // accepted all along. Both the folded `(result T)` form and the bare-valtype form
+      // `if` takes are honoured here.
+      const declared = blockSignature(expr[bodyStart + 1], head);
+      if (declared !== null) bodyStart++;
+
       const lastExpr = expr[expr.length - 1];
-      // An UNLABELED block yields the value of its last expression (so it can be
-      // used as a value, e.g. an if-arm). A LABELED block stays void, since its
-      // br targets do not carry a result value.
-      const producesValue = !label && (expr.length - 1) > bodyStart && exprProducesValue(lastExpr, func);
+      // Without a declared signature the old rule stands: an UNLABELED block yields the
+      // value of its last expression (so it can be used as an if-arm), a LABELED one
+      // stays void.
+      const producesValue = declared !== null
+        || (!label && (expr.length - 1) > bodyStart && exprProducesValue(lastExpr, func));
       let resultType = VALTYPE.void;
-      if (producesValue) {
+      if (declared !== null) {
+        resultType = VALTYPE[declared];
+      } else if (producesValue) {
         const symT = new Map();
         for (const [nm, arr] of func.localSlots) if (arr && arr.length) symT.set(nm, arr[0].type);
         resultType = VALTYPE[inferExprType(lastExpr, symT)] || VALTYPE.i32;
@@ -1848,7 +2091,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         compileExpr(expr[i + 1], func, depth + 1, bytes);
         const isLast = (i === (expr.length - 1) - 1);
         // Drop each statement's value; keep only the last one, and only for a
-        // value-producing (unlabeled) block.
+        // value-producing block.
         if (exprProducesValue(expr[i + 1], func) && !(isLast && producesValue)) {
           bytes.push(OP.drop);
         }
@@ -1862,20 +2105,25 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     // ── loop ──
     if (head === 'loop') {
       const label = V(expr[2])?.startsWith('$') ? V(expr[2]) : null;
-      const bodyStart = label ? 2 : 1;
-      
+      let bodyStart = label ? 2 : 1;
+      // A loop's result is what falls out of the BOTTOM of its body — a `br` to a loop
+      // label jumps to the top and carries the loop's parameters, not its result.
+      const declared = blockSignature(expr[bodyStart + 1], head);
+      if (declared !== null) bodyStart++;
+
       if (label) func.blockLabels.push(label);
-      
-      bytes.push(OP.loop, VALTYPE.void);
+
+      bytes.push(OP.loop, declared !== null ? VALTYPE[declared] : VALTYPE.void);
       for (let i = bodyStart; i < (expr.length - 1); i++) {
         compileExpr(expr[i + 1], func, depth + 1, bytes);
-        // Loops are always void — drop any value left on stack
-        if (exprProducesValue(expr[i + 1], func)) {
+        const isLast = (i === (expr.length - 1) - 1);
+        // Drop every statement's value; keep the last one only for a typed loop.
+        if (exprProducesValue(expr[i + 1], func) && !(isLast && declared !== null)) {
           bytes.push(OP.drop);
         }
       }
       bytes.push(OP.end);
-      
+
       if (label) func.blockLabels.pop();
       return bytes;
     }
@@ -1892,21 +2140,29 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         labelDepth = parseInt(label);
         if (!Number.isInteger(labelDepth) || labelDepth < 0 || labelDepth >= func.blockLabels.length + depth) throw new Error(`Invalid branch depth '${label}' in ${func.name}`);
       }
+      // Standard folded WAT allows a value operand when the target block is typed:
+      // `(br $l VALUE)` (migration gap G4). Without a target signature there is no
+      // operand and nothing is emitted here.
+      if (expr[3] !== undefined) compileExpr(expr[3], func, depth, bytes);
       bytes.byte(OP.br);
       bytes.uleb(labelDepth);
       return bytes;
     }
-    
+
     if (head === 'br_if') {
-      let label, condExpr;
+      // `(br_if $l COND)` is the historical WATX/WAT spelling; `(br_if $l VALUE COND)`
+      // is the standard folded form for a typed target block — the CONDITION is always
+      // the last operand (migration gap G4).
+      let label, condExpr, valueExpr = null;
       if (T(expr[2]) === 'symbol' && V(expr[2])?.startsWith('$') && (expr.length - 1) > 2) {
         label = V(expr[2]);
-        condExpr = expr[3];
+        if ((expr.length - 1) > 3) { valueExpr = expr[3]; condExpr = expr[4]; }
+        else condExpr = expr[3];
       } else {
         label = '0';
         condExpr = expr[2];
       }
-      
+
       let labelDepth = 0;
       if (label?.startsWith('$')) {
         const idx = func.blockLabels.lastIndexOf(label);
@@ -1917,6 +2173,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         if (!Number.isInteger(labelDepth) || labelDepth < 0 || labelDepth >= func.blockLabels.length + depth) throw new Error(`Invalid branch depth '${label}' in ${func.name}`);
       }
       
+      if (valueExpr !== null) compileExpr(valueExpr, func, depth, bytes);
       compileExpr(condExpr, func, depth, bytes);
       bytes.byte(OP.br_if);
       bytes.uleb(labelDepth);
@@ -2378,17 +2635,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         'i64.store8':[OP.i64_store8,0], 'i64.store16':[OP.i64_store16,1], 'i64.store32':[OP.i64_store32,2],
       });
       if (loads[head] || stores[head]) {
-        let operand = 1, offset = 0, align = (loads[head] || stores[head])[1];
-        while (T(expr[operand + 1]) === 'symbol' && /^(offset|align)=/.test(V(expr[operand + 1]))) {
-          const [key, raw] = V(expr[(operand++) + 1]).split('=');
-          const n = parseInt(raw);
-          if (!Number.isInteger(n) || n < 0) throw new Error(`Invalid ${key} memarg '${raw}' in ${head}`);
-          if (key === 'offset') offset = n;
-          else {
-            if (n === 0 || (n & (n - 1)) !== 0) throw new Error(`align=${n} must be a positive power of two`);
-            align = Math.log2(n);
-          }
-        }
+        const ma = parseMemarg(expr, 1, head, (loads[head] || stores[head])[1], false);
+        let operand = ma.next;
+        const offset = ma.offset, align = ma.align;
         if (!expr[operand + 1]) throw new Error(`${head} is missing its address operand`);
         compileExpr(expr[(operand++) + 1], func, depth, bytes);
         if (stores[head]) {
@@ -2400,6 +2649,89 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         bytes.uleb(align);
         bytes.uleb(offset);
         if (stores[head] && !standardWat) {
+          bytes.byte(OP.i32_const);
+          bytes.sleb(0);
+        }
+        return bytes;
+      }
+    }
+
+    // ── Atomic memory operations (WebAssembly threads proposal, 0xFE prefix) ──
+    // Migration gap G1: this family was absent entirely — the string `atomic` did not
+    // occur anywhere in this file — while Wine-Assembly's own closure has 144 atomic
+    // sites over an imported `shared` memory. The whole standard family is implemented,
+    // not the subset one tree happens to use: a partial opcode table is exactly the
+    // failure mode that makes an unknown-but-valid form vanish silently.
+    //
+    // Encoding: 0xFE + ULEB(subop) + ULEB(align log2) + ULEB(offset), with the operands
+    // pushed first — address, then (for stores/rmw) the value, then (for cmpxchg and the
+    // wait ops) the second value. `atomic.fence` is the one form with no memarg: it
+    // carries a single 0x00 immediate naming the memory order.
+    //
+    // Natural alignment is REQUIRED here, unlike the non-atomic accesses where align= is
+    // only a hint — see parseMemarg's `requireNatural`.
+    {
+      const atomics = WATX_ATOMIC_OPS || (WATX_ATOMIC_OPS = (function () {
+        const tbl = {};
+        const put = (name, op, align, args, store) => { tbl[name] = { op, align, args, store: !!store }; };
+        put('memory.atomic.notify', 0x00, 2, 1, false);
+        put('memory.atomic.wait32', 0x01, 2, 2, false);
+        put('memory.atomic.wait64', 0x02, 3, 2, false);
+        put('atomic.fence',         0x03, 0, 0, false);
+        for (const [n, o, a] of [
+          ['i32.atomic.load',      0x10, 2], ['i64.atomic.load',     0x11, 3],
+          ['i32.atomic.load8_u',   0x12, 0], ['i32.atomic.load16_u', 0x13, 1],
+          ['i64.atomic.load8_u',   0x14, 0], ['i64.atomic.load16_u', 0x15, 1],
+          ['i64.atomic.load32_u',  0x16, 2],
+        ]) put(n, o, a, 0, false);
+        for (const [n, o, a] of [
+          ['i32.atomic.store',     0x17, 2], ['i64.atomic.store',    0x18, 3],
+          ['i32.atomic.store8',    0x19, 0], ['i32.atomic.store16',  0x1A, 1],
+          ['i64.atomic.store8',    0x1B, 0], ['i64.atomic.store16',  0x1C, 1],
+          ['i64.atomic.store32',   0x1D, 2],
+        ]) put(n, o, a, 1, true);
+        // The seven rmw families occupy 0x1E..0x4E as seven consecutive width groups
+        // each, in this exact order. The narrow widths carry a `_u` suffix.
+        const widths = [
+          ['i32.atomic.rmw.',   2], ['i64.atomic.rmw.',   3],
+          ['i32.atomic.rmw8.',  0], ['i32.atomic.rmw16.', 1],
+          ['i64.atomic.rmw8.',  0], ['i64.atomic.rmw16.', 1],
+          ['i64.atomic.rmw32.', 2],
+        ];
+        let op = 0x1E;
+        for (const kind of ['add', 'sub', 'and', 'or', 'xor', 'xchg', 'cmpxchg']) {
+          for (let w = 0; w < widths.length; w++) {
+            put(widths[w][0] + kind + (w >= 2 ? '_u' : ''), op++, widths[w][1],
+                kind === 'cmpxchg' ? 2 : 1, false);
+          }
+        }
+        return tbl;
+      })());
+      const aspec = atomics[head];
+      if (aspec) {
+        if (head === 'atomic.fence') {
+          bytes.byte(0xFE);
+          bytes.uleb(aspec.op);
+          bytes.byte(0x00);
+          return bytes;
+        }
+        const ma = parseMemarg(expr, 1, head, aspec.align, true);
+        let operand = ma.next;
+        if (!expr[operand + 1]) throw new Error(`${head} is missing its address operand`);
+        compileExpr(expr[(operand++) + 1], func, depth, bytes);
+        for (let k = 0; k < aspec.args; k++) {
+          if (!expr[operand + 1]) {
+            throw new Error(`${head} is missing operand ${k + 1} of ${aspec.args} after the address`);
+          }
+          compileExpr(expr[(operand++) + 1], func, depth, bytes);
+        }
+        bytes.byte(0xFE);
+        bytes.uleb(aspec.op);
+        bytes.uleb(ma.align);
+        bytes.uleb(ma.offset);
+        // Legacy WATX convention: a store yields i32 0 so expression trees compose.
+        // Standard-WAT mode leaves the stack alone, matching the scalar stores above.
+        if (aspec.store && !standardWat) {
           bytes.byte(OP.i32_const);
           bytes.sleb(0);
         }
@@ -2483,6 +2815,28 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     if (hd === 'i64.const') return 'i64';
     if (hd === 'i32.const') return 'i32';
 
+    // Atomics: an i64.* atomic load or rmw yields i64, everything else in the family
+    // (including memory.atomic.notify / wait32 / wait64) yields i32. Checked before the
+    // generic `.store` rule below so `i64.atomic.load` is not mistaken for one.
+    if (typeof hd === 'string' && hd.indexOf('.atomic.') > 0) {
+      if (hd.indexOf('i64.') === 0 && hd.indexOf('.atomic.store') < 0) return 'i64';
+      return 'i32';
+    }
+
+    // A labeled or unlabeled block/loop with an explicit (block $l (result T) ...)
+    // signature yields T; without one, an unlabeled block yields its last expression
+    // (migration gap G4).
+    if (hd === 'block' || hd === 'loop') {
+      const labeled = T(expr[2]) === 'symbol' && V(expr[2])?.startsWith('$');
+      const sig = expr[labeled ? 3 : 2];
+      if (Array.isArray(sig) && V(sig[1]) === 'result') return V(sig[2]) || 'i32';
+      if (T(sig) === 'symbol' && ['i32','i64','f32','f64','v128'].includes(V(sig))) return V(sig);
+      if (hd === 'block' && !labeled && (expr.length - 1) >= 2) {
+        return inferExprType(expr[expr.length - 1], symTypes);
+      }
+      return 'i32';
+    }
+
     // Stores push i32 0 (WATX store convention), regardless of the stored value's
     // width — so e.g. v128.store leaves i32, not v128. Handle before the SIMD
     // prefix check below so the inferred type matches what codegen emits.
@@ -2556,6 +2910,8 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
           hd === 'i16x8.extract_lane_s' || hd === 'i16x8.extract_lane_u' ||
           hd === 'i32x4.extract_lane' ||
           hd === 'v128.any_true' ||
+          hd === 'i8x16.bitmask' || hd === 'i16x8.bitmask' ||
+          hd === 'i32x4.bitmask' || hd === 'i64x2.bitmask' ||
           hd === 'i8x16.all_true' || hd === 'i16x8.all_true' ||
           hd === 'i32x4.all_true' || hd === 'i64x2.all_true') return 'i32';
       if (hd === 'i64x2.extract_lane') return 'i64';
