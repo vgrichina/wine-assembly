@@ -22,6 +22,7 @@
 ;; WATX compiler's include resolver splice them as top-level module fields and
 ;; what lets lib/compile-wat.js parse each part independently.
 ;; ============================================================
+(include "00-regions.wat")
 (include "01-header.wat")
 (include "01b-api-hashes.generated.wat")
 (include "02-thread-table.wat")

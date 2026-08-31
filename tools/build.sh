@@ -19,6 +19,11 @@ node tools/check-wat-fragments.js
 # valid WAT and compiles cleanly, then silently cross-corrupts unrelated state
 # at runtime, so the sized-region/data-segment map is a shipping gate.
 node test/test-wat-memory-map.js
+# src/00-regions.wat declares that same map to the compiler, which then enforces
+# overlap-freedom, alignment and memory bounds itself. A declaration set that
+# has drifted from the globals the code actually reads is a second opinion, not
+# a safety net — hold the two together here.
+node tools/check-region-decls.js
 # JS host-side guest-pointer translation must use the same DIB/RPC boundary as
 # WAT. A stale extra megabyte maps guest DIB addresses onto worker RPC slots.
 node test/test-wat-rpc-region.js
