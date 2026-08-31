@@ -21,14 +21,27 @@ node test/run.js --iso=DIABLO.ISO --iso-exe=AUTORUN.EXE --overlay-dir=DIR \
 #    bnetunin.exe in c:\windows. Extract the blobs (index.json maps
 #    path -> blob) and launch with the disc still mounted:
 node test/run.js --exe=DIR/diablo.exe \
-  --dlls=DIR/storm.dll,DIR/diabloui.dll,DIR/smackw32.dll \
   --vfs-include='*.snp,*.ini' --iso=DIABLO.ISO \
   --quiet-api --batch-size=200000
 ```
 
-`--dlls=` is required: only `storm.dll` is in `APP_LOCAL_DLLS`
-(lib/dll-registry.js), so a bare `--exe` resolves the `diabloui.dll` imports to
-emulator thunks and the run dies at `UNIMPLEMENTED API: UiAppActivate`.
+All three private DLLs (`storm.dll`, `diabloui.dll`, `smackw32.dll`) are in
+`APP_LOCAL_DLLS` (lib/dll-registry.js), so a bare `--exe` resolves them from
+the exe's own directory. Before `diabloui.dll`/`smackw32.dll` were listed, a
+bare run resolved their imports to emulator thunks and died at
+`UNIMPLEMENTED API: UiAppActivate` (`jmp [0x6ad6d0]` at 0x47a542 = diabloui
+IAT slot 10).
+
+In the **browser** the whole flow is one gesture: insert the ISO, launch
+AUTORUN.EXE (its INF names it), click "Install & Play Diablo", OK the
+directory dialog. The launcher then calls
+`ShellExecuteA("C:\Diablo\diablo.exe")`, which chain-launches the installed
+game from the caller's own VFS (`launchVfsExe` in lib/browser-shell.js +
+`VirtualFS.adoptFrom`) with the disc still mounted at D:. Note AUTORUN's
+installed-check is the registry value
+`HKLM\SOFTWARE\Blizzard Entertainment\Archives\DiabloInstall` — persisted in
+localStorage, so a later session with that key but no installed files gets
+SE_ERR_FNF (2) back from ShellExecute rather than a silent success.
 
 ## The CD check (storm.dll, fn entry 0x1500d28a)
 

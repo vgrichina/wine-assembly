@@ -26,7 +26,7 @@ function claimAudioSession() {
 if (typeof window !== 'undefined') window.claimAudioSession = claimAudioSession;
 
 class WineAssembly {
-  static SOURCE_VERSION = '247';
+  static SOURCE_VERSION = '248';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   static _nextProcessId = 1000;
 
@@ -702,11 +702,27 @@ class WineAssembly {
       const file = fileWa ? self.readString(fileWa) : '';
       const op = opWa ? self.readString(opWa) : 'open';
       const params = paramsWa ? self.readString(paramsWa) : '';
+      const dir = dirWa ? self.readString(dirWa) : '';
       console.log(`[ShellExecute] hwnd=0x${hwnd.toString(16)} op="${op}" file="${file}" params="${params}"`);
       const shell = window.wineShell;
-      if (shell && /\.exe$/i.test(file) && shell.launchExe(file)) {
-        self.logToUI(`[ShellExecute] launching ${file}`);
-        return 33;
+      if (shell && /\.exe$/i.test(file)) {
+        // An absolute path names a concrete file on the caller's own
+        // filesystem (a CD launcher handing off to the game its installer
+        // just wrote); that beats the registered-app basename heuristic,
+        // which could resolve "diablo.exe" to a different registered build.
+        const absolute = /^[a-z]:\\/i.test(file);
+        if (absolute && shell.launchVfsExe && shell.launchVfsExe(file, self, dir)) {
+          self.logToUI(`[ShellExecute] launching ${file} from the caller's filesystem`);
+          return 33;
+        }
+        if (shell.launchExe(file)) {
+          self.logToUI(`[ShellExecute] launching ${file}`);
+          return 33;
+        }
+        // A path that resolved nowhere is a failure the guest can react to
+        // (SE_ERR_FNF). Bare names keep the lenient success return — several
+        // apps fire ShellExecute at helpers they can live without.
+        if (absolute) return 2;
       }
       if (/^https?:/i.test(file)) window.open(file, '_blank');
       return 33;
