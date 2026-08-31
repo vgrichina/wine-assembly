@@ -230,6 +230,89 @@ call proposal) lowers `return_call` to `call; return`. Today that costs two
 nested frames per dispatch — the handler's and `$next`'s. Replication makes it
 one. That build gets shallower, not deeper, so this is not a blocker there.
 
+## 9. 2026-08-31 implementation attempt
+
+Implemented in the isolated worktree `/private/tmp/wa-repl-tailcall`.
+
+- `$next` now outlines the cache-corruption recovery body to `$dispatch_bad`.
+- `compileWat(..., { replicatedDispatch })` rewrites selected exact
+  `(return_call $next)` handler tails into the thin dispatch sequence:
+  decrement/escape, load fn/op, advance `$ip`, compare against 443, cold
+  `return_call $dispatch_bad`, then `return_call_indirect`.
+- The replicated tail's bound comes from the pass-1 `$handlers` table size,
+  not a second hand-maintained compiler constant.
+- `replicatedDispatch` accepts `true`/`"all"` for every handler tail, `false`
+  for the shared `$next`, or a function-name list for top-N experiments.
+- `tools/build-compile-wat.js` accepts `--dispatch=shared|replicated|...`,
+  `--out=...`, and `--compat-out=...` so A/B artifacts can be built without
+  changing the default build.
+- The handler-count check now accepts the outlined `$dispatch_bad` shape while
+  still requiring table size, elem count, and dispatch bound to agree.
+
+Validation run:
+
+```sh
+/opt/homebrew/bin/timeout -s KILL 60 node test/test-compile-wat-replicated-dispatch.js
+/opt/homebrew/bin/timeout -s KILL 60 node tools/check-handler-count.js
+/opt/homebrew/bin/timeout -s KILL 180 node tools/build-compile-wat.js --dispatch=shared --out=build/wine-assembly.shared.wasm --compat-out=build/wine-assembly.shared.compat.wasm
+/opt/homebrew/bin/timeout -s KILL 180 node tools/build-compile-wat.js --dispatch=replicated --out=build/wine-assembly.repldispatch.wasm --compat-out=build/wine-assembly.repldispatch.compat.wasm
+```
+
+Artifact sizes:
+
+| artifact | bytes |
+| --- | ---: |
+| shared tail calls | 976,543 |
+| replicated tail calls | 1,004,118 |
+| shared compat | 976,992 |
+| replicated compat | 1,004,975 |
+
+The clean detached source at `df4793a6` did not build by itself because current
+`src/13-exports.wat` referenced DirectX display getter/setter helpers that were
+only present in active main-worktree WIP. For this isolated benchmark worktree,
+`src/09a8-handlers-directx.wat` carries small compatibility wrappers around the
+existing globals; that hunk is not part of the dispatch experiment.
+
+Benchmark setup:
+
+- host load before timing: `0:27  38 users, load averages: 4.47 6.00 5.78`
+- fixed work, `/usr/bin/time -p` user CPU time;
+- interleaved order per app: shared/repl, repl/shared, shared/repl;
+- no crashes; both arms reached the requested batch count.
+
+Diablo II:
+
+```sh
+node test/run.js --app=diablo2_demo --no-build --wasm=ARTIFACT \
+  --batch-size=1000000 --max-batches=240 --max-seconds=60 \
+  --quiet-api --quiet-blocks --no-close --repaint-every=10000
+```
+
+| arm | user CPU samples, seconds | mean | speedup |
+| --- | --- | ---: | ---: |
+| shared | 17.02, 17.27, 17.22 | 17.170 | 1.00x |
+| replicated | 15.33, 15.06, 17.21 | 15.867 | 1.08x |
+
+Heroes III:
+
+```sh
+node test/run.js --app=heroes3_demo --screen=800x600 --no-build --wasm=ARTIFACT \
+  --batch-size=200000 --thread-slices=1 --tick-ms-per-batch=100 \
+  --max-batches=1000 --max-seconds=60 --quiet-api --quiet-blocks \
+  --no-close --repaint-every=10000 --dx-surfaces
+```
+
+| arm | user CPU samples, seconds | mean | speedup |
+| --- | --- | ---: | ---: |
+| shared | 2.80, 2.61, 2.09 | 2.500 | 1.00x |
+| replicated | 2.44, 2.41, 1.89 | 2.247 | 1.11x |
+
+This is a positive result for the two requested games, but it is not yet enough
+to flip the default build. The Diablo II third replicated sample was noisy,
+wall time was scheduler-sensitive under load, and Heroes III's startup sample
+is very short. Next useful step is the top-N build from handler histograms and
+at least one longer app-window sample with screenshot/trace parity.
+
 ---
 
 ## Related
