@@ -299,12 +299,12 @@ assert(fs.existsSync(path.join(ROOT, 'binaries', 'whatsnew.txt')), 'Winamp versi
 assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winamp version history text should not be empty');
 assert(!webApp.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!webApp.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(webApp.includes('lib/renderer-input.js?v=197'), 'web host should cache-bust renderer input after Worker menu command wake');
+assert(webApp.includes('lib/renderer-input.js?v=198'), 'web host should cache-bust renderer input after live Worker focus mirroring');
 assert(webApp.includes('lib/browser-input.js?v=12'), 'web host should cache-bust explicit Quake relative-mouse capture');
 assert(webApp.includes('lib/renderer.js?v=190'), 'web host should cache-bust renderer after the current source update');
 assert(webApp.includes('lib/pe.js?v=1'), 'web host should load the shared PE section reader');
 assert(webApp.includes('lib/process-boot.js?v=3'), 'web host should cache-bust timed DllMain resume plumbing');
-assert(webApp.includes('lib/host-window.js?v=6'), 'web host should cache-bust console mouse metadata');
+assert(webApp.includes('lib/host-window.js?v=7'), 'web host should cache-bust zero-focus Worker keyboard fallback');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(webApp.includes('lib/storage.js?v=170'), 'web host should cache-bust storage after renderer-aware registry delivery');
 assert(webApp.includes('lib/filesystem.js?v=172'), 'web host should cache-bust persisted Win32 file timestamps');
@@ -320,7 +320,7 @@ assert(webApp.includes('lib/guest-thread-host.js?v=10'), 'web host should cache-
 assert(webApp.includes('lib/dll-loader.js?v=171'), 'web host should cache-bust timed DllMain resume');
 assert(webApp.includes('lib/debug-thread-state.js?v=7'), 'web host should cache-bust live Worker status diagnostics');
 assert(webApp.includes('lib/host-audio.js?v=2'), 'web host should cache-bust waveOut pause/restart scheduling');
-assert(webApp.includes('host.js?v=258'), 'web host should cache-bust Win16 DLL selector ownership');
+assert(webApp.includes('host.js?v=259'), 'web host should cache-bust live Worker focus mirroring');
 assert(hostJs.includes("static SOURCE_VERSION = '246'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');

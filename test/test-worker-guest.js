@@ -68,10 +68,23 @@ function startIsolatedServer() {
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
+async function clickGuest(page, x, y) {
+  const point = await page.evaluate(({ x, y }) => {
+    const canvas = document.getElementById('screen');
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + (x / canvas.width) * rect.width,
+      y: rect.top + (y / canvas.height) * rect.height,
+    };
+  }, { x, y });
+  await page.mouse.click(point.x, point.y);
+}
+
 async function launch(browser, port, app, { threaded }) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1100, height: 820 });
   const problems = [];
+  let boardChanged = 0;
   page.on('pageerror', e => problems.push(String(e)));
   page.on('console', m => {
     const t = m.text();
@@ -136,6 +149,105 @@ async function launch(browser, port, app, { threaded }) {
       }
       return false;
     }, { timeout: 60000, polling: 250 });
+    const menu = await page.evaluate(() => {
+      const win = Object.values(sharedRenderer.windows)
+        .find(item => item && item.visible && /^Rodent's Revenge \[\d+\]$/.test(item.title || ''));
+      return {
+        gameX: win.x + 32, gameY: win.y + 38,
+        newX: win.x + 42, newY: win.y + 59,
+      };
+    });
+    await clickGuest(page, menu.gameX, menu.gameY);
+    await wait(120);
+    await clickGuest(page, menu.newX, menu.newY);
+    await page.waitForFunction(() => {
+      const wine = runningApps[0] && runningApps[0].wine;
+      const focus = wine && (wine._workerFocusHwnd | 0);
+      const focused = focus && sharedRenderer.windows[focus];
+      return !!(focused && focused.isChild && focused.w >= 250 && focused.h >= 250);
+    }, { timeout: 10000, polling: 50 });
+    await wait(300);
+    await page.evaluate(() => {
+      const win = Object.values(sharedRenderer.windows)
+        .find(item => item && item.visible && /^Rodent's Revenge \[\d+\]$/.test(item.title || ''));
+      const rect = {
+        x: win.x + 20, y: win.y + 100,
+        w: Math.max(1, win.w - 40), h: Math.max(1, win.h - 120),
+      };
+      const ctx = document.getElementById('screen').getContext('2d');
+      window.__workerRodentBefore = {
+        rect,
+        pixels: Array.from(ctx.getImageData(rect.x, rect.y, rect.w, rect.h).data),
+      };
+    });
+    await page.keyboard.down('ArrowRight');
+    await wait(1200);
+    await page.keyboard.up('ArrowRight');
+    await wait(500);
+    boardChanged = await page.evaluate(() => {
+      const before = window.__workerRodentBefore;
+      const r = before.rect;
+      const after = document.getElementById('screen').getContext('2d')
+        .getImageData(r.x, r.y, r.w, r.h).data;
+      let changed = 0;
+      for (let i = 0; i < after.length; i += 4) {
+        if (after[i] !== before.pixels[i] || after[i + 1] !== before.pixels[i + 1] ||
+            after[i + 2] !== before.pixels[i + 2] || after[i + 3] !== before.pixels[i + 3]) {
+          changed++;
+        }
+      }
+      return changed;
+    });
+  } else if (app === 'rodent2000') {
+    await page.waitForFunction(() => Object.values(sharedRenderer.windows || {}).some(win =>
+      win && win.visible && win.w > 300 && /^Rodent's Revenge 2000/.test(win.title || '')),
+    { timeout: 120000, polling: 250 });
+    const menu = await page.evaluate(() => {
+      const win = Object.values(sharedRenderer.windows).find(item =>
+        item && item.visible && item.w > 300 && /^Rodent's Revenge 2000/.test(item.title || ''));
+      return {
+        gameX: win.x + 42, gameY: win.y + 38,
+        newX: win.x + 52, newY: win.y + 58,
+      };
+    });
+    await clickGuest(page, menu.gameX, menu.gameY);
+    await wait(120);
+    await clickGuest(page, menu.newX, menu.newY);
+    await page.waitForFunction(() => Object.values(sharedRenderer.windows || {}).some(win =>
+      win && win.visible && /Rodent's Revenge 2000 - Level 1/.test(win.title || '')),
+    { timeout: 30000, polling: 100 });
+    await wait(500);
+    await page.evaluate(() => {
+      const win = Object.values(sharedRenderer.windows).find(item =>
+        item && item.visible && item.w > 300 && /Rodent's Revenge 2000 - Level 1/.test(item.title || ''));
+      const rect = {
+        x: win.x + 10, y: win.y + 70,
+        w: Math.max(1, win.w - 20), h: Math.max(1, win.h - 80),
+      };
+      const ctx = document.getElementById('screen').getContext('2d');
+      window.__workerRodentBefore = {
+        rect,
+        pixels: Array.from(ctx.getImageData(rect.x, rect.y, rect.w, rect.h).data),
+      };
+    });
+    await page.keyboard.down('ArrowRight');
+    await wait(1200);
+    await page.keyboard.up('ArrowRight');
+    await wait(500);
+    boardChanged = await page.evaluate(() => {
+      const before = window.__workerRodentBefore;
+      const r = before.rect;
+      const after = document.getElementById('screen').getContext('2d')
+        .getImageData(r.x, r.y, r.w, r.h).data;
+      let changed = 0;
+      for (let i = 0; i < after.length; i += 4) {
+        if (after[i] !== before.pixels[i] || after[i + 1] !== before.pixels[i + 1] ||
+            after[i + 2] !== before.pixels[i + 2] || after[i + 3] !== before.pixels[i + 3]) {
+          changed++;
+        }
+      }
+      return changed;
+    });
   } else {
     await wait(SECONDS * 1000);
   }
@@ -160,8 +272,10 @@ async function launch(browser, port, app, { threaded }) {
       titles: wine && wine.renderer && wine.renderer.windows
         ? Object.values(wine.renderer.windows).map(w => w && w.title).filter(Boolean).sort() : [],
       boardGreen,
+      focusHwnd: wine ? (wine._workerFocusHwnd | 0) : 0,
     };
   });
+  state.boardChanged = boardChanged;
 
   fs.mkdirSync(OUT, { recursive: true });
   await page.screenshot({ path: path.join(OUT, `${app}-${threaded ? 'worker' : 'single'}.png`) });
@@ -345,10 +459,27 @@ async function comLoadDllProbe(browser, port) {
       `slices=${win16.state.slices}`);
     check(win16.state.windows >= 8, 'Win16 Worker creates the Rodent board windows',
       `windows=${win16.state.windows}`);
+    check(win16.state.titles.some(title => /^Rodent's Revenge(?: \[\d+\])?$/.test(title)),
+      'Win16 Worker retains the Rodent window title',
+      `titles=${JSON.stringify(win16.state.titles)}`);
     check(win16.state.boardGreen > 10000, 'Win16 Worker renders the live Rodent board',
       `green=${win16.state.boardGreen}`);
+    check(win16.state.boardChanged > 40, 'Win16 Worker routes held arrows to the focused Rodent playfield',
+      `changed=${win16.state.boardChanged} focus=0x${(win16.state.focusHwnd >>> 0).toString(16)}`);
     check(win16.problems.length === 0, 'Win16 Worker has no trap or missing import',
       win16.problems.slice(0, 2).join(' | '));
+
+    const remake = await launch(browser, port, 'rodent2000', { threaded: true });
+    check(remake.state.threaded, 'Rodent2000 main task stays in the guest Worker');
+    check(remake.state.titles.some(title => title === "Rodent's Revenge 2000 - Level 1"),
+      'Rodent2000 Worker starts a new game from its real menu',
+      `titles=${JSON.stringify(remake.state.titles)}`);
+    check(remake.state.boardGreen > 10000, 'Rodent2000 Worker retains the rendered block field',
+      `green=${remake.state.boardGreen}`);
+    check(remake.state.boardChanged > 40, 'Rodent2000 Worker routes held arrows to the active game form',
+      `changed=${remake.state.boardChanged}`);
+    check(remake.problems.length === 0, 'Rodent2000 Worker has no trap or missing import',
+      remake.problems.slice(0, 2).join(' | '));
 
     // Phase 2. Skipped rather than failed without the binary, like the CLI audio
     // test: winamp.exe and demo.mp3 are not in every checkout.

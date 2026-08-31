@@ -96,6 +96,7 @@ installInputHandlers(RendererProbe);
   const wine = new context.WineAssembly();
   const scheduled = [];
   const sliceSteps = [];
+  const sliceSync = [];
   const sliceResolvers = [];
   wine._scheduleStep = step => scheduled.push(step);
   wine._beginGuestTickBatch = () => {};
@@ -105,10 +106,12 @@ installInputHandlers(RendererProbe);
     inputQueue: [], _inputPendingPublishers: new Set(),
     beginWorkerGuestSlice() {}, endWorkerGuestSlice() {}, flushRepaint() {},
   };
+  wine.instance = { exports: {} };
   wine.guestWorker = {
     broker: { publish() {} },
-    slice(steps) {
+    slice(steps, sync) {
       sliceSteps.push(steps);
+      sliceSync.push(sync);
       return new Promise(resolve => sliceResolvers.push(resolve));
     },
   };
@@ -121,12 +124,17 @@ installInputHandlers(RendererProbe);
   assert.deepStrictEqual(sliceSteps, [100000, 6000],
     'a 200ms full slice adapts to a presentation-sized 12ms block budget');
   for (const publish of wine.renderer._inputPendingPublishers) publish(3, true);
+  for (const publish of wine.renderer._guestWorkerFocusPublishers) {
+    publish(wine.instance, 0x10005);
+  }
   sliceResolvers.shift()({ eip: 1, yield: 0, focusHwnd: 0, blocks: 6000, ms: 12 });
   await new Promise(resolve => setImmediate(resolve));
   assert.strictEqual(scheduled.length, 1, 'adapted in-flight slice schedules its successor');
   scheduled.shift()();
   assert.deepStrictEqual(sliceSteps, [100000, 6000, 1000],
     'the slice that dequeues and paints keyboard input is capped at 1k blocks');
+  assert.strictEqual(sliceSync[2].focusHwnd, 0x10005,
+    'the short input slice carries renderer focus to the live guest instance');
   wine.running = false;
   sliceResolvers.shift()({ eip: 1, yield: 0, focusHwnd: 0, blocks: 1000, ms: 2 });
   await new Promise(resolve => setImmediate(resolve));

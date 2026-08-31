@@ -41,6 +41,22 @@ loaded the NE task. Its `VBRUN100` selector, app-local modules, and far-import
 fixups therefore share one arena. `test/test-worker-guest.js` keeps Threads on,
 requires the Worker backend, and checks the rendered green Rodent board.
 
+## Browser Worker keyboard focus (fixed 2026-08-30)
+
+The renderer's Worker-owned WASM is only a browser-side shadow. Mouse clicks
+updated its focus global, while slot 0 kept `$focus_hwnd == 0`; a following
+arrow therefore reached the top-level form instead of the 276x276 VB picture
+child that implements the board. The frame stayed alive and its timer kept
+firing, which made this look like frozen rendering rather than wrong input.
+
+Renderer focus changes now ride on the next slot-0 slice. The Worker performs
+the normal `set_focus` notification and then mirrors USER's focus bookkeeping
+before it dequeues a following key. Opening Game > New Game consequently leaves
+live focus on `0x10005`, matching cooperative execution. The Worker browser
+regression holds Right and requires the board to change; the 2026-08-30 run
+changed 221 pixels with no trap. The reviewed frame has intact chrome, menu,
+mouse counter, cyan border, olive floor, and green block field.
+
 ## Menu inventory and what each item does
 
 Driven by click, item by item, on 2026-08-25. `menu-sweep.js` cannot do this

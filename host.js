@@ -807,6 +807,7 @@ class WineAssembly {
     h.check_input_hwnd = () => {
       const evt = self._lastInputEvent;
       if (!evt) return 0;
+      const ownerInstance = ctx.instance || self.instance;
       // The routing rule itself is shared with the CLI (lib/host-window.js).
       // In browser Worker mode the local instance is deliberately idle and
       // its per-instance focus global remains zero. Use the focus published by
@@ -814,7 +815,17 @@ class WineAssembly {
       const routingExports = self.guestWorker
         ? { get_focus_hwnd: () => self._workerFocusHwnd | 0 }
         : (self.instance && self.instance.exports);
-      return inputEventHwnd(evt, routingExports);
+      const keyboardFallback = self.guestWorker ? () => {
+        const renderer = self.renderer;
+        const windows = Object.values((renderer && renderer.windows) || {})
+          .filter(win => win && win.visible && !win.isChild &&
+            (!win.wasm || win.wasm === ownerInstance))
+          .sort((a, b) => renderer && renderer._compareTopLevelZ
+            ? renderer._compareTopLevelZ(b, a)
+            : ((b.zOrder || 0) - (a.zOrder || 0)));
+        return windows.length ? (windows[0].hwnd | 0) : 0;
+      } : null;
+      return inputEventHwnd(evt, routingExports, null, keyboardFallback);
     };
 
     // Wire thread/event imports to ThreadManager
@@ -1271,7 +1282,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=14',
+        workerUrl: 'lib/guest-worker.js?v=15',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
@@ -1900,6 +1911,10 @@ class WineAssembly {
         this.renderer._inputPendingPublishers.delete(this._rendererInputPendingPublisher);
         this._rendererInputPendingPublisher = null;
       }
+      if (this._rendererFocusPublisher && this.renderer._guestWorkerFocusPublishers) {
+        this.renderer._guestWorkerFocusPublishers.delete(this._rendererFocusPublisher);
+        this._rendererFocusPublisher = null;
+      }
       if (this._multiApp) {
         this._removeAppWindows();
       } else {
@@ -2090,6 +2105,17 @@ class WineAssembly {
       }
       self.renderer._inputPendingPublishers.add(self._rendererInputPendingPublisher);
     }
+    if (self.renderer && self.guestWorker && !self._rendererFocusPublisher) {
+      self._rendererFocusPublisher = (wasm, hwnd) => {
+        if (wasm !== self.instance) return;
+        self._workerPendingFocusHwnd = hwnd | 0;
+        self._workerInputBurstSlices = Math.max(self._workerInputBurstSlices | 0, 4);
+      };
+      if (!self.renderer._guestWorkerFocusPublishers) {
+        self.renderer._guestWorkerFocusPublishers = new Set();
+      }
+      self.renderer._guestWorkerFocusPublishers.add(self._rendererFocusPublisher);
+    }
     let unsupportedYield = 0;
     const step = async () => {
       if (!self.running) return;
@@ -2129,6 +2155,11 @@ class WineAssembly {
         // do: in worker mode it is not the main INSTANCE, so its thunk
         // allocations are invisible to everyone else unless they are published.
         const sync = self.threadManager ? self.threadManager.workerSyncState() : null;
+        const pendingFocus = self._workerPendingFocusHwnd;
+        self._workerPendingFocusHwnd = undefined;
+        const mainSync = pendingFocus === undefined
+          ? sync
+          : Object.assign({}, sync || {}, { focusHwnd: pendingFocus | 0 });
         let r, threadsRun;
         if (self.renderer && self.renderer.beginWorkerGuestSlice) {
           self.renderer.beginWorkerGuestSlice();
@@ -2138,10 +2169,10 @@ class WineAssembly {
             // Diagnostic only: the same slices, one at a time. A bug that appears
             // in parallel and not here is a race in shared emulator state, which is
             // a different investigation from a bug in the worker plumbing.
-            r = await self.guestWorker.slice(steps, sync);
+            r = await self.guestWorker.slice(steps, mainSync);
             threadsRun = await runThreads();
           } else {
-            [r, threadsRun] = await Promise.all([self.guestWorker.slice(steps, sync), runThreads()]);
+            [r, threadsRun] = await Promise.all([self.guestWorker.slice(steps, mainSync), runThreads()]);
           }
         } finally {
           if (self.renderer && self.renderer.endWorkerGuestSlice) {

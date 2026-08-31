@@ -49,3 +49,13 @@ through `DefWindowProcA` on the Thunder form, and the default procedure did not
 yet implement that message. It now stores, paints, and mirrors the caption;
 the gameplay test requires `Rodent's Revenge 2000` (or its active Level suffix)
 on the visible form before accepting the dealt board.
+
+## Browser Worker keyboard routing (fixed 2026-08-30)
+
+When the Worker has no live child focus, keyboard messages now fall back to the
+front visible top-level owned by that guest instead of hwnd 0. The browser
+regression opens Game > New Game through the real menu, holds Right, and checks
+the rendered board rather than accepting key logs alone. The verified run
+changed 893 pixels and retained the complete `Rodent's Revenge 2000 - Level 1`
+frame: caption/menu, lives and score strip, cyan border, olive floor, green
+blocks, mouse and cats were all visually inspected.

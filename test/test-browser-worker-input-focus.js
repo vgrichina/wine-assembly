@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { installInputHandlers } = require('../lib/renderer-input');
 const { Win98Renderer } = require('../lib/renderer');
+const { inputEventHwnd } = require('../lib/host-window');
 
 const root = path.join(__dirname, '..');
 const host = fs.readFileSync(path.join(root, 'host.js'), 'utf8');
@@ -19,17 +20,19 @@ const menus = fs.readFileSync(path.join(root, 'src', '09c5-menu.wat'), 'utf8');
 
 assert(worker.includes('focusHwnd: ex.get_focus_hwnd ? ex.get_focus_hwnd() >>> 0 : 0'),
   'guest Worker slice result should publish its live focus hwnd');
+assert(/msg\.sync\.focusHwnd !== undefined[\s\S]*?ex\.set_focus\(focus\)[\s\S]*?ex\.set_focus_hwnd\(focus\)/.test(worker),
+  'guest Worker should apply renderer focus with real messages before running the next slice');
 assert(host.includes('self._workerFocusHwnd = r.focusHwnd | 0;'),
   'browser Worker loop should cache the focus returned by slot 0');
 assert(host.includes("evt.type === 'mouse' && evt.msg === 0x0201 && evt.hwnd"),
   'dequeued mouse-down should update Worker focus before rapid following keys');
-assert(/const routingExports = self\.guestWorker[\s\S]*?get_focus_hwnd: \(\) => self\._workerFocusHwnd \| 0[\s\S]*?inputEventHwnd\(evt, routingExports\)/.test(host),
-  'browser keyboard routing should consult cached Worker focus, not idle local focus');
+assert(/const routingExports = self\.guestWorker[\s\S]*?get_focus_hwnd: \(\) => self\._workerFocusHwnd \| 0[\s\S]*?keyboardFallback[\s\S]*?inputEventHwnd\(evt, routingExports, null, keyboardFallback\)/.test(host),
+  'browser keyboard routing should consult Worker focus then its visible owner window');
 assert(host.includes('this.renderer._guestWorkerWasms.add(this.instance);'),
   'Worker-backed renderer ownership token should be marked');
 assert(input.includes('if (this._keyboardOwnerRunsInGuestWorker())'),
   'Worker-backed keyboard events should bypass direct calls into the idle instance');
-assert(host.includes("workerUrl: 'lib/guest-worker.js?v=14'"),
+assert(host.includes("workerUrl: 'lib/guest-worker.js?v=15'"),
   'guest Worker cache key should change with its slice result protocol');
 assert(/\(func \$menu_post[\s\S]*?\$shared_post_queue_enqueue[\s\S]*?\n\s*\)/.test(menus),
   'browser-side menu commands must enter the shared owning-thread queue');
@@ -65,6 +68,19 @@ assert.deepStrictEqual(renderer.inputQueue.map(event => [event.msg, event.wParam
   [0x0102, 0x43],
 ], 'Worker-backed keydown and character messages should stay ordered in the guest queue');
 
+let fallbackCalls = 0;
+const fallbackHwnd = () => { fallbackCalls++; return 0x10002; };
+assert.strictEqual(inputEventHwnd(
+  { type: 'key', hwnd: 0, msg: 0x0100, wParam: 0x27 },
+  { get_focus_hwnd: () => 0 }, null, fallbackHwnd), 0x10002,
+'zero-focus Worker keyboard input should target its active visible form');
+assert.strictEqual(inputEventHwnd(
+  { type: 'key', hwnd: 0, msg: 0x0100, wParam: 0x27 },
+  { get_focus_hwnd: () => 0x10013 }, null, fallbackHwnd), 0x10013,
+'a focused child must win over the active-window fallback');
+assert.strictEqual(fallbackCalls, 1,
+  'active-window fallback should only run when the Worker publishes no focus');
+
 // Mouse focus used to have only the keyboard half of the Worker guard. A
 // Win16 menu click first called set_focus on the idle browser instance, which
 // entered an x86 wndproc with slot 0's EIP/selectors absent and trapped before
@@ -84,6 +100,7 @@ const menuRenderer = new Win98Renderer(canvas);
 let shadowFocus = 0;
 let liveFocusCalls = 0;
 let menuClicks = 0;
+const focusRequests = [];
 let menuOpenHwnd = 0;
 let menuActivations = 0;
 const workerOwnedWasm = {
@@ -106,6 +123,9 @@ const workerOwnedWasm = {
 menuRenderer.wasm = workerOwnedWasm;
 menuRenderer.mainWasm = workerOwnedWasm;
 menuRenderer._guestWorkerWasms = new WeakSet([workerOwnedWasm]);
+menuRenderer._guestWorkerFocusPublishers = new Set([
+  (wasm, hwnd) => focusRequests.push({ wasm, hwnd }),
+]);
 menuRenderer._ensureWatMenu = () => {};
 menuRenderer.windows[0x10002] = {
   hwnd: 0x10002, visible: true, isChild: false,
@@ -117,6 +137,8 @@ assert.strictEqual(liveFocusCalls, 0,
   'Worker-backed mouse focus must not execute the idle browser WASM instance');
 assert.strictEqual(shadowFocus, 0x10002,
   'renderer shadow focus should still follow the clicked Worker-owned window');
+assert.deepStrictEqual(focusRequests, [{ wasm: workerOwnedWasm, hwnd: 0x10002 }],
+  'Worker-backed mouse focus should request the same transition in live slot 0');
 assert.strictEqual(menuClicks, 1,
   'Worker-backed Win16 menu click should reach the menu tracker after focus routing');
 
