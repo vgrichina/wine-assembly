@@ -81,8 +81,8 @@ at the bottom of this file, not left to whoever is editing.
 ```sha256
 cc9dfe2962214e5da09162844e98d359b825009a8388bb7726edaed729b37ee2  tools/watx.js
 17a14c6c447cdee48dcbd6212047d86c88087c50277b141b8d44136672732280  tools/watx-src/compiler-parser.js
-8bf0983cad711749c4577f3eeffb5e89d0263f3dba920369e0b33962b79ac296  tools/watx-src/compiler-stages.js
-4ba1f42b951b20da0673bab7628317e9888ec1b1d7641827f53a7e60c9275132  tools/watx-src/compiler-codegen.js
+5c6641524ffdc8b97db247c4b3fb0d7fe4526df071186a3dcaf903dba2f2e0e9  tools/watx-src/compiler-stages.js
+3024b9c13319d1da2bbd286cd842c1b959f0fe8280a982e7147937334bc7998a  tools/watx-src/compiler-codegen.js
 40f9bc10c5405f4930619bff535d4d435cb68a3e6bb762d32bc32058b99af453  tools/watx-src/compiler.js
 293c1a233359bf142bf5badceb3399c92b79a653a86085681142b2037d80fce4  test/watx-compiler-wine-parity.test.js
 aaea455c646e4db3e1b60c034b32bda842c06babd29d8de3b810d73181ecf2c8  test/watx-compiler-production.test.js
@@ -100,6 +100,7 @@ c8b1f6a5361212e835ba7f4478800008c41c53041f380bf21b6a6a11cfb43e5d  test/watx-comp
 a1b425dc42f4fd3458cf983710c00c028c11f99afab51bd9b5c90046df0ae15b  test/watx-compiler-i64-literal.test.js
 9fe942a56d279a77840a9ca6d04c358186c9a51ffae9bff0ca5fe02b5269f4c4  test/watx-compiler-literals.test.js
 4bcc836d2a63143457c4f8edb5678920bf204db13201d58580fbe64499aed21b  test/watx-compiler-type-index.test.js
+f5e7a5b619f13ec596e998bd2ea6e5283f16b2a786e4ee5c11bb3ffbaef5ac88  test/watx-compiler-regions.test.js
 ```
 
 Every hash above matches the android-emu working tree byte for byte except
@@ -144,6 +145,6 @@ without re-sealing. Both lines are rewritten together by
 CHANGELOG already names the new digest.
 
 ```seal
-manifest-sha256   d2c06462422e7a908639c137f94c0f3c17d940061944edef32e71420531ebe94
-changelog-sha256  9f5872271fee8f641d6693c578af1f7415de3d2e8dd6efa4cd602c231e621fa1
+manifest-sha256   56bf8193ed55ccda9273b571d77be9adccd9fcab78dbdc6c87120ecc4ccf5bf4
+changelog-sha256  f312e92b62950a770eb7d0c73c139c5d4f1a9d01329027a65365fc17e5ed3d99
 ```

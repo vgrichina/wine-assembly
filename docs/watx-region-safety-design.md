@@ -218,7 +218,11 @@ static regions, reached because `region.declare-fixed` populates the same
 with `(region.size $NAME)` and `(region.end $NAME)` as companions;
 `(region.addr $NAME 0)` is the base. It compiles to **exactly** `0x41` +
 SLEB128(`base + offset`) — the identical bytes the raw constant emits — after
-checking `0 <= offset` and `offset + span <= size`.
+checking `0 <= offset` and `offset + span <= size`. With no `(span N)` the span
+is **1**, not 0: the form still addresses a byte, so the last valid offset is
+`size - 1` and an address exactly at the region end is rejected as the
+one-past-the-end it is. A given `(span N)` must be positive for the same
+reason.
 
 **Why the bare symbol is not enough on its own.** It carries no offset, so
 there is nothing for the compiler to check; `(i32.add $DX_OBJECTS (i32.const

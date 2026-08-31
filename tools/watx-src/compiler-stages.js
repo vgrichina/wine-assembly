@@ -245,7 +245,7 @@ function checkTypes(forms, options = {}) {
       if(hd==="let"){var nm=V(A(expr,1));if(N(expr)>=4&&T(A(expr,2))==="symbol"&&VALTYPE_TOKENS.indexOf(V(A(expr,2)))>=0){var dt=stackType(V(A(expr,2)));if(nm)localEnv.set(nm,dt);return dt;}if(nm&&A(expr,2)){var it=synthesize(A(expr,2));localEnv.set(nm,it);return it;}return"i32";}
       if(hd==="if"){if(T(A(expr,1))==="symbol"&&["i32","i64","f32","f64","v128"].indexOf(V(A(expr,1)))>=0)return stackType(V(A(expr,1)));return"i32";}
       if(hd==="select")return N(expr)>=3?synthesize(A(expr,1)):"i32";
-      if(hd==="region.alloc"||hd==="set!"||hd==="local.set"||hd==="store.field"||hd==="store.elem"||hd==="store.field-elem")return"i32";
+      if(hd==="region.alloc"||hd==="region.addr"||hd==="region.size"||hd==="region.end"||hd==="set!"||hd==="local.set"||hd==="store.field"||hd==="store.elem"||hd==="store.field-elem")return"i32";
       // block/loop may carry a standard (result T) signature (migration gap G4); it wins
       // over the "type of the last body expression" guess.
       if(hd==="block"||hd==="loop"){

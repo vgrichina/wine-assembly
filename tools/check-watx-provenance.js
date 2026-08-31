@@ -98,6 +98,9 @@ const REQUIRED_FILES = [
   // Type-section ORDER parity: a (type N) operand is positional, so the two
   // compilers must intern signatures in the same order (body #355, $next).
   'test/watx-compiler-type-index.test.js',
+  // Milestone 6 step 1: region.declare-fixed, the head that VERIFIES a base
+  // instead of allocating one (docs/watx-region-safety-design.md).
+  'test/watx-compiler-regions.test.js',
 ];
 
 function fail(msg) {

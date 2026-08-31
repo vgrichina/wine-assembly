@@ -936,6 +936,164 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     }
   }
 
+  // ── region.declare-fixed ────────────────────────────────────────────────────
+  // The rest of the family ALLOCATES: declare-static lays regions out from
+  // STATIC_REGION_BASE below, bump/rc carve from the heap that starts after
+  // them. This head is the opposite verb — the base is an INPUT. It exists for
+  // trees whose addresses are an ABI they do not get to choose (wine-assembly's
+  // fixed memory map is shared with JavaScript, with tests and with guest
+  // address translation), so the useful operation is "this region is AT 0xA and
+  // is N bytes — verify that, never place it".
+  //
+  //   (region.declare-fixed $NAME (base 0x12000) (size 0x3C00000)
+  //                               (align 0x1000) (owner "text"))
+  //
+  // Exactly one of (size N) / (end N) is required; `end` is exclusive.
+  // (within $OUTER) declares a deliberate nested region: it must be contained
+  // in $OUTER, and the pair is then exempt from the overlap error — so "these
+  // two overlap on purpose" is written at the point of overlap instead of
+  // living in some gate's exception list.
+  //
+  // Declarations emit NOTHING. They add no data, no global, no instruction; a
+  // module with them is byte-identical to the same module without them. What
+  // they buy is set-level validation here, plus base resolution: a fixed region
+  // joins the same `regionBase` map static regions use, so `$NAME` in operand
+  // position already emits `i32.const <base>` via compileExpr's symbol handler
+  // with no new code at all. See docs/watx-region-safety-design.md.
+  const fixedRegions = new Map();
+  {
+    const REGION_CLAUSES = new Set(['base', 'size', 'end', 'align', 'owner', 'within']);
+    const located = (form, message) => {
+      const e = new Error(message);
+      const loc = watxFormLoc(form);
+      if (loc !== undefined) {
+        e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc);
+      }
+      return e;
+    };
+    const at = (r) => r.file ? `${r.file}:${r.line}` : `line ${r.line}`;
+    const hx = (n) => `0x${(n >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
+
+    for (const form of forms) {
+      if (!Array.isArray(form) || V(form[1]) !== 'region.declare-fixed') continue;
+      const name = V(form[2]);
+      if (!name || !name.startsWith('$')) {
+        throw located(form, `region.declare-fixed: expected a $-prefixed region name as the first operand`);
+      }
+      const prev = fixedRegions.get(name);
+      if (prev) {
+        throw located(form, `region.declare-fixed ${name} is already declared at ${at(prev)}`);
+      }
+      const clause = new Map();
+      for (let i = 2; i < (form.length - 1); i++) {
+        const part = form[i + 1];
+        if (!Array.isArray(part)) {
+          throw located(form, `region.declare-fixed ${name}: unexpected bare operand '${V(part)}'; ` +
+            `clauses are (base N) (size N) (end N) (align N) (owner "text") (within $R)`);
+        }
+        const key = V(part[1]);
+        if (!REGION_CLAUSES.has(key)) {
+          throw located(form, `region.declare-fixed ${name}: unknown clause (${key} ...); ` +
+            `expected base, size, end, align, owner, within`);
+        }
+        if (clause.has(key)) {
+          throw located(form, `region.declare-fixed ${name}: duplicate (${key} ...) clause`);
+        }
+        if (part.length !== 3) {
+          throw located(form, `region.declare-fixed ${name}: (${key} ...) takes exactly one operand`);
+        }
+        clause.set(key, part[2]);
+      }
+      const intClause = (key) => {
+        const raw = V(clause.get(key));
+        let value;
+        try {
+          value = watxParseIntLiteral(raw, `region.declare-fixed ${name} (${key} ...)`);
+        } catch (err) {
+          throw located(form, `region.declare-fixed ${name}: (${key} ${raw}) is not an integer literal`);
+        }
+        if (!Number.isInteger(value) || value < 0) {
+          throw located(form, `region.declare-fixed ${name}: (${key} ${raw}) must be a non-negative integer`);
+        }
+        return value;
+      };
+
+      if (!clause.has('base')) throw located(form, `region.declare-fixed ${name} needs a (base N) clause`);
+      if (clause.has('size') === clause.has('end')) {
+        throw located(form, `region.declare-fixed ${name} needs exactly one of (size N) or (end N)`);
+      }
+      const base = intClause('base');
+      let size;
+      if (clause.has('size')) {
+        size = intClause('size');
+      } else {
+        const end = intClause('end');
+        if (end <= base) {
+          throw located(form, `region.declare-fixed ${name}: (end ${hx(end)}) is not above (base ${hx(base)})`);
+        }
+        size = end - base;
+      }
+      if (size === 0) {
+        throw located(form, `region.declare-fixed ${name}: (size 0) — a region must have an extent`);
+      }
+      const align = clause.has('align') ? intClause('align') : 4;
+      if (align < 1 || (align & (align - 1)) !== 0) {
+        throw located(form, `region.declare-fixed ${name}: (align ${align}) is not a power of two`);
+      }
+      if (base % align !== 0) {
+        throw located(form, `region.declare-fixed ${name} base ${hx(base)} is not a multiple of its (align ${hx(align)})`);
+      }
+      // Bound against the memory GUARANTEED to exist at instantiation, not the
+      // maximum: a region that only exists after a memory.grow the compiler
+      // cannot see is not a fixed region, and declare-fixed should refuse it
+      // rather than bless it.
+      const memoryBytes = memoryDecl.min * 65536;
+      if (base + size > memoryBytes) {
+        throw located(form, `region.declare-fixed ${name} ends at ${hx(base + size)}, past the ` +
+          `${hx(memoryBytes)} bytes of initial memory (${memoryDecl.min} pages)`);
+      }
+      const loc = watxFormLoc(form);
+      fixedRegions.set(name, {
+        name, base, size, align, form,
+        within: clause.has('within') ? V(clause.get('within')) : null,
+        owner: clause.has('owner') ? V(clause.get('owner')) : null,
+        line: loc !== undefined ? watxNodeLine(loc) : 0,
+        file: loc !== undefined ? watxNodeFile(loc) : null,
+      });
+    }
+
+    for (const r of fixedRegions.values()) {
+      if (!r.within) continue;
+      const outer = fixedRegions.get(r.within);
+      if (!outer) {
+        throw located(r.form, `region.declare-fixed ${r.name}: (within ${r.within}) names no declared region`);
+      }
+      if (outer === r) {
+        throw located(r.form, `region.declare-fixed ${r.name}: (within ${r.within}) names itself`);
+      }
+      if (r.base < outer.base || r.base + r.size > outer.base + outer.size) {
+        throw located(r.form, `region.declare-fixed ${r.name} [${hx(r.base)},${hx(r.base + r.size)}) ` +
+          `is not contained in ${outer.name} [${hx(outer.base)},${hx(outer.base + outer.size)})`);
+      }
+    }
+
+    // Overlap-freedom. Sort by base and compare each region with the ones still
+    // open at its start; an interval list is small enough that the obvious
+    // O(n log n) sweep is the whole algorithm.
+    const ordered = [...fixedRegions.values()].sort((a, b) => (a.base - b.base) || (a.size - b.size));
+    const nested = (a, b) => a.within === b.name || b.within === a.name;
+    for (let i = 0; i < ordered.length; i++) {
+      for (let j = i + 1; j < ordered.length; j++) {
+        const a = ordered[i], b = ordered[j];
+        if (b.base >= a.base + a.size) break; // sorted: nothing later can overlap a
+        if (nested(a, b)) continue;
+        throw located(b.form, `region.declare-fixed ${b.name} [${hx(b.base)},${hx(b.base + b.size)}) ` +
+          `overlaps ${a.name} [${hx(a.base)},${hx(a.base + a.size)}) (declared at ${at(a)}); ` +
+          `use (within ${a.name}) if the nesting is deliberate`);
+      }
+    }
+  }
+
   // Lay static regions out at fixed base addresses and start the bump heap after
   // them. This makes a `(region.declare-static $r (size N))` symbol resolve to a
   // real base address (see compileExpr's symbol handler), so code addresses the
@@ -951,6 +1109,21 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       regionBase.set(rd.name, staticCursor);
       staticCursor += (rd.size + 15) & ~15; // 16-byte align (safe for f64/v128)
     }
+  }
+  // Fixed regions join the SAME name→base map, which is the whole point of
+  // making this a head in the existing family: `$NAME` in operand position
+  // resolves to `i32.const <base>` through compileExpr's existing symbol
+  // handler, with no new resolution path to keep in step.
+  for (const r of fixedRegions.values()) {
+    if (regionBase.has(r.name)) {
+      const e = new Error(`Region ${r.name} is declared both fixed and allocated; a region has one base`);
+      const loc = watxFormLoc(r.form);
+      if (loc !== undefined) {
+        e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc);
+      }
+      throw e;
+    }
+    regionBase.set(r.name, r.base);
   }
   const initialMemoryBytes = memoryDecl.min * 65536;
   for (const seg of fixedDataSegments) {
@@ -1121,6 +1294,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       'size-of','offset-of','elem-addr',
       'select','memory.size','memory.grow',
       'region.alloc',
+      'region.addr','region.size','region.end',
       // watjs extensions
       'i32.rotl','i32.rotr','i32.clz','i32.ctz','i32.popcnt',
       'i64.clz','i64.ctz','i64.popcnt',
@@ -2526,6 +2700,74 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       bytes.byte(OP.call);
       bytes.uleb(funcIndexMap.get(BUILTIN_REGION_EXIT));
       
+      return bytes;
+    }
+
+    // ── region.addr / region.size / region.end ──
+    // The offset-checked complement to bare-symbol base resolution. A bare
+    // `$NAME` already emits the base, but it carries no offset and therefore
+    // nothing to check; `(region.addr $NAME 0x400)` is where a CONSTANT offset
+    // becomes visible to bounds checking. It compiles to exactly one i32.const
+    // — the identical bytes the raw hex literal emits — so adopting it costs
+    // nothing at runtime and is a pure compile-time gain.
+    if (head === 'region.addr' || head === 'region.size' || head === 'region.end') {
+      const located = (message) => {
+        const e = new Error(message);
+        const loc = watxFormLoc(expr);
+        if (loc !== undefined) {
+          e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc);
+        }
+        return e;
+      };
+      const rname = V(expr[2]);
+      const region = rname ? fixedRegions.get(rname) : null;
+      if (!region) {
+        const known = [...fixedRegions.keys()];
+        throw located(`${head}: unknown region ${rname || '<missing>'}; declared regions are ` +
+          (known.length ? known.join(', ') : '(none)'));
+      }
+      let value;
+      if (head === 'region.size') {
+        if (expr.length !== 3) throw located(`region.size ${rname} takes no operand besides the region`);
+        value = region.size;
+      } else if (head === 'region.end') {
+        if (expr.length !== 3) throw located(`region.end ${rname} takes no operand besides the region`);
+        value = region.base + region.size;
+      } else {
+        if (expr.length < 4) throw located(`region.addr ${rname}: expected a constant offset operand`);
+        const rawOffset = V(expr[3]);
+        let offset;
+        try {
+          offset = watxParseIntLiteral(rawOffset, `region.addr ${rname} offset`);
+        } catch (err) { offset = NaN; }
+        if (!Number.isInteger(offset) || offset < 0 || Array.isArray(expr[3])) {
+          throw located(`region.addr ${rname}: offset must be a non-negative integer literal ` +
+            `(got '${Array.isArray(expr[3]) ? '<expression>' : rawOffset}')`);
+        }
+        // With no (span N) the form still addresses a byte, so the last valid
+        // offset is size-1: an address AT the region end is one-past-the-end,
+        // which is exactly the off-by-one this feature exists to catch.
+        let span = 1;
+        if (expr.length > 4) {
+          const spanForm = expr[4];
+          if (!Array.isArray(spanForm) || V(spanForm[1]) !== 'span' || spanForm.length !== 3) {
+            throw located(`region.addr ${rname}: the only extra clause is (span N)`);
+          }
+          span = watxParseIntLiteral(V(spanForm[2]), `region.addr ${rname} span`);
+          if (!Number.isInteger(span) || span < 1) {
+            throw located(`region.addr ${rname}: (span ${V(spanForm[2])}) must be a positive integer`);
+          }
+          if (expr.length > 5) throw located(`region.addr ${rname}: too many operands`);
+        }
+        if (offset + span > region.size) {
+          throw located(`region.addr ${rname} offset 0x${offset.toString(16)}` +
+            (expr.length > 4 ? ` span 0x${span.toString(16)}` : '') +
+            ` runs past the region's 0x${region.size.toString(16)} bytes`);
+        }
+        value = region.base + offset;
+      }
+      bytes.byte(OP.i32_const);
+      bytes.sleb(value);
       return bytes;
     }
 

@@ -447,3 +447,82 @@ pinned suites), so the seal covers it.
 New manifest digest:
 
   d2c06462422e7a908639c137f94c0f3c17d940061944edef32e71420531ebe94
+
+## 2026-08-31 — `region.declare-fixed`: the head that verifies a base instead of allocating one
+
+Milestone 6 step 1 of `docs/watx-migration-plan.md`, designed in
+`docs/watx-region-safety-design.md`.
+
+The compiler already had a region FAMILY — `region.declare-static` / `-bump` /
+`-rc`, `region.alloc`, `region.enter/exit`, and bare-symbol resolution of a
+region name to its base. Every existing head **allocates**: static regions are
+laid out from `STATIC_REGION_BASE = 1024`, bump/rc carve from the heap that
+starts after them. wine-assembly's bases are an ABI it shares with JavaScript,
+with tests and with guest-address translation (`g2w`), so the one operation it
+was missing is the opposite verb: *this region is AT 0x07F60000 and is 0x20000
+bytes — verify that, never place it.*
+
+So this is **one new head in the existing family**, not a parallel subsystem:
+
+```wat
+(region.declare-fixed $GUEST_BASE (base 0x00012000) (size 0x03C00000)
+                      (align 0x1000) (owner "PE image window"))
+```
+
+`(size N)` and `(end N)` are mutually exclusive and `end` is exclusive;
+`(align N)` defaults to 4 and must be a power of two; `(within $OUTER)` declares
+a deliberately nested region, which must be contained in `$OUTER` and is then
+exempt from the overlap error against it alone — so "these two overlap on
+purpose" is written at the point of overlap instead of living in an external
+gate's exception list.
+
+Reused verbatim: the top-level collection scan, the `(size N)` spelling, and
+`regionBase` — a fixed region joins the same name→base map, so `$NAME` in
+operand position emits `i32.const <base>` through the family's existing symbol
+handler with no new resolution path. Rejected: the `staticCursor` allocation
+entirely. A `declare-fixed` region contributes nothing to `staticCursor` or
+`DATA_BASE`, so it cannot move the bump heap or the interned-string pool.
+
+Validation, all hard errors carrying `e.line/e.col/e.file`: duplicate name,
+missing/dual/malformed extent, unknown or duplicate clause, zero size, `end`
+below `base`, misaligned base, non-power-of-two align, a region ending past the
+memory *guaranteed at instantiation* (`memoryDecl.min * 65536` — a region that
+only exists after a `memory.grow` the compiler cannot see is not a fixed
+region), pairwise overlap naming both regions and both locations, `(within ...)`
+naming an undeclared region or one that does not contain it, and a name declared
+both fixed and allocated.
+
+Also added: `(region.addr $NAME OFFSET [(span N)])`, `(region.size $NAME)` and
+`(region.end $NAME)`, the offset-checked complement to bare-symbol resolution.
+`region.addr` compiles to **exactly one `i32.const`** — byte-identical to the
+raw constant it replaces, pinned by the suite — after checking the offset is a
+non-negative integer literal and that `offset + span` is within the region.
+With no `(span N)` the span is 1, so an address exactly at the region end is
+rejected as the one-past-the-end it is.
+
+**Declarations emit nothing.** A module with them is byte-identical to the same
+module without them; that is what lets wine-assembly declare its whole fixed
+memory map without moving the canonical artifacts (tail `01daf6ccfbd115e3`,
+compat `0ee6414668129ac4`). It is also what keeps `WINE_WAT_COMPILER=legacy`
+alive through this step: `lib/compile-wat.js` dispatches top-level forms through
+a flat `if`-chain with no `else` and no whitelist, so it ignores an unknown
+top-level form outright — verified by compiling the real tree twice through it,
+with and without a `region.declare-fixed` part, to identical bytes. The
+*expression* forms are WATX-only, and the first one written into `src/` retires
+that rollback deliberately, in its own commit.
+
+`compiler-stages.js` gained the three new heads in its i32 synthesis list, next
+to `region.alloc`.
+
+New suite `test/watx-compiler-regions.test.js` (60 checks): byte-identity with
+declarations present and against a static/bump declaration; bare symbol,
+`region.addr`, `(span N)`, `region.size` and `region.end` instantiated and
+called; `region.addr` and the bare symbol byte-compared against the raw
+`i32.const`; every failure mode above, each asserted to name its condition
+*and* to carry a nonzero line number; and both tail-call and compat modes. It
+joins `REQUIRED_FILES` in `tools/check-watx-provenance.js` (18 → 19 pinned
+suites), so the seal covers it.
+
+New manifest digest:
+
+  56bf8193ed55ccda9273b571d77be9adccd9fcab78dbdc6c87120ecc4ccf5bf4
