@@ -733,3 +733,70 @@ confident wrong numbers first.
 Fixing (1) also moved the back-edge shares in the section above by a point or
 two — DRAGON's `back` went 65.0% → 66.4% — since the classifier was missing
 fused back edges too. The conclusions there are unchanged.
+
+### Would inlining the calls rescue the other half?
+
+The table above declines every region containing a call, and that is half the
+corpus. The obvious repair is to inline the callee so the call stops being a
+region boundary. Whether that is available at all depends on something the
+census can answer: **are these calls direct?** A `call_rel` carries its operands
+as `[arenaTarget][guestTarget][retIp][arenaRet]` — the callee's arena address is
+already there at compile time, so inlining it is a static splice. A
+`call_r16`/`call_m16` computes its target at runtime, so inlining one needs a
+speculated target plus a guard, which is the trace machinery this VM has spent
+several documents avoiding.
+
+Same command, same twenty programs; hottest region per program:
+
+| program | region exits | direct sites | distinct targets | leaf targets (ops) | indirect | int |
+|---|---:|---:|---:|---|---:|---:|
+| CONTACT | 23 | 12 | 3 | 1 (8) | 0 | 1 |
+| DSTNFO | 35 | 13 | 6 | 2 (59, 171) | 0 | 0 |
+| DREAM | 35 | 13 | 6 | 4 (21, 21, 5, 216) | 0 | 0 |
+| B-STEEL | 23 | 11 | 5 | 3 (4, 14, 4) | 0 | 0 |
+| ASYLUM | 15 | 9 | 2 | 0 | 0 | 0 |
+| RUNDEMO | 15 | 7 | 4 | 4 (9, 45, 54, 57) | 0 | 0 |
+| CORE-ADD | 13 | 6 | 1 | 0 | 0 | 0 |
+| BRW | 26 | 6 | 1 | 0 | 0 | 0 |
+| CYCLE (3.0% region) | 14 | 5 | 2 | 1 (288) | 0 | 0 |
+| ACCIDENT (3.8% region) | 4 | 0 | 0 | 0 | 0 | 2 |
+
+**Every call in every hot region is direct.** Not a majority — all of them. The
+mechanism inlining needs is therefore available without speculation, without a
+guard on the target, and without any of the deopt machinery; the callee's arena
+address is a constant in the operand stream.
+
+Three things that still cost something, none of them a blocker:
+
+- **The return-address push is observable guest memory** and has to stay.
+  Inlining removes the *transfer* and the region boundary, not the stack
+  traffic. Programs read that word; several in this corpus are self-modifying
+  and one of them is a depacker.
+- **`ret` consults the shadow stack**, and an inlined `ret` still has to check
+  that what it pops is the return address it was inlined against — a guest that
+  rearranged the stack must still leave. That is one compare whose failure path
+  is an exit the region would have had anyway.
+- **Not every callee is a leaf.** CORE-ADD, ASYLUM and BRW have *zero* leaf
+  targets — their callees call further — so those need recursive inlining under
+  a depth budget, or they stay declined. And "leaf" is not "small": CYCLE's is
+  288 ops and DREAM has one at 216, against B-STEEL's 4/14/4.
+
+What inlining does **not** do is turn these into the one-exit shape the
+call-free half already has. DSTNFO's 35 exits lose at most its 13 call sites;
+the rest are ordinary branches leaving the loop. So the ordering stands: build
+the call-free case first, where ADDY_II is 178 ops behind a single exit, and
+treat direct-call inlining as the extension that brings B-STEEL-shaped regions
+(three leaves of 4, 14 and 4 ops) in behind it. The regions whose callees are
+large or non-leaf are a size decision, not a mechanism one, and can be declined
+by a budget without losing the mechanism.
+
+#### The regex that made this table wrong the first time
+
+`/^call_(r|m)/` also matches `call_rel`. Every region duly reported exactly as
+many indirect sites as direct ones — 12/12, 13/13, 6/6, 11/11 — and the tidy
+1:1 ratio is what gave it away: a real corpus does not do that. Anchored to the
+whole name (`call_r16|call_r32|call_m16|call_m32|call_far_m|call_far_m32`) the
+indirect count is zero everywhere. **The first version of this section would
+have concluded that inlining was unavailable.** Third branch-reading bug in this
+file, same shape as the other two: a name pattern standing in for a structural
+fact.

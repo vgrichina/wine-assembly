@@ -411,13 +411,29 @@ async function jitTiers(exe, {
       // is an exit whether or not it is a loop exit.
       const opaque = !/^jmp/.test(t.end);
       const calls = t.ops.filter(o => /^(call|int)/.test(o.name)).length;
+      // Not every call is the same obstacle, and the difference decides whether
+      // inlining is even available. `call_rel`'s operands are
+      // [arenaTarget][guestTarget][retIp][arenaRet] -- the callee's arena
+      // address is sitting right there at compile time, so inlining it is a
+      // static splice. `call_r16`/`call_m16` compute their target at runtime,
+      // so inlining one needs a speculated target plus a guard, which is the
+      // trace machinery this VM has been avoiding. `int` cannot be inlined at
+      // all: leaving for the host IS the instruction.
+      // Match the whole name. `/^call_(r|m)/` also matches `call_rel`, which
+      // made every region report exactly as many indirect sites as direct ones
+      // -- a suspiciously tidy result that was one regex, not a finding.
+      const direct = t.ops.filter(o => /^call_(rel|rel32|far|far32)$/.test(o.name));
+      const indirect = t.ops.filter(o => /^call_(r16|r32|m16|m32|far_m|far_m32)$/.test(o.name))
+        .length;
+      const ints = t.ops.filter(o => /^(int|into)/.test(o.name)).length;
       // The extent matters as much as the successors. A traced conditional
       // stitches its fall-through in behind it, so ONE readTrace here covers
       // arena words that the profiler attributes to several block heads --
       // charging the region only the samples landing exactly on its head would
       // credit a 64.6% loop with 0.0% of its own program.
       const end = blk.addr + ((t.nextWord - ((blk.addr - blk.prog.arenaBase) >> 2)) << 2);
-      const v = { out, opaque, calls, ops: t.ops.length, end, handbacks: handbacksOf(t) };
+      const v = { out, opaque, calls, ops: t.ops.length, end, handbacks: handbacksOf(t),
+        direct: direct.map(o => o.args[0]), indirect, ints };
       succCache.set(blk.addr, v);
       return v;
     };
@@ -457,13 +473,19 @@ async function jitTiers(exe, {
       // rows with identical bodies and identical shares. Key on the REGION.
       const sig = region.join(',');
       if (loops.some(l => l.sig === sig)) continue;
-      let exits = 0, calls = 0, ops = 0, samples = 0;
+      // `directN` is call SITES, `callees` is distinct targets: the two are not
+      // interchangeable and comparing one against the indirect site count would
+      // flatter inlining by however much the region reuses a callee.
+      let exits = 0, calls = 0, ops = 0, samples = 0, indirect = 0, ints = 0, directN = 0;
+      const callees = new Set();
       const counted = new Set();
       for (const a of region) {
         const blk = headByAddr.get(a);
         if (!blk) continue;
         const s = succOf(blk);
         ops += s.ops; calls += s.calls; exits += s.handbacks;
+        indirect += s.indirect; ints += s.ints; directN += s.direct.length;
+        for (const c of s.direct) callees.add(c);
         if (s.opaque) exits++;
         for (const to of s.out) if (!set.has(to)) exits++;
         for (const x of ranked) {
@@ -471,8 +493,23 @@ async function jitTiers(exe, {
           counted.add(x); samples += x.samples;
         }
       }
+      // How big is each direct callee, and is it a leaf? A callee that is one
+      // block ending in `ret` and calls nothing itself is a splice; one that
+      // is a subgraph of its own with calls inside it is a second region.
+      const sized = [...callees].filter(c => headByAddr.has(c)).map((c) => {
+        const body = reach(c);
+        let n = 0, inner = 0;
+        for (const a of body) {
+          const b2 = headByAddr.get(a);
+          if (!b2) continue;
+          const s2 = succOf(b2);
+          n += s2.ops; inner += s2.direct.length + s2.indirect + s2.ints;
+        }
+        return { at: c, blocks: body.size, ops: n, leaf: inner === 0 };
+      });
       loops.push({ head, sig, blocks: region.length, exits, calls, ops,
         share: 100 * samples / total,
+        indirect, ints, directN, callees: sized, uncompiled: callees.size - sized.length,
         // Every op the region can leave through, so a zero-exit row can be
         // checked rather than believed: a loop with no exit at all is either a
         // slice-bounded spin or a bug in the region walk.
@@ -491,6 +528,18 @@ async function jitTiers(exe, {
           + `0x${l.head.toString(16).padEnd(9)} ${String(l.blocks).padStart(6)}  `
           + `${String(l.ops).padStart(3)}  ${String(l.exits).padStart(5)}  `
           + `${String(l.calls).padStart(8)}`);
+      }
+      // Is the call-bearing half rescuable by inlining? Only the direct calls
+      // are candidates at all, only the leaf ones are cheap, and an `int` is
+      // never one -- so print the three separately rather than as one count.
+      for (const l of loops.slice(0, 4)) {
+        if (!l.calls) continue;
+        const leaves = l.callees.filter(c => c.leaf);
+        log(`    0x${l.head.toString(16)} call sites: `
+          + `${l.directN} direct (${l.callees.length} target(s), ${leaves.length} leaf, `
+          + `${leaves.map(c => c.ops).join('/') || '-'} ops), `
+          + `${l.indirect} indirect, ${l.ints} int`
+          + (l.uncompiled ? `, ${l.uncompiled} never compiled` : ''));
       }
       const t0 = loops[0], b0 = headByAddr.get(t0.head);
       if (b0) {
