@@ -190,3 +190,136 @@ plus a `window.M4.run(tailCalls)` entry point) driven by a puppeteer script that
 polls `ps` for whole-browser RSS across the compile window. It is not committed:
 it is a measurement jig, and once `host.js` is wired (see the launcher header)
 the same reading is available from the real page with `?compile-wat`.
+
+## 6. Follow-ups (2026-08-31, session `watx-perf`)
+
+Two questions the sections above left open, measured on artifacts **pinned** at
+`8bd1cd39` (`build/wine-assembly.wasm` 986,139 B and `build/wine-assembly.compat.wasm`
+986,588 B copied out of `build/` before any work started, because the working
+tree was moving under three other agents). Box: darwin 23.6.0, node v23.10.0,
+loadavg 3.5–6 throughout, which is why **every whole-app number below is user
+CPU over fixed work, not wall clock**.
+
+### 6.1 What does `wasm-opt` do to our artifact?
+
+Never measured before: the WATX backend is a direct emitter with no optimization
+passes at all, so this is the first reading of how much a real optimizer finds.
+`wasm-opt` version 121 (`/opt/homebrew/bin/wasm-opt`), run with `--all-features`.
+
+| artifact | baseline | `-O2` | `-Os` |
+|---|---|---|---|
+| tail-call | 986,139 B | 851,793 B (**−13.6 %**) | 823,291 B (**−16.5 %**) |
+| compatibility | 986,588 B | 851,818 B (−13.7 %) | 823,322 B (−16.6 %) |
+
+**Correctness: all four optimized artifacts are functionally identical on the
+smoke.** `WINE_ASSEMBLY_WASM=<artifact> node test/run.js --app=sol --quiet-api
+--no-build --max-batches=2000 --no-close --png=…` gives the **same sha256 PNG**
+(`563aa73e…`) and the same `6517 API calls` for all six of {base, −O2, −Os} ×
+{tail, compat}; `tools/png-diff.js` reports 0 of 307200 pixels differing.
+
+**No exotic features are introduced.** `--all-features` is only what `wasm-opt`
+will *accept*; re-validating each output under the narrow set the module actually
+uses (`threads, bulk-memory, simd, sign-ext, tail-call, mutable-globals,
+nontrapping-float-to-int, multivalue, reference-types`) passes for all four. So a
+`-O2` artifact is shippable to the same engines as the baseline.
+
+**Throughput: nothing, within noise.** Fixed work = `--app=caesar3_demo
+--quiet-api --no-build --max-batches=36000` (~12 s user, chosen because Caesar's
+cost per batch is wildly non-linear — 28k batches is 2.6 s user and 40k is 54 s,
+so a batch count is only comparable against itself). Three reps per arm,
+interleaved:
+
+| arm | user CPU (3 reps) | min |
+|---|---|---|
+| baseline tail | 13.30 / 11.71 / 11.32 s | 11.32 s |
+| `-O2` tail | 13.33 / 11.51 / 11.59 s | 11.51 s |
+
+That is 0 to −2 % either way — i.e. **`wasm-opt` does not measurably speed up the
+interpreter.** Which is the expected result and worth writing down: the hot loop
+is `$next` plus a table dispatch, and its cost is engine dispatch overhead, not
+anything a wasm-level optimizer can fold.
+
+**There is a real startup regression.** Same command at `--max-batches=1`
+(process + instantiate + PE load + boot), four reps interleaved:
+
+| arm | user CPU |
+|---|---|
+| baseline tail | 0.10 / 0.11 / 0.10 / 0.11 s |
+| `-O2` tail | 0.33 / 0.30 / 0.30 / 0.42 s |
+| `-Os` tail | 0.34 / 0.28 / 0.29 / 0.36 s |
+
+**+0.2 s of user CPU per instantiate, consistently, 3×.** It is *not* module
+decode: `WebAssembly.compile()` of the raw bytes is 2.0–2.2 ms for every one of
+the six artifacts, optimized or not (the smaller files are marginally faster).
+So the cost is on the lazy-baseline-compile path — `wasm-opt` inlines and merges,
+the resulting functions are bigger, and the boot path pays more to tier them in.
+This matters more than it looks under `--threads`, where every worker instantiates
+the same module.
+
+**Cost to run it:** `-O2` is ~10 s and `-Os` ~12.5 s of *user* CPU per artifact,
+and the build emits two artifacts — so wiring it into `tools/build.sh`
+unconditionally would add ~20–25 s of CPU to a build every agent runs constantly.
+
+**Verdict: worth having as an opt-in ship step, not as part of the build.** It
+buys 135–163 KB off the wire (−14 % / −17 %, and gzip will shrink the gap
+further), costs nothing in correctness, buys nothing in throughput, and costs
+0.2 s of startup CPU per instance plus ~22 s of build CPU. That trade is right
+for `tools/deploy-berrry.js` and wrong for `bash tools/build.sh`. Nobody should
+wire it in without re-checking the startup number, because it is the one thing
+that got *worse*.
+
+### 6.2 The node-vs-browser 3× in §3 — investigated, not explained by anything we control
+
+§3 recorded that the same closure compiles in ~1470 ms in node and 554/481 ms in
+a Chrome Worker, and left it. Five experiments, cheapest first. **Four are clean
+negatives, and the fifth is not actionable.**
+
+Baseline reproduction on the current tree, compiling the real closure
+in-process through `tools/watx-closure.js` (the same entry `tools/build-compile-wat.js`
+uses): snapshot read 19–21 ms, compile 1970–2110 ms per mode. Larger than §3's
+1470 ms because `src/` has grown since `c2c54c8e`, not because of the harness.
+
+1. **JIT warm-up — REFUTED.** Six consecutive compiles in one process,
+   alternating modes: 2109 / 2094 / 2034 / 2057 / 2033 / 1970 ms. The sixth
+   compile is 6 % faster than the first. There is no 3× warm-up cliff, so the
+   browser number is not "node's second compile".
+2. **`--no-lazy`, `--max-old-space-size=8192` — no reproducible effect** once
+   read as user CPU rather than the wall clock this box cannot hold still.
+3. **GC — not the cost.** `--max-semi-space-size=64/128` did not help, and a CPU
+   profile puts `(garbage collector)` at **1.7 %** of a 1929 ms compile.
+4. **Maglev — already on.** `node --v8-options` reports `--maglev` default *on*
+   in node 23; passing it explicitly changes nothing.
+5. **Engine version — the standing explanation, and we cannot flag our way out
+   of it.** node v23.10.0 is **V8 12.9**; the Chrome on this box is **152**
+   (V8 ~14.x). That is the only difference left after the four negatives above,
+   and §1's byte-count equality already rules out "the browser compiled something
+   smaller". Nothing in `build.sh` can close it; a newer node would.
+
+**No pathology to fix.** Self time over one compile is ordinary, spread work:
+
+```
+ 514 ms  26.7%  compileExpr        compiler-codegen.js:2020
+ 333 ms  17.3%  parseSource        compiler-parser.js:230
+ 152 ms   7.9%  recycleWatxTree    compiler-parser.js:315
+ 151 ms   7.8%  expandForm         compiler-stages.js:100
+ 150 ms   7.8%  walk               compiler-codegen.js:4048
+  68 ms   3.5%  scanWatxFunctionHeader
+  33 ms   1.7%  (garbage collector)
+```
+
+**`build.sh` already does the obvious thing.** `compileWatx()` in
+`tools/build-compile-wat.js` calls `compileClosure()` twice — tail-call then
+compatibility — **in one process**, over one `watxSourceClosure()` snapshot. There
+is no per-mode spawn to eliminate and no second disk read; the 19 ms snapshot is
+read once. So the "compile both modes in one process" idea is already the shipped
+behaviour, and there is nothing to commit here.
+
+**The one real lead, left un-taken deliberately.** The two modes re-parse the
+same 11.29 MB from scratch: parse and scan (`parseSource` + `recycleWatxTree` +
+`scanWatx*`) are **~33 %** of a compile, and compile #2 in the profile above costs
+the same as compile #1, so none of it is reused. Caching the parsed tree across
+the two dispatch modes would cut a build's compile phase from ~4.0 s to ~3.35 s
+(−16 %) — worth having, but it is a change inside `tools/watx-src/compiler-*.js`,
+which was claimed by another agent while this was measured, and a parse cache
+shared between two modes is exactly the kind of change that needs the
+byte-identity gate run against it rather than a drive-by commit.
