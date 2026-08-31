@@ -69,6 +69,16 @@ const extraWat = String.raw`
 
   (func (export "test_window_unicode") (param $hwnd i32) (result i32)
     (call $wnd_unicode_get (local.get $hwnd)))
+
+  (func (export "test_sysclass_nccreate")
+      (param $hwnd i32) (param $stack i32) (result i32)
+    (global.set $esp (local.get $stack))
+    (call $gs32 (global.get $esp) (i32.const 0))
+    (call $handle_CallWindowProcA
+      (i32.or (global.get $WNDPROC_SYSCLASS) (i32.const 1)) ;; BUTTON
+      (local.get $hwnd) (i32.const 0x0081) (i32.const 0) (i32.const 0)
+      (i32.const 0))
+    (global.get $eax))
 `;
 
 (async () => {
@@ -197,6 +207,9 @@ const extraWat = String.raw`
   assert.strictEqual(e.guest_read32(teardownCount) >>> 0, 4);
   assert.deepStrictEqual(destroyed,
     [rejectNc, rejectCreate, rejectChild, rejectChildNc]);
+
+  assert.strictEqual(e.test_sysclass_nccreate(accepted, stack) >>> 0, 1,
+    'a subclass chained to a USER system class accepts WM_NCCREATE');
 
   console.log('PASS CreateWindowEx rejects failed WM_NCCREATE/WM_CREATE transactions');
 })().catch(error => {

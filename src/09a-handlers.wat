@@ -13300,6 +13300,15 @@ SetColorAdjustment — validate and copy complete per-DC state.
                 (call $sysclass_replay_create (local.get $arg1) (local.get $thunk_idx))))))
         (global.set $eax (call $control_wndproc_dispatch
           (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+        ;; Every USER system-class default proc accepts WM_NCCREATE. The
+        ;; control dispatcher has no state to create for that message and
+        ;; historically returns zero; once CreateWindowEx began honoring the
+        ;; documented rejection result, subclassed VB6 controls were therefore
+        ;; torn down before WM_CREATE and Rodent 2000 reported "Out of memory".
+        ;; Keep the adoption/dispatch side effects above, but return USER's
+        ;; required creation result to the subclass that chained here.
+        (if (i32.eq (local.get $arg2) (i32.const 0x0081))
+          (then (global.set $eax (i32.const 1))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
     ;; Sentinel 0xFFFE0001 = built-in control default wndproc.
