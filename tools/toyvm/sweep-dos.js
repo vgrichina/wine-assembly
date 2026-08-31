@@ -3,7 +3,7 @@
 'use strict';
 
 // Every DOS binary in the corpus against every version of the VM: the four
-// interpreter dispatch shells AND the two JIT tiers, one row per program.
+// interpreter dispatch shells AND the full JIT tier ladder, one row per program.
 //
 //   node tools/toyvm/sweep-dos.js --dir=/tmp/demos --out=/tmp/sweep.json
 //   node tools/toyvm/sweep-dos.js --dir=/tmp/demos --md=/tmp/sweep.md --reps=3
@@ -13,7 +13,7 @@
 //
 //   bench-dos.js   sweep-dos.js
 //   -----------    ------------
-//   4 shells       4 shells + tier 0/1/2 JIT, same program, same run
+//   4 shells       4 shells + tier 0/1/2/3 JIT + compile cost, same run
 //   one process    one child process per program
 //   prose          JSON per program, plus a markdown table
 //
@@ -142,7 +142,7 @@ async function runOne(exe, o) {
   try {
     row.jit = await jitTiers(exe, {
       budget: o.budget, slice: o.slice, cpu: o.cpu,
-      sampleAfter: o.sampleAfter, sampleFrom: o.sampleFrom,
+      sampleAfter: o.sampleAfter, sampleFrom: o.sampleFrom, minOps: o.minOps,
       bench: true, iters: o.iters, reps: o.reps, log: quiet,
     });
     delete row.jit.fingerprints;    // large, and the boolean is the finding
@@ -158,7 +158,7 @@ function child(exe, o) {
     const args = [__filename, `--one=${exe}`, `--dispatches=${o.budget}`,
       `--reps=${o.reps}`, `--iters=${o.iters}`, `--cpu=${o.cpu}`,
       `--sample-after=${o.sampleAfter}`, `--sample-from=${o.sampleFrom}`,
-      `--variants=${o.variants.join(',')}`];
+      `--min-ops=${o.minOps}`, `--variants=${o.variants.join(',')}`];
     const p = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     p.stdout.on('data', (d) => { out += d; });
@@ -197,8 +197,8 @@ function markdown(rows, variants) {
   const jit = rows.filter(r => r.jit && r.jit.ok && r.jit.reason === 'benched');
 
   L.push('| program | dispatches | px | ' + variants.map(v => `\`${v}\``).join(' | ')
-    + ' | hot trace | tier 1 | tier 2 |');
-  L.push('|---|---:|---:|' + variants.map(() => '---:|').join('') + '---|---:|---:|');
+    + ' | hot trace | tier 1 | tier 2 | tier 3 | build |');
+  L.push('|---|---:|---:|' + variants.map(() => '---:|').join('') + '---|---:|---:|---:|---:|');
   for (const r of rows) {
     const cells = [];
     if (r.shells && r.shells.ok) {
@@ -214,8 +214,15 @@ function markdown(rows, variants) {
     const trace = j.trace ? `${j.trace.ops} ops, ${j.trace.share.toFixed(0)}%` : '';
     const t1 = j.speedup ? `${j.speedup.t01.toFixed(2)}x` : `_${j.reason || ''}_`;
     const t2 = j.speedup ? `${j.speedup.t02.toFixed(2)}x` : '';
+    // tier 3 and the compile cost are the two columns this table used to be
+    // missing, and they are the two that decide whether any of the rest is
+    // worth anything: t03 is the whole ladder, and `build` is what has to be
+    // repaid before a single iteration of it counts.
+    const t3 = j.speedup && j.speedup.t03 !== undefined ? `${j.speedup.t03.toFixed(2)}x` : '';
+    const build = j.build ? `${(j.build.tier3Ns / 1e6).toFixed(1)} ms` : '';
     L.push(`| ${r.name} | ${r.dispatched ? (r.dispatched / 1e6).toFixed(1) + 'M' : ''} | `
-      + `${r.pixels === undefined ? '' : r.pixels} | ${cells.join(' | ')} | ${trace} | ${t1} | ${t2} |`);
+      + `${r.pixels === undefined ? '' : r.pixels} | ${cells.join(' | ')} | ${trace} | ${t1} | ${t2}`
+      + ` | ${t3} | ${build} |`);
   }
 
   L.push('');
@@ -241,12 +248,34 @@ function markdown(rows, variants) {
     L.push(`  ...and the ${blank.length} that did not: `
       + variants.map(v => `\`${v}\` ${rel(blank, v)}`).join(', '));
   }
+  // One place that formats the whole ladder, because there are two callers --
+  // all benchable programs, and one row per DISTINCT trace -- and they drifted
+  // apart the last time a tier was added.
+  const ladder = (rs) => {
+    const g = (k) => geomean(rs.map(r => r.jit.speedup[k]).filter(Number.isFinite));
+    const parts = [`tier 0->1 ${g('t01').toFixed(2)}x`, `tier 1->2 ${g('t12').toFixed(2)}x`,
+      `tier 2->3 ${g('t23').toFixed(2)}x`, `**tier 0->3 ${g('t03').toFixed(2)}x**`];
+    return parts.join(', ');
+  };
+  // What the ladder costs, kept beside what it buys on purpose. A ratio with no
+  // compile cost next to it reads as a speedup, and for four of the nine core
+  // programs it is not one: the trace never runs enough iterations to repay a
+  // single compile. See the break-even table in docs/toyvm-trace-jit.md.
+  const cost = (rs) => {
+    const built = rs.filter(r => r.jit.build);
+    if (!built.length) return '';
+    const ms = built.map(r => r.jit.build.tier3Ns / 1e6).sort((a, b) => a - b);
+    const be = built.map(r => r.jit.build.breakEvenIters * r.jit.trace.ops)
+      .filter(Number.isFinite).sort((a, b) => a - b);
+    return `\n\n  ...and what it cost: build ${ms[0].toFixed(1)}-${ms[ms.length - 1].toFixed(1)} ms`
+      + (be.length ? `, break-even ${(be[0] / 1e6).toFixed(2)}M-`
+        + `${(be[be.length - 1] / 1e6).toFixed(2)}M guest ops` : '')
+      + ' (NOT included in any ratio above)';
+  };
   if (jit.length) {
     L.push('');
-    L.push(`**geomean over ${jit.length} programs with a benchable hot trace**: `
-      + `tier 0->1 ${geomean(jit.map(r => r.jit.speedup.t01)).toFixed(2)}x, `
-      + `tier 1->2 ${geomean(jit.map(r => r.jit.speedup.t12)).toFixed(2)}x, `
-      + `tier 0->2 ${geomean(jit.map(r => r.jit.speedup.t02)).toFixed(2)}x`);
+    L.push(`**geomean over ${jit.length} programs with a benchable hot trace**: ${ladder(jit)}`
+      + cost(jit));
   }
   // Programs whose hottest trace is byte-identical to another program's. These
   // are not independent measurements: this corpus ships compressed, and the
@@ -254,9 +283,15 @@ function markdown(rows, variants) {
   // that starts at dispatch zero can report the same unpacking loop as the hot
   // trace of a dozen unrelated demos. Counting those as a dozen data points
   // would be counting one loop twelve times.
+  // Keyed on the decoded ops, NOT on the guest bytes. See the note on
+  // trace.sig in trace-jit.js: bytes are read when profiling ends and come back
+  // all zero for any program that has overwritten the region since, which
+  // collapsed eleven unrelated traces into one bucket. Older sweep JSON has no
+  // `sig`, so fall back to bytes and let the op count keep those apart.
   const byBytes = new Map();
   for (const r of jit) {
-    const k = r.jit.trace.bytes;
+    const t = r.jit.trace;
+    const k = t.sig !== undefined ? t.sig : `${t.ops}:${t.bytes}`;
     if (!byBytes.has(k)) byBytes.set(k, []);
     byBytes.get(k).push(r.name);
   }
@@ -264,16 +299,18 @@ function markdown(rows, variants) {
     .sort((a, b) => b[1].length - a[1].length);
   if (shared.length) {
     L.push('');
-    L.push('**shared hot traces** (same guest bytes in more than one program — one loop, not N):');
-    for (const [bytes, names] of shared) {
-      L.push(`- \`${bytes.slice(0, 23)}…\` × ${names.length}: ${names.join(', ')}`);
+    L.push('**shared hot traces** (same decoded ops in more than one program — one loop, not N):');
+    for (const [, names] of shared) {
+      const r = jit.find(x => x.name === names[0]);
+      L.push(`- \`${r.jit.trace.bytes.slice(0, 23)}…\` (${r.jit.trace.ops} ops)`
+        + ` × ${names.length}: ${names.join(', ')}`);
     }
-    const uniq = jit.filter(r => byBytes.get(r.jit.trace.bytes)[0] === r.name);
+    const key = (r) => (r.jit.trace.sig !== undefined
+      ? r.jit.trace.sig : `${r.jit.trace.ops}:${r.jit.trace.bytes}`);
+    const uniq = jit.filter(r => byBytes.get(key(r))[0] === r.name);
     L.push('');
     L.push(`**geomean counting each distinct trace once** (${uniq.length} traces): `
-      + `tier 0->1 ${geomean(uniq.map(r => r.jit.speedup.t01)).toFixed(2)}x, `
-      + `tier 1->2 ${geomean(uniq.map(r => r.jit.speedup.t12)).toFixed(2)}x, `
-      + `tier 0->2 ${geomean(uniq.map(r => r.jit.speedup.t02)).toFixed(2)}x`);
+      + ladder(uniq) + cost(uniq));
   }
 
   const tally = {};
@@ -314,6 +351,14 @@ async function main() {
     sampleAfter: count(arg('sample-after'), 0),
     sampleFrom: Number(arg('sample-from', 0.5)),
     iters: count(arg('iters'), 20000),
+    // Ask the profiler for a trace of at least this many ops. Without it the
+    // hottest *block* is often one op long, and a one-op "trace" is not a
+    // trace: it times a single handler, its tier ratios are noise, and ten of
+    // twenty programs came back with byte-identical all-zero trace bytes --
+    // decoded padding that the padding check passes because it does not end
+    // 'too-long'. report-core10.js has always passed minOps: 6; this sweep did
+    // not, and that difference alone made the two disagree.
+    minOps: count(arg('min-ops'), 6),
     reps: Number(arg('reps', 3)),
     cpu: Number(arg('cpu', 386)),
     timeout: Number(arg('timeout', 180)),
@@ -335,7 +380,7 @@ async function main() {
     process.exit(2);
   }
 
-  console.log(`${exes.length} programs x ${o.variants.length} shells + 3 JIT tiers`);
+  console.log(`${exes.length} programs x ${o.variants.length} shells + JIT tiers 0-3`);
   console.log(`load average ${os.loadavg()[0].toFixed(2)} at start\n`);
   const rows = [];
   const t0 = Date.now();
@@ -343,7 +388,7 @@ async function main() {
     const r = await child(exe, o);
     rows.push(r);
     const sh = r.shells && r.shells.ok ? `${r.shells.ns[o.variants[0]].min.toFixed(1)}ns` : (r.shells || {}).reason;
-    const jt = r.jit && r.jit.speedup ? `${r.jit.speedup.t02.toFixed(2)}x` : (r.jit || {}).reason;
+    const jt = r.jit && r.jit.speedup ? `${r.jit.speedup.t03.toFixed(2)}x` : (r.jit || {}).reason;
     console.log(`  [${String(i + 1).padStart(3)}/${exes.length}] ${r.name.padEnd(14)} `
       + `shells ${String(sh).padEnd(14)} jit ${jt}`);
     if (arg('out')) fs.writeFileSync(arg('out'), JSON.stringify({ opts: o, rows }, null, 1));

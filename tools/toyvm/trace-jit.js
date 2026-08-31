@@ -281,6 +281,16 @@ async function jitTiers(exe, {
     share, samples: total,
     bytes: bytes.map(b => b.toString(16).padStart(2, '0')).join(' '),
   };
+  // The trace's IDENTITY, for asking whether two programs are really running
+  // the same loop. It must not be `bytes`: those are read out of guest memory
+  // when profiling ENDS, so for a program that has since overwritten or swapped
+  // out that region they come back all zero. Group by them and every such
+  // program lands in one bucket -- a 20-program sweep reported eleven programs
+  // "sharing" a hot trace whose op counts were 2, 5, 6, 6, 6, 6, 6, 7, 8, 8 and
+  // 8, which cannot be one trace. The decoded ops are the trace itself and are
+  // in hand at this point, so they answer the question directly.
+  trace.sig = t.ops.map(o => `${o.name}(${o.args.map(a => (a >>> 0).toString(16)).join(',')})`)
+    .join(';');
   log(`\nhottest trace ${hot.cs.toString(16)}:${hot.bip.toString(16)} `
     + `-- ${t.ops.length} ops, ${share.toFixed(1)}% of samples`);
   log(`  guest bytes: ${trace.bytes}`);

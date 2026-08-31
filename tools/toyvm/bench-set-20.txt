@@ -1,0 +1,60 @@
+# Twenty programs: the core ten, plus the ten the dispatch shootout's §5 table
+# was measured on. One set that both prior tables are a subset of, so a
+# re-measurement can be compared against either without re-deriving anything.
+#
+#   node tools/toyvm/sweep-dos.js $(grep -v '^#' tools/toyvm/bench-set-20.txt) \
+#     --dispatches=12m --sample-from=0.5 --reps=5 \
+#     --out=/tmp/sweep20.json --md=/tmp/sweep20.md
+#
+# Paths are where tools/toyvm/fetch-demos.js --out=/tmp/demos puts them.
+#
+# WHY TWENTY AND NOT "MORE". The 94-program sweep exists and is the right tool
+# for a coverage question. This set answers a different one: it is the set where
+# every row has a known history, so a number that moves is a change in the VM
+# rather than a program nobody had run before. Programs 1-10 are the core ten
+# and each covers a distinct VM path (see bench-set-core10.txt for the per-line
+# reason; dropping one drops that coverage). Programs 11-19 are §5's table, kept
+# because they are the only ten-program shell measurement that was taken on a
+# quiet box, and re-running exactly them is what makes a comparison legitimate.
+#
+# mars.exe is the one member of §5's table this corpus copy does not contain,
+# so §5 comparisons are over nine of its ten rows, not ten.
+#
+# daretro.exe is here because it is the program the padding check was built for:
+# its hottest block once decoded out of a region whose bytes are 13/16 zero, and
+# those zeros decode to real ops, so it reported an 11.5x "speedup" for compiling
+# nothing. Do NOT expect it to report `padding` from this set, though -- which
+# block is hottest depends on the budget and on --sample-from, and at
+# --dispatches=12m --sample-from=0.5 it comes back as a real 3-op trace at
+# roughly 1.95x. The row is here so that a program with a known zero-decode
+# region is in the set at all; read its `hot trace` cell, not its ratio.
+#
+# READ THE LOAD AVERAGE THE SWEEP PRINTS AT BOTH ENDS. This box routinely sits
+# at load 10-40 with other agents on it, and there a timing run measures the
+# machine. Interleaving and minimum-of-N narrow that; they do not remove it.
+
+# --- the core ten: one distinct VM path each -------------------------------
+/tmp/demos/1993-a-adrenali/DHADREN.EXE
+/tmp/demos/1995-b-bc_dtm2/DTM2.EXE
+/tmp/demos/1994-a-accident/ACCIDENT.EXE
+/tmp/demos/1994-a-acme_bsd/B-STEEL.EXE
+/tmp/demos/1994-b-bltdemo/RUNDEMO.EXE
+/tmp/demos/1994-c-cma_shrt/CMA_SHRT.EXE
+/tmp/demos/1994-c-contagio/CONTAGIO.EXE
+/tmp/demos/1994-c-cyclewar/CYCLE.EXE
+/tmp/demos/1995-a-akm-dem5/DEMO5.EXE
+/tmp/demos/1995-c-cma_brw/BRW.EXE
+
+# --- the dispatch shootout's own ten, less the one we do not have ----------
+/tmp/demos/1994-a-addy_ii/ADDY_II.EXE
+/tmp/demos/1994-c-compovrs/COMPOVRS.EXE
+/tmp/demos/1994-c-copper/COPPER.EXE
+/tmp/demos/1994-c-core_add/CORE-ADD.EXE
+/tmp/demos/1994-c-cyclewar/CONTACT.EXE
+/tmp/demos/1994-d-dragon/DRAGON.EXE
+/tmp/demos/1994-a-asylum/ASYLUM.EXE
+/tmp/demos/1994-c-cyclewar/DSTNFO.EXE
+/tmp/demos/1994-d-dream/DREAM.EXE
+
+# --- regression row: the padding false positive ----------------------------
+/tmp/demos/1993-d-daretro/daretro.exe
