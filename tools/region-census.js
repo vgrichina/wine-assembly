@@ -110,8 +110,18 @@ function census(options = {}) {
   const LOOSE = options.loose ?? flag('loose');
   // See the header: region bases that are also ordinary integers.
   const NOISE_BASES = new Set([0x100, 0x380, 0x400]);
+  // WAVE 3: only a PINNED region's base can be a copy of the map. An allocated
+  // region's base is an output — it is written down nowhere, so no literal can
+  // be a second copy of it, and any literal that happens to equal it equals a
+  // number the allocator chose this morning. That is not a nuance: packing put
+  // regions at 0x1000, 0x2000, 0x3000, 0x4000 and 0x10000, and counting base
+  // coincidence against those took the census from 351 to 884 without a single
+  // line of source changing. The signal the odometer exists to measure —
+  // "somebody typed an address the declaration owns" — survives exactly on the
+  // seven pinned regions and on the INTERIOR rule below.
   const byBase = new Map();
   for (const d of ordered) {
+    if (d.kind === 'alloc') continue;
     if (!NOISE_BASES.has(d.base)) byBase.set(d.base, d);
     const end = d.base + d.size;
     if (!NOISE_BASES.has(end) && !byBase.has(end)) byBase.set(end, d);

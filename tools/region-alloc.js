@@ -1,29 +1,32 @@
 #!/usr/bin/env node
-// region-alloc.js — can the allocator reproduce the map we already have?
+// region-alloc.js — the allocated map: is it legal, does it still pin the ABI,
+// and how much room is left for a shake to move things?
 //
-// Stage A of docs/watx-region-safety-design.md §9 must not move a byte, and §4.1
-// commits to exactly two mechanisms for that: declaration ORDER (first-fit above
-// a floor, never backfilling) and explicit GAPS where the current map has a
-// deliberate hole. This tool applies both to the real declaration set:
-//
-//   node tools/region-alloc.js --emit         # the allocated form of src/00-regions.wat
-//   node tools/region-alloc.js --diff         # allocated base vs declared base, per region
+//   node tools/region-alloc.js                # counts, pins, slack
 //   node tools/region-alloc.js --list         # the resulting layout
+//   node tools/region-alloc.js --diff         # the seven pinned bases vs the ABI
 //   node tools/region-alloc.js --shake=gap    # what a permuted layout looks like
+//   node tools/region-alloc.js --reclaim      # ONE-SHOT: fixed -> allocated
 //
-// `--diff` is the gate the design names: it must be EMPTY before stage A can
-// ship. It is honest about what that proves and what it does not. The gaps are
-// derived from the current map, so an empty diff is partly true by construction;
-// what it actually establishes is that the allocator — declaration order,
-// alignment, first-fit, gap arithmetic, the memory bound — lands on a real
-// 160-region map with no adjustment, and that the emitted allocated source is a
-// legal module. The load-bearing proof is the one downstream of it: compile the
-// tree with the emitted form substituted for src/00-regions.wat and check the
-// canonical hashes (01daf6ccfbd115e3 / 0ee6414668129ac4) did not move.
+// WHAT CHANGED IN WAVE 3. Until 2026-08-31 every region in src/00-regions.wat
+// was `region.declare-fixed`, and this tool's job was to prove that an
+// ALLOCATED form — declaration order, first-fit, and an explicit
+// `(region.gap …)` at every hand-placed hole — reproduced that map byte for
+// byte. It did, and then the map was converted (§8.1): the gaps are gone, the
+// floor is 0x100, seven regions stay pinned and the other ~167 are placed by
+// the allocator. So the emitted-and-compared form no longer exists; the real
+// file IS the allocated form, and the questions worth asking about it are
+// different ones.
 //
-// There is ONE allocator. This tool does not reimplement it — it emits source
-// and asks the vendored compiler where the regions landed (`result.regions`), so
-// a bug here cannot disagree with a build.
+// `--diff` is still the gate, but it now means: **the seven pinned bases are
+// exactly the addresses the guest ABI and the JavaScript side hold.** Those are
+// the only bases in the map that may not move. Everything else moving is the
+// point of the exercise, so diffing it against yesterday's address would report
+// success as failure.
+//
+// There is ONE allocator. This tool does not reimplement it — tools/region-
+// layout.js asks the vendored compiler where the regions landed, so a bug here
+// cannot disagree with a build.
 'use strict';
 
 const fs = require('fs');
@@ -32,22 +35,39 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const DECLS = path.join(ROOT, 'src', '00-regions.wat');
 
-// 512 MB — `(import "host" "memory" (memory 8192 8192 shared))` in
-// src/01-header.wat. The allocator refuses anything that ends past the memory
-// guaranteed at instantiation, and the map's top regions (VIRTUAL_BACKING_BASE
-// at 0x08000000, THREAD_RPC at 0x1FF00000) are well above 128 MB, so the
-// synthetic module has to declare the real size.
-const MEMORY_PAGES = 8192;
-
 // The floor. Below it lives NULL_SENTINEL at 0xF0, which $g2w's sink behaviour
-// pins; nothing there may be allocated. It sits at 0x100 — not 0x1000 — because
-// the low string pool is a real declared region now ($STRING_CONSTANTS at
-// 0x100, $VK_SCAN_TABLES at 0x380 since wave 2), and a floor above them makes
-// first-fit unable to reproduce the map.
+// pins; nothing there may be allocated. It sits at 0x100 — not 0x1000 —
+// because the low string pool is a real declared region ($STRING_CONSTANTS at
+// 0x100, $VK_SCAN_TABLES at 0x380), and a floor above them makes first-fit
+// unable to place them at all.
 const ALLOC_FLOOR = 0x100;
 
+// The guest image base every `g2w` is stated against, and the seven bases that
+// are an ABI rather than a placement. Four are anchored by a guest address
+// (declared `region.declare-derived (base (g2w VA))`, so the arithmetic is in
+// the source rather than in a comment) and three are the backing windows,
+// which are sized to consume whatever memory is left and therefore have
+// nowhere to move to. §8.1 of docs/watx-region-safety-design.md is where the
+// list comes from.
+const IMAGE_BASE = 0x400000;
+const PINNED_ABI = new Map([
+  ['$GUEST_BASE', 0x00012000],
+  ['$GUEST_HEAP_BASE', 0x03D12000],
+  ['$GUEST_STACK', 0x07012000],
+  ['$THUNK_BASE', 0x07112000],
+  ['$VIRTUAL_BACKING_BASE', 0x08000000],
+  ['$DIB_BACKING_BASE', 0x1C000000],
+  ['$THREAD_RPC', 0x1FF00000],
+]);
+// $GUEST_BASE itself stays `region.declare-fixed`: it is the anchor every
+// `(g2w …)` is resolved through, so it cannot be expressed in terms of itself.
+const DERIVED = new Set(['$GUEST_HEAP_BASE', '$GUEST_STACK', '$THUNK_BASE']);
+
+// The top of the guest-visible window. Slack below it is the budget a shake
+// spends; above it sit the three backing windows with nothing between them.
+const SHAKE_CEILING = 0x08000000;
+
 const hex = (n) => `0x${(n >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
-const alignUp = (n, a) => Math.ceil(n / a) * a;
 
 function arg(name, fallback = null) {
   const hit = process.argv.find(a => a === `--${name}` || a.startsWith(`--${name}=`));
@@ -59,12 +79,12 @@ function arg(name, fallback = null) {
 // A small dedicated reader, for the same reason tools/check-region-decls.js has
 // one: this runs beside the build's gates, and reading the file with the
 // compiler it is describing makes a failure recursive.
+const HEAD = /^(\s*)\(region\.declare(-fixed|-derived|-span)?\s+(\$[A-Za-z0-9_]+)\b/;
 function readDeclarations() {
-  const text = fs.readFileSync(DECLS, 'utf8');
-  const lines = text.split(/\r?\n/);
+  const lines = fs.readFileSync(DECLS, 'utf8').split(/\r?\n/);
   const decls = [];
   for (let i = 0; i < lines.length; i++) {
-    const head = /^\s*\(region\.declare-fixed\s+(\$[A-Za-z0-9_]+)\b/.exec(lines[i]);
+    const head = HEAD.exec(lines[i]);
     if (!head) continue;
     let depth = 0, body = '', j = i;
     do {
@@ -81,156 +101,116 @@ function readDeclarations() {
     const base = num('base');
     const end = num('end');
     const size = num('size') !== null ? num('size') : (end !== null && base !== null ? end - base : null);
-    decls.push({ name: head[1], base, size, align: num('align') || 4, owner, line: i + 1 });
+    decls.push({
+      name: head[3],
+      kind: { '-fixed': 'fixed', '-derived': 'derived', '-span': 'span' }[head[2]] || 'alloc',
+      base, size, align: num('align') || 4, owner, line: i + 1, first: i, last: j - 1,
+    });
     i = j - 1;
   }
   return decls;
 }
 
-// Declaration order is the allocator's input, so the emitted file keeps it and
-// inserts a gap wherever the hand-placed map left a hole. Every gap carries a
-// reason: "unknown, preserved" is an honest marker, a silent constant is not.
-function emitAllocatedSource(decls) {
-  const out = [];
-  out.push(';; GENERATED by tools/region-alloc.js — the allocated form of src/00-regions.wat.');
-  out.push(';; Declaration order + explicit gaps reproduce the hand-placed map exactly');
-  out.push(';; (docs/watx-region-safety-design.md §4.1). Do not hand-edit; regenerate.');
-  out.push('');
-  out.push(`  (region.floor ${hex(ALLOC_FLOOR)})`);
-  let cursor = ALLOC_FLOOR;
-  let gaps = 0, gapBytes = 0;
-  for (const d of decls) {
-    const natural = alignUp(cursor, d.align);
-    if (natural > d.base) {
-      throw new Error(`region-alloc: ${d.name} at ${hex(d.base)} is BELOW where the cursor already ` +
-        `reached (${hex(natural)}); the declaration order is not ascending and first-fit cannot ` +
-        `reproduce it without backfilling`);
-    }
-    if (natural < d.base) {
-      const size = d.base - cursor;
-      out.push(`  (region.gap ${hex(size)} (reason "unknown, preserved — hole ahead of ${d.name} in the hand-placed map"))`);
-      gaps++; gapBytes += size;
-      cursor = d.base;
-    }
-    out.push(`  (region.declare ${d.name} (size ${hex(d.size)}) (align ${hex(d.align)})` +
-      (d.owner ? `\n    (owner ${JSON.stringify(d.owner)})` : '') + ')');
-    cursor = d.base + d.size;
-  }
-  return { text: out.join('\n') + '\n', gaps, gapBytes };
-}
-
-// Where the regions actually land, straight from the compiler.
-function allocate(source, shake) {
-  const { compile } = require(path.join(__dirname, 'watx.js'));
-  const module = `(memory ${MEMORY_PAGES} ${MEMORY_PAGES})\n${source}\n` +
-    `(func $noop (effects heap) (nop))\n(wasm-export "noop" $noop)\n`;
-  const options = { mode: 'production', standardWat: true, runtimeBuiltins: false, tailCalls: true };
-  if (shake) options.regionShake = shake;
-  const r = compile(module, new Map(), options);
-  if (!r.success) {
-    throw new Error(`region-alloc: the emitted allocated form does not compile: ${r.error}`);
-  }
-  return r.regions;
-}
-
-// The load-bearing proof: build the WHOLE tree with the emitted allocated form
-// substituted for src/00-regions.wat, in both canonical modes, and print the
-// hashes. Nothing is written to src/ and nothing is written to build/ — the
-// substitution happens in the in-memory VFS the closure compiles from, so this
-// can run at any time without disturbing a tree somebody else is building.
-function prove() {
-  const crypto = require('crypto');
-  const { watxSourceClosure, compileClosure } = require(path.join(__dirname, 'watx-closure.js'));
+// ── The one-shot conversion ─────────────────────────────────────────────────
+// Rewrites the declaration HEADS in place and leaves every comment, clause and
+// line break where it is: the file is 450 lines of hard-won annotation, and a
+// generated replacement would throw all of it away to save an afternoon.
+//
+// A fixed region becomes `region.declare` and loses its `(base …)`, because an
+// allocated region's base is an OUTPUT. The four guest-anchored ones keep
+// their address, three of them stated as the guest VA they actually mean.
+// Running it twice is a no-op.
+function reclaim() {
   const decls = readDeclarations();
-  const emitted = emitAllocatedSource(decls);
-  const closure = watxSourceClosure();
-  // The declarations live inside the module's paren wrapper, so the substituted
-  // text is the emitted body with the file's own (module-less) shape preserved.
-  let replaced = 0;
-  for (const key of [...closure.vfs.keys()]) {
-    if (!/(^|\/)00-regions\.wat$/.test(key.replace(/^\.\//, ''))) continue;
-    closure.vfs.set(key, emitted.text);
-    replaced++;
+  const lines = fs.readFileSync(DECLS, 'utf8').split(/\r?\n/);
+  let converted = 0, pinned = 0, derived = 0;
+  for (const d of decls) {
+    if (d.kind !== 'fixed') continue;
+    if (PINNED_ABI.has(d.name) && !DERIVED.has(d.name)) { pinned++; continue; }
+    const line = lines[d.first];
+    if (DERIVED.has(d.name)) {
+      const va = d.base - PINNED_ABI.get('$GUEST_BASE') + IMAGE_BASE;
+      lines[d.first] = line
+        .replace('(region.declare-fixed ', '(region.declare-derived ')
+        .replace(/\(base\s+0x[0-9A-Fa-f]+\)/, `(base (g2w ${hex(va)}))`);
+      derived++;
+      continue;
+    }
+    lines[d.first] = line
+      .replace('(region.declare-fixed ', '(region.declare ')
+      .replace(/\(base\s+0x[0-9A-Fa-f]+\)\s*/, '');
+    converted++;
   }
-  if (!replaced) throw new Error('region-alloc --prove: 00-regions.wat is not in the source closure');
-  // The comparison is against THIS tree's own declare-fixed build, not against a
-  // hash written down last week: src/ moves under other work all day, and a
-  // stale constant would turn "somebody else edited a handler" into "the
-  // allocator is broken". The historical canonical pair is still printed, so a
-  // tree that happens to be at that commit says so.
-  const pinned = watxSourceClosure();
-  const hash = (buf) => require('crypto').createHash('sha256').update(buf).digest('hex').slice(0, 16);
-  const CANONICAL = { tail: '01daf6ccfbd115e3', compat: '0ee6414668129ac4' };
-  let ok = true;
-  for (const [label, tailCalls] of [['tail', true], ['compat', false]]) {
-    const a = compileClosure(closure, { tailCalls });
-    if (!a.success) throw new Error(`region-alloc --prove: allocated ${label} build failed: ${a.error}`);
-    const p = compileClosure(pinned, { tailCalls });
-    if (!p.success) throw new Error(`region-alloc --prove: declare-fixed ${label} build failed: ${p.error}`);
-    const ab = Buffer.from(a.wasmBinary), pb = Buffer.from(p.wasmBinary);
-    const same = ab.equals(pb);
-    if (!same) ok = false;
-    console.log(`region-alloc --prove: ${label.padEnd(6)} allocated ${ab.length} B ${hash(ab)}  ` +
-      `declare-fixed ${pb.length} B ${hash(pb)}  ${same ? 'IDENTICAL' : 'DIFFER'}` +
-      (hash(pb) === CANONICAL[label] ? '  (tree is at the recorded canonical bytes)' : ''));
+  // The floor goes in ahead of the first declaration, wherever the comments
+  // put it, so the file keeps its shape.
+  if (!/\(region\.floor\b/.test(lines.join('\n'))) {
+    const first = decls.find(d => d.kind !== 'span');
+    lines.splice(first.first, 0,
+      `  ;; The allocator starts here. Below it: NULL_SENTINEL at 0xF0, which`,
+      `  ;; $g2w's sink behaviour pins and nothing may be placed on top of.`,
+      `  (region.floor ${hex(ALLOC_FLOOR)})`,
+      ``);
   }
-  console.log(ok
-    ? `region-alloc --prove: the ALLOCATOR reproduces this tree's map exactly ` +
-      `(160 regions allocated, ${emitted.gaps} gaps)`
-    : 'region-alloc --prove: the allocated map does NOT reproduce this tree\'s bytes');
-  process.exit(ok ? 0 : 1);
+  fs.writeFileSync(DECLS, lines.join('\n'));
+  console.log(`region-alloc --reclaim: ${converted} region(s) now allocated, ` +
+    `${derived} derived from a guest VA, ${pinned} left pinned`);
+  return 0;
 }
 
 function main() {
-  if (arg('prove')) return prove();
+  if (arg('reclaim')) return process.exit(reclaim());
+
   const decls = readDeclarations();
-  const emitted = emitAllocatedSource(decls);
-
-  const emitTarget = arg('emit');
-  if (emitTarget) {
-    if (emitTarget === true) process.stdout.write(emitted.text);
-    else fs.writeFileSync(path.resolve(emitTarget), emitted.text);
-  }
-
   const shake = arg('shake');
-  const layout = allocate(emitted.text, shake === true ? 'gap' : shake);
-  const placed = new Map(layout.regions.map(r => [r.name, r]));
+  const { layout } = require('./region-layout.js');
+  const placed = layout(shake ? { shake: shake === true ? 'gap' : shake } : {});
+  const byName = placed.byName;
 
   if (arg('list')) {
-    for (const r of layout.regions) {
-      console.log(`${hex(r.base)} +${String(r.size).padStart(9)}  ${r.name}`);
+    for (const r of placed.regions) {
+      console.log(`${hex(r.base)} +${String(r.size).padStart(9)}  ${r.name}` +
+        (r.kind === 'alloc' ? '' : `  [${r.kind}]`));
     }
   }
+
+  // Slack: the bytes still free below the backing windows, which is the whole
+  // budget a shake has to displace anything into.
+  let used = 0;
+  for (const r of placed.regions) {
+    if (r.kind === 'span' || r.base >= SHAKE_CEILING) continue;
+    used = Math.max(used, r.base + r.size);
+  }
+  const slack = SHAKE_CEILING - used;
 
   const diffs = [];
-  for (const d of decls) {
-    const got = placed.get(d.name);
-    if (!got) { diffs.push(`${d.name}: not placed at all`); continue; }
-    if (got.base !== d.base) {
-      diffs.push(`${d.name}: declared ${hex(d.base)}, allocated ${hex(got.base)} ` +
-        `(${got.base > d.base ? '+' : ''}${got.base - d.base})`);
+  for (const [name, abi] of PINNED_ABI) {
+    const got = byName.get(name.slice(1));
+    if (!got) { diffs.push(`${name}: not declared at all`); continue; }
+    if (got.base !== abi) {
+      diffs.push(`${name}: ABI ${hex(abi)}, placed ${hex(got.base)} ` +
+        `(${got.base > abi ? '+' : ''}${got.base - abi})`);
     }
   }
 
-  if (arg('emit') && arg('emit') !== true) {
-    console.log(`region-alloc: wrote ${arg('emit')}`);
+  const kinds = { fixed: 0, derived: 0, alloc: 0, span: 0 };
+  for (const r of placed.regions) kinds[r.kind] = (kinds[r.kind] || 0) + 1;
+  console.log(`region-alloc: ${decls.length} declared — ${kinds.alloc} allocated, ` +
+    `${kinds.fixed} fixed, ${kinds.derived} derived, ${kinds.span} span; ` +
+    `floor ${hex(placed.floor)}, map ends ${hex(placed.end)}, ` +
+    `${hex(slack)} free below ${hex(SHAKE_CEILING)}` +
+    (shake ? `, SHAKEN (${placed.shake})` : ''));
+
+  if (diffs.length) {
+    for (const line of diffs) console.log(`  ${line}`);
+    console.log(`region-alloc: ${diffs.length} PINNED region(s) are not at their ABI address`);
+    process.exit(1);
   }
-  console.log(`region-alloc: ${decls.length} regions, ${emitted.gaps} explicit gap(s) ` +
-    `totalling ${hex(emitted.gapBytes)} bytes, floor ${hex(ALLOC_FLOOR)}` +
-    (shake ? `, SHAKEN (${layout.shake})` : ''));
-  if (!diffs.length) {
-    console.log(shake
-      ? 'region-alloc: no region moved under the shake — that is a FAILURE of the shake, not a pass'
-      : 'region-alloc: --diff is EMPTY — the allocator reproduces the map exactly');
-    process.exit(shake ? 1 : 0);
-  }
-  for (const line of diffs) console.log(`  ${line}`);
-  console.log(`region-alloc: ${diffs.length} of ${decls.length} regions differ`);
-  process.exit(shake ? 0 : 1);
+  console.log('region-alloc: every pinned base is at its ABI address');
+  process.exit(0);
 }
 
 if (require.main === module) {
   try { main(); } catch (err) { console.error(String(err && err.message || err)); process.exit(2); }
 }
 
-module.exports = { readDeclarations, emitAllocatedSource, allocate, ALLOC_FLOOR, MEMORY_PAGES };
+module.exports = { readDeclarations, ALLOC_FLOOR, PINNED_ABI, DERIVED, IMAGE_BASE };

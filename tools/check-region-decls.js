@@ -132,7 +132,22 @@ function collectDeclarations(overrideFile) {
     // nested value where a flat one belongs, or a malformed number is an error
     // here, never something the mirror check silently reads past.
     const clauseRe = /\(([^()\s]+)((?:[^()"]|"[^"]*")*?)\)/g;
-    const afterHead = body.replace(/^\s*\(region\.declare(?:-fixed|-derived|-span)?\s+\$[A-Za-z0-9_]+/, '');
+    let afterHead = body.replace(/^\s*\(region\.declare(?:-fixed|-derived|-span)?\s+\$[A-Za-z0-9_]+/, '');
+    // `(base (g2w VA))` is the one NESTED clause in the grammar, and it is what
+    // a derived region is: the base is stated as the guest address it means, so
+    // the g2w arithmetic is in the source instead of a comment beside a magic
+    // number. Consumed here, before the flat-clause scan that cannot see it.
+    const g2w = /\(base\s+\(g2w\s+([^)\s]+)\)\s*\)/.exec(afterHead);
+    if (g2w) {
+      afterHead = afterHead.replace(g2w[0], '');
+      if (kind !== 'derived') {
+        d.parseErrors.push(`(base (g2w ...)) is only for region.declare-derived`);
+      } else if (parseInt32(g2w[1]) === null) {
+        d.parseErrors.push(`(base (g2w ${g2w[1]})) is not a whole-token integer`);
+      } else {
+        d.guestVa = parseInt32(g2w[1]);
+      }
+    }
     const seenClauses = new Set();
     const values = new Map();
     let m;

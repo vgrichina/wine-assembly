@@ -83,8 +83,14 @@ equal(memUtils.GUEST_BASE, guestBase, 'lib/mem-utils.js GUEST_BASE');
 equal(guestRpc.RPC_BASE, threadRpc, 'lib/guest-rpc.js RPC_BASE');
 equal(guestRpc.SYNC_TABLE, syncTable, 'lib/guest-rpc.js SYNC_TABLE');
 
-equal(jsConst('lib/host-imports.js', 'DX_OBJECTS_WA'), dxBase,
-  'lib/host-imports.js DX_OBJECTS_WA');
+// lib/host-imports.js's copy of $DX_OBJECTS is GONE the same way test/run.js's
+// went (§6 — a conversion deletes its clause): the region is allocated now, so
+// there is no literal for a regex to police, only the requirement that the
+// base still comes from the generated map.
+const hostImports = source('lib/host-imports.js');
+assert(/\bconst\s+DX_OBJECTS_WA\s*=\s*_regionMap\.BASE\.DX_OBJECTS\b/.test(hostImports),
+  'lib/host-imports.js must read DX_OBJECTS_WA from lib/region-map.generated.js, ' +
+  'not retype the base');
 equal(jsConst('lib/host-imports.js', 'DX_ENTRY_SIZE'), dxStride,
   'lib/host-imports.js DX_ENTRY_SIZE');
 equal(jsConst('lib/host-imports.js', 'DX_SLOT_COUNT'), dxSlots,
