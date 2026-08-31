@@ -42,14 +42,14 @@
       (then
         (local.set $string_wa
           (if (result i32) (i32.eq (local.get $arg0) (i32.const 0x1F00))
-            (then (i32.const 0x07F0BF60))
+            (then (region.addr $TT_FONT_STRING_STORAGE 0x60))
             (else
               (if (result i32) (i32.eq (local.get $arg0) (i32.const 0x1F01))
-                (then (i32.const 0x07F0BF70))
+                (then (region.addr $TT_FONT_STRING_STORAGE 0x70))
                 (else
                   (if (result i32) (i32.eq (local.get $arg0) (i32.const 0x1F02))
-                    (then (i32.const 0x07F0BF88))
-                    (else (i32.const 0x07F0BFA0))))))))
+                    (then (region.addr $TT_FONT_STRING_STORAGE 0x88))
+                    (else (region.addr $TT_FONT_STRING_STORAGE 0xA0))))))))
         (global.set $eax (call $gpu_linear_to_guest (local.get $string_wa)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
