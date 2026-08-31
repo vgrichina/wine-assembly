@@ -203,5 +203,33 @@ for (const [name, src] of [
   ck(`(start …) rejects ${name}`, r.success === false, r.success);
 }
 
+// --- A memory declaration takes limits, not clauses ---------------------------
+// `parseLimits` used to SKIP anything in a memory form it did not recognise, and
+// the skip was invisible because the limits then fell back to their defaults.
+// `(memory (data "…"))` — the spec's inline-data spelling, which also implies
+// the memory's size — matched no branch, contributed no number, and produced a
+// silently synthesized 16-page memory containing none of the author's bytes. An
+// inline `(export "…")` vanished the same way. Neither form is one this tree
+// needs; both now say so, and say what to write instead.
+for (const [name, src] of [
+  ['(memory (data "…")) — the inline-data spelling', '(memory (data "hello"))\n(func $f (export "f") (result i32) (i32.const 1))'],
+  ['(memory 1 (data "…")) — inline data beside real limits', '(memory 1 (data "hello"))\n(func $f (export "f") (result i32) (i32.const 1))'],
+  ['an inline (export …) on a memory', '(memory (export "mem") 1 1)\n(func $f (export "f") (result i32) (i32.const 1))'],
+  ['an unrecognised token in a memory form', '(memory 1 1 wibble)\n(func $f (export "f") (result i32) (i32.const 1))'],
+] ) {
+  let r;
+  try { r = build(src); } catch (e) { r = { success: false, error: String(e.message || e) }; }
+  ck(`memory declaration rejects ${name}`, r.success === false, r.success);
+}
+// The spellings that ARE the tree's: bare limits, min-only, and $name + shared.
+for (const [name, src] of [
+  ['(memory 1 1)', '(memory 1 1)\n(func $f (export "f") (result i32) (i32.const 1))'],
+  ['(memory 1) with no maximum', '(memory 1)\n(func $f (export "f") (result i32) (i32.const 1))'],
+  ['(memory $m 1 2 shared)', '(memory $m 1 2 shared)\n(func $f (export "f") (result i32) (i32.const 1))'],
+]) {
+  const r = build(src);
+  ck(`NO REGRESSION: ${name} still compiles`, r.success === true, r.error);
+}
+
 console.log(`\nwatx-compiler-export-order: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

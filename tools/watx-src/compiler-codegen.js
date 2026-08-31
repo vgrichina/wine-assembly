@@ -787,16 +787,50 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     return offset;
   }
   
+  // A memory declaration is a name, limits and an optional `shared`. Anything
+  // else inside the form used to be SKIPPED, and the skip was invisible because
+  // the limits then fell back to their defaults: `(memory (data "…"))` — the
+  // spec's inline-data spelling, which also implies the memory's size — matched
+  // no branch here, contributed no number, and produced a **silently synthesized
+  // 16-page memory with none of the author's bytes in it**. An inline
+  // `(export "…")` clause disappeared the same way.
+  //
+  // So the loop is exhaustive now. Neither form is one we need — the tree writes
+  // its data segments and its memory export separately — and both have a
+  // one-line standard rewrite, which the error gives.
   function parseLimits(mem) {
     const nums = [];
     let shared = false;
     let name = null;
+    const fail = (msg) => {
+      const e = new Error(`memory declaration: ${msg}`);
+      const loc = watxFormLoc(mem);
+      if (loc !== undefined) { e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc); }
+      return e;
+    };
     for (let i = 1; i < (mem.length - 1); i++) {
       const item = mem[i + 1];
       const v = V(item);
+      if (Array.isArray(item)) {
+        const kind = V(item[1]);
+        if (kind === 'data') {
+          throw fail(`an inline (data …) on a memory is not supported — it also implies the ` +
+            `memory's size, and ignoring it silently produced a default-sized memory with ` +
+            `none of its bytes. Write the limits on the memory and a separate ` +
+            `(data (i32.const OFFSET) "…") segment`);
+        }
+        if (kind === 'export') {
+          throw fail(`an inline (export …) on a memory is not supported — write a top-level ` +
+            `(export "name" (memory 0))`);
+        }
+        throw fail(`unexpected (${kind ?? '…'} …) clause; a memory takes an optional $name, ` +
+          `its limits, and an optional 'shared'`);
+      }
       if (v?.startsWith('$') && name === null) name = v;
       else if (v === 'shared') shared = true;
-      else if (T(item) === 'number') nums.push(parseInt(v));
+      else if (T(item) === 'number') nums.push(watxParseIntLiteral(v, 'memory limits'));
+      else throw fail(`unexpected token '${v}'; a memory takes an optional $name, its limits, ` +
+        `and an optional 'shared'`);
     }
     return { name, min: nums[0] ?? 16, max: nums[1], shared };
   }

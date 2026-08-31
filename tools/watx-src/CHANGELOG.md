@@ -998,3 +998,34 @@ No `src/*.wat` data string uses `\u`, and the artifacts are unchanged:
 New manifest digest:
 
   bddda2054299ac1fd640a7f7b0c76111a9ca491272a717df0b0b7e2592610fac
+
+## 2026-08-31 — a memory declaration takes limits, not clauses
+
+`parseLimits` skipped anything inside a `(memory …)` form it did not recognise,
+and the skip was invisible because the limits then fell back to their defaults.
+So `(memory (data "…"))` — the spec's inline-data spelling, which also *implies*
+the memory's size — matched no branch, contributed no number, and produced a
+**silently synthesized 16-page memory containing none of the author's bytes**.
+An inline `(export "…")` clause disappeared the same way.
+
+The loop is exhaustive now. Neither form is one this tree needs, and both have a
+one-line standard rewrite, which the error hands over: write the limits on the
+memory plus a separate `(data (i32.const OFFSET) "…")` segment, and a top-level
+`(export "name" (memory 0))`. An unrecognised bare token is named rather than
+dropped, and the limits themselves go through `watxParseIntLiteral`, so
+`(memory 1 2junk)` joins every other literal position in refusing trailing junk
+instead of silently reading `2`.
+
+The rule covers the imported spelling too, since `(import "env" "memory"
+(memory …))` parses through the same function — which is the one that matters
+here, because that is the form `src/01-header.wat` actually writes.
+
+`watx-compiler-export-order` 26 → 33: four rejections, and three no-regression
+cases pinning the spellings that are real — bare limits, min with no maximum,
+and `$name` + `shared`.
+
+Artifacts unchanged: `71ea98f134a486cd` / `d569961e3e7d6325`.
+
+New manifest digest:
+
+  5aa98a2aa48835dfa4d20a6d61d7e13299ba3752c0f76fd5a688e762cc17bb72

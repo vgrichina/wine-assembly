@@ -82,7 +82,7 @@ at the bottom of this file, not left to whoever is editing.
 cc9dfe2962214e5da09162844e98d359b825009a8388bb7726edaed729b37ee2  tools/watx.js
 17a14c6c447cdee48dcbd6212047d86c88087c50277b141b8d44136672732280  tools/watx-src/compiler-parser.js
 5c6641524ffdc8b97db247c4b3fb0d7fe4526df071186a3dcaf903dba2f2e0e9  tools/watx-src/compiler-stages.js
-27566d153059e8213cf4c6330c8ab90329efbff7a28deb67d234da2119116a41  tools/watx-src/compiler-codegen.js
+e6bb68d0f7f37f28708b267aa50dd587e182a3bc4c8a6f152294318616a72c57  tools/watx-src/compiler-codegen.js
 b85a780ec3d53fa0a9a9b335839504f24c5ca7288a75885c2c0823b8bd9dd550  tools/watx-src/compiler.js
 293c1a233359bf142bf5badceb3399c92b79a653a86085681142b2037d80fce4  test/watx-compiler-wine-parity.test.js
 aaea455c646e4db3e1b60c034b32bda842c06babd29d8de3b810d73181ecf2c8  test/watx-compiler-production.test.js
@@ -96,7 +96,7 @@ d3b11de0f87fdd1bdd839ea391aa551ab70d01fb917f6c696fa11559ff1fe805  test/watx-comp
 0638376e02776a9bdcc0698113d88b97419f61d75671e28fe6e901b0400924f9  test/watx-compiler-block-result.test.js
 5958957d1baeef1f1fd3fe7c1b5a9c67a5cb53a4665196a71d818d732298ed88  test/watx-compiler-lanes.test.js
 59123677f802de8f7aeb41b81d7b9b9b5bc36f334d455e136b3c936cd3afebde  test/watx-compiler-explicit-drop.test.js
-a838e9834fb2aa6e3091369b0786cd012a2a50681822c122c00054d7f658ab83  test/watx-compiler-export-order.test.js
+f1738fb081ffb159b5a921816daea86439449797d1c73631bdeae2bdf50c8f0b  test/watx-compiler-export-order.test.js
 a1b425dc42f4fd3458cf983710c00c028c11f99afab51bd9b5c90046df0ae15b  test/watx-compiler-i64-literal.test.js
 6ef6534d87493358f2e75bf1889ae09922082a6ee370012ab93655a78c418883  test/watx-compiler-literals.test.js
 4bcc836d2a63143457c4f8edb5678920bf204db13201d58580fbe64499aed21b  test/watx-compiler-type-index.test.js
@@ -146,6 +146,6 @@ without re-sealing. Both lines are rewritten together by
 CHANGELOG already names the new digest.
 
 ```seal
-manifest-sha256   bddda2054299ac1fd640a7f7b0c76111a9ca491272a717df0b0b7e2592610fac
-changelog-sha256  ecd8b677c367c7c0e16b0a0dea4205a13586466b317e3fcf1020a6ff8a7122d3
+manifest-sha256   5aa98a2aa48835dfa4d20a6d61d7e13299ba3752c0f76fd5a688e762cc17bb72
+changelog-sha256  d01547b3f38362b75d2950813ef77f307206530d529a6a83bd4b282a3ea972dc
 ```
