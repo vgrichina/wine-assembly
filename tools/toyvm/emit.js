@@ -49,6 +49,31 @@ const TRACE = new Map();
 // 1 for a plain Jcc, after the ALU's operands for a fused one -- so the compiler
 // can ask "does this branch go back to its own block head" without knowing
 // either operand layout. See jccSpinArm() and docs/toyvm-spin-loops.md.
+// The effective-address br_table's arms, one per addressing form, indexed by
+// `i & 15`. At module scope and exported rather than local to helpers() because
+// a JIT tier wants to FOLD this call: after operand constant propagation the
+// index is a literal, so `(call $ea (i32.const K) D)` can be replaced by arm
+// K's expression with `$d` substituted -- which is what turns a memory-stream
+// loop body into plain register arithmetic, and $ea is called by 612 of the
+// 1581 handlers. Sharing the array is the point: a second copy of these
+// expressions in the JIT would drift from the interpreter's the first time an
+// addressing form changed, and the two would disagree about where a store went.
+const EA_ARMS = [
+  '(return (i32.and (i32.add (i32.add (global.get $bx) (global.get $si)) (local.get $d)) (i32.const 0xFFFF)))',
+  '(return (i32.and (i32.add (i32.add (global.get $bx) (global.get $di)) (local.get $d)) (i32.const 0xFFFF)))',
+  '(return (i32.and (i32.add (i32.add (global.get $bp) (global.get $si)) (local.get $d)) (i32.const 0xFFFF)))',
+  '(return (i32.and (i32.add (i32.add (global.get $bp) (global.get $di)) (local.get $d)) (i32.const 0xFFFF)))',
+  '(return (i32.and (i32.add (global.get $si) (local.get $d)) (i32.const 0xFFFF)))',
+  '(return (i32.and (i32.add (global.get $di) (local.get $d)) (i32.const 0xFFFF)))',
+  '(return (i32.and (i32.add (global.get $bp) (local.get $d)) (i32.const 0xFFFF)))',
+  '(return (i32.and (i32.add (global.get $bx) (local.get $d)) (i32.const 0xFFFF)))',
+  '(return (i32.and (local.get $d) (i32.const 0xFFFF)))',
+  // 32-bit addressing. The fields do not fit in a br_table arm, and this is
+  // the one EA form the 16-bit corpus almost never takes, so it costs the
+  // fast path a call it does not make.
+  '(return (call $ea32 (local.get $i) (local.get $d)))',
+];
+
 const SPIN = new Map();
 
 // A branch handler index -> which operand word holds its TAKEN edge's guest ip.
@@ -3699,24 +3724,9 @@ function helpers() {
   // is masked to 16 bits anyway, and (a + b) & 0xFFFF depends only on the low
   // halves -- so a 32-bit value sitting in ESI cannot change the answer, and
   // this is the hottest path in the whole VM.
-  const eaArms = [
-    '(return (i32.and (i32.add (i32.add (global.get $bx) (global.get $si)) (local.get $d)) (i32.const 0xFFFF)))',
-    '(return (i32.and (i32.add (i32.add (global.get $bx) (global.get $di)) (local.get $d)) (i32.const 0xFFFF)))',
-    '(return (i32.and (i32.add (i32.add (global.get $bp) (global.get $si)) (local.get $d)) (i32.const 0xFFFF)))',
-    '(return (i32.and (i32.add (i32.add (global.get $bp) (global.get $di)) (local.get $d)) (i32.const 0xFFFF)))',
-    '(return (i32.and (i32.add (global.get $si) (local.get $d)) (i32.const 0xFFFF)))',
-    '(return (i32.and (i32.add (global.get $di) (local.get $d)) (i32.const 0xFFFF)))',
-    '(return (i32.and (i32.add (global.get $bp) (local.get $d)) (i32.const 0xFFFF)))',
-    '(return (i32.and (i32.add (global.get $bx) (local.get $d)) (i32.const 0xFFFF)))',
-    '(return (i32.and (local.get $d) (i32.const 0xFFFF)))',
-    // 32-bit addressing. The fields do not fit in a br_table arm, and this is
-    // the one EA form the 16-bit corpus almost never takes, so it costs the
-    // fast path a call it does not make.
-    '(return (call $ea32 (local.get $i) (local.get $d)))',
-  ];
   // The index is masked here rather than at every call site: the callers pass
   // the whole packed operand, because arm 9 needs the bits above the kind.
-  s += brTableFn('ea', '(param $i i32) (param $d i32)', '(result i32)', eaArms,
+  s += brTableFn('ea', '(param $i i32) (param $d i32)', '(result i32)', EA_ARMS,
     '(i32.and (local.get $i) (i32.const 15))');
 
   // base + index*scale + disp, at full 32 bits and NOT wrapped to 64K -- that
@@ -5580,6 +5590,9 @@ module.exports = {
   // handler reads and writes, which is what a loop matcher needs before it can
   // talk about induction variables at all.
   indexDefs, resolveIndex, sexpAt,
+  // The $ea br_table's arms, so a JIT tier can fold the call once its index is
+  // a constant instead of keeping a second copy that drifts.
+  EA_ARMS,
   // A handler index -> the same handler without its flag write, and what every
   // handler does to the flag state. The compiler walks a finished block
   // backwards with these and swaps in the variant where the write is dead.
