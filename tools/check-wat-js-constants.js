@@ -83,18 +83,27 @@ equal(jsConst('lib/host-imports.js', 'DX_ENTRY_SIZE'), dxStride,
 equal(jsConst('lib/host-imports.js', 'DX_SLOT_COUNT'), dxSlots,
   'lib/host-imports.js DX_SLOT_COUNT');
 
+// test/run.js's copy of $DX_OBJECTS is GONE: d28979b2 pointed it at
+// lib/region-map.generated.js, which is generated from src/00-regions.wat, so
+// there is nothing left for a regex to police (docs/watx-region-safety-design.md
+// §6 — a conversion deletes its clause). What is still hand-typed there is the
+// SLOT COUNT and the entry STRIDE, neither of which the mirror carries, so
+// those two are what this checks. The `RegionMap.BASE.DX_OBJECTS` requirement
+// is asserted positively so a future edit cannot quietly retype the address.
 const runSource = source('test/run.js');
-everyEqual(all(runSource, /\bconst\s+DX_BASE\s*=\s*(0x[0-9a-f]+|[0-9]+)/gi,
-  'DX_BASE copies in test/run.js'), dxBase, 'test/run.js DX_BASE');
+assert(/RegionMap\.BASE\.DX_OBJECTS/.test(runSource),
+  'test/run.js no longer reads $DX_OBJECTS from lib/region-map.generated.js; ' +
+  'it must not retype the base');
+assert(!/\bconst\s+DX_BASE\s*=\s*(?:0x[0-9a-f]+|[0-9]+)/i.test(runSource),
+  'test/run.js has grown a literal DX_BASE again; read RegionMap.BASE.DX_OBJECTS');
 everyEqual(all(runSource, /\bconst\s+DX_SLOTS\s*=\s*(0x[0-9a-f]+|[0-9]+)/gi,
   'DX_SLOTS copies in test/run.js'), dxSlots, 'test/run.js DX_SLOTS');
 equal(one(runSource, /\bif\s*\(slot\s*>=\s*(0x[0-9a-f]+|[0-9]+)\)/i,
   'dxLookupThis slot bound in test/run.js'), dxSlots, 'test/run.js dxLookupThis slot bound');
 const runDxEntry = runSource.match(
-  /\bconst\s+entry\s*=\s*(0x[0-9a-f]+|[0-9]+)\s*\+\s*slot\s*\*\s*(0x[0-9a-f]+|[0-9]+)/i);
+  /\bconst\s+entry\s*=\s*RegionMap\.BASE\.DX_OBJECTS\s*\+\s*slot\s*\*\s*(0x[0-9a-f]+|[0-9]+)/i);
 assert(runDxEntry, 'cannot find dxLookupThis entry calculation in test/run.js');
-equal(number(runDxEntry[1]), dxBase, 'test/run.js dxLookupThis base');
-equal(number(runDxEntry[2]), dxStride, 'test/run.js dxLookupThis stride');
+equal(number(runDxEntry[1]), dxStride, 'test/run.js dxLookupThis stride');
 
 equal(jsConst('lib/dll-loader.js', 'WIN16_DYNAMIC_BASE'), win16DynamicBase,
   'lib/dll-loader.js WIN16_DYNAMIC_BASE');
