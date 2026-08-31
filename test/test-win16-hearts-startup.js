@@ -46,13 +46,14 @@ const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'test', 'output', 'win16-hearts');
 const EXE = path.join(ROOT, 'test', 'binaries', 'win98-16bit', 'MSHEARTS.EXE');
 
-// Screen points inside the rendered controls. Dialog-template units are not
-// pixels: the 235x105 DLU template renders about 475x230 with the current
-// system font. The old arithmetic clicked the dialog body, so the test could
-// deal behind a welcome dialog without ever choosing Dealer or pressing OK.
-const OK_CLICK = '420:103';       // OK, id 1
-const NAME_CLICK = '275:138';     // player-name edit, id 201
-const DEALER_CLICK = '70:237';    // "I want to be dealer", id 203
+// Drive the modal by control id rather than screen coordinates. Dialog units,
+// centering, and non-client metrics all affect its live position; a coordinate
+// that once selected id 203 later landed on the surrounding id 214 group box,
+// left the Locate Dealer modal open, and made the later synthetic New Game
+// command look like a Hearts deal crash.
+const SET_NAME = 'dlg-set-edit:201:A';
+const CLICK_DEALER = 'dlg-click:203';
+const CLICK_OK = 'dlg-click:1';
 
 let pass = 0;
 function check(name, cond, detail) {
@@ -122,15 +123,14 @@ function main() {
   // at all — before WM_COMMAND was packed the Win16 way, MFC saw a notification
   // code of 1 where BN_CLICKED is 0, matched no handler, and let the command
   // fall past it to be swallowed.
-  const logEmpty = run(`4000:click:${OK_CLICK},9000:png:${after}`, 12000);
+  const logEmpty = run(`4000:${CLICK_OK},9000:png:${after}`, 12000);
   check('clicking OK did not crash', !/CRASH|UNIMPLEMENTED API/.test(logEmpty));
   check('OK with no name keeps the dialog up',
     dialogHeaders(logEmpty).length === 1);
 
   // The whole flow: a name, "I want to be dealer", OK, then New Game.
   const table = path.join(OUT, 'table.png');
-  const log2 = run(`3000:click:${NAME_CLICK},3500:keypress:65,` +
-    `4500:click:${DEALER_CLICK},6000:click:${OK_CLICK},` +
+  const log2 = run(`3000:${SET_NAME},4500:${CLICK_DEALER},6000:${CLICK_OK},` +
     `30000:post-cmd:102,52000:png:${table}`, 60000);
   check('the dealer path did not crash', !/CRASH|UNIMPLEMENTED API/.test(log2));
   check('the dealer path put up no further dialog',
@@ -162,8 +162,7 @@ function main() {
   // nothing and every accelerator in the game was dead. Posting the command
   // directly, as the check above does, goes around exactly the part that broke.
   const f2 = path.join(OUT, 'table-f2.png');
-  const log3 = run(`3000:click:${NAME_CLICK},3500:keypress:65,` +
-    `4500:click:${DEALER_CLICK},6000:click:${OK_CLICK},` +
+  const log3 = run(`3000:${SET_NAME},4500:${CLICK_DEALER},6000:${CLICK_OK},` +
     `13000:keydown:113,13100:keyup:113,35000:png:${f2}`, 40000);
   check('the F2 path did not crash', !/CRASH|UNIMPLEMENTED API/.test(log3));
   const f2png = PNG.sync.read(fs.readFileSync(f2));

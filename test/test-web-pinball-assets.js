@@ -301,7 +301,7 @@ assert(!webApp.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should
 assert(!webApp.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
 assert(webApp.includes('lib/renderer-input.js?v=196'), 'web host should cache-bust renderer input after Worker-safe mouse focus routing');
 assert(webApp.includes('lib/browser-input.js?v=12'), 'web host should cache-bust explicit Quake relative-mouse capture');
-assert(webApp.includes('lib/renderer.js?v=190'), 'web host should cache-bust renderer after the current source update');
+assert(webApp.includes('lib/renderer.js?v=191'), 'web host should cache-bust renderer after nested Worker modal publication');
 assert(webApp.includes('lib/pe.js?v=1'), 'web host should load the shared PE section reader');
 assert(webApp.includes('lib/process-boot.js?v=2'), 'web host should cache-bust oversized PE section hydration');
 assert(webApp.includes('lib/host-window.js?v=6'), 'web host should cache-bust console mouse metadata');
@@ -321,7 +321,7 @@ assert(webApp.includes('lib/dll-loader.js?v=170'), 'web host should cache-bust s
 assert(webApp.includes('lib/debug-thread-state.js?v=7'), 'web host should cache-bust live Worker status diagnostics');
 assert(webApp.includes('lib/host-audio.js?v=2'), 'web host should cache-bust waveOut pause/restart scheduling');
 assert(webApp.includes('host.js?v=254'), 'web host should cache-bust host.js after waveOut host wiring');
-assert(hostJs.includes("static SOURCE_VERSION = '243'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(hostJs.includes("static SOURCE_VERSION = '244'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');
 assert(hostJs.includes('fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions)'),

@@ -69,6 +69,36 @@ try {
     'completed cooperative paint should composite exactly once');
   repaints = 0;
 
+  // A synchronous modal loop can begin inside its owner's WM_PAINT and wait
+  // there indefinitely for user input. The nested loop suspends the outer
+  // transaction so both what the owner drew before MessageBox and the
+  // separately completed dialog can become visible.
+  const ownerCanvas = { _waFlushCanonicalSurface: () => { ownerCanvas.flushes++; }, flushes: 0 };
+  const dialogCanvas = { _waFlushCanonicalSurface: () => { dialogCanvas.flushes++; }, flushes: 0 };
+  const owner = { hwnd: 0x10020, visible: true, isChild: false,
+    _backCanvas: ownerCanvas };
+  const dialog = { hwnd: 0x10021, visible: true, isDialog: true,
+    isChild: false, ownerHwnd: owner.hwnd, clientPainted: true,
+    _backCanvas: dialogCanvas };
+  renderer.windows[owner.hwnd] = owner;
+  renderer.windows[dialog.hwnd] = dialog;
+  renderer.beginWorkerGdiPaint(owner.hwnd);
+  assert.strictEqual(renderer._workerPublicationHeld(), false,
+    'a painted modal dialog must not wait forever for its owner EndPaint');
+  renderer._flushCanonicalCanvas(ownerCanvas);
+  renderer._flushCanonicalCanvas(dialogCanvas);
+  assert.strictEqual(ownerCanvas.flushes, 1,
+    'a nested modal loop must publish what its owner already drew');
+  assert.strictEqual(dialogCanvas.flushes, 1,
+    'the completed modal surface may publish independently');
+  renderer.beginWorkerGdiPaint(dialog.hwnd);
+  assert.strictEqual(renderer._workerPublicationHeld(), true,
+    'a dialog inside its own BeginPaint remains private');
+  renderer.endWorkerGdiPaint(dialog.hwnd);
+  renderer.endWorkerGdiPaint(owner.hwnd);
+  delete renderer.windows[dialog.hwnd];
+  delete renderer.windows[owner.hwnd];
+
   // A saved parent snapshot already repairs the pixels exposed by hiding a
   // child. WAT queues the clipped repaint; JS must not widen it to the entire
   // top-level tree and erase unrelated menu controls.

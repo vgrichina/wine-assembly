@@ -233,16 +233,31 @@ function testIdleWild(outDir) {
   assertHealthy(output, 'IdleWild');
   const png = readPng(second);
   const white = (r, g, b) => r > 225 && g > 225 && b > 225;
-  const saturated = (r, g, b) => Math.max(r, g, b) > 170 &&
-    Math.max(r, g, b) - Math.min(r, g, b) > 110;
+  // Blackness rotates between the bright and dark halves of the 16-colour
+  // palette. The same healthy animation can therefore contain 0 pixels above
+  // 170 in a later frame even while nearly a thousand coloured line pixels
+  // are moving. Sample only the exposed parent strips around the controls and
+  // accept the dark 0x80 palette entries too.
+  const chromatic = (r, g, b) => Math.max(r, g, b) > 120 &&
+    Math.max(r, g, b) - Math.min(r, g, b) > 70;
   assert(matchingPixels(png, { x: 155, y: 197, w: 135, h: 15 }, white) > 20,
     'IdleWild must show the selected Blackness module name in its list');
   assert(matchingPixels(png, { x: 297, y: 213, w: 14, h: 107 }, white) > 1200,
     'IdleWild listbox must hide its vertical scrollbar while the single row fits');
   assert(matchingPixels(png, { x: 328, y: 194, w: 160, h: 130 }, white) > 18000,
     'IdleWild module information child must erase to its native white class background');
-  assert(matchingPixels(png, { x: 136, y: 178, w: 368, h: 162 }, saturated) > 100,
-    'IdleWild should render the selected module around its child controls');
+  const animationRects = [
+    { x: 136, y: 178, w: 368, h: 16 },
+    { x: 136, y: 322, w: 368, h: 18 },
+    { x: 136, y: 194, w: 16, h: 128 },
+    { x: 312, y: 194, w: 16, h: 128 },
+    { x: 488, y: 194, w: 16, h: 128 },
+  ];
+  const animationInk = animationRects.reduce((sum, rect) =>
+    sum + matchingPixels(png, rect, chromatic), 0);
+  assert(animationInk > 100,
+    `IdleWild should render the selected module around its child controls ` +
+    `(chromatic pixels=${animationInk})`);
   assert(changedPixels(first, second, { x: 136, y: 178, w: 368, h: 162 }) > 500,
     'IdleWild should keep running the selected module after the click');
   console.log('PASS  Win16 IdleWild selects Blackness and runs its animation');
