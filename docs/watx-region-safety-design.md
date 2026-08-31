@@ -541,9 +541,13 @@ legacy  tail 984347 B 01daf6ccfbd115e3   compat 984796 B 0ee6414668129ac4
 
 **The retirement is scheduled, not avoided.** Rollback survives *top-level*
 declarations. It cannot survive either addressing spelling: a bare `$REGION` or
-a `(region.addr …)` in expression position is not ignored harmlessly — an
-operand vanishes from the stack and the function miscompiles or fails
-validation. So:
+a `(region.addr …)` in expression position is not ignored harmlessly — and the
+failure mode is worse than "fails validation". Legacy compiles an unknown
+expression op to `unreachable` (`lib/compile-wat.js:1528-1532`, verified by
+compiling a `(region.addr …)` under it: it *builds*, prints one `unknown op`
+warning, and traps at runtime when that path executes). A legacy rollback of a
+partially converted tree can therefore ship a module that instantiates cleanly
+and dies mid-app. So:
 
 > Stage B's first converted file formally retires `WINE_WAT_COMPILER=legacy`.
 > That commit must say so, flip the migration plan's rollback checklist row, and

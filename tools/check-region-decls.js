@@ -20,14 +20,15 @@
 // job shrinks to nothing because there is only one copy left. Until then it is
 // the thing standing between "we declared the map" and "we declared a map".
 //
-// A sized global with no declaration is a WARNING, not an error, while the
-// declaration set is still being completed; --strict promotes it, and that is
-// the switch to flip when the set is whole.
+// The declaration set is complete, so the build gate runs --strict: a sized
+// global with no mirror declaration is an ERROR. Without --strict it degrades
+// to a warning — that mode exists only for mid-edit inspection.
 //
 // Usage:
-//   node tools/check-region-decls.js            # the build gate
-//   node tools/check-region-decls.js --strict   # also require full coverage
+//   node tools/check-region-decls.js --strict   # the build gate
+//   node tools/check-region-decls.js            # lenient (mid-edit inspection)
 //   node tools/check-region-decls.js --list     # print the declared map
+//   node tools/check-region-decls.js --file=X   # check a fixture instead of src/00-regions.wat
 'use strict';
 
 const fs = require('fs');
@@ -42,9 +43,13 @@ const LIST = process.argv.includes('--list');
 
 const hex = (n) => `0x${(n >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
 
+// Whole-token: `0x10zz` and `1_000_000junk` are rejected, not silently
+// truncated the way Number.parseInt would. Underscore separators are legal per
+// the WATX literal grammar.
 function parseInt32(text) {
-  const t = String(text).trim();
-  return (/^-?0x/i.test(t) ? Number.parseInt(t, 16) : Number.parseInt(t, 10)) >>> 0;
+  const t = String(text).trim().replace(/_/g, '');
+  if (!/^(0x[0-9a-fA-F]+|\d+)$/.test(t)) return null;
+  return Number.parseInt(t, /^0x/i.test(t) ? 16 : 10) >>> 0;
 }
 
 // The same `(global $NAME i32 (i32.const N))` shape test/test-wat-memory-map.js
@@ -69,9 +74,15 @@ function collectGlobals() {
 // WATX parser: this gate runs before the compiler in the build, and a gate that
 // needs the thing it gates in order to run is not a gate. The grammar it
 // accepts is deliberately narrow — anything it does not recognize is an error,
-// never something quietly skipped.
-function collectDeclarations() {
-  const file = path.join(SRC, DECLS);
+// never something quietly skipped. (The compiler re-validates the same clause
+// set plus overlap/alignment/bounds; this reader only has to refuse to guess.)
+const KNOWN_CLAUSES = new Set(['base', 'size', 'end', 'align', 'owner', 'within']);
+const NUMERIC_CLAUSES = new Set(['base', 'size', 'end', 'align']);
+
+function collectDeclarations(overrideFile) {
+  const fileArg = overrideFile ||
+    (process.argv.find(a => a.startsWith('--file=')) || '').slice('--file='.length);
+  const file = fileArg ? path.resolve(fileArg) : path.join(SRC, DECLS);
   const text = fs.readFileSync(file, 'utf8');
   const decls = [];
   const lines = text.split(/\r?\n/);
@@ -79,28 +90,64 @@ function collectDeclarations() {
     const head = /^\s*\(region\.declare-fixed\s+\$([A-Za-z0-9_]+)\b/.exec(lines[i]);
     if (!head) continue;
     // A declaration may wrap onto following lines; take everything up to the
-    // line whose parentheses close it.
+    // line whose parentheses close it. Line comments are stripped first so a
+    // parenthesized aside in a comment is not read as a clause.
     let depth = 0, body = '', j = i;
     do {
-      body += lines[j] + '\n';
-      for (const ch of lines[j]) { if (ch === '(') depth++; else if (ch === ')') depth--; }
+      body += lines[j].replace(/;;.*$/, '') + '\n';
+      for (const ch of lines[j].replace(/;;.*$/, '')) {
+        if (ch === '(') depth++; else if (ch === ')') depth--;
+      }
       j++;
     } while (depth > 0 && j < lines.length);
-    const clause = (name) => {
-      const m = new RegExp(`\\(${name}\\s+([^)\\s]+)\\)`).exec(body);
-      return m ? m[1] : null;
+    const d = {
+      name: head[1], file: path.relative(ROOT, file), line: i + 1,
+      base: null, size: null, within: null, parseErrors: [],
     };
-    const base = clause('base');
-    const size = clause('size');
-    const end = clause('end');
-    decls.push({
-      name: head[1], file: `src/${DECLS}`, line: i + 1,
-      base: base === null ? null : parseInt32(base),
-      size: size !== null ? parseInt32(size)
-          : end !== null && base !== null ? (parseInt32(end) - parseInt32(base)) >>> 0
-          : null,
-      within: (/\(within\s+\$([A-Za-z0-9_]+)\)/.exec(body) || [])[1] || null,
-    });
+    // Split the declaration body into its depth-1 clause forms. Every clause
+    // must be a recognized `(name value)` — an unknown head, a duplicate, a
+    // nested value where a flat one belongs, or a malformed number is an error
+    // here, never something the mirror check silently reads past.
+    const clauseRe = /\(([^()\s]+)((?:[^()"]|"[^"]*")*?)\)/g;
+    const afterHead = body.replace(/^\s*\(region\.declare-fixed\s+\$[A-Za-z0-9_]+/, '');
+    const seenClauses = new Set();
+    const values = new Map();
+    let m;
+    while ((m = clauseRe.exec(afterHead)) !== null) {
+      const key = m[1];
+      if (!KNOWN_CLAUSES.has(key)) {
+        d.parseErrors.push(`unknown clause (${key} ...)`);
+        continue;
+      }
+      if (seenClauses.has(key)) {
+        d.parseErrors.push(`duplicate (${key} ...) clause`);
+        continue;
+      }
+      seenClauses.add(key);
+      const value = m[2].trim();
+      if (NUMERIC_CLAUSES.has(key)) {
+        const n = parseInt32(value);
+        if (n === null) d.parseErrors.push(`(${key} ${value}) is not a whole-token integer`);
+        else values.set(key, n);
+      } else {
+        values.set(key, value);
+      }
+    }
+    // Anything at depth 1 that was not consumed as a clause (a bare atom, a
+    // nested form the regex skipped) is grammar this reader does not accept.
+    const leftover = afterHead.replace(clauseRe, '').replace(/[)\s]/g, '');
+    if (leftover) d.parseErrors.push(`unrecognized text in declaration: ${leftover.slice(0, 40)}`);
+    if (values.has('size') && values.has('end')) {
+      d.parseErrors.push('has both (size N) and (end N); declare one');
+    }
+    d.base = values.has('base') ? values.get('base') : null;
+    d.size = values.has('size') ? values.get('size')
+      : values.has('end') && d.base !== null ? (values.get('end') - d.base) >>> 0
+      : null;
+    const w = values.get('within');
+    d.within = w && /^\$[A-Za-z0-9_]+$/.test(w) ? w.slice(1) : null;
+    if (w && d.within === null) d.parseErrors.push(`(within ${w}) is not a $NAME`);
+    decls.push(d);
     i = j - 1;
   }
   return decls;
@@ -133,6 +180,10 @@ for (const d of decls) {
     continue;
   }
   seen.add(d.name);
+  for (const pe of d.parseErrors) {
+    errors.push(`$${d.name} (${where}): ${pe}`);
+  }
+  if (d.parseErrors.length) continue;
   if (d.base === null || d.size === null) {
     errors.push(`$${d.name} (${where}) has no readable base/extent`);
     continue;

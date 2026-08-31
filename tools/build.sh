@@ -22,8 +22,13 @@ node test/test-wat-memory-map.js
 # src/00-regions.wat declares that same map to the compiler, which then enforces
 # overlap-freedom, alignment and memory bounds itself. A declaration set that
 # has drifted from the globals the code actually reads is a second opinion, not
-# a safety net — hold the two together here.
-node tools/check-region-decls.js
+# a safety net — hold the two together here. --strict because the declaration
+# set is complete: a new sized region without a mirror declaration is an error.
+node tools/check-region-decls.js --strict
+# Raw address literals inside declared regions are a RATCHET: the count per file
+# may fall (bank it with --record), never rise, and a region marked converted
+# must stay at zero. This is what keeps the symbolization wave from regressing.
+node tools/region-census.js --gate
 # JS host-side guest-pointer translation must use the same DIB/RPC boundary as
 # WAT. A stale extra megabyte maps guest DIB addresses onto worker RPC slots.
 node test/test-wat-rpc-region.js
@@ -90,13 +95,13 @@ node tools/check-parens.js build/combined.wat --no-diff --quiet
 # of docs/watx-migration-plan.md. Both modes write the same canonical paths and
 # every gate above and below runs unchanged, so rollback is this one env var:
 #
-#   bash tools/build.sh                              # legacy (default today)
-#   WINE_WAT_COMPILER=watx   bash tools/build.sh      # WATX, from src/main.watx
+#   bash tools/build.sh                              # WATX (default since 23ed9639)
 #   WINE_WAT_COMPILER=legacy bash tools/build.sh      # explicit rollback
+#   WINE_WAT_COMPILER=watx   bash tools/build.sh      # explicit WATX
 #
 # build/combined.wat is written from WAT_FILES in BOTH modes: it is the grep /
 # check-parens / func-index surface and is never itself compiled.
-echo "Compiling (WINE_WAT_COMPILER=${WINE_WAT_COMPILER:-legacy})..."
+echo "Compiling (WINE_WAT_COMPILER=${WINE_WAT_COMPILER:-watx})..."
 node tools/build-compile-wat.js
 
 # Two (data ...) segments that cover the same byte: the later one wins at
