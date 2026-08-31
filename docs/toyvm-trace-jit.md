@@ -181,15 +181,15 @@ the set picked so that no code path goes uncovered — asked a blunter question:
 *how many of them can this tool measure at all?*
 
 **One.** And that one on a single-op trace. Every tier number this page quotes
-rested on `daretro.exe` alone. Four separate causes, none of them in the
-compiler:
+rested on `daretro.exe` alone. Seven separate causes, **none of them in the
+compiler** — every one was in the harness that was accusing it:
 
 | | before | now |
 |---|---|---|
-| benchable | 1 | 2 |
+| benchable | 1 | **9** |
 | `unfoldable` (fused handler) | 2 | 0 |
-| `mismatch` | 5 | 4 |
-| `padding` | 3 | 3 |
+| `mismatch` | 5 | 0 |
+| `padding` | 3 | 0 |
 | `no-samples` | 1 | 1 |
 
 What moved, and what each was:
@@ -222,14 +222,56 @@ DTM2 agreeing is worth more than the count: it is the first program with a
 the two-segment operand walk is right. The dumped body shows all five operands
 landing exactly where it predicts.
 
-**Still open.** Four programs mismatch. ACCIDENT and CONTAGIO exit by
-`call_far`/`jmp_m16` and are trimmed but still diverge; CONTAGIO agrees at 500
-iterations and not at 20000, so its divergence *accumulates*. B-STEEL and BRW
-both stop on `bad-handler` — B-STEEL differs only in `ax` and the flags with
-guest memory identical, on a six-op VGA DAC palette loop. Ports were the first
-suspect and are not it: tier 0 is a default `makeVm` and the arms replicate
-those defaults exactly (a bug of precisely that kind was fixed here before).
-Three more are `padding` and one has no samples.
+6. **The generated module wrote its own state accessors.** All four remaining
+   mismatches were this, and it is the one worth reading. `moduleWat` built a
+   `get_`/`set_` pair per guest global rather than sharing the interpreter's,
+   and the two had drifted: the interpreter routes a segment write through
+   `$sset`, which recomputes that segment's **shadow base**, and the copy was a
+   plain `global.set`. So `$esb` stayed 0 in every generated arm, and every
+   segmented access in a compiled trace addressed `0 + off` while the
+   interpreter it was being compared against addressed `base + off`.
+
+   It presented as an addressing bug and is not one. B-STEEL's six-op VGA DAC
+   loop came out differing only in `ax` — one byte, loaded through `es:[bx]` —
+   with `$ea` provably pure, the packed operand provably right, and the memory
+   provably identical. Nothing in the *compiler* was wrong; the two machines
+   were different machines. `stateAccessors()` is emitted once in `emit.js` now
+   and used by both modules, and it exports the six segment bases so a
+   comparison can see derived state at all.
+
+7. **`padding` was decided on the bytes.** `guestBytes` reads memory as it
+   stands at the **end** of the profiling run, while the block was compiled from
+   whatever was there when the compiler reached it — so an overlay since swapped
+   out, or a buffer since cleared, reads back as sixteen zeroes underneath real
+   code. What actually marks an unwritten region is that it has **no
+   terminator**: the decoder runs through it to `readTrace`'s cap. CYCLE's 92.5%
+   block is two ops ending in `ret` and was being thrown away. Selection also
+   skips padding whether or not `--min-ops` was given, instead of declining a
+   whole program because its *hottest* block is padding — RUNDEMO's top block is
+   26 ops of zeroes and there is real code below it.
+
+**Still open: one.** DHADREN lands no samples in a known block.
+
+### Three tools that made the difference
+
+- **`--ops-prefix=N`** runs only the first N ops of a trace. A mismatch names a
+  whole trace, which is not a lead; rerunning at N=1,2,3… names the first op
+  whose arms disagree, which is. It is a debugging knob, not a measurement — a
+  prefix is not the hot loop and its timings mean nothing.
+- **An exact `memHash`.** It sampled every 97th byte. B-STEEL's arms disagreed
+  about the byte at `0x1180`, which 97 does not land on, so the report printed
+  *identical memory* beside a register that had just been loaded from it — and
+  sent the investigation looking for a bug in the addressing. It hashes every
+  byte of the first megabyte now, and a mismatch names the first differing
+  address.
+- **Announcing every relaxation.** `--min-ops=6` used to fall back to the
+  hottest block silently, so a 1-op measurement read in the output exactly like
+  the 6-op one that was asked for. Both fallbacks say so now.
+
+One more caution the base columns taught: a fingerprint field that only *some*
+arms can report makes every comparison fail on formatting rather than on state.
+Adding `esb=…` to the row declared B-STEEL's arms to disagree while every
+register in it was equal.
 
 ### The corpus sweep: what it settles and what it does not
 
@@ -344,6 +386,7 @@ node tools/toyvm/trace-jit.js DEMO.EXE --bench --json   # one JSON object
 node tools/toyvm/trace-jit.js DEMO.EXE --sample-from=0.5   # profile only the tail
 node tools/toyvm/trace-jit.js DEMO.EXE --min-ops=6         # skip 1-op blocks and padding
 node tools/toyvm/trace-jit.js DEMO.EXE --bench --dump-wat=/tmp/t3.wat   # why it declined
+node tools/toyvm/trace-jit.js DEMO.EXE --bench --ops-prefix=2           # bisect a mismatch
 ```
 
 `--sample-from` exists because this corpus ships compressed and a profile from
