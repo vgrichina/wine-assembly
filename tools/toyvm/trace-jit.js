@@ -1391,6 +1391,23 @@ ${epi})
 // byte at 0x1180, which 97 does not land on, so the table reported identical
 // memory beside a register that had just been loaded from it -- and the whole
 // investigation went looking for a bug in the addressing instead.
+// The op list, as a key. compileWat caches compiled modules in a process-wide
+// Map, so whatever goes in its cacheKey has to distinguish two builds that must
+// not be confused -- and the tier name, the block ip and the pass set do not:
+// two benchTiers calls over DIFFERENT ops from the same block hash to the same
+// key, and the second one silently runs the first one's compiled code while its
+// tier-0 arm runs the new op list. That reads as a lowering bug that appears on
+// the second call and never the first, whatever the ops are, which is exactly
+// how it was found (a prefix walk that always blamed whichever op it looked at
+// second).
+function opsKey(ops) {
+  let h = 0x811c9dc5;
+  for (const op of ops) {
+    for (const v of [op.fn, ...op.args]) h = Math.imul(h ^ (v | 0), 0x01000193);
+  }
+  return (h >>> 0).toString(16);
+}
+
 function memHash(mem) {
   let h = 0x811c9dc5;
   for (let i = 0; i < 0x100000; i++) h = Math.imul(h ^ mem[i], 0x01000193);
@@ -1449,19 +1466,30 @@ function straightLineProgram(ops, base) {
     const nextArena = base + (starts[i + 1] === undefined ? endAt : starts[i + 1]) * 4;
     const nextGuest = 0;
     if (h.name === 'jmp') {
-      // Terminate rather than loop. Budgeting the interpreter by dispatch count
-      // cannot express "k iterations": any op costing more than one dispatch
-      // (a rep prefix, a bail) cuts the last iteration short, and a partial
-      // iteration is a different computation. Ending the trace makes one run()
-      // exactly one iteration, and every arm is then driven one iteration per
-      // call so they all pay the same host-call overhead.
+      // A jmp is REDIRECTED at its fall-through, exactly like a conditional
+      // branch below, and terminates only when it is the last op (where the
+      // fall-through IS the end word). What must not happen is a jmp that
+      // jumps BACK: budgeting the interpreter by dispatch count cannot express
+      // "k iterations" -- any op costing more than one dispatch cuts the last
+      // iteration short, and a partial iteration is a different computation --
+      // and a jmp left pointing at its own trace looped tier 0 until the budget
+      // was gone, which read as an 18.5x speedup on daretro. Pointing it at the
+      // NEXT op has neither problem: every op still runs exactly once.
+      //
+      // Terminating there instead, which is what this did, silently made the
+      // bench unable to judge any op list with an internal jmp: tier 0 stopped
+      // at the jmp while the compiled arms -- which are straight lines and have
+      // no jmp to stop at -- ran the whole list, so the arms were guaranteed to
+      // disagree from the op after it onwards. Every multi-block region in the
+      // corpus is that shape, and all of them were being reported as
+      // INCONCLUSIVE (CYCLE, BRW, CMA_SHRT) or, before the gate learned to
+      // downgrade a branchy mismatch, DECLINED.
       //
       // This has to be tested BEFORE TAKEN_AT: a bare `jmp` has an entry there
-      // too (it is a spin candidate), and letting that win reintroduces exactly
-      // the self-loop described above.
-      words[w] = endFn;
-      words[w + 1] = 0;
-      words.length = w + 2;
+      // too (it is a spin candidate), and its taken slot is operand 0, so the
+      // generic path below would write the same thing -- but only by accident.
+      words[w + 1] = nextArena;
+      words[w + 2] = nextGuest;
       return;
     }
     // Which operand holds the taken edge is emit.js's own bookkeeping, and it
@@ -1557,7 +1585,8 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
       // The pass set is part of the key: two `--passes=` runs produce different
       // tier-2 modules for the same trace, and a cache hit across them would
       // silently benchmark the previous one.
-      { files: [file], cacheKey: `trace-jit:${name}:${hot.bip}:${passName}:v3` });
+      { files: [file],
+        cacheKey: `trace-jit:${name}:${hot.bip}:${passName}:${opsKey(ops)}:v4` });
     const memory = new WebAssembly.Memory({ initial: isa.MEM_PAGES, maximum: isa.MEM_PAGES });
     // These MUST match makeVm's defaults exactly. They did not: the shipped
     // interpreter answers a 16-bit port read with 0xFFFF and this answered

@@ -66,7 +66,7 @@ const path = require('path');
 const { performance } = require('perf_hooks');
 const { runDos } = require('./run-dos');
 const { makeVm } = require('./vm');
-const { findHotTrace, readTrace, emitTier3, benchTiers } = require('./trace-jit');
+const { findHotTrace, readTrace, emitTier3, benchTiers, memHash } = require('./trace-jit');
 const { HANDLERS, TAKEN_AT, prepareTables, sexpAt } = require('./emit');
 const isa = require('./isa');
 
@@ -271,6 +271,71 @@ function fallThroughIp(op) {
 // Anything that can publish a new $gip, which after call inlining is more than
 // TAKEN_AT knows about: `ret` reads its target off the guest stack and so has no
 // operand tail at all, and `call_rel` has one in a different shape.
+// EVERY ARENA ADDRESS IN AN OP'S OPERANDS IS A LIE ONCE THE REGION IS
+// INSTALLED. The operands come from the profiling run, where the compiler had
+// laid the successor blocks out at particular arena addresses; the run that
+// executes the region compiles its own blocks in its own order, and the same
+// number now names unrelated code. The rule is old -- nothing baked into a
+// region may be an arena address, only a guest ip -- and the branch lowering
+// already honours it. Two places did not.
+//
+// `$rpush(ret_guest, ret_arena)` is the one that cost a corpus program. A
+// `call` inside a region pushed the PROFILING run's arena address for its
+// return point onto the shadow return stack; the callee's `ret` then popped it,
+// matched on the (correct) guest ip, and set $ip to code that had nothing to do
+// with the return site. CMA_SHRT goes blank on exactly this. $rpush treats a
+// zero arena as "no entry" and returns early, so zeroing the operand degrades
+// the return to a block-cache resolve -- one handback per return out of a
+// region, which is the correct answer at the right price.
+//
+// `GO(target_arena, target_guest)` is the same thing for the call's own
+// transfer. It is usually dead (the callee's block follows in the region, so
+// splitJump replaces the transfer with a fall-through), but "usually" is not a
+// property to rely on: CONT(0) is 0, so a zeroed arena hands back and the host
+// resolves the guest ip.
+//
+// The slots are derived from the handler body rather than listed here, because
+// a list would drift the first time an operand is added: the arena is $rpush's
+// second argument and the one CONT selects on, and both are written by emit.js
+// in one shape each.
+// Both are matched globally: a Jcc body carries a GO per arm, and a call
+// carries a GO and an $rpush, so the first match is never the whole story.
+// A `$t7` inside CONT is a scratch local rather than an operand (`ret32` reads
+// its target off the guest stack) -- the arity check in stripArenaOperands is
+// what tells those apart.
+const ARENA_IN_RPUSH = /\(call \$rpush \(local\.get \$t\d\) \(local\.get \$t(\d)\)\)/g;
+const ARENA_IN_GO = /\(select \(i32\.const 0\) \(local\.get \$t(\d)\)/g;
+
+// ...and only $rpush's. Zeroing GO's arena as well is CORRECT in isolation --
+// CONT(0) is 0, so the transfer hands back and the host resolves the guest ip
+// it just published -- and it broke DRAGON and ADDY_II, which had been
+// frame-identical. The reason is in this file, not in GO: an unlowered transfer
+// sits INSIDE the region's loop, so when its CONT fails the body calls
+// $slice_exit and then keeps executing the ops after it. While the baked arena
+// resolved, that path was rare enough not to show; forcing it on every such
+// transfer made the region run code past its own exit. The real fix is to lower
+// those transfers (`br $out`) rather than to zero their operand, and until
+// then, a stale GO arena is a smaller wrong than a guaranteed one.
+function arenaSlots(fn) {
+  const out = new Set();
+  for (const m of HANDLERS[fn].body.matchAll(ARENA_IN_RPUSH)) out.add(Number(m[1]));
+  return out;
+}
+
+function stripArenaOperands(ops) {
+  let stripped = 0;
+  const out = ops.map((op) => {
+    const slots = arenaSlots(op.fn);
+    if (!slots.size) return op;
+    const args = op.args.slice();
+    for (const s of slots) {
+      if (s < args.length && args[s] !== 0) { args[s] = 0; stripped++; }
+    }
+    return { ...op, args };
+  });
+  return { ops: out, stripped };
+}
+
 // One reading of `--passes=`, shared by the region build and by the snapshot
 // bench behind `--agree` and the gate. They have to agree: a gate that judged a
 // differently-optimized body than the one about to be installed would be
@@ -393,8 +458,12 @@ function splitJump(body) {
   return { pre: body.slice(0, m.index), ip: Number(m[1]) };
 }
 
-function buildRegion(ops, nexts, headIp, name) {
+function buildRegion(rawOps, nexts, headIp, name) {
   prepareTables();
+  // Before anything else, and never optional: the profiling run's arena
+  // addresses are not addresses in the run that will execute this region.
+  const { ops, stripped } = flag('keep-arena-operands')
+    ? { ops: rawOps, stripped: 0 } : stripArenaOperands(rawOps);
   // deadflags off: see the header. constprop and regfold are safe -- neither
   // reasons about what happens after the trace.
   // `--no-promote` keeps the registers in globals. It is a bisector, not a
@@ -492,6 +561,31 @@ function buildRegion(ops, nexts, headIp, name) {
     // taken edge and paid a fresh dispatch to come back in.
     parts.push(`;; back edge if this branch went to the head (${headIp.toString(16)})`);
     parts.push(backEdge);
+    // AFTER A TRANSFER THIS FILE COULD NOT LOWER, LEAVE. The region hands $gip
+    // back and the host resolves it like any other block edge, which is sound
+    // whatever the transfer did.
+    //
+    // What it replaces -- `--assume-fallthrough` still selects it -- was a test
+    // that carried on inside the region whenever $gip came out equal to the
+    // recorded fall-through. That is an OFFSET comparison, and an offset is not
+    // an address: a far transfer that lands on the same offset in a different
+    // selector passes it, and the region then runs its next block's ops in the
+    // wrong segment. CMA_SHRT is a 32-bit protected-mode program that does
+    // exactly this, and it is the whole of its divergence -- blank screen under
+    // the old rule, frame-IDENTICAL (19432 px, same as the interpreter) under
+    // this one. Zeroing the arena operands used to hide the same bug by
+    // accident: CONT failed, $slice_exit set $halt, and the test exited.
+    //
+    // It costs a handback per unlowered transfer where one exists, and nothing
+    // at all where none does: DRAGON and ADDY_II report the same dispatch and
+    // handback counts either way, because every transfer in their regions is
+    // lowered.
+    if (!flag('assume-fallthrough')) {
+      parts.push(`;; leave after the unlowered ${op.name}; ${fall.toString(16)} resolves outside`);
+      parts.push('(br $out)');
+      exits++;
+      continue;
+    }
     parts.push(`;; exit unless this branch fell through to ${fall.toString(16)}`);
     // $halt is part of the test, not just of the back edge: a branch whose
     // slice expired takes the $slice_exit arm and still publishes the
@@ -539,7 +633,7 @@ function buildRegion(ops, nexts, headIp, name) {
     name, body, locals: t3.locals, exits,
     promoted: t3.promoted, declined: t3.promoted ? null : t3.declined,
     eaFolded: t3.eaFolded, segFolded: t3.segFolded, folded: t3.folded,
-    inlined: t3.inlined,
+    inlined: t3.inlined, strippedArena: stripped,
   };
 }
 
@@ -651,6 +745,7 @@ async function main() {
   console.log(`  ${region.exits} in-body exit(s), ${region.eaFolded} addresses folded, `
     + `${region.folded} register-file calls folded, `
     + `${region.inlined} counter call(s) inlined, `
+    + `${region.strippedArena} stale arena operand(s) stripped, `
     + (region.promoted ? `${region.promoted.length} values in locals: ${region.promoted.join(' ')}`
       : `NO register promotion -- ${region.declined}`));
   if (flag('dump')) {
@@ -668,8 +763,55 @@ async function main() {
   // MISMATCH here is a lowering bug; ALL THREE MATCH moves the search to the
   // control flow this file supplies.
   if (flag('agree')) {
-    await benchTiers(exe, snapshotFor(rr, pick), pick.ops,
+    // `--agree-ops=N` truncates the op list to its first N. It is the manual
+    // form of the prefix walk below: once that has named a k, this prints the
+    // full register and memory report for exactly that prefix.
+    const n = Number(arg('agree-ops', pick.ops.length));
+    await benchTiers(exe, snapshotFor(rr, pick), pick.ops.slice(0, n),
       { iters: Number(arg('agree-iters', 200)), reps: 1, passes: passSpec() });
+    return;
+  }
+
+  // `--agree-bisect` turns that yes/no into an address. It runs the same
+  // snapshot bench over ops[0..k] for growing k and stops at the first k whose
+  // arms disagree, which names ONE op: the k-th is the first whose compiled
+  // form does not mean what the interpreter's does from this seed.
+  //
+  // A whole-region MISMATCH is nearly useless on its own -- a 58-op region has
+  // 58 candidates and the bench prints one hash -- and for a region with an
+  // internal branch the gate cannot even call it a bug (the arms take different
+  // paths, so of course they end up in different states). The prefix walk
+  // separates those two: an op that flips agreement while sitting in the middle
+  // of a straight line is a lowering bug, while one that flips it by being a
+  // transfer is the harness's own limit, and the op's NAME says which.
+  //
+  // Few iterations on purpose. This is not a measurement, and a divergence that
+  // needs thousands of iterations to appear is not a divergence, it is a
+  // counter running to a different value.
+  if (flag('agree-bisect')) {
+    const iters = Number(arg('agree-bisect-iters', 50));
+    for (let k = Number(arg('agree-bisect-from', 1)); k <= pick.ops.length; k++) {
+      // A FRESH snapshot per prefix, not one hoisted out of the loop. The bench
+      // hands its arms the snapshot object and the arms write through it, so a
+      // reused one seeds prefix k from wherever prefix k-1 stopped -- which
+      // reported a disagreement at op 1 that a direct `--agree --agree-ops=2`
+      // could not reproduce at any iteration count.
+      const hot = snapshotFor(rr, pick);
+      const g = await benchTiers(exe, hot, pick.ops.slice(0, k),
+        { iters, reps: 1, log: () => {}, passes: passSpec() });
+      const op = pick.ops[k - 1];
+      if (!g.agree) {
+        console.log(`  seed mem=${memHash(hot.memSnapshot)}`);
+        console.log(`  first disagreement at op ${k - 1}: ${op.name} `
+          + `[${op.args.join(' ')}]${isTransfer(op) ? '  (a TRANSFER -- the arms '
+            + 'stop running the same program here, which the bench cannot see past)' : ''}`);
+        return;
+      }
+      if (flag('verbose')) {
+        console.log(`  ops[0..${k}] agree (${op.name})  seed mem=${memHash(hot.memSnapshot)}`);
+      }
+    }
+    console.log(`  all ${pick.ops.length} prefixes agree over ${iters} iterations`);
     return;
   }
 

@@ -1159,3 +1159,65 @@ exit re-runs the epilogue that stores each promoted local back to its global.
 Promoting one more register adds a store per exit against the loads and stores
 it saves per use. The regions where this should pay are the ones with few exits
 and a hot counter — which is a selection criterion, not a pass.
+
+## The wrong-frame bug, one third of it found
+
+Four corpus programs installed a region and then computed something else
+(ACCIDENT, RUNDEMO, CMA_SHRT, CONTACT, plus rage). CMA_SHRT is now fixed, and
+the route there says as much as the fix.
+
+**The bench was lying twice, and both lies had to go first.**
+
+1. *compileWat's cache key did not include the ops.* It keyed on tier name,
+   block ip and pass set, all of which two different op lists from one block
+   share, so the **second** `benchTiers` call in a process ran the **first**
+   call's compiled module against the new list's tier-0 arm. A prefix walk
+   therefore blamed whichever op it happened to look at second — op 1 starting
+   from 1, op 2 starting from 2, op 3 starting from 3. The key now carries a
+   hash of the ops.
+2. *`straightLineProgram` terminated tier 0 at any `jmp`.* The compiled arms are
+   straight lines with no `jmp` to stop at, so for any op list with an internal
+   jump the arms were guaranteed to diverge from the next op onward — which is
+   every multi-block region in the corpus. A `jmp` is now redirected at its
+   fall-through, exactly like a conditional branch already was; it still
+   terminates when it is the last op, and it still never points backwards (the
+   self-loop that once read as an 18.5x speedup on daretro).
+
+With both fixed, `--agree-bisect` walks prefixes and names one op. On CMA_SHRT
+it clears ops 0–43 and stops at a `call_rel32`, which is a real transfer and
+outside what a straight-line bench can judge.
+
+**Then two real bugs, in the region compiler.**
+
+*A stale arena on the shadow return stack.* A `call` inside a region pushed
+`$rpush(ret_guest, ret_arena)` with the **profiling run's** arena address for
+its return point. The callee's `ret` popped it, matched the (correct) guest ip
+and set `$ip` to unrelated code. Arena operands are now stripped from the ops a
+region compiles — `$rpush` treats a zero arena as "no entry", so the return
+degrades to a block-cache resolve.
+
+*An offset compared as though it were an address.* After a transfer it could not
+lower, the region carried on inside itself whenever `$gip` came out equal to the
+recorded fall-through. `$gip` is an offset. A far transfer to the same offset in
+a **different selector** passes that test, and the region then runs its next
+block's ops in the wrong segment — which is precisely what CMA_SHRT, a 32-bit
+protected-mode program, does. The region now leaves after any unlowered
+transfer and lets the host resolve `$gip` (`--assume-fallthrough` restores the
+old rule). It costs a handback where an unlowered transfer exists and nothing
+where none does: DRAGON and ADDY_II report identical dispatch and handback
+counts either way.
+
+| program | before | after |
+|---|---|---|
+| CMA_SHRT | blank screen (0 px vs 19432) | **frame IDENTICAL**, 19432 px |
+| CONTACT | 51014 px vs 61081 | unchanged |
+| ACCIDENT | 0 px vs 18447 | unchanged |
+| rage | 0 px both, hashes differ | unchanged |
+| ADDY_II / DRAGON / CYCLE / BRW | identical | identical |
+
+Zeroing `GO`'s arena operand as well as `$rpush`'s fixes CMA_SHRT too, by
+accident — `CONT(0)` fails, `$slice_exit` sets `$halt`, and the old test then
+exits — but it **breaks DRAGON and ADDY_II**, because an unlowered transfer sits
+inside the loop and the body keeps executing the ops after it. That is worth
+knowing before reaching for it again: the fix is to leave, not to poison the
+operand.
