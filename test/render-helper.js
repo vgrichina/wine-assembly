@@ -18,7 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const { createCanvas } = require('../lib/canvas-compat');
 const { createHostImports } = require('../lib/host-imports');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 const { Win98Renderer } = require('../lib/renderer');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
 
@@ -49,21 +49,29 @@ function mountBundledFonts(ctx, { scalable = true } = {}) {
   }
 }
 
+// The canonical compiler is WATX (see test/compile-src.js): lib/compile-wat.js's
+// compileWat was retired for full-tree builds, so this harness now compiles
+// exactly what tools/build.sh ships.
+//
+// extraWat keeps its old semantics: every src/*.wat fragment is self-balanced
+// since b1c221d8 — the `(module` wrapper comes from the closure entry file, not
+// from 13-exports.wat — so the fragment is simply APPENDED to 13-exports.wat.
+// The old form spliced it in front of a trailing `)` that no longer exists,
+// which matched nothing and silently dropped every extraWat export.
+const harnessWasmCache = new Map();
+function compileHarnessWasm(extraWat) {
+  if (harnessWasmCache.has(extraWat)) return harnessWasmCache.get(extraWat);
+  const bytes = compileSrcWasm(!extraWat ? null : (file, source) =>
+    (file === '13-exports.wat' ? `${source}\n${extraWat}\n` : source));
+  harnessWasmCache.set(extraWat, bytes);
+  return bytes;
+}
+
 async function bootRenderHarness({
   extraHostOverrides = {}, extraWat = '', width = 640, height = 480,
   fonts = 'all', memory: suppliedMemory = null,
 } = {}) {
-  const SRC = path.join(__dirname, '..', 'src');
-  const wasmBytes = await compileWat(async f => {
-    const source = await fs.promises.readFile(path.join(SRC, f), 'utf-8');
-    if (!extraWat || f !== '13-exports.wat') return source;
-    // Every src/*.wat fragment is self-balanced since b1c221d8 — the `(module`
-    // wrapper is added by tools/concat-wat.js / lib/compile-wat.js, not by
-    // 13-exports.wat. So extraWat is simply appended to the last fragment; the
-    // old form spliced it in front of a trailing `)` that no longer exists,
-    // which matched nothing and silently dropped every extraWat export.
-    return `${source}\n${extraWat}\n`;
-  });
+  const wasmBytes = compileHarnessWasm(extraWat);
   const memory = suppliedMemory ||
     new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const canvas = createCanvas(width, height);
@@ -81,6 +89,7 @@ async function bootRenderHarness({
   base.host.memory = memory;
   base.host.create_thread = () => 0;
   base.host.exit_thread   = () => 0;
+  base.host.terminate_thread = () => 0;
   base.host.create_event  = () => 0;
   base.host.set_event     = () => 0;
   base.host.reset_event   = () => 0;

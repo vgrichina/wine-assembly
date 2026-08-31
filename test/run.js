@@ -4,7 +4,6 @@ const { execSync } = require('child_process');
 const { createHostImports } = require('../lib/host-imports');
 const { loadDlls, callDllMain, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
 const { inputEventHwnd } = require('../lib/host-window');
-const { compileWat } = require('../lib/compile-wat');
 const { resolveDllGraph, mountLoadedDllFiles, stageAndLoadPe, setExeName, setExtraCmdline,
   setEnvironmentVariable, handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
 const {
@@ -878,7 +877,20 @@ async function main() {
   if (NO_BUILD && fs.existsSync(WASM_PATH)) {
     wasmBytes = fs.readFileSync(WASM_PATH);
   } else {
-    wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
+    // The canonical compiler is WATX (lib/compile-wat.js's compileWat was retired
+    // for full-tree builds; the src tree now spells region-symbolic operands that
+    // legacy silently lowers to `unreachable`). tools/watx-closure.js owns the
+    // closure and the option set so this path cannot drift from tools/build.sh —
+    // tailCalls:true is the same artifact build.sh writes to build/wine-assembly.wasm.
+    const { watxSourceClosure, compileClosure } = require('../tools/watx-closure.js');
+    const r = compileClosure(watxSourceClosure(), { tailCalls: true });
+    if (!r || !r.success || !r.wasmBinary) {
+      const where = r && r.file ? ` at ${r.file}:${r.line || '?'}:${r.col || '?'}` : '';
+      console.error(`run.js: WATX compile failed${where}: ` +
+        String((r && (r.error || r.message)) || 'compile() returned no binary'));
+      process.exit(2);
+    }
+    wasmBytes = Buffer.from(r.wasmBinary);
   }
   const exeBytes = fs.readFileSync(EXE_PATH);
 

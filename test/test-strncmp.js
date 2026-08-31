@@ -5,7 +5,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
-const { compileWat } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 const apiTable = require('../src/api_table.json');
 
 const ROOT = path.join(__dirname, '..');
@@ -26,17 +26,16 @@ const u32 = value => [value, value >>> 8, value >>> 16, value >>> 24]
   .map(v => v & 0xff);
 
 async function main() {
-  const wasm = await compileWat(async file => {
-    const source = await fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8');
-    return file === '13-exports.wat'
-      ? source.replace(/\n\)\s*$/, `\n${extraWat}\n)\n`)
-      : source;
-  });
+  // Every src/*.wat fragment is self-balanced, so the fragment is APPENDED to
+  // 13-exports.wat; the old `.replace(/\n\)\s*$/…)` spliced it in front of a
+  // trailing `)` that no longer exists and silently dropped the export.
+  const wasm = compileSrcWasm((file, source) =>
+    (file === '13-exports.wat' ? `${source}\n${extraWat}\n` : source));
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const imports = createHostImports({ getMemory: () => memory.buffer, renderer: null, resourceJson: {} });
   imports.host.memory = memory;
   Object.assign(imports.host, {
-    create_thread: () => 0, exit_thread: () => 0,
+    create_thread: () => 0, exit_thread: () => 0, terminate_thread: () => 0,
     create_event: () => 0, set_event: () => 0, reset_event: () => 0,
     wait_single: () => 0, wait_multiple: () => 0,
     com_create_instance: () => 0x80004002,
