@@ -74,6 +74,98 @@ const EA_ARMS = [
   '(return (call $ea32 (local.get $i) (local.get $d)))',
 ];
 
+// The six guest memory accessors, emitted TWICE from one source: once taking a
+// segment index (`$rd16`, what every handler calls) and once taking a segment
+// base (`$rd16b`).
+//
+// The seg-index form looks its base up through $sbase's br_table on every
+// access, inside a helper, so a constant segment index is invisible to anything
+// outside that helper. A JIT tier that has propagated the index to a literal
+// can call the `b` twin with `(global.get $dsb)` instead -- which removes the
+// br_table, and, more to the point, turns the segment base into an ordinary
+// global read that the register promoter can lift into a loop local next to the
+// registers it already lifts. Without the twin the base cannot leave the helper
+// at all, and no amount of folding around it helps.
+//
+// Emitted from one builder rather than having one family call the other,
+// because the obvious factoring -- `$rd8` = `$rd8b (call $sbase seg)` -- makes
+// every INTERPRETED access pay an extra call to buy something only the JIT
+// uses. Two copies in the wasm, one copy in the source: same rule EA_ARMS is
+// shared under, for the same reason. A drift here would be two disagreements
+// about where a store went, one of them only reachable from compiled code.
+function memAccessors() {
+  let s = '';
+  for (const b of ['', 'b']) {
+    const p = b ? '(param $base i32)' : '(param $seg i32)';
+    const a = b ? '(local.get $base)' : '(local.get $seg)';
+    // The ONLY difference between the families. $lin is `(sbase(seg)+off) & linmask`,
+    // so passing the base in already resolved leaves exactly the same address.
+    const setL = b
+      ? '(local.set $l (i32.and (i32.add (local.get $base) (local.get $off)) (global.get $linmask)))'
+      : '(local.set $l (call $lin (local.get $seg) (local.get $off)))';
+    s += `
+(func $rd8${b} ${p} (param $off i32) (result i32)
+  (local $l i32)
+  ${setL}
+  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xFFF0000)) (i32.const 1))
+              (i32.load (i32.const ${isa.VGA_CTL_KEY})))
+    (then (return (call $vga_rd8 (local.get $l)))))
+  (i32.load8_u (local.get $l)))
+
+(func $wr8${b} ${p} (param $off i32) (param $v i32)
+  (local $l i32)
+  ${setL}
+  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xFFF0000)) (i32.const 1))
+              (i32.load (i32.const ${isa.VGA_CTL_KEY})))
+    (then (call $vga_wr8 (local.get $l) (local.get $v)) (return)))
+  ;; A store into a byte that has already been COMPILED means the compiled form
+  ;; is now a lie -- see isa.CODE_BITMAP. The flag is all this does: the host
+  ;; throws the regions away on the next handback, which is where a packed
+  ;; program goes anyway (it reaches its unpacked entry through a far jump).
+  (if (i32.and (i32.load8_u (i32.add (i32.const ${isa.CODE_BITMAP})
+                                     (i32.shr_u (local.get $l) (i32.const 3))))
+               (i32.shl (i32.const 1) (i32.and (local.get $l) (i32.const 7))))
+    (then
+      ;; Widen the range this slice has dirtied. The host clears $smc on every
+      ;; handback, so "already 2" means "this slice, not an older one".
+      (if (i32.eq (global.get $smc) (i32.const 2))
+        (then
+          (if (i32.lt_u (local.get $l) (global.get $smclo))
+            (then (global.set $smclo (local.get $l))))
+          (if (i32.gt_u (local.get $l) (global.get $smchi))
+            (then (global.set $smchi (local.get $l)))))
+        (else (global.set $smclo (local.get $l))
+              (global.set $smchi (local.get $l))))
+      (global.set $smc (i32.const 2))))
+  (i32.store8 (local.get $l) (local.get $v)))
+
+(func $rd16${b} ${p} (param $off i32) (result i32)
+  (i32.or
+    (call $rd8${b} ${a} (local.get $off))
+    (i32.shl (call $rd8${b} ${a} (call $off_add (local.get $off) (i32.const 1)))
+             (i32.const 8))))
+
+(func $wr16${b} ${p} (param $off i32) (param $v i32)
+  (call $wr8${b} ${a} (local.get $off) (i32.and (local.get $v) (i32.const 0xFF)))
+  (call $wr8${b} ${a} (call $off_add (local.get $off) (i32.const 1))
+    (i32.shr_u (local.get $v) (i32.const 8))))
+
+;; 32-bit access, built from the 16-bit pair so it inherits the same wrap.
+(func $rd32${b} ${p} (param $off i32) (result i32)
+  (i32.or
+    (call $rd16${b} ${a} (local.get $off))
+    (i32.shl (call $rd16${b} ${a} (call $off_add (local.get $off) (i32.const 2)))
+             (i32.const 16))))
+
+(func $wr32${b} ${p} (param $off i32) (param $v i32)
+  (call $wr16${b} ${a} (local.get $off) (local.get $v))
+  (call $wr16${b} ${a} (call $off_add (local.get $off) (i32.const 2))
+    (i32.shr_u (local.get $v) (i32.const 16))))
+`;
+  }
+  return s;
+}
+
 const SPIN = new Map();
 
 // A branch handler index -> which operand word holds its TAKEN edge's guest ip.
@@ -4002,41 +4094,6 @@ function helpers() {
       (local.set $p (i32.add (local.get $p) (i32.const 1)))
       (br $plane))))
 
-(func $rd8 (param $seg i32) (param $off i32) (result i32)
-  (local $l i32)
-  (local.set $l (call $lin (local.get $seg) (local.get $off)))
-  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xFFF0000)) (i32.const 1))
-              (i32.load (i32.const ${isa.VGA_CTL_KEY})))
-    (then (return (call $vga_rd8 (local.get $l)))))
-  (i32.load8_u (local.get $l)))
-
-(func $wr8 (param $seg i32) (param $off i32) (param $v i32)
-  (local $l i32)
-  (local.set $l (call $lin (local.get $seg) (local.get $off)))
-  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xFFF0000)) (i32.const 1))
-              (i32.load (i32.const ${isa.VGA_CTL_KEY})))
-    (then (call $vga_wr8 (local.get $l) (local.get $v)) (return)))
-  ;; A store into a byte that has already been COMPILED means the compiled form
-  ;; is now a lie -- see isa.CODE_BITMAP. The flag is all this does: the host
-  ;; throws the regions away on the next handback, which is where a packed
-  ;; program goes anyway (it reaches its unpacked entry through a far jump).
-  (if (i32.and (i32.load8_u (i32.add (i32.const ${isa.CODE_BITMAP})
-                                     (i32.shr_u (local.get $l) (i32.const 3))))
-               (i32.shl (i32.const 1) (i32.and (local.get $l) (i32.const 7))))
-    (then
-      ;; Widen the range this slice has dirtied. The host clears $smc on every
-      ;; handback, so "already 2" means "this slice, not an older one".
-      (if (i32.eq (global.get $smc) (i32.const 2))
-        (then
-          (if (i32.lt_u (local.get $l) (global.get $smclo))
-            (then (global.set $smclo (local.get $l))))
-          (if (i32.gt_u (local.get $l) (global.get $smchi))
-            (then (global.set $smchi (local.get $l)))))
-        (else (global.set $smclo (local.get $l))
-              (global.set $smchi (local.get $l))))
-      (global.set $smc (i32.const 2))))
-  (i32.store8 (local.get $l) (local.get $v)))
-
 ;; Step an offset to the next byte. A 16-bit offset of 0xFFFF wraps to 0x0000
 ;; within the SAME segment -- which is why every multi-byte access is done a
 ;; byte at a time and not as one i32.load16_u, and the 8088 vectors exercise it.
@@ -4051,28 +4108,7 @@ function helpers() {
              (i32.const 0xFFFF))
     (i32.and (local.get $off) (i32.const 0x7FFF0000))))
 
-(func $rd16 (param $seg i32) (param $off i32) (result i32)
-  (i32.or
-    (call $rd8 (local.get $seg) (local.get $off))
-    (i32.shl (call $rd8 (local.get $seg) (call $off_add (local.get $off) (i32.const 1)))
-             (i32.const 8))))
-
-(func $wr16 (param $seg i32) (param $off i32) (param $v i32)
-  (call $wr8 (local.get $seg) (local.get $off) (i32.and (local.get $v) (i32.const 0xFF)))
-  (call $wr8 (local.get $seg) (call $off_add (local.get $off) (i32.const 1))
-    (i32.shr_u (local.get $v) (i32.const 8))))
-
-;; 32-bit access, built from the 16-bit pair so it inherits the same wrap.
-(func $rd32 (param $seg i32) (param $off i32) (result i32)
-  (i32.or
-    (call $rd16 (local.get $seg) (local.get $off))
-    (i32.shl (call $rd16 (local.get $seg) (call $off_add (local.get $off) (i32.const 2)))
-             (i32.const 16))))
-
-(func $wr32 (param $seg i32) (param $off i32) (param $v i32)
-  (call $wr16 (local.get $seg) (local.get $off) (local.get $v))
-  (call $wr16 (local.get $seg) (call $off_add (local.get $off) (i32.const 2))
-    (i32.shr_u (local.get $v) (i32.const 16))))
+${memAccessors()}
 
 ;; CX as a 16-bit counter with ECX's upper half preserved. Every counted loop
 ;; and every REP goes through these: a 386-era guest that keeps something in the

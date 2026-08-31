@@ -138,7 +138,7 @@ function readTrace(mem32, addrWordIdx, maxOps = 512) {
 // the corpus, and the sweep reports it as one.
 async function jitTiers(exe, {
   budget = 15e6, slice = 20000, cpu = 386, top = 6, sampleAfter = 0, sampleFrom = 0,
-  bench = false, iters = 20000, reps = 7, cx = 8, log = () => {},
+  bench = false, iters = 20000, reps = 7, cx = 8, log = () => {}, dumpWat = null,
   passes = { constprop: true, regfold: true, deadflags: true },
 } = {}) {
   log(`profiling ${path.basename(exe)} -- ${(budget / 1e6).toFixed(0)}M dispatches, `
@@ -256,7 +256,7 @@ async function jitTiers(exe, {
 
   let bres;
   try {
-    bres = await benchTiers(exe, hot, t.ops, { iters, reps, log, passes });
+    bres = await benchTiers(exe, hot, t.ops, { iters, reps, log, passes, dumpWat });
   } catch (e) {
     // Two very different failures used to share this label. `unfoldable` is a
     // handler body whose operand preamble drifted from ops()'s shape, which
@@ -290,6 +290,7 @@ async function main() {
     bench: flag('bench'),
     iters: count(arg('iters'), 20000),
     reps: Number(arg('reps', 7)),
+    dumpWat: arg('dump-wat', null),
     cx: Number(arg('cx', 8)),
     passes: (() => {
       const spec = arg('passes', 'constprop,regfold,deadflags').split(',').filter(Boolean);
@@ -539,6 +540,122 @@ function foldEa(body) {
   return { out, changed, a32, dynamic };
 }
 
+// Constant arithmetic, evaluated.
+//
+// Propagating an operand is not the same as folding it. A handler that pulls
+// its segment index out of a packed word emits
+// `(i32.and (i32.shr_u (i32.const 3299129) (i32.const 4)) (i32.const 7))` once
+// the operand is known -- entirely constant, and still an expression. Every
+// later pass here asks "is this argument a literal", so an unevaluated constant
+// reads as dynamic and declines the fold: BRW's 17 memory accesses all had a
+// known segment and all 17 were reported as having a dynamic one.
+//
+// V8 folds these itself, so this buys no instructions directly. It exists to
+// make the constants VISIBLE to the passes below, which is where the win is.
+//
+// i32 semantics exactly: wrap to 32 bits, shift counts mod 32, and the two
+// shift-rights are different operators. Printed unsigned, which is the form the
+// rest of the emitted text uses.
+const CONST_OPS = {
+  add: (a, b) => a + b, sub: (a, b) => a - b, mul: (a, b) => Math.imul(a, b),
+  and: (a, b) => a & b, or: (a, b) => a | b, xor: (a, b) => a ^ b,
+  shl: (a, b) => a << (b & 31),
+  shr_u: (a, b) => a >>> (b & 31),
+  shr_s: (a, b) => a >> (b & 31),
+};
+const CONST_PAIR = new RegExp(
+  '\\(i32\\.(' + Object.keys(CONST_OPS).join('|') + ') '
+  + '\\(i32\\.const (0x[0-9a-fA-F]+|-?\\d+)\\) \\(i32\\.const (0x[0-9a-fA-F]+|-?\\d+)\\)\\)');
+
+function foldConstArith(body) {
+  let out = body, changed = 0;
+  // Innermost-first falls out of repeated replacement: a pair whose arguments
+  // are still expressions does not match, and collapsing the inside makes the
+  // outside match on the next round.
+  for (;;) {
+    const m = CONST_PAIR.exec(out);
+    if (!m) break;
+    const v = CONST_OPS[m[1]](Number(m[2]) | 0, Number(m[3]) | 0) >>> 0;
+    out = out.slice(0, m.index) + `(i32.const ${v})` + out.slice(m.index + m[0].length);
+    changed++;
+  }
+  return { out, changed };
+}
+
+// A body-local temporary that is only ever a constant, propagated to its uses.
+//
+// Evaluating the arithmetic is not enough on its own: a handler unpacks its
+// segment index into a scratch local and then passes `(local.get $t5)` to
+// $rd32, so the constant is in the ASSIGNMENT and every pass below looks at the
+// argument. This closes that gap.
+//
+// Two conditions, both required, and both cheap to check because a body is one
+// op's worth of statements:
+//   * exactly one `(local.set $tN ...)` in the body -- so there is no second
+//     definition a use could be seeing instead, on any path;
+//   * that set is at paren depth 0 -- a top-level statement, not the inside of
+//     an `if` arm, so it is not conditional on anything.
+// Uses BEFORE the set are left alone: those read the local's zero-initialized
+// value, and substituting the constant there would invent a definition.
+function propagateLocalConsts(body) {
+  let out = body, changed = 0;
+  for (const name of new Set([...body.matchAll(/\(local\.set (\$t\d+) /g)].map(m => m[1]))) {
+    const setNeedle = `(local.set ${name} `;
+    if (out.indexOf(setNeedle) !== out.lastIndexOf(setNeedle)) continue;
+    const at = out.indexOf(setNeedle);
+    let depth = 0;
+    for (let i = 0; i < at; i++) {
+      if (out[i] === '(') depth++;
+      else if (out[i] === ')') depth--;
+    }
+    if (depth !== 0) continue;
+    const lit = /^\(i32\.const (0x[0-9a-fA-F]+|-?\d+)\)\)/.exec(out.slice(at + setNeedle.length));
+    if (!lit) continue;
+    const head = out.slice(0, at);
+    const tail = out.slice(at);
+    const uses = tail.split(`(local.get ${name})`).length - 1;
+    if (!uses) continue;
+    out = head + tail.split(`(local.get ${name})`).join(`(i32.const ${lit[1]})`);
+    changed += uses;
+  }
+  return { out, changed };
+}
+
+// The segment index out of the memory accessors.
+//
+// A handler asks for memory as `(call $rd16 (i32.const 3) off)` -- segment by
+// INDEX -- and $rd16 resolves it through $sbase's br_table on the way in. That
+// resolution happens inside a helper, so a constant index buys nothing on its
+// own: the base never becomes an expression anything outside $rd16 can see.
+//
+// emit.js therefore emits a base-taking twin of all six accessors from the same
+// source (memAccessors()), and this pass swaps to it. Two things come out of
+// that. The br_table and its call go, per access. And the segment base becomes
+// an ordinary `(global.get $dsb)` in the body -- which is what lets the register
+// promoter hoist it out of the loop, since nothing short of a segment load can
+// change it and a segment load already declines the whole promotion.
+function foldSeg(body) {
+  let out = body, changed = 0, dynamic = 0;
+  for (const kind of ['rd8', 'rd16', 'rd32', 'wr8', 'wr16', 'wr32']) {
+    for (let from = 0; ;) {
+      const hit = findCalls(out, kind).find(c => c.start >= from);
+      if (!hit) break;
+      const lit = CONST.exec(hit.args[0].trim());
+      const seg = lit ? isa.SEG[Number(lit[1])] : null;
+      if (!seg) { dynamic++; from = hit.end; continue; }
+      const repl = `(call $${kind}b (global.get $${seg}b) ${hit.args.slice(1).join(' ')})`;
+      out = out.slice(0, hit.start) + repl + out.slice(hit.end);
+      changed++;
+      // Rescan from the SAME offset, not past the replacement: a store whose
+      // value is itself a load nests one accessor inside another, and the outer
+      // rewrite has just made the outer call stop matching the needle. Skipping
+      // past it would leave the inner one on the br_table path.
+      from = hit.start;
+    }
+  }
+  return { out, changed, dynamic };
+}
+
 // Guest registers into wasm locals. Every access has to be visible first: one
 // surviving $rget/$rset/$ea/$push/$pop/$cx16 reaches the globals behind this
 // pass's back, and a promoted register would then be read stale. So the pass
@@ -553,7 +670,7 @@ function foldEa(body) {
 // body is made of. So: a call is safe only if it is named here as touching no
 // general register, and anything unrecognised declines the whole promotion.
 const REG_SAFE = new RegExp('^(' + [
-  'rd(8|16|32)', 'wr(8|16|32)',          // memory, addressed by a value we pass in
+  'rd(8|16|32)b?', 'wr(8|16|32)b?',      // memory, addressed by a value we pass in
   'lin', 'sget', 'sbase', 'segbase', 'segd32',  // segmentation: segment globals only
   // The flag record. rec_* takes its inputs as parameters and writes only
   // $fa/$fb/$fu/$fw/$fr/$fcf/$fop, which are not general registers.
@@ -654,22 +771,39 @@ function emitTier2(ops, passes = { constprop: true, regfold: true, deadflags: tr
 // the length of the loop.
 function emitTier3(ops, passes) {
   const t2 = emitTier2(ops, passes);
-  let eaFolded = 0, eaA32 = 0, eaDynamic = 0;
+  let eaFolded = 0, eaA32 = 0, eaDynamic = 0, segFolded = 0, segDynamic = 0, arith = 0;
   let bodies = t2.bodies.map((b) => {
     const r = foldEa(b);
     eaFolded += r.changed; eaA32 += r.a32; eaDynamic += r.dynamic;
-    return r.out;
+    // Before foldSeg, not after: a segment index that is still an unevaluated
+    // constant expression is indistinguishable from a dynamic one, and that is
+    // exactly what declined all of BRW's accesses.
+    const c = foldConstArith(r.out);
+    arith += c.changed;
+    const l = propagateLocalConsts(c.out);
+    arith += l.changed;
+    const s = foldSeg(l.out);
+    segFolded += s.changed; segDynamic += s.dynamic;
+    return s.out;
   });
   // Register-file calls that only became foldable once $ea stopped hiding them.
   let folded = t2.folded;
   bodies = bodies.map((b) => {
     const r = foldRegisterFile(b); folded += r.changed;
     const w = foldRegisterFileWide(r.out); folded += w.changed;
-    return w.out;
+    // Again after the register-file folds, which unpack their own index the
+    // same packed-word way and leave the same shape behind.
+    const c = foldConstArith(w.out); arith += c.changed;
+    return c.out;
   });
-  const p = promoteRegs(bodies, isa.REG16);
+  // Segment bases join the registers as promotion candidates. They are
+  // loop-INVARIANT rather than merely register-like: only a segment load writes
+  // one, and $sset is not on the allow-list, so a body that could change a base
+  // has already declined. Hoisting them is what makes a promoted address
+  // computation entirely locals.
+  const p = promoteRegs(bodies, isa.REG16.concat(isa.SEG.map(s => `${s}b`)));
   return {
-    ...t2, eaFolded, eaA32, eaDynamic, folded,
+    ...t2, eaFolded, eaA32, eaDynamic, segFolded, segDynamic, arith, folded,
     promoted: p.declined ? null : p.used,
     declined: p.declined || null,
     wat: (p.declined ? bodies : p.bodies).join('\n'),
@@ -758,14 +892,23 @@ function straightLineProgram(ops, base) {
   return words;
 }
 
-async function benchTiers(exe, hot, ops, { iters, reps, log = console.log,
+async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpWat = null,
   passes = { constprop: true, regfold: true, deadflags: true } }) {
+  const opts = { dumpWat };
   const { makeVm } = require('./vm');
   const { compileWat } = require(path.join(__dirname, '..', '..', 'lib', 'compile-wat.js'));
 
   const t1 = emitTier1(ops, {});
   const t2 = emitTier2(ops, passes);
   const t3 = emitTier3(ops, passes);
+  // Every decline this file reports is a fact about ONE expression -- a segment
+  // index that stayed dynamic, a call that is not on the allow-list -- and the
+  // count alone never says which. Writing the tier's own body out is the
+  // shortest path from "17 had a dynamic segment" to the line that made them so.
+  if (opts.dumpWat) {
+    fs.writeFileSync(opts.dumpWat, [t3.locals, t3.pro, t3.wat, t3.epi].join('\n\n'));
+    log(`tier 3 body written to ${opts.dumpWat}`);
+  }
   log(`\ntier 1: ${ops.length} bodies stitched, operands folded`);
   const passName = ['constprop', 'regfold', 'deadflags'].filter(p => passes[p]).join('+') || 'none';
   log(`tier 2 passes: ${passName}`);
@@ -775,7 +918,10 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log,
   log(`tier 3: + ${t3.eaFolded} address br_tables folded `
     + `(${t3.eaA32} were 32-bit addressing, ${t3.eaDynamic} had a dynamic index), `
     + `${t3.folded - t2.folded} further register-file calls folded, `
-    + (t3.promoted ? `${t3.promoted.length} registers in locals: ${t3.promoted.join(' ')}`
+    + `${t3.arith} constant expressions evaluated, `
+    + `${t3.segFolded} segment br_tables folded `
+    + `(${t3.segDynamic} had a dynamic segment), `
+    + (t3.promoted ? `${t3.promoted.length} values in locals: ${t3.promoted.join(' ')}`
       : `NO register promotion -- ${t3.declined}`));
 
   const arms = [];
@@ -803,7 +949,7 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log,
       // The pass set is part of the key: two `--passes=` runs produce different
       // tier-2 modules for the same trace, and a cache hit across them would
       // silently benchmark the previous one.
-      { files: [file], cacheKey: `trace-jit:${name}:${hot.bip}:${passName}:v2` });
+      { files: [file], cacheKey: `trace-jit:${name}:${hot.bip}:${passName}:v3` });
     const memory = new WebAssembly.Memory({ initial: isa.MEM_PAGES, maximum: isa.MEM_PAGES });
     // These MUST match makeVm's defaults exactly. They did not: the shipped
     // interpreter answers a 16-bit port read with 0xFFFF and this answered
@@ -900,6 +1046,7 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log,
     },
     micro: {
       eaFolded: t3.eaFolded, eaA32: t3.eaA32, eaDynamic: t3.eaDynamic,
+      segFolded: t3.segFolded, segDynamic: t3.segDynamic, arith: t3.arith,
       promoted: t3.promoted, declined: t3.declined,
     },
     opt: { propagated: t2.propagated, folded: t2.folded, killed: t2.killed },
