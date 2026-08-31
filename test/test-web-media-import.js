@@ -151,6 +151,26 @@ async function main() {
   try {
     // ---- pass 1: session import, through the dialog, to a window ----------
     const page = await openPage(browser, base, 'session');
+
+    // Desktop furniture rule: the button shows with the desktop and hides
+    // with it — a fullscreen surface must not have a DOM button floating on
+    // top of the game.
+    const btnDisplay = (cls) => page.evaluate((toggled) => {
+      const body = document.body;
+      const had = body.className;
+      if (toggled) body.className = `${had} ${toggled}`.trim();
+      const display = getComputedStyle(
+        document.querySelector('.wa-media-import-btn')).display;
+      body.className = had;
+      return display;
+    }, cls);
+    assert.notStrictEqual(await btnDisplay(''), 'none',
+      'the + Add a game button shows on the idle desktop');
+    assert.strictEqual(await btnDisplay('exclusive-fullscreen'), 'none',
+      'the button hides over an exclusive-fullscreen surface');
+    assert.strictEqual(await btnDisplay('single-app app-running'), 'none',
+      'the button hides while a single-app page runs its app');
+
     await uploadThroughInput(page, fixture.zipPath);
 
     await page.waitForFunction(() => !!document.querySelector('.wa-media-modal'), { timeout: 30000 });
