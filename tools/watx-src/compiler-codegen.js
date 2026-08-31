@@ -125,6 +125,93 @@ function encodeSLEB128Big(value) {
   }
   return bytes;
 }
+// ── Strict numeric-literal validation ───────────────────────────────────────
+// A numeric literal has to parse in its ENTIRETY. `parseInt`/`parseFloat` stop at
+// the first character they cannot use and hand back whatever prefix they managed
+// to read, so before this existed `(i32.const 123abc)` compiled to 123,
+// `(i64.const 0x10zz)` to 16, `(f32.const 1.25junk)` to 1.25 and
+// `(i32.load offset=16junk ...)` to offset=16 — every one of them silently, with
+// a plausible-looking wrong constant baked into the module. Trailing junk is now
+// a hard error naming the token.
+//
+// UNDERSCORE DIGIT SEPARATORS: the WAT text format allows `_` BETWEEN digits
+// (`1_000` is 1000, `0xFFFF_FFFF` is 0xFFFFFFFF). WATX's tokenizer used to stop a
+// number at the underscore, so `1_000` arrived as the number `1` followed by a
+// stray symbol `_000` and compiled to 1 — the worst of the three possible
+// outcomes. The tokenizer now carries `_` through a number token (see
+// WATX_CHAR_NUMBER in compiler-parser.js) and these validators accept it only in
+// the spec position: between two digits of the same run, never leading, trailing
+// or doubled. A separator is stripped before the value is computed, so every
+// literal that was already valid keeps its exact previous value and encoding.
+//
+// NOT SUPPORTED, deliberately, and now rejected loudly instead of silently
+// truncated: hex floats (`0x1p4`), `inf`/`nan[:0x…]`, and a `+`-signed exponent
+// (`1e+10`). No site in the Wine-Assembly closure uses any of them (a NEGATIVE
+// exponent, `2.2250738585072014e-308` at src/06-fpu.wat:193, does tokenize and
+// keeps working). Adding them is a tokenizer change plus an encoder, not a
+// validator change.
+const WATX_INT_LITERAL_RE = /^[+-]?(?:0[xX][0-9a-fA-F](?:_?[0-9a-fA-F])*|[0-9](?:_?[0-9])*)$/;
+const WATX_FLOAT_LITERAL_RE =
+  /^[+-]?(?:[0-9](?:_?[0-9])*)(?:\.(?:[0-9](?:_?[0-9])*)?)?(?:[eE]-?[0-9](?:_?[0-9])*)?$/;
+
+function watxLiteralReject(raw, what, expected) {
+  const shown = raw === undefined || raw === null ? '<missing>' : String(raw);
+  const e = new Error(
+    `Invalid ${expected} literal '${shown}'${what ? ` in ${what}` : ''}: ` +
+    `a numeric literal must parse in its entirety (trailing junk is not ignored; ` +
+    `'_' is allowed only between digits)`);
+  e.watxLiteral = shown;
+  return e;
+}
+
+// Validate an integer literal token and return it with digit separators removed.
+function watxCheckIntLiteral(raw, what) {
+  const s = String(raw ?? '');
+  if (!WATX_INT_LITERAL_RE.test(s)) throw watxLiteralReject(raw, what, 'integer');
+  return s.replace(/_/g, '');
+}
+
+// Validate a floating-point literal token and return it with separators removed.
+// A plain integer is a valid float literal (`(f64.const 0)`, `(f32.const 0x10)`).
+function watxCheckFloatLiteral(raw, what) {
+  const s = String(raw ?? '');
+  if (!WATX_INT_LITERAL_RE.test(s) && !WATX_FLOAT_LITERAL_RE.test(s)) {
+    throw watxLiteralReject(raw, what, 'floating-point');
+  }
+  return s.replace(/_/g, '');
+}
+
+// Strict parseInt replacement for every position that reads an integer literal
+// out of the source text. Returns a Number, exactly as parseInt did for the
+// literals that were already valid.
+function watxParseIntLiteral(raw, what) {
+  // No explicit radix, exactly as the parseInt calls this replaces: the 0x prefix
+  // selects hex and everything else is decimal. The token is already known to be
+  // a complete literal, so parseInt's prefix-scanning behaviour cannot bite here.
+  return parseInt(watxCheckIntLiteral(raw, what));
+}
+
+// Read the single literal token out of a `(TYPE.const LIT)` form used OUTSIDE a
+// function body — a global initializer, an active data or elem segment offset.
+// Same arity rule as the in-body constants, and for the same reason: junk that
+// the tokenizer split into a second atom (`0x10zz`, `16zz`, `5oops`) is only
+// visible as an extra child, and dropping it silently left a truncated constant.
+function watxConstFormToken(form, what) {
+  if (!Array.isArray(form) || form.length !== 3 || Array.isArray(form[2]) ||
+      watxType(form[2]) === 'string') {
+    throw new Error(
+      `${what}: expected a constant with exactly one complete literal operand ` +
+      `(an extra token here is usually trailing junk on the literal)`);
+  }
+  return watxValue(form[2]);
+}
+
+// Strict parseFloat replacement, same contract.
+function watxParseFloatLiteral(raw, what) {
+  const s = watxCheckFloatLiteral(raw, what);
+  return /^[+-]?0[xX]/.test(s) ? parseInt(s) : parseFloat(s);
+}
+
 // Parse an integer literal (decimal or 0x hex, optional sign) as a BigInt,
 // normalized to the signed two's-complement i64 value so SLEB128 stays <= 10
 // bytes (e.g. 0xFFF8000000000000 -> -2251799813685248).
@@ -135,6 +222,7 @@ function encodeSLEB128Big(value) {
 // compiled to a silent zero and the container it writes had no signature at all.
 // An unparseable literal is now a hard error rather than a plausible-looking 0.
 function parseI64Literal(s) {
+  watxCheckIntLiteral(s, 'i64 literal');
   s = String(s).trim().replace(/_/g, '');
   const neg = s.startsWith('-');
   const body = (neg || s.startsWith('+')) ? s.slice(1) : s;
@@ -409,6 +497,25 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
   const runtimeBuiltins = options.runtimeBuiltins !== false;
   const tailCalls = options.tailCalls !== false;
   const standardWat = options.standardWat === true;
+
+  // ── Positional-else warning (see the `if` compiler below) ──────────────────
+  // One line per SOURCE SITE, not per compile of that site: a function body can be
+  // walked more than once and the closure is compiled twice (tail / compat).
+  const positionalElseSeen = new Set();
+  function warnPositionalElse(expr, func) {
+    const loc = watxFormLoc(expr);
+    const file = loc !== undefined ? watxNodeFile(loc) : '<unknown>';
+    const line = loc !== undefined ? watxNodeLine(loc) : 0;
+    const key = `${file}:${line}`;
+    if (positionalElseSeen.has(key)) return;
+    positionalElseSeen.add(key);
+    console.warn(
+      `[WATX WARNING] ${file}:${line}: bare expression in the else slot of ` +
+      `(if COND (then ...) EXPR)${func && func.name ? ` in ${func.name}` : ''} — ` +
+      `standard WAT requires (else ...). WATX is compiling it AS the else arm; ` +
+      `note that lib/compile-wat.js silently DISCARDS it instead, so the two ` +
+      `compilers disagree here. Wrap it in (else ...). This will become a hard error.`);
+  }
   const layoutInfo = new Map();
   for (const f of loweredForms) {
     if (f?.type === 'layout-lowered') {
@@ -601,7 +708,8 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     if (Array.isArray(form[i + 1]) && V(form[i + 1][1]) === 'memory') i++; // explicit memory selector
     const offsetForm = form[(i++) + 1];
     if (!Array.isArray(offsetForm) || V(offsetForm[1]) !== 'i32.const') throw new Error('Active data requires an i32.const offset');
-    const offset = parseInt(V(offsetForm[2]));
+    const offset = watxParseIntLiteral(
+      watxConstFormToken(offsetForm, 'active data segment offset'), 'active data segment offset');
     if (!Number.isInteger(offset) || offset < 0) throw new Error('Data offset must be a non-negative integer');
     const bytes = [];
     for (; i < (form.length - 1); i++) {
@@ -770,7 +878,8 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       if (Array.isArray(form[i + 1]) && V(form[i + 1][1]) === 'table') { table = V(form[i + 1][2]) || 0; i++; }
       const offsetForm = form[(i++) + 1];
       if (!Array.isArray(offsetForm) || V(offsetForm[1]) !== 'i32.const') throw new Error('Active elem requires an i32.const offset');
-      const offset = parseInt(V(offsetForm[2]));
+      const offset = watxParseIntLiteral(
+        watxConstFormToken(offsetForm, 'active elem segment offset'), 'active elem segment offset');
       const entries = [];
       for (; i < (form.length - 1); i++) {
         if (V(form[i + 1]) === 'func') continue;
@@ -902,9 +1011,15 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
   function parseMemarg(expr, argIdx, head, naturalAlign, requireNatural) {
     let offset = 0, align = naturalAlign, i = argIdx, sawAlign = false;
     while (T(expr[i + 1]) === 'symbol' && /^(offset|align)=/.test(V(expr[i + 1]))) {
-      const [key, raw] = V(expr[i + 1]).split('=');
+      // split('=', 2) is NOT enough: `offset=1=2` must be rejected outright, not
+      // silently read as offset=1. Take the key and require ONE '=' with a
+      // complete integer literal after it — `offset=16junk` used to compile as 16.
+      const tokenText = V(expr[i + 1]);
+      const eq = tokenText.indexOf('=');
+      const key = tokenText.slice(0, eq);
+      const raw = tokenText.slice(eq + 1);
       i++;
-      const n = parseInt(raw);
+      const n = watxParseIntLiteral(raw, `${key}= memarg in ${head}`);
       if (!Number.isInteger(n) || n < 0) throw new Error(`Invalid ${key} memarg '${raw}' in ${head}`);
       if (key === 'offset') offset = n;
       else {
@@ -1157,11 +1272,16 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     if (!Array.isArray(expr)) {
       if (T(expr) === 'number') {
         const val = V(expr);
-        if (val.includes('.') || val.includes('e') || val.includes('E')) {
+        const where = `bare literal in function ${func.name}`;
+        // A hex literal is never a float here, so test for the 0x prefix BEFORE the
+        // exponent characters: `0xE1` contains an 'E' and used to take the float
+        // branch, where parseFloat('0xE1') is 0 — a silent zero constant.
+        const isHex = /^[+-]?0[xX]/.test(val);
+        if (!isHex && (val.includes('.') || val.includes('e') || val.includes('E'))) {
           bytes.byte(OP.f32_const);
-          bytes.f32(parseFloat(val));
+          bytes.f32(watxParseFloatLiteral(val, where));
         } else {
-          const n = parseInt(val);
+          const n = watxParseIntLiteral(val, where);
           bytes.byte(OP.i32_const);
           bytes.sleb(n);
         }
@@ -1178,7 +1298,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         }
         // Could be a numeric literal that tokenized as symbol
         if (/^-?[0-9]/.test(V(expr))) {
-          const n = parseInt(V(expr));
+          const n = watxParseIntLiteral(V(expr), `bare literal in function ${func.name}`);
           bytes.byte(OP.i32_const);
           bytes.sleb(n);
           return bytes;
@@ -1240,35 +1360,46 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       return bytes;
     }
 
-    // ── i32 const ──
-    if (head === 'i32.const') {
-      const val = parseInt(V(expr[2]) || '0');
-      bytes.byte(OP.i32_const);
-      bytes.sleb(val);
-      return bytes;
-    }
-    
-    // ── f32 const ──
-    if (head === 'f32.const') {
-      const val = parseFloat(V(expr[2]) || '0');
-      bytes.byte(OP.f32_const);
-      bytes.f32(val);
-      return bytes;
-    }
-    
-    // ── i64.const ── (BigInt-encoded: full 64-bit range)
-    if (head === 'i64.const') {
-      const val = parseI64Literal(V(expr[2]) || '0');
-      bytes.byte(OP.i64_const);
-      bytes.slebBig(val);
-      return bytes;
-    }
-    
-    // ── f64.const ──
-    if (head === 'f64.const') {
-      const val = parseFloat(V(expr[2]) || '0');
-      bytes.byte(OP.f64_const);
-      bytes.f64(val);
+    // ── Numeric constants ──
+    // The operand of a `.const` is a single literal TOKEN, never a sub-expression
+    // and never two tokens. Checking the arity here is what catches junk that the
+    // tokenizer split off into a second atom instead of keeping inside the number:
+    // `(i64.const 0x10zz)` reads as `0x10` plus a stray symbol `zz`, and the extra
+    // child used to be dropped on the floor, leaving a silently wrong 16.
+    if (head === 'i32.const' || head === 'i64.const' || head === 'f32.const' || head === 'f64.const') {
+      const where = `${head} in function ${func.name}`;
+      if (watxFormLength(expr) !== 2 || Array.isArray(expr[2]) || T(expr[2]) === 'string') {
+        const e = new Error(
+          `${where}: expected exactly one literal operand, got ` +
+          `${watxFormLength(expr) - 1} argument(s) — a constant takes a single complete ` +
+          `numeric token (an extra token here is usually trailing junk on the literal)`);
+        const loc = watxFormLoc(expr);
+        if (loc !== undefined) { e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc); }
+        throw e;
+      }
+      const raw = V(expr[2]);
+      try {
+        if (head === 'i32.const') {
+          bytes.byte(OP.i32_const);
+          bytes.sleb(watxParseIntLiteral(raw, where));
+        } else if (head === 'i64.const') {
+          bytes.byte(OP.i64_const);
+          bytes.slebBig(parseI64Literal(raw));
+        } else if (head === 'f32.const') {
+          bytes.byte(OP.f32_const);
+          bytes.f32(watxParseFloatLiteral(raw, where));
+        } else {
+          bytes.byte(OP.f64_const);
+          bytes.f64(watxParseFloatLiteral(raw, where));
+        }
+      } catch (err) {
+        const loc = watxFormLoc(expr);
+        if (loc !== undefined && err.line === undefined) {
+          err.line = watxNodeLine(loc); err.col = watxNodeCol(loc); err.file = watxNodeFile(loc);
+        }
+        if (!/ in /.test(err.message)) err.message = `${err.message} in ${where}`;
+        throw err;
+      }
       return bytes;
     }
 
@@ -1571,7 +1702,11 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         if (V(inner) != null) return parseInt(V(inner));
         return dflt;
       }
-      // Bare number / symbol token.
+      // Bare number / symbol token. Deliberately NOT strict: immVal is also
+      // handed shape tokens like the `i32x4` of a (v128.const i32x4 ...), and it
+      // is expected to fall through to the default on those. Lane immediates,
+      // which are the positions where a truncated literal would be silently
+      // wrong, go through laneImm below and ARE strict.
       if (V(tok) != null) return parseInt(V(tok));
       return dflt;
     }
@@ -1606,9 +1741,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         if (inner !== 'i32.const' && inner !== 'i64.const') {
           throw new Error(`${opName}: ${what} immediate must be a compile-time constant, got a '${inner}' form`);
         }
-        n = parseInt(V(tok[2]));
+        n = watxParseIntLiteral(V(tok[2]), `${opName} ${what} immediate`);
       } else if (T(tok) === 'number') {
-        n = parseInt(V(tok));
+        n = watxParseIntLiteral(V(tok), `${opName} ${what} immediate`);
       } else {
         throw new Error(`${opName}: ${what} immediate must be a compile-time constant, got '${V(tok)}'`);
       }
@@ -1993,8 +2128,10 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       let restIdx = condIdx + 1;
       
       // Look for then branch
+      let sawThenForm = false;
       if (restIdx < (expr.length - 1)) {
         if (Array.isArray(expr[restIdx + 1]) && V(expr[restIdx + 1][1]) === 'then') {
+          sawThenForm = true;
           thenExpr = expr[restIdx + 1].length === 3 ? expr[restIdx + 1][2] : { _multi: expr[restIdx + 1].slice(2) };
         } else {
           thenExpr = expr[restIdx + 1];
@@ -2015,7 +2152,15 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
           elseExpr = expr[restIdx + 1].length === 3 ? expr[restIdx + 1][2] : { _multi: expr[restIdx + 1].slice(2) };
           restIdx++;
         } else {
-          // Positional: 4th element (after cond, then) is the else
+          // Positional: 4th element (after cond, then) is the else.
+          // NOT standard WAT — the spec form is (else ...). Accepted for now
+          // because the Wine tree still has such sites, but warned about once per
+          // site so they can be found and wrapped; promotion to a hard error is
+          // planned for when the closure has none left.
+          // Only when the then arm was written in the standard (then ...) form:
+          // WATX's own `(if COND A B)` shorthand has no (then ...) either and is a
+          // deliberate, documented WATX spelling, not a mistake to warn about.
+          if (sawThenForm) warnPositionalElse(expr, func);
           elseExpr = expr[restIdx + 1];
           restIdx++;
         }
@@ -3362,19 +3507,20 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         content.sleb(0);
       }
       else {
-        const raw = V(g.init[2]) || '0';
+        const where = `initializer of global ${g.name || '(anonymous)'}`;
+        const raw = g.init ? watxConstFormToken(g.init, where) : '0';
         if (g.type === 'i32') {
           content.byte(OP.i32_const);
-          content.sleb(parseInt(raw));
+          content.sleb(watxParseIntLiteral(raw, where));
         } else if (g.type === 'i64') {
           content.byte(OP.i64_const);
           content.slebBig(parseI64Literal(raw));
         } else if (g.type === 'f32') {
           content.byte(OP.f32_const);
-          content.f32(parseFloat(raw));
+          content.f32(watxParseFloatLiteral(raw, where));
         } else {
           content.byte(OP.f64_const);
-          content.f64(parseFloat(raw));
+          content.f64(watxParseFloatLiteral(raw, where));
         }
       }
       content.byte(OP.end);

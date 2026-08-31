@@ -93,6 +93,8 @@ const REQUIRED_FILES = [
   // Milestone 3 differential-gate fixes (docs/watx-migration-plan.md §M3).
   'test/watx-compiler-export-order.test.js',
   'test/watx-compiler-i64-literal.test.js',
+  // Round 4 external review: strict numeric literals + the positional-else warning.
+  'test/watx-compiler-literals.test.js',
 ];
 
 function fail(msg) {

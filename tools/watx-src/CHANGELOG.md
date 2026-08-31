@@ -238,3 +238,110 @@ for it.
 New manifest digest:
 
   bf54906c2ea0aba43a09042177295a9660fa8846fb8168db9be08a4354f20bcd
+
+## 2026-08-31 — strict numeric literals, and a warning for the positional else
+
+Two of the three findings from the round-4 external review of the vendored
+compiler. (The third, a `MATRIX GREEN` on a symmetrically-failing pinned test,
+is in `tools/watx-matrix.js`, which is not a vendored file — commit `f2f99acd`.)
+
+**1. Numeric literals parsed permissively and truncated in silence (HIGH).**
+`parseInt` and `parseFloat` do not validate. They read a prefix, stop at the
+first character they cannot use, and return what they got — so every literal
+position in the compiler accepted trailing junk and baked a plausible-looking
+wrong constant into the module, with no error and no warning:
+
+```text
+(i32.const 1_000)            ->  1        (the digit separator split the token)
+(i32.const 123abc)           ->  123
+(i64.const 0x10zz)           ->  16n
+(f32.const 1.25junk)         ->  1.25
+(f64.const 1_000.5)          ->  1
+(i32.load offset=16junk …)   ->  offset=16
+```
+
+A wrong constant is the worst failure mode this compiler has: the module
+compiles, validates, runs, and misbehaves somewhere else entirely. The same
+class of bug already cost a session — the negatively-signed hex `i64` above,
+which deleted the OLE compound-file signature from every container the emulator
+wrote.
+
+Every literal position now validates the token **in its entirety**:
+`i32.const`, `i64.const`, `f32.const`, `f64.const`, `offset=`/`align=` memargs,
+bare number and numeric-symbol atoms in operand position, global initializers,
+active `data` and `elem` segment offsets, and SIMD lane immediates. Junk is a
+hard error naming the token and the position.
+
+Trailing junk has two shapes and both are closed. Junk the tokenizer keeps
+inside the number (`123abc` — `a`,`b`,`c` are hex digits) is caught by the
+validators. Junk it splits off into a second atom (`0x10zz` → `0x10` + `zz`)
+is invisible to any validator, because the const form simply dropped the extra
+child; so the four `.const` heads and the out-of-body constant forms now also
+check **arity** — exactly one atom operand, never a sub-expression, never two.
+The `|| '0'` fallback for a missing operand is gone with it.
+
+**THE UNDERSCORE DECISION.** The WAT text format allows `_` between digits:
+`1_000` is 1000, `0xFFFF_FFFF` is `0xFFFFFFFF`. Of the three possible outcomes
+for `1_000` — parse it as 1000, reject it, or silently produce 1 — only the
+last is unacceptable, and the spec answer is the first, so **WATX now parses it
+correctly**. `WATX_CHAR_NUMBER` in `compiler-parser.js` carries `_` through a
+number token (it used to end the token, which is how `1_000` became the number
+`1` followed by a stray symbol `_000`), and the validators accept it only in the
+spec position: between two digits of the same run, never leading, trailing or
+doubled. A separator is stripped before the value is computed, so every literal
+that was already valid keeps its exact previous value and encoding. A census
+over `WAT_FILES` found no token that changes tokenization under the wider
+number alphabet — the only `_`-after-digit occurrences in the tree are inside
+string literals and `;;` comments.
+
+Deliberately **not** supported, and now rejected loudly instead of truncated:
+hex floats (`0x1p4`), `inf`/`nan`, and a `+`-signed exponent (`1e+10`). None
+occur in the closure. A NEGATIVE exponent does tokenize and still works — there
+is one in the tree, `(f64.const 2.2250738585072014e-308)` at
+`src/06-fpu.wat:193`, and it is asserted. Two smaller fixes fell out of the
+audit: a bare hex atom containing `E` (`0xE1`) took the float branch, where
+`parseFloat('0xE1')` is 0 — a silent zero constant, now decided by the `0x`
+prefix before the exponent characters; and `offset=1=2` was read as `offset=1`
+rather than rejected.
+
+`immVal` is deliberately left lenient: it is also handed shape tokens like the
+`i32x4` of a `(v128.const i32x4 …)` and is expected to fall through to its
+default on those. The lane positions where a truncated literal would be
+silently wrong go through `laneImm`, which is strict.
+
+**2. `(if (cond) (then …) EXPR)` now warns (MED).** Standard WAT spells the
+else arm `(else …)`. WATX also accepts a bare fourth child as the else — and
+that shape is one the two compilers read DIFFERENTLY: `lib/compile-wat.js`
+silently discards the expression, WATX compiles it as the else arm. It stays
+accepted for now, because one such site is still in the tree
+(`src/09a5-handlers-window.wat:225`, a `$wnd_set_style` call that the shipped
+legacy build therefore never makes), but it prints a warning naming the file,
+line and function, once per SOURCE SITE rather than per compile of it.
+**Promotion to a hard error is planned for when the closure has zero such
+sites.** WATX's own `(if COND A B)` shorthand — no `(then …)` either — is a
+documented WATX spelling and stays quiet, or every watjs tree would drown in
+warnings and the real sites would be invisible.
+
+New suite `test/watx-compiler-literals.test.js` (83 checks), added to the
+provenance checker's `REQUIRED_FILES` (19 → 20). It covers all six reproduced
+shapes, the junk-in-every-other-position sweep, the unsupported float
+spellings, a no-regression table of every literal form that was already valid
+(including the negative-hex `i64` from the entry above), and the finding-2
+warning: fires for the positional else, silent for a proper `(else …)`, silent
+for an else-less `if`, silent for the WATX shorthand, and once per site.
+
+`test/watx-compiler-i64-literal.test.js` needed two edits. Its rejection checks
+pinned the exact sentence `Invalid i64 literal`, and `0xZZ` is now caught one
+step earlier by the arity check, so the assertion is on rejection rather than on
+one wording; and its note that digit separators are unsupported is now stale, so
+it asserts `(i64.const 1_000_000) == 1000000` instead.
+
+**Emitted bytes are unchanged.** The full `src/main.watx` closure compiled with
+the HEAD compiler and with this one, on the same source tree, gives identical
+artifacts in both modes — 984320 B tail / 984769 B compat, same sha256 — and
+the only warning the closure prints is the single 09a5 site above. All fifteen
+`watx-compiler-*` suites are green and none shrank.
+
+New manifest digest:
+
+  da59b4bab1dde12f248f44f814cd435ebec72d30675ffa581ea21220ac292029

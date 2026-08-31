@@ -80,16 +80,29 @@ for (const [lit, want] of cases) {
   ck(`i64.const ${lit} === ${want}`, got.value === want, got.error ?? String(got.value));
 }
 
-// Not asserted here: standard WAT's `_` digit separators. The WATX TOKENIZER splits
-// `1_000_000` into `1` and `_000_000` before any literal parser sees it, so the gap is in
-// tokenization, not in parseI64Literal — a separate fix with its own regression, and no
-// source in this tree writes one. `lib/compile-wat.js` does not accept them either.
+// Digit separators are now handled — the tokenizer carries `_` through a number token and
+// the strict validators accept it between digits, so `(i64.const 1_000_000)` is 1000000
+// rather than the 1 the split token used to produce. That fix and its regressions live in
+// test/watx-compiler-literals.test.js; one value is asserted here so this file's own
+// parser coverage does not claim the gap is still open.
+{
+  const sep = valueOf('1_000_000');
+  ck('i64.const 1_000_000 is the spec value, not the split-token 1',
+    sep.value === 1000000n, sep.error ?? String(sep.value));
+}
 
 // --- Silence is the thing being removed: garbage must be an ERROR. -----------
+// The assertion is REJECTION, not one particular sentence: `0xZZ` is now caught a step
+// earlier, by the arity check on the const form (the tokenizer splits it into the number
+// `0x` and a stray symbol `ZZ`, and dropping that second token is exactly how trailing
+// junk used to become a truncated constant), so its message names the operand count
+// instead of the literal.
 for (const bad of ['0xZZ', 'not_a_number', '--5']) {
   const r = build(`(memory 1 1)\n(func $m (export "m") (result i64) (i64.const ${bad}))`);
   ck(`i64.const ${bad} is rejected, not silently 0`,
-    r.success === false && /Invalid i64 literal/.test(String(r.error)), r.error);
+    r.success === false &&
+    /Invalid (i64|integer) literal|expected exactly one literal operand/.test(String(r.error)),
+    r.error);
 }
 
 // --- The same parser serves data-segment i64 constants; check that path too. --

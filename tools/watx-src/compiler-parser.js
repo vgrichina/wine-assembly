@@ -13,7 +13,12 @@ class ParseError extends Error {
 }
 
 const WATX_DIGIT_RE = /[0-9]/;
-const WATX_NUMBER_RE = /[0-9.\-xXa-fA-F]/;
+// `_` is a WAT digit separator (`1_000`, `0xFFFF_FFFF`), so it has to stay inside
+// the number token. Without it `1_000` split into the number `1` and a stray
+// symbol `_000`, and the const site quietly compiled the literal as 1. The
+// separator's legal POSITION (between digits only) is enforced by the strict
+// literal validators in compiler-codegen.js, not here.
+const WATX_NUMBER_RE = /[0-9._\-xXa-fA-F]/;
 const WATX_SYMBOL_START_RE = /[a-zA-Z_$\-\.{}\+\*\/\<\>\=\!\&\|\^\~\%\?\@\#]/;
 const WATX_SYMBOL_RE = /[a-zA-Z0-9_$\-\.{}\+\*\/\<\>\=\!\&\|\^\~\%\?\@\#]/;
 
@@ -28,7 +33,7 @@ for (let code = 48; code <= 57; code++) WATX_CHAR_FLAGS[code] |= WATX_CHAR_DIGIT
 for (let code = 65; code <= 90; code++) WATX_CHAR_FLAGS[code] |= WATX_CHAR_SYMBOL_START | WATX_CHAR_SYMBOL;
 for (let code = 97; code <= 122; code++) WATX_CHAR_FLAGS[code] |= WATX_CHAR_SYMBOL_START | WATX_CHAR_SYMBOL;
 for (const ch of '_$-.{}+*/<>=!&|^~%?@#') WATX_CHAR_FLAGS[ch.charCodeAt(0)] |= WATX_CHAR_SYMBOL_START | WATX_CHAR_SYMBOL;
-for (const ch of '.-xXabcdefABCDEF') WATX_CHAR_FLAGS[ch.charCodeAt(0)] |= WATX_CHAR_NUMBER;
+for (const ch of '._-xXabcdefABCDEF') WATX_CHAR_FLAGS[ch.charCodeAt(0)] |= WATX_CHAR_NUMBER;
 
 // Successful production builds used to allocate a separate { line, col, file }
 // object for every list and repeat those three properties on every atom. The
