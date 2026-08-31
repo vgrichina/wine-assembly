@@ -492,16 +492,17 @@ Win98's Briefcase *was* the sync feature:
  │   sol        sol.ini   ▪ 1 KB     synced ✓   │
  │   caesar3    c3.sav    ▪ 890 KB   local only │
  │                                              │
- │   sync code:  ferry-lamp-oak-42   [ copy ]   │
+ │   signed in:  vg @ berrry        [ log out ]  │
  │                                              │
- │   [ Export .zip ]  [ Sync now ]  [ Link… ]   │
+ │   [ Export .zip ]  [ Sync now ]  [ Sign in ] │
  └──────────────────────────────────────────────┘
 ```
 
-`Export .zip` is the memory-card gesture that works with no server; `Link…`
-shows the sync code as phrase + QR for the second device. Rows come straight
-from each app's `persistFiles` matches plus its `storage.js` registry/INI
-slice.
+`Export .zip` is the memory-card gesture that works with no server or
+account; `Sign in` redirects to berrry's `/api/auth/login` (it bounces back
+to the app), after which saves follow the account to any device. Rows come
+straight from each app's `persistFiles` matches plus its `storage.js`
+registry/INI slice.
 
 ### The phone
 
