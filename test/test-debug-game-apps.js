@@ -119,6 +119,8 @@ assert.strictEqual(diabloShareware.exe,
   'test/binaries/candidates/diablo-shareware/installed/diablo_s.exe');
 assert.strictEqual(diabloShareware.requiredFiles, true);
 assert.strictEqual(diabloShareware.asyncMultimediaTimer, true);
+assert.deepStrictEqual(diabloShareware.persistFiles, ['c:\\spawn_*.sv'],
+  'Diablo Shareware persists the save archive created beside its executable');
 assert.deepStrictEqual(diabloShareware.dlls, [
   'test/binaries/candidates/diablo-shareware/installed/storm.dll',
   'test/binaries/candidates/diablo-shareware/installed/diabloui.dll',
