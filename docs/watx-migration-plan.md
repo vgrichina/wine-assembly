@@ -376,6 +376,24 @@ change. A census found 12 bare-tail-in-`if` sites total; the 6 inside `if`s
 that already have an `(else …)` compile identically under both compilers and
 need no change.
 
+Status 2026-08-31, after the audit wave: five of the six source defects are
+fixed (`95e7263b` d3dim greyscale fallback + treeview leak/nops, `483f305a`
+menu MF_GRAYED — all previously-dead code becoming live, +45 bytes across the
+legacy artifacts, each measured; the menu fix also exposed and repaired a
+test that had been silently red at HEAD). The codex round-4 findings are
+closed: `155ff750` makes every numeric-literal position whole-token strict
+(underscore separators now parsed per spec — they used to make `1_000`
+compile to `1` — hex floats/`inf`/`nan` rejected loudly, const-form arity
+checked, all proven byte-identical on the closure), and `f2f99acd` makes the
+matrix require the legacy column green (`MATRIX RED — baseline failure` +
+`--allow-baseline-fail=` excusals) so symmetric crashes can no longer fake a
+pass. The positional-else shape now warns once per source site and will
+become a hard error; the closure census shows exactly one site left —
+`09a5-handlers-window.wat:216` in `$handle_CreateWindowExA`, peer-owned,
+where the shipped build silently never applies a class-registered window's
+style. Diagnostic body-diff residue: 2 of 8,142 (that site, plus the benign
+`$next` type renumber). MATRIX GREEN throughout.
+
 Performance checks come after behavioral equality. On a quiet machine, compare
 fixed-duration guest progress and retired operations, not batches per second.
 Investigate any material code-size, startup or guest-throughput difference
