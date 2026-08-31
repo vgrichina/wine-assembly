@@ -25874,5 +25874,23 @@
       }
     ],
     "ret": "HRESULT"
+  },
+  {
+    "id": 3094,
+    "name": "TerminateThread",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 754139676,
+    "args": [
+      {
+        "name": "hThread",
+        "type": "HANDLE"
+      },
+      {
+        "name": "dwExitCode",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "BOOL"
   }
 ]

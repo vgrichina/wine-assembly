@@ -12948,6 +12948,13 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; TerminateThread(hThread, dwExitCode) — legacy installers use this to tear
+  ;; down helper threads during setup cleanup.
+  (func $handle_TerminateThread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_terminate_thread (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
   ;; SuspendThread(hThread) — 1 arg stdcall, return previous suspend count (0 = not suspended)
   (func $handle_SuspendThread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $result i32)

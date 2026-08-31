@@ -792,6 +792,7 @@
   (import "host" "resume_thread" (func $host_resume_thread (param i32) (result i32)))
   (import "host" "exit_thread" (func $host_exit_thread (param i32)))
   (import "host" "get_exit_code_thread" (func $host_get_exit_code_thread (param i32) (result i32)))
+  (import "host" "terminate_thread" (func $host_terminate_thread (param i32 i32) (result i32)))
   (import "host" "create_event" (func $host_create_event (param i32 i32 i32 i32) (result i32)))
   (import "host" "open_event" (func $host_open_event (param i32 i32) (result i32)))
   (import "host" "set_event" (func $host_set_event (param i32) (result i32)))

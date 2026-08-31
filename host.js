@@ -854,16 +854,22 @@ class WineAssembly {
     };
 
     // Wire thread/event imports to ThreadManager
-    h.create_thread = (s, p, sz, flags) => self.threadManager ? self.threadManager.createThread(s, p, sz, flags) : 0;
+    h.create_thread = (s, p, sz, flags, threadIdWa) => self.threadManager
+      ? self.threadManager.createThread(s, p, sz, flags, threadIdWa) : 0;
     h.duplicate_current_thread = (tid) => self.threadManager ? self.threadManager.duplicateCurrentThread(tid) : 0;
     h.suspend_thread = (handle) => self.threadManager ? self.threadManager.suspendThread(handle) : 0xFFFFFFFF;
     h.resume_thread = (handle) => self.threadManager ? self.threadManager.resumeThread(handle) : 0xFFFFFFFF;
     h.exit_thread = (c) => self.threadManager && self.threadManager.exitThread(c);
     h.get_exit_code_thread = (handle) => self.threadManager ? self.threadManager.getExitCodeThread(handle) : 0x103;
+    h.terminate_thread = (handle, exitCode) => self.threadManager
+      ? self.threadManager.terminateThread(handle, exitCode) : 0;
     const readSyncObjectName = (nameWa, wide) => {
       if (!nameWa) return '';
       if (!(wide & 1)) return self.readString(nameWa);
-      const dv = new DataView(self.memory.buffer);
+      const memoryBuffer = self.memory && (self.memory.buffer || self.memory);
+      if (!(memoryBuffer instanceof ArrayBuffer) &&
+          !(typeof SharedArrayBuffer !== 'undefined' && memoryBuffer instanceof SharedArrayBuffer)) return '';
+      const dv = new DataView(memoryBuffer);
       let name = '';
       for (let i = 0; i < 512; i++) {
         const ch = dv.getUint16(nameWa + i * 2, true);
@@ -2627,12 +2633,12 @@ class WineAssembly {
         }
         if (yieldReason === 9) {
           // cs_wait: EnterCriticalSection found the section held by another guest
-          // thread. Same shape as net_wait — EIP is still on the thunk, so
-          // clearing re-enters the same call — and rescheduling rather than
-          // spinning is again the point: the holder only runs when this returns.
+          // thread. EIP is still on the thunk, so clearing re-enters the same
+          // call next turn. Do not return here: the cooperative holder runs in
+          // the shared thread-manager block immediately below. Returning first
+          // lets the main thread retry and re-park forever without ever giving
+          // the critical-section owner a slice.
           self.instance.exports.clear_yield();
-          if (self.running) { setTimeout(step, 0); }
-          return;
         }
         // Spawn and run worker threads
         if (self.threadManager) {

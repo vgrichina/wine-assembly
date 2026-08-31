@@ -2970,6 +2970,7 @@ async function main() {
   h.resume_thread = (handle) => threadManager.resumeThread(handle);
   h.exit_thread = (exitCode) => threadManager.exitThread(exitCode);
   h.get_exit_code_thread = (handle) => threadManager.getExitCodeThread(handle);
+  h.terminate_thread = (handle, exitCode) => threadManager.terminateThread(handle, exitCode);
   const readSyncObjectName = (nameWa, wide) => {
     if (!nameWa) return '';
     const dv = new DataView(memory.buffer);

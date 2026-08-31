@@ -28,6 +28,18 @@ function makeThreadManagerWithMemory(memory, opts) {
   return tm;
 }
 
+const idTm = makeThreadManager();
+const threadIdWa = 0x100;
+const idView = new DataView(idTm.memory.buffer);
+idView.setUint32(threadIdWa, 0xdeadbeef, true);
+const idHandle = idTm.createThread(0x5000, 0, 0, 0, threadIdWa);
+assert.strictEqual(idHandle, 0xE1000,
+  'CreateThread still returns the independently allocated kernel handle');
+assert.strictEqual(idView.getUint32(threadIdWa, true), 2,
+  'lpThreadId receives the worker current_thread_id, not the kernel handle');
+assert.notStrictEqual(idHandle, idView.getUint32(threadIdWa, true),
+  'thread HANDLE and thread id remain distinct Win32 namespaces');
+
 const tm = makeThreadManager();
 const handles = [];
 
@@ -134,6 +146,21 @@ assert.strictEqual(
   pendingWaitTm.getExitCodeThread(pendingWaitHandle),
   0x103,
   'GetExitCodeThread reports a pending worker as STILL_ACTIVE'
+);
+assert.strictEqual(
+  pendingWaitTm.terminateThread(pendingWaitHandle, 0x2a),
+  1,
+  'TerminateThread reports success for a known worker handle'
+);
+assert.strictEqual(
+  pendingWaitTm.getExitCodeThread(pendingWaitHandle),
+  0x2a,
+  'TerminateThread stores the requested exit code'
+);
+assert.strictEqual(
+  pendingWaitTm.terminateThread(0xdeadbeef, 7),
+  1,
+  'TerminateThread treats stale installer helper handles as successful no-ops'
 );
 
 const currentProcessTm = makeThreadManager();

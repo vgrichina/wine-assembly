@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 220,
+  "count": 221,
   "sigs": {
     "log": {
       "params": [
@@ -1630,6 +1630,15 @@
     },
     "get_exit_code_thread": {
       "params": [
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "terminate_thread": {
+      "params": [
+        "i32",
         "i32"
       ],
       "results": [
