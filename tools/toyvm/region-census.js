@@ -76,10 +76,43 @@ function classify(code, out) {
   return 'crash';
 }
 
-function runOne(exe, o) {
+// A DIFFERING FRAME IS NOT AUTOMATICALLY A BUG, AND THIS IS THE TRAP.
+//
+// Most of the corpus never terminates: a demo runs its effect until somebody
+// presses a key, so the run stops when the dispatch budget does and the frame
+// is a SNAPSHOT OF AN ANIMATION IN PROGRESS. region-jit.js charges $steps in
+// one lump per straight line rather than one per op, so the two arms stop a few
+// instructions apart having done the same work -- and a few instructions apart
+// in a plasma loop is a different picture.
+//
+// Measured on CONTACT.EXE, whose region is correct under --no-lower: identical
+// at 8M dispatches, identical at 11M, DIFFERS at 12M with the same pixel count.
+// Reading that one budget on its own said "the region protocol is broken" and
+// cost an afternoon. The lowered arm, which really is broken, differs at every
+// budget and freezes on one byte-identical frame from 3M dispatches on.
+//
+// So a `differs` is confirmed at a SECOND budget before it is reported. Agreeing
+// at either one means the region is a faithful replacement and the run was
+// caught mid-frame; that is `phase`, and it is not a defect.
+// THREE of them, not one, and it has to be three. A single retry is a coin
+// toss: CONTACT.EXE under --no-lower is a faithful region that happens to
+// disagree at 12M dispatches AND at 11.04M, and agrees at 11M and 8M. One
+// confirmation would still have called it a bug. A region that is actually
+// wrong disagrees at every budget, so any agreement at all clears it.
+function confirmBudgets(n) {
+  const m = /^(\d+(?:\.\d+)?)([kmb]?)$/i.exec(String(n).trim());
+  if (!m) return [];
+  const mul = { '': 1, k: 1e3, m: 1e6, b: 1e9 }[m[2].toLowerCase()];
+  const base = Number(m[1]) * mul;
+  // Far enough apart to land the animation somewhere else, near enough that the
+  // run still reaches the same part of the program.
+  return [0.92, 0.83, 0.67].map(f => `${Math.round(base * f)}`);
+}
+
+function runOne(exe, o, dispatches = o.dispatches) {
   return new Promise((resolve) => {
     const args = [path.join(__dirname, 'region-jit.js'), exe,
-      `--dispatches=${o.dispatches}`, `--reps=${o.reps}`, ...o.extra];
+      `--dispatches=${dispatches}`, `--reps=${o.reps}`, ...o.extra];
     const ch = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     ch.stdout.on('data', (d) => { out += d; });
@@ -130,26 +163,36 @@ function markdown(rows, o) {
     + ' `region-jit.js` alone.');
   L.push('');
   L.push('A region is a drop-in replacement only if the demo draws the SAME frame'
-    + ' with it installed. `differs` is a bug in the region; `no-loop`,'
-    + ' `no-samples` and `declined` mean no region was installed, so they are'
-    + ' coverage gaps rather than defects.');
+    + ' with it installed. `no-loop`, `no-samples` and `declined` mean no region'
+    + ' was installed, so they are coverage gaps rather than defects.');
+  L.push('');
+  L.push('- `identical` — same frame. The region is a faithful replacement.');
+  L.push('- `phase` — differed at the first budget and agreed at the second.'
+    + ' Most of the corpus never terminates, so the frame is a snapshot of a'
+    + ' running animation and the arms stop a few instructions apart. **Not a'
+    + ' defect.**');
+  L.push('- `differs` — differed at both budgets. A bug in the region.');
+  L.push('- `frozen` — differed at both budgets **and drew the identical frame at'
+    + ' each** while the interpreter moved on. The guest stopped making'
+    + ' progress: the worst kind of `differs`, and the one to fix first.');
   L.push('');
   const tally = {};
   for (const r of rows) tally[r.verdict] = (tally[r.verdict] || 0) + 1;
   L.push('outcomes: ' + Object.entries(tally).sort((a, b) => b[1] - a[1])
     .map(([k, n]) => `**${k}** ${n}`).join(', '));
 
-  const shown = rows.filter(r => r.verdict === 'identical' || r.verdict === 'differs');
+  const RANK = { frozen: 0, differs: 1, phase: 2, identical: 3 };
+  const shown = rows.filter(r => RANK[r.verdict] !== undefined);
   L.push('');
   L.push('| program | head | ops | share | speed | frame | baseline | region | ints | smc |');
   L.push('|---|---|---:|---:|---:|---|---|---|---|---|');
-  for (const r of shown.sort((a, b) => (a.verdict === b.verdict ? 0 : a.verdict === 'differs' ? -1 : 1))) {
+  for (const r of shown.sort((a, b) => RANK[a.verdict] - RANK[b.verdict])) {
     const g = r.region || {};
     const f = r.frame;
     L.push(`| ${r.name} | ${g.headIp === undefined ? '' : '0x' + g.headIp.toString(16)}`
       + ` | ${g.ops || ''} | ${g.share === undefined ? '' : g.share.toFixed(1) + '%'}`
       + ` | ${r.speedup === undefined ? '' : (r.speedup >= 0 ? '+' : '') + r.speedup + '%'}`
-      + ` | ${r.verdict === 'differs' ? '**DIFFERS**' : 'identical'}`
+      + ` | ${r.verdict === 'identical' || r.verdict === 'phase' ? r.verdict : `**${r.verdict}**`}`
       + ` | ${f ? `${f.base.hash} ${f.base.px}px` : ''}`
       + ` | ${f ? `${f.jit.hash} ${f.jit.px}px` : ''}`
       + ` | ${f ? f.ints.join('/') : ''} | ${f ? f.smc.join('/') : ''} |`);
@@ -192,6 +235,8 @@ async function main() {
     // docs/toyvm-trace-jit.md, which until now were run a program at a time.
     extra: arg('args') ? arg('args').split(' ').filter(Boolean) : [],
     jobs: Number(arg('jobs', Math.max(1, Math.min(4, os.cpus().length - 2)))),
+    confirmAt: flag('no-confirm') ? []
+      : (arg('confirm-at') ? arg('confirm-at').split(',') : confirmBudgets(arg('dispatches', '6m'))),
   };
   let exes = findExes(dir);
   if (only) exes = exes.filter(e => only.has(path.basename(e)));
@@ -203,7 +248,33 @@ async function main() {
   const worker = async () => {
     while (next < exes.length) {
       const i = next++;
-      const r = await runOne(exes[i], o);
+      let r = await runOne(exes[i], o);
+      // See secondBudget: a differing frame is confirmed at a second budget
+      // before it counts as a defect. `--no-confirm` skips it, which is only
+      // right when every program in the set is known to terminate.
+      if (r.verdict === 'differs' && o.confirmAt.length) {
+        r.confirm = [];
+        for (const d of o.confirmAt) {
+          const again = await runOne(exes[i], o, d);
+          // AN AGREEMENT ON A BLANK SCREEN IS NOT AN AGREEMENT. A shorter budget
+          // can stop before the demo has drawn anything, and two black frames
+          // match trivially -- which cleared ACCIDENT.EXE, whose region really
+          // does leave the guest stuck (18447px against 0px at the full budget).
+          // A confirmation only counts when the interpreter had drawn something
+          // by then.
+          const informative = !again.frame || again.frame.base.px > 0
+            || !r.frame || r.frame.base.px === 0;
+          r.confirm.push({ dispatches: d, verdict: again.verdict, frame: again.frame,
+            informative });
+          if (again.verdict === 'identical' && informative) { r.verdict = 'phase'; break; }
+          if (again.verdict === 'identical') continue;
+          // A region that lands on the SAME frame at every budget while the
+          // interpreter moves on is not merely different, it is stuck -- the
+          // strongest signal in the census, and worth its own word.
+          if (again.frame && r.frame && again.frame.jit.hash === r.frame.jit.hash
+            && again.frame.base.hash !== r.frame.base.hash) r.verdict = 'frozen';
+        }
+      }
       rows[i] = r;
       const f = r.frame;
       console.log(`  [${String(i + 1).padStart(3)}/${exes.length}] ${r.name.padEnd(14)} ${r.verdict}`
@@ -220,8 +291,10 @@ async function main() {
   for (const r of out) tally[r.verdict] = (tally[r.verdict] || 0) + 1;
   console.log('\noutcomes: ' + Object.entries(tally).sort((a, b) => b[1] - a[1])
     .map(([k, n]) => `${k} ${n}`).join(', '));
-  const bad = out.filter(r => r.verdict === 'differs');
-  if (bad.length) console.log(`differs: ${bad.map(r => r.name).join(', ')}`);
+  const bad = out.filter(r => r.verdict === 'differs' || r.verdict === 'frozen');
+  if (bad.length) {
+    console.log(`bugs: ${bad.map(r => `${r.name} (${r.verdict})`).join(', ')}`);
+  }
 }
 
 main();
