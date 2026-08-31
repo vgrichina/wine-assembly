@@ -1941,8 +1941,8 @@
   ;; for 'A'..'Z' and +0x20 scan->vkey for scan 0x00..0x58. Byte arrays, not
   ;; strings, which is why they are their own region rather than a tail on
   ;; STRING_CONSTANTS.
-  (global $VK_SCAN_TABLES i32 (i32.const 0x00000380))
-  (global $VK_SCAN_TABLES_SIZE i32 (i32.const 0x00000080))
+  (global $VK_SCAN_TABLES i32 (region.addr $VK_SCAN_TABLES 0))
+  (global $VK_SCAN_TABLES_SIZE i32 (region.size $VK_SCAN_TABLES))
   (data (region.addr $VK_SCAN_TABLES 0x00)
     "\1e\30\2e\20\12\21\22\23\17\24\25\26\32\31\18\19\10\13\1f\14\16\2f\11\2d\15\2c")
 

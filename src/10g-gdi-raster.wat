@@ -3817,7 +3817,7 @@
   ;; than a wrong pixel, so no generation counter or flush hook is needed.
   ;; Only distance-0 results are stored — an approximate match is specific to
   ;; the palette it was computed against and could not be verified this way.
-  (global $GDI_NEAREST_CACHE i32 (i32.const 0x079D0000))
+  (global $GDI_NEAREST_CACHE i32 (region.addr $GDI_NEAREST_CACHE 0))
   (global $GDI_NEAREST_CACHE_SLOTS i32 (i32.const 4096))
 
   (func $gdi_nearest_cache_slot (param $color i32) (result i32)

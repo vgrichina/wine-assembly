@@ -9229,8 +9229,8 @@
   ;; return, and a callback that answers zero ends the enumeration.
   ;; 48 bytes: the face-name run in 01-header.wat, ending in the empty string
   ;; that terminates it. Sized exactly, so a sixth face is a compile error.
-  (global $WIN16_FONT_FACES i32 (i32.const 0x00003E00))
-  (global $WIN16_FONT_FACES_SIZE i32 (i32.const 0x00000030))
+  (global $WIN16_FONT_FACES i32 (region.addr $WIN16_FONT_FACES 0))
+  (global $WIN16_FONT_FACES_SIZE i32 (region.size $WIN16_FONT_FACES))
   (global $win16_ef_proc (mut i32) (i32.const 0))
   (global $win16_ef_data (mut i32) (i32.const 0))
   (global $win16_ef_ret  (mut i32) (i32.const 0))
@@ -10008,9 +10008,9 @@
   ;; then the zero length byte that ends the list. Exactly the extent of the
   ;; (data ...) in 01-header.wat, so adding a sixth entry is a compile error
   ;; here rather than a silent write into whatever follows.
-  (global $WIN16_MMSYSTEM_NAMES i32 (i32.const 0x00003E30))
-  (global $WIN16_MMSYSTEM_NAMES_SIZE i32 (i32.const 0x0000005D))
-  (global $WIN16_BUILTIN_NAMES i32 (i32.const 0x079CA000))
+  (global $WIN16_MMSYSTEM_NAMES i32 (region.addr $WIN16_MMSYSTEM_NAMES 0))
+  (global $WIN16_MMSYSTEM_NAMES_SIZE i32 (region.size $WIN16_MMSYSTEM_NAMES))
+  (global $WIN16_BUILTIN_NAMES i32 (region.addr $WIN16_BUILTIN_NAMES 0))
 
   ;; The KERNEL/USER/GDI half of the same idea, over its own table. That table
   ;; carries the module in the top nibble of each ordinal word, so a name only

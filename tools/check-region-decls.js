@@ -20,6 +20,24 @@
 // job shrinks to nothing because there is only one copy left. Until then it is
 // the thing standing between "we declared the map" and "we declared a map".
 //
+// WAVE 3 TURNED THAT ROUND. Most regions are now `region.declare`, so their base
+// is the ALLOCATOR's output and there is no number in the source to compare
+// against; and their mirrors read `(region.addr $R 0)`, so there is no second
+// copy to disagree. What is left for this gate is two things worth keeping:
+//
+//   1. Every declared region still has a `$NAME`/`$NAME_SIZE` mirror behind it,
+//      and every sized global still has a declaration. Coverage, in both
+//      directions.
+//   2. A region that is NOT pinned must have a SYMBOLIC mirror. A literal
+//      mirror on an allocated region is a stale copy the moment the allocator
+//      chooses a different address — silently, since nothing else compares
+//      them any more. This is the check that replaces the base comparison.
+//
+// It reads the placed layout through tools/region-layout.js, which asks the
+// compiler. The old "a gate must not need the thing it gates" rule gave way
+// here for the reason it had to: after wave 3 the compiler's output IS the map,
+// and a second parser would be a second map.
+//
 // The declaration set is complete, so the build gate runs --strict: a sized
 // global with no mirror declaration is an ERROR. Without --strict it degrades
 // to a warning — that mode exists only for mid-edit inspection.
@@ -57,27 +75,19 @@ function parseInt32(text) {
 // different set of globals than the tools it is reconciling would reconcile
 // nothing.
 function collectGlobals() {
-  const globals = new Map();
-  const re = /^\s*\(global\s+(\$[A-Za-z0-9_]+)\s+(?:i32|\(mut\s+i32\))\s+\(i32\.const\s+([^)]+)\)\)\s*(?:;;.*)?$/;
-  for (const file of WAT_FILES) {
-    if (file === DECLS) continue;
-    const text = fs.readFileSync(path.join(SRC, file), 'utf8');
-    text.split(/\r?\n/).forEach((line, i) => {
-      const m = line.match(re);
-      if (m) globals.set(m[1].slice(1), { value: parseInt32(m[2]), file, line: i + 1 });
-    });
-  }
-  return globals;
+  return require('./wat-globals.js').collect();
 }
 
-// Declarations are read with a small dedicated reader rather than the vendored
-// WATX parser: this gate runs before the compiler in the build, and a gate that
-// needs the thing it gates in order to run is not a gate. The grammar it
-// accepts is deliberately narrow — anything it does not recognize is an error,
-// never something quietly skipped. (The compiler re-validates the same clause
-// set plus overlap/alignment/bounds; this reader only has to refuse to guess.)
-const KNOWN_CLAUSES = new Set(['base', 'size', 'end', 'align', 'owner', 'within']);
-const NUMERIC_CLAUSES = new Set(['base', 'size', 'end', 'align']);
+// The reader still walks the declaration text — for the NAME, the source line,
+// the `(within …)` nesting and the grammar refusal — but the BASE and SIZE come
+// from the placed layout, because an allocated region has no base in the source
+// and its size may be stated as `(end N)`. The grammar it accepts is deliberately
+// narrow: anything it does not recognize is an error, never something quietly
+// skipped.
+const HEADS = /^\s*\(region\.declare(?:-fixed|-derived|-span)?\s+\$([A-Za-z0-9_]+)\b/;
+const KNOWN_CLAUSES = new Set(['base', 'size', 'end', 'align', 'owner', 'within',
+  'stride', 'mask', 'size-is-power-of-2']);
+const NUMERIC_CLAUSES = new Set(['size', 'end', 'align']);
 
 // The --file= CLI flag is read only when this script IS the CLI: importers
 // (tools/region-census.js) have their own --file= meaning a file to census,
@@ -90,11 +100,18 @@ function collectDeclarations(overrideFile) {
       : '');
   const file = fileArg ? path.resolve(fileArg) : path.join(SRC, DECLS);
   const text = fs.readFileSync(file, 'utf8');
+  // Where the regions actually landed. Asked of the compiler (tools/region-layout.js)
+  // rather than read out of the clauses, because since wave 3 most bases are the
+  // allocator's choice and simply are not written down anywhere.
+  const placed = require('./region-layout.js').layout();
   const decls = [];
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
-    const head = /^\s*\(region\.declare-fixed\s+\$([A-Za-z0-9_]+)\b/.exec(lines[i]);
+    const head = HEADS.exec(lines[i]);
     if (!head) continue;
+    const kind = /-fixed\s/.test(lines[i]) ? 'fixed'
+      : /-derived\s/.test(lines[i]) ? 'derived'
+      : /-span\s/.test(lines[i]) ? 'span' : 'alloc';
     // A declaration may wrap onto following lines; take everything up to the
     // line whose parentheses close it. Line comments are stripped first so a
     // parenthesized aside in a comment is not read as a clause.
@@ -107,7 +124,7 @@ function collectDeclarations(overrideFile) {
       j++;
     } while (depth > 0 && j < lines.length);
     const d = {
-      name: head[1], file: path.relative(ROOT, file), line: i + 1,
+      name: head[1], kind, file: path.relative(ROOT, file), line: i + 1,
       base: null, size: null, within: null, parseErrors: [],
     };
     // Split the declaration body into its depth-1 clause forms. Every clause
@@ -115,7 +132,7 @@ function collectDeclarations(overrideFile) {
     // nested value where a flat one belongs, or a malformed number is an error
     // here, never something the mirror check silently reads past.
     const clauseRe = /\(([^()\s]+)((?:[^()"]|"[^"]*")*?)\)/g;
-    const afterHead = body.replace(/^\s*\(region\.declare-fixed\s+\$[A-Za-z0-9_]+/, '');
+    const afterHead = body.replace(/^\s*\(region\.declare(?:-fixed|-derived|-span)?\s+\$[A-Za-z0-9_]+/, '');
     const seenClauses = new Set();
     const values = new Map();
     let m;
@@ -146,14 +163,24 @@ function collectDeclarations(overrideFile) {
     if (values.has('size') && values.has('end')) {
       d.parseErrors.push('has both (size N) and (end N); declare one');
     }
-    d.base = values.has('base') ? values.get('base') : null;
-    d.size = values.has('size') ? values.get('size')
-      : values.has('end') && d.base !== null ? (values.get('end') - d.base) >>> 0
-      : null;
+    // Base and size come from the PLACED layout, not from the clauses: an
+    // allocated region has no (base ...) to read, and the compiler is the only
+    // thing that knows where the allocator put it.
+    const placedRegion = placed.byName.get(d.name);
+    if (!placedRegion) d.parseErrors.push('is not in the placed layout');
+    d.base = placedRegion ? placedRegion.base : null;
+    d.size = placedRegion ? placedRegion.size : null;
     const w = values.get('within');
     d.within = w && /^\$[A-Za-z0-9_]+$/.test(w) ? w.slice(1) : null;
     if (w && d.within === null) d.parseErrors.push(`(within ${w}) is not a $NAME`);
-    decls.push(d);
+    // A SPAN is not in this list. Every importer — the mirror gate, the JS
+    // generator, the census — means "a region that owns bytes", and a span owns
+    // none: it has no mirror to hold it against, nothing to generate a base and
+    // size for, and its base of 0x00000000 would make the census score every
+    // literal zero in the tree as a copy of the map. It is validated by the
+    // compiler (bounds) and by its mandatory (owner "…"), which is the whole of
+    // what can be said about a limit.
+    if (d.kind !== 'span') decls.push(d);
     i = j - 1;
   }
   return decls;
@@ -190,6 +217,10 @@ for (const d of decls) {
     errors.push(`$${d.name} (${where}): ${pe}`);
   }
   if (d.parseErrors.length) continue;
+  // A SPAN owns no bytes, so there is nothing to store and no mirror to hold it
+  // against. It is checked by the compiler (bounds) and by its mandatory
+  // (owner "…"), not here.
+  if (d.kind === 'span') continue;
   if (d.base === null || d.size === null) {
     errors.push(`$${d.name} (${where}) has no readable base/extent`);
     continue;
@@ -214,6 +245,17 @@ for (const d of decls) {
   if (size.value !== d.size) {
     errors.push(`$${d.name} size disagrees: declaration ${hex(d.size)} (${where}) ` +
       `vs $${d.name}_SIZE ${hex(size.value)} (${size.file}:${size.line})`);
+  }
+  // The check that replaces the base comparison for a region whose base is the
+  // allocator's to choose. A literal mirror on a non-pinned region is a copy of
+  // an address nobody promised to keep: it is right today and stale the moment
+  // an earlier region changes size. Nothing else compares the two any more, so
+  // the failure would be silent — which is exactly why it is an error here.
+  if (d.kind !== 'fixed' && base.form !== 'region') {
+    errors.push(`$${d.name} (${where}) is allocated, but its mirror ` +
+      `(${base.file}:${base.line}) is a literal ${hex(base.value)}. An allocated ` +
+      `region's address is not a constant anybody wrote down; spell the mirror ` +
+      `(region.addr $${d.name} 0) — node tools/region-mirrors.js --rewrite`);
   }
 }
 

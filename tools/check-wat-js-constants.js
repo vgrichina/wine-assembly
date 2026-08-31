@@ -34,10 +34,17 @@ function all(text, re, label) {
   return values;
 }
 
+// The WAT side of the seam, read through tools/wat-globals.js so that a mirror
+// spelled `(region.addr $R 0)` resolves to the same number a literal one did.
+// Since wave 3 most of these mirrors are symbolic — a literal mirror pins its
+// region — and a regex for `i32.const` would simply stop finding them.
+const watGlobals = require('./wat-globals.js').collect();
 function watGlobal(relative, name) {
-  return one(source(relative),
-    new RegExp(`\\(global\\s+\\$${name}\\s+i32\\s+\\(i32\\.const\\s+([^)]+)\\)\\)`),
-    `$${name} in ${relative}`);
+  const g = watGlobals.get(name);
+  assert(g, `$${name} (expected in ${relative})`);
+  assert(g.file === path.basename(relative),
+    `$${name} moved to src/${g.file}; this gate expected ${relative}`);
+  return g.value >>> 0;
 }
 
 function jsConst(relative, name) {

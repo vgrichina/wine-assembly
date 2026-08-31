@@ -4,14 +4,14 @@
   ;; canonical GDI pixels. Registry record (64 bytes): active/path hash,
   ;; owned FNT WA/size, version, height/ascent/average/max width,
   ;; first/last/default char, weight/charset, face offset, leading values.
-  (global $GDI_BITMAP_FONT_TABLE i32 (i32.const 0x07F0A800))
-  (global $GDI_BITMAP_FONT_TABLE_SIZE i32 (i32.const 0x00000C00))
+  (global $GDI_BITMAP_FONT_TABLE i32 (region.addr $GDI_BITMAP_FONT_TABLE 0))
+  (global $GDI_BITMAP_FONT_TABLE_SIZE i32 (region.size $GDI_BITMAP_FONT_TABLE))
   (global $GDI_BITMAP_FONT_COUNT i32 (i32.const 48))
   (global $GDI_BITMAP_FONT_STRIDE i32 (i32.const 64))
-  (global $GDI_BITMAP_FONT_IO i32 (i32.const 0x07F0A420))
-  (global $GDI_BITMAP_FONT_IO_SIZE i32 (i32.const 0x00000004))
-  (global $GDI_BITMAP_FONT_DESC i32 (i32.const 0x07F0A440))
-  (global $GDI_BITMAP_FONT_DESC_SIZE i32 (i32.const 0x00000050))
+  (global $GDI_BITMAP_FONT_IO i32 (region.addr $GDI_BITMAP_FONT_IO 0))
+  (global $GDI_BITMAP_FONT_IO_SIZE i32 (region.size $GDI_BITMAP_FONT_IO))
+  (global $GDI_BITMAP_FONT_DESC i32 (region.addr $GDI_BITMAP_FONT_DESC 0))
+  (global $GDI_BITMAP_FONT_DESC_SIZE i32 (region.size $GDI_BITMAP_FONT_DESC))
   (global $GDI_BITMAP_FONT_SYSTEM_PATH i32 (i32.const 0x07F0A490))
   (global $GDI_BITMAP_FONT_SYSTEM_STATE i32 (i32.const 0x07F0A4AC))
   (global $GDI_BITMAP_FONT_MS_SANS_PATH i32 (i32.const 0x07F0A4B0))
@@ -35,8 +35,8 @@
   ;; MS Sans Serif, so a guest silently starts drawing every subsequent font in
   ;; the wrong face. Evicting the coldest rasterized strike instead costs only
   ;; the work to rebuild it if it is wanted again.
-  (global $GDI_BITMAP_FONT_LRU i32 (i32.const 0x07F0A600))
-  (global $GDI_BITMAP_FONT_LRU_SIZE i32 (i32.const 0x000000C0))
+  (global $GDI_BITMAP_FONT_LRU i32 (region.addr $GDI_BITMAP_FONT_LRU 0))
+  (global $GDI_BITMAP_FONT_LRU_SIZE i32 (region.size $GDI_BITMAP_FONT_LRU))
   (global $gdi_bitmap_font_clock (mut i32) (i32.const 0))
 
   ;; Browser and CLI hosts preload this tracked file into the process VFS.
@@ -1968,11 +1968,11 @@
   ;; removed and && becomes literal &. A parallel byte array marks accelerator
   ;; underlines without stealing a WCHAR bit, so scalable UTF-16 stays intact.
   ;; Four spare WCHARs accommodate the three-dot ellipsis and terminator.
-  (global $GDI_BITMAP_TEXT_LAYOUT i32 (i32.const 0x07993000))
-  (global $GDI_BITMAP_TEXT_LAYOUT_SIZE i32 (i32.const 0x00021000))
+  (global $GDI_BITMAP_TEXT_LAYOUT i32 (region.addr $GDI_BITMAP_TEXT_LAYOUT 0))
+  (global $GDI_BITMAP_TEXT_LAYOUT_SIZE i32 (region.size $GDI_BITMAP_TEXT_LAYOUT))
   (global $GDI_BITMAP_TEXT_LAYOUT_CHARS i32 (i32.const 65540))
-  (global $GDI_BITMAP_TEXT_PREFIX i32 (i32.const 0x079B4000))
-  (global $GDI_BITMAP_TEXT_PREFIX_SIZE i32 (i32.const 0x00011000))
+  (global $GDI_BITMAP_TEXT_PREFIX i32 (region.addr $GDI_BITMAP_TEXT_PREFIX 0))
+  (global $GDI_BITMAP_TEXT_PREFIX_SIZE i32 (region.size $GDI_BITMAP_TEXT_PREFIX))
   (global $gdi_bitmap_text_active_tab_width (mut i32) (i32.const 0))
   (global $gdi_bitmap_draw_text_tab_chars (mut i32) (i32.const 0))
 

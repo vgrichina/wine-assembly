@@ -15383,8 +15383,8 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   ;; branch histograms. Unrepresentable characters use the Windows default
   ;; character '?'. The two 256-byte tables make the string and counted APIs
   ;; share exactly the same conversion, including in-place calls.
-  (global $CP1252_TO_CP437 i32 (i32.const 0x07F90000))
-  (global $CP437_TO_CP1252 i32 (i32.const 0x07F90100))
+  (global $CP1252_TO_CP437 i32 (region.addr $CP1252_TO_CP437 0))
+  (global $CP437_TO_CP1252 i32 (region.addr $CP437_TO_CP1252 0))
   (global $file_apis_ansi (mut i32) (i32.const 1))
   (data (region.addr $CP1252_TO_CP437 0)
     "\00\01\02\03\04\05\06\07\08\09\0a\0b\0c\0d\0e\0f\10\11\12\13\14\15\16\17\18\19\1a\1b\1c\1d\1e\1f"

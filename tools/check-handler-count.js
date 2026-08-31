@@ -43,11 +43,14 @@ if (!ok) {
   process.exit(1);
 }
 
-const header = fs.readFileSync(path.join(root, 'src/01-header.wat'), 'utf8');
+// The size globals below mirror regions, and since wave 3 a mirror is written
+// `(region.size $R)` rather than a literal — a literal mirror pins its region.
+// tools/wat-globals.js resolves both spellings against the placed layout.
+const watGlobals = require('./wat-globals.js').collect();
 function headerGlobal(name) {
-  const m = header.match(new RegExp(`\\(global \\$${name} i32 \\(i32\\.const (0x[0-9A-Fa-f]+|\\d+)\\)\\)`));
-  if (!m) { console.error(`[check-handler-count] could not find $${name} in src/01-header.wat`); process.exit(2); }
-  return Number(m[1]);
+  const g = watGlobals.get(name);
+  if (!g) { console.error(`[check-handler-count] could not find $${name} in src/`); process.exit(2); }
+  return g.value >>> 0;
 }
 const histCount = headerGlobal('HANDLER_HIST_COUNT');
 const pairSize = headerGlobal('HANDLER_PAIR_HIST_COUNTS_SIZE');

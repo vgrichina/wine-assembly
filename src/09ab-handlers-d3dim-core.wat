@@ -111,8 +111,8 @@
   ;; or sparse VirtualAlloc map state.
   ;; The encompassing sized region makes the memory-map gate account for the
   ;; strings, execute-buffer pointer cache, state blocks, and matrix-used map.
-  (global $D3DIM_AUX i32 (i32.const 0x07FEB000))
-  (global $D3DIM_AUX_SIZE i32 (i32.const 0x00001000))
+  (global $D3DIM_AUX i32 (region.addr $D3DIM_AUX 0))
+  (global $D3DIM_AUX_SIZE i32 (region.size $D3DIM_AUX))
   (data (region.addr $D3DIM_AUX 0) "D3DIM:Execute opcode\00")
   (data (region.addr $D3DIM_AUX 0x20) "D3DIM:DrawPrimitive vtx/prim\00")
   (global $D3DIM_UNIMPL_EXEC_OP i32 (i32.const 0x07FEB000))

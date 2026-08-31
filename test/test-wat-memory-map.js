@@ -15,32 +15,14 @@ const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
 const WASM_MEMORY_SIZE = 0x20000000;
 
-function parseConstI32(value) {
-  const text = String(value).trim();
-  if (/^-?0x/i.test(text)) return Number.parseInt(text, 16) >>> 0;
-  return Number.parseInt(text, 10) >>> 0;
-}
-
-function collectConstGlobals() {
-  const globals = new Map();
-  const re = /^\s*\(global\s+(\$[A-Za-z0-9_]+)\s+(?:i32|\(mut\s+i32\))\s+\(i32\.const\s+([^)]+)\)\)\s*(?:;;.*)?$/;
-  for (const file of WAT_FILES) {
-    const source = fs.readFileSync(path.join(SRC, file), 'utf8');
-    for (const [lineNo, line] of source.split(/\r?\n/).entries()) {
-      const match = line.match(re);
-      if (!match) continue;
-      const name = match[1].slice(1);
-      assert(!globals.has(name), `duplicate global $${name} at ${file}:${lineNo + 1}`);
-      globals.set(name, {
-        name,
-        value: parseConstI32(match[2]),
-        file,
-        line: lineNo + 1,
-      });
-    }
-  }
-  return globals;
-}
+// The globals come from tools/wat-globals.js, which resolves BOTH spellings —
+// `(i32.const 0x…)` and `(region.addr $R OFF)` / `(region.size $R)` — against
+// the placed layout. Since wave 3 most of this map's mirrors are symbolic,
+// because a literal mirror pins the region it mirrors: an allocated region would
+// relocate and every `global.get` would keep reading where it used to be. A
+// regex looking for `i32.const` finds nothing in that tree and reports an empty
+// map, which reads as green.
+const { collect: collectConstGlobals, parseConstI32 } = require('../tools/wat-globals.js');
 
 function collectRegions(globals) {
   const regions = [];

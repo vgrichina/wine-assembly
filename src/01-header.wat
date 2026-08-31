@@ -879,8 +879,8 @@
   ;; and this pool was most of them -- with no _SIZE global it was invisible to
   ;; tools/wat-memory-map.js and to every overlap gate.
   ;; It ends at VK_SCAN_TABLES; the decoder scratch at 0x1000 is beyond both.
-  (global $STRING_CONSTANTS i32 (i32.const 0x00000100))
-  (global $STRING_CONSTANTS_SIZE i32 (i32.const 0x00000280))
+  (global $STRING_CONSTANTS i32 (region.addr $STRING_CONSTANTS 0))
+  (global $STRING_CONSTANTS_SIZE i32 (region.size $STRING_CONSTANTS))
   (data (region.addr $STRING_CONSTANTS 0x0) "win.ini\00Help\00[Contents]\00[Back]\00")
   ;; EXE name buffer at 0x120 (max 128 bytes), default "app.exe"
   (data (region.addr $STRING_CONSTANTS 0x20) "app.exe\00")
@@ -965,8 +965,8 @@
   ;; imports. A by-ordinal import carries no name, so $dll_ordinal_api_id maps
   ;; the ordinal to one of these strings and hashes it. Bounded by
   ;; DI_DIK_VK_TABLE at 0x11400.
-  (global $ORDINAL_NAMES_WSOCK32 i32 (i32.const 0x00011300))
-  (global $ORDINAL_NAMES_WSOCK32_SIZE i32 (i32.const 0x00000100))
+  (global $ORDINAL_NAMES_WSOCK32 i32 (region.addr $ORDINAL_NAMES_WSOCK32 0))
+  (global $ORDINAL_NAMES_WSOCK32_SIZE i32 (region.size $ORDINAL_NAMES_WSOCK32))
   (data (region.addr $ORDINAL_NAMES_WSOCK32 0x0) "WSOCK32.dll\00WSAStartup\00WSACleanup\00WSAGetLastError\00socket\00closesocket\00connect\00send\00recv\00gethostbyname\00htons\00inet_addr\00select\00setsockopt\00ioctlsocket\00accept\00bind\00listen\00shutdown\00ntohs\00inet_ntoa\00__WSAFDIsSet\00WSASetLastError\00")
 
   ;; WINMM ordinal-import names, in the free space right after the WSOCK32
@@ -985,8 +985,8 @@
   ;; hole between DI_DIK_VK_TABLE and RICHEDIT_FORMAT_TABLE. Kodak Imaging
   ;; lost these imports once when they were placed on top of another block --
   ;; the later segment wins silently, which is what a declared extent stops.
-  (global $ORDINAL_NAMES_OLEAUT32 i32 (i32.const 0x00011500))
-  (global $ORDINAL_NAMES_OLEAUT32_SIZE i32 (i32.const 0x00000080))
+  (global $ORDINAL_NAMES_OLEAUT32 i32 (region.addr $ORDINAL_NAMES_OLEAUT32 0))
+  (global $ORDINAL_NAMES_OLEAUT32_SIZE i32 (region.size $ORDINAL_NAMES_OLEAUT32))
   (data (region.addr $ORDINAL_NAMES_OLEAUT32 0x0) "oleaut32.dll\00SysAllocString\00SysAllocStringLen\00SysFreeString\00SysStringLen\00VariantInit\00VariantClear\00VariantCopy\00")
   ;; More WSOCK32 ordinal names. The 0x11300 block ends flush against the
   ;; winmm block at 0x113DC, so later additions live in the free run above the
@@ -999,8 +999,8 @@
   ;; GetModuleHandle matches, the Win16 built-in module list, the system
   ;; directory, the Hearts NDDE share record and the shell's Run / Shut Down
   ;; dialog text (09c3-controls.wat).
-  (global $RESERVED_PAGE_STRINGS i32 (i32.const 0x00011D80))
-  (global $RESERVED_PAGE_STRINGS_SIZE i32 (i32.const 0x00000280))
+  (global $RESERVED_PAGE_STRINGS i32 (region.addr $RESERVED_PAGE_STRINGS 0))
+  (global $RESERVED_PAGE_STRINGS_SIZE i32 (region.size $RESERVED_PAGE_STRINGS))
   (data (region.addr $RESERVED_PAGE_STRINGS 0x0) "ntohl\00WsControl\00")
   ;; if_descr for the one adapter WsControl reports (src/09d-winsock.wat).
   (data (region.addr $RESERVED_PAGE_STRINGS 0x10) "Virtual LAN Adapter\00")
@@ -1130,8 +1130,8 @@
   ;; are kept for older helpers, but apps can disturb that scratch area at
   ;; run time; these must come from storage nothing else writes. Runs up to
   ;; DX_VERSION_INFO.
-  (global $USER_DIALOG_STRINGS i32 (i32.const 0x00011000))
-  (global $USER_DIALOG_STRINGS_SIZE i32 (i32.const 0x00000270))
+  (global $USER_DIALOG_STRINGS i32 (region.addr $USER_DIALOG_STRINGS 0))
+  (global $USER_DIALOG_STRINGS_SIZE i32 (region.size $USER_DIALOG_STRINGS))
   (data (region.addr $USER_DIALOG_STRINGS 0x0) "OK\00")
   (data (region.addr $USER_DIALOG_STRINGS 0x3) "Cancel\00")
   (data (region.addr $USER_DIALOG_STRINGS 0xA) "Abort\00")
@@ -1249,16 +1249,16 @@
   ;; their own validated mask triplet; DirectDraw explicitly requests RGB565.
   ;; Three dwords, and NOT a string -- its own region rather than a tail on
   ;; CLASS_NAME_STRINGS, which is what the block on either side of it is.
-  (global $DIB_DEFAULT_RGB555_MASKS i32 (i32.const 0x000032A0))
-  (global $DIB_DEFAULT_RGB555_MASKS_SIZE i32 (i32.const 0x0000000C))
+  (global $DIB_DEFAULT_RGB555_MASKS i32 (region.addr $DIB_DEFAULT_RGB555_MASKS 0))
+  (global $DIB_DEFAULT_RGB555_MASKS_SIZE i32 (region.size $DIB_DEFAULT_RGB555_MASKS))
   (data (region.addr $DIB_DEFAULT_RGB555_MASKS 0) "\00\7c\00\00\e0\03\00\00\1f\00\00\00")
 
   ;; OLE_STRINGS: the clipboard-format names, the two server-less ProgIDs and
   ;; the Insert Object dialog's own text, 0x32B0 up to ENV_DEFAULTS. A
   ;; separate region from the class names because 09a7b-ole.wat is what reads
   ;; every one of them.
-  (global $OLE_STRINGS i32 (i32.const 0x000032B0))
-  (global $OLE_STRINGS_SIZE i32 (i32.const 0x000000E0))
+  (global $OLE_STRINGS i32 (region.addr $OLE_STRINGS 0))
+  (global $OLE_STRINGS_SIZE i32 (region.size $OLE_STRINGS))
   ;; The two registered clipboard formats that carry an embedded OLE object.
   ;; OleCreateFromData looks for these on a source data object and declines with
   ;; DV_E_FORMATETC when neither is there, which is what sends a container down
@@ -1287,8 +1287,8 @@
   ;; ENV_DEFAULTS: 192 bytes, exactly the run below. $env_ensure copies it
   ;; into the guest heap and then appends LAUNCH_ENV_OVERRIDES over its final
   ;; NUL, so the two together are the environment an app is handed.
-  (global $ENV_DEFAULTS i32 (i32.const 0x00003390))
-  (global $ENV_DEFAULTS_SIZE i32 (i32.const 0x000000C0))
+  (global $ENV_DEFAULTS i32 (region.addr $ENV_DEFAULTS 0))
+  (global $ENV_DEFAULTS_SIZE i32 (region.size $ENV_DEFAULTS))
   ;; ENV_DEFAULTS — the process environment a freshly booted Win98 hands an
   ;; app, as one "NAME=VALUE\0"... run ending in a second NUL. Copied into the
   ;; guest heap on first use; see $env_ensure.
@@ -1501,19 +1501,19 @@
 
   ;; Memory region bases. Fixed regions with a companion *_SIZE global are
   ;; checked by test/test-wat-memory-map.js.
-  (global $PE_STAGING   i32 (i32.const 0x07192000))
-  (global $PE_STAGING_SIZE i32 (i32.const 0x00800000))
-  (global $GUEST_BASE   i32 (i32.const 0x00012000))
-  (global $GUEST_BASE_SIZE i32 (i32.const 0x03C00000))
-  (global $GUEST_STACK  i32 (i32.const 0x07012000))
-  (global $GUEST_STACK_SIZE i32 (i32.const 0x00100000))
-  (global $GUEST_HEAP_BASE i32 (i32.const 0x03D12000))
-  (global $GUEST_HEAP_BASE_SIZE i32 (i32.const 0x00100000))
-  (global $THUNK_BASE   i32 (i32.const 0x07112000))
-  (global $THUNK_BASE_SIZE i32 (i32.const 0x00040000))
+  (global $PE_STAGING   i32 (region.addr $PE_STAGING 0))
+  (global $PE_STAGING_SIZE i32 (region.size $PE_STAGING))
+  (global $GUEST_BASE   i32 (region.addr $GUEST_BASE 0))
+  (global $GUEST_BASE_SIZE i32 (region.size $GUEST_BASE))
+  (global $GUEST_STACK  i32 (region.addr $GUEST_STACK 0))
+  (global $GUEST_STACK_SIZE i32 (region.size $GUEST_STACK))
+  (global $GUEST_HEAP_BASE i32 (region.addr $GUEST_HEAP_BASE 0))
+  (global $GUEST_HEAP_BASE_SIZE i32 (region.size $GUEST_HEAP_BASE))
+  (global $THUNK_BASE   i32 (region.addr $THUNK_BASE 0))
+  (global $THUNK_BASE_SIZE i32 (region.size $THUNK_BASE))
   (global $THUNK_END    i32 (i32.const 0x07152000))
-  (global $THREAD_CACHE_BASE i32 (i32.const 0x05000000))
-  (global $THREAD_CACHE_BASE_SIZE i32 (i32.const 0x02000000))
+  (global $THREAD_CACHE_BASE i32 (region.addr $THREAD_CACHE_BASE 0))
+  (global $THREAD_CACHE_BASE_SIZE i32 (region.size $THREAD_CACHE_BASE))
   ;; 0x07152000..0x07192000 (256KB) used to be CACHE_INDEX_BASE, the per-thread
   ;; direct-mapped hash index of the block cache. Pages replaced it outright
   ;; (docs/page-compile-design.md sections 4 and 4.1) and the region is free.
@@ -1537,8 +1537,8 @@
   ;; offset never needs bit 14 and the marker is free.
   ;;
   ;; 8KB each, 128 slots per thread, 1MB stride, 8 threads.
-  (global $PAGE_INDEX_ARENA i32 (i32.const 0x04100000))
-  (global $PAGE_INDEX_ARENA_SIZE i32 (i32.const 0x00800000))
+  (global $PAGE_INDEX_ARENA i32 (region.addr $PAGE_INDEX_ARENA 0))
+  (global $PAGE_INDEX_ARENA_SIZE i32 (region.size $PAGE_INDEX_ARENA))
   (global $PAGE_INDEX_STRIDE i32 (i32.const 0x00100000))
   (global $PAGE_INDEX_BYTES  i32 (i32.const 0x2000))
   (global $PAGE_INDEX_SLOTS  i32 (i32.const 128))
@@ -1550,8 +1550,8 @@
   ;; PAGE_DIR: per-thread direct-mapped table keyed on the guest page number.
   ;; 1024 entries x 16 bytes: +0 page base (0 = empty), +4 index ptr,
   ;; +8 chunk base, +12 chunk length. 16KB per thread, 8 threads.
-  (global $PAGE_DIR_BASE i32 (i32.const 0x04900000))
-  (global $PAGE_DIR_BASE_SIZE i32 (i32.const 0x00020000))
+  (global $PAGE_DIR_BASE i32 (region.addr $PAGE_DIR_BASE 0))
+  (global $PAGE_DIR_BASE_SIZE i32 (region.size $PAGE_DIR_BASE))
   (global $PAGE_DIR_STRIDE i32 (i32.const 0x4000))
   (global $PAGE_DIR_ENTRIES i32 (i32.const 1024))
   (global $PAGE_DIR_MASK i32 (i32.const 1023))
@@ -1565,22 +1565,22 @@
   ;; slice. Dropped chunks are recycled when no decoded stream can still name
   ;; them.
   (global $PAGE_CHUNK_BYTES i32 (i32.const 0x4000))
-  (global $DLL_TABLE_SIZE i32 (i32.const 0x00000200))
-  (global $DLL_RSRC_TABLE_SIZE i32 (i32.const 0x00000080))
-  (global $DLL_PATH_TABLE_SIZE i32 (i32.const 0x00000040))
+  (global $DLL_TABLE_SIZE i32 (region.size $DLL_TABLE))
+  (global $DLL_RSRC_TABLE_SIZE i32 (region.size $DLL_RSRC_TABLE))
+  (global $DLL_PATH_TABLE_SIZE i32 (region.size $DLL_PATH_TABLE))
   ;; Fixed bases declared in later WAT parts still publish their extents here,
   ;; so the memory-map gate can prove that they neither overlap nor run past
   ;; the memory. The two string-storage roots intentionally own several named
   ;; subfields/data segments; those aliases are audited explicitly by the gate.
-  (global $WIN16_BUILTIN_NAMES_SIZE i32 (i32.const 0x00000200))
-  (global $GDI_NEAREST_CACHE_SIZE i32 (i32.const 0x00008000))
-  (global $CP1252_TO_CP437_SIZE i32 (i32.const 0x00000100))
-  (global $CP437_TO_CP1252_SIZE i32 (i32.const 0x00000100))
-  (global $DX_VTBL_REGISTRY_SIZE i32 (i32.const 0x00000104))
-  (global $GDI_BITMAP_FONT_STATIC i32 (i32.const 0x07F0A490))
-  (global $GDI_BITMAP_FONT_STATIC_SIZE i32 (i32.const 0x00000170))
-  (global $TT_FONT_STRING_STORAGE i32 (i32.const 0x07F0BF00))
-  (global $TT_FONT_STRING_STORAGE_SIZE i32 (i32.const 0x00000100))
+  (global $WIN16_BUILTIN_NAMES_SIZE i32 (region.size $WIN16_BUILTIN_NAMES))
+  (global $GDI_NEAREST_CACHE_SIZE i32 (region.size $GDI_NEAREST_CACHE))
+  (global $CP1252_TO_CP437_SIZE i32 (region.size $CP1252_TO_CP437))
+  (global $CP437_TO_CP1252_SIZE i32 (region.size $CP437_TO_CP1252))
+  (global $DX_VTBL_REGISTRY_SIZE i32 (region.size $DX_VTBL_REGISTRY))
+  (global $GDI_BITMAP_FONT_STATIC i32 (region.addr $GDI_BITMAP_FONT_STATIC 0))
+  (global $GDI_BITMAP_FONT_STATIC_SIZE i32 (region.size $GDI_BITMAP_FONT_STATIC))
+  (global $TT_FONT_STRING_STORAGE i32 (region.addr $TT_FONT_STRING_STORAGE 0))
+  (global $TT_FONT_STRING_STORAGE_SIZE i32 (region.size $TT_FONT_STRING_STORAGE))
   ;; Guest-space thunk bounds (set by PE loader: THUNK_BASE/END - GUEST_BASE + image_base)
   (global $thunk_guest_base (mut i32) (i32.const 0))
   (global $thunk_guest_end  (mut i32) (i32.const 0))
@@ -1669,8 +1669,8 @@
   ;; lands mid-block routinely, and re-running a block's leading pushes moves ESP
   ;; twice. Non-zero means "resume here"; $run consumes it and clears it.
   (global $resume_ip (mut i32) (i32.const 0))
-  (global $API_HASH_TABLE i32 (i32.const 0x07E00000))
-  (global $API_HASH_TABLE_SIZE i32 (i32.const 0x00008000))
+  (global $API_HASH_TABLE i32 (region.addr $API_HASH_TABLE 0))
+  (global $API_HASH_TABLE_SIZE i32 (region.size $API_HASH_TABLE))
   ;; Window/class/parent tables (below GUEST_BASE, above the API hash table).
   ;; All four tables live in the 0x7000..0xC000 region; the old 0x2000..0x4000
   ;; layout is now unused and free for future scratch use.
@@ -1684,8 +1684,8 @@
   ;;   +16  style
   ;;   +20  state_ptr   (heap ptr to per-class WndState; 0 if none)
   ;; 256 entries × 24 bytes = 0x1800 (0x7000..0x8800)
-  (global $WND_RECORDS   i32 (i32.const 0x00007000))
-  (global $WND_RECORDS_SIZE i32 (i32.const 0x00001800))
+  (global $WND_RECORDS   i32 (region.addr $WND_RECORDS 0))
+  (global $WND_RECORDS_SIZE i32 (region.size $WND_RECORDS))
   (global $MAX_WINDOWS   i32 (i32.const 256))
   ;; CLASS_NAME_STRINGS: the built-in control class names dialog templates and
   ;; GetClassNameA answer with, plus the DirectAnimation coclass/behaviour
@@ -1693,28 +1693,28 @@
   ;; covered only as far as "SysLink" -- the block actually runs to the RGB555
   ;; mask triplet at 0x32A0, so more than half of it was outside any region
   ;; and every name past 0x3180 was a raw literal nothing could check.
-  (global $CLASS_NAME_STRINGS i32 (i32.const 0x00003100))
-  (global $CLASS_NAME_STRINGS_SIZE i32 (i32.const 0x000001A0))
-  (global $WND_BG_BRUSH_TABLE i32 (i32.const 0x00003500))
-  (global $WND_BG_BRUSH_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $CLASS_NAME_STRINGS i32 (region.addr $CLASS_NAME_STRINGS 0))
+  (global $CLASS_NAME_STRINGS_SIZE i32 (region.size $CLASS_NAME_STRINGS))
+  (global $WND_BG_BRUSH_TABLE i32 (region.addr $WND_BG_BRUSH_TABLE 0))
+  (global $WND_BG_BRUSH_TABLE_SIZE i32 (region.size $WND_BG_BRUSH_TABLE))
   ;; WNDCLASS.hCursor, resolved per window at creation exactly like the class
   ;; background brush above. $defwndproc_do_setcursor applies it for HTCLIENT,
   ;; which is what makes a tool palette read as buttons (arrow) while the
   ;; drawing area next to it keeps the app's own tool cursor. Zero means the
   ;; class registered a NULL cursor — Win32's way of saying "the window sets
   ;; its own", so the default handler must leave it alone.
-  (global $WND_CLASS_CURSOR_TABLE i32 (i32.const 0x00003900))
-  (global $WND_CLASS_CURSOR_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $WND_CLASS_CURSOR_TABLE i32 (region.addr $WND_CLASS_CURSOR_TABLE 0))
+  (global $WND_CLASS_CURSOR_TABLE_SIZE i32 (region.size $WND_CLASS_CURSOR_TABLE))
   ;; UPDATE_RECT / UPDATE_FLAGS: WAT-owned Win32 update-region state. We store
   ;; a bounding RECT per hwnd slot; JS is only asked to schedule canvas work.
-  (global $UPDATE_RECT    i32 (i32.const 0x00002000))
-  (global $UPDATE_RECT_SIZE i32 (i32.const 0x00001000))
-  (global $UPDATE_FLAGS   i32 (i32.const 0x00003000))
-  (global $UPDATE_FLAGS_SIZE i32 (i32.const 0x00000100))
+  (global $UPDATE_RECT    i32 (region.addr $UPDATE_RECT 0))
+  (global $UPDATE_RECT_SIZE i32 (region.size $UPDATE_RECT))
+  (global $UPDATE_FLAGS   i32 (region.addr $UPDATE_FLAGS 0))
+  (global $UPDATE_FLAGS_SIZE i32 (region.size $UPDATE_FLAGS))
   ;; NC_FLAGS: parallel to WND_RECORDS, 4 bytes per slot (bits track
   ;; pending WM_NC* messages that GetMessageA synthesises before WM_PAINT).
-  (global $NC_FLAGS      i32 (i32.const 0x0000EA70))
-  (global $NC_FLAGS_SIZE i32 (i32.const 0x00000400))
+  (global $NC_FLAGS      i32 (region.addr $NC_FLAGS 0))
+  (global $NC_FLAGS_SIZE i32 (region.size $NC_FLAGS))
   ;; NC_FLAGS_COUNT: running count of slots with any bit set, so the
   ;; per-GetMessageA-call scan can early-out when the table is empty.
   (global $nc_flags_count (mut i32) (i32.const 0))
@@ -1739,20 +1739,20 @@
   ;; TITLE_TABLE: parallel to WND_RECORDS, 8 bytes per slot = { wa_ptr:i32, len:i32 }
   ;; ptr is a WASM linear address of a heap-allocated ASCII title (no NUL).
   ;; Written by SetWindowTextA; read by $defwndproc_handle_ncpaint.
-  (global $TITLE_TABLE   i32 (i32.const 0x0000EE70))
-  (global $TITLE_TABLE_SIZE i32 (i32.const 0x00000800))
+  (global $TITLE_TABLE   i32 (region.addr $TITLE_TABLE 0))
+  (global $TITLE_TABLE_SIZE i32 (region.size $TITLE_TABLE))
   ;; MCI_DEVICE_TABLE: 16 slots. Slot 0 is invalid.
   ;;   +0 host_id returned by host_mci_open
   ;;   +4 reserved
   ;;   +8 reserved
   ;;   +12 reserved
-  (global $MCI_DEVICE_TABLE i32 (i32.const 0x00010A00))
-  (global $MCI_DEVICE_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $MCI_DEVICE_TABLE i32 (region.addr $MCI_DEVICE_TABLE 0))
+  (global $MCI_DEVICE_TABLE_SIZE i32 (region.size $MCI_DEVICE_TABLE))
   ;; OWNER_TABLE: per-window owner hwnd, separate from WND_RECORDS.parent.
   ;; Parent is only for WS_CHILD geometry/clipping. Owner is for owned
   ;; top-level/modal windows and GetWindow(GW_OWNER).
-  (global $OWNER_TABLE i32 (i32.const 0x00010B00))
-  (global $OWNER_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $OWNER_TABLE i32 (region.addr $OWNER_TABLE 0))
+  (global $OWNER_TABLE_SIZE i32 (region.size $OWNER_TABLE))
   ;; WNDCLASS.hIcon per window, the same shape as the class cursor above and
   ;; for the same reason: SetClassWord(GCW_HICON) changes what a window shows
   ;; for itself, and the class record it came from may be re-registered or its
@@ -1764,8 +1764,8 @@
   ;; hid the overlap from anyone reading the header. Moved somewhere with room,
   ;; verified with tools/wat-memory-map.js, which is the only way to see that a
   ;; (data ...) segment in one file and a table in another share an address.
-  (global $WND_CLASS_ICON_TABLE i32 (i32.const 0x079C9000))
-  (global $WND_CLASS_ICON_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $WND_CLASS_ICON_TABLE i32 (region.addr $WND_CLASS_ICON_TABLE 0))
+  (global $WND_CLASS_ICON_TABLE_SIZE i32 (region.size $WND_CLASS_ICON_TABLE))
   ;; WND_OWN_DC_TABLE: the private device context of a CS_OWNDC window, one
   ;; entry per window slot. A class registered with CS_OWNDC gets one DC per
   ;; window and keeps it, which is the whole point of the style: what the app
@@ -1776,7 +1776,7 @@
   ;;   0  the class did not ask for a private DC
   ;;  -1  it did, and nothing has asked for the DC yet
   ;;   n  the DC handle, alive until the window is destroyed
-  (global $WND_OWN_DC_TABLE i32 (i32.const 0x079C9800))
+  (global $WND_OWN_DC_TABLE i32 (region.addr $WND_OWN_DC_TABLE 0))
   ;; Owning Win32 thread id for each WND_RECORDS slot.  This is deliberately
   ;; separate from OWNER_TABLE: that table is the GW_OWNER HWND relationship,
   ;; while this one is the execution-affinity relationship used by USER message
@@ -1786,8 +1786,8 @@
   ;; WND_HINSTANCE_TABLE onto that address independently, and two 1KB tables
   ;; over the same bytes made every window's owning thread read back as an
   ;; HINSTANCE. Run tools/wat-memory-map.js before moving this.
-  (global $WND_THREAD_TABLE i32 (i32.const 0x079CC400))
-  (global $WND_THREAD_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $WND_THREAD_TABLE i32 (region.addr $WND_THREAD_TABLE 0))
+  (global $WND_THREAD_TABLE_SIZE i32 (region.size $WND_THREAD_TABLE))
   ;; Shared per-thread USER queues.  Eight emulated thread ids (1..8), each with
   ;; a 64-entry MSG ring.  Queue metadata and payload live in shared memory;
   ;; $LOCK_WND serializes producers and the single owning consumer.
@@ -1797,27 +1797,27 @@
   ;; segment at that address, and its 512 bytes of export names landed on top of
   ;; queue 1's count/head/tail words. Enqueue then read a count of "KERN" and
   ;; refused every post, and the reader computed a slot address out of bounds.
-  (global $THREAD_MSG_QUEUES i32 (i32.const 0x079CC800))
-  (global $THREAD_MSG_QUEUES_SIZE i32 (i32.const 0x00002080))
+  (global $THREAD_MSG_QUEUES i32 (region.addr $THREAD_MSG_QUEUES 0))
+  (global $THREAD_MSG_QUEUES_SIZE i32 (region.size $THREAD_MSG_QUEUES))
   (global $THREAD_MSG_QUEUE_STRIDE i32 (i32.const 0x00000410))
   (global $THREAD_MSG_QUEUE_MAX i32 (i32.const 64))
   ;; Timer metadata that must be process-wide rather than per-instance.
   ;; +0 active count, +4 next auto id, +0x10 owner tid for each of 16 slots.
-  (global $TIMER_SHARED i32 (i32.const 0x07F20100))
-  (global $TIMER_SHARED_SIZE i32 (i32.const 0x00000050))
-  (global $WND_OWN_DC_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $TIMER_SHARED i32 (region.addr $TIMER_SHARED 0))
+  (global $TIMER_SHARED_SIZE i32 (region.size $TIMER_SHARED))
+  (global $WND_OWN_DC_TABLE_SIZE i32 (region.size $WND_OWN_DC_TABLE))
   ;; Module instance supplied to CreateWindowEx, one dword per window slot.
   ;; DLL-owned helper windows must retain their DLL HINSTANCE: OLEAUT32 checks
   ;; this through GetWindowLong(GWL_HINSTANCE) before reusing its hidden window.
   ;; -1 means an older/template creation path did not provide an instance, in
   ;; which case GetWindowLong keeps the historical EXE-module fallback.
-  (global $WND_HINSTANCE_TABLE i32 (i32.const 0x079C9C00))
-  (global $WND_HINSTANCE_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $WND_HINSTANCE_TABLE i32 (region.addr $WND_HINSTANCE_TABLE 0))
+  (global $WND_HINSTANCE_TABLE_SIZE i32 (region.size $WND_HINSTANCE_TABLE))
   ;; Current sibling stacking order, parallel to WND_RECORDS. Higher ranks are
   ;; above lower ranks; a process-global sequence is sufficient because ranks
   ;; are compared only between windows with the same parent.
-  (global $WND_Z_ORDER_TABLE i32 (i32.const 0x079C8000))
-  (global $WND_Z_ORDER_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $WND_Z_ORDER_TABLE i32 (region.addr $WND_Z_ORDER_TABLE 0))
+  (global $WND_Z_ORDER_TABLE_SIZE i32 (region.size $WND_Z_ORDER_TABLE))
   (global $wnd_z_next (mut i32) (i32.const 0))
   ;; Open files, indexed by the small handle a 16-bit task sees. DOS numbers
   ;; file handles from zero and a C runtime indexes its own per-handle table
@@ -1827,8 +1827,8 @@
   ;; expected and reported its score file unreadable. Entry i holds the
   ;; 32-bit handle that 16-bit handle i names, 0 for a free slot; 0-4 stay
   ;; reserved for the standard handles a DOS program assumes it starts with.
-  (global $WIN16_FILE_TABLE i32 (i32.const 0x079C9400))
-  (global $WIN16_FILE_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $WIN16_FILE_TABLE i32 (region.addr $WIN16_FILE_TABLE 0))
+  (global $WIN16_FILE_TABLE_SIZE i32 (region.size $WIN16_FILE_TABLE))
   (global $WIN16_FILE_MAX i32 (i32.const 256))
   ;; Which class record each window was created from, one byte per window slot
   ;; (0xFF = none), and the cbClsExtra bytes that belong to that class. Class
@@ -1848,82 +1848,82 @@
   ;; a program that created 256 windows lost its socket imports. It is now in
   ;; the page below WND_RECORDS, which is emulator-private and holds no data
   ;; segment at all.
-  (global $WND_CLASS_SLOT_TABLE i32 (i32.const 0x00006F00))
-  (global $WND_CLASS_SLOT_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $WND_CLASS_SLOT_TABLE i32 (region.addr $WND_CLASS_SLOT_TABLE 0))
+  (global $WND_CLASS_SLOT_TABLE_SIZE i32 (region.size $WND_CLASS_SLOT_TABLE))
   ;; 0x11400 was DI_DIK_VK_TABLE (09a8-handlers-directx.wat) — a DirectInput
   ;; game and a class with cbClsExtra were writing the same 256 bytes. Moved
   ;; beside the other per-class tables instead.
-  (global $CLASS_EXTRA_TABLE i32 (i32.const 0x00003D00))
-  (global $CLASS_EXTRA_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $CLASS_EXTRA_TABLE i32 (region.addr $CLASS_EXTRA_TABLE 0))
+  (global $CLASS_EXTRA_TABLE_SIZE i32 (region.size $CLASS_EXTRA_TABLE))
   (global $CLASS_EXTRA_STRIDE i32 (i32.const 4))
   ;; EDIT visual-line scratch table. Each entry is { char_start, char_len }.
   ;; Used by WAT EDIT controls so wrapped text, caret, hit-testing and scroll
   ;; all share one layout model instead of mixing DrawText with manual math.
-  (global $EDIT_LAYOUT_SCRATCH i32 (i32.const 0x07F01800))
-  (global $EDIT_LAYOUT_SCRATCH_SIZE i32 (i32.const 0x00000C00))
+  (global $EDIT_LAYOUT_SCRATCH i32 (region.addr $EDIT_LAYOUT_SCRATCH 0))
+  (global $EDIT_LAYOUT_SCRATCH_SIZE i32 (region.size $EDIT_LAYOUT_SCRATCH))
   (global $EDIT_LAYOUT_MAX i32 (i32.const 384))
   ;; WAT-owned HRGN records (255 live slots in a 256 x 32-byte table):
   ;;   +0 state (0 free, 1 simple/empty, 2 canonical complex, 3 legacy mirror)
   ;;   +4 generation, +8..+20 bbox RECT, +24 temporary host mirror handle,
   ;;   +28 canonical band-rectangle count.
   ;; Handles use 0x0050GGSS where GG is generation and SS is slot + 1.
-  (global $GDI_REGION_TABLE i32 (i32.const 0x07F0D000))
-  (global $GDI_REGION_TABLE_SIZE i32 (i32.const 0x00002000))
+  (global $GDI_REGION_TABLE i32 (region.addr $GDI_REGION_TABLE 0))
+  (global $GDI_REGION_TABLE_SIZE i32 (region.size $GDI_REGION_TABLE))
   ;; Current path ownership is separate from the selected clip. A closed path
   ;; owns one canonical HRGN copy until the DC is destroyed or a new path wins.
-  (global $GDI_DC_PATH_TABLE i32 (i32.const 0x07F0F000))
-  (global $GDI_DC_PATH_TABLE_SIZE i32 (i32.const 0x00001000))
+  (global $GDI_DC_PATH_TABLE i32 (region.addr $GDI_DC_PATH_TABLE 0))
+  (global $GDI_DC_PATH_TABLE_SIZE i32 (region.size $GDI_DC_PATH_TABLE))
   (global $GDI_DC_PATH_COUNT i32 (i32.const 256))
   (global $GDI_DC_PATH_STRIDE i32 (i32.const 16))
   ;; Each canonical region owns 208 sorted, disjoint half-open RECTs. Slot 255
   ;; remains reserved and never gets a public handle. Boolean and scanline
   ;; operations use four adjacent alias-safe work buffers.
-  (global $GDI_REGION_BANDS i32 (i32.const 0x07E1C000))
-  (global $GDI_REGION_BANDS_SIZE i32 (i32.const 0x000D0000))
-  (global $GDI_REGION_WORK i32 (i32.const 0x07EEC000))
-  (global $GDI_REGION_WORK_SIZE i32 (i32.const 0x00003400))
+  (global $GDI_REGION_BANDS i32 (region.addr $GDI_REGION_BANDS 0))
+  (global $GDI_REGION_BANDS_SIZE i32 (region.size $GDI_REGION_BANDS))
+  (global $GDI_REGION_WORK i32 (region.addr $GDI_REGION_WORK 0))
+  (global $GDI_REGION_WORK_SIZE i32 (region.size $GDI_REGION_WORK))
   (global $GDI_REGION_RECT_STRIDE i32 (i32.const 0x00000D00))
   (global $GDI_REGION_MAX_RECTS i32 (i32.const 208))
   ;; WAT-owned explicit DC clip registry. Empty HDC slots are zero. Each live
   ;; entry owns its HRGN and publishes only a derived mirror to the host DC.
-  (global $GDI_DC_CLIP_TABLE i32 (i32.const 0x07EF0000))
-  (global $GDI_DC_CLIP_TABLE_SIZE i32 (i32.const 0x00000800))
+  (global $GDI_DC_CLIP_TABLE i32 (region.addr $GDI_DC_CLIP_TABLE 0))
+  (global $GDI_DC_CLIP_TABLE_SIZE i32 (region.size $GDI_DC_CLIP_TABLE))
   (global $GDI_DC_CLIP_COUNT i32 (i32.const 256))
-  (global $GDI_DC_SAVE_TABLE i32 (i32.const 0x07EF0800))
-  (global $GDI_DC_SAVE_TABLE_SIZE i32 (i32.const 0x00000800))
+  (global $GDI_DC_SAVE_TABLE i32 (region.addr $GDI_DC_SAVE_TABLE 0))
+  (global $GDI_DC_SAVE_TABLE_SIZE i32 (region.size $GDI_DC_SAVE_TABLE))
   (global $GDI_DC_SAVE_COUNT i32 (i32.const 256))
-  (global $GDI_LINE_DESC i32 (i32.const 0x07EF1000))
-  (global $GDI_LINE_DESC_SIZE i32 (i32.const 0x00000050))
+  (global $GDI_LINE_DESC i32 (region.addr $GDI_LINE_DESC 0))
+  (global $GDI_LINE_DESC_SIZE i32 (region.size $GDI_LINE_DESC))
   ;; Two 80-byte surface descriptors for raster/blit destination and source.
   ;; The surface registry owns resolution; pixel kernels consume this scratch.
-  (global $GDI_BLIT_DESC i32 (i32.const 0x07EF1100))
+  (global $GDI_BLIT_DESC i32 (region.addr $GDI_BLIT_DESC 0))
   (global $GDI_BLIT_DST_DESC i32 (i32.const 0x07EF1100))
   (global $GDI_BLIT_SRC_DESC i32 (i32.const 0x07EF1150))
-  (global $GDI_BLIT_DESC_SIZE i32 (i32.const 0x000000A0))
+  (global $GDI_BLIT_DESC_SIZE i32 (region.size $GDI_BLIT_DESC))
   ;; Bitmap creation handlers are synchronous. They share a parsed metadata
   ;; plan and an ANSI conversion buffer for LoadBitmapW resource names.
-  (global $GDI_BITMAP_PLAN i32 (i32.const 0x07EF11A0))
-  (global $GDI_BITMAP_PLAN_SIZE i32 (i32.const 0x00000030))
+  (global $GDI_BITMAP_PLAN i32 (region.addr $GDI_BITMAP_PLAN 0))
+  (global $GDI_BITMAP_PLAN_SIZE i32 (region.size $GDI_BITMAP_PLAN))
   (global $GDI_RGB555_MASKS i32 (i32.const 0x000032A0))
-  (global $GDI_BITMAP_NAME i32 (i32.const 0x07EF11D0))
-  (global $GDI_BITMAP_NAME_SIZE i32 (i32.const 0x00000100))
+  (global $GDI_BITMAP_NAME i32 (region.addr $GDI_BITMAP_NAME 0))
+  (global $GDI_BITMAP_NAME_SIZE i32 (region.size $GDI_BITMAP_NAME))
   ;; Window-coordinate resolution can run while a painter owns PAINT_SCRATCH.
   ;; Keep host GetWindowRect results in private high memory so surface/text
   ;; binding cannot overwrite the caller's RECT.
-  (global $WINDOW_RECT_SCRATCH i32 (i32.const 0x07EF12D0))
-  (global $WINDOW_RECT_SCRATCH_SIZE i32 (i32.const 0x00000010))
+  (global $WINDOW_RECT_SCRATCH i32 (region.addr $WINDOW_RECT_SCRATCH 0))
+  (global $WINDOW_RECT_SCRATCH_SIZE i32 (region.size $WINDOW_RECT_SCRATCH))
   ;; Pattern-brush sampling is synchronous and uses a private bitmap
   ;; descriptor so it cannot clobber active line/blit descriptors.
-  (global $GDI_BRUSH_DESC i32 (i32.const 0x07EF12E0))
-  (global $GDI_BRUSH_DESC_SIZE i32 (i32.const 0x00000050))
+  (global $GDI_BRUSH_DESC i32 (region.addr $GDI_BRUSH_DESC 0))
+  (global $GDI_BRUSH_DESC_SIZE i32 (region.size $GDI_BRUSH_DESC))
   ;; Synchronous DIB_PAL_COLORS decoding resolves WORD logical-palette
   ;; indexes into this RGBQUAD table before a raster operation starts.
-  (global $GDI_PALETTE_RESOLVE i32 (i32.const 0x07EF1330))
-  (global $GDI_PALETTE_RESOLVE_SIZE i32 (i32.const 0x00000400))
+  (global $GDI_PALETTE_RESOLVE i32 (region.addr $GDI_PALETTE_RESOLVE 0))
+  (global $GDI_PALETTE_RESOLVE_SIZE i32 (region.size $GDI_PALETTE_RESOLVE))
   ;; Canonical DC state. JavaScript receives a transient text-fallback view;
   ;; presentation surfaces contain pixels only and own no GDI semantics.
-  (global $GDI_DC_STATE_TABLE i32 (i32.const 0x07EF1800))
-  (global $GDI_DC_STATE_TABLE_SIZE i32 (i32.const 0x00006000))
+  (global $GDI_DC_STATE_TABLE i32 (region.addr $GDI_DC_STATE_TABLE 0))
+  (global $GDI_DC_STATE_TABLE_SIZE i32 (region.size $GDI_DC_STATE_TABLE))
   (global $GDI_DC_STATE_COUNT i32 (i32.const 256))
   (global $GDI_DC_STATE_STRIDE i32 (i32.const 96))
   ;; Dynamic WAT-owned pen, brush, bitmap, font, palette, and metafile records.
@@ -1931,10 +1931,10 @@
   ;; Bumped whenever a handle is entered into the table. Worker threads are
   ;; separate WASM instances that share this memory but not their globals, so a
   ;; per-instance negative lookup cache has to revalidate against this counter.
-  (global $GDI_OBJECT_GEN i32 (i32.const 0x07EF1730))
-  (global $GDI_OBJECT_GEN_SIZE i32 (i32.const 0x00000004))
-  (global $GDI_OBJECT_TABLE i32 (i32.const 0x07EF7800))
-  (global $GDI_OBJECT_TABLE_SIZE i32 (i32.const 0x00003000))
+  (global $GDI_OBJECT_GEN i32 (region.addr $GDI_OBJECT_GEN 0))
+  (global $GDI_OBJECT_GEN_SIZE i32 (region.size $GDI_OBJECT_GEN))
+  (global $GDI_OBJECT_TABLE i32 (region.addr $GDI_OBJECT_TABLE 0))
+  (global $GDI_OBJECT_TABLE_SIZE i32 (region.size $GDI_OBJECT_TABLE))
   (global $GDI_OBJECT_COUNT i32 (i32.const 256))
   (global $GDI_OBJECT_STRIDE i32 (i32.const 48))
   ;; One past the highest surface slot ever allocated. Slots are handed out
@@ -1944,21 +1944,21 @@
   ;; separate WASM instances that share this memory but not their globals, and a
   ;; per-instance high-water mark would read 0 in a worker and hand out slot 0
   ;; on top of a live record.
-  (global $GDI_WINDOW_SURFACE_HWM i32 (i32.const 0x07EF1734))
-  (global $GDI_WINDOW_SURFACE_HWM_SIZE i32 (i32.const 0x00000004))
-  (global $GDI_WINDOW_SURFACE_TABLE i32 (i32.const 0x07EFA800))
-  (global $GDI_WINDOW_SURFACE_TABLE_SIZE i32 (i32.const 0x00002000))
+  (global $GDI_WINDOW_SURFACE_HWM i32 (region.addr $GDI_WINDOW_SURFACE_HWM 0))
+  (global $GDI_WINDOW_SURFACE_HWM_SIZE i32 (region.size $GDI_WINDOW_SURFACE_HWM))
+  (global $GDI_WINDOW_SURFACE_TABLE i32 (region.addr $GDI_WINDOW_SURFACE_TABLE 0))
+  (global $GDI_WINDOW_SURFACE_TABLE_SIZE i32 (region.size $GDI_WINDOW_SURFACE_TABLE))
   (global $GDI_WINDOW_SURFACE_COUNT i32 (i32.const 256))
   (global $GDI_WINDOW_SURFACE_STRIDE i32 (i32.const 32))
-  (global $GDI_DC_AUX_TABLE i32 (i32.const 0x07EFC800))
-  (global $GDI_DC_AUX_TABLE_SIZE i32 (i32.const 0x00002000))
+  (global $GDI_DC_AUX_TABLE i32 (region.addr $GDI_DC_AUX_TABLE 0))
+  (global $GDI_DC_AUX_TABLE_SIZE i32 (region.size $GDI_DC_AUX_TABLE))
   (global $GDI_DC_AUX_COUNT i32 (i32.const 256))
   (global $GDI_DC_AUX_STRIDE i32 (i32.const 32))
-  (global $GDI_COLOR_ADJUST_TABLE i32 (i32.const 0x07EFE800))
-  (global $GDI_COLOR_ADJUST_TABLE_SIZE i32 (i32.const 0x00001800))
+  (global $GDI_COLOR_ADJUST_TABLE i32 (region.addr $GDI_COLOR_ADJUST_TABLE 0))
+  (global $GDI_COLOR_ADJUST_TABLE_SIZE i32 (region.size $GDI_COLOR_ADJUST_TABLE))
   ;; USER-derived visible regions are independent from app-selected DC clips.
-  (global $GDI_DC_SYSTEM_CLIP_TABLE i32 (i32.const 0x07F0C000))
-  (global $GDI_DC_SYSTEM_CLIP_TABLE_SIZE i32 (i32.const 0x00000800))
+  (global $GDI_DC_SYSTEM_CLIP_TABLE i32 (region.addr $GDI_DC_SYSTEM_CLIP_TABLE 0))
+  (global $GDI_DC_SYSTEM_CLIP_TABLE_SIZE i32 (region.size $GDI_DC_SYSTEM_CLIP_TABLE))
   (global $GDI_DC_SYSTEM_CLIP_COUNT i32 (i32.const 256))
   ;; How far each DC-keyed table has ever been filled, so a lookup that misses
   ;; can stop instead of walking all 256 slots. These must be memory, not
@@ -1968,30 +1968,30 @@
   ;; Moved off 0x07F0C800 on the real-threads merge: that address is HEAP_SHARED,
   ;; the cross-instance low-heap cursor, which main's branch did not have. The two
   ;; would have overlapped silently — test-wat-memory-map.js is what says so.
-  (global $GDI_TABLE_MARKS i32 (i32.const 0x07F0CE60))
-  (global $GDI_TABLE_MARKS_SIZE i32 (i32.const 0x00000010))
+  (global $GDI_TABLE_MARKS i32 (region.addr $GDI_TABLE_MARKS 0))
+  (global $GDI_TABLE_MARKS_SIZE i32 (region.size $GDI_TABLE_MARKS))
   ;; Which TreeView each TV_TABLE item belongs to, parallel-indexed to it. The
   ;; item records are full at 32 bytes, so the owner has to live beside them.
-  (global $TV_OWNER_TABLE i32 (i32.const 0x07F27000))
-  (global $TV_OWNER_TABLE_SIZE i32 (i32.const 0x00000800))
+  (global $TV_OWNER_TABLE i32 (region.addr $TV_OWNER_TABLE 0))
+  (global $TV_OWNER_TABLE_SIZE i32 (region.size $TV_OWNER_TABLE))
   ;; High-water mark: one past the highest TV_TABLE slot ever allocated. Every
   ;; scan bounds itself with this rather than with the full slot count, so
   ;; growing the table costs nothing for the app that only ever shows a dozen
   ;; items. It lives in memory and not in a global because a worker thread is a
   ;; separate instance with its own globals but the same linear memory, and
   ;; Winamp's AVS fills its tree from a worker while the main thread paints it.
-  (global $TV_SLOT_MARK i32 (i32.const 0x07F0CE80))
-  (global $TV_SLOT_MARK_SIZE i32 (i32.const 0x00000004))
+  (global $TV_SLOT_MARK i32 (region.addr $TV_SLOT_MARK 0))
+  (global $TV_SLOT_MARK_SIZE i32 (region.size $TV_SLOT_MARK))
   ;; Item-handle sequence, for the same reason: a handle allocated on a worker
   ;; thread has to be unique against the ones the main thread handed out. Two
   ;; items with the same handle turn a sibling walk into a cycle, and the walk
   ;; that appends a child runs until the process is killed.
-  (global $TV_HANDLE_SEQ i32 (i32.const 0x07F0CE84))
-  (global $TV_HANDLE_SEQ_SIZE i32 (i32.const 0x00000004))
+  (global $TV_HANDLE_SEQ i32 (region.addr $TV_HANDLE_SEQ 0))
+  (global $TV_HANDLE_SEQ_SIZE i32 (region.size $TV_HANDLE_SEQ))
   ;; Per-TreeView view state, 16 records x 16 bytes:
   ;;   +0 hwnd (0 = free)  +4 caret item  +8 first visible row  +12 image list
-  (global $TV_VIEW_TABLE i32 (i32.const 0x07F0CF00))
-  (global $TV_VIEW_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $TV_VIEW_TABLE i32 (region.addr $TV_VIEW_TABLE 0))
+  (global $TV_VIEW_TABLE_SIZE i32 (region.size $TV_VIEW_TABLE))
   (global $TV_VIEW_COUNT i32 (i32.const 16))
   ;; Keep WAT-owned object/DC namespaces distinct and outside stock handles.
   (global $gdi_next_object_handle (mut i32) (i32.const 0x00410001))
@@ -2025,15 +2025,15 @@
   ;; involving a handler at or above it, so a stale cap silently hides every
   ;; fused superinstruction from the very table used to pick the next fusion.
   ;; tools/check-handler-count.js enforces this. 512*512*4 = 1MB.
-  (global $HANDLER_HIST_COUNTS i32 (i32.const 0x07F10000))
-  (global $HANDLER_HIST_COUNTS_SIZE i32 (i32.const 0x00001000))
+  (global $HANDLER_HIST_COUNTS i32 (region.addr $HANDLER_HIST_COUNTS 0))
+  (global $HANDLER_HIST_COUNTS_SIZE i32 (region.size $HANDLER_HIST_COUNTS))
   ;; Decode-time op-start index (see docs/loop-idiom-superops-design.md 6.1).
   ;; $te appends the address of every op header it emits; $decode_block resets
   ;; the counter. Pure scratch -- reused by every block, never read at runtime,
   ;; so it costs no per-block memory. Overflow sets $op_index_poison and the
   ;; block is simply not matched.
-  (global $OP_INDEX i32 (i32.const 0x07F30000))
-  (global $OP_INDEX_SIZE i32 (i32.const 0x00002000))
+  (global $OP_INDEX i32 (region.addr $OP_INDEX 0))
+  (global $OP_INDEX_SIZE i32 (region.size $OP_INDEX))
   (global $OP_INDEX_MAX i32 (i32.const 2048))
   (global $op_index_n (mut i32) (i32.const 0))
   (global $op_index_poison (mut i32) (i32.const 0))
@@ -2043,59 +2043,59 @@
   ;; ranges only cover code inside the PE image or in the sparse VirtualAlloc
   ;; reserve; Storm generates its blitters into ordinary HeapAlloc memory,
   ;; which falls in neither. 0x10000000 >> 12 = 65536 pages = 8KB of bitmap.
-  (global $CODE_PAGE_BITMAP i32 (i32.const 0x07F12000))
-  (global $CODE_PAGE_BITMAP_SIZE i32 (i32.const 0x00002000))
+  (global $CODE_PAGE_BITMAP i32 (region.addr $CODE_PAGE_BITMAP 0))
+  (global $CODE_PAGE_BITMAP_SIZE i32 (region.size $CODE_PAGE_BITMAP))
   (global $CODE_PAGE_BITMAP_PAGES i32 (i32.const 65536))
-  (global $HANDLER_PAIR_HIST_COUNTS i32 (i32.const 0x04000000))
-  (global $HANDLER_PAIR_HIST_COUNTS_SIZE i32 (i32.const 0x00100000))
+  (global $HANDLER_PAIR_HIST_COUNTS i32 (region.addr $HANDLER_PAIR_HIST_COUNTS 0))
+  (global $HANDLER_PAIR_HIST_COUNTS_SIZE i32 (region.size $HANDLER_PAIR_HIST_COUNTS))
   (global $HANDLER_HIST_COUNT i32 (i32.const 512))
-  (global $BRANCH_CMP_JCC_HIST i32 (i32.const 0x07F91000))
-  (global $BRANCH_CMP_JCC_HIST_SIZE i32 (i32.const 0x00001000))
-  (global $BRANCH_TEST_JCC_HIST i32 (i32.const 0x07F92000))
-  (global $BRANCH_TEST_JCC_HIST_SIZE i32 (i32.const 0x00001000))
-  (global $BRANCH_ALU_M32_RO_JCC_HIST i32 (i32.const 0x07F93000))
-  (global $BRANCH_ALU_M32_RO_JCC_HIST_SIZE i32 (i32.const 0x00008000))
-  (global $HOT_BLOCK_HIST i32 (i32.const 0x07F9B000))
-  (global $HOT_BLOCK_HIST_SIZE i32 (i32.const 0x00040000))
+  (global $BRANCH_CMP_JCC_HIST i32 (region.addr $BRANCH_CMP_JCC_HIST 0))
+  (global $BRANCH_CMP_JCC_HIST_SIZE i32 (region.size $BRANCH_CMP_JCC_HIST))
+  (global $BRANCH_TEST_JCC_HIST i32 (region.addr $BRANCH_TEST_JCC_HIST 0))
+  (global $BRANCH_TEST_JCC_HIST_SIZE i32 (region.size $BRANCH_TEST_JCC_HIST))
+  (global $BRANCH_ALU_M32_RO_JCC_HIST i32 (region.addr $BRANCH_ALU_M32_RO_JCC_HIST 0))
+  (global $BRANCH_ALU_M32_RO_JCC_HIST_SIZE i32 (region.size $BRANCH_ALU_M32_RO_JCC_HIST))
+  (global $HOT_BLOCK_HIST i32 (region.addr $HOT_BLOCK_HIST 0))
+  (global $HOT_BLOCK_HIST_SIZE i32 (region.size $HOT_BLOCK_HIST))
   (global $HOT_BLOCK_HIST_COUNT i32 (i32.const 32768))
   (global $hot_block_hist_collisions (mut i32) (i32.const 0))
-  (global $SIB_CONSUMER_HIST i32 (i32.const 0x07FDB000))
-  (global $SIB_CONSUMER_HIST_SIZE i32 (i32.const 0x00010000))
+  (global $SIB_CONSUMER_HIST i32 (region.addr $SIB_CONSUMER_HIST 0))
+  (global $SIB_CONSUMER_HIST_SIZE i32 (region.size $SIB_CONSUMER_HIST))
   (global $SIB_CONSUMER_HIST_COUNT i32 (i32.const 8192))
   (global $sib_consumer_hist_collisions (mut i32) (i32.const 0))
   (global $sib_consumer_hist_total (mut i32) (i32.const 0))
   ;; CLIENT_RECT: parallel to WND_RECORDS, 16 bytes per slot = { l,t,r,b } i32s.
   ;; Window-local coordinates of the client area after WM_NCCALCSIZE.
-  (global $CLIENT_RECT   i32 (i32.const 0x0000F670))
-  (global $CLIENT_RECT_SIZE i32 (i32.const 0x00001000))
+  (global $CLIENT_RECT   i32 (region.addr $CLIENT_RECT 0))
+  (global $CLIENT_RECT_SIZE i32 (region.size $CLIENT_RECT))
   ;; CONTROL_TABLE: per-slot control metadata, parallel-indexed to WND_RECORDS.
   ;; 256 entries × 16 bytes = 0x1000 (0x8800..0x9800)
-  (global $CONTROL_TABLE i32 (i32.const 0x00008800))
-  (global $CONTROL_TABLE_SIZE i32 (i32.const 0x00001000))
+  (global $CONTROL_TABLE i32 (region.addr $CONTROL_TABLE 0))
+  (global $CONTROL_TABLE_SIZE i32 (region.size $CONTROL_TABLE))
   ;; CONTROL_GEOM: parallel x/y/w/h table indexed by window slot.
   ;; Stored as 4 × i16 (parent-relative pixels). Populated by
   ;; $ctrl_create_child; consulted by the renderer to enumerate WAT-managed
   ;; child controls without needing host_create_window for each.
   ;; 256 entries × 8 bytes = 0x800 (0x9800..0xA000)
-  (global $CONTROL_GEOM  i32 (i32.const 0x00009800))
-  (global $CONTROL_GEOM_SIZE i32 (i32.const 0x00000800))
+  (global $CONTROL_GEOM  i32 (region.addr $CONTROL_GEOM 0))
+  (global $CONTROL_GEOM_SIZE i32 (region.size $CONTROL_GEOM))
   ;; NATIVE_STATUS_BITS: windows whose registered common-control wndproc owns
   ;; layout/messages while WAT paints their shared-surface status-bar pixels.
   ;; Keep this separate from CONTROL_TABLE: a non-zero control class changes
   ;; SetWindowText/DefWindowProc routing and prevents MFC's status bar sizing.
-  (global $NATIVE_STATUS_BITS i32 (i32.const 0x00010790))
-  (global $NATIVE_STATUS_BITS_SIZE i32 (i32.const 0x00000020))
+  (global $NATIVE_STATUS_BITS i32 (region.addr $NATIVE_STATUS_BITS 0))
+  (global $NATIVE_STATUS_BITS_SIZE i32 (region.size $NATIVE_STATUS_BITS))
   ;; NATIVE_TAB_BITS: registered COMCTL32 tab controls retain their guest
   ;; layout/message proc while WAT replaces only their shared-surface paint.
-  (global $NATIVE_TAB_BITS i32 (i32.const 0x000107B0))
-  (global $NATIVE_TAB_BITS_SIZE i32 (i32.const 0x00000020))
+  (global $NATIVE_TAB_BITS i32 (region.addr $NATIVE_TAB_BITS 0))
+  (global $NATIVE_TAB_BITS_SIZE i32 (region.size $NATIVE_TAB_BITS))
   ;; CLASS_RECORDS: merged class table + WNDCLASSA storage
   ;;   +0  name_hash (0 = empty slot)
   ;;   +4  atom (assigned at registration)
   ;;   +8  WNDCLASSA[40]  (lpfnWndProc lives at record+12)
   ;; 64 entries × 48 bytes = 0xC00 (0xA000..0xAC00)
-  (global $CLASS_RECORDS i32 (i32.const 0x0000A000))
-  (global $CLASS_RECORDS_SIZE i32 (i32.const 0x00000C00))
+  (global $CLASS_RECORDS i32 (region.addr $CLASS_RECORDS 0))
+  (global $CLASS_RECORDS_SIZE i32 (region.size $CLASS_RECORDS))
   (global $MAX_CLASSES   i32 (i32.const 64))
   ;; RECT scratch used by control wndproc WM_PAINT to call WAT DrawText and the
   ;; other rect-taking primitives (they expect a WASM linear address for the
@@ -2109,9 +2109,9 @@
   ;; into other windows while holding rects brackets the call with
   ;; $paint_scratch_mark / $paint_scratch_reset so the inner frame's slots are
   ;; recycled and the outer frame's are not. See $paint_rect in 10-helpers.wat.
-  (global $PAINT_SCRATCH  i32 (i32.const 0x00006E00))
+  (global $PAINT_SCRATCH  i32 (region.addr $PAINT_SCRATCH 0))
   (global $PAINT_SCRATCH_SLOTS i32 (i32.const 16))
-  (global $PAINT_SCRATCH_SIZE i32 (i32.const 0x00000100))
+  (global $PAINT_SCRATCH_SIZE i32 (region.size $PAINT_SCRATCH))
   ;; Cursor into the ring. Mutable globals are per-instance while the memory is
   ;; shared, so two threads painting at once can still land on the same slot.
   ;; That is the pre-existing situation (they shared one rect before) and is not
@@ -2123,8 +2123,8 @@
   ;;   +4  name_hash  (atom for <64k names, FNV-1a otherwise — same as $class_name_hash)
   ;;   +8  value
   ;; 256 entries × 12 bytes = 0xC00 (0x07F00400..0x07F01000)
-  (global $PROP_TABLE  i32 (i32.const 0x07F00400))
-  (global $PROP_TABLE_SIZE i32 (i32.const 0x00000C00))
+  (global $PROP_TABLE  i32 (region.addr $PROP_TABLE 0))
+  (global $PROP_TABLE_SIZE i32 (region.size $PROP_TABLE))
   (global $MAX_PROPS   i32 (i32.const 256))
   ;; MENU_DATA_TABLE — parallel to WND_RECORDS, indexed by window slot.
   ;; Each entry is a guest heap pointer to that window's menu data blob
@@ -2148,8 +2148,8 @@
   ;;              +20 i32 id
   ;;              +24 i32 child_offset (nested popup header, 0 if none)
   ;;   string bytes appended at the tail
-  (global $MENU_DATA_TABLE i32 (i32.const 0x0000AD60))
-  (global $MENU_DATA_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $MENU_DATA_TABLE i32 (region.addr $MENU_DATA_TABLE 0))
+  (global $MENU_DATA_TABLE_SIZE i32 (region.size $MENU_DATA_TABLE))
   ;; WND_DLG_RECORDS — per-window dialog state, parallel to WND_RECORDS slots.
   ;; Populated by $dlg_load when a dialog is created from RT_DIALOG template.
   ;; Consulted by renderer via dlg_* exports.
@@ -2165,27 +2165,27 @@
   ;;   +20  title_ptr      guest heap ptr to NUL-terminated ASCII title (0 if none)
   ;;   +24  menu_key       template menu field: int id, or guest ptr to ASCII name (0 if none)
   ;;   +28  ctrl_count     number of controls (child hwnds = first_hwnd..first_hwnd+ctrl_count-1)
-  (global $WND_DLG_RECORDS i32 (i32.const 0x0000B160))
-  (global $WND_DLG_RECORDS_SIZE i32 (i32.const 0x00002000))
+  (global $WND_DLG_RECORDS i32 (region.addr $WND_DLG_RECORDS 0))
+  (global $WND_DLG_RECORDS_SIZE i32 (region.size $WND_DLG_RECORDS))
   ;; USER dialog-manager state, separate from application GWL_USERDATA.
   ;; 256 entries x 16 bytes, indexed by the corresponding WND_RECORDS slot:
   ;;   +0  DLGPROC
   ;;   +4  DWL_MSGRESULT (offset 0)
   ;;   +8  reserved dialog extra bytes (offset 4 aliases DLGPROC)
   ;;   +12 DWL_USER (offset 8)
-  (global $DIALOG_STATE_TABLE i32 (i32.const 0x00004000))
-  (global $DIALOG_STATE_TABLE_SIZE i32 (i32.const 0x00001000))
-  (global $WINDOW_UNICODE_TABLE i32 (i32.const 0x00005000))
-  (global $WINDOW_UNICODE_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $DIALOG_STATE_TABLE i32 (region.addr $DIALOG_STATE_TABLE 0))
+  (global $DIALOG_STATE_TABLE_SIZE i32 (region.size $DIALOG_STATE_TABLE))
+  (global $WINDOW_UNICODE_TABLE i32 (region.addr $WINDOW_UNICODE_TABLE 0))
+  (global $WINDOW_UNICODE_TABLE_SIZE i32 (region.size $WINDOW_UNICODE_TABLE))
   ;; Process identity lives in shared linear memory rather than a mutable
   ;; global because each emulated Win32 thread is a separate WASM instance.
-  (global $SHARED_PROCESS_ID i32 (i32.const 0x00005100))
-  (global $SHARED_PROCESS_ID_SIZE i32 (i32.const 0x00000004))
+  (global $SHARED_PROCESS_ID i32 (region.addr $SHARED_PROCESS_ID 0))
+  (global $SHARED_PROCESS_ID_SIZE i32 (region.size $SHARED_PROCESS_ID))
   ;; Per-window cbWndExtra-compatible storage. USER classes in WinHelp use
   ;; independent LONG slots at offsets 0, 4, 8, and 12; aliasing these to
   ;; GWL_USERDATA corrupts toolbar layout state.
-  (global $WINDOW_EXTRA_TABLE i32 (i32.const 0x00005200))
-  (global $WINDOW_EXTRA_TABLE_SIZE i32 (i32.const 0x00001000))
+  (global $WINDOW_EXTRA_TABLE i32 (region.addr $WINDOW_EXTRA_TABLE 0))
+  (global $WINDOW_EXTRA_TABLE_SIZE i32 (region.size $WINDOW_EXTRA_TABLE))
   ;; One-shot override for CreateDialogIndirectParam*: when non-zero,
   ;; $dlg_load reads the DLGTEMPLATE directly from this guest pointer
   ;; instead of resolving an RT_DIALOG resource.
@@ -2198,26 +2198,26 @@
   ;;   +12  v_pos     SB_VERT position
   ;;   +16  v_min     SB_VERT range min
   ;;   +20  v_max     SB_VERT range max
-  (global $SCROLL_TABLE i32 (i32.const 0x0000D170))
-  (global $SCROLL_TABLE_SIZE i32 (i32.const 0x00001800))
+  (global $SCROLL_TABLE i32 (region.addr $SCROLL_TABLE 0))
+  (global $SCROLL_TABLE_SIZE i32 (region.size $SCROLL_TABLE))
   ;; SCROLL_AUX_TABLE — extra SCROLLINFO fields that do not fit in the legacy
   ;; low-memory SCROLL_TABLE layout. Per WND_RECORDS slot:
   ;;   +0   h_page    SB_HORZ nPage
   ;;   +4   h_track   SB_HORZ nTrackPos
   ;;   +8   v_page    SB_VERT nPage
   ;;   +12  v_track   SB_VERT nTrackPos
-  (global $SCROLL_AUX_TABLE i32 (i32.const 0x07F21000))
-  (global $SCROLL_AUX_TABLE_SIZE i32 (i32.const 0x00001000))
+  (global $SCROLL_AUX_TABLE i32 (region.addr $SCROLL_AUX_TABLE 0))
+  (global $SCROLL_AUX_TABLE_SIZE i32 (region.size $SCROLL_AUX_TABLE))
   ;; VSOCK_TABLE — virtual LAN socket records (docs/virtual-lan-party.md).
   ;; 64 entries × 128 bytes, occupying the last 8KB below the sparse
   ;; VirtualAlloc backing pool. Layout is documented in 09d-winsock.wat.
-  (global $VSOCK_TABLE i32 (i32.const 0x07FFE000))
-  (global $VSOCK_TABLE_SIZE i32 (i32.const 0x00002000))
+  (global $VSOCK_TABLE i32 (region.addr $VSOCK_TABLE 0))
+  (global $VSOCK_TABLE_SIZE i32 (region.size $VSOCK_TABLE))
   ;; FLASH_TABLE — per-window flash state, parallel to WND_RECORDS slots.
   ;; 256 entries × 1 byte = 0x100 (0xE970..0xEA70)
   ;; Each byte: 0 = normal, 1 = flashing (inverted caption)
-  (global $FLASH_TABLE i32 (i32.const 0x0000E970))
-  (global $FLASH_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $FLASH_TABLE i32 (region.addr $FLASH_TABLE 0))
+  (global $FLASH_TABLE_SIZE i32 (region.size $FLASH_TABLE))
   ;; SHOW_STATE_TABLE — per-window show state, parallel to WND_RECORDS slots.
   ;; 256 entries × 1 byte, two independent bits because Windows treats them as
   ;; independent: a maximized window that is then minimized restores to
@@ -2227,23 +2227,23 @@
   ;; Written by ShowWindow and by the WM_SYSCOMMAND handler after
   ;; $host_sys_command commits geometry; read through $wnd_max_get /
   ;; $wnd_min_get, which are the only two functions that know the encoding.
-  (global $SHOW_STATE_TABLE i32 (i32.const 0x00010670))
-  (global $SHOW_STATE_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $SHOW_STATE_TABLE i32 (region.addr $SHOW_STATE_TABLE 0))
+  (global $SHOW_STATE_TABLE_SIZE i32 (region.size $SHOW_STATE_TABLE))
   ;; WINDOW_REGION_BITS — bitset keyed by WND_RECORDS slot. Regioned/skinned
   ;; windows (Winamp) use their whole shaped surface as the client area, so
   ;; later MoveWindow/SetWindowPos NCCALCSIZE must not restore standard chrome
   ;; offsets.
-  (global $WINDOW_REGION_BITS i32 (i32.const 0x00010770))
-  (global $WINDOW_REGION_BITS_SIZE i32 (i32.const 0x00000020))
+  (global $WINDOW_REGION_BITS i32 (region.addr $WINDOW_REGION_BITS 0))
+  (global $WINDOW_REGION_BITS_SIZE i32 (region.size $WINDOW_REGION_BITS))
   ;; RICHEDIT_FORMAT_TABLE — per-window latest explicit CHARFORMAT.yHeight
   ;; seen through EM_SETCHARFORMAT(CFM_SIZE). This is a narrow compatibility
   ;; cache for the current RichEdit shim; it is not a full per-run format model.
-  (global $RICHEDIT_FORMAT_TABLE i32 (i32.const 0x00011580))
-  (global $RICHEDIT_FORMAT_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $RICHEDIT_FORMAT_TABLE i32 (region.addr $RICHEDIT_FORMAT_TABLE 0))
+  (global $RICHEDIT_FORMAT_TABLE_SIZE i32 (region.size $RICHEDIT_FORMAT_TABLE))
   ;; RICHEDIT_PARA_TABLE — per-window heap pointer to a 188-byte PARAFORMAT2A
   ;; snapshot for explicitly set paragraph fields. 0 = no cached fields.
-  (global $RICHEDIT_PARA_TABLE i32 (i32.const 0x00011980))
-  (global $RICHEDIT_PARA_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $RICHEDIT_PARA_TABLE i32 (region.addr $RICHEDIT_PARA_TABLE 0))
+  (global $RICHEDIT_PARA_TABLE_SIZE i32 (region.size $RICHEDIT_PARA_TABLE))
   ;; Synchronization object table (SharedArrayBuffer backed)
   ;; Each entry (16 bytes):
   ;;   +0: Current issued handle (worker-side exact slot lookup)
@@ -2255,20 +2255,20 @@
   ;; its own tree on top of that one, and an app that gets NULL back from
   ;; TVM_INSERTITEM does not stop asking -- AVS retries the insert forever, so
   ;; a full table reads as a hang rather than as a truncated tree.
-  (global $TV_TABLE i32 (i32.const 0x07F22000))
-  (global $TV_TABLE_SIZE i32 (i32.const 0x00004000))
+  (global $TV_TABLE i32 (region.addr $TV_TABLE 0))
+  (global $TV_TABLE_SIZE i32 (region.size $TV_TABLE))
   (global $TV_SLOT_COUNT i32 (i32.const 512))
-  (global $TV_IMAGE_TABLE i32 (i32.const 0x07F26000))
-  (global $TV_IMAGE_TABLE_SIZE i32 (i32.const 0x00001000))
-  (global $TAB_NATIVE_STATE_TABLE i32 (i32.const 0x07F01200))
-  (global $TAB_NATIVE_STATE_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $TV_IMAGE_TABLE i32 (region.addr $TV_IMAGE_TABLE 0))
+  (global $TV_IMAGE_TABLE_SIZE i32 (region.size $TV_IMAGE_TABLE))
+  (global $TAB_NATIVE_STATE_TABLE i32 (region.addr $TAB_NATIVE_STATE_TABLE 0))
+  (global $TAB_NATIVE_STATE_TABLE_SIZE i32 (region.size $TAB_NATIVE_STATE_TABLE))
   ;; ICON_TABLE: what an HICON actually stands for. An icon handle has to
   ;; survive the round trip from LoadIcon/LoadImage to DrawIconEx, which may
   ;; happen long afterwards and from a different module, so each entry keeps
   ;; the pair needed to find the pixels again: {hInstance, resource id}.
   ;; 32 entries x 8 bytes. Handles are $ICON_HANDLE_TAG | slot.
-  (global $ICON_TABLE i32 (i32.const 0x07F01300))
-  (global $ICON_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $ICON_TABLE i32 (region.addr $ICON_TABLE 0))
+  (global $ICON_TABLE_SIZE i32 (region.size $ICON_TABLE))
   (global $MAX_ICONS i32 (i32.const 32))
   (global $ICON_HANDLE_TAG i32 (i32.const 0x00650000))
   ;; CURSOR_TABLE: an icon or cursor BUILT from bitmaps, which ICON_TABLE
@@ -2277,34 +2277,34 @@
   ;; struct plus a flag recording whether the host already holds the composited
   ;; pixels for this handle. Handles are $CURSOR_HANDLE_TAG | (slot + 1), so
   ;; slot 0 still produces the non-zero handle callers test for.
-  (global $CURSOR_TABLE i32 (i32.const 0x07F01400))
-  (global $CURSOR_TABLE_SIZE i32 (i32.const 0x00000300))
+  (global $CURSOR_TABLE i32 (region.addr $CURSOR_TABLE 0))
+  (global $CURSOR_TABLE_SIZE i32 (region.size $CURSOR_TABLE))
   (global $CURSOR_TABLE_STRIDE i32 (i32.const 24))
   (global $MAX_CURSORS i32 (i32.const 32))
   (global $CURSOR_HANDLE_TAG i32 (i32.const 0x00CC0000))
   ;; Two private surface descriptors: compositing a cursor reads the mask and
   ;; the colour plane at once, and must not borrow the blit scratch.
-  (global $CURSOR_MASK_DESC i32 (i32.const 0x07F01700))
-  (global $CURSOR_MASK_DESC_SIZE i32 (i32.const 0x00000050))
-  (global $CURSOR_COLOR_DESC i32 (i32.const 0x07F01750))
-  (global $CURSOR_COLOR_DESC_SIZE i32 (i32.const 0x00000050))
+  (global $CURSOR_MASK_DESC i32 (region.addr $CURSOR_MASK_DESC 0))
+  (global $CURSOR_MASK_DESC_SIZE i32 (region.size $CURSOR_MASK_DESC))
+  (global $CURSOR_COLOR_DESC i32 (region.addr $CURSOR_COLOR_DESC 0))
+  (global $CURSOR_COLOR_DESC_SIZE i32 (region.size $CURSOR_COLOR_DESC))
   ;; DrawIconEx diFlags: which plane of the icon to write.
   (global $DI_MASK   i32 (i32.const 1))
   (global $DI_IMAGE  i32 (i32.const 2))
   (global $DI_NORMAL i32 (i32.const 3))
-  (global $SYNC_TABLE i32 (i32.const 0x07F14000))
-  (global $SYNC_TABLE_SIZE i32 (i32.const 0x00002000))
+  (global $SYNC_TABLE i32 (region.addr $SYNC_TABLE 0))
+  (global $SYNC_TABLE_SIZE i32 (region.size $SYNC_TABLE))
   (global $MAX_SYNC_OBJECTS i32 (i32.const 512))
   ;; Sparse VirtualAlloc mapping table. Guest reserve addresses are high
   ;; virtual addresses; committed chunks are backed here so they do not collide
   ;; with the low HeapAlloc arena.
-  (global $VIRTUAL_MAP_STATE i32 (i32.const 0x07F02400))
-  (global $VIRTUAL_MAP_STATE_SIZE i32 (i32.const 0x00000010))
-  (global $VIRTUAL_MAP_TABLE i32 (i32.const 0x07F02410))
-  (global $VIRTUAL_MAP_TABLE_SIZE i32 (i32.const 0x00008000))
+  (global $VIRTUAL_MAP_STATE i32 (region.addr $VIRTUAL_MAP_STATE 0))
+  (global $VIRTUAL_MAP_STATE_SIZE i32 (region.size $VIRTUAL_MAP_STATE))
+  (global $VIRTUAL_MAP_TABLE i32 (region.addr $VIRTUAL_MAP_TABLE 0))
+  (global $VIRTUAL_MAP_TABLE_SIZE i32 (region.size $VIRTUAL_MAP_TABLE))
   (global $MAX_VIRTUAL_MAPS i32 (i32.const 2048))
-  (global $VIRTUAL_BACKING_BASE i32 (i32.const 0x08000000))
-  (global $VIRTUAL_BACKING_BASE_SIZE i32 (i32.const 0x14000000))
+  (global $VIRTUAL_BACKING_BASE i32 (region.addr $VIRTUAL_BACKING_BASE 0))
+  (global $VIRTUAL_BACKING_BASE_SIZE i32 (region.size $VIRTUAL_BACKING_BASE))
   ;; The sparse VA arena ends exactly where the separate DIB guest arena
   ;; begins. Keeping the former 0x40000000 ceiling left 256MB of valid,
   ;; non-overlapping guest address space unused and exhausted StarCraft's
@@ -2317,8 +2317,8 @@
   ;; transfers than the loads themselves.
   ;;   +0  next unreserved chunk in the low guest heap window (0 = uninitialized)
   ;;   +4  heap_base — immutable after load, published for worker instances
-  (global $HEAP_SHARED i32 (i32.const 0x07F0C800))
-  (global $HEAP_SHARED_SIZE i32 (i32.const 0x40))
+  (global $HEAP_SHARED i32 (region.addr $HEAP_SHARED 0))
+  (global $HEAP_SHARED_SIZE i32 (region.size $HEAP_SHARED))
   ;; Cross-instance locks (docs/design-real-threads.md §3.1b). Every guest
   ;; thread is a separate WASM instance over this one memory, so the tables they
   ;; share need a mutex that lives in memory rather than in a global.
@@ -2335,8 +2335,8 @@
   ;;      for the lock that worker holds, neither ever moves. So these wrap pure
   ;;      table arithmetic — slot allocation — and nothing else.
   ;;   2. Never take two at once, so there is no order to get wrong.
-  (global $LOCK_TABLE i32 (i32.const 0x07F0C840))
-  (global $LOCK_TABLE_SIZE i32 (i32.const 0x00000200))
+  (global $LOCK_TABLE i32 (region.addr $LOCK_TABLE 0))
+  (global $LOCK_TABLE_SIZE i32 (region.size $LOCK_TABLE))
   ;; Every CRITICAL_SECTION the guest has initialised, so that one owned by a
   ;; thread that has ended can be found and released. WASM addresses, not guest
   ;; ones: the release runs from whichever instance notices the exit, and in
@@ -2344,8 +2344,8 @@
   ;; would answer nonsense. 256 is generous; msvcrt uses a dozen and an app a
   ;; handful. Overflow just means that section is not tracked, i.e. today's
   ;; behaviour.
-  (global $CS_TABLE i32 (i32.const 0x07F0CA40))
-  (global $CS_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $CS_TABLE i32 (region.addr $CS_TABLE 0))
+  (global $CS_TABLE_SIZE i32 (region.size $CS_TABLE))
   (global $CS_TABLE_ENTRIES i32 (i32.const 256))
   (global $LOCK_VIRTUAL_MAP i32 (i32.const 0x07F0C840))
   (global $LOCK_DX i32 (i32.const 0x07F0C880))
@@ -2367,8 +2367,8 @@
   ;; registration wrote a counter into the TrueType substitution table, and a
   ;; guest thread trapped in font code. test-wat-memory-map.js is what caught
   ;; it: the comments are documentation, that test is the authority.
-  (global $SHARED_COUNTERS i32 (i32.const 0x07F0CE40))
-  (global $SHARED_COUNTERS_SIZE i32 (i32.const 0x00000010))
+  (global $SHARED_COUNTERS i32 (region.addr $SHARED_COUNTERS 0))
+  (global $SHARED_COUNTERS_SIZE i32 (region.size $SHARED_COUNTERS))
   (global $CLASS_ATOM_BASE i32 (i32.const 0xC000))
   ;; 256 bytes of scratch that belong to the TEST HARNESS, not to the emulator.
   ;; No WAT reads any of it. The layout is fixed by offset so tests in separate
@@ -2391,8 +2391,8 @@
   ;; allocator is about to stop leaving accidents lying around. Storage a test
   ;; writes to is storage: it gets a name, an extent and a place in the overlap
   ;; sweep like everything else.
-  (global $TEST_SCRATCH i32 (i32.const 0x07F5E000))
-  (global $TEST_SCRATCH_SIZE i32 (i32.const 0x00000100))
+  (global $TEST_SCRATCH i32 (region.addr $TEST_SCRATCH 0))
+  (global $TEST_SCRATCH_SIZE i32 (region.size $TEST_SCRATCH))
   ;; The COM aux-wrapper bump cursor. It was a mutable global, which means a
   ;; private copy per instance handing out the same aux slot twice — the same
   ;; shape of bug $heap_ptr had. Under $LOCK_DX, so plain loads are fine.
@@ -2427,18 +2427,18 @@
   ;; Guest capacity and backing size must move together or a high DIB address
   ;; translates past its own backing.
   (global $DIB_GUEST_CAPACITY i32 (i32.const 0x03F00000))
-  (global $DIB_BACKING_BASE i32 (i32.const 0x1C000000))
-  (global $DIB_BACKING_BASE_SIZE i32 (i32.const 0x03F00000))
+  (global $DIB_BACKING_BASE i32 (region.addr $DIB_BACKING_BASE 0))
+  (global $DIB_BACKING_BASE_SIZE i32 (region.size $DIB_BACKING_BASE))
   ;; Host-import RPC control blocks, one per guest thread, at the very top of
   ;; linear memory. Declared here rather than only in JS so
   ;; test/test-wat-memory-map.js proves nothing else claims the range —
   ;; test/test-wat-rpc-region.js pins the JS constants to these numbers.
-  (global $THREAD_RPC i32 (i32.const 0x1FF00000))
-  (global $THREAD_RPC_SIZE i32 (i32.const 0x00100000))
-  (global $DIB_PAGE_USED i32 (i32.const 0x07E10000))
-  (global $DIB_PAGE_USED_SIZE i32 (i32.const 0x00004000))
-  (global $DIB_PAGE_RUNS i32 (i32.const 0x07E14000))
-  (global $DIB_PAGE_RUNS_SIZE i32 (i32.const 0x00008000))
+  (global $THREAD_RPC i32 (region.addr $THREAD_RPC 0))
+  (global $THREAD_RPC_SIZE i32 (region.size $THREAD_RPC))
+  (global $DIB_PAGE_USED i32 (region.addr $DIB_PAGE_USED 0))
+  (global $DIB_PAGE_USED_SIZE i32 (region.size $DIB_PAGE_USED))
+  (global $DIB_PAGE_RUNS i32 (region.addr $DIB_PAGE_RUNS 0))
+  (global $DIB_PAGE_RUNS_SIZE i32 (region.size $DIB_PAGE_RUNS))
   (global $DIB_PAGE_COUNT i32 (i32.const 16384))
 
   (global $WNDPROC_CTRL_NATIVE i32 (i32.const 0xFFFF0002))  ;; WAT-native control wndproc
@@ -2484,8 +2484,8 @@
   ;; Shadow call-stack for --trace-callstack: ring buffer of ret_addrs.
   ;; Push on CALL, pop on RET. JS reads via get_cs_depth/get_cs_entry.
   ;; cs_enabled gates the push/pop hot path so non-debug runs pay zero cost.
-  (global $CS_RING i32 (i32.const 0x00010900))
-  (global $CS_RING_SIZE i32 (i32.const 0x00000100))
+  (global $CS_RING i32 (region.addr $CS_RING 0))
+  (global $CS_RING_SIZE i32 (region.size $CS_RING))
   (global $CS_MASK i32 (i32.const 63))   ;; 64 slots, power-of-two for cheap mask
   (global $cs_depth (mut i32) (i32.const 0))
   (global $cs_enabled (mut i32) (i32.const 0))
@@ -2657,8 +2657,8 @@
   ;; Four dwords, exactly as $handle_waveOutOpen writes them:
   ;;   +0 handle   +4 callback   +8 callback instance   +12 callback type
   ;; It fills the 16-byte hole between WND_DLG_RECORDS and SCROLL_TABLE.
-  (global $WAVE_OUT_SHARED i32 (i32.const 0x0000D160))
-  (global $WAVE_OUT_SHARED_SIZE i32 (i32.const 0x00000010))
+  (global $WAVE_OUT_SHARED i32 (region.addr $WAVE_OUT_SHARED 0))
+  (global $WAVE_OUT_SHARED_SIZE i32 (region.size $WAVE_OUT_SHARED))
   ;; waveOut audio state
   (global $wave_out_handle (mut i32) (i32.const 0))
   (global $wave_out_callback (mut i32) (i32.const 0))
@@ -2709,12 +2709,12 @@
   ;; DLL loader state
   (global $dll_count (mut i32) (i32.const 0))
   (global $DLL_TABLE_CAPACITY i32 (i32.const 16))
-  (global $DLL_TABLE i32 (i32.const 0x07992000))  ;; 32 bytes x 16 DLLs = 512 bytes
+  (global $DLL_TABLE i32 (region.addr $DLL_TABLE 0))  ;; 32 bytes x 16 DLLs = 512 bytes
   ;; Parallel to DLL_TABLE: per-DLL resource dir (rsrc_rva, rsrc_size). 8 bytes x 16 = 128B.
-  (global $DLL_RSRC_TABLE i32 (i32.const 0x07992200))
+  (global $DLL_RSRC_TABLE i32 (region.addr $DLL_RSRC_TABLE 0))
   ;; Full path used to load each module, as a guest string pointer. Keeping it
   ;; parallel avoids changing the long-established 32-byte DLL table ABI.
-  (global $DLL_PATH_TABLE i32 (i32.const 0x07992300))
+  (global $DLL_PATH_TABLE i32 (region.addr $DLL_PATH_TABLE 0))
   ;; Active resource-lookup context. base=0 means "use main EXE ($image_base / $rsrc_rva)".
   ;; When a Load*/FindResource* handler is called with a DLL hInstance, these are pushed
   ;; to that DLL's load_addr + rsrc_rva for the duration of the lookup, then cleared.
@@ -2727,8 +2727,8 @@
   (global $tls_slots (mut i32) (i32.const 0))  ;; guest ptr to 64 x i32 = 256 bytes
   ;; TLS indexes belong to the process, not one guest-thread WASM instance.
   ;; Give the atomic cursor its own cache line in shared memory.
-  (global $TLS_NEXT_INDEX_SHARED i32 (i32.const 0x07F20300))
-  (global $TLS_NEXT_INDEX_SHARED_SIZE i32 (i32.const 0x00000040))
+  (global $TLS_NEXT_INDEX_SHARED i32 (region.addr $TLS_NEXT_INDEX_SHARED 0))
+  (global $TLS_NEXT_INDEX_SHARED_SIZE i32 (region.size $TLS_NEXT_INDEX_SHARED))
   ;; Performance counter (monotonic, incremented per query)
   (global $perf_counter_lo (mut i32) (i32.const 0))
   ;; EFLAGS bits outside the six we model lazily (CF/PF/ZF/SF/DF/OF). popfd
@@ -2835,16 +2835,16 @@
   ;; Win32-style — InvalidateRect just sets a per-window pending bit; there
   ;; is no fixed-size queue to overflow. GetMessageA's child-paint phase
   ;; scans this table for the first set bit. 256 slots = 256 bytes total.
-  (global $PAINT_FLAGS i32 (i32.const 0x07F01000))
-  (global $PAINT_FLAGS_SIZE i32 (i32.const 0x00000100))
+  (global $PAINT_FLAGS i32 (region.addr $PAINT_FLAGS 0))
+  (global $PAINT_FLAGS_SIZE i32 (region.size $PAINT_FLAGS))
   (global $pending_child_create (mut i32) (i32.const 0)) ;; Child hwnd needing WM_CREATE (0=none)
   (global $pending_child_size   (mut i32) (i32.const 0)) ;; Child WM_SIZE lParam (cx|cy<<16, 0=none)
   (global $pending_child_size_hwnd (mut i32) (i32.const 0)) ;; Child hwnd for pending WM_SIZE
   ;; Timer table at 0xAC00: 16 entries × 20 bytes each (ends 0xAD40)
   ;; Each entry: [hwnd:4][id:4][interval:4][last_tick:4][callback:4]
   ;; Entry with id=0 is unused. Lives just past CLASS_RECORDS (see memory map).
-  (global $TIMER_TABLE  i32 (i32.const 0x0000AC00))
-  (global $TIMER_TABLE_SIZE i32 (i32.const 0x00000140))
+  (global $TIMER_TABLE  i32 (region.addr $TIMER_TABLE 0))
+  (global $TIMER_TABLE_SIZE i32 (region.size $TIMER_TABLE))
   (global $TIMER_MAX    i32 (i32.const 16))
   (global $TIMER_ENTRY_SIZE i32 (i32.const 20))
   (global $timer_count  (mut i32) (i32.const 0))    ;; Number of active timers
@@ -3052,10 +3052,10 @@
   ;; Shared-memory mirror for EndDialog calls made from worker-thread WASM
   ;; instances. Thread globals are private; this lets the main modal pump see
   ;; installer worker completion.
-  (global $SHARED_DLG_ENDED  i32 (i32.const 0x00005104))
-  (global $SHARED_DLG_ENDED_SIZE i32 (i32.const 0x00000004))
-  (global $SHARED_DLG_RESULT i32 (i32.const 0x00005108))
-  (global $SHARED_DLG_RESULT_SIZE i32 (i32.const 0x00000004))
+  (global $SHARED_DLG_ENDED  i32 (region.addr $SHARED_DLG_ENDED 0))
+  (global $SHARED_DLG_ENDED_SIZE i32 (region.size $SHARED_DLG_ENDED))
+  (global $SHARED_DLG_RESULT i32 (region.addr $SHARED_DLG_RESULT 0))
+  (global $SHARED_DLG_RESULT_SIZE i32 (region.size $SHARED_DLG_RESULT))
   ;; ...and a mirror of $dlg_pump_hwnd itself, for the same reason. Every
   ;; "is this hwnd the active modal dialog?" test has to answer the same way
   ;; on every instance: a worker's own $dlg_pump_hwnd is 0, so EndDialog from
@@ -3063,26 +3063,26 @@
   ;; ever raising SHARED_DLG_ENDED, leaving main's CACA0004 pump spinning on
   ;; a dialog that no longer existed (Winamp's NSIS installer, after the
   ;; "Completed" page).
-  (global $SHARED_DLG_PUMP_HWND i32 (i32.const 0x0000510C))
-  (global $SHARED_DLG_PUMP_HWND_SIZE i32 (i32.const 0x00000004))
+  (global $SHARED_DLG_PUMP_HWND i32 (region.addr $SHARED_DLG_PUMP_HWND 0))
+  (global $SHARED_DLG_PUMP_HWND_SIZE i32 (region.size $SHARED_DLG_PUMP_HWND))
   ;; LAUNCH_ENV_OVERRIDES — host-supplied "NAME=VALUE\0" entries appended to
   ;; the ENV_DEFAULTS template by $env_ensure (10-helpers.wat) and filled by
   ;; the test_launch_env_add export (13-exports.wat). The 240-byte extent is
   ;; the bound that export already enforces before it copies, so the region is
   ;; exactly as large as the code says it is; it runs up to WINDOW_EXTRA_TABLE.
-  (global $LAUNCH_ENV_OVERRIDES i32 (i32.const 0x00005110))
-  (global $LAUNCH_ENV_OVERRIDES_SIZE i32 (i32.const 0x000000F0))
+  (global $LAUNCH_ENV_OVERRIDES i32 (region.addr $LAUNCH_ENV_OVERRIDES 0))
+  (global $LAUNCH_ENV_OVERRIDES_SIZE i32 (region.size $LAUNCH_ENV_OVERRIDES))
   ;; WAT-built MessageBox/common-dialog state has the same cross-instance
   ;; requirement as DialogBoxParam above. Browser Worker mode renders and
   ;; hit-tests through a main-thread shadow instance, while the API call is
   ;; parked in the guest Worker instance. Completion therefore has to cross
   ;; through linear memory rather than a private WebAssembly global.
-  (global $SHARED_MODAL_DLG_HWND i32 (i32.const 0x000107D0))
-  (global $SHARED_MODAL_DLG_HWND_SIZE i32 (i32.const 0x00000004))
-  (global $SHARED_MODAL_RESULT i32 (i32.const 0x000107D4))
-  (global $SHARED_MODAL_RESULT_SIZE i32 (i32.const 0x00000004))
-  (global $SHARED_MODAL_DONE i32 (i32.const 0x000107D8))
-  (global $SHARED_MODAL_DONE_SIZE i32 (i32.const 0x00000004))
+  (global $SHARED_MODAL_DLG_HWND i32 (region.addr $SHARED_MODAL_DLG_HWND 0))
+  (global $SHARED_MODAL_DLG_HWND_SIZE i32 (region.size $SHARED_MODAL_DLG_HWND))
+  (global $SHARED_MODAL_RESULT i32 (region.addr $SHARED_MODAL_RESULT 0))
+  (global $SHARED_MODAL_RESULT_SIZE i32 (region.size $SHARED_MODAL_RESULT))
+  (global $SHARED_MODAL_DONE i32 (region.addr $SHARED_MODAL_DONE 0))
+  (global $SHARED_MODAL_DONE_SIZE i32 (region.size $SHARED_MODAL_DONE))
   (global $dlg_proc     (mut i32) (i32.const 0))    ;; Dialog proc address
   (global $dlg_ret_addr (mut i32) (i32.const 0))    ;; Return address for DialogBoxParamA
   (global $dlg_loop_thunk (mut i32) (i32.const 0))  ;; Thunk addr for dialog message loop
@@ -3271,16 +3271,16 @@
 
   ;; 1KB scratch for UTF-16→ANSI conversion in Unicode text handlers (ExtTextOutW,
   ;; TextOutW, etc.). WAT-private so guest writes cannot corrupt it.
-  (global $TEXT_SCRATCH i32 (i32.const 0x07E08000))
-  (global $TEXT_SCRATCH_SIZE i32 (i32.const 0x00000400))
+  (global $TEXT_SCRATCH i32 (region.addr $TEXT_SCRATCH 0))
+  (global $TEXT_SCRATCH_SIZE i32 (region.size $TEXT_SCRATCH))
   ;; Console screen buffer. This used to sit at 0x7000/0x7FA0, which is
   ;; WND_RECORDS — every WriteConsole overwrote the window table, so a console
   ;; app corrupted windows it never touched. Cells are capped by
   ;; $CONSOLE_MAX_CELLS so a SetConsoleScreenBufferSize cannot walk off the end.
-  (global $CONSOLE_TEXT i32 (i32.const 0x07E09000))
-  (global $CONSOLE_TEXT_SIZE i32 (i32.const 0x00003000))
-  (global $CONSOLE_ATTR i32 (i32.const 0x07E0C000))
-  (global $CONSOLE_ATTR_SIZE i32 (i32.const 0x00003000))
+  (global $CONSOLE_TEXT i32 (region.addr $CONSOLE_TEXT 0))
+  (global $CONSOLE_TEXT_SIZE i32 (region.size $CONSOLE_TEXT))
+  (global $CONSOLE_ATTR i32 (region.addr $CONSOLE_ATTR 0))
+  (global $CONSOLE_ATTR_SIZE i32 (region.size $CONSOLE_ATTR))
   (global $CONSOLE_MAX_CELLS i32 (i32.const 6144))
   ;; Console input queue. $CONSOLE_ATTR's 6144 cells end at 0x07E0F000, which
   ;; leaves one free page before DIB_PAGE_USED.
@@ -3296,8 +3296,8 @@
   ;; shared across thread instances and globals are not: the window that reads
   ;; the keyboard and the thread that calls ReadConsole are usually different
   ;; threads, and a global would give each of them its own empty queue.
-  (global $CONSOLE_INPUT i32 (i32.const 0x07E0F000))
-  (global $CONSOLE_INPUT_SIZE i32 (i32.const 0x00001000))
+  (global $CONSOLE_INPUT i32 (region.addr $CONSOLE_INPUT 0))
+  (global $CONSOLE_INPUT_SIZE i32 (region.size $CONSOLE_INPUT))
   ;; 102 × 20B ends at +0x818, within the original +0x820 ring end, leaving the shared
   ;; screen-buffer table at +0x840 untouched.
   (global $CONSOLE_INPUT_MAX i32 (i32.const 102))
@@ -3310,8 +3310,8 @@
   ;; so 11 of the 16 slots were overwritten at init and --count silently reported 0
   ;; for addresses that were demonstrably hot. It now lives in the free gap between
   ;; CODE_PAGE_BITMAP (ends 0x07F14000) and OP_INDEX (0x07F30000).
-  (global $HIT_COUNT_BASE i32 (i32.const 0x07F20000))
-  (global $HIT_COUNT_BASE_SIZE i32 (i32.const 0x00000100))
+  (global $HIT_COUNT_BASE i32 (region.addr $HIT_COUNT_BASE 0))
+  (global $HIT_COUNT_BASE_SIZE i32 (region.size $HIT_COUNT_BASE))
   (global $hit_count_n (mut i32) (i32.const 0))
 
   (global $clipboard_fmt_counter (mut i32) (i32.const 0))
@@ -3331,8 +3331,8 @@
   ;; arena likewise failed with linear memory left. Slot MAX remains the hidden
   ;; handle/resource page; at guest 0x03CF0000 it ends immediately below
   ;; GUEST_HEAP_BASE after g2w translation.
-  (global $WIN16_SEG_TABLE i32 (i32.const 0x079DA000))
-  (global $WIN16_SEG_TABLE_SIZE i32 (i32.const 0x00004000))
+  (global $WIN16_SEG_TABLE i32 (region.addr $WIN16_SEG_TABLE 0))
+  (global $WIN16_SEG_TABLE_SIZE i32 (region.size $WIN16_SEG_TABLE))
   (global $WIN16_SEG_MAX   i32 (i32.const 959))
   ;; One entry per distinct (module, ordinal) the task and its DLLs import.
   ;; 256 was not enough once a DLL as large as VBRUN100 was in the picture, and
@@ -3340,8 +3340,8 @@
   ;; the 64KB that selector owns. It cannot remain beside the segment table:
   ;; 0x079C8000 begins WND_Z_ORDER_TABLE. The first complete 8KB gap is after
   ;; GDI_NEAREST_CACHE instead.
-  (global $WIN16_THUNK_TABLE i32 (i32.const 0x079D8000))
-  (global $WIN16_THUNK_TABLE_SIZE i32 (i32.const 0x00002000))
+  (global $WIN16_THUNK_TABLE i32 (region.addr $WIN16_THUNK_TABLE 0))
+  (global $WIN16_THUNK_TABLE_SIZE i32 (region.size $WIN16_THUNK_TABLE))
   (global $WIN16_THUNK_MAX i32 (i32.const 2048))
   ;; Each selector index owns one 64KB slot. The arena sits above the PE guest
   ;; image start: an NE task sets image_base to 0, so nothing else is mapped
@@ -3454,8 +3454,8 @@
   ;; next LoadLibrary may reuse all six megabytes. Resource-only Civ II packs
   ;; are as large as 3.9MB; fixed one-megabyte-per-id slots cannot represent
   ;; them and also cap the process at six names for no Windows-level reason.
-  (global $WIN16_APP_DLL_STAGING i32 (i32.const 0x04A00000))
-  (global $WIN16_APP_DLL_STAGING_SIZE i32 (i32.const 0x00600000))
+  (global $WIN16_APP_DLL_STAGING i32 (region.addr $WIN16_APP_DLL_STAGING 0))
+  (global $WIN16_APP_DLL_STAGING_SIZE i32 (region.size $WIN16_APP_DLL_STAGING))
   (global $WIN16_APP_DLL_STRIDE  i32 (i32.const 0x00100000))
   (global $WIN16_CONT_OFFSET i32 (i32.const 0xFF00))
   ;; The second continuation slot: CreateWindow calls the WH_CALLWNDPROC hook
@@ -3555,8 +3555,8 @@
   (global $STATIC_SYS_DLL_HANDLE_BASE i32 (i32.const 0x5D110000))
   ;; First index in the name list that belongs to DirectX.
   (global $STATIC_SYS_DLL_FIRST_DX i32 (i32.const 1))
-  (global $DX_VERSION_INFO i32 (i32.const 0x11270))
-  (global $DX_VERSION_INFO_SIZE i32 (i32.const 92))
+  (global $DX_VERSION_INFO i32 (region.addr $DX_VERSION_INFO 0))
+  (global $DX_VERSION_INFO_SIZE i32 (region.size $DX_VERSION_INFO))
   (global $WIN16_NAME_KERNEL   i32 (i32.const 0x11E70))
   (global $WIN16_NAME_USER     i32 (i32.const 0x11E77))
   (global $WIN16_NAME_GDI      i32 (i32.const 0x11E7C))

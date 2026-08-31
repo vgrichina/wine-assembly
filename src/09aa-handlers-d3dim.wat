@@ -18,8 +18,8 @@
   ;; room for their viewport owner, light index and next/previous links.  The
   ;; list therefore needs only this one shared pointer per possible viewport.
   ;; D3D v1-v3 expose at most eight lights on a viewport.
-  (global $D3DIM_VIEWPORT_LIGHT_HEAD i32 (i32.const 0x07F16000))
-  (global $D3DIM_VIEWPORT_LIGHT_HEAD_SIZE i32 (i32.const 0x00004000))
+  (global $D3DIM_VIEWPORT_LIGHT_HEAD i32 (region.addr $D3DIM_VIEWPORT_LIGHT_HEAD 0))
+  (global $D3DIM_VIEWPORT_LIGHT_HEAD_SIZE i32 (region.size $D3DIM_VIEWPORT_LIGHT_HEAD))
 
   (func $d3dim_viewport_light_head_addr (param $this i32) (result i32)
     (i32.add (global.get $D3DIM_VIEWPORT_LIGHT_HEAD)

@@ -14,13 +14,14 @@
 // RPC region was not declared in the WAT at all.
 
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
 const RPC = require('../lib/guest-rpc.js');
 const MEM_UTILS = require('../lib/mem-utils.js');
 
-const SRC = path.join(__dirname, '..', 'src', '01-header.wat');
-const source = fs.readFileSync(SRC, 'utf8');
+// The mirrors these checks read are symbolic since wave 3 — a literal mirror
+// pins its region — so they are resolved through tools/wat-globals.js, which
+// understands both spellings, instead of a regex for `i32.const` that would
+// find nothing and report an empty map as green.
+const WAT_GLOBALS = require('../tools/wat-globals.js').collect();
 
 let passed = 0, failed = 0;
 function check(ok, label, detail) {
@@ -29,10 +30,9 @@ function check(ok, label, detail) {
 }
 
 function watGlobal(name) {
-  const re = new RegExp(`\\(global\\s+\\$${name}\\s+i32\\s+\\(i32\\.const\\s+([^)]+)\\)\\)`);
-  const m = source.match(re);
-  assert(m, `src/01-header.wat has no (global $${name} i32 ...)`);
-  return Number.parseInt(m[1].trim(), m[1].trim().startsWith('0x') ? 16 : 10) >>> 0;
+  const g = WAT_GLOBALS.get(name);
+  assert(g, `src/ has no (global $${name} i32 ...)`);
+  return g.value >>> 0;
 }
 
 console.log('guest-rpc region vs the WAT memory map\n');

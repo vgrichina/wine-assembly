@@ -73,8 +73,8 @@
   ;; (bit 0) and the historically divergent generic COPY/AVG experiment gate
   ;; (bit 1) in shared memory so every decoder sees the same value. Production
   ;; only enables bit 0; bit 1 exists for focused semantic/benchmark A/Bs.
-  (global $LOOP_PROCESS_STATE i32 (i32.const 0x07F0CEE0))
-  (global $LOOP_PROCESS_STATE_SIZE i32 (i32.const 0x00000004))
+  (global $LOOP_PROCESS_STATE i32 (region.addr $LOOP_PROCESS_STATE 0))
+  (global $LOOP_PROCESS_STATE_SIZE i32 (region.size $LOOP_PROCESS_STATE))
   (func $loop_copy_emit_get (result i32)
     (i32.and (i32.atomic.load (global.get $LOOP_PROCESS_STATE)) (i32.const 1)))
   (func $loop_copy_emit_set (param $flag i32)

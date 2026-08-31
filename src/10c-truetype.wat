@@ -3367,8 +3367,8 @@
   ;; pointers means inserting a face never renumbers an address, which is the
   ;; failure mode tools/data_offsets.js exists to catch.
 
-  (global $TT_SUBST_TABLE i32 (i32.const 0x07F0B400))
-  (global $TT_SUBST_TABLE_SIZE i32 (i32.const 0x00000800))
+  (global $TT_SUBST_TABLE i32 (region.addr $TT_SUBST_TABLE 0))
+  (global $TT_SUBST_TABLE_SIZE i32 (region.size $TT_SUBST_TABLE))
 
   (data (region.addr $TT_SUBST_TABLE 0)
     "Arial\00"
@@ -3416,8 +3416,8 @@
   ;; Win98 machine without them installed did not list them either. It is also
   ;; not academic: TetriNET's Delphi runtime enumerates fonts at startup and
   ;; crashes later, mid-paint, when this list grows by even one entry.
-  (global $TT_SUBST_ALIAS_TABLE i32 (i32.const 0x07F0BC00))
-  (global $TT_SUBST_ALIAS_TABLE_SIZE i32 (i32.const 0x00000300))
+  (global $TT_SUBST_ALIAS_TABLE i32 (region.addr $TT_SUBST_ALIAS_TABLE 0))
+  (global $TT_SUBST_ALIAS_TABLE_SIZE i32 (region.size $TT_SUBST_ALIAS_TABLE))
 
   (data (region.addr $TT_SUBST_ALIAS_TABLE 0)
     "Verdana\00"

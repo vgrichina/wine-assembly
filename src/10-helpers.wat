@@ -1273,8 +1273,8 @@
   ;; Keep this mutable staging area out of the low static-string block. The old
   ;; 0x300 buffer overwrote names and labels through 0x3C7 when a long installer
   ;; command line was supplied, including the optional uxtheme.dll name.
-  (global $EXTRA_CMDLINE_BUFFER i32 (i32.const 0x07F20200))
-  (global $EXTRA_CMDLINE_BUFFER_SIZE i32 (i32.const 0x00000100))
+  (global $EXTRA_CMDLINE_BUFFER i32 (region.addr $EXTRA_CMDLINE_BUFFER 0))
+  (global $EXTRA_CMDLINE_BUFFER_SIZE i32 (region.size $EXTRA_CMDLINE_BUFFER))
   (global $extra_cmdline_len (mut i32) (i32.const 0))
   (func (export "set_extra_cmdline") (param $waddr i32) (param $len i32)
     (local $i i32)

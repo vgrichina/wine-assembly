@@ -48,26 +48,27 @@ function dataLength(literal) {
 
 function collect() {
   const regions = [];
+
+  // The regions themselves come from the placed layout, not from a scan of the
+  // globals. Since wave 3 an allocated region has no base to scan for — the
+  // allocator chooses it — and the mirrors that used to carry one are symbolic.
+  // `region-layout.js` asks the compiler where everything landed, so this tool
+  // and the shipped wasm cannot disagree about the map.
+  const { layout } = require('./region-layout.js');
+  const placed = layout();
+  for (const r of placed.regions) {
+    if (r.kind === 'span') continue;
+    regions.push({ name: r.name.replace(/^\$/, ''), start: r.base, size: r.size,
+                   file: r.owner || 'src/00-regions.wat', line: 0, kind: r.kind });
+  }
+
+  // Data segments still come from a scan, and that is the point of keeping one:
+  // a segment written at a raw `(i32.const 0x…)` belongs to no region, which is
+  // exactly what this tool exists to surface.
   for (const file of fs.readdirSync(SRC).sort()) {
     if (!file.endsWith('.wat')) continue;
     const text = fs.readFileSync(path.join(SRC, file), 'utf8');
     const lines = text.split('\n');
-
-    // Address globals, and their _SIZE partners wherever they are declared.
-    const addrs = new Map();
-    const sizes = new Map();
-    lines.forEach((line, i) => {
-      const m = /\(global \$([A-Za-z0-9_]+)\s+i32\s+\(i32\.const\s+(0x[0-9a-fA-F]+|\d+)\)/.exec(line);
-      if (!m) return;
-      const [, name, value] = m;
-      const v = Number(value);
-      if (/_SIZE$/.test(name)) sizes.set(name.replace(/_SIZE$/, ''), v);
-      else if (v >= 0x100 && v < 0x08000000) addrs.set(name, { v, file, line: i + 1 });
-    });
-    for (const [name, at] of addrs) {
-      regions.push({ name, start: at.v, size: sizes.get(name) ?? null,
-                     file: at.file, line: at.line, kind: 'global' });
-    }
 
     // Data segments.
     lines.forEach((line, i) => {
