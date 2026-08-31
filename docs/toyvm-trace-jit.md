@@ -173,6 +173,64 @@ ns move between runs at that load; the min-of-7 interleaved ratio is what holds.
 **This is a lead, not a corpus number.** The trace is 3 ops long, and finding
 even one benchable program took a scan — see the selection trap below.
 
+### Bench the core ten before the corpus
+
+A 199-program sweep reports a geomean, and a geomean over the programs that
+happened to work hides how few that was. Running the **core ten** instead —
+the set picked so that no code path goes uncovered — asked a blunter question:
+*how many of them can this tool measure at all?*
+
+**One.** And that one on a single-op trace. Every tier number this page quotes
+rested on `daretro.exe` alone. Four separate causes, none of them in the
+compiler:
+
+| | before | now |
+|---|---|---|
+| benchable | 1 | 2 |
+| `unfoldable` (fused handler) | 2 | 0 |
+| `mismatch` | 5 | 4 |
+| `padding` | 3 | 3 |
+| `no-samples` | 1 | 1 |
+
+What moved, and what each was:
+
+1. **`foldOperands` refused every fused handler** — the hottest shape in the
+   corpus. See the section above; DTM2 and ACCIDENT were lost to it.
+2. **Traces with an exit that cannot fall through.** A `ret`, a `call_far`, a
+   `jmp_m16`: tier 0 *follows* it and goes on executing other blocks while
+   tiers 1–3 have nothing to follow and re-run the body. DTM2's SP came out
+   20000 pops from the rest. `trimExit` drops such an exit in every arm at once.
+3. **No terminator at all.** `straightLineProgram` only ended the arena when the
+   trace ended in a `jmp`; otherwise tier 0 ran off the end into unrelated code.
+   The terminator is laid down *first* now, which also gives a trailing branch
+   somewhere to fall through to — repointing it at the arena base instead made a
+   self-loop that read as an **18.5x speedup**, which is how it was found.
+4. **Branch edges located by name regex.** `args === 4` plus a list of Jcc names
+   misses every fused and traced twin (`cmp_rm8_jz_t` has five operands and a
+   name no entry is a prefix of). `TAKEN_AT` is emit.js's own bookkeeping for
+   this and cannot drift from the handler table.
+5. **The arms ran on a different machine.** Only `STATE` was copied across, so
+   the generated modules sat at every default: 8086 reserved flag bits, a
+   real-mode address mask, empty descriptor tables. That is one bit of the flags
+   word — `0xF246` against `0x7246` — with nothing to say which field moved.
+   `MACHINE_STATE` is now shared out of `emit.js` so both modules declare the
+   same list, and is seeded *before* the guest state, because a segment setter
+   resolves its shadow base through the descriptor tables.
+
+DTM2 agreeing is worth more than the count: it is the first program with a
+**fused branch** in its trace to match tier 0, which is the positive check that
+the two-segment operand walk is right. The dumped body shows all five operands
+landing exactly where it predicts.
+
+**Still open.** Four programs mismatch. ACCIDENT and CONTAGIO exit by
+`call_far`/`jmp_m16` and are trimmed but still diverge; CONTAGIO agrees at 500
+iterations and not at 20000, so its divergence *accumulates*. B-STEEL and BRW
+both stop on `bad-handler` — B-STEEL differs only in `ax` and the flags with
+guest memory identical, on a six-op VGA DAC palette loop. Ports were the first
+suspect and are not it: tier 0 is a default `makeVm` and the arms replicate
+those defaults exactly (a bug of precisely that kind was fixed here before).
+Three more are `padding` and one has no samples.
+
 ### The corpus sweep: what it settles and what it does not
 
 `sweep-dos.js --dir=/tmp/demos --variants=tailcall`, all 199 programs.
