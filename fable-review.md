@@ -52,7 +52,7 @@ model is one lock across both backends.
 | Handler table | 437 | **442** | H439 fnstsw/test/jcc, H440 rgb565 colour-key, H441 MW3 grid filter |
 | `api_table.json` | 3,012 | **3,071** | 59 new, all with `nargs` |
 | `crash_unimplemented` sites | 98 | **137** | D3D9 flip + new DX rows |
-| Silent-handler ratchet pin | — | **524 broad** (was 315 exact-shape) | see §P3-3.4 |
+| Silent-handler ratchet pin | — | **514 broad** (was 315 exact-shape) | see §P3-3.4 |
 | Tests / unlisted | 631 / 48 | **677 / 0** | gate in `build.sh:25` |
 | SKIP accounting | — | **exit 77, separate total** | §P3-3.5 |
 | `test/run.js` / `host.js` / `index.html` | 8,612 / 2,553 / 2,324 | 8,672 / 2,553 / **2,477** | index regrew |
@@ -92,7 +92,7 @@ hour.
 | 8 | symbolic handler/api ids | OPEN, grew | 371 bare literals in `07-decoder.wat` (+37 in `07b`), H440/H441 added as bare `:666,:706`; stale "handler 422/424" comments still at `07-decoder.wat:50,152,416,2132` and `13-exports.wat:3037,3045` (422/424 are now `$th_mmx_rr/_mr`); `0xCACA0010` hand-stored `09a8:985,1018` |
 | 9 | app-literal gate / `copySuperops` | PARTIAL | MW3 VAs are out of the decoder (byte-hash predicates, §P3-3.9); `browser-shell.js:566` honors the flag; **`test/run.js --app=mw3` still does not** (only `--copy-superops`, `:188,4035,7429`); no allowlist tool |
 | 10 | one globals table / hwnd base / `yr===9` | PARTIAL | `lib/worker-imports.js` exists but is a *ctx-key* list, not the WASM-global table; setter sets still diverge (§P3-3.3); hwnd base still two formulas (`thread-manager.js:416-418` vs `:1040`); duplicate `yr === 9` moved to `thread-manager.js:2276-2287` / `:2303-2309` (second still unreachable) |
-| 11 | silent stubs | PARTIAL | DONE: WaitMessage `09a:13588-13600` (`5237ac44`), ReleaseMutex `09a:12056-12071` (`1e76e8ab`), HeapCreate per-call `09a:2123`, CreateConsoleScreenBuffer `09a7:2914`, CreateIconFromResourceEx `09a:11456`, DirectDrawEnumerateA CACA `09a8:1043`, EnumDisplayModes `09a8:1833`. RegisterHotKey FIXED `2b27e407` (real registration list, modifier matching, WM_HOTKEY through the queue — `09a:11184-11238`). OPEN: hooks `09a7:488` / `09a:9348-9360`; DDE trio `09a:1188,1198,1245`; 12 DX enumerations returning 0 without a callback (`09a8:2410,5279,5357`…) — DirectPlayEnumerate[A] FIXED `0064c7fc`, pushing the real DPSPGUID_TCPIP provider through the guest callback (`09a7:2810-2905`), ratchet re-pinned in the same commit; 4 viewport lights in `09aa` |
+| 11 | silent stubs | PARTIAL | DONE: WaitMessage `09a:13588-13600` (`5237ac44`), ReleaseMutex `09a:12056-12071` (`1e76e8ab`), HeapCreate per-call `09a:2123`, CreateConsoleScreenBuffer `09a7:2914`, CreateIconFromResourceEx `09a:11456`, DirectDrawEnumerateA CACA `09a8:1043`, EnumDisplayModes `09a8:1833`. RegisterHotKey FIXED `2b27e407` (real registration list, modifier matching, WM_HOTKEY through the queue — `09a:11184-11238`). DirectPlayEnumerate[A] FIXED `0064c7fc`, pushing the real DPSPGUID_TCPIP provider through the guest callback. Viewport lights FIXED `14b75f42`: D3D v1-v3 now retain an ordered eight-light list, enforce ownership/capacity, AddRef/Release and enumerate HEAD/NEXT/TAIL; `LightElements` fails honestly with `E_NOTIMPL`; the ratchet fell 524→514 in the same commit. OPEN: hooks `09a7:488` / `09a:9348-9360`; DDE trio `09a:1188,1198,1245`; 12 DX enumerations returning 0 without a callback (`09a8:2410,5279,5357`…) |
 | 12 | dead code / tools / requires | PARTIAL | WAT dead list deleted (`71191bed`); `wat-func.js` still has no `--dead`; all 6 superseded tools present; 3 broken requires unchanged (`tools/trace-assert.js:6`, `render-desktop.js:9`, `test/call-func.js:10`); `win16-v86-compare.js:265` still greps `[CreateWindowEx` |
 | 13 | per-block counters / atomic gate | OPEN | `04-cache.wat:741,797`, `05-alu.wat:773`, `13-exports.wat:52-58` |
 | 14 | cached DataView / live-surface set | DONE | GL command decoding caches one memory view (`f4e5b79b`). DirectDraw now caches its view too, bootstraps the 4096-slot table once, then walks an allocation/free/traffic-fed live set; the common WAT DX allocator covers DirectDraw and D3D9, including high recycled slots (`test-dx-live-surface-index.js`) |
@@ -171,7 +171,7 @@ now validates absolute/relative inclusive rectangles, round-trips through
 viewport, and resizes the browser console client like the Win98 console.
 
 The code now closes both remaining gaps. The classifier (`:31-68`) inventories
-all 524 straight-line handlers with no call, control-flow branch, fail-loud
+all 514 straight-line handlers with no call, control-flow branch, fail-loud
 trap, or memory write and hashes each complete normalized body, rather than
 matching only `eax=const; esp+=N`. Thus the stateful-looking
 `SetFileApisToOEM/ANSI` escape is in the pin even though it touches a global;
@@ -492,7 +492,7 @@ still omits `emit-decoder.js`, and the committed bundle is still `6b015971`'s.
 The rest stands; two moved. The stub ratchet was subsequently re-pinned *in the
 same commit* as its removals repeatedly (`4a08c267`, `e3ff3e4c`, `2b27e407`,
 `0064c7fc`, `32590db9`, and the `SetConsoleWindowInfo` fix). Section 3.4 is now
-closed in code too: 524 broad bodies are hashed, replacement pin lines are
+closed in code too: 514 broad bodies are hashed, replacement pin lines are
 printed, and clean pin-only follow-up commits fail. The
 GL encoder's `?v=` now agrees between page and worker (`index.html:1367`,
 `guest-worker.js:27`, both `v=5`) — one of the four counters of 3.10. H441's
@@ -556,7 +556,7 @@ declarative 21-setter table in `lib/worker-imports.js` (MMX included, via
 `get_cpu_mmx`) applied identically by both spawn paths, with
 `test-worker-wasm-globals.js` diffing the backends — plus the
 `forwardGuestLogs` rename with CLI opt-in (`acc7334a`). 3.4: the ratchet
-classifier now hashes all 524 quiet bodies (any handler with no call, branch,
+classifier now hashes all 514 quiet bodies (any handler with no call, branch,
 trap or store), prints its replacement pin, and a clean-checkout audit rejects
 pin-only catch-up commits. 3.5: `SKIP` is a real protocol — exit 77 via a
 preloaded `test/skip-exit.js`, its own runner column, and
