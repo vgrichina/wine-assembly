@@ -16,6 +16,7 @@ const expectedLocalCandidates = new Map([
   ['heroes3_demo_installer', 'test/binaries/candidates/heroes-3-demo-installer/installer-engine/_ins5576._mp'],
   ['diablo2_demo', 'test/binaries/candidates/diablo-2-demo-installer/installed-extracted/diablo ii.exe'],
   ['diablo2_demo_installer', 'test/binaries/candidates/diablo-2-demo-installer/DiabloIIDemo.exe'],
+  ['gta2_demo', 'test/binaries/candidates/gta2-demo/installed/Program_Executable_Files/gta2.exe'],
   ['halflife_uplink', 'test/binaries/candidates/half-life-uplink-installer/installed/hldemo.exe'],
   ['halflife_uplink_installer', 'test/binaries/candidates/half-life-uplink-installer/hluplink.exe'],
 ]);
