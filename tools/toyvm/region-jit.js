@@ -66,7 +66,7 @@ const path = require('path');
 const { performance } = require('perf_hooks');
 const { runDos } = require('./run-dos');
 const { findHotTrace, readTrace, emitTier3 } = require('./trace-jit');
-const { HANDLERS, TAKEN_AT, prepareTables } = require('./emit');
+const { HANDLERS, TAKEN_AT, prepareTables, sexpAt } = require('./emit');
 const isa = require('./isa');
 
 function arg(name, d) {
@@ -276,6 +276,82 @@ function successorIps(ops) {
   return [...out];
 }
 
+// COMPILING THE BRANCH INSTEAD OF INTERPRETING IT.
+//
+// A branch handler exists to serve a threaded-code interpreter that does not
+// know where it is going: it publishes $gip, resolves the arena address, and
+// checks the budget and the self-patch flag, because the dispatcher after it
+// has no other way to find out. Inside a region every one of those answers is
+// already known at compile time -- and running the handler anyway, then reading
+// $gip BACK to decide whether to loop, is what made the first working region a
+// null. Counted on daretro's six-op body: 5 $steps loads, 3 $smc loads, 2 $gip
+// stores, 2 $ip stores, 2 $gip loads and 2 $halt loads per iteration, to
+// re-derive a destination the compiler wrote down.
+//
+// So the body is cut apart instead. After operand folding a conditional
+// branch's body is exactly `<operand sets> (if <cond> (then GO..) (else GO..))`
+// with the two destinations sitting in it as literals, which is enough to keep
+// the condition, throw both transfer protocols away, and emit a wasm branch.
+// Nothing is guessed: the guest ip of each arm is READ OUT of the arm.
+//
+// The two costs that remain are real and are paid once per iteration rather
+// than once per branch: the budget test, and publishing $gip on the way out.
+const GIP_SET = /\(global\.set \$gip \(i32\.const (\d+)\)\)/;
+
+// A body is only cut where both halves stand on their own. An ALU handler can
+// have an `(if` of its own long before the transfer -- cutting at the FIRST one
+// kept a prefix with unclosed parens and the module failed to assemble at
+// nesting depth 4, which is at least loud. This is the check that makes the
+// surgery safe rather than lucky.
+function balanced(s) {
+  let d = 0;
+  for (const c of s) {
+    if (c === '(') d++;
+    else if (c === ')') { d--; if (d < 0) return false; }
+  }
+  return d === 0;
+}
+
+function splitBranch(body) {
+  // Last `(if` first: the transfer is the tail of the body, and anything
+  // earlier belongs to the operation itself.
+  const at = body.lastIndexOf('(if ');
+  if (at < 0) return null;
+  if (!balanced(body.slice(0, at))) return null;
+  if (!balanced(body.slice(at))) return null;
+  let j = at + 4;
+  while (j < body.length && /\s/.test(body[j])) j++;
+  const cond = sexpAt(body, j);
+  if (cond === null) return null;
+  let k = j + cond.length;
+  while (k < body.length && /\s/.test(body[k])) k++;
+  const thenArm = body[k] === '(' ? sexpAt(body, k) : null;
+  if (thenArm === null) return null;
+  let m = k + thenArm.length;
+  while (m < body.length && /\s/.test(body[m])) m++;
+  const elseArm = body[m] === '(' ? sexpAt(body, m) : null;
+  if (elseArm === null) return null;
+  const thenIp = GIP_SET.exec(thenArm);
+  const elseIp = GIP_SET.exec(elseArm);
+  if (!thenIp || !elseIp) return null;
+  return { pre: body.slice(0, at), cond,
+    thenIp: Number(thenIp[1]), elseIp: Number(elseIp[1]) };
+}
+
+// The same surgery on an unconditional transfer, which is the shape a `jmp`
+// back to the loop head has. Its body is `<operands> (global.set $gip <lit>)
+// (if <resolve> ...)`: everything from the $gip set onwards is the protocol,
+// and everything before it is work the guest asked for -- which is why a
+// `call_rel`, whose push and shadow-stack record come first, survives this cut
+// with its frame intact.
+function splitJump(body) {
+  const m = GIP_SET.exec(body);
+  if (!m) return null;
+  if (/\(global\.set \$gip /.test(body.slice(m.index + m[0].length))) return null;
+  if (!balanced(body.slice(0, m.index)) || !balanced(body.slice(m.index))) return null;
+  return { pre: body.slice(0, m.index), ip: Number(m[1]) };
+}
+
 function buildRegion(ops, nexts, headIp, name) {
   prepareTables();
   // deadflags off: see the header. constprop and regfold are safe -- neither
@@ -296,6 +372,11 @@ function buildRegion(ops, nexts, headIp, name) {
   // calls, so without this test the region iterates on with `$steps` deep in the
   // negatives and the host never gets its turn back (measured: 37s in one
   // region, and the machine stopped in the wrong place).
+  // May the loop go round again? Everything the interpreter's own block
+  // boundary tests, in one place instead of once per branch: budget left, not
+  // halted, and no byte of compiled code patched this slice.
+  const okToLoop = `(i32.and (i32.gt_s (global.get $steps) (i32.const 0))`
+    + ` (i32.eqz (i32.or (global.get $halt) (global.get $smc))))`;
   const backEdge = `(br_if $again (i32.and (i32.and`
     + ` (i32.eq (global.get $gip) (i32.const ${headIp}))`
     + ` (i32.eqz (global.get $halt)))`
@@ -311,6 +392,36 @@ function buildRegion(ops, nexts, headIp, name) {
     if (branch) {
       parts.push(`(global.set $steps (i32.sub (global.get $steps) (i32.const ${pending})))`);
       pending = 0;
+    }
+    // The compiled form: keep the condition, drop both transfer protocols, and
+    // let wasm's own control flow carry the edges. `--no-lower` turns it off so
+    // the two can be measured against each other on the same region.
+    const lowered = (branch && !flag('no-lower')) ? splitBranch(t3.bodies3[i]) : null;
+    if (lowered) {
+      const cont = isLast ? headIp : nexts[i];
+      const act = (ip) => (ip === cont && !isLast ? ''
+        : ip === headIp ? `(if ${okToLoop} (then (br $again))`
+          + ` (else (global.set $gip (i32.const ${ip})) (br $out)))`
+          : `(global.set $gip (i32.const ${ip})) (br $out)`);
+      if (lowered.thenIp !== cont && lowered.elseIp !== cont && !isLast) {
+        return { declined: `${op.name} continues to ${cont} which is neither of its edges` };
+      }
+      parts.push(lowered.pre);
+      parts.push(`(if ${lowered.cond}\n  (then ${act(lowered.thenIp)})\n  (else ${act(lowered.elseIp)}))`);
+      if (lowered.thenIp !== cont && lowered.elseIp !== cont) exits += 2;
+      else exits++;
+      continue;
+    }
+    const jump = (branch && !flag('no-lower')) ? splitJump(t3.bodies3[i]) : null;
+    if (jump) {
+      const cont = isLast ? headIp : nexts[i];
+      if (jump.ip !== cont) return { declined: `${op.name} goes to ${jump.ip}, not ${cont}` };
+      parts.push(jump.pre);
+      if (jump.ip === headIp) {
+        parts.push(`(if ${okToLoop} (then (br $again))`
+          + ` (else (global.set $gip (i32.const ${jump.ip})) (br $out)))`);
+      }
+      continue;
     }
     parts.push(t3.bodies3[i]);
     if (!branch) continue;
