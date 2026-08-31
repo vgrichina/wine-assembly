@@ -3507,10 +3507,81 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; EnumAttachedSurfaces — no-op (return immediately)
+  ;; Enumerate the directly attached surface.  Our flip-chain model links one
+  ;; backbuffer from entry+8; explicit AddAttachedSurface calls retain the
+  ;; parent slot in DX_SURF_META, so scan for the first such direct child when
+  ;; there is no implicit backbuffer.  Win9x AddRefs each interface handed to
+  ;; the callback, which then owns that reference.
   (func $handle_IDirectDrawSurface_EnumAttachedSurfaces (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (local $parent i32) (local $child i32) (local $child_entry i32)
+    (local $desc i32) (local $ret_addr i32) (local $slot i32)
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DDERR_INVALIDPARAMS
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $parent (call $dx_from_this (local.get $arg0)))
+    (if (i32.ne (i32.load (local.get $parent)) (i32.const 2))
+      (then
+        (global.set $eax (i32.const 0x80070057))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $child (i32.load offset=8 (local.get $parent)))
+    (if (i32.eqz (local.get $child))
+      (then
+        (block $found (loop $scan
+          (br_if $found (i32.ge_u (local.get $slot) (global.get $DX_MAX)))
+          (local.set $child_entry
+            (i32.add (global.get $DX_OBJECTS)
+              (i32.shl (local.get $slot) (i32.const 5))))
+          (if (i32.and
+                (i32.eq (i32.load (local.get $child_entry)) (i32.const 2))
+                (i32.eq (i32.load offset=4 (call $dx_surf_meta_ptr (local.get $child_entry)))
+                  (i32.add (call $dx_slot_of (local.get $parent)) (i32.const 1))))
+            (then
+              (local.set $child
+                (call $w2g
+                  (i32.add (global.get $COM_WRAPPERS)
+                    (i32.shl (local.get $slot) (i32.const 3)))))
+              (br $found)))
+          (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+          (br $scan)))))
+    (if (local.get $child)
+      (then
+        (local.set $child_entry (call $dx_from_this (local.get $child)))
+        (if (i32.ne (i32.load (local.get $child_entry)) (i32.const 2))
+          (then (local.set $child (i32.const 0))))))
+    ;; No direct (or still-live) attachment is a successful empty enumeration.
+    (if (i32.eqz (local.get $child))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $desc (call $heap_alloc (i32.const 108)))
+    (if (i32.eqz (local.get $desc))
+      (then
+        (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $dx_fill_surface_desc (call $g2w (local.get $desc)) (local.get $child_entry))
+    (i32.store offset=4 (local.get $child_entry)
+      (i32.add (i32.load offset=4 (local.get $child_entry)) (i32.const 1)))
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ;; Saved caller return, then callback args right-to-left: context,
+    ;; DDSURFACEDESC, attached surface. CACA0007 finishes with DD_OK.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $arg1))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $desc))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $child))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $ddenum_ret_thunk))
+    (global.set $eip (local.get $arg2))
+    (global.set $steps (i32.const 0)))
 
   (func $handle_IDirectDrawSurface_EnumOverlayZOrders (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x80004001))
@@ -3709,11 +3780,32 @@
       (i32.store offset=4 (local.get $pf_wa) (i32.const 0x41))
       (i32.store offset=28 (local.get $pf_wa) (i32.const 0xFF000000)))))
 
+  ;; Fill the legacy 108-byte DDSURFACEDESC used by DirectDraw 1-3 surface
+  ;; methods and callbacks.  Keep one canonical layout so enumeration cannot
+  ;; drift from GetSurfaceDesc.
+  (func $dx_fill_surface_desc (param $wa i32) (param $entry i32)
+    (call $zero_memory (local.get $wa) (i32.const 108))
+    (i32.store (local.get $wa) (i32.const 108))
+    (i32.store offset=4 (local.get $wa) (i32.const 0x100F))
+    (i32.store offset=8 (local.get $wa) (i32.load16_u offset=14 (local.get $entry)))
+    (i32.store offset=12 (local.get $wa) (i32.load16_u offset=12 (local.get $entry)))
+    (i32.store offset=16 (local.get $wa) (i32.load16_u offset=18 (local.get $entry)))
+    (call $dx_fill_surface_pixel_format (i32.add (local.get $wa) (i32.const 72))
+      (local.get $entry))
+    (if (i32.and (i32.load offset=28 (local.get $entry)) (i32.const 1))
+      (then
+        (if (i32.load offset=8 (local.get $entry))
+          (then
+            (i32.store offset=4 (local.get $wa) (i32.const 0x102F))
+            (i32.store offset=20 (local.get $wa) (i32.const 1))))))
+    (i32.store offset=104 (local.get $wa)
+      (i32.load (call $dx_surf_meta_ptr (local.get $entry)))))
+
   ;; GetPixelFormat(this, lpDDPixelFormat)
   (func $handle_IDirectDrawSurface_GetPixelFormat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $bpp i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $bpp (global.get $dx_display_bpp))
+    (local.set $bpp (call $dx_display_bpp_get))
     (if (local.get $entry)
       (then (local.set $bpp (i32.and (i32.load (i32.add (local.get $entry) (i32.const 16))) (i32.const 0xFFFF)))))
     (if (i32.eqz (local.get $bpp)) (then (local.set $bpp (i32.const 16))))
@@ -3728,27 +3820,7 @@
     (local $entry i32) (local $wa i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $wa (call $g2w (local.get $arg1)))
-    (call $zero_memory (local.get $wa) (i32.const 108))
-    (i32.store (local.get $wa) (i32.const 108))
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x100F)) ;; DDSD_CAPS|HEIGHT|WIDTH|PITCH|PIXELFORMAT
-    (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.load16_u (i32.add (local.get $entry) (i32.const 14))))
-    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.load16_u (i32.add (local.get $entry) (i32.const 12))))
-    (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
-    (call $dx_fill_surface_pixel_format (i32.add (local.get $wa) (i32.const 72)) (local.get $entry))
-    ;; Return the caps recorded from the creation descriptor. Applications use
-    ;; these to decide whether a 3D render target really resides in video
-    ;; memory, so synthesizing a generic surface class here is not equivalent.
-    (if (i32.and (i32.load (i32.add (local.get $entry) (i32.const 28))) (i32.const 1))
-      (then
-        (if (i32.load (i32.add (local.get $entry) (i32.const 8)))
-          (then
-            ;; DDSD_BACKBUFFERCOUNT plus the one back buffer allocated and
-            ;; linked by CreateSurface for PRIMARY|FLIP|COMPLEX requests.
-            (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x102F))
-            (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 1))
-            ))))
-    (i32.store (i32.add (local.get $wa) (i32.const 104))
-      (i32.load (call $dx_surf_meta_ptr (local.get $entry))))
+    (call $dx_fill_surface_desc (local.get $wa) (local.get $entry))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 

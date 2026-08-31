@@ -78,6 +78,7 @@ UNIT=(
   test/test-vfs-host-files.js
   test/test-storage-registry.js
   test/test-registry-snapshot-diff.js
+  test/test-reg-enum-key-ex-wat.js
   test/test-vfs-export.js
   test/test-codepage-dbcs.js
   test/test-atom-table.js
