@@ -57,7 +57,12 @@ async function bootRenderHarness({
   const wasmBytes = await compileWat(async f => {
     const source = await fs.promises.readFile(path.join(SRC, f), 'utf-8');
     if (!extraWat || f !== '13-exports.wat') return source;
-    return source.replace(/\n\)\s*$/, `\n${extraWat}\n)\n`);
+    // Every src/*.wat fragment is self-balanced since b1c221d8 — the `(module`
+    // wrapper is added by tools/concat-wat.js / lib/compile-wat.js, not by
+    // 13-exports.wat. So extraWat is simply appended to the last fragment; the
+    // old form spliced it in front of a trailing `)` that no longer exists,
+    // which matched nothing and silently dropped every extraWat export.
+    return `${source}\n${extraWat}\n`;
   });
   const memory = suppliedMemory ||
     new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });

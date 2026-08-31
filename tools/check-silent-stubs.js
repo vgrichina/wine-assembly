@@ -74,8 +74,11 @@ const digest = crypto.createHash('sha256')
 // This is a ratchet, not approval of the old entries. Any addition or mutation
 // changes the digest and stops the build; deleting/fixing an entry deliberately
 // lowers the count and updates the digest after review.
-const EXPECTED_COUNT = 506;
-const EXPECTED_SHA256 = 'bd58e8c48f8977191cfa7c07ded44b8cf921db197fe63026cda58e2fefe49e2e';
+// 2026-08-31: 506 -> 505. Commit 34b4f08f ("Fix Win98 installer chain
+// launches") gave handle_CreateProcessA a real implementation, so it left the
+// quiet inventory. Ratchet only; nothing was added.
+const EXPECTED_COUNT = 505;
+const EXPECTED_SHA256 = '36862bb7d195921dd09919f0309c7e6ef50accf163acf93b082f90db298e3a95';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
