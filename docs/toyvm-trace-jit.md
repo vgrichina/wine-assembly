@@ -1698,3 +1698,61 @@ is the interaction between the region's install-time byte guard and the
 `covered` ranges `guardBytes` contributes — it silently skips a block whose
 span it cannot find, and a region whose code is only partly covered is invisible
 to the self-modify check that is supposed to retire it.
+
+## The region install had two layout dependences, and both are now gated
+
+`BMGLP.EXE` and `CARRIE.EXE` failed the same way and for two different reasons.
+Both are frame-identical under `--no-succ` (region installed, successor list
+withheld) *and* under `--succ-only` (list supplied, no region), and wrong only
+with both — so neither half is wrong on its own. `--succ-take=N` bisects the
+list down to the single address that tips each one.
+
+**BMGLP: a never-taken edge, pre-compiled into ciphertext.** Its culprit is
+successor 5, `0x281`, the fall-through of a `cmp_mi8_jnz` — and `--why` reports
+it was NEVER DECODED in the profiling run. The successor list exists so the
+decoder can walk out of a block whose body it never decodes, and the comment on
+it claimed over-approximating was free. It is not free on a program that
+decrypts itself: BMGLP takes 51158 self-modify breaks, and pre-compiling an
+address whose bytes are not code yet made the run report **338 fewer** breaks
+than the interpreter and draw a different picture. Two gates now: successors the
+profiling run never decoded are dropped (`--succ-unseen` restores them), and
+every remaining one carries the bytes it was decoded from so `compile.js` can
+skip any whose code has not been written yet, the same check the region's own
+guard already does. BMGLP is frame-identical with them in.
+
+**CARRIE: a region that could not lower its transfers.** Its culprit is
+successor 14, `0xa74` — a block the profiling run *did* decode, whose bytes at
+install time *do* match. Compiling it changes no guest semantics at all, and the
+two arms agree on everything a run can be counted by: **3840 region entries
+each, 1929 self-modify breaks each, 6 interrupts each**, 79 dispatches apart —
+and 52101 pixels different. (Which is its own proof, incidentally: 79 dispatches
+cannot repaint 52101 pixels, so no amount of phase can explain that frame.)
+
+What CARRIE's region has that the working ones do not is **eight transfers
+`splitBranch` could not lower**. Such a transfer keeps the interpreter's `GO`
+protocol inside the region's loop, and a `GO` carries an arena address from the
+profiling run. Resolving that address live rather than trusting the constant
+(`$jlook` of the `$gip` the `GO` has just published) changes CARRIE not at all —
+the `(br $out)` after it re-resolves `$ip` anyway — so the stale constant is not
+itself the mechanism. But the *dependence* is real and it is confined to exactly
+these regions: a fully lowered region has no edge that survives to install time,
+and DRAGON and ADDY_II report identical dispatch and handback counts with and
+without their regions for that reason. So a region with an unlowered transfer is
+now declined (`--allow-unlowered` overrides, `--no-lower` is exempt as a
+bisector), and so is one whose blocks cannot all be byte-guarded.
+
+### What that costs, and what it buys
+
+```
+                    no-loop  identical  no-samples  differs  frozen  phase  declined  gated
+after readTrace fix      83         81          23        6       0      3         -      3
++ phase noise floor      87         74          24        1       0      8         -      5
++ these two gates        87         19          24    >>0<<      0      2        64      3
+```
+
+**Zero wrong frames in 199 programs** — which is the bar — for 55 regions that
+had been measuring identical. They were not *known* correct: CARRIE measured
+identical at 6M dispatches and is wrong at 11M, so "identical at the census
+budget" was never proof. But the trade is steep and it names the next piece of
+work precisely: **lowering the transfers `splitBranch` declines has 55 regions
+waiting on it**, and `--why`'s decline histogram is the list.
