@@ -379,3 +379,53 @@ the two dispatch modes would cut a build's compile phase from ~4.0 s to ~3.35 s
 which was claimed by another agent while this was measured, and a parse cache
 shared between two modes is exactly the kind of change that needs the
 byte-identity gate run against it rather than a drive-by commit.
+
+## 7. The cross-mode parse cache: measured, not taken (2026-08-31, session `watx-internals`)
+
+Section 6 left one lead open — the two dispatch modes re-parse the same 11.29 MB,
+parse+scan is ~33% of a compile, so sharing the parsed tree should cut the compile
+phase by ~16%. Measured properly, **the shareable fraction is a third of that, and
+the thing it would share is not a tree.** Nothing was landed.
+
+The measurement is a `--cpu-prof` of one whole `tools/build-compile-wat.js` run
+(both modes, one process, 11.83 s sampled) rather than a wall-clock A/B, because
+this box sat at load 63 while it was taken and a profile **share** is a ratio
+inside one process — a loaded machine stretches every bucket equally, so the
+split survives what a timing comparison would not.
+
+| self time | | |
+|---|---|---|
+| 27.5% | `compileExpr` | emit |
+| 16.6% | `parseSource` | **per-function body** parse |
+| 7.8% | `expandForm` | macro expansion |
+| 7.6% | `recycleWatxTree` | returning body arrays to the pool |
+| 7.2% | `walk` | codegen |
+| 3.7% | `scanWatxFunctionHeader` | top-level |
+| 2.2% | `prepareStreamingModule` | top-level |
+| 2.0% / 1.9% | `scanWatxTypeForms` / `scanWatxTopLevelForms` | top-level |
+
+Rolled up: parse+scan is **35.0%**, confirming section 6's ~33%. But it splits
+into two halves that behave completely differently:
+
+- **9.8% — the top-level scan and function headers.** This is the only work the
+  two modes do identically, and it is the only thing a cross-mode cache could
+  avoid paying twice. Sharing it perfectly removes *one* of the two payments:
+  **≈4.9% of the compile phase**, against the item's 8% gate.
+- **24.8% — per-function body parse plus recycle.** Not shareable, and not
+  because nobody got around to it. In production streaming mode a body is never
+  in a module-wide tree at all: `loadFunctionBody` re-parses it from its byte
+  range on demand and `release()` calls `recycleWatxTree`, which sets
+  `form.length = 0` and pushes the arrays back into the parse context's pool.
+  That is a deliberate memory strategy — the same one `watx-snapshot` was
+  measuring RSS against on the same day — and caching bodies means abandoning it.
+
+And the 4.9% ceiling assumes the sharing itself is free, which it is not:
+`prepareStreamingModule` returns a **stateful object**, not a tree.
+`bindFunctionDeclarations` sets `fd.form = null`, clears `streamByHeader` and
+nulls `headerContext`; after one compile the object is spent. Reuse means making
+it reconstructible, which is a change to the two-pass streaming contract itself.
+
+**Verdict: an invasive change to the compiler's memory strategy for at most 4.9%
+of a build's compile phase, and realistically less.** Not taken. If it is ever
+revisited, the honest target is the 9.8% top-level slice alone — and the number
+to beat is 4.9%, not 16%.
