@@ -1038,6 +1038,57 @@ async function main() {
     + `  smc ${baseRun.smcBreaks || 0}/${jitRun.smcBreaks || 0}`
     + `  (baseline ${baseRun.frame} ${baseRun.pixels}px stop ${baseRun.cs.toString(16)}:${baseRun.ip.toString(16)}`
     + ` / region ${jitRun.frame} ${jitRun.pixels}px stop ${jitRun.cs.toString(16)}:${jitRun.ip.toString(16)})`);
+  // `--png=PREFIX` writes PREFIX-base.png and PREFIX-jit.png off the two arms
+  // that were just compared. A frame hash says THAT they differ; only the
+  // pictures say WHERE, which is the difference between "the loop wrote the
+  // wrong colour" and "the loop wrote the right colour in the wrong place".
+  // Feed the pair to tools/png-diff.js for the bounding box.
+  const pngPrefix = arg('png');
+  if (pngPrefix) {
+    const { writePng, writeConsolePng } = require('./run-dos');
+    for (const [tag, run] of [['base', baseRun], ['jit', jitRun]]) {
+      const rr = run.r;
+      const file = `${pngPrefix}-${tag}.png`;
+      if (rr.surface.text) writeConsolePng(file, rr.machine.con);
+      else writePng(file, rr.vm.mem, rr.machine.palette, rr.surface.geom);
+      console.log(`  wrote ${file}`);
+    }
+  }
+  // A DIFFERING FRAME AT A FIXED BUDGET IS NOT YET A DEFECT, AND NO NUMBER OF
+  // EXTRA BUDGETS SETTLES IT. The interpreter stops dispatch-exact; the region
+  // charges $steps in one lump per straight line, so it overshoots its last
+  // entry and the two arms end thousands of dispatches apart -- 13087 apart on
+  // COMPOVRS.EXE, whose changed pixels were then a 320x5 band, the ~1400 writes
+  // that delta buys. The delta is not even signed consistently across budgets
+  // (-3228 at 4M, +13087 at 8M), which is why re-confirming at more budgets
+  // cannot clear it.
+  //
+  // So re-run the INTERPRETER with a budget equal to the region arm's actual
+  // dispatch count. Both arms have then retired the same amount of guest work,
+  // and a frame that still differs is the region computing something else.
+  // ... and the re-run cannot land on that count either: the interpreter also
+  // stops only at a block boundary, so asking for 8054341 dispatches ran 8062431
+  // of them. There is no budget that samples two arms at the same guest instant.
+  //
+  // What CAN be measured is the phase noise floor. Run the interpreter a second
+  // time at the region's dispatch count and count the pixels the BASELINE moved
+  // by itself over that delta. That is how much of a picture this program
+  // repaints in the distance between the two stops. A baseline-vs-region
+  // difference no bigger than the baseline's own drift is phase; a difference
+  // far above it is the region computing something else.
+  if (!same && !flag('no-rematch') && baseRun.dispatched !== jitRun.dispatched) {
+    const { readFrame } = require('./run-dos');
+    const px = (run) => readFrame(run.r.vm.mem, run.r.surface.geom).pixels;
+    const nd = (a, b) => { let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++; return n; };
+    const matched = await once(exe, { ...o, budget: jitRun.dispatched }, {});
+    const [pb, pj, pm] = [px(baseRun), px(jitRun), px(matched)];
+    const drift = nd(pb, pm), gap = nd(pb, pj);
+    const phase = gap <= Math.max(drift, 1) * 2;
+    console.log(`  phase check: baseline drifts ${drift}px over the ${jitRun.dispatched - baseRun.dispatched}`
+      + ` dispatch gap; baseline vs region is ${gap}px`
+      + `  -> ${phase ? 'PHASE, not a defect' : '*** BEYOND THE NOISE FLOOR ***'}`);
+    if (phase) { process.exitCode = 6; return; }
+  }
   if (!same) process.exitCode = 4;
 }
 

@@ -72,6 +72,9 @@ function classify(code, out) {
   if (code === 4) return 'differs';
   if (code === 2) return /no samples/.test(out) ? 'no-samples' : 'no-loop';
   if (code === 3) return 'declined';
+  // exit 5 is the speed gate: a region WAS built, it just did not beat the
+  // interpreter, so it is a coverage/perf row and never a correctness one.
+  if (code === 5) return 'gated';
   if (code === null) return 'timeout';
   return 'crash';
 }
