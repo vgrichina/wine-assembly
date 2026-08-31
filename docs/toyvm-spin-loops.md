@@ -160,18 +160,79 @@ substitution is a single store into the arena at compile time. There is no trace
 recording, no guard, no deoptimisation path — the twin handler contains its own
 fallback, and it is the same two tests the block transfer already ran.
 
+## The obvious widening has no beneficiary, and that is measured
+
+The narrow rule looked like the place with headroom: a body of several
+*provably pure* ops rather than exactly one, on the back of a real purity
+property derived from emitted WAT the way `FLAG_EFFECTS` is. This page used to
+end by saying the census had to find such loops before that got built.
+
+It was built — `tools/toyvm/spin-census.js` — and the census says they are not
+there.
+
+For every block the compiler emitted, it walks the ops by `ARITY`, asks whether
+the last one is a branch back to the block's own head, and weights the answer
+by `$ip` samples so a shape is scored by *work* rather than by sites:
+
+```
+node tools/toyvm/spin-census.js --dir=/tmp/demos --dispatches=2m
+```
+
+| population | core ten, 8M each | whole corpus, 199 programs, 2M each |
+|---|---|---|
+| one-op self-loops (today's rule) | 6.4% of samples | 1.3% |
+| multi-op self-loops, any shape | 0.9% | 3.4% |
+| …body pure, flag-only closer | **0.0%** | **0.0%** |
+| …body pure, counting closer | 0.0% | 0.7% |
+
+**Not one multi-op self-loop in 199 programs has a pure body and a flag-only
+closer.** 93 distinct multi-op shapes exist in the core ten alone, and every one
+of them writes a register, stores, or touches a port — which is to say every one
+of them is a loop that *ends*. That is not a surprise in hindsight: a loop whose
+body changes nothing and whose branch reads only flags is a loop with nowhere to
+put a counter, and fusion already collapsed that shape to one op. The rule is
+narrow because the population is.
+
+So the purity property is not being built. The third row is a ceiling — a real
+analysis accepts fewer shapes than this heuristic, never more — and the ceiling
+is zero.
+
+Two things the tool had to get right before that number meant anything, both of
+which it got wrong first:
+
+- **The closer's own purity decides the class.** `nop -> nop -> loop32` scored as
+  a pure loop over nothing until `loop32`'s decrement of ECX was counted:
+  that loop terminates, and collapsing it with `(v % S) - S` would be wrong
+  rather than slow. Those now report separately as the fourth row.
+- **Purity is an allow-list.** A deny-list spelled `$out` does not match
+  `$port_out`, so a loop writing the VGA palette came back pure. Anything not
+  named as a known reader is impure, so the next helper nobody thought of fails
+  closed.
+
+One caveat on the first row: a collapsed spin loop retires almost no dispatches,
+so it draws almost no samples — RUNDEMO's loop is 57.7% of its dispatches in the
+table above and 0.0% here. The rows that matter for this question are the
+uncollapsed ones, which are sampled honestly.
+
 ## What is next in this direction
 
-The narrow eligibility rule is where the headroom is, and it should be widened
-by evidence rather than ambition:
-
-- **A loop body of several provably pure ops.** Needs a real purity property per
-  handler (writes nothing but the flag record), derived from the emitted WAT the
-  way `FLAG_EFFECTS` already is. The census does not yet say such loops exist in
-  the corpus — find them before building it.
+- **The loops worth folding are the ones that DO stop.** The same census, pointed
+  at multi-block inner loops instead of self-loops, finds memory-stream shapes
+  carrying **24.8% of the corpus** — an RLE sprite blit around `rep_movsb`,
+  ~140 sites of it, whose cost is the setup around the copy rather than the
+  copy. That is the production interpreter's `RLE_RUN`/`LUT_RUN` family, worth
+  +7% to +12% there. [toyvm-stream-loops.md](toyvm-stream-loops.md).
+- **The counted delay loop** is small and adjacent. A pure body behind a
+  `loop`/`loop32` is 0.7% of the corpus, and *all* of it is one program:
+  ALABTRO.COM spends 96.3% of its run in `nop -> nop -> loop32`. The trip count
+  is in CX, so the fold is a different one — charge `min(cx * S, budget)` and
+  zero CX — and three sites across 199 programs is not a general primitive. It
+  belongs to the counted case of the stream fold, not to this one.
 - **The port poll.** `in_8 -> cmp_ri8_jz` cannot be collapsed, but 2.15M crossings
   into JS for a retrace bit can be answered inside wasm. That is a host-interface
-  change, not a compiler one.
+  change, not a compiler one — and the census now shows the same
+  `in_8 -> test_ri8 -> jnz` shape recurring across the corpus, so it is the
+  broader of the two remaining leads.
 
 The next idea after this one — pinning the register a handler reaches, which
 the same twin-swap machinery makes almost free to express — was tried and did

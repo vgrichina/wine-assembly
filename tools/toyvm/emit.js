@@ -51,6 +51,17 @@ const TRACE = new Map();
 // either operand layout. See jccSpinArm() and docs/toyvm-spin-loops.md.
 const SPIN = new Map();
 
+// A branch handler index -> which operand word holds its TAKEN edge's guest ip.
+//
+// SPIN carries the same number, but only for the branches it is willing to
+// collapse: a bare Jcc, a bare `jmp`, or one fused with `cmp`/`test`. Asking
+// "does this block branch back to its own head" is a broader question than
+// "may this block be collapsed" -- a census has to be able to see the loops
+// that are NOT eligible, or it cannot say what widening the rule would buy.
+// So every branch is in here, eligible or not, including `loop` and the fused
+// pairs whose first half writes a register.
+const TAKEN_AT = new Map();
+
 // Lazy flags are on. This is the A/B switch for them, and it is a GENERATION-time
 // variable rather than a runtime one: the whole point of the change is that a
 // compare stores its inputs instead of computing six bits, so the two arms have
@@ -548,9 +559,17 @@ function genBranches() {
     const idx = h(`j${cc}`, 4, jccBody(expr));
     const tidx = h(`j${cc}_t`, 3, jccTraceBody(expr));
     TRACE.set(idx, tidx);
+    TAKEN_AT.set(idx, 1);
+    TAKEN_AT.set(tidx, 1);
     // A bare `jz $` is one dispatch per turn, and $next charges the one step.
-    SPIN.set(idx, { twin: h(`j${cc}_spin`, 4, jccSpinBody(expr, 1)), takenAt: 1 });
-    SPIN.set(tidx, { twin: h(`j${cc}_t_spin`, 3, jccSpinTraceBody(expr, 1)), takenAt: 1 });
+    const sidx = h(`j${cc}_spin`, 4, jccSpinBody(expr, 1));
+    const stidx = h(`j${cc}_t_spin`, 3, jccSpinTraceBody(expr, 1));
+    SPIN.set(idx, { twin: sidx, takenAt: 1 });
+    SPIN.set(tidx, { twin: stidx, takenAt: 1 });
+    // The collapsed twins too: a census reads the arena AFTER compilation, so
+    // a loop the compiler already collapsed must still be recognisable as one.
+    TAKEN_AT.set(sidx, 1);
+    TAKEN_AT.set(stidx, 1);
   }
 
   // Unconditional jump: one successor, so two operands.
@@ -562,29 +581,29 @@ function genBranches() {
   // is finished. The compiler only offers this twin for a block that is the
   // jump and nothing else, so a `jmp` back to the head from further down a
   // block -- a real loop with a body -- is not eligible and never sees it.
-  SPIN.set(jmpIdx, {
-    takenAt: 1,
-    twin: h('jmp_spin', 2, `
+  const jmpSpin = h('jmp_spin', 2, `
   ${ops(2)}
   ${jccSpinArm(1)}
-`),
-  });
+`);
+  SPIN.set(jmpIdx, { takenAt: 1, twin: jmpSpin });
+  TAKEN_AT.set(jmpIdx, 1);
+  TAKEN_AT.set(jmpSpin, 1);
 
   // LOOP decrements CX and branches on non-zero WITHOUT touching flags. It is
   // the shape every counted loop in real 16-bit code ends with, which is why
   // it is here rather than left to dec+jnz.
-  h('loop', 4, `
+  TAKEN_AT.set(h('loop', 4, `
   ${ops(4)}
   (if (call $cxdec)
     (then ${GO('(local.get $t0)', '(local.get $t1)')})
     (else ${GO('(local.get $t2)', '(local.get $t3)')}))
-`);
-  h('loop32', 4, `
+`), 1);
+  TAKEN_AT.set(h('loop32', 4, `
   ${ops(4)}
   (if (call $ecxdec)
     (then ${GO('(local.get $t0)', '(local.get $t1)')})
     (else ${GO('(local.get $t2)', '(local.get $t3)')}))
-`);
+`), 1);
 }
 
 // INC/DEC are generated for both widths and both operand kinds inside
@@ -2981,6 +3000,8 @@ function genFusedBranches() {
   ${jccTraceBody(half || CONDS[cc])}
 `);
       TRACE.set(idx, tidx);
+      TAKEN_AT.set(idx, a.args + 1);
+      TAKEN_AT.set(tidx, a.args + 1);
       // The spin twin, for the pairs whose first half discards its result.
       // `cmp` and `test` are the only two, and the census says they are also
       // the ones that actually close these loops: `cmp_rm8_jz` following itself
@@ -2988,22 +3009,20 @@ function genFusedBranches() {
       // here, not one -- the dispatch $next charges, plus the one the fused
       // handler charges for the op it swallowed.
       if (/^(cmp|test)_/.test(alu)) {
-        SPIN.set(idx, {
-          takenAt: a.args + 1,
-          twin: h(`${alu}_j${cc}_spin`, a.args + j.args, `
+        const sidx = h(`${alu}_j${cc}_spin`, a.args + j.args, `
   ${a.body}
   (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
   ${jccSpinBody(half || CONDS[cc], 2)}
-`),
-        });
-        SPIN.set(tidx, {
-          takenAt: a.args + 1,
-          twin: h(`${alu}_j${cc}_t_spin`, a.args + j.args - 1, `
+`);
+        const stidx = h(`${alu}_j${cc}_t_spin`, a.args + j.args - 1, `
   ${a.body}
   (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
   ${jccSpinTraceBody(half || CONDS[cc], 2)}
-`),
-        });
+`);
+        SPIN.set(idx, { takenAt: a.args + 1, twin: sidx });
+        SPIN.set(tidx, { takenAt: a.args + 1, twin: stidx });
+        TAKEN_AT.set(sidx, a.args + 1);
+        TAKEN_AT.set(stidx, a.args + 1);
       }
     }
   }
@@ -3542,6 +3561,7 @@ function buildHandlers(lazy, fuseCond) {
   const fuseBefore = [...FUSE.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
   const traceBefore = [...TRACE.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
   const spinBefore = [...SPIN.entries()].map(([k, v]) => `${k}:${v.twin}/${v.takenAt}`).sort().join(',');
+  const takenBefore = [...TAKEN_AT.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
   const specBefore = [...SPEC.entries()]
     .map(([k, v]) => `${k}:${v.operand}/${JSON.stringify(v.ops)}/${v.twins.join('.')}`).sort().join(',');
   LAZY = lazy;
@@ -3551,6 +3571,7 @@ function buildHandlers(lazy, fuseCond) {
   FUSE.clear();
   TRACE.clear();
   SPIN.clear();
+  TAKEN_AT.clear();
   NOFLAG.clear();
   SPEC.clear();
   // genShifts()/genDoubleShifts() append to this rather than returning, so a
@@ -3575,6 +3596,8 @@ function buildHandlers(lazy, fuseCond) {
   if (traceAfter !== traceBefore) throw new Error('the flag scheme changed the trace table');
   const spinAfter = [...SPIN.entries()].map(([k, v]) => `${k}:${v.twin}/${v.takenAt}`).sort().join(',');
   if (spinAfter !== spinBefore) throw new Error('the flag scheme changed the spin table');
+  const takenAfter = [...TAKEN_AT.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
+  if (takenAfter !== takenBefore) throw new Error('the flag scheme changed the taken-edge table');
   const specAfter = [...SPEC.entries()]
     .map(([k, v]) => `${k}:${v.operand}/${JSON.stringify(v.ops)}/${v.twins.join('.')}`).sort().join(',');
   if (specAfter !== specBefore) throw new Error('the flag scheme changed the register-spec table');
@@ -5542,6 +5565,10 @@ module.exports = {
   // instead of running it. The compiler swaps it in when the taken edge goes
   // back to the branch's own block head.
   SPIN,
+  // Every branch handler -> where its taken edge's guest ip sits in the operand
+  // list, eligible for collapse or not. tools/toyvm/spin-census.js reads it to
+  // find self-loop blocks the current rule declines.
+  TAKEN_AT,
   // A handler index -> the eight twins of it with the register index pinned to
   // a literal, plus which arena word holds that index and how to read it out.
   SPEC, applyExtract, enableRegSpec,
