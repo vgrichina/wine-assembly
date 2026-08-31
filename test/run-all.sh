@@ -61,6 +61,7 @@ UNIT=(
   test/test-bignum-mul.js
   test/test-mat4.js
   test/test-vfs.js
+  test/test-vfs-lazy-entry.js
   test/test-zip-mount.js
   test/test-flush-view-of-file.js
   test/test-heap-free-block-validation.js
@@ -267,6 +268,7 @@ UNIT=(
   test/test-getclassname-superclass.js
   test/test-global-alloc-reuse.js
   test/test-is-char-alpha.js
+  test/test-iso-mount.js
   test/test-iswindow-validity.js
   test/test-lcmapstring-wat.js
   test/test-locale-info-wat.js
