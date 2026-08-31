@@ -1221,3 +1221,24 @@ exits — but it **breaks DRAGON and ADDY_II**, because an unlowered transfer si
 inside the loop and the body keeps executing the ops after it. That is worth
 knowing before reaching for it again: the fix is to leave, not to poison the
 operand.
+
+## A compiled region's bytes were not marked as code
+
+`isa.CODE_BITMAP` is the whole self-modify detector: `$wr8` raises `$smc` only
+for a store into a byte the host marked compiled, and the host builds that
+bitmap from the `covered` ranges `compile.js` records as it decodes. The
+region-substitution branch never decoded the region's guest bytes — it writes
+the region's handler index as the block body and moves on — so those bytes were
+absent from `covered`, absent from the bitmap, and a guest store into them was
+invisible. `compile.js` now pushes each guard range into `covered` on that path.
+
+**It is a correctness argument with no demonstrated beneficiary.** `--no-region-code-bits`
+is the A/B switch, threaded through `dos-loop.js` and `run-dos.js`, and every
+program that has a region in this corpus reports byte-identical results both
+ways: rage `smc 27/4` and the same two frame hashes, ACCIDENT `smc 1/0`,
+CMA_SHRT `smc 1634/1634` and IDENTICAL, ADDY_II `smc 2/2` and IDENTICAL. So it
+does not explain ACCIDENT's blank frame, which was the hypothesis that produced
+it, and no program in the corpus writes into a region it is executing. It is
+kept because the hole is real and the fix is three lines, not because anything
+measured got better — and the flag is there so the next program that lands can
+be checked rather than assumed.

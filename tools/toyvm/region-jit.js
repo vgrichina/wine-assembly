@@ -923,6 +923,9 @@ async function main() {
     // walk covered. compile.js checks them before installing, so a program that
     // rewrites its own loop gets the decoder back instead of a stale region.
     regionBytes: new Map([[`${pick.cs}:${pick.headIp}`, guardBytes(rr, pick)]]),
+    // ...and those same bytes marked as compiled code, so a store into them
+    // still trips the self-modify check. `--no-region-code-bits` is the A/B.
+    regionCodeBits: !flag('no-region-code-bits'),
   };
 
   // HOW MANY TIMES DOES ONE ENTRY GO ROUND? This is the number that decides

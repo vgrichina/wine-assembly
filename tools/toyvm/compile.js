@@ -340,6 +340,23 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       // interpreter's 301). The region knows its own exit addresses, so it
       // supplies them.
       for (const ip of (opts.regionSucc && opts.regionSucc.get(regionKey)) || []) pending.push(ip);
+      // ...and the bytes have to be marked as COMPILED, which is a separate
+      // thing from having been checked. `covered` is what the host turns into
+      // isa.CODE_BITMAP, and that bitmap is the entire self-modify detector:
+      // $wr8 sets $smc only for a store into a byte somebody has compiled.
+      // Substituting a region skips the decode that would have recorded these
+      // ranges, so without this the region's own code is invisible to that
+      // check -- a program that patches an instruction inside the region gets
+      // no break, no invalidation, and the stale compiled body keeps running
+      // over code that no longer exists. The install-time guard cannot cover
+      // it: it is checked once, when the region is put in, and says nothing
+      // about a write that happens afterwards. That is ACCIDENT.EXE, which
+      // reports one self-modify break in the baseline and none with the region.
+      // `regionCodeBits: false` (region-jit's --no-region-code-bits) turns it
+      // off, so the two can be compared on one program.
+      if (opts.regionCodeBits !== false) {
+        for (const g of guard || []) covered.push([g.lin, g.lin + g.bytes.length]);
+      }
       continue;
     }
 

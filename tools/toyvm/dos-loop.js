@@ -55,7 +55,7 @@ class CodeCache {
                     wasmDecode = true, fuse = true, deadFlags = true, crossFlags = true,
                     traceBlocks = true, spinLoops = true, regSpec = false,
                     traceDeadFlags = null, regionAt = null, regionSucc = null,
-                    regionBytes = null } = {}) {
+                    regionBytes = null, regionCodeBits = true } = {}) {
     // Watchpoints, as [lo, hi] linear byte ranges. They ride the CODE_BITMAP
     // rather than adding a range test to $wr8, because $wr8 is on the hot path
     // of every single store the guest makes and a watch that is off must cost
@@ -118,6 +118,10 @@ class CodeCache {
     // The guest bytes each region was compiled from. compile.js refuses to
     // install one whose code has been rewritten underneath it.
     this.regionBytes = regionBytes;
+    // Whether an installed region's guest bytes are marked as compiled code.
+    // They must be, or a store into them is invisible to the self-modify check
+    // -- see the note at the substitution in compile.js. False is the bisector.
+    this.regionCodeBits = regionCodeBits;
     this.deadFlagsDropped = 0;
     this.noCache = noCache;
     this.regions = new Map();          // cs -> [prog]
@@ -326,6 +330,7 @@ class CodeCache {
       regionAt: this.regionAt,
       regionSucc: this.regionSucc,
       regionBytes: this.regionBytes,
+      regionCodeBits: this.regionCodeBits,
       regionBase: vm.regionBase,
     });
     this.deadFlagsDropped += prog.deadFlags || 0;
@@ -443,7 +448,8 @@ class DosSession {
       { noCache, smcFlush, watch, wasmDecode, fuse, deadFlags, crossFlags,
         traceBlocks, spinLoops, regSpec, traceDeadFlags,
         regionAt: opts.regionAt || null, regionSucc: opts.regionSucc || null,
-        regionBytes: opts.regionBytes || null });
+        regionBytes: opts.regionBytes || null,
+        regionCodeBits: opts.regionCodeBits !== false });
 
     this.dispatched = 0;
     this.handbacks = 0;
