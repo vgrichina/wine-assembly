@@ -709,3 +709,62 @@ neither. Not touched here — that file is outside this change.
 New manifest digest:
 
   a5c40a9c52e4d3e1024c8e2932f6dd3089192d9cacaf6fb947e40fc80cf71f0b
+
+## 2026-08-31 — a span cannot be storage (round-8 review, HIGH)
+
+External review, with a reproducer that compiled:
+
+```wat
+(memory 1)
+(region.declare-span $S (base 0x1000) (size 0x100) (owner "test"))
+(region.declare-fixed $A (base 0x1000) (size 0x100))
+(data (region.addr $S 0) "X")
+```
+
+A span joins the same name→base map every other head does — deliberately, since
+that is what makes `(region.end $DIRECT_WINDOW)` work — but `region.addr`
+resolved against it without ever asking what kind of region it was, and the data
+scan accepted the result as a segment offset. So bytes could be stored through
+a declaration that **nothing checks for overlap**, and `$A` above sits on top of
+them in silence. Transparency is the head's entire purpose and this was
+transparency leaking into a place it was never meant to reach: the answer to
+"what stops someone declaring their new table as a span?" was review discipline,
+which is not an answer.
+
+**`region.addr` is now refused on a span, in every position and at every
+offset.** A span has no interior of its own — the bytes between its base and its
+end belong to the regions it covers, which have their own names, their own
+extents and, unlike the span, their own overlap check. An address computed off a
+span is therefore an address in a range nothing polices.
+
+Rejected at offset **zero** as well, not only nonzero. The alternative — allow
+`(region.addr $S 0)` as a lower-bound spelling and reject the rest — was
+considered and dropped: `(region.addr $S 0)` and a bare `$S` are the same
+number, so permitting it buys no expressiveness whatever, and it costs a rule
+with a boundary that somebody then has to remember. A boundary at zero is
+exactly the sort that gets widened later by one reasonable-sounding exception.
+
+Nothing a limit legitimately needs was lost, which is what makes this a rule
+rather than a retreat: `$S` is the lower bound, `(region.end $S)` the upper
+bound, and `(region.size $S)` the width for a `lt_u (sub x base) size` range
+test. `src/03-registers.wat` uses only `region.end`, so the real tree is
+unaffected.
+
+Two diagnostics, not one, because the mistakes are different. A data segment
+anchored to a span gets its own message naming the actual error — bytes stored
+in a limit, in a range any region may later be declared on top of — instead of
+inheriting the general "a span has no interior" one. Bytes in a module are the
+least ambiguous evidence that somebody meant storage.
+
+`test/watx-compiler-regions.test.js` 119 → **125**: `region.addr` into a span at
+a nonzero offset and at zero, a data segment anchored to a span, the review's
+reproducer verbatim, and a positive check that the three-way range test still
+compiles. All 18 `watx-compiler-*` suites green, `test/test-watx-matrix.js`
+48/48. Byte-identical no-op on the real tree in both modes: the same working
+tree built with HEAD's `compiler-codegen.js` and with this one gives
+`aff985b4c0dcac92…` / `53530d46d34ccda6…`, and the `03-registers.wat`
+conversion re-verifies `IDENTICAL` under the paired HEAD-vs-HEAD+file oracle.
+
+New manifest digest:
+
+  4db2a8f0b64e9ffe4af6372dc9d5c65af2b1f2619de8bf1b92d5ffe762ecd469

@@ -327,16 +327,17 @@ const SPAN = '(region.declare-span $WINDOW (base 0x0) (end 0x8000) ' +
 {
   // The point of the head: the literal goes away. `(region.end $WINDOW)` is the
   // 0x8000000 that `$g2w` compares against, and it is one i32.const.
+  // The three spellings a LIMIT needs, and the only three a span has: the lower
+  // bound, the upper bound, and the width for a `lt_u (sub x base) size` range
+  // test. src/03-registers.wat uses the second.
   const e = run(`${SPAN}
 (func $base (result i32) (effects heap) $WINDOW)
 (func $end (result i32) (effects heap) (region.end $WINDOW))
 (func $size (result i32) (effects heap) (region.size $WINDOW))
-(func $mid (result i32) (effects heap) (region.addr $WINDOW 0x40))
-(wasm-export "base" $base) (wasm-export "end" $end)
-(wasm-export "size" $size) (wasm-export "mid" $mid)`);
+(wasm-export "base" $base) (wasm-export "end" $end) (wasm-export "size" $size)`);
   ck('a span symbol resolves like a fixed region\'s',
-    e.base() === 0 && e.end() === 0x8000 && e.size() === 0x8000 && e.mid() === 0x40,
-    [e.base(), e.end(), e.size(), e.mid()]);
+    e.base() === 0 && e.end() === 0x8000 && e.size() === 0x8000,
+    [e.base(), e.end(), e.size()]);
 }
 {
   // Identity: like every other declaration head, a span emits nothing.
@@ -411,11 +412,51 @@ mustFail('a span with a non-integer extent',
   `(region.declare-span $W (base 0x0) (size "big") (owner "x"))
    (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
   'is not an integer literal');
-mustFail('region.addr past a span\'s extent',
+// A span must not become storage — the round-8 review finding. Transparency is
+// the head's whole purpose, and it means nothing checks a span's extent for
+// overlap; so anything that ADDRESSES a byte inside one is a reference into a
+// range another region may later be declared straight on top of. "What stops
+// someone declaring their new table as a span?" has to be the compiler, not
+// review discipline. `region.addr` is therefore refused on a span at EVERY
+// offset, zero included: `(region.addr $S 0)` and a bare `$S` are the same
+// number, so allowing the zero case buys nothing and costs a boundary rule.
+mustFail('region.addr into a span (nonzero offset)',
   `${SPAN}
-   (func $f (result i32) (effects heap) (region.addr $WINDOW 0x8000))
+   (func $f (result i32) (effects heap) (region.addr $WINDOW 0x40))
    (wasm-export "f" $f)`,
-  "runs past the region's");
+  'is a span');
+mustFail('region.addr into a span at offset ZERO',
+  `${SPAN}
+   (func $f (result i32) (effects heap) (region.addr $WINDOW 0))
+   (wasm-export "f" $f)`,
+  'is a span');
+mustFail('an active data segment anchored to a span',
+  `${SPAN}
+   (data (region.addr $WINDOW 0x40) "X")
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'not storage');
+{
+  // The review's reproducer, whole: a span declared over an existing region,
+  // with bytes stored through it. Both halves are wrong — the storage AND the
+  // silent coexistence with $A — and the second is only invisible because the
+  // first was allowed, so refusing the first is what closes it.
+  const r = build(`
+(region.declare-span $S (base 0x1000) (size 0x100) (owner "test"))
+(region.declare-fixed $A (base 0x1000) (size 0x100))
+(data (region.addr $S 0) "X")
+(func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`);
+  ck('the round-8 span-as-storage reproducer no longer compiles', r.success === false, r.error);
+}
+{
+  // …and the legitimate uses are untouched by the rejection, which is the
+  // property that makes it a safe rule rather than a retreat from the feature.
+  const r = build(`${SPAN}
+(func $f (result i32) (effects heap)
+  (i32.and (i32.lt_u (i32.const 4) (region.end $WINDOW))
+           (i32.lt_u (i32.sub (i32.const 4) $WINDOW) (region.size $WINDOW))))
+(wasm-export "f" $f)`);
+  ck('a span still spells a range test three ways', r.success === true, r.error);
+}
 // The clauses a span REFUSES, one per clause, because each one would smuggle a
 // property back in that a transparent range cannot honestly have.
 for (const [label, clause] of [

@@ -1320,6 +1320,29 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         if (expr.length !== 3) throw loc8(`region.end ${rname} takes no operand besides the region`);
         return region.base + region.size;
       }
+      // `region.addr` names a byte INSIDE a region, and a span has no inside of
+      // its own: the bytes between its base and its end belong to the regions it
+      // covers, which have their own names, their own extents and — unlike the
+      // span — their own overlap check. So an address computed off a span is an
+      // address in a range nothing polices, which is the one thing transparency
+      // must not be allowed to buy.
+      //
+      // Rejected for ANY offset, zero included, rather than only for a nonzero
+      // one. `(region.addr $S 0)` and a bare `$S` are the same number, so
+      // permitting the zero case buys no expressiveness at all and costs a rule
+      // with a boundary — and a boundary at zero is exactly the sort that gets
+      // widened by one reasonable-sounding exception later. The three spellings
+      // a limit actually needs are all still here: `$S` is the lower bound,
+      // `(region.end $S)` the upper, `(region.size $S)` the width for a
+      // `lt_u (sub x base) size` range test. src/03-registers.wat uses only the
+      // second.
+      if (region.kind === 'span') {
+        throw loc8(`region.addr ${rname}: ${rname} is a span — a named address LIMIT, not ` +
+          `storage — so it has no interior to address; the bytes inside it belong to the ` +
+          `regions it covers. Use ${rname} for its lower bound, (region.end ${rname}) for ` +
+          `its upper bound, or (region.size ${rname}) for its width; if these bytes are ` +
+          `really yours, declare a region for them so the overlap check can see it`);
+      }
       if (expr.length < 4) throw loc8(`region.addr ${rname}: expected a constant offset operand`);
       const rawOffset = V(expr[3]);
       let offset;
@@ -1397,6 +1420,23 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     }
     if (!regionRelative && (!Array.isArray(offsetForm) || offsetHead !== 'i32.const')) {
       throw dataErr('Active data requires an i32.const offset or a (region.addr $R OFF) offset');
+    }
+    // A segment anchored to a SPAN is the sharpest form of the span-as-storage
+    // mistake, so it gets its own diagnostic rather than inheriting the generic
+    // "a span has no interior" one from regionConstValue below. Bytes in a
+    // module are the least ambiguous evidence that somebody meant storage, and
+    // a span is the one declaration head whose extent no overlap check covers —
+    // so this segment would sit in a range that another region can be declared
+    // straight on top of, silently, forever.
+    if (regionRelative) {
+      const anchor = regions.get(V(offsetForm[2]));
+      if (anchor && anchor.kind === 'span') {
+        throw dataErr(`(data (region.addr ${anchor.name} …) …): ${anchor.name} is a span — a ` +
+          `named address LIMIT, not storage — and nothing checks a span for overlap, so these ` +
+          `bytes would sit in a range any region may later be declared on top of. Declare a ` +
+          `region for them (it may live (within ${anchor.name})'s extent) and anchor the ` +
+          `segment to that`);
+      }
     }
     const bytes = [];
     for (; i < (form.length - 1); i++) {
