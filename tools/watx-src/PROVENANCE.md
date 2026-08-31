@@ -117,6 +117,14 @@ A list of hashes catches an edit to a vendored file. It does not catch editing
 a compiler file *and* its recorded hash together, which is the change most
 worth explaining and the one that would otherwise leave no trace.
 
+It also does not say what the list must *contain*. A shortened manifest can be
+re-sealed as easily as a correct one, and the result — a file quietly no longer
+watched — reads as green. So the required set of paths is hard-coded in
+`REQUIRED_FILES` in `tools/check-watx-provenance.js`, and a normal verify fails
+unless the manifest is exactly that set. Vendoring or dropping a file has to
+edit that array in the same commit, which puts the coverage change in the diff
+instead of inside a block of hex nobody reads line by line.
+
 `manifest-sha256` is the digest of the `sha256` block above; the CHANGELOG entry
 for each change must quote it verbatim, and `changelog-sha256` pins the
 CHANGELOG bytes that did so. Every link is checked on a normal verify, so the
@@ -127,5 +135,5 @@ CHANGELOG already names the new digest.
 
 ```seal
 manifest-sha256   b8dc6490e2fbb757fb08f6acef0c0f860eb549e809003950804afc96ae893256
-changelog-sha256  35cfe0ab87317600148af21dbd197390548ee301a5d442b6a857de3929eb4ebb
+changelog-sha256  e63dcc3a915b71af5c4d77312cadf49950486c62c363e06e94f5db2b5792d100
 ```

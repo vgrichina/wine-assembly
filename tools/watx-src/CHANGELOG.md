@@ -37,6 +37,8 @@ Manifest digest: `b8dc6490e2fbb757fb08f6acef0c0f860eb549e809003950804afc96ae8932
 No vendored file changed; the digest above covers the same bytes the import
 recorded. What changed is the enforcement.
 
+Manifest digest: `b8dc6490e2fbb757fb08f6acef0c0f860eb549e809003950804afc96ae893256`
+
 External review found the changelog rule was procedural: the gate compared
 recorded hashes against file bytes, so editing a compiler file *and*
 hand-editing its hash in PROVENANCE.md left the build green with nothing
@@ -45,3 +47,20 @@ verify, that PROVENANCE.md's `seal` block matches its own manifest, that this
 file quotes the current manifest digest, and that this file's bytes match the
 sealed changelog hash. Moving either end without the other is now a build
 failure.
+
+## 2026-08-31 — require the full file set, not just a sealed one
+
+No vendored file changed; same digest as above.
+
+The seal binds whatever entries the manifest holds, and said nothing about what
+it must hold. External review exploited that: delete `compiler-codegen.js`'s
+line, paste the new digest here, re-seal, and the gate reported
+`OK (10 vendored files match)` — a monitored file dropped from monitoring, with
+every hash check still passing.
+
+`REQUIRED_FILES` in `tools/check-watx-provenance.js` now names the 11 paths, in
+code rather than in the sealed document, and a normal verify fails unless the
+manifest is exactly that set (duplicates included). `--update` reconciles the
+block to the array instead of refusing, so the shrink self-heals and a
+legitimate add or removal is still two commands — but the array is source in
+the same diff, so coverage cannot change without a reviewer seeing it.

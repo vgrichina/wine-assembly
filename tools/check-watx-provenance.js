@@ -38,6 +38,11 @@
 // The digest depends on the manifest alone, never on the changelog, so the
 // chain is a line and not a fixpoint: compute, write the entry, re-record.
 //
+// That chain still only protects the entries that are IN the manifest. What
+// files must be in it is a separate question, and it is answered by
+// REQUIRED_FILES below — in code, because a list the sealed document carries
+// could be shortened and re-sealed like anything else in it.
+//
 // Usage:
 //   node tools/check-watx-provenance.js            # verify (the build gate)
 //   node tools/check-watx-provenance.js --update    # re-record hashes + seal
@@ -54,6 +59,31 @@ const ROOT = path.resolve(__dirname, '..');
 const PROVENANCE = path.join(ROOT, 'tools', 'watx-src', 'PROVENANCE.md');
 const CHANGELOG = path.join(ROOT, 'tools', 'watx-src', 'CHANGELOG.md');
 const UPDATE = process.argv.includes('--update');
+
+// ── What must be monitored ───────────────────────────────────────────────────
+// The seal proves the recorded hashes were not edited behind the changelog's
+// back. It cannot prove the LIST is complete: delete a file's line from the
+// manifest, quote the new digest in CHANGELOG.md, re-seal, and every check
+// passes while that file is no longer watched at all. A monitoring system whose
+// coverage its own subject can shrink is not monitoring anything.
+//
+// So the required set lives here, in code, not in the sealed document. Adding
+// or removing a vendored file must edit this array in the same commit — which
+// is the correct friction: it puts the coverage change in the diff, where a
+// reviewer reads it, instead of inside a block of hex nobody diffs by eye.
+const REQUIRED_FILES = [
+  'tools/watx.js',
+  'tools/watx-src/compiler-parser.js',
+  'tools/watx-src/compiler-stages.js',
+  'tools/watx-src/compiler-codegen.js',
+  'tools/watx-src/compiler.js',
+  'test/watx-compiler-wine-parity.test.js',
+  'test/watx-compiler-production.test.js',
+  'test/watx-compiler-emit-stack.test.js',
+  'test/watx-compiler-br-table.test.js',
+  'test/watx-compiler-bulk-memory.test.js',
+  'test/watx-compiler-simd.test.js',
+];
 
 function fail(msg) {
   console.error('check-watx-provenance: ' + msg);
@@ -72,17 +102,60 @@ if (!fence) {
        'hash manifest is how this gate knows what was imported');
 }
 
-const entries = [];
+const parsed = [];
 for (const raw of fence[1].split('\n')) {
   const line = raw.trim();
   if (!line) continue;
   const m = /^([0-9a-f]{64})\s+(\S+)$/.exec(line);
   if (!m) fail(`malformed manifest line: ${line}`);
-  entries.push({ hash: m[1], file: m[2] });
+  parsed.push({ hash: m[1], file: m[2] });
 }
-if (entries.length === 0) fail('the sha256 manifest is empty');
+if (parsed.length === 0) fail('the sha256 manifest is empty');
 
 const sha256 = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+
+// ── Coverage: the manifest must be exactly REQUIRED_FILES ────────────────────
+// Checked before any hash is compared, and enforced in BOTH modes: an --update
+// that quietly accepted a short list would just be the same attack with an
+// extra step. Duplicates count as a coverage defect too — two lines for one
+// path let a stale hash sit next to a fresh one.
+const seen = new Map();
+for (const e of parsed) {
+  if (seen.has(e.file)) fail(`manifest lists ${e.file} twice`);
+  seen.set(e.file, e);
+}
+const required = new Set(REQUIRED_FILES);
+const dropped = REQUIRED_FILES.filter((f) => !seen.has(f));
+const unexpected = parsed.map((e) => e.file).filter((f) => !required.has(f));
+
+if ((dropped.length || unexpected.length) && !UPDATE) {
+  fail(
+    'the recorded manifest is not the set this gate requires:\n' +
+    (dropped.length
+      ? '  required by REQUIRED_FILES but NOT RECORDED (so not monitored):\n    ' +
+        dropped.join('\n    ') + '\n' : '') +
+    (unexpected.length
+      ? '  recorded but not required — remove the line, or add the path to REQUIRED_FILES:\n    ' +
+        unexpected.join('\n    ') + '\n' : '') +
+    '\nIf this is a deliberate coverage change, edit REQUIRED_FILES in\n' +
+    'tools/check-watx-provenance.js in the same commit, then run --update.'
+  );
+}
+
+// --update reconciles the block to REQUIRED_FILES rather than refusing, so a
+// legitimate add is "edit the array, run --update twice" and never a deadlock
+// where the manifest cannot be brought into a state the gate accepts. It is not
+// a hole: the array it reconciles TO is source code in the same diff, and the
+// changelog seal below still has to be satisfied afterwards.
+if (UPDATE && (dropped.length || unexpected.length)) {
+  for (const f of dropped) console.log(`check-watx-provenance: adding ${f} to the manifest`);
+  for (const f of unexpected) console.log(`check-watx-provenance: dropping ${f} from the manifest`);
+}
+
+// Order follows REQUIRED_FILES so the digest depends on recorded content and not
+// on how the block happens to be sorted. A file required but not yet recorded
+// carries no hash until --update supplies one.
+const entries = REQUIRED_FILES.map((f) => seen.get(f) || { hash: null, file: f });
 
 const drifted = [];
 const missing = [];
@@ -97,8 +170,10 @@ for (const e of entries) {
 }
 
 if (missing.length) {
-  fail('these files are recorded in PROVENANCE.md but do not exist:\n  ' +
-       missing.join('\n  '));
+  fail('these files are required by this gate but do not exist:\n  ' +
+       missing.join('\n  ') +
+       '\nA vendored file cannot be deleted without removing it from ' +
+       'REQUIRED_FILES\nin tools/check-watx-provenance.js and saying why in CHANGELOG.md.');
 }
 
 // The manifest digest is taken over normalized `<hash>  <file>` lines, so
@@ -208,5 +283,5 @@ if (seal.changelog !== changelogHash) {
   );
 }
 
-console.log(`check-watx-provenance: OK (${entries.length} vendored files match PROVENANCE.md, ` +
-            'manifest sealed against CHANGELOG.md)');
+console.log(`check-watx-provenance: OK (all ${REQUIRED_FILES.length} required files present ` +
+            'and matching, manifest sealed against CHANGELOG.md)');
