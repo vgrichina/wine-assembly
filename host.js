@@ -1286,7 +1286,11 @@ class WineAssembly {
     if (!this.instance) await this.init();
     this._win16ExtraModules = opts.win16Modules || [];
 
-    const exeBytes = await WineAssembly.fetchAssetBytes(url);
+    // `opts.bytes` is the imported-media path (docs/design-byo-media.md): the
+    // program came off a dropped zip/ISO or out of the OPFS library, so there
+    // is no URL to fetch and `url` is only the name the guest should see for
+    // itself. Everything below treats the two identically.
+    const exeBytes = opts.bytes || await WineAssembly.fetchAssetBytes(url);
     this._exeBytes = exeBytes;
 
     // Resource parsing lives in WAT ($find_resource, $dlg_load,

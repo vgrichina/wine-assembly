@@ -1356,11 +1356,20 @@ Resource-aware Win98 emulator
   <!-- Byte providers for lazily mounted media; must precede filesystem.js,
        which resolves window.byteProvider when a container mounts. -->
   <script src="lib/byte-provider.js?v=1"></script>
-  <script src="lib/browser-shell.js?v=18"></script>
+  <!-- Bring-your-own media (docs/design-byo-media.md phase 4): the containers,
+       the OPFS/IndexedDB library, and the drop-to-insert desktop flow. The
+       mounts run against a guest's VFS, so these load before host.js. -->
+  <script src="lib/zip-mount.js?v=1"></script>
+  <script src="lib/iso9660.js?v=1"></script>
+  <script src="lib/media-sniff.js?v=1"></script>
+  <script src="lib/media-library.js?v=1"></script>
+  <script src="lib/media-import.js?v=1"></script>
+  <script src="lib/media-import-ui.js?v=1"></script>
+  <script src="lib/browser-shell.js?v=19"></script>
   <script src="lib/pe.js?v=1"></script>
-  <script src="lib/process-boot.js?v=2"></script>
+  <script src="lib/process-boot.js?v=3"></script>
   <script src="lib/app-profiles.js?v=1"></script>
-  <script src="lib/dll-loader.js?v=170"></script>
+  <script src="lib/dll-loader.js?v=171"></script>
   <script src="lib/storage.js?v=170"></script>
   <script src="lib/filesystem.js?v=172"></script>
   <script src="lib/font-substitutions.js?v=1"></script>
@@ -1939,6 +1948,25 @@ Resource-aware Win98 emulator
     }
     function stopAllApps() { shell.stopAllApps(); }
     function applyRunSlice() { shell.applyRunSlice(); }
+
+    // Bring your own media: drop an ISO/zip/exe on the desktop, or use the
+    // corner button on a phone (iOS has no drag-drop and no
+    // showOpenFilePicker). The import registers a synthesized entry in the
+    // same `apps` table the built-in icons read, so an imported game launches
+    // through the identical path -- see docs/design-byo-media.md and
+    // lib/media-import.js.
+    const mediaUI = window.mediaImportUI.install({
+      dropTarget: document.getElementById('screen-wrap'),
+      desktopIcons: document.getElementById('desktop-icons'),
+      apps,
+      shell,
+      singleApp: () => SINGLE_APP_MODE,
+      appendLog: text => appendDebugLog(text),
+    });
+    window.wineMedia = mediaUI;
+    // Kept media becomes desktop icons again on every visit. Nothing is read
+    // from OPFS here beyond the catalog -- the disc itself is opened on launch.
+    mediaUI.restoreLibrary().catch(e => appendDebugLog(`[media] ${e && e.message || e}`));
 
     const threadStateViewer = window.debugThreadState.createDebugThreadState({
       debugMode: DEBUG_MODE,

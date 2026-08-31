@@ -539,6 +539,7 @@ E2E=(
   test/test-web-audio-session.js
   test/test-web-ios-lab.js
   test/test-web-single-app-quit.js
+  test/test-web-media-import.js
   test/test-win16-jigsawed.js
   test/test-win16-jigsawed-menus.js
   test/test-win16-entertainment-manifests.js
