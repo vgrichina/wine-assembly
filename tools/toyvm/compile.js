@@ -314,7 +314,19 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     // and matched nothing: the region silently never ran, and the only symptom
     // was a run that was neither faster nor different.
     const regionKey = `${d32 ? `${codeBase}d` : codeBase}:${blockIp}`;
-    if (opts.regionAt && opts.regionAt.has(regionKey)) {
+    // A REGION IS ONLY VALID OVER THE BYTES IT WAS COMPILED FROM. It is keyed
+    // by guest ip, and a program that rewrites the code at that ip would
+    // otherwise get the old loop installed over the new instructions -- with
+    // nothing to notice, because the region replaces the decode that would have
+    // read them. Measured on ACCIDENT.EXE at 12M dispatches: one self-modify
+    // break in the baseline, none with the region, a blank screen where the
+    // baseline had drawn 18447 pixels, and a run 4x slower for it. So the
+    // caller records the guest bytes each block covered, and a byte that has
+    // moved declines the substitution and decodes normally.
+    const guard = opts.regionBytes && opts.regionBytes.get(regionKey);
+    const guardOk = !guard || guard.every(g =>
+      g.bytes.every((b, i) => readByte((g.lin + i) & mask) === b));
+    if (opts.regionAt && opts.regionAt.has(regionKey) && guardOk) {
       // The map holds an ORDINAL (which region), not a table index: only the
       // built module knows where its regions landed, and it says so through
       // `regionBase`.

@@ -65,6 +65,7 @@ const fs = require('fs');
 const path = require('path');
 const { performance } = require('perf_hooks');
 const { runDos } = require('./run-dos');
+const { makeVm } = require('./vm');
 const { findHotTrace, readTrace, emitTier3 } = require('./trace-jit');
 const { HANDLERS, TAKEN_AT, prepareTables, sexpAt } = require('./emit');
 const isa = require('./isa');
@@ -106,7 +107,7 @@ function count(s, d) {
 // going. Whether that ip is the branch's taken edge or its fall-through does
 // not matter here and is not asked -- anything else exits.
 function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3) {
-  const ops = [], nexts = [], spans = [];
+  const ops = [], nexts = [], spans = [], heads = [];
   const seen = new Set();
   // The inlined call frames still open, innermost last. Only the return ADDRESS
   // is tracked -- the guest's own frame is built and torn down by the ops.
@@ -121,6 +122,7 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3) {
     seen.add(key);
     const blk = headByAddr.get(cur);
     if (!blk) { why(`0x${head.toString(16)}: 0x${cur.toString(16)} is not a block head`); return null; }
+    heads.push(blk);
     const t = traceAt(blk);
     // `int` still ends the walk: it hands the machine to the host by design and
     // there is nothing to inline. `call` and `ret` do not, any more -- see
@@ -165,7 +167,7 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3) {
       if (!frame) { why(`0x${head.toString(16)}: ${last.name} with no inlined call to return to`); return null; }
       nexts[nexts.length - 1] = frame.ip;
       cur = frame.arena;
-      if (cur === head) return { ops, nexts, spans, headIp: frame.ip };
+      if (cur === head) return { ops, nexts, spans, heads, headIp: frame.ip };
       if (!headByAddr.has(cur)) { why(`0x${head.toString(16)}: return to 0x${(cur >>> 0).toString(16)} is not a block head`); return null; }
       if (ops.length > maxOps) { why(`0x${head.toString(16)}: over ${maxOps} ops without closing`); return null; }
       continue;
@@ -175,7 +177,9 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3) {
     if (at === undefined) { why(`0x${head.toString(16)}: terminator ${last.name} has no edge tail`); return null; }
     // The terminator's arena target sits one slot in front of its guest ip.
     const tgt = last.args[at - 1];
-    if (tgt === head && !retStack.length) return { ops, nexts, spans, headIp: last.args[at] };
+    if (tgt === head && !retStack.length) {
+      return { ops, nexts, spans, heads, headIp: last.args[at] };
+    }
     if (ops.length > maxOps) { why(`0x${head.toString(16)}: over ${maxOps} ops without closing`); return null; }
     if (!headByAddr.has(tgt)) {
       why(`0x${head.toString(16)}: ${last.name} leaves to 0x${(tgt >>> 0).toString(16)}, not a block head`);
@@ -197,7 +201,10 @@ function pickRegion(rr, ranked, minOps, maxOps = 400) {
   // The key of `regions` is the code segment, and it has to be carried: a
   // region is installed at cs:ip, never at a bare offset.
   for (const [cs, progs] of rr.regions) {
-    for (const p of progs) for (const [, addr] of p.blocks) headByAddr.set(addr, { addr, prog: p, cs });
+    // `ip` rides along because the guard needs it: the region is only valid
+    // over the guest bytes it was compiled from, and those are found through
+    // each block's own guest ip, not through its arena address.
+    for (const p of progs) for (const [ip, addr] of p.blocks) headByAddr.set(addr, { addr, ip, prog: p, cs });
   }
   const traceAt = (blk) => readTrace(blk.prog.words, (blk.addr - blk.prog.arenaBase) >> 2);
   // Every candidate head that was rejected, and by which rule. `--why` prints
@@ -232,7 +239,7 @@ function pickRegion(rr, ranked, minOps, maxOps = 400) {
       const samples = ranked.filter(x => chain.spans.some(([a, e]) => x.addr >= a && x.addr < e))
         .reduce((n, x) => n + x.samples, 0);
       return { block: blk, cs: blk.cs, ops: chain.ops, nexts: chain.nexts,
-        blocks: chain.spans.length, headIp: chain.headIp, samples };
+        blocks: chain.spans.length, heads: chain.heads, headIp: chain.headIp, samples };
     }
   }
   return null;
@@ -486,6 +493,25 @@ function buildRegion(ops, nexts, headIp, name) {
   };
 }
 
+// The guest code a region covers, read out of the profiling run's memory as
+// [{lin, bytes}]. The extents come from the compiler's own `covered` list --
+// the same linear ranges it marks as code for self-modify detection -- so the
+// guard checks exactly the bytes the region was decoded from, not a fixed
+// window around the head that could miss a patch further in.
+function guardBytes(rr, pick) {
+  const out = [];
+  for (const blk of pick.heads || []) {
+    // The program key is the linear code base, with a `d` suffix for a 32-bit
+    // descriptor. Both name the same base.
+    const codeBase = parseInt(String(blk.cs), 10);
+    const start = (codeBase + blk.ip) & 0xFFFFF;
+    const span = (blk.prog.covered || []).find(([s]) => s === start);
+    if (!span) continue;
+    out.push({ lin: span[0], bytes: Array.from(rr.vm.mem.slice(span[0], span[1])) });
+  }
+  return out;
+}
+
 // --- running it -------------------------------------------------------------
 
 async function once(exe, o, extra) {
@@ -505,7 +531,7 @@ async function once(exe, o, extra) {
   // is still alive: the frame, the pixel count, the interrupt tally and the
   // stopping cs:ip. Wall clock and arena footprint are allowed to move.
   return { ms: performance.now() - t0, dispatched: r.dispatched, frame: r.frame,
-    pixels: r.pixels, ints: r.ints, handbacks: r.handbacks,
+    pixels: r.pixels, ints: r.ints, handbacks: r.handbacks, smcBreaks: r.smcBreaks,
     cs: r.vm.exports.get_cs(), ip: r.vm.exports.get_gip(), r };
 }
 
@@ -546,6 +572,29 @@ async function main() {
     console.log(`  body written to ${f}`);
   }
 
+  const guarded = guardBytes(rr, pick);
+  console.log(`  guard: ${guarded.reduce((n, g) => n + g.bytes.length, 0)} guest byte(s) over `
+    + `${guarded.length}/${(pick.heads || []).length} block(s)`
+    + (guarded.length < (pick.heads || []).length ? ' -- UNGUARDED, see guardBytes()' : ''));
+
+  // `--emit=PREFIX` writes the two whole modules -- with the region and
+  // without it -- as both .wat and .wasm. Nothing here runs them; they are for
+  // the tools that cannot drive our JS harness: tools/wasm-native.js (what
+  // SpiderMonkey Ion makes of $region_0) and any other engine's shell.
+  if (arg('emit')) {
+    const p = path.resolve(arg('emit'));
+    for (const [suffix, opts] of [['', { regions: [region] }], ['-base', {}]]) {
+      const vm = await makeVm('tailcall', opts);
+      fs.writeFileSync(`${p}${suffix}.wat`, vm.wat);
+      fs.writeFileSync(`${p}${suffix}.wasm`, Buffer.from(vm.bytes));
+      // The .wat beside it is what names the functions for wasm-native.js:
+      // `--wasm=X.wasm --wat=X.wat --func=$region_0`. The handler-table index
+      // (vm.regionBase) is NOT the wasm function index -- more functions are
+      // defined after the table -- so do not reach for it here.
+      console.log(`  ${p}${suffix}.wasm  ${(vm.bytes.length / 1024).toFixed(0)}KB`);
+    }
+  }
+
   const install = {
     jitRegions: [region],
     // WHICH region, not where it sits in the table: only the built module knows
@@ -556,6 +605,10 @@ async function main() {
     // an address that turns out to be unreachable just gets compiled and never
     // entered, which is what a decoder that guesses a fall-through already does.
     regionSucc: new Map([[`${pick.cs}:${pick.headIp}`, successorIps(pick.ops)]]),
+    // The guest bytes this region was compiled from, one entry per block the
+    // walk covered. compile.js checks them before installing, so a program that
+    // rewrites its own loop gets the decoder back instead of a stale region.
+    regionBytes: new Map([[`${pick.cs}:${pick.headIp}`, guardBytes(rr, pick)]]),
   };
 
   // HOW MANY TIMES DOES ONE ENTRY GO ROUND? This is the number that decides
@@ -619,6 +672,10 @@ async function main() {
     + `   ${((min(base) / min(jit) - 1) * 100).toFixed(1)}%`);
   console.log(`\n  frame ${same ? 'IDENTICAL' : '*** DIFFERS ***'}`
     + `  ints ${baseRun.ints}/${jitRun.ints}`
+    // Self-modify breaks are the first thing to read on a frame that differs:
+    // a region is installed by guest ip, so a program that rewrites the bytes
+    // at that ip gets the OLD loop compiled over the new code.
+    + `  smc ${baseRun.smcBreaks || 0}/${jitRun.smcBreaks || 0}`
     + `  (baseline ${baseRun.frame} ${baseRun.pixels}px stop ${baseRun.cs.toString(16)}:${baseRun.ip.toString(16)}`
     + ` / region ${jitRun.frame} ${jitRun.pixels}px stop ${jitRun.cs.toString(16)}:${jitRun.ip.toString(16)})`);
   if (!same) process.exitCode = 4;

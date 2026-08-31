@@ -54,7 +54,8 @@ class CodeCache {
   constructor(vm, { noCache = false, smcFlush = false, watch = [],
                     wasmDecode = true, fuse = true, deadFlags = true, crossFlags = true,
                     traceBlocks = true, spinLoops = true, regSpec = false,
-                    traceDeadFlags = null, regionAt = null, regionSucc = null } = {}) {
+                    traceDeadFlags = null, regionAt = null, regionSucc = null,
+                    regionBytes = null } = {}) {
     // Watchpoints, as [lo, hi] linear byte ranges. They ride the CODE_BITMAP
     // rather than adding a range test to $wr8, because $wr8 is on the hot path
     // of every single store the guest makes and a watch that is off must cost
@@ -114,6 +115,9 @@ class CodeCache {
     // guest ip of a region -> the guest ips it can leave to, so the decoder
     // still discovers the code downstream of a block it never decodes.
     this.regionSucc = regionSucc;
+    // The guest bytes each region was compiled from. compile.js refuses to
+    // install one whose code has been rewritten underneath it.
+    this.regionBytes = regionBytes;
     this.deadFlagsDropped = 0;
     this.noCache = noCache;
     this.regions = new Map();          // cs -> [prog]
@@ -321,6 +325,7 @@ class CodeCache {
       traceDeadFlags: this.traceDeadFlags,
       regionAt: this.regionAt,
       regionSucc: this.regionSucc,
+      regionBytes: this.regionBytes,
       regionBase: vm.regionBase,
     });
     this.deadFlagsDropped += prog.deadFlags || 0;
@@ -437,7 +442,8 @@ class DosSession {
     this.cache = new CodeCache(vm,
       { noCache, smcFlush, watch, wasmDecode, fuse, deadFlags, crossFlags,
         traceBlocks, spinLoops, regSpec, traceDeadFlags,
-        regionAt: opts.regionAt || null, regionSucc: opts.regionSucc || null });
+        regionAt: opts.regionAt || null, regionSucc: opts.regionSucc || null,
+        regionBytes: opts.regionBytes || null });
 
     this.dispatched = 0;
     this.handbacks = 0;

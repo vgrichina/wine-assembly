@@ -168,7 +168,7 @@ async function runDos(o) {
     // passes neither and is byte-identical to before.
     // (named jitRegions, not regions: run-dos already reports the COMPILED
     // regions the block cache holds, and the two are unrelated)
-    jitRegions = null, regionAt = null, regionSucc = null,
+    jitRegions = null, regionAt = null, regionSucc = null, regionBytes = null,
     smcCensus = false, watch = [],
     stopText = null,
     traceIo = null,
@@ -348,7 +348,7 @@ async function runDos(o) {
 
   const session = new DosSession(vm, machine, {
     slice, noCache, smcFlush, wasmDecode, fuse, deadFlags, crossFlags, traceBlocks, spinLoops,
-    regSpec, regionAt, regionSucc,
+    regSpec, regionAt, regionSucc, regionBytes,
     traceDeadFlags: traceDeadFlags ? ((s) => log(s)) : null,
     mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
     stuckWork,

@@ -908,3 +908,129 @@ silently yields `NaN`, and the run reports `0.0 ms` and `NaN ns/dispatch`
 against every arm. And the `mixed` shape retires almost nothing (0.3ms for a
 6M-dispatch budget, `unresolved=2`) — it stops early, so its numbers are not
 comparable with the other two.
+
+## Five engines, and what the machine code actually looks like
+
+Every number above this line came out of node's V8. Two questions follow from
+that and neither can be answered from inside it: is the tier win a fact about
+*our* code generation or about V8's optimizer finishing the job, and does it
+survive on an engine that compiles differently.
+
+`tools/toyvm/engine-bench.js` answers both. `trace-jit.js --bundle=DIR` writes
+what a different engine would need to run the identical arms — the four module
+binaries, the memory snapshot, the register and machine state, and the arena the
+interpreter arm executes — and the tool generates one runner script that every
+installed shell can eval, with its parameters baked in as literals (argv reaches
+a shell script differently in all five, and a mis-parsed argument would silently
+benchmark a default).
+
+DRAGON.EXE's hottest block, 8 ops, 1M iterations, best of 3, box at load 1.6:
+
+| engine | tier 0 | tier 1 | tier 2 | tier 3 | tier3 vs tier0 |
+|---|---:|---:|---:|---:|---:|
+| node (V8 24.x) | 69ms | 34ms | 33ms | **8ms** | 8.6x |
+| node, `--liftoff-only` | 102ms | 58ms | 58ms | 23ms | 4.4x |
+| SpiderMonkey (Ion) | 56ms | 36ms | 35ms | 12ms | 4.7x |
+| SpiderMonkey, `--wasm-compiler=baseline` | 78ms | 53ms | 52ms | 17ms | 4.6x |
+| JavaScriptCore | 66ms | 26ms | 28ms | 8ms | 8.3x |
+| JavaScriptCore, `--useOMGJIT=false` | 84ms | 53ms | 52ms | 17ms | 4.9x |
+| d8 (V8 shell) | 83ms | 21ms | 21ms | 11ms | 7.6x |
+| d8, `--liftoff-only` | 166ms | 64ms | 63ms | 26ms | 6.4x |
+| bun (JSC) | 66ms | 25ms | 23ms | **7ms** | 9.4x |
+
+**The tiers are not a V8 artifact.** Every engine ranks them the same way and
+every engine, including the three baseline-only arms, pays less for tier 3 than
+for tier 0. Stitching alone (tier 0 → 1) is worth ~2x everywhere, which is the
+per-op tax and nothing to do with any optimizer.
+
+**But the ratio is engine-dependent by 2x, and the baseline arms say why.** With
+the optimizing tier off, all three engines land in the same place: 4.4-4.9x. The
+spread at the top — 4.7x on SpiderMonkey against 9.4x on bun — is the optimizing
+compilers disagreeing about *our generated code*, not about the interpreter.
+SpiderMonkey is the outlier in both directions: its interpreter arm is the
+fastest of the five (56ms) and its compiled arm the slowest (12ms).
+
+Shorter traces converge, as they should — CYCLE.EXE and ACCIDENT.EXE both park
+in a 4-op loop and score 1.2x (SM) to 2.5x (bun), and a 1-op block scores
+1.06-1.77x. There is no fixed multiplier to quote; the tier win scales with how
+much per-op tax there is to delete.
+
+The non-JIT control this does *not* have is a pure interpreter runtime like
+`wasm3`: these modules import a memory and three host functions, and wiring that
+through a CLI runtime is a harness, not a flag. `--liftoff-only` /
+`--wasm-compiler=baseline` / `--useOMGJIT=false` are the honest stand-ins.
+
+### What Ion makes of a compiled region
+
+`tools/wasm-native.js` now takes `--wat=` (any module's source, for the name
+table) alongside `--wasm=`, and names direct-call targets from the segment
+table, so the region a JIT run installs can be read as machine code:
+
+```
+node tools/toyvm/region-jit.js <exe> --emit=/tmp/rj
+node tools/wasm-native.js --wasm=/tmp/rj.wasm --wat=/tmp/rj.wat --func='$region_0'
+```
+
+daretro's region — 8 ops, +18% end to end — is 952 bytes of arm64 Ion. Two
+things in it are the next work, and neither was visible from a timing:
+
+**The promoted registers are not in registers.** `ax`, `dx`, `si` and `esb` are
+lifted out of the globals into wasm locals for the length of the loop, which is
+what tier 3's promotion pass is for — and Ion spills all four to the frame
+(`[x20,#44]`, `#40`, `#36`, `#32`) and reloads them around every call. So
+promotion currently buys a cheaper *addressing mode* (frame-relative instead of
+instance-relative), not registers.
+
+**Four calls survive per iteration** — `$rd8b`, `$rec_add`, `$wr8b`, `$cxdec` —
+and they are what forces those spills. `$cxdec` is the loop counter and
+`$rec_add` is a flag record; both are small enough to inline into the region,
+and doing so is the difference between a loop that keeps its state in registers
+and one that does not. That is a much larger lever than anything left in the
+op bodies themselves.
+
+Read it for structure only: this is SpiderMonkey Ion, and the table above says
+Ion is the engine least happy with our generated code.
+
+## The region JIT at depth: a shorter budget was flattering it
+
+The six-demo table in commit `776c20dd` was measured at `--dispatches=2m`, which
+is 50-250ms of guest per arm. Re-run at 12M on an idle box (load 1.9, 3 reps,
+minima) the same regions look very different:
+
+| demo | region | 2M | 12M |
+|---|---|---:|---:|
+| daretro.exe | 8 ops @ 0x216 | +11.5% | **+0.3%** |
+| DRAGON.EXE | 56 ops @ 0x7d | +7.4% | **+14.8%** |
+| CYCLE.EXE | 4 ops | +7.1% | **−3.0%** |
+| ADDY_II.EXE | — | −1.9% | −0.1% |
+| DTM2.EXE | — | −12.9% | no self-loop region found |
+| ACCIDENT.EXE | 34 ops @ 0x2d41 | +5.1% | **wrong frame** |
+
+Two lessons, one of them uncomfortable.
+
+**A short run measures the region's share, not the region.** A demo's hot loop
+is hot during its *effect* — a fade, a scroller, a plasma — and a 2M-dispatch
+run is often mostly that one effect. Ten times the budget walks into the rest of
+the program, the share collapses, and the same compiled loop with the same body
+is worth a tenth as much. Only DRAGON's region survives, and it is the one whose
+loop is the program's actual renderer. Amdahl was always in the formula; the
+short budget was hiding which side of it each demo sat on.
+
+**ACCIDENT.EXE is a correctness bug, not a slow region.** At 12M the region run
+diverges: 135 interrupts against the baseline's 1567, a blank screen where the
+baseline drew 18447 pixels, and it takes 4x the wall clock to do it. It is
+reproducible and it is *not* in the parts this session added — `--no-lower`,
+`--no-promote` and the default all produce byte-identical runs (12003056
+dispatches each), so the fault is in the shared region mechanism: the `$steps`
+charge, the exit protocol, or the successor list. It is the same open question
+as RUNDEMO's `+82%` with a differing frame. Until it is found, **a region result
+is only a result when the frame matches at the budget it was measured at.**
+
+One hypothesis was tested and ruled out. A region is keyed by guest ip, so a
+program that rewrites the code there would get the old loop compiled over new
+instructions, and ACCIDENT does take one self-modify break in the baseline and
+none with the region. So `compile.js` now takes `regionBytes`: the guest bytes
+each block covered, read out of the compiler's own `covered` extents at build
+time and re-checked before every install, with the substitution declined if a
+byte has moved. That is a real hole closed — but it is not this one. The guard
+installs 41 bytes over ACCIDENT's single block and the divergence is unchanged.
