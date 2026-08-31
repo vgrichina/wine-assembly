@@ -1242,3 +1242,47 @@ it, and no program in the corpus writes into a region it is executing. It is
 kept because the hole is real and the fix is three lines, not because anything
 measured got better — and the flag is there so the next program that lands can
 be checked rather than assumed.
+
+## CONTACT: the divergence is the exit at the head, not the ops
+
+CONTACT.EXE's region is a single 17-op block at `1d79:00cf` carrying 99.7% of
+the samples — a generated inner loop (the static image is zeros there, so the
+program writes this code at runtime). It has been the corpus's second wrong
+frame since the CMA_SHRT fix. The bisect now names the edge exactly:
+
+| arm | frame |
+|---|---|
+| `--passes=` (nothing lowered, nothing folded) | IDENTICAL |
+| `--passes=constprop` | **DIFFERS** 51014 px vs 61629 |
+| `--passes=constprop --no-lower` | IDENTICAL |
+| `--passes=constprop --no-lower --once` | **DIFFERS**, same wrong hash |
+
+`constprop` is not the culprit — it is the enabler. `splitBranch` needs the
+branch's operands folded to literals, so with no passes the `dec ch / jnz` is
+left unlowered and the region hands back there. What the last two rows isolate
+is sharper than that: `--no-lower` and `--no-lower --once` compile the **same
+body**, and differ only in whether the region takes its own back edge or leaves
+and comes back through `$jlook`. Looping inside is right; leaving and
+re-entering is wrong.
+
+So the rule the evidence supports is: **exiting the region with `$gip` equal to
+the head and re-entering through the block cache is not equivalent to the back
+edge.** Every arm that ever does it produces the identical wrong frame
+(`7dc0c28d`, 51014 px), and every arm that never does it is byte-identical to
+the interpreter.
+
+Two whole families are already excluded, each by its own control:
+
+- **Not the clock.** `--irq-every=1b` turns interrupts off in both arms and the
+  divergence survives, which is the switch's stated job: it separates "the
+  region ran the wrong code" from "the region moved the clock".
+- **Not the compiler's assumptions about the arena words.** `--no-spin`,
+  `--no-traced`, `--no-fuse` and `--keep-arena-operands` each produce the same
+  wrong hash.
+
+And `--entries` shows both arms leaving wasm at the same guest addresses in
+nearly the same counts (`1d79:ae x10`, `1e3c:7f x7`, `1d79:b3 x6` in both), so
+the guest is not stuck — it runs the same surrounding code and paints a
+different picture. The snapshot bench cannot see any of this: `--agree` reports
+all three tiers matching over 400,000 iterations, because the thing that is
+wrong is the region's re-entry, which a straight-line snapshot never performs.
