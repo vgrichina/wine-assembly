@@ -872,3 +872,57 @@ bug in one line, plus six rejections. The reproducer
 New manifest digest:
 
   c3554e582ff41d577c28137cce7e67eedfa5821359d81d7cd01dd3c12a05fe7e
+
+## 2026-08-31 — multivalue results are refused, not silently emitted
+
+An accepted-invalid module is the worst failure a compiler has, and WATX had
+one. `(result i32 i32)` parsed — the type section even encoded both results
+correctly — and then the body was emitted as if there were one. V8 caught it at
+instantiate:
+
+```text
+WebAssembly.Module(): Compiling function #3 failed:
+expected 2 elements on the stack for fallthru, found 1 @+116
+```
+
+A byte offset into a generated binary, from the engine, long after the compiler
+that could have named the file and line let it through. Confirmed from outside
+by the wabt differential oracle at the same time.
+
+Nothing downstream of the parse is multi-valued, so this was never one missing
+line: a block type is emitted as a **single `VALTYPE` byte** with no path to the
+type-index form multivalue requires, `expressionType` reports `results[0]` and
+discards the rest, and `funcHasResult` / `exprYieldsValue` are booleans. Real
+support is a second value stack through the whole emitter plus block types as
+type indices — not a contained change, and nothing in the tree asks for it. So
+the honest behaviour is to fail at the declaration, with a location:
+
+```text
+function $swap: multivalue results are not supported — 2 result types (i32 i32)
+were declared and WATX emits bodies that yield at most one. Return the extra
+values through memory or an out-pointer.
+```
+
+Five declaration positions are covered — `func`, `block`, `loop`, `if`, and an
+imported func — because all five reached the same single-valued emitter and four
+of the five produced a module V8 refused. The function check sits in the shared
+`funcDecls` loop rather than beside either `(result …)` parse, since there are
+**two** parsers (the inline one here and the streaming one in
+`compiler-stages.js`) and a rule enforced in one of them holds only for whichever
+path the caller happened to take.
+
+`tools/watx-differential.js`: the `multivalue` corpus entry's divergence marker
+now states the refusal instead of the old accepted-invalid emit, and the spelling
+is listed in `DIALECT_GAPS` beside the float spellings — it is a deliberate,
+documented dialect boundary now, not an open bug.
+
+`watx-compiler-block-result` 23 → 34: each of the five positions must fail *here*
+and the message must say `multivalue` (so a future refactor cannot satisfy the
+test by handing the job back to V8), plus a no-regression case proving the rule
+is "more than one", not "a `(result …)` clause at all". Canonical artifacts
+byte-identical against a clean worktree build at the same HEAD (`c409c554`):
+`71ea98f134a486cd` / `d569961e3e7d6325`.
+
+New manifest digest:
+
+  490113af46201c26a37ea33db1acf145e0bd2bf169488a9143524626dc46ec35

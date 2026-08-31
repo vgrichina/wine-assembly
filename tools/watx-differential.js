@@ -129,6 +129,7 @@ const DIALECT_GAPS = [
   { spelling: 'nan / -nan', note: 'quiet NaN has no literal spelling' },
   { spelling: 'nan:0x1', note: 'the tokenizer splits on ":", so the payload arrives as a second operand ("expected exactly one literal operand, got 2")' },
   { spelling: '0x1p-149, 0x1.fffffep+127', note: 'hex float literals split at the exponent sign, same "got 2 operands" error' },
+  { spelling: '(result i32 i32) on a func/block/loop/if/import', note: 'multivalue results are refused at the declaration — a block type is emitted as one VALTYPE byte with no type-index path, and expressionType carries a single type; this used to be an accepted-invalid module instead' },
 ];
 
 // ── Byte comparison, modulo differences that are not bugs ─────────────────
@@ -516,7 +517,7 @@ mod('multivalue', `
     () => ex.blk(1), () => ex.blk(-5),
     () => ex.ifm(0), () => ex.ifm(1), () => ex.ifm(-1),
     () => ex.loopm(0), () => ex.loopm(1), () => ex.loopm(100),
-  ], { expectDivergence: 'WATX accepts multivalue (result i32 i32) and emits a body V8 rejects: "expected 2 elements on the stack for fallthru, found 1"' });
+  ], { expectDivergence: 'WATX REFUSES multivalue (result i32 i32) at the declaration, with a located error. It used to accept it and emit a body V8 rejected at instantiate ("expected 2 elements on the stack for fallthru, found 1") — an accepted-invalid module, the worse of the two. The refusal is deliberate and permanent until the emitter carries more than one value: see DIALECT_GAPS.' });
 
 // The multivalue shapes that DO work, split out so the marked entry above is
 // the narrow claim it should be rather than "all multivalue is broken".

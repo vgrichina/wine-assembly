@@ -164,6 +164,33 @@ function watxLiteralReject(raw, what, expected) {
   return e;
 }
 
+// ── Multivalue results are rejected, not silently emitted ───────────────────
+// Wasm's multi-value proposal lets a function or a block yield more than one
+// value. WATX PARSED `(result i32 i32)` — the type section even encoded both
+// results correctly — and then emitted a body that assumes exactly one, because
+// nothing downstream of the parse is multi-valued: a block type is emitted as a
+// SINGLE `VALTYPE` byte with no path to the type-index form multivalue requires,
+// `expressionType` reports `results[0]` and discards the rest, and
+// `funcHasResult` / `exprYieldsValue` are booleans. The result was an
+// accepted-invalid module: it compiled here, and V8 refused it at instantiate
+// with `expected 2 elements on the stack for fallthru, found 1` — a diagnostic
+// pointing at a byte offset in a generated binary, arriving from the engine long
+// after the compiler that could have named the line let it through.
+//
+// Supporting it for real is not a contained change (it is a second value stack
+// through the whole emitter, plus block types as type indices), so the honest
+// behaviour is to fail HERE, at the declaration, naming the file and line.
+function watxRejectMultivalue(what, types, node) {
+  if (types.length <= 1) return;
+  const e = new Error(
+    `${what}: multivalue results are not supported — ${types.length} result types ` +
+    `(${types.join(' ')}) were declared and WATX emits bodies that yield at most one. ` +
+    `Return the extra values through memory or an out-pointer.`);
+  const loc = watxFormLoc(node);
+  if (loc !== undefined) { e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc); }
+  throw e;
+}
+
 // Validate an integer literal token and return it with digit separators removed.
 function watxCheckIntLiteral(raw, what) {
   const s = String(raw ?? '');
@@ -758,6 +785,8 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
                 const t = V(sigPart[j + 1]);
                 results.push(valtypeOf(t));
               }
+              watxRejectMultivalue(`imported function '${mod}.${name}'`,
+                results.map(valtypeName), sigPart);
             }
           }
         }
@@ -1527,6 +1556,11 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
   }
   const funcDeclByName = new Map();
   for (const fd of funcDecls) {
+    // Checked HERE rather than beside either `(result …)` parse, because there
+    // are two of them — the inline one above and the streaming one in
+    // compiler-stages.js — and a rule enforced in one parser and not the other
+    // is a rule that holds only for whichever path the caller happened to take.
+    watxRejectMultivalue(`function ${fd.name}`, fd.results, fd.form || fd.body);
     if (!funcDeclByName.has(fd.name)) funcDeclByName.set(fd.name, fd);
   }
   
@@ -1677,6 +1711,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
           const t = V(part[j + 1]);
           arr.push(valtypeOf(t));
         }
+        // The type section could encode two results, but the call_indirect that
+        // reads this signature pushes them onto a single-valued expression model.
+        if (arr === results) watxRejectMultivalue('call_indirect signature', results.map(valtypeName), part);
       }
     }
     return { params, results };
@@ -1795,6 +1832,10 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
   function blockSignature(node, head) {
     const named = ['i32', 'i64', 'f32', 'f64', 'v128'];
     if (Array.isArray(node) && V(node[1]) === 'result') {
+      // A block type is one VALTYPE byte here, so a second declared result has
+      // nowhere to go; it used to be dropped on the floor and the body was then
+      // emitted for the first type alone.
+      watxRejectMultivalue(head, watxFormSlice(node, 1).map(V), node);
       const t = V(node[2]);
       if (!named.includes(t)) throw new Error(`${head}: unknown (result ${t}) type`);
       return t;
@@ -2977,6 +3018,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         condIdx = 2;
       } else if (Array.isArray(expr[2]) && V(expr[2][1]) === 'result') {
         // (result T) — take the first declared valtype as the if's block type.
+        // "First" is only ever "only": a second one is a multivalue if, which
+        // the single-byte block type below cannot express.
+        watxRejectMultivalue('if', watxFormSlice(expr[2], 1).map(V), expr[2]);
         const t = V(expr[2][2]);
         explicitResultType = ['i32','i64','f32','f64','v128'].includes(t) ? t : 'i32';
         condIdx = 2;

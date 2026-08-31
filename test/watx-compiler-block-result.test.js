@@ -180,5 +180,42 @@ const badType = build(`
 (wasm-export "a" $a)`);
 ck('(block $l (result i33) ...) is a hard compile error', badType.success === false, badType.error);
 
+// ── Multivalue results are REFUSED, not silently emitted ─────────────────────
+// The other half of "(result T) means exactly one T". WATX parsed a second
+// result type — the type section even encoded both — and then emitted a body
+// that assumes one, because nothing downstream of the parse is multi-valued: a
+// block type is a SINGLE VALTYPE byte with no path to the type-index form
+// multivalue needs, expressionType reports results[0] and drops the rest, and
+// funcHasResult/exprYieldsValue are booleans. So the module compiled here and
+// V8 refused it at instantiate with "expected 2 elements on the stack for
+// fallthru, found 1" — a byte offset into a generated binary, arriving from the
+// engine long after the compiler that could have named the line waved it past.
+//
+// That accepted-invalid path is gone. Each of these five declaration positions
+// must fail HERE, and say multivalue, so the diagnostic names the source.
+const MULTIVALUE = [
+  ['func', '(func $f (result i32 i32) (effects heap) (i32.const 1) (i32.const 2))\n(wasm-export "f" $f)'],
+  ['block', '(func $f (result i32) (effects heap) (drop (block (result i32 i32) (i32.const 1) (i32.const 2))) (i32.const 0))\n(wasm-export "f" $f)'],
+  ['loop', '(func $f (result i32) (effects heap) (drop (loop (result i32 i32) (i32.const 1) (i32.const 2))) (i32.const 0))\n(wasm-export "f" $f)'],
+  ['if', '(func $f (result i32) (effects heap) (drop (if (result i32 i32) (i32.const 1) (then (i32.const 1) (i32.const 2)) (else (i32.const 3) (i32.const 4)))) (i32.const 0))\n(wasm-export "f" $f)'],
+  ['imported func', '(import "e" "g" (func $g (result i32 i32)))\n(func $f (effects heap) (drop (call $g)))\n(wasm-export "f" $f)'],
+];
+for (const [where, src] of MULTIVALUE) {
+  let r;
+  try { r = build(src); } catch (e) { r = { success: false, error: String(e.message || e) }; }
+  const msg = String((r && (r.error || r.message)) || '');
+  ck(`a multivalue (result i32 i32) on a ${where} is a compile error`, r.success === false, r.success);
+  ck(`  ...and the error says multivalue rather than leaving it to V8`,
+     /multivalue/i.test(msg), msg.slice(0, 140));
+}
+
+// The single-result forms these checks sit next to must keep working untouched:
+// the rule is "more than one", not "a (result …) clause at all".
+const stillFine = build(`
+(func $f (result i32) (effects heap)
+  (block (result i32) (if (result i32) (i32.const 1) (then (i32.const 7)) (else (i32.const 9)))))
+(wasm-export "f" $f)`);
+ck('NO REGRESSION: single-result func/block/if still compile', stillFine.success === true, stillFine.error);
+
 console.log(`\nwatx-compiler-block-result: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
