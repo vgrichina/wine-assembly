@@ -24,18 +24,19 @@ this text and are listed at the end of the section.*
 The Pass-2 list was worked hard and mostly honestly: of 24 recommendations,
 **6 done, 5 partial, 13 open**, and Tier 1 is closed except for the long tail of
 WAT↔JS constants. What the three days added is a different shape of risk. The
-gates that now exist are real, but two of them are being *worked around by
-process* rather than by code — the silent-stub ratchet is re-pinned one commit
+gates that now exist are real, but two of them were initially *worked around by
+process* rather than by code. The silent-stub ratchet was re-pinned one commit
 after each stub removal, so `build.sh` was red on `main` for 22 of the 204
-commits (§P3-3.4); and 250 of the 677 tiered tests carry a `SKIP` path that
+reviewed commits; §P3-3.4 now closes that gap with broad body hashing, a
+ready-to-paste pin, and a clean-commit boundary check. The other remains: 250
+of the 677 tiered tests carry a `SKIP` path that
 `run-all.sh` counts as `PASS`, so 37% of the suite is green on a machine with no
 fixtures without anyone seeing a SKIP column (§P3-3.5). Three real bugs landed
-with new features: `ReadConsoleOutputA/W` writes past the caller's buffer for
-any region larger than it (§P3-3.1), the new MW3 grid-filter super-op stores
-through guest memory without the self-modifying-code invalidation every scalar
-store makes (§P3-3.2), and a `--threads` run silently loses `--fault-null`,
-`--count`, `--trace-eip-range` and the MMX flag on every worker instance while
-CLAUDE.md says they are propagated (§P3-3.3). The performance items got worse
+with new features and are now fixed: `ReadConsoleOutputA/W` wrote past the
+caller's buffer for an oversized region (§P3-3.1), the MW3 grid-filter super-op
+stored through guest memory without scalar-store SMC invalidation (§P3-3.2),
+and a `--threads` run lost `--fault-null`, `--count`, `--trace-eip-range` and
+the MMX flag on every worker instance (§P3-3.3). The performance items got worse
 on purpose — the DirectDraw slot walk is now 4096 wide and the GL immediate-mode
 path calls the per-word `DataView` allocator from eight more sites — and the two
 biggest WAT files both crossed 16k lines. The healthy side is also real: the
@@ -51,7 +52,7 @@ model is one lock across both backends.
 | Handler table | 437 | **442** | H439 fnstsw/test/jcc, H440 rgb565 colour-key, H441 MW3 grid filter |
 | `api_table.json` | 3,012 | **3,071** | 59 new, all with `nargs` |
 | `crash_unimplemented` sites | 98 | **137** | D3D9 flip + new DX rows |
-| Silent-stub ratchet pin | — | **315** (was 332 at creation) | see §P3-3.4 |
+| Silent-handler ratchet pin | — | **524 broad** (was 315 exact-shape) | see §P3-3.4 |
 | Tests / unlisted | 631 / 48 | **677 / 0** | gate in `build.sh:25` |
 | Tests with a SKIP path | — | **250** | §P3-3.5 |
 | `test/run.js` / `host.js` / `index.html` | 8,612 / 2,553 / 2,324 | 8,672 / 2,553 / **2,477** | index regrew |
@@ -153,14 +154,12 @@ option/wire alias for cached callers. `test/test-worker-api-batching.js` covers
 the opt-in, the no-RPC fast path, the compatibility alias, and both Worker host
 constructors.
 
-**3.4 The stub ratchet is bypassed by process — PARTIAL.**
-`tools/check-silent-stubs.js` is a real ratchet — now `EXPECTED_COUNT=315` plus
-a sha256 of the sorted stub list (`:39-52`), no allowlist, and the D3D9 rule
-(`:54-75`). The original finding remains in history: four older re-pins landed
-as separate commits *after* their removals (`694e2ab2`, `1535d918`,
-`1a21921d`, `0626553b`), leaving `build.sh` red on `main` for intervening
-commits. Current practice is better: `4a08c267`, `e3ff3e4c`, `2b27e407`,
-`0064c7fc`, and `32590db9` each remove stubs and lower the pin in the same
+**3.4 The stub ratchet is bypassed by process — FIXED.** The original finding
+remains in history: four older re-pins landed as separate commits *after* their
+removals (`694e2ab2`, `1535d918`, `1a21921d`, `0626553b`), leaving `build.sh`
+red on `main` for intervening commits. Current practice improved first:
+`4a08c267`, `e3ff3e4c`, `2b27e407`, `0064c7fc`, `32590db9`, and the
+`SetConsoleWindowInfo` fix each remove stubs and lower the pin in the same
 commit. `32590db9` also repairs the omitted pin for `c6d52424` while replacing
 `FlushInstructionCache` with Win98-compatible current-process validation,
 range/full decoded-code invalidation, and a shared generation that reaches all
@@ -171,15 +170,19 @@ now validates absolute/relative inclusive rectangles, round-trips through
 `GetConsoleScreenBufferInfo`, clips painting and mouse coordinates to the
 viewport, and resizes the browser console client like the Win98 console.
 
-The process fix is still convention rather than enforcement, and the coverage
-gap remains: the regex (`:33`) matches only the exact `eax=const; esp+=N` shape.
-A crude census of constant-shaped handlers (no call/if/store, ≤3 `global.set`)
-found ~524 across 09a/09a8/09ad/09aa against the then-current pin, and
-`SetFileApisToOEM/ANSI` (`09a:15245-15252`, `e9e0aa2d`) still demonstrates the
-escape: it sets `$file_apis_ansi`, which nothing but `AreFileApisANSI` reads —
-no file API consults it — and it passes the gate because the body touches a
-global. The tool also still reports the observed count/hash without printing a
-ready-to-paste replacement pin.
+The code now closes both remaining gaps. The classifier (`:31-68`) inventories
+all 524 straight-line handlers with no call, control-flow branch, fail-loud
+trap, or memory write and hashes each complete normalized body, rather than
+matching only `eax=const; esp+=N`. Thus the stateful-looking
+`SetFileApisToOEM/ANSI` escape is in the pin even though it touches a global;
+implemented handlers that delegate, publish output, or branch are outside it.
+Classifier self-checks cover constant/stateful quiet bodies and each excluded
+effect class (`:51-62`). `--list` exposes the complete reviewed bodies and
+`--print-pin` plus mismatch output prints the exact replacement count/hash
+lines (`:80-97`). Finally, a clean-checkout Git audit compares changed WAT
+inventories with `HEAD^` and rejects a pin-only catch-up commit unless the
+classifier itself changed (`:99-157`). Source archives and dirty development
+trees retain the ordinary content ratchet without depending on Git.
 
 **3.5 250 of 677 tests can pass without running.** `run-all.sh:848-852` counts
 any exit-0 as `PASS` with no SKIP row; 250 test files contain a
@@ -401,16 +404,14 @@ Pass 1.
 ## Pass-3 recommendations
 
 **Tier 1 — bugs and the two process gaps (a day):**
-1. Clamp `$console_read_output` to `dwBufferSize` (both words) and the screen
-   buffer; write back `lpReadRegion`. (3.1)
-2. `$invalidate_code_write` after H441's two stores, or route them through
-   `$gs16/$gs32`. Add a test that puts the grid row in a code page. (3.2)
-3. One inherited-globals table consumed by both `thread-manager.js` and
-   `guest-worker.js` spawn paths; a test that diffs the two setter sets. Fix
-   the CLAUDE.md `--fault-null` claim until then. (3.3)
-4. Re-pin the stub ratchet **in the same commit** as the removal — make
-   `check-silent-stubs.js` print the new pin so it is a one-line edit — and
-   widen the regex to any handler with no call/branch/store. (3.4)
+1. ~~Clamp `$console_read_output` to both `dwBufferSize` words and the screen
+   buffer; write back `lpReadRegion`.~~ **FIXED** (3.1)
+2. ~~Invalidate H441's two stores and test a grid row in a code page.~~
+   **FIXED** (3.2)
+3. ~~Use one inherited-globals table for both Worker spawn paths and diff the
+   setter sets in a test.~~ **FIXED** (3.3)
+4. ~~Re-pin the stub ratchet in the same commit, print the replacement pin,
+   and widen coverage to handlers with no call/branch/store.~~ **FIXED** (3.4)
 5. A SKIP exit code tallied in its own `run-all.sh` column; manifest check
    refuses per-test timeouts above the runner cap. (3.5)
 
@@ -473,11 +474,11 @@ is what COMCTL32's own PropertySheet loop needed, with `test-enable-window.js`.
 **A.1 WORSE** — `f2dc80d2` (toyvm ALU+Jcc fusion, 192 fused handlers, +8.3%
 geomean) changed `emit.js` again without a bundle rebuild; `bundle-browser.js`
 still omits `emit-decoder.js`, and the committed bundle is still `6b015971`'s.
-The rest stands; two moved. The stub ratchet has now been re-pinned *in the same
-commit* as its removals repeatedly (`4a08c267`, `e3ff3e4c`, `2b27e407`,
-`0064c7fc`, `32590db9`, and the `SetConsoleWindowInfo` fix, reaching 315). This
-improves the process half of 3.4 without enforcing it; the regex is unchanged
-and the tool still does not print a ready-to-paste pin. The
+The rest stands; two moved. The stub ratchet was subsequently re-pinned *in the
+same commit* as its removals repeatedly (`4a08c267`, `e3ff3e4c`, `2b27e407`,
+`0064c7fc`, `32590db9`, and the `SetConsoleWindowInfo` fix). Section 3.4 is now
+closed in code too: 524 broad bodies are hashed, replacement pin lines are
+printed, and clean pin-only follow-up commits fail. The
 GL encoder's `?v=` now agrees between page and worker (`index.html:1367`,
 `guest-worker.js:27`, both `v=5`) — one of the four counters of 3.10. H441's
 stores changed shape (`07b:3271-3286` now pick `i32.store16`/`i32.store` when
