@@ -138,7 +138,7 @@ function readTrace(mem32, addrWordIdx, maxOps = 512) {
 // the corpus, and the sweep reports it as one.
 async function jitTiers(exe, {
   budget = 15e6, slice = 20000, cpu = 386, top = 6, sampleAfter = 0, sampleFrom = 0,
-  bench = false, iters = 20000, reps = 7, cx = 8, log = () => {}, dumpWat = null,
+  bench = false, iters = 20000, reps = 7, cx = 8, log = () => {}, dumpWat = null, opsPrefix = 0,
   passes = { constprop: true, regfold: true, deadflags: true },
 } = {}) {
   log(`profiling ${path.basename(exe)} -- ${(budget / 1e6).toFixed(0)}M dispatches, `
@@ -194,7 +194,20 @@ async function jitTiers(exe, {
         // with one or two handlers: a straight run, not a loop body.
         || (t.end === 'too-long' && distinctOps <= 2)
         || zeros >= 12);
-    return { t, bytes, uniform, padding: uniform || bytes.every(x => x === 0) };
+    // All-zero bytes are NOT on their own enough, and treating them as enough
+    // cost two of the core ten. `guestBytes` reads memory as it stands at the
+    // END of the profiling run, while the block was compiled from whatever was
+    // there when the compiler reached it -- so an overlay that has since been
+    // swapped out, or a buffer since cleared, reads back as zeroes under real
+    // code. CYCLE's 92.5% block is two ops ending in `ret` and was being
+    // discarded on exactly that evidence.
+    //
+    // What actually distinguishes an unwritten region is that it has no
+    // terminator: the decoder runs through it until readTrace's cap. A short
+    // block that ends in a real ret/jmp came from real instructions whatever
+    // the bytes say now.
+    const zeroed = bytes.every(x => x === 0);
+    return { t, bytes, uniform, padding: uniform || (zeroed && t.end === 'too-long') };
   };
 
   // The hottest BLOCK is often one or two ops -- a `jmp` parking loop, a lone
@@ -210,10 +223,30 @@ async function jitTiers(exe, {
   // scan into `padding` declines that the default selection would not have hit.
   // Falls back to the hottest block, which then gets the padding verdict
   // printed against it as before.
+  //
+  // Padding is skipped whether or not a floor was asked for. Declining a whole
+  // program because its HOTTEST block is an unwritten region throws away the
+  // real code underneath it: RUNDEMO's top block is 26 ops of zeroes and its
+  // third is a 5-op loop with 29.9% of the samples, and reporting `padding`
+  // for that program said nothing true about it.
+  //
+  // Both relaxations are announced. A floor that quietly fell back reads in the
+  // output exactly like a measurement that met it -- `--min-ops=6` picking a
+  // 1-op trace is a different experiment from the one that was asked for.
   const minOps = Number(arg('min-ops', 0));
-  const hot = (minOps
-    ? ranked.find((b) => { const i = inspect(b); return i.t.ops.length >= minOps && !i.padding; })
-    : null) || ranked[0];
+  const real = ranked.filter(b => !inspect(b).padding);
+  const wanted = minOps ? real.find(b => inspect(b).t.ops.length >= minOps) : real[0];
+  const hot = wanted || real[0] || ranked[0];
+  if (minOps && !wanted && real[0]) {
+    log(`  (no block reaches --min-ops=${minOps}; falling back to the hottest `
+      + `real block, ${inspect(real[0]).t.ops.length} ops)`);
+  }
+  if (hot !== ranked[0] && hot !== undefined) {
+    const skipped = ranked.indexOf(hot);
+    if (skipped > 0 && inspect(ranked[0]).padding) {
+      log(`  (skipped ${skipped} block${skipped > 1 ? 's' : ''} of decoded padding)`);
+    }
+  }
   const { t, bytes, padding } = inspect(hot);
   const share = 100 * hot.samples / total;
   const trace = {
@@ -274,7 +307,17 @@ async function jitTiers(exe, {
       trace.exit = trimmed.dropped;
       trace.ops = trimmed.ops.length;
     }
-    bres = await benchTiers(exe, hot, trimmed.ops, { iters, reps, log, passes, dumpWat });
+    // `--ops-prefix=N` runs only the first N ops of the trace. A mismatch names
+    // a whole trace, which is not a lead; rerunning it at N=1,2,3... turns it
+    // into the first op whose arms disagree, which is. It is a debugging knob
+    // and not a measurement: a prefix is not the hot loop and its timings mean
+    // nothing.
+    let ops = trimmed.ops;
+    if (opsPrefix && opsPrefix < ops.length) {
+      ops = ops.slice(0, opsPrefix);
+      log(`  (--ops-prefix=${opsPrefix}: benching a PREFIX, not the trace -- timings are meaningless)`);
+    }
+    bres = await benchTiers(exe, hot, ops, { iters, reps, log, passes, dumpWat });
   } catch (e) {
     // Two very different failures used to share this label. `unfoldable` is a
     // handler body whose operand preamble drifted from ops()'s shape, which
@@ -309,6 +352,7 @@ async function main() {
     iters: count(arg('iters'), 20000),
     reps: Number(arg('reps', 7)),
     dumpWat: arg('dump-wat', null),
+    opsPrefix: Number(arg('ops-prefix', 0)),
     cx: Number(arg('cx', 8)),
     passes: (() => {
       const spec = arg('passes', 'constprop,regfold,deadflags').split(',').filter(Boolean);
@@ -864,14 +908,16 @@ function emitTier3(ops, passes) {
 // So this prices dispatch and code quality over a real op mix, and it does NOT
 // price side exits. That is the honest limit of the measurement: a trace JIT
 // also has to pay for leaving the trace, and this says nothing about it.
-const { helpers, LOCALS, STATE, EXTRA_GLOBALS, MACHINE_STATE, machineAccessors } = require('./emit');
+const { helpers, LOCALS, STATE, EXTRA_GLOBALS, MACHINE_STATE, machineAccessors,
+  stateAccessors } = require('./emit');
 
 function moduleWat(body, extra = {}) {
   const { locals = '', pro = '', epi = '' } = extra;
   const globals = STATE.map(g => `(global $${g} (mut i32) (i32.const 0))`).join('\n');
-  const accessors = STATE.map(g => `
-(func (export "get_${g}") (result i32) (global.get $${g}))
-(func (export "set_${g}") (param $v i32) (global.set $${g} (local.get $v)))`).join('');
+  // Shared with the interpreter's own preamble. Writing a second, simpler set
+  // here is what made every segmented access in a compiled trace read from
+  // linear address `0 + off`; see the note on stateAccessors() in emit.js.
+  const accessors = stateAccessors();
   return `(module
 (import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
 (import "host" "port_in" (func $port_in (param i32) (param i32) (result i32)))
@@ -897,10 +943,22 @@ ${epi})
 // Guest RAM only -- the first megabyte. Hashing the whole linear memory would
 // include the thread arena, and tier 0 has a compiled program there that the
 // generated arms have no reason to contain.
+// Every byte, not every 97th. The sampled version was cheap and wrong in the
+// one situation the fingerprint exists for: B-STEEL's arms disagreed about a
+// byte at 0x1180, which 97 does not land on, so the table reported identical
+// memory beside a register that had just been loaded from it -- and the whole
+// investigation went looking for a bug in the addressing instead.
 function memHash(mem) {
   let h = 0x811c9dc5;
-  for (let i = 0; i < 0x100000; i += 97) h = Math.imul(h ^ mem[i], 0x01000193);
+  for (let i = 0; i < 0x100000; i++) h = Math.imul(h ^ mem[i], 0x01000193);
   return (h >>> 0).toString(16);
+}
+
+// A differing hash says only "somewhere". This says where, which for a trace of
+// half a dozen ops is usually the whole answer.
+function firstMemDiff(a, b) {
+  for (let i = 0; i < 0x100000; i++) if (a[i] !== b[i]) return i;
+  return -1;
 }
 
 // Lay the trace down as a straight-line arena program: every branch's taken
@@ -1098,16 +1156,35 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
     // $halt joins them for the same reason: it says how the SLICE ended, which
     // is harness state, and a straight-line arm ends its slice differently from
     // one that branches.
+    // The segment BASES join the selectors -- but only when EVERY arm can
+    // report them, because a column one arm omits makes every comparison fail
+    // on formatting rather than on state. (It did: B-STEEL's arms were declared
+    // to disagree while every register in the row was equal.) They are derived
+    // state, set only by `$sset` via `set_<seg>`, so an arm can carry the right
+    // selector and the wrong base and address somewhere else entirely.
+    const bases = arms.every(a => (a.vm ? a.vm.exports : a.exports)[`get_${isa.SEG[0]}b`])
+      ? isa.SEG : [];
     const regs = STATE.filter(g => !['ip', 'steps', 'left', 'intno', 'gip', 'halt'].includes(g))
-      .map(g => `${g}=${ex[`get_${g}`]() >>> 0}`).join(' ');
-    fingerprints.push({ name: arm.name, regs, mem: memHash(arm.vm ? arm.vm.mem : arm.mem) });
+      .map(g => `${g}=${ex[`get_${g}`]() >>> 0}`)
+      .concat(bases.map(r => `${r}b=${ex[`get_${r}b`]() >>> 0}`))
+      .join(' ');
+    const mem = arm.vm ? arm.vm.mem : arm.mem;
+    fingerprints.push({ name: arm.name, regs, mem: memHash(mem), bytes: mem });
   }
   const agree = new Set(fingerprints.map(f => `${f.regs}|${f.mem}`)).size === 1;
   log(`\nagreement after ${iters} iterations: ${agree ? 'ALL THREE MATCH' : 'MISMATCH'}`);
   if (!agree) {
-    for (const f of fingerprints) log(`  ${f.name}\n    ${f.regs}\n    mem=${f.mem}`);
+    for (const f of fingerprints) {
+      let where = '';
+      if (f.mem !== fingerprints[0].mem) {
+        const at = firstMemDiff(fingerprints[0].bytes, f.bytes);
+        where = ` (first byte differing from ${fingerprints[0].name.split(' ')[1]}: `
+          + `0x${at.toString(16)} -- ${fingerprints[0].bytes[at]} here ${f.bytes[at]})`;
+      }
+      log(`  ${f.name}\n    ${f.regs}\n    mem=${f.mem}${where}`);
+    }
     log('\nnot comparable -- an arm that computes something else is not faster.');
-    return { agree: false, fingerprints };
+    return { agree: false, fingerprints: fingerprints.map(({ bytes, ...f }) => f) };
   }
 
   const best = new Map(arms.map(a => [a.name, Infinity]));

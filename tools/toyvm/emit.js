@@ -5317,12 +5317,21 @@ const machineAccessors = () => MACHINE_STATE.map(g => `
 (func (export "mget_${g}") (result i32) (global.get $${g}))
 (func (export "mset_${g}") (param $v i32) (global.set $${g} (local.get $v)))`).join('');
 
-function preamble() {
-  const globals = STATE
-    .map(g => `(global $${g} (mut i32) (i32.const 0))`).join('\n');
-  // A segment register's setter goes through $sset like every in-guest write
-  // does, so the shadow base cannot drift when the host pokes CS or ES -- which
-  // it does on every interrupt dispatch and on the way into a program.
+// The host's window onto guest state, emitted from ONE place because there is a
+// second module that needs the identical set: trace-jit.js compiles a trace into
+// a standalone module and seeds it through these exports. That module used to
+// write its own simpler pair -- a plain `(global.set $es)` for a segment -- and
+// the consequence was silent and expensive: $esb stayed 0, so every segmented
+// access in a compiled trace addressed `0 + off` while the interpreter it was
+// being compared against addressed `base + off`. The arms disagreed on a byte,
+// the register table blamed the addressing, and the addressing was fine.
+//
+// A segment register's setter goes through $sset like every in-guest write
+// does, so the shadow base cannot drift when the host pokes CS or ES -- which
+// it does on every interrupt dispatch and on the way into a program. The bases
+// are exported read-only for the same reason they exist: they are derived, and
+// anything that compares two machines has to be able to see them.
+function stateAccessors() {
   const accessors = STATE.map(g => {
     const seg = isa.SEG.indexOf(g);
     // The flags word is the one piece of state that may be DEFERRED rather than
@@ -5340,6 +5349,14 @@ function preamble() {
       ? `(global.set $${g} (local.get $v))`
       : `(call $sset (i32.const ${seg}) (local.get $v))`})`;
   }).join('');
+  return accessors + isa.SEG
+    .map(r => `\n(func (export "get_${r}b") (result i32) (global.get $${r}b))`).join('');
+}
+
+function preamble() {
+  const globals = STATE
+    .map(g => `(global $${g} (mut i32) (i32.const 0))`).join('\n');
+  const accessors = stateAccessors();
   return `(module
 (import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
 (import "host" "port_in" (func $port_in (param i32) (param i32) (result i32)))
@@ -5359,7 +5376,8 @@ ${EXTRA_GLOBALS}
 ;; memory entirely. $d32 goes with it because the default operand size is a
 ;; property of the same descriptor and so is part of what a block was compiled
 ;; against.
-${isa.SEG.map(r => `(func (export "get_${r}b") (result i32) (global.get $${r}b))`).join('\n')}
+;; (the six get_<seg>b exports come from stateAccessors(), which the trace
+;; compiler shares -- see the note there)
 (func (export "get_d32") (result i32) (global.get $d32))
 (func (export "get_cr0") (result i32) (global.get $cr0))
 (func (export "get_vm86") (result i32) (global.get $vm86))
@@ -5655,6 +5673,7 @@ module.exports = {
   EA_ARMS,
   MACHINE_STATE,
   machineAccessors,
+  stateAccessors,
   // A handler index -> the same handler without its flag write, and what every
   // handler does to the flag state. The compiler walks a finished block
   // backwards with these and swaps in the variant where the write is dead.
