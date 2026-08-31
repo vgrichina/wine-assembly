@@ -20,6 +20,8 @@ const EXTRA_WAT = `
   (func (export "test_aoe_span_zf") (result i32) (call $get_zf))
   (func (export "test_aoe_span_sf") (result i32) (call $get_sf))
   (func (export "test_aoe_span_of") (result i32) (call $get_of))
+  (func (export "test_try_emit_aoe_span_prefix") (param $entry i32) (result i32)
+    (call $try_emit_aoe_span_prefix (local.get $entry)))
 `;
 
 function pePrefix(file, entry, length) {
@@ -168,7 +170,7 @@ function pePrefix(file, entry, length) {
   assertOrdinaryEquivalent('reject', rejectConfig, snapshot());
   assert(e.get_loop_aoe_span_runs() >= 3, 'all three packet continuations executed');
 
-  // A patched prefix must remain ordinary x86.
+  // A patched anchor must remain ordinary x86.
   const nearCode = code + 0x500;
   const near = Uint8Array.from(prefix);
   near[0x60] ^= 1;
@@ -178,6 +180,20 @@ function pePrefix(file, entry, length) {
   e.run(1);
   assert.strictEqual(e.get_loop_aoe_span_matches(), nearMatches,
     'byte-signature near miss remains ordinary x86');
+
+  // Anchor-only matching used to accept this mutation: +0x10 lies between
+  // every sampled dword, but still belongs to the body replaced by H438.
+  // Ask the recognizer directly so the deliberately corrupted instruction
+  // stream never has to execute.
+  const interiorCode = code + 0x700;
+  const interior = Uint8Array.from(prefix);
+  interior[0x10] ^= 1;
+  bytes.set(interior, wa(interiorCode));
+  const interiorMatches = e.get_loop_aoe_span_matches();
+  assert.strictEqual(e.test_try_emit_aoe_span_prefix(interiorCode), 0,
+    'interior-byte near miss is rejected by the whole-body proof');
+  assert.strictEqual(e.get_loop_aoe_span_matches(), interiorMatches,
+    'rejected interior mutation does not count as a span-prefix match');
 
   // The same H438 algorithm must also accept AoE I's register allocation.
   const aoe1Prefix = pePrefix(

@@ -95,6 +95,25 @@
   (global $mmx_mask_copy_rows (mut i64) (i64.const 0))
   (global $mmx_mask_copy_bytes (mut i64) (i64.const 0))
 
+  ;; Decode-time FNV-1a over guest bytes. Exact binary-specific folds use this
+  ;; after cheap anchor checks so accepting a fold proves the complete body,
+  ;; not just a handful of instruction words sampled from it.
+  (func $loop_hash_bytes (param $start i32) (param $length i32) (result i32)
+    (local $p i32) (local $end i32) (local $hash i32)
+    (local.set $p (local.get $start))
+    (local.set $end (i32.add (local.get $start) (local.get $length)))
+    (local.set $hash (i32.const 0x811C9DC5))
+    (block $done
+      (loop $bytes
+        (br_if $done (i32.ge_u (local.get $p) (local.get $end)))
+        (local.set $hash
+          (i32.mul
+            (i32.xor (local.get $hash) (call $gl8 (local.get $p)))
+            (i32.const 0x01000193)))
+        (local.set $p (i32.add (local.get $p) (i32.const 1)))
+        (br $bytes)))
+    (local.get $hash))
+
   ;; Recognize the exact Jazz row-mask loop at 0x468892/0x468a04/0x468b7e.
   ;; This is deliberately a raw-byte proof rather than an extension of the
   ;; self-loop matcher: JAE splits the idiom into a mask head and a copy/tail
@@ -183,6 +202,18 @@
                       (i32.const 0x75C0)))))
       (then (local.set $mode (i32.const 2))))
     (if (i32.eqz (local.get $mode)) (then (return (i32.const 0))))
+
+    ;; The anchors above select the register-layout variant cheaply; the hash
+    ;; proves every byte of the complete replaced prefix. These are the FNV-1a
+    ;; digests of the 0x6b-byte AoE I and 0x6a-byte AoE II retail bodies used by
+    ;; the differential regression below.
+    (if (i32.ne
+          (call $loop_hash_bytes (local.get $start_eip)
+            (select (i32.const 0x6b) (i32.const 0x6a)
+              (i32.eq (local.get $mode) (i32.const 1))))
+          (select (i32.const 0x99364898) (i32.const 0xe76d1b61)
+            (i32.eq (local.get $mode) (i32.const 1))))
+      (then (return (i32.const 0))))
 
     (global.set $loop_aoe_span_matches
       (i32.add (global.get $loop_aoe_span_matches) (i32.const 1)))
