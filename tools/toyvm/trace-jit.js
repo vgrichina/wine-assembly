@@ -656,6 +656,8 @@ async function jitTiers(exe, {
   }
 
   let bres;
+  // The list the arms actually ran, kept where the verdict can see it.
+  let opsBenched = t.ops;
   try {
     // One trim, applied before the arms diverge, so all four run the identical
     // op sequence -- which is the only reason their fingerprints can be
@@ -677,6 +679,7 @@ async function jitTiers(exe, {
       ops = ops.slice(0, opsPrefix);
       log(`  (--ops-prefix=${opsPrefix}: benching a PREFIX, not the trace -- timings are meaningless)`);
     }
+    opsBenched = ops;
     bres = await benchTiers(exe, hot, ops, { iters, reps, log, passes, dumpWat, bundle });
   } catch (e) {
     // Two very different failures used to share this label. `unfoldable` is a
@@ -689,7 +692,16 @@ async function jitTiers(exe, {
     log(`\ncannot build the tiers: ${e.message}`);
     return { ok: false, reason: fold ? 'unfoldable' : 'trap', detail: e.message, trace };
   }
-  if (!bres.agree) return { ok: false, reason: 'mismatch', trace, fingerprints: bres.fingerprints };
+  if (!bres.agree) {
+    // See internalTransfer: `branchy` is "the arms did not run the same
+    // program", which is a different report from "the tiers computed something
+    // else", and only the second is a bug in the lowering.
+    const branchy = internalTransfer(opsBenched);
+    if (branchy) log('  ...but this op list transfers internally, so the arms did NOT run\n'
+      + '  the same program. INCONCLUSIVE, not a tier bug.');
+    return { ok: false, reason: branchy ? 'branchy' : 'mismatch', trace,
+      fingerprints: bres.fingerprints };
+  }
   return { ok: true, reason: 'benched', trace, ...bres };
 }
 
@@ -1439,6 +1451,32 @@ function firstMemDiff(a, b) {
 // BODY, which is what this page has always claimed to price: "this does not
 // price side exits" was already true of the branches that stayed.
 const CANNOT_FALL_THROUGH = /^(ret|call|int|iret|hlt|jmp_far|jmp_m)/;
+
+// A DISAGREEMENT ONLY MEANS SOMETHING WHEN BOTH ARMS RAN THE SAME PROGRAM.
+// tier 0 executes the arena, where a transfer is a real edge; tiers 1-3 are
+// straight lines that compute a branch's condition and then fall through it.
+// straightLineProgram repoints the edges it can see, but that is not the same
+// as the arms agreeing on them: a `loop` also decrements CX and charges its own
+// steps, and nothing repoints a call, a ret, an int or a far jump at all. So an
+// op list with a transfer anywhere but its own end cannot be judged, and a
+// mismatch on one is a fact about the harness rather than about the tiers.
+//
+// Measured over the 199-program corpus: 17 programs came back `mismatch`, and
+// every one of them has such a transfer -- CHANGE.EXE a `loop`, ATTIC.EXE a
+// lone `call_far`, INTRO.EXE a `ret32`. Reporting those as micro-op bugs sent
+// a whole afternoon after bugs that are not there.
+function internalTransfer(ops) {
+  // The last op is exempt from the branch test and only the branch test: a
+  // trace that ENDS in a Jcc is the normal shape, straightLineProgram points it
+  // at the terminator, and every arm then stops in the same place. A trailing
+  // call/ret/int is a different matter -- trimExit drops one only when there is
+  // something left after it, so a one-op trace still carries it here.
+  return ops.some((op, i) => {
+    const name = HANDLERS[op.fn].name;
+    if (CANNOT_FALL_THROUGH.test(name)) return true;
+    return i < ops.length - 1 && TAKEN_AT.has(op.fn);
+  });
+}
 
 function trimExit(ops) {
   if (ops.length < 2) return { ops, dropped: null };
