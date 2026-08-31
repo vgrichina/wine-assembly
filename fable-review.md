@@ -180,19 +180,26 @@ listed tests declare their own budget above the runner's 300 s kill
 `run-all.sh` tallies in its own column; refuse a per-test timeout above the
 runner cap at manifest-check time.
 
-**3.6 The memory-map gate sees only `_SIZE`-paired globals.**
-`test/test-wat-memory-map.js` intersects every `$X`/`$X_SIZE` pair plus data
-segments — which is why Pass 2's five collisions were found. But 60 fixed
-high-range globals have no `_SIZE` twin (`CS_TABLE`, `LOCK_*`,
-`CODE_PAGE_BITMAP`, `WIN16_*_STAGING`, the `GDI_BITMAP_FONT_*` set, `D3DIM_*`,
-`CP1252_TO_CP437`), and two of this window's new regions are among them:
-`DX_PROCESS_STATE` 0x07F0CE90/32 B (dirty tree, `09a8:283`, only a comment at
-`01-header.wat:1330`) and `CONSOLE_TITLE_STORAGE` 0x07E0FA00 (`e3ff3e4c`,
-`09a2:8`, bounded only by `$CONSOLE_TITLE_MAX=128` at `01-header.wat:3402`,
-absent from the header map). Hand-checked against their neighbours today — no
-collision — which is exactly the check Pass 2 said should not be by hand.
-(`LOOP_PROCESS_STATE` *does* have its twin, `07b:75`.) *Fix:* the gate fails on
-any `0x07xxxxxx` global without a `_SIZE`.
+**3.6 The memory-map gate sees only `_SIZE`-paired globals — FIXED `8ed5ae8c`.**
+Every `0x07xxxxxx` constant-address global must now either publish its own
+`_SIZE` or appear in an explicit, range-checked alias-to-owner table. A new
+unclassified high global fails the build even when its address happens to fall
+inside some existing region. The gate also ties declared extents to the counts
+and strides that index the DLL, Win16, console, code-page, GDI, COM-wrapper and
+vtable tables; shrinking `_SIZE` no longer makes an overflowing implementation
+look safe.
+
+Turning the 55 formerly invisible globals into checked regions/aliases exposed
+three live layout errors: `DLL_RSRC_TABLE`'s declared 512 bytes covered the
+untracked `DLL_PATH_TABLE` even though its 16 × 8-byte implementation needs
+128; the 2,048-entry `WIN16_THUNK_TABLE` occupied 8KB from 0x079C7000 and
+overwrote `WND_Z_ORDER_TABLE` at 0x079C8000; and `COM_WRAPPERS_AUX`'s declared
+tail covered the first four bytes of `DX_VTBL_REGISTRY`. Their extents are now
+correct, the thunk table moved to the complete 0x079D8000 gap, and the registry
+starts exactly after the padded aux pool. The new capacity assertion also
+stopped an in-flight 4→6 Win16 app-DLL expansion from extending 0x07A00000
+through the API/console/GDI/DX tables; that six-megabyte staging arena now lives
+in the checked 0x04A00000..0x05000000 gap before `THREAD_CACHE_BASE`.
 
 **3.7 `tools/check-parens.js` is red on HEAD and nothing runs it — FIXED `1166907c`; it was a real stray paren, see the addendum.** On a fresh
 `concat-wat.js` it reports `final depth -1` at `build/combined.wat:192307`; per
