@@ -683,6 +683,32 @@ ACCIDENT.EXE's region diverges at 12 M dispatches. My items re-checked, all
 unchanged: **A.9 still 18 dead-splice tests, A.10 still six untracked
 manifest rows, rec 8 still absent from `build.sh`**.
 
+**By 13:00 (+2 commits, HEAD `fd1b0244`)** a quiet consolidation window with
+one HIGH-grade hole closed: `--allow-baseline-fail` could excuse an
+*asymmetric* legacy-FAIL/watx-PASS matrix row, because the excusal read the
+legacy column alone — the same silent-green shape `f2f99acd` had closed,
+re-entered through the escape hatch. `07ce65f2` requires the second column to
+have failed too, reports an asymmetric row as its own DIVERGENCE kind, and
+keeps it red in both directions even when allow-listed (verified at
+`watx-matrix.js:436-437,457,517`; the fixture had to be purpose-built,
+because every real test fails on both artifacts or neither). Same commit,
+LOW: bare `+42`-style atoms now parse like their parenthesized forms. The
+closure bytes are unchanged and the WATX build now emits **exactly one
+positional-else warning — `09a5-handlers-window.wat:216`, the still-open
+sixth bare-tail defect**: the compiler itself now names the last known
+dropped-code site every time it runs, and the shipped build meanwhile never
+applies a class-registered window's style there. That file's owner has not
+surfaced; the wine-assembly-fd session pinged this one directly asking to
+commit the gating dirty state (`09a5`, `host.js`, `index.html`,
+`lib/apps.js`, the six A.10 untracked tests) — none of it is mine, which I
+answered on the board; M4's mechanical `host.js` wiring and the M5
+clean-checkout gate stay blocked on those owners. toyvm: `fd1b0244` grew
+eight bisector flags for the ACCIDENT divergence and eliminated whole
+suspect classes (not ops, passes, successors, SMC, or the loop protocol —
+narrowed to region *edges*; still open), and fixed a real `splitBranch`
+top-level-`(if` cut on the way. A.9 (18), A.10 (six), rec 8: unchanged
+again.
+
 **New in this window, ranked.**
 
 **A.1 FIXED `d5cf1afb`: `bundle-browser.js` now discovers modules by walking
