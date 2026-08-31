@@ -94,6 +94,7 @@ UNIT=(
   test/test-ole-insert-object-dlg.js
   test/test-wat-dib-rle.js
   test/test-wasm-abi-diff.js
+  test/test-watx-matrix.js
   test/test-icon-extract.js
   test/test-heroes2-desktop-save.js
   test/test-wide-api.js
@@ -447,6 +448,7 @@ UNIT=(
   test/test-browser-cooperative-crash-registers.js
   test/test-button-auto-check.js
   test/test-char-lower-w.js
+  test/test-child-cbt-native-return.js
   test/test-compare-file-time.js
   test/test-file-times.js
   test/test-command-line-a-stability.js
