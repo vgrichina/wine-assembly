@@ -34,6 +34,8 @@ installInputHandlers(RendererProbe);
 
 const renderer = new RendererProbe();
 renderer.handleKeyDown(0x26, { code: 'ArrowUp' });
+assert.strictEqual(renderer.peekKeyDownState(0x26), 0x8000,
+  'DirectInput physical state sees a browser key press immediately');
 let event = renderer.takeInput();
 assert(event, 'keydown enters the normal renderer input queue');
 assert.strictEqual(event.msg, 0x0100);
@@ -48,4 +50,14 @@ assert.strictEqual(event.msg, 0x0101);
 assert.strictEqual(event.lParam >>> 0, 0xC1480001,
   'queued WM_KEYUP preserves scan, extended, previous, and transition bits');
 
-console.log('PASS Win32 keyboard lParam scan codes reach queued key messages');
+const directInputOnly = new RendererProbe();
+directInputOnly.handleKeyDown(0x28, { code: 'ArrowDown' });
+directInputOnly.handleKeyUp(0x28, { code: 'ArrowDown' });
+assert.strictEqual(directInputOnly.inputQueue.length, 2,
+  'the Win32 key messages remain queued for an app that does not drain them');
+assert.strictEqual(directInputOnly.peekAsyncKeyState(0x28), 0x8000,
+  'Win32 async state remains ordered behind the queued key-up');
+assert.strictEqual(directInputOnly.peekKeyDownState(0x28), 0,
+  'DirectInput physical state observes key-up without waiting for GetMessage');
+
+console.log('PASS Win32 keyboard messages preserve ordering while DirectInput tracks physical key release');
