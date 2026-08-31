@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 215,
+  "count": 219,
   "sigs": {
     "log": {
       "params": [
@@ -1181,6 +1181,12 @@
         "i32"
       ]
     },
+    "fs_read_pending": {
+      "params": [],
+      "results": [
+        "i32"
+      ]
+    },
     "fs_write_file": {
       "params": [
         "i32",
@@ -1414,6 +1420,35 @@
         "i32"
       ]
     },
+    "fs_drive_type": {
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "fs_volume_label": {
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "fs_volume_serial": {
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
     "fs_search_path": {
       "params": [
         "i32",
@@ -1544,6 +1579,7 @@
     },
     "create_thread": {
       "params": [
+        "i32",
         "i32",
         "i32",
         "i32",

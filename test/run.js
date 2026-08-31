@@ -443,6 +443,44 @@ const ZIP_LAUNCH = (() => {
   }
   throw new Error(`--zip-exe=${ZIP_EXE} not found in ${ZIP_MOUNTS.join(', ')}`);
 })();
+// --iso=PATH (repeatable): mount an ISO 9660 image as a read-only CD-ROM
+// drive, D:\ for the first image and the next free letter after that
+// (override with --iso-drive=E). Joliet long names win when the image has
+// them; --iso-primary takes the 8.3 ISO names instead. Entries stay lazy: the
+// directory records supply every size, so a mount reads nothing but the
+// descriptors until the guest opens a file. The drive reports DRIVE_CDROM and
+// the image's volume label. See lib/iso9660.js and docs/design-byo-media.md
+// phase 3.
+const ISO_MOUNTS = getArgs('iso');
+const ISO_DRIVE = getArg('iso-drive', null);
+const ISO_PRIMARY = hasFlag('iso-primary');
+// --iso-exe=NAME: launch an executable that lives on the disc. Same shape as
+// --zip-exe: the bytes go to a temp file because the PE loader takes a host
+// path, and the guest CWD becomes the file's directory on D:\, so everything
+// the app opens afterwards comes off the disc.
+const ISO_EXE = getArg('iso-exe', null);
+const ISO_LAUNCH = (() => {
+  if (!ISO_EXE) return null;
+  if (!ISO_MOUNTS.length) throw new Error('--iso-exe needs --iso=PATH');
+  const iso9660 = require('../lib/iso9660');
+  const want = ISO_EXE.toLowerCase().replace(/\//g, '\\').replace(/^[a-z]:\\/, '');
+  let drive = (ISO_DRIVE || 'D').replace(/:$/, '').toUpperCase();
+  for (const isoPath of ISO_MOUNTS) {
+    const image = iso9660.parseIso(new Uint8Array(fs.readFileSync(isoPath)),
+      { prefer: ISO_PRIMARY ? 'primary' : 'joliet' });
+    const hit = image.files.find(f => !f.isDirectory && (f.path.toLowerCase() === want
+      || f.path.toLowerCase().replace(/^.*\\/, '') === want));
+    if (!hit) { drive = String.fromCharCode(drive.charCodeAt(0) + 1); continue; }
+    const dir = fs.mkdtempSync(require('path').join(require('os').tmpdir(), 'wine-iso-'));
+    const out = require('path').join(dir, hit.name);
+    fs.writeFileSync(out, iso9660.readEntry(image, hit));
+    const guestDir = hit.path.includes('\\')
+      ? `${drive}:\\${hit.path.slice(0, hit.path.lastIndexOf('\\'))}`
+      : `${drive}:\\`;
+    return { exePath: out, guestDir, isoPath, drive };
+  }
+  throw new Error(`--iso-exe=${ISO_EXE} not found in ${ISO_MOUNTS.join(', ')}`);
+})();
 // --dll-seed=PATH[,PATH]: preload one more DLL as if the app registry had
 // listed it in `dlls:`. LoadLibraryA resolves a guest path against modules
 // that are already loaded and never opens the VFS itself, so a plugin the app
@@ -477,6 +515,7 @@ const APP_ENTRY = (() => {
 // symlink, so they resolve the same from the page and from here.
 const appAsset = p => (path.isAbsolute(p) ? p : path.join(ROOT, p));
 const EXE_PATH = getArg('exe', ZIP_LAUNCH ? ZIP_LAUNCH.exePath
+  : ISO_LAUNCH ? ISO_LAUNCH.exePath
   : (APP_ENTRY ? appAsset(APP_ENTRY.exe) : 'test/binaries/notepad.exe'));
 const canonicalPath = p => {
   try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); }
@@ -2866,8 +2905,8 @@ async function main() {
   let threadManager = null;
 
   // Wire thread/event imports to ThreadManager
-  h.create_thread = (startAddr, param, stackSize, creationFlags) =>
-    threadManager.createThread(startAddr, param, stackSize, creationFlags);
+  h.create_thread = (startAddr, param, stackSize, creationFlags, threadIdWa) =>
+    threadManager.createThread(startAddr, param, stackSize, creationFlags, threadIdWa);
   h.duplicate_current_thread = (tid) => threadManager.duplicateCurrentThread(tid);
   h.suspend_thread = (handle) => threadManager.suspendThread(handle);
   h.resume_thread = (handle) => threadManager.resumeThread(handle);
@@ -3690,6 +3729,25 @@ async function main() {
         // the working directory, the way a shortcut's "Start in" would set it.
         ctx.vfs.setCurrentDirectory(ZIP_LAUNCH.root);
         console.log(`[zip] launching ${ZIP_EXE} from ${ZIP_LAUNCH.root}`);
+      }
+    }
+
+    // Read-only ISO 9660 mounts (docs/design-byo-media.md phase 3). A disc is
+    // its own drive letter, so it never collides with the app manifest on C:.
+    if (ISO_MOUNTS.length) {
+      const { mountIso } = require('../lib/iso9660');
+      let drive = (ISO_DRIVE || 'D').replace(/:$/, '').toUpperCase();
+      for (const isoPath of ISO_MOUNTS) {
+        const result = mountIso(ctx.vfs, new Uint8Array(fs.readFileSync(isoPath)),
+          { drive, prefer: ISO_PRIMARY ? 'primary' : 'joliet' });
+        console.log(`[iso] mounted ${isoPath} -> ${result.root} ` +
+          `label="${result.volumeLabel}" (${result.fileCount} files, ` +
+          `${result.iso.joliet ? 'Joliet' : 'primary'} names)`);
+        drive = String.fromCharCode(drive.charCodeAt(0) + 1);
+      }
+      if (ISO_LAUNCH) {
+        ctx.vfs.setCurrentDirectory(ISO_LAUNCH.guestDir);
+        console.log(`[iso] launching ${ISO_EXE} from ${ISO_LAUNCH.guestDir}`);
       }
     }
 
@@ -6680,6 +6738,7 @@ async function main() {
         const key = ev.code & 0xFF;
         const down = ev.action === 'di-keydown';
         renderer._asyncKeys[key] = down;
+        if (renderer.pokeKeyDownState) renderer.pokeKeyDownState(key, down);
         if (down) renderer._asyncPressedKeys[key] = true;
         // Event-buffered DirectInput devices must wake for test-injected state
         // changes just as they do for renderer.handleKeyDown/handleKeyUp.
@@ -7421,6 +7480,26 @@ async function main() {
         log: console.log,
         findDll: findRuntimeDllBytes,
       });
+    }
+
+    // Handle the lazy-VFS io_wait yield (yield_reason=12). A provider-backed
+    // file (a mounted zip/iso entry, a dropped File, a remote URL) was asked
+    // for a chunk the host has not read yet. ReadFile parked with its stdcall
+    // frame restored and EIP on the thunk, so filling the chunk and clearing
+    // the yield re-enters the same call, which then takes the cache hit.
+    if (instance.exports.get_yield_reason() === 12) {
+      const pending = ctx.vfs && ctx.vfs.pendingRead;
+      if (TRACE_YIELD) {
+        console.log(`[yield] T0 reason=12 (io_wait) ` +
+          (pending ? `path=${pending.path} off=${pending.offset} len=${pending.length}` : 'no pending record'));
+      }
+      if (pending) {
+        // Fail loudly rather than spinning: a provider that cannot deliver is
+        // a mount bug, and a silent retry loop would look like a hang.
+        await ctx.vfs.fillPendingRead(pending);
+        ctx.vfs.pendingRead = null;
+      }
+      instance.exports.clear_yield();
     }
 
     // Handle the virtual LAN net_wait yield (yield_reason=8). The guest is

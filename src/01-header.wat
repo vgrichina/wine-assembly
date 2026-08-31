@@ -694,6 +694,11 @@
   ;; fs_create_legacy_file(...) → 16-bit HFILE for _lopen/_lcreat
   (import "host" "fs_read_file" (func $host_fs_read_file (param i32 i32 i32 i32) (result i32)))
   ;; fs_read_file(handle, bufGA, nToRead, nReadGA) → BOOL
+  (import "host" "fs_read_pending" (func $host_fs_read_pending (result i32)))
+  ;; fs_read_pending() → 1 when the fs_read_file that just returned 0 is
+  ;; waiting on bytes from a lazy (provider-backed) mount rather than failing.
+  ;; ReadFile asks only on a zero return; every other i32 the read can return
+  ;; is already spoken for as a BOOL at its other call sites.
   (import "host" "fs_write_file" (func $host_fs_write_file (param i32 i32 i32 i32) (result i32)))
   ;; fs_write_file(handle, bufGA, nToWrite, nWrittenGA) → BOOL
   (import "host" "fs_close_handle" (func $host_fs_close_handle (param i32) (result i32)))
@@ -720,6 +725,18 @@
   (import "host" "fs_get_current_directory" (func $host_fs_get_current_directory (param i32 i32 i32) (result i32)))
   (import "host" "fs_set_current_directory" (func $host_fs_set_current_directory (param i32 i32) (result i32)))
   (import "host" "fs_get_full_path_name" (func $host_fs_get_full_path_name (param i32 i32 i32 i32 i32) (result i32)))
+  ;; Drive identity for mounted media. A container mount (an ISO at D:\) records
+  ;; the drive's type and its volume label on the host VFS; these two answer
+  ;; GetDriveType/GetVolumeInformation from that mount when one owns the letter.
+  (import "host" "fs_drive_type" (func $host_fs_drive_type (param i32 i32) (result i32)))
+  ;; fs_drive_type(rootWA, isWide) → DRIVE_* value, or 0 when no mount claims
+  ;; that letter and the caller should keep its built-in answer.
+  (import "host" "fs_volume_label" (func $host_fs_volume_label (param i32 i32 i32 i32) (result i32)))
+  ;; fs_volume_label(rootWA, isWide, outWA, maxChars) → characters written,
+  ;; NUL-terminated; 0 when the drive has no label of its own.
+  (import "host" "fs_volume_serial" (func $host_fs_volume_serial (param i32 i32) (result i32)))
+  ;; fs_volume_serial(rootWA, isWide) → the mounted volume's serial number, or
+  ;; 0 when no mount claims the letter.
   (import "host" "fs_search_path" (func $host_fs_search_path (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; fs_search_path(pathWA, fileNameWA, extWA, bufLen, bufGA, filePartPtrGA, isWide) → len or 0
   (import "host" "fs_get_short_path_name" (func $host_fs_get_short_path_name (param i32 i32 i32 i32) (result i32)))
@@ -754,7 +771,10 @@
   ;; com_get_pending_dll() → WASM addr of pending DLL name string (0=none)
 
   ;; Thread/event host imports
-  (import "host" "create_thread" (func $host_create_thread (param i32 i32 i32 i32) (result i32)))
+  ;; create_thread(start, param, stackSize, flags, lpThreadIdWA) returns the
+  ;; kernel HANDLE and writes the distinct Win32 thread id through the optional
+  ;; translated output pointer.
+  (import "host" "create_thread" (func $host_create_thread (param i32 i32 i32 i32 i32) (result i32)))
   (import "host" "duplicate_current_thread" (func $host_duplicate_current_thread (param i32) (result i32)))
   (import "host" "suspend_thread" (func $host_suspend_thread (param i32) (result i32)))
   (import "host" "resume_thread" (func $host_resume_thread (param i32) (result i32)))
@@ -1334,6 +1354,7 @@
   ;; left under GDI_REGION_TABLE.
   ;; 0x07F0CE80   4B     TV_SLOT_MARK (one past the highest TV_TABLE slot used)
   ;; 0x07F0CE84   4B     TV_HANDLE_SEQ (item-handle sequence, shared by threads)
+  ;; 0x07F0CE90  32B     DX_PROCESS_STATE (display/cooperative state shared by threads)
   ;; 0x07F0CEE0   4B     LOOP_PROCESS_STATE (copy-superop opt-in shared by threads)
   ;; 0x07F0CF00 256B     TV_VIEW_TABLE (16 x per-TreeView caret/scroll/imagelist)
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
@@ -2611,6 +2632,7 @@
   (global $wndclass_style (mut i32) (i32.const 0))    ;; class style from first RegisterClass
   ;; (removed: $window_dc_hwnd — hwnd is now encoded in DC handle)
   (global $cbt_hook_proc (mut i32) (i32.const 0))     ;; CBT hook proc address (from SetWindowsHookExA WH_CBT)
+  (global $keyboard_hook_proc (mut i32) (i32.const 0)) ;; thread WH_KEYBOARD proc; called as queued key messages are retrieved
   (global $capture_hwnd (mut i32) (i32.const 0))      ;; hwnd that has mouse capture (SetCapture/ReleaseCapture)
   (global $cursor_count (mut i32) (i32.const 0))      ;; ShowCursor display count (>=0 = visible)
   (global $current_cursor (mut i32) (i32.const 0x67F00)) ;; HCURSOR last set by SetCursor (default IDC_ARROW)
@@ -2824,7 +2846,7 @@
   ;; different bugs: what is actually wrong in that Winamp run is that a section
   ;; is orphaned by a thread that exits while owning it.
   (global $cs_steal_after (mut i32) (i32.const 0x3FFFFFFF))
-  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait, 9=cs_wait, 10=cross-thread SendMessage
+  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait, 9=cs_wait, 10=cross-thread SendMessage, 11=self-suspend, 12=io_wait (lazy VFS chunk)
   ;; Parameters published when SendMessage parks on an HWND owned by another
   ;; guest thread.  They are per-instance because only that sender consumes
   ;; them; the scheduler carries them to the target instance.

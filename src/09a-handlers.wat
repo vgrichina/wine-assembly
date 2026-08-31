@@ -7231,17 +7231,23 @@
 	        (i32.store offset=16 (call $g2w (local.get $arg1)) (i32.and (local.get $cs) (i32.const 0xFFFF)))
 	        (i32.store offset=20 (call $g2w (local.get $arg1)) (i32.shr_u (local.get $cs) (i32.const 16)))
 	        (local.set $partial (i32.const 0))))
-	    ;; WAT-owned visible clipping: update rect, client bounds, parent,
-    ;; CLIPCHILDREN and CLIPSIBLINGS all compose into the HDC clip.
+    ;; WAT-owned visible clipping: client bounds, parent, CLIPCHILDREN and
+    ;; CLIPSIBLINGS establish USER's system clip. The update rectangle is part
+    ;; of that same system region, not the application-selected clip:
+    ;; SelectClipRgn/IntersectClipRect may replace the latter during WM_PAINT
+    ;; but must never let drawing escape rcPaint. CARDS.DLL selects one card
+    ;; rectangle at a time; keeping rcPaint in the app clip let those selects
+    ;; erase Hearts' three already-dealt opponent hands outside the update.
+    (call $dc_apply_client_clip (local.get $hdc) (local.get $arg0))
     (if (local.get $partial)
       (then
-        (drop (call $host_gdi_intersect_clip_rect
+        (drop (call $gdi_dc_system_clip_rect
           (local.get $hdc)
           (i32.load (local.get $wa))
           (i32.load offset=4 (local.get $wa))
           (i32.load offset=8 (local.get $wa))
-          (i32.load offset=12 (local.get $wa))))))
-    (call $dc_apply_client_clip (local.get $hdc) (local.get $arg0))
+          (i32.load offset=12 (local.get $wa))
+          (i32.const 1))))) ;; RGN_AND
     ;; Erase through the same clipped paint HDC. Win98's BeginPaint/WM_ERASEBKGND
     ;; is constrained by the update/visible region; erasing before the clip is
     ;; installed wipes too much during small invalidations (Spider card drags).
@@ -10373,11 +10379,55 @@ HookEx — no next hook in chain, return 0
   )
 
   ;; 425: ReadFile — STUB: unimplemented
+  ;; Park an API call that has to wait on host I/O, exactly the way
+  ;; $vsock_block parks a blocking socket call: put the stdcall frame back,
+  ;; point EIP at the thunk rather than the block that called it, and yield.
+  ;; The host fills the missing chunk and clears the yield; the same handler
+  ;; then re-runs with the same arguments and takes the cache hit.
+  ;;
+  ;; $handler_set_eip is load-bearing. $run's thunk-zone auto-pop fires
+  ;; whenever a handler leaves EIP alone — yield or no yield — and splices the
+  ;; call out entirely, so the guest would resume past its own ReadFile with
+  ;; the arguments still on the stack.
+  (func $io_block (param $unpop i32)
+    (global.set $esp (i32.sub (global.get $esp) (local.get $unpop)))
+    (global.set $handler_set_eip (i32.const 1))
+    (global.set $eip (global.get $current_thunk_eip))
+    (global.set $yield_reason (i32.const 12))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0)))
+
   (func $handle_ReadFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $lazy i32)
     ;; ReadFile(hFile, lpBuffer, nToRead, lpBytesRead, lpOverlapped) — 5 args
     (global.set $eax (call $host_fs_read_file
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    ;; A zero return from a lazily mounted file can mean "not resident yet"
+    ;; rather than "failed". The host cannot answer that through the BOOL,
+    ;; so it is a separate question — asked only here, and only on a zero.
+    ;; 1 = park and retry this exact call, 2 = the fill failed for good, so
+    ;; complete the call as a Win32 read failure instead of parking forever.
+    (if (i32.eqz (global.get $eax))
+      (then
+        (local.set $lazy (call $host_fs_read_pending))
+        ;; Only the main guest thread may park. A spawned thread brokers its
+        ;; host imports to the main thread and gets an immediate number back —
+        ;; nothing on that path fills a chunk or clears a yield, so parking
+        ;; there is a hang, not a wait. Container mounts that a worker thread
+        ;; will read must be pre-materialized (vfs.materialize) or backed by a
+        ;; provider that reads synchronously; anything else fails here loudly
+        ;; instead of stopping the thread forever.
+        (if (i32.and
+              (i32.eq (local.get $lazy) (i32.const 1))
+              (i32.eq (global.get $current_thread_id) (i32.const 1)))
+          (then (call $io_block (i32.const 24)))
+          ;; 2 = the fill failed for good; 1 on a spawned thread = the mount
+          ;; contract above was broken. Both complete the call as a real Win32
+          ;; read failure rather than a silent zero-byte success.
+          (else
+            (if (local.get $lazy)
+              (then (global.set $last_error (i32.const 30)))))))) ;; ERROR_READ_FAULT
   )
 
   ;; 426: CreateFileW — STUB: unimplemented
@@ -11911,8 +11961,18 @@ HookEx — no next hook in chain, return 0
   ;; fixed C: and CD-ROM D:. Installers enumerate letters independently of
   ;; GetLogicalDrives, so reporting every other letter as fixed makes them pick
   ;; the nonexistent A: drive as their default destination.
+  ;; A mounted volume owns its letter, so ask the host before falling back to
+  ;; that built-in map: an ISO mounted at D:\ reports DRIVE_CDROM from its own
+  ;; mount record, and a mount at any other letter is answered too. 0 means no
+  ;; mount claims the letter.
   (func $drive_type (param $root_g i32) (param $wide i32) (result i32)
-    (local $drive i32)
+    (local $drive i32) (local $mounted i32)
+    (local.set $mounted (call $host_fs_drive_type
+      (if (result i32) (local.get $root_g)
+        (then (call $g2w (local.get $root_g)))
+        (else (i32.const 0)))
+      (local.get $wide)))
+    (if (local.get $mounted) (then (return (local.get $mounted))))
     (if (i32.eqz (local.get $root_g)) (then (return (i32.const 3))))
     (if (i32.ne
           (call $gl_char
@@ -12802,7 +12862,8 @@ HookEx — no next hook in chain, return 0
   ;; describes, with its two strings written as UTF-16.
   (func $handle_GetVolumeInformationW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $volume_information
-      (local.get $arg1) (local.get $arg3) (local.get $arg4) (i32.const 1)))
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36))) ;; stdcall 8 args
   )
 
@@ -12812,20 +12873,42 @@ HookEx — no next hook in chain, return 0
   ;; how the two strings are written, so $wide decides that and nothing else.
   ;; The three arguments past arg4 are read off the guest stack here, before
   ;; either entry point pops it.
-  (func $volume_information (param $name_buf i32) (param $serial i32)
+  (func $volume_information (param $root i32) (param $name_buf i32)
+                            (param $name_size i32) (param $serial i32)
                             (param $max_comp i32) (param $wide i32) (result i32)
     (local $wa_esp i32) (local $fs_flags i32) (local $fs_name i32)
+    (local $mounted_serial i32)
     (local.set $wa_esp (call $g2w (global.get $esp)))
     (local.set $fs_flags (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
     (local.set $fs_name (i32.load (i32.add (local.get $wa_esp) (i32.const 28))))
-    ;; The volume has no label: an empty string, in the caller's encoding.
+    ;; A mounted volume's label — the string an era CD check compares against.
+    ;; Nothing mounted at this letter has a label, so the volume has none: an
+    ;; empty string, in the caller's encoding.
     (if (local.get $name_buf)
       (then
-        (if (local.get $wide)
-          (then (i32.store16 (call $g2w (local.get $name_buf)) (i32.const 0)))
-          (else (i32.store8 (call $g2w (local.get $name_buf)) (i32.const 0))))))
+        (if (i32.eqz (call $host_fs_volume_label
+              (if (result i32) (local.get $root)
+                (then (call $g2w (local.get $root)))
+                (else (i32.const 0)))
+              (local.get $wide)
+              (call $g2w (local.get $name_buf))
+              (local.get $name_size)))
+          (then
+            (if (local.get $wide)
+              (then (i32.store16 (call $g2w (local.get $name_buf)) (i32.const 0)))
+              (else (i32.store8 (call $g2w (local.get $name_buf)) (i32.const 0))))))))
+    ;; A mounted volume's own serial when one is mounted here; the emulator's
+    ;; fixed C: serial otherwise.
     (if (local.get $serial)
-      (then (call $gs32 (local.get $serial) (i32.const 0x12345678))))
+      (then
+        (local.set $mounted_serial (call $host_fs_volume_serial
+          (if (result i32) (local.get $root)
+            (then (call $g2w (local.get $root)))
+            (else (i32.const 0)))
+          (local.get $wide)))
+        (call $gs32 (local.get $serial)
+          (select (local.get $mounted_serial) (i32.const 0x12345678)
+                  (i32.ne (local.get $mounted_serial) (i32.const 0))))))
     (if (local.get $max_comp)
       (then (call $gs32 (local.get $max_comp) (i32.const 255))))
     ;; FILE_CASE_PRESERVED_NAMES | FILE_CASE_SENSITIVE_SEARCH
@@ -12845,7 +12928,8 @@ HookEx — no next hook in chain, return 0
 
   (func $handle_GetVolumeInformationA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $volume_information
-      (local.get $arg1) (local.get $arg3) (local.get $arg4) (i32.const 0)))
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36))) ;; stdcall 8 args
   )
 

@@ -149,7 +149,12 @@
               (i32.eq (global.get $yield_reason) (i32.const 8))
               (i32.or
                 (i32.eq (global.get $yield_reason) (i32.const 9))
-                (i32.eq (global.get $yield_reason) (i32.const 10)))))))
+                (i32.or
+                  (i32.eq (global.get $yield_reason) (i32.const 10))
+                  ;; 12 = io_wait: a lazily mounted file needs a chunk the host
+                  ;; has not read yet. Same contract as 8/9 — EIP is parked on
+                  ;; the thunk, so clearing the yield re-enters the call.
+                  (i32.eq (global.get $yield_reason) (i32.const 12))))))))
         (then (global.set $last_run_halt (i32.const 4)) (br $halt)))
       ;; The 16-bit twin of the thunk-zone check below. A far call or return
       ;; into the thunk segment is caught at the transfer, but EIP can also be
@@ -476,6 +481,21 @@
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
 
+  ;; GetVolumeInformationA reads its last three arguments straight off the
+  ;; guest stack, so a caller here supplies the stack pointer to read them
+  ;; from: $stack must address 32 zeroed guest bytes.
+  (func (export "test_call_GetVolumeInformationA")
+        (param $root i32) (param $name_buf i32) (param $name_size i32)
+        (param $stack i32) (param $serial i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (global.set $esp (local.get $stack))
+    (call $handle_GetVolumeInformationA
+      (local.get $root) (local.get $name_buf) (local.get $name_size)
+      (local.get $serial) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
   (func (export "test_call_WinHelpA")
     (param $caller i32) (param $path_ga i32) (param $command i32)
     (param $data i32) (result i32)
@@ -663,14 +683,14 @@
   (func (export "set_tls_slots") (param i32) (global.set $tls_slots (local.get 0)))
   ;; Post queue exports for IPC injection
   (func (export "get_main_hwnd") (result i32) (global.get $main_hwnd))
-  (func (export "get_dx_primary_pal_wa") (result i32) (global.get $dx_primary_pal_wa))
+  (func (export "get_dx_primary_pal_wa") (result i32) (call $dx_primary_pal_get))
   ;; The window DirectDraw currently owns the whole screen through, or 0.
   ;; A DDSCL_EXCLUSIVE|DDSCL_FULLSCREEN app's primary surface *is* the display,
   ;; so its window shows no caption, border or menu bar however it was styled
   ;; -- the DX SDK's own samples keep WS_CAPTION and a menu and rely on that.
   ;; The compositor cannot infer this from the style bits alone.
   (func (export "get_dx_exclusive_hwnd") (result i32)
-    (if (result i32) (global.get $dx_exclusive_fullscreen)
+    (if (result i32) (call $dx_exclusive_get)
       (then (call $dx_target_hwnd))
       (else (i32.const 0))))
   ;; 1 while the guest holds a ChangeDisplaySettings(CDS_FULLSCREEN) mode.
@@ -695,7 +715,8 @@
   ;;
   ;; WND_RECORDS *is* shared memory, so when this instance has no main window
   ;; of its own, fall back to the topmost visible top-level window recorded
-  ;; there. $dx_coop_hwnd is no help here -- it is a per-instance global too.
+  ;; there. The process-wide cooperative HWND may name a hidden helper, so the
+  ;; visible-window scan remains the compositor's correct fallback.
   (func (export "get_dx_present_hwnd") (result i32)
     (local $i i32) (local $hwnd i32) (local $best i32) (local $best_z i32)
     (local $z i32)
@@ -2245,7 +2266,35 @@
   (func (export "test_gdi_object_record") (param i32) (result i32)
     (call $gdi_object_record (local.get 0)))
   (func (export "test_dx_set_primary_palette_wa") (param i32)
-    (global.set $dx_primary_pal_wa (local.get 0)))
+    (call $dx_primary_pal_set (local.get 0)))
+  ;; Seed/read the process-wide DirectDraw state from two WebAssembly instances
+  ;; in the cross-thread SendMessage regression. These are deliberately helper
+  ;; calls rather than raw memory accesses so the test covers the production
+  ;; accessors used by DirectDraw handlers and GetSystemMetrics.
+  (func (export "test_dx_set_process_state")
+        (param $w i32) (param $h i32) (param $bpp i32) (param $mode i32)
+        (param $hwnd i32) (param $exclusive i32) (param $palette i32)
+    (call $dx_display_w_set (local.get $w))
+    (call $dx_display_h_set (local.get $h))
+    (call $dx_display_bpp_set (local.get $bpp))
+    (call $dx_display_mode_set (local.get $mode))
+    (call $dx_coop_hwnd_set (local.get $hwnd))
+    (call $dx_exclusive_set (local.get $exclusive))
+    (call $dx_primary_pal_set (local.get $palette)))
+  (func (export "test_dx_get_process_state") (param $field i32) (result i32)
+    (if (i32.eq (local.get $field) (i32.const 0))
+      (then (return (call $dx_display_w_get))))
+    (if (i32.eq (local.get $field) (i32.const 1))
+      (then (return (call $dx_display_h_get))))
+    (if (i32.eq (local.get $field) (i32.const 2))
+      (then (return (call $dx_display_bpp_get))))
+    (if (i32.eq (local.get $field) (i32.const 3))
+      (then (return (call $dx_display_mode_get))))
+    (if (i32.eq (local.get $field) (i32.const 4))
+      (then (return (call $dx_coop_hwnd_get))))
+    (if (i32.eq (local.get $field) (i32.const 5))
+      (then (return (call $dx_exclusive_get))))
+    (call $dx_primary_pal_get))
   (func (export "test_dx_set_primary_wa") (param i32)
     (global.set $dx_primary_wa (local.get 0)))
   (func (export "test_dx_primary_entry") (result i32)
