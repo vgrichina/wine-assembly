@@ -278,8 +278,9 @@ stream alive and makes the stale generation fail (`4a812854`,
 before callbacks and honors `WM_NCCREATE`/`WM_CREATE` rejection with the
 Win98 `WM_NCDESTROY` abort sequence (`3bdb921f`). Finally, `WaitMessage` parks
 with its call frame live until queue work arrives, then completes exactly once;
-Worker slices no longer clear and re-enter it as a busy poll (`5237ac44`,
-`test-getmessage-teardown-quit.js`).
+real Worker slices leave that yield parked instead of clearing and re-entering
+the API as a busy poll (`5237ac44`, `42f10d02`,
+`test-getmessage-teardown-quit.js`, `test-worker-thread-scheduler.js`).
 
 **3.12 Duplication and drift, new.** `readSyncObjectName` + `win32ThreadId` +
 the mutex/event trampolines are verbatim in `host.js:807-838` and
