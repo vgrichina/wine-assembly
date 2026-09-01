@@ -5,9 +5,11 @@ cd "$(dirname "$0")/.."
 
 mkdir -p build
 
-# The shipped wasm compiles from WAT_FILES in lib/compile-wat.js, not from the
-# src/*.wat glob — a part that lands in src/ but not in WAT_FILES is silently
-# absent from the build while still appearing in build/combined.wat.
+# The shipped wasm IS src/main.watx's (include ...) closure, so an include that
+# names a missing file is already a located compile error. What the compiler
+# CANNOT see is the other direction: a part that lands in src/ and is included
+# by nobody is silently absent from the build while still appearing in
+# build/combined.wat. That, plus filename order, is what this gate is for.
 node tools/check-wat-manifest.js
 # Every src/*.wat fragment must balance its own parentheses. check-parens.js only
 # proves the CONCATENATION balances, so a stray closer in one file cancelled by a
@@ -117,10 +119,25 @@ node tools/layout-migrate.js --file=src/09d-winsock.wat --layout=VSock \
   --base-local=rec,prec,lrec,crec --base-call='$vsock_rec' --gate > /dev/null || {
   node tools/layout-migrate.js --file=src/09d-winsock.wat --layout=VSock \
     --base-local=rec,prec,lrec,crec --base-call='$vsock_rec' --gate; exit 1; }
+# DxObject (wave 4) — the 32-byte DX_OBJECTS entry, reached through
+# $dx_from_this from five files. --skip-func names the functions where a local
+# called `$entry` is NOT this record (12-byte D3DIM_STATEBLOCKS records, a
+# packed debug key, a PE message-table cursor); base recognition there is by
+# call only. Keep this list in step with the one in the wave-4 commit — dropping
+# a name from it does not make the gate stricter, it makes the codemod convert
+# sites that are not DX objects.
+DX_LAYOUT_ARGS=(--file=src/09a8-handlers-directx.wat,src/09aa-handlers-d3dim.wat,src/09ab-handlers-d3dim-core.wat,src/09ad-handlers-d3d9.wat,src/09a7-handlers-dispatch.wat
+  --layout=DxObject --layout-from=src/09a8-handlers-directx.wat
+  --base-local=entry,dst_entry,src_entry,back_entry,parent,surf_entry,pal_entry
+  --base-call='$dx_from_this'
+  --skip-func='$d3dim_stateblock_create,$d3dim_stateblock_apply,$d3dim_stateblock_capture,$d3dim_stateblock_delete,$d3dim_lights_refresh,$message_table_lookup')
+node tools/layout-migrate.js "${DX_LAYOUT_ARGS[@]}" --gate > /dev/null || {
+  node tools/layout-migrate.js "${DX_LAYOUT_ARGS[@]}" --gate; exit 1; }
 
 echo "Concatenating WAT parts..."
-# From WAT_FILES, not a shell glob: combined.wat must be the same sequence the
-# real compile sees, or every function index in it names the wrong function.
+# From the src/main.watx include list, not a shell glob: combined.wat must be
+# the same sequence the real compile resolves, or every function index in it
+# names the wrong function.
 node tools/concat-wat.js
 # Keep the lightweight structural checker honest and useful. The compiler is
 # authoritative for syntax; this gate adds targeted diagnostics for unmatched
@@ -133,8 +150,8 @@ node tools/check-parens.js build/combined.wat --no-diff --quiet
 # compiles to runtime traps, so build-compile-wat.js hard-errors on
 # WINE_WAT_COMPILER=legacy. See docs/watx-region-safety-design.md §11.
 #
-# build/combined.wat is still written from WAT_FILES: it is the grep /
-# check-parens / func-index surface and is never itself compiled.
+# build/combined.wat is still written from the same include list: it is the grep
+# / check-parens / func-index surface and is never itself compiled.
 echo "Compiling (WATX)..."
 node tools/build-compile-wat.js
 
