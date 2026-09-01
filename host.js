@@ -3451,6 +3451,19 @@ class WineAssembly {
           // vblank_wait: a DirectDraw call is parked on the display. EIP is
           // still on the thunk, so clearing the yield re-enters the same call,
           // which re-tests the model and either completes or parks again.
+          //
+          // Frozen: the display beat is the step budget, not the compositor's.
+          // Waking from a real rAF here let a frozen DirectDraw guest keep
+          // running at the real refresh for as long as stepFrozen budget
+          // remained — DX-Ball visibly animating inside a "frozen" tile, and a
+          // step:N costing N real frames of wall clock. One frozen step is one
+          // vblank, so a frame-paced game advances exactly one frame per step.
+          if (self._frozen) {
+            try { if (self.instance.exports.vblank_tick) self.instance.exports.vblank_tick(); } catch (_) {}
+            try { self.instance.exports.clear_yield(); } catch (_) {}
+            if (self.running) self._scheduleStep(step, 0);
+            return;
+          }
           self._awaitVblank(() => {
             try { self.instance.exports.clear_yield(); } catch (_) {}
             if (self.running) self._scheduleStep(step, 0);
