@@ -202,7 +202,7 @@ function readLayout(text, name) {
   let f;
   while ((f = fieldRe.exec(body))) {
     const [, fname, ftype, countS, strideS] = f;
-    const elemSize = ftype === 'i64' || ftype === 'f64' ? 8 : ftype === 'u8' ? 1 : 4;
+    const elemSize = FIELD_SIZE[ftype] !== undefined ? FIELD_SIZE[ftype] : 4;
     const count = countS ? Number(countS) : 1;
     const stride = strideS ? Number(strideS) : elemSize;
     fields.push({ name: fname, type: ftype, offset, count, stride, elemSize, size: stride * count });
@@ -211,10 +211,38 @@ function readLayout(text, name) {
   return { name, fields, totalSize: offset, byOffset: new Map(fields.map(f => [f.offset, f])) };
 }
 
+// Byte width of each layout field type. MUST AGREE WITH the compiler's
+// WATX_LAYOUT_FIELD_TYPES (tools/watx-src/compiler-stages.js), which is the
+// single source of truth for what a `(field)` may declare and how wide it is:
+// this tool computes the SAME struct offsets independently, so a disagreement
+// silently mis-attributes every field after the first one that differs. A type
+// absent here falls back to 4, which is what the pre-a5fc1b72 `ptr*` prefix
+// rule needs (ptr<Name> is a 4-byte i32).
+const FIELD_SIZE = {
+  i32: 4, ptr: 4, weak: 4,
+  u8: 1, s8: 1, u16: 2, s16: 2,
+  i64: 8, f32: 4, f64: 8,
+};
+
 // Which memory op goes with which field type. A mismatch means the site is NOT
 // this field (or the layout is wrong) — either way, do not touch it.
-const LOAD_FOR = { i32: 'i32.load', ptr: 'i32.load', f32: 'f32.load', f64: 'f64.load', i64: 'i64.load', u8: 'i32.load8_u' };
-const STORE_FOR = { i32: 'i32.store', ptr: 'i32.store', f32: 'f32.store', f64: 'f64.store', i64: 'i64.store', u8: 'i32.store8' };
+//
+// SIGNEDNESS IS THE FIELD TYPE, NOT THE SITE. a5fc1b72 gave u16/s16/s8 their
+// own opcodes and there is no per-access override, so `u16` accepts ONLY
+// i32.load16_u and `s16` ONLY i32.load16_s. That asymmetry is the point: it is
+// what stops a sign-extending load from being respelled through an unsigned
+// field, which would change the value for any half-word with the high bit set
+// and would do it byte-identically nowhere — the oracle would catch it, but
+// only after the fact. Stores carry no signedness (i32.store16 truncates either
+// way), so both 16-bit field types share one store op.
+const LOAD_FOR = {
+  i32: 'i32.load', ptr: 'i32.load', f32: 'f32.load', f64: 'f64.load', i64: 'i64.load',
+  u8: 'i32.load8_u', s8: 'i32.load8_s', u16: 'i32.load16_u', s16: 'i32.load16_s',
+};
+const STORE_FOR = {
+  i32: 'i32.store', ptr: 'i32.store', f32: 'f32.store', f64: 'f64.store', i64: 'i64.store',
+  u8: 'i32.store8', s8: 'i32.store8', u16: 'i32.store16', s16: 'i32.store16',
+};
 const OPS = new Set([...Object.values(LOAD_FOR), ...Object.values(STORE_FOR)]);
 
 // log2 of the natural alignment each access carries when no `align=` is given.
@@ -223,7 +251,8 @@ const OPS = new Set([...Object.values(LOAD_FOR), ...Object.values(STORE_FOR)]);
 const NATURAL_ALIGN = {
   'i32.load': 2, 'i32.store': 2, 'f32.load': 2, 'f32.store': 2,
   'i64.load': 3, 'i64.store': 3, 'f64.load': 3, 'f64.store': 3,
-  'i32.load8_u': 0, 'i32.store8': 0,
+  'i32.load8_u': 0, 'i32.load8_s': 0, 'i32.store8': 0,
+  'i32.load16_u': 1, 'i32.load16_s': 1, 'i32.store16': 1,
 };
 
 function normalize(s) { return s.replace(/\s+/g, ' ').trim(); }
@@ -263,6 +292,19 @@ function allFuncRanges(text) {
 // A local with even one other assignment is dropped: it is the SAME slot, and
 // which record it holds at a given site is a flow question this tool does not
 // answer. See --base-local-from-call in the header.
+// Does `t` (already normalized) call exactly `baseCall`?
+//
+// The obvious `t.startsWith('(call ' + fn + ' ')` is wrong for an accessor that
+// takes NO ARGUMENTS: its call normalizes to `(call $fn)` with no space, so the
+// prefix never matches and the family silently converts nothing — which is what
+// $paint_scratch_take did, reporting "base locals verified in 0 function(s)"
+// against a file full of them. Both endings have to be accepted, and the space
+// or `)` is also what keeps `$foo` from matching `$foo_bar`.
+function callsBase(t, baseCall) {
+  const head = `(call ${baseCall}`;
+  return t.startsWith(`${head} `) || t === `${head})`;
+}
+
 function verifiedBaseLocals(text, ranges, names, baseCall) {
   const perFunc = new Map();
   if (!names || !names.size || !baseCall) return perFunc;
@@ -279,7 +321,7 @@ function verifiedBaseLocals(text, ranges, names, baseCall) {
       const ops = splitOperands(body, m.index + 1 + m[1].length + 1 + m[2].length, close);
       const rhs = ops && ops.length === 1 ? normalize(ops[0].text) : null;
       const rec = seen.get(name) || { fromCall: 0, other: 0 };
-      if (rhs && rhs.startsWith(`(call ${baseCall} `)) rec.fromCall++;
+      if (rhs && callsBase(rhs, baseCall)) rec.fromCall++;
       else rec.other++;
       seen.set(name, rec);
     }
@@ -319,7 +361,7 @@ function migrate(text, layout, opts) {
   const isRecordPtr = (s, nameOk, at) => {
     const t = normalize(s);
     if (nameOk && baseLocals.has(t)) return true;
-    if (opts.baseCall && t.startsWith(`(call ${opts.baseCall} `)) return true;
+    if (opts.baseCall && callsBase(t, opts.baseCall)) return true;
     // A local whose every assignment in this function came from the base call
     // is evidence, not a name match — so it holds even inside a --skip-func.
     if (verifiedNames.size) {

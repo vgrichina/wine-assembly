@@ -9433,10 +9433,10 @@ nW — STUB: unimplemented
       (then
         (drop (call $gdi_rgn_set_rect
           (local.get $arg1)
-          (i32.load (local.get $rect))
-          (i32.load offset=4 (local.get $rect))
-          (i32.load offset=8 (local.get $rect))
-          (i32.load offset=12 (local.get $rect))))))
+          (load.field PaintRect left (local.get $rect))
+          (load.field.memarg PaintRect top (local.get $rect))
+          (load.field.memarg PaintRect right (local.get $rect))
+          (load.field.memarg PaintRect bottom (local.get $rect))))))
     ;; Win16 USER returned this runtime's historical BOOL-shaped result here.
     ;; Several VB-era libraries check only zero/non-zero instead of the Win32
     ;; region complexity constants; preserve that ABI for thunked callers.
@@ -15154,10 +15154,10 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         (if (local.get $rt)
           (then
             (call $update_invalidate_rect (local.get $arg0)
-              (i32.load (local.get $box))
-              (i32.load offset=4 (local.get $box))
-              (i32.load offset=8 (local.get $box))
-              (i32.load offset=12 (local.get $box))))))
+              (load.field PaintRect left (local.get $box))
+              (load.field.memarg PaintRect top (local.get $box))
+              (load.field.memarg PaintRect right (local.get $box))
+              (load.field.memarg PaintRect bottom (local.get $box))))))
       (else
         (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
         (call $update_invalidate_rect (local.get $arg0) (i32.const 0) (i32.const 0)
@@ -15652,11 +15652,11 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
             (local.set $rect (call $paint_scratch_take))
             (call $host_get_window_rect (local.get $arg0) (local.get $rect))
             (local.set $w (i32.sub
-              (i32.load offset=8 (local.get $rect))
-              (i32.load (local.get $rect))))
+              (load.field.memarg PaintRect right (local.get $rect))
+              (load.field PaintRect left (local.get $rect))))
             (local.set $h (i32.sub
-              (i32.load offset=12 (local.get $rect))
-              (i32.load offset=4 (local.get $rect))))
+              (load.field.memarg PaintRect bottom (local.get $rect))
+              (load.field.memarg PaintRect top (local.get $rect))))
             (if (i32.and
                   (i32.gt_s (local.get $w) (i32.const 0))
                   (i32.gt_s (local.get $h) (i32.const 0)))

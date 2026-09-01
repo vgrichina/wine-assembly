@@ -17,6 +17,23 @@
   ;; dispatch with $paint_scratch_mark / $paint_scratch_reset: the inner frame's
   ;; slots are recycled on the way out, the outer frame's (allocated before the
   ;; mark) are not.
+  ;; A slot is a Win32 RECT and nothing else — $paint_rect below writes exactly
+  ;; these four in this order, and every reader takes them back the same way
+  ;; (e.g. $handle_InvalidateRgn feeds l/t/r/b straight into
+  ;; $update_invalidate_rect). The `16` in the address arithmetic above is this
+  ;; layout's size-of; the region comment in 01-header.wat calls PAINT_SCRATCH
+  ;; "a ring of 16 RECTs" for the same reason.
+  ;;
+  ;; Emulator-private, NOT a guest ABI: the address handed out is a WASM linear
+  ;; address, and the two call sites that pass a slot to $shared_post_queue_read
+  ;; / $timer_check_due use it as an opaque 16-byte out-buffer rather than as a
+  ;; rect. Those never name a field, so they are not sites of this layout.
+  (layout PaintRect
+    (field left   i32)   ;; +0
+    (field top    i32)   ;; +4
+    (field right  i32)   ;; +8
+    (field bottom i32))  ;; +12  ends at +16, the ring's per-slot stride
+
   (func $paint_scratch_take (result i32)
     (local $slot i32)
     (local.set $slot (global.get $paint_scratch_cursor))
@@ -30,10 +47,10 @@
   (func $paint_rect (param $l i32) (param $t i32) (param $r i32) (param $b i32) (result i32)
     (local $p i32)
     (local.set $p (call $paint_scratch_take))
-    (i32.store           (local.get $p) (local.get $l))
-    (i32.store offset=4  (local.get $p) (local.get $t))
-    (i32.store offset=8  (local.get $p) (local.get $r))
-    (i32.store offset=12 (local.get $p) (local.get $b))
+    (store.field PaintRect left (local.get $p) (local.get $l))
+    (store.field.memarg PaintRect top (local.get $p) (local.get $t))
+    (store.field.memarg PaintRect right (local.get $p) (local.get $r))
+    (store.field.memarg PaintRect bottom (local.get $p) (local.get $b))
     (local.get $p))
 
   (func $paint_scratch_mark (result i32) (global.get $paint_scratch_cursor))
@@ -2284,10 +2301,10 @@
     (local.set $rect (call $paint_scratch_take))
     (if (i32.eqz (call $update_get_rect (local.get $parent) (local.get $rect)))
       (then (return (i32.const 0))))
-    (local.set $pl (i32.load (local.get $rect)))
-    (local.set $pt (i32.load offset=4 (local.get $rect)))
-    (local.set $pr (i32.load offset=8 (local.get $rect)))
-    (local.set $pb (i32.load offset=12 (local.get $rect)))
+    (local.set $pl (load.field PaintRect left (local.get $rect)))
+    (local.set $pt (load.field.memarg PaintRect top (local.get $rect)))
+    (local.set $pr (load.field.memarg PaintRect right (local.get $rect)))
+    (local.set $pb (load.field.memarg PaintRect bottom (local.get $rect)))
     (local.set $slot (i32.const 0))
     (block $done (loop $scan
       (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
