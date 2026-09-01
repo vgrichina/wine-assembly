@@ -42,6 +42,19 @@ Acceptance on 2026-08-26:
   without compatibility errors. Diagnostic screenshot:
   `/private/tmp/lw-browser-worker-fixed.png`.
 
+Acceptance update on 2026-09-01:
+
+- `__p___initenv` is now an MSVCRT cdecl alias for the same narrow environment
+  vector as `__p__environ`; the original server no longer stops during CRT
+  startup.
+- `strncat` is implemented as a bounded cdecl append helper; the original
+  client no longer stops after the network connect path starts.
+- `test/test-liquid-war-candidate.js` now drives the highlighted Play item with
+  Enter and captures a single-player arena frame at batch 65000. The current
+  proof frame is 640x480 with the expected red/yellow teams, blue map, white
+  walls, and timer. Ad-hoc screenshot:
+  `/private/tmp/lw-single3-65000.png`.
+
 ## Network startup
 
 - The executable imports MSVCRT `_beginthread` through IAT VA `0x0046e114`.
@@ -70,3 +83,8 @@ For headless input, a one-batch `keydown` followed by `di-keyup` releases the
 DirectInput state without leaving a delayed `WM_KEYUP`. This reaches the
 settings screen, where `10.77.0.1` can be entered before Start game. The fixed
 reproduction is encoded in `test/test-vlan-match.js`.
+
+The current two-process path reaches the waiting room with the player listed,
+and the server accepts and exchanges protocol bytes. It has not yet been
+promoted to a gameplay test because the lobby's "Start now"/"Play" activation
+still needs a reliable headless route.

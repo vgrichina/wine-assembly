@@ -7793,6 +7793,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
+  ;; __p___initenv() — cdecl, returns &__initenv for the narrow CRT startup path.
+  (func $handle___p___initenv (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle___p__environ
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
+
   ;; 260: __set_app_type(type) — cdecl; sets GUI vs console, no-op for us
   (func $handle___set_app_type (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))

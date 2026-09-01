@@ -472,6 +472,35 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  ;; strncat(dest, src, count) — cdecl
+  (func $handle_strncat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dst i32) (local $src i32) (local $ch i32) (local $i i32)
+    (local.set $dst (call $g2w (local.get $arg0)))
+    (block $d (loop $l
+      (br_if $d (i32.ge_u (local.get $i) (i32.const 65536)))
+      (br_if $d (i32.eqz (i32.load8_u (local.get $dst))))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l)))
+    (local.set $src (call $g2w (local.get $arg1)))
+    (local.set $i (i32.const 0))
+    (if (local.get $arg2)
+      (then
+        (block $d2 (loop $l2
+          (br_if $d2 (i32.ge_u (local.get $i) (local.get $arg2)))
+          (br_if $d2 (i32.ge_u (local.get $i) (i32.const 65536)))
+          (local.set $ch (i32.load8_u (local.get $src)))
+          (br_if $d2 (i32.eqz (local.get $ch)))
+          (i32.store8 (local.get $dst) (local.get $ch))
+          (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
+          (local.set $src (i32.add (local.get $src) (i32.const 1)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $l2)))
+        (i32.store8 (local.get $dst) (i32.const 0))))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   ;; 730: atoi(str) — cdecl
   (func $handle_atoi (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $val i32) (local $neg i32) (local $ch i32)

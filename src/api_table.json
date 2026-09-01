@@ -26669,5 +26669,12 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1050845538
+  },
+  {
+    "id": 3206,
+    "name": "__p___initenv",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 996370429
   }
 ]

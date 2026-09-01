@@ -38,6 +38,16 @@ const extraWat = String.raw`
     (global.set $test_esp_delta (i32.sub (global.get $esp) (local.get $saved_esp)))
     (global.set $esp (local.get $saved_esp)))
 
+  (func (export "call_p_initenv")
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle___p___initenv
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $test_eax (global.get $eax))
+    (global.set $test_esp_delta (i32.sub (global.get $esp) (local.get $saved_esp)))
+    (global.set $esp (local.get $saved_esp)))
+
   (func (export "call_cexit")
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
@@ -168,15 +178,35 @@ const extraWat = String.raw`
     (global.set $test_eax (global.get $eax))
     (global.set $test_esp_delta (i32.sub (global.get $esp) (local.get $saved_esp)))
     (global.set $esp (local.get $saved_esp)))
+
+  (func (export "call_strncat") (param $dst i32) (param $src i32) (param $count i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_strncat
+      (local.get $dst) (local.get $src) (local.get $count)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $test_eax (global.get $eax))
+    (global.set $test_esp_delta (i32.sub (global.get $esp) (local.get $saved_esp)))
+    (global.set $esp (local.get $saved_esp)))
 `;
 
 (async () => {
   const { exports } = await bootRenderHarness({ extraWat, fonts: 'none' });
-  function guestCString(text) {
-    const ptr = exports.guest_alloc(text.length + 1) >>> 0;
+  function guestCString(text, capacity = text.length + 1) {
+    assert(capacity >= text.length + 1, 'guestCString capacity holds text and NUL');
+    const ptr = exports.guest_alloc(capacity) >>> 0;
     for (let i = 0; i < text.length; i++) exports.guest_write8(ptr + i, text.charCodeAt(i));
     exports.guest_write8(ptr + text.length, 0);
     return ptr;
+  }
+  function guestReadCString(ptr, limit = 64) {
+    let out = '';
+    for (let i = 0; i < limit; i++) {
+      const ch = exports.guest_read8(ptr + i);
+      if (!ch) return out;
+      out += String.fromCharCode(ch);
+    }
+    return out;
   }
 
   exports.call_mb_cur_max();
@@ -190,6 +220,10 @@ const extraWat = String.raw`
   const envp = exports.guest_read32(environSlot) >>> 0;
   assert(envp, '__p__environ slot points at the envp vector');
   assert.strictEqual(exports.guest_read32(envp) >>> 0, 0, 'envp is a valid empty vector');
+
+  exports.call_p_initenv();
+  assert.strictEqual(exports.last_eax() >>> 0, environSlot, '__p___initenv shares the narrow environment slot');
+  assert.strictEqual(exports.last_esp_delta(), 4, '__p___initenv preserves cdecl cleanup');
 
   exports.call_cexit();
   assert.strictEqual(exports.last_eax() >>> 0, 0x12345678, '_cexit has no return value');
@@ -247,6 +281,20 @@ const extraWat = String.raw`
   assert.strictEqual(exports.last_esp_delta(), 4, 'memchr preserves cdecl cleanup');
   exports.call_memchr(memchrBuf, 0x7a, 6);
   assert.strictEqual(exports.last_eax(), 0, 'memchr returns NULL when not found');
+
+  const strncatDst = guestCString('ab', 16);
+  exports.call_strncat(strncatDst, guestCString('cdef'), 2);
+  assert.strictEqual(exports.last_eax() >>> 0, strncatDst, 'strncat returns dest');
+  assert.strictEqual(exports.last_esp_delta(), 4, 'strncat preserves cdecl cleanup');
+  assert.strictEqual(guestReadCString(strncatDst), 'abcd', 'strncat appends at most count bytes');
+  assert.strictEqual(exports.guest_read8(strncatDst + 4), 0, 'strncat terminates after a partial append');
+
+  exports.call_strncat(strncatDst, guestCString('zz'), 0);
+  assert.strictEqual(guestReadCString(strncatDst), 'abcd', 'strncat count zero leaves dest unchanged');
+
+  const shortDst = guestCString('x', 16);
+  exports.call_strncat(shortDst, guestCString('y'), 8);
+  assert.strictEqual(guestReadCString(shortDst), 'xy', 'strncat stops at source NUL before count');
 
   exports.call_strerror(2);
   const strerrorPtr = exports.last_eax() >>> 0;

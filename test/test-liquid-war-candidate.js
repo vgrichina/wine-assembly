@@ -23,6 +23,10 @@ function assert(condition, message) {
 function imageStats(filename) {
   const png = PNG.sync.read(fs.readFileSync(filename));
   let nonBlack = 0;
+  let red = 0;
+  let yellow = 0;
+  let blue = 0;
+  let white = 0;
   const colors = new Set();
   for (let i = 0; i < png.data.length; i += 4) {
     const r = png.data[i];
@@ -31,8 +35,12 @@ function imageStats(filename) {
     const a = png.data[i + 3];
     if (a && (r || g || b)) nonBlack++;
     if (a) colors.add((r << 16) | (g << 8) | b);
+    if (a && r > 180 && g < 80 && b < 80) red++;
+    if (a && r > 180 && g > 180 && b < 80) yellow++;
+    if (a && r < 80 && g > 40 && b > 100) blue++;
+    if (a && r > 180 && g > 180 && b > 180) white++;
   }
-  return { width: png.width, height: png.height, nonBlack, colors: colors.size };
+  return { width: png.width, height: png.height, nonBlack, colors: colors.size, red, yellow, blue, white };
 }
 
 async function main() {
@@ -44,6 +52,7 @@ async function main() {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-liquid-war-candidate-'));
   const wasmPath = path.join(temp, 'candidate.wasm');
   const framePath = path.join(temp, 'liquid-war-menu.png');
+  const gameplayPath = path.join(temp, 'liquid-war-gameplay.png');
   const vfsRoot = path.join(temp, 'vfs');
 
   try {
@@ -59,17 +68,18 @@ async function main() {
       '--no-close',
       '--quiet-api',
       '--quiet-blocks',
-      '--batch-size=4000',
-      '--max-batches=32000',
+      '--max-batches=92000',
+      '--max-seconds=180',
       '--thread-slices=4',
       '--stuck-after=100000',
-      '--input=20:wait-dlg-control:1:2000,21:dlg-click:1,60:wait-dlg-control:1:2000,61:dlg-click:1',
+      '--input=20:wait-dlg-control:1:2000,21:dlg-click:1,60:wait-dlg-control:1:2000,61:dlg-click:1,' +
+        `48000:png-pixels:${framePath},50000:keydown:13,50001:di-keyup:13,` +
+        `65000:png-pixels:${gameplayPath},92000:stop`,
       `--save-vfs=${vfsRoot}`,
       `--png=${framePath}`,
     ], {
       cwd: ROOT,
       encoding: 'utf8',
-      timeout: 300000,
       maxBuffer: 64 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -83,6 +93,7 @@ async function main() {
     assert(!/OLE32\.DLL can't be loaded|DCOM not found/i.test(output),
       `Liquid War displayed an obsolete OLE/DCOM warning\n${output.slice(-8000)}`);
     assert(fs.existsSync(framePath), 'Liquid War did not produce a menu frame');
+    assert(fs.existsSync(gameplayPath), 'Liquid War did not produce a gameplay frame');
 
     const stats = imageStats(framePath);
     assert(stats.width === 640 && stats.height === 480,
@@ -92,6 +103,12 @@ async function main() {
     // distinct RGB values.
     assert(stats.nonBlack > 250000 && stats.colors > 40,
       `Liquid War menu stayed blank: ${JSON.stringify(stats)}`);
+    const gameplay = imageStats(gameplayPath);
+    assert(gameplay.width === 640 && gameplay.height === 480,
+      `Liquid War gameplay used an unexpected frame size: ${gameplay.width}x${gameplay.height}`);
+    assert(gameplay.colors > 100 && gameplay.red > 10000 && gameplay.yellow > 10000 &&
+      gameplay.blue > 10000 && gameplay.white > 10000,
+      `Liquid War gameplay frame does not look like a live arena: ${JSON.stringify(gameplay)}`);
 
     const logPath = path.join(vfsRoot, 'data', 'lwwin.log');
     assert(fs.existsSync(logPath), 'Liquid War did not write data/lwwin.log');
@@ -106,6 +123,7 @@ async function main() {
     }
 
     console.log(`PASS Liquid War menu: ${stats.width}x${stats.height}, ${stats.colors} colors`);
+    console.log(`PASS Liquid War gameplay: ${gameplay.colors} colors, red=${gameplay.red}, yellow=${gameplay.yellow}`);
     console.log('PASS Liquid War assets: packed data, custom textures/maps, and DirectDraw mode loaded');
   } finally {
     if (process.env.KEEP_LIQUID_WAR_CANDIDATE_TMP === '1') {
