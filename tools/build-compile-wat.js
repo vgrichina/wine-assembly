@@ -241,6 +241,25 @@ function compileWatx(replicatedDispatch) {
     const namedSt = await fs.promises.stat(NAMED_OUT);
     console.log(`Build complete: ${path.relative(ROOT, NAMED_OUT)} (${namedSt.size} bytes, ` +
       `with a wasm name section — NOT canonical, do not ship or hash-compare this one)`);
+  } else {
+    // A STALE named build is worse than no named build, and nothing else here
+    // can catch one. The two canonical artifacts are rewritten on every build,
+    // so they cannot go stale; this third one is only written when it is ASKED
+    // for, so an ordinary build leaves whatever the last --names run produced
+    // sitting beside two fresh files with no marking and no mtime anybody
+    // reads. Its whole job is to turn `Compiling function #3849 failed` into a
+    // name, and a name section from a different build answers that question
+    // CONFIDENTLY WRONG — indices move whenever a function is added.
+    //
+    // No gate for an opt-in artifact: just delete it, so the choice is a real
+    // name or no file at all. `--names` is one flag away.
+    try {
+      await fs.promises.unlink(NAMED_OUT);
+      console.log(`Removed stale ${path.relative(ROOT, NAMED_OUT)} ` +
+        `(name sections are indices; rebuild it with --names)`);
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
   }
 })().catch((err) => {
   console.error(err && err.stack || err);
