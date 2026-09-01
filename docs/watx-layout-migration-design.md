@@ -354,10 +354,82 @@ which is why it is not wave 1 — a three-file wave wants the one-file wave's
 lessons first. The 54 untypeable (16-bit) sites need §3.1 resolved or must stay
 hand-spelled.
 
-### 5.4 `GdiObject` — `call $gdi_object_record`, 160 sites
+### 5.4 `GdiObject` — `call $gdi_object_record`, 160 sites — **ATTEMPTED AND DECLINED**
 
 100% memarg-spelled, so it is the natural first customer of §3.4(b) and should
 not be attempted before that is decided.
+
+A wave was run against this family anyway, to find out whether §3.4(b) is the
+*only* thing in the way. It is not. **Two independent blockers, and the second
+one is new.** No source was changed; the wave converted zero sites, which is the
+correct outcome and is why it is written down here rather than landed.
+
+**Blocker 1 — the memarg fork (§3.4), confirmed by measurement.** The census
+says 160 of 160 sites carry an `offset=` memarg and 0 are byte-identical-capable:
+
+```
+call $gdi_object_record   class A   160 sites (12 stores)
+  distinct offsets : 0x4 0x8 0xc 0x10 0x14 0x18 0x1c 0x20 0x24 0x28
+  memarg form      : 160   untypeable width: 0   byte-identical-capable: 0
+```
+
+That number was *not* taken on trust — the census groups by base symbol and can
+mis-attribute (§2), so the add-form idiom itself was grepped across all nine
+files that hold sites (`10f` 39, `10g` 38, `10e` 35, `10a` 21, `09a` 10, `10b` 7,
+`01-header` 4, `10d` 4, `09a4` 2). Zero hits. There is nothing here for an
+add-form wave to convert, and `tools/layout-migrate.js` has nothing to decline
+because it never sees a candidate.
+
+**Blocker 2 — this record is a discriminated union, not a struct.** A `(layout)`
+assigns one name to one offset (§3.1). This record does not have one name per
+offset. The comment above the table says so, and the allocator proves it:
+`$gdi_object_adopt` (`10d-gdi-region-path.wat`) stores offsets 8/12/16/20 from
+four *positional* parameters — `$style`, `$width`, `$color`, `$flags` — and each
+of the seven types (1=pen 2=brush 3=bitmap 4=font 5=palette 6=WMF 7=EMF)
+reinterprets them:
+
+| offset | pen / brush | bitmap | font | palette |
+|---|---|---|---|---|
+| +0 | handle | handle | handle | handle |
+| +4 | type | type | type | type |
+| +8 | style | width | height | count |
+| +12 | width | height | weight | capacity |
+| +16 | color | bpp | italic | version |
+| +20 | flags | flags (DIB/top-down) | — | flags |
+| +24 | — | bitsWa | FNT strike | PALETTEENTRY storage WA |
+| +28 | — | stride | guest face ptr | — |
+| +32/36/40 | — | paletteWa / paletteCount / surfaceId | — | — |
+
+`+24` alone is `bitsWa`, `strike` and `storage` depending on `+4`. A single
+`GdiObject` layout naming it anything would be wrong at two thirds of its sites,
+and would compile perfectly — precisely the §9 row "field declared in the wrong
+order", except that here no ordering is right. The 10 distinct offsets the
+census observed are 10 *slots*, not 10 fields; `size-of` would be 48
+(`$GDI_OBJECT_STRIDE`), and the record has 4 unobserved trailing bytes.
+
+**So the wave order changes.** Even after §3.4(b) lands a memarg lowering, this
+family still cannot be migrated as one layout. It needs a variant design first —
+four layouts sharing a two-field header (`GdiPen`/`GdiBrush`, `GdiBitmap`,
+`GdiFont`, `GdiPalette`), each declared at 48 bytes so `size-of` still matches
+the stride, with each site converted against the layout its enclosing function's
+type check already establishes. That is a *typing* exercise, not a codemod: the
+tool cannot know which variant a site is, and the type discriminant is not always
+in scope at the site. Under the byte-identity oracle it is still safe to attempt —
+a mis-assigned variant that lands on the same offset is byte-identical and
+therefore harmless, and one that lands on a different offset changes the shasum
+and is caught — but it cannot be a tool run the way wave 1 was.
+
+Two smaller notes for whoever picks this up:
+
+- `tools/layout-migrate.js` requires the `(layout ...)` declaration to be in the
+  **same file** as the sites it rewrites. Wave 1 was one file so this never came
+  up; this family spans nine, and the declaration belongs in `10d` beside the
+  allocator. The tool needs a `--layout-file=` before any multi-file wave
+  (wave 2 and wave 4 both hit this).
+- No §6.1 gate was added for this base symbol. That gate asserts the raw-site
+  count for a **migrated** family is zero; against an unmigrated family it fails
+  on all 160 sites immediately. The gate belongs with the conversion, not ahead
+  of it.
 
 ---
 
@@ -472,6 +544,7 @@ Ordered by risk, not by size. Each row's site count is from the census.
 | **1 ✅** | `VSock` (`call $vsock_rec`), step 1 + step 2 | `src/09d-winsock.wat` | **172 converted** (94 load, 78 store) | **yes** — `aa65465e…` unchanged | **DONE, e5ab038b.** 2 `acc_queue` array sites correctly declined |
 | 2 | `WndRecord` field constants (helper kept) | `09c0`, `09c3`, `09c5` | 72 | partial (46 memarg sites deferred) | first multi-file wave; do not touch the parallel tables |
 | 3 | decide §3.4 — memarg lowering, or accept the delta | compiler or none | — | — | gates 6,543 sites |
+| — | `GdiObject` (`call $gdi_object_record`) | `10a`,`10b`,`10d`,`10e`,`10f`,`10g`,`09a`,`09a4`,`01` | 160 | n/a — 0 add-form sites | **ATTEMPTED, CONVERTED NOTHING (§5.4).** Blocked twice: all 160 memarg (needs wave 3) *and* the record is a discriminated union, which no single layout can express. Needs a variant design, not a codemod |
 | 4 | `DxObject` (`call $dx_from_this`) | `09a8`, `09aa`, `09ab` | 537 | 83% | biggest single win; 54 sites blocked on §3.1 (u16) |
 | 5 | remaining class A families ≥ 20 sites | ~15 files | ~1,100 | mixed | mechanical once 1-4 have set the pattern |
 | 6 | class C frozen ABI layouts, one structure at a time | many | 3,798 | mixed | highest value, highest blast radius; each layout is a frozen declaration |
@@ -534,6 +607,14 @@ back non-empty.
   byte-identical. They are §4 step-1 (`offset-of`) material.
 - `tools/layout-migrate.js` — **landed** with wave 1, and is the wave tool for
   everything below.
+- **`GdiObject` — attempted, declined, no source change (§5.4).** Zero of its
+  160 sites are convertible: 160/160 are `offset=` memarg (confirmed against the
+  add-form idiom by grep across all nine files, not just by the census), and the
+  record is a *discriminated union* whose offsets 8-40 mean different things for
+  each of seven object types — a shape a single `(layout)` cannot express at all.
+  `build/wine-assembly.wasm` unchanged, necessarily: nothing under `src/` was
+  touched. The finding moves this family out of "mechanical once wave 3 lands"
+  and into "needs a variant-layout design first".
 - Waves 2-7 are still design.
 
 ### Two things learned in wave 1 that change the plan slightly
