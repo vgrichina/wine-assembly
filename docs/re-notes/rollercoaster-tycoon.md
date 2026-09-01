@@ -129,7 +129,39 @@ Two compat patches already exist for this binary and fire at load
 | `0x004036d3` | function entered right before the first `CreateDialog` |
 | `0x00410710` | DirectPlay provider-enumeration callback (`ret 0x14`) |
 | `0x004107c0` | its caller; `0x004107e0` is the `DirectPlayEnumerateA` call, returning to `0x004107e5` |
-| `0x0040c7a6` | multimedia-timer `TimeProc` — the game loop. `--count=0x0040c7a6` is the single best health check: 0 means the timer is dead, ~1000 over a 90s run is healthy |
+| `0x0040c7a6` | multimedia-timer `TimeProc` — the **sound-channel service pump**, not the game loop (an earlier version of this row said game loop; wrong). It walks a 4-slot channel table at `0x5672e0` (stride 0x16C, computed by the lea chain as 364) and calls `0x40bb20` per active slot; with no sound playing all four slots are empty and it does nothing, healthily. `--count=0x0040c7a6` still checks the timer is alive |
 | `0x0040d269` | return site of the `timeSetEvent` call that arms it |
 | `0x0045231d` | caller of that arming function |
 | `0x0042f5a5`–`0x0042f5ff` | the `.SC4` decode inner loop the startup scan spends its time in |
+
+## The real game loop (mapped in-scenario, 2026-09-01, browser frozen tile)
+
+Sawyer's outer loop lives around `0x4010e9`/`0x40110a`: `pump(0x403b2e)` →
+`0x402bb3` (FPS bookkeeping only — accumulates ms at `0x565dc8`, publishes
+frames/sec to `0x560124` once a second; it is NOT the tick) → `0x438248`, the
+whole per-frame function, then back to the pump.
+
+Inside `0x438248`, steady state (`byte [0x59fc98]=1` once init ran):
+elapsed = `0x404640()` − `[0x8e0fd0]`, clamped to 500ms, stored as a word at
+`0x8e0fd8`. Sim tick count = clamp(elapsed/31, 1, 4), and the sim loop at
+`0x4384fc` (game update `0x436234` + the UI update battery) is **gated by
+`byte [0x8e31a9] == 0` — that byte is the pause flag** the toolbar pause
+button (top-left, ~(10,10) at 640x480) toggles. When paused the loop is
+skipped wholesale, which is also why "Construction not allowed while game is
+paused!" pairs with a completely still frame. The frame ends in a **25ms
+frame-limiter spin**: `0x43867d` re-reads the clock until 25ms have passed
+since frame start — spin-park's clock-spin detector (yield 14) is what keeps
+that cheap for the host.
+
+Diagnosing "RCT looks stuck" from a browser session, fastest order:
+1. `exports.set_count(i, 0x436234)` + step — the game update counting is the
+   one-line health check (like `--count` headless).
+2. `byte [0x8e31a9]` nonzero = paused; the pause button at (10,10) toggles it.
+3. A running, unpaused, **closed** park with no rides in view is legitimately
+   pixel-static for minutes: no guests, no ride motion, date changes monthly.
+   Do not read a byte-identical screenshot as a stall without checking 1–2.
+`0x59fc99` is a "screen re-init done" latch (cleared by the mode-change /
+screenshot-request handler at `0x42e8d8`, raised by the redraw path), not a
+per-frame render gate; `0x56fdb2` is a screen-effect state machine (1 =
+normal). The DirectSound guard dword at `0x562f2c` protects the TimeProc
+above, unrelated to all of this.
