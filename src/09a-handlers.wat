@@ -6847,14 +6847,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
-  ;; 213: toupper
-  (func $handle_toupper (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Simple ASCII toupper
-    (if (i32.and (i32.ge_u (local.get $arg0) (i32.const 0x61)) (i32.le_u (local.get $arg0) (i32.const 0x7A)))
-    (then (global.set $eax (i32.sub (local.get $arg0) (i32.const 0x20))))
-    (else (global.set $eax (local.get $arg0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
-  )
+  ;; 213: toupper lives in src/09a6-handlers-crt.wat beside $handle_tolower and
+  ;; $handle_towupper, which delegates to it. A SECOND $handle_toupper stood here
+  ;; until 2026-08-31 and had never run: the compiler's `funcIndexMap` is
+  ;; last-wins, so every call to the name — including the generated dispatch
+  ;; table's — resolved to the CRT file's body, and this one was emitted and
+  ;; never reached. Nothing said so, because `strictDeclarations` was off in
+  ;; every shipped build; it is on now (tools/watx-closure.js).
 
   ;; 214: memmove
   (func $handle_memmove (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

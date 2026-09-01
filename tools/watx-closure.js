@@ -72,6 +72,20 @@ function compileClosure(closure, { tailCalls, regionShake, nameSection } = {}) {
     standardWat: true,
     runtimeBuiltins: false,
     tailCalls: !!tailCalls,
+    // A duplicate `(func $name …)` is a SILENT miscompile, not a redefinition.
+    // The compiler builds two maps from the declarations: `funcDeclByName`, used
+    // to type-check a call, is first-wins, and `funcIndexMap`, used to emit the
+    // call's target index, is last-wins. So a second body under the same name
+    // with a different signature type-checks against the FIRST one and then
+    // calls the SECOND — no error anywhere, and a wrong function at runtime.
+    // The compiler has guarded this since it was written, behind
+    // `strictDeclarations`, and until now nothing but tools/watx-rejection-
+    // pairs.js ever passed it: every shipped build had the guard switched off.
+    // It is set here rather than in the compiler because this is the contract
+    // for OUR closure, and turning it on inside tools/watx-src/ would be a
+    // vendored-compiler change requiring a re-seal to say "the tree has no
+    // duplicates today" — which is a property of the tree, not of the compiler.
+    strictDeclarations: true,
   };
   if (regionShake) options.regionShake = regionShake;
   // Only ever set when explicitly asked for. A name section changes the emitted
