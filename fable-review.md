@@ -851,6 +851,24 @@ PASS and localhost-enabled HTTP control PASS. The next substantive review
 item remains the MEDIUM control-variant gate blind spot from the 14:50 tick;
 BYO-media Tier 1 remains the larger carried backlog.
 
+**15:40 catch-up (one runtime commit landed during the review, `bb31c6af`).**
+The five deferred `09c3-controls.wat` bulk-memory conversions are sound. One
+copies into a fresh heap allocation; the tab insertion collapses a nested
+high-to-low, last-byte-to-first record shift into the same whole-span memmove;
+and the toolbar plus two edit paths replace explicit backward copies. No
+forward-smearing loop was changed. A current-tree build is green at **997,646
+B** with the region hash unchanged, the owner ratchet is 13/13, Notepad's
+editing path is 10/10 and its tab-order path is 9/9.
+
+The landing also demonstrated a **LOW gate-integrity gap**: the owner checker
+accepts a region mention anywhere within ±3 lines, so four owner strings that
+had actually shifted by exactly three lines would have stayed green if the
+author had updated only the two failures. The window was intentional, but it
+means “173 verified” does not mean the recorded `file:line` strings are exact;
+near misses accumulate until a later edit trips them. This commit re-derived
+all six affected owners anyway. A coordinator lane claimed exact-line
+tightening plus the broader stale-owner snap while this paragraph was written.
+
 ---
 
 # Pass 3 — 2026-08-30
