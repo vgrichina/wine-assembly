@@ -9,6 +9,8 @@
 // launcher process is still in runningApps at the instant it calls us.
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const { createBrowserShell } = require('../lib/browser-shell.js');
 
 const apps = {
@@ -63,7 +65,42 @@ function makeShell(opts = {}) {
   console.log('ok: unknown exe declined');
 }
 
-// 3. A resolvable exe is accepted (returns true) in both modes, and in
+// 3. VFS child launches keep the command line with the dynamic app, and the
+//    real launcher passes app.args into loadExe() before the PE starts. Inno
+//    bootstrap installers rely on this for their /SL4 handoff: without it the
+//    child setup EXE looks for a missing sidecar .bin and shows only "Error".
+{
+  const { shell } = makeShell();
+  const files = new Map([
+    ['c:\\windows\\temp\\is-test.tmp\\child.tmp', { data: new Uint8Array([77, 90]), attrs: 0x20 }],
+    ['c:\\ptanks.exe', { data: new Uint8Array([77, 90, 1]), attrs: 0x20 }],
+  ]);
+  const vfs = {
+    files,
+    dirs: new Set(['c:\\windows\\temp\\is-test.tmp']),
+    readOnlyDrives: new Set(),
+    _normPath: p => String(p).toLowerCase(),
+    adoptFrom(other) {
+      for (const [p, entry] of other.files) this.files.set(p, entry);
+      for (const dir of other.dirs) this.dirs.add(dir);
+    },
+  };
+  const ok = shell.launchVfsExe('C:\\windows\\temp\\is-test.tmp\\child.tmp',
+    { _helpCtx: { vfs } }, '', '/SL4 $10001 "C:\\ptanks.exe" 2743738 52736');
+  assert.strictEqual(ok, true, 'absolute child exe in the caller VFS is accepted');
+  const child = apps['vfs:c:\\windows\\temp\\is-test.tmp\\child.tmp'];
+  assert.ok(child, 'dynamic vfs app entry is registered');
+  assert.strictEqual(child.args, '/SL4 $10001 "C:\\ptanks.exe" 2743738 52736',
+    'dynamic child command line is preserved');
+
+  const shellSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'browser-shell.js'), 'utf8');
+  assert.match(shellSource,
+    /wine\.loadExe\(app\.exe,\s*\{[\s\S]*?\bargs:\s*app\.args,[\s\S]*?\}\)/,
+    'browser launch must pass app.args into loadExe before PE startup');
+  console.log('ok: vfs child launch keeps args before PE startup');
+}
+
+// 4. A resolvable exe is accepted (returns true) in both modes, and in
 //    single-app mode with a guest still running it defers rather than
 //    declining — write.exe is still in runningApps when it calls us.
 {
