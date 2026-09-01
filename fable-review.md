@@ -738,6 +738,50 @@ default awaits its per-game measurement pass, Icy Tower's joystick
 wait loop is still being debugged off-tree, and the two pre-existing
 reds (test-cli-worker-threads, test-web-record-audio) stand.
 
+**By 14:50 (+4 commits, HEAD `f6ae1917`).** The reported WATX example is
+fixed, but the bug class is not closed. `68381853` makes the table-driven
+scalar/SIMD families, `select` and memory size/grow consume their entire
+form, so `(i32.or A B C D)` is now a located error. Direct emitters still
+return after reading only the operands they need: `unreachable`/`string`
+(`compiler-codegen.js:2697-2715`), local get/set (`:3397-3420`),
+`func-slot` (`:3548-3554`), return/drop/nop (`:3884-3902`) and global
+get/set (`:4372-4396`) are immediate examples; the scalar/SIMD memory and
+layout families have the same shape. Reproduced at this HEAD:
+`(local.get $x (i32.const 9))`, `(drop (i32.const 1) (i32.const 2))` and
+`(nop (i32.const 99))` all compile, validate and run with the surplus
+child discarded. Replacing that child with a call/store therefore erases
+a side effect exactly like the original `i32.or` bug. **HIGH, next compiler
+item:** apply exact arity to every fixed-form direct emitter and add the
+cases to the rejection oracle; do not describe the silent-drop class as
+closed until an emitter census says none remain.
+
+The other runtime-facing commit is sound: `ad5d5391` POSIX-quotes the
+paste-ready agent handoff URL, and its crafted apostrophe fragment survives
+`/bin/sh` as one exact argv value. The real-browser suite passes all 22
+checks. `b7ad4c62` is metadata-only. `f6ae1917` is a byte-preserving naming
+wave over the control-state discriminated union (14 layouts, 541 converted
+sites); the new attribution gate runs green and the decision not to invent
+one common-prefix layout is correct. Its fourth advertised protection is
+not implemented, however: `control-variant-gate.js:245-269` compares each
+parsed layout size to a second hand-written `VARIANTS[name].size`; the
+`alloc` citation is only interpolated into an error and no `heap_alloc` is
+read. An allocator changing independently therefore stays green. The raw
+and converted-site scans are also line regexes (`:274-305`), so a multiline
+form or a hexadecimal `offset=` evades them. **MEDIUM gate hardening:** parse
+forms (or reuse the compiler AST), derive allocation sizes from the named
+allocator sites, and add negative plants for allocator drift, multiline
+forms and hex offsets.
+
+My focused runs: rejection pairs 116/116, differential 46/46 with the one
+deliberate divergence, agent-remote browser suite pass, control-variant gate
+541/541. I did not call the shared dirty tree a full-build verification: 17
+foreign `src/` files are in flight from the bulk-memory/dispatch lanes. The
+author's isolated before/after proof for `f6ae1917` reports identical
+998,494-byte wasm. Open ledger now starts with the remaining direct-emitter
+arity sweep, then BYO-media Tier 1; the class-B lane's newly demonstrated
+`i8`-accepted-by-WATX/rejected-by-layout-generator diagnostic gap is a
+smaller compiler follow-up.
+
 ---
 
 # Pass 3 — 2026-08-30
