@@ -17,6 +17,38 @@ Rules:
 - Every compiler change lands with a minimal regression in one of the
   `test/watx-compiler-*.test.js` suites.
 
+## 2026-09-01 — folded operators consume their whole form
+
+Manifest digest: `c92c6ac479994083463da953384d51be9b4fe34d9a0a59471fb54948e98d8f4c`
+
+`compiler-codegen.js`.
+
+The table-driven instruction emitters read only the operands they needed and
+never checked that the form ended there. `(i32.or A B C D)` therefore compiled
+as `A | B`; `C` and `D` — including any calls or stores inside them — vanished
+without a diagnostic. The emitted wasm was valid, so engine validation could
+not recover the discarded source. Scalar unary/conversion operators and the
+parallel SIMD tables had the same shape.
+
+The common folded-expression dispatch now has one located exact-arity check,
+used by every fixed-arity scalar arithmetic/comparison, unary, conversion and
+saturating-conversion table; the simple SIMD binary, unary, bitmask, shift,
+splat, lane, shuffle and reduction forms; and `select`, `memory.size` and
+`memory.grow`. Missing and surplus operands both fail at the instruction's
+source location before any child is emitted. Variable-arity control forms and
+memory instructions with optional `offset=`/`align=` operands remain under
+their own parsers.
+
+Coverage is three accepted/rejected pairs in `tools/watx-rejection-pairs.js`:
+the exact reported four-operand `i32.or`, a surplus operand on `i32.eqz`, and a
+third vector on `v128.or`. All three reject with located messages while their
+well-formed twins compile. The full rejection oracle is 116/116; Wine parity
+is 22/22, SIMD is 51/51, and the extended SIMD-op suite is 60/60.
+
+The production tree contains no malformed folded form, so its output remains
+`1ed8e600d282ef4d458534ad7b1b4d3f942244ae93d2fe623724d954db4dfd54`
+(998,494 bytes) before and after the change.
+
 ## 2026-08-31 — positional else is a hard error, as the warning promised
 
 Manifest digest: `780cd7466183a3cc7e5ba3520682233620c545efb8a4112dd70c21756ff09a57`

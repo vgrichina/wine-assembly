@@ -411,6 +411,18 @@ pair('module', 'memory.copy takes three arguments',
   '(func $f (memory.copy (i32.const 0) (i32.const 4) (i32.const 4)))\n(export "f" (func $f))',
   '(func $f (memory.copy (i32.const 0) (i32.const 4)))\n(export "f" (func $f))',
   'expected 3 args');
+pair('folded op', 'a scalar binary operator takes exactly two operands',
+  '(func $f (result i32) (i32.or (i32.const 1) (i32.const 2)))\n(export "f" (func $f))',
+  '(func $f (result i32) (i32.or (i32.const 1) (i32.const 2) (i32.const 4) (i32.const 8)))\n(export "f" (func $f))',
+  'expected exactly 2 operand(s), got 4');
+pair('folded op', 'a scalar unary operator takes exactly one operand',
+  '(func $f (result i32) (i32.eqz (i32.const 0)))\n(export "f" (func $f))',
+  '(func $f (result i32) (i32.eqz (i32.const 0) (i32.const 1)))\n(export "f" (func $f))',
+  'expected exactly 1 operand(s), got 2');
+pair('folded op', 'a SIMD binary operator takes exactly two operands',
+  '(func $f (result v128) (v128.or (v128.const i32x4 1 2 3 4) (v128.const i32x4 5 6 7 8)))',
+  '(func $f (result v128) (v128.or (v128.const i32x4 1 2 3 4) (v128.const i32x4 5 6 7 8) (v128.const i32x4 9 10 11 12)))',
+  'expected exactly 2 operand(s), got 3');
 pair('module', 'a function name is declared once (strictDeclarations)',
   '(func $f (result i32) (i32.const 1))\n(export "f" (func $f))',
   '(func $f (result i32) (i32.const 1))\n(func $f (result i32) (i32.const 2))',

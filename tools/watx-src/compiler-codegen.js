@@ -2676,6 +2676,24 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       throw e;
     }
 
+    // Fixed-arity folded instructions must consume the WHOLE form. Emitting
+    // only expr[2]/expr[3] is not validation: before this check
+    // `(i32.or A B C D)` compiled A|B and silently discarded C and D. The
+    // resulting wasm validates, so neither the engine nor the type pass can
+    // recover the author's intent. Keep this helper at the common dispatch
+    // point and use it for every table-driven fixed-arity family below.
+    const requireArity = (expected) => {
+      const got = watxFormLength(expr) - 1;
+      if (got === expected) return;
+      const e = new Error(
+        `${head} in function ${func.name}: expected exactly ${expected} operand(s), got ${got}`);
+      const loc = watxFormLoc(expr);
+      if (loc !== undefined) {
+        e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc);
+      }
+      throw e;
+    };
+
     if (head === 'unreachable') {
       bytes.push(OP.unreachable);
       return bytes;
@@ -2778,6 +2796,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     });
 
     if (binaryOps[head]) {
+      requireArity(2);
       compileExpr(expr[2], func, depth, bytes);
       compileExpr(expr[3], func, depth, bytes);
       bytes.push(binaryOps[head]);
@@ -2798,6 +2817,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     });
     
     if (unaryOps[head]) {
+      requireArity(1);
       compileExpr(expr[2], func, depth, bytes);
       bytes.push(unaryOps[head]);
       return bytes;
@@ -2824,6 +2844,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     });
     
     if (convOps[head]) {
+      requireArity(1);
       compileExpr(expr[2], func, depth, bytes);
       bytes.push(convOps[head]);
       return bytes;
@@ -2835,6 +2856,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       'i64.trunc_sat_f32_s': 4, 'i64.trunc_sat_f32_u': 5, 'i64.trunc_sat_f64_s': 6, 'i64.trunc_sat_f64_u': 7,
     });
     if (satConvOps[head] !== undefined) {
+      requireArity(1);
       compileExpr(expr[2], func, depth, bytes);
       bytes.push(0xFC, satConvOps[head]);
       return bytes;
@@ -2932,6 +2954,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       'i64x2.lt_s': 0xD8, 'i64x2.gt_s': 0xD9, 'i64x2.le_s': 0xDA, 'i64x2.ge_s': 0xDB,
     });
     if (simdBinOps[head] !== undefined) {
+      requireArity(2);
       compileExpr(expr[2], func, depth, bytes);
       compileExpr(expr[3], func, depth, bytes);
       bytes.byte(0xFD);
@@ -2973,6 +2996,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       'f64x2.convert_low_i32x4_s':    0xFE, 'f64x2.convert_low_i32x4_u':    0xFF,
     });
     if (simdUnaryOps[head] !== undefined) {
+      requireArity(1);
       compileExpr(expr[2], func, depth, bytes);
       bytes.byte(0xFD);
       bytes.uleb(simdUnaryOps[head]);
@@ -2987,6 +3011,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       'i32x4.bitmask': 0xA4, 'i64x2.bitmask': 0xC4,
     });
     if (simdBitmaskOps[head] !== undefined) {
+      requireArity(1);
       compileExpr(expr[2], func, depth, bytes);
       bytes.byte(0xFD);
       bytes.uleb(simdBitmaskOps[head]);
@@ -3001,6 +3026,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       'i64x2.shl': 0xCB, 'i64x2.shr_s': 0xCC, 'i64x2.shr_u': 0xCD,
     });
     if (simdShiftOps[head] !== undefined) {
+      requireArity(2);
       compileExpr(expr[2], func, depth, bytes);
       compileExpr(expr[3], func, depth, bytes);
       bytes.byte(0xFD);
@@ -3016,6 +3042,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       'i64x2.splat': 0x12, 'f32x4.splat': 0x13, 'f64x2.splat': 0x14,
     });
     if (simdSplatOps[head] !== undefined) {
+      requireArity(1);
       compileExpr(expr[2], func, depth, bytes);
       bytes.byte(0xFD);
       bytes.uleb(simdSplatOps[head]);
@@ -3104,6 +3131,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       'f32x4.extract_lane':   0x1F, 'f64x2.extract_lane':   0x21,
     };
     if (simdExtractOps[head] !== undefined) {
+      requireArity(2);
       const laneFirst = isLaneToken(expr[2]);
       const vecExpr = laneFirst ? expr[3] : expr[2];
       const laneTok = laneFirst ? expr[2] : expr[3];
@@ -3122,6 +3150,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       'f32x4.replace_lane': 0x20, 'f64x2.replace_lane': 0x22,
     };
     if (simdReplaceOps[head] !== undefined) {
+      requireArity(3);
       const laneFirst = isLaneToken(expr[2]);
       const vecExpr = laneFirst ? expr[3] : expr[2];
       const laneTok = laneFirst ? expr[2] : expr[3];
@@ -3142,6 +3171,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     // vectors first. Both are accepted (gap G7), and a short or out-of-range lane list is
     // a hard error rather than a silent pad with zeros.
     if (head === 'i8x16.shuffle') {
+      requireArity(18);
       const laneFirst = isLaneToken(expr[2]);
       const aExpr = laneFirst ? expr[18] : expr[2];
       const bExpr = laneFirst ? expr[19] : expr[3];
@@ -3158,6 +3188,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     }
     // i8x16.swizzle (v128 vec, v128 idx) -> v128 — dynamic per-lane byte pick.
     if (head === 'i8x16.swizzle') {
+      requireArity(2);
       compileExpr(expr[2], func, depth, bytes);
       compileExpr(expr[3], func, depth, bytes);
       bytes.byte(0xFD);
@@ -3334,6 +3365,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // any_true / all_true — reductions (v128) -> i32.
     if (head === 'v128.any_true') {
+      requireArity(1);
       compileExpr(expr[2], func, depth, bytes);
       bytes.byte(0xFD);
       bytes.uleb(0x53);
@@ -3344,6 +3376,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       'i32x4.all_true': 0xA3, 'i64x2.all_true': 0xC3,
     };
     if (simdAllTrueOps[head] !== undefined) {
+      requireArity(1);
       compileExpr(expr[2], func, depth, bytes);
       bytes.byte(0xFD);
       bytes.uleb(simdAllTrueOps[head]);
@@ -3351,6 +3384,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     }
     // bitselect (a b mask) -> v128
     if (head === 'v128.bitselect') {
+      requireArity(3);
       compileExpr(expr[2], func, depth, bytes);
       compileExpr(expr[3], func, depth, bytes);
       compileExpr(expr[4], func, depth, bytes);
@@ -3870,6 +3904,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── select ──
     if (head === 'select') {
+      requireArity(3);
       compileExpr(expr[2], func, depth, bytes);
       compileExpr(expr[3], func, depth, bytes);
       compileExpr(expr[4], func, depth, bytes);
@@ -3879,10 +3914,12 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     
     // ── memory.size / memory.grow ──
     if (head === 'memory.size') {
+      requireArity(0);
       bytes.push(OP.memory_size, 0x00);
       return bytes;
     }
     if (head === 'memory.grow') {
+      requireArity(1);
       compileExpr(expr[2], func, depth, bytes);
       bytes.push(OP.memory_grow, 0x00);
       return bytes;
