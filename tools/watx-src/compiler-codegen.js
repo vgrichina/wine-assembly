@@ -3914,9 +3914,19 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         bytes.push(OP.i32_store, 0x02, 0x00);
       }
       
-      // store.field evaluates to 0
-      bytes.byte(OP.i32_const);
-      bytes.sleb(0);
+      // store.field evaluates to 0 — in the WATX dialect, where every form is an
+      // expression. NOT under standardWat, where a store is a statement: the
+      // plain `i32.store` path below carries the same `!standardWat` guard, and
+      // needsAutoDrop() deliberately returns false for any head containing
+      // "store" in that dialect, so an unguarded value here is never dropped and
+      // leaks onto the stack. A store in a void function then fails
+      // WebAssembly.validate outright. Wave 0 of
+      // docs/watx-layout-migration-design.md; it survived because nothing in the
+      // tree used a layout op at all.
+      if (!standardWat) {
+        bytes.byte(OP.i32_const);
+        bytes.sleb(0);
+      }
       return bytes;
     }
 
@@ -3990,9 +4000,12 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       } else {
         bytes.push(OP.i32_store, 0x02, 0x00);
       }
-      
-      bytes.byte(OP.i32_const);
-      bytes.sleb(0);
+
+      // store.elem evaluates to 0 in the WATX dialect only — see store.field.
+      if (!standardWat) {
+        bytes.byte(OP.i32_const);
+        bytes.sleb(0);
+      }
       return bytes;
     }
 
@@ -4076,8 +4089,11 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         bytes.push(OP.i32_store, 0x02, 0x00);
       }
 
-      bytes.byte(OP.i32_const);
-      bytes.sleb(0);
+      // store.field-elem evaluates to 0 in the WATX dialect only — see store.field.
+      if (!standardWat) {
+        bytes.byte(OP.i32_const);
+        bytes.sleb(0);
+      }
       return bytes;
     }
 

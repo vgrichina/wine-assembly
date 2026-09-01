@@ -174,6 +174,7 @@ const extra = [
   { name: 'VirtualQuery', nargs: 3 },
   { name: 'WaitForSingleObjectEx', nargs: 3 },
   // Wide-char CRT APIs
+  { name: '__getmainargs', nargs: 5, convention: 'cdecl' },
   { name: '__wgetmainargs', nargs: 5 },
   { name: '__p__wcmdln', nargs: 0 },
   { name: '__p__acmdln', nargs: 0 },
@@ -200,6 +201,7 @@ const extra = [
   { name: 'ceil', nargs: 1, convention: 'cdecl' },
   { name: 'sqrt', nargs: 1, convention: 'cdecl' },
   { name: 'sin', nargs: 1, convention: 'cdecl' },
+  { name: 'log10', nargs: 1, convention: 'cdecl' },
   { name: 'pow', nargs: 2, convention: 'cdecl' },
   { name: '_CIpow', nargs: 0, convention: 'cdecl' },
   { name: 'fopen', nargs: 2, convention: 'cdecl' },
@@ -226,6 +228,12 @@ const extra = [
   { name: '_access', nargs: 2, convention: 'cdecl' },
   { name: '_beginthread', nargs: 3, convention: 'cdecl' },
   { name: '_beginthreadex', nargs: 6, convention: 'cdecl' },
+  { name: '_endthreadex', nargs: 1, convention: 'cdecl' },
+  { name: 'feof', nargs: 1, convention: 'cdecl' },
+  { name: 'ferror', nargs: 1, convention: 'cdecl' },
+  { name: 'fread', nargs: 4, convention: 'cdecl' },
+  { name: 'fseek', nargs: 3, convention: 'cdecl' },
+  { name: 'ftell', nargs: 1, convention: 'cdecl' },
   { name: 'tolower', nargs: 1, convention: 'cdecl' },
   { name: 'toupper', nargs: 1, convention: 'cdecl' },
   { name: 'towlower', nargs: 1, convention: 'cdecl' },
@@ -248,6 +256,7 @@ const extra = [
   { name: 'strtoul', nargs: 3, convention: 'cdecl' },
   { name: 'memset', nargs: 3 },
   { name: 'memcpy', nargs: 3 },
+  { name: 'memcmp', nargs: 3, convention: 'cdecl' },
   { name: '_strupr', nargs: 1, convention: 'cdecl' },
   { name: '_fullpath', nargs: 3, convention: 'cdecl' },
   { name: 'qsort', nargs: 4, convention: 'cdecl' },
@@ -255,6 +264,7 @@ const extra = [
   { name: '__CxxFrameHandler', nargs: 4 },
   { name: '_global_unwind2', nargs: 1 },
   { name: '_getdcwd', nargs: 3 },
+  { name: '_setjmp3', nargs: -1, convention: 'cdecl' },
   // W-suffix Win32 APIs
   { name: 'GetModuleHandleW', nargs: 1 },
   { name: 'GetModuleFileNameW', nargs: 3 },
@@ -1333,11 +1343,11 @@ const cdeclCrtApis = new Set([
   '_itoa', '_itow', '_ltoa', '_mbschr', '_mbsinc', '_mbsnbcmp', '_mbsrchr', '_onexit',
   '_purecall', '_splitpath', '_strdup', '_stricmp', '_strlwr', '_strrev',
   '_wcsicmp', '_wtoi',
-  'atoi', 'atol', 'bsearch', 'calloc', 'exit', 'free', 'malloc', 'memcpy',
+  'atoi', 'atol', 'bsearch', 'calloc', 'exit', 'feof', 'ferror', 'fread', 'free', 'fseek', 'ftell', 'malloc', 'memcmp', 'memcpy',
   'memmove', 'memset', 'rand', 'realloc', 'sprintf', 'sscanf', 'srand', 'strcat',
   'strchr', 'strcmp', 'strcpy', 'strlen', 'strncpy', 'strrchr', 'time', 'qsort',
   'toupper', 'wcscmp', 'wcslen', 'wcsncpy', 'wcsrchr', 'mbstowcs', 'wcstombs',
-  'ceil', 'sqrt', 'sin', 'pow', '_CIpow',
+  'ceil', 'sqrt', 'sin', 'pow', '_CIpow', 'log10',
 ]);
 for (const api of existing) {
   if (cdeclCrtApis.has(api.name)) api.convention = 'cdecl';

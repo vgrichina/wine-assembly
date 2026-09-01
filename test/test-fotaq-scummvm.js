@@ -26,15 +26,16 @@ if (![scummvm, sdl, config, gameData].every(fs.existsSync)) {
 }
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-fotaq-scummvm-'));
-const screenshot = path.join(temp, 'fotaq-title.png');
+const screenshot = path.join(temp, 'fotaq-gameplay.png');
 const args = [
   'test/run.js', `--exe=${scummvm}`,
-  '--args=-c c:\\queen.ini --path=c:\\ queen',
+  '--args=-c c:\\queen.ini queen',
   '--env=SDL_RENDER_DRIVER=software',
+  '--env=SDL_AUDIODRIVER=dummy',
   '--vfs-include=../queen.1',
   `--vfs-mount=${config}=c:\\queen.ini`, `--dll-seed=${sdl}`,
   '--no-build', '--winver=win2k', '--screen=800x600', '--batch-size=5000',
-  '--max-batches=3200', '--max-seconds=90', '--quiet-api', '--quiet-blocks',
+  '--max-batches=18000', '--max-seconds=210', '--quiet-api', '--quiet-blocks',
   `--png=${screenshot}`,
 ];
 
@@ -42,7 +43,7 @@ try {
   const run = spawnSync(process.execPath, args, {
     cwd: root,
     encoding: 'utf8',
-    timeout: 180000,
+    timeout: 300000,
     maxBuffer: 32 * 1024 * 1024,
   });
   const output = `${run.stdout || ''}\n${run.stderr || ''}`;
@@ -55,32 +56,34 @@ try {
     `ScummVM returned to a null instruction pointer\n${output.slice(-8000)}`);
 
   const png = PNG.sync.read(fs.readFileSync(screenshot));
-  let gold = 0;
   let cyan = 0;
   let black = 0;
-  let navy = 0;
+  let skin = 0;
+  let red = 0;
+  let bright = 0;
   const colors = new Set();
-  // At this deterministic guest-work boundary the 640x400 surface shows the
-  // gold Amazon Queen logo and cyan copyright copy over black/navy artwork.
-  // The combination rejects both a blank SDL surface and the teal desktop.
-  for (let y = 100; y <= 500; y++) {
-    for (let x = 80; x <= 720; x++) {
+  // At this deterministic guest-work boundary the ScummVM window has advanced
+  // into the intro scene with a character, red cockpit art, and cyan subtitles.
+  // The combination rejects both a blank SDL surface and the status window.
+  for (let y = 80; y <= 520; y++) {
+    for (let x = 60; x <= 740; x++) {
       const i = (y * png.width + x) * 4;
       const r = png.data[i], g = png.data[i + 1], b = png.data[i + 2];
       colors.add((r << 16) | (g << 8) | b);
-      if (r > 120 && g > 50 && g < 200 && b < 90 && r > g * 1.3) gold++;
-      if (r < 100 && g > 80 && b > 100 && b > r * 1.6) cyan++;
+      if (r < 80 && g > 100 && b > 100) cyan++;
       if (r < 15 && g < 15 && b < 15) black++;
-      if (r < 50 && g < 60 && b > r * 1.2) navy++;
+      if (r > 130 && g > 70 && g < 180 && b > 40 && b < 150 && r > g && g > b) skin++;
+      if (r > 120 && g < 80 && b < 80) red++;
+      if (r + g + b > 450) bright++;
     }
   }
-  assert(gold > 8000 && cyan > 5000 && black > 80000 && navy > 15000 &&
-    colors.size > 25,
-  `FOTAQ title was not visibly rendered: gold=${gold}, cyan=${cyan}, ` +
-    `black=${black}, navy=${navy}, colors=${colors.size}`);
+  assert(cyan > 10000 && black > 25000 && skin > 8000 && red > 4000 &&
+    bright > 5000 && colors.size > 80,
+  `FOTAQ gameplay was not visibly rendered: cyan=${cyan}, black=${black}, ` +
+    `skin=${skin}, red=${red}, bright=${bright}, colors=${colors.size}`);
   console.log(`PASS Flight of the Amazon Queen runs in GOG ScummVM inside ` +
-    `Wine-Assembly (${gold} gold, ${cyan} cyan, ${black} black, ` +
-    `${navy} navy pixels, ${colors.size} colors)`);
+    `Wine-Assembly (${cyan} cyan, ${black} black, ${skin} skin, ` +
+    `${red} red, ${bright} bright pixels, ${colors.size} colors)`);
   if (process.env.KEEP_FOTAQ_SCUMMVM_TMP === '1') {
     console.log(`kept FOTAQ artifacts: ${temp}`);
   } else {

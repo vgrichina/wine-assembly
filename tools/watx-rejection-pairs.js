@@ -504,6 +504,54 @@ pair('string pool', 'a pool that outgrows its region is refused',
   `(region.declare-fixed $P2 (base 0x11000) (size 0x4) (owner "strings"))\n(string.pool $P2)\n(func $f (result i32) "hello")\n(export "f" (func $f))`,
   'runs past');
 
+// ── Struct layouts ────────────────────────────────────────────────────────
+// Every rule here guards a refusal that USED to be a silent default: an unknown
+// layout or field name resolved to offset 0 / size 16, which turns one typo into
+// a read or write of the wrong field — the exact silent bug class
+// docs/watx-layout-migration-design.md exists to delete. A rule that only fires
+// as a comment is not a rule.
+const OK_LAYOUT = '(layout Rec (field state i32) (field value i32) (field ports i32 4))';
+// The PRELUDE above already declares the memory these bodies address.
+const useField = (l, f) =>
+  `(func $g (param $p i32) (result i32) (load.field ${l} ${f} (local.get $p)))\n(export "g" (func $g))`;
+
+pair('layout', 'load.field names a declared layout',
+  `${OK_LAYOUT}\n${useField('Rec', 'value')}`,
+  `${OK_LAYOUT}\n${useField('Nope', 'value')}`,
+  'no such');
+pair('layout', 'load.field names a field the layout has',
+  `${OK_LAYOUT}\n${useField('Rec', 'value')}`,
+  `${OK_LAYOUT}\n${useField('Rec', 'valu')}`,
+  'Unknown field');
+pair('layout', 'store.field names a field the layout has',
+  `${OK_LAYOUT}\n(func $s (param $p i32) (store.field Rec value (local.get $p) (i32.const 1)))\n(export "s" (func $s))`,
+  `${OK_LAYOUT}\n(func $s (param $p i32) (store.field Rec vlaue (local.get $p) (i32.const 1)))\n(export "s" (func $s))`,
+  'Unknown field');
+pair('layout', 'offset-of names a field the layout has',
+  `${OK_LAYOUT}\n(func $o (result i32) (offset-of Rec ports))\n(export "o" (func $o))`,
+  `${OK_LAYOUT}\n(func $o (result i32) (offset-of Rec portz))\n(export "o" (func $o))`,
+  'Unknown field');
+pair('layout', 'size-of names a declared layout',
+  `${OK_LAYOUT}\n(func $z (result i32) (size-of Rec))\n(export "z" (func $z))`,
+  `${OK_LAYOUT}\n(func $z (result i32) (size-of Reck))\n(export "z" (func $z))`,
+  'no such');
+pair('layout', 'an array field count is a positive integer',
+  '(layout R2 (field a i32) (field ports i32 4))\n(func $z (result i32) (size-of R2))\n(export "z" (func $z))',
+  '(layout R2 (field a i32) (field ports i32 0))\n(func $z (result i32) (size-of R2))\n(export "z" (func $z))',
+  'positive integer');
+pair('layout', 'an explicit stride is at least the element size',
+  '(layout R3 (field v f64 2 16))\n(func $z (result i32) (size-of R3))\n(export "z" (func $z))',
+  '(layout R3 (field v f64 2 4))\n(func $z (result i32) (size-of R3))\n(export "z" (func $z))',
+  'stride');
+pair('layout', 'load.field-elem names a field the layout has',
+  `${OK_LAYOUT}\n(func $g (param $p i32) (result i32) (load.field-elem Rec ports (local.get $p) (i32.const 1)))\n(export "g" (func $g))`,
+  `${OK_LAYOUT}\n(func $g (param $p i32) (result i32) (load.field-elem Rec porz (local.get $p) (i32.const 1)))\n(export "g" (func $g))`,
+  'Unknown field');
+pair('layout', 'elem-addr names a declared layout',
+  `${OK_LAYOUT}\n(func $a (param $p i32) (result i32) (elem-addr Rec ports (local.get $p) (i32.const 1)))\n(export "a" (func $a))`,
+  `${OK_LAYOUT}\n(func $a (param $p i32) (result i32) (elem-addr Nope ports (local.get $p) (i32.const 1)))\n(export "a" (func $a))`,
+  'no such');
+
 // ── The runner ────────────────────────────────────────────────────────────
 
 function runPairs({ only = null, onResult = null } = {}) {

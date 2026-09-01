@@ -17,6 +17,62 @@ Rules:
 - Every compiler change lands with a minimal regression in one of the
   `test/watx-compiler-*.test.js` suites.
 
+## 2026-08-31 — store.field stops leaving a value on the stack
+
+Manifest digest: `a933c58ab262e2f89ec0f4e1ab9a32c9548d89dadff969900bce8670958c0bdf`
+
+`compiler-codegen.js`. `store.field`, `store.elem` and `store.field-elem`
+appended an `i32.const 0` unconditionally. In the WATX dialect that is correct —
+every form is an expression and a store evaluates to 0 — but under
+`standardWat: true`, the mode `tools/watx-closure.js` builds the emulator with, a
+store is a **statement**. The plain `i32.store` path a few hundred lines below
+has carried a `!standardWat` guard on exactly that value since it was written;
+these three never got one, and `needsAutoDrop()` returns false for any head
+containing `store` in that dialect, so nothing dropped it either.
+
+The result was not a size regression, it was an invalid module:
+
+```
+  VALID    i32.store in void func
+  INVALID  store.field in void func
+  INVALID  store.field then another statement
+```
+
+A store in a function declared to return nothing left an i32 on the stack and
+the whole module failed `WebAssembly.validate`.
+
+Nothing in the tree noticed because nothing in the tree used a layout op:
+`load.field|store.field|(layout ` over `src/`, `lib/`, `tools/` and `test/`
+matched only the census tool added alongside
+[docs/watx-layout-migration-design.md](../../docs/watx-layout-migration-design.md).
+The spec suite, the differential and the rejection pairs had no layout coverage
+at all, which is the actual defect this entry fixes — the missing guard is one
+line, the missing oracle is the reason it was reachable.
+
+Coverage added in the same commit:
+
+- `test/test-watx-compiler-layout.js` — validates a store in a void function,
+  asserts the WATX dialect still yields its 0, asserts every accessor is
+  byte-identical to its hand-spelled twin, and round-trips fields through memory
+  to check the offsets are the declared ones. Named `test/test-*.js` rather than
+  joining the `test/watx-compiler-*.test.js` family the rules above point at,
+  **because nothing runs that family**: no runner, no npm script, and
+  `tools/check-test-manifest.sh` only sweeps `test/test-*.js`, so those 20 files
+  are in the same blind spot the manifest gate was built to close. This one is in
+  run-all.sh's UNIT tier and therefore actually executes. Wiring the other 20 back
+  in is somebody's follow-up, not this commit's.
+- `tools/watx-differential.js` — `layout-field-scalar` and `layout-elem`. wabt
+  has no `(layout ...)` spelling at all, so these use a new optional
+  `refSource`: the WATX module uses the accessors, the reference is the
+  hand-lowered twin. Both are byte-identical to wabt's encoding of the twin.
+- `tools/watx-rejection-pairs.js` — nine rules, each guarding a refusal that used
+  to be a silent default (an unknown layout or field resolved to offset 0 /
+  size 16, turning one typo into an access to the wrong field).
+
+With the guard in place `store.field` compiles to the same bytes as the
+`(i32.store (i32.add ptr (i32.const N)) v)` it replaces, which is what lets a
+layout migration wave be gated on an unchanged `build/wine-assembly.wasm`.
+
 ## 2026-08-31 — the string pool gets an address instead of a guess
 
 Manifest digest: `bb690346c9e5e1af8c0507518b88d5eca2de46fe60268de179b2d74acbb92c34`

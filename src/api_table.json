@@ -6616,7 +6616,7 @@
   {
     "id": 748,
     "name": "__getmainargs",
-    "nargs": 4,
+    "nargs": 5,
     "convention": "cdecl",
     "hash": 336392573
   },
@@ -26200,5 +26200,68 @@
     "nargs": 3,
     "convention": "cdecl",
     "hash": 208654552
+  },
+  {
+    "id": 3139,
+    "name": "log10",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 2346846000
+  },
+  {
+    "id": 3140,
+    "name": "_endthreadex",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 3127162750
+  },
+  {
+    "id": 3141,
+    "name": "feof",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 2840422373
+  },
+  {
+    "id": 3142,
+    "name": "ferror",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 1850525725
+  },
+  {
+    "id": 3143,
+    "name": "fread",
+    "nargs": 4,
+    "convention": "cdecl",
+    "hash": 2236291193
+  },
+  {
+    "id": 3144,
+    "name": "fseek",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 2154301157
+  },
+  {
+    "id": 3145,
+    "name": "ftell",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 1165692326
+  },
+  {
+    "id": 3146,
+    "name": "memcmp",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 2939988490
+  },
+  {
+    "id": 3147,
+    "name": "_setjmp3",
+    "nargs": -1,
+    "convention": "cdecl",
+    "hash": 4223288742
   }
 ]

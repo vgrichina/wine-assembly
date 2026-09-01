@@ -956,6 +956,128 @@ mod('imported-global', `
     }),
   });
 
+// ── STRUCT LAYOUTS ────────────────────────────────────────────────────────
+// wabt has no (layout ...) at all, so these entries use `refSource`: the WATX
+// module uses the field accessors, the reference is the hand-lowered twin
+// spelled the way src/*.wat spells it today. The claim under test is exactly
+// the one docs/watx-layout-migration-design.md is built on — that
+// load.field/store.field/load.elem/load.field-elem/offset-of/size-of are
+// SUGAR, compiling to the identical bytes as the arithmetic they replace — so
+// a migration wave can be gated on an unchanged wine-assembly.wasm shasum.
+//
+// This family exists because its absence hid a real bug: store.field emitted a
+// trailing `i32.const 0` even under standardWat (where a store is a statement
+// and needsAutoDrop never drops it), so every store left a value on the stack
+// and the module failed WebAssembly.validate. Nothing in the tree used a layout
+// op, so nothing noticed. The instantiation check below is what would have.
+const LAYOUT_DECL = `
+(layout Rec
+  (field state i32)
+  (field flags u8)
+  (field pad0 u8)
+  (field pad1 u8)
+  (field pad2 u8)
+  (field value i32)
+  (field ports i32 4))`;
+
+// Scalar loads and stores, at offset 0, at a non-zero offset, and byte-wide.
+mod('layout-field-scalar', `${LAYOUT_DECL}
+(memory $m 1)
+(func $get_state (param $p i32) (result i32) (load.field Rec state (local.get $p)))
+(func $get_value (param $p i32) (result i32) (load.field Rec value (local.get $p)))
+(func $get_flags (param $p i32) (result i32) (load.field Rec flags (local.get $p)))
+(func $set_state (param $p i32) (param $v i32) (store.field Rec state (local.get $p) (local.get $v)))
+(func $set_value (param $p i32) (param $v i32) (store.field Rec value (local.get $p) (local.get $v)))
+(func $set_flags (param $p i32) (param $v i32) (store.field Rec flags (local.get $p) (local.get $v)))
+(func $roundtrip (param $p i32) (param $v i32) (result i32)
+  (store.field Rec value (local.get $p) (local.get $v))
+  (store.field Rec state (local.get $p) (i32.const 7))
+  (i32.add (load.field Rec value (local.get $p)) (load.field Rec state (local.get $p))))
+(export "get_state" (func $get_state)) (export "get_value" (func $get_value))
+(export "get_flags" (func $get_flags)) (export "set_state" (func $set_state))
+(export "set_value" (func $set_value)) (export "set_flags" (func $set_flags))
+(export "roundtrip" (func $roundtrip)) (export "mem" (memory $m))`,
+  (ex) => [
+    () => ex.set_value(32, 0x11223344),
+    () => ex.get_value(32),
+    () => ex.set_flags(32, 0xAB),
+    () => ex.get_flags(32),
+    () => ex.set_state(32, -1),
+    () => ex.get_state(32),
+    () => ex.roundtrip(64, 100),
+    () => ex.get_value(64),
+  ],
+  {
+    memoryExport: 'mem', memoryBytes: 96,
+    refSource: `
+(memory $m 1)
+(func $get_state (param $p i32) (result i32) (i32.load (local.get $p)))
+(func $get_value (param $p i32) (result i32) (i32.load (i32.add (local.get $p) (i32.const 8))))
+(func $get_flags (param $p i32) (result i32) (i32.load8_u (i32.add (local.get $p) (i32.const 4))))
+(func $set_state (param $p i32) (param $v i32) (i32.store (local.get $p) (local.get $v)))
+(func $set_value (param $p i32) (param $v i32) (i32.store (i32.add (local.get $p) (i32.const 8)) (local.get $v)))
+(func $set_flags (param $p i32) (param $v i32) (i32.store8 (i32.add (local.get $p) (i32.const 4)) (local.get $v)))
+(func $roundtrip (param $p i32) (param $v i32) (result i32)
+  (i32.store (i32.add (local.get $p) (i32.const 8)) (local.get $v))
+  (i32.store (local.get $p) (i32.const 7))
+  (i32.add (i32.load (i32.add (local.get $p) (i32.const 8))) (i32.load (local.get $p))))
+(export "get_state" (func $get_state)) (export "get_value" (func $get_value))
+(export "get_flags" (func $get_flags)) (export "set_state" (func $set_state))
+(export "set_value" (func $set_value)) (export "set_flags" (func $set_flags))
+(export "roundtrip" (func $roundtrip)) (export "mem" (memory $m))`,
+  });
+
+// Array OF structs (load.elem/store.elem stride by the whole record) and an
+// array FIELD inside one (load.field-elem/store.field-elem stride by the
+// field's own element size). Getting these two confused is a silent wrong-record
+// write, so the memory compare matters as much as the byte compare.
+mod('layout-elem', `${LAYOUT_DECL}
+(memory $m 1)
+(func $rec_get (param $b i32) (param $i i32) (result i32) (load.elem Rec value (local.get $b) (local.get $i)))
+(func $rec_set (param $b i32) (param $i i32) (param $v i32) (store.elem Rec value (local.get $b) (local.get $i) (local.get $v)))
+(func $port_get (param $p i32) (param $i i32) (result i32) (load.field-elem Rec ports (local.get $p) (local.get $i)))
+(func $port_set (param $p i32) (param $i i32) (param $v i32) (store.field-elem Rec ports (local.get $p) (local.get $i) (local.get $v)))
+(func $port_addr (param $p i32) (param $i i32) (result i32) (elem-addr Rec ports (local.get $p) (local.get $i)))
+(func $sz (result i32) (size-of Rec))
+(func $off_value (result i32) (offset-of Rec value))
+(func $off_ports (result i32) (offset-of Rec ports))
+(export "rec_get" (func $rec_get)) (export "rec_set" (func $rec_set))
+(export "port_get" (func $port_get)) (export "port_set" (func $port_set))
+(export "port_addr" (func $port_addr)) (export "sz" (func $sz))
+(export "off_value" (func $off_value)) (export "off_ports" (func $off_ports))
+(export "mem" (memory $m))`,
+  (ex) => [
+    () => ex.sz(), () => ex.off_value(), () => ex.off_ports(),
+    () => ex.rec_set(0, 0, 11), () => ex.rec_set(0, 1, 22), () => ex.rec_set(0, 3, 44),
+    () => ex.rec_get(0, 0), () => ex.rec_get(0, 1), () => ex.rec_get(0, 3),
+    () => ex.port_set(0, 0, 0x1000), () => ex.port_set(0, 3, 0x4000),
+    () => ex.port_get(0, 0), () => ex.port_get(0, 3),
+    () => ex.port_addr(0, 0), () => ex.port_addr(0, 2),
+  ],
+  {
+    memoryExport: 'mem', memoryBytes: 128,
+    refSource: `
+(memory $m 1)
+(func $rec_get (param $b i32) (param $i i32) (result i32)
+  (i32.load (i32.add (i32.add (local.get $b) (i32.mul (local.get $i) (i32.const 28))) (i32.const 8))))
+(func $rec_set (param $b i32) (param $i i32) (param $v i32)
+  (i32.store (i32.add (i32.add (local.get $b) (i32.mul (local.get $i) (i32.const 28))) (i32.const 8)) (local.get $v)))
+(func $port_get (param $p i32) (param $i i32) (result i32)
+  (i32.load (i32.add (i32.add (local.get $p) (i32.const 12)) (i32.mul (local.get $i) (i32.const 4)))))
+(func $port_set (param $p i32) (param $i i32) (param $v i32)
+  (i32.store (i32.add (i32.add (local.get $p) (i32.const 12)) (i32.mul (local.get $i) (i32.const 4))) (local.get $v)))
+(func $port_addr (param $p i32) (param $i i32) (result i32)
+  (i32.add (i32.add (local.get $p) (i32.const 12)) (i32.mul (local.get $i) (i32.const 4))))
+(func $sz (result i32) (i32.const 28))
+(func $off_value (result i32) (i32.const 8))
+(func $off_ports (result i32) (i32.const 12))
+(export "rec_get" (func $rec_get)) (export "rec_set" (func $rec_set))
+(export "port_get" (func $port_get)) (export "port_set" (func $port_set))
+(export "port_addr" (func $port_addr)) (export "sz" (func $sz))
+(export "off_value" (func $off_value)) (export "off_ports" (func $off_ports))
+(export "mem" (memory $m))`,
+  });
+
 // ── Select, both typed and untyped ────────────────────────────────────────
 mod('select', `
 (func $s (param $a i32) (param $b i32) (param $c i32) (result i32)
@@ -1230,7 +1352,13 @@ async function runDifferential({ only = null, onResult = null } = {}) {
     const r = { name: entry.name, ok: true, byteIdentical: null, notes: [], divergences: [] };
     let ref;
     try {
-      ref = await compileWabt(entry.source);
+      // `refSource` (optional): compile the REFERENCE from a different source
+      // than WATX. Needed for forms wabt has no spelling for at all — the
+      // (layout ...) family — where the honest comparison is "the WATX sugar
+      // against the hand-lowered twin a human would otherwise write". Byte
+      // identity between those two is then the actual claim being tested, and
+      // the execution and memory checks below run over both binaries unchanged.
+      ref = await compileWabt(entry.refSource || entry.source);
     } catch (e) {
       r.ok = false;
       r.notes.push(`reference encoder (wabt) refused the module: ${e.message || e}`);

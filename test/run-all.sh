@@ -520,6 +520,7 @@ UNIT=(
   test/test-worker-sparse-thread-stack.js
   test/test-touch-controls.js
   test/test-display-mode-enumeration.js
+  test/test-watx-compiler-layout.js
 )
 
 E2E=(

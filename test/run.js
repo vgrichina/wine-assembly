@@ -3611,6 +3611,15 @@ async function main() {
   ctx.closeSyncHandle = handle => threadManager.closeSyncHandle(handle);
 
   const mem = new Uint8Array(memory.buffer);
+
+  // MSVCRT data imports (__argc/__argv) can be resolved while load_pe walks
+  // the executable import table. Seed process identity first so a lazy argv
+  // block built during import resolution sees the real launcher metadata.
+  setExeName(instance.exports, memory.buffer, path.basename(EXE_PATH));
+  if (EXTRA_ARGS) {
+    setExtraCmdline(instance.exports, memory.buffer, EXTRA_ARGS);
+  }
+
   const { entry } = stageAndLoadPe(instance.exports, memory.buffer, exeBytes, console.log);
   if (CS_STEAL_AFTER && instance.exports.set_cs_steal_after) {
     instance.exports.set_cs_steal_after(CS_STEAL_AFTER);
@@ -3642,9 +3651,6 @@ async function main() {
     instance.exports.init_dx_com_thunks();
   }
 
-  // Set EXE name from path
-  setExeName(instance.exports, memory.buffer, path.basename(EXE_PATH));
-
   // Queue environment overrides before loading DLLs: a CRT's DllMain snapshots
   // GetEnvironmentStrings while it initializes. The WAT export keeps this
   // lazy, so queueing here does not allocate or perturb the early guest heap.
@@ -3655,9 +3661,7 @@ async function main() {
     console.log(`Guest environment: ${name}=${JSON.stringify(value)}`);
   }
 
-  // Pass extra command-line arguments via the staging buffer (--args="...")
   if (EXTRA_ARGS) {
-    setExtraCmdline(instance.exports, memory.buffer, EXTRA_ARGS);
     console.log(`Extra cmdline args: ${JSON.stringify(EXTRA_ARGS)}`);
   }
 

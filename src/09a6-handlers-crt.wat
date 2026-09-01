@@ -82,6 +82,29 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  ;; memcmp(s1, s2, n) — cdecl, compare raw bytes as unsigned chars.
+  (func $handle_memcmp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa1 i32) (local $wa2 i32) (local $n i32) (local $b1 i32) (local $b2 i32)
+    (local.set $wa1 (call $g2w (local.get $arg0)))
+    (local.set $wa2 (call $g2w (local.get $arg1)))
+    (local.set $n (local.get $arg2))
+    (block $done (loop $cmp
+      (br_if $done (i32.eqz (local.get $n)))
+      (local.set $b1 (i32.load8_u (local.get $wa1)))
+      (local.set $b2 (i32.load8_u (local.get $wa2)))
+      (if (i32.ne (local.get $b1) (local.get $b2))
+        (then
+          (global.set $eax (i32.sub (local.get $b1) (local.get $b2)))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+          (return)))
+      (local.set $wa1 (i32.add (local.get $wa1) (i32.const 1)))
+      (local.set $wa2 (i32.add (local.get $wa2) (i32.const 1)))
+      (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+      (br $cmp)))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   ;; 783: SHGetFileInfoA(pszPath, dwFileAttributes, psfi, cbFileInfo, uFlags) — 5 args stdcall
   ;; This returned 0 — "the shell knows nothing about that file" — while the W
   ;; spelling filled in szDisplayName, so an ANSI app that titles its window
@@ -525,6 +548,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  (func $handle_log10 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push
+      (f64.div
+        (call $host_math_log2 (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4)))))
+        (f64.const 3.32192809488736234787)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   (func $handle_pow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $fpu_push
       (call $host_math_pow
@@ -687,6 +718,83 @@
   (func $handle_fclose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax
       (if (result i32) (call $host_fs_close_handle (local.get $arg0))
+        (then (i32.const 0))
+        (else (i32.const -1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_feof (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $tmp_ga i32) (local $bytes_ga i32) (local $bytes_wa i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $tmp_ga (i32.sub (global.get $esp) (i32.const 8)))
+    (local.set $bytes_ga (i32.sub (global.get $esp) (i32.const 4)))
+    (local.set $bytes_wa (call $g2w (local.get $bytes_ga)))
+    (i32.store (local.get $bytes_wa) (i32.const 0))
+    (if (call $host_fs_read_file
+          (local.get $arg0) (local.get $tmp_ga) (i32.const 1)
+          (local.get $bytes_ga))
+      (then
+        (if (i32.load (local.get $bytes_wa))
+          (then
+            (drop (call $host_fs_set_file_pointer
+              (local.get $arg0) (i32.const -1) (i32.const 1)))
+            (global.set $eax (i32.const 0)))
+          (else (global.set $eax (i32.const 1)))))
+      (else (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_ferror (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (if (result i32) (local.get $arg0)
+        (then (i32.const 0))
+        (else (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_fread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $total i32) (local $bytes_ga i32) (local $bytes_wa i32) (local $read i32)
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
+          (i32.or (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg3))))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $total (i32.mul (local.get $arg1) (local.get $arg2)))
+    (local.set $bytes_ga (i32.sub (global.get $esp) (i32.const 4)))
+    (local.set $bytes_wa (call $g2w (local.get $bytes_ga)))
+    (i32.store (local.get $bytes_wa) (i32.const 0))
+    (if (call $host_fs_read_file
+          (local.get $arg3) (local.get $arg0) (local.get $total)
+          (local.get $bytes_ga))
+      (then (local.set $read (i32.load (local.get $bytes_wa))))
+      (else (local.set $read (i32.const 0))))
+    (global.set $eax (i32.div_u (local.get $read) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_ftell (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (if (result i32) (local.get $arg0)
+        (then (call $host_fs_set_file_pointer
+          (local.get $arg0) (i32.const 0) (i32.const 1)))
+        (else (i32.const -1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_fseek (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (if (result i32) (i32.and
+            (local.get $arg0)
+            (i32.ne
+              (call $host_fs_set_file_pointer
+                (local.get $arg0) (local.get $arg1) (local.get $arg2))
+              (i32.const -1)))
         (then (i32.const 0))
         (else (i32.const -1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
@@ -1207,6 +1315,13 @@
     (if (local.get $thread_id_ptr)
       (then (call $gs32 (local.get $thread_id_ptr) (global.get $eax))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle__endthreadex (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $host_exit_thread (local.get $arg0))
+    (global.set $yield_reason (i32.const 2))
+    (global.set $eip (i32.const 0))
+    (global.set $steps (i32.const 0))
   )
 
   ;; _itoa / _itow(value, buffer, radix) — cdecl, returns the buffer.
@@ -2043,6 +2158,16 @@
                 (br $compare)))
               (local.set $hay (i32.add (local.get $hay) (i32.const 1)))
               (br $candidate))))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; _setjmp3(jmp_buf, ...) — cdecl. First return from setjmp is zero; the
+  ;; caller retains varargs cleanup. Store a conservative zeroed frame so code
+  ;; that inspects the buffer does not see stale heap/stack bytes.
+  (func $handle__setjmp3 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0)
+      (then (call $zero_memory (call $g2w (local.get $arg0)) (i32.const 64))))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 

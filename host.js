@@ -1415,9 +1415,15 @@ class WineAssembly {
     // same PE metadata via init_thread, because a handful of host-import paths
     // read image_base off it (SEH and callstack formatting) and would otherwise
     // translate every guest address against zero.
+    const exeName = url.replace(/^.*[\\\/]/, '');
+    this._exeName = exeName;
+    this._exeUrl = url;
+    if (opts.args) this._extraArgs = opts.args;
+
     let entry;
     if (this.guestWorker) {
-      entry = await this.guestWorker.loadPe(exeBytes, url.replace(/^.*[\\\/]/, ''), this.processId);
+      entry = await this.guestWorker.loadPe(
+        exeBytes, exeName, this.processId, { extraArgs: this._extraArgs || '' });
       const meta = await this.guestWorker.readExports([
         'get_image_base', 'get_code_start', 'get_code_end',
         'get_thunk_base', 'get_thunk_end', 'get_num_thunks',
@@ -1430,13 +1436,16 @@ class WineAssembly {
           meta.get_code_end, meta.get_thunk_base, meta.get_thunk_end, meta.get_num_thunks);
       }
     } else {
+      ProcessBoot.setExeName(this.instance.exports, this.memory.buffer, exeName);
+      if (this._extraArgs) {
+        ProcessBoot.setExtraCmdline(this.instance.exports, this.memory.buffer, this._extraArgs);
+      }
       // The staging clamp and its reasoning live in lib/process-boot.js,
       // shared with the CLI harness.
       ({ entry } = ProcessBoot.stageAndLoadPe(
         this.instance.exports, this.memory.buffer, exeBytes));
     }
 
-    const exeName = url.replace(/^.*[\\\/]/, '');
     this._applyExeCompatibilityPatches(exeName, opts.launchPrefs);
 
     // A 16-bit task's DLLs go into the same selector arena its own segments
@@ -1449,13 +1458,12 @@ class WineAssembly {
       this.instance.exports.init_dx_com_thunks();
     }
 
-    // Set EXE name from URL
-    this._exeName = exeName;
-    this._exeUrl = url;
     if (this._helpCtx && this._helpCtx.vfs) {
       VfsSeed.seedExeImage(this._helpCtx.vfs, exeBytes, exeName);
     }
-    ProcessBoot.setExeName(this.instance.exports, this.memory.buffer, exeName);
+    if (this.guestWorker) {
+      ProcessBoot.setExeName(this.instance.exports, this.memory.buffer, exeName);
+    }
 
     return entry;
   }

@@ -7633,9 +7633,10 @@
   ;; 257: __wgetmainargs
   (func $handle___wgetmainargs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; arg0=&argc, arg1=&argv, arg2=&envp (wide versions)
-    (call $gs32 (local.get $arg0) (i32.const 1))     ;; argc = 1
     (if (i32.eqz (global.get $msvcrt_wcmdln_ptr))
       (then (call $store_fake_wcmdline)))
+    (call $gs32 (local.get $arg0)
+      (call $gl32 (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 772))))
     (call $gs32 (local.get $arg1) (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 776)))
     (call $gs32 (local.get $arg2) (i32.add (global.get $msvcrt_wcmdln_ptr) (i32.const 784)))
     (global.set $eax (i32.const 0))
@@ -8013,6 +8014,13 @@
 
   ;; 289: DefWindowProcW — same as DefWindowProcA
   (func $handle_DefWindowProcW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; WM_NCCREATE (0x81): accepting non-client creation is the documented
+    ;; default. Returning zero aborts CreateWindowEx before WM_CREATE.
+    (if (i32.eq (local.get $arg1) (i32.const 0x0081))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; WM_CLOSE (0x10): default close destroys the target. Only closing the
     ;; main window should end the message loop; modeless dialogs are ordinary
     ;; owned windows and closing them must not terminate the app.
