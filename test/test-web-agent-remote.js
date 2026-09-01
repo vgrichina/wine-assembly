@@ -130,6 +130,31 @@ let browser = null;
     catch (e) { return e.status; }
   })();
   check('unsupported browser entry is rejected with exit 1', badExit === 1, `exit=${badExit}`);
+
+  // The connection URL explains itself: GET the hub root, get the protocol.
+  const instructions = await new Promise((resolve, reject) => {
+    require('http').get(`http://127.0.0.1:${PORT}/api/agent`, r => {
+      let t = ''; r.on('data', c => { t += c; }); r.on('end', () => resolve(t));
+    }).on('error', reject);
+  });
+  check('GET /api/agent returns protocol instructions',
+    instructions.includes('tools/ctl.js') && instructions.includes('/api/agent/ctl'),
+    instructions.slice(0, 120));
+
+  // launch/apps: the shell's registry over the protocol.
+  const apps = ctl('-s', sessionId, 'apps');
+  check('apps lists the registry', apps.includes('sol') && apps.includes('winmine'), apps.slice(0, 120));
+  const badLaunch = (() => {
+    try { ctl('-s', sessionId, 'launch', 'no-such-app-zzz'); return 'no error'; }
+    catch (e) { return e.status; }
+  })();
+  check('launch rejects an unknown app id with exit 1', badLaunch === 1, `exit=${badLaunch}`);
+  const launched = ctl('-s', sessionId, 'launch', 'sol');
+  const appUp = await page.waitForFunction(() =>
+    window.wineShell && window.wineShell.runningApps
+    && window.wineShell.runningApps.some(r => r && r.name === 'sol'), { timeout: 30000 })
+    .then(() => true).catch(() => false);
+  check('launch sol brings the app up', appUp, launched.trim());
 })().catch(error => {
   console.log('FAIL  ' + error.message);
   failed = true;

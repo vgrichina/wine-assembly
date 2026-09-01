@@ -489,12 +489,55 @@ async function handleAgent(req, res, url, opts) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+  const route = url.pathname.slice('/api/agent/'.length);
+
+  // The connection URL explains itself: GET the hub root and you get the
+  // whole protocol as plain text, so a handoff need carry only the link.
+  // Deliberately before the token gate — these are instructions, not data.
+  if (route === '' && req.method === 'GET') {
+    const base = `http://${req.headers.host || '127.0.0.1:8080'}`;
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end([
+      'wine-assembly agent control hub (docs/design-agent-control.md)',
+      '',
+      'Relays commands to live emulator sessions. Pages served by this',
+      'dev-server connect automatically; a session is identified by its id',
+      'or simply by its tab URL.',
+      '',
+      'With the repo checked out:',
+      '  node tools/ctl.js sessions',
+      "  node tools/ctl.js -s '<tab URL or ID>' snapshot",
+      "  node tools/ctl.js -s '<tab URL or ID>' png /tmp/frame.png",
+      "  node tools/ctl.js -s '<tab URL or ID>' click 120,88",
+      '  verbs: snapshot ping apps launch APPID click dblclick rclick',
+      '    mousedown mouseup mousemove drag key VK type TEXT png FILE',
+      '    eval CODE cmd RAW pipe',
+      '',
+      'Raw protocol (any HTTP client):',
+      `  GET  ${base}/api/agent/sessions`,
+      `  POST ${base}/api/agent/ctl?s=ID   body {"action":"ping"} or an array`,
+      '       reply is held open until the page executed the command(s)',
+      '  actions: ping snapshot eval {code} png apps launch {app}',
+      '  cmd entries (run.js --input syntax): click:X:Y dblclick:X:Y',
+      '    rclick:X:Y mousedown:X:Y mouseup:X:Y mousemove:X:Y wheel:X:Y:D',
+      '    keydown:VK keyup:VK keypress:CHARCODE',
+      '  each command answers {ok:true,value:...} or {ok:false,error:"..."}',
+      '',
+      'Headless CLI VMs listen directly instead of via this hub:',
+      '  node test/run.js --app=ID --control    # POST the same shapes to',
+      '  http://127.0.0.1:8123/ctl              # or drive with ctl.js',
+      '',
+      'Bound beyond localhost? Every /api/agent request then needs the',
+      '?token= printed at server startup.',
+      '',
+    ].join('\n'));
+  }
+
   const token = opts && opts.agentToken;
   if (token && url.searchParams.get('token') !== token) {
     return sendJson(res, 403, { ok: false, error: 'this hub is bound beyond localhost; pass ?token= (printed at server startup)' });
   }
   agentPrune();
-  const route = url.pathname.slice('/api/agent/'.length);
 
   if (route === 'hello' && req.method === 'POST') {
     let info = {};
@@ -626,7 +669,7 @@ function createServer(opts) {
 
     // Agent hub traffic is long-polls and held responses; route it before
     // the generic API logging, which would print one line per idle poll.
-    if (url.pathname.startsWith('/api/agent/')) {
+    if (url.pathname.startsWith('/api/agent/') || url.pathname === '/api/agent') {
       handleAgent(req, res, url, { agentToken: opts && opts.agentToken }).catch(err => {
         if (!res.headersSent) sendJson(res, 500, { error: String(err && err.message || err) });
       });

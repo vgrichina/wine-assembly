@@ -179,7 +179,7 @@ function printResult(result) {
 
 async function main() {
   if (!VERB) {
-    fail('usage: ctl.js [-s SESSION|:PORT|PAGE-URL] snapshot|ping|click X,Y|dblclick|rclick|mousedown|mouseup|mousemove|drag X1,Y1 X2,Y2|key VK|type TEXT|png FILE|eval CODE|cmd RAW|pipe|quit|sessions', 2);
+    fail('usage: ctl.js [-s SESSION|:PORT|PAGE-URL] snapshot|ping|apps|launch APPID|click X,Y|dblclick|rclick|mousedown|mouseup|mousemove|drag X1,Y1 X2,Y2|key VK|type TEXT|png FILE|eval CODE|cmd RAW|pipe|quit|sessions', 2);
   }
 
   if (VERB === 'sessions') {
@@ -204,6 +204,14 @@ async function main() {
   let commands;
   if (VERB === 'snapshot' || VERB === 'ping' || VERB === 'quit') {
     commands = { action: VERB };
+  } else if (VERB === 'launch' || VERB === 'apps') {
+    // Browser sessions only: the page launches from its app registry. A CLI
+    // VM chose its app at start — relaunching means a new run.js.
+    if (target.kind === 'direct') {
+      fail(`${VERB} drives a browser session — a CLI VM chooses its app at start (node test/run.js --app=ID --control)`, 2);
+    }
+    if (VERB === 'launch' && !positional[1]) fail('launch needs an app id (list them: ctl.js apps)', 2);
+    commands = VERB === 'launch' ? { action: 'launch', app: positional[1] } : { action: 'apps' };
   } else if (VERB === 'eval') {
     commands = { action: 'eval', code: positional.slice(1).join(' ') };
   } else if (VERB === 'cmd') {
@@ -227,10 +235,18 @@ async function main() {
   } else if (VERB === 'type') {
     const text = positional.slice(1).join(' ');
     if (!text) fail('type needs text', 2);
+    // A real key fires keydown (VK) then keypress (char) then keyup, and the
+    // guest splits them: dialogs act on WM_KEYDOWN, edits on the WM_CHAR that
+    // comes from keypress. keypress alone types into an edit but a dialog's
+    // key handler never sees it (winmine's high-score name box stayed
+    // "Anonymous" that way), so send the full triple where a VK exists.
     commands = [];
     for (const ch of text) {
-      if (ch === '\n') commands.push({ cmd: 'keydown:13' }, { cmd: 'keyup:13' });
-      else commands.push({ cmd: `keypress:${ch.charCodeAt(0)}` });
+      if (ch === '\n') { commands.push({ cmd: 'keydown:13' }, { cmd: 'keyup:13' }); continue; }
+      const vk = /^[a-zA-Z0-9 ]$/.test(ch) ? ch.toUpperCase().charCodeAt(0) : null;
+      if (vk !== null) commands.push({ cmd: `keydown:${vk}` });
+      commands.push({ cmd: `keypress:${ch.charCodeAt(0)}` });
+      if (vk !== null) commands.push({ cmd: `keyup:${vk}` });
     }
   } else if (VERB === 'png') {
     const out = positional[1];

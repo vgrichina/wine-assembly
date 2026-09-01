@@ -74,9 +74,17 @@ Phase 1 (the minimum that closes the agent loop):
   names and argument meanings as the `--input` actions, so everything already
   known about them (e.g. *mousedown, gap, mouseup* for per-frame button
   samplers; keydown vs keypress for dialogs) transfers verbatim.
-- **`type`** — a string, expanded host-side into the keydown/keypress/keyup
-  sequence with a per-key gap, because every agent otherwise re-implements it
-  badly.
+- **`type`** — a string, expanded by ctl.js into the full
+  keydown/keypress/keyup triple per character, because every agent otherwise
+  re-implements it badly. The triple is load-bearing: dialogs act on
+  WM_KEYDOWN while edits take the WM_CHAR that comes from keypress, so
+  keypress alone types into Notepad but leaves winmine's high-score name box
+  untouched.
+- **`launch` / `apps`** — browser sessions only: `apps` lists the app
+  registry ids and `{action:'launch', app:'sol'}` selects and launches one
+  through the shell's own `launchApp()` path (the same code the Launch
+  button runs). A CLI VM chose its app at start; ctl.js says so instead of
+  sending it.
 - **Observation:** `png` — screen capture. The CLI VM shares a filesystem
   with the agent, so run.js **writes the file itself** through the existing
   `png:PATH` input action and the reply's log line names the path and size —
@@ -158,6 +166,11 @@ promoted from lab-only to the emulator page and made session-aware:
   right coordinates), so they exercise `lib/renderer-input.js` routing
   identically to a human — the same reason `--trace-input` exists. `eval`
   runs in page context. `png` is `canvas.toDataURL('image/png')`.
+- **The hub explains itself:** `GET /api/agent` (the bare root) returns the
+  whole protocol as plain text — ctl.js quick start, raw routes, command
+  shapes — readable without a token. The in-page handoff therefore carries
+  only the ctl.js line plus `curl <hub>/api/agent`; instructions live on the
+  server, not in the copied snippet (the nomcp pattern).
 - **dev-server routes** (`/api/agent/*`): `hello`, `poll` (long-poll per
   session), `result` (routes the reply back to the held client request),
   `sessions` (list live sessions: id, kind, app, age, last-seen), and the
