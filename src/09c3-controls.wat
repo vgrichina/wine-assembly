@@ -16135,12 +16135,12 @@
     ;; bare host_register_dialog_frame import — JS does no Win32 logic.
     (call $host_register_dialog_frame
       (local.get $dlg) (local.get $owner)
-      (select (region.addr $USER_DIALOG_STRINGS 0x180) (region.addr $USER_DIALOG_STRINGS 0x17B) (local.get $is_replace))
+      (select (region.addr $USER_DIALOG_STRINGS 0x160) (region.addr $USER_DIALOG_STRINGS 0x17B) (local.get $is_replace))
       (i32.const 340) (select (i32.const 160) (i32.const 128) (local.get $is_replace))
       (i32.const 2))      ;; kind bit 1 = isFindDialog
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $title_table_set (local.get $dlg)
-      (select (region.addr $USER_DIALOG_STRINGS 0x180) (region.addr $USER_DIALOG_STRINGS 0x17B) (local.get $is_replace))
+      (select (region.addr $USER_DIALOG_STRINGS 0x160) (region.addr $USER_DIALOG_STRINGS 0x17B) (local.get $is_replace))
       (select (i32.const 7) (i32.const 4) (local.get $is_replace)))
     (call $wnd_set_owner (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
@@ -16222,7 +16222,7 @@
             (i32.const 248) (select (i32.const 90) (i32.const 34) (local.get $is_replace))
             (i32.const 80) (i32.const 24)
             (i32.const 0x50010000)
-            (call $wat_str_to_heap (region.addr $USER_DIALOG_STRINGS 0x174) (i32.const 6))))
+            (call $wat_str_to_heap (region.addr $USER_DIALOG_STRINGS 0x3) (i32.const 6))))
     ;; Stash FR struct ptr in dialog userdata for a future $wndproc_dialog.
     (drop (call $wnd_set_userdata (local.get $dlg) (local.get $fr_guest)))
     (global.set $findreplace_dlg_hwnd (local.get $dlg))
