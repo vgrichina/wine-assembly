@@ -14,7 +14,9 @@ Compiles the `(include ...)` closure rooted at **`src/main.watx`** with the vend
 
 An `(include ...)` naming a file that does not exist is a **hard compile error** from the include resolver. The reverse is the case a compiler cannot see — a `src/*.wat` that no `(include ...)` names is simply not part of the program, so it lands in `combined.wat` and is silently absent from the shipped wasm. That, plus filename (`LC_ALL=C`) order, is what `tools/check-wat-manifest.js` (run first in the build) still exists to catch.
 
-Build gates, in order: manifest ↔ glob equality, fixed-memory-map overlaps, WAT↔JS RPC/DIB and shared-constant consistency, complete test-tier membership, `api_table.json` (id == index, append-only), generated dispatch table freshness, API hash table, ordinal data-string offsets, handler-table count, handler ESP cleanup, logical-`i32.and` operands, silent-success stubs, Worker import signatures, generated stdcall epilogues, WAT compilation, and compiled data-segment overlaps.
+Build gates, in order: manifest ↔ glob equality, per-fragment paren balance, memory-map overlaps, region declarations vs the globals the code reads, the raw-address-literal ratchet, JS region-map mirror freshness, no JS copy of an allocated base, no bare address in a JS-embedded WAT fragment, every shake mode still places, WAT↔JS RPC/DIB and shared-constant consistency, complete test-tier membership, `api_table.json` (id == index, append-only), generated dispatch table freshness, API hash table, ordinal data-string offsets, handler-table count, handler ESP cleanup, logical-`i32.and` operands, silent-success stubs, Worker import signatures, toy-VM browser-bundle reproducibility, generated stdcall epilogues, vendored-compiler provenance (SHA-256 + sealed CHANGELOG), nine struct-layout migration gates plus the `GdiObject` variant gate and the FROZEN layout-offset freeze, `combined.wat` paren/label checks, the WATX compile, and compiled data-segment overlaps.
+
+Note "memory-map overlaps" is now a check over a map the **compiler allocates**, not a fixed one — see the Memory Layout section — and the five region gates around it exist because a moved base is silent in JS.
 
 **Important:** When adding new handler opcodes to `02-thread-table.wat`, increase `(table $handlers N funcref)` to match the total entry count (0-based index + 1).
 
@@ -153,10 +155,11 @@ toolbars as they move, so a `dvh`-sized spacer grows mid-gesture and the scroll 
 from the finger. `svh` (bars visible) and `lvh` (bars retracted) are constants. Size overflow in
 `svh`; test "are the bars down?" as `innerHeight >= 100lvh - 8`.
 
-## Source Parts (concatenation order)
+## Source Parts (`src/main.watx` include order — 61 files)
 
 | File | Purpose |
 |------|---------|
+| `00-regions.wat` | **The memory map, declared** — `region.declare` sizes the compiler's allocator places, four pinned `region.declare-fixed` bases, three `region.declare-derived` off `$GUEST_BASE`, and the `$DIRECT_WINDOW` span |
 | `01-header.wat` | Module declaration, host imports, memory layout, CPU state globals |
 | `01b-api-hashes.generated.wat` | **Generated** — FNV-1a hash table for Win32 API name→ID lookup |
 | `02-thread-table.wat` | Threaded code function table (opcode → handler mapping) |
@@ -164,12 +167,15 @@ from the finger. `svh` (bars visible) and `lvh` (bars retracted) are constants. 
 | `04-cache.wat` | Block cache (decoded x86 → threaded code) |
 | `05-alu.wat` | ALU operations (32/16/8-bit), shifts, bit ops, MUL/DIV, SETcc |
 | `05b-string-ops.wat` | String operations (movsb/movsd/stosb/stosd/cmps/scas + REP) |
+| `05c-seg16-ops.wat` | 16-bit segmented operations: segment-base arithmetic and the Win16 execution handlers (ES/CS/SS/DS/FS) — the execution half of the NE loader |
 | `06-fpu.wat` | x87 FPU |
 | `06b-core-handlers.wat` | Non-FPU threaded handlers: flag ops, LEAVE/BSWAP/XCHG/IMUL, 16-bit ALU/MOV, and every memory-form (`_ro`) handler |
+| `06c-mmx.wat` | MMX: eight i64-global registers, whole-register moves/boolean/shift ops direct, packed ops widened to real wasm SIMD |
 | `07-decoder.wat` | x86 instruction decoder → threaded code emitter |
 | `07b-loop-match.wat` | Loop-idiom matcher (Design A): classifies the ops a self-loop block just emitted and, when a pattern holds, replaces the whole body with one super-op |
 | `08-pe-loader.wat` | PE executable loader, import table processing |
 | `08b-dll-loader.wat` | DLL loader with relocations, export resolution |
+| `08c-ne-loader.wat` | NE (New Executable) loader for 16-bit images: per-segment loading into the 64KB-strided WIN16 arena, selector layout, relocation fixups, ordinal-import thunk segment |
 | `09a-handlers.wat` | Win32 API handler functions (core: process, memory, encoding, window props) |
 | `09a2-handlers-console.wat` | Console API handlers (screen buffer, cursor, read/write) |
 | `09a3-handlers-audio.wat` | Audio/wave API handlers (waveOut*, mmio*, mci) |
@@ -179,12 +185,34 @@ from the finger. `svh` (bars visible) and `lvh` (bars retracted) are constants. 
 | `09a7-handlers-dispatch.wat` | Late-added misc handlers (shell, version, file, key/prop, atoms, setupapi) |
 | `09a7b-ole.wat` | OLE/COM: ROT, monikers, bind contexts, IFont, structured storage, IDataObject/clipboard, IOleObject/IOleCache/IViewObject |
 | `09a7c-mixer.wat` | WINMM mixer handlers (mixerOpen/GetLineInfo/GetControlDetails and A/W pairs) |
-| `09d-winsock.wat` | Virtual LAN Winsock core — socket table, in-process switch, and the `vln/1` frame wire that joins two emulator processes into one room |
+| `09a8-handlers-directx.wat` | DirectX handlers — DirectDraw, DirectSound, DirectInput; COM vtable dispatch through the thunk zone, and the `DxObject` record declaration |
+| `09a8b-handlers-opengl.wat` | OpenGL 1.x / WGL frontend: one ABI bridge lowering the measured Quake II GL/WGL set to the generic GPU backend |
+| `09a9-comctl32.wat` | COMCTL32: ImageList, toolbar and status-bar creation, up-down and property-sheet stubs, MenuHelp, DSA/DPA dynamic arrays |
+| `09aa-handlers-d3dim.wat` | **Generated** — Direct3D Immediate Mode: ~211 IM methods across D3D v2/v7 (Device, Viewport, Material, ExecuteBuffer, VertexBuffer, Texture), plus pick state and viewport light lists |
+| `09ab-handlers-d3dim-core.wat` | D3DIM core helpers: hand-written forwarding from the v1/v2/v3/v7 stubs into the IDirect3DDevice3/IDirect3DViewport3 cores, and the extended state-block layout |
+| `09ad-handlers-d3d9.wat` | **Generated** — Direct3D 9: IDirect3D9, IDirect3DDevice9, IDirect3DTexture9, IDirect3DSurface9, plus windowed-vs-fullscreen device-window tracking |
 | `09b-dispatch.wat` | Manual dispatch helpers |
 | `09b2-dispatch-table.generated.wat` | **Generated** — br_table dispatch calling handler functions |
 | `09c-help.wat` | WAT-native help system |
 | `09c0-window-table.wat` | WND_RECORDS + accessors, per-slot parallel tables, GWL/cbWndExtra, dialog state, class table, `$wat_wndproc_dispatch`, focus |
+| `09c2-treeview.wat` | WAT-native TreeView control: per-item TV_TABLE records, image and owner tables, per-window view state |
+| `09c3-controls.wat` | CONTROL_TABLE and the built-in control wndprocs (Button, Edit, Static, ListBox, ComboBox, ColorGrid, ScrollBar, ProgressBar, ListView, TrackBar…) with per-window state structs |
+| `09c4-defwndproc.wat` | DefWindowProc non-client paint: 3D outset frame, caption gradient and text, sysmenu buttons, as a callable entry point |
+| `09c5-menu.wat` | Menu painting and hit-testing over the heap-resident menu blob, indexed per window by MENU_DATA_TABLE |
+| `09c6-winhelp-core.wat` | WAT-native WinHelp document core: WAT-owned file bytes and directory index, plus the bounded-size limits every help parser works within |
+| `09c7-winhelp-hlp.wat` | Bounded HLP outer-file and directory B+tree parser: semantic index, phrase, font and bitmap extraction |
+| `09c8-winhelp-cnt.wat` | Bounded WAT-native CNT contents-file parser (directive tokenizing, topic/heading tree) |
+| `09c9-winhelp-ui.wat` | WAT-native WinHelp typed topic layout: positioned text/space/bitmap runs, fonts, colors, extents |
+| `09d-winsock.wat` | Virtual LAN Winsock core — socket table, in-process switch, and the `vln/1` frame wire that joins two emulator processes into one room |
+| `09d2-tapi.wat` | TAPI 2.0 line device API (TAPI32.DLL) for a machine with zero line devices — real init/shutdown and documented errors, not stubs |
+| `09e-win16-api.wat` | Win16 API dispatch by module and ordinal (KERNEL/USER/GDI) — the Pascal-convention twin of `$win32_dispatch` |
+| `09e2-win16-dialog.wat` | Win16 dialogs: 16-bit RT_DIALOG template rewritten into the 32-bit form, plus the Pascal modal pump |
+| `09f-win16-ddeml.wat` | Win16 DDEML: string/data handle interning, service registration and truthful "no peer" conversation results |
 | `10-helpers.wat` | String/memory helpers, heap allocator, resource walker, window/paint/clipboard helpers |
+| `10a-gdi-bitmap.wat` | WAT-native GDI bitmap object records and raw DIB parsing: the 48-byte record, its flags word and canonical-bits ownership |
+| `10b-gdi-font.wat` | Win16/Win9x bitmap fonts: FNT strike parsing and rasterization in WAT, plus the installed-font registry |
+| `10c-truetype.wat` | TrueType metrics: bounds-checked `glyf`-outline table parsing for advance widths and TEXTMETRIC, no host font measurement |
+| `10c1-truetype-hint.wat` | Runtime TrueType instruction engine: fpgm/prep/glyph programs over eight ppem contexts with scaled CVT, storage and twilight points |
 | `10d-gdi-region-path.wat` | GDI regions (allocator + polygon scan-converter), path engine (record/flatten/widen/stroke), DC clipping, object allocator |
 | `10e-gdi-metafile.wat` | GDI palettes, WMF/EMF recorder and player, bitmap objects |
 | `10f-gdi-dc.wat` | GDI device-context state: save/restore, selected objects, surface descriptors, text metrics, the `$host_gdi_*` entry points |
@@ -222,23 +250,29 @@ Don't add a second drawing surface. If a GDI call needs to hit the screen, route
 
 ## Memory Layout
 
-128 MB flat WASM linear memory. Guest memory starts at WASM offset `0x12000` (GUEST_BASE). The PE is loaded at its preferred `image_base` (typically `0x400000`) which maps to `GUEST_BASE + (image_base - image_base)` via `g2w` (guest-to-WASM address translation): `g2w(guest) = guest - image_base + GUEST_BASE`.
+512 MB WASM linear memory — `(import "host" "memory" (memory 8192 8192 shared))`, and the map runs to `0x20000000` exactly, with nothing above it.
 
-Key regions:
-- `0x00000100` — String constants (win.ini path, help strings, exe name buffer)
-- `0x00004000` — API hash table (12KB, API_HASH_TABLE)
-- `0x00007000` — WND_RECORDS, CONTROL_TABLE, CONTROL_GEOM, CLASS_RECORDS, TIMER_TABLE, PAINT_SCRATCH, SCROLL_TABLE, FLASH_TABLE, WND_DLG_RECORDS (all below GUEST_BASE, end at 0xF000)
-- `0x00012000` — Guest memory (GUEST_BASE, maps guest addresses)
-- `0x03C12000` — Guest stack (1MB, grows down)
-- `0x03D12000` — Heap region (1MB)
-- `0x03E12000` — API thunk zone (256KB, THUNK_BASE)
-- `0x03E52000` — Threaded code cache (4MB, THREAD_BASE)
-- `0x04252000` — Block cache index (64KB, CACHE_INDEX)
-- `0x04262000` — PE staging buffer (2MB, PE_STAGING)
-- `0x04462000` — DLL table (512B)
-- `0x07F60000` — DX_OBJECTS / COM_WRAPPERS (high memory, outside g2w bounds)
+**Most region bases are the ALLOCATOR's output and are not written down anywhere.** `src/00-regions.wat` declares 174 regions; 166 are `region.declare`, which states a *size* and lets the compiler place it. So a base moves whenever any earlier region changes size or a new one is added, and a hex address copied into a note, a comment or a JS file is wrong at the next edit with nothing to say so — `tools/region-census.js --js-copies` is a hard build gate for exactly that. **Do not read a base out of this file. Run `node tools/region-layout.js`**, which asks the compiler where things actually landed, or read `lib/region-map.generated.js`, the one mirror every host loads.
 
-See [docs/memory-map.md](docs/memory-map.md) for the full annotated layout, comparison with Windows 98 kernel/user memory model, and analysis of what's emulator-private vs guest-accessible.
+What *is* durable is the handful of addresses that are an ABI rather than a placement — these are the ones pinned in the declarations and the only ones safe to quote:
+
+| Base | Region | Why it cannot move |
+|---|---|---|
+| `0x00012000` | GUEST_BASE (60 MB) | what every `g2w` resolves through |
+| `0x03D12000` | GUEST_HEAP_BASE (~3.9 MB) | derived, `g2w 0x04100000` |
+| `0x07012000` | GUEST_STACK (1 MB) | derived, `g2w 0x07400000` |
+| `0x07112000` | THUNK_BASE (256 KB) | derived, `g2w 0x07500000` |
+| `0x08000000` | VIRTUAL_BACKING_BASE (320 MB) | backing window, sized to what is left |
+| `0x1C000000` | DIB_BACKING_BASE (63 MB) | backing window |
+| `0x1FF00000` | THREAD_RPC (1 MB) | backing window |
+
+Plus one span, `$DIRECT_WINDOW` `0x0`–`0x08000000`: a transparent named limit, not a region, and the range `$g2w`'s fast path covers.
+
+The PE loads at its preferred `image_base` (typically `0x400000`). `g2w(guest) = guest - image_base + GUEST_BASE` is now the **direct-window case only** — when that result falls outside `$DIRECT_WINDOW`, `$g2w` tries the DIB range (guest `0x50000000`, backed by DIB_BACKING_BASE) and then a record-walked affine virtual-mapping table backed by VIRTUAL_BACKING_BASE; a miss returns the NULL sentinel at `0xF0`.
+
+Two things that used to be in this list and are gone: **CACHE_INDEX no longer exists as a region at all**, and the threaded-code cache is `$THREAD_CACHE_BASE`, 32 MB, carved into per-thread `0x400000` partitions — `$THREAD_BASE` survives only as a per-thread cursor global, so its old "4MB" was the partition size, never the region's.
+
+See [docs/memory-map.md](docs/memory-map.md) for the full annotated layout, comparison with Windows 98 kernel/user memory model, and analysis of what's emulator-private vs guest-accessible; [docs/watx-region-safety-design.md](docs/watx-region-safety-design.md) for why the map is allocated rather than hand-placed.
 
 ## Message / Event Handling
 
