@@ -916,10 +916,11 @@ mod('data-segments', `
 (export "touch" (func $touch))`,
   (ex) => [() => ex.touch()], { memoryExport: 'mem', memoryBytes: 256 });
 
-// KNOWN BUG. `\u{…}` is a core-WAT string escape and WATX does not decode it:
-// it drops the backslash and stores the LITERAL characters `u{1F600}`. Bytes in
-// a data segment are the least recoverable thing to get silently wrong, and
-// nothing about the module says anything went awry.
+// Fixed at aa62fc9d; this is now a plain regression test. It was an
+// `expectDivergence` witness for the bug where `\u{…}` was not decoded — the
+// backslash was dropped and the LITERAL characters `u{1F600}` stored. Bytes in
+// a data segment are the least recoverable thing to get silently wrong, which
+// is why this stays in the corpus forever.
 mod('data-unicode-escape', `
 (memory 1 1)
 (export "mem" (memory 0))
@@ -927,10 +928,7 @@ mod('data-unicode-escape', `
 (func $touch (result i32) (i32.load8_u (i32.const 0)))
 (export "touch" (func $touch))`,
   (ex) => [() => ex.touch()],
-  {
-    memoryExport: 'mem', memoryBytes: 16,
-    expectDivergence: '\\u{…} data-string escape is not decoded — the literal characters are stored instead of the UTF-8 bytes',
-  });
+  { memoryExport: 'mem', memoryBytes: 16 });
 
 // ── Export names: ordering, punctuation, empty, unicode ───────────────────
 // A memory is declared even though nothing here uses one: with no (memory …)
@@ -950,10 +948,11 @@ mod('export-names', `
   (ex) => [() => Object.keys(ex).sort().join('|'), () => ex[''](), () => ex['a b']()]);
 
 // ── A start function ──────────────────────────────────────────────────────
-// KNOWN BUG: WATX parses `(start $f)` and emits NO start section at all — the
-// function simply never runs, with no diagnostic. wabt emits `08 01 00` here.
-// (That three-byte encoding is also why the byte-identity normalizer has to
-// special-case section 8; see stripEmptySections.)
+// Fixed at 5bf961ca; this is now a plain regression test. It was an
+// `expectDivergence` witness for the bug where `(start $f)` was parsed and
+// DROPPED — no start section, the function never ran, no diagnostic. wabt
+// emits `08 01 00` here, which is also why the byte-identity normalizer has
+// to special-case section 8; see stripEmptySections.
 mod('start-function', `
 (memory 1 1)
 (export "mem" (memory 0))
@@ -964,10 +963,7 @@ mod('start-function', `
 (func $ran (result i32) (global.get $ran))
 (export "ran" (func $ran))`,
   (ex) => [() => ex.ran()],
-  {
-    memoryExport: 'mem', memoryBytes: 16,
-    expectDivergence: '(start $f) emits no start section — the start function never runs',
-  });
+  { memoryExport: 'mem', memoryBytes: 16 });
 
 // ── A big function body ───────────────────────────────────────────────────
 // The code section writes each body's size as a ULEB before the body; a body
