@@ -2,22 +2,21 @@
 
 'use strict';
 
-// `tools/check-region-decls.js --check-owners` is a ratchet on the
-// `(owner "file:line")` clause every region declaration carries. The clause is
-// documentation the compiler never reads, and two waves of moving code left
-// ~155 of them aimed at lines that have nothing to do with the region — which
-// is worse than no owner at all, because it sends the next reader somewhere
-// confident and wrong.
+// `tools/check-region-decls.js --check-owners` gates the `(owner "file:line")`
+// clause every region declaration carries. The clause is documentation the
+// compiler never reads, and two waves of moving code once left 155 of them
+// aimed at lines that have nothing to do with the region — worse than no owner
+// at all, because it sends the next reader somewhere confident and wrong.
 //
-// The mode's whole job is to stop that number growing, so the two things worth
-// testing are the two directions of its verdict: an owner that still names its
-// region passes, and one that does not is caught. A ratchet nobody has watched
-// fire is a ratchet nobody knows works.
+// It landed as a ratchet over those 155; they have since all been re-derived,
+// so the whitelist is empty and the mode is a flat refusal. The two things
+// worth testing are still the two directions of its verdict: an owner that
+// names its region passes, and one that does not is caught. A gate nobody has
+// watched fire is a gate nobody knows works.
 //
-// It tests `ownerVerdict` rather than shelling out to the CLI, because the CLI
-// path is the baseline bookkeeping and the baseline is deliberately allowed to
-// contain 155 names — running it proves nothing about whether the check itself
-// can see a stale owner.
+// It tests `ownerVerdict` directly rather than shelling out to the CLI, because
+// the CLI path is baseline bookkeeping; exercising it proves nothing about
+// whether the check itself can see a stale owner.
 
 const assert = require('assert');
 const fs = require('fs');
@@ -70,21 +69,28 @@ check(ownerVerdict({ name: 'X', owner: '"00-regions.wat:999999"' }).state === 's
 check(ownerVerdict({ name: 'X', owner: '"01-header.wat: (string.pool ...)"' }).state === 'skip',
   'a non-file:line owner is skipped, not failed');
 
-// 7. The baseline exists, is a name list, and is not empty-by-accident — an
-//    empty baseline would make the ratchet look green while checking nothing.
+// 7. The baseline is EMPTY. It used to hold 155 names and this check used to
+//    assert the opposite, on the reasoning that an empty list would make the
+//    ratchet look green while checking nothing. That reasoning belonged to the
+//    period when the drain was pending: the guarantee comes from checks 2-6
+//    (the matcher can see both verdicts) and check 8 (it verifies real owners
+//    in the live tree), not from the whitelist having entries. Now that all 155
+//    are re-derived the list is a flat refusal, and a name reappearing here is
+//    the regression — a wrong owner laundered by --record-owners rather than
+//    fixed.
 const baselinePath = path.join(__dirname, '..', 'tools', 'check-region-decls.owners.json');
 const baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf8'));
-check(Array.isArray(baseline.stale) && baseline.stale.length > 0,
-  'the recorded stale set is a non-empty list');
-const declNames = new Set(decls.map(d => d.name));
-const ghosts = baseline.stale.filter(n => !declNames.has(n));
-check(ghosts.length === 0,
-  `every baselined name is still a declared region: ${ghosts.join(', ')}`);
+check(Array.isArray(baseline.stale), 'the recorded stale set is a list');
+check(baseline.stale.length === 0,
+  `the stale baseline is drained: ${baseline.stale.join(', ')}`);
 
-// 8. And the live tree has at least one owner that verifies, so "155 stale" is
-//    a measurement rather than a broken matcher reporting everything.
+// 8. And no declaration in the live tree is stale — the drain holds without the
+//    whitelist. This is what check 7 used to delegate to the baseline.
+const liveStale = decls.filter(d => ownerVerdict(d).state === 'stale');
+check(liveStale.length === 0,
+  `no live declaration has a stale owner: ${liveStale.map(d => d.name).join(', ')}`);
 const okCount = decls.filter(d => ownerVerdict(d).state === 'ok').length;
-check(okCount > 0, `the matcher can verify a real owner (${okCount} do)`);
+check(okCount > 100, `the matcher verifies real owners (${okCount} do)`);
 
 console.log(`PASS  region owner ratchet (${checks} checks, ${okCount} owners verify, ` +
   `${baseline.stale.length} baselined stale)`);

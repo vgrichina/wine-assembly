@@ -237,13 +237,16 @@ function collectDeclarations(overrideFile, shake) {
 // worse than none — it sends the next reader to a line that has nothing to do
 // with the region and looks authoritative doing it.
 //
-// This is a RATCHET, not a sweep. Re-deriving the ~150 already-stale owners is
-// a separate piece of work with a separate review; what this mode buys is that
-// the number cannot GROW. The currently-stale set is recorded in
-// check-region-decls.owners.json, and only a region absent from that file is
-// held to a correct owner. Fixing a stale owner and dropping it from the
-// baseline is always allowed (and --record-owners will prune it); adding a
-// region to the baseline is what review is for.
+// This started as a RATCHET over 155 already-stale owners, so the number could
+// not grow while they were re-derived. THAT DRAIN IS DONE: every owner now
+// names a line that mentions its region, check-region-decls.owners.json holds
+// an EMPTY list, and this mode is a flat refusal rather than a whitelist. The
+// baseline file stays because it is the honest way to record an exception if
+// one is ever argued for — but an entry in it is now a review question, not a
+// bookkeeping step, and the file keying on region NAME (so a whitelisted region
+// that later moves stays whitelisted) is harmless only while it is empty. Keep
+// it empty. --record-owners re-cuts it; running that to silence a failure is
+// laundering a wrong owner, and the diff will say so.
 //
 // The test is deliberately loose: read the named file, take the named line
 // plus or minus THREE, and ask whether the region's name appears anywhere in
@@ -299,11 +302,11 @@ function checkOwners(list) {
   if (RECORD_OWNERS) {
     fs.writeFileSync(OWNERS_BASELINE, `${JSON.stringify({
       comment: 'Regions whose (owner "file:line") does not point at a line ' +
-        'mentioning them. Ratchet baseline for check-region-decls.js ' +
-        '--check-owners: a region NOT listed here must have a correct owner. ' +
-        'Removing a name after fixing its owner is always welcome; adding one ' +
-        'means a new declaration shipped with a wrong owner and should be ' +
-        'fixed instead.',
+        'mentioning them. Baseline for check-region-decls.js --check-owners. ' +
+        'THIS LIST SHOULD BE EMPTY: the original 155 stale owners were all ' +
+        're-derived, so the gate is a flat refusal and every region must have ' +
+        'a correct owner. A name appearing here means a declaration shipped ' +
+        'with a wrong owner and should be fixed instead of listed.',
       stale: stale.map(s => s.name),
     }, null, 2)}\n`);
     console.log(`check-region-decls: recorded ${stale.length} stale owner(s) ` +
@@ -327,10 +330,15 @@ function checkOwners(list) {
     console.error(`check-region-decls: $${s.name} (${s.where}) ${s.why}`);
   }
   if (fresh.length) {
-    console.error(`check-region-decls: ${fresh.length} region(s) declared or ` +
-      `moved since the baseline have an (owner "…") that does not name them.\n` +
-      `  Point the owner at a line that uses the region. Do NOT add these to ` +
-      `${path.relative(ROOT, OWNERS_BASELINE)}.`);
+    console.error(`check-region-decls: ${fresh.length} region(s) have an ` +
+      `(owner "…") that does not name them.\n` +
+      `  Point the owner at a line that uses the region — its accessor, its ` +
+      `init, or the (global $NAME …) that defines its base.\n` +
+      `  ${baseline.size === 0
+        ? `${path.relative(ROOT, OWNERS_BASELINE)} is empty by design (all 155 ` +
+          'originally-stale owners were re-derived); there is no whitelist to ' +
+          'add to.'
+        : `Do NOT add these to ${path.relative(ROOT, OWNERS_BASELINE)}.`}`);
     return 1;
   }
   console.log(`check-region-decls: owners ok — ${ok} verified, ` +
