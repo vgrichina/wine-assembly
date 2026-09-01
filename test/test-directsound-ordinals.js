@@ -48,6 +48,20 @@ async function main() {
   assert.strictEqual(e.test_system_ordinal_api_id(dllName, 3), -1,
     'unsupported DSOUND ordinals remain explicit diagnostics');
 
+  // DPLAYX sits at 1-based list position 4 and DSOUND at 6. The DSOUND rule
+  // used to test for 4 and therefore answered every dplayx ordinal with a
+  // DirectSound id: RollerCoaster Tycoon's ordinal 2 came back as
+  // DirectSoundEnumerateA, whose handler pushes four callback arguments where
+  // DirectPlayEnumerateA's callback pops five, and the guest returned to EIP 0.
+  // Ordinals are the retail DX6 dplayx.dll's (tools/pe-exports.js).
+  new Uint8Array(memory.buffer).set(Buffer.from('DPLAYX.dll\0', 'latin1'), dllNameWa);
+  assert.strictEqual(e.test_system_ordinal_api_id(dllName, 1), id('DirectPlayCreate'));
+  assert.strictEqual(e.test_system_ordinal_api_id(dllName, 2), id('DirectPlayEnumerateA'));
+  assert.strictEqual(e.test_system_ordinal_api_id(dllName, 4), id('DirectPlayLobbyCreateA'));
+  assert.strictEqual(e.test_system_ordinal_api_id(dllName, 9), id('DirectPlayEnumerate'));
+  assert.strictEqual(e.test_system_ordinal_api_id(dllName, 3), -1,
+    'unsupported DPLAYX ordinals remain explicit diagnostics');
+
   new Uint8Array(memory.buffer).set(Buffer.from('C:\\WINDOWS\\SYSTEM\\COMCTL32.DLL\0', 'latin1'), dllNameWa);
   assert.strictEqual(e.test_system_ordinal_api_id(dllName, 17), id('InitCommonControls'));
   assert.strictEqual(e.test_system_ordinal_api_id(dllName, 18), -1,

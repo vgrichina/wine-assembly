@@ -175,6 +175,15 @@
   (region.declare $CS_RING (size 0x00000100) (align 0x00000100)
     (stride 0x4 (count 64)) (mask $CS_MASK) (size-is-power-of-2)
     (owner "01-header.wat:2401"))
+  ;; timeSetEvent slots: 8 x 24 bytes, then the id allocator in its own region.
+  ;; Sized from $MM_TIMER_MAX x $MM_TIMER_ENTRY, so growing either without
+  ;; growing this is a compile error rather than a silent overrun into whatever
+  ;; the allocator packed next.
+  (region.declare $MM_TIMER_TABLE (size 0x000000C0) (align 0x00000010)
+    (stride $MM_TIMER_ENTRY (count 8))
+    (owner "01-header.wat:2858"))
+  (region.declare $MM_TIMER_NEXT_ID (size 0x00000004)
+    (owner "01-header.wat:2861"))
   (region.declare $MCI_DEVICE_TABLE (size 0x00000100) (align 0x00000100)
     (owner "01-header.wat:1686"))
   (region.declare $OWNER_TABLE (size 0x00000400) (align 0x00000100)

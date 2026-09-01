@@ -372,12 +372,31 @@
       (then
         (if (i32.eq (local.get $ordinal) (i32.const 2)) (then (return (call $lookup_api_id "PlaySoundA"))))
       ))
-    ;; Authentic Win98 DSOUND exports. Diablo II's D2Sound imports both by
-    ;; ordinal: 2 enumerates the default driver, then 1 creates it. DSOUND is
-    ;; entry 4 in STATIC_SYS_DLL_NAMES; those API ids are append-only table
-    ;; positions and therefore as stable as the generated dispatch itself.
+    ;; Authentic Win98 DPLAYX exports (ordinals read off the retail DX6
+    ;; dplayx.dll with tools/pe-exports.js, not guessed). RollerCoaster Tycoon
+    ;; imports 1 and 2 by ordinal only. $guest_name_is_static_system_dll
+    ;; answers a *1-based* list position, and the list is
+    ;; ole32/user32/comctl32/dplayx/ddraw/dsound/d3drm — so dplayx is 4 and
+    ;; dsound is 6. The DSOUND rule below used to say 4 and therefore claimed
+    ;; every dplayx ordinal: RCT's ordinal 2 came back as DirectSoundEnumerateA,
+    ;; whose handler pushes four callback arguments where DirectPlayEnumerateA's
+    ;; callback pops five (`ret 0x14`), and the resulting stack skew returned the
+    ;; guest to EIP 0 before it ever created a window.
     (if (i32.eq (call $guest_name_is_static_system_dll (local.get $dll_name_ga))
                 (i32.const 4))
+      (then
+        (if (i32.eq (local.get $ordinal) (i32.const 1)) (then (return (i32.const 1232)))) ;; DirectPlayCreate
+        (if (i32.eq (local.get $ordinal) (i32.const 2)) (then (return (i32.const 1234)))) ;; DirectPlayEnumerateA
+        (if (i32.eq (local.get $ordinal) (i32.const 4)) (then (return (i32.const 1235)))) ;; DirectPlayLobbyCreateA
+        (if (i32.eq (local.get $ordinal) (i32.const 9)) (then (return (i32.const 1233)))) ;; DirectPlayEnumerate
+      ))
+    ;; Authentic Win98 DSOUND exports. Diablo II's D2Sound imports both by
+    ;; ordinal: 2 enumerates the default driver, then 1 creates it. DSOUND is
+    ;; entry 6 in STATIC_SYS_DLL_NAMES' 1-based numbering; those API ids are
+    ;; append-only table positions and therefore as stable as the generated
+    ;; dispatch itself.
+    (if (i32.eq (call $guest_name_is_static_system_dll (local.get $dll_name_ga))
+                (i32.const 6))
       (then
         (if (i32.eq (local.get $ordinal) (i32.const 1)) (then (return (i32.const 976))))  ;; DirectSoundCreate
         (if (i32.eq (local.get $ordinal) (i32.const 2)) (then (return (i32.const 1236)))) ;; DirectSoundEnumerateA

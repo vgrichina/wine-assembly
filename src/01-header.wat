@@ -2853,12 +2853,23 @@
   ;; the periodic timer, fired once, and left no timer at all, so the audio
   ;; buffers were never released and SmackWait spun forever.
   ;; Slot: +0 id (0 = free), +4 interval, +8 callback, +12 dwUser,
-  ;;       +16 last_tick, +20 oneshot. The word past the table holds the
-  ;;       id allocator (0 reads as 1). Process-wide, hence memory not globals.
-  (global $MM_TIMER_TABLE i32 (i32.const 0x00010800))
+  ;;       +16 last_tick, +20 oneshot. $MM_TIMER_NEXT_ID is the id allocator
+  ;;       (0 reads as 1). Process-wide, hence memory not globals.
+  ;; Both addresses were raw `(i32.const 0x00010800)` / `0x000108C0`, in no
+  ;; region at all. The WATX allocator only knows about declared regions, so it
+  ;; had put RICHEDIT_FORMAT_TABLE (256 hwnd slots x 4 bytes) at exactly
+  ;; 0x00010800: creating any dialog with controls wrote hwnd-slot zeroes over
+  ;; timer slot 0's interval and callback while leaving its id intact. The slot
+  ;; then read as "always due, callback NULL", which floods the message pump
+  ;; with MM_TIMER (0x7FF0) that DispatchMessage declines for its NULL lParam.
+  ;; RollerCoaster Tycoon drives its whole game loop from one 50ms
+  ;; timeSetEvent and died on its first CreateDialog for this reason.
   (global $MM_TIMER_MAX   i32 (i32.const 8))
   (global $MM_TIMER_ENTRY i32 (i32.const 24))
-  (global $MM_TIMER_NEXT_ID i32 (i32.const 0x000108C0))
+  (global $MM_TIMER_TABLE i32 (region.addr $MM_TIMER_TABLE 0))
+  (global $MM_TIMER_TABLE_SIZE i32 (region.size $MM_TIMER_TABLE))
+  (global $MM_TIMER_NEXT_ID i32 (region.addr $MM_TIMER_NEXT_ID 0))
+  (global $MM_TIMER_NEXT_ID_SIZE i32 (region.size $MM_TIMER_NEXT_ID))
   (global $mm_timer_in_cb    (mut i32) (i32.const 0))  ;; re-entrancy guard
   (global $mm_timer_ret_thunk (mut i32) (i32.const 0)) ;; CACA000A return thunk
   (global $font_enum_ret_thunk (mut i32) (i32.const 0)) ;; CACA0011 EnumFontFamilies callback return
