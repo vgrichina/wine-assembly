@@ -5725,6 +5725,10 @@
     ;; Tell the renderer the dialog has been loaded; JS reads geom /
     ;; style / controls from the dlg_* / ctrl_* exports.
     (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
+    ;; USER's dialog manager places the frame relative to the owner's client
+    ;; area (DS_ABSALIGN opts out) and centres a DS_CENTER template. The host
+    ;; has mirrored the window by now, so this measures both rects and moves.
+    (call $dlg_place_owner_relative (local.get $hwnd))
     ;; Populate WAT CLIENT_RECT from the same frame metrics the renderer
     ;; uses so ScreenToClient/MapWindowPoints subtract the real client origin.
     (call $defwndproc_do_nccalcsize (local.get $hwnd))

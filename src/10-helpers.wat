@@ -5414,6 +5414,109 @@
     (call $dlg_seed_focus (local.get $dlg_hwnd))
     (return (local.get $ctrl_count)))
 
+  ;; $dlg_place_owner_relative(dlg_hwnd)
+  ;;
+  ;; A DLGTEMPLATE's x/y are dialog units measured from the upper-left corner
+  ;; of the OWNER window's *client* area, not from the screen — unless the
+  ;; template sets DS_ABSALIGN, which is the one case where they are screen
+  ;; coordinates. Nothing applied that offset, so an owned dialog whose
+  ;; template names a non-zero origin opened that far from the desktop corner
+  ;; instead of that far into its owner. XP winmine's "enter your name" dialog
+  ;; (RT_DIALOG 600, x=0 y=28) therefore appeared at screen (0, 45), in the
+  ;; top-left of the desktop, with the minesweeper board it belongs to
+  ;; somewhere off to the right.
+  ;;
+  ;; Call this once the caller has established the owner link and the host has
+  ;; mirrored the window ($host_dialog_loaded). It works entirely in pixels off
+  ;; the two window rects, so the dialog-unit conversion stays in one place —
+  ;; the $ctrl_geom_set above, whose result is what the window rect already
+  ;; reports here as a template-relative origin.
+  (func $dlg_place_owner_relative (param $dlg_hwnd i32)
+    (local $slot i32) (local $tmpl_style i32) (local $owner i32)
+    (local $rect i32)
+    (local $dx i32) (local $dy i32) (local $dw i32) (local $dh i32)
+    (local $ox i32) (local $oy i32) (local $ow i32) (local $oh i32)
+    (local $nx i32) (local $ny i32) (local $screen i32)
+    (if (i32.eqz (local.get $dlg_hwnd)) (then (return)))
+    ;; Child dialog pages are laid out inside their container's client area by
+    ;; whoever hosts them; their template origin is already parent-relative.
+    (if (i32.and (call $wnd_get_style (local.get $dlg_hwnd)) (i32.const 0x40000000))
+      (then (return)))
+    (local.set $owner (call $wnd_get_owner (local.get $dlg_hwnd)))
+    (if (i32.eqz (local.get $owner)) (then (return)))
+    (local.set $slot (call $wnd_table_find (local.get $dlg_hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return)))
+    ;; The DS_* half of the template style word, as stored by $dlg_load.
+    (local.set $tmpl_style (i32.load offset=4 (call $dlg_record_addr (local.get $slot))))
+    (if (i32.and (local.get $tmpl_style) (i32.const 0x0001)) ;; DS_ABSALIGN
+      (then (return)))
+    (local.set $rect (call $paint_scratch_take))
+    (call $host_get_window_rect (local.get $dlg_hwnd) (local.get $rect))
+    (local.set $dx (load.field.memarg PaintRect left (local.get $rect)))
+    (local.set $dy (load.field.memarg PaintRect top (local.get $rect)))
+    (local.set $dw (i32.sub (load.field.memarg PaintRect right (local.get $rect))
+                            (local.get $dx)))
+    (local.set $dh (i32.sub (load.field.memarg PaintRect bottom (local.get $rect))
+                            (local.get $dy)))
+    (local.set $rect (call $paint_scratch_take))
+    (call $host_get_window_rect (local.get $owner) (local.get $rect))
+    (local.set $ox (load.field.memarg PaintRect left (local.get $rect)))
+    (local.set $oy (load.field.memarg PaintRect top (local.get $rect)))
+    (local.set $ow (i32.sub (load.field.memarg PaintRect right (local.get $rect))
+                            (local.get $ox)))
+    (local.set $oh (i32.sub (load.field.memarg PaintRect bottom (local.get $rect))
+                            (local.get $oy)))
+    (if (i32.or (i32.le_s (local.get $ow) (i32.const 0))
+                (i32.le_s (local.get $oh) (i32.const 0)))
+      (then (return)))
+    (if (i32.or (i32.le_s (local.get $dw) (i32.const 0))
+                (i32.le_s (local.get $dh) (i32.const 0)))
+      (then (return)))
+    ;; DS_CENTER, plus the modal-template-at-origin case USER's dialog manager
+    ;; centres for a frame whose template never names a position. This used to
+    ;; live in lib/renderer.js's createDialog; it is window placement, so it
+    ;; belongs on this side of the seam.
+    (if (i32.or
+          (i32.ne (i32.and (local.get $tmpl_style) (i32.const 0x0800)) (i32.const 0)) ;; DS_CENTER
+          (i32.and
+            (i32.ne (i32.and (local.get $tmpl_style) (i32.const 0x0080)) (i32.const 0)) ;; DS_MODALFRAME
+            (i32.and (i32.eqz (local.get $dx)) (i32.eqz (local.get $dy)))))
+      (then
+        (local.set $nx (i32.add (local.get $ox)
+          (i32.div_s (i32.sub (local.get $ow) (local.get $dw)) (i32.const 2))))
+        (local.set $ny (i32.add (local.get $oy)
+          (i32.div_s (i32.sub (local.get $oh) (local.get $dh)) (i32.const 2)))))
+      (else
+        (local.set $nx (i32.add (local.get $dx)
+          (i32.add (local.get $ox) (call $client_rect_get_l (local.get $owner)))))
+        (local.set $ny (i32.add (local.get $dy)
+          (i32.add (local.get $oy) (call $client_rect_get_t (local.get $owner)))))))
+    ;; Keep the whole frame on the desktop when the owner sits near an edge.
+    (local.set $screen (call $host_get_screen_size))
+    (if (i32.gt_s (i32.and (local.get $screen) (i32.const 0xFFFF)) (i32.const 0))
+      (then
+        (if (i32.gt_s (i32.add (local.get $nx) (local.get $dw))
+                      (i32.and (local.get $screen) (i32.const 0xFFFF)))
+          (then (local.set $nx (i32.sub (i32.and (local.get $screen) (i32.const 0xFFFF))
+                                        (local.get $dw)))))))
+    (if (i32.gt_s (i32.shr_u (local.get $screen) (i32.const 16)) (i32.const 0))
+      (then
+        (if (i32.gt_s (i32.add (local.get $ny) (local.get $dh))
+                      (i32.shr_u (local.get $screen) (i32.const 16)))
+          (then (local.set $ny (i32.sub (i32.shr_u (local.get $screen) (i32.const 16))
+                                        (local.get $dh)))))))
+    (if (i32.lt_s (local.get $nx) (i32.const 0)) (then (local.set $nx (i32.const 0))))
+    (if (i32.lt_s (local.get $ny) (i32.const 0)) (then (local.set $ny (i32.const 0))))
+    (if (i32.and (i32.eq (local.get $nx) (local.get $dx))
+                 (i32.eq (local.get $ny) (local.get $dy)))
+      (then (return)))
+    (call $ctrl_geom_set (local.get $slot)
+      (local.get $nx) (local.get $ny) (local.get $dw) (local.get $dh))
+    ;; SWP_NOSIZE — this is a move, and the size is the template's.
+    (call $host_move_window (local.get $dlg_hwnd)
+      (local.get $nx) (local.get $ny) (local.get $dw) (local.get $dh)
+      (i32.const 1)))
+
   ;; ============================================================
   ;; Process environment block
   ;; ============================================================

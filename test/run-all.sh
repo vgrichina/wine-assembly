@@ -507,6 +507,7 @@ UNIT=(
   test/test-shell-malloc.js
   test/test-shell-execute-ex-w.js
   test/test-showwindow-dialog-promotion.js
+  test/test-winmine-name-dialog-frame.js
   test/test-system-enum-dispatch.js
   test/test-thread-manager-sparse-stack.js
   test/test-dialog-timer-pump.js

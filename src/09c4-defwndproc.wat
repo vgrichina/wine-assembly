@@ -737,8 +737,19 @@
           (i32.and
             (i32.ne (i32.and (local.get $style) (i32.const 0x00800000)) (i32.const 0))
             (i32.ne (i32.and (local.get $style) (i32.const 0x00080000)) (i32.const 0))))))
-    (local.set $has_border (i32.or (local.get $has_cap)
-                                    (i32.and (local.get $style) (i32.const 0x00800000))))
+    ;; WS_DLGFRAME (0x00400000) is a border in its own right, not just the
+    ;; upper half of WS_CAPTION. A template that asks for a fixed dialog frame
+    ;; and no title bar -- XP winmine's "enter your name" dialog, RT_DIALOG 600,
+    ;; is style WS_POPUP|WS_DLGFRAME|DS_SETFONT -- reserved no non-client area
+    ;; at all when only WS_BORDER counted here. $dc_apply_nc_clip then excluded
+    ;; the entire window rect from the NC DC, so every pixel
+    ;; $defwndproc_ncpaint drew (the btnFace fill and the raised 3D edge) was
+    ;; clipped away and the dialog rendered as a flat grey slab with no frame.
+    ;; Captioned windows already carry this bit, so they are unaffected.
+    (local.set $has_border
+      (i32.or (i32.ne (local.get $has_cap) (i32.const 0))
+              (i32.ne (i32.and (local.get $style) (i32.const 0x00C00000))
+                      (i32.const 0))))
     (local.set $simple_child_border
       (i32.and
         (i32.and

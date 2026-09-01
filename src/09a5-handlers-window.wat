@@ -922,6 +922,9 @@
     ;; window object by reading header + control state via the dlg_* /
     ;; ctrl_* exports. No template parsing on the JS side.
     (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
+    ;; Owner-relative template placement / DS_CENTER — see
+    ;; $dlg_place_owner_relative and the matching call in $handle_DialogBoxParamA.
+    (call $dlg_place_owner_relative (local.get $hwnd))
     ;; Top-level dialogs created through MFC's modal path can arrive through
     ;; CreateDialogIndirectParam without a later explicit ShowWindow call.
     ;; A hidden top-level dialog then traps the app in an invisible modal loop.
