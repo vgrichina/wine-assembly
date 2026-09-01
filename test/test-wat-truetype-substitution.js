@@ -18,8 +18,8 @@ const fs = require('fs');
 const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
 const { fontMounts, FONT_DIR } = require('../lib/font-substitutions');
-// $TT_SUBST_TABLE, $TT_SUBST_ALIAS_TABLE and $GUEST_BASE, from the map
-// declared in src/00-regions.wat.
+// $TT_SUBST_TABLE and $TT_SUBST_ALIAS_TABLE, from the map declared in
+// src/00-regions.wat.
 const RegionMap = require('../lib/region-map.generated.js');
 
 const REPO = path.join(__dirname, '..');
@@ -46,8 +46,10 @@ const manifest = JSON.parse(fs.readFileSync(
 (async () => {
   const { exports: wat, memory, hostCtx } = await bootRenderHarness();
   const bytes = new Uint8Array(memory.buffer);
-  const imageBase = wat.get_image_base() >>> 0;
-  const wa = guest => RegionMap.g2w(guest, imageBase);
+  // The module's own $g2w, not image-relative arithmetic: mounting the fonts
+  // exhausts the low heap window ($GUEST_HEAP_BASE) and $heap_alloc then spills
+  // to the sparse high arena, whose pointers only $g2w can resolve.
+  const wa = guest => wat.guest_to_wasm(guest) >>> 0;
 
   const readStr = at => {
     let end = at;

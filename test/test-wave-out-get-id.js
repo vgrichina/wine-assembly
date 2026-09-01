@@ -13,7 +13,11 @@ const extraWat = String.raw`
         (param $open_handle i32) (param $query_handle i32)
         (param $device_id i32) (result i32)
     (local $saved_esp i32)
-    (i32.store (i32.const 0xD160) (local.get $open_handle))
+    ;; $handle_waveOutGetID compares against the shared open-handle word. Name
+    ;; the region rather than the address it happened to have: the map is
+    ;; allocated now, so a literal here goes stale silently and the handler
+    ;; simply answers MMSYSERR_INVALHANDLE to a valid handle.
+    (i32.store (region.addr $WAVE_OUT_SHARED 0) (local.get $open_handle))
     (local.set $saved_esp (global.get $esp))
     (call $handle_waveOutGetID
       (local.get $query_handle) (local.get $device_id)

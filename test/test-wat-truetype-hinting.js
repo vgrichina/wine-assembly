@@ -10,8 +10,6 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
-// $GUEST_BASE, from the map declared in src/00-regions.wat.
-const RegionMap = require('../lib/region-map.generated.js');
 
 const REPO = path.join(__dirname, '..');
 const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
@@ -60,8 +58,10 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     wat.test_tth_md_uses_original(0x49),
     wat.test_tth_md_uses_original(0x4A),
   ], [0, 1], 'MD opcodes must select fitted then original outline distances');
-  const imageBase = wat.get_image_base() >>> 0;
-  const wa = guest => RegionMap.g2w(guest, imageBase);
+  // The module's own $g2w, not image-relative arithmetic: loading whole fonts
+  // exhausts the low heap window ($GUEST_HEAP_BASE) and $heap_alloc then spills
+  // to the sparse high arena, whose pointers only $g2w can resolve.
+  const wa = guest => wat.guest_to_wasm(guest) >>> 0;
   const copyToGuest = bytes => {
     const guest = wat.guest_alloc(bytes.length) >>> 0;
     assert.ok(guest, `guest_alloc(${bytes.length}) failed`);

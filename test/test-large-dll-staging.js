@@ -110,8 +110,11 @@ async function main() {
     'large DLL executable section should map from the intact staging buffer');
 
   const g2w = guest => regionG2w(guest, imageBase);
-  assert.strictEqual(Buffer.from(memory.buffer, REGIONS.ORDINAL_NAMES_WSOCK32.base, 11).toString('ascii'), 'WSOCK32.dll',
-    'static WinSock ordinal map should contain the DLL name');
+  // $ORDINAL_NAMES_WSOCK32 was a packed NUL-separated blob of ordinal-import
+  // names addressed by hand-counted offset; 74e4ac34 replaced all 46 sites with
+  // interned string literals and deleted the region. What that assertion was
+  // really guarding — that WSOCK32 ordinal 115 still resolves to WSAStartup —
+  // is checked below against the host thunk, which is the observable behaviour.
   assert.strictEqual(Buffer.from(memory.buffer,
     g2w((second.loadAddr >>> 0) + 0x1130), 11).toString('ascii'), 'WSOCK32.dll',
     'synthetic large DLL should retain its import descriptor name');
