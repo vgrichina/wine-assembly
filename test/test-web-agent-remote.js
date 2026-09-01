@@ -66,6 +66,8 @@ let browser = null;
 
   browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new' });
   const page = await browser.newPage();
+  const pageErrors = [];
+  page.on('pageerror', e => pageErrors.push(String(e)));
   // ?debug so the toolbar (and its Agent handoff button) is up; the copied
   // link below deliberately omits the query, which exercises ctl.js's
   // origin+pathname match.
@@ -135,6 +137,17 @@ let browser = null;
 
   const clicked = ctl('-s', sessionId, 'click', '100,100');
   check('click executes page-side', clicked.includes('click:100:100'), clicked.trim());
+
+  // Synthetic keys used to be dispatched on `window`, whose non-Node target
+  // reached shouldIgnorePageKey()'s toolbar.contains(e.target) and threw on
+  // every keystroke — so browser-side type never reached the guest. Keys now
+  // target the canvas; any uncaught page error here is a regression.
+  const errorsBeforeType = pageErrors.length;
+  ctl('-s', sessionId, 'type', 'hi');
+  await new Promise(r => setTimeout(r, 500));
+  check('type raises no uncaught page errors (keys target the canvas)',
+    pageErrors.length === errorsBeforeType,
+    pageErrors.slice(errorsBeforeType).join(' | '));
 
   // The agent's first input command takes the page's input away from the
   // person watching (a stray mousemove edge-scrolled Heroes II out from under
