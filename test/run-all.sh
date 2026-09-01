@@ -603,6 +603,7 @@ E2E=(
   test/test-web-touch-cursor.js
   test/test-web-agent-remote.js
   test/test-web-agent-frozen.js
+  test/test-web-frozen-recording.js
   test/test-web-record-audio.js
   test/test-web-audio-session.js
   test/test-web-ios-lab.js

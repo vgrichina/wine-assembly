@@ -118,8 +118,327 @@ const frozenBus = {
     } catch (_) { /* no CustomEvent in this host */ }
   },
 };
+// ---------------------------------------------------------------------------
+// Frozen session recorder  (docs/design-frozen-recording.md)
+// ---------------------------------------------------------------------------
+//
+// An agent driving a frozen session produces a wall-clock profile nothing can
+// be made of: ~450 steps a second in bursts, separated by 30-90s of the agent
+// thinking. lib/recorder.js records the wall clock, so it would record the
+// thinking. This records the GUEST clock instead, and the two invariants that
+// make an exact offline reconstruction possible are the frozen contract:
+//
+//   * pixels change only inside a step, and step k sits at a guest time this
+//     recorder is told exactly (tickMs may change per `step` call, so the
+//     actual per-step tickMs is written down rather than assumed);
+//   * every sound is guest PCM arriving at a submit seam in lib/host-audio.js,
+//     stamped off the same step-driven clock.
+//
+// So: sample the composited screen every k-th step as a JPEG tagged with
+// {stepIndex, guestMs}, tap the PCM with its guestStartMs, ship both to the
+// dev-server, and let tools/frozen-video.js lay them back down on the guest
+// timeline. Hours of deliberation between steps collapse to nothing and the
+// clip plays as continuous realtime gameplay.
+//
+// Nothing here may block stepping: frames are encoded off-thread by toBlob and
+// posted from a queue that drains on its own, and a sink that falls behind
+// drops frames rather than throttling the guest.
+const frozenRecorder = {
+  active: false,
+  sink: '',
+  session: '',
+  everyNSteps: 2,
+  quality: 0.85,
+  frames: 0,
+  framesDropped: 0,
+  audioChunks: 0,
+  audioBytes: 0,
+  events: 0,
+  startedAtGuestMs: 0,
+  lastGuestMs: 0,
+  _frames: [],
+  _audio: [],
+  _events: [],
+  _inFlight: 0,
+  _lastStep: -1,
+  _postChain: Promise.resolve(),
+  _capture: null,
+  _pumps: new Set(),
+  // A queue this deep already means the sink cannot keep up; holding more
+  // just converts a network problem into a memory problem.
+  MAX_QUEUED_FRAMES: 240,
+
+  status() {
+    return {
+      recording: frozenRecorder.active,
+      session: frozenRecorder.session || null,
+      sink: frozenRecorder.sink || null,
+      everyNSteps: frozenRecorder.everyNSteps,
+      frames: frozenRecorder.frames,
+      framesDropped: frozenRecorder.framesDropped,
+      audioChunks: frozenRecorder.audioChunks,
+      audioBytes: frozenRecorder.audioBytes,
+      events: frozenRecorder.events,
+      guestMs: Math.max(0, frozenRecorder.lastGuestMs - frozenRecorder.startedAtGuestMs),
+      queued: frozenRecorder._frames.length + frozenRecorder._audio.length,
+    };
+  },
+
+  async start(opts) {
+    const o = opts || {};
+    if (frozenRecorder.active) return frozenRecorder.status();
+    frozenRecorder.sink = String(o.sink || (typeof location !== 'undefined' ? location.origin : ''))
+      .replace(/\/+$/, '');
+    frozenRecorder.everyNSteps = Math.max(1, parseInt(o.everyNSteps || o.k || 2, 10) || 2);
+    frozenRecorder.quality = Number.isFinite(Number(o.quality)) ? Number(o.quality) : 0.85;
+    frozenRecorder.frames = 0;
+    frozenRecorder.framesDropped = 0;
+    frozenRecorder.audioChunks = 0;
+    frozenRecorder.audioBytes = 0;
+    frozenRecorder.events = 0;
+    frozenRecorder._frames.length = 0;
+    frozenRecorder._audio.length = 0;
+    frozenRecorder._events.length = 0;
+    const guestMs = frozenBus.status().guestMs | 0;
+    frozenRecorder.startedAtGuestMs = guestMs;
+    frozenRecorder.lastGuestMs = guestMs;
+    const meta = {
+      name: String(o.name || '') || null,
+      everyNSteps: frozenRecorder.everyNSteps,
+      tickMs: frozenBus.tickMs,
+      startGuestMs: guestMs,
+      href: typeof location !== 'undefined' ? location.href : null,
+      startedAt: new Date().toISOString(),
+    };
+    const reply = await frozenRecorder._post('start', meta);
+    frozenRecorder.session = String((reply && reply.session) || meta.name || 'session');
+    frozenRecorder.active = true;
+    // One frame of the machine as it stands, so a recording that is stopped
+    // after very few steps still has a first picture to start from. Tagged
+    // with the step the page is actually AT, not zero: a recording armed
+    // mid-session must keep the frame stream monotonic in guest time.
+    frozenRecorder._lastStep = -1;
+    frozenRecorder._postChain = Promise.resolve();
+    frozenRecorder.capture(frozenBus.status().steps, guestMs, frozenBus.tickMs);
+    return frozenRecorder.status();
+  },
+
+  async stop() {
+    if (!frozenRecorder.active) return frozenRecorder.status();
+    // The audio still owed by a looping buffer nobody touched belongs to this
+    // recording, not to the next one.
+    frozenRecorder.pumpAudio();
+    frozenRecorder.active = false;
+    await frozenRecorder.drain(true);
+    const summary = frozenRecorder.status();
+    await frozenRecorder._post('stop', {
+      session: frozenRecorder.session,
+      endGuestMs: frozenRecorder.lastGuestMs,
+      frames: summary.frames,
+      audioChunks: summary.audioChunks,
+    });
+    return summary;
+  },
+
+  registerPump(fn) {
+    if (typeof fn === 'function') frozenRecorder._pumps.add(fn);
+  },
+
+  pumpAudio() {
+    for (const fn of frozenRecorder._pumps) { try { fn(); } catch (_) {} }
+  },
+
+  // Called from _frozenPump with the state the step just produced.
+  capture(stepIndex, guestMs, tickMs) {
+    if (!frozenRecorder.active) return;
+    frozenRecorder.lastGuestMs = guestMs;
+    // The arming frame and the first pump frame can name the same step (a
+    // recording armed on a k-boundary), and two frames at one guest time is
+    // a zero-duration entry the assembler would have to invent a length for.
+    if (stepIndex === frozenRecorder._lastStep) return;
+    frozenRecorder._lastStep = stepIndex;
+    if (frozenRecorder._frames.length >= frozenRecorder.MAX_QUEUED_FRAMES) {
+      frozenRecorder.framesDropped++;
+      return;
+    }
+    const canvas = frozenRecorder._sourceCanvas();
+    if (!canvas) return;
+    const header = {
+      stepIndex: stepIndex | 0,
+      guestMs: Math.round(guestMs),
+      tickMs: Number(tickMs) || frozenBus.tickMs,
+      k: frozenRecorder.everyNSteps,
+      w: canvas.width, h: canvas.height,
+    };
+    // Placed in the queue NOW so frames stay in guest order even though
+    // toBlob resolves later and out of order.
+    // `encoded` rather than a non-null blob: toBlob can hand back null, and
+    // a head slot that never becomes non-null would wedge the whole queue.
+    const slot = { header, blob: null, encoded: false };
+    frozenRecorder._frames.push(slot);
+    frozenRecorder.frames++;
+    const done = (blob) => { slot.blob = blob; slot.encoded = true; frozenRecorder.drain(); };
+    try {
+      if (canvas.toBlob) canvas.toBlob(done, 'image/jpeg', frozenRecorder.quality);
+      else done(frozenRecorder._dataUrlToBlob(canvas.toDataURL('image/jpeg', frozenRecorder.quality)));
+    } catch (_) { done(null); }
+  },
+
+  // lib/host-audio.js's tap target. `bytes` is a private copy already.
+  pcm(chunk) {
+    if (!frozenRecorder.active || !chunk || !chunk.bytes || !chunk.bytes.length) return;
+    frozenRecorder.audioChunks++;
+    frozenRecorder.audioBytes += chunk.bytes.length;
+    frozenRecorder._audio.push({
+      guestStartMs: Math.round(chunk.guestStartMs),
+      sampleRate: chunk.sampleRate | 0,
+      channels: chunk.channels | 0,
+      bits: chunk.bits | 0,
+      gainL: Number.isFinite(chunk.gainL) ? chunk.gainL : 1,
+      gainR: Number.isFinite(chunk.gainR) ? chunk.gainR : 1,
+      pcm: frozenRecorder._b64(chunk.bytes),
+    });
+    if (frozenRecorder._audio.length >= 32) frozenRecorder.drain();
+  },
+
+  // Optional sidecar: what the agent did, on the guest clock, so a clip can
+  // be annotated with its own inputs later.
+  event(kind, detail) {
+    if (!frozenRecorder.active) return;
+    frozenRecorder.events++;
+    frozenRecorder._events.push(Object.assign({
+      kind: String(kind), guestMs: Math.round(frozenRecorder.lastGuestMs),
+    }, detail || {}));
+    if (frozenRecorder._events.length >= 32) frozenRecorder.drain();
+  },
+
+  async drain(force) {
+    // Frames only leave in order, so a slot still waiting on its encoder
+    // holds the ones behind it — which is what keeps the stream monotonic.
+    const ready = [];
+    while (frozenRecorder._frames.length && frozenRecorder._frames[0].encoded) {
+      ready.push(frozenRecorder._frames.shift());
+    }
+    if (force) {
+      // A stop must not lose the tail; give the encoders a turn to land.
+      for (let i = 0; i < 40 && frozenRecorder._frames.length; i++) {
+        await new Promise(r => setTimeout(r, 25));
+        while (frozenRecorder._frames.length && frozenRecorder._frames[0].encoded) {
+          ready.push(frozenRecorder._frames.shift());
+        }
+      }
+      frozenRecorder._frames.length = 0;
+    }
+    const jobs = [];
+    if (ready.length) jobs.push(frozenRecorder._postFrames(ready));
+    if (frozenRecorder._audio.length && (force || frozenRecorder._audio.length >= 8)) {
+      const batch = frozenRecorder._audio.splice(0, frozenRecorder._audio.length);
+      jobs.push(frozenRecorder._post('audio', { session: frozenRecorder.session, chunks: batch }));
+    }
+    if (frozenRecorder._events.length && (force || frozenRecorder._events.length >= 8)) {
+      const batch = frozenRecorder._events.splice(0, frozenRecorder._events.length);
+      jobs.push(frozenRecorder._post('events', { session: frozenRecorder.session, events: batch }));
+    }
+    if (jobs.length) await Promise.all(jobs).catch(() => {});
+  },
+
+  // The composited screen at guest resolution. In exclusive fullscreen the
+  // canvas is the page layout with the picture fitted inside it, so crop the
+  // fit box back out — the same rect lib/recorder.js and agent-remote use.
+  _sourceCanvas() {
+    if (typeof document === 'undefined') return null;
+    const canvas = document.getElementById('screen');
+    if (!canvas || !canvas.width || !canvas.height) return null;
+    const r = (typeof window !== 'undefined' && window.sharedRenderer) || null;
+    const t = r && r._exclusiveFullscreen && r._exclusiveTransform;
+    const box = (t && (t.dstW | 0) > 0 && (t.dstH | 0) > 0 && (t.srcW | 0) > 0 && (t.srcH | 0) > 0)
+      ? { x: t.dstX | 0, y: t.dstY | 0, w: t.dstW | 0, h: t.dstH | 0, sw: t.srcW | 0, sh: t.srcH | 0 }
+      : null;
+    // H.264 wants even dimensions; rounding here beats making ffmpeg scale.
+    const w = ((box ? box.sw : canvas.width) | 0) & ~1;
+    const h = ((box ? box.sh : canvas.height) | 0) & ~1;
+    if (w < 2 || h < 2) return null;
+    let out = frozenRecorder._capture;
+    if (!out) out = frozenRecorder._capture = document.createElement('canvas');
+    if (out.width !== w || out.height !== h) { out.width = w; out.height = h; }
+    const cx = out.getContext('2d');
+    // Copy synchronously: toBlob resolves later, and by then the guest may
+    // have stepped again. The recording must show the step it is tagged with.
+    if (box) cx.drawImage(canvas, box.x, box.y, box.w, box.h, 0, 0, w, h);
+    else cx.drawImage(canvas, 0, 0, w, h, 0, 0, w, h);
+    return out;
+  },
+
+  _b64(bytes) {
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      s += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(bytes.length, i + 0x8000)));
+    }
+    return typeof btoa === 'function' ? btoa(s) : Buffer.from(bytes).toString('base64');
+  },
+
+  _dataUrlToBlob(url) {
+    try {
+      const comma = url.indexOf(',');
+      const bin = atob(url.slice(comma + 1));
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return new Blob([out], { type: 'image/jpeg' });
+    } catch (_) { return null; }
+  },
+
+  // Frames go up as one binary container rather than base64 JSON: at 31fps a
+  // recording is megabytes a second and a 33% expansion is real cost on a
+  // path that must not fall behind the guest.
+  //
+  //   'WAF1' then, per frame: u32 headerLen, header JSON, u32 jpegLen, jpeg
+  async _postFrames(slots) {
+    const parts = [new Uint8Array([0x57, 0x41, 0x46, 0x31])];
+    const u32 = (n) => {
+      const b = new Uint8Array(4);
+      new DataView(b.buffer).setUint32(0, n >>> 0, true);
+      return b;
+    };
+    let any = false;
+    for (const slot of slots) {
+      if (!slot.blob) continue;
+      any = true;
+      const header = new TextEncoder().encode(JSON.stringify(slot.header));
+      parts.push(u32(header.length), header, u32(slot.blob.size), slot.blob);
+    }
+    if (!any) return;
+    const body = new Blob(parts, { type: 'application/octet-stream' });
+    // Chained, not parallel. Two batches in flight at once can land at the
+    // sink in either order, and the sink numbers frames by arrival — which
+    // would leave frames.ndjson out of guest order for no reason at all.
+    const send = async () => {
+      try {
+        await fetch(`${frozenRecorder.sink}/api/record/frames?s=${encodeURIComponent(frozenRecorder.session)}`,
+          { method: 'POST', body, headers: { 'Content-Type': 'application/octet-stream' } });
+      } catch (_) { frozenRecorder.framesDropped += slots.length; }
+    };
+    frozenRecorder._postChain = frozenRecorder._postChain.then(send, send);
+    return frozenRecorder._postChain;
+  },
+
+  async _post(route, payload) {
+    try {
+      const response = await fetch(`${frozenRecorder.sink}/api/record/${route}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      return await response.json();
+    } catch (error) {
+      if (route === 'start') throw new Error(`recording sink unreachable at ${frozenRecorder.sink}/api/record — is tools/dev-server.js serving this page?`);
+      return null;
+    }
+  },
+};
+
 if (typeof window !== 'undefined') {
   window.WineFrozen = frozenBus;
+  window.WineRecorder = frozenRecorder;
   // `?frozen` (optionally `?frozen=MS`) is a convenience that pre-checks the
   // box: a dashboard tile, or an agent's own tab, can be born stepped rather
   // than having to freeze a machine that already ran its boot.
@@ -568,6 +887,13 @@ class WineAssembly {
       sharedAudio,
       sharedMixer,
       audioClockMs: () => self._guestAudioClockMs(sharedAudio),
+      // Frozen session recorder (docs/design-frozen-recording.md): host-audio
+      // asks for a tap on every PCM submit and gets null unless one is armed,
+      // so an unrecorded session pays one property read per buffer. The pump
+      // is how a looping DirectSound ring nobody touched still gets its swept
+      // window emitted once per captured frame.
+      audioTap: () => (frozenRecorder.active ? frozenRecorder : null),
+      registerAudioTapPump: fn => frozenRecorder.registerPump(fn),
       onOpenGLContextCountChange: count => {
         if (typeof self.onOpenGLContextCountChange === 'function') {
           self.onOpenGLContextCountChange(count | 0);
@@ -2954,6 +3280,18 @@ class WineAssembly {
     if ((this._frozenBudget | 0) <= 0) { this._frozenIdle(); return; }
     this._frozenStep = null;
     this._frozenBudget--;
+    // Recording tap. The pixels of step N-1 are settled the moment we are
+    // about to run step N, so this samples the finished picture without
+    // having to wait on a repaint the run loop may defer forever. Every k-th
+    // step, tagged with the guest time that produced it — the recorder's
+    // whole timeline, and the reason a clip has no agent think-time in it.
+    if (frozenRecorder.active && (this._frozenSteps % frozenRecorder.everyNSteps) === 0) {
+      try { if (this._presentDxIfDirty) this._presentDxIfDirty(); } catch (_) {}
+      try { if (this.renderer && this.renderer.flushRepaint) this.renderer.flushRepaint(true); } catch (_) {}
+      try { if (this.renderer && this.renderer.repaint) this.renderer.repaint(); } catch (_) {}
+      frozenRecorder.pumpAudio();
+      frozenRecorder.capture(this._frozenSteps | 0, this.frozenGuestMs(), this._frozenTickMs);
+    }
     this._frozenSteps = (this._frozenSteps | 0) + 1;
     this._advanceGuestTickMs(this._frozenTickMs, this.hostCtx && this.hostCtx.sharedAudio);
     this._postStep(step);

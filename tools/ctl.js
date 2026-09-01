@@ -14,6 +14,8 @@
 //   node tools/ctl.js user-input on               # give the human back their mouse/keys
 //   node tools/ctl.js frozen on                   # stop the world (browser session)
 //   node tools/ctl.js step 400                    # run 400 steps, repaint, stop again
+//   node tools/ctl.js record on                   # record the stepped session
+//   node tools/ctl.js record off                  # ...then tools/frozen-video.js
 //
 // Frozen mode is the browser twin of the headless CLI: nothing runs between
 // commands, so png is byte-stable and `click then step` is one atomic move.
@@ -185,7 +187,7 @@ function printResult(result) {
 
 async function main() {
   if (!VERB) {
-    fail('usage: ctl.js [-s SESSION|:PORT|PAGE-URL] snapshot|ping|apps|launch APPID|click X,Y|dblclick|rclick|mousedown|mouseup|mousemove|drag X1,Y1 X2,Y2|key VK|type TEXT|png FILE|eval CODE|cmd RAW|user-input on|off|frozen on|off|step N [MS]|pipe|quit|sessions', 2);
+    fail('usage: ctl.js [-s SESSION|:PORT|PAGE-URL] snapshot|ping|apps|launch APPID|click X,Y|dblclick|rclick|mousedown|mouseup|mousemove|drag X1,Y1 X2,Y2|key VK|type TEXT|png FILE|eval CODE|cmd RAW|user-input on|off|frozen on|off|step N [MS]|record on|off|status [NAME]|pipe|quit|sessions', 2);
   }
 
   if (VERB === 'sessions') {
@@ -246,6 +248,21 @@ async function main() {
       const ms = positional[2] === undefined ? undefined : parseInt(positional[2], 10);
       commands = ms === undefined ? { action: 'step', n } : { action: 'step', n, ms };
     }
+  } else if (VERB === 'record') {
+    // Record the frozen session as realtime video: frames and guest PCM are
+    // both stamped on the GUEST clock, so the agent's think-time between
+    // steps is absent from the result. docs/design-frozen-recording.md.
+    if (target.kind === 'direct') {
+      fail('record drives a browser session — a headless VM has no composited screen to sample (use --png=)', 2);
+    }
+    const mode = positional[1] || 'status';
+    if (!['on', 'off', 'status'].includes(mode)) {
+      fail("record needs 'on' (arm), 'off' (stop and print the session dir) or 'status'", 2);
+    }
+    commands = { action: 'record', mode };
+    if (positional[2]) commands.name = positional[2];
+    const every = process.argv.find(a => a.startsWith('--every='));
+    if (every) commands.everyNSteps = parseInt(every.slice(8), 10);
   } else if (VERB === 'eval') {
     commands = { action: 'eval', code: positional.slice(1).join(' ') };
   } else if (VERB === 'cmd') {

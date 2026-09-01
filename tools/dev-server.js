@@ -152,6 +152,26 @@ function readBody(req, limitBytes) {
   });
 }
 
+// The frame stream is JPEG bytes in a binary container, not text; decoding it
+// as utf8 first would corrupt every byte above 0x7f.
+function readBodyBuffer(req, limitBytes) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > limitBytes) {
+        reject(Object.assign(new Error('payload too large'), { status: 413 }));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
 function parseCookies(header) {
   const out = {};
   for (const part of String(header || '').split(';')) {
@@ -439,6 +459,147 @@ async function handlePerf(req, res, opts) {
 }
 
 // ---------------------------------------------------------------------------
+// Frozen session recording sink  (POST /api/record/*)
+// ---------------------------------------------------------------------------
+//
+// See docs/design-frozen-recording.md. host.js's frozenRecorder posts frames
+// and guest PCM here while an agent steps a frozen session; the timeline is
+// the GUEST clock, so what lands on disk is a continuous realtime session with
+// every second of agent deliberation already absent. tools/frozen-video.js
+// turns a session directory into an mp4.
+//
+// One directory per recording, the way --perf-log is one file per session:
+//
+//   recordings/<session>/meta.json     what start/stop said
+//                       /frames.ndjson one {stepIndex,guestMs,tickMs,file} line
+//                       /frames/*.jpg
+//                       /audio.ndjson  one {guestStartMs,sampleRate,...,pcm} line
+//                       /events.ndjson optional input markers
+
+const MAX_RECORD_FRAME_BYTES = 64 * 1024 * 1024;
+const MAX_RECORD_JSON_BYTES = 32 * 1024 * 1024;
+const recordSessions = new Map(); // session -> { dir, frames, audioChunks }
+
+function recordDirRoot(opts) {
+  return path.resolve((opts && opts.recordDir) || path.join(ROOT, 'recordings'));
+}
+
+function recordSlug(name) {
+  const base = String(name || '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return base.slice(0, 64) || 'session';
+}
+
+function recordSessionDir(session, opts) {
+  const known = recordSessions.get(session);
+  if (known) return known;
+  const dir = path.join(recordDirRoot(opts), recordSlug(session));
+  fs.mkdirSync(path.join(dir, 'frames'), { recursive: true });
+  const state = { dir, frames: 0, audioChunks: 0, events: 0 };
+  recordSessions.set(session, state);
+  return state;
+}
+
+async function handleRecord(req, res, url, opts) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+  if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' });
+  const route = url.pathname.slice('/api/record/'.length);
+
+  if (route === 'frames') {
+    const session = String(url.searchParams.get('s') || '');
+    if (!session) return sendJson(res, 400, { ok: false, error: 'frames need ?s=SESSION' });
+    let body;
+    try { body = await readBodyBuffer(req, MAX_RECORD_FRAME_BYTES); }
+    catch (error) { return sendJson(res, error.status || 400, { ok: false, error: error.message }); }
+    if (body.length < 4 || body.toString('latin1', 0, 4) !== 'WAF1') {
+      return sendJson(res, 400, { ok: false, error: 'frame batch must start with the WAF1 magic' });
+    }
+    const state = recordSessionDir(session, opts);
+    const lines = [];
+    let at = 4;
+    let written = 0;
+    while (at + 4 <= body.length) {
+      const headerLen = body.readUInt32LE(at); at += 4;
+      if (at + headerLen + 4 > body.length) break;
+      let header;
+      try { header = JSON.parse(body.toString('utf8', at, at + headerLen)); }
+      catch (_) { break; }
+      at += headerLen;
+      const jpegLen = body.readUInt32LE(at); at += 4;
+      if (at + jpegLen > body.length) break;
+      const name = String(state.frames).padStart(6, '0') + '.jpg';
+      fs.writeFileSync(path.join(state.dir, 'frames', name), body.subarray(at, at + jpegLen));
+      at += jpegLen;
+      state.frames++;
+      written++;
+      lines.push(JSON.stringify(Object.assign({}, header, { file: `frames/${name}`, bytes: jpegLen })));
+    }
+    if (lines.length) fs.appendFileSync(path.join(state.dir, 'frames.ndjson'), lines.join('\n') + '\n');
+    return sendJson(res, 200, { ok: true, wrote: written, frames: state.frames });
+  }
+
+  let payload;
+  try { payload = JSON.parse(await readBodyBuffer(req, MAX_RECORD_JSON_BYTES)); }
+  catch (error) { return sendJson(res, error.status || 400, { ok: false, error: String(error.message || error) }); }
+
+  if (route === 'start') {
+    // The page names a recording or the clock does; either way the answer is
+    // the session id every later post carries.
+    const session = recordSlug(payload.name || new Date().toISOString().replace(/[:.]/g, '-'));
+    recordSessions.delete(session);
+    const state = recordSessionDir(session, opts);
+    fs.writeFileSync(path.join(state.dir, 'meta.json'),
+      JSON.stringify(Object.assign({ session }, payload), null, 2) + '\n');
+    for (const f of ['frames.ndjson', 'audio.ndjson', 'events.ndjson']) {
+      try { fs.writeFileSync(path.join(state.dir, f), ''); } catch (_) {}
+    }
+    if (!opts.quiet) console.log(`[record] ${session} -> ${state.dir}  (every ${payload.everyNSteps} steps, ${payload.tickMs}ms/step)`);
+    return sendJson(res, 200, { ok: true, session, dir: state.dir });
+  }
+
+  const session = recordSlug(payload.session || '');
+  if (!recordSessions.has(session)) {
+    return sendJson(res, 410, { ok: false, error: `no recording ${JSON.stringify(session)} — POST /api/record/start first` });
+  }
+  const state = recordSessions.get(session);
+
+  if (route === 'audio') {
+    const chunks = Array.isArray(payload.chunks) ? payload.chunks : [];
+    if (chunks.length) {
+      fs.appendFileSync(path.join(state.dir, 'audio.ndjson'),
+        chunks.map(c => JSON.stringify(c)).join('\n') + '\n');
+      state.audioChunks += chunks.length;
+    }
+    return sendJson(res, 200, { ok: true, chunks: state.audioChunks });
+  }
+  if (route === 'events') {
+    const events = Array.isArray(payload.events) ? payload.events : [];
+    if (events.length) {
+      fs.appendFileSync(path.join(state.dir, 'events.ndjson'),
+        events.map(e => JSON.stringify(e)).join('\n') + '\n');
+      state.events += events.length;
+    }
+    return sendJson(res, 200, { ok: true, events: state.events });
+  }
+  if (route === 'stop') {
+    let meta = {};
+    try { meta = JSON.parse(fs.readFileSync(path.join(state.dir, 'meta.json'), 'utf8')); } catch (_) {}
+    Object.assign(meta, payload, {
+      framesOnDisk: state.frames, audioChunksOnDisk: state.audioChunks,
+      stoppedAt: new Date().toISOString(),
+    });
+    fs.writeFileSync(path.join(state.dir, 'meta.json'), JSON.stringify(meta, null, 2) + '\n');
+    if (!opts.quiet) {
+      console.log(`[record] ${session} stopped: ${state.frames} frames, ${state.audioChunks} audio chunks`);
+      console.log(`[record] assemble: node tools/frozen-video.js ${state.dir}`);
+    }
+    return sendJson(res, 200, { ok: true, session, dir: state.dir, frames: state.frames, audioChunks: state.audioChunks });
+  }
+  return sendJson(res, 404, { ok: false, error: 'record routes: start, frames, audio, events, stop' });
+}
+
+// ---------------------------------------------------------------------------
 // Agent control hub  (/api/agent/*, docs/design-agent-control.md)
 // ---------------------------------------------------------------------------
 //
@@ -517,7 +678,8 @@ async function handleAgent(req, res, url, opts) {
       "  node tools/ctl.js -s '<tab URL or ID>' click 120,88",
       '  verbs: snapshot ping apps launch APPID click dblclick rclick',
       '    mousedown mouseup mousemove drag key VK type TEXT png FILE',
-      '    eval CODE cmd RAW user-input on|off frozen on|off step N [MS] pipe',
+      '    eval CODE cmd RAW user-input on|off frozen on|off step N [MS]',
+      '    record on|off|status pipe',
       '  the page blocks the human at the keyboard from reaching the guest as',
       '  soon as you send input; `user-input on` hands it back to them',
       '',
@@ -530,6 +692,16 @@ async function handleAgent(req, res, url, opts) {
       '  guest time per step, `step N MS` changes it) — the browser twin of',
       "  run.js's --tick-ms-per-batch. A page loaded with ?frozen starts that",
       '  way; the ?debug toolbar has the same switch as a checkbox.',
+      '',
+      'RECORDING A FROZEN SESSION AS REALTIME VIDEO:',
+      '  node tools/ctl.js -s ID record on     # arm the frame + guest-PCM taps',
+      '  ...drive it: click / step / click / step, for as long as you like...',
+      '  node tools/ctl.js -s ID record off    # prints the session directory',
+      '  node tools/frozen-video.js recordings/<session> --out=clip.mp4',
+      '  Frames are sampled every 2nd step and stamped with GUEST time, and all',
+      '  audio is tapped at the guest PCM submit, so the mp4 plays as one',
+      '  continuous realtime session: the agent thinking between steps takes up',
+      '  no time in it at all. (docs/design-frozen-recording.md)',
       '',
       'MANY GAMES AT ONCE:',
       `  ${base}/dashboard  boots one emulator per tile, each its own session`,
@@ -544,6 +716,7 @@ async function handleAgent(req, res, url, opts) {
       '  actions: ping snapshot eval {code} png apps launch {app}',
       '           user-input {mode:"on"|"off"} frozen {mode:"on"|"off"}',
       '           step {n,ms}  — held open until the guest is back at rest',
+      '           record {mode:"on"|"off"|"status", everyNSteps, name}',
       '  cmd entries (run.js --input syntax): click:X:Y dblclick:X:Y',
       '    rclick:X:Y mousedown:X:Y mouseup:X:Y mousemove:X:Y wheel:X:Y:D',
       '    keydown:VK keyup:VK keypress:CHARCODE',
@@ -696,6 +869,15 @@ function createServer(opts) {
       return;
     }
 
+    // Recording frames arrive many per second and carry megabytes of JPEG;
+    // like /api/perf they get their own route above the signaling log.
+    if (url.pathname.startsWith('/api/record/')) {
+      handleRecord(req, res, url, { quiet, recordDir: opts && opts.recordDir }).catch(err => {
+        if (!res.headersSent) sendJson(res, 500, { error: String(err && err.message || err) });
+      });
+      return;
+    }
+
     // Agent hub traffic is long-polls and held responses; route it before
     // the generic API logging, which would print one line per idle poll.
     if (url.pathname.startsWith('/api/agent/') || url.pathname === '/api/agent') {
@@ -748,6 +930,7 @@ function main() {
   const port = parseInt(arg('port', '8080'), 10);
   const host = arg('host', '127.0.0.1');
   const perfLog = arg('perf-log', '');
+  const recordDir = arg('record-dir', '');
   // The agent hub carries eval into any connected page, so a bind beyond
   // localhost requires the token on every agent route.
   const agentToken = host === '127.0.0.1' ? null : crypto.randomBytes(8).toString('hex');
@@ -755,6 +938,7 @@ function main() {
     quiet: process.argv.includes('--quiet'),
     verbose: process.argv.includes('--verbose'),
     perfLog,
+    recordDir,
     agentToken,
     noAgentInject: process.argv.includes('--no-agent-inject'),
   });
@@ -766,6 +950,8 @@ function main() {
     console.log(`  threads probe: http://${host}:${port}/threads-probe.html`
       + (ISOLATE ? '  (COOP/COEP served: isolated)' : '  (no COOP/COEP; use --isolate or the page\'s service-worker button)'));
     if (perfLog) console.log(`  perf batches appended as NDJSON to ${perfLog}`);
+    console.log(`  frozen-session recordings at /api/record -> ${recordDir || 'recordings/'}`
+      + '  (ctl.js -s ID record on, then node tools/frozen-video.js <dir>)');
     const tokenQuery = agentToken ? `?token=${agentToken}` : '';
     const injecting = !agentToken && !process.argv.includes('--no-agent-inject');
     if (injecting) {
