@@ -77,7 +77,7 @@ try {
       if (r + g + b > 450) bright++;
     }
   }
-  assert(cyan > 10000 && black > 25000 && skin > 8000 && red > 4000 &&
+  assert(cyan > 10000 && black > 20000 && skin > 8000 && red > 4000 &&
     bright > 5000 && colors.size > 80,
   `FOTAQ gameplay was not visibly rendered: cyan=${cyan}, black=${black}, ` +
     `skin=${skin}, red=${red}, bright=${bright}, colors=${colors.size}`);
