@@ -26263,5 +26263,145 @@
     "nargs": -1,
     "convention": "cdecl",
     "hash": 4223288742
+  },
+  {
+    "id": 3148,
+    "name": "HeapSetInformation",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2381586581
+  },
+  {
+    "id": 3149,
+    "name": "BASS_Init",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1091029657
+  },
+  {
+    "id": 3150,
+    "name": "BASS_PluginLoad",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3225957768
+  },
+  {
+    "id": 3151,
+    "name": "BASS_Start",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 4126220373
+  },
+  {
+    "id": 3152,
+    "name": "BASS_SetConfig",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1312639463
+  },
+  {
+    "id": 3153,
+    "name": "BASS_SampleLoad",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 2595046161
+  },
+  {
+    "id": 3154,
+    "name": "BASS_SampleGetChannel",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2810938126
+  },
+  {
+    "id": 3155,
+    "name": "BASS_SampleFree",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2486226915
+  },
+  {
+    "id": 3156,
+    "name": "BASS_StreamCreateFile",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 1749888505
+  },
+  {
+    "id": 3157,
+    "name": "BASS_StreamFree",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2097151389
+  },
+  {
+    "id": 3158,
+    "name": "BASS_MusicLoad",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 2816465242
+  },
+  {
+    "id": 3159,
+    "name": "BASS_MusicFree",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2057867384
+  },
+  {
+    "id": 3160,
+    "name": "BASS_ChannelPlay",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3057207504
+  },
+  {
+    "id": 3161,
+    "name": "BASS_ChannelStop",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2062661846
+  },
+  {
+    "id": 3162,
+    "name": "BASS_ChannelSetAttribute",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2223407122
+  },
+  {
+    "id": 3163,
+    "name": "BASS_ChannelSetPosition",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3603486577
+  },
+  {
+    "id": 3164,
+    "name": "BASS_ErrorGetCode",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1566729216
+  },
+  {
+    "id": 3165,
+    "name": "BASS_Free",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1278475261
+  },
+  {
+    "id": 3166,
+    "name": "SleepEx",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2624317885
+  },
+  {
+    "id": 3167,
+    "name": "BASS_ChannelPause",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2168932184
   }
 ]

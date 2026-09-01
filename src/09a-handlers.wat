@@ -2088,6 +2088,18 @@
         (global.set $sleep_timeout (local.get $arg0))))
   )
 
+  ;; SleepEx(dwMilliseconds, bAlertable) — same cooperative wait as Sleep.
+  ;; Alertable APC delivery is not modeled, so the return is 0.
+  (func $handle_SleepEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (global.set $yield_flag (i32.const 1))
+    (if (local.get $arg0)
+      (then
+        (global.set $sleep_yielded (i32.const 1))
+        (global.set $sleep_timeout (local.get $arg0))))
+  )
+
   ;; 26: CloseHandle(hObject) — 1 arg stdcall, return TRUE
   (func $handle_CloseHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $console_result i32)
@@ -12444,6 +12456,20 @@ HookEx — no next hook in chain, return 0
   ;; 503: HeapWalk — STUB: unimplemented
   (func $handle_HeapWalk (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
+  )
+
+  ;; HeapSetInformation(hHeap, HeapInformationClass, HeapInformation, HeapInformationLength)
+  ;; Win9x-era heaps have no LFH mode to apply. Accept recognized heap handles so
+  ;; modern VC runtimes can continue after their compatibility probe.
+  (func $handle_HeapSetInformation (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (call $heap_api_handle_valid (local.get $arg0)))
+      (then
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 504: ReadConsoleA(hConsole, lpBuffer, nCharsToRead, lpCharsRead, lpReserved) → BOOL

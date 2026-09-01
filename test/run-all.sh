@@ -489,6 +489,7 @@ UNIT=(
   test/test-get-environment-variable-w.js
   test/test-get-system-directory-w.js
   test/test-getprocaddress-sparse-name.js
+  test/test-bass-compat-handlers.js
   test/test-heap-api-handles.js
   test/test-hidden-relative-mouse.js
   test/test-imm-is-ime.js

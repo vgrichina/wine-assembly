@@ -173,6 +173,7 @@ const extra = [
   { name: 'GetStringTypeExA', nargs: 5 },
   { name: 'VirtualQuery', nargs: 3 },
   { name: 'WaitForSingleObjectEx', nargs: 3 },
+  { name: 'SleepEx', nargs: 2 },
   // Wide-char CRT APIs
   { name: '__getmainargs', nargs: 5, convention: 'cdecl' },
   { name: '__wgetmainargs', nargs: 5 },
@@ -498,6 +499,28 @@ const extra = [
   // Heap
   { name: 'HeapCreate', nargs: 3 },
   { name: 'HeapDestroy', nargs: 1 },
+  { name: 'HeapSetInformation', nargs: 4 },
+  // BASS audio library entry points used by shareware games. The emulator
+  // provides no BASS mixer yet, but no-audio lifecycle stubs let callers fall
+  // through to gameplay.
+  { name: 'BASS_Init', nargs: 5 },
+  { name: 'BASS_PluginLoad', nargs: 2 },
+  { name: 'BASS_Start', nargs: 0 },
+  { name: 'BASS_SetConfig', nargs: 2 },
+  { name: 'BASS_SampleLoad', nargs: 7 },
+  { name: 'BASS_SampleGetChannel', nargs: 2 },
+  { name: 'BASS_SampleFree', nargs: 1 },
+  { name: 'BASS_StreamCreateFile', nargs: 7 },
+  { name: 'BASS_StreamFree', nargs: 1 },
+  { name: 'BASS_MusicLoad', nargs: 7 },
+  { name: 'BASS_MusicFree', nargs: 1 },
+  { name: 'BASS_ChannelPlay', nargs: 2 },
+  { name: 'BASS_ChannelPause', nargs: 1 },
+  { name: 'BASS_ChannelStop', nargs: 1 },
+  { name: 'BASS_ChannelSetAttribute', nargs: 3 },
+  { name: 'BASS_ChannelSetPosition', nargs: 4 },
+  { name: 'BASS_ErrorGetCode', nargs: 0 },
+  { name: 'BASS_Free', nargs: 0 },
   // Misc KERNEL32 used by msvcrt
   { name: 'GetCurrentThread', nargs: 0 },
   { name: 'GetCurrentProcess', nargs: 0 },

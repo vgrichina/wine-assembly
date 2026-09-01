@@ -80,8 +80,10 @@ const digest = crypto.createHash('sha256')
 // 2026-08-31: 505 -> 508. MSVCRT startup helpers _lock, _unlock, and
 // __lconv_init are documented compatibility no-ops for single-threaded CRT
 // initialization paths.
-const EXPECTED_COUNT = 508;
-const EXPECTED_SHA256 = 'be47281e739001afe39867f097b692297a2bd02c6c7524f4ad2e7057479e0eeb';
+// 2026-09-01: 508 -> 526. Minimal no-audio BASS compatibility handlers let
+// shareware games bundled with bass.dll continue to gameplay.
+const EXPECTED_COUNT = 526;
+const EXPECTED_SHA256 = 'b982607a416d3c6bf79b5df182715120277284a18f4dc0e6a3423767788f14a9';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
