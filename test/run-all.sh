@@ -172,6 +172,7 @@ UNIT=(
   test/test-wat-gdi-bitmap.js
   test/test-gdi-bitmap-flags-roundtrip.js
   test/test-gdi-handle-space-disjoint.js
+  test/test-gdi-compat-bitmap-backing-ownership.js
   test/test-wat-gdi-palette.js
   test/test-gdi-migration-status.js
   test/test-gdi-public-api-status.js

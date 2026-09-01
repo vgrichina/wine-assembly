@@ -2621,10 +2621,42 @@
         (local.set $bits_ga (call $dib_alloc (i32.wrap_i64 (local.get $size64))))
         (if (i32.eqz (local.get $bits_ga)) (then (return (i32.const 0))))
         (local.set $bits (call $g2w (local.get $bits_ga)))))
+    ;; Flags bit1 (0x2, top-down) always; bit2 (0x4, "this record owns its +24
+    ;; block") only when we allocated that block ourselves.
+    ;;
+    ;; A caller-supplied $backing belongs to the caller. The host import that
+    ;; passes one says so -- gdi_create_compat_bitmap(hdc, w, h, backingWa)
+    ;; "registers a DDB whose private canonical pixels live at backingWa" -- and
+    ;; the failure path immediately below already encodes exactly this contract,
+    ;; freeing only when (i32.eqz $backing). Claiming ownership unconditionally
+    ;; contradicted the line under it: $gdi_object_delete_full (10e:2603) reads
+    ;; bit2 and would hand a run we never allocated to $dib_free_wasm.
+    ;;
+    ;; No caller reaches that today -- all six pass backing 0 (10e:531,
+    ;; 10f:908/953/1121, and both $host_gdi_create_compat_bitmap sites at
+    ;; 09a7:139 and 09a9:387), and no JS calls the import -- so nothing has been
+    ;; double-freed. It is fixed rather than left as a comment because the way
+    ;; it would have surfaced is silence: $dib_free_wasm range-checks the arena
+    ;; and returns without complaint for a pointer outside it, so a guest-heap
+    ;; or host-owned buffer would be released with no trap, no log and no
+    ;; failing test -- and an in-arena one would be quietly handed back for
+    ;; reuse while the original owner kept writing to it.
     (local.set $handle (call $gdi_bitmap_alloc
-      (local.get $width) (local.get $height) (i32.const 32) (i32.const 6)
+      (local.get $width) (local.get $height) (i32.const 32)
+      (select (i32.const 6) (i32.const 2) (i32.eqz (local.get $backing)))
       (local.get $bits) (i32.mul (local.get $width) (i32.const 4))
       (i32.const 0) (i32.const 0)))
     (if (i32.and (i32.eqz (local.get $handle)) (i32.eqz (local.get $backing)))
       (then (call $dib_free_wasm (local.get $bits))))
     (local.get $handle))
+
+  ;; Test hooks for the ownership contract above. $gdi_create_compat_bitmap_internal
+  ;; has no export of its own, and its only non-zero-$backing entry point is a
+  ;; host import with no JS caller, so the adopting path is otherwise
+  ;; unreachable from a test. $gdi_object_delete_full is the reader of bit2 and
+  ;; the only thing that can turn the flag into a free.
+  (func (export "test_gdi_create_compat_bitmap") (param i32 i32 i32) (result i32)
+    (call $gdi_create_compat_bitmap_internal
+      (local.get 0) (local.get 1) (local.get 2)))
+  (func (export "test_gdi_object_delete_full") (param i32) (result i32)
+    (call $gdi_object_delete_full (local.get 0)))
