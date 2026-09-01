@@ -373,8 +373,8 @@
             (local.set $x (call $wnd_client_screen_x (local.get $hwnd)))
             (local.set $y (call $wnd_client_screen_y (local.get $hwnd)))))))
     (local.set $wa (call $g2w (local.get $arg1)))
-    (i32.store (local.get $wa) (local.get $x))
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (local.get $y))
+    (store.field Point x (local.get $wa) (local.get $x))
+    (store.field Point y (local.get $wa) (local.get $y))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )

@@ -71,6 +71,30 @@
         }
       ]
     },
+    "Point": {
+      "file": "src/09a-handlers.wat",
+      "frozen": "POINT",
+      "frozenNote": "Win32 ABI, windef.h. Two LONGs, x then y, and the guest binary already contains the compiled instructions that read them at these offsets. Moving one is a wire-format change: it traps nowhere and misreads every app at once. tools/gen-layout-offsets.js --check refuses any movement.",
+      "size": 8,
+      "fields": [
+        {
+          "name": "x",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "y",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
     "DxObject": {
       "file": "src/09a8-handlers-directx.wat",
       "frozen": null,

@@ -47,6 +47,45 @@
   ;; explicit --only-func list in tools/build.sh, not derived.
   ;; =====================================================================
 
+  ;; =====================================================================
+  ;; POINT — the second CLASS-C layout, and the same ownership story as RECT
+  ;; above: the address comes out of $g2w, the bytes are the application's,
+  ;; and the two offsets are Microsoft's.
+  ;;
+  (; FROZEN: POINT — Win32 ABI, windef.h. Two LONGs, x then y, and the guest
+     binary already contains the compiled instructions that read them at these
+     offsets. Moving one is a wire-format change: it traps nowhere and
+     misreads every app at once.
+     tools/gen-layout-offsets.js --check refuses any movement. ;)
+  (layout Point
+    (field x i32)    ;; +0
+    (field y i32))   ;; +4  ends at +8 == sizeof(POINT)
+
+  ;; WHY THIS LAYOUT IS SMALL, and it is a finding about the tree and not
+  ;; about POINT: almost every guest POINT in this emulator is touched through
+  ;; the $gs32/$gl32 guest accessors, which take a GUEST address and are calls,
+  ;; not `i32.load`/`i32.store` on a $g2w'd local. The layout system describes
+  ;; the latter, so it cannot see the former at all. $handle_GetCursorPos,
+  ;; $handle_GetViewportOrgEx, $handle_SetViewportOrgEx, $handle_GetWindowOrgEx,
+  ;; $handle_SetWindowOrgEx, $handle_OffsetViewportOrgEx,
+  ;; $handle_OffsetWindowOrgEx, $handle_GetCurrentPositionEx,
+  ;; $handle_GetBrushOrgEx, $handle_DPtoLP and $handle_LPtoDP all take an
+  ;; LPPOINT by their SDK prototype and are all declined for exactly that
+  ;; reason — the access width and kind disagree with the field, not the name.
+  ;; $handle_GetCaretPos is declined for a narrower one: its base is an inline
+  ;; `(call $g2w …)` per access rather than a local, so there is no base local
+  ;; to attribute. None of these is a judgement about whether the pointer is a
+  ;; POINT; they all are.
+  ;;
+  ;; And the same $g2w warning as RECT applies with more force at eight bytes
+  ;; than at sixteen. In src/09a7-handlers-dispatch.wat, $handle_GetDCOrgEx
+  ;; (an LPPOINT, converted) and $handle_QueryPerformanceCounter (a
+  ;; LARGE_INTEGER, NOT converted) sit four lines apart and write +0/+4 off a
+  ;; $g2w'd local named `$wa` in the same shape. Both convert byte-identically
+  ;; and one of them would be a lie. The --only-func list in tools/build.sh is
+  ;; what separates them, and it is a claim about the SDK prototype.
+  ;; =====================================================================
+
   ;; ---- Timer table helpers ----
   ;; Timer table at 0x24C0: 16 entries × 20 bytes
   ;; Each entry: [hwnd:4][id:4][interval:4][last_tick:4][callback:4]
@@ -5596,10 +5635,10 @@
     (local.set $pt (call $g2w (local.get $arg1)))
     (local.set $ox (call $wnd_client_screen_x (local.get $arg0)))
     (local.set $oy (call $wnd_client_screen_y (local.get $arg0)))
-    (i32.store (local.get $pt)
-      (i32.sub (i32.load (local.get $pt)) (local.get $ox)))
-    (i32.store offset=4 (local.get $pt)
-      (i32.sub (i32.load offset=4 (local.get $pt)) (local.get $oy)))
+    (store.field Point x (local.get $pt)
+      (i32.sub (load.field Point x (local.get $pt)) (local.get $ox)))
+    (store.field.memarg Point y (local.get $pt)
+      (i32.sub (load.field.memarg Point y (local.get $pt)) (local.get $oy)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -5804,10 +5843,10 @@
     (local.set $p (call $g2w (local.get $arg2)))
     (block $apply_done (loop $apply
       (br_if $apply_done (i32.ge_u (local.get $i) (local.get $arg3)))
-      (i32.store (local.get $p)
-        (i32.add (i32.load (local.get $p)) (local.get $dx)))
-      (i32.store offset=4 (local.get $p)
-        (i32.add (i32.load offset=4 (local.get $p)) (local.get $dy)))
+      (store.field Point x (local.get $p)
+        (i32.add (load.field Point x (local.get $p)) (local.get $dx)))
+      (store.field.memarg Point y (local.get $p)
+        (i32.add (load.field.memarg Point y (local.get $p)) (local.get $dy)))
       (local.set $p (i32.add (local.get $p) (i32.const 8)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $apply)))
@@ -9639,8 +9678,8 @@ rushOrgEx(hdc, x, y, lppt) — canonical WAT-owned brush origin.
     (if (local.get $arg3)
       (then
         (local.set $wa (call $g2w (local.get $arg3)))
-        (i32.store (local.get $wa) (local.get $old_x))
-        (i32.store (i32.add (local.get $wa) (i32.const 4)) (local.get $old_y))
+        (store.field Point x (local.get $wa) (local.get $old_x))
+        (store.field Point y (local.get $wa) (local.get $old_y))
       )
     )
     (drop (call $gdi_dc_aux_set (local.get $arg0) (i32.const 8)
@@ -10333,10 +10372,10 @@ HookEx — no next hook in chain, return 0
     (local.set $pt (call $g2w (local.get $arg1)))
     (local.set $ox (call $wnd_client_screen_x (local.get $arg0)))
     (local.set $oy (call $wnd_client_screen_y (local.get $arg0)))
-    (i32.store (local.get $pt)
-      (i32.add (i32.load (local.get $pt)) (local.get $ox)))
-    (i32.store offset=4 (local.get $pt)
-      (i32.add (i32.load offset=4 (local.get $pt)) (local.get $oy)))
+    (store.field Point x (local.get $pt)
+      (i32.add (load.field Point x (local.get $pt)) (local.get $ox)))
+    (store.field.memarg Point y (local.get $pt)
+      (i32.add (load.field.memarg Point y (local.get $pt)) (local.get $oy)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )

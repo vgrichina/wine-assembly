@@ -2716,8 +2716,8 @@
       (then
         (local.set $last (i32.add (local.get $p)
           (i32.shl (i32.sub (local.get $arg2) (i32.const 1)) (i32.const 3))))
-        (local.set $x (i32.load (local.get $last)))
-        (local.set $y (i32.load offset=4 (local.get $last)))
+        (local.set $x (load.field Point x (local.get $last)))
+        (local.set $y (load.field.memarg Point y (local.get $last)))
         (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 12) (local.get $x) (i32.const 0)))
         (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 16) (local.get $y) (i32.const 0)))))
     (global.set $eax (local.get $ok))

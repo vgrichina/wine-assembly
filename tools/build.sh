@@ -397,6 +397,47 @@ RECT_LAYOUT_ARGS=(--file=src/09a-handlers.wat --layout=Rect
 node tools/layout-migrate.js "${RECT_LAYOUT_ARGS[@]}" --gate > /dev/null || {
   node tools/layout-migrate.js "${RECT_LAYOUT_ARGS[@]}" --gate; exit 1; }
 
+# Point (wave 6, the SECOND CLASS-C family) — the Win32 POINT, in GUEST memory.
+# Same two gates as Rect above: (a) gen-layout-offsets.js --check refuses any
+# movement of the FROZEN offsets, a few lines down; (b) this --gate line refuses
+# a new raw site, and --memarg is what makes it see the `offset=4` spelling as
+# well as the `(i32.add … (i32.const 4))` one. Verified to exit 1 on a planted
+# `(i32.load (i32.add (local.get $pt) (i32.const 4)))` AND on a planted
+# `(i32.load offset=4 (local.get $pt))` inside $handle_ClientToScreen.
+#
+# --only-func is the reviewable artifact, exactly as for Rect: every name below
+# takes an LPPOINT at that argument position per the Win32 SDK signature, and
+# adding one is a claim about a prototype that must be checked against the SDK
+# and not against whether the build still passes — it always will. The trap is
+# sharper at eight bytes than at sixteen: in 09a7-handlers-dispatch.wat,
+# $handle_GetDCOrgEx (LPPOINT, listed) and $handle_QueryPerformanceCounter
+# (LARGE_INTEGER, deliberately absent) write +0/+4 off a $g2w'd local named
+# `$wa` four lines apart, and both would convert byte-identically.
+#
+# ONLY 18 SITES, and the reason is worth knowing before anyone scopes wave 7:
+# nearly every guest POINT in this tree is touched through the $gs32/$gl32
+# guest accessors, which take a GUEST address and are calls — not loads and
+# stores on a $g2w'd local, which is the only thing the layout system can
+# describe. GetCursorPos, Get/Set/OffsetViewportOrgEx, Get/Set/OffsetWindowOrgEx,
+# GetCurrentPositionEx, GetBrushOrgEx, DPtoLP and LPtoDP all take an LPPOINT and
+# are all out of reach for that reason, and GetCaretPos for the narrower one
+# that its base is an inline `(call $g2w …)` per access with no local to name.
+# See the declaration comment in src/09a-handlers.wat.
+#
+# --base-local (as opposed to --base-local-from-call) is used for two of the six
+# functions and it is deliberate: $handle_MapWindowPoints walks its POINT array
+# with `p = p + 8`, and $handle_PolylineTo indexes the last element as
+# `last = p + (n-1)*8`, so neither local is assigned from $g2w on EVERY path and
+# the provenance check cannot pass them. --only-func is what keeps that safe:
+# inside those two functions the local is a POINT* on every path there is.
+POINT_LAYOUT_ARGS=(--file=src/09a-handlers.wat,src/09a4-handlers-gdi.wat,src/09a7-handlers-dispatch.wat
+  --layout=Point --layout-from=src/09a-handlers.wat
+  --base-call='$g2w' --base-local-from-call=pt,wa --base-local=p,last
+  --only-func='$handle_ClientToScreen,$handle_ScreenToClient,$handle_SetBrushOrgEx,$handle_MapWindowPoints,$handle_GetDCOrgEx,$handle_PolylineTo'
+  --memarg)
+node tools/layout-migrate.js "${POINT_LAYOUT_ARGS[@]}" --gate > /dev/null || {
+  node tools/layout-migrate.js "${POINT_LAYOUT_ARGS[@]}" --gate; exit 1; }
+
 # The offsets a (layout ...) declares, checked against the committed record in
 # tools/layout-offsets.json — docs/watx-layout-migration-design.md §6.2/§7.
 #

@@ -1098,6 +1098,49 @@ Realistic read: class C is worth doing for the structures whose offsets are
 `build.sh`. It is not worth attempting as a sweep, and any plan that quotes
 "3,798 sites" as one number has already made the mistake.
 
+**What the next two structures on that list actually cost — and the second
+gate class C needs, which is not the SDK one.** `POINT` and `MSG` were taken
+straight after `RECT` and they answer the "is class C mechanical yet" question
+differently from how the list above implies. `POINT` converted **18 sites over
+six functions**; `MSG` converted **nothing at all** and is a documented
+decline. Neither number is about how much a program uses the structure —
+notepad cannot draw a menu without both — it is about *how this tree spells the
+access*:
+
+> **The layout system describes `i32.load`/`i32.store` on a `$g2w`'d local. Most
+> guest-structure traffic here is not written that way — it goes through the
+> `$gs32`/`$gl32` guest accessors, which take a GUEST address and are calls.**
+
+`$handle_GetMessageA` fills its `LPMSG` with **44 `$gs32` calls** and does
+not hold a WASM pointer to it at any point; `$handle_DispatchMessageA` reads
+the same MSG back with `$gl32`. Across the whole tree there is exactly **one**
+`$g2w`'d local ever used as a MSG (`$msg_wa` in `$handle_TranslateAcceleratorA`,
+two field reads), which is well under the bar for a frozen layout, a gate and a
+`--only-func` list. The same effect, less totally, is what caps `POINT` at 18:
+eleven functions with an `LPPOINT` in their SDK prototype — `GetCursorPos`,
+`Get`/`Set`/`OffsetViewportOrgEx`, `Get`/`Set`/`OffsetWindowOrgEx`,
+`GetCurrentPositionEx`, `GetBrushOrgEx`, `DPtoLP`, `LPtoDP` — are declined
+because of the *access kind*, not because of any doubt about the type.
+
+Two things follow for anyone scoping wave 7. First, **census the accessor
+spelling before the SDK prototypes**: `grep 'local.set $X (call $g2w'` inside
+the candidate functions is a one-minute upper bound on the wave, and it would
+have said "MSG is zero" before any judgement was made. Second, a structure can
+be *right* and still not be *worth* a layout, and the honest form of that is a
+decline recorded with the count — not a layout declared over two sites.
+
+Two smaller notes from the same wave. `--base-local` (rather than
+`--base-local-from-call`) is legitimate for an array walk — `$handle_MapWindowPoints`
+does `p = p + 8` and `$handle_PolylineTo` indexes `p + (n-1)*8`, so neither
+local is `$g2w`'d on every path — and `--only-func` is what keeps it honest,
+because inside those two functions the local is a `POINT*` on every path there
+is. And the §10 attribution trap gets sharper as the structure gets smaller:
+at eight bytes, `$handle_GetDCOrgEx` (an `LPPOINT`) and
+`$handle_QueryPerformanceCounter` (a `LARGE_INTEGER`) sit four lines apart in
+`09a7-handlers-dispatch.wat`, write `+0`/`+4` off a `$g2w`'d local both named
+`$wa`, and convert byte-identically either way. Only the `--only-func` list
+tells them apart.
+
 **Waves 4 and 5 answered the union question two different ways, and the
 difference is the variants' *shape*, not their number.** `DxObject` names the
 overloaded words `misc0`/`misc1`/`misc2` and keeps one layout, because its
