@@ -51,6 +51,16 @@ node tools/region-census.js --js-copies
 # 0xD160 — $WAVE_OUT_SHARED before the map moved, and by then 0x1010 into
 # $SCROLL_TABLE — and answered MMSYSERR_INVALHANDLE to a valid handle for it.
 node tools/region-census.js --embedded-wat
+# Every gate above proves nothing in the tree has MEMORIZED an allocated base.
+# The instrument that proves it end to end is §8's shake — build the whole wasm
+# with the map permuted and check the picture is identical — and that instrument
+# only exists while the shaken layout can still be PLACED. Nothing checked that.
+# Measured when this line was added: `rotate` leaves exactly 0x00000000 free
+# below $VIRTUAL_BACKING_BASE, and the tightest mode (`gap`) has 0x001B1000, so
+# the budget is real but finite. Five modes, one compile of 00-regions.wat each,
+# no wasm built — cheap enough to run every time, which is the point: the
+# alternative is discovering the shake is unusable on the day you need it.
+node tools/region-alloc.js --shake-all
 # JS host-side guest-pointer translation must use the same DIB/RPC boundary as
 # WAT. A stale extra megabyte maps guest DIB addresses onto worker RPC slots.
 node test/test-wat-rpc-region.js

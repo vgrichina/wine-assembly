@@ -857,9 +857,33 @@ declared, block runs past 0x3240).
     artifact against the canonical mirror reads the wrong bytes and draws a
     plausible wrong picture instead of failing. Measured: sol under `gap`,
     `rotate` and seed `0x9E3779B9`, marbles under `pad`, **0 of 307200 pixels
-    differ** in every case. The slack each mode leaves below `0x08000000`
-    reproduces §8.1's predicted table to the byte (gap `0x0020C000`, pad
+    differ** in every case. The slack each mode left below `0x08000000` at that
+    commit reproduced §8.1's predicted table to the byte (gap `0x0020C000`, pad
     `0x00209000`, rotate `0x00479D80`, reverse `0x0059AC80`, seed `0x00608900`).
+
+    **Those five numbers are historical and were never re-measured.** Every one
+    of them is wrong today, because the map has grown since. Re-measured
+    2026-08-31: gap `0x001B1000`, pad `0x001B8000`, rotate `0x00000000`,
+    reverse `0x00563D80`, seed `0x0048B800`. Rotate's is not a typo — under that
+    permutation `$TV_IMAGE_TABLE` ends on `$VIRTUAL_BACKING_BASE`'s first byte
+    exactly, with the map perfectly packed and not one spare byte below the
+    ceiling.
+
+    A written-down slack figure is a copy of the map by another name, and it
+    went stale the same silent way every other copy does — so it is now
+    *computed*, not quoted: `node tools/region-alloc.js --shake-all` prints the
+    table and **exits nonzero when any mode cannot be placed**, and
+    `tools/build.sh` runs it beside the other region gates. That is the gate §8
+    always needed. Read the tool's output for the current numbers; the ones
+    above are a record of two measurements, not a specification.
+
+    Two things the re-measurement corrected. First, rotate's zero is not a
+    one-page knife edge: `placeShakenAroundPins` is best fit, so growing a
+    region by a page re-drains the small regions into different windows and
+    rotate comes back with `0x280` spare. The zero is what perfect packing looks
+    like. Second, the number that actually bounds growth is therefore the
+    *tightest* mode's slack, `gap`'s `0x001B1000` — and about 6 MB of new region
+    below the ceiling is what it takes to make any mode fail.
 
 **Wave-3 corrections to this design.**
 
