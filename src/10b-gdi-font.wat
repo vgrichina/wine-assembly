@@ -1010,12 +1010,12 @@
     (local.set $object (call $gdi_object_record (local.get $handle)))
     (if (i32.eqz (local.get $object)) (then (return)))
     (local.set $best (call $gdi_bitmap_font_best
-      (local.get $face) (i32.load offset=8 (local.get $object))))
+      (local.get $face) (load.field.memarg GdiFont height (local.get $object))))
     (if (local.get $best)
       (then
-        (i32.store offset=20 (local.get $object)
-          (i32.or (i32.load offset=20 (local.get $object)) (i32.const 1)))
-        (i32.store offset=24 (local.get $object) (local.get $best)))))
+        (store.field.memarg GdiFont flags (local.get $object)
+          (i32.or (load.field.memarg GdiFont flags (local.get $object)) (i32.const 1)))
+        (store.field.memarg GdiFont strike (local.get $object) (local.get $best)))))
 
   ;; TrueType substitutes must be rasterized at the font's mapped device
   ;; height, not at its untransformed logical height. WordZap asks for a
@@ -1066,9 +1066,9 @@
     (local.set $handle (load.field.memarg GdiDcState font (local.get $dc)))
     (local.set $object (call $gdi_object_record (local.get $handle)))
     (if (i32.and (i32.ne (local.get $object) (i32.const 0))
-          (i32.eq (i32.load offset=4 (local.get $object)) (i32.const 4)))
+          (i32.eq (load.field.memarg GdiObjectAny type (local.get $object)) (i32.const 4)))
       (then
-        (local.set $strike (i32.load offset=24 (local.get $object)))
+        (local.set $strike (load.field.memarg GdiFont strike (local.get $object)))
         (if (i32.and (i32.ne (local.get $strike) (i32.const 0))
               (i32.ne (i32.load (local.get $strike)) (i32.const 0)))
           (then
@@ -1153,7 +1153,7 @@
     (local.set $object (call $gdi_object_record (local.get $handle)))
     (if (local.get $object)
       (then
-        (local.set $request (i32.load offset=8 (local.get $object)))
+        (local.set $request (load.field.memarg GdiFont height (local.get $object)))
         (local.set $height (local.get $request))
         ;; Negative LOGFONT heights request character height. Bitmap selection
         ;; returns a complete cell. Fixedsys exposes the same integer-scaled

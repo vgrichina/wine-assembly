@@ -739,7 +739,7 @@
           (i32.and
             (i32.or (i32.eq (local.get $style) (i32.const 3))
               (i32.eq (local.get $style) (i32.const 6)))
-            (i32.eq (call $gdi_object_type (i32.load offset=24 (local.get $record)))
+            (i32.eq (call $gdi_object_type (load.field.memarg GdiBrush pattern_bitmap (local.get $record)))
               (i32.const 3)))))))
 
   ;; Resolve one brush pixel in device coordinates. Values above COLORREF are
@@ -777,18 +777,18 @@
       (then (return (call $gdi_stock_object_color (local.get $brush)))))
     (local.set $record (call $gdi_object_record (local.get $brush)))
     (if (i32.or (i32.eqz (local.get $record))
-          (i32.ne (i32.load offset=4 (local.get $record)) (i32.const 2)))
+          (i32.ne (load.field.memarg GdiObjectAny type (local.get $record)) (i32.const 2)))
       (then (return (i32.const 0x01000000))))
-    (local.set $style (i32.load offset=8 (local.get $record)))
+    (local.set $style (load.field.memarg GdiBrush style (local.get $record)))
     (if (i32.eqz (local.get $style))
       (then (return (call $gdi_dc_resolve_colorref (local.get $hdc)
-        (i32.load offset=16 (local.get $record))))))
+        (load.field.memarg GdiBrush color (local.get $record))))))
     (if (i32.eq (local.get $style) (i32.const 1))
       (then (return (i32.const 0x01000001))))
     (if (i32.or (i32.eq (local.get $style) (i32.const 3))
           (i32.eq (local.get $style) (i32.const 6)))
       (then
-        (local.set $bitmap (i32.load offset=24 (local.get $record)))
+        (local.set $bitmap (load.field.memarg GdiBrush pattern_bitmap (local.get $record)))
         (local.set $desc (global.get $GDI_BRUSH_DESC))
         (if (i32.eqz (call $gdi_raster_desc_from_bitmap
               (local.get $bitmap) (local.get $desc)))
@@ -805,17 +805,17 @@
           (then (local.set $py (i32.add (local.get $py) (i32.load offset=8 (local.get $desc))))))
         (local.set $bitmap_record (call $gdi_object_record (local.get $bitmap)))
         (if (i32.and (i32.ne (local.get $bitmap_record) (i32.const 0))
-              (i32.ne (i32.and (i32.load offset=20 (local.get $bitmap_record))
+              (i32.ne (i32.and (load.field.memarg GdiBitmap flags (local.get $bitmap_record))
                 (i32.const 0x10)) (i32.const 0)))
           (then
             (local.set $index (call $gdi_raster_read_index
               (local.get $desc) (local.get $px) (local.get $py)))
             (if (i32.or (i32.lt_s (local.get $index) (i32.const 0))
                   (i32.ge_u (local.get $index)
-                    (i32.load offset=36 (local.get $bitmap_record))))
+                    (load.field.memarg GdiBitmap palette_count (local.get $bitmap_record))))
               (then (return (i32.const 0x01000000))))
             (local.set $logical_index (i32.load
-              (i32.add (i32.load offset=32 (local.get $bitmap_record))
+              (i32.add (load.field.memarg GdiBitmap palette (local.get $bitmap_record))
                 (i32.shl (local.get $index) (i32.const 2)))))
             (local.set $color (call $gdi_palette_colorref
               (call $gdi_dc_selected_palette (local.get $hdc))
@@ -835,7 +835,7 @@
         (if (i32.and
               (i32.and (i32.eq (local.get $style) (i32.const 3))
                        (i32.ne (local.get $bitmap_record) (i32.const 0)))
-              (i32.eq (i32.load offset=16 (local.get $bitmap_record)) (i32.const 1)))
+              (i32.eq (load.field.memarg GdiBitmap bpp (local.get $bitmap_record)) (i32.const 1)))
           (then
             (local.set $index (call $gdi_raster_read_index
               (local.get $desc) (local.get $px) (local.get $py)))
@@ -853,7 +853,7 @@
         (return (call $gdi_raster_swap_rb (local.get $color)))))
     (if (i32.ne (local.get $style) (i32.const 2))
       (then (return (i32.const 0x01000000))))
-    (local.set $hatch (i32.load offset=12 (local.get $record)))
+    (local.set $hatch (load.field.memarg GdiBrush hatch (local.get $record)))
     (if (i32.gt_u (local.get $hatch) (i32.const 5))
       (then (return (i32.const 0x01000000))))
     (local.set $px (i32.and (i32.sub (local.get $x)
@@ -879,7 +879,7 @@
         (i32.eqz (i32.and (i32.sub (local.get $px) (local.get $py)) (i32.const 7)))))))
     (if (local.get $foreground)
       (then (return (call $gdi_dc_resolve_colorref (local.get $hdc)
-        (i32.load offset=16 (local.get $record))))))
+        (load.field.memarg GdiBrush color (local.get $record))))))
     (if (i32.eq (call $gdi_dc_get_field
           (local.get $hdc) (i32.const 28) (i32.const 2)) (i32.const 2))
       (then (return (call $gdi_dc_get_field
@@ -1692,7 +1692,7 @@
     (local.set $record (call $gdi_object_record (local.get $pen)))
     (if (local.get $record)
       (then (local.set $geometric (i32.and
-        (i32.load offset=20 (local.get $record)) (i32.const 0x00010000)))))
+        (load.field.memarg GdiPen flags (local.get $record)) (i32.const 0x00010000)))))
     (if (i32.gt_u (local.get $width) (i32.const 64)) (then (return (i32.const 0))))
     (local.set $x0 (call $gdi_line_map_x (local.get $desc) (local.get $from_x)))
     (local.set $y0 (call $gdi_line_map_y (local.get $desc) (local.get $from_y)))
@@ -1737,7 +1737,7 @@
     (local $near_x f64) (local $near_y f64) (local $ddx f64) (local $ddy f64)
     (local.set $record (call $gdi_object_record (local.get $pen)))
     (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
-    (local.set $flags (i32.load offset=20 (local.get $record)))
+    (local.set $flags (load.field.memarg GdiPen flags (local.get $record)))
     (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x00010000)))
       (then (return (i32.const 0))))
     (local.set $width (call $gdi_object_width (local.get $pen)))
@@ -3309,7 +3309,7 @@
         (local.set $record (call $gdi_object_record (local.get $pen)))
         (if (local.get $record)
           (then (local.set $geometric (i32.and
-            (i32.load offset=20 (local.get $record)) (i32.const 0x00010000)))))))
+            (load.field.memarg GdiPen flags (local.get $record)) (i32.const 0x00010000)))))))
     (if (i32.and (i32.gt_u (local.get $width) (i32.const 1))
           (i32.and (i32.ne (local.get $rop2) (i32.const 13))
             (i32.and (i32.eqz (local.get $geometric))
@@ -3549,10 +3549,10 @@
       (then (return (call $gdi_stock_object_color (local.get $brush)))))
     (local.set $record (call $gdi_object_record (local.get $brush)))
     (if (i32.and (i32.ne (local.get $record) (i32.const 0))
-          (i32.and (i32.eq (i32.load offset=4 (local.get $record)) (i32.const 2))
-            (i32.eqz (i32.load offset=8 (local.get $record)))))
+          (i32.and (i32.eq (load.field.memarg GdiObjectAny type (local.get $record)) (i32.const 2))
+            (i32.eqz (load.field.memarg GdiBrush style (local.get $record)))))
       (then (return (call $gdi_dc_resolve_colorref (local.get $hdc)
-        (i32.load offset=16 (local.get $record))))))
+        (load.field.memarg GdiBrush color (local.get $record))))))
     (i32.const 0x01000000))
 
   (func $gdi_raster_pixel_ptr (param $desc i32) (param $x i32) (param $y i32) (result i32)
@@ -3687,8 +3687,8 @@
     (local.set $record (call $gdi_object_record (i32.load offset=68 (local.get $desc))))
     (if (local.get $record)
       (then
-        (local.set $palette (i32.load offset=32 (local.get $record)))
-        (local.set $count (i32.load offset=36 (local.get $record)))
+        (local.set $palette (load.field.memarg GdiBitmap palette (local.get $record)))
+        (local.set $count (load.field.memarg GdiBitmap palette_count (local.get $record)))
         (if (i32.and (i32.ne (local.get $palette) (i32.const 0))
               (i32.lt_u (local.get $index) (local.get $count)))
           (then
@@ -3745,11 +3745,11 @@
     (local.set $record (call $gdi_object_record (i32.load offset=68 (local.get $desc))))
     (if (local.get $record)
       (then
-        (local.set $palette (i32.load offset=32 (local.get $record)))
+        (local.set $palette (load.field.memarg GdiBitmap palette (local.get $record)))
         (if (i32.and (i32.ne (local.get $palette) (i32.const 0))
-              (i32.ne (i32.load offset=36 (local.get $record)) (i32.const 0)))
+              (i32.ne (load.field.memarg GdiBitmap palette_count (local.get $record)) (i32.const 0)))
           (then
-            (global.set $gdi_pal_count (i32.load offset=36 (local.get $record)))
+            (global.set $gdi_pal_count (load.field.memarg GdiBitmap palette_count (local.get $record)))
             (return (local.get $palette))))))
     (local.set $palette (i32.load offset=24 (local.get $desc)))
     (if (i32.and (i32.ne (local.get $palette) (i32.const 0))
@@ -3965,10 +3965,10 @@
     (local.set $surface (i32.load offset=68 (local.get $desc)))
     (local.set $record (call $gdi_object_record (local.get $surface)))
     (if (i32.and (i32.ne (local.get $record) (i32.const 0))
-          (i32.and (i32.eq (i32.load offset=16 (local.get $record)) (i32.const 16))
-            (i32.eq (i32.load offset=36 (local.get $record)) (i32.const 3))))
+          (i32.and (i32.eq (load.field.memarg GdiBitmap bpp (local.get $record)) (i32.const 16))
+            (i32.eq (load.field.memarg GdiBitmap palette_count (local.get $record)) (i32.const 3))))
       (then
-        (local.set $masks (i32.load offset=32 (local.get $record)))
+        (local.set $masks (load.field.memarg GdiBitmap palette (local.get $record)))
         (if (call $gdi_color_masks_valid (local.get $masks))
           (then (return (i32.load (i32.add (local.get $masks)
             (i32.shl (local.get $channel) (i32.const 2)))))))))
@@ -4067,7 +4067,7 @@
       (then
         (local.set $record (call $gdi_object_record (i32.load offset=68 (local.get $dst))))
         (if (i32.and (i32.ne (local.get $record) (i32.const 0))
-              (i32.eqz (i32.and (i32.load offset=20 (local.get $record)) (i32.const 1))))
+              (i32.eqz (i32.and (load.field.memarg GdiBitmap flags (local.get $record)) (i32.const 1))))
           (then
             ;; Indexed DIBs compare palette indexes after mapping the DC
             ;; background color through the bitmap's current color table.
@@ -4098,7 +4098,7 @@
       (then
         (local.set $record (call $gdi_object_record (i32.load offset=68 (local.get $src))))
         (if (i32.and (i32.ne (local.get $record) (i32.const 0))
-              (i32.eqz (i32.and (i32.load offset=20 (local.get $record)) (i32.const 1))))
+              (i32.eqz (i32.and (load.field.memarg GdiBitmap flags (local.get $record)) (i32.const 1))))
           (then
             (local.set $p (call $gdi_raster_pixel_ptr
               (local.get $src) (local.get $x) (local.get $y)))
@@ -5764,20 +5764,20 @@
           (i32.eqz (call $gdi_bitmap_record_valid (local.get $record))))
       (then (return (i32.const 0))))
     (memory.fill (local.get $desc) (i32.const 0) (i32.const 80))
-    (i32.store (local.get $desc) (i32.load offset=24 (local.get $record)))
-    (i32.store offset=4 (local.get $desc) (i32.load offset=8 (local.get $record)))
-    (i32.store offset=8 (local.get $desc) (i32.load offset=12 (local.get $record)))
-    (i32.store offset=12 (local.get $desc) (i32.load offset=28 (local.get $record)))
-    (i32.store offset=16 (local.get $desc) (i32.load offset=16 (local.get $record)))
+    (i32.store (local.get $desc) (load.field.memarg GdiBitmap bits (local.get $record)))
+    (i32.store offset=4 (local.get $desc) (load.field.memarg GdiBitmap width (local.get $record)))
+    (i32.store offset=8 (local.get $desc) (load.field.memarg GdiBitmap height (local.get $record)))
+    (i32.store offset=12 (local.get $desc) (load.field.memarg GdiBitmap stride (local.get $record)))
+    (i32.store offset=16 (local.get $desc) (load.field.memarg GdiBitmap bpp (local.get $record)))
     (i32.store offset=20 (local.get $desc)
-      (i32.and (i32.shr_u (i32.load offset=20 (local.get $record)) (i32.const 1)) (i32.const 1)))
-    (i32.store offset=24 (local.get $desc) (i32.load offset=32 (local.get $record)))
-    (i32.store offset=28 (local.get $desc) (i32.load offset=36 (local.get $record)))
+      (i32.and (i32.shr_u (load.field.memarg GdiBitmap flags (local.get $record)) (i32.const 1)) (i32.const 1)))
+    (i32.store offset=24 (local.get $desc) (load.field.memarg GdiBitmap palette (local.get $record)))
+    (i32.store offset=28 (local.get $desc) (load.field.memarg GdiBitmap palette_count (local.get $record)))
     (i32.store offset=40 (local.get $desc) (i32.const 1))
     (i32.store offset=44 (local.get $desc) (i32.const 1))
     (i32.store offset=56 (local.get $desc) (i32.const 1))
     (i32.store offset=60 (local.get $desc) (i32.const 1))
-    (i32.store offset=68 (local.get $desc) (i32.load offset=40 (local.get $record)))
+    (i32.store offset=68 (local.get $desc) (load.field.memarg GdiBitmap self_handle (local.get $record)))
     (i32.const 1))
 
   (func $gdi_get_dibits
@@ -5846,8 +5846,8 @@
             ;; An explicit caller request keeps and validates the supplied triplet.
             (if (i32.eqz (local.get $requested_bpp))
               (then
-                (local.set $masks (i32.load offset=32 (local.get $record)))
-                (if (i32.and (i32.eq (i32.load offset=36 (local.get $record)) (i32.const 3))
+                (local.set $masks (load.field.memarg GdiBitmap palette (local.get $record)))
+                (if (i32.and (i32.eq (load.field.memarg GdiBitmap palette_count (local.get $record)) (i32.const 3))
                       (call $gdi_color_masks_valid (local.get $masks)))
                   (then
                     (if (i32.or

@@ -55,6 +55,14 @@ const HEADER_FILE = path.join(ROOT, 'src', '01-header.wat');
 const BASE = 'call $gdi_object_record';
 const VARIANTS = ['GdiPen', 'GdiBrush', 'GdiPenBrush', 'GdiBitmap', 'GdiFont',
                   'GdiPalette', 'GdiMetafile'];
+// The prefix view. A site that reads +0/+4 has not decided a type yet — it is
+// usually the read that DOES the deciding — so it spells this rather than
+// arbitrarily naming one of the seven. It is a layout like the others (48
+// bytes, handle@0/type@4) and is shape-checked with them, but it is never an
+// attribution: BY_FUNCTION/BY_SITE never name it, and check (2) does not apply
+// because everything above the prefix is `reserved` and the COMPILER refuses it.
+const PREFIX_VIEW = 'GdiObjectAny';
+const ALL_LAYOUTS = [PREFIX_VIEW, ...VARIANTS];
 
 // Which value of the +4 discriminant each variant is FOR. This is what lets the
 // gate check an attribution against the source rather than against itself: a
@@ -202,7 +210,7 @@ const BY_SITE = {
 // ── Parse the (layout ...) declarations out of the WAT ──────────────────────
 function parseLayouts(text) {
   const out = new Map();
-  for (const name of VARIANTS) {
+  for (const name of ALL_LAYOUTS) {
     const start = text.indexOf(`(layout ${name}\n`);
     if (start < 0) continue;
     // Scan to the matching close paren, ignoring parens inside line comments.
@@ -253,10 +261,20 @@ function harvestGuards(files) {
       const set = guards.get(fn) || new Set();
       // `(i32.eq (i32.load offset=4 X) (i32.const N))` and the i32.ne form,
       // tolerating the line break the sources wrap these across.
-      const re = /i32\.(?:eq|ne)\s*\(i32\.load\s+offset=4\s*\([^()]*\)\)\s*\(i32\.const\s+(\d+)\)/g;
+      //
+      // BOTH spellings, and that is load-bearing: the discriminant reads are
+      // themselves migrated now, to `(load.field.memarg GdiObjectAny type X)`.
+      // Matching only the raw form silently harvested nothing after the
+      // conversion, which took check (4) — the one that exists because the
+      // other three were measured insufficient — down to zero sites without
+      // failing anything. A check that stops running is worse than no check.
+      const res = [
+        /i32\.(?:eq|ne)\s*\(i32\.load\s+offset=4\s*\([^()]*\)\)\s*\(i32\.const\s+(\d+)\)/g,
+        /i32\.(?:eq|ne)\s*\(load\.field(?:\.memarg)?\s+\w+\s+type\s*\([^()]*\)\)\s*\(i32\.const\s+(\d+)\)/g,
+      ];
       let m;
       const flat = body.replace(/;;[^\n]*/g, '').replace(/\s+/g, ' ');
-      while ((m = re.exec(flat))) set.add(Number(m[1]));
+      for (const re of res) { re.lastIndex = 0; while ((m = re.exec(flat))) set.add(Number(m[1])); }
       guards.set(fn, set);
       buf = [];
     };
@@ -270,6 +288,87 @@ function harvestGuards(files) {
   return guards;
 }
 
+// ── --emit-selection: hand the attribution to the codemod ───────────────────
+//
+// The conversion of this family is one tools/layout-migrate.js run PER VARIANT,
+// and which sites each run may touch is exactly the table above. Rather than
+// copy that table into build.sh or into a shell array — where it would rot away
+// from the gate that checks it — this mode prints it in the form the codemod
+// takes: for each variant, the functions attributed to it whole, and the exact
+// file:line sites attributed per arm.
+//
+// GdiObjectAny collects every +0/+4 site, whatever function it sits in, and
+// therefore MUST be converted first: those sites live inside functions that are
+// attributed to a real variant, and that variant's --only-func would otherwise
+// claim them and name a type the code has not decided yet.
+function emitSelection(census, siteRe) {
+  const sel = new Map();
+  const add = (v, kind, val) => {
+    if (!sel.has(v)) sel.set(v, { funcs: new Set(), lines: new Set() });
+    sel.get(v)[kind].add(val);
+  };
+  for (const line of census.split('\n')) {
+    const m = line.match(siteRe);
+    if (!m) continue;
+    const [, file, lineNo, fn, , offHex] = m;
+    const off = parseInt(offHex, 16);
+    const key = `${file}:${lineNo}`;
+    if (off === 0 || off === 4) { add('GdiObjectAny', 'lines', key); continue; }
+    if (BY_SITE[key] !== undefined) { add(BY_SITE[key], 'lines', key); continue; }
+    const v = BY_FUNCTION[fn];
+    if (v) add(v, 'funcs', fn);
+  }
+  const out = {};
+  for (const v of ['GdiObjectAny', ...VARIANTS]) {
+    const s = sel.get(v) || { funcs: new Set(), lines: new Set() };
+    out[v] = { funcs: [...s.funcs].sort(), lines: [...s.lines].sort() };
+  }
+  console.log(JSON.stringify(out, null, 2));
+}
+
+// ── Where the sites are NOW: the converted spelling ─────────────────────────
+//
+// After the migration a site is `(load.field.memarg GdiBitmap bits (…))`, not
+// `(i32.load offset=24 …)`, so struct-offset-census.js — which looks for
+// hand-spelled arithmetic — correctly finds nothing. This is the census of the
+// migrated form: every src/*.wat is scanned (not a fixed list, so a new file
+// that reaches this record is covered the day it is added), and each site is
+// reported with its file, 1-based line, enclosing function, and the LAYOUT THE
+// SOURCE NAMES. The offset is recovered from the layout declaration by field
+// name, which is why a renamed field cannot slip past the attribution table.
+function scanConverted(layouts) {
+  const out = [];
+  const dir = path.join(ROOT, 'src');
+  const re = /\((load|store)\.field(?:\.memarg)?\s+(Gdi[A-Za-z]+)\s+([A-Za-z0-9_]+)/g;
+  for (const base of fs.readdirSync(dir).filter(f => f.endsWith('.wat')).sort()) {
+    const text = fs.readFileSync(path.join(dir, base), 'utf8');
+    // Enclosing function per byte offset, and the line number, both from one
+    // pass over the file.
+    const funcs = [];
+    const fre = /^\s{0,4}\(func\s+(\$[\w.$-]+)/gm;
+    let fm;
+    while ((fm = fre.exec(text))) funcs.push({ at: fm.index, name: fm[1] });
+    const nl = [];
+    for (let i = 0; i < text.length; i++) if (text[i] === '\n') nl.push(i);
+    const lineOf = (i) => { let lo = 0, hi = nl.length; while (lo < hi) { const m = (lo + hi) >> 1; if (nl[m] < i) lo = m + 1; else hi = m; } return lo + 1; };
+    const fnOf = (i) => { let name = null; for (const f of funcs) { if (f.at <= i) name = f.name; else break; } return name; };
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(text))) {
+      const [, kind, layoutName, fieldName] = m;
+      if (!ALL_LAYOUTS.includes(layoutName)) continue;   // some other family's layout
+      const L = layouts.get(layoutName);
+      const f = L && L.fields.find(x => x.name === fieldName);
+      if (!f) continue;   // the compiler rejects an unknown field; nothing to add here
+      out.push({
+        file: base, lineNo: String(lineOf(m.index)), fn: fnOf(m.index) || '$?',
+        op: `${kind}.field`, off: f.offset, spelled: layoutName,
+      });
+    }
+  }
+  return out;
+}
+
 function main() {
   const list = process.argv.includes('--list');
   const layouts = parseLayouts(fs.readFileSync(LAYOUT_FILE, 'utf8'));
@@ -281,7 +380,7 @@ function main() {
   if (!strideM) { console.error('gdi-variant-gate: $GDI_OBJECT_STRIDE not found'); process.exit(1); }
   const STRIDE = Number(strideM[1]);
 
-  for (const name of VARIANTS) {
+  for (const name of ALL_LAYOUTS) {
     const L = layouts.get(name);
     if (!L) { problems.push(`layout ${name} is not declared in ${path.basename(LAYOUT_FILE)}`); continue; }
     if (L.totalSize !== STRIDE)
@@ -294,30 +393,77 @@ function main() {
       problems.push(`layout ${name}: +4 must be the shared field 'type', got '${t && t.name}'`);
   }
 
-  // --- run the census -------------------------------------------------------
-  let census;
+  // --- run the RAW census ---------------------------------------------------
+  //
+  // Every one of the 160 sites is converted now, so the expected answer is
+  // NOTHING: struct-offset-census.js exits nonzero with "no such base" when the
+  // base call has no hand-spelled field arithmetic left against it at all, and
+  // that is this family's healthy state. Any raw site it does find is a
+  // REFUSE-RAW failure below — somebody has added hand-spelled offset
+  // arithmetic against a GDI object record without deciding its type.
+  let census = '';
+  let rawCensusEmpty = false;
   try {
     census = execFileSync('node', [path.join(ROOT, 'tools', 'struct-offset-census.js'), `--base=${BASE}`],
-                          { cwd: ROOT, encoding: 'utf8', maxBuffer: 32 << 20 });
+                          { cwd: ROOT, encoding: 'utf8', maxBuffer: 32 << 20, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
-    console.error('gdi-variant-gate: census failed:', e.message);
-    process.exit(1);
+    const out = `${e.stdout || ''}${e.stderr || ''}`;
+    if (/no such base/.test(out)) { census = ''; rawCensusEmpty = true; }
+    else { console.error('gdi-variant-gate: census failed:', e.message); process.exit(1); }
   }
 
   const siteRe = /^\s+([\w.-]+\.wat):(\d+)\s+(\$\S+)\s+(\S+)\s+\+0x([0-9a-f]+)/;
-  const files = [...new Set(census.split('\n').map(l => (l.match(siteRe) || [])[1]).filter(Boolean))];
+  if (process.argv.includes('--emit-selection')) { emitSelection(census, siteRe); return; }
+
+  // Every site the family has, in one list: the CONVERTED ones (the normal
+  // case now — `spelled` is the layout the source names) and any RAW one the
+  // census still finds (`spelled` null, a refuse-raw failure). Both go through
+  // the same attribution checks, so a raw site is told which variant it should
+  // have been as it is refused.
+  const converted = scanConverted(layouts);
+  const sites = [
+    ...converted,
+    ...census.split('\n').map(l => l.match(siteRe)).filter(Boolean).map(m => ({
+      file: m[1], lineNo: m[2], fn: m[3], op: m[4], off: parseInt(m[5], 16), spelled: null,
+    })),
+  ];
+  const files = [...new Set(sites.map(s => s.file))];
   const guards = harvestGuards(files);
   const producerTyped = new Set();
-  let checked = 0, agnostic = 0, guarded = 0, perArm = 0;
-  for (const line of census.split('\n')) {
-    const m = line.match(siteRe);
-    if (!m) continue;
-    const [, file, lineNo, fn, op, offHex] = m;
-    const off = parseInt(offHex, 16);
+  let checked = 0, agnostic = 0, guarded = 0, perArm = 0, raw = 0;
+  for (const site of sites) {
+    const { file, lineNo, fn, op, off, spelled } = site;
     const key = `${file}:${lineNo}`;
 
-    // (1) offsets every variant agrees on need no attribution.
-    if (off === 0 || off === 4) { agnostic++; if (list) console.log(`${key}  ${fn}  +${off}  (shared prefix)`); continue; }
+    // REFUSE RAW. Hand-spelled offset arithmetic against a GDI object record is
+    // how the wrong-layout bug gets in: it names no type, so nothing can check
+    // it. The site is still attributed below, so the message can say which
+    // variant it should be spelled as.
+    if (spelled === null) {
+      raw++;
+      problems.push(`${key} ${fn} (${op}) is RAW hand-spelled +${off} arithmetic against a GDI object ` +
+                    `record. This family is fully migrated: spell it ` +
+                    `(load.field.memarg <variant> <field> ptr), choosing the variant from the type ` +
+                    `check in scope or the producer of the handle.`);
+    }
+
+    // (1) +0/+4 mean the same thing to every variant, and a site reading them
+    // has not decided a type — often it is the read that decides. Those spell
+    // the prefix view, and naming one of the seven there is the failure.
+    if (off === 0 || off === 4) {
+      agnostic++;
+      if (spelled !== null && spelled !== PREFIX_VIEW) {
+        problems.push(`${key} ${fn} reads the shared prefix (+${off}) but spells it ${spelled}. ` +
+                      `A +0/+4 site claims no object type: spell it ${PREFIX_VIEW}.`);
+      }
+      if (list) console.log(`${key}  ${fn}  +${off}  ${spelled || '(raw)'}  (shared prefix)`);
+      continue;
+    }
+    if (spelled === PREFIX_VIEW) {
+      problems.push(`${key} ${fn} spells ${PREFIX_VIEW} at +${off}, above the shared prefix. ` +
+                    `${PREFIX_VIEW} declares only handle/type; decide the object type.`);
+      continue;
+    }
 
     let variant = BY_SITE[key];
     let how = 'site';
@@ -338,6 +484,18 @@ function main() {
 
     const L = layouts.get(variant);
     if (!L) { problems.push(`${key} ${fn}: attributed to unknown layout ${variant}`); continue; }
+
+    // THE WRONG-LAYOUT CHECK, now that the sites name their layout. Before the
+    // conversion this gate could only say the offset was owned by the variant
+    // the table claimed; now the source itself claims one, and the two must
+    // agree. A site that reads a bitmap's +24 as a font's strike compiles
+    // perfectly and is exactly what §6.2 is about.
+    if (spelled !== null && spelled !== variant) {
+      problems.push(`${key} ${fn} spells ${spelled} at +${off}, but the attribution (by ${how}) says ` +
+                    `${variant}. One of the two is wrong: fix the site, or fix ` +
+                    `BY_FUNCTION/BY_SITE in ${path.basename(__filename)} with the evidence.`);
+      continue;
+    }
 
     // (2) the offset must be a named, non-reserved field of that variant.
     const f = fieldAt(L, off);
@@ -386,11 +544,13 @@ function main() {
     console.error('');
     process.exit(1);
   }
-  console.log(`gdi-variant-gate: ${total} GdiObject sites OK ` +
-              `(${agnostic} on the shared handle/type prefix, ${checked} attributed to a variant, ` +
+  console.log(`gdi-variant-gate: ${total} GdiObject sites OK, all migrated ` +
+              `(${agnostic} on the shared handle/type prefix spelled ${PREFIX_VIEW}, ` +
+              `${checked} spelling a variant that matches its attribution, ` +
               `of which ${guarded} are cross-checked against the function's own +4 guard ` +
               `and ${perArm} are per-arm sites in a multi-variant function; ` +
-              `${VARIANTS.length} variants, all ${STRIDE} bytes)`);
+              `${VARIANTS.length} variants + the prefix view, all ${STRIDE} bytes; ` +
+              `${rawCensusEmpty ? 'no' : raw} raw hand-spelled site(s) remain)`);
   if (list && producerTyped.size) {
     console.log(`\n${producerTyped.size} function(s) carry no +4 guard of their own and are typed by ` +
                 `their PRODUCER — the attribution comment is the only evidence, so check (4) cannot ` +

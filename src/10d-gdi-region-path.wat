@@ -2892,18 +2892,18 @@
       (local.get $hdc) (i32.const 4) (i32.const 0x30017)))
     (local.set $pen_record (call $gdi_object_record (local.get $pen)))
     (if (i32.or (i32.eqz (local.get $pen_record))
-          (i32.or (i32.ne (i32.load offset=4 (local.get $pen_record)) (i32.const 1))
-            (i32.ne (i32.and (i32.load offset=20 (local.get $pen_record)) (i32.const 1))
+          (i32.or (i32.ne (load.field.memarg GdiObjectAny type (local.get $pen_record)) (i32.const 1))
+            (i32.ne (i32.and (load.field.memarg GdiPen flags (local.get $pen_record)) (i32.const 1))
               (i32.const 0))))
       (then (return (i32.const 0))))
     (local.set $width (call $gdi_object_width (local.get $pen)))
-    (local.set $pen_flags (i32.load offset=20 (local.get $pen_record)))
+    (local.set $pen_flags (load.field.memarg GdiPen flags (local.get $pen_record)))
     (local.set $geometric (i32.and (local.get $pen_flags) (i32.const 0x00010000)))
     (local.set $cap (i32.and (local.get $pen_flags) (i32.const 0x00000F00)))
     (local.set $join (i32.and (local.get $pen_flags) (i32.const 0x0000F000)))
     (if (i32.or (i32.gt_u (local.get $width) (i32.const 64))
           (i32.and (i32.le_u (local.get $width) (i32.const 1))
-            (i32.eqz (i32.and (i32.load offset=20 (local.get $pen_record))
+            (i32.eqz (i32.and (load.field.memarg GdiPen flags (local.get $pen_record))
               (i32.const 0x00010000)))))
       (then (return (i32.const 0))))
     (local.set $flat_g (call $gdi_dc_path_flatten_copy (local.get $entry)))
@@ -3797,6 +3797,20 @@
   ;; named predicate like $gdi_bitmap_record_valid, which is 10a:12's `+4 == 3`),
   ;; or from the producer that made the handle. tools/gdi-variant-gate.js holds
   ;; that site->variant attribution and machine-checks it (see §6.1/§6.2).
+
+  ;; The shared prefix, and ONLY the shared prefix. A site that reads +0 or +4
+  ;; has not yet decided what kind of object this is -- it is usually the very
+  ;; read that decides ($gdi_object_type returns +4; $gdi_object_delete_full
+  ;; dispatches on it; every `+4 == N` guard in this family is one of these).
+  ;; Naming one of the seven at such a site would claim a type the code does not
+  ;; have yet, so those 24 sites spell this instead: handle and type are the two
+  ;; words every variant agrees on, and everything above them is `reserved`, so
+  ;; reading further through this view is a compile error rather than a guess.
+  ;; It is 48 bytes like the others, so (size-of ...) still pins the stride.
+  (layout GdiObjectAny
+    (field handle    i32)        ;; +0
+    (field type      i32)        ;; +4   1..7, the discriminant
+    (field reserved  i32 10))    ;; +8..+44 unknown until the type is known
 
   ;; Pen (type 1). flags@20 is a rich bitfield, not a boolean: bit0 forces
   ;; PS_NULL (set at creation as `style == 5`, read 10d:2878 / 10f:1852),

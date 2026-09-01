@@ -1261,7 +1261,7 @@
     ;; never selected.
     (local.set $object (call $gdi_object_record (local.get $handle)))
     (if (i32.and (i32.ne (local.get $object) (i32.const 0))
-          (i32.ne (i32.load offset=24 (local.get $object)) (i32.const 0)))
+          (i32.ne (load.field.memarg GdiFont strike (local.get $object)) (i32.const 0)))
       (then (return)))
     (local.set $face (call $tt_face_for_logfont
       (call $gdi_font_face (local.get $handle))
@@ -2283,7 +2283,7 @@
         (local.set $record (call $gdi_object_record (local.get $handle)))
         (call $gs32 (local.get $arg3)
           (if (result i32) (local.get $record)
-            (then (call $w2g (i32.load offset=24 (local.get $record))))
+            (then (call $w2g (load.field.memarg GdiBitmap bits (local.get $record))))
             (else (i32.const 0))))))
     (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))

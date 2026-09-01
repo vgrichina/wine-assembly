@@ -123,6 +123,31 @@
 //   those gate lines would start failing in build.sh with nobody having asked
 //   for a conversion. One family opts in, in one reviewed commit, at a time.
 //
+// ── --only-func / --only-line: one variant of a UNION at a time ────────────
+//
+//   A discriminated union has no single layout. The GDI object record is seven
+//   of them (GdiPen/GdiBrush/GdiPenBrush/GdiBitmap/GdiFont/GdiPalette/
+//   GdiMetafile, plus GdiObjectAny for the handle/type prefix they all share),
+//   and WHICH one a site reads is a typing decision this tool must not make —
+//   see tools/gdi-variant-gate.js, which holds that attribution as data.
+//
+//   So the union converts as one run PER VARIANT, each restricted to the sites
+//   that variant was attributed:
+//
+//     --only-func=$a,$b        convert only inside these functions
+//     --only-line=f.wat:12,…   convert only at these exact file:line positions
+//
+//   The two are a UNION, and either one present turns selection on: with
+//   neither, every site is eligible, which is the pre-existing behaviour of
+//   every other family. `--only-line` is what serves a function that holds more
+//   than one variant in one stack frame ($gdi_object_delete_full reads a
+//   different +24 per arm); `--only-func` serves the ordinary case, and is
+//   stable under edits in a way a line number is not.
+//
+//   The rewrite never adds or removes a newline — ADDR and VAL are spliced
+//   verbatim — so a line number stays valid across passes, and main() asserts
+//   the line count did not move rather than trusting that.
+//
 //   Declined, and reported rather than guessed:
 //     * an `align=` that is not the access's natural alignment (the emitted
 //       memarg would not match);
@@ -336,14 +361,37 @@ function migrate(text, layout, opts) {
   const baseLocals = new Set(opts.baseLocals.map(x => `(local.get $${x})`));
   const verifiedNames = new Set(opts.verifiedLocals || []);
   const skipNames = new Set((opts.skipFuncs || []).map(x => (x.startsWith('$') ? x : `$${x}`)));
+  const onlyFuncs = new Set((opts.onlyFuncs || []).map(x => (x.startsWith('$') ? x : `$${x}`)));
+  const onlyLines = new Set(opts.onlyLines || []);
+  const selecting = onlyFuncs.size > 0 || onlyLines.size > 0;
   const stats = {
     converted: 0, convertedMemarg: 0, skippedOffset: [], skippedWidth: [], remaining: 0,
     byField: new Map(), skippedFunc: new Map(), skippedMemarg: new Map(),
-    verifiedFuncs: new Set(),
+    verifiedFuncs: new Set(), notSelected: 0,
   };
   let ranges = [];
   let allRanges = [];
   let verified = new Map();
+  // Newline offsets, for turning a byte index into the 1-based line number the
+  // --only-line keys and the census both speak. Recomputed per pass.
+  let nlAt = [];
+  const lineOf = (i) => {
+    let lo = 0, hi = nlAt.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (nlAt[mid] < i) lo = mid + 1; else hi = mid; }
+    return lo + 1;
+  };
+  const funcAt = (i) => {
+    for (const r of allRanges) if (i >= r.start && i < r.end) return r.name;
+    return null;
+  };
+  // Is this site one of the ones this run was pointed at? With no --only-*
+  // flag every site is, which is how every other family runs.
+  const isSelected = (i) => {
+    if (!selecting) return true;
+    if (onlyLines.size && onlyLines.has(`${opts.fileName}:${lineOf(i)}`)) return true;
+    if (onlyFuncs.size) { const f = funcAt(i); if (f && onlyFuncs.has(f)) return true; }
+    return false;
+  };
   const skipFuncAt = (i) => {
     for (const r of ranges) if (i >= r.start && i < r.end) return r.name;
     return null;
@@ -380,8 +428,13 @@ function migrate(text, layout, opts) {
     stats.skippedFunc = new Map(); stats.skippedMemarg = new Map();
     // NOT reset per pass, unlike the decline counters: this one records where
     // work was DONE, and the last pass is the one that converts nothing.
+    stats.notSelected = 0;
     ranges = funcRanges(text, skipNames);
-    allRanges = verifiedNames.size ? allFuncRanges(text) : [];
+    allRanges = (verifiedNames.size || onlyFuncs.size) ? allFuncRanges(text) : [];
+    if (selecting) {
+      nlAt = [];
+      for (let k = 0; k < text.length; k++) if (text[k] === '\n') nlAt.push(k);
+    }
     verified = verifiedBaseLocals(text, allRanges, verifiedNames, opts.baseCall);
     // Scan right-to-left so a rewrite never invalidates an earlier index.
     const hits = [];
@@ -400,7 +453,7 @@ function migrate(text, layout, opts) {
       const isStore = op.startsWith('i32.store') || op.startsWith('i64.store') || op.startsWith('f32.store') || op.startsWith('f64.store');
       const inSkip = skipFuncAt(i);
       const nameOk = inSkip === null;
-      let addr = null, off = null, memarg = false;
+      let addr = null, off = null, memarg = false, addrStart = -1;
 
       if (ops.some(o => o.atom)) {
         // ── the memarg spelling (§3.4) ──
@@ -440,7 +493,7 @@ function migrate(text, layout, opts) {
           if (inSkip && isRecordPtr(a0, true, i)) stats.skippedFunc.set(inSkip, (stats.skippedFunc.get(inSkip) || 0) + 1);
           continue;
         }
-        addr = a0; off = mOff; memarg = true;
+        addr = a0; off = mOff; memarg = true; addrStart = rest[0].start;
         // Rewrite through the shared tail below, but with the operands the
         // memarg form has (the value, for a store, is the second of `rest`).
         ops.length = 0; ops.push(rest[0]); if (isStore) ops.push(rest[1]);
@@ -455,13 +508,17 @@ function migrate(text, layout, opts) {
           if (inner && inner.length === 2 && /^\(i32\.const\s+(-?(0x)?[0-9a-fA-F]+)\s*\)$/.test(normalize(inner[1].text))) {
             const cm = /^\(i32\.const\s+(-?(?:0x)?[0-9a-fA-F]+)\s*\)$/.exec(normalize(inner[1].text));
             const v = cm[1].startsWith('0x') ? parseInt(cm[1], 16) : parseInt(cm[1], 10);
-            if (isRecordPtr(inner[0].text, nameOk, i)) { addr = inner[0].text; off = v; }
+            if (isRecordPtr(inner[0].text, nameOk, i)) { addr = inner[0].text; off = v; addrStart = ops[0].start + inner[0].start; }
             else if (inSkip && isRecordPtr(inner[0].text, true, i)) stats.skippedFunc.set(inSkip, (stats.skippedFunc.get(inSkip) || 0) + 1);
           }
-        } else if (isRecordPtr(addrForm, nameOk, i)) { addr = addrForm; off = 0; }
+        } else if (isRecordPtr(addrForm, nameOk, i)) { addr = addrForm; off = 0; addrStart = ops[0].start; }
         else if (inSkip && isRecordPtr(addrForm, true, i)) stats.skippedFunc.set(inSkip, (stats.skippedFunc.get(inSkip) || 0) + 1);
       }
       if (addr === null) continue;
+      // A real record-pointer site, but not one THIS run was pointed at: it
+      // belongs to another arm of the union and will convert under its own
+      // variant. Counted, so a selection that matches nothing is visible.
+      if (!isSelected(i)) { stats.notSelected++; continue; }
 
       const field = layout.byOffset.get(off);
       if (!field) { stats.skippedOffset.push({ off, op }); continue; }
@@ -471,8 +528,20 @@ function migrate(text, layout, opts) {
       if (isStore && opts.loadsOnly) { stats.remaining++; continue; }
 
       const head = (isStore ? 'store.field' : 'load.field') + (memarg ? '.memarg' : '');
-      const tail = isStore ? ` ${ops[1].text}` : '';
-      const replacement = `(${head} ${layout.name} ${field.name} ${addr}${tail})`;
+      // Keep the author's line break before ADDR and before the stored VALUE. Collapsing a site the source
+      // wrapped across two lines is byte-neutral in the wasm but moves every
+      // line number after it, which invalidates the --only-line keys of a later
+      // variant's run over the same file (measured: 10b-gdi-font.wat).
+      const wsBefore = (at) => {
+        if (!(at > 0)) return ' ';
+        let s = at;
+        while (s > 0 && ' \t\r\n'.includes(text[s - 1])) s--;
+        const ws = text.slice(s, at);
+        return ws.includes('\n') ? ws : ' ';
+      };
+      const sep = wsBefore(addrStart);
+      const tail = isStore ? `${wsBefore(ops[1].start)}${ops[1].text}` : '';
+      const replacement = `(${head} ${layout.name} ${field.name}${sep}${addr}${tail})`;
       text = text.slice(0, i) + replacement + text.slice(close + 1);
       stats.converted++;
       if (memarg) stats.convertedMemarg++;
@@ -495,6 +564,7 @@ function main() {
     console.error('       [--layout-from=src/Z.wat] [--skip-func=$a,$b] [--loads-only] [--write] [--gate]');
     console.error('       [--base-local-from-call=a,b] locals whose EVERY assignment in a function is the base call');
     console.error('       [--memarg]                   also convert offset=N sites, via the .memarg lowering');
+    console.error('       [--only-func=$a,$b] [--only-line=f.wat:12,..]  one variant of a union at a time');
     process.exit(2);
   }
   const root = path.resolve(__dirname, '..');
@@ -520,6 +590,8 @@ function main() {
     skipFuncs: (opt('skip-func', '') || '').split(',').map(s => s.trim()).filter(Boolean),
     loadsOnly: flag('loads-only'),
     memarg: flag('memarg'),
+    onlyFuncs: (opt('only-func', '') || '').split(',').map(s => s.trim()).filter(Boolean),
+    onlyLines: (opt('only-line', '') || '').split(',').map(s => s.trim()).filter(Boolean),
   };
   if (opts.verifiedLocals.length && !opts.baseCall) {
     console.error('--base-local-from-call needs --base-call: the whole point is that the local is'
@@ -531,7 +603,15 @@ function main() {
   for (const file of files) {
     const abs = resolve(file);
     const orig = fs.readFileSync(abs, 'utf8');
-    const { text, stats } = migrate(orig, layout, opts);
+    const { text, stats } = migrate(orig, layout, { ...opts, fileName: path.basename(file) });
+
+    // --only-line keys are line numbers, and they are only meaningful because
+    // the rewrite is newline-neutral. Assert that rather than assume it.
+    const nl = (s) => { let n = 0; for (let k = 0; k < s.length; k++) if (s[k] === '\n') n++; return n; };
+    if (nl(text) !== nl(orig)) {
+      console.error(`INTERNAL: ${file} changed line count (${nl(orig)} -> ${nl(text)}); --only-line keys are invalid`);
+      process.exit(1);
+    }
 
     console.log(`\n── ${file}`);
     console.log(`converted ${stats.converted} sites in ${stats.passes} passes`
@@ -539,6 +619,9 @@ function main() {
       + (opts.loadsOnly ? `  (${stats.remaining} store sites left by --loads-only)` : ''));
     if (opts.verifiedLocals.length) {
       console.log(`  base locals verified from ${opts.baseCall} in ${stats.verifiedFuncs.size} function(s)`);
+    }
+    if (stats.notSelected) {
+      console.log(`  LEFT ALONE, outside --only-func/--only-line (another variant's arm): ${stats.notSelected}`);
     }
     for (const [f, c] of [...stats.byField].sort((a, b) => b[1] - a[1])) console.log(`  ${String(c).padStart(4)}  ${f}`);
     if (stats.skippedOffset.length) {
