@@ -106,29 +106,54 @@ function count(s, d) {
 // records, per op, the guest ip control must be at for the region to keep
 // going. Whether that ip is the branch's taken edge or its fall-through does
 // not matter here and is not asked -- anything else exits.
-function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3) {
+// THE WALK FOLLOWS EITHER EDGE, AND BACKTRACKS. It used to follow only the
+// TAKEN one, and that single line was the corpus's biggest coverage limit: a
+// loop whose body bails out on a condition -- which is nearly all of them --
+// got walked down the BAIL-OUT, where it immediately met a `ret`, a `retf`, or
+// a block that "ends bad-handler, not jmp", and the candidate was thrown away
+// while the loop closed on the fall-through nobody tried. Measured with
+// tools/toyvm/region-why.js over the 87 programs that got no region at all:
+// `ret with no inlined call to return to` blocked 45 of them, `ends
+// bad-handler, not jmp` 25, `ends call_far` 14, `ends retf` 9 -- all of them
+// symptoms of having walked into code the loop never enters.
+//
+// Following the fall-through is sound for exactly the reason following the
+// taken edge is: `nexts[i]` records the guest ip control MUST be at for the
+// region to keep going, the emitted test exits on anything else, and it does
+// not care which edge produced that ip. `fallArena`/`fallThroughIp` already
+// name the fall-through's arena address and guest ip.
+//
+// A dead end is now a dead end for that PATH rather than for the candidate, so
+// every rule below returns to the search instead of failing it. `--no-backtrack`
+// restores the old single-path walk for the A/B.
+function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisits = 3000) {
   const ops = [], nexts = [], spans = [], heads = [];
   const seen = new Set();
-  // The inlined call frames still open, innermost last. Only the return ADDRESS
-  // is tracked -- the guest's own frame is built and torn down by the ops.
-  const retStack = [];
-  let cur = head;
-  for (;;) {
+  let visits = 0;
+  // The reason the LAST path died, reported only if the whole search does. One
+  // line per candidate, as before -- a backtracking search rejects many paths
+  // and printing each would bury the histogram region-why.js builds.
+  let lastWhy = null;
+  const no = (s) => { lastWhy = s; return null; };
+
+  // `retStack` is the inlined call frames still open, innermost last. Only the
+  // return ADDRESS is tracked -- the guest's own frame is built and torn down
+  // by the ops. It is copied on the call edge rather than mutated, so a
+  // backtrack out of a callee cannot leave a frame behind.
+  const walk = (cur, retStack) => {
+    if (++visits > maxVisits) return no(`search gave up after ${maxVisits} blocks`);
     // A block may legitimately appear twice once calls are inlined (one helper
     // called from two places in the loop), so the revisit test is on the block
     // AND the call depth, not the block alone.
     const key = `${cur}@${retStack.length}`;
-    if (seen.has(key)) { why(`0x${head.toString(16)}: walk revisited 0x${cur.toString(16)}`); return null; }
-    seen.add(key);
+    if (seen.has(key)) return no(`walk revisited 0x${cur.toString(16)}`);
     const blk = headByAddr.get(cur);
-    if (!blk) { why(`0x${head.toString(16)}: 0x${cur.toString(16)} is not a block head`); return null; }
-    heads.push(blk);
+    if (!blk) return no(`0x${cur.toString(16)} is not a block head`);
     const t = traceAt(blk);
     // `int` still ends the walk: it hands the machine to the host by design and
-    // there is nothing to inline. `call` and `ret` do not, any more -- see
-    // below.
+    // there is nothing to inline.
     const bad = t.ops.find(o => /^(int|into)/.test(o.name));
-    if (bad) { why(`0x${head.toString(16)}: 0x${cur.toString(16)} contains ${bad.name}`); return null; }
+    if (bad) return no(`0x${cur.toString(16)} contains ${bad.name}`);
     // See fallArena: cut the block at the first branch whose fall-through lives
     // somewhere other than the words behind it. Everything past that point is
     // another block's code that readTrace ran into.
@@ -141,9 +166,27 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3) {
     const tops = t.ops.slice(0, cut);
     const truncated = cut < t.ops.length;
     const endWord = truncated ? t.ops[cut].at : t.nextWord;
+
+    const mark = { ops: ops.length, spans: spans.length, heads: heads.length };
+    const undo = () => {
+      ops.length = mark.ops; nexts.length = mark.ops;
+      spans.length = mark.spans; heads.length = mark.heads;
+      seen.delete(key);
+    };
+    seen.add(key);
+    heads.push(blk);
     for (const op of tops) { ops.push(op); nexts.push(fallThroughIp(op)); }
     spans.push([cur, cur + ((endWord - ((cur - blk.prog.arenaBase) >> 2)) << 2)]);
     const last = tops[tops.length - 1];
+    // Follow one edge: rewrite the terminator's required-gip, recurse, and undo
+    // everything this block added if the path behind it dies.
+    const follow = (arena, ip, stack) => {
+      if (ops.length > maxOps) return no(`over ${maxOps} ops without closing`);
+      if (arena === head && !stack.length) return { ops, nexts, spans, heads, headIp: ip };
+      if (!headByAddr.has(arena)) return no(`edge to 0x${(arena >>> 0).toString(16)} is not a block head`);
+      nexts[nexts.length - 1] = ip;
+      return walk(arena, stack);
+    };
 
     // A DIRECT CALL IS AN EDGE LIKE ANY OTHER, and inlining it is the whole
     // reason to bother: the exit census found that call-free hot regions cover
@@ -161,13 +204,11 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3) {
     // case. What inlining removes is the two block transfers, not the frame.
     // Operands are [arenaTarget][guestTarget][retIp][arenaRet].
     if (/^call_rel(32)?$/.test(last.name)) {
-      if (retStack.length >= maxDepth) { why(`0x${head.toString(16)}: calls nested deeper than ${maxDepth}`); return null; }
-      retStack.push({ ip: last.args[2], arena: last.args[3] });
-      nexts[nexts.length - 1] = last.args[1];
-      cur = last.args[0];
-      if (!headByAddr.has(cur)) { why(`0x${head.toString(16)}: callee 0x${(cur >>> 0).toString(16)} is not a block head`); return null; }
-      if (ops.length > maxOps) { why(`0x${head.toString(16)}: over ${maxOps} ops without closing`); return null; }
-      continue;
+      if (retStack.length >= maxDepth) { undo(); return no(`calls nested deeper than ${maxDepth}`); }
+      const r = follow(last.args[0], last.args[1],
+        [...retStack, { ip: last.args[2], arena: last.args[3] }]);
+      if (!r) undo();
+      return r;
     }
     // ...and the matching return is the same edge run backwards. `ret` reads
     // its target off the guest stack, so unlike a branch it has no operand to
@@ -175,35 +216,39 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3) {
     // exactly the guard that makes that safe: a callee that returned somewhere
     // else leaves the region instead of being believed.
     if (/^ret(32)?$/.test(last.name)) {
-      const frame = retStack.pop();
-      if (!frame) { why(`0x${head.toString(16)}: ${last.name} with no inlined call to return to`); return null; }
-      nexts[nexts.length - 1] = frame.ip;
-      cur = frame.arena;
-      if (cur === head) return { ops, nexts, spans, heads, headIp: frame.ip };
-      if (!headByAddr.has(cur)) { why(`0x${head.toString(16)}: return to 0x${(cur >>> 0).toString(16)} is not a block head`); return null; }
-      if (ops.length > maxOps) { why(`0x${head.toString(16)}: over ${maxOps} ops without closing`); return null; }
-      continue;
+      if (!retStack.length) { undo(); return no(`${last.name} with no inlined call to return to`); }
+      const stack = retStack.slice();
+      const frame = stack.pop();
+      const r = follow(frame.arena, frame.ip, stack);
+      if (!r) undo();
+      return r;
     }
     // A truncated block ends at the branch the cut found, which IS a
     // terminator; `t.end` describes the op readTrace ran on to and no longer
     // applies.
-    if (!truncated && t.end !== 'jmp') { why(`0x${head.toString(16)}: 0x${cur.toString(16)} ends ${t.end}, not jmp`); return null; }
+    if (!truncated && t.end !== 'jmp') { undo(); return no(`0x${cur.toString(16)} ends ${t.end}, not jmp`); }
     const at = TAKEN_AT.get(last.fn);
-    if (at === undefined) { why(`0x${head.toString(16)}: terminator ${last.name} has no edge tail`); return null; }
+    if (at === undefined) { undo(); return no(`terminator ${last.name} has no edge tail`); }
     // The terminator's arena target sits one slot in front of its guest ip.
-    const tgt = last.args[at - 1];
-    if (tgt === head && !retStack.length) {
-      return { ops, nexts, spans, heads, headIp: last.args[at] };
+    // Taken first, then the fall-through -- the taken edge is the back edge of
+    // a `loop` or a bottom-tested loop, so trying it first keeps the common
+    // case at its old cost.
+    const edges = [[last.args[at - 1], last.args[at]]];
+    const fa = fallArena(last), fi = fallThroughIp(last);
+    if (!flag('no-backtrack') && fa !== null && fi !== null && fa !== last.args[at - 1]) {
+      edges.push([fa, fi]);
     }
-    if (ops.length > maxOps) { why(`0x${head.toString(16)}: over ${maxOps} ops without closing`); return null; }
-    if (!headByAddr.has(tgt)) {
-      why(`0x${head.toString(16)}: ${last.name} leaves to 0x${(tgt >>> 0).toString(16)}, not a block head`);
-      return null;
+    for (const [arena, ip] of edges) {
+      const r = follow(arena, ip, retStack);
+      if (r) return r;
     }
-    // Chaining on: control must be at the NEXT block's guest ip to stay in.
-    nexts[nexts.length - 1] = last.args[at];
-    cur = tgt;
-  }
+    undo();
+    return null;
+  };
+
+  const r = walk(head, []);
+  if (!r && lastWhy) why(`0x${head.toString(16)}: ${lastWhy}`);
+  return r;
 }
 
 function pickRegion(rr, ranked, minOps, maxOps = 400) {
@@ -928,6 +973,13 @@ async function main() {
   const share = 100 * pick.samples / total;
   console.log(`region at guest ip 0x${pick.headIp.toString(16)}: `
     + `${pick.blocks} block(s), ${pick.ops.length} ops, ${share.toFixed(1)}% of samples`);
+
+  // `--pick-only` stops here: profile, pick, report, exit. Nothing is built,
+  // installed, compared or timed. It exists for tools/toyvm/region-why.js,
+  // which asks which SHAPES the picker can reach across the corpus and has no
+  // use for the run -- and paying for two whole-program runs and a wasm build
+  // per program would have made that census too slow to run at all.
+  if (flag('pick-only')) return;
 
   const region = buildRegion(pick.ops, pick.nexts, pick.headIp, 'region_0');
   if (region.declined && !region.body) { console.log(`declined: ${region.declined}`); process.exit(3); }

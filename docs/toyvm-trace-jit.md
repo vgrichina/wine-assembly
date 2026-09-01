@@ -1944,3 +1944,86 @@ It does, and by the widest possible margin:
 **Zero pixels.** The region draws exactly the picture the interpreter draws at
 the same break count. `smc-drift` (exit 7) survives as the fallback for a
 rematch that still fails, which is now a much stronger claim than it was.
+
+## Coverage: why 111 of 199 programs got no region, and the walk that fixed half of it
+
+At `a956de59` the region JIT was correct everywhere it applied and applied to
+88 of 199 programs. `region-census.js` reports the shortfall as two verdicts,
+`no-loop` (87) and `no-samples` (24), and neither is actionable: "no self-loop
+region found" is the summary of a search that rejected every candidate it
+looked at, one rule at a time.
+
+`region-jit.js --why` already prints each of those rejections. What did not
+exist was the aggregate. `tools/toyvm/region-why.js` runs the pick — and only
+the pick, via the new `--pick-only`, which returns straight after the report so
+nothing is built, installed, compared or timed — over the whole corpus, keeps
+the rejection lines from programs that ended with no region, normalizes each
+line to its *rule* (addresses and counts differ per program; the rule does
+not), and histograms by **programs blocked** rather than by occurrences. That
+last choice is the whole point: one program can reject two thousand candidates
+for a single reason and would otherwise drown out a rule that quietly blocks
+forty. `no-samples` is kept in its own bucket and never mixed in — it is a
+different failure (the profiler's samples landed in blocks that no longer
+exist, which is what a self-decrypting program does to its own arena) and no
+loosening of the pick rules reaches it.
+
+The first histogram named the cause immediately: the walk was ending at a `ret`,
+a `bad-handler` or a `call_far` in program after program — at addresses that had
+no business being on a loop body's path at all.
+
+`chainFrom` followed only the **taken** edge. A loop whose body contains a bail-
+out test — which is most loops — has its taken edge leaving the loop, so the
+walk marched down the bail-out path, away from the head, until it hit something
+it could not cross, and reported *that* as the reason. The rule the histogram
+was counting was real but was never the obstacle; the obstacle was that the walk
+never tried the other edge.
+
+It is now a backtracking depth-first search: at each terminator it tries the
+taken edge first and the fall-through second, with an undo mark over `ops`,
+`nexts`, `spans` and `heads` so a failed branch leaves no residue, a
+`seen` key of `ip@depth` (the same block at a different inlined-call depth is a
+different state), and a `maxVisits` cap so a pathological CFG gives up rather
+than hangs. `--no-backtrack` restores the old single-path behaviour for A/B.
+
+Measured over the corpus:
+
+```
+                     region   no-loop   no-samples
+taken edge only          88        87           24
++ backtracking          103        72           24     (+15 programs)
+```
+
+And the census, which is the gate that matters — a region reached is worth
+nothing if it is a region that draws the wrong picture:
+
+```
+                     identical  no-loop  no-samples  phase  gated  differs  smc-drift
+before                      75       87          24      8      3        0          0
+after                       88       72          24      8      5        0          0
+```
+
+15 more programs get a region, 13 more are byte-identical to the interpreter,
+and **zero wrong frames**. This changes which region the picker selects in all
+103 programs, not only the 15 new ones, which is why the full census was the
+acceptance test rather than a spot check on the new arrivals. The two `timeout`
+rows at the 180s cap are ASMINST.EXE and STHINTRO.EXE, the corpus's two slowest
+programs; re-run at `--timeout=900` they come back `phase 0px vs 0px` and
+`identical`.
+
+The rejection histogram over the remaining 72, by programs blocked, is now the
+work list:
+
+```
+  36  ret with no inlined call to return to
+  17  block contains an op the walk will not cross   (int_imm)
+  17  edge to ADDR is not a block head
+  15  ends bad-handler, not jmp
+  12  ends call_far, not jmp
+```
+
+The top two are the same shape of fix and `splitExit()` already has the
+machinery for it: an unmatched `ret` and an `int_imm` are both *exits* from the
+region, not reasons to reject it — publish `$gip` and let the epilogue's
+`$jlook` resolve the destination, exactly as a computed `ret` destination is
+handled today. The third is a depth/size limit (`maxDepth` 3, `maxOps` 400)
+rather than a shape the walk cannot express.

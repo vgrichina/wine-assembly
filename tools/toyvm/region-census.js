@@ -57,6 +57,8 @@ function findExes(dir) {
   return out;
 }
 
+module.exports = { findExes };
+
 const RE = {
   // `region at guest ip 0x2d41: 1 block(s), 34 ops, 9.4% of samples`
   pick: /region at guest ip 0x([0-9a-f]+): (\d+) block\(s\), (\d+) ops, ([\d.]+)% of samples/,
@@ -311,4 +313,6 @@ async function main() {
   }
 }
 
-main();
+// Only when run directly: region-why.js requires this file for `findExes`, and
+// an unguarded call here started a whole second corpus census inside it.
+if (require.main === module) main();
