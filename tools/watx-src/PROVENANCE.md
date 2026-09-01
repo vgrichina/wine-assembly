@@ -82,7 +82,7 @@ at the bottom of this file, not left to whoever is editing.
 b8068704e35bb4e41db2dd17324d5c629ac753faa64416dbdd412a97e36c40ab  tools/watx.js
 f7b02737864024e94bb59d191bc0169291db47731cc19d9cf52822c31ba8484a  tools/watx-src/compiler-parser.js
 05b4dd8f55b909d466cb4097357935321ade9ee72cd53c45f69da1305044b12c  tools/watx-src/compiler-stages.js
-773c705effce58986e135143ea9b85e0bea12f3f5d4491ee34410653865c1e02  tools/watx-src/compiler-codegen.js
+8aaeb2ce94ca3ef693c33636087b6bf9190029d07919e3f07e27e4213f65db2b  tools/watx-src/compiler-codegen.js
 b85a780ec3d53fa0a9a9b335839504f24c5ca7288a75885c2c0823b8bd9dd550  tools/watx-src/compiler.js
 293c1a233359bf142bf5badceb3399c92b79a653a86085681142b2037d80fce4  test/watx-compiler-wine-parity.test.js
 8f545280a756dcaff9762beb4cc45645a2205eb7a9a583d00297d97a6d15cd15  test/watx-compiler-production.test.js
@@ -98,7 +98,7 @@ d3b11de0f87fdd1bdd839ea391aa551ab70d01fb917f6c696fa11559ff1fe805  test/watx-comp
 59123677f802de8f7aeb41b81d7b9b9b5bc36f334d455e136b3c936cd3afebde  test/watx-compiler-explicit-drop.test.js
 8eed348ed4515fc63c1fde3d3cfcd507a5996eade013ea565aab2ab5df7240e0  test/watx-compiler-export-order.test.js
 a1b425dc42f4fd3458cf983710c00c028c11f99afab51bd9b5c90046df0ae15b  test/watx-compiler-i64-literal.test.js
-d4a612ae2c5fe9ac4f5f1d8b4223309b2ab3d1ae0d9508014d23b8c310f53f7f  test/watx-compiler-literals.test.js
+1bf02a515c0b1d3dc50737f177868f505aaa2c0c02b9562fc3925b0adf7af609  test/watx-compiler-literals.test.js
 4bcc836d2a63143457c4f8edb5678920bf204db13201d58580fbe64499aed21b  test/watx-compiler-type-index.test.js
 3c3fe13c63933d12446b22aad6334fe62e57b21c9968336ef9db11d5848f7ccb  test/watx-compiler-regions.test.js
 07596a8750d10d747487c59aae5ae57cf664f42cfb32de4e43143a4bf635dadc  test/watx-compiler-alloc.test.js
@@ -146,6 +146,6 @@ without re-sealing. Both lines are rewritten together by
 CHANGELOG already names the new digest.
 
 ```seal
-manifest-sha256   c41cd76154c64d5f8630d3fc7e36cb46937b9d4f3abf2acdbb7decc8b239d669
-changelog-sha256  80662de0b29d18237ac7976979143af6d0d904a7db343df65828c4db0b23328e
+manifest-sha256   780cd7466183a3cc7e5ba3520682233620c545efb8a4112dd70c21756ff09a57
+changelog-sha256  e5ae365605b65e8e3e1a28a4f8d40b98a3f5c27e04ca9619109df47a99283d14
 ```

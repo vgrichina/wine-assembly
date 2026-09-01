@@ -370,15 +370,25 @@ function constValue(type, literal) { return evalWat(constFn(type, literal)); }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 6. FINDING 3 -- the positional else.
+// 6. FINDING 3 -- the positional else, now a HARD ERROR.
 //
-// Standard WAT spells the else arm `(else ...)`. WATX also accepts a BARE
-// fourth child of `(if COND (then ...) EXPR)` as the else, which is not
-// standard and, worse, is a shape the two compilers read DIFFERENTLY:
-// lib/compile-wat.js silently discards that expression, WATX compiles it as the
-// else arm. One such site is still in the tree at src/09a5-handlers-window.wat:225
-// (peer-owned), so this is a WARNING for now, not an error -- promotion to a
-// hard error is planned for when the closure has zero such sites.
+// Standard WAT spells the else arm `(else ...)`. WATX used to also accept a
+// BARE fourth child of `(if COND (then ...) EXPR)` as the else, which is not
+// standard and, worse, is a shape two compilers read DIFFERENTLY: WATX compiled
+// it as the else arm, lib/compile-wat.js silently DISCARDED it. Same source,
+// two different programs, no error on either side.
+//
+// That was a warning, with a stated precondition for promotion: "when the
+// closure has zero such sites". The last one -- the src/09a5-handlers-window.wat
+// site this comment used to name -- is gone, a full tools/build.sh emits zero
+// of these warnings in both dispatch modes, and the promotion landed
+// 2026-08-31. So these assertions are inverted: the shape is REFUSED.
+//
+// What must keep working is the reason the warning was ever conditional. WATX's
+// own `(if COND A B)` shorthand also has no (then ...), and it is a deliberate
+// spelling, not a mistake -- refusing it would break every watjs tree. The
+// discriminator is `sawThenForm`, and the last three blocks here are what pins
+// it: shorthand compiles, else-less if compiles, proper (else ...) compiles.
 // ═══════════════════════════════════════════════════════════════════════════
 // tools/watx.js runs the vendored stages inside a vm context whose `console` is
 // a shim writing to process.stderr, so patching this process's console.warn sees
@@ -401,25 +411,26 @@ function warningsFrom(src) {
     '(memory 1 1)\n' +
     '(func $m (export "m") (param $c i32) (result i32)\n' +
     '  (if (result i32) (local.get $c) (then (i32.const 1)) (i32.const 2)))';
-  const w = warningsFrom(positional);
-  ck('the positional-else shape still compiles', !!(w.result && w.result.success),
-    w.result && w.result.error);
-  ck('...and warns exactly once', w.warnings.length === 1, w.warnings.length);
+  const r = build(positional);
+  ck('the positional-else shape is REFUSED', !(r && r.success),
+    r && r.success ? 'compiled anyway' : undefined);
+  const err = String((r && (r.error || r.message)) || '');
   ck('...with a message naming the shape',
-    /else slot of \(if COND \(then \.\.\.\) EXPR\)/.test(w.warnings[0] || ''), w.warnings[0]);
-  ck('...that says WATX is compiling it AS the else arm',
-    /compiling it AS the else arm/.test(w.warnings[0] || ''), w.warnings[0]);
-  ck('...that says the legacy compiler discards it',
-    /compile-wat\.js silently DISCARDS it/.test(w.warnings[0] || ''), w.warnings[0]);
-  ck('...and that it will become a hard error',
-    /will become a hard error/.test(w.warnings[0] || ''), w.warnings[0]);
-
-  // The behaviour itself is unchanged: the bare tail IS the else arm.
-  const taken = evalWat(positional, 'm', [1]);
-  const notTaken = evalWat(positional, 'm', [0]);
-  ck('the bare tail is compiled as the else arm (cond true -> then)', taken.value === 1, taken.error || taken.value);
-  ck('the bare tail is compiled as the else arm (cond false -> tail)', notTaken.value === 2, notTaken.error || notTaken.value);
+    /else slot of \(if COND \(then \.\.\.\) EXPR\)/.test(err), err);
+  ck('...that says what to write instead',
+    /Wrap it: \(if COND \(then \.\.\.\) \(else \.\.\.\)\)/.test(err), err);
+  ck('...and why it matters: two compilers, two programs',
+    /two different programs/.test(err), err);
+  ck('...and it does NOT merely warn any more',
+    warningsFrom(positional).warnings.length === 0,
+    warningsFrom(positional).warnings.join(' | '));
+  ck('...and the error is located at the offending line',
+    /:\d+: bare expression/.test(err), err);
 }
+
+// The old assertions read the compiled module back to prove the bare tail WAS
+// the else arm. There is nothing to read back now -- the compile fails -- and
+// that is the point: the shape has no meaning to disagree about any more.
 
 {
   const proper =
@@ -454,18 +465,21 @@ function warningsFrom(src) {
 }
 
 {
-  // One line per SITE: two distinct sites warn twice, and neither is repeated.
+  // A module with two such sites fails on the FIRST one. The old test asserted
+  // one warning per site, which mattered while the job was to enumerate the
+  // sites so they could be wrapped. A refusal has the opposite job -- stop --
+  // and reporting the first is the right shape for that.
   const twoSites =
     '(memory 1 1)\n' +
     '(func $a (export "a") (param $c i32) (result i32)\n' +
     '  (if (result i32) (local.get $c) (then (i32.const 1)) (i32.const 2)))\n' +
     '(func $b (export "b") (param $c i32) (result i32)\n' +
     '  (if (result i32) (local.get $c) (then (i32.const 3)) (i32.const 4)))';
-  const w = warningsFrom(twoSites);
-  ck('two distinct positional-else sites warn twice', w.warnings.length === 2, w.warnings.length);
-  ck('...on two different lines',
-    new Set(w.warnings.map(s => (s.match(/:(\d+):/) || [])[1])).size === 2,
-    w.warnings.join(' | '));
+  const r = build(twoSites);
+  ck('a module with two positional-else sites is refused', !(r && r.success));
+  ck('...naming the first of them ($a, the earlier line)',
+    /\$a/.test(String((r && (r.error || r.message)) || '')),
+    String((r && (r.error || r.message)) || ''));
 }
 
 // ── \u{…} escapes in strings ──────────────────────────────────────────────────

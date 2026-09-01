@@ -17,6 +17,47 @@ Rules:
 - Every compiler change lands with a minimal regression in one of the
   `test/watx-compiler-*.test.js` suites.
 
+## 2026-08-31 — positional else is a hard error, as the warning promised
+
+Manifest digest: `780cd7466183a3cc7e5ba3520682233620c545efb8a4112dd70c21756ff09a57`
+
+`compiler-codegen.js`.
+
+`(if COND (then A) B)` — a bare expression in the else slot, without `(else
+…)` — is not standard WAT, and it is a shape two compilers read **differently**:
+WATX compiles the bare `B` as the else arm, `lib/compile-wat.js` silently
+DISCARDED it. One source, two programs, no error on either side, and the symptom
+is a missing else branch at runtime an arbitrary distance from the line.
+
+It has warned since the Round 4 review, in a message ending "This will become a
+hard error", with the promotion condition stated in the code: *"planned for when
+the closure has none left."*
+
+**The condition is met.** A full `tools/build.sh` emits zero of these warnings,
+in both dispatch modes. The last site the test suite named — 
+`src/09a5-handlers-window.wat:225` — is a proper `(else …)` now. So
+`warnPositionalElse` became `failPositionalElse`, and the message says what to
+write instead rather than what will happen later.
+
+Two things kept, deliberately:
+
+- **The `sawThenForm` guard.** WATX's own `(if COND A B)` shorthand also has no
+  `(then …)`, and it is a deliberate documented spelling, not a mistake. Only
+  the mixed form — a standard `(then …)` followed by a bare tail — is refused.
+  Refusing the shorthand would break every watjs tree, and the three
+  still-compiles assertions in the suite are what pin that.
+- **The located message.** `file:line` plus the enclosing function name, because
+  the whole failure mode this addresses is one that reads far from its cause.
+
+`test/watx-compiler-literals.test.js` §6 flipped from asserting the warning to
+asserting the refusal: the shape is rejected, the message names the shape and
+the fix, a two-site module fails on the first, and shorthand / else-less `if` /
+proper `(else …)` all still compile. 130 checks, all pass.
+
+Free ratchet: this cost nothing to take, because the tree had already been
+cleaned. Warnings whose promotion condition has quietly become true are worth
+re-checking for exactly that reason.
+
 ## 2026-08-31 — a layout field type is a closed set, and u16/s16/s8 are in it
 
 Manifest digest: `c41cd76154c64d5f8630d3fc7e36cb46937b9d4f3abf2acdbb7decc8b239d669`

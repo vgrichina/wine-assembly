@@ -840,23 +840,32 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
   const tailCalls = options.tailCalls !== false;
   const standardWat = options.standardWat === true;
 
-  // ── Positional-else warning (see the `if` compiler below) ──────────────────
-  // One line per SOURCE SITE, not per compile of that site: a function body can be
-  // walked more than once and the closure is compiled twice (tail / compat).
-  const positionalElseSeen = new Set();
-  function warnPositionalElse(expr, func) {
+  // ── Positional else is a HARD ERROR (see the `if` compiler below) ──────────
+  // This was a warning, ending "This will become a hard error", with the stated
+  // precondition "promotion is planned for when the closure has none left". The
+  // closure has none left — a full tools/build.sh emits zero of these warnings,
+  // in both dispatch modes — so the promotion is due and this is it.
+  //
+  // Why it cannot stay a warning. `(if COND (then A) B)` is not standard WAT.
+  // WATX compiles the bare B AS the else arm; lib/compile-wat.js silently
+  // DISCARDED it. Two compilers, one source, different programs, no error on
+  // either side — the failure is a missing else branch at runtime, arbitrarily
+  // far from the line that caused it. A warning is the wrong instrument for a
+  // divergence you cannot see in the output, and this one was additionally
+  // invisible in the configuration that matters: the production build routes
+  // console.warn nowhere anybody reads.
+  function failPositionalElse(expr, func) {
     const loc = watxFormLoc(expr);
     const file = loc !== undefined ? watxNodeFile(loc) : '<unknown>';
     const line = loc !== undefined ? watxNodeLine(loc) : 0;
-    const key = `${file}:${line}`;
-    if (positionalElseSeen.has(key)) return;
-    positionalElseSeen.add(key);
-    console.warn(
-      `[WATX WARNING] ${file}:${line}: bare expression in the else slot of ` +
+    throw new Error(
+      `${file}:${line}: bare expression in the else slot of ` +
       `(if COND (then ...) EXPR)${func && func.name ? ` in ${func.name}` : ''} — ` +
-      `standard WAT requires (else ...). WATX is compiling it AS the else arm; ` +
-      `note that lib/compile-wat.js silently DISCARDS it instead, so the two ` +
-      `compilers disagree here. Wrap it in (else ...). This will become a hard error.`);
+      `standard WAT requires (else ...). Wrap it: (if COND (then ...) (else ...)). ` +
+      `WATX would compile the bare expression as the else arm and other WAT ` +
+      `compilers discard it, so the same source means two different programs. ` +
+      `Note this does NOT apply to WATX's own (if COND A B) shorthand, which has ` +
+      `no (then ...) either and is a deliberate spelling.`);
   }
   const layoutInfo = new Map();
   for (const f of loweredForms) {
@@ -3565,14 +3574,13 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
           restIdx++;
         } else {
           // Positional: 4th element (after cond, then) is the else.
-          // NOT standard WAT — the spec form is (else ...). Accepted for now
-          // because the Wine tree still has such sites, but warned about once per
-          // site so they can be found and wrapped; promotion to a hard error is
-          // planned for when the closure has none left.
+          // NOT standard WAT — the spec form is (else ...) — and REFUSED since
+          // 2026-08-31, the promotion the old warning promised once the closure
+          // had no sites left. It has none.
           // Only when the then arm was written in the standard (then ...) form:
           // WATX's own `(if COND A B)` shorthand has no (then ...) either and is a
-          // deliberate, documented WATX spelling, not a mistake to warn about.
-          if (sawThenForm) warnPositionalElse(expr, func);
+          // deliberate, documented WATX spelling, not a mistake to refuse.
+          if (sawThenForm) failPositionalElse(expr, func);
           elseExpr = expr[restIdx + 1];
           restIdx++;
         }
