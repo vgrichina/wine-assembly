@@ -11,12 +11,17 @@ function lowerIR(forms, checkResult, options = {}) {
   const lowered = [];
   const { layouts } = checkResult;
   
+  // Byte width of a layout field type. The table is WATX_LAYOUT_FIELD_TYPES in
+  // compiler-stages.js — the same one checkTypes() refuses unknown types against,
+  // so this can no longer answer 4 for a type nobody recognizes and lay the struct
+  // out at the wrong stride. Reaching the throw means the checker admitted a type
+  // this table has no width for: a compiler bug, not a source error.
   function sizeOfType(t) {
-    if (t === 'i32' || t === 'f32') return 4;
-    if (t === 'i64' || t === 'f64') return 8;
-    if (t === 'u8') return 1;
-    if (t?.startsWith && t.startsWith('ptr')) return 4;
-    return 4;
+    const size = watxLayoutFieldSize(t);
+    if (size === null)
+      throw new Error(`WATX internal: no byte width for layout field type '${t}' ` +
+        `(it passed checkTypes but WATX_LAYOUT_FIELD_TYPES has no entry).`);
+    return size;
   }
   
   function lowerForm(form) {
@@ -2271,13 +2276,32 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
   // rather than through six hand-written opcode triples that can drift apart.
   function emitLayoutAccess(bytes, fieldType, isStore, memargOffset) {
     const tbl = WATX_LAYOUT_ACCESS_OPS || (WATX_LAYOUT_ACCESS_OPS = {
-      load:  { f32: [OP.f32_load, 2],  f64: [OP.f64_load, 3],  u8: [OP.i32_load8_u, 0], i64: [OP.i64_load, 3],  i32: [OP.i32_load, 2] },
-      store: { f32: [OP.f32_store, 2], f64: [OP.f64_store, 3], u8: [OP.i32_store8, 0],  i64: [OP.i64_store, 3], i32: [OP.i32_store, 2] },
+      // (opcode, align) per field type. `align` is the log2 memarg the plain
+      // WATX_LOAD_OPS/WATX_STORE_OPS tables below emit for the same instruction,
+      // so a layout accessor stays byte-identical to its hand-spelled twin.
+      // The sub-width integer types are access WIDTHS: each loads and stores
+      // through an i32 on the stack. `s8`/`s16` sign-extend on load; their store
+      // is the same truncating store as the unsigned twin, because a store
+      // discards the high bits either way.
+      load:  { f32: [OP.f32_load, 2],  f64: [OP.f64_load, 3],  i64: [OP.i64_load, 3],  i32: [OP.i32_load, 2],
+               u8: [OP.i32_load8_u, 0], s8: [OP.i32_load8_s, 0], u16: [OP.i32_load16_u, 1], s16: [OP.i32_load16_s, 1] },
+      store: { f32: [OP.f32_store, 2], f64: [OP.f64_store, 3], i64: [OP.i64_store, 3], i32: [OP.i32_store, 2],
+               u8: [OP.i32_store8, 0],  s8: [OP.i32_store8, 0], u16: [OP.i32_store16, 1], s16: [OP.i32_store16, 1] },
     });
     const group = isStore ? tbl.store : tbl.load;
-    // `ptr`/`ptr*` and anything unrecognized are 4-byte i32 accesses, which is
-    // what every one of these paths did before the encoding moved in here.
-    const spec = group[fieldType] || group.i32;
+    // `ptr`/`ptr$Rec`/`weak` are 4-byte i32 fields — the ONLY types that map onto
+    // the i32 group without being spelled i32. Everything else must have its own
+    // entry: this used to be `group[fieldType] || group.i32`, so an unrecognized
+    // type became a silent 4-byte access over a field of some other width. That
+    // fallback is now unreachable — checkTypes() refuses any type outside
+    // WATX_LAYOUT_FIELD_TYPES at the declaration — so reaching the throw means the
+    // two tables have drifted apart, which is a compiler bug rather than bad source.
+    const spec = group[fieldType] ||
+      (typeof fieldType === 'string' && (fieldType === 'weak' || fieldType.startsWith('ptr'))
+        ? group.i32 : null);
+    if (!spec)
+      throw new Error(`WATX internal: no ${isStore ? 'store' : 'load'} opcode for layout field type ` +
+        `'${fieldType}' (it passed checkTypes but emitLayoutAccess has no entry).`);
     bytes.byte(spec[0]);
     bytes.uleb(spec[1]);
     bytes.uleb(memargOffset);

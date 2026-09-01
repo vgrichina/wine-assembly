@@ -150,9 +150,55 @@ function expandMacros(forms) {
 }
 
 // --- Stage 4: Bidirectional Type/Region Checker ---
-// Valid scalar/vector type tokens for a layout field, `let` annotation, `if` block type, etc.
+// Valid scalar/vector type tokens for a `let` annotation, `if` block type, etc.
 // v128 (WASM SIMD) added by the SIMD track 2026-08-12 (shared host-SIMD substrate).
+// NOT the layout-field set — see WATX_LAYOUT_FIELD_TYPES immediately below.
 var VALTYPE_TOKENS = ["i32","i64","f32","f64","v128","u8","ptr","weak"];
+
+// ── The complete set of types a `(layout …)` field may declare ──────────────
+//
+// SINGLE SOURCE OF TRUTH, shared by three consumers that must never disagree:
+//   * checkTypes() below refuses anything outside it, AT THE DECLARATION —
+//     one located error per bad field instead of one per access site;
+//   * lowerIR()'s sizeOfType() (compiler-codegen.js) reads the widths to lay
+//     the struct out;
+//   * emitLayoutAccess() (compiler-codegen.js) keys its load/store op table on
+//     exactly these names, and throws an internal compiler-bug error on a name
+//     this table admits and that one does not.
+// The three files are concatenated in parser → stages → codegen order
+// (tools/watx.js, lib/watx-launcher.js), so codegen sees this binding.
+//
+// WHY IT IS NOT VALTYPE_TOKENS. A layout field is a MEMORY ACCESS OF A FIXED
+// WIDTH, and the two sets differ in both directions:
+//   * `v128` is a real valtype and a legal `let` annotation, but there is no
+//     v128 entry in emitLayoutAccess — a `(field v v128)` was accepted by the
+//     checker and then compiled to a FOUR-byte i32 access over a sixteen-byte
+//     field, with the struct laid out four bytes wide to match. It is refused
+//     here rather than left as an accepted-invalid; add it to both tables (the
+//     0xFD-prefixed v128.load/v128.store, align 4) if a field ever wants it.
+//   * `u8`/`s8`/`u16`/`s16` are access WIDTHS, not valtypes: each loads and
+//     stores as i32 through the sub-width ops. `ptr`/`weak` are 4-byte i32
+//     fields that carry a documentation-only distinction.
+// Any type name starting with `ptr` is a 4-byte pointer field — the `ptr*`
+// spelling of §158 in docs/watx-layout-migration-design.md, which lets a field
+// name the record it points at (`ptr$WndRecord`). That prefix rule is applied
+// explicitly by watxLayoutFieldSize() below, not as a fallback.
+var WATX_LAYOUT_FIELD_TYPES = {
+  i32: 4, ptr: 4, weak: 4,
+  u8: 1, s8: 1, u16: 2, s16: 2,
+  i64: 8, f32: 4, f64: 8,
+};
+// Byte width of a layout field type, or null when the type is not one.
+function watxLayoutFieldSize(t) {
+  if (typeof t !== 'string') return null;
+  if (Object.prototype.hasOwnProperty.call(WATX_LAYOUT_FIELD_TYPES, t)) return WATX_LAYOUT_FIELD_TYPES[t];
+  if (t.indexOf('ptr') === 0) return 4;
+  return null;
+}
+// The set as a sorted list, for a diagnostic that tells the author what to write.
+function watxLayoutFieldTypeList() {
+  return Object.keys(WATX_LAYOUT_FIELD_TYPES).sort().join(', ') + ', ptr<Name>';
+}
 function checkTypes(forms, options = {}) {
   var V = watxValue, T = watxType;
   var A = watxAt, N = watxFormLength, SL = watxFormSlice;
@@ -178,7 +224,16 @@ function checkTypes(forms, options = {}) {
     if (head === "layout") { var name = V(A(form,1)); if (name) { var fields = [];
       for (var i = 2; i < N(form); i++) { var fieldForm=A(form,i); if (Array.isArray(fieldForm) && V(A(fieldForm,0)) === "field") {
         var fname = V(A(fieldForm,1)), ftype = V(A(fieldForm,2)) || "i32";
-        if (fname) { if (VALTYPE_TOKENS.indexOf(ftype)===-1) addWarning("Layout "+name+": field "+fname+" has unknown type "+ftype, fieldForm); var field={ name: fname, type: ftype }; fields.push(field); fieldsByLayout.set(fieldKey(name,fname),field); } } }
+        // An unrecognized field type is a HARD, LOCATED ERROR at the declaration.
+        // It used to be addWarning(), which is not a refusal at all: warnings never
+        // fail the build, and in production mode (collectWarnings:false, the mode
+        // tools/watx-closure.js builds the emulator with) addWarning returns
+        // immediately and the finding was not even printed. The field then reached
+        // emitLayoutAccess, whose op table fell back to the i32 group, and the
+        // access was silently four bytes wide over a field of some other size.
+        // Refusing at the declaration rather than at the access is deliberate: one
+        // diagnostic naming the field, not one per call site.
+        if (fname) { if (watxLayoutFieldSize(ftype)===null) addError("Layout "+name+": field "+fname+" has unknown field type '"+ftype+"'. Layout field types are: "+watxLayoutFieldTypeList()+".", fieldForm); var field={ name: fname, type: ftype }; fields.push(field); fieldsByLayout.set(fieldKey(name,fname),field); } } }
       if (layouts.has(name)) addWarning("Duplicate layout: "+name, form); layouts.set(name, fields); } }
     if (head === "func") {
       var cursor = 1;
@@ -224,7 +279,12 @@ function checkTypes(forms, options = {}) {
     if (head === "with-region") { var rn = V(A(form,1)); if(rn) regions.add(rn); }
   }
   function stackType(t) { if(typeof t==="number"){if(t===0x7f)return"i32";if(t===0x7e)return"i64";if(t===0x7d)return"f32";if(t===0x7c)return"f64";if(t===0x7b)return"v128";}
-    if(t==="ptr"||t==="weak"||t==="u8"||t==="region-handle")return"i32"; return t||"i32"; }
+    // The sub-width layout field types (u8/s8/u16/s16) and the pointer-ish ones
+    // all sit in an i32 on the stack — the sub-width load/store ops widen and
+    // truncate. `ptr` is prefix-matched for the `ptr$Rec` spelling that names
+    // the pointee (see WATX_LAYOUT_FIELD_TYPES).
+    if(t==="weak"||t==="u8"||t==="s8"||t==="u16"||t==="s16"||t==="region-handle")return"i32";
+    if(typeof t==="string"&&t.indexOf("ptr")===0)return"i32"; return t||"i32"; }
   // SIMD (0xFD-prefix) op-name shape prefixes — used to identify v128-producing ops
   // without enumerating every opcode name. Scalar-returning SIMD ops (extract_lane_*,
   // any_true, all_true) are handled explicitly BEFORE this fallback returns 'v128'.

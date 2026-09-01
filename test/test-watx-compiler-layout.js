@@ -288,6 +288,136 @@ check('.memarg on a non-accessing layout op is a hard error', () => {
   }
 });
 
+// ── 3g. The sub-width field types and their hand-spelled twins ─────────────
+// u8 was the only sub-width type the emitter knew; every other name fell through
+// to the i32 op group, so `(field w u16)` was a FOUR-byte access over a two-byte
+// field and the struct was laid out four bytes wide to match. u16/s16/s8 are now
+// declared types with their own opcodes, and the claim is the same one the whole
+// migration rests on: the accessor is sugar for the hand-spelled instruction,
+// byte for byte, memarg included (align 1 for the 16-bit ops, 0 for the 8-bit).
+const WIDTHS = `
+(layout W
+  (field b0 u8)
+  (field b1 s8)
+  (field h0 u16)
+  (field h1 s16)
+  (field w0 i32))`;
+check('sub-width accessors lower to the hand-spelled bytes', () => {
+  const bin = build(`${WIDTHS}
+(memory $m 1)
+(func $a_hand  (param $p i32) (result i32) (i32.load8_u (local.get $p)))
+(func $a_field (param $p i32) (result i32) (load.field W b0 (local.get $p)))
+(func $b_hand  (param $p i32) (result i32) (i32.load8_s (i32.add (local.get $p) (i32.const 1))))
+(func $b_field (param $p i32) (result i32) (load.field W b1 (local.get $p)))
+(func $c_hand  (param $p i32) (result i32) (i32.load16_u (i32.add (local.get $p) (i32.const 2))))
+(func $c_field (param $p i32) (result i32) (load.field W h0 (local.get $p)))
+(func $d_hand  (param $p i32) (result i32) (i32.load16_s (i32.add (local.get $p) (i32.const 4))))
+(func $d_field (param $p i32) (result i32) (load.field W h1 (local.get $p)))
+(func $e_hand  (param $p i32) (param $v i32) (i32.store16 (i32.add (local.get $p) (i32.const 2)) (local.get $v)))
+(func $e_field (param $p i32) (param $v i32) (store.field W h0 (local.get $p) (local.get $v)))
+(func $f_hand  (param $p i32) (param $v i32) (i32.store16 (i32.add (local.get $p) (i32.const 4)) (local.get $v)))
+(func $f_field (param $p i32) (param $v i32) (store.field W h1 (local.get $p) (local.get $v)))
+(func $g_hand  (param $p i32) (param $v i32) (i32.store8 (i32.add (local.get $p) (i32.const 1)) (local.get $v)))
+(func $g_field (param $p i32) (param $v i32) (store.field W b1 (local.get $p) (local.get $v)))
+(func $h_hand  (param $p i32) (result i32) (i32.load16_u offset=2 (local.get $p)))
+(func $h_field (param $p i32) (result i32) (load.field.memarg W h0 (local.get $p)))
+(func $i_hand  (param $p i32) (param $v i32) (i32.store16 offset=4 (local.get $p) (local.get $v)))
+(func $i_field (param $p i32) (param $v i32) (store.field.memarg W h1 (local.get $p) (local.get $v)))
+(export "a" (func $a_field))`);
+  const bodies = codeBodies(bin);
+  const labels = ['load u8', 'load s8', 'load u16', 'load s16', 'store u16', 'store s16',
+                  'store s8', 'load.memarg u16', 'store.memarg s16'];
+  assert.strictEqual(bodies.length, labels.length * 2, `expected ${labels.length * 2} bodies, got ${bodies.length}`);
+  for (let k = 0; k < labels.length; k++) {
+    const hand = bodies[k * 2], sugar = bodies[k * 2 + 1];
+    assert.ok(hand.equals(sugar),
+      `${labels[k]} is NOT byte-identical to its hand-spelled twin\n` +
+      `         hand=${hand.toString('hex')}\n         watx=${sugar.toString('hex')}`);
+  }
+});
+
+// The widths also have to be REAL: the struct must be laid out at 1/1/2/2/4 and
+// the accesses must touch exactly those bytes. Byte identity above says the two
+// spellings agree; this says the layout arithmetic agrees with them.
+check('sub-width fields are laid out and accessed at their true widths', () => {
+  const bin = build(`${WIDTHS}
+(memory $m 1)
+(func $sz (result i32) (size-of W))
+(func $off_w0 (result i32) (offset-of W w0))
+(func $set_h0 (param $p i32) (param $v i32) (store.field W h0 (local.get $p) (local.get $v)))
+(func $get_h0 (param $p i32) (result i32) (load.field W h0 (local.get $p)))
+(func $get_h1 (param $p i32) (result i32) (load.field W h1 (local.get $p)))
+(func $set_h1 (param $p i32) (param $v i32) (store.field W h1 (local.get $p) (local.get $v)))
+(func $get_b1 (param $p i32) (result i32) (load.field W b1 (local.get $p)))
+(func $set_b1 (param $p i32) (param $v i32) (store.field W b1 (local.get $p) (local.get $v)))
+(func $get_w0 (param $p i32) (result i32) (load.field W w0 (local.get $p)))
+(export "sz" (func $sz)) (export "off_w0" (func $off_w0))
+(export "set_h0" (func $set_h0)) (export "get_h0" (func $get_h0))
+(export "set_h1" (func $set_h1)) (export "get_h1" (func $get_h1))
+(export "set_b1" (func $set_b1)) (export "get_b1" (func $get_b1))
+(export "get_w0" (func $get_w0)) (export "mem" (memory $m))`);
+  const ex = new WebAssembly.Instance(new WebAssembly.Module(bin), {}).exports;
+  assert.strictEqual(ex.sz(), 10, 'size-of W should be 1+1+2+2+4 = 10');
+  assert.strictEqual(ex.off_w0(), 6, 'w0 should sit at +6');
+  const u8 = new Uint8Array(ex.mem.buffer);
+  // A 16-bit store must write exactly two bytes and leave the next field alone.
+  ex.set_h1(64, 0x1234);            // h1 is +4..+5
+  ex.set_h0(64, 0xBEEF);            // h0 is +2..+3
+  assert.strictEqual(ex.get_h0(64), 0xBEEF, 'u16 load did not read back its own store');
+  assert.strictEqual(ex.get_h1(64), 0x1234, 'the u16 store at +2 bled into the field at +4');
+  assert.strictEqual(u8[64 + 6], 0, 'a 16-bit field access touched w0 at +6');
+  // Signedness is the whole difference between s16 and u16 on load.
+  ex.set_h0(96, 0xFFFF); ex.set_h1(96, 0xFFFF);
+  assert.strictEqual(ex.get_h0(96), 0xFFFF, 'u16 load must zero-extend');
+  assert.strictEqual(ex.get_h1(96), -1, 's16 load must sign-extend');
+  ex.set_b1(96, 0x80);
+  assert.strictEqual(ex.get_b1(96), -128, 's8 load must sign-extend');
+  // And an oversized value truncates rather than spilling into the neighbour.
+  ex.set_h0(128, 0x12345678);
+  assert.strictEqual(ex.get_h0(128), 0x5678, 'u16 store must truncate to two bytes');
+  assert.strictEqual(ex.get_w0(128), 0, 'the truncated high half landed outside the field');
+});
+
+// ── 3h. An unrecognized field type is REFUSED at the declaration ───────────
+// The refusal is the point of the type list. Before it, emitLayoutAccess read
+// `group[fieldType] || group.i32`, so any name the table did not know became a
+// four-byte i32 access — the accepted-invalid this project kills on sight. The
+// diagnostic has to be at the DECLARATION (one error, naming the field) rather
+// than at each access, and it has to carry a line: an error with no location is
+// half a diagnostic.
+check('an unknown field type is a located refusal naming field, type and the set', () => {
+  for (const [what, decl] of [
+    ['scalar field',      '(layout Bad (field a i32) (field b u24))'],
+    ['array field',       '(layout Bad (field a i32) (field b u24 4))'],
+    ['a real valtype that is not a field type', '(layout Bad (field a i32) (field b v128))'],
+  ]) {
+    const out = compile(`${decl}\n(memory $m 1)\n(func $z (result i32) (size-of Bad))\n(export "z" (func $z))`,
+      new Map(), PROD);
+    assert.ok(!out.success, `${what}: expected a refusal`);
+    const msg = out.error || '';
+    assert.ok(/\bb\b/.test(msg), `${what}: error should name the field, got: ${msg}`);
+    assert.ok(/u24|v128/.test(msg), `${what}: error should name the offending type, got: ${msg}`);
+    assert.ok(/u16/.test(msg) && /f64/.test(msg),
+      `${what}: error should list the supported types, got: ${msg}`);
+    assert.ok((out.errorLine || 0) > 0, `${what}: refusal has no line number`);
+  }
+});
+
+// The boundary half: every name in the set must still be accepted. A rule that
+// refused everything would pass the check above.
+check('every declared field type is accepted, and ptr$Rec names its pointee', () => {
+  const out = compile(
+    `(layout All (field a i32) (field b i64) (field c f32) (field d f64)
+       (field e u8) (field f s8) (field g u16) (field h s16)
+       (field i ptr) (field j weak) (field k ptr$All))\n` +
+    `(memory $m 1)\n(func $z (result i32) (size-of All))\n(export "z" (func $z))`,
+    new Map(), PROD);
+  assert.ok(out.success, `every declared field type should compile: ${out.error}`);
+  const ex = new WebAssembly.Instance(new WebAssembly.Module(Buffer.from(out.wasmBinary)), {}).exports;
+  // 4+8+4+8 +1+1+2+2 +4+4+4
+  assert.strictEqual(ex.z(), 42, 'the declared widths did not lay the struct out as declared');
+});
+
 // ── 4. The accessors actually address the right bytes ──────────────────────
 // Byte identity says the two spellings agree; this says they are both RIGHT.
 check('fields round-trip through memory at their declared offsets', () => {

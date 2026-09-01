@@ -17,6 +17,80 @@ Rules:
 - Every compiler change lands with a minimal regression in one of the
   `test/watx-compiler-*.test.js` suites.
 
+## 2026-08-31 — a layout field type is a closed set, and u16/s16/s8 are in it
+
+Manifest digest: `c41cd76154c64d5f8630d3fc7e36cb46937b9d4f3abf2acdbb7decc8b239d669`
+
+`compiler-stages.js`, `compiler-codegen.js`.
+
+`emitLayoutAccess` — the shared encoder behind all six accessors, added in the
+memarg entry below — ended with
+
+```js
+    const spec = group[fieldType] || group.i32;
+```
+
+so a field type its table did not know became a **four-byte i32 access**, and
+`lowerIR`'s `sizeOfType` answered `4` for the same unknown type, laying the
+struct out to match. Two silently wrong things that agreed with each other: a
+hypothetical `(field width u16)` would have compiled clean, read four bytes over
+a two-byte field, and put every later field at the wrong offset.
+
+**Where the hole actually was.** The parser *did* check the type — but with
+`addWarning`, and a warning is not a refusal. Worse, `addWarning` returns
+immediately when `collectWarnings` is false, which is exactly how
+`tools/watx-closure.js` builds the emulator, so in the production configuration
+the finding was not even printed. And the list it checked against was
+`VALTYPE_TOKENS`, the set that types `let` bindings and block results — a
+different question. It admitted `v128`, a real valtype with **no** entry in
+`emitLayoutAccess`, so a `(field v v128)` was accepted by the checker and then
+compiled to a 4-byte access over sixteen declared bytes.
+
+So both halves were wrong, and the fix is one table:
+
+- `WATX_LAYOUT_FIELD_TYPES` in `compiler-stages.js` is now the single source of
+  truth for what a `(layout …)` field may declare — name → byte width — with
+  `watxLayoutFieldSize()` also applying the `ptr*` prefix rule of §158 of the
+  design doc (`ptr`, `ptr$WndRecord`, … are 4-byte fields). The three files are
+  concatenated parser → stages → codegen, so codegen sees the binding.
+- The checker refuses anything outside it with a **located hard error at the
+  declaration** — one diagnostic per bad field, naming the layout, the field,
+  the offending type and the supported set, rather than one per access site:
+
+  ```
+  Layout 'DxObject': field 'width' has unknown field type 'u24'.
+  Layout field types are: f32, f64, i32, i64, ptr, s16, s8, u16, u8, weak, ptr<Name>.
+  ```
+
+- The two fallbacks in codegen become **internal compiler-bug guards** that
+  `throw`, not user-facing refusals: reaching either now means the checker
+  admitted a type one of the tables has no entry for, i.e. the tables drifted.
+  `v128` is refused as a field type until both tables gain an entry for the
+  0xFD-prefixed `v128.load`/`v128.store`.
+
+**`u16`, `s16` and `s8` are added to the set**, with their own opcodes
+(`i32.load16_u` / `i32.load16_s` / `i32.load8_s`, align 1 for the 16-bit pair,
+and the truncating `i32.store16` / `i32.store8` for both signednesses — a store
+discards the high bits either way). This is not speculative generality: the
+DxObject completion sweep found real 16-bit fields at `+12..+18`
+(width/height/bpp/pitch) that had to be declined and spelled `u8[2]` because the
+type did not exist. They are now declarable, which unlocks those sites for a
+later wave. The alignment values are the ones `WATX_LOAD_OPS`/`WATX_STORE_OPS`
+already emit for the same instructions, so the byte-identity oracle holds for
+the new types too — asserted directly in `test/test-watx-compiler-layout.js`
+against hand-spelled twins, add-form and `.memarg` alike.
+
+Coverage: four new pairs in `tools/watx-rejection-pairs.js` (unknown scalar
+type, unknown array-field type, `v128`-is-a-valtype-but-not-a-field-type, and
+the accepting boundary), 113/113 pairs holding; four new checks in
+`test/test-watx-compiler-layout.js` (byte identity for the sub-width accessors,
+true-width layout and sign/truncation behaviour through a live instance, the
+located refusal, and every declared type accepted). `build/wine-assembly.wasm`
+is **byte-identical** across the change —
+`6378dc30c8c1a82c8486e979816dec3795bb3c7b3a48218b5265a461a8259929` before and
+after, in a detached worktree at HEAD — as no source declares a layout field
+outside the previously-working set.
+
 ## 2026-08-31 — a layout access can put its field offset in the memarg
 
 Manifest digest: `ae2df8439fb10bd2fea4d25698b98ac56fb4f77fd973a87f9b5c4fc0e512e042`

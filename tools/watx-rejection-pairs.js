@@ -543,6 +543,37 @@ pair('layout', 'an explicit stride is at least the element size',
   '(layout R3 (field v f64 2 16))\n(func $z (result i32) (size-of R3))\n(export "z" (func $z))',
   '(layout R3 (field v f64 2 4))\n(func $z (result i32) (size-of R3))\n(export "z" (func $z))',
   'stride');
+// ── Field TYPES (WATX_LAYOUT_FIELD_TYPES, compiler-stages.js) ─────────────
+// A layout field is a memory access of a fixed width, so the type name decides
+// both the struct's stride and the opcode. emitLayoutAccess used to end
+// `group[fieldType] || group.i32`: any name it did not know became a four-byte
+// i32 access, and sizeOfType answered 4 to match, so `(field w u16)` was two
+// silently wrong things that agreed with each other. The refusal is at the
+// DECLARATION — one diagnostic naming the field, not one per access site.
+pair('layout', 'a field type outside the declared set is refused',
+  '(layout T1 (field a i32) (field b u16))\n(func $z (result i32) (size-of T1))\n(export "z" (func $z))',
+  '(layout T1 (field a i32) (field b u24))\n(func $z (result i32) (size-of T1))\n(export "z" (func $z))',
+  'unknown field type');
+pair('layout', 'an ARRAY field with an unknown type is refused too',
+  '(layout T2 (field a i32) (field b s16 4))\n(func $z (result i32) (size-of T2))\n(export "z" (func $z))',
+  '(layout T2 (field a i32) (field b s24 4))\n(func $z (result i32) (size-of T2))\n(export "z" (func $z))',
+  'unknown field type');
+// v128 is a real valtype and a legal `let` annotation, which is exactly why it
+// needs its own pair: the checker's valtype list admitted it, and there is no
+// v128 entry in emitLayoutAccess, so a v128 field compiled to a 4-byte i32
+// access over 16 declared bytes. Refused until both tables gain an entry.
+pair('layout', 'v128 is a valtype but not a field type',
+  '(func $z (result i32) (let $v v128 (v128.const i32x4 0 0 0 0) (i32.const 0)))\n(export "z" (func $z))',
+  '(layout T3 (field v v128))\n(func $z (result i32) (size-of T3))\n(export "z" (func $z))',
+  'unknown field type');
+// The set's own boundary: the sub-width types must be ACCEPTED and must lay the
+// struct out at their true widths, or the refusal above is just a wall.
+pair('layout', 'the sub-width field types lay the struct out at their true widths',
+  '(layout T4 (field b u8) (field c s8) (field d u16) (field e s16))\n' +
+    '(func $z (result i32) (i32.sub (size-of T4) (i32.const 6)))\n(export "z" (func $z))',
+  '(layout T4 (field b u8) (field c s8) (field d u16) (field e s16))\n' +
+    '(func $z (result i32) (offset-of T4 nope))\n(export "z" (func $z))',
+  'Unknown field');
 pair('layout', 'load.field-elem names a field the layout has',
   `${OK_LAYOUT}\n(func $g (param $p i32) (result i32) (load.field-elem Rec ports (local.get $p) (i32.const 1)))\n(export "g" (func $g))`,
   `${OK_LAYOUT}\n(func $g (param $p i32) (result i32) (load.field-elem Rec porz (local.get $p) (i32.const 1)))\n(export "g" (func $g))`,

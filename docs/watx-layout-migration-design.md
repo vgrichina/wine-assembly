@@ -155,13 +155,28 @@ handlers around lines 3795-4100.
 
 Offsets are assigned by running total, **with no alignment padding inserted** —
 the declaration order *is* the layout, which is exactly right for describing
-records that already exist. Field types are `i32 | i64 | f32 | f64 | u8 | ptr*`
-(`ptr` is 4 bytes). Bad count/stride is a hard compile error, and so is an
+records that already exist. Field types are
+`i32 | i64 | f32 | f64 | u8 | s8 | u16 | s16 | weak | ptr*` (`ptr`, `weak` and
+`ptr$Rec` are 4 bytes). Bad count/stride is a hard compile error, and so is an
 unknown layout or field name — the codegen comments record that these used to
 default silently to offset 0 / size 16, which turned a typo into a wild access.
 
-**There is no `u16` and no signed byte.** 1,258 sites in the tree are 16-bit or
-`load8_s` accesses and cannot be expressed by a field today.
+**The type set is CLOSED, and refused at the declaration.** Anything outside the
+list above is a located hard error naming the layout, the field, the type and
+the set. It was not always: the encoder ended `group[fieldType] || group.i32`, so
+an unrecognized name became a 4-byte access and `sizeOfType` laid the struct out
+4 bytes wide to match — see the 2026-08-31 field-type entry in
+[tools/watx-src/CHANGELOG.md](../tools/watx-src/CHANGELOG.md). Note that `v128`
+is a legal valtype and *not* a field type: there is no v128 entry in the encoder,
+so it is refused rather than silently narrowed to i32.
+
+**`u16` and the signed widths are now expressible.** The 1,258 16-bit and
+`load8_s` sites this section once parked are declarable as `u16`/`s16`/`s8` —
+including DxObject's `+12..+18` width/height/bpp/pitch, which the completion
+sweep had to decline and spell `u8[2]`. Each lowers to its own sub-width opcode
+(`i32.load16_u`/`i32.load16_s`/`i32.load8_s`, and the truncating
+`i32.store16`/`i32.store8`) at the alignment the hand-spelled instruction
+already uses, so those sites join a byte-identical wave like any other.
 
 ### 3.2 Byte identity — MEASURED
 
