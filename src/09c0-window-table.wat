@@ -8,9 +8,34 @@
   ;; a file named 09c-help.wat, which the CLAUDE.md file table had to apologize for.
   ;; ============================================================
 
-  ;; Address of window record N: WND_RECORDS + slot * 24
+  ;; The per-window record. 256 of these live in $WND_RECORDS (0x7000..0x8800),
+  ;; one per slot; $wnd_record_addr below is the only thing that computes one's
+  ;; address, so this declaration is the single statement of where its fields
+  ;; are. See docs/watx-layout-migration-design.md §5.2.
+  ;;
+  ;; MEANINGS, which a layout cannot carry:
+  ;;   hwnd       0 means the slot is EMPTY. It is also the publication word:
+  ;;              $wnd_table_set builds the record while it is still invisible
+  ;;              and stores hwnd last, and readers scan it with i32.atomic.load,
+  ;;              which is why the offset-0 accesses are not all load.field.
+  ;;   userdata   GWL_USERDATA.
+  ;;   state_ptr  heap pointer to the per-class WndState, 0 if the class has none.
+  ;;
+  ;; Most per-window state is NOT here: it lives in ~20 PARALLEL per-slot tables
+  ;; ($WND_Z_ORDER_TABLE, $WND_HINSTANCE_TABLE, $MENU_DATA_TABLE, ...), each with
+  ;; its own stride and its own reset. A layout does not describe that shape and
+  ;; making it would be a redesign, not a migration — deliberately out of scope.
+  (layout WndRecord
+    (field hwnd      i32)     ;; +0
+    (field wndproc   i32)     ;; +4
+    (field parent    i32)     ;; +8
+    (field userdata  i32)     ;; +12
+    (field style     i32)     ;; +16
+    (field state_ptr i32))    ;; +20, record ends at +24
+
+  ;; Address of window record N: WND_RECORDS + slot * size-of WndRecord
   (func $wnd_record_addr (param $slot i32) (result i32)
-    (i32.add (global.get $WND_RECORDS) (i32.mul (local.get $slot) (i32.const 24))))
+    (i32.add (global.get $WND_RECORDS) (i32.mul (local.get $slot) (size-of WndRecord))))
 
   (func $wnd_thread_addr (param $slot i32) (result i32)
     (i32.add (global.get $WND_THREAD_TABLE) (i32.mul (local.get $slot) (i32.const 4))))
@@ -424,11 +449,11 @@
     (if (local.get $hwnd) (then
       (local.set $hint (global.get $wnd_find_hint0))
       (if (i32.ge_s (local.get $hint) (i32.const 0)) (then
-        (if (i32.eq (i32.load (call $wnd_record_addr (local.get $hint))) (local.get $hwnd))
+        (if (i32.eq (load.field WndRecord hwnd (call $wnd_record_addr (local.get $hint))) (local.get $hwnd))
           (then (return (local.get $hint))))))
       (local.set $hint (global.get $wnd_find_hint1))
       (if (i32.ge_s (local.get $hint) (i32.const 0)) (then
-        (if (i32.eq (i32.load (call $wnd_record_addr (local.get $hint))) (local.get $hwnd))
+        (if (i32.eq (load.field WndRecord hwnd (call $wnd_record_addr (local.get $hint))) (local.get $hwnd))
           (then
             ;; Promote: the two windows swap roles as painting moves between a
             ;; parent and its children, and the hot one should stay in hint0.
@@ -823,7 +848,7 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (if (i32.and
-            (i32.ne (i32.load (call $wnd_record_addr (local.get $i))) (i32.const 0))
+            (i32.ne (load.field WndRecord hwnd (call $wnd_record_addr (local.get $i))) (i32.const 0))
             (i32.eq (i32.load8_u (i32.add (global.get $WND_CLASS_SLOT_TABLE) (local.get $i)))
                     (local.get $slot)))
         (then
