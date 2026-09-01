@@ -3163,8 +3163,12 @@
                   (i32.shl (local.get $arg2) (i32.const 16)))))))))
     (global.set $eax (i32.const 0))
     (local.set $vtbl (call $gl32 (local.get $arg0)))
-    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_DDRAW2))
-      (then (global.set $esp (i32.add (global.get $esp) (i32.const 28)))) ;; v2: this + 5 args
+    (if (i32.or
+          (i32.eq (local.get $vtbl) (global.get $DX_VTBL_DDRAW2))
+          (i32.or
+            (i32.eq (local.get $vtbl) (global.get $DX_VTBL_DDRAW4))
+            (i32.eq (local.get $vtbl) (global.get $DX_VTBL_DDRAW7))))
+      (then (global.set $esp (i32.add (global.get $esp) (i32.const 28)))) ;; v2+: this + 5 args
       (else (global.set $esp (i32.add (global.get $esp) (i32.const 20)))))) ;; v1: this + 3 args
 
   ;; WaitForVerticalBlank — no-op

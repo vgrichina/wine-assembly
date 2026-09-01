@@ -16,6 +16,13 @@ const extraWat = String.raw`
       (i32.const 0) (i32.const 0))
     (global.get $eax))
   (func (export "test_ddrawex_esp") (result i32) (global.get $esp))
+  (func (export "test_ddraw_set_display_mode_esp") (param $obj i32) (result i32)
+    (global.set $esp (i32.const 0x30000))
+    (call $handle_IDirectDraw_SetDisplayMode
+      (local.get $obj)
+      (i32.const 640) (i32.const 480) (i32.const 8)
+      (i32.const 0) (i32.const 0))
+    (global.get $esp))
 `;
 
 (async () => {
@@ -49,6 +56,8 @@ const extraWat = String.raw`
     'IDirectDraw7 includes its EvaluateMode tail at slot 29');
   assert.strictEqual(wat.test_ddrawex_esp() >>> 0, 0x30014,
     'DirectDrawCreateEx pops its return address and four stdcall arguments');
+  assert.strictEqual(wat.test_ddraw_set_display_mode_esp(object) >>> 0, 0x3001c,
+    'IDirectDraw7 SetDisplayMode should pop its return address and five stdcall arguments');
 
   wat.guest_write32(out, 0xdeadbeef);
   wat.guest_write32(iid, 0x12345678);
