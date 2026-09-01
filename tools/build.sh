@@ -152,9 +152,24 @@ node tools/layout-migrate.js --file=src/09d-winsock.wat --layout=VSock \
 # there and the width mismatch is the only thing telling the two readings apart.
 # Widening them to `load.field width` would read two fields as one and label a
 # capacity as a width — byte-identically, so the oracle would not catch it.
+#
+# A GATE'S BLIND SPOT IS NOT ITS FILE LIST. This gate has always named
+# 09a8-handlers-directx.wat, and nine raw sites in it went unseen for months
+# anyway: $handle_IDirectAnimationDAView_DirectSlot reaches the record through
+# locals called $view_entry and $surface_entry, and base recognition is an
+# EXACT-STRING set — `surf_entry` is in --base-local, `surface_entry` is not,
+# and one character was the whole difference. --base-call could not rescue it
+# either, because the call result is stored into a local before it is used. So
+# a gate reporting exit 0 over a file it is nominally covering says only that
+# it recognized no base there, which is indistinguishable from finding nothing
+# wrong. Both locals are assigned SOLELY from $dx_from_this, so provenance is
+# derivable and --base-local-from-call is the right instrument — not a wider
+# --base-local, which the WndRecord note below explains is how you get seven
+# sites labelled as fields of a record they are not in.
 DX_LAYOUT_ARGS=(--file=src/09a8-handlers-directx.wat,src/09aa-handlers-d3dim.wat,src/09ab-handlers-d3dim-core.wat,src/09ad-handlers-d3d9.wat,src/09a7-handlers-dispatch.wat
   --layout=DxObject --layout-from=src/09a8-handlers-directx.wat
   --base-local=entry,dst_entry,src_entry,back_entry,parent,surf_entry,pal_entry
+  --base-local-from-call=view_entry,surface_entry
   --base-call='$dx_from_this'
   --skip-func='$d3dim_stateblock_create,$d3dim_stateblock_apply,$d3dim_stateblock_capture,$d3dim_stateblock_delete,$d3dim_lights_refresh,$message_table_lookup'
   --memarg)

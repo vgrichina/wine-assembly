@@ -7981,7 +7981,7 @@
     ;; SetDirectDrawSurface(surface) binds the 800x600 offscreen surface which
     ;; the saver later GetDCs and StretchBlts to its 640x480 window.
     (if (i32.eq (local.get $slot) (i32.const 17))
-      (then (i32.store (i32.add (local.get $view_entry) (i32.const 8)) (local.get $arg1))))
+      (then (store.field DxObject misc0 (local.get $view_entry) (local.get $arg1))))
     ;; StartModel(image, sound, ...) supplies the roots of the composed graph.
     ;; Preserve the first imported image identity propagated through either
     ;; root; host timeline selection advances across every resolved frame.
@@ -7990,24 +7990,33 @@
         (local.set $image_id (call $da_node_image_id (local.get $arg1)))
         (if (i32.eqz (local.get $image_id))
           (then (local.set $image_id (call $da_node_image_id (local.get $arg2)))))
+        ;; RAW ON PURPOSE, and the gate agrees. +12 is a UNION: width+height for
+        ;; a surface, one whole dword for everything else — here the DAView's
+        ;; image id. `store.field DxObject width` would write two fields as one
+        ;; and label an image id a width, byte-identically, so no oracle would
+        ;; catch it. The access WIDTH is the only thing telling the arms apart,
+        ;; and layout-migrate declines an i32 op against a u16 field for exactly
+        ;; that reason. See the +12/+16 note at the head of this file.
         (i32.store (i32.add (local.get $view_entry) (i32.const 12)) (local.get $image_id))))
     ;; Tick(time, changed) evaluates the prepared image timeline directly into
     ;; the canonical DirectDraw DIB. The guest's following StretchBlt remains
     ;; responsible for presentation, exactly as in the original saver.
     (if (i32.eq (local.get $slot) (i32.const 8))
       (then
-        (local.set $surface_guest (i32.load (i32.add (local.get $view_entry) (i32.const 8))))
+        (local.set $surface_guest (load.field DxObject misc0 (local.get $view_entry)))
         (if (local.get $surface_guest)
           (then
             (local.set $surface_entry (call $dx_from_this (local.get $surface_guest)))
             (local.set $rendered (call $host_da_image_blit
+              ;; The DAView arm of +12 again — the image id stored above, read
+              ;; back whole. Raw for the same reason, not an oversight.
               (i32.load (i32.add (local.get $view_entry) (i32.const 12)))
               (local.get $arg1) (local.get $arg2)
-              (i32.load (i32.add (local.get $surface_entry) (i32.const 20)))
-              (i32.load16_u (i32.add (local.get $surface_entry) (i32.const 12)))
-              (i32.load16_u (i32.add (local.get $surface_entry) (i32.const 14)))
-              (i32.load16_u (i32.add (local.get $surface_entry) (i32.const 18)))
-              (i32.load16_u (i32.add (local.get $surface_entry) (i32.const 16)))))))
+              (load.field DxObject misc1 (local.get $surface_entry))
+              (load.field DxObject width (local.get $surface_entry))
+              (load.field DxObject height (local.get $surface_entry))
+              (load.field DxObject pitch (local.get $surface_entry))
+              (load.field DxObject bpp (local.get $surface_entry))))))
         (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (local.get $rendered))))))
     (global.set $eax (i32.const 0))
     (global.set $esp
