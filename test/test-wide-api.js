@@ -118,6 +118,10 @@ async function main() {
   const STATIC_SYS_DLL_HANDLE_BASE = 0x5D110000;
   check('GetModuleHandleA recognizes statically dispatched OLE32',
     (e.test_call_GetModuleHandleA(ole32A) >>> 0) === STATIC_SYS_DLL_HANDLE_BASE);
+  check('GetModuleHandleA recognizes statically dispatched USER32',
+    (e.test_call_GetModuleHandleA(writeAscii('USER32.DLL')) >>> 0) === STATIC_SYS_DLL_HANDLE_BASE + 1);
+  check('GetModuleHandleA recognizes statically dispatched COMCTL32',
+    (e.test_call_GetModuleHandleA(writeAscii('comctl32.dll')) >>> 0) === STATIC_SYS_DLL_HANDLE_BASE + 2);
   const oleExpDir = e.guest_alloc(32);
   const oleDllName = writeAscii('OLE32.DLL');
   const oleLoadAddr = oleExpDir - 0x1800;

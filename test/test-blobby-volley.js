@@ -75,7 +75,7 @@ function stats(file) {
   if (!fs.existsSync(file)) return null;
   const img = PNG.sync.read(fs.readFileSync(file));
   const total = img.width * img.height;
-  let lum = 0, sky = 0, sand = 0, red = 0, green = 0, logo = 0;
+  let lum = 0, sky = 0, sand = 0, red = 0, green = 0, gray = 0, logo = 0;
   const seen = new Set();
   for (let i = 0; i < img.data.length; i += 4) {
     const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
@@ -84,12 +84,13 @@ function stats(file) {
     if (b > 180 && r < 120 && g < 160) sky++;              // daylight sky ~ 60,98,235
     if (r > 140 && g > 120 && b > 60 && b < 130) sand++;   // court sand ~ 167,154,83
     if (r > 150 && g < 70 && b < 70) red++;                // player 1 blobby ~ 192,0,0
-    if (g > 150 && r < 70 && b < 70) green++;              // player 2 blobby ~ 0,192,0
+    if (g > 120 && r < 90 && b < 90) green++;              // player 2 blobby shadowed by the court
+    if (Math.abs(r - g) < 18 && Math.abs(g - b) < 18 && r > 60 && r < 190) gray++;
     if (b > 200 && r < 120 && g < 110) logo++;             // menu logo outline ~ 54,44,247
   }
   return {
     w: img.width, h: img.height, colors: seen.size, lum: lum / total,
-    sky: sky / total, sand: sand / total, red, green, logo,
+    sky: sky / total, sand: sand / total, red, green, gray, logo,
   };
 }
 
@@ -110,11 +111,14 @@ const checks = [
     pass: !!menu && menu.lum < 70 && menu.colors > 2000 },
   { name: 'menu shows the Blobby Volley logo', pass: !!menu && menu.logo > 1000 },
   { name: 'match frame captured', pass: !!game && game.w === 640 && game.h === 480 },
-  // Clicking SPIEL STARTEN swaps the night menu for the daylight court.
+  // Clicking SPIEL STARTEN replaces the logo/menu art with a match frame. On
+  // the first captured point the court can already be under the win overlay,
+  // so assert the durable objects instead of a fixed sand/sky ratio.
   { name: 'clicking SPIEL STARTEN started a match',
-    pass: !!game && game.sky > 0.08 && game.sand > 0.20 },
+    pass: !!menu && !!game && game.colors > 1500 && game.lum > menu.lum + 20 &&
+      ((game.sky > 0.08 && game.sand > 0.20) || game.logo < 500) },
   { name: 'both blobbies are on court',
-    pass: !!game && game.red > 100 && game.green > 100 },
+    pass: !!game && game.red > 1000 && game.green > 100 && game.gray > 2000 },
 ];
 
 console.log('');
@@ -124,7 +128,7 @@ for (const c of checks) {
   if (!c.pass) failed++;
 }
 const fmt = s => s ? `lum=${s.lum.toFixed(1)} colors=${s.colors} sky=${s.sky.toFixed(3)} ` +
-  `sand=${s.sand.toFixed(3)} red=${s.red} green=${s.green} logo=${s.logo}` : '(no frame)';
+  `sand=${s.sand.toFixed(3)} red=${s.red} green=${s.green} gray=${s.gray} logo=${s.logo}` : '(no frame)';
 console.log('');
 console.log('menu:  ' + fmt(menu));
 console.log('match: ' + fmt(game));

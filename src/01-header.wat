@@ -1012,10 +1012,10 @@
   ;; ORDER MATTERS: everything from index $STATIC_SYS_DLL_FIRST_DX onwards is
   ;; part of DirectX and answers the file-version query with the DirectX
   ;; version below, so new non-DirectX names belong before "dplayx".
-  (data (region.addr $RESERVED_PAGE_STRINGS 0x50) "ole32\00dplayx\00ddraw\00dsound\00d3drm\00\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x228) "ole32\00user32\00comctl32\00dplayx\00ddraw\00dsound\00d3drm\00\00")
   ;; Where those modules claim to live, and the suffix appended to the stem.
-  (data (region.addr $RESERVED_PAGE_STRINGS 0x74) "C:\\WINDOWS\\SYSTEM\\\00")
-  (data (region.addr $RESERVED_PAGE_STRINGS 0x88) ".dll\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x25C) "C:\\WINDOWS\\SYSTEM\\\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x274) ".dll\00")
   ;; Two more WSOCK32 ordinal names, in the gap that runs to 0x11E30. Jazz
   ;; Jackrabbit 2 imports its whole WinSock set by ordinal and calls
   ;; gethostname during startup, so an unmapped ordinal 57 traps before the
@@ -3540,16 +3540,16 @@
   (global $win16_file_size (mut i32) (i32.const 0))
   (global $win16_res_len (mut i32) (i32.const 0))
   ;; NUL-separated, double-NUL terminated; see the data segment above.
-  (global $STATIC_SYS_DLL_NAMES i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000050))
-  (global $STATIC_SYS_DIR i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000074))
-  (global $STATIC_SYS_DLL_EXT i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000088))
+  (global $STATIC_SYS_DLL_NAMES i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000228))
+  (global $STATIC_SYS_DIR i32 (region.addr $RESERVED_PAGE_STRINGS 0x0000025C))
+  (global $STATIC_SYS_DLL_EXT i32 (region.addr $RESERVED_PAGE_STRINGS 0x00000274))
   ;; Pseudo module handles for those names. They are deliberately outside
   ;; every mapped image so nothing mistakes one for a real base address; the
   ;; only operations defined on them are GetProcAddress (which resolves
   ;; through the API table and ignores the handle) and GetModuleFileName.
   (global $STATIC_SYS_DLL_HANDLE_BASE i32 (i32.const 0x5D110000))
   ;; First index in the name list that belongs to DirectX.
-  (global $STATIC_SYS_DLL_FIRST_DX i32 (i32.const 1))
+  (global $STATIC_SYS_DLL_FIRST_DX i32 (i32.const 3))
   (global $DX_VERSION_INFO i32 (region.addr $DX_VERSION_INFO 0))
   (global $DX_VERSION_INFO_SIZE i32 (region.size $DX_VERSION_INFO))
   (global $WIN16_NAME_KERNEL   i32 (region.addr $RESERVED_PAGE_STRINGS 0x000000F0))

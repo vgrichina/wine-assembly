@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { PNG } = require('pngjs');
-const { compileWatSnapshot } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -67,8 +67,7 @@ async function main() {
   const frameB = path.join(temp, 'qbob-game-b.png');
 
   try {
-    const wasm = await compileWatSnapshot(file =>
-      fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
+    const wasm = compileSrcWasm();
     await WebAssembly.compile(wasm);
     fs.writeFileSync(wasmPath, wasm);
 
@@ -82,12 +81,12 @@ async function main() {
       '--quiet-blocks',
       '--screen=800x600',
       '--batch-size=25000',
-      '--max-batches=285',
+      '--max-batches=460',
       '--thread-slices=16',
       '--stuck-after=600',
-      '--input=120:mousedown:315:507,125:mouseup:315:507,' +
-        '180:click:27:30,200:click:32:51,220:click:230:52,' +
-        `240:png:${frameA},280:png:${frameB}`,
+      '--input=20:wait-dlg-control:32877:300,25:dlg-click:32877,' +
+        '100:click:27:30,160:click:32:51,190:click:230:52,' +
+        `260:png:${frameA},420:png:${frameB}`,
     ], {
       cwd: ROOT,
       encoding: 'utf8',
@@ -105,6 +104,7 @@ async function main() {
     assert(/title="QBob"/i.test(output), 'QBob did not create its main window');
     assert(/qbob\.dll loaded/i.test(output) && /highscore\.dll loaded/i.test(output),
       'QBob did not load both bundled DLLs');
+    assert(/dlg-click: id=32877/i.test(output), 'QBob did not accept its license dialog');
     assert(/\[MCI\] play sequencer/i.test(output) && /\[waveOut\] open/i.test(output),
       'QBob did not initialize its MIDI and sampled-audio paths');
     assert(fs.existsSync(frameA) && fs.existsSync(frameB),
