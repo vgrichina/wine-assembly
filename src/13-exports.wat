@@ -2697,7 +2697,7 @@
     (global.set $heap_ptr (i32.const 0))
     (global.set $heap_end (i32.const 0))
     (global.set $heap_base
-      (i32.load (i32.add (global.get $HEAP_SHARED) (i32.const 4))))
+      (i32.load (region.addr $HEAP_SHARED 4)))
     (global.set $heap_sparse_ptr (i32.const 0))
     (global.set $heap_sparse_end (i32.const 0))
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))

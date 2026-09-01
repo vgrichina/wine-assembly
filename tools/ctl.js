@@ -11,6 +11,7 @@
 //   node tools/ctl.js pipe < events.ndjson        # a continuous stream
 //   node tools/ctl.js quit
 //   node tools/ctl.js sessions                    # list browser sessions on the hub
+//   node tools/ctl.js user-input on               # give the human back their mouse/keys
 //
 // Targets a CLI VM (test/run.js --control, default http://127.0.0.1:8123) or,
 // with -s SESSIONID, a browser session through the dev-server hub (default
@@ -179,7 +180,7 @@ function printResult(result) {
 
 async function main() {
   if (!VERB) {
-    fail('usage: ctl.js [-s SESSION|:PORT|PAGE-URL] snapshot|ping|apps|launch APPID|click X,Y|dblclick|rclick|mousedown|mouseup|mousemove|drag X1,Y1 X2,Y2|key VK|type TEXT|png FILE|eval CODE|cmd RAW|pipe|quit|sessions', 2);
+    fail('usage: ctl.js [-s SESSION|:PORT|PAGE-URL] snapshot|ping|apps|launch APPID|click X,Y|dblclick|rclick|mousedown|mouseup|mousemove|drag X1,Y1 X2,Y2|key VK|type TEXT|png FILE|eval CODE|cmd RAW|user-input on|off|pipe|quit|sessions', 2);
   }
 
   if (VERB === 'sessions') {
@@ -212,6 +213,16 @@ async function main() {
     }
     if (VERB === 'launch' && !positional[1]) fail('launch needs an app id (list them: ctl.js apps)', 2);
     commands = VERB === 'launch' ? { action: 'launch', app: positional[1] } : { action: 'apps' };
+  } else if (VERB === 'user-input') {
+    // Browser sessions only: a CLI VM has no human at its canvas. "off" takes
+    // input away from the person watching, "on" hands it back. The page also
+    // takes it by itself on the first input command — this is the release.
+    if (target.kind === 'direct') {
+      fail('user-input drives a browser session — a CLI VM has no user input to share', 2);
+    }
+    const mode = positional[1];
+    if (mode !== 'on' && mode !== 'off') fail("user-input needs 'on' (user may play) or 'off' (agent only)", 2);
+    commands = { action: 'user-input', mode };
   } else if (VERB === 'eval') {
     commands = { action: 'eval', code: positional.slice(1).join(' ') };
   } else if (VERB === 'cmd') {

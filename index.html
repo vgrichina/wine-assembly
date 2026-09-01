@@ -1268,8 +1268,9 @@
       <span class="debug-agent" id="agent-handoff" hidden>
         <button id="agent-handoff-btn" onclick="copyAgentHandoff()" title="Copy this tab's link plus the tools/ctl.js instructions that let an agent drive this session (docs/design-agent-control.md)">Agent handoff</button>
         <span id="agent-handoff-status" style="color:#606060"></span>
-        <textarea id="agent-handoff-text" readonly spellcheck="false" hidden
-                  style="position:fixed;top:40px;right:8px;width:540px;max-width:92vw;height:96px;z-index:1000;font:11px/1.4 monospace;background:#ffffe1;border:1px solid #808080;padding:4px;box-sizing:border-box"></textarea>
+        <label title="While checked, your own mouse and keyboard do not reach the emulator — the agent driving this session has input to itself. It checks itself the first time an agent sends input; uncheck it to take the session back (it will not re-arm itself after that)."><input id="agent-input-toggle" type="checkbox" onchange="setAgentInputBlock(this.checked)">Agent owns input</label>
+        <input id="agent-handoff-text" type="text" readonly spellcheck="false" hidden size="56"
+               style="font:11px/1.4 monospace;background:#ffffe1;border:1px solid #808080;padding:2px 4px">
       </span>
       <a href="story.html" style="margin-left: 8px; font-size: 12px; color: #000080;">The Story</a>
       <span id="status" style="margin-left: auto; color: #808080;"></span>
@@ -2020,6 +2021,23 @@ Resource-aware Win98 emulator
     };
     window.addEventListener('agent-remote-connected', revealAgentHandoff);
     if (window.__agentRemote && window.__agentRemote.running) revealAgentHandoff();
+    // Input exclusivity. lib/agent-remote.js engages this itself the first
+    // time an agent sends an input command (connecting alone does not — the
+    // dev-server auto-connects every page it serves, and people play on those
+    // normally). The checkbox is the manual override in both directions;
+    // unchecking it retires the auto-engage for the rest of the session.
+    window.addEventListener('agent-remote-input', (e) => {
+      const box = document.getElementById('agent-input-toggle');
+      if (box) box.checked = !!(e.detail && e.detail.blocked);
+    });
+    async function setAgentInputBlock(on) {
+      try {
+        const m = await import('./lib/agent-remote.js');
+        m.setInputBlocked(on, { manual: true });
+      } catch (error) {
+        console.warn('[agent-handoff]', error);
+      }
+    }
     async function copyAgentHandoff() {
       const status = document.getElementById('agent-handoff-status');
       const box = document.getElementById('agent-handoff-text');
@@ -2027,11 +2045,15 @@ Resource-aware Win98 emulator
       try {
         const m = await import('./lib/agent-remote.js');
         const text = await m.copyHandoff();
-        box.value = text;
+        // The field is one line by construction (an <input> sanitizes CR/LF
+        // away, so fold the multi-line handoff into it deliberately rather
+        // than letting the browser silently glue the lines together); the
+        // clipboard still carries the full text.
+        box.value = text.replace(/\s*\n\s*/g, '  ');
         box.hidden = false;
         box.focus();
         box.select();
-        status.textContent = 'copied — box below has it too';
+        status.textContent = 'copied — the field has it too';
       } catch (error) {
         status.textContent = `copy failed: ${error && error.message || error}`;
         console.warn('[agent-handoff]', error);

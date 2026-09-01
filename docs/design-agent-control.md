@@ -98,6 +98,36 @@ Phase 1 (the minimum that closes the agent loop):
   page-context eval (reaches `window.wineShell`, `WinePerf`, the canvas).
   CLI: evaluated with `instance.exports`, `renderer`, `mem`, `g2w` in scope.
 - **`ping`** — session liveness + identity.
+- **`user-input on|off`** — browser sessions only; see *Sharing input with the
+  user* below.
+
+### Sharing input with the user
+
+A browser session has a person sitting in front of it, and their hands do not
+stop when an agent starts driving: the mousemove of a hand resting on the desk
+edge-scrolled Heroes II's map out from under the agent's path clicks, and every
+click landed somewhere else than it was aimed. So the page takes input
+exclusively while an agent drives it.
+
+What engages it is the **first input command the agent actually sends** (any
+`click`/`key`/`mouse`/`wheel` entry through `execEntry`), never the connect —
+the dev-server auto-connects every page it serves and people play on those
+normally most of the time. Once engaged, `lib/agent-remote.js`'s window-capture
+guard drops trusted mouse, wheel and touch events aimed at the `#screen`
+canvas, and `window.__agentInputExclusive` makes `shouldIgnorePageKey()` in
+`lib/browser-input.js` drop trusted keys (its listeners are registered at page
+load and cannot be out-captured, so keys are cooperative rather than blocked).
+The agent's own synthesized events carry `isTrusted=false` and pass; the
+`?debug` toolbar is never in the guarded target chain, so its controls stay
+clickable.
+
+The **`Agent owns input`** checkbox in the `?debug` toolbar shows and steers
+that state. Unchecking it takes the session back *for good* — auto-engage is
+retired for the rest of the session, so the next agent click will not silently
+take it again. The agent's side of the same switch is
+`node tools/ctl.js -s SESSION user-input on` (hand it back) / `off` (take it);
+like `launch`, it refuses a direct CLI target with exit 2, since a headless VM
+has no user at its canvas.
 
 Phase 2:
 

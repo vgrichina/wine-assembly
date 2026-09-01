@@ -480,7 +480,7 @@
 
     (if (i32.ne (i32.load16_u (global.get $PE_STAGING)) (i32.const 0x5A4D))
       (then (return (i32.const -1))))
-    (local.set $ne_off (i32.load (i32.add (global.get $PE_STAGING) (i32.const 0x3C))))
+    (local.set $ne_off (i32.load (region.addr $PE_STAGING 0x3C)))
     (if (i32.ne (i32.load16_u (i32.add (global.get $PE_STAGING) (local.get $ne_off)))
                 (i32.const 0x454E))
       (then (return (i32.const -2))))

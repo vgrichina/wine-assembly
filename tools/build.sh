@@ -51,6 +51,13 @@ node tools/region-census.js --js-copies
 # 0xD160 — $WAVE_OUT_SHARED before the map moved, and by then 0x1010 into
 # $SCROLL_TABLE — and answered MMSYSERR_INVALHANDLE to a valid handle for it.
 node tools/region-census.js --embedded-wat
+# ...and the fourth form, which uses no literal address at all and is therefore
+# invisible to all three gates above: (i32.add (global.get $REGION) (i32.const N))
+# is (region.addr $REGION N) with the compile-time in-region check REMOVED. The
+# offset that walks off the end of a table is the bug the region family exists
+# to catch, and this spelling is the one that cannot catch it. Ratcheted per
+# file, not a wall: 17 sites remain in four files other lanes hold.
+node tools/region-census.js --hand-rolled
 # Every gate above proves nothing in the tree has MEMORIZED an allocated base.
 # The instrument that proves it end to end is §8's shake — build the whole wasm
 # with the map permuted and check the picture is identical — and that instrument

@@ -97,8 +97,8 @@ let browser = null;
 
   // The in-page way to get the link: the debug toolbar's Agent handoff
   // button. It is hidden until the hub session is live, and clicking it
-  // opens a visible box holding the handoff text (a silent clipboard write
-  // looks identical to a broken button).
+  // reveals the inline readonly field in the toolbar holding the handoff text
+  // (a silent clipboard write looks identical to a broken button).
   const revealed = await page.waitForFunction(() =>
     !document.getElementById('agent-handoff').hidden, { timeout: 10000 })
     .then(() => true).catch(() => false);
@@ -111,8 +111,19 @@ let browser = null;
   const boxText = await page.evaluate(() =>
     document.getElementById('agent-handoff-text').value);
   const wantLink = `-s 'http://127.0.0.1:${PORT}/?debug'`;
-  check('handoff box shows ctl.js line with the tab URL',
+  // Embedded in the toolbar flow, not a floating box: an <input> in the
+  // handoff span, so it must be one line and must sit inside #agent-handoff.
+  const inline = await page.evaluate(() => {
+    const box = document.getElementById('agent-handoff-text');
+    return {
+      tag: box.tagName, inSpan: document.getElementById('agent-handoff').contains(box),
+      fixed: getComputedStyle(box).position === 'fixed',
+    };
+  });
+  check('handoff field shows ctl.js line with the tab URL',
     boxShown && boxText.includes('tools/ctl.js') && boxText.includes(wantLink), boxText);
+  check('handoff field is embedded in the toolbar, not a floating box',
+    inline.tag === 'INPUT' && inline.inSpan && !inline.fixed, JSON.stringify(inline));
 
   const title = ctl('-s', sessionId, 'eval', 'document.title');
   check('eval answers from page scope', title.trim().length > 0, JSON.stringify(title));
@@ -124,6 +135,49 @@ let browser = null;
 
   const clicked = ctl('-s', sessionId, 'click', '100,100');
   check('click executes page-side', clicked.includes('click:100:100'), clicked.trim());
+
+  // The agent's first input command takes the page's input away from the
+  // person watching (a stray mousemove edge-scrolled Heroes II out from under
+  // an agent's clicks). The toolbar checkbox mirrors it.
+  const blockedState = await page.evaluate(() => ({
+    blocked: !!(window.__agentRemote && window.__agentRemote.inputBlocked),
+    flag: !!window.__agentInputExclusive,
+    checked: document.getElementById('agent-input-toggle').checked,
+  }));
+  check('agent input auto-engages the user-input block',
+    blockedState.blocked && blockedState.flag && blockedState.checked, JSON.stringify(blockedState));
+
+  // A real (trusted) click from the user must not reach the canvas handlers
+  // while the block is on. Puppeteer's CDP input is trusted, so this is the
+  // actual condition, not a proxy for it.
+  const hitPoint = await page.evaluate(() => {
+    window.__testTrustedClicks = 0;
+    const canvas = document.getElementById('screen');
+    canvas.addEventListener('mousedown', () => { window.__testTrustedClicks++; });
+    const r = canvas.getBoundingClientRect();
+    const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+    const top = document.elementFromPoint(x, y);
+    return { x, y, onCanvas: top === canvas || canvas.contains(top) };
+  });
+  await page.mouse.click(hitPoint.x, hitPoint.y);
+  const leaked = await page.evaluate(() => window.__testTrustedClicks);
+  check('a trusted user click is blocked while the agent owns input',
+    hitPoint.onCanvas && leaked === 0, `${leaked} reached the canvas at ${JSON.stringify(hitPoint)}`);
+
+  const released = ctl('-s', sessionId, 'user-input', 'on');
+  // Positive control: the same trusted click lands once input is handed back
+  // (without it, "blocked" could just mean the click missed the canvas).
+  await page.mouse.click(hitPoint.x, hitPoint.y);
+  const landed = await page.evaluate(() => window.__testTrustedClicks);
+  check('the same trusted click lands once input is handed back', landed > 0, `${landed} clicks seen`);
+  const releasedState = await page.evaluate(() => ({
+    blocked: !!(window.__agentRemote && window.__agentRemote.inputBlocked),
+    flag: !!window.__agentInputExclusive,
+    checked: document.getElementById('agent-input-toggle').checked,
+  }));
+  check('ctl user-input on hands input back to the user',
+    !releasedState.blocked && !releasedState.flag && !releasedState.checked,
+    `${released.trim()} ${JSON.stringify(releasedState)}`);
 
   const badExit = (() => {
     try { ctl('-s', sessionId, 'cmd', 'dlg-cmd:1'); return 'no error'; }

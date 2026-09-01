@@ -38,5 +38,11 @@
     "test/test-win16-civ2-apis.js": 1,
     "test/test-win16-wep-gameplay.js": 1,
     "test/vlan-node.js": 1
+  },
+  "handRolledByFile": {
+    "src/10-helpers.wat": 10,
+    "src/09a-handlers.wat": 4,
+    "src/09a5-handlers-window.wat": 2,
+    "src/08b-dll-loader.wat": 1
   }
 }

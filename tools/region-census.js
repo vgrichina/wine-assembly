@@ -154,6 +154,75 @@ function stripComment(line, isWat) {
   return at === -1 ? line : line.slice(0, at);
 }
 
+// ============================================================================
+// --hand-rolled — the form the other three rules cannot see, because it uses
+// no literal address at all.
+//
+// `(i32.add (global.get $CONSOLE_INPUT) (i32.const 16))` is spelled entirely in
+// symbols, so the census counts nothing, --js-copies sees no JS and
+// --embedded-wat no fragment. It is still a second spelling of
+// `(region.addr $CONSOLE_INPUT 16)`, and it is strictly weaker than one:
+//
+//   - region.addr CHECKS that offset + span is inside the region, at compile
+//     time. The add form cannot: a global plus a number is a number, and an
+//     offset that walks off the end of its table is exactly the bug the region
+//     family exists to catch. That check is the entire reason to prefer it.
+//   - region.addr is a CONSTANT (base + offset folded by the compiler); the add
+//     form emits a global.get and an i32.add per site, which is why converting
+//     23 sites made the module 29 bytes smaller with pixel-identical output.
+//
+// The rule only fires on a REGION BASE global — one spelled
+// `(global $X i32 (region.addr $X 0))` — because that is the only case where
+// the two forms mean the same address. `(i32.add (global.get $D3DIM_OFF_VP_RECT)
+// (i32.const 4))` looks identical and is a struct field offset, not a region;
+// there are 4342 such sites and none of them are the map. Getting that
+// distinction wrong is what makes a naive grep report 86 hits where there are
+// 40, so the region set is asked of the compiler, never of a name pattern.
+//
+// RATCHET, not a wall. The remaining sites live in files other lanes hold, so
+// this records per-file counts in the baseline under `handRolledByFile` and
+// fails when any file goes UP or a file absent from the baseline has any at
+// all. New code cannot introduce the form; the existing ones are a list.
+function regionBaseGlobals() {
+  const names = new Set();
+  for (const f of WAT_FILES) {
+    const txt = fs.readFileSync(path.join(ROOT, 'src', f), 'utf8');
+    const re = /\(global\s+(\$[A-Za-z0-9_]+)\s+i32\s+\(region\.addr\s+(\$[A-Za-z0-9_]+)\s+0\)\)/g;
+    let m;
+    while ((m = re.exec(txt))) if (m[1] === m[2]) names.add(m[1]);
+  }
+  return names;
+}
+
+function handRolled() {
+  const bases = regionBaseGlobals();
+  const placed = require('./region-layout.js').layout();
+  const hits = [];
+  const byFile = new Map();
+  for (const f of WAT_FILES.filter(x => x !== '00-regions.wat')) {
+    const rel = `src/${f}`;
+    const lines = fs.readFileSync(path.join(ROOT, 'src', f), 'utf8').split(/\r?\n/);
+    lines.forEach((raw, i) => {
+      const line = stripComment(raw, true);
+      const re = /\(i32\.add\s+\(global\.get\s+(\$[A-Za-z0-9_]+)\)\s+\(i32\.const\s+(0x[0-9A-Fa-f]+|\d+)\)\)/g;
+      let m;
+      while ((m = re.exec(line))) {
+        if (!bases.has(m[1])) continue;
+        const region = placed.byName.get(m[1].slice(1));
+        const offset = Number(m[2]);
+        // An offset at or past the region's size is not debt, it is a BUG: the
+        // region.addr form would refuse to compile it. Reported separately and
+        // fatally, whatever the ratchet says.
+        const outOfRegion = region ? offset >= region.size : false;
+        hits.push({ file: rel, line: i + 1, global: m[1], offset, raw: m[2],
+                    size: region ? region.size : null, outOfRegion, text: raw.trim() });
+        byFile.set(rel, (byFile.get(rel) || 0) + 1);
+      }
+    });
+  }
+  return { hits, byFile, regions: bases.size };
+}
+
 function census(options = {}) {
   const decls = collectDeclarations().filter(d => d.base !== null && d.size !== null);
   const ordered = [...decls].sort((a, b) => a.base - b.base);
@@ -526,6 +595,52 @@ function embeddedWat(options = {}) {
 }
 
 function main() {
+  if (flag('hand-rolled')) {
+    const r = handRolled();
+    const bugs = r.hits.filter(h => h.outOfRegion);
+    for (const h of bugs) {
+      console.error(`region-census: ${h.file}:${h.line} addresses ${h.global} + ${h.raw}, ` +
+        `but the region is only 0x${h.size.toString(16)} bytes — this is OUT OF REGION`);
+      console.error(`    ${h.text.slice(0, 120)}`);
+    }
+    const baseline = readBaseline() || {};
+    const recorded = baseline.handRolledByFile || {};
+    if (flag('record')) {
+      const out = { ...baseline, handRolledByFile: Object.fromEntries(
+        [...r.byFile].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))) };
+      fs.writeFileSync(BASELINE, JSON.stringify(out, null, 2) + '\n');
+      console.log(`region-census --hand-rolled --record: ${r.hits.length} site(s) in ` +
+        `${r.byFile.size} file(s) recorded`);
+      return;
+    }
+    const risen = [];
+    for (const [file, n] of r.byFile) {
+      const was = recorded[file] || 0;
+      if (n > was) risen.push({ file, n, was });
+    }
+    for (const x of risen) {
+      console.error(`region-census: ${x.file} has ${x.n} hand-rolled region address(es), ` +
+        `baseline ${x.was}`);
+      for (const h of r.hits.filter(h => h.file === x.file)) {
+        console.error(`    ${x.file}:${h.line}  write (region.addr ${h.global} ${h.raw})`);
+      }
+    }
+    if (risen.length || bugs.length) {
+      console.error('region-census: (i32.add (global.get $REGION) (i32.const N)) is ' +
+        '(region.addr $REGION N) with the bounds check removed and two instructions added. ' +
+        'The region.addr form proves at compile time that the offset is inside the region; ' +
+        'the add form cannot, which is how an offset walks off a table with nothing to say ' +
+        'so. Ratchet baseline: tools/region-census.baseline.json handRolledByFile ' +
+        '(--hand-rolled --record to re-cut it after a conversion).');
+      process.exit(1);
+    }
+    const listed = Object.values(recorded).reduce((a, b) => a + b, 0);
+    console.log(`region-census OK: ${r.hits.length} hand-rolled region address(es) in ` +
+      `${r.byFile.size} file(s), none above the ${listed}-site baseline ` +
+      `(${r.regions} region base globals checked)`);
+    return;
+  }
+
   if (flag('embedded-wat')) {
     const r = embeddedWat();
     for (const h of r.hits) {
@@ -653,4 +768,4 @@ function readBaseline() {
 }
 
 if (require.main === module) main();
-module.exports = { census, jsCopies, embeddedWat, templateLiterals, JS_COPY_FLOOR };
+module.exports = { census, jsCopies, embeddedWat, handRolled, templateLiterals, JS_COPY_FLOOR };

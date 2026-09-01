@@ -13,7 +13,7 @@
 
     (if (i32.ne (i32.load16_u (global.get $PE_STAGING)) (i32.const 0x5A4D)) (then (return (i32.const -1))))
     (local.set $pe_off (i32.add (global.get $PE_STAGING)
-      (i32.load (i32.add (global.get $PE_STAGING) (i32.const 0x3C)))))
+      (i32.load (region.addr $PE_STAGING 0x3C))))
     ;; A 16-bit image has an 'NE' header where a PE has 'PE\0\0'. It shares
     ;; nothing else with this loader, so hand it over whole.
     (if (i32.eq (i32.load16_u (local.get $pe_off)) (i32.const 0x454E))
@@ -53,7 +53,7 @@
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
     (call $zero_memory (global.get $VIRTUAL_MAP_STATE)
       (i32.add (global.get $VIRTUAL_MAP_STATE_SIZE) (global.get $VIRTUAL_MAP_TABLE_SIZE)))
-    (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))
+    (i32.store (region.addr $VIRTUAL_MAP_STATE 4)
       (global.get $VIRTUAL_BACKING_BASE))
 
     ;; Copy DOS+PE headers into guest memory (CRT startup reads MZ signature from image base)

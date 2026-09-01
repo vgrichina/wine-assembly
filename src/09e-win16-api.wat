@@ -2947,7 +2947,7 @@
   ;; Scratch for the Pascal string above, at the unused bottom of the 32-bit
   ;; task's stack region, which a 16-bit task never touches.
   (func $win16_name_scratch (result i32)
-    (i32.add (global.get $GUEST_STACK) (i32.const 0x200)))
+    (region.addr $GUEST_STACK 0x200))
 
   ;; KERNEL.95 LoadLibrary(lpszLibFile) -> HINSTANCE, or an error code below 32.
   ;;
@@ -3796,7 +3796,7 @@
           (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))))
     (if (call $win16_arg16 (i32.const 1))
       (then
-        (local.set $clip (i32.add (global.get $GUEST_STACK) (i32.const 16)))
+        (local.set $clip (region.addr $GUEST_STACK 16))
         (call $win16_rect_widen (local.get $clip) (call $win16_far_to_guest
           (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))))
     (call $win16_call32_begin (i32.const 5))
@@ -6121,7 +6121,7 @@
       (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
     ;; Word 4 is the first variable argument.
     (local.set $src (i32.add (global.get $esp) (i32.const 12)))
-    (local.set $dst (i32.add (global.get $GUEST_STACK) (i32.const 0x800)))
+    (local.set $dst (region.addr $GUEST_STACK 0x800))
 
     (block $scanned (loop $scan
       (local.set $ch (call $gl8 (i32.add (local.get $fmt) (local.get $i))))
@@ -6180,7 +6180,7 @@
       (br $scan)))
 
     (global.set $eax (call $wsprintf_impl (local.get $out) (local.get $fmt)
-      (i32.add (global.get $GUEST_STACK) (i32.const 0x800))))
+      (region.addr $GUEST_STACK 0x800)))
     (call $win16_api_return (i32.const 0)))
 
   ;; USER.84 DrawIcon(hDC, X, Y, hIcon).
@@ -9195,7 +9195,7 @@
       (global.get $GUEST_STACK) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
     (global.set $eax (i32.and (call $gl32 (global.get $GUEST_STACK)) (i32.const 0xFFFF)))
-    (global.set $edx (i32.and (call $gl32 (i32.add (global.get $GUEST_STACK) (i32.const 4)))
+    (global.set $edx (i32.and (call $gl32 (region.addr $GUEST_STACK 4))
                               (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 2)))
 

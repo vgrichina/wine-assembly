@@ -759,18 +759,18 @@
   ;; telnet the worker writes and the main thread pumps. Keyboard routing runs
   ;; on the pumping thread, so the hwnd has to come out of shared memory.
   (func $console_shared_hwnd (result i32)
-    (i32.load (i32.add (global.get $CONSOLE_INPUT) (i32.const 16))))
+    (i32.load (region.addr $CONSOLE_INPUT 16)))
 
   (func $console_shared_hwnd_set (param $hwnd i32)
-    (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 16)) (local.get $hwnd)))
+    (i32.store (region.addr $CONSOLE_INPUT 16) (local.get $hwnd)))
 
   ;; Address of the ring slot holding the i-th oldest queued event.
   (func $console_input_slot (param $i i32) (result i32)
     (i32.add
-      (i32.add (global.get $CONSOLE_INPUT) (i32.const 32))
+      (region.addr $CONSOLE_INPUT 32)
       (i32.mul
         (i32.rem_u
-          (i32.add (i32.load (i32.add (global.get $CONSOLE_INPUT) (i32.const 4))) (local.get $i))
+          (i32.add (i32.load (region.addr $CONSOLE_INPUT 4)) (local.get $i))
           (global.get $CONSOLE_INPUT_MAX))
         (i32.const 20))))
 
@@ -794,25 +794,25 @@
   ;; that sets the mode is often not the thread that reads.
   (func $console_input_mode (result i32)
     (local $m i32)
-    (local.set $m (i32.load (i32.add (global.get $CONSOLE_INPUT) (i32.const 12))))
+    (local.set $m (i32.load (region.addr $CONSOLE_INPUT 12)))
     (if (result i32) (local.get $m)
       (then (i32.sub (local.get $m) (i32.const 1)))
       (else (global.get $console_mode))))
 
   (func $console_input_set_mode (param $mode i32)
-    (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 12))
+    (i32.store (region.addr $CONSOLE_INPUT 12)
       (i32.add (local.get $mode) (i32.const 1))))
 
   ;; Lazily created wake event. A blocked ReadConsole parks on it so the host
   ;; scheduler has something to name, and a push signals it.
   (func $console_input_event (result i32)
     (local $h i32)
-    (local.set $h (i32.load (i32.add (global.get $CONSOLE_INPUT) (i32.const 8))))
+    (local.set $h (i32.load (region.addr $CONSOLE_INPUT 8)))
     (if (i32.eqz (local.get $h))
       (then
         (local.set $h (call $host_create_event
           (i32.const 1) (i32.const 0) (i32.const 0) (i32.const 0)))
-        (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 8)) (local.get $h))))
+        (i32.store (region.addr $CONSOLE_INPUT 8) (local.get $h))))
     (local.get $h))
 
   (func $console_input_echo (param $ch i32)
@@ -859,7 +859,7 @@
   (func $console_input_push (param $ch i32) (param $vk i32)
     (call $console_input_push_key
       (local.get $ch) (local.get $vk) (i32.const 1)
-      (i32.load (i32.add (global.get $CONSOLE_INPUT) (i32.const 24)))))
+      (i32.load (region.addr $CONSOLE_INPUT 24))))
 
   ;; WM_CHAR follows WM_KEYDOWN in the browser queue. Merge it into the newest
   ;; matching down record instead of inventing a second KEY_EVENT. If input was
@@ -895,7 +895,7 @@
       (param $msg i32) (param $vk i32) (param $lparam i32) (result i32)
     (local $state i32) (local $mask i32) (local $down i32)
     (local.set $state
-      (i32.load (i32.add (global.get $CONSOLE_INPUT) (i32.const 24))))
+      (i32.load (region.addr $CONSOLE_INPUT 24)))
     (local.set $down
       (i32.or
         (i32.eq (local.get $msg) (i32.const 0x0100))
@@ -941,7 +941,7 @@
           (i32.and (local.get $down) (i32.ne (local.get $mask) (i32.const 0)))
           (i32.eqz (i32.and (local.get $lparam) (i32.const 0x40000000))))
       (then (local.set $state (i32.xor (local.get $state) (local.get $mask)))))
-    (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 24))
+    (i32.store (region.addr $CONSOLE_INPUT 24)
       (local.get $state))
     ;; ENHANCED_KEY belongs only to this event, not to persistent state.
     (i32.or (local.get $state)
@@ -1060,9 +1060,9 @@
     (local $count i32)
     (local.set $count (i32.load (global.get $CONSOLE_INPUT)))
     (if (i32.gt_u (local.get $n) (local.get $count)) (then (local.set $n (local.get $count))))
-    (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 4))
+    (i32.store (region.addr $CONSOLE_INPUT 4)
       (i32.rem_u
-        (i32.add (i32.load (i32.add (global.get $CONSOLE_INPUT) (i32.const 4))) (local.get $n))
+        (i32.add (i32.load (region.addr $CONSOLE_INPUT 4)) (local.get $n))
         (global.get $CONSOLE_INPUT_MAX)))
     (i32.store (global.get $CONSOLE_INPUT) (i32.sub (local.get $count) (local.get $n)))
     (if (i32.eqz (i32.load (global.get $CONSOLE_INPUT)))
