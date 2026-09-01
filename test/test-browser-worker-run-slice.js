@@ -55,7 +55,7 @@ assert(hostSource.includes('const activeStepsPerSlice = Math.max(1, (self.stepsP
   'the cooperative host must honor browser-shell slices below 1k');
 assert(hostSource.includes('const configuredSteps = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);'),
   'the guest-Worker backend should retain its 1k messaging floor');
-assert(indexSource.includes('lib/browser-shell.js?v=23'),
+assert(indexSource.includes('lib/browser-shell.js?v=24'),
   'the page cache-busts the Uplink slice policy');
 assert(shellSource.includes("if (Number(change.data) === 2) applyRendererSlice('opengl');"),
   'Uplink keeps the setup quantum until a real DirectDraw frame selects Software');

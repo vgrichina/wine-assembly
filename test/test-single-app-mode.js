@@ -55,6 +55,10 @@ assert(/function toggleDebugPanels\(\)[\s\S]{0,400}resizeCanvas\(\);/.test(html)
   'showing or hiding the panels changes how much screen is left: resize the canvas');
 assert(html.includes("document.body.classList.toggle('app-running', !!running)"),
   'the page should track whether a guest is running');
+assert(shellSource.includes('function clearUnownedDisplayMode()'),
+  'a fresh launch should clear stale fullscreen/page state that no live app owns');
+assert(shellSource.includes("document.body.classList.remove('exclusive-fullscreen', 'page-fullscreen')"),
+  'stale display ownership must not make ordinary apps inherit a black fullscreen shell');
 
 // --- The shell: one app, maximized when it can be ---
 assert(shellSource.includes('if (SINGLE_APP() && runningApps.length)'),
