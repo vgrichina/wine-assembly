@@ -86,8 +86,20 @@ const digest = crypto.createHash('sha256')
 // parks on a real vblank (yield_reason 13). Ratchet only; nothing was added.
 // 2026-09-01: 507 -> 525. Minimal no-audio BASS compatibility handlers let
 // shareware games bundled with bass.dll continue to gameplay.
-const EXPECTED_COUNT = 525;
-const EXPECTED_SHA256 = '40334c913c6a0cb02959af71858ef21451d3e1f8fbbb1186126a1db52ea2b05f';
+// 2026-09-01: 525 -> 526. __mb_cur_max is a documented constant for the
+// emulator's single-byte ANSI CRT environment.
+// 2026-09-01: 526 -> 527. _cexit acknowledges CRT cleanup without process
+// termination; returning terminator callbacks need a separate future path.
+// 2026-09-01: 527 -> 528. _getdrive is a documented constant in the default
+// single-drive C: process environment.
+// 2026-09-01: 528 -> 529. _setmode acknowledges text/binary mode changes and
+// returns the previous text mode because stdio streams are not distinguished.
+// 2026-09-01: 529 -> 530. keybd_event is a legacy input-synthesis probe shim;
+// browser-side input injection remains host-owned.
+// 2026-09-01: 530 -> 531. joyGetPosEx mirrors joyGetPos for a no-joystick
+// Win98 environment so startup probes can keep keyboard/mouse input.
+const EXPECTED_COUNT = 531;
+const EXPECTED_SHA256 = '007ae1a78dbf5d249db56303d4e48c0301b26607d701ba122f64ac315d4e86e6';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

@@ -2327,6 +2327,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; PulseEvent(hEvent) — 1 arg stdcall. Deprecated on modern Windows, but
+  ;; older Win9x-era loaders still resolve it dynamically during startup.
+  (func $handle_PulseEvent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $set_ok i32)
+    (local.set $set_ok (call $host_set_event (local.get $arg0)))
+    (if (local.get $set_ok)
+      (then (drop (call $host_reset_event (local.get $arg0)))))
+    (global.set $eax (local.get $set_ok))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; 32: WriteProfileStringA(appName, keyName, lpString) — stub, pretend success
   (func $handle_WriteProfileStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; WriteProfileStringA(appName, keyName, string) — 3 args stdcall, writes to win.ini
@@ -6812,6 +6823,13 @@
     (global.set $steps (i32.const 0)) (return)
   )
 
+  ;; _cexit() — cdecl, run CRT cleanup without terminating the process. The
+  ;; current atexit runner is exit-oriented, so keep this as a startup-safe
+  ;; cleanup acknowledgement until a returning terminator chain exists.
+  (func $handle__cexit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   ;; 207: __getmainargs
   (func $handle___getmainargs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; arg0=&argc, arg1=&argv, arg2=&envp
@@ -7762,6 +7780,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
+  ;; __p__environ() — cdecl, returns &environ for the narrow CRT.
+  (func $handle___p__environ (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (global.get $fake_cmdline_addr))
+      (then (call $store_fake_cmdline)))
+    (if (i32.eqz (global.get $msvcrt_environ_ptr))
+      (then
+        (global.set $msvcrt_environ_ptr (call $heap_alloc (i32.const 4)))
+        (call $gs32 (global.get $msvcrt_environ_ptr)
+          (i32.add (global.get $fake_cmdline_addr) (i32.const 1532)))))
+    (global.set $eax (global.get $msvcrt_environ_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
+  )
+
   ;; 260: __set_app_type(type) — cdecl; sets GUI vs console, no-op for us
   (func $handle___set_app_type (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
@@ -8455,6 +8486,13 @@
         (call $host_get_key_down_state (local.get $arg0))
         (i32.const 0x8000)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  (func $handle_keybd_event (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Legacy input synthesis. Browser input injection stays host-owned; this
+    ;; compatibility shim satisfies libraries that only probe the entry point.
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; ToAsciiEx(uVirtKey, uScanCode, lpKeyState, lpChar, uFlags, hkl) → int.

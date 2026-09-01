@@ -472,6 +472,7 @@ UNIT=(
   test/test-d3d9-fixed-function-shaders.js
   test/test-d3d9-shader-unsupported.js
   test/test-d3d9-swap-chain.js
+  test/test-crt-mb-cur-max-handler.js
   test/test-destroy-main-window-recreation.js
   test/test-create-window-failure.js
   test/test-directdraw-surface3-desc.js
@@ -491,6 +492,7 @@ UNIT=(
   test/test-getprocaddress-sparse-name.js
   test/test-bass-compat-handlers.js
   test/test-heap-api-handles.js
+  test/test-pulse-event-handler.js
   test/test-hidden-relative-mouse.js
   test/test-imm-is-ime.js
   test/test-is-debugger-present.js

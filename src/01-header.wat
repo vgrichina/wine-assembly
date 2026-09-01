@@ -2595,6 +2595,11 @@
   (global $msvcrt_fmode_ptr   (mut i32) (i32.const 0))
   (global $msvcrt_commode_ptr (mut i32) (i32.const 0))
   (global $msvcrt_acmdln_ptr  (mut i32) (i32.const 0))
+  (global $msvcrt_environ_ptr (mut i32) (i32.const 0))
+  (global $msvcrt_iob_ptr     (mut i32) (i32.const 0))
+  (global $msvcrt_pctype_ptr  (mut i32) (i32.const 0))
+  (global $msvcrt_strerror_ptr (mut i32) (i32.const 0))
+  (global $msvcrt_tmpnam_ptr  (mut i32) (i32.const 0))
   (global $msvcrt_wcmdln_ptr (mut i32) (i32.const 0))  ;; wide command line pointer
   ;; Guest-space address of catch-return thunk (set during PE load)
   (global $catch_ret_thunk (mut i32) (i32.const 0))

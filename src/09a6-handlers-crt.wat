@@ -6,6 +6,29 @@
   (global $msvcrt_signal_table (mut i32) (i32.const 0))
   (global $msvcrt_tm_ptr (mut i32) (i32.const 0))
 
+  ;; __mb_cur_max() — cdecl. The default Win98 ANSI code page is single-byte in
+  ;; this emulator, so old MSVCRT callers see the same max character width as C.
+  (func $handle___mb_cur_max (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; _getdrive() — cdecl, returns 1 for A:, 2 for B:, 3 for C:, etc.
+  (func $handle__getdrive (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 3))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; _iob() — cdecl, returns the CRT stdin/stdout/stderr FILE table.
+  (func $handle__iob (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (global.get $msvcrt_iob_ptr))
+      (then
+        (global.set $msvcrt_iob_ptr (call $heap_alloc (i32.const 96)))
+        (call $zero_memory (call $g2w (global.get $msvcrt_iob_ptr)) (i32.const 96))))
+    (global.set $eax (global.get $msvcrt_iob_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   ;; _mbschr(str, ch) — cdecl, find first occurrence of byte in MBCS string
   (func $handle__mbschr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $ch i32) (local $cur i32)
@@ -102,6 +125,23 @@
       (local.set $n (i32.sub (local.get $n) (i32.const 1)))
       (br $cmp)))
     (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; memchr(buf, ch, n) — cdecl, return a guest pointer to the first byte match.
+  (func $handle_memchr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32) (local $i i32) (local $ch i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
+    (local.set $ch (i32.and (local.get $arg1) (i32.const 0xFF)))
+    (global.set $eax (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
+      (if (i32.eq (i32.load8_u (i32.add (local.get $wa) (local.get $i))) (local.get $ch))
+        (then
+          (global.set $eax (i32.add (local.get $arg0) (local.get $i)))
+          (br $done)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
@@ -531,6 +571,87 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  (func $crt_strtod_simple (param $nptr i32) (result f64)
+    (local $s i32) (local $ch i32) (local $val i32)
+    (local $neg i32) (local $digits i32) (local $exp_neg i32) (local $exp i32)
+    (local $fval f64) (local $frac f64)
+    (local.set $s (call $g2w (local.get $nptr)))
+    (block $space_done (loop $skip_space
+      (local.set $ch (i32.load8_u (local.get $s)))
+      (br_if $space_done (i32.eqz (call $crt_is_space (local.get $ch))))
+      (local.set $s (i32.add (local.get $s) (i32.const 1)))
+      (br $skip_space)))
+    (local.set $ch (i32.load8_u (local.get $s)))
+    (if (i32.or (i32.eq (local.get $ch) (i32.const 0x2D)) (i32.eq (local.get $ch) (i32.const 0x2B)))
+      (then
+        (local.set $neg (i32.eq (local.get $ch) (i32.const 0x2D)))
+        (local.set $s (i32.add (local.get $s) (i32.const 1)))))
+    (local.set $fval (f64.const 0))
+    (block $ip_done (loop $ip
+      (local.set $val (call $crt_digit_value (i32.load8_u (local.get $s))))
+      (br_if $ip_done (i32.or (i32.lt_s (local.get $val) (i32.const 0)) (i32.gt_u (local.get $val) (i32.const 9))))
+      (local.set $fval (f64.add (f64.mul (local.get $fval) (f64.const 10))
+                                (f64.convert_i32_s (local.get $val))))
+      (local.set $digits (i32.add (local.get $digits) (i32.const 1)))
+      (local.set $s (i32.add (local.get $s) (i32.const 1)))
+      (br $ip)))
+    (if (i32.eq (i32.load8_u (local.get $s)) (i32.const 0x2E))
+      (then
+        (local.set $s (i32.add (local.get $s) (i32.const 1)))
+        (local.set $frac (f64.const 1))
+        (block $fp_done (loop $fp
+          (local.set $val (call $crt_digit_value (i32.load8_u (local.get $s))))
+          (br_if $fp_done (i32.or (i32.lt_s (local.get $val) (i32.const 0)) (i32.gt_u (local.get $val) (i32.const 9))))
+          (local.set $frac (f64.div (local.get $frac) (f64.const 10)))
+          (local.set $fval (f64.add (local.get $fval)
+            (f64.mul (f64.convert_i32_s (local.get $val)) (local.get $frac))))
+          (local.set $digits (i32.add (local.get $digits) (i32.const 1)))
+          (local.set $s (i32.add (local.get $s) (i32.const 1)))
+          (br $fp)))))
+    (if (local.get $digits)
+      (then
+        (local.set $ch (i32.load8_u (local.get $s)))
+        (if (i32.or (i32.eq (local.get $ch) (i32.const 0x65)) (i32.eq (local.get $ch) (i32.const 0x45)))
+          (then
+            (local.set $s (i32.add (local.get $s) (i32.const 1)))
+            (local.set $ch (i32.load8_u (local.get $s)))
+            (if (i32.or (i32.eq (local.get $ch) (i32.const 0x2D)) (i32.eq (local.get $ch) (i32.const 0x2B)))
+              (then
+                (local.set $exp_neg (i32.eq (local.get $ch) (i32.const 0x2D)))
+                (local.set $s (i32.add (local.get $s) (i32.const 1)))))
+            (block $ex_done (loop $ex
+              (local.set $val (call $crt_digit_value (i32.load8_u (local.get $s))))
+              (br_if $ex_done (i32.or (i32.lt_s (local.get $val) (i32.const 0)) (i32.gt_u (local.get $val) (i32.const 9))))
+              (local.set $exp (i32.add (i32.mul (local.get $exp) (i32.const 10)) (local.get $val)))
+              (local.set $s (i32.add (local.get $s) (i32.const 1)))
+              (br $ex)))
+            (block $scale_done (loop $scale
+              (br_if $scale_done (i32.eqz (local.get $exp)))
+              (if (local.get $exp_neg)
+                (then (local.set $fval (f64.div (local.get $fval) (f64.const 10))))
+                (else (local.set $fval (f64.mul (local.get $fval) (f64.const 10)))))
+              (local.set $exp (i32.sub (local.get $exp) (i32.const 1)))
+              (br $scale)))))))
+    (if (local.get $neg) (then (return (f64.neg (local.get $fval)))))
+    (local.get $fval))
+
+  (func $handle_atof (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push (call $crt_strtod_simple (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_strtod (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push (call $crt_strtod_simple (local.get $arg0)))
+    (if (local.get $arg1)
+      (then (call $gs32 (local.get $arg1) (local.get $arg0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_clock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_get_ticks))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   ;; MSVCRT double math returns through x87 ST(0). These are cdecl, so the
   ;; callee only pops the return address; the caller removes stack arguments.
   (func $handle_ceil (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -545,6 +666,130 @@
 
   (func $handle_sin (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $fpu_push (call $host_math_sin (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_cos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push (call $host_math_cos (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_tan (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push (call $host_math_tan (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_atan2 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push
+      (call $host_math_atan2
+        (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4))))
+        (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 12))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_atan (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push
+      (call $host_math_atan2
+        (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4))))
+        (f64.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_asin (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $x f64) (local $root f64)
+    (local.set $x (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4)))))
+    (local.set $root (f64.sub (f64.const 1) (f64.mul (local.get $x) (local.get $x))))
+    (if (f64.lt (local.get $root) (f64.const 0))
+      (then (local.set $root (f64.const nan))))
+    (call $fpu_push
+      (call $host_math_atan2
+        (local.get $x)
+        (f64.sqrt (local.get $root))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_acos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $x f64) (local $root f64)
+    (local.set $x (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4)))))
+    (local.set $root (f64.sub (f64.const 1) (f64.mul (local.get $x) (local.get $x))))
+    (if (f64.lt (local.get $root) (f64.const 0))
+      (then (local.set $root (f64.const nan))))
+    (call $fpu_push
+      (call $host_math_atan2
+        (f64.sqrt (local.get $root))
+        (local.get $x)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_floor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push (f64.floor (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_fabs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push (f64.abs (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_log (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push
+      (f64.mul
+        (call $host_math_log2 (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4)))))
+        (f64.const 0.69314718055994530942)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_exp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push
+      (call $host_math_pow2
+        (f64.div
+          (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4))))
+          (f64.const 0.69314718055994530942))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_fmod (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $x f64) (local $y f64)
+    (local.set $x (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4)))))
+    (local.set $y (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 12)))))
+    (call $fpu_push
+      (f64.sub
+        (local.get $x)
+        (f64.mul
+          (f64.trunc (f64.div (local.get $x) (local.get $y)))
+          (local.get $y))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_frexp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $x f64) (local $absx f64) (local $exp i32)
+    (local.set $x (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4)))))
+    (local.set $absx (f64.abs (local.get $x)))
+    (if (f64.eq (local.get $x) (f64.const 0))
+      (then
+        (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+        (call $fpu_push (f64.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $exp
+      (i32.add
+        (i32.trunc_f64_s
+          (f64.floor (call $host_math_log2 (local.get $absx))))
+        (i32.const 1)))
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (local.get $exp))))
+    (call $fpu_push
+      (f64.div
+        (local.get $x)
+        (call $host_math_pow2 (f64.convert_i32_s (local.get $exp)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_ldexp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $fpu_push
+      (f64.mul
+        (f64.load (call $g2w (i32.add (global.get $esp) (i32.const 4))))
+        (call $host_math_pow2
+          (f64.convert_i32_s (i32.load (call $g2w (i32.add (global.get $esp) (i32.const 12))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
@@ -756,6 +1001,39 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  (func $handle_fgets (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $count i32) (local $bytes_ga i32) (local $bytes_wa i32) (local $ch i32)
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $arg0)) (i32.le_s (local.get $arg1) (i32.const 0)))
+          (i32.eqz (local.get $arg2)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $bytes_ga (i32.sub (global.get $esp) (i32.const 4)))
+    (local.set $bytes_wa (call $g2w (local.get $bytes_ga)))
+    (block $done (loop $read
+      (br_if $done (i32.ge_u (local.get $count) (i32.sub (local.get $arg1) (i32.const 1))))
+      (i32.store (local.get $bytes_wa) (i32.const 0))
+      (if (i32.eqz (call $host_fs_read_file
+            (local.get $arg2)
+            (i32.add (local.get $arg0) (local.get $count))
+            (i32.const 1)
+            (local.get $bytes_ga)))
+        (then (br $done)))
+      (br_if $done (i32.eqz (i32.load (local.get $bytes_wa))))
+      (local.set $ch (call $gl8 (i32.add (local.get $arg0) (local.get $count))))
+      (local.set $count (i32.add (local.get $count) (i32.const 1)))
+      (br_if $done (i32.eq (local.get $ch) (i32.const 0x0a)))
+      (br $read)))
+    (if (local.get $count)
+      (then
+        (call $gs8 (i32.add (local.get $arg0) (local.get $count)) (i32.const 0))
+        (global.set $eax (local.get $arg0)))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   (func $handle_fread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $total i32) (local $bytes_ga i32) (local $bytes_wa i32) (local $read i32)
     (if (i32.or
@@ -848,6 +1126,22 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  (func $handle__dup (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (if (result i32) (i32.ge_s (local.get $arg0) (i32.const 0))
+        (then (local.get $arg0))
+        (else (i32.const -1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle__unlink (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (if (result i32) (call $host_fs_delete_file (call $g2w (local.get $arg0)) (i32.const 0))
+        (then (i32.const 0))
+        (else (i32.const -1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   (func $handle__read (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $bytes_ga i32) (local $bytes_wa i32)
     (local.set $bytes_ga (i32.sub (global.get $esp) (i32.const 4)))
@@ -859,6 +1153,12 @@
             (local.get $bytes_ga))
         (then (i32.load (local.get $bytes_wa)))
         (else (i32.const -1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle__write (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $crt_stream_write
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
@@ -969,12 +1269,101 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  (func $handle_vfprintf (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $scratch i32) (local $written i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $scratch (call $heap_alloc (i32.const 65536)))
+    (if (i32.eqz (local.get $scratch))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $written
+      (call $wsprintf_impl (local.get $scratch) (local.get $arg1) (local.get $arg2)))
+    (local.set $written
+      (if (result i32) (i32.lt_s (call $crt_stream_write
+            (local.get $arg0) (local.get $scratch) (local.get $written)) (i32.const 0))
+        (then (i32.const -1))
+        (else (local.get $written))))
+    (call $heap_free (local.get $scratch))
+    (global.set $eax (local.get $written))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_vsprintf (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (call $wsprintf_impl (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   (func $handle__errno (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.eqz (global.get $msvcrt_errno_ptr))
       (then
         (global.set $msvcrt_errno_ptr (call $heap_alloc (i32.const 4)))
         (call $gs32 (global.get $msvcrt_errno_ptr) (i32.const 0))))
     (global.set $eax (global.get $msvcrt_errno_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle_strerror (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (global.get $msvcrt_strerror_ptr))
+      (then
+        (global.set $msvcrt_strerror_ptr (call $heap_alloc (i32.const 14)))
+        (call $gs8 (global.get $msvcrt_strerror_ptr) (i32.const 0x55))
+        (call $gs8 (i32.add (global.get $msvcrt_strerror_ptr) (i32.const 1)) (i32.const 0x6e))
+        (call $gs8 (i32.add (global.get $msvcrt_strerror_ptr) (i32.const 2)) (i32.const 0x6b))
+        (call $gs8 (i32.add (global.get $msvcrt_strerror_ptr) (i32.const 3)) (i32.const 0x6e))
+        (call $gs8 (i32.add (global.get $msvcrt_strerror_ptr) (i32.const 4)) (i32.const 0x6f))
+        (call $gs8 (i32.add (global.get $msvcrt_strerror_ptr) (i32.const 5)) (i32.const 0x77))
+        (call $gs8 (i32.add (global.get $msvcrt_strerror_ptr) (i32.const 6)) (i32.const 0x6e))
+        (call $gs8 (i32.add (global.get $msvcrt_strerror_ptr) (i32.const 7)) (i32.const 0x20))
+        (call $gs8 (i32.add (global.get $msvcrt_strerror_ptr) (i32.const 8)) (i32.const 0x65))
+        (call $gs8 (i32.add (global.get $msvcrt_strerror_ptr) (i32.const 9)) (i32.const 0x72))
+        (call $gs8 (i32.add (global.get $msvcrt_strerror_ptr) (i32.const 10)) (i32.const 0x72))
+        (call $gs8 (i32.add (global.get $msvcrt_strerror_ptr) (i32.const 11)) (i32.const 0x6f))
+        (call $gs8 (i32.add (global.get $msvcrt_strerror_ptr) (i32.const 12)) (i32.const 0x72))
+        (call $gs8 (i32.add (global.get $msvcrt_strerror_ptr) (i32.const 13)) (i32.const 0))))
+    (global.set $eax (global.get $msvcrt_strerror_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $crt_write_tmpnam (param $dst i32)
+    (call $gs8 (local.get $dst) (i32.const 0x43)) ;; C
+    (call $gs8 (i32.add (local.get $dst) (i32.const 1)) (i32.const 0x3a)) ;; :
+    (call $gs8 (i32.add (local.get $dst) (i32.const 2)) (i32.const 0x5c)) ;; backslash
+    (call $gs8 (i32.add (local.get $dst) (i32.const 3)) (i32.const 0x54)) ;; T
+    (call $gs8 (i32.add (local.get $dst) (i32.const 4)) (i32.const 0x45)) ;; E
+    (call $gs8 (i32.add (local.get $dst) (i32.const 5)) (i32.const 0x4d)) ;; M
+    (call $gs8 (i32.add (local.get $dst) (i32.const 6)) (i32.const 0x50)) ;; P
+    (call $gs8 (i32.add (local.get $dst) (i32.const 7)) (i32.const 0x5c))
+    (call $gs8 (i32.add (local.get $dst) (i32.const 8)) (i32.const 0x57)) ;; W
+    (call $gs8 (i32.add (local.get $dst) (i32.const 9)) (i32.const 0x41)) ;; A
+    (call $gs8 (i32.add (local.get $dst) (i32.const 10)) (i32.const 0x30)) ;; 0
+    (call $gs8 (i32.add (local.get $dst) (i32.const 11)) (i32.const 0x30))
+    (call $gs8 (i32.add (local.get $dst) (i32.const 12)) (i32.const 0x30))
+    (call $gs8 (i32.add (local.get $dst) (i32.const 13)) (i32.const 0x30))
+    (call $gs8 (i32.add (local.get $dst) (i32.const 14)) (i32.const 0x30))
+    (call $gs8 (i32.add (local.get $dst) (i32.const 15)) (i32.const 0x30))
+    (call $gs8 (i32.add (local.get $dst) (i32.const 16)) (i32.const 0x2e)) ;; .
+    (call $gs8 (i32.add (local.get $dst) (i32.const 17)) (i32.const 0x54)) ;; T
+    (call $gs8 (i32.add (local.get $dst) (i32.const 18)) (i32.const 0x4d)) ;; M
+    (call $gs8 (i32.add (local.get $dst) (i32.const 19)) (i32.const 0x50)) ;; P
+    (call $gs8 (i32.add (local.get $dst) (i32.const 20)) (i32.const 0)))
+
+  (func $handle_tmpnam (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dst i32)
+    (local.set $dst (local.get $arg0))
+    (if (i32.eqz (local.get $dst))
+      (then
+        (if (i32.eqz (global.get $msvcrt_tmpnam_ptr))
+          (then (global.set $msvcrt_tmpnam_ptr (call $heap_alloc (i32.const 21)))))
+        (local.set $dst (global.get $msvcrt_tmpnam_ptr))))
+    (call $crt_write_tmpnam (local.get $dst))
+    (global.set $eax (local.get $dst))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
@@ -1109,6 +1498,71 @@
           (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41)) (i32.le_u (local.get $ch) (i32.const 0x46)))
           (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61)) (i32.le_u (local.get $ch) (i32.const 0x66))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
+  (func $handle__isctype (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ch i32) (local $flags i32)
+    (local.set $ch (i32.and (local.get $arg0) (i32.const 0xff)))
+    (local.set $flags (call $ctype1_ascii_flags (local.get $ch)))
+    (if (i32.eq (local.get $ch) (i32.const 0x20))
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x40)))))
+    (if (i32.or
+          (call $crt_is_digit (local.get $ch))
+          (i32.or
+            (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41)) (i32.le_u (local.get $ch) (i32.const 0x46)))
+            (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61)) (i32.le_u (local.get $ch) (i32.const 0x66)))))
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x80)))))
+    (global.set $eax (i32.and (local.get $flags) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
+  (func $msvcrt_ctype_flags (param $ch i32) (result i32)
+    (local $flags i32)
+    (local.set $flags (call $ctype1_ascii_flags (i32.and (local.get $ch) (i32.const 0xff))))
+    (if (i32.eq (i32.and (local.get $ch) (i32.const 0xff)) (i32.const 0x20))
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x40)))))
+    (if (i32.or
+          (call $crt_is_digit (i32.and (local.get $ch) (i32.const 0xff)))
+          (i32.or
+            (i32.and
+              (i32.ge_u (i32.and (local.get $ch) (i32.const 0xff)) (i32.const 0x41))
+              (i32.le_u (i32.and (local.get $ch) (i32.const 0xff)) (i32.const 0x46)))
+            (i32.and
+              (i32.ge_u (i32.and (local.get $ch) (i32.const 0xff)) (i32.const 0x61))
+              (i32.le_u (i32.and (local.get $ch) (i32.const 0xff)) (i32.const 0x66)))))
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x80)))))
+    (local.get $flags))
+
+  ;; _pctype() — cdecl, returns the CRT ctype table. Entry zero is EOF; byte
+  ;; values are indexed at table[ch + 1].
+  (func $handle__pctype (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $i i32)
+    (if (i32.eqz (global.get $msvcrt_pctype_ptr))
+      (then
+        (global.set $msvcrt_pctype_ptr (call $heap_alloc (i32.const 514)))
+        (call $zero_memory (call $g2w (global.get $msvcrt_pctype_ptr)) (i32.const 514))
+        (local.set $i (i32.const 0))
+        (block $done (loop $fill
+          (br_if $done (i32.ge_u (local.get $i) (i32.const 256)))
+          (call $gs16
+            (i32.add (global.get $msvcrt_pctype_ptr)
+              (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const 1)))
+            (call $msvcrt_ctype_flags (local.get $i)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $fill)))))
+    (global.set $eax (global.get $msvcrt_pctype_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
+  ;; _setmode(fd, mode) — cdecl. The emulator does not distinguish text and
+  ;; binary stdio streams; return the previous text mode.
+  (func $handle__setmode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x4000))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
+  (func $handle_abort (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    (call $host_exit (i32.const 3))
+    (global.set $eip (i32.const 0))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0)))
 
   (func $handle_iswctype (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crt_ctype_return (i32.const 0))
@@ -1413,6 +1867,15 @@
                  (i32.lt_u (local.get $len) (local.get $cap)))
         (then (local.get $buf))
         (else (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle__chdir (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (if (result i32) (call $host_fs_set_current_directory
+            (call $g2w (local.get $arg0)) (i32.const 0))
+        (then (i32.const 0))
+        (else (i32.const -1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
