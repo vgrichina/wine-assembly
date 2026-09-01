@@ -378,7 +378,16 @@ declines every `i32.load16_u` site against them instead of widening it to i32
 and reading two fields as one. See §10's wave-4 notes for why +8/+20/+24 are
 `miscN` and not `hwnd`/`dib_ptr`/`color_key_low`.
 
-### 5.4 `GdiObject` — `call $gdi_object_record`, 160 sites — **ATTEMPTED AND DECLINED**
+### 5.4 `GdiObject` — `call $gdi_object_record`, 160 sites — **DECLINED AS ONE LAYOUT, RESOLVED AS SEVEN VARIANTS** (wave 5)
+
+> **Resolution (wave 5).** The two blockers below both stand, and the second one
+> is now fixed rather than merely diagnosed. `src/10d-gdi-region-path.wat`
+> declares **seven variant layouts** — `GdiPen`, `GdiBrush`, `GdiPenBrush`,
+> `GdiBitmap`, `GdiFont`, `GdiPalette`, `GdiMetafile` — each exactly 48 bytes,
+> all agreeing on `handle@0` / `type@4`. `tools/gdi-variant-gate.js` attributes
+> every one of the 160 sites to a variant and checks the attribution against the
+> source. **Zero sites converted, and the build is byte-identical** — blocker 1
+> is untouched, so conversion still waits on §3.4(b). See §5.4.1.
 
 100% memarg-spelled, so it is the natural first customer of §3.4(b) and should
 not be attempted before that is decided.
@@ -454,6 +463,147 @@ Two smaller notes for whoever picks this up:
   count for a **migrated** family is zero; against an unmigrated family it fails
   on all 160 sites immediately. The gate belongs with the conversion, not ahead
   of it.
+
+### 5.4.1 The variant field map, as measured
+
+The table in the section above was the *comment's* claim. Every entry below was
+re-derived from the creators (`$gdi_object_alloc` call sites, by the literal
+type each passes) and from every consumer, with a file:line for each field. The
+comment was right as far as it went and **wrong or incomplete in six places**,
+all of them listed at the end.
+
+Common to every variant: `handle@0`, `type@4`. `$gdi_object_adopt` (10d:3812)
+writes `+8/+12/+16/+20` from four *positional* parameters for all seven types,
+and `+24`..`+44` are left to each creator. `$gdi_object_delete` zero-fills the
+whole 48 bytes, which is what keeps a reused slot clean.
+
+**`GdiPen` (type 1)** — created at 09a4:47, 09a4:67, 09a:13282, 01-header:185,
+10e:1207, 10e:2261.
+
+| off | field | evidence |
+|---|---|---|
+| +8 | `style` | PS_*; 10e:376 |
+| +12 | `width` | `lopnWidth.x`; 10e:390, 10f:810 |
+| +16 | `color` | masked `0x03FFFFFF` at 10d:3841-3845, keeping the PALETTEINDEX/PALETTERGB qualifier byte; 10f:811 |
+| +20 | `flags` | a bitfield, not a boolean: bit0 forces PS_NULL (set as `style == 5` at 09a4:49; read 10d:2878, 10f:1852), `0x00000F00` end cap (10g:1745), `0x0000F000` join (10d:2885), `0x00010000` geometric (10d:2883, 10g:1695/1740/3312) |
+| +24..+44 | reserved | no pen consumer anywhere |
+
+**`GdiBrush` (type 2)** — created at 09a4:77, 09a4:109, 09a4:2576,
+01-header:188, 10a:899, 10e:1235, 10e:2284.
+
+| off | field | evidence |
+|---|---|---|
+| +8 | `style` | BS_* (0 solid, 2 hatched, 3/6 pattern); 10g:782, 10g:3553 |
+| +12 | `hatch` | `lbHatch`, **not** a width; 10f:814, 10g:856 |
+| +16 | `color` | 10g:785, 10g:3555 |
+| +20 | `flags` | 10f:807 |
+| +24 | `pattern_bitmap` | a **HANDLE**, not a pointer, live only when `style` is 3 or 6; stored 10a:906, read 10g:742/791, recursively deleted 10e:2597 |
+| +28..+44 | reserved | |
+
+**`GdiPenBrush`** — not an object type; the *view* the three genuinely
+polymorphic readers need. `$gdi_object_write_pen_brush` loads `+8` and `+20`
+at 10f:806/807 **before** it branches on the type, and `$gdi_object_style`
+(10e:376) / `$gdi_object_color` (10e:370) serve pen and brush through one load.
+It names `style@8`, `color@16`, `flags@20` and leaves **+12 unnamed**, because
+that is the one word pen and brush disagree about — a site that wants it must
+first say which type it has.
+
+**`GdiBitmap` (type 3)** — created at 10e:306.
+
+| off | field | evidence |
+|---|---|---|
+| +8 | `width` | 01-header:472 under `+4 == 3` |
+| +12 | `height` | 01-header:479 under `+4 == 3` |
+| +16 | `bpp` | 10e:427 |
+| +20 | `flags` | bit0 public DIB section (10e:418, 10g:4042), bit1 top-down (10e:318 forwards `(flags>>1)&1`), bit2 owns the +24 block, bit4 `0x10` palette holds DIB_PAL_COLORS indices (set 10a:681, read 10g:808) |
+| +24 | `bits` | WASM address; 10e:310, and `w2g`'d out as `CreateDIBSection`'s `ppvBits` at 09a4:2286 |
+| +28 | `stride` | 10e:311 |
+| +32 | `palette` | RGBQUAD table — **or**, when `palette_count == 3`, a three-DWORD channel-mask triplet for a 16bpp DIB (10g:3941+3943, 10g:5821+5822). A nested discriminant. |
+| +36 | `palette_count` | 10e:313 |
+| +40 | `self_handle` | the record's **own** handle (10e:314 stores `$handle`), round-tripped back into a record through `desc+68` (10g:5752 → 10g:3690) |
+
+**`GdiFont` (type 4)** — created at 10f:670.
+
+| off | field | evidence |
+|---|---|---|
+| +8 | `height` | 10f:580 under `+4 == 4` |
+| +12 | `weight` | 10f:635 |
+| +16 | `italic` | 10f:644, `& 1` |
+| +20 | `flags` | bit0 = "a bitmap strike is bound at +24" (10b:1016) — a different meaning from the same bit on a bitmap |
+| +24 | `strike` | optional installed FNT strike; 10b:1018 store, 10b:1071 load, and 09a4:1264 uses "+24 is non-zero" to mean "raster face, no sfnt tables, answer GDI_ERROR" |
+| +28 | `face` | a **GUEST** pointer (`heap_free`'d at 10e:2600), unlike every other pointer in this union; 10f:678 |
+| +32 | `width` | `lfWidth`; 10f:600/608 |
+| +36 | `pitch_and_family` | `lfPitchAndFamily & 0xFF`; 10f:619/627 |
+
+**`GdiPalette` (type 5)** — created at 10e:77 as `alloc(5, count, 256, version, 4)`.
+
+| off | field | evidence |
+|---|---|---|
+| +8 | `count` | mutated after creation by `$gdi_palette_resize` (10e:172) |
+| +12 | `capacity` | written 10e:78, **read by nothing** |
+| +16 | `version` | written 10e:78, **read by nothing** |
+| +20 | `flags` | always 4 |
+| +24 | `storage` | PALETTEENTRY storage, a WA; 10e:84, freed 10e:2585 |
+
+**`GdiMetafile` (types 6 WMF and 7 EMF)** — created at 10e:452 as
+`alloc(type, size, 0, 0, 4)`.
+
+| off | field | evidence |
+|---|---|---|
+| +8 | `size` | 10e:472, 487, 1000, 1962, 2558 |
+| +12, +16 | reserved | written 0 at 10e:453 and read by nothing |
+| +20 | `flags` | always 4 |
+| +24 | `bits` | WA; stored 10e:457, read 10e:478/557/999/1961/2557 |
+
+**`flags@20` bit 2 (value 4)** means *"the +24 pointer is a `dib_alloc` block
+this record owns; free it on delete"*. Exactly one reader in the tree,
+`$gdi_object_delete_full` at 10e:2603. It is meaningful for bitmaps, palettes
+and metafiles and dead for pens, brushes and fonts.
+
+**Corrections to the old comment.** (1) Pen and brush are **not** one shape:
+`+12` is a pen's `width` and a brush's `hatch`. (2) Brush owns `+24`, a pattern
+bitmap **handle** — the comment had no brush `+24` at all, and it is the one
+`+24` that is not a pointer. (3) Font owns `+32` and `+36`. (4) Bitmap's `+32`
+has its own nested discriminant. (5) `surfaceId@40` is misnamed: it is the
+record's own handle. (6) Palette `capacity`/`version` and metafile `+12`/`+16`
+are write-only, so they are named `reserved` where nothing reads them.
+
+Two latent inconsistencies found and **not** touched, because neither is on a
+live path and both belong to whoever owns those initializers:
+`$gdi_bitmap_record_init` (10a:34) masks `flags & 3`, dropping both bit2 (owned)
+and bit4 (DIB_PAL_COLORS) that the live `$gdi_bitmap_alloc` path passes through
+unmasked; and `$gdi_raster_channel_mask` (10g:3940) resolves `desc+68` without
+the DX-range pre-check its two siblings do, so an HDC colliding with a live
+object handle would be read as a bitmap.
+
+### 5.4.2 What a variant gate has to check that byte identity would not
+
+Byte identity is unavailable here (blocker 1), so `tools/gdi-variant-gate.js`
+plays its role. Three of its four checks are the obvious ones — every site is
+attributed, the offset is a **named, non-reserved** field of that variant, and
+every variant is `$GDI_OBJECT_STRIDE` bytes with `handle@0`/`type@4`.
+
+The fourth exists because the first three were **measured to be insufficient**.
+Mis-attributing `$gdi_font_weight` from `GdiFont` to `GdiPalette` *passed* all
+three: both variants declare a field at `+12` (`weight` and `capacity`), so the
+offset is owned, the name resolves, and nothing complains. That is the §9
+"declared in the wrong order" failure wearing a different hat.
+
+So the gate also harvests each function's **own** `(i32.eq (i32.load offset=4 …)
+(i32.const N))` guards straight out of the source and requires the attributed
+variant's type to be among them. The same mis-attribution then fails with
+*"attributed to GdiPalette (type 5), but the function's own discriminant guard
+tests +4 against 4"*. The check is applied **only** to whole-function
+attributions: for the three functions that hold more than one variant
+(`$gdi_object_delete_full`, `$gdi_object_write_pen_brush`, `$gdi_brush_sample`)
+the harvested guards are a union across arms and prove nothing about any one
+site, which is exactly why those 26 sites are attributed per-arm by hand.
+
+Of 160 sites: 24 read only the shared `handle`/`type` prefix, 26 are per-arm
+sites in a multi-variant function, 23 are cross-checked against the function's
+own guard, and the remainder are typed by their **producer** — the handle came
+out of a constructor for a known type — which check (4) cannot verify and which
+`--list` names explicitly so the weak attributions stay visible.
 
 ---
 
@@ -647,7 +797,28 @@ back non-empty.
   `build.sh` carries the §6.1 back-stop, verified to fail (exit 1, all 367
   sites named) on the unconverted tree — a gate that cannot fail is not a gate.
   Declined by design: **51** u16 sites (§3.1) and **8** `--skip-func` sites.
-- Waves 3, 5-7 are still design.
+- **Wave 5 — `GdiObject`, done as far as it can go without §3.4(b).** Seven
+  variant layouts declared in `src/10d-gdi-region-path.wat` (§5.4.1);
+  **0 of 160 sites converted**, because all 160 are memarg-spelled and
+  `load.field` lowers to the add form. `build/wine-assembly.wasm` is
+  **byte-identical** across the wave — `25961751…` — so the declarations and the
+  gate cost nothing and risk nothing. `tools/gdi-variant-gate.js` attributes all
+  160 sites and is wired into `build.sh`; verified to fail the build (exit 1) on
+  a planted mis-attribution. When §3.4(b) lands, this family converts in one
+  byte-identical pass with its typing already proven.
+- Waves 3, 6-7 are still design.
+
+**Waves 4 and 5 answered the union question two different ways, and the
+difference is the variants' *shape*, not their number.** `DxObject` names the
+overloaded words `misc0`/`misc1`/`misc2` and keeps one layout, because its
+variants agree on width and count and differ only in meaning. `GdiObject` could
+not: its readers are *type-specific functions*, so the useful thing is for
+`(load.field GdiFont strike …)` to be a compile error in a bitmap function. Rule
+of thumb: **name the slot `miscN` when one function reads it for several types;
+split the layout when different functions read it for different types.**
+`GdiPenBrush` is what the two approaches look like when both apply at once — a
+variant that names only the three fields pen and brush agree on, for the three
+readers that genuinely serve both.
 
 ### Three things wave 4 adds
 

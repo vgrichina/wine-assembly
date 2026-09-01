@@ -3745,12 +3745,160 @@
 
   ;; ---- WAT-owned GDI objects and DC state ------------------------------
   ;; Object records use 48 bytes. Types are 1=pen, 2=brush, 3=bitmap,
-  ;; 4=font, 5=palette, 6=WMF, 7=EMF. Font records keep height@8, weight@12,
-  ;; italic@16, optional FNT strike@24, and a WAT-owned guest face pointer@28.
-  ;; Bitmap fields are width@8, height@12, bpp@16, flags@20 (DIB/top-down),
-  ;; bitsWa@24, stride@28, paletteWa@32, paletteCount@36, surfaceId@40.
-  ;; Palette fields are count@8, capacity@12, version@16, flags@20,
-  ;; PALETTEENTRY storage WA@24. Palette storage is always WAT-owned.
+  ;; 4=font, 5=palette, 6=WMF, 7=EMF.
+  ;;
+  ;; THIS RECORD IS A DISCRIMINATED UNION, NOT A STRUCT. Only +0 (handle) and
+  ;; +4 (type) mean the same thing for every object. Everything from +8 up is
+  ;; reinterpreted per type, so there is no single (layout GdiObject) that is
+  ;; right — one would compile perfectly and be wrong at two thirds of its
+  ;; sites, which is the exact silent-plausible failure the layout migration
+  ;; exists to kill (docs/watx-layout-migration-design.md §5.4, §9).
+  ;;
+  ;; +24 alone carries FIVE unrelated meanings, and two of them are spelled
+  ;; 1000 lines apart in one file:
+  ;;     bitmap   +24 = pixel bits, a WASM address   (09a4:2286, w2g'd out as
+  ;;                                                  CreateDIBSection's ppvBits)
+  ;;     font     +24 = optional installed FNT strike (09a4:1264, "a raster face
+  ;;                                                  has no sfnt tables")
+  ;;     palette  +24 = PALETTEENTRY storage, a WA    (10e:2585)
+  ;;     metafile +24 = record bits, a WA             (10e:2592)
+  ;;     brush    +24 = the owned pattern bitmap's    (10a:906 store,
+  ;;                    HANDLE, not a pointer          10e:2597 / 10g:742 loads)
+  ;; $gdi_object_delete_full (10e:2569) is the union's own dispatch and frees a
+  ;; different +24 per type; it is the best single piece of evidence for all of
+  ;; the above.
+  ;;
+  ;; So the record is declared as SEVEN VARIANT LAYOUTS instead of one. Every
+  ;; variant is 48 bytes, so (size-of ...) still pins the table stride whichever
+  ;; one you reach for, and all of them agree on handle@0 / type@4. A field the
+  ;; variant does not own is named `reserved*` rather than left implicit, so an
+  ;; access to it is an unknown-field compile error instead of a plausible read.
+  ;;
+  ;; Choosing a variant at a site is a TYPING decision the codemod cannot make:
+  ;; it comes from the type check already in scope (`i32.eq (load +4) N`, or a
+  ;; named predicate like $gdi_bitmap_record_valid, which is 10a:12's `+4 == 3`),
+  ;; or from the producer that made the handle. tools/gdi-variant-gate.js holds
+  ;; that site->variant attribution and machine-checks it (see §6.1/§6.2).
+
+  ;; Pen (type 1). flags@20 is a rich bitfield, not a boolean: bit0 forces
+  ;; PS_NULL (set at creation as `style == 5`, read 10d:2878 / 10f:1852),
+  ;; 0x00000F00 is the end cap (10g:1745), 0x0000F000 the join (10d:2885), and
+  ;; 0x00010000 marks a geometric pen (10d:2883, 10g:1695/1740/3312).
+  ;; 0x000F0F00 is echoed straight into the LOGPEN style word at 10f:807.
+  (layout GdiPen
+    (field handle    i32)        ;; +0
+    (field type      i32)        ;; +4   == 1
+    (field style     i32)        ;; +8   PS_*
+    (field width     i32)        ;; +12  lopnWidth.x  (10e:390 $gdi_object_width)
+    (field color     i32)        ;; +16  masked 0x03FFFFFF — keeps the
+                                 ;;      PALETTEINDEX/PALETTERGB qualifier byte
+    (field flags     i32)        ;; +20  see above
+    (field reserved  i32 6))     ;; +24..+44 unused by pens; ends at +48
+
+  ;; Brush (type 2). Identical to a pen through +8, +16 and +20 — which is what
+  ;; lets $gdi_object_write_pen_brush (10f:806/807) read style and flags BEFORE
+  ;; it branches on the type. The two diverge at +12 only (width vs hatch), and
+  ;; a brush alone owns +24.
+  (layout GdiBrush
+    (field handle          i32)  ;; +0
+    (field type            i32)  ;; +4   == 2
+    (field style           i32)  ;; +8   BS_*  (0 solid, 2 hatched, 3/6 pattern)
+    (field hatch           i32)  ;; +12  lbHatch  (10f:814, 10g:856)
+    (field color           i32)  ;; +16  masked 0x03FFFFFF, as for a pen
+    (field flags           i32)  ;; +20
+    (field pattern_bitmap  i32)  ;; +24  a HANDLE, live only when style is 3 or
+                                 ;;      6; written 10a:906, read 10g:742/791,
+                                 ;;      recursively deleted at 10e:2597
+    (field reserved        i32 5)) ;; +28..+44
+
+  ;; The pen-or-brush view. $gdi_object_write_pen_brush (10f:806/807),
+  ;; $gdi_object_style (10e:376) and $gdi_object_color (10e:370) genuinely serve
+  ;; both types through one load, so they get a layout that names ONLY the three
+  ;; fields pen and brush agree on. +12 is deliberately unnamed here: it is the
+  ;; one word the two disagree about, and a site that wants it must first say
+  ;; which type it has.
+  (layout GdiPenBrush
+    (field handle       i32)     ;; +0
+    (field type         i32)     ;; +4   1 or 2
+    (field style        i32)     ;; +8
+    (field reserved_12  i32)     ;; +12  pen width / brush hatch — pick a variant
+    (field color        i32)     ;; +16
+    (field flags        i32)     ;; +20
+    (field reserved     i32 6))  ;; +24..+44
+
+  ;; Bitmap (type 3). flags@20 bits: 0 = the bits are a public DIB section
+  ;; (10e:418, 10g:4042), 1 = top-down (10e:318 forwards it as (flags>>1)&1),
+  ;; 2 = this record owns the +24 block and delete must dib_free_wasm it
+  ;; (10e:2603), 4 (0x10) = the palette holds DIB_PAL_COLORS indices
+  ;; (set 10a:681, read 10g:808).
+  ;; palette@32 has a nested discriminant of its own: when palette_count == 3 it
+  ;; is not an RGBQUAD table but a three-DWORD channel-mask triplet for a 16bpp
+  ;; DIB (10g:3941+3943, 10g:5821+5822).
+  ;; +40 is the record's OWN handle, not an opaque surface id: $gdi_bitmap_alloc
+  ;; stores $handle there (10e:314) and the raster layer round-trips it back
+  ;; into an object record through desc+68 (10g:5752 -> 10g:3690 etc).
+  (layout GdiBitmap
+    (field handle        i32)    ;; +0
+    (field type          i32)    ;; +4   == 3
+    (field width         i32)    ;; +8
+    (field height        i32)    ;; +12
+    (field bpp           i32)    ;; +16
+    (field flags         i32)    ;; +20  see above
+    (field bits          i32)    ;; +24  WASM address of the pixels
+    (field stride        i32)    ;; +28
+    (field palette       i32)    ;; +32  RGBQUAD table, or a mask triplet
+    (field palette_count i32)    ;; +36
+    (field self_handle   i32)    ;; +40  == handle; the desc+68 round trip
+    (field reserved      i32))   ;; +44
+
+  ;; Font (type 4). flags@20 bit0 means "a bitmap strike is bound at +24" —
+  ;; a completely different meaning from the same bit on a bitmap. +28 is a
+  ;; GUEST pointer (heap_free'd at 10e:2600), unlike every other +24/+28 in
+  ;; this union, which are WASM addresses.
+  ;; width@32 and pitch_and_family@36 were kept out of the allocator's four
+  ;; positional fields on purpose (10f:592-594, 10f:611-614); they alias the
+  ;; bitmap's palette/palette_count, which is harmless because the types are
+  ;; disjoint but is exactly why one shared layout cannot work.
+  (layout GdiFont
+    (field handle            i32) ;; +0
+    (field type              i32) ;; +4   == 4
+    (field height            i32) ;; +8   lfHeight
+    (field weight            i32) ;; +12  lfWeight
+    (field italic            i32) ;; +16  lfItalic & 1
+    (field flags             i32) ;; +20  bit0 = strike bound at +24
+    (field strike            i32) ;; +24  installed FNT strike, or 0
+    (field face              i32) ;; +28  GUEST pointer to the face name
+    (field width             i32) ;; +32  lfWidth
+    (field pitch_and_family  i32) ;; +36  lfPitchAndFamily, & 0xFF
+    (field reserved          i32 2)) ;; +40..+44
+
+  ;; Palette (type 5). Storage at +24 is always WAT-owned, which is what
+  ;; flags@20 bit2 records. capacity@12 and version@16 are written by
+  ;; $gdi_palette_alloc (10e:77) and read by NOTHING in the tree — named, not
+  ;; dropped, because the allocator's positional store still writes them.
+  ;; count@8 is mutated after creation by $gdi_palette_resize (10e:172).
+  (layout GdiPalette
+    (field handle    i32)        ;; +0
+    (field type      i32)        ;; +4   == 5
+    (field count     i32)        ;; +8
+    (field capacity  i32)        ;; +12  write-only
+    (field version   i32)        ;; +16  write-only
+    (field flags     i32)        ;; +20  always 4 = owns the +24 block
+    (field storage   i32)        ;; +24  PALETTEENTRY storage, a WA
+    (field reserved  i32 5))     ;; +28..+44
+
+  ;; Metafile (types 6 = WMF and 7 = EMF share one shape). $gdi_metafile_create
+  ;; allocates as (type, size, 0, 0, 4) at 10e:452, so +12 and +16 are written
+  ;; zero and never read by anything — reserved, not fields.
+  (layout GdiMetafile
+    (field handle       i32)     ;; +0
+    (field type         i32)     ;; +4   6 or 7
+    (field size         i32)     ;; +8
+    (field reserved_12  i32)     ;; +12  written 0, never read
+    (field reserved_16  i32)     ;; +16  written 0, never read
+    (field flags        i32)     ;; +20  always 4 = owns the +24 block
+    (field bits         i32)     ;; +24  record bits, a WA
+    (field reserved     i32 5))  ;; +28..+44
   ;; Two positive hints, not one: a blit resolves the source handle and the
   ;; destination handle alternately for every single pixel, and a single hint
   ;; thrashes between them so neither ever hits. The two $gdi_object_miss slots

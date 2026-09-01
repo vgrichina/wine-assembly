@@ -145,6 +145,18 @@ node tools/layout-migrate.js --file=src/09c0-window-table.wat --layout=WndRecord
   node tools/layout-migrate.js --file=src/09c0-window-table.wat --layout=WndRecord \
     --base-call='$wnd_record_addr' --gate; exit 1; }
 
+# GdiObject (wave 5) — the 48-byte GDI object record, which is a DISCRIMINATED
+# UNION and so gets SEVEN variant layouts rather than one, all 48 bytes, all
+# agreeing on handle@0 / type@4. There is no --gate here because there is
+# nothing to convert: all 160 sites are `offset=` memarg-spelled, and load.field
+# lowers to the add form, so this family has to wait for the memarg lowering
+# (design doc §3.4(b)) before it can be converted byte-identically. What this
+# gate does instead is check the part a codemod could never do — that every site
+# is attributed to an object TYPE, that the offset it reads is a field that type
+# actually owns, and that the attribution does not contradict the function's own
+# +4 discriminant guard.
+node tools/gdi-variant-gate.js > /dev/null || { node tools/gdi-variant-gate.js; exit 1; }
+
 echo "Concatenating WAT parts..."
 # From the src/main.watx include list, not a shell glob: combined.wat must be
 # the same sequence the real compile resolves, or every function index in it
