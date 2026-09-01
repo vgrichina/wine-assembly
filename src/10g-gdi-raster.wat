@@ -3932,6 +3932,34 @@
   ;; own a three-DWORD table in record +32/+36. Transient BITMAPINFO sources
   ;; use descriptor +24/+28/+64. DirectDraw is explicitly RGB565; all other
   ;; maskless 16-bpp DIB descriptors use Win32 BI_RGB RGB555.
+  ;;
+  ;; This resolves +68 through $gdi_object_record BEFORE testing the
+  ;; DirectDraw range, where the two sibling resolvers immediately above
+  ;; ($gdi_raster_palette_color, $gdi_raster_palette_base) test the range
+  ;; first. The asymmetry is deliberate and safe, and the two reasons are
+  ;; worth writing down because both look like bugs from a distance:
+  ;;
+  ;;   1. The sibling range test is a PRIORITY branch, not a guard. Neither
+  ;;      sibling is protected by it -- when $dx_primary_pal_get returns 0 they
+  ;;      both fall through to exactly this same unguarded lookup. So there is
+  ;;      no guard here to be missing.
+  ;;   2. It could not be a wild read in any case. $gdi_object_record
+  ;;      (10d:3915) is an exact-match scan over a fixed 256-entry table; it
+  ;;      compares its argument against each live record's +0 word and returns
+  ;;      0 on a miss. It never dereferences the handle, so any HDC, surface
+  ;;      id, or garbage is memory-safe input.
+  ;;
+  ;; The ordering is therefore unobservable, because the two handle spaces are
+  ;; disjoint by construction and cannot converge: DirectDraw surface ids are
+  ;; 0x00200000 + slot and stop below 0x00300000, while a GDI object handle can
+  ;; only be minted by $gdi_object_alloc from $gdi_next_object_handle, which
+  ;; starts at 0x00410001 (01-header) and only ever increments -- and
+  ;; $gdi_object_adopt, the sole way a record enters the table, has exactly one
+  ;; production caller ($gdi_object_alloc itself). A DirectDraw id thus always
+  ;; misses the table and always reaches the RGB565 branch below.
+  ;; test/test-gdi-handle-space-disjoint.js pins that invariant, so lowering
+  ;; the handle base into the DirectDraw range fails a test rather than
+  ;; silently turning a primary surface into somebody's bitmap.
   (func $gdi_raster_channel_mask (param $desc i32) (param $channel i32) (result i32)
     (local $record i32) (local $masks i32) (local $surface i32)
     (local.set $surface (i32.load offset=68 (local.get $desc)))
