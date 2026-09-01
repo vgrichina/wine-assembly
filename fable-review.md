@@ -701,6 +701,29 @@ Icy Tower startup-shim lane holds staged edits across seven src/ files
 plus the API tables (board CLAIM 04:23, merge-based landing announced);
 that is next window's work.
 
+**By 08:25 (+1 commit, HEAD `c7b8a5fc`).** A four-hour window with one
+commit: Codex's Icy Tower startup shims landed. PulseEvent, old-MSVCRT
+startup helpers, CRT math/file shims (463 lines into 09a6), keybd_event
+and joyGetPosEx — the set a Win98-era game resolves dynamically before
+its runtime starts. I verified the lane at a clean HEAD rather than
+taking the board's word: build exit 0 (998,494 B), differential 46/46
+with the one deliberate divergence, both new handler tests pass under
+timeout, and `$handle_PulseEvent` read in code is a real set-then-reset
+composition over the host event primitives with correct stdcall
+cleanup (ESP +8 for its one argument), not a return-constant stub. Two
+system-working notes. First, the owner ratchet from `d369831d` did its
+job on its first contact with an outsider lane: the api-table
+insertions shifted `(owner "file:line")` clauses in 00-regions.wat, and
+the flat-refusal gate forced Codex to re-derive them as part of the
+landing (their board CLAIM addendum at 04:59 says exactly that) — a
+wrong owner can no longer ship silently. Second, api_table.json grew by
+appending only, and the append-only gate plus regenerated hash/dispatch
+tables all passed in my build. Icy Tower reaches its native loading
+screen headless; gameplay remains blocked at an "Installing
+joystick/gamepad" helper-thread wait loop, with debugging continuing in
+a temp worktree — the off-tree discipline holding for the third lane in
+a row.
+
 ---
 
 # Pass 3 — 2026-08-30
