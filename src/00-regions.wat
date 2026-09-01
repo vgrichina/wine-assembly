@@ -181,12 +181,16 @@
     (owner "01-header.wat:1133"))
   (region.declare $DX_VERSION_INFO (size 0x0000005C) (align 0x00000010)
     (owner "01-header.wat:3457"))
-  (region.declare $ORDINAL_NAMES_WSOCK32 (size 0x00000100) (align 0x00000100)
-    (owner "01-header.wat:968"))
+  ;; Storage for every string the compiler interns from a `"text"` literal.
+  ;; Named by `(string.pool $WATX_STRING_POOL)` in 01-header.wat; without that
+  ;; declaration the pool is placed above the last data segment, which in this
+  ;; map is the middle of $D3DIM_AUX. Nothing hand-places bytes in here and no
+  ;; offset into it is ever written down — that is the entire point. Growing it
+  ;; is a one-line edit and the compiler says exactly how many bytes short it is.
+  (region.declare $WATX_STRING_POOL (size 0x00000400) (align 0x00000010)
+    (owner "01-header.wat: (string.pool ...)"))
   (region.declare $DI_DIK_VK_TABLE (size 0x00000100) (align 0x00000100)
     (owner "09a8-handlers-directx.wat:6309"))
-  (region.declare $ORDINAL_NAMES_OLEAUT32 (size 0x00000080) (align 0x00000100)
-    (owner "01-header.wat:988"))
   (region.declare $RICHEDIT_FORMAT_TABLE (size 0x00000400) (align 0x00000010)
     (owner "01-header.wat:2178"))
   (region.declare $RICHEDIT_PARA_TABLE (size 0x00000400) (align 0x00000010)

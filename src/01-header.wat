@@ -961,39 +961,34 @@
   (data (region.addr $TT_FONT_STRING_STORAGE 0xA0) "\00")
   ;; WinSock 1.1 ordinal imports used by Win9x DLLs. The DLL loader maps
   ;; supported ordinals to these normal API-table names.
-  ;; ORDINAL_NAMES_WSOCK32 — the names behind WSOCK32's and WINMM's ordinal
-  ;; imports. A by-ordinal import carries no name, so $dll_ordinal_api_id maps
-  ;; the ordinal to one of these strings and hashes it. Bounded by
-  ;; DI_DIK_VK_TABLE at 0x11400.
-  (global $ORDINAL_NAMES_WSOCK32 i32 (region.addr $ORDINAL_NAMES_WSOCK32 0))
-  (global $ORDINAL_NAMES_WSOCK32_SIZE i32 (region.size $ORDINAL_NAMES_WSOCK32))
-  (data (region.addr $ORDINAL_NAMES_WSOCK32 0x0) "WSOCK32.dll\00WSAStartup\00WSACleanup\00WSAGetLastError\00socket\00closesocket\00connect\00send\00recv\00gethostbyname\00htons\00inet_addr\00select\00setsockopt\00ioctlsocket\00accept\00bind\00listen\00shutdown\00ntohs\00inet_ntoa\00__WSAFDIsSet\00WSASetLastError\00")
+  ;; Every `"text"` literal in this tree interns into one compiler-managed pool.
+  ;; This says where that pool lives. Without it the compiler places the pool
+  ;; above the last data segment — which is only "above the map" when WATX
+  ;; allocated the map itself; here it is the middle of $D3DIM_AUX, measured at
+  ;; 0x07B7B040, silently on top of live Direct3D state. See the 2026-08-31
+  ;; entry in tools/watx-src/CHANGELOG.md.
+  (string.pool $WATX_STRING_POOL)
+  ;; The pool's base, as a global, because check-region-decls requires every
+  ;; declared region to have one. Nothing reads it: the whole point of the pool
+  ;; is that no offset into it is ever written down by hand.
+  (global $WATX_STRING_POOL i32 (region.addr $WATX_STRING_POOL 0))
+  (global $WATX_STRING_POOL_SIZE i32 (region.size $WATX_STRING_POOL))
 
-  ;; WINMM ordinal-import names, in the free space right after the WSOCK32
-  ;; block. $system_ordinal_api_id addresses these by absolute offset, so
-  ;; append here rather than inserting above — tools/data_offsets.js prints
-  ;; the resulting addresses.
-  (data (region.addr $ORDINAL_NAMES_WSOCK32 0xDC) "winmm.dll\00PlaySoundA\00")
-
-  ;; OLEAUT32 ordinal-import names. Kodak Imaging imports the whole VARIANT
-  ;; and BSTR set by ordinal only; the numbers come from the real Win98
-  ;; oleaut32.dll export table (tools/pe-exports.js --ordinal=...).
-  ;; NB 0x11400..0x11500 is DI_DIK_VK_TABLE in 09a8-handlers-directx.wat, which
-  ;; concatenates later and would silently overwrite anything placed there.
-  ;; ORDINAL_NAMES_OLEAUT32 — the same idea for oleaut32's BSTR/VARIANT
-  ;; entry points plus WSAAsyncSelect. It fills 0x11500..0x11580 exactly, the
-  ;; hole between DI_DIK_VK_TABLE and RICHEDIT_FORMAT_TABLE. Kodak Imaging
-  ;; lost these imports once when they were placed on top of another block --
-  ;; the later segment wins silently, which is what a declared extent stops.
-  (global $ORDINAL_NAMES_OLEAUT32 i32 (region.addr $ORDINAL_NAMES_OLEAUT32 0))
-  (global $ORDINAL_NAMES_OLEAUT32_SIZE i32 (region.size $ORDINAL_NAMES_OLEAUT32))
-  (data (region.addr $ORDINAL_NAMES_OLEAUT32 0x0) "oleaut32.dll\00SysAllocString\00SysAllocStringLen\00SysFreeString\00SysStringLen\00VariantInit\00VariantClear\00VariantCopy\00")
-  ;; More WSOCK32 ordinal names. The 0x11300 block ends flush against the
-  ;; winmm block at 0x113DC, so later additions live in the free run above the
-  ;; richedit tables; the DLL name itself is still matched from 0x11300.
-  ;; This one fills the 18-byte gap between the oleaut32 block (ends 0x1156E)
-  ;; and RICHEDIT_FORMAT_TABLE at 0x11580 — there is no room to grow it.
-  (data (region.addr $ORDINAL_NAMES_OLEAUT32 0x70) "WSAAsyncSelect\00")
+  ;; The WSOCK32/WINMM and OLEAUT32 ordinal-import name blocks used to live
+  ;; here, as two packed NUL-separated blobs that $dll_ordinal_api_id and
+  ;; $system_ordinal_api_id addressed by hand-counted byte offset. Both are
+  ;; gone: the names are `"text"` literals at their use sites in
+  ;; 08b-dll-loader.wat now, interned into $WATX_STRING_POOL by the compiler.
+  ;;
+  ;; What went with them is the whole failure mode. Inserting or renaming one
+  ;; name shifted every later offset, and the only symptom was an ordinal
+  ;; resolving to the WRONG API, in one app, much later — so names could not be
+  ;; added where they belonged. The comments deleted along with these blobs
+  ;; recorded the damage: "append here rather than inserting above", "fills the
+  ;; 18-byte gap ... there is no room to grow it", and a note that Kodak Imaging
+  ;; had already lost its imports once to a block placed on top of another. The
+  ;; wsock32 name WSAAsyncSelect had been parked inside the OLEAUT32 block for
+  ;; want of anywhere else to put it.
   ;; RESERVED_PAGE_STRINGS — the rest of the reserved page, 0x11D80 up to
   ;; GUEST_BASE: the remaining ordinal-import names, the module names
   ;; GetModuleHandle matches, the Win16 built-in module list, the system

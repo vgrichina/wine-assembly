@@ -78,9 +78,9 @@
     (if (i32.and
           (i32.and
             (i32.eq (i32.load16_u (local.get $hint_name_wa)) (i32.const 446))
-            (call $str_eq (local.get $name_wa) (i32.const 0x330))) ;; GetMessageA
-          (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x325))) ;; USER32.dll
-      (then (return (call $lookup_api_id (i32.const 0x319))))) ;; MessageBoxA
+            (call $str_eq (local.get $name_wa) "GetMessageA"))
+          (call $dll_name_match (local.get $dll_name_ga) "USER32.dll"))
+      (then (return (call $lookup_api_id "MessageBoxA"))))
     (i32.const -1))
 
   ;; Apply segment override to an address. FS=5 adds fs_base. GS=6 traps
@@ -1415,9 +1415,72 @@
     (call $store_fake_argv_a (local.get $ptr)
       (i32.add (global.get $exe_name_len) (i32.const 3))))
 
+  (func $store_fake_argv_w (param $cmd i32) (param $path_len i32)
+    (local $dst i32) (local $argv i32) (local $argc i32)
+    (local $i i32) (local $ch i32) (local $quoted i32)
+    (local.set $dst (i32.add (local.get $cmd) (i32.const 1024)))
+    (local.set $argv (i32.add (local.get $cmd) (i32.const 1536)))
+    (call $gs32 (local.get $argv) (local.get $dst))
+    (block $path_done (loop $path_copy
+      (br_if $path_done (i32.ge_u (local.get $i) (local.get $path_len)))
+      (call $gs16
+        (local.get $dst)
+        (call $gl16 (i32.add (local.get $cmd) (i32.shl (local.get $i) (i32.const 1)))))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $path_copy)))
+    (call $gs16 (local.get $dst) (i32.const 0))
+    (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+    (local.set $argc (i32.const 1))
+    (local.set $i (i32.const 0))
+    (block $args_done (loop $next_arg
+      (block $have_arg (loop $skip_space
+        (br_if $args_done (i32.ge_u (local.get $i) (global.get $extra_cmdline_len)))
+        (local.set $ch (i32.load8_u
+          (i32.add (global.get $EXTRA_CMDLINE_BUFFER) (local.get $i))))
+        (br_if $have_arg
+          (i32.and (i32.ne (local.get $ch) (i32.const 0x20))
+                   (i32.ne (local.get $ch) (i32.const 0x09))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $skip_space)))
+      (br_if $args_done (i32.ge_u (local.get $argc) (i32.const 126)))
+      (call $gs32
+        (i32.add (local.get $argv) (i32.shl (local.get $argc) (i32.const 2)))
+        (local.get $dst))
+      (local.set $argc (i32.add (local.get $argc) (i32.const 1)))
+      (local.set $quoted (i32.const 0))
+      (block $arg_done (loop $copy_arg
+        (br_if $arg_done (i32.ge_u (local.get $i) (global.get $extra_cmdline_len)))
+        (local.set $ch (i32.load8_u
+          (i32.add (global.get $EXTRA_CMDLINE_BUFFER) (local.get $i))))
+        (if (i32.eq (local.get $ch) (i32.const 0x22))
+          (then
+            (local.set $quoted (i32.eqz (local.get $quoted)))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $copy_arg)))
+        (br_if $arg_done
+          (i32.and (i32.eqz (local.get $quoted))
+            (i32.or (i32.eq (local.get $ch) (i32.const 0x20))
+                    (i32.eq (local.get $ch) (i32.const 0x09)))))
+        (call $gs16 (local.get $dst) (local.get $ch))
+        (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $copy_arg)))
+      (call $gs16 (local.get $dst) (i32.const 0))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+      (br $next_arg)))
+    (call $gs32
+      (i32.add (local.get $argv) (i32.shl (local.get $argc) (i32.const 2)))
+      (i32.const 0))
+    (call $gs32 (i32.add (local.get $cmd) (i32.const 772)) (local.get $argc))
+    (call $gs32 (i32.add (local.get $cmd) (i32.const 776)) (local.get $argv))
+    (call $gs32 (i32.add (local.get $cmd) (i32.const 784))
+      (i32.add (local.get $cmd) (i32.const 2040)))
+    (call $gs32 (i32.add (local.get $cmd) (i32.const 2040)) (i32.const 0)))
+
   (func $store_fake_wcmdline
     (local $ptr i32) (local $i i32) (local $len i32) (local $extra i32)
-    (local.set $ptr (call $heap_alloc (i32.const 1024)))
+    (local.set $ptr (call $heap_alloc (i32.const 2048)))
     (global.set $msvcrt_wcmdln_ptr (local.get $ptr))
     ;; Write L"C:\<exe_name>" and mirror set_extra_cmdline as UTF-16.
     (call $gs16 (local.get $ptr) (i32.const 0x43))  ;; 'C'
@@ -1449,9 +1512,8 @@
     (call $gs16 (i32.add (local.get $ptr) (i32.shl (local.get $len) (i32.const 1))) (i32.const 0))
     ;; Scratch records used by __p__wcmdln and __wgetmainargs.
     (call $gs32 (i32.add (local.get $ptr) (i32.const 768)) (local.get $ptr))
-    (call $gs32 (i32.add (local.get $ptr) (i32.const 776)) (local.get $ptr))
-    (call $gs32 (i32.add (local.get $ptr) (i32.const 780)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $ptr) (i32.const 784)) (i32.const 0)))
+    (call $store_fake_argv_w (local.get $ptr)
+      (i32.add (global.get $exe_name_len) (i32.const 3))))
   (func $guest_strlen (param $gp i32) (result i32)
     (local $len i32)
     (block $d (loop $l
