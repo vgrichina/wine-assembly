@@ -1265,9 +1265,11 @@
       <span class="debug-thread-state">
         <button id="thread-state-btn" onclick="openThreadState()" title="Open live scheduler, yield, and critical-section state">Thread state</button>
       </span>
-      <span class="debug-agent">
+      <span class="debug-agent" id="agent-handoff" hidden>
         <button id="agent-handoff-btn" onclick="copyAgentHandoff()" title="Copy this tab's link plus the tools/ctl.js instructions that let an agent drive this session (docs/design-agent-control.md)">Agent handoff</button>
         <span id="agent-handoff-status" style="color:#606060"></span>
+        <textarea id="agent-handoff-text" readonly spellcheck="false" hidden
+                  style="position:fixed;top:40px;right:8px;width:540px;max-width:92vw;height:96px;z-index:1000;font:11px/1.4 monospace;background:#ffffe1;border:1px solid #808080;padding:4px;box-sizing:border-box"></textarea>
       </span>
       <a href="story.html" style="margin-left: 8px; font-size: 12px; color: #000080;">The Story</a>
       <span id="status" style="margin-left: auto; color: #808080;"></span>
@@ -2005,23 +2007,35 @@ Resource-aware Win98 emulator
     });
     function openThreadState() { return threadStateViewer.open(); }
 
-    // Agent handoff (docs/design-agent-control.md): copy what an agent needs
-    // to drive this session — the tab URL and the ctl.js line. The module is
-    // the same instance the dev-server's auto-connect injected, so connect()
-    // just returns the live session; on a page with no hub (a deployed
-    // build) it fails and the status says so instead of copying a dud.
+    // Agent handoff (docs/design-agent-control.md). The control is hidden
+    // until lib/agent-remote.js announces a live hub session (the
+    // dev-server's auto-connect, or a manual connect() paste) — a page with
+    // no hub has nothing to hand off, so it shows no button. The click
+    // copies AND opens a visible box with the text selected: a silent
+    // clipboard write is indistinguishable from a broken button, and on
+    // plain-http LAN pages the Clipboard API refuses anyway.
+    const revealAgentHandoff = () => {
+      const span = document.getElementById('agent-handoff');
+      if (span) span.hidden = false;
+    };
+    window.addEventListener('agent-remote-connected', revealAgentHandoff);
+    if (window.__agentRemote && window.__agentRemote.running) revealAgentHandoff();
     async function copyAgentHandoff() {
       const status = document.getElementById('agent-handoff-status');
+      const box = document.getElementById('agent-handoff-text');
+      if (!box.hidden) { box.hidden = true; status.textContent = ''; return; }
       try {
         const m = await import('./lib/agent-remote.js');
-        await m.connect();
-        await m.copyHandoff();
-        status.textContent = 'copied — paste it to your agent';
+        const text = await m.copyHandoff();
+        box.value = text;
+        box.hidden = false;
+        box.focus();
+        box.select();
+        status.textContent = 'copied — box below has it too';
       } catch (error) {
-        status.textContent = 'no agent hub (serve via tools/dev-server.js)';
+        status.textContent = `copy failed: ${error && error.message || error}`;
         console.warn('[agent-handoff]', error);
       }
-      setTimeout(() => { status.textContent = ''; }, 4000);
     }
 
     // Frame/step graph overlay (lib/perf-hud.js). Off by default even in

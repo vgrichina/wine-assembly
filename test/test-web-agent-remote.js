@@ -96,19 +96,23 @@ let browser = null;
   check('paste line joins the same session', pastedId === sessionId, `${pastedId} vs ${sessionId}`);
 
   // The in-page way to get the link: the debug toolbar's Agent handoff
-  // button. Its status line confirms the copy, and the handoff text names
-  // ctl.js with this tab's URL as the -s value.
+  // button. It is hidden until the hub session is live, and clicking it
+  // opens a visible box holding the handoff text (a silent clipboard write
+  // looks identical to a broken button).
+  const revealed = await page.waitForFunction(() =>
+    !document.getElementById('agent-handoff').hidden, { timeout: 10000 })
+    .then(() => true).catch(() => false);
+  check('Agent handoff control appears once connected', revealed, 'still hidden');
   await page.click('#agent-handoff-btn');
-  const copied = await page.waitForFunction(() =>
-    document.getElementById('agent-handoff-status').textContent.includes('copied'),
-    { timeout: 10000 }).then(() => true).catch(() => false);
-  check('Agent handoff button reports copied', copied,
-    await page.evaluate(() => document.getElementById('agent-handoff-status').textContent));
-  const handoff = await page.evaluate(() =>
-    import('./lib/agent-remote.js').then(m => m.handoffText()));
+  const boxShown = await page.waitForFunction(() => {
+    const box = document.getElementById('agent-handoff-text');
+    return !box.hidden && box.value.length > 0;
+  }, { timeout: 10000 }).then(() => true).catch(() => false);
+  const boxText = await page.evaluate(() =>
+    document.getElementById('agent-handoff-text').value);
   const wantLink = `-s 'http://127.0.0.1:${PORT}/?debug'`;
-  check('handoff text names ctl.js and the tab URL',
-    handoff.includes('tools/ctl.js') && handoff.includes(wantLink), handoff);
+  check('handoff box shows ctl.js line with the tab URL',
+    boxShown && boxText.includes('tools/ctl.js') && boxText.includes(wantLink), boxText);
 
   const title = ctl('-s', sessionId, 'eval', 'document.title');
   check('eval answers from page scope', title.trim().length > 0, JSON.stringify(title));
