@@ -53,9 +53,9 @@ const browserShellSource = fs.readFileSync(path.join(root, 'lib/browser-shell.js
 const indexSource = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 assert(browserShellSource.includes('if (app.cdAudio)'));
 assert(browserShellSource.includes('loadTrack: name => WineAssembly.fetchAssetBytes'));
-assert(indexSource.includes('<script src="lib/cdrom.js?v=2"></script>'));
-assert(indexSource.includes('<script src="lib/browser-shell.js?v=20"></script>'));
-assert(indexSource.includes('<script src="lib/host-audio.js?v=3"></script>'));
+assert(/<script src="lib\/cdrom\.js\?v=\d+"><\/script>/.test(indexSource));
+assert(/<script src="lib\/browser-shell\.js\?v=\d+"><\/script>/.test(indexSource));
+assert(/<script src="lib\/host-audio\.js\?v=\d+"><\/script>/.test(indexSource));
 
 const sizes = {
   'data.bin': SECTOR_BYTES,

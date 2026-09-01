@@ -48,6 +48,26 @@ assert.strictEqual(
   keyboardProxyAction({ hasCaret: true, proxyFocused: false, gesture: false, caretIsNew: false }),
   'none', 'a caret the user already dismissed the keyboard on stays dismissed');
 
+// The manual keyboard. A fullscreen DirectDraw game -- Diablo II asking for a
+// character name, StarCraft's chat line, a Half-Life console -- draws its own
+// text field and never calls CreateCaret, so hasCaret is false for the entire
+// time the user is trying to type. The on-screen pill says so directly, and it
+// has to beat the caret rule in BOTH directions: without the override the
+// 500ms resync blurs the proxy immediately after the pill focused it, and the
+// keyboard drops back down on its own a moment after it appears.
+assert.strictEqual(
+  keyboardProxyAction({ hasCaret: false, proxyFocused: false, manual: true }), 'focus',
+  'the manual toggle opens the keyboard with no caret anywhere');
+assert.strictEqual(
+  keyboardProxyAction({ hasCaret: false, proxyFocused: true, manual: true }), 'none',
+  'and the resync leaves it alone instead of blurring it a moment later');
+assert.strictEqual(
+  keyboardProxyAction({ hasCaret: false, proxyFocused: true, manual: false }), 'blur',
+  'turning the toggle back off lets the ordinary no-caret rule close it');
+assert.strictEqual(
+  keyboardProxyAction({ hasCaret: true, proxyFocused: true, manual: false }), 'none',
+  'but a guest text field keeps its own keyboard when the toggle goes off');
+
 // --- telling a keyboard from everything else that shrinks the viewport ---
 
 assert.strictEqual(

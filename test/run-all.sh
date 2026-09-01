@@ -546,6 +546,10 @@ UNIT=(
   test/watx-compiler-type-index.test.js
   test/watx-compiler-wine-parity.test.js
   test/test-keyboard-focus-seed.js
+  test/test-single-app-keep-aspect.js
+  test/test-browser-park-sleep.js
+  test/test-next-timer-due.js
+  test/test-app-icon-assets.js
 )
 
 E2E=(

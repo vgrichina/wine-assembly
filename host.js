@@ -28,6 +28,14 @@ if (typeof window !== 'undefined') window.claimAudioSession = claimAudioSession;
 class WineAssembly {
   static SOURCE_VERSION = '250';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
+  // Ceiling on any sleep the drive loop takes while the guest is parked. Every
+  // sleep is bounded by a deadline the guest actually named; this bounds the
+  // damage when one of those deadlines is wrong or a wake source is missing,
+  // turning a hang into 20Hz polling.
+  static MAX_PARK_SLEEP_MS = 50;
+  // How long an AudioContext may sit 'running' with nothing playing before it
+  // is suspended. A running context holds the audio hardware awake.
+  static AUDIO_IDLE_SUSPEND_MS = 10000;
   static _nextProcessId = 1000;
 
   static _assetPartUrl(url, index) {
@@ -310,7 +318,60 @@ class WineAssembly {
       this._exeName, info, this.instance.exports, this.memory.buffer);
   }
 
+  // The guest has reached an audio API for the first time. Everything below
+  // keys off this: until it happens there is no AudioContext, because a
+  // running AudioContext keeps the audio hardware powered whether or not a
+  // single sample is ever played, and most apps never play one. Notepad used
+  // to open one at launch and hold it 'running' for the whole session.
+  markAudioRequested() {
+    this._audioRequested = true;
+    this._startAudioIdleWatch();
+  }
+
+  // Resume a context we suspended for silence. Called from the one place that
+  // knows sound is imminent (host-audio's _markWaveOutHot), which is reached
+  // on open and on every buffer submit — so the first effect of an app that
+  // has been quiet is not swallowed, it just costs a resume.
+  wakeAudio() {
+    this._audioIdleSince = 0;
+    const ac = this._audioCtx;
+    if (ac && ac.state === 'suspended') {
+      try { ac.resume(); } catch (_) {}
+    }
+  }
+
+  _startAudioIdleWatch() {
+    if (this._audioIdleTimer || typeof setInterval !== 'function') return;
+    this._audioIdleTimer = setInterval(() => {
+      const ac = this._audioCtx;
+      if (!ac || ac.state !== 'running') { this._audioIdleSince = 0; return; }
+      if (this._isAudioHot()) { this._audioIdleSince = 0; return; }
+      const now = this._audioSchedulerNow();
+      if (!this._audioIdleSince) { this._audioIdleSince = now; return; }
+      if (now - this._audioIdleSince < WineAssembly.AUDIO_IDLE_SUSPEND_MS) return;
+      this._audioIdleSince = 0;
+      // Suspended, never closed: a closed context cannot be reopened, and
+      // wakeAudio() has to be able to bring this one back for the next sound.
+      try { ac.suspend(); } catch (_) {}
+    }, 2000);
+  }
+
+  _stopAudioIdleWatch() {
+    if (this._audioIdleTimer) {
+      clearInterval(this._audioIdleTimer);
+      this._audioIdleTimer = 0;
+    }
+    this._audioIdleSince = 0;
+  }
+
   primeAudio() {
+    // Launch calls this unconditionally, and so does every touch (the iOS
+    // gesture unlock). Both are the right moment to *unlock* audio and the
+    // wrong moment to *create* it: a gesture is only worth spending on an app
+    // that has asked for sound. Once one has, the next gesture primes it —
+    // which is the pattern iOS actually needs, since the app's own first
+    // waveOut is rarely inside a gesture.
+    if (!this._audioCtx && !this._audioRequested) return null;
     const AC = (typeof AudioContext !== 'undefined') ? AudioContext :
                (typeof webkitAudioContext !== 'undefined') ? webkitAudioContext : null;
     if (!AC) return null;
@@ -401,6 +462,10 @@ class WineAssembly {
       },
       get _audioCtx() { return self._audioCtx; },
       set _audioCtx(v) { self._audioCtx = v; },
+      // The two seams that make the AudioContext lazy. host-audio owns the
+      // context; the host owns the policy about when one should exist.
+      markAudioRequested: () => self.markAudioRequested(),
+      wakeAudio: () => self.wakeAudio(),
       // A 16-bit LoadLibrary for a module nothing imports statically: the
       // Entertainment Pack's WEPUTIL, or the per-level DLL Stones ships one of
       // per screen. WAT has already given the name a module id and wants the
@@ -510,25 +575,37 @@ class WineAssembly {
     // healthy. A phone does not have three of those, so the second or third
     // app a visitor opened failed with "Out of memory" -- which is what
     // "sometimes it closes properly, sometimes it doesn't" actually was.
-    if (typeof requestAnimationFrame === 'function') {
-      const tick = () => {
-        if (self._stopped) return;
-        self._dxFrameSeq = (self._dxFrameSeq || 0) + 1;
-        requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
-    }
+    // It used to be a bare rAF chain ticking that counter. Two problems with
+    // that: it ran for the app's whole life even for a GDI-only program that
+    // never creates a DirectDraw surface, and every scheduled frame held the
+    // whole WineHost — and its 512MB shared memory — alive (see above; that
+    // was the "second app fails with Out of memory" bug).
+    //
+    // Derive the frame number from the clock instead. It answers the same
+    // question ("has a display frame's worth of time passed since the last
+    // upload?") with no chain to leak and nothing to tick when the app is not
+    // presenting. The hidden-tab check keeps the property the rAF gave for
+    // free: a backgrounded tab uploads nothing.
+    self._dxFrameSeqNow = () => {
+      if (typeof document !== 'undefined' && document.hidden) return null;
+      const now = (typeof performance !== 'undefined' && performance.now)
+        ? performance.now() : Date.now();
+      return Math.floor(now / 16.7);
+    };
 
     self._presentDxIfDirty = () => {
       if (!self._dxDirty) return;
       const gdi = self.hostCtx && self.hostCtx.sharedGdi;
       if (!gdi || !gdi.presentBestDxOffscreen) return;
-      // One upload per display frame. With no rAF (a non-DOM host) _dxFrameSeq
-      // stays undefined and every dirty slice presents, which is the old
+      // One upload per display frame. A null sequence means "do not present
+      // at all" (hidden tab); on a non-DOM host with no clock at all the
+      // counter is undefined and every dirty slice presents, which is the old
       // unthrottled behaviour rather than none.
-      if (self._dxFrameSeq !== undefined) {
-        if (self._dxFrameSeq === self._dxPresentedSeq) return;
-        self._dxPresentedSeq = self._dxFrameSeq;
+      const frameSeq = self._dxFrameSeqNow ? self._dxFrameSeqNow() : undefined;
+      if (frameSeq === null) return;
+      if (frameSeq !== undefined) {
+        if (frameSeq === self._dxPresentedSeq) return;
+        self._dxPresentedSeq = frameSeq;
       }
       // Don't upload a surface the guest is part-way through writing. Every
       // Lock measured so far is released inside its own frame (Heroes II
@@ -2052,6 +2129,15 @@ class WineAssembly {
   // screen. Repainting last, once, fixes both.
   stop(options = {}) {
     this.running = false;
+    // A pending parked-sleep timeout and the visibilitychange listener both
+    // close over this WineHost, and a WineHost owns a 512MB shared memory.
+    // Same leak the DX rAF chain had.
+    this._cancelDelayedStep();
+    this._pausedStep = null;
+    this._hiddenPaused = false;
+    this._removeVisibilityPause();
+    this._removeInputWake();
+    this._stopAudioIdleWatch();
     // Read by every self-rescheduling loop this host owns. `running` cannot
     // do that job: it goes false and true again over a host's life, and a
     // loop that restarted itself on the second launch would be back to
@@ -2241,6 +2327,13 @@ class WineAssembly {
   _runThreaded(stepsPerSlice) {
     this.running = true;
     const self = this;
+    // Worker mode gets the hidden-tab pause and the input wake. It does NOT
+    // get the parked sleep: its main thread is one participant in a rendezvous
+    // with real Workers, so "the main instance is waiting" does not mean the
+    // machine has nothing to run, and the cooperative signal this decision
+    // rests on is not the same signal here.
+    self._installVisibilityPause();
+    self._installInputWake();
     if (self.renderer && self.guestWorker && self.guestWorker.broker &&
         !self._rendererInputPendingPublisher) {
       self._rendererInputPendingPublisher = (depth, wake) => {
@@ -2274,6 +2367,10 @@ class WineAssembly {
     let unsupportedYield = 0;
     const step = async () => {
       if (!self.running) return;
+      if (self._hiddenPaused || self._maybePauseForHidden()) {
+        self._pausedStep = step;
+        return;
+      }
       const perf = (typeof window !== 'undefined' && window.WinePerf && window.WinePerf.enabled)
         ? window.WinePerf : null;
       if (perf) perf.stepBegin();
@@ -2492,7 +2589,26 @@ class WineAssembly {
   // of every cycle. A MessageChannel port posts an unclamped macrotask: it
   // still yields to input and rAF between slices, it just doesn't wait 4ms to
   // do it. setTimeout stays as the fallback for anything without MessageChannel.
-  _scheduleStep(step) {
+  //
+  // delayMs > 0 asks for the opposite of all that: the guest is parked with
+  // nothing to run, so the next slice should happen when something could have
+  // changed, not as fast as the event loop will allow. An idle Notepad used to
+  // spend ~95% of a core re-asking has_pending_message 100,000 times a second
+  // and being told "no" every time. The cap is deliberate — a wake source we
+  // forgot to hook up degrades to 20Hz polling, never to a hang.
+  _scheduleStep(step, delayMs = 0) {
+    this._cancelDelayedStep();
+    const delay = delayMs > 0 ? Math.min(delayMs, WineAssembly.MAX_PARK_SLEEP_MS) : 0;
+    if (delay > 0) {
+      this._delayedStep = step;
+      this._stepTimeoutId = setTimeout(() => {
+        this._stepTimeoutId = 0;
+        const fn = this._delayedStep;
+        this._delayedStep = null;
+        if (fn && this.running) fn();
+      }, delay);
+      return;
+    }
     if (this._stepPort === undefined) {
       this._stepPort = null;
       if (typeof MessageChannel === 'function') {
@@ -2517,14 +2633,166 @@ class WineAssembly {
     }
   }
 
+  _cancelDelayedStep() {
+    if (this._stepTimeoutId) {
+      clearTimeout(this._stepTimeoutId);
+      this._stepTimeoutId = 0;
+    }
+    this._delayedStep = null;
+  }
+
+  // Something happened that the parked guest was waiting for. Cut the sleep
+  // short rather than letting it run out: the whole point of sleeping is that
+  // nothing could have changed, and this is the call that says otherwise.
+  // Cheap and idempotent, so input paths can call it unconditionally.
+  _wakeStep() {
+    if (!this.running) return;
+    if (this._hiddenPaused) { this._resumeFromHidden(); return; }
+    if (!this._stepTimeoutId) return;
+    clearTimeout(this._stepTimeoutId);
+    this._stepTimeoutId = 0;
+    const fn = this._delayedStep;
+    this._delayedStep = null;
+    if (fn) this._scheduleStep(fn, 0);
+  }
+
+  // How long the drive loop may sleep before the next slice, given that the
+  // guest's main thread is parked. 0 means "do not sleep".
+  //
+  // Every deadline here is one the guest itself named. A Sleep(n) and a
+  // bounded WaitForSingleObject carry their own; a GetMessage/WaitMessage park
+  // has no deadline of its own but can still be woken by a WM_TIMER, which is
+  // what next_timer_due_ms answers. Anything else that could wake it — input,
+  // a posted message, a worker thread, an async yield — either calls
+  // _wakeStep() or does not park in the first place.
+  _parkedSleepMs() {
+    if (this._paused) return 0;
+    const tm = this.threadManager;
+    // A worker with runnable code is the other half of this step. It is not
+    // idle just because the main thread is.
+    if (tm && tm.hasActiveThreads && tm.hasActiveThreads()) return 0;
+    const ex = this.instance && this.instance.exports;
+    if (!ex) return 0;
+    const now = this._audioSchedulerNow();
+    // A click or keypress lands as a queued input event that the very next
+    // slice consumes. Do not sleep through the tail of an interaction.
+    const wake = this.renderer && this.renderer._recentMessageWakeAt;
+    if (wake && (now - wake) < 120) return 0;
+    let best = Infinity;
+    if (tm && tm._mainSleepUntil) best = Math.min(best, tm._mainSleepUntil - now);
+    let yr = 0;
+    try { yr = ex.get_yield_reason ? (ex.get_yield_reason() >>> 0) : 0; } catch (_) { return 0; }
+    if (yr === 1) {
+      let timeout = 0xFFFFFFFF;
+      try { timeout = ex.get_wait_timeout ? (ex.get_wait_timeout() >>> 0) : 0xFFFFFFFF; } catch (_) {}
+      if (timeout !== 0xFFFFFFFF && timeout !== 0) best = Math.min(best, timeout);
+    } else if (yr === 7) {
+      let due = -1;
+      try { due = ex.next_timer_due_ms ? (ex.next_timer_due_ms() | 0) : -1; } catch (_) { due = -1; }
+      // -1 is "this thread owns no timer at all": nothing but an external
+      // event can wake it, and those wake us explicitly.
+      if (due >= 0) best = Math.min(best, due);
+    } else if (!tm || !tm._mainSleepUntil) {
+      // Parked for a reason we do not model. Poll at the cap.
+      best = Math.min(best, WineAssembly.MAX_PARK_SLEEP_MS);
+    }
+    if (!Number.isFinite(best)) best = WineAssembly.MAX_PARK_SLEEP_MS;
+    // A deadline that has already passed still means "park": whatever the
+    // guest is waiting for did not arrive, and returning 0 here would put the
+    // loop straight back into the spin this exists to end.
+    return Math.max(1, Math.min(WineAssembly.MAX_PARK_SLEEP_MS, Math.round(best)));
+  }
+
+  // The tab went away. Unless the app is audible, stop the chain outright —
+  // a throttled cadence is still a cadence, and a backgrounded emulator that
+  // nobody is looking at should cost nothing at all. Audible playback is the
+  // one case worth the battery: a music player in another tab is a feature.
+  // Let the renderer's input path cut a parked sleep short. Registered per
+  // host so two apps in one page each get their own wake.
+  _installInputWake() {
+    const renderer = this.renderer;
+    if (!renderer) return;
+    if (!this._wakeStepHook) this._wakeStepHook = () => this._wakeStep();
+    const hooks = renderer._stepWakeHooks || (renderer._stepWakeHooks = new Set());
+    hooks.add(this._wakeStepHook);
+  }
+
+  _removeInputWake() {
+    const hooks = this.renderer && this.renderer._stepWakeHooks;
+    if (hooks && this._wakeStepHook) hooks.delete(this._wakeStepHook);
+  }
+
+  _installVisibilityPause() {
+    if (this._visibilityHooked || typeof document === 'undefined') return;
+    if (typeof document.addEventListener !== 'function') return;
+    this._visibilityHooked = true;
+    this._onVisibilityChange = () => {
+      if (!this.running) return;
+      if (document.hidden) this._maybePauseForHidden();
+      else this._resumeFromHidden();
+    };
+    document.addEventListener('visibilitychange', this._onVisibilityChange);
+  }
+
+  _removeVisibilityPause() {
+    if (!this._visibilityHooked || typeof document === 'undefined') return;
+    this._visibilityHooked = false;
+    if (this._onVisibilityChange) {
+      document.removeEventListener('visibilitychange', this._onVisibilityChange);
+      this._onVisibilityChange = null;
+    }
+  }
+
+  _maybePauseForHidden() {
+    if (this._hiddenPaused || !this.running) return false;
+    if (typeof document === 'undefined' || !document.hidden) return false;
+    if (this._isAudioHot()) return false;
+    this._hiddenPaused = true;
+    this._hiddenPausedAt = this._audioSchedulerNow();
+    this._cancelDelayedStep();
+    return true;
+  }
+
+  _resumeFromHidden() {
+    if (!this._hiddenPaused) return;
+    this._hiddenPaused = false;
+    // Freeze the guest clock across the pause. get_ticks is wall-clock derived
+    // (now - wallStartMs), so without this a five-minute background stint
+    // hands the app a five-minute jump the moment it resumes: every WM_TIMER
+    // it owns is instantly overdue, every timeGetTime delta is enormous, and
+    // an animation that paces itself off either one either fires a backlog or
+    // teleports. Sliding the origin forward by the paused interval costs one
+    // addition and makes the pause invisible to the guest.
+    const pausedMs = Math.max(0, this._audioSchedulerNow() - (this._hiddenPausedAt || 0));
+    if (pausedMs > 0) {
+      const st = this._guestTickState(this.hostCtx && this.hostCtx.sharedAudio);
+      if (st && Number.isFinite(st.wallStartMs) && st.wallStartMs > 0) {
+        st.wallStartMs += pausedMs;
+      }
+    }
+    this._hiddenPausedAt = 0;
+    const fn = this._pausedStep;
+    this._pausedStep = null;
+    if (fn && this.running) this._scheduleStep(fn, 0);
+  }
+
   run(stepsPerSlice = 100000) {
     this.stepsPerSlice = stepsPerSlice;
     if (this.guestWorker) return this._runThreaded(stepsPerSlice);
     this.running = true;
     this._stopped = false;
     const self = this;
+    self._installVisibilityPause();
+    self._installInputWake();
     const step = async () => {
       if (!self.running) return;
+      // Hidden tab, nothing audible: park the whole chain here. Nothing is
+      // scheduled after this return, so the emulator costs exactly zero until
+      // visibilitychange calls _resumeFromHidden with this same closure.
+      if (self._hiddenPaused || self._maybePauseForHidden()) {
+        self._pausedStep = step;
+        return;
+      }
       // Debug-mode HUD seam (lib/perf-hud.js). Null unless the HUD is on, so
       // a normal run pays one property read per step. Phases are timed here
       // rather than sampled from outside because the whole point is knowing
@@ -2532,6 +2800,10 @@ class WineAssembly {
       const perf = (typeof window !== 'undefined' && window.WinePerf && window.WinePerf.enabled)
         ? window.WinePerf : null;
       if (perf) perf.stepBegin();
+      // Set by the one branch below that establishes the guest ran nothing.
+      // Read only at the tail, where it decides whether the next slice is
+      // posted immediately or slept for.
+      let mainParked = false;
       try {
         // Cooperative apps run on the browser's main thread. Respect the
         // smaller compatibility policies selected by browser-shell so a hot
@@ -2544,6 +2816,7 @@ class WineAssembly {
         const mainThreadWaiting = self.threadManager &&
           (self._isMainExecutionSuspended() || self.threadManager.checkMainYield());
         if (mainThreadWaiting) {
+          mainParked = true;
           // Main still waiting — just run worker threads.
           //
           // But the deferred last-window teardown still has to be able to
@@ -2626,13 +2899,20 @@ class WineAssembly {
           }
           if (perf) perf.mark('present', performance.now() - perfPresentStart);
           self._runSliceCount = (self._runSliceCount || 0) + 1;
-          self._runHeartbeat = ((self._runHeartbeat || 0) + 1) & 31;
           if (self.instance && self.instance.exports) {
             const ex = self.instance.exports;
             const windows = self.renderer && self.renderer.windows ? Object.keys(self.renderer.windows).length : 0;
+            // The heartbeat used to be "every 32nd slice", which is a count,
+            // not a rate. At 100,000 slices a second that is 3,000 log lines a
+            // second — and logToUI is DOM work on the thread the guest runs
+            // on, so the heartbeat became a meaningful share of the cost of
+            // being idle. One a second says the same thing.
+            const heartbeatNow = self._audioSchedulerNow();
+            const heartbeatDue = heartbeatNow - (self._runHeartbeatAt || 0) >= 1000;
             const shouldLog = windows === 0
-              ? (self._runSliceCount <= 64 || (self._runSliceCount & 7) === 0)
-              : (self._runSliceCount <= 8 || self._runHeartbeat === 0);
+              ? (self._runSliceCount <= 64 || heartbeatDue)
+              : (self._runSliceCount <= 8 || heartbeatDue);
+            if (heartbeatDue) self._runHeartbeatAt = heartbeatNow;
             if (shouldLog) {
               const hex32 = v => (v >>> 0).toString(16).padStart(8, '0');
               const eip = ex.get_eip ? ex.get_eip() >>> 0 : 0;
@@ -2809,7 +3089,7 @@ class WineAssembly {
         if (perf) perf.stepEnd();
       }
       if (self.running) {
-        self._scheduleStep(step);
+        self._scheduleStep(step, mainParked ? self._parkedSleepMs() : 0);
       }
     };
     step();

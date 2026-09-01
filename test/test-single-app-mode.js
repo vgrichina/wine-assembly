@@ -181,6 +181,151 @@ function win(x, y, w, h, extra) {
   assert(zoom && zoom.viewport.cropW === 320, 'Progman should be excluded from the zoom rectangle');
 }
 
+// --- The touch-control bottom inset ---
+//
+// A square game on a tall phone was getting the dpad drawn on top of it while
+// a third of the screen sat empty underneath. The inset reserves the band the
+// overlay occupies; the picture moves up into the space instead.
+
+// Enough letterbox to absorb the band: the picture keeps every pixel of its
+// scale and is simply re-centred higher.
+{
+  const renderer = makeRenderer(390, 844, 390, 844);
+  renderer.touchOverlay = { getOccupiedFraction: () => 200 / 844 };
+  const v = renderer._computeSingleAppZoom([win(0, 0, 320, 400)]).viewport;
+  assert.strictEqual(v.dstW, 390, 'a game that fits above the band keeps its width');
+  assert.strictEqual(v.dstH, 488, 'and every pixel of its scale');
+  assert.strictEqual(v.bottomInset, 200, 'the band is reserved');
+  assert.strictEqual(v.dstY, 78, 'the picture is centred in what is left, not on the screen');
+  assert.ok(v.dstY + v.dstH <= 844 - 200,
+    'and clears the band entirely — nothing to draw the dpad over');
+
+  // Input still round-trips: the mapping reads the same viewport.
+  renderer._exclusiveTransform = renderer._computeExclusiveTransform(
+    { hwnd: 0, x: 0, y: 0, w: 320, h: 400 });
+  renderer._exclusivePresentationViewport = v;
+  assert.deepStrictEqual(renderer._mapExclusiveInputPoint(195, 78 + 244), { x: 160, y: 200 },
+    'a tap in the middle of the moved picture still lands in the middle of the window');
+}
+
+// Not enough room to absorb it: the picture shrinks to fit above the band.
+{
+  const renderer = makeRenderer(390, 844, 390, 844);
+  renderer.touchOverlay = { getOccupiedFraction: () => 200 / 844 };
+  const v = renderer._computeSingleAppZoom([win(0, 0, 320, 700)]).viewport;
+  assert.strictEqual(v.dstH, 644, 'the picture is fitted into the height that is left');
+  assert.strictEqual(v.dstW, 294, 'keeping its aspect ratio');
+  assert.strictEqual(v.dstY, 0, 'and sits at the top of the remaining space');
+}
+
+// The floor: past 35% of the height, giving the game away costs more than the
+// overlap does, so the reservation is capped and the overlay goes back over
+// the picture. 0.35 * 844 = 295.
+{
+  const renderer = makeRenderer(390, 844, 390, 844);
+  renderer.touchOverlay = { getOccupiedFraction: () => 0.6 };
+  const v = renderer._computeSingleAppZoom([win(0, 0, 320, 700)]).viewport;
+  assert.strictEqual(v.bottomInset, 295, 'the inset is capped at 35% of the output height');
+}
+
+// An overlay that is down reserves nothing, and neither does an app that never
+// declared one: every app on a phone would otherwise shrink for no reason.
+{
+  const renderer = makeRenderer(390, 844, 390, 844);
+  renderer.touchOverlay = { getOccupiedFraction: () => 0 };
+  const v = renderer._computeSingleAppZoom([win(0, 0, 320, 400)]).viewport;
+  assert.strictEqual(v.bottomInset, 0, 'a hidden overlay reserves nothing');
+  assert.strictEqual(v.dstY, 178, 'and the picture stays centred on the screen');
+}
+
+// The exclusive-fullscreen path must not inherit any of this: a game that owns
+// the display owns all of it.
+{
+  const renderer = makeRenderer(390, 844, 390, 844);
+  renderer.touchOverlay = { getOccupiedFraction: () => 0.3 };
+  const v = renderer._computeExclusivePresentationViewport(
+    renderer._computeExclusiveTransform({ hwnd: 1, x: 0, y: 0, w: 320, h: 400 }));
+  assert.strictEqual(v.bottomInset, 0, 'fullscreen presentation reserves no band');
+  assert.strictEqual(v.dstY, 178, 'and stays centred on the whole display');
+}
+
+// The presented rectangle the touch zones are laid out against follows the
+// viewport, inset and all.
+{
+  const renderer = makeRenderer(390, 844, 390, 844);
+  renderer.canvas.getBoundingClientRect = () => ({
+    left: 0, top: 0, right: 390, bottom: 844, width: 390, height: 844,
+  });
+  renderer.presentationCanvas.getBoundingClientRect = () => ({
+    left: 0, top: 20, right: 390, bottom: 864, width: 390, height: 844,
+  });
+  renderer.touchOverlay = { getOccupiedFraction: () => 200 / 844 };
+  renderer._exclusivePresentationViewport =
+    renderer._computeSingleAppZoom([win(0, 0, 320, 400)]).viewport;
+  const r = renderer.getPresentedRectClient();
+  assert.deepStrictEqual({ x: r.x, y: r.y, w: r.w, h: r.h },
+    { x: 0, y: 98, w: 390, h: 488 },
+    'the presented rect is the viewport in page coordinates');
+}
+
+// --- Fit vs zoom ---
+//
+// 'fit' shows the whole window letterboxed; 'zoom' fills the screen and crops.
+// Both go through ONE presentation path -- zoom only chooses a different
+// source rectangle -- so input mapping and the touch zones need to know
+// nothing about modes.
+{
+  const renderer = makeRenderer(390, 844, 390, 844);
+  assert.strictEqual(renderer.viewMode, 'fit', 'apps start fitted: nothing is hidden');
+  assert.strictEqual(renderer.setViewMode('zoom'), true, 'switching modes reports the change');
+  assert.strictEqual(renderer.setViewMode('zoom'), false, 'and a no-op reports none');
+
+  const v = renderer._computeSingleAppZoom([win(0, 0, 320, 400)]).viewport;
+  assert.strictEqual(v.dstW, 390, 'zoom fills the width');
+  assert.strictEqual(v.dstH, 844, 'and the height: nothing is letterboxed');
+  // A 320x400 window on a 390x844 screen is far too wide to fill it, so what
+  // gets cropped is the sides, not the top and bottom.
+  assert.strictEqual(v.cropH, 400, 'the crop keeps the full height of the window');
+  assert.strictEqual(v.cropW, 185, 'and only as much width as the screen aspect allows');
+  assert.strictEqual(v.cropX, 68, 'taken from the middle of the window');
+}
+
+// A registry `mobileCrop` names the part of the window worth filling with --
+// Space Cadet's table, not the score panel beside it.
+{
+  const renderer = makeRenderer(390, 844, 390, 844);
+  renderer.setViewMode('zoom');
+  renderer.mobileCrop = { x: 0.2, y: 0.0, w: 0.5, h: 1.0 };
+  // The window is wider than the desktop canvas, so the union rect is clamped
+  // to 390 first and the crop fractions are taken of THAT.
+  const v = renderer._computeSingleAppZoom([win(0, 0, 400, 400)]).viewport;
+  assert.strictEqual(v.cropH, 400, 'the named crop is full height, so it stays full height');
+  assert.strictEqual(v.cropW, 185, 'and is trimmed from half the width to the screen aspect');
+  assert.strictEqual(v.cropX, 83,
+    'starting inside the named crop (0.2 of 390 = 78) plus half the trim');
+
+  // Input still round-trips through the same viewport in zoom mode.
+  renderer._exclusiveTransform = renderer._computeExclusiveTransform(
+    { hwnd: 0, x: v.cropX, y: v.cropY, w: v.cropW, h: v.cropH });
+  renderer._exclusivePresentationViewport = v;
+  const mid = renderer._mapExclusiveInputPoint(195, 422);
+  assert.ok(Math.abs(mid.x - (v.cropX + v.cropW / 2)) <= 1 &&
+            Math.abs(mid.y - (v.cropY + v.cropH / 2)) <= 1,
+    'the middle of the screen is the middle of the crop');
+}
+
+// The bottom band is reserved in zoom mode too, so the controls still sit in
+// clear space rather than over the picture.
+{
+  const renderer = makeRenderer(390, 844, 390, 844);
+  renderer.setViewMode('zoom');
+  renderer.touchOverlay = { getOccupiedFraction: () => 200 / 844 };
+  const v = renderer._computeSingleAppZoom([win(0, 0, 320, 400)]).viewport;
+  assert.strictEqual(v.bottomInset, 200, 'zoom mode reserves the band as well');
+  assert.strictEqual(v.dstH, 644, 'and fills only what is left');
+  assert.strictEqual(v.dstY, 0, 'starting at the top');
+}
+
 // Without a presentation canvas (the CLI harness) there is nothing to crop
 // against, so single-app mode must leave presentation alone.
 {

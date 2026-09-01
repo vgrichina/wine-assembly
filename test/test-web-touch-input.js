@@ -141,6 +141,131 @@ try {
   canvas.onmousemove({ ...event, movementX: 4, movementY: -2 });
   assert.deepStrictEqual(relativeMoves, [{ x: 4, y: -2 }],
     'relative movement should resume immediately after the acquisition click');
+
+  // Pinch to switch presentation modes. A Win98 guest has no use for a second
+  // finger, so a second concurrent canvas touch is unambiguously the page's --
+  // and it must take the first finger's press with it, or the guest is left
+  // with a button held down for the length of the gesture.
+  const touchStart = canvasListeners.get('touchstart');
+  assert(touchStart, 'the canvas should take touchstart');
+  const modes = [];
+  global.window.TouchControls = {
+    installed: true,
+    setViewMode: (mode) => modes.push(mode),
+  };
+  const tev = (touches, changed) => ({
+    touches, changedTouches: changed || touches,
+    preventDefault() {}, stopPropagation() {},
+  });
+  const finger = (identifier, clientX, clientY) => ({ identifier, clientX, clientY });
+
+  releases.length = 0;
+  const f1 = finger(1, 100, 100);
+  const f2 = finger(2, 140, 100);
+  touchStart(tev([f1], [f1]));
+  touchStart(tev([f1, f2], [f2]));
+  assert.strictEqual(releases.length, 1,
+    'the second finger retires the guest button the first one pressed');
+
+  const pinchMoves = listeners.get('touchmove') || [];
+  // Fingers apart past the threshold: fill the screen.
+  pinchMoves.at(-1)(tev([f1, finger(2, 200, 100)]));
+  assert.deepStrictEqual(modes, ['zoom'], 'pinching out switches to zoom');
+  // And the rest of the gesture is inert: one flip per pinch.
+  pinchMoves.at(-1)(tev([f1, finger(2, 300, 100)]));
+  assert.deepStrictEqual(modes, ['zoom'], 'a wobbling pinch must not oscillate the mode');
+
+  // No mouse leaks to the guest while the gesture owns the screen, including
+  // the touch that starts after the pinch began.
+  const beforeDown = releases.length;
+  touchStart(tev([f1, finger(2, 300, 100), finger(3, 50, 50)], [finger(3, 50, 50)]));
+  assert.strictEqual(releases.length, beforeDown,
+    'a third finger during a pinch reaches the guest as nothing at all');
+
+  // The gesture holds until every finger of it is off the glass.
+  const pinchEnds = listeners.get('touchend') || [];
+  pinchEnds.at(-1)(tev([f1], [finger(2, 300, 100)]));
+  pinchEnds.at(-1)(tev([], [f1]));
+  // A fresh single touch is an ordinary click again.
+  const downs = [];
+  renderer.handleMouseDown = (x, y, b) => downs.push([x, y, b]);
+  touchStart(tev([finger(4, 100, 100)], [finger(4, 100, 100)]));
+  assert.strictEqual(downs.length, 1,
+    'once the pinch is over the canvas takes single touches as clicks again');
+  delete global.window.TouchControls;
+
+  // --- the manual keyboard -------------------------------------------------
+  // Every fullscreen DirectDraw game that takes text -- Diablo II's character
+  // name, StarCraft chat, a Half-Life console -- paints its own field and
+  // never creates a Win32 caret, so the caret-driven keyboard above can never
+  // fire for it. The on-screen pill calls these entry points instead, and the
+  // characters have to come back out as a full keystroke: a soft keyboard
+  // reports keyCode 229 on iOS, so WM_CHAR alone leaves a guest that reads
+  // WM_KEYDOWN with nothing.
+  {
+    const proxyListeners = new Map();
+    const proxy = {
+      tagName: 'TEXTAREA', value: '',
+      focus() { global.document.activeElement = proxy; },
+      blur() {
+        global.document.activeElement = canvas;
+        const fn = proxyListeners.get('blur');
+        if (fn) fn({ target: proxy });
+      },
+      addEventListener(type, fn) { proxyListeners.set(type, fn); },
+    };
+    global.document.getElementById = (id) =>
+      (id === 'mobile-keyboard-proxy' ? proxy : null);
+    delete require.cache[require.resolve('../lib/browser-input')];
+    delete require.cache[require.resolve('../lib/mobile-keyboard')];
+    global.window.MobileKeyboard = require('../lib/mobile-keyboard');
+    const bi = require('../lib/browser-input');
+    const seen = [];
+    const kbRenderer = {
+      windows: {},
+      caretRect: () => null,          // the whole point: no caret, ever
+      handleKeyDown: (vk) => seen.push(['down', vk]),
+      handleKeyUp: (vk) => seen.push(['up', vk]),
+      handleKeyPress: (c) => seen.push(['char', c]),
+      handleMouseDown() {}, handleMouseUp() {}, handleMouseMove() {},
+      handleMenuHover() {},
+    };
+    bi.wireCanvasInput(canvas, kbRenderer, { runningApps: [{ id: 'diablo2_demo' }] });
+
+    assert.strictEqual(typeof global.window.__wineToggleKeyboard, 'function',
+      'the page publishes a manual keyboard toggle for the overlay pill to call');
+    assert.strictEqual(global.window.__wineKeyboardOpen(), false, 'closed to start with');
+    assert.strictEqual(global.window.__wineToggleKeyboard(), true, 'one tap opens it');
+    assert.strictEqual(global.document.activeElement, proxy,
+      'which means focusing the hidden textarea -- the only thing iOS opens a keyboard for');
+    // The resync runs twice a second and used to close it again immediately,
+    // because there is no caret behind a game that draws its own field.
+    global.window.__wineSetKeyboard(true);
+    assert.strictEqual(global.document.activeElement, proxy,
+      'and it survives the resync that has no caret to point at');
+
+    // Typing. A soft keyboard delivers the character through `input`.
+    proxy.value = 'Ab7,';
+    proxyListeners.get('input')({ target: proxy });
+    assert.deepStrictEqual(seen, [
+      ['down', 0x41], ['char', 65], ['up', 0x41],
+      ['down', 0x42], ['char', 98], ['up', 0x42],
+      ['down', 0x37], ['char', 55], ['up', 0x37],
+      ['char', 44],
+    ], 'each character arrives as keydown + WM_CHAR + keyup, punctuation as WM_CHAR only');
+    assert.strictEqual(proxy.value, '', 'and the proxy is emptied so the next key is not a repeat');
+
+    assert.strictEqual(global.window.__wineToggleKeyboard(), false, 'a second tap closes it');
+    assert.notStrictEqual(global.document.activeElement, proxy, 'and drops the focus with it');
+
+    // iOS closes its own keyboard from the Done key; all the page sees is the
+    // blur, and the flag has to follow or the resync puts it straight back up.
+    global.window.__wineSetKeyboard(true);
+    proxy.blur();
+    assert.strictEqual(global.window.__wineKeyboardOpen(), false,
+      'dismissing the keyboard from iOS clears the manual flag');
+    delete global.window.MobileKeyboard;
+  }
 } finally {
   global.window = originalWindow;
   global.document = originalDocument;

@@ -142,15 +142,29 @@ async function checkFastPath() {
       return img;
     },
   };
-  global.fetch = async () => { exeFetches++; throw new Error('unexpected EXE fetch'); };
+  // loadAppIcon consults lib/app-icon-manifest.json once before it does
+  // anything else, so the stub has to answer that or every case below falls
+  // into the "manifest unavailable" branch and the bucket checks prove nothing.
+  const manifest = JSON.parse(fs.readFileSync(
+    path.join(ROOT, 'lib', 'app-icon-manifest.json'), 'utf-8'));
+  const serveManifest = url => ({ ok: true, json: async () => manifest });
+  global.fetch = async url => {
+    if (String(url).endsWith('app-icon-manifest.json')) return serveManifest(url);
+    exeFetches++;
+    throw new Error('unexpected EXE fetch');
+  };
   const container = {
     style: {},
     child: 'fallback glyph',
     replaceChildren(child) { this.child = child; },
   };
+  // The manifest lookup makes loadAppIcon asynchronous before its first image
+  // exists, so every inspection of `created` has to let those microtasks run.
+  const settle = () => new Promise(resolve => setImmediate(resolve));
 
   try {
     const loading = loadAppIcon(container, 'an app/id', 'large.exe');
+    await settle();
     check('the fast path uses the predictable encoded PNG URL',
       created.length === 1 && created[0].src === 'icons/apps/an%20app%2Fid.png',
       created[0] && created[0].src);
@@ -168,6 +182,7 @@ async function checkFastPath() {
     // resource, and install the resulting data URL.
     const peBytes = fs.readFileSync(PE);
     global.fetch = async url => {
+      if (String(url).endsWith('app-icon-manifest.json')) return serveManifest(url);
       exeFetches++;
       return {
         ok: true,
@@ -176,6 +191,7 @@ async function checkFastPath() {
       };
     };
     const fallback = loadAppIcon(container, 'missing', 'large.exe');
+    await settle();
     created[1].onerror();
     await new Promise(resolve => setImmediate(resolve));
     check('a missing PNG downloads the executable exactly once',
@@ -186,6 +202,44 @@ async function checkFastPath() {
     created[2].onload();
     check('the EXE-derived image replaces the missing PNG',
       await fallback === 'executable' && container.child === created[2]);
+
+    // The whole point of the manifest: an app the build has already opened and
+    // found no icon in must cost nothing at all on a page load. Before this,
+    // quake2_demo_installer's 39MB installer was downloaded on every cold load
+    // to rediscover that it has no RT_GROUP_ICON.
+    check('the manifest names the apps with no extractable icon',
+      manifest.noIcon.length > 0 && manifest.noIcon.every(id => !!APPS[id]),
+      manifest.noIcon.join(', '));
+    const before = { exe: exeFetches, imgs: created.length };
+    const noIcon = await loadAppIcon(container, manifest.noIcon[0], 'large.exe');
+    check('a known-iconless app fetches neither a PNG nor its executable',
+      noIcon === null && exeFetches === before.exe && created.length === before.imgs,
+      `${exeFetches - before.exe} EXE fetches, ${created.length - before.imgs} images`);
+
+    // preExtractIcon:false apps have no PNG by policy, so asking for one is a
+    // guaranteed 404 in front of the download that was always going to happen.
+    check('the manifest names the apps whose icon is extracted at runtime',
+      manifest.runtime.length > 0 && manifest.runtime.every(id => !!APPS[id]),
+      manifest.runtime.join(', '));
+    const runtimeLoad = loadAppIcon(container, manifest.runtime[0], 'large.exe');
+    await settle();
+    check('a runtime-icon app skips the PNG and goes straight to its executable',
+      created.length === before.imgs + 1 &&
+        created[before.imgs].src === 'data:image/png;base64,extracted',
+      created[before.imgs] && created[before.imgs].src);
+    created[before.imgs].onload();
+    check('the runtime-extracted image is installed',
+      await runtimeLoad === 'executable');
+
+    // Every id the desktop grid can show must land in exactly one bucket, or
+    // the page is back to guessing by downloading.
+    const buckets = new Map();
+    for (const key of ['icons', 'noIcon', 'runtime'])
+      for (const id of manifest[key]) buckets.set(id, (buckets.get(id) || 0) + 1);
+    const desktopIds = [...DESKTOP_APPS, ...LOCAL_CANDIDATE_APPS].map(([id]) => id);
+    const unbucketed = desktopIds.filter(id => buckets.get(id) !== 1);
+    check(`all ${desktopIds.length} desktop apps are in exactly one manifest bucket`,
+      unbucketed.length === 0, unbucketed.join(', '));
   } finally {
     global.document = oldDocument;
     global.fetch = oldFetch;

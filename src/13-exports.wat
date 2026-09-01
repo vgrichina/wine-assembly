@@ -2811,6 +2811,75 @@
     (if (call $timer_check_due (call $paint_scratch_take) (i32.const 0))
       (then (return (i32.const 1))))
     (i32.const 0))
+
+  ;; next_timer_due_ms() — milliseconds until the soonest timer this thread owns
+  ;; becomes due, or -1 when it owns none. $has_pending_message answers "is
+  ;; there work now"; a host that parks a guest waiting on GetMessage needs the
+  ;; complementary "and when could there be", because a WM_TIMER is the one
+  ;; wake source that arrives with nothing else touching the emulator: no
+  ;; input event, no worker, no posted message. Without it the drive loop can
+  ;; only poll. Same two tables $timer_check_due walks, same ownership rule
+  ;; (a WM_TIMER is delivered to the thread that set it), and it consumes
+  ;; nothing — a due timer reports 0 and is still there for the next
+  ;; GetMessage/PeekMessage to take.
+  (func (export "next_timer_due_ms") (result i32)
+    (local $i i32) (local $addr i32) (local $elapsed i32)
+    (local $interval i32) (local $remain i32) (local $best i32)
+    (local.set $best (i32.const -1))
+    (global.set $tick_count (call $host_get_ticks))
+    (call $lock_wnd_acquire)
+    (block $break
+      (loop $loop
+        (br_if $break (i32.ge_u (local.get $i) (global.get $TIMER_MAX)))
+        (local.set $addr (i32.add (global.get $TIMER_TABLE)
+          (i32.mul (local.get $i) (global.get $TIMER_ENTRY_SIZE))))
+        ;; Both halves normalized to 0/1 before the i32.and: the raw hwnd/id are
+        ;; arbitrary integers and an even one would clear the low bit.
+        (if (i32.and
+              (i32.or
+                (i32.ne (i32.load (local.get $addr)) (i32.const 0))
+                (i32.ne (i32.atomic.load offset=4 (local.get $addr)) (i32.const 0)))
+              (i32.eq (i32.load (i32.add (global.get $TIMER_SHARED)
+                (i32.add (i32.const 0x10) (i32.mul (local.get $i) (i32.const 4)))))
+                (global.get $current_thread_id)))
+          (then
+            (local.set $interval (i32.load offset=8 (local.get $addr)))
+            (local.set $elapsed (i32.sub (global.get $tick_count)
+              (i32.load offset=12 (local.get $addr))))
+            (local.set $remain
+              (select (i32.const 0)
+                (i32.sub (local.get $interval) (local.get $elapsed))
+                (i32.ge_u (local.get $elapsed) (local.get $interval))))
+            (if (i32.or
+                  (i32.lt_s (local.get $best) (i32.const 0))
+                  (i32.lt_u (local.get $remain) (local.get $best)))
+              (then (local.set $best (local.get $remain))))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)))
+    (call $lock_wnd_release)
+    ;; Multimedia timers (timeSetEvent): id at +0, period at +4, last tick at +16.
+    (local.set $i (i32.const 0))
+    (block $mm_break
+      (loop $mm_loop
+        (br_if $mm_break (i32.ge_u (local.get $i) (global.get $MM_TIMER_MAX)))
+        (local.set $addr (call $mm_timer_slot (local.get $i)))
+        (if (i32.load (local.get $addr))
+          (then
+            (local.set $interval (i32.load offset=4 (local.get $addr)))
+            (local.set $elapsed (i32.sub (global.get $tick_count)
+              (i32.load offset=16 (local.get $addr))))
+            (local.set $remain
+              (select (i32.const 0)
+                (i32.sub (local.get $interval) (local.get $elapsed))
+                (i32.ge_u (local.get $elapsed) (local.get $interval))))
+            (if (i32.or
+                  (i32.lt_s (local.get $best) (i32.const 0))
+                  (i32.lt_u (local.get $remain) (local.get $best)))
+              (then (local.set $best (local.get $remain))))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $mm_loop)))
+    (local.get $best))
+
   (func (export "get_com_dll_name") (result i32) (global.get $com_dll_name))
   (func (export "get_loadlib_name") (result i32) (global.get $loadlib_name_ptr))
 

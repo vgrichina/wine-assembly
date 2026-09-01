@@ -57,6 +57,41 @@ regression holds Right and requires the board to change; the 2026-08-30 run
 changed 221 pixels with no trap. The reviewed frame has intact chrome, menu,
 mouse counter, cyan border, olive floor, and green block field.
 
+## Nothing owns the keyboard until you click (fixed 2026-08-31)
+
+Reported from a real iPhone: the on-screen dpad (`lib/touch-controls.js`) does
+nothing. It is not the overlay and it is not the Worker focus bug above — the
+overlay reaches `renderer.handleKeyDown` with the right vk every time.
+
+`get_focus_hwnd()` is **0** from launch until a press lands in the client area.
+Nothing in our activation chain records a focus window: `ShowWindow` sends
+WM_ACTIVATEAPP/WM_ACTIVATE/WM_SETFOCUS to the form but writes no focus, and
+`--trace-win16` shows VBRUN100 calling `USER.23 GETFOCUS` exactly once, getting
+0, and never calling `SetFocus` at all. With focus 0 the shared routing rule in
+`lib/host-window.js` (`inputEventHwnd`) sends every key to `main_hwnd` — the
+0x10001 VB form, which ignores arrows. The board is 0x10005.
+
+It is not touch-specific and not browser-specific. Headless, with no click:
+
+```
+node test/run.js --app=wep16_rodent --max-batches=11000 --no-close --quiet-api \
+  --input='6000:keydown:113,6100:keyup:113,7000:png:/tmp/a.png,\
+8600:keydown:38,8700:keyup:38,8900:keydown:38,9000:keyup:38,10500:png:/tmp/b.png'
+```
+
+gave `0 of 307200 pixels differ`. Setting `$focus_hwnd` to 0x10005 by hand made
+the same keystrokes play the game, so the routing was right and only the seed
+was missing.
+
+`P._seedKeyboardFocus` in `lib/renderer-input.js` now runs on each
+`handleKeyDown`: when nothing holds the focus and the deep child at the client
+centre covers at least half the top-level client area (and is not WS_DISABLED),
+that child is given the focus. Rodent's 276x276 board inside a 292x350 frame is
+79% of the client, so it qualifies; a frame whose children are a toolbar and a
+status strip does not, and single-window games keep the old `main_hwnd` routing
+unchanged. The same command now changes 944 px and F2 alone deals a real game.
+`test/test-keyboard-focus-seed.js` pins all five cases.
+
 ## Menu inventory and what each item does
 
 Driven by click, item by item, on 2026-08-25. `menu-sweep.js` cannot do this

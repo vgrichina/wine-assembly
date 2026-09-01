@@ -233,6 +233,71 @@ async function main() {
     assert.strictEqual(tracked.pointerEvents, 'none', 'the cursor sprite must never take input');
     assert(tracked.hitsCanvas, 'a tap under the cursor sprite must reach the guest');
 
+    // With a touch-control overlay up, the sprite stops being sticky. A dpad
+    // game is played with the pad -- there is no pointer in it to describe --
+    // and an arrow left sitting on the board after the one tap that reached a
+    // menu is just litter. So: only while a finger is on the game surface,
+    // never for a touch that lands on the overlay itself.
+    const policy = await page.evaluate(async () => {
+      const canvas = document.getElementById('screen');
+      const overlay = document.createElement('div');
+      overlay.id = 'touch-controls';
+      const button = document.createElement('button');
+      button.className = 'tc-btn';
+      overlay.appendChild(button);
+      document.body.appendChild(overlay);
+      window.TouchControls = { isVisible: () => true };
+
+      const at = (type, target, x, y) => {
+        const touch = new Touch({ identifier: 7, target, clientX: x, clientY: y });
+        target.dispatchEvent(new TouchEvent(type, {
+          bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [touch],
+          changedTouches: [touch],
+        }));
+      };
+      const shown = () => getComputedStyle(document.getElementById('touch-cursor')).display;
+      const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+      TouchCursor.tick();
+      await wait(50);
+      const atRest = shown();
+
+      at('touchstart', canvas, 200, 300);
+      await wait(50);
+      const duringCanvasTouch = shown();
+
+      at('touchend', canvas, 200, 300);
+      await wait(400);
+      const afterRelease = shown();
+
+      at('touchstart', button, 30, 600);
+      at('touchend', button, 30, 600);
+      await wait(300);
+      const afterOverlayTouch = shown();
+
+      // And the policy is per-app: an app with no overlay keeps the sticky
+      // sprite it has always had.
+      window.TouchControls = { isVisible: () => false };
+      TouchCursor.tick();
+      await wait(50);
+      const withoutOverlay = shown();
+
+      overlay.remove();
+      delete window.TouchControls;
+      TouchCursor.tick();
+      return { atRest, duringCanvasTouch, afterRelease, afterOverlayTouch, withoutOverlay };
+    });
+    assert.strictEqual(policy.atRest, 'none',
+      'with an overlay up the sprite must not linger between touches');
+    assert.strictEqual(policy.duringCanvasTouch, 'block',
+      'a finger on the game surface still gets a cursor -- that is how a menu is tapped');
+    assert.strictEqual(policy.afterRelease, 'none',
+      'and it goes away promptly when the finger lifts');
+    assert.strictEqual(policy.afterOverlayTouch, 'none',
+      'a touch on a dpad or a button is a key press, not a pointer gesture');
+    assert.strictEqual(policy.withoutOverlay, 'block',
+      'an app that declares no touch controls keeps the sticky sprite');
+
     // And nothing at all under a mouse, where the browser draws a real one.
     const page2 = await browser.newPage();
     await page2.setViewport({ width: 1024, height: 768 });
