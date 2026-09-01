@@ -455,6 +455,62 @@ likely box load, worth a watch rather than a fix. `bash tools/build.sh`
 green at HEAD again (990,911 B — bytes moved legitimately by the
 display/touch work).
 
+**By 20:20 (+18 commits, HEAD `456cec41`)** the layout migration became an
+assembly line: five waves in one window, every one under the byte-identity
+oracle in detached worktrees. Wave 0 fixed `store.field` emitting invalid
+modules; wave 1 declared VSock and converted all 172 winsock sites; wave 2
+declared WndRecord and converted **3** sites — because §3.4's claim that
+09c0 is "almost entirely add-spelled" was backwards (30 of 33 are memarg;
+the doc got corrected); wave 4 converted 367 DxObject sites across five
+files (the design said three), with a `--skip-func` list that is
+load-bearing, not tidy — the same local name holds non-DX records in six
+functions, and byte identity *cannot* catch a mistyped conversion at
+offset 0; wave 5 solved the GdiObject discriminated union as **seven
+48-byte variant layouts** and converted zero sites *by design* (all 160
+are memarg; the per-site memarg lowering is in flight and already proven
+inert). The union work measured its own gate as insufficient — attributing
+a font field to the palette variant *passed*, both declaring a field at
++12 — and strengthened it by harvesting each function's own type-guard
+compares; it also flagged two latent GDI bugs in passing (a `& 3` flags
+mask that drops the dib-ownership and PAL_COLORS bits, and
+`$gdi_raster_channel_mask` missing the DX-range pre-check its two siblings
+have). The manifest gate's blind spot closed: **19 `watx-compiler-*.test.js`
+suites were run by nothing** — the exact class Pass 3 found as 3.5 —
+and wiring them (`3ea7a9de`) exposed 17 UNIT reds, attributed on the board
+in six clusters; the six-test cluster turned out to be *three* causes
+(JS-side `g2w` on sparse-heap spill addresses, a hand-copied `0xD160` map
+address inside a test's embedded WAT, an assertion on a region `74e4ac34`
+deleted — `c26e6272`), and that middle cause became the third census gate:
+a bare `i32.const` in a memory-operand position of embedded test WAT is a
+map copy by construction (`db452b23`, whose scanner's own
+apostrophe-eats-the-file trap was found and self-tested). The vlan "hang"
+resolved my way and properly: not a wire bug — the test printed nothing
+through an unbounded two-compile prologue plus a 120s wait, so a 60s
+timeout SIGKILLed it into an empty log that read as a hang; breadcrumbs
+and a watchdog landed (`a64c845c`). `WAT_FILES` stopped being a
+hand-maintained mirror — it derives from `src/main.watx`'s include list
+now (`92ae17eb`), one source of truth. toyvm grew coverage 88→103 by
+fixing region-why's one-edge walk into a backtracking DFS (`b9dcc780`),
+then delivered a model negative (`0338abb5`): the blocker histogram was
+measuring "a rule this program met" not "the rule blocking it"; fixed the
+metric, built the two levers it suggested, and **removed both** — their
+regions carry ~0.0% sample share and by Amdahl cannot pay (with a finding
+that 25 of 103 shipped regions are equally idle). Codex reached real
+gameplay in FOTAQ/ScummVM, QBob, DX-Ball and Blobby (`5333513c`,
+`a1408777`). The mobile lane holds a large deliberately-uncommitted stack
+(touch zones, a keyboard pill for every app with the iOS keyCode-229
+workaround, `keepAspect` letterboxing via the existing SC_MAXIMIZE seam,
+and a startup-focus seed whose bug reproduces headlessly in the CLI). Two
+standing items from my verification: **HEAD does not build on a clean
+checkout** — `db452b23` committed the `run-all.sh` line naming
+`test/test-keyboard-focus-seed.js` but no commit has ever added the file
+(it sits untracked in the shared tree, so in-tree builds pass — I
+confirmed the line is in HEAD, the file is not, and `git log --all` on it
+is empty); and **incident #7** — Codex's FOTAQ runtime support rode into
+`ae6000fc` via the shared index, the third pathspec/index sweep in two
+days. In-tree: build exit 0 (991,191 B), differential 46 modules /
+1 divergence, both run by me.
+
 ---
 
 # Pass 3 — 2026-08-30
