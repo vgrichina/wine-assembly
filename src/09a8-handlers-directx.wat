@@ -1531,7 +1531,7 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
     (local.set $entry (call $dx_from_this (local.get $obj_guest)))
-    (i32.store offset=8 (local.get $entry) (local.get $arg1))
+    (store.field.memarg DxObject misc0 (local.get $entry) (local.get $arg1))
     (call $gs32 (local.get $arg2) (local.get $obj_guest))
     (global.set $eax (i32.const 0)) ;; DI_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))) ;; stdcall 4 args
@@ -1575,7 +1575,7 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
     (local.set $entry (call $dx_from_this (local.get $obj_guest)))
-    (i32.store offset=8 (local.get $entry) (local.get $arg1))
+    (store.field.memarg DxObject misc0 (local.get $entry) (local.get $arg1))
     (call $gs32 (local.get $arg3) (local.get $obj_guest))
     (global.set $eax (i32.const 0)) ;; DI_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
@@ -1612,7 +1612,7 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
     (local.set $entry (call $dx_from_this (local.get $obj_guest)))
-    (i32.store offset=8 (local.get $entry) (i32.const 0x0800))
+    (store.field.memarg DxObject misc0 (local.get $entry) (i32.const 0x0800))
     (call $gs32 (local.get $arg3) (local.get $obj_guest))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
@@ -2795,8 +2795,7 @@
                     (i32.eqz (local.get $matches)))))
             (then
               ;; DOESEXIST gives the callback a new owned reference.
-              (i32.store offset=4 (local.get $entry)
-                (i32.add (i32.load offset=4 (local.get $entry)) (i32.const 1)))
+              (store.field.memarg DxObject refcount (local.get $entry) (i32.add (load.field.memarg DxObject refcount (local.get $entry)) (i32.const 1)))
               (local.set $selected (local.get $slot))
               (br $scan_done)))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
@@ -3927,7 +3926,7 @@
         (global.set $eax (i32.const 0x80070057))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
-    (local.set $child (i32.load offset=8 (local.get $parent)))
+    (local.set $child (load.field.memarg DxObject misc0 (local.get $parent)))
     (if (i32.eqz (local.get $child))
       (then
         (block $found (loop $scan
@@ -4191,9 +4190,9 @@
     (i32.store offset=16 (local.get $wa) (i32.load16_u offset=18 (local.get $entry)))
     (call $dx_fill_surface_pixel_format (i32.add (local.get $wa) (i32.const 72))
       (local.get $entry))
-    (if (i32.and (i32.load offset=28 (local.get $entry)) (i32.const 1))
+    (if (i32.and (load.field.memarg DxObject flags (local.get $entry)) (i32.const 1))
       (then
-        (if (i32.load offset=8 (local.get $entry))
+        (if (load.field.memarg DxObject misc0 (local.get $entry))
           (then
             (i32.store offset=4 (local.get $wa) (i32.const 0x102F))
             (i32.store offset=20 (local.get $wa) (i32.const 1))))))
@@ -4339,7 +4338,7 @@
         (local.set $surf_entry (call $dx_from_this (local.get $arg0)))
         (call $dx_surf_pal_set (local.get $surf_entry) (local.get $pal_wa))
         (if (i32.ne
-              (i32.and (i32.load offset=28 (local.get $surf_entry)) (i32.const 1))
+              (i32.and (load.field.memarg DxObject flags (local.get $surf_entry)) (i32.const 1))
               (i32.const 0))
           (then (call $dx_primary_pal_set (local.get $pal_wa))))))
     (global.set $eax (i32.const 0))
@@ -4407,8 +4406,7 @@
         (if (i32.and (local.get $flags) (i32.const 0x00000800))
           (then
             (local.set $pixels (i32.load offset=36 (local.get $desc)))
-            (i32.store offset=20 (local.get $entry)
-              (if (result i32) (local.get $pixels)
+            (store.field.memarg DxObject misc1 (local.get $entry) (if (result i32) (local.get $pixels)
                 (then (call $g2w (local.get $pixels)))
                 (else (i32.const 0))))))))
     (global.set $eax (i32.const 0))
@@ -5862,7 +5860,7 @@
         (return)))
     (local.set $entry (call $dx_from_this (local.get $obj)))
     (i32.store offset=16 (local.get $entry)
-      (i32.load offset=8 (call $dx_from_this (local.get $arg0))))
+      (load.field.memarg DxObject misc0 (call $dx_from_this (local.get $arg0))))
     ;; Detect keyboard vs mouse from GUID first dword. Unknown devices
     ;; (joysticks, etc.) are present but inert.
     (local.set $guid_first (call $gl32 (local.get $arg1)))
@@ -5905,7 +5903,7 @@
         (return)))
     (local.set $entry (call $dx_from_this (local.get $obj)))
     (i32.store offset=16 (local.get $entry)
-      (i32.load offset=8 (call $dx_from_this (local.get $arg0))))
+      (load.field.memarg DxObject misc0 (call $dx_from_this (local.get $arg0))))
     (local.set $guid_first (call $gl32 (local.get $arg1)))
     (store.field DxObject misc0 (local.get $entry) (i32.const 0))
     (if (i32.eq (local.get $guid_first) (i32.const 0x6F1D2B61))
@@ -6168,7 +6166,7 @@
     (local.set $ret (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
     (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $version (i32.load offset=8 (local.get $entry)))
+    (local.set $version (load.field.memarg DxObject misc0 (local.get $entry)))
     (if (i32.eqz (local.get $version)) (then (local.set $version (i32.const 0x0700))))
     (if (i32.or (i32.eqz (local.get $arg2))
           (i32.ne (i32.and (local.get $arg4) (i32.const 0xFEFAFEFE)) (i32.const 0)))
@@ -6207,7 +6205,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectInput_Initialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=8 (call $dx_from_this (local.get $arg0)) (local.get $arg2))
+    (store.field.memarg DxObject misc0 (call $dx_from_this (local.get $arg0)) (local.get $arg2))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
@@ -6304,7 +6302,7 @@
     (call $gs32 (i32.add (local.get $frame) (i32.const 20)) (local.get $arg3))
     (call $gs32 (i32.add (local.get $frame) (i32.const 24)) (i32.const 0))
     (call $gs32 (i32.add (local.get $frame) (i32.const 28))
-      (i32.load offset=8 (local.get $entry)))
+      (load.field.memarg DxObject misc0 (local.get $entry)))
     (call $gs32 (i32.add (local.get $frame) (i32.const 32)) (i32.const 0))
     (call $gs32 (i32.add (local.get $frame) (i32.const 36)) (local.get $version))
     (call $di_enum_dispatch))
@@ -6798,7 +6796,7 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
     (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $kind (i32.load offset=8 (local.get $entry)))
+    (local.set $kind (load.field.memarg DxObject misc0 (local.get $entry)))
     (block $not_found
       (loop $objects
         (if (i32.ge_u (local.get $index) (i32.const 256))
@@ -6844,7 +6842,7 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $kind (i32.load offset=8 (local.get $entry)))
+    (local.set $kind (load.field.memarg DxObject misc0 (local.get $entry)))
     (local.set $version (i32.load offset=16 (local.get $entry)))
     (if (i32.eqz (local.get $version)) (then (local.set $version (i32.const 0x0700))))
     (call $di_fill_device_instance (local.get $arg1) (local.get $kind)

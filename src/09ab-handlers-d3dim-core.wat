@@ -3595,7 +3595,7 @@
             (i32.add (global.get $DX_OBJECTS) (global.get $DX_OBJECTS_SIZE))))
       (then
         (local.set $entry (local.get $zbuf_guest))
-        (local.set $dib (i32.load offset=20 (local.get $entry)))
+        (local.set $dib (load.field.memarg DxObject misc1 (local.get $entry)))
         (local.set $pitch (i32.load16_u offset=18 (local.get $entry)))
         (local.set $bpp (i32.load16_u offset=16 (local.get $entry)))
         (local.set $z (local.get $zval))
