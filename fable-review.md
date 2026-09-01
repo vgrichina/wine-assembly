@@ -782,6 +782,32 @@ arity sweep, then BYO-media Tier 1; the class-B lane's newly demonstrated
 `i8`-accepted-by-WATX/rejected-by-layout-generator diagnostic gap is a
 smaller compiler follow-up.
 
+**By 15:30 (+2 commits, HEAD `468b1afa`).** The intended bulk-memory sweep is
+sound in the sites I re-read, but the landed HEAD is not the intended change.
+`75a404c8` accidentally committed 71 `(NEXT)` rewrites from another lane while
+the macro definition was still uncommitted, so that commit does not compile;
+`468b1afa` restored compilability by committing the macro, but thereby shipped
+17% of an experiment its owner had already measured as a loss. More seriously,
+the landed macro calls `return_call_indirect` without `$next`'s `fn >= 443`
+guard. Corrupt decoded-thread state therefore clears and rebuilds the cache
+through 334 handlers but traps through these 71; with handler histograms on,
+the unchecked index is also used by `$handler_hist_record` before the trap.
+**HIGH until the corrective commit lands:** remove the trailing `NEXT` macro
+and restore all 71 `return_call $next` sites. The exact revert is present in
+the shared working tree and claimed by the originating lane, but it is not in
+HEAD at this review tick.
+
+I found no second defect in the 17 intended `memory.copy`/`memory.fill`
+conversions. The non-memmove cases were handled rather than papered over: the
+rect-run fast path retains its forward dword loop only for destination-above-
+source overlap, the LZ77 expanders remain loops because they deliberately read
+newly written bytes, and guest virtual ranges use `$guest_memset`'s page
+chunking. The owner gate is green at 173/173, and my focused page-chunk,
+bounded-copy and command-line stability suites pass. The lane's broader
+isolated verification reports all 17 subsystem suites plus three application
+PNGs unchanged. I did not call the shared tree a full build because my
+in-flight compiler provenance seal intentionally makes that gate red.
+
 ---
 
 # Pass 3 — 2026-08-30
