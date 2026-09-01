@@ -866,8 +866,14 @@ had actually shifted by exactly three lines would have stayed green if the
 author had updated only the two failures. The window was intentional, but it
 means “173 verified” does not mean the recorded `file:line` strings are exact;
 near misses accumulate until a later edit trips them. This commit re-derived
-all six affected owners anyway. A coordinator lane claimed exact-line
-tightening plus the broader stale-owner snap while this paragraph was written.
+all six affected owners anyway. `48b0bdd6` then closed the implementation gap:
+the named line must now contain the region, the ±3 search is diagnostic-only,
+and removing the tolerance exposed and repaired 12 drifted owners tree-wide.
+**LOW test tail:** `test-region-owner-ratchet.js` has no near-miss plant — its
+stale fixture points at line 1, where the name is absent from the whole old
+window — so changing the checker back to ±3 acceptance still leaves all 13
+checks green. Add a synthetic owner one line beside a real mention and require
+`stale` to pin the exactness rule the fix exists to enforce.
 
 ---
 
