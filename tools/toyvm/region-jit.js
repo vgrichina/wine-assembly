@@ -884,6 +884,10 @@ async function once(exe, o, extra) {
     spinLoops: !flag('no-spin'), traceBlocks: !flag('no-traced'),
     crossFlags: !flag('no-cross-flags'), fuse: !flag('no-fuse'),
     deadFlags: !flag('no-dead-flags'),
+    // `--smc-diff` turns on the per-site self-modify census in BOTH arms. A
+    // missing break has a writer, and "5 breaks missing out of 17600" as an
+    // aggregate names nobody; this makes the two maps subtractable.
+    smcCensus: flag('smc-diff'),
     autoKey: true, report: flag('entries'), log: () => {}, ...extra });
   if (flag('entries')) {
     const eh = [...r.entryHist].sort((a, b) => b[1] - a[1]).slice(0, 6);
@@ -895,7 +899,7 @@ async function once(exe, o, extra) {
   // stopping cs:ip. Wall clock and arena footprint are allowed to move.
   return { ms: performance.now() - t0, dispatched: r.dispatched, frame: r.frame,
     pixels: r.pixels, ints: r.ints, handbacks: r.handbacks, smcBreaks: r.smcBreaks,
-    cs: r.vm.exports.get_cs(), ip: r.vm.exports.get_gip(), r };
+    smcSites: r.smcSites, cs: r.vm.exports.get_cs(), ip: r.vm.exports.get_gip(), r };
 }
 
 async function main() {
@@ -1308,6 +1312,24 @@ async function main() {
     + `  smc ${baseRun.smcBreaks || 0}/${jitRun.smcBreaks || 0}`
     + `  (baseline ${baseRun.frame} ${baseRun.pixels}px stop ${baseRun.cs.toString(16)}:${baseRun.ip.toString(16)}`
     + ` / region ${jitRun.frame} ${jitRun.pixels}px stop ${jitRun.cs.toString(16)}:${jitRun.ip.toString(16)})`);
+  // ...and `--smc-diff` turns that aggregate into names. Every break is a
+  // (writer cs:ip, what it hit) pair, so subtracting the two censuses says
+  // exactly which write stopped raising one -- which is a guest address to
+  // disassemble, where a count is only a number to worry about.
+  if (flag('smc-diff') && baseRun.smcSites && jitRun.smcSites) {
+    const keys = new Set([...baseRun.smcSites.keys(), ...jitRun.smcSites.keys()]);
+    const rows = [];
+    for (const k of keys) {
+      const b = baseRun.smcSites.get(k) || 0, j = jitRun.smcSites.get(k) || 0;
+      if (b !== j) rows.push([k, b, j]);
+    }
+    rows.sort((a, b) => Math.abs(b[1] - b[2]) - Math.abs(a[1] - a[2]));
+    console.log(`  smc sites differing: ${rows.length} of ${keys.size}`);
+    for (const [k, b, j] of rows.slice(0, Number(arg('smc-top', 12)))) {
+      console.log(`    ${b > j ? '-' : '+'}${Math.abs(b - j)}  ${k}  (baseline ${b}, region ${j})`);
+    }
+  }
+
   // `--png=PREFIX` writes PREFIX-base.png and PREFIX-jit.png off the two arms
   // that were just compared. A frame hash says THAT they differ; only the
   // pictures say WHERE, which is the difference between "the loop wrote the
@@ -1368,6 +1390,72 @@ async function main() {
       + ` probes of the ${delta} dispatch gap; baseline vs region is ${gap}px`
       + `  -> ${phase ? 'PHASE, not a defect' : '*** BEYOND THE NOISE FLOOR ***'}`);
     if (phase) { process.exitCode = 6; return; }
+
+    // THE DISPATCH COUNT IS NOT A COMMON CLOCK, and on a self-modifying program
+    // that is not a quibble. A region collapses a whole loop into ONE dispatch,
+    // so two arms stopped at equal dispatch counts are at different guest
+    // instants, and the gap between them is not `jitRun.dispatched -
+    // baseRun.dispatched` -- which means the probe above measured the noise
+    // floor over the wrong distance and can call a phase difference a defect.
+    // acme-sns.exe is the case: the arms end at the same cs:ip, paint the same
+    // number of pixels, and differ only in being ~3 iterations apart in ONE
+    // self-patching loop (`--smc-diff` names it: two writers, 110:5467 and
+    // 110:5484, short by 3 of ~12000 at every budget from 3M to 12M -- a
+    // constant, not something accumulating).
+    //
+    // When the arms disagree on self-modify breaks, USE THOSE AS THE CLOCK.
+    // Breaks are monotone in budget, so bisect the baseline for the budget at
+    // which it has taken exactly as many as the region did: that is the same
+    // guest instant by the program's own measure, and it is what the frame
+    // should be compared against.
+    if ((baseRun.smcBreaks || 0) !== (jitRun.smcBreaks || 0) && !flag('no-rematch-smc')) {
+      const target = jitRun.smcBreaks || 0;
+      // Bracket the target by walking DOWN from the full budget in doubling
+      // strides before bisecting. Bisecting the whole run instead costs ~22
+      // halvings of full-length runs for an answer that is a few thousand
+      // dispatches from where it started -- the deficit is single digits of
+      // breaks -- and a step count too small to converge silently reports a
+      // bracket that is not one (it sat on 10142 -> 10142 across a target of
+      // 10134 and called the region wrong).
+      let hi = baseRun.dispatched, lo = hi;
+      for (let stride = Math.max(1, o.slice); lo > 1; stride *= 2) {
+        lo = Math.max(1, hi - stride);
+        const at = await once(exe, { ...o, budget: lo }, {});
+        if ((at.smcBreaks || 0) < target) break;
+        hi = lo;
+      }
+      for (let i = 0; i < Number(arg('rematch-steps', 40)) && lo < hi; i++) {
+        const mid = Math.floor((lo + hi) / 2);
+        const at = await once(exe, { ...o, budget: mid }, {});
+        if ((at.smcBreaks || 0) < target) lo = mid + 1; else hi = mid;
+      }
+      // The bisect gets NEAR the target and cannot always land on it: the
+      // interpreter stops only at a block boundary, so its break count is a
+      // step function of the budget and a step can be wider than the miss. So
+      // sweep a few instants either side and take the CLOSEST frame the
+      // baseline ever shows. The question a rematch actually answers is not
+      // "do these two stops agree" but "does the interpreter, somewhere in
+      // here, draw the picture the region drew" -- and if it does, the region
+      // computed nothing of its own.
+      // ...and the bisect often CANNOT land on the target, because breaks come
+      // in bursts: a decryptor patches a run of bytes and the count steps by
+      // nine, so a target inside a burst is an instant the interpreter passes
+      // through and never stops at. What is still available is the BRACKET --
+      // the last instant below the target and the first at or above it. If the
+      // region's frame is no further from one of those than they are from each
+      // other, it lies inside a step the interpreter itself takes, and there is
+      // no picture there that the interpreter does not also draw.
+      const above = await once(exe, { ...o, budget: hi }, {});
+      const below = await once(exe, { ...o, budget: Math.max(1, hi - 1) }, {});
+      const bracket = nd(px(below), px(above));
+      const best = Math.min(nd(px(below), pj), nd(px(above), pj));
+      const ok = best <= Math.max(bracket, drift, 1) * 2;
+      console.log(`  rematched on self-modify breaks: the interpreter steps`
+        + ` ${below.smcBreaks} -> ${above.smcBreaks} across the region's ${target}`
+        + ` and moves ${bracket}px doing it; the region is ${best}px from the nearer end`
+        + `  -> ${ok ? 'PHASE, not a defect' : '*** STILL BEYOND THE NOISE FLOOR ***'}`);
+      if (ok) { process.exitCode = 6; return; }
+    }
   }
   // NOT CERTIFIED, AS DISTINCT FROM WRONG. A self-modify break is the emulator
   // invalidating what it believes is code, and the two arms believe different

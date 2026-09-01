@@ -1895,3 +1895,52 @@ norm near 17ns. Agreement is decided by comparing the four shells' end
 signatures and does not need the timing ladder, so re-running just those seven
 at `--dispatches=2m --reps=1` closes the hole: all seven complete, zero
 disagreements.
+
+## acme-sns.exe was not a defect: the dispatch count is not a common clock
+
+The `smc-drift` verdict above was the right instinct pointed at the wrong
+conclusion. `--smc-diff` runs both arms with the per-site self-modify census on
+and subtracts the two maps, which turns "5 breaks missing out of 17600" into two
+names:
+
+```
+  smc sites differing: 2 of 10
+    -3  110:5467 patched its own next block  (baseline 12370, region 12367)
+    -3  110:5484 patched its own next block  (baseline 12369, region 12366)
+```
+
+Two writers, each short by three, **constant from 3M to 12M dispatches** — not
+accumulating, and every other site identical. Both arms stop at the same cs:ip
+and paint the same number of pixels. That is not a region computing something
+else; it is a region three iterations behind in one self-patching loop.
+
+**Which is a measurement bug, and an obvious one in hindsight.** A region
+collapses a whole loop into ONE dispatch. Two arms stopped at equal dispatch
+counts are therefore at *different guest instants*, and the distance between
+them is not `jitRun.dispatched - baseRun.dispatched` — so the phase probe was
+measuring the noise floor over the wrong distance and calling the residue a
+defect.
+
+When the arms disagree on self-modify breaks, those breaks are the better
+clock: they are the program's own events, monotone in the budget. So the check
+now brackets on them — walk down from the full budget in doubling strides until
+the count drops below the region's, bisect the remainder, and compare the region
+against the two instants either side. Two details are load-bearing. The bisect
+needs enough steps to converge (ten halvings of a 4M range leave it on its
+starting point, reporting `10142 -> 10142` across a target of 10134 and calling
+the region wrong). And an exact rematch is often impossible, because breaks come
+in bursts — a decryptor patches a run of bytes and the count steps by nine — so
+the test is whether the region's frame lies inside a step the interpreter itself
+takes.
+
+It does, and by the widest possible margin:
+
+```
+  4M   interpreter steps 10133 -> 10134 across the region's 10134 ... region is 0px from the nearer end
+  8M   interpreter steps 25359 -> 25360 across the region's 25360 ... region is 0px
+ 10M   interpreter steps 32841 -> 32842 across the region's 32842 ... region is 0px
+```
+
+**Zero pixels.** The region draws exactly the picture the interpreter draws at
+the same break count. `smc-drift` (exit 7) survives as the fallback for a
+rematch that still fails, which is now a much stronger claim than it was.
