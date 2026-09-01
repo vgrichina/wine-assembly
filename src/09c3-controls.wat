@@ -3239,7 +3239,7 @@
     (call $host_get_window_rect (local.get $dlg) (local.get $rect))
     (call $host_move_window
       (local.get $dlg)
-      (i32.load (local.get $rect)) (i32.load offset=4 (local.get $rect))
+      (load.field PaintRect left (local.get $rect)) (load.field.memarg PaintRect top (local.get $rect))
       (i32.const 436) (i32.const 330) (i32.const 0))
     (call $defwndproc_do_nccalcsize (local.get $dlg))
     ;; Allocate/fill the resized back-canvas now. If its first allocation is
@@ -6237,6 +6237,12 @@
                     ;; shared rect, where +32 was MENU_DATA_TABLE and one digit
                     ;; too many corrupted Paint's main menu.
                     (local.set $coord_w (call $paint_scratch_take))
+                    ;; NOT a (layout PaintRect) site, deliberately: this slot is
+                    ;; a "X, Y" TEXT buffer, not a RECT, and the byte written
+                    ;; below at a RUNTIME offset ($coord_len) is a comma in that
+                    ;; string. The ring hands out 16 bytes; what they mean is
+                    ;; the caller's business, and naming them l/t/r/b here would
+                    ;; be a lie the compiler would happily accept.
                     (local.set $coord_len
                       (call $statusbar_write_uint (local.get $coord_w) (local.get $coord_x)))
                     (i32.store8 (i32.add (local.get $coord_w) (local.get $coord_len)) (i32.const 44))
@@ -9135,9 +9141,9 @@
                     (i32.eq (i32.load offset=4 (local.get $rec)) (local.get $child_id)))
                   (call $toolbar_button_rect (local.get $sw) (local.get $i) (local.get $brect)))
               (then
-                (local.set $left (i32.load (local.get $brect)))
-                (local.set $top (i32.load offset=4 (local.get $brect)))
-                (local.set $right (i32.load offset=8 (local.get $brect)))
+                (local.set $left (load.field PaintRect left (local.get $brect)))
+                (local.set $top (load.field.memarg PaintRect top (local.get $brect)))
+                (local.set $right (load.field.memarg PaintRect right (local.get $brect)))
                 (call $host_move_window
                   (local.get $ch)
                   (local.get $left)
@@ -9189,10 +9195,10 @@
       (local.set $brect (call $paint_scratch_take))
       (if (i32.eqz (call $toolbar_button_rect (local.get $sw) (local.get $idx) (local.get $brect)))
         (then (return (i32.const -1))))
-      (local.set $left (i32.load (local.get $brect)))
-      (local.set $top (i32.load offset=4 (local.get $brect)))
-      (local.set $right (i32.load offset=8 (local.get $brect)))
-      (local.set $bottom (i32.load offset=12 (local.get $brect)))
+      (local.set $left (load.field PaintRect left (local.get $brect)))
+      (local.set $top (load.field.memarg PaintRect top (local.get $brect)))
+      (local.set $right (load.field.memarg PaintRect right (local.get $brect)))
+      (local.set $bottom (load.field.memarg PaintRect bottom (local.get $brect)))
       (if (i32.and
             (i32.and
               (i32.ge_s (local.get $x) (local.get $left))
@@ -9855,13 +9861,13 @@
               (local.set $brect (call $paint_scratch_take))
               (if (i32.eqz (call $toolbar_button_rect (local.get $sw) (local.get $i) (local.get $brect)))
                 (then (br $done)))
-              (local.set $left (i32.load (local.get $brect)))
-              (local.set $top (i32.load offset=4 (local.get $brect)))
+              (local.set $left (load.field PaintRect left (local.get $brect)))
+              (local.set $top (load.field.memarg PaintRect top (local.get $brect)))
               (local.set $bw (i32.sub
-                (i32.load offset=8 (local.get $brect))
+                (load.field.memarg PaintRect right (local.get $brect))
                 (local.get $left)))
               (local.set $bh (i32.sub
-                (i32.load offset=12 (local.get $brect))
+                (load.field.memarg PaintRect bottom (local.get $brect))
                 (local.get $top)))
               (br_if $done (i32.ge_s (local.get $top) (i32.sub (local.get $h) (i32.const 2))))
               (local.set $state_byte (i32.const 4))
@@ -11785,10 +11791,10 @@
         (local.set $my (i32.shr_s (local.get $lParam) (i32.const 16)))
         (local.set $rect (call $paint_scratch_take))
         (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
-        (local.set $w (i32.sub (i32.load offset=8  (local.get $rect))
-                                (i32.load          (local.get $rect))))
-        (local.set $h (i32.sub (i32.load offset=12 (local.get $rect))
-                                (i32.load offset=4 (local.get $rect))))
+        (local.set $w (i32.sub (load.field.memarg PaintRect right (local.get $rect))
+                                (load.field PaintRect left (local.get $rect))))
+        (local.set $h (i32.sub (load.field.memarg PaintRect bottom (local.get $rect))
+                                (load.field.memarg PaintRect top (local.get $rect))))
         (if (i32.or
               (i32.or (i32.lt_s (local.get $mx) (i32.const 0))
                       (i32.lt_s (local.get $my) (i32.const 0)))
@@ -11904,8 +11910,8 @@
         (local.set $rect (call $paint_scratch_take))
         (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
         (call $host_move_window (local.get $popup)
-          (i32.load          (local.get $rect))           ;; left
-          (i32.add (i32.load offset=4 (local.get $rect)) (i32.const 21)) ;; top + FIELD_H
+          (load.field PaintRect left (local.get $rect))           ;; left
+          (i32.add (load.field.memarg PaintRect top (local.get $rect)) (i32.const 21)) ;; top + FIELD_H
           (local.get $lb_w) (local.get $lb_h)
           (i32.const 0x40))                               ;; SWP_SHOWWINDOW
         ;; host_move_window updates renderer geometry/visibility, while USER

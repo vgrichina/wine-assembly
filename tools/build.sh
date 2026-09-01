@@ -187,15 +187,31 @@ node tools/layout-migrate.js "${WND_LAYOUT_ARGS[@]}" --gate > /dev/null || {
   node tools/layout-migrate.js "${WND_LAYOUT_ARGS[@]}" --gate; exit 1; }
 
 # GdiObject (wave 5) — the 48-byte GDI object record, which is a DISCRIMINATED
-# UNION and so gets SEVEN variant layouts rather than one, all 48 bytes, all
-# agreeing on handle@0 / type@4. There is no --gate here because there is
-# nothing to convert: all 160 sites are `offset=` memarg-spelled, and load.field
-# lowers to the add form, so this family has to wait for the memarg lowering
-# (design doc §3.4(b)) before it can be converted byte-identically. What this
-# gate does instead is check the part a codemod could never do — that every site
-# is attributed to an object TYPE, that the offset it reads is a field that type
-# actually owns, and that the attribution does not contradict the function's own
-# +4 discriminant guard.
+# UNION and so gets SEVEN variant layouts rather than one, plus GdiObjectAny for
+# the handle@0 / type@4 prefix they all share. All eight are 48 bytes, so
+# (size-of ...) pins the table stride whichever one a site reaches for.
+#
+# All 160 sites are CONVERTED now (the .memarg lowering of 009f35de is what made
+# that possible), so this gate does ATTRIBUTE **AND** REFUSE-RAW, like the other
+# nine — but it is not a layout-migrate --gate line, because a union has no
+# single layout to point one at. It is its own tool for that reason, and it does
+# four things a --gate line cannot:
+#
+#   * REFUSE RAW: struct-offset-census.js must find NO hand-spelled offset
+#     arithmetic left against `call $gdi_object_record`. Anything it does find
+#     is reported with the variant that site should have been spelled as.
+#   * every site must spell the variant its ATTRIBUTION names — the wrong-layout
+#     check (§6.2), which only became possible once the sites named a layout at
+#     all. A bitmap's +24 read as a font's strike compiles perfectly.
+#   * a +0/+4 site must spell GdiObjectAny, and nothing else may: those sites
+#     have not decided a type yet (they are usually the read that decides), and
+#     naming one of the seven there claims one they do not have.
+#   * the attribution must not contradict the function's own +4 discriminant
+#     guard, harvested from the source in BOTH spellings.
+#
+# Verified to exit 1 on each of the four: a planted raw site, a bitmap field
+# spelled GdiFont, GdiObjectAny used above the prefix, and a variant named at a
+# +4 site. A gate that cannot fail is not a gate.
 node tools/gdi-variant-gate.js > /dev/null || { node tools/gdi-variant-gate.js; exit 1; }
 
 # TthPoint (the first MEMARG wave) — the 28-byte hinted-point record. --memarg
@@ -260,20 +276,28 @@ node tools/layout-migrate.js "${LOOPOP_LAYOUT_ARGS[@]}" --gate > /dev/null || {
 # $paint_scratch_take. A plain Win32 RECT: $paint_rect writes l/t/r/b in that
 # order and every reader takes them back the same way.
 #
-# DELIBERATELY PARTIAL. The family has 61 call sites across nine files; this
-# covers the four that were unclaimed when the wave ran (13 call sites, 32
-# memory sites). The others are NOT declined-for-cause — 09c3/09c5, 09a5,
-# 13-exports and 09a8 were simply held by other lanes. Whoever frees one should
-# ADD IT TO --file= here rather than starting a second gate: --gate fails if any
-# listed file carries a raw site, so one line covers as much of the family as
-# the list names, and a file missing from the list is silently ungated.
+# COMPLETE. edf55a7a covered the four files that were unclaimed when that wave
+# ran and deferred five more that other lanes were holding; 09c3, 09c5, 09a8 and
+# 13-exports were freed afterwards and are converted and listed here (27 more
+# sites), and 09a5 turned out to carry no raw site at all. Every file of the
+# family is now gated. A file missing from this list is silently ungated, so add
+# one the day a new file reaches this record.
 #
-# 09b-dispatch.wat is in the list and converts nothing, on purpose: its single
-# site passes the slot straight to $w2g as an opaque address and never names a
-# field. Keeping it listed is what makes that stay true.
-PAINT_RECT_LAYOUT_ARGS=(--file=src/10-helpers.wat,src/09a-handlers.wat,src/09c4-defwndproc.wat,src/09b-dispatch.wat
+# THREE sites inside these listed files stay raw ON PURPOSE, and each carries a
+# comment at the site saying so. The ring hands out 16 opaque bytes and what
+# they MEAN is the caller's business, so not every slot is a RECT:
+#   * 09b-dispatch.wat passes the slot straight to $w2g as an address and never
+#     names a field at all;
+#   * 09c3 $statusbar_wndproc builds an "X, Y" string in one, writing a comma at
+#     a RUNTIME offset;
+#   * 09c5 $menu_draw_submenu_arrow stores the single byte '>' in one.
+# The last two are i32.store8 at +0, which is exactly why the codemod declines
+# them — the access width disagrees with the i32 field — rather than naming a
+# rect edge for a character. $coord_w and $glyph are deliberately absent from
+# --base-local-from-call for the same reason.
+PAINT_RECT_LAYOUT_ARGS=(--file=src/10-helpers.wat,src/09a-handlers.wat,src/09c4-defwndproc.wat,src/09b-dispatch.wat,src/09c3-controls.wat,src/09c5-menu.wat,src/09a8-handlers-directx.wat,src/13-exports.wat
   --layout=PaintRect --layout-from=src/10-helpers.wat
-  --base-call='$paint_scratch_take' --base-local-from-call=rect,p,box --memarg)
+  --base-call='$paint_scratch_take' --base-local-from-call=rect,p,box,brect --memarg)
 node tools/layout-migrate.js "${PAINT_RECT_LAYOUT_ARGS[@]}" --gate > /dev/null || {
   node tools/layout-migrate.js "${PAINT_RECT_LAYOUT_ARGS[@]}" --gate; exit 1; }
 

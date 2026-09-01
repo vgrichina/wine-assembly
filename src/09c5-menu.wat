@@ -1631,6 +1631,11 @@
     ;; single shared rect. Take a slot of its own instead of writing off the end
     ;; of one.
     (local.set $glyph (call $paint_scratch_take))
+    ;; NOT a (layout PaintRect) site, deliberately. This slot is a one-byte
+    ;; STRING buffer, not a RECT: the ring hands out 16 bytes and what they mean
+    ;; is the caller's business. `store.field PaintRect left` would name a rect
+    ;; edge for a '>' character. The i32.store8 is what says so, and it is why
+    ;; the codemod declines this site rather than converting it.
     (i32.store8 (local.get $glyph) (i32.const 0x3E))
     (drop (call $host_gdi_set_text_color (local.get $hdc)
             (if (result i32) (local.get $hover)

@@ -3143,14 +3143,14 @@
       (local.set $moved
         (i32.or
           (i32.or
-            (i32.ne (i32.load          (local.get $rect)) (i32.const 0))
-            (i32.ne (i32.load offset=4 (local.get $rect)) (i32.const 0)))
+            (i32.ne (load.field PaintRect left (local.get $rect)) (i32.const 0))
+            (i32.ne (load.field.memarg PaintRect top (local.get $rect)) (i32.const 0)))
           (i32.or
-            (i32.ne (i32.sub (i32.load offset=8  (local.get $rect))
-                             (i32.load           (local.get $rect)))
+            (i32.ne (i32.sub (load.field.memarg PaintRect right (local.get $rect))
+                             (load.field PaintRect left (local.get $rect)))
                     (local.get $arg1))
-            (i32.ne (i32.sub (i32.load offset=12 (local.get $rect))
-                             (i32.load offset=4  (local.get $rect)))
+            (i32.ne (i32.sub (load.field.memarg PaintRect bottom (local.get $rect))
+                             (load.field.memarg PaintRect top (local.get $rect)))
                     (local.get $arg2)))))
       (call $host_move_window (local.get $target_hwnd)
         (i32.const 0) (i32.const 0)
