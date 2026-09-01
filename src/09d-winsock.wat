@@ -41,7 +41,39 @@
   ;;   +60  backlog     listener backlog, clamped to 1..15
   ;;   +64  acc_count   queued accepts
   ;;   +68  acc_queue   15 × i32 child record indexes (ends at +128)
+  ;;
+  ;; The table above is now DECLARED, not just described: the (layout VSock ...)
+  ;; below is the single source of every offset in it, and each field access
+  ;; goes through (load.field VSock <name> ptr) / (store.field ...). The comment
+  ;; survives because a layout carries the offsets and the types but not the
+  ;; MEANINGS — what state 6 is, which bit of flags is which. Wave 1 of
+  ;; docs/watx-layout-migration-design.md.
+  ;;
+  ;; Adding a raw (i32.add rec (i32.const N)) field access back into this file is
+  ;; a BUILD FAILURE — tools/layout-migrate.js --gate says so, from build.sh.
   ;; =====================================================================
+
+  (layout VSock
+    (field state       i32)      ;; +0    0 free / 1 created / 2 bound / 3 listening
+                                 ;;       4 connected / 5 closed / 6 connecting
+    (field family      i32)      ;; +4    AF_INET
+    (field type        i32)      ;; +8    SOCK_STREAM
+    (field proto       i32)      ;; +12   0 or IPPROTO_TCP
+    (field local_ip    i32)      ;; +16   host byte order, 0 = INADDR_ANY
+    (field local_port  i32)      ;; +20   host byte order
+    (field remote_ip   i32)      ;; +24   host byte order
+    (field remote_port i32)      ;; +28   host byte order
+    (field peer        i32)      ;; +32   peer index, -1 unconnected, -2 out-of-process
+    (field mode        i32)      ;; +36   0 blocking / 1 nonblocking (FIONBIO)
+    (field rx_buf      i32)      ;; +40   guest pointer to the receive ring
+    (field rx_cap      i32)      ;; +44   ring capacity in bytes
+    (field rx_head     i32)      ;; +48   read offset into the ring
+    (field rx_len      i32)      ;; +52   bytes currently readable
+    (field flags       i32)      ;; +56   bit0 read-closed, bit1 write-closed,
+                                 ;;       bit2 reset, bit3 connect result unreported
+    (field backlog     i32)      ;; +60   listener backlog, clamped 1..15
+    (field acc_count   i32)      ;; +64   queued accepts
+    (field acc_queue   i32 15))  ;; +68   15 child record indexes, ends at +128
 
   (global $VSOCK_MAX i32 (i32.const 64))
   (global $VSOCK_REC_SIZE i32 (i32.const 128))
@@ -81,7 +113,7 @@
     (local.set $idx (i32.and (local.get $handle) (i32.const 0xFFFFFF)))
     (if (i32.ge_u (local.get $idx) (global.get $VSOCK_MAX))
       (then (return (i32.const -1))))
-    (if (i32.eqz (i32.load (call $vsock_rec (local.get $idx))))
+    (if (i32.eqz (load.field VSock state (call $vsock_rec (local.get $idx))))
       (then (return (i32.const -1))))
     (local.get $idx))
 
@@ -111,7 +143,7 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $VSOCK_MAX)))
       (local.set $rec (call $vsock_rec (local.get $i)))
-      (if (i32.eqz (i32.load (local.get $rec)))
+      (if (i32.eqz (load.field VSock state (local.get $rec)))
         (then
           (local.set $j (i32.const 0))
           (block $zdone (loop $zero
@@ -119,13 +151,13 @@
             (i32.store (i32.add (local.get $rec) (local.get $j)) (i32.const 0))
             (local.set $j (i32.add (local.get $j) (i32.const 4)))
             (br $zero)))
-          (i32.store (i32.add (local.get $rec) (i32.const 32)) (i32.const -1))
+          (store.field VSock peer (local.get $rec) (i32.const -1))
           ;; Claim the record before releasing the lock. Every caller overwrites
           ;; this state a few instructions later, but "free until the caller gets
           ;; around to it" is exactly the window in which a second thread picks
           ;; the same record. 1 = created-but-unbound, the least surprising state
           ;; to be caught in.
-          (i32.store (local.get $rec) (i32.const 1))
+          (store.field VSock state (local.get $rec) (i32.const 1))
           (return (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -206,20 +238,20 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $VSOCK_MAX)))
       (local.set $rec (call $vsock_rec (local.get $i)))
-      (local.set $st (i32.load (local.get $rec)))
+      (local.set $st (load.field VSock state (local.get $rec)))
       ;; States 2..4 own their local port, and so does 6 (connecting).
       (if (i32.or (i32.and (i32.ge_u (local.get $st) (i32.const 2))
                            (i32.le_u (local.get $st) (i32.const 4)))
                   (i32.eq (local.get $st) (i32.const 6)))
         (then
-          (if (i32.eq (i32.load (i32.add (local.get $rec) (i32.const 20)))
+          (if (i32.eq (load.field VSock local_port (local.get $rec))
                       (local.get $port))
             (then
               ;; INADDR_ANY on either side collides with every address.
               (if (i32.or
                     (i32.or (i32.eqz (local.get $ip))
-                            (i32.eqz (i32.load (i32.add (local.get $rec) (i32.const 16)))))
-                    (i32.eq (i32.load (i32.add (local.get $rec) (i32.const 16)))
+                            (i32.eqz (load.field VSock local_ip (local.get $rec))))
+                    (i32.eq (load.field VSock local_ip (local.get $rec))
                             (local.get $ip)))
                 (then (return (i32.const 1))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -261,11 +293,11 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $VSOCK_MAX)))
       (local.set $rec (call $vsock_rec (local.get $i)))
-      (if (i32.eq (i32.load (local.get $rec)) (i32.const 3))
+      (if (i32.eq (load.field VSock state (local.get $rec)) (i32.const 3))
         (then
-          (if (i32.eq (i32.load (i32.add (local.get $rec) (i32.const 20))) (local.get $port))
+          (if (i32.eq (load.field VSock local_port (local.get $rec)) (local.get $port))
             (then
-              (local.set $lip (i32.load (i32.add (local.get $rec) (i32.const 16))))
+              (local.set $lip (load.field VSock local_ip (local.get $rec)))
               (if (i32.or (i32.eqz (local.get $lip)) (i32.eq (local.get $lip) (local.get $ip)))
                 (then (return (local.get $i))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -275,32 +307,32 @@
   (func $vsock_alloc_ring (param $idx i32) (result i32)
     (local $rec i32) (local $buf i32)
     (local.set $rec (call $vsock_rec (local.get $idx)))
-    (if (i32.load (i32.add (local.get $rec) (i32.const 40)))
+    (if (load.field VSock rx_buf (local.get $rec))
       (then (return (i32.const 1))))
     (local.set $buf (call $heap_alloc (global.get $VSOCK_RX_CAP)))
     (if (i32.eqz (local.get $buf)) (then (return (i32.const 0))))
-    (i32.store (i32.add (local.get $rec) (i32.const 40)) (local.get $buf))
-    (i32.store (i32.add (local.get $rec) (i32.const 44)) (global.get $VSOCK_RX_CAP))
-    (i32.store (i32.add (local.get $rec) (i32.const 48)) (i32.const 0))
-    (i32.store (i32.add (local.get $rec) (i32.const 52)) (i32.const 0))
+    (store.field VSock rx_buf (local.get $rec) (local.get $buf))
+    (store.field VSock rx_cap (local.get $rec) (global.get $VSOCK_RX_CAP))
+    (store.field VSock rx_head (local.get $rec) (i32.const 0))
+    (store.field VSock rx_len (local.get $rec) (i32.const 0))
     (i32.const 1))
 
   ;; Bytes this record can still accept into its receive ring.
   (func $vsock_rx_space (param $idx i32) (result i32)
     (local $rec i32)
     (local.set $rec (call $vsock_rec (local.get $idx)))
-    (i32.sub (i32.load (i32.add (local.get $rec) (i32.const 44)))
-             (i32.load (i32.add (local.get $rec) (i32.const 52)))))
+    (i32.sub (load.field VSock rx_cap (local.get $rec))
+             (load.field VSock rx_len (local.get $rec))))
 
   ;; Append n bytes of guest memory at src_ga into idx's receive ring.
   (func $vsock_ring_write (param $idx i32) (param $src_ga i32) (param $n i32)
     (local $rec i32) (local $buf i32) (local $cap i32) (local $head i32)
     (local $len i32) (local $pos i32) (local $i i32)
     (local.set $rec (call $vsock_rec (local.get $idx)))
-    (local.set $buf (call $g2w (i32.load (i32.add (local.get $rec) (i32.const 40)))))
-    (local.set $cap (i32.load (i32.add (local.get $rec) (i32.const 44))))
-    (local.set $head (i32.load (i32.add (local.get $rec) (i32.const 48))))
-    (local.set $len (i32.load (i32.add (local.get $rec) (i32.const 52))))
+    (local.set $buf (call $g2w (load.field VSock rx_buf (local.get $rec))))
+    (local.set $cap (load.field VSock rx_cap (local.get $rec)))
+    (local.set $head (load.field VSock rx_head (local.get $rec)))
+    (local.set $len (load.field VSock rx_len (local.get $rec)))
     (local.set $i (i32.const 0))
     (block $done (loop $copy
       (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
@@ -310,21 +342,20 @@
         (i32.load8_u (call $g2w (i32.add (local.get $src_ga) (local.get $i)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy)))
-    (i32.store (i32.add (local.get $rec) (i32.const 52))
-      (i32.add (local.get $len) (local.get $n))))
+    (store.field VSock rx_len (local.get $rec) (i32.add (local.get $len) (local.get $n))))
 
   ;; Remove up to n bytes from idx's ring into guest memory at dst_ga.
   (func $vsock_ring_read (param $idx i32) (param $dst_ga i32) (param $n i32) (result i32)
     (local $rec i32) (local $buf i32) (local $cap i32) (local $head i32)
     (local $len i32) (local $i i32)
     (local.set $rec (call $vsock_rec (local.get $idx)))
-    (local.set $len (i32.load (i32.add (local.get $rec) (i32.const 52))))
+    (local.set $len (load.field VSock rx_len (local.get $rec)))
     (if (i32.lt_u (local.get $len) (local.get $n))
       (then (local.set $n (local.get $len))))
     (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
-    (local.set $buf (call $g2w (i32.load (i32.add (local.get $rec) (i32.const 40)))))
-    (local.set $cap (i32.load (i32.add (local.get $rec) (i32.const 44))))
-    (local.set $head (i32.load (i32.add (local.get $rec) (i32.const 48))))
+    (local.set $buf (call $g2w (load.field VSock rx_buf (local.get $rec))))
+    (local.set $cap (load.field VSock rx_cap (local.get $rec)))
+    (local.set $head (load.field VSock rx_head (local.get $rec)))
     (local.set $i (i32.const 0))
     (block $done (loop $copy
       (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
@@ -333,10 +364,8 @@
           (i32.rem_u (i32.add (local.get $head) (local.get $i)) (local.get $cap)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy)))
-    (i32.store (i32.add (local.get $rec) (i32.const 48))
-      (i32.rem_u (i32.add (local.get $head) (local.get $n)) (local.get $cap)))
-    (i32.store (i32.add (local.get $rec) (i32.const 52))
-      (i32.sub (local.get $len) (local.get $n)))
+    (store.field VSock rx_head (local.get $rec) (i32.rem_u (i32.add (local.get $head) (local.get $n)) (local.get $cap)))
+    (store.field VSock rx_len (local.get $rec) (i32.sub (local.get $len) (local.get $n)))
     (local.get $n))
 
   ;; Release a record and notify its peer. graceful=0 delivers a reset.
@@ -344,20 +373,20 @@
     (local $rec i32) (local $peer i32) (local $prec i32) (local $buf i32)
     (local $i i32) (local $child i32)
     (local.set $rec (call $vsock_rec (local.get $idx)))
-    (if (i32.eqz (i32.load (local.get $rec))) (then (return)))
+    (if (i32.eqz (load.field VSock state (local.get $rec))) (then (return)))
     ;; A listener drops every connection still waiting in its backlog.
-    (if (i32.eq (i32.load (local.get $rec)) (i32.const 3))
+    (if (i32.eq (load.field VSock state (local.get $rec)) (i32.const 3))
       (then
         (local.set $i (i32.const 0))
         (block $ad (loop $al
-          (br_if $ad (i32.ge_u (local.get $i) (i32.load (i32.add (local.get $rec) (i32.const 64)))))
+          (br_if $ad (i32.ge_u (local.get $i) (load.field VSock acc_count (local.get $rec))))
           (local.set $child (i32.load (i32.add (local.get $rec)
             (i32.add (i32.const 68) (i32.mul (local.get $i) (i32.const 4))))))
           (call $vsock_destroy (local.get $child) (i32.const 0))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $al)))
-        (i32.store (i32.add (local.get $rec) (i32.const 64)) (i32.const 0))))
-    (local.set $peer (i32.load (i32.add (local.get $rec) (i32.const 32))))
+        (store.field VSock acc_count (local.get $rec) (i32.const 0))))
+    (local.set $peer (load.field VSock peer (local.get $rec)))
     ;; A peer in another process learns about the close from the wire. The
     ;; same graceful/abortive split applies: FIN after shutdown, RST when
     ;; the write half was still open.
@@ -369,19 +398,18 @@
     (if (i32.ge_s (local.get $peer) (i32.const 0))
       (then
         (local.set $prec (call $vsock_rec (local.get $peer)))
-        (if (i32.load (local.get $prec))
+        (if (load.field VSock state (local.get $prec))
           (then
-            (i32.store (i32.add (local.get $prec) (i32.const 32)) (i32.const -1))
-            (i32.store (i32.add (local.get $prec) (i32.const 56))
-              (i32.or (i32.load (i32.add (local.get $prec) (i32.const 56)))
+            (store.field VSock peer (local.get $prec) (i32.const -1))
+            (store.field VSock flags (local.get $prec) (i32.or (load.field VSock flags (local.get $prec))
                 (if (result i32) (local.get $graceful)
                   (then (i32.const 1))     ;; orderly EOF for the reader
                   (else (i32.const 5)))))))))  ;; read-closed + reset
-    (local.set $buf (i32.load (i32.add (local.get $rec) (i32.const 40))))
+    (local.set $buf (load.field VSock rx_buf (local.get $rec)))
     (if (local.get $buf) (then (call $heap_free (local.get $buf))))
-    (i32.store (local.get $rec) (i32.const 0))
-    (i32.store (i32.add (local.get $rec) (i32.const 40)) (i32.const 0))
-    (i32.store (i32.add (local.get $rec) (i32.const 32)) (i32.const -1)))
+    (store.field VSock state (local.get $rec) (i32.const 0))
+    (store.field VSock rx_buf (local.get $rec) (i32.const 0))
+    (store.field VSock peer (local.get $rec) (i32.const -1)))
 
   ;; ---- readiness ------------------------------------------------------
 
@@ -390,12 +418,12 @@
   (func $vsock_read_ready (param $idx i32) (result i32)
     (local $rec i32) (local $st i32)
     (local.set $rec (call $vsock_rec (local.get $idx)))
-    (local.set $st (i32.load (local.get $rec)))
+    (local.set $st (load.field VSock state (local.get $rec)))
     (if (i32.eq (local.get $st) (i32.const 3))
-      (then (return (i32.gt_u (i32.load (i32.add (local.get $rec) (i32.const 64))) (i32.const 0)))))
-    (if (i32.gt_u (i32.load (i32.add (local.get $rec) (i32.const 52))) (i32.const 0))
+      (then (return (i32.gt_u (load.field VSock acc_count (local.get $rec)) (i32.const 0)))))
+    (if (i32.gt_u (load.field VSock rx_len (local.get $rec)) (i32.const 0))
       (then (return (i32.const 1))))
-    (i32.ne (i32.and (i32.load (i32.add (local.get $rec) (i32.const 56))) (i32.const 5))
+    (i32.ne (i32.and (load.field VSock flags (local.get $rec)) (i32.const 5))
             (i32.const 0)))
 
   ;; Write-ready: a connected stream whose write half is open and whose
@@ -403,11 +431,11 @@
   (func $vsock_write_ready (param $idx i32) (result i32)
     (local $rec i32) (local $peer i32)
     (local.set $rec (call $vsock_rec (local.get $idx)))
-    (if (i32.ne (i32.load (local.get $rec)) (i32.const 4))
+    (if (i32.ne (load.field VSock state (local.get $rec)) (i32.const 4))
       (then (return (i32.const 0))))
-    (if (i32.and (i32.load (i32.add (local.get $rec) (i32.const 56))) (i32.const 2))
+    (if (i32.and (load.field VSock flags (local.get $rec)) (i32.const 2))
       (then (return (i32.const 0))))
-    (local.set $peer (i32.load (i32.add (local.get $rec) (i32.const 32))))
+    (local.set $peer (load.field VSock peer (local.get $rec)))
     ;; A remote peer has no visible ring here; the wire carries the bytes and
     ;; reports its own backpressure when the frame is handed over.
     (if (i32.eq (local.get $peer) (i32.const -2)) (then (return (i32.const 1))))
@@ -415,7 +443,7 @@
     (i32.gt_u (call $vsock_rx_space (local.get $peer)) (i32.const 0)))
 
   (func $vsock_except_ready (param $idx i32) (result i32)
-    (i32.ne (i32.and (i32.load (i32.add (call $vsock_rec (local.get $idx)) (i32.const 56)))
+    (i32.ne (i32.and (load.field VSock flags (call $vsock_rec (local.get $idx)))
                      (i32.const 4))
             (i32.const 0)))
 
@@ -489,10 +517,10 @@
     (local $rec i32)
     (local.set $rec (call $vsock_rec (local.get $idx)))
     (call $vsock_emit (local.get $type)
-      (i32.load (i32.add (local.get $rec) (i32.const 16)))
-      (i32.load (i32.add (local.get $rec) (i32.const 20)))
-      (i32.load (i32.add (local.get $rec) (i32.const 24)))
-      (i32.load (i32.add (local.get $rec) (i32.const 28)))
+      (load.field VSock local_ip (local.get $rec))
+      (load.field VSock local_port (local.get $rec))
+      (load.field VSock remote_ip (local.get $rec))
+      (load.field VSock remote_port (local.get $rec))
       (local.get $payload_ga) (local.get $len)))
 
   ;; Find a record in the given state whose remote endpoint and local port
@@ -505,14 +533,14 @@
       (br_if $done (i32.ge_u (local.get $i) (global.get $VSOCK_MAX)))
       (local.set $rec (call $vsock_rec (local.get $i)))
       (if (i32.and
-            (i32.eq (i32.load (local.get $rec)) (local.get $state))
-            (i32.eq (i32.load (i32.add (local.get $rec) (i32.const 32))) (i32.const -2)))
+            (i32.eq (load.field VSock state (local.get $rec)) (local.get $state))
+            (i32.eq (load.field VSock peer (local.get $rec)) (i32.const -2)))
         (then
           (if (i32.and
-                (i32.eq (i32.load (i32.add (local.get $rec) (i32.const 20))) (local.get $lport))
+                (i32.eq (load.field VSock local_port (local.get $rec)) (local.get $lport))
                 (i32.and
-                  (i32.eq (i32.load (i32.add (local.get $rec) (i32.const 24))) (local.get $rip))
-                  (i32.eq (i32.load (i32.add (local.get $rec) (i32.const 28))) (local.get $rport))))
+                  (i32.eq (load.field VSock remote_ip (local.get $rec)) (local.get $rip))
+                  (i32.eq (load.field VSock remote_port (local.get $rec)) (local.get $rport))))
             (then (return (local.get $i))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -531,8 +559,8 @@
                 (local.get $sip) (local.get $sport) (i32.const 0) (i32.const 0)))
         (return (i32.const 1))))
     (local.set $lrec (call $vsock_rec (local.get $lis)))
-    (if (i32.ge_u (i32.load (i32.add (local.get $lrec) (i32.const 64)))
-                  (i32.load (i32.add (local.get $lrec) (i32.const 60))))
+    (if (i32.ge_u (load.field VSock acc_count (local.get $lrec))
+                  (load.field VSock backlog (local.get $lrec)))
       (then
         ;; Backlog full. A real stack drops the SYN and lets the peer retry;
         ;; here the wire is lossless, so refuse explicitly instead.
@@ -546,26 +574,25 @@
                 (local.get $sip) (local.get $sport) (i32.const 0) (i32.const 0)))
         (return (i32.const 1))))
     (local.set $crec (call $vsock_rec (local.get $child)))
-    (i32.store (local.get $crec) (i32.const 4))
-    (i32.store (i32.add (local.get $crec) (i32.const 4)) (i32.const 2))
-    (i32.store (i32.add (local.get $crec) (i32.const 8)) (i32.const 1))
-    (i32.store (i32.add (local.get $crec) (i32.const 16)) (local.get $dip))
-    (i32.store (i32.add (local.get $crec) (i32.const 20)) (local.get $dport))
-    (i32.store (i32.add (local.get $crec) (i32.const 24)) (local.get $sip))
-    (i32.store (i32.add (local.get $crec) (i32.const 28)) (local.get $sport))
-    (i32.store (i32.add (local.get $crec) (i32.const 32)) (i32.const -2))
+    (store.field VSock state (local.get $crec) (i32.const 4))
+    (store.field VSock family (local.get $crec) (i32.const 2))
+    (store.field VSock type (local.get $crec) (i32.const 1))
+    (store.field VSock local_ip (local.get $crec) (local.get $dip))
+    (store.field VSock local_port (local.get $crec) (local.get $dport))
+    (store.field VSock remote_ip (local.get $crec) (local.get $sip))
+    (store.field VSock remote_port (local.get $crec) (local.get $sport))
+    (store.field VSock peer (local.get $crec) (i32.const -2))
     (if (i32.eqz (call $vsock_alloc_ring (local.get $child)))
       (then
-        (i32.store (local.get $crec) (i32.const 0))
+        (store.field VSock state (local.get $crec) (i32.const 0))
         (drop (call $vsock_emit (i32.const 5) (local.get $dip) (local.get $dport)
                 (local.get $sip) (local.get $sport) (i32.const 0) (i32.const 0)))
         (return (i32.const 1))))
     (i32.store (i32.add (local.get $lrec)
       (i32.add (i32.const 68)
-        (i32.mul (i32.load (i32.add (local.get $lrec) (i32.const 64))) (i32.const 4))))
+        (i32.mul (load.field VSock acc_count (local.get $lrec)) (i32.const 4))))
       (local.get $child))
-    (i32.store (i32.add (local.get $lrec) (i32.const 64))
-      (i32.add (i32.load (i32.add (local.get $lrec) (i32.const 64))) (i32.const 1)))
+    (store.field VSock acc_count (local.get $lrec) (i32.add (load.field VSock acc_count (local.get $lrec)) (i32.const 1)))
     (drop (call $vsock_emit (i32.const 2) (local.get $dip) (local.get $dport)
             (local.get $sip) (local.get $sport) (i32.const 0) (i32.const 0)))
     ;; FD_ACCEPT on the LISTENER, not the new connection. A server written to
@@ -593,7 +620,7 @@
                           (local.get $sip) (local.get $sport)))
         (if (i32.ge_s (local.get $idx) (i32.const 0))
           (then
-            (i32.store (call $vsock_rec (local.get $idx)) (i32.const 4))
+            (store.field VSock state (call $vsock_rec (local.get $idx)) (i32.const 4))
             ;; The connection completed. Winsock reports FD_WRITE alongside
             ;; FD_CONNECT, because a freshly connected socket is writable and
             ;; that first edge is the only one an app will ever get.
@@ -630,19 +657,17 @@
         (return (i32.const 1))))
     (if (i32.eq (local.get $type) (i32.const 4))
       (then
-        (i32.store (i32.add (local.get $rec) (i32.const 56))
-          (i32.or (i32.load (i32.add (local.get $rec) (i32.const 56))) (i32.const 1)))
+        (store.field VSock flags (local.get $rec) (i32.or (load.field VSock flags (local.get $rec)) (i32.const 1)))
         (call $vsock_async_post (local.get $idx) (i32.const 0x20) (i32.const 0))
         (return (i32.const 1))))
     (if (i32.eq (local.get $type) (i32.const 5))
       (then
-        (i32.store (i32.add (local.get $rec) (i32.const 56))
-          (i32.or (i32.load (i32.add (local.get $rec) (i32.const 56))) (i32.const 5)))
-        (i32.store (i32.add (local.get $rec) (i32.const 32)) (i32.const -1))
+        (store.field VSock flags (local.get $rec) (i32.or (load.field VSock flags (local.get $rec)) (i32.const 5)))
+        (store.field VSock peer (local.get $rec) (i32.const -1))
         ;; A reset before the connection came up is a failed connect, and the
         ;; app learns the reason from the error half of lParam rather than
         ;; from a close it never opened.
-        (if (i32.eq (i32.load (local.get $rec)) (i32.const 6))
+        (if (i32.eq (load.field VSock state (local.get $rec)) (i32.const 6))
           (then (call $vsock_async_post (local.get $idx) (i32.const 0x10) (i32.const 10061)))
           (else (call $vsock_async_post (local.get $idx) (i32.const 0x20) (i32.const 10054))))
         (return (i32.const 1))))
@@ -752,10 +777,10 @@
         (global.set $eax (i32.const -1))
         (return)))
     (local.set $rec (call $vsock_rec (local.get $idx)))
-    (i32.store (local.get $rec) (i32.const 1))
-    (i32.store (i32.add (local.get $rec) (i32.const 4)) (local.get $arg0))
-    (i32.store (i32.add (local.get $rec) (i32.const 8)) (local.get $arg1))
-    (i32.store (i32.add (local.get $rec) (i32.const 12)) (local.get $arg2))
+    (store.field VSock state (local.get $rec) (i32.const 1))
+    (store.field VSock family (local.get $rec) (local.get $arg0))
+    (store.field VSock type (local.get $rec) (local.get $arg1))
+    (store.field VSock proto (local.get $rec) (local.get $arg2))
     (global.set $eax (call $vsock_handle (local.get $idx))))
 
   ;; bind(s, name, namelen)
@@ -770,7 +795,7 @@
         (global.set $eax (i32.const -1))
         (return)))
     (local.set $rec (call $vsock_rec (local.get $idx)))
-    (if (i32.ne (i32.load (local.get $rec)) (i32.const 1))
+    (if (i32.ne (load.field VSock state (local.get $rec)) (i32.const 1))
       (then
         (call $vsock_set_error (i32.const 10022))          ;; WSAEINVAL
         (global.set $eax (i32.const -1))
@@ -805,9 +830,9 @@
             (call $vsock_set_error (i32.const 10048))      ;; WSAEADDRINUSE
             (global.set $eax (i32.const -1))
             (return)))))
-    (i32.store (i32.add (local.get $rec) (i32.const 16)) (local.get $ip))
-    (i32.store (i32.add (local.get $rec) (i32.const 20)) (local.get $port))
-    (i32.store (local.get $rec) (i32.const 2))
+    (store.field VSock local_ip (local.get $rec) (local.get $ip))
+    (store.field VSock local_port (local.get $rec) (local.get $port))
+    (store.field VSock state (local.get $rec) (i32.const 2))
     (global.set $eax (i32.const 0)))
 
   ;; listen(s, backlog)
@@ -823,7 +848,7 @@
         (return)))
     (local.set $rec (call $vsock_rec (local.get $idx)))
     ;; A listener must already own an address.
-    (if (i32.ne (i32.load (local.get $rec)) (i32.const 2))
+    (if (i32.ne (load.field VSock state (local.get $rec)) (i32.const 2))
       (then
         (call $vsock_set_error (i32.const 10022))
         (global.set $eax (i32.const -1))
@@ -831,8 +856,8 @@
     (local.set $bl (local.get $arg1))
     (if (i32.lt_s (local.get $bl) (i32.const 1)) (then (local.set $bl (i32.const 1))))
     (if (i32.gt_s (local.get $bl) (i32.const 15)) (then (local.set $bl (i32.const 15))))
-    (i32.store (i32.add (local.get $rec) (i32.const 60)) (local.get $bl))
-    (i32.store (local.get $rec) (i32.const 3))
+    (store.field VSock backlog (local.get $rec) (local.get $bl))
+    (store.field VSock state (local.get $rec) (i32.const 3))
     (global.set $eax (i32.const 0)))
 
   ;; connect(s, name, namelen)
@@ -852,39 +877,38 @@
     ;; Re-entry: a SYN is already outstanding for this socket, either
     ;; because a blocking connect parked here or because a nonblocking one
     ;; is being polled.
-    (if (i32.and (i32.load (i32.add (local.get $rec) (i32.const 56))) (i32.const 8))
+    (if (i32.and (load.field VSock flags (local.get $rec)) (i32.const 8))
       (then
-        (if (i32.eq (i32.load (local.get $rec)) (i32.const 4))
+        (if (i32.eq (load.field VSock state (local.get $rec)) (i32.const 4))
           (then
-            (i32.store (i32.add (local.get $rec) (i32.const 56))
-              (i32.and (i32.load (i32.add (local.get $rec) (i32.const 56))) (i32.const -9)))
+            (store.field VSock flags (local.get $rec) (i32.and (load.field VSock flags (local.get $rec)) (i32.const -9)))
             (global.set $eax (i32.const 0))
             (return)))
-        (if (i32.and (i32.load (i32.add (local.get $rec) (i32.const 56))) (i32.const 4))
+        (if (i32.and (load.field VSock flags (local.get $rec)) (i32.const 4))
           (then
             ;; Refused. Put the socket back where it was so the guest can
             ;; bind or connect it again.
-            (i32.store (i32.add (local.get $rec) (i32.const 56)) (i32.const 0))
-            (i32.store (i32.add (local.get $rec) (i32.const 32)) (i32.const -1))
-            (i32.store (i32.add (local.get $rec) (i32.const 24)) (i32.const 0))
-            (i32.store (i32.add (local.get $rec) (i32.const 28)) (i32.const 0))
-            (i32.store (local.get $rec) (i32.const 2))
+            (store.field VSock flags (local.get $rec) (i32.const 0))
+            (store.field VSock peer (local.get $rec) (i32.const -1))
+            (store.field VSock remote_ip (local.get $rec) (i32.const 0))
+            (store.field VSock remote_port (local.get $rec) (i32.const 0))
+            (store.field VSock state (local.get $rec) (i32.const 2))
             (call $vsock_set_error (i32.const 10061))      ;; WSAECONNREFUSED
             (global.set $eax (i32.const -1))
             (return)))
-        (if (i32.load (i32.add (local.get $rec) (i32.const 36)))
+        (if (load.field VSock mode (local.get $rec))
           (then
             (call $vsock_set_error (i32.const 10037))      ;; WSAEALREADY
             (global.set $eax (i32.const -1))
             (return)))
         (call $vsock_block (i32.const 16))
         (return)))
-    (if (i32.eq (i32.load (local.get $rec)) (i32.const 4))
+    (if (i32.eq (load.field VSock state (local.get $rec)) (i32.const 4))
       (then
         (call $vsock_set_error (i32.const 10056))          ;; WSAEISCONN
         (global.set $eax (i32.const -1))
         (return)))
-    (if (i32.gt_u (i32.load (local.get $rec)) (i32.const 2))
+    (if (i32.gt_u (load.field VSock state (local.get $rec)) (i32.const 2))
       (then
         (call $vsock_set_error (i32.const 10022))
         (global.set $eax (i32.const -1))
@@ -904,21 +928,21 @@
         (return)))
     ;; An unbound connector picks up an ephemeral room address before the
     ;; route is chosen, because either path needs a source endpoint.
-    (if (i32.eq (i32.load (local.get $rec)) (i32.const 1))
+    (if (i32.eq (load.field VSock state (local.get $rec)) (i32.const 1))
       (then
-        (i32.store (i32.add (local.get $rec) (i32.const 16)) (global.get $vsock_local_ip))
-        (i32.store (i32.add (local.get $rec) (i32.const 20)) (call $vsock_alloc_port))))
+        (store.field VSock local_ip (local.get $rec) (global.get $vsock_local_ip))
+        (store.field VSock local_port (local.get $rec) (call $vsock_alloc_port))))
     ;; A destination this process does not answer for goes out on the wire.
     (if (i32.eqz (call $vsock_is_local_addr (local.get $ip)))
       (then
-        (i32.store (i32.add (local.get $rec) (i32.const 24)) (local.get $ip))
-        (i32.store (i32.add (local.get $rec) (i32.const 28)) (local.get $port))
-        (i32.store (i32.add (local.get $rec) (i32.const 32)) (i32.const -2))
+        (store.field VSock remote_ip (local.get $rec) (local.get $ip))
+        (store.field VSock remote_port (local.get $rec) (local.get $port))
+        (store.field VSock peer (local.get $rec) (i32.const -2))
         (if (i32.eqz (call $vsock_alloc_ring (local.get $idx)))
           (then
-            (i32.store (i32.add (local.get $rec) (i32.const 24)) (i32.const 0))
-            (i32.store (i32.add (local.get $rec) (i32.const 28)) (i32.const 0))
-            (i32.store (i32.add (local.get $rec) (i32.const 32)) (i32.const -1))
+            (store.field VSock remote_ip (local.get $rec) (i32.const 0))
+            (store.field VSock remote_port (local.get $rec) (i32.const 0))
+            (store.field VSock peer (local.get $rec) (i32.const -1))
             (call $vsock_set_error (i32.const 10055))      ;; WSAENOBUFS
             (global.set $eax (i32.const -1))
             (return)))
@@ -927,20 +951,19 @@
           (then
             ;; The wire could not take the SYN. Roll the socket back so the
             ;; retry emits a fresh one rather than waiting on a lost frame.
-            (i32.store (i32.add (local.get $rec) (i32.const 24)) (i32.const 0))
-            (i32.store (i32.add (local.get $rec) (i32.const 28)) (i32.const 0))
-            (i32.store (i32.add (local.get $rec) (i32.const 32)) (i32.const -1))
-            (if (i32.load (i32.add (local.get $rec) (i32.const 36)))
+            (store.field VSock remote_ip (local.get $rec) (i32.const 0))
+            (store.field VSock remote_port (local.get $rec) (i32.const 0))
+            (store.field VSock peer (local.get $rec) (i32.const -1))
+            (if (load.field VSock mode (local.get $rec))
               (then
                 (call $vsock_set_error (i32.const 10035))  ;; WSAEWOULDBLOCK
                 (global.set $eax (i32.const -1))
                 (return)))
             (call $vsock_block (i32.const 16))
             (return)))
-        (i32.store (local.get $rec) (i32.const 6))
-        (i32.store (i32.add (local.get $rec) (i32.const 56))
-          (i32.or (i32.load (i32.add (local.get $rec) (i32.const 56))) (i32.const 8)))
-        (if (i32.load (i32.add (local.get $rec) (i32.const 36)))
+        (store.field VSock state (local.get $rec) (i32.const 6))
+        (store.field VSock flags (local.get $rec) (i32.or (load.field VSock flags (local.get $rec)) (i32.const 8)))
+        (if (load.field VSock mode (local.get $rec))
           (then
             (call $vsock_set_error (i32.const 10035))      ;; WSAEWOULDBLOCK
             (global.set $eax (i32.const -1))
@@ -954,8 +977,8 @@
         (global.set $eax (i32.const -1))
         (return)))
     (local.set $lrec (call $vsock_rec (local.get $lis)))
-    (if (i32.ge_u (i32.load (i32.add (local.get $lrec) (i32.const 64)))
-                  (i32.load (i32.add (local.get $lrec) (i32.const 60))))
+    (if (i32.ge_u (load.field VSock acc_count (local.get $lrec))
+                  (load.field VSock backlog (local.get $lrec)))
       (then
         (call $vsock_set_error (i32.const 10061))          ;; backlog full
         (global.set $eax (i32.const -1))
@@ -969,37 +992,34 @@
     (local.set $crec (call $vsock_rec (local.get $child)))
     ;; Server half: inherits the listener's address, points back at the
     ;; connector.
-    (i32.store (local.get $crec) (i32.const 4))
-    (i32.store (i32.add (local.get $crec) (i32.const 4)) (i32.const 2))
-    (i32.store (i32.add (local.get $crec) (i32.const 8)) (i32.const 1))
-    (i32.store (i32.add (local.get $crec) (i32.const 16)) (local.get $ip))
-    (i32.store (i32.add (local.get $crec) (i32.const 20)) (local.get $port))
-    (i32.store (i32.add (local.get $crec) (i32.const 24))
-      (i32.load (i32.add (local.get $rec) (i32.const 16))))
-    (i32.store (i32.add (local.get $crec) (i32.const 28))
-      (i32.load (i32.add (local.get $rec) (i32.const 20))))
-    (i32.store (i32.add (local.get $crec) (i32.const 32)) (local.get $idx))
+    (store.field VSock state (local.get $crec) (i32.const 4))
+    (store.field VSock family (local.get $crec) (i32.const 2))
+    (store.field VSock type (local.get $crec) (i32.const 1))
+    (store.field VSock local_ip (local.get $crec) (local.get $ip))
+    (store.field VSock local_port (local.get $crec) (local.get $port))
+    (store.field VSock remote_ip (local.get $crec) (load.field VSock local_ip (local.get $rec)))
+    (store.field VSock remote_port (local.get $crec) (load.field VSock local_port (local.get $rec)))
+    (store.field VSock peer (local.get $crec) (local.get $idx))
     ;; Client half.
-    (i32.store (i32.add (local.get $rec) (i32.const 24)) (local.get $ip))
-    (i32.store (i32.add (local.get $rec) (i32.const 28)) (local.get $port))
-    (i32.store (i32.add (local.get $rec) (i32.const 32)) (local.get $child))
-    (i32.store (local.get $rec) (i32.const 4))
+    (store.field VSock remote_ip (local.get $rec) (local.get $ip))
+    (store.field VSock remote_port (local.get $rec) (local.get $port))
+    (store.field VSock peer (local.get $rec) (local.get $child))
+    (store.field VSock state (local.get $rec) (i32.const 4))
     (if (i32.eqz (i32.and (call $vsock_alloc_ring (local.get $idx))
                           (call $vsock_alloc_ring (local.get $child))))
       (then
         (call $vsock_destroy (local.get $child) (i32.const 0))
-        (i32.store (i32.add (local.get $rec) (i32.const 32)) (i32.const -1))
-        (i32.store (local.get $rec) (i32.const 2))
+        (store.field VSock peer (local.get $rec) (i32.const -1))
+        (store.field VSock state (local.get $rec) (i32.const 2))
         (call $vsock_set_error (i32.const 10055))          ;; WSAENOBUFS
         (global.set $eax (i32.const -1))
         (return)))
     ;; OPEN_OK: the connection is in the backlog, not yet accepted.
     (i32.store (i32.add (local.get $lrec)
       (i32.add (i32.const 68)
-        (i32.mul (i32.load (i32.add (local.get $lrec) (i32.const 64))) (i32.const 4))))
+        (i32.mul (load.field VSock acc_count (local.get $lrec)) (i32.const 4))))
       (local.get $child))
-    (i32.store (i32.add (local.get $lrec) (i32.const 64))
-      (i32.add (i32.load (i32.add (local.get $lrec) (i32.const 64))) (i32.const 1)))
+    (store.field VSock acc_count (local.get $lrec) (i32.add (load.field VSock acc_count (local.get $lrec)) (i32.const 1)))
     (global.set $eax (i32.const 0)))
 
   ;; accept(s, addr, addrlen)
@@ -1016,17 +1036,17 @@
         (global.set $eax (i32.const -1))
         (return)))
     (local.set $rec (call $vsock_rec (local.get $idx)))
-    (if (i32.ne (i32.load (local.get $rec)) (i32.const 3))
+    (if (i32.ne (load.field VSock state (local.get $rec)) (i32.const 3))
       (then
         (call $vsock_set_error (i32.const 10022))
         (global.set $eax (i32.const -1))
         (return)))
     (call $vsock_pump)
-    (local.set $n (i32.load (i32.add (local.get $rec) (i32.const 64))))
+    (local.set $n (load.field VSock acc_count (local.get $rec)))
     (if (i32.eqz (local.get $n))
       (then
         ;; A blocking accept parks until the wire delivers a SYN.
-        (if (i32.eqz (i32.load (i32.add (local.get $rec) (i32.const 36))))
+        (if (i32.eqz (load.field VSock mode (local.get $rec)))
           (then (call $vsock_block (i32.const 16)) (return)))
         (call $vsock_set_error (i32.const 10035))          ;; WSAEWOULDBLOCK
         (global.set $eax (i32.const -1))
@@ -1042,7 +1062,7 @@
           (i32.add (i32.const 68) (i32.mul (local.get $i) (i32.const 4))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $sh)))
-    (i32.store (i32.add (local.get $rec) (i32.const 64)) (i32.sub (local.get $n) (i32.const 1)))
+    (store.field VSock acc_count (local.get $rec) (i32.sub (local.get $n) (i32.const 1)))
     ;; A socket from accept inherits the listener's WSAAsyncSelect registration
     ;; -- window, message and event mask alike. Without that the server is told
     ;; about the connection and then never hears another thing from it: the
@@ -1061,8 +1081,8 @@
         (i32.store offset=8 (local.get $carec) (i32.load offset=8 (local.get $arec)))))
     (local.set $crec (call $vsock_rec (local.get $child)))
     (call $vsock_write_sockaddr (local.get $arg1) (local.get $arg2)
-      (i32.load (i32.add (local.get $crec) (i32.const 24)))
-      (i32.load (i32.add (local.get $crec) (i32.const 28))))
+      (load.field VSock remote_ip (local.get $crec))
+      (load.field VSock remote_port (local.get $crec)))
     ;; Anything the peer sent between the SYN and this accept is already in the
     ;; ring, and its FD_READ went to a socket that did not exist yet. Report the
     ;; edge now, or that first packet waits for a second one to announce it.
@@ -1089,14 +1109,14 @@
     (local.set $rec (call $vsock_rec (local.get $idx)))
     ;; Only an established connection has a peer. A listener or a half-open
     ;; connect reports WSAENOTCONN rather than inventing an address.
-    (if (i32.ne (i32.load (local.get $rec)) (i32.const 4))
+    (if (i32.ne (load.field VSock state (local.get $rec)) (i32.const 4))
       (then
         (call $vsock_set_error (i32.const 10057))          ;; WSAENOTCONN
         (global.set $eax (i32.const -1))
         (return)))
     (call $vsock_write_sockaddr (local.get $arg1) (local.get $arg2)
-      (i32.load (i32.add (local.get $rec) (i32.const 24)))
-      (i32.load (i32.add (local.get $rec) (i32.const 28))))
+      (load.field VSock remote_ip (local.get $rec))
+      (load.field VSock remote_port (local.get $rec)))
     (global.set $eax (i32.const 0)))
 
   ;; send(s, buf, len, flags) — a partial count is a legal TCP result.
@@ -1112,17 +1132,17 @@
         (return)))
     (local.set $rec (call $vsock_rec (local.get $idx)))
     (call $vsock_pump)
-    (if (i32.ne (i32.load (local.get $rec)) (i32.const 4))
+    (if (i32.ne (load.field VSock state (local.get $rec)) (i32.const 4))
       (then
         (call $vsock_set_error (i32.const 10057))          ;; WSAENOTCONN
         (global.set $eax (i32.const -1))
         (return)))
-    (if (i32.and (i32.load (i32.add (local.get $rec) (i32.const 56))) (i32.const 2))
+    (if (i32.and (load.field VSock flags (local.get $rec)) (i32.const 2))
       (then
         (call $vsock_set_error (i32.const 10058))          ;; WSAESHUTDOWN
         (global.set $eax (i32.const -1))
         (return)))
-    (local.set $peer (i32.load (i32.add (local.get $rec) (i32.const 32))))
+    (local.set $peer (load.field VSock peer (local.get $rec)))
     ;; A peer in another process takes bytes as wire frames. One send
     ;; produces at most one frame, so a large write returns a partial count
     ;; — which a stream socket is always allowed to do.
@@ -1136,7 +1156,7 @@
         (if (i32.eqz (call $vsock_emit_from (local.get $idx) (i32.const 3)
                        (local.get $arg1) (local.get $n)))
           (then
-            (if (i32.eqz (i32.load (i32.add (local.get $rec) (i32.const 36))))
+            (if (i32.eqz (load.field VSock mode (local.get $rec)))
               (then (call $vsock_block (i32.const 20)) (return)))
             (call $vsock_set_error (i32.const 10035))
             (global.set $eax (i32.const -1))
@@ -1156,7 +1176,7 @@
     (if (i32.eqz (local.get $space))
       (then
         ;; The peer's ring is full; a blocking send waits for it to drain.
-        (if (i32.eqz (i32.load (i32.add (local.get $rec) (i32.const 36))))
+        (if (i32.eqz (load.field VSock mode (local.get $rec)))
           (then (call $vsock_block (i32.const 20)) (return)))
         (call $vsock_set_error (i32.const 10035))
         (global.set $eax (i32.const -1))
@@ -1179,16 +1199,16 @@
         (return)))
     (local.set $rec (call $vsock_rec (local.get $idx)))
     (call $vsock_pump)
-    (if (i32.ne (i32.load (local.get $rec)) (i32.const 4))
+    (if (i32.ne (load.field VSock state (local.get $rec)) (i32.const 4))
       (then
         (call $vsock_set_error (i32.const 10057))
         (global.set $eax (i32.const -1))
         (return)))
-    (if (i32.gt_u (i32.load (i32.add (local.get $rec) (i32.const 52))) (i32.const 0))
+    (if (i32.gt_u (load.field VSock rx_len (local.get $rec)) (i32.const 0))
       (then
         (global.set $eax (call $vsock_ring_read (local.get $idx) (local.get $arg1) (local.get $arg2)))
         (return)))
-    (local.set $flags (i32.load (i32.add (local.get $rec) (i32.const 56))))
+    (local.set $flags (load.field VSock flags (local.get $rec)))
     ;; A reset outranks an orderly EOF once the buffer has drained.
     (if (i32.and (local.get $flags) (i32.const 4))
       (then
@@ -1200,7 +1220,7 @@
         (global.set $eax (i32.const 0))
         (return)))
     ;; Nothing buffered and neither half closed: a blocking recv waits.
-    (if (i32.eqz (i32.load (i32.add (local.get $rec) (i32.const 36))))
+    (if (i32.eqz (load.field VSock mode (local.get $rec)))
       (then (call $vsock_block (i32.const 20)) (return)))
     (call $vsock_set_error (i32.const 10035))
     (global.set $eax (i32.const -1)))
@@ -1217,7 +1237,7 @@
         (global.set $eax (i32.const -1))
         (return)))
     (local.set $rec (call $vsock_rec (local.get $idx)))
-    (if (i32.ne (i32.load (local.get $rec)) (i32.const 4))
+    (if (i32.ne (load.field VSock state (local.get $rec)) (i32.const 4))
       (then
         (call $vsock_set_error (i32.const 10057))
         (global.set $eax (i32.const -1))
@@ -1225,21 +1245,18 @@
     (if (i32.ne (local.get $arg1) (i32.const 0))
       (then
         ;; SD_SEND / SD_BOTH close the write half and deliver FIN.
-        (i32.store (i32.add (local.get $rec) (i32.const 56))
-          (i32.or (i32.load (i32.add (local.get $rec) (i32.const 56))) (i32.const 2)))
-        (local.set $peer (i32.load (i32.add (local.get $rec) (i32.const 32))))
+        (store.field VSock flags (local.get $rec) (i32.or (load.field VSock flags (local.get $rec)) (i32.const 2)))
+        (local.set $peer (load.field VSock peer (local.get $rec)))
         (if (i32.eq (local.get $peer) (i32.const -2))
           (then (drop (call $vsock_emit_from (local.get $idx) (i32.const 4)
                         (i32.const 0) (i32.const 0)))))
         (if (i32.ge_s (local.get $peer) (i32.const 0))
           (then
             (local.set $prec (call $vsock_rec (local.get $peer)))
-            (i32.store (i32.add (local.get $prec) (i32.const 56))
-              (i32.or (i32.load (i32.add (local.get $prec) (i32.const 56))) (i32.const 1)))))))
+            (store.field VSock flags (local.get $prec) (i32.or (load.field VSock flags (local.get $prec)) (i32.const 1)))))))
     (if (i32.ne (local.get $arg1) (i32.const 1))
       (then
-        (i32.store (i32.add (local.get $rec) (i32.const 56))
-          (i32.or (i32.load (i32.add (local.get $rec) (i32.const 56))) (i32.const 1)))))
+        (store.field VSock flags (local.get $rec) (i32.or (load.field VSock flags (local.get $rec)) (i32.const 1)))))
     (global.set $eax (i32.const 0)))
 
   ;; closesocket(s)
@@ -1257,7 +1274,7 @@
     ;; Closing after shutdown(SD_SEND) is orderly; closing with the write
     ;; half still open aborts, matching TCP's RST-on-unread-close behavior.
     (local.set $graceful
-      (i32.ne (i32.and (i32.load (i32.add (local.get $rec) (i32.const 56))) (i32.const 2))
+      (i32.ne (i32.and (load.field VSock flags (local.get $rec)) (i32.const 2))
               (i32.const 0)))
     (call $vsock_destroy (local.get $idx) (local.get $graceful))
     (global.set $eax (i32.const 0)))
@@ -1392,14 +1409,13 @@
     (local.set $rec (call $vsock_rec (local.get $idx)))
     (if (i32.eq (local.get $arg1) (i32.const 0x8004667E))  ;; FIONBIO
       (then
-        (i32.store (i32.add (local.get $rec) (i32.const 36))
-          (i32.ne (i32.load (call $g2w (local.get $arg2))) (i32.const 0)))
+        (store.field VSock mode (local.get $rec) (i32.ne (i32.load (call $g2w (local.get $arg2))) (i32.const 0)))
         (global.set $eax (i32.const 0))
         (return)))
     (if (i32.eq (local.get $arg1) (i32.const 0x4004667F))  ;; FIONREAD
       (then
         (i32.store (call $g2w (local.get $arg2))
-          (i32.load (i32.add (local.get $rec) (i32.const 52))))
+          (load.field VSock rx_len (local.get $rec)))
         (global.set $eax (i32.const 0))
         (return)))
     (call $vsock_set_error (i32.const 10022))
@@ -1975,7 +1991,7 @@
     (i32.store offset=8 (local.get $w) (local.get $arg3))  ;; lEvent
     ;; Documented side effect: the socket becomes non-blocking, and stays that
     ;; way even if the registration is later cancelled with lEvent = 0.
-    (i32.store (i32.add (call $vsock_rec (local.get $idx)) (i32.const 36)) (i32.const 1))
+    (store.field VSock mode (call $vsock_rec (local.get $idx)) (i32.const 1))
     (global.set $eax (i32.const 0)))
 
   ;; getprotobyname(name) → struct protoent* (NULL when unknown)

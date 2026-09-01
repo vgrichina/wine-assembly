@@ -97,6 +97,17 @@ node tools/esp-epilogue.js --check
 # copy OF. Fail if any imported file's bytes no longer match the SHA-256 the
 # import recorded, so a silent edit or an unlogged re-sync cannot ship.
 node tools/check-watx-provenance.js
+# A struct that has been migrated to a (layout ...) must STAY migrated. Without
+# this the tree quietly re-grows hand-spelled field offsets against a record
+# whose offsets now live in one place, and the migration undoes itself over
+# months. One line per migrated struct — see docs/watx-layout-migration-design.md.
+# The gate keys on the BASE SYMBOL, not on the offset literals: grepping for
+# `(i32.const 56)` would fire on every unrelated 56 in the file, and a gate that
+# cries wolf gets deleted.
+node tools/layout-migrate.js --file=src/09d-winsock.wat --layout=VSock \
+  --base-local=rec,prec,lrec,crec --base-call='$vsock_rec' --gate > /dev/null || {
+  node tools/layout-migrate.js --file=src/09d-winsock.wat --layout=VSock \
+    --base-local=rec,prec,lrec,crec --base-call='$vsock_rec' --gate; exit 1; }
 
 echo "Concatenating WAT parts..."
 # From WAT_FILES, not a shell glob: combined.wat must be the same sequence the
