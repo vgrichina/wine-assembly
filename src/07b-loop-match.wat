@@ -302,6 +302,39 @@
       (then (return (global.get $LR_JCC))))
     (global.get $LR_UNKNOWN))
 
+  ;; One threaded-code op, as $te writes it (04-cache.wat :: $te). size-of is 8,
+  ;; which is exactly the bump $te makes after storing the pair — an op's header
+  ;; is two words and nothing else is guaranteed to follow it.
+  ;;
+  ;; ONLY the header is a layout, deliberately, and the rest of the record is
+  ;; not a struct at all. Handlers pull extra words with $te_raw, and both the
+  ;; arity and the meaning are chosen by the handler index at +0:
+  ;;
+  ;;   +8 is the fall-through EIP for Jcc (fn 307..322, 07-decoder.wat:4257)
+  ;;      but the branch TARGET for LOOP (fn 46, 07-decoder.wat:4270, read at
+  ;;      05-alu.wat:929) — the same offset with the pair in the opposite order;
+  ;;   +8 is a packed base|index<<4|scale<<8 SIB info word for fn 149/363/389/420
+  ;;      ($sib_info_word, 07-decoder.wat:1522; read 06b-core-handlers.wat:281),
+  ;;      a plain disp32 for the _ro family (06b-core-handlers.wat:1589), and a
+  ;;      raw absolute address or $SIB_SENTINEL for fn 20/21 (05-alu.wat:386);
+  ;;   fn 407 puts fall/target at +16/+20 instead (07-decoder.wat:1782), and the
+  ;;      payload arity runs 0,1,2,3,4,6,7 words with no length field and at
+  ;;      least three conditional-arity emitters (07-decoder.wat:2094, 1957, 562).
+  ;;
+  ;; That is why OP_INDEX exists at all: the stream is not self-describing, so
+  ;; nothing can walk it structurally (04-cache.wat:876). Every +8 read in this
+  ;; file is already guarded by an equality test on the handler index just above
+  ;; it, and 07-decoder.wat:5305 documents what happens to code that infers the
+  ;; shape positionally instead. So the trailing words are a discriminated union
+  ;; keyed by `handler` — §5.4's variant shape — but with a computed tag rather
+  ;; than a stored type word, which is also why wave 5's variant gate cannot
+  ;; attribute them. They stay hand-spelled until a variant declaration can name
+  ;; each arm from evidence; --gate leaves them alone because an undeclared
+  ;; offset is not a convertible site.
+  (layout LoopOp
+    (field handler i32)    ;; +0  handler-table index; $te's $fn, $loop_is_jcc's arg
+    (field operand i32))   ;; +4  packed operand; $te's $op, masked 0xF for regs
+
   ;; Address of op i in the block just emitted.
   (func $loop_op_at (param $i i32) (result i32)
     (i32.load
@@ -314,7 +347,7 @@
     (if (i32.lt_u (global.get $op_index_n) (i32.const 2)) (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at
       (i32.sub (global.get $op_index_n) (i32.const 1))))
-    (if (i32.eqz (call $loop_is_jcc (i32.load (local.get $p))))
+    (if (i32.eqz (call $loop_is_jcc (load.field LoopOp handler (local.get $p))))
       (then (return (i32.const 0))))
     ;; words after the header: +8 fall-through, +12 target
     (i32.eq (i32.load offset=12 (local.get $p)) (local.get $start_eip)))
@@ -331,8 +364,8 @@
       (loop $each
         (br_if $done (i32.ge_u (local.get $i) (global.get $op_index_n)))
         (local.set $p (call $loop_op_at (local.get $i)))
-        (call $host_log_i32 (i32.load (local.get $p)))
-        (call $host_log_i32 (i32.load offset=4 (local.get $p)))
+        (call $host_log_i32 (load.field LoopOp handler (local.get $p)))
+        (call $host_log_i32 (load.field.memarg LoopOp operand (local.get $p)))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $each))))
 
@@ -405,9 +438,9 @@
         ;; The dominant H3 form reloads its invariant table pointer from a
         ;; stack local at the top of every pixel iteration.
         (local.set $p (call $loop_op_at (i32.const 0)))
-        (if (i32.ne (i32.load (local.get $p)) (i32.const 343))
+        (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 343))
           (then (return (i32.const 0))))
-        (local.set $tbl (i32.and (i32.load offset=4 (local.get $p)) (i32.const 0xF)))
+        (local.set $tbl (i32.and (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0xF)))
         (local.set $stack_disp (i32.load offset=8 (local.get $p)))
         (local.set $table_stack (i32.const 1))
         (local.set $first (i32.const 1)))
@@ -417,9 +450,9 @@
 
     ;; xor acc,acc
     (local.set $p (call $loop_op_at (local.get $first)))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 18))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 18))
       (then (return (i32.const 0))))
-    (local.set $op (i32.load offset=4 (local.get $p)))
+    (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
     (local.set $acc (i32.and (local.get $op) (i32.const 0xF)))
     (if (i32.or
           (i32.gt_u (local.get $acc) (i32.const 3))
@@ -428,9 +461,9 @@
 
     ;; mov acc8,[src+disp]
     (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 1))))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 28))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 28))
       (then (return (i32.const 0))))
-    (local.set $op (i32.load offset=4 (local.get $p)))
+    (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
     (if (i32.ne (i32.shr_u (local.get $op) (i32.const 4)) (local.get $acc))
       (then (return (i32.const 0))))
     (local.set $src (i32.and (local.get $op) (i32.const 0xF)))
@@ -440,34 +473,34 @@
     ;; into its descriptor displacement below.
     (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 2))))
     (if (i32.and
-          (i32.ne (i32.load (local.get $p)) (i32.const 3))
-          (i32.ne (i32.load (local.get $p)) (i32.const 8)))
+          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 3))
+          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 8)))
       (then (return (i32.const 0))))
     (if (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 2))
       (then (return (i32.const 0))))
-    (local.set $dst (i32.and (i32.load offset=4 (local.get $p)) (i32.const 0xF)))
+    (local.set $dst (i32.and (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0xF)))
     (local.set $dst_stride
       (select (i32.const 2) (i32.const -2)
-        (i32.eq (i32.load (local.get $p)) (i32.const 3))))
+        (i32.eq (load.field LoopOp handler (local.get $p)) (i32.const 3))))
 
     ;; inc src / dec count
     (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 3))))
     (if (i32.or
-          (i32.ne (i32.load (local.get $p)) (i32.const 64))
-          (i32.ne (i32.and (i32.load offset=4 (local.get $p)) (i32.const 0xF))
+          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 64))
+          (i32.ne (i32.and (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0xF))
                   (local.get $src)))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 4))))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 65))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 65))
       (then (return (i32.const 0))))
-    (local.set $ctr (i32.and (i32.load offset=4 (local.get $p)) (i32.const 0xF)))
+    (local.set $ctr (i32.and (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0xF)))
 
     ;; H149 computes table+acc*2+disp, and H164 consumes its SIB_SENTINEL as
     ;; a word load into acc.
     (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 5))))
     (if (i32.or
-          (i32.ne (i32.load (local.get $p)) (i32.const 149))
-          (i32.ne (i32.load offset=4 (local.get $p)) (i32.const 0)))
+          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 149))
+          (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0)))
       (then (return (i32.const 0))))
     (local.set $info (i32.load offset=8 (local.get $p)))
     (local.set $sib_tbl (i32.and (local.get $info) (i32.const 0xF)))
@@ -488,18 +521,18 @@
     (local.set $table_disp (i32.load offset=12 (local.get $p)))
     (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 6))))
     (if (i32.or
-          (i32.ne (i32.load (local.get $p)) (i32.const 164))
+          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 164))
           (i32.or
-            (i32.ne (i32.and (i32.load offset=4 (local.get $p)) (i32.const 0xF))
+            (i32.ne (i32.and (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0xF))
                     (local.get $acc))
             (i32.ne (i32.load offset=8 (local.get $p)) (global.get $SIB_SENTINEL))))
       (then (return (i32.const 0))))
 
     ;; mov [dst+disp],acc16 / jnz ^
     (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 7))))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 165))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 165))
       (then (return (i32.const 0))))
-    (local.set $op (i32.load offset=4 (local.get $p)))
+    (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
     (if (i32.or
           (i32.ne (i32.shr_u (local.get $op) (i32.const 4)) (local.get $acc))
           (i32.ne (i32.and (local.get $op) (i32.const 0xF)) (local.get $dst)))
@@ -507,7 +540,7 @@
     (local.set $dst_disp
       (i32.add (i32.load offset=8 (local.get $p)) (local.get $dst_stride)))
     (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 8))))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 312))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 312))
       (then (return (i32.const 0))))
 
     ;; All architectural roles are distinct in the observed family. Requiring
@@ -595,8 +628,8 @@
       (loop $p1
         (br_if $p1_done (i32.ge_u (local.get $i) (local.get $n)))
         (local.set $p (call $loop_op_at (local.get $i)))
-        (local.set $fn (i32.load (local.get $p)))
-        (local.set $op (i32.load offset=4 (local.get $p)))
+        (local.set $fn (load.field LoopOp handler (local.get $p)))
+        (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
         (local.set $role (call $loop_role (local.get $fn) (local.get $op)))
         (if (i32.eq (local.get $role) (global.get $LR_UNKNOWN))
           (then (return (i32.const 0))))
@@ -754,7 +787,7 @@
     ;; The counter must be the register the exit test reads, and must not be
     ;; the cursor. We only accept the JNZ form: exit when the counter hits 0.
     (local.set $p (call $loop_op_at (i32.sub (local.get $n) (i32.const 1))))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 312)) (then (return (i32.const 0))))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 312)) (then (return (i32.const 0))))
     (if (i32.eq (local.get $ctr_reg) (local.get $iv_reg)) (then (return (i32.const 0))))
     ;; The counter must be the last flag-setting op before the branch, or the
     ;; condition is not the one we are modelling.
@@ -961,8 +994,8 @@
       (loop $p1
         (br_if $p1_done (i32.ge_u (local.get $i) (local.get $n)))
         (local.set $p (call $loop_op_at (local.get $i)))
-        (local.set $fn (i32.load (local.get $p)))
-        (local.set $op (i32.load offset=4 (local.get $p)))
+        (local.set $fn (load.field LoopOp handler (local.get $p)))
+        (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
         (local.set $role (call $loop_role (local.get $fn) (local.get $op)))
 
         (if (i32.eq (local.get $role) (global.get $LR_ZERO))
@@ -1087,7 +1120,7 @@
     ;; The fused SIB lookup must be exactly [table + accumulator], scale 1,
     ;; displacement zero, and write the same low-byte accumulator.
     (local.set $p (call $loop_op_at (local.get $lut_idx)))
-    (if (i32.ne (i32.and (i32.load offset=4 (local.get $p)) (i32.const 7))
+    (if (i32.ne (i32.and (load.field.memarg LoopOp operand (local.get $p)) (i32.const 7))
                 (local.get $acc_reg))
       (then (return (i32.const 0))))
     (if (i32.ne (i32.and (i32.shr_u (local.get $lut_info) (i32.const 8)) (i32.const 3))
@@ -1110,10 +1143,10 @@
       (loop $incs
         (br_if $incs_done (i32.ge_u (local.get $i) (local.get $n)))
         (local.set $p (call $loop_op_at (local.get $i)))
-        (if (i32.eq (call $loop_role (i32.load (local.get $p)) (i32.load offset=4 (local.get $p)))
+        (if (i32.eq (call $loop_role (load.field LoopOp handler (local.get $p)) (load.field.memarg LoopOp operand (local.get $p)))
                     (global.get $LR_ADDI))
           (then
-            (local.set $x (i32.and (i32.load offset=4 (local.get $p)) (i32.const 0xF)))
+            (local.set $x (i32.and (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0xF)))
             (if (i32.eq (local.get $x) (local.get $ld_base))
               (then
                 (local.set $src_inc_cnt (i32.add (local.get $src_inc_cnt) (i32.const 1)))
@@ -1230,15 +1263,15 @@
 
     ;; Two zeroing instructions establish exact full-register scratch state.
     (local.set $p (call $loop_op_at (i32.const 0)))
-    (if (i32.ne (call $loop_role (i32.load (local.get $p))
-                  (i32.load offset=4 (local.get $p))) (global.get $LR_ZERO))
+    (if (i32.ne (call $loop_role (load.field LoopOp handler (local.get $p))
+                  (load.field.memarg LoopOp operand (local.get $p))) (global.get $LR_ZERO))
       (then (return (i32.const 0))))
-    (local.set $acc (i32.and (i32.load offset=4 (local.get $p)) (i32.const 0xF)))
+    (local.set $acc (i32.and (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0xF)))
     (local.set $p (call $loop_op_at (i32.const 1)))
-    (if (i32.ne (call $loop_role (i32.load (local.get $p))
-                  (i32.load offset=4 (local.get $p))) (global.get $LR_ZERO))
+    (if (i32.ne (call $loop_role (load.field LoopOp handler (local.get $p))
+                  (load.field.memarg LoopOp operand (local.get $p))) (global.get $LR_ZERO))
       (then (return (i32.const 0))))
-    (local.set $aux (i32.and (i32.load offset=4 (local.get $p)) (i32.const 0xF)))
+    (local.set $aux (i32.and (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0xF)))
     (if (i32.or (i32.gt_u (local.get $acc) (i32.const 3))
                 (i32.or (i32.gt_u (local.get $aux) (i32.const 3))
                         (i32.eq (local.get $acc) (local.get $aux))))
@@ -1246,10 +1279,10 @@
 
     ;; Primary/high byte source.
     (local.set $p (call $loop_op_at (i32.const 2)))
-    (if (i32.ne (call $loop_role (i32.load (local.get $p))
-                  (i32.load offset=4 (local.get $p))) (global.get $LR_LOAD8))
+    (if (i32.ne (call $loop_role (load.field LoopOp handler (local.get $p))
+                  (load.field.memarg LoopOp operand (local.get $p))) (global.get $LR_LOAD8))
       (then (return (i32.const 0))))
-    (local.set $op (i32.load offset=4 (local.get $p)))
+    (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
     (if (i32.ne (i32.and (i32.shr_u (local.get $op) (i32.const 4))
                          (i32.const 0xF)) (local.get $acc))
       (then (return (i32.const 0))))
@@ -1258,10 +1291,10 @@
 
     ;; Secondary/low byte source.
     (local.set $p (call $loop_op_at (i32.const 3)))
-    (if (i32.ne (call $loop_role (i32.load (local.get $p))
-                  (i32.load offset=4 (local.get $p))) (global.get $LR_LOAD8))
+    (if (i32.ne (call $loop_role (load.field LoopOp handler (local.get $p))
+                  (load.field.memarg LoopOp operand (local.get $p))) (global.get $LR_LOAD8))
       (then (return (i32.const 0))))
-    (local.set $op (i32.load offset=4 (local.get $p)))
+    (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
     (if (i32.ne (i32.and (i32.shr_u (local.get $op) (i32.const 4))
                          (i32.const 0xF)) (local.get $aux))
       (then (return (i32.const 0))))
@@ -1270,10 +1303,10 @@
 
     ;; Exact `shl acc,8`.
     (local.set $p (call $loop_op_at (i32.const 4)))
-    (if (i32.ne (call $loop_role (i32.load (local.get $p))
-                  (i32.load offset=4 (local.get $p))) (global.get $LR_SHIFT))
+    (if (i32.ne (call $loop_role (load.field LoopOp handler (local.get $p))
+                  (load.field.memarg LoopOp operand (local.get $p))) (global.get $LR_SHIFT))
       (then (return (i32.const 0))))
-    (local.set $op (i32.load offset=4 (local.get $p)))
+    (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
     (if (i32.ne (i32.and (local.get $op) (i32.const 0xFF)) (local.get $acc))
       (then (return (i32.const 0))))
     (if (i32.eqz (i32.or
@@ -1288,10 +1321,10 @@
 
     ;; The lookup writes acc8 and addresses exactly [acc+aux+table_disp].
     (local.set $p (call $loop_op_at (i32.const 7)))
-    (if (i32.ne (call $loop_role (i32.load (local.get $p))
-                  (i32.load offset=4 (local.get $p))) (global.get $LR_LOAD8S))
+    (if (i32.ne (call $loop_role (load.field LoopOp handler (local.get $p))
+                  (load.field.memarg LoopOp operand (local.get $p))) (global.get $LR_LOAD8S))
       (then (return (i32.const 0))))
-    (local.set $op (i32.load offset=4 (local.get $p)))
+    (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
     (if (i32.ne (i32.and (local.get $op) (i32.const 7)) (local.get $acc))
       (then (return (i32.const 0))))
     (local.set $info (i32.load offset=8 (local.get $p)))
@@ -1312,26 +1345,26 @@
 
     ;; Result store and final unsigned source2 bound check.
     (local.set $p (call $loop_op_at (i32.const 9)))
-    (if (i32.ne (call $loop_role (i32.load (local.get $p))
-                  (i32.load offset=4 (local.get $p))) (global.get $LR_STORE8))
+    (if (i32.ne (call $loop_role (load.field LoopOp handler (local.get $p))
+                  (load.field.memarg LoopOp operand (local.get $p))) (global.get $LR_STORE8))
       (then (return (i32.const 0))))
-    (local.set $op (i32.load offset=4 (local.get $p)))
+    (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
     (if (i32.ne (i32.and (i32.shr_u (local.get $op) (i32.const 4))
                          (i32.const 0xF)) (local.get $acc))
       (then (return (i32.const 0))))
     (local.set $dst (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $dst_disp (i32.load offset=8 (local.get $p)))
     (local.set $p (call $loop_op_at (i32.const 10)))
-    (if (i32.ne (call $loop_role (i32.load (local.get $p))
-                  (i32.load offset=4 (local.get $p))) (global.get $LR_CMP))
+    (if (i32.ne (call $loop_role (load.field LoopOp handler (local.get $p))
+                  (load.field.memarg LoopOp operand (local.get $p))) (global.get $LR_CMP))
       (then (return (i32.const 0))))
-    (local.set $op (i32.load offset=4 (local.get $p)))
+    (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
     (if (i32.ne (i32.and (i32.shr_u (local.get $op) (i32.const 4))
                          (i32.const 0xF)) (local.get $src2))
       (then (return (i32.const 0))))
     (local.set $bound (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $p (call $loop_op_at (i32.const 11)))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 309))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 309))
       (then (return (i32.const 0))))
 
     ;; Positions 5, 6 and 8 must be one INC for each distinct cursor. Record
@@ -1343,9 +1376,9 @@
     (local.set $i (i32.const 5))
     (block $incs_done (loop $incs
       (local.set $p (call $loop_op_at (local.get $i)))
-      (if (i32.ne (i32.load (local.get $p)) (i32.const 64))
+      (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 64))
         (then (return (i32.const 0))))
-      (local.set $r (i32.and (i32.load offset=4 (local.get $p)) (i32.const 0xF)))
+      (local.set $r (i32.and (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0xF)))
       (local.set $mask (i32.or (local.get $mask)
         (i32.shl (i32.const 1) (local.get $r))))
       (if (i32.eq (local.get $r) (local.get $src1))
@@ -1490,57 +1523,57 @@
       (then (return (i32.const 0))))
 
     (local.set $p (call $loop_op_at (i32.const 0)))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 389))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 389))
       (then (return (i32.const 0))))
-    (local.set $a (i32.load offset=4 (local.get $p)))
+    (local.set $a (load.field.memarg LoopOp operand (local.get $p)))
     (local.set $a_info (i32.load offset=8 (local.get $p)))
     (local.set $a_disp (i32.load offset=12 (local.get $p)))
 
     (local.set $p (call $loop_op_at (i32.const 1)))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 389))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 389))
       (then (return (i32.const 0))))
-    (local.set $b (i32.load offset=4 (local.get $p)))
+    (local.set $b (load.field.memarg LoopOp operand (local.get $p)))
     (local.set $b_info (i32.load offset=8 (local.get $p)))
     (local.set $b_disp (i32.load offset=12 (local.get $p)))
 
     ;; Equal immediate masks on the two loaded values.
     (local.set $p (call $loop_op_at (i32.const 2)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 7))
-                (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a)))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 7))
+                (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $a)))
       (then (return (i32.const 0))))
     (local.set $mask (i32.load offset=8 (local.get $p)))
     (local.set $p (call $loop_op_at (i32.const 3)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 7))
-          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $b))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 7))
+          (i32.or (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $b))
                   (i32.ne (i32.load offset=8 (local.get $p)) (local.get $mask))))
       (then (return (i32.const 0))))
 
     (local.set $p (call $loop_op_at (i32.const 4)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 12))
-                (i32.ne (i32.load offset=4 (local.get $p))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 12))
+                (i32.ne (load.field.memarg LoopOp operand (local.get $p))
                   (i32.or (i32.shl (local.get $a) (i32.const 4)) (local.get $b))))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 5)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 53))
-                (i32.ne (i32.load offset=4 (local.get $p))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 53))
+                (i32.ne (load.field.memarg LoopOp operand (local.get $p))
                   (i32.or (local.get $a) (i32.const 0x10300))))
       (then (return (i32.const 0))))
 
     (local.set $p (call $loop_op_at (i32.const 6)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 420))
-                (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a)))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 420))
+                (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $a)))
       (then (return (i32.const 0))))
     (local.set $d_info (i32.load offset=8 (local.get $p)))
     (local.set $d_disp (i32.load offset=12 (local.get $p)))
 
     (local.set $p (call $loop_op_at (i32.const 7)))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 65))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 65))
       (then (return (i32.const 0))))
-    (local.set $ind (i32.load offset=4 (local.get $p)))
+    (local.set $ind (load.field.memarg LoopOp operand (local.get $p)))
     (local.set $p (call $loop_op_at (i32.const 8)))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 320))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 320))
       (then (return (i32.const 0))))
-    (local.set $branch_op (i32.load offset=4 (local.get $p)))
+    (local.set $branch_op (load.field.memarg LoopOp operand (local.get $p)))
     (local.set $fall (i32.load offset=8 (local.get $p)))
     (local.set $back (i32.load offset=12 (local.get $p)))
 
@@ -1630,82 +1663,82 @@
     (if (i32.ne (global.get $op_index_n) (i32.const 13))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 0)))
-    (local.set $fn (i32.load (local.get $p)))
+    (local.set $fn (load.field LoopOp handler (local.get $p)))
     (if (i32.or (i32.lt_u (local.get $fn) (i32.const 339))
                 (i32.gt_u (local.get $fn) (i32.const 346)))
       (then (return (i32.const 0))))
     (local.set $a_base (i32.sub (local.get $fn) (i32.const 339)))
-    (local.set $a (i32.load offset=4 (local.get $p)))
+    (local.set $a (load.field.memarg LoopOp operand (local.get $p)))
     (local.set $a_disp (i32.load offset=8 (local.get $p)))
     (local.set $p (call $loop_op_at (i32.const 1)))
-    (local.set $fn (i32.load (local.get $p)))
+    (local.set $fn (load.field LoopOp handler (local.get $p)))
     (if (i32.or (i32.lt_u (local.get $fn) (i32.const 339))
                 (i32.gt_u (local.get $fn) (i32.const 346)))
       (then (return (i32.const 0))))
     (local.set $b_base (i32.sub (local.get $fn) (i32.const 339)))
-    (local.set $b (i32.load offset=4 (local.get $p)))
+    (local.set $b (load.field.memarg LoopOp operand (local.get $p)))
     (local.set $b_disp (i32.load offset=8 (local.get $p)))
 
     (local.set $p (call $loop_op_at (i32.const 2)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 53))
-                (i32.ne (i32.load offset=4 (local.get $p))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 53))
+                (i32.ne (load.field.memarg LoopOp operand (local.get $p))
                   (i32.or (local.get $a) (i32.const 0x10500))))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 3)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 53))
-                (i32.ne (i32.load offset=4 (local.get $p))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 53))
+                (i32.ne (load.field.memarg LoopOp operand (local.get $p))
                   (i32.or (local.get $b) (i32.const 0x10500))))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 4)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 7))
-                (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a)))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 7))
+                (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $a)))
       (then (return (i32.const 0))))
     (local.set $mask (i32.load offset=8 (local.get $p)))
     (local.set $p (call $loop_op_at (i32.const 5)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 7))
-          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $b))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 7))
+          (i32.or (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $b))
                   (i32.ne (i32.load offset=8 (local.get $p)) (local.get $mask))))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 6)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 12))
-                (i32.ne (i32.load offset=4 (local.get $p))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 12))
+                (i32.ne (load.field.memarg LoopOp operand (local.get $p))
                   (i32.or (i32.shl (local.get $a) (i32.const 4)) (local.get $b))))
       (then (return (i32.const 0))))
 
     (local.set $p (call $loop_op_at (i32.const 7)))
-    (local.set $fn (i32.load (local.get $p)))
+    (local.set $fn (load.field LoopOp handler (local.get $p)))
     (if (i32.or
           (i32.or (i32.lt_u (local.get $fn) (i32.const 347))
                   (i32.gt_u (local.get $fn) (i32.const 354)))
-          (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a)))
+          (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $a)))
       (then (return (i32.const 0))))
     (local.set $d_base (i32.sub (local.get $fn) (i32.const 347)))
     (local.set $d_disp (i32.load offset=8 (local.get $p)))
 
     ;; Three cursor bumps by four bytes in stream order.
     (local.set $p (call $loop_op_at (i32.const 8)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 3))
-          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a_base))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 3))
+          (i32.or (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $a_base))
                   (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 9)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 3))
-          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $b_base))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 3))
+          (i32.or (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $b_base))
                   (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 10)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 3))
-          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $d_base))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 3))
+          (i32.or (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $d_base))
                   (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 11)))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 65))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 65))
       (then (return (i32.const 0))))
-    (local.set $ind (i32.load offset=4 (local.get $p)))
+    (local.set $ind (load.field.memarg LoopOp operand (local.get $p)))
     (local.set $p (call $loop_op_at (i32.const 12)))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 312))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 312))
       (then (return (i32.const 0))))
-    (local.set $branch_op (i32.load offset=4 (local.get $p)))
+    (local.set $branch_op (load.field.memarg LoopOp operand (local.get $p)))
     (local.set $fall (i32.load offset=8 (local.get $p)))
     (local.set $back (i32.load offset=12 (local.get $p)))
 
@@ -1772,104 +1805,104 @@
     (if (i32.ne (global.get $op_index_n) (i32.const 17))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 0)))
-    (local.set $fn (i32.load (local.get $p)))
+    (local.set $fn (load.field LoopOp handler (local.get $p)))
     (if (i32.or (i32.lt_u (local.get $fn) (i32.const 339))
                 (i32.gt_u (local.get $fn) (i32.const 346)))
       (then (return (i32.const 0))))
     (local.set $a_base (i32.sub (local.get $fn) (i32.const 339)))
-    (local.set $a (i32.load offset=4 (local.get $p)))
+    (local.set $a (load.field.memarg LoopOp operand (local.get $p)))
     (local.set $a_disp (i32.load offset=8 (local.get $p)))
     (local.set $p (call $loop_op_at (i32.const 1)))
-    (local.set $fn (i32.load (local.get $p)))
+    (local.set $fn (load.field LoopOp handler (local.get $p)))
     (if (i32.or (i32.lt_u (local.get $fn) (i32.const 339))
                 (i32.gt_u (local.get $fn) (i32.const 346)))
       (then (return (i32.const 0))))
     (local.set $b_base (i32.sub (local.get $fn) (i32.const 339)))
-    (local.set $b (i32.load offset=4 (local.get $p)))
+    (local.set $b (load.field.memarg LoopOp operand (local.get $p)))
     (local.set $b_disp (i32.load offset=8 (local.get $p)))
 
     (local.set $p (call $loop_op_at (i32.const 2)))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 11))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 11))
       (then (return (i32.const 0))))
-    (local.set $round (i32.shr_u (i32.load offset=4 (local.get $p)) (i32.const 4)))
-    (if (i32.ne (i32.load offset=4 (local.get $p))
+    (local.set $round (i32.shr_u (load.field.memarg LoopOp operand (local.get $p)) (i32.const 4)))
+    (if (i32.ne (load.field.memarg LoopOp operand (local.get $p))
           (i32.or (i32.shl (local.get $round) (i32.const 4)) (local.get $a)))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 3)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 16))
-                (i32.ne (i32.load offset=4 (local.get $p))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 16))
+                (i32.ne (load.field.memarg LoopOp operand (local.get $p))
                   (i32.or (i32.shl (local.get $round) (i32.const 4)) (local.get $b))))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 4)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 7))
-                (i32.ne (i32.load offset=4 (local.get $p)) (local.get $round)))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 7))
+                (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $round)))
       (then (return (i32.const 0))))
     (local.set $round_mask (i32.load offset=8 (local.get $p)))
 
     (local.set $p (call $loop_op_at (i32.const 5)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 53))
-                (i32.ne (i32.load offset=4 (local.get $p))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 53))
+                (i32.ne (load.field.memarg LoopOp operand (local.get $p))
                   (i32.or (local.get $a) (i32.const 0x10500))))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 6)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 53))
-                (i32.ne (i32.load offset=4 (local.get $p))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 53))
+                (i32.ne (load.field.memarg LoopOp operand (local.get $p))
                   (i32.or (local.get $b) (i32.const 0x10500))))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 7)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 7))
-                (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a)))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 7))
+                (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $a)))
       (then (return (i32.const 0))))
     (local.set $mask (i32.load offset=8 (local.get $p)))
     (local.set $p (call $loop_op_at (i32.const 8)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 7))
-          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $b))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 7))
+          (i32.or (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $b))
                   (i32.ne (i32.load offset=8 (local.get $p)) (local.get $mask))))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 9)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 12))
-                (i32.ne (i32.load offset=4 (local.get $p))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 12))
+                (i32.ne (load.field.memarg LoopOp operand (local.get $p))
                   (i32.or (i32.shl (local.get $a) (i32.const 4)) (local.get $b))))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 10)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 12))
-                (i32.ne (i32.load offset=4 (local.get $p))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 12))
+                (i32.ne (load.field.memarg LoopOp operand (local.get $p))
                   (i32.or (i32.shl (local.get $a) (i32.const 4)) (local.get $round))))
       (then (return (i32.const 0))))
 
     (local.set $p (call $loop_op_at (i32.const 11)))
-    (local.set $fn (i32.load (local.get $p)))
+    (local.set $fn (load.field LoopOp handler (local.get $p)))
     (if (i32.or
           (i32.or (i32.lt_u (local.get $fn) (i32.const 347))
                   (i32.gt_u (local.get $fn) (i32.const 354)))
-          (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a)))
+          (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $a)))
       (then (return (i32.const 0))))
     (local.set $d_base (i32.sub (local.get $fn) (i32.const 347)))
     (local.set $d_disp (i32.load offset=8 (local.get $p)))
 
     (local.set $p (call $loop_op_at (i32.const 12)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 3))
-          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a_base))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 3))
+          (i32.or (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $a_base))
                   (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 13)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 3))
-          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $b_base))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 3))
+          (i32.or (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $b_base))
                   (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 14)))
-    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 3))
-          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $d_base))
+    (if (i32.or (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 3))
+          (i32.or (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $d_base))
                   (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
       (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at (i32.const 15)))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 65))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 65))
       (then (return (i32.const 0))))
-    (local.set $ind (i32.load offset=4 (local.get $p)))
+    (local.set $ind (load.field.memarg LoopOp operand (local.get $p)))
     (local.set $p (call $loop_op_at (i32.const 16)))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 312))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 312))
       (then (return (i32.const 0))))
-    (local.set $branch_op (i32.load offset=4 (local.get $p)))
+    (local.set $branch_op (load.field.memarg LoopOp operand (local.get $p)))
     (local.set $fall (i32.load offset=8 (local.get $p)))
     (local.set $back (i32.load offset=12 (local.get $p)))
 
@@ -1960,53 +1993,53 @@
 
     ;; mov scratch,[src+disp]
     (local.set $p (call $loop_op_at (i32.const 0)))
-    (local.set $fn (i32.load (local.get $p)))
+    (local.set $fn (load.field LoopOp handler (local.get $p)))
     (if (i32.or (i32.lt_u (local.get $fn) (i32.const 339))
                 (i32.gt_u (local.get $fn) (i32.const 346)))
       (then (return (i32.const 0))))
     (local.set $src (i32.sub (local.get $fn) (i32.const 339)))
-    (local.set $scratch (i32.load offset=4 (local.get $p)))
+    (local.set $scratch (load.field.memarg LoopOp operand (local.get $p)))
     (local.set $src_disp (i32.load offset=8 (local.get $p)))
 
     ;; add src,4
     (local.set $p (call $loop_op_at (i32.const 1)))
     (if (i32.or
-          (i32.ne (i32.load (local.get $p)) (i32.const 3))
+          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 3))
           (i32.or
-            (i32.ne (i32.load offset=4 (local.get $p)) (local.get $src))
+            (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $src))
             (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
       (then (return (i32.const 0))))
 
     ;; mov [dst+disp],scratch
     (local.set $p (call $loop_op_at (i32.const 2)))
-    (local.set $fn (i32.load (local.get $p)))
+    (local.set $fn (load.field LoopOp handler (local.get $p)))
     (if (i32.or (i32.lt_u (local.get $fn) (i32.const 347))
                 (i32.gt_u (local.get $fn) (i32.const 354)))
       (then (return (i32.const 0))))
     (local.set $dst (i32.sub (local.get $fn) (i32.const 347)))
-    (if (i32.ne (i32.load offset=4 (local.get $p)) (local.get $scratch))
+    (if (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $scratch))
       (then (return (i32.const 0))))
     (local.set $dst_disp (i32.load offset=8 (local.get $p)))
 
     ;; add dst,4
     (local.set $p (call $loop_op_at (i32.const 3)))
     (if (i32.or
-          (i32.ne (i32.load (local.get $p)) (i32.const 3))
+          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 3))
           (i32.or
-            (i32.ne (i32.load offset=4 (local.get $p)) (local.get $dst))
+            (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (local.get $dst))
             (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
       (then (return (i32.const 0))))
 
     ;; cmp dst,bound / jb back
     (local.set $p (call $loop_op_at (i32.const 4)))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 19))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 19))
       (then (return (i32.const 0))))
-    (local.set $op (i32.load offset=4 (local.get $p)))
+    (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
     (if (i32.ne (i32.shr_u (local.get $op) (i32.const 4)) (local.get $dst))
       (then (return (i32.const 0))))
     (local.set $bound (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $p (call $loop_op_at (i32.const 5)))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 309))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 309))
       (then (return (i32.const 0))))
     (local.set $fall (i32.load offset=8 (local.get $p)))
     (local.set $back (i32.load offset=12 (local.get $p)))
@@ -2056,7 +2089,7 @@
     (call $te_raw (i32.sub (local.get $dst_disp) (i32.const 4)))
     (call $te (i32.const 19)
       (i32.or (i32.shl (local.get $dst) (i32.const 4)) (local.get $bound)))
-    (call $te (i32.const 309) (i32.load offset=4 (local.get $p)))
+    (call $te (i32.const 309) (load.field.memarg LoopOp operand (local.get $p)))
     (call $te_raw (local.get $fall))
     (call $te_raw (local.get $back))
     (i32.const 1))
@@ -2122,8 +2155,8 @@
       (loop $p1
         (br_if $p1_done (i32.ge_u (local.get $i) (local.get $n)))
         (local.set $p (call $loop_op_at (local.get $i)))
-        (local.set $fn (i32.load (local.get $p)))
-        (local.set $op (i32.load offset=4 (local.get $p)))
+        (local.set $fn (load.field LoopOp handler (local.get $p)))
+        (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
         (local.set $role (call $loop_role (local.get $fn) (local.get $op)))
 
         (if (i32.eq (local.get $role) (global.get $LR_LOAD8))
@@ -2186,8 +2219,8 @@
       (loop $p2
         (br_if $p2_done (i32.ge_u (local.get $i) (local.get $n)))
         (local.set $p (call $loop_op_at (local.get $i)))
-        (local.set $fn (i32.load (local.get $p)))
-        (local.set $op (i32.load offset=4 (local.get $p)))
+        (local.set $fn (load.field LoopOp handler (local.get $p)))
+        (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
         (if (i32.eq (call $loop_role (local.get $fn) (local.get $op))
                     (global.get $LR_ADDI))
           (then
@@ -2237,7 +2270,7 @@
     ;; Only the count-down-to-zero form: the branch reads the counter's flags,
     ;; so the counter has to be the last thing that set them.
     (local.set $p (call $loop_op_at (i32.sub (local.get $n) (i32.const 1))))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 312)) (then (return (i32.const 0))))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 312)) (then (return (i32.const 0))))
     (if (i32.ne (local.get $ctr_idx) (i32.sub (local.get $n) (i32.const 2)))
       (then (return (i32.const 0))))
 
@@ -3426,29 +3459,29 @@
 
     (local.set $p (call $loop_op_at (i32.const 0)))
     (if (i32.or
-          (i32.ne (i32.load (local.get $p)) (i32.const 345))
+          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 345))
           (i32.or
-            (i32.ne (i32.load offset=4 (local.get $p)) (i32.const 7))
+            (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (i32.const 7))
             (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 0x408))))
       (then (return (i32.const 0))))
 
     (local.set $p (call $loop_op_at (i32.const 1)))
     (if (i32.or
-          (i32.ne (i32.load (local.get $p)) (i32.const 64))
-          (i32.ne (i32.load offset=4 (local.get $p)) (i32.const 0)))
+          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 64))
+          (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0)))
       (then (return (i32.const 0))))
 
     (local.set $p (call $loop_op_at (i32.const 2)))
     (if (i32.or
-          (i32.ne (i32.load (local.get $p)) (i32.const 19))
-          (i32.ne (i32.load offset=4 (local.get $p)) (i32.const 2)))
+          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 19))
+          (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (i32.const 2)))
       (then (return (i32.const 0))))
 
     (local.set $p (call $loop_op_at (i32.const 3)))
     (if (i32.or
-          (i32.ne (i32.load (local.get $p)) (i32.const 389))
+          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 389))
           (i32.or
-            (i32.ne (i32.load offset=4 (local.get $p)) (i32.const 7))
+            (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (i32.const 7))
             (i32.or
               (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 0x217))
               (i32.ne (i32.load offset=12 (local.get $p)) (i32.const 0)))))
@@ -3456,16 +3489,16 @@
 
     (local.set $p (call $loop_op_at (i32.const 4)))
     (if (i32.or
-          (i32.ne (i32.load (local.get $p)) (i32.const 402))
+          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 402))
           (i32.or
-            (i32.ne (i32.load offset=4 (local.get $p)) (i32.const 0xff))
+            (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0xff))
             (i32.or
               (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 7))
               (i32.ne (i32.load offset=12 (local.get $p)) (i32.const -1)))))
       (then (return (i32.const 0))))
 
     (local.set $p (call $loop_op_at (i32.const 5)))
-    (if (i32.ne (i32.load (local.get $p)) (i32.const 319))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 319))
       (then (return (i32.const 0))))
     (local.set $fall (i32.load offset=8 (local.get $p)))
     (local.set $back (i32.load offset=12 (local.get $p)))
