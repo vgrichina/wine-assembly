@@ -2995,15 +2995,98 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; GetScanLine — return 0
+  ;; ---- the 60 Hz vblank model ------------------------------------------
+  ;; See the block comment on $vblank_counter in src/01-header.wat for why
+  ;; the browser and the CLI drive this from different clocks.
+
+  ;; Position within the current 1/60 s period, in thousandths (0..999).
+  ;; now*60/1000 is the period index and the remainder is the phase, which
+  ;; makes both of these exact integer arithmetic with no accumulated drift.
+  ;; i64 because now*60 leaves the i32 range about 10 hours into a run.
+  (func $vblank_phase_1k (param $now i32) (result i32)
+    (i32.wrap_i64 (i64.rem_u
+      (i64.mul (i64.extend_i32_u (local.get $now)) (i64.const 60))
+      (i64.const 1000))))
+
+  ;; The next 1/60 s boundary at or after `now`, as a guest millisecond.
+  (func $vblank_next_boundary (param $now i32) (result i32)
+    (local $period i64)
+    (local.set $period (i64.add
+      (i64.div_u (i64.mul (i64.extend_i32_u (local.get $now)) (i64.const 60))
+                 (i64.const 1000))
+      (i64.const 1)))
+    (i32.wrap_i64 (i64.div_u
+      (i64.add (i64.mul (local.get $period) (i64.const 1000)) (i64.const 59))
+      (i64.const 60))))
+
+  ;; A 525-line VGA-style frame: 480 visible, the rest is the blanking
+  ;; interval. That is where GetScanLine's value and GetVerticalBlankStatus's
+  ;; ~8% duty cycle both come from, so the two can never disagree.
+  (func $vblank_scanline (param $now i32) (result i32)
+    (i32.div_u (i32.mul (call $vblank_phase_1k (local.get $now)) (i32.const 525))
+               (i32.const 1000)))
+
+  (func $vblank_in_blank (param $now i32) (result i32)
+    (i32.ge_u (call $vblank_scanline (local.get $now)) (i32.const 480)))
+
+  ;; Park the calling API on the next vblank. Same contract as $io_block: the
+  ;; stdcall frame is left untouched, EIP is put back on the thunk rather than
+  ;; on the block that called it, and $handler_set_eip opts out of $run's
+  ;; thunk-zone auto-pop -- without it the call would be spliced out entirely
+  ;; and the guest would resume past its own WaitForVerticalBlank with the
+  ;; arguments still on the stack. The host clears the yield when the display
+  ;; says so, and the very same handler re-runs and re-tests.
+  (func $vblank_block
+    (global.set $handler_set_eip (i32.const 1))
+    (global.set $eip (global.get $current_thunk_eip))
+    (global.set $yield_reason (i32.const 13))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0)))
+
+  ;; Has the vblank this call parked for happened yet? Arms the park on first
+  ;; entry, so callers only ask this question.
+  ;;
+  ;; Wrap-safe: tick counts are unsigned and roll over, so deadlines are
+  ;; compared as a signed difference rather than with ge_u.
+  (func $vblank_wait_elapsed (result i32)
+    (local $now i32)
+    (local.set $now (call $host_get_ticks))
+    (if (i32.eqz (global.get $vblank_wait_active))
+      (then
+        (global.set $vblank_wait_active (i32.const 1))
+        (global.set $vblank_wait_counter (global.get $vblank_counter))
+        (global.set $vblank_deadline_ms (call $vblank_next_boundary (local.get $now)))))
+    (if (global.get $vblank_host_driven)
+      (then
+        ;; A real display tick ends the wait. The deadline is only the escape
+        ;; hatch for a page that stopped getting rAF callbacks at all (hidden
+        ;; tab, display asleep) -- 50 ms past the boundary is three refreshes,
+        ;; far outside any jitter a live compositor produces.
+        (return (i32.or
+          (i32.ne (global.get $vblank_counter) (global.get $vblank_wait_counter))
+          (i32.ge_s
+            (i32.sub (local.get $now)
+              (i32.add (global.get $vblank_deadline_ms) (i32.const 50)))
+            (i32.const 0))))))
+    (i32.ge_s (i32.sub (local.get $now) (global.get $vblank_deadline_ms)) (i32.const 0)))
+
+  ;; GetScanLine(this, lpdwScanLine) — sweeps 0..524 across each period.
+  ;; Real DirectDraw answers DDERR_VERTICALBLANKINPROGRESS while the beam is
+  ;; retracing; we deliberately do not, because an app that loops until this
+  ;; succeeds would then be gated on our clock granularity rather than on the
+  ;; value it asked for. The line number already tells it what it needs.
   (func $handle_IDirectDraw_GetScanLine (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gs32 (local.get $arg1) (i32.const 0))
+    (if (local.get $arg1)
+      (then (call $gs32 (local.get $arg1) (call $vblank_scanline (call $host_get_ticks)))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; GetVerticalBlankStatus(this, lpbIsInVB) — always TRUE
+  ;; GetVerticalBlankStatus(this, lpbIsInVB) — the real ~8% duty cycle. This
+  ;; used to answer TRUE unconditionally, which makes "spin until vblank"
+  ;; return instantly and "spin until NOT vblank" never return at all.
   (func $handle_IDirectDraw_GetVerticalBlankStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gs32 (local.get $arg1) (i32.const 1))
+    (if (local.get $arg1)
+      (then (call $gs32 (local.get $arg1) (call $vblank_in_blank (call $host_get_ticks)))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -3190,8 +3273,22 @@
       (then (global.set $esp (i32.add (global.get $esp) (i32.const 28)))) ;; v2+: this + 5 args
       (else (global.set $esp (i32.add (global.get $esp) (i32.const 20)))))) ;; v1: this + 3 args
 
-  ;; WaitForVerticalBlank — no-op
+  ;; WaitForVerticalBlank(this, dwFlags, hEvent) — blocks until the next
+  ;; vblank boundary, which is the whole point of the call.
+  ;;
+  ;; The flags are honoured loosely on purpose: DDWAITVB_BLOCKBEGIN (0x01),
+  ;; DDWAITVB_BLOCKBEGINEVENT (0x02) and DDWAITVB_BLOCKEND (0x04) all name a
+  ;; point inside the same retrace, and the difference between "the start of
+  ;; the blank" and "the end of it" is under a millisecond -- less than the
+  ;; resolution of the clock either host gives us. So every flag waits to the
+  ;; boundary rather than being rejected. BLOCKBEGINEVENT is supposed to
+  ;; signal hEvent instead of blocking; blocking is the strictly safer answer
+  ;; (the caller waits on the event next, and would hang on a signal we never
+  ;; sent), so it takes the same path.
   (func $handle_IDirectDraw_WaitForVerticalBlank (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (call $vblank_wait_elapsed))
+      (then (call $vblank_block) (return)))
+    (global.set $vblank_wait_active (i32.const 0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
@@ -4014,6 +4111,31 @@
   (func $handle_IDirectDrawSurface_Flip (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $back_guest i32) (local $back_entry i32)
     (local $tmp_dib i32)
+    ;; Real hardware Flip blocks until the retrace unless DDFLIP_NOVSYNC
+    ;; (0x00000008) is set. Ours does not, by default: making every Flip wait
+    ;; changes the pacing of every Flip-presenting game in the corpus at once,
+    ;; and the acceptance case for vsync (DX-Ball) does not need it -- it takes
+    ;; its Flip path off the WaitForVerticalBlank calibration alone. So this is
+    ;; opt-in ($dx_flip_vsync, --flip-vsync) until each of those games has been
+    ;; measured with it on. The park has to happen BEFORE any of the work
+    ;; below, because the handler re-runs from the top on resume.
+    (if (i32.and (i32.ne (global.get $dx_flip_vsync) (i32.const 0))
+                 (i32.eqz (i32.and (local.get $arg2) (i32.const 0x00000008))))
+      (then
+        (if (i32.eqz (call $vblank_wait_elapsed))
+          (then
+            ;; DDFLIP_DONOTWAIT (0x00000020): the caller explicitly asked not
+            ;; to be blocked, so tell it the flip is still outstanding instead
+            ;; of parking. Its retry loop comes back and eventually finds the
+            ;; boundary passed.
+            (if (i32.and (local.get $arg2) (i32.const 0x00000020))
+              (then
+                (global.set $eax (i32.const 0x8876021C)) ;; DDERR_WASSTILLDRAWING
+                (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+                (return)))
+            (call $vblank_block)
+            (return)))
+        (global.set $vblank_wait_active (i32.const 0))))
     (call $d3dim_worker_fence)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $back_guest (load.field DxObject misc0 (local.get $entry)))

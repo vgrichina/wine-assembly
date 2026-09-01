@@ -3140,6 +3140,12 @@
   ;; 58: GetTickCount
   (func $handle_GetTickCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $tick_count (call $host_get_ticks))
+    ;; Busy-waiting on the clock? Park until it moves rather than answering
+    ;; "not yet" a million times. See $clock_spin_step. The park must happen
+    ;; before the ESP pop below, and the handler re-runs from the top on wake.
+    (if (call $clock_spin_step (global.get $tick_count))
+      (then
+        (if (call $clock_spin_arm (global.get $tick_count)) (then (return)))))
     (global.set $eax (global.get $tick_count))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
@@ -10658,6 +10664,117 @@ HookEx — no next hook in chain, return 0
     (global.set $yield_reason (i32.const 12))
     (global.set $yield_flag (i32.const 1))
     (global.set $steps (i32.const 0)))
+
+  ;; ---- spin parking ----------------------------------------------------
+  ;; See the block comment on $spin_dispatch_seq in src/01-header.wat for why
+  ;; a guest that busy-waits on the clock or on an empty message queue can be
+  ;; parked inside the API call, and what the detector has to prove first.
+  ;;
+  ;; The park itself is the $io_block contract with a different reason, and it
+  ;; is called BEFORE the handler pops its stdcall frame: the frame is left
+  ;; exactly as the guest built it, EIP goes back to the thunk rather than to
+  ;; the block that called it, and $handler_set_eip opts out of $run's
+  ;; thunk-zone auto-pop -- without that last one the call is spliced out and
+  ;; the guest resumes past its own timeGetTime with the arguments still on the
+  ;; stack. The host clears the yield and the same handler re-runs from the top
+  ;; with the same arguments, re-reads the clock, and this time returns it.
+  (func $spin_park (param $reason i32)
+    (global.set $handler_set_eip (i32.const 1))
+    (global.set $eip (global.get $current_thunk_eip))
+    (global.set $yield_reason (local.get $reason))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0)))
+
+  ;; The caller's return address, which at API entry is the top of the stdcall
+  ;; frame. Two clock reads from the same call site share it; a program that
+  ;; reads the clock from two places does not, and neither detector debounces.
+  (func $spin_call_site (result i32)
+    (call $gl32 (global.get $esp)))
+
+  ;; One step of the clock debounce. Returns 1 when this read is the Kth in a
+  ;; row that is indistinguishable from the last one -- same millisecond, same
+  ;; call site, same stack depth, and nothing else dispatched in between.
+  ;; Anything different resets the run to 1, so the state is always about the
+  ;; CONSECUTIVE reads and never accumulates across a frame.
+  (func $clock_spin_step (param $value i32) (result i32)
+    (local $ret i32)
+    (local.set $ret (call $spin_call_site))
+    (if (i32.and
+          (i32.and
+            (i32.eq (local.get $value) (global.get $clock_spin_value))
+            (i32.eq (global.get $spin_dispatch_seq)
+                    (i32.add (global.get $clock_spin_seq) (i32.const 1))))
+          (i32.and
+            (i32.eq (local.get $ret) (global.get $clock_spin_ret))
+            (i32.eq (global.get $esp) (global.get $clock_spin_esp))))
+      (then (global.set $clock_spin_count
+              (i32.add (global.get $clock_spin_count) (i32.const 1))))
+      (else
+        (global.set $clock_spin_count (i32.const 1))
+        ;; A value we have not parked on yet: the one-park-per-millisecond
+        ;; latch is about the value, so a new one re-arms it.
+        (if (i32.ne (local.get $value) (global.get $clock_spin_parked_value))
+          (then (global.set $clock_spin_parked_valid (i32.const 0))))))
+    (global.set $clock_spin_value (local.get $value))
+    (global.set $clock_spin_seq (global.get $spin_dispatch_seq))
+    (global.set $clock_spin_ret (local.get $ret))
+    (global.set $clock_spin_esp (global.get $esp))
+    (i32.and
+      (i32.ne (global.get $spin_park_k) (i32.const 0))
+      (i32.ge_u (global.get $clock_spin_count) (global.get $spin_park_k))))
+
+  ;; Take the park, if this millisecond has not already had one. Returns 1 when
+  ;; the caller must return immediately without popping its frame.
+  (func $clock_spin_arm (param $value i32) (result i32)
+    (if (i32.and (i32.ne (global.get $clock_spin_parked_valid) (i32.const 0))
+                 (i32.eq (global.get $clock_spin_parked_value) (local.get $value)))
+      (then (return (i32.const 0))))
+    (global.set $clock_spin_parked_value (local.get $value))
+    (global.set $clock_spin_parked_valid (i32.const 1))
+    (global.set $clock_spin_parks (i32.add (global.get $clock_spin_parks) (i32.const 1)))
+    ;; The deadline is the next millisecond, because the millisecond is the
+    ;; resolution of the thing being waited on: any wake earlier than that finds
+    ;; the identical value and parks again. Tier 3 -- learning the deadline the
+    ;; guest is actually counting to -- is deliberately not built.
+    (global.set $spin_deadline_ms (i32.add (local.get $value) (i32.const 1)))
+    ;; A park ends the run of identical reads it was taken for: the next K have
+    ;; to establish themselves again before another one.
+    (global.set $clock_spin_count (i32.const 0))
+    (call $spin_park (i32.const 14))
+    (i32.const 1))
+
+  ;; The PeekMessage twin. There is no value to compare -- "the queue was
+  ;; empty" IS the repeated observation -- so the dispatch-adjacency test is
+  ;; doing the heavy lifting here, and it is exactly the right test: the
+  ;; ordinary game loop is empty-peek, RENDER A FRAME, empty-peek, and a frame
+  ;; is API calls. Only a pump with nothing at all between two empty peeks
+  ;; debounces. A successful peek does not call this, and leaves the sequence
+  ;; number two behind, so it resets the run on its own.
+  (func $peek_spin_step (result i32)
+    (local $ret i32)
+    (local.set $ret (call $spin_call_site))
+    (if (i32.and
+          (i32.eq (global.get $spin_dispatch_seq)
+                  (i32.add (global.get $peek_spin_seq) (i32.const 1)))
+          (i32.and
+            (i32.eq (local.get $ret) (global.get $peek_spin_ret))
+            (i32.eq (global.get $esp) (global.get $peek_spin_esp))))
+      (then (global.set $peek_spin_count
+              (i32.add (global.get $peek_spin_count) (i32.const 1))))
+      (else (global.set $peek_spin_count (i32.const 1))))
+    (global.set $peek_spin_seq (global.get $spin_dispatch_seq))
+    (global.set $peek_spin_ret (local.get $ret))
+    (global.set $peek_spin_esp (global.get $esp))
+    (i32.and
+      (i32.ne (global.get $spin_park_k) (i32.const 0))
+      (i32.ge_u (global.get $peek_spin_count) (global.get $spin_park_k))))
+
+  (func $peek_spin_arm
+    (global.set $peek_spin_parks (i32.add (global.get $peek_spin_parks) (i32.const 1)))
+    ;; Rebuild the run from zero, so the worst case is one park per K empty
+    ;; peeks even if the host wakes it immediately.
+    (global.set $peek_spin_count (i32.const 0))
+    (call $spin_park (i32.const 15)))
 
   (func $handle_ReadFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $lazy i32)

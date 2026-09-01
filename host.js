@@ -25,6 +25,114 @@ function claimAudioSession() {
 }
 if (typeof window !== 'undefined') window.claimAudioSession = claimAudioSession;
 
+// ---------------------------------------------------------------------------
+// Frozen (agent-stepped) mode — docs/design-agent-control.md
+// ---------------------------------------------------------------------------
+//
+// The browser twin of the headless CLI: while frozen, the run loop schedules
+// NOTHING. No slice runs, no frame is presented, and the guest clock does not
+// move, so a screenshot an agent took cannot change under it. Work happens
+// only when somebody asks for it — `WineFrozen.step(n)`, which runs exactly n
+// slices and then parks again.
+//
+// The clock is the part that has to be got right. `_guestTickMs` derives guest
+// time from the wall (`now - wallStartMs`), and a wall clock that keeps running
+// while nothing executes is worse than useless: every WM_TIMER the app owns is
+// instantly overdue when it resumes, and a `timeGetTime`-paced animation sees
+// one enormous delta per step. So a frozen host stops reading the wall and
+// charges `tickMs` of guest time per executed step instead — the browser's
+// answer to `--tick-ms-per-batch` (lib/batch-clock.js is the CLI's, and is a
+// different object over a different unit; nothing is shared but the idea).
+// Unfreezing slides `wallStartMs` forward so the guest never sees a jump,
+// exactly the way `_resumeFromHidden` does for a backgrounded tab.
+//
+// This bus is page-level rather than per-instance because the toolbar
+// checkbox, the `?frozen` param and the agent channel all mean "this page",
+// and a page may be running more than one guest (WRITE.EXE -> WordPad). Hosts
+// register as they start running and inherit whatever the page has decided.
+const frozenBus = {
+  enabled: false,
+  tickMs: 16,
+  hosts: new Set(),
+
+  status() {
+    const hosts = [...frozenBus.hosts];
+    return {
+      frozen: frozenBus.enabled,
+      tickMs: frozenBus.tickMs,
+      hosts: hosts.length,
+      steps: hosts.reduce((n, h) => n + (h._frozenSteps | 0), 0),
+      // Total steps this page's guests have retired, frozen or live. The
+      // number a watcher checks to answer "is anything running at all".
+      ticks: hosts.reduce((n, h) => n + (h._stepTicks | 0), 0),
+      guestMs: hosts.length ? Math.max(...hosts.map(h => h.frozenGuestMs())) : 0,
+    };
+  },
+
+  // `manual` marks the ?debug checkbox (or an agent command) as the source, so
+  // the page chrome can tell an echo of its own click from a change it must
+  // mirror. Announced the same way agent-remote announces input exclusivity.
+  setEnabled(on, opts) {
+    const next = !!on;
+    const changed = frozenBus.enabled !== next;
+    frozenBus.enabled = next;
+    for (const host of frozenBus.hosts) host.setFrozen(next);
+    if (changed || (opts && opts.force)) frozenBus.announce();
+    return frozenBus.status();
+  },
+
+  setTickMs(ms) {
+    const value = Number(ms);
+    if (Number.isFinite(value) && value >= 0) {
+      frozenBus.tickMs = Math.min(60000, Math.floor(value));
+      for (const host of frozenBus.hosts) host._frozenTickMs = frozenBus.tickMs;
+      frozenBus.announce();
+    }
+    return frozenBus.status();
+  },
+
+  // Run n slices on every live guest in this page, then park again. Resolves
+  // once they have all come back to rest, so the caller's next screenshot is
+  // of a machine that has stopped.
+  async step(n, tickMs) {
+    if (!frozenBus.enabled) throw new Error('not frozen — check "Frozen" in the ?debug toolbar, load ?frozen, or send {action:"frozen",mode:"on"}');
+    if (Number.isFinite(Number(tickMs))) frozenBus.setTickMs(tickMs);
+    const hosts = [...frozenBus.hosts];
+    if (!hosts.length) {
+      return Object.assign(frozenBus.status(), { requested: n | 0, ran: 0, note: 'no app is running yet — launch one first' });
+    }
+    const each = await Promise.all(hosts.map(h => h.stepFrozen(n, frozenBus.tickMs)));
+    frozenBus.announce();
+    return Object.assign(frozenBus.status(), {
+      requested: n | 0,
+      ran: Math.max(...each.map(r => r.ran | 0)),
+      timedOut: each.some(r => r.timedOut) || undefined,
+      guests: each,
+    });
+  },
+
+  announce() {
+    if (typeof window === 'undefined') return;
+    try {
+      window.dispatchEvent(new CustomEvent('wine-frozen', { detail: frozenBus.status() }));
+    } catch (_) { /* no CustomEvent in this host */ }
+  },
+};
+if (typeof window !== 'undefined') {
+  window.WineFrozen = frozenBus;
+  // `?frozen` (optionally `?frozen=MS`) is a convenience that pre-checks the
+  // box: a dashboard tile, or an agent's own tab, can be born stepped rather
+  // than having to freeze a machine that already ran its boot.
+  try {
+    const params = new URLSearchParams(location.search);
+    if (params.has('frozen')) {
+      const raw = params.get('frozen');
+      if (raw && /^\d+$/.test(raw)) frozenBus.tickMs = Math.min(60000, parseInt(raw, 10));
+      frozenBus.enabled = true;
+    }
+  } catch (_) { /* no location (a worker, a test harness) */ }
+}
+
 class WineAssembly {
   static SOURCE_VERSION = '250';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
@@ -36,6 +144,10 @@ class WineAssembly {
   // How long an AudioContext may sit 'running' with nothing playing before it
   // is suspended. A running context holds the audio hardware awake.
   static AUDIO_IDLE_SUSPEND_MS = 10000;
+  // Frozen mode: the biggest single `step` a caller may ask for, and how long
+  // a step request waits for the step count to move before giving up.
+  static FROZEN_MAX_STEPS = 2000000;
+  static FROZEN_STALL_MS = 5000;
   static _nextProcessId = 1000;
 
   static _assetPartUrl(url, index) {
@@ -213,6 +325,9 @@ class WineAssembly {
 
   _beginGuestTickBatch(sharedAudio) {
     const st = this._guestTickState(sharedAudio);
+    // Frozen mode charges guest time per executed step instead of reading the
+    // wall — see the frozen-mode block above `class WineAssembly`.
+    if (this._frozen) { st.callsInBatch = 0; return; }
     const now = this._audioSchedulerNow();
     if (!Number.isFinite(st.wallStartMs) || st.wallStartMs <= 0) st.wallStartMs = now;
     const elapsed = Math.max(0, Math.floor(now - st.wallStartMs));
@@ -222,6 +337,19 @@ class WineAssembly {
 
   _guestTickMs(sharedAudio) {
     const st = this._guestTickState(sharedAudio);
+    if (this._frozen) {
+      // Whatever the executed steps have charged, and not one millisecond
+      // more: a guest polling GetTickCount inside one frozen step must see a
+      // clock that is standing still, or a spin-until-the-time-changes loop
+      // would burn the step's whole quantum on a clock the agent did not move.
+      const batchMs = Number.isFinite(st.batchMs) ? st.batchMs : 0;
+      const last = Number.isFinite(st.lastReturnedMs) ? st.lastReturnedMs : 0;
+      const tick = Math.max(batchMs, last) & 0x7FFFFFFF;
+      st.batchMs = tick;
+      st.lastReturnedMs = tick;
+      st.callsInBatch = (Number.isFinite(st.callsInBatch) ? st.callsInBatch : 0) + 1;
+      return tick;
+    }
     const now = this._audioSchedulerNow();
     if (!Number.isFinite(st.wallStartMs) || st.wallStartMs <= 0) st.wallStartMs = now;
     const elapsed = Math.max(0, Math.floor(now - st.wallStartMs));
@@ -2200,6 +2328,8 @@ class WineAssembly {
     // close over this WineHost, and a WineHost owns a 512MB shared memory.
     // Same leak the DX rAF chain had.
     this._cancelDelayedStep();
+    this._cancelVblankWait();
+    this._frozenUnregister();
     this._pausedStep = null;
     this._hiddenPaused = false;
     this._removeVisibilityPause();
@@ -2393,6 +2523,7 @@ class WineAssembly {
   // boundary, so long slices are paced and keyboard input can request one early.
   _runThreaded(stepsPerSlice) {
     this.running = true;
+    this._frozenRegister();
     const self = this;
     // Worker mode gets the hidden-tab pause and the input wake. It does NOT
     // get the parked sleep: its main thread is one participant in a rendezvous
@@ -2621,6 +2752,12 @@ class WineAssembly {
             pvfs.pendingRead = null;
           }
           await self.guestWorker.callExport('clear_yield');
+        } else if (r.yield === 14 || r.yield === 15) {
+          // A spin park in the worker that carries the guest's MAIN thread.
+          // Clearing re-enters the parked call on its next slice. This branch
+          // has to exist: the catch-all below stops the app outright, so a
+          // busy-wait the detector caught would have ended the session.
+          await self.guestWorker.callExport('clear_yield');
         } else if (r.yield === 6) {
           // modal_dialog: the single-threaded loop does nothing special here
           // either — the WAT side drives the dialog — so neither does this.
@@ -2644,7 +2781,10 @@ class WineAssembly {
       // hold worker mode to ~250 slices a second no matter how fast a slice is.
       if (self.running) self._scheduleStep(step);
     };
-    step();
+    // Frozen at launch (a ?frozen tile, or the box checked before the app
+    // started): park the very first slice instead of running it, so the guest
+    // is at instruction zero until an agent steps it.
+    if (self._frozen) self._scheduleStep(step, 0); else step();
   }
 
   // Schedule the next guest slice.
@@ -2664,6 +2804,22 @@ class WineAssembly {
   // and being told "no" every time. The cap is deliberate — a wake source we
   // forgot to hook up degrades to 20Hz polling, never to a hang.
   _scheduleStep(step, delayMs = 0) {
+    // Every completed step of both drive loops passes through here exactly
+    // once, which makes this the only honest "did the guest run" counter the
+    // page has. `_runSliceCount` is not one: it is bumped only on the branch
+    // where the guest's main thread was runnable, so an app idling in
+    // GetMessage retires slices forever without moving it.
+    this._stepTicks = (this._stepTicks | 0) + 1;
+    // Frozen: the loop stops here. The continuation is held, not scheduled,
+    // and `stepFrozen` is the only thing that lets it run. Note this is the
+    // ONE seam frozen mode needs — both drive loops (cooperative and worker)
+    // reach their next slice through it, so neither is special-cased.
+    if (this._frozen) {
+      this._cancelDelayedStep();
+      this._frozenStep = step;
+      this._frozenPump();
+      return;
+    }
     this._cancelDelayedStep();
     const delay = delayMs > 0 ? Math.min(delayMs, WineAssembly.MAX_PARK_SLEEP_MS) : 0;
     if (delay > 0) {
@@ -2676,6 +2832,13 @@ class WineAssembly {
       }, delay);
       return;
     }
+    this._postStep(step);
+  }
+
+  // Post the next slice as an unclamped macrotask. Split out of
+  // _scheduleStep so frozen mode can dispatch a step without going back
+  // through the "should I sleep?" decision it has already overruled.
+  _postStep(step) {
     if (this._stepPort === undefined) {
       this._stepPort = null;
       if (typeof MessageChannel === 'function') {
@@ -2708,6 +2871,141 @@ class WineAssembly {
     this._delayedStep = null;
   }
 
+  // ---- frozen (agent-stepped) mode ------------------------------------
+  //
+  // See the frozenBus block above `class WineAssembly` for what this is and
+  // why the clock is part of it. Everything below is per-guest bookkeeping;
+  // the page-level switch is `window.WineFrozen`.
+
+  _frozenRegister() {
+    this._frozenSteps = this._frozenSteps | 0;
+    this._frozenBudget = this._frozenBudget | 0;
+    this._frozenWaiters = this._frozenWaiters || [];
+    this._frozenTickMs = Number.isFinite(this._frozenTickMs) ? this._frozenTickMs : frozenBus.tickMs;
+    frozenBus.hosts.add(this);
+    if (frozenBus.enabled) this.setFrozen(true);
+  }
+
+  _frozenUnregister() {
+    frozenBus.hosts.delete(this);
+    // A guest that exited (or crashed) is never coming back for its budget;
+    // release anyone waiting on a step rather than making them time out.
+    this._frozenBudget = 0;
+    this._frozenStep = null;
+    this._frozenIdle();
+  }
+
+  frozenGuestMs() {
+    return this._guestAudioClockMs(this.hostCtx && this.hostCtx.sharedAudio) | 0;
+  }
+
+  frozenStatus(extra) {
+    let eip = 0;
+    try { eip = this.instance && this.instance.exports.get_eip ? this.instance.exports.get_eip() >>> 0 : 0; }
+    catch (_) { eip = 0; }
+    return Object.assign({
+      frozen: !!this._frozen,
+      tickMs: this._frozenTickMs | 0,
+      steps: this._frozenSteps | 0,
+      ticks: this._stepTicks | 0,
+      guestMs: this.frozenGuestMs(),
+      running: !!this.running,
+      eip: '0x' + eip.toString(16).padStart(8, '0'),
+    }, extra || {});
+  }
+
+  setFrozen(on) {
+    const next = !!on;
+    this._frozenTickMs = Number.isFinite(this._frozenTickMs) ? this._frozenTickMs : frozenBus.tickMs;
+    if (this._frozen === next) return this.frozenStatus();
+    this._frozen = next;
+    if (next) {
+      this._frozenBudget = 0;
+      this._frozenWaiters = this._frozenWaiters || [];
+      // A slice already in flight finishes and parks at its next
+      // _scheduleStep — "finish the current step, then stop". A slice merely
+      // *sleeping* (the parked-guest case, which is most of an idle app) has
+      // not started yet, so take its continuation now instead of letting one
+      // more step land up to 50ms after the freeze.
+      if (this._delayedStep) {
+        const pending = this._delayedStep;
+        this._cancelDelayedStep();
+        this._frozenStep = pending;
+      }
+    } else {
+      // Live again. Slide the wall-clock origin forward by the time the guest
+      // did not experience, or it gets the whole frozen interval as one jump:
+      // every timer instantly overdue, every timeGetTime delta enormous.
+      const st = this._guestTickState(this.hostCtx && this.hostCtx.sharedAudio);
+      if (st) st.wallStartMs = this._audioSchedulerNow() - (st.batchMs | 0);
+      const pending = this._frozenStep;
+      this._frozenStep = null;
+      this._frozenBudget = 0;
+      this._frozenIdle();
+      if (pending && this.running) this._scheduleStep(pending, 0);
+    }
+    return this.frozenStatus();
+  }
+
+  // Hand the held continuation one step's worth of budget, or come to rest.
+  _frozenPump() {
+    const step = this._frozenStep;
+    if (!step) return;                       // the run loop has not parked here yet
+    if ((this._frozenBudget | 0) <= 0) { this._frozenIdle(); return; }
+    this._frozenStep = null;
+    this._frozenBudget--;
+    this._frozenSteps = (this._frozenSteps | 0) + 1;
+    this._advanceGuestTickMs(this._frozenTickMs, this.hostCtx && this.hostCtx.sharedAudio);
+    this._postStep(step);
+  }
+
+  // At rest: flush whatever the last step drew before anyone screenshots it.
+  // The run loop presents inside a step, but a repaint the renderer deferred
+  // would otherwise land on the next step — which, frozen, may never come.
+  _frozenIdle() {
+    const waiters = this._frozenWaiters;
+    if (!waiters || !waiters.length) return;
+    this._frozenWaiters = [];
+    try { if (this._presentDxIfDirty) this._presentDxIfDirty(); } catch (_) {}
+    try { if (this.renderer && this.renderer.flushRepaint) this.renderer.flushRepaint(true); } catch (_) {}
+    try { if (this.renderer && this.renderer.repaint) this.renderer.repaint(); } catch (_) {}
+    for (const waiter of waiters) { try { waiter(); } catch (_) {} }
+  }
+
+  // Run exactly `count` slices, then park again. The promise resolves when the
+  // guest is at rest, which is what makes "click, step, screenshot" atomic.
+  stepFrozen(count, tickMs) {
+    const n = Math.max(1, Math.min(WineAssembly.FROZEN_MAX_STEPS, count | 0));
+    if (Number.isFinite(Number(tickMs)) && Number(tickMs) >= 0) this._frozenTickMs = Math.floor(Number(tickMs));
+    if (!this._frozen) {
+      return Promise.resolve(this.frozenStatus({ requested: n, ran: 0, error: 'not frozen' }));
+    }
+    const before = this._frozenSteps | 0;
+    this._frozenBudget = (this._frozenBudget | 0) + n;
+    return new Promise(resolve => {
+      // A watchdog on PROGRESS, not on wall time: a legitimate 200000-step
+      // request may take minutes, while a guest that stopped calling back
+      // (crashed mid-slice, awaiting a DLL fetch that will never land) must
+      // not hold the agent's HTTP request open forever.
+      let seen = -1;
+      const watchdog = setInterval(() => {
+        const now = this._frozenSteps | 0;
+        if (now !== seen) { seen = now; return; }
+        clearInterval(watchdog);
+        const idx = this._frozenWaiters.indexOf(done);
+        if (idx >= 0) this._frozenWaiters.splice(idx, 1);
+        this._frozenBudget = 0;
+        resolve(this.frozenStatus({ requested: n, ran: (this._frozenSteps | 0) - before, timedOut: true }));
+      }, WineAssembly.FROZEN_STALL_MS);
+      const done = () => {
+        clearInterval(watchdog);
+        resolve(this.frozenStatus({ requested: n, ran: (this._frozenSteps | 0) - before }));
+      };
+      this._frozenWaiters.push(done);
+      this._frozenPump();
+    });
+  }
+
   // Something happened that the parked guest was waiting for. Cut the sleep
   // short rather than letting it run out: the whole point of sleeping is that
   // nothing could have changed, and this is the call that says otherwise.
@@ -2723,6 +3021,123 @@ class WineAssembly {
     if (fn) this._scheduleStep(fn, 0);
   }
 
+  // ---- vertical blank -------------------------------------------------
+  //
+  // A DirectDraw guest parked in WaitForVerticalBlank (yield_reason 13) is
+  // waiting for the *display*, and requestAnimationFrame is the only thing a
+  // web page can see that actually is the display: it fires on the
+  // compositor's own beat. So the wake comes from rAF rather than from a
+  // synthetic 16.7 ms grid on a timer — no beat frequency between our idea of
+  // 60 Hz and the real refresh, no half-frame of latency from a setTimeout
+  // that lands mid-frame, and hidden-tab throttling for free.
+  //
+  // Deliberately NOT a standing rAF chain: one is armed only while a guest is
+  // actually parked, and it is dropped again the moment the wait ends. An
+  // always-on rAF is exactly what the idle-cost work removed.
+  //
+  // (The headless CLI has no rAF at all and keeps the guest-clock model in
+  // src/09a8-handlers-directx.wat. The two are meant to differ.)
+  _awaitVblank(resume) {
+    const ex = this.instance && this.instance.exports;
+    const tick = () => {
+      this._vblankPending = null;
+      if (this._vblankTimer) { clearTimeout(this._vblankTimer); this._vblankTimer = 0; }
+      this._vblankRafId = 0;
+      try { if (ex && ex.vblank_tick) ex.vblank_tick(); } catch (_) {}
+      resume();
+    };
+    // A display faster than 60 Hz would double the pace of any game that
+    // counts vblanks — DirectDraw-era software was written for a ~60 Hz CRT
+    // and takes one wait per frame. So measure the real interval and deliver
+    // every Nth callback, with N derived rather than hardcoded so 90/120/144
+    // all land near 60 rather than only ProMotion being special-cased.
+    const raf = (typeof requestAnimationFrame === 'function') ? requestAnimationFrame : null;
+    if (raf) {
+      const onFrame = (ts) => {
+        this._vblankRafId = 0;
+        const prev = this._vblankLastTs;
+        this._vblankLastTs = ts;
+        if (prev !== undefined) {
+          const dt = ts - prev;
+          // Ignore a gap that is not a refresh (a throttled or resumed tab).
+          if (dt > 1 && dt < 40) {
+            this._vblankPeriodMs = this._vblankPeriodMs
+              ? this._vblankPeriodMs * 0.8 + dt * 0.2 : dt;
+          }
+        }
+        const period = this._vblankPeriodMs || (1000 / 60);
+        const divisor = Math.max(1, Math.round((1000 / 60) / period));
+        this._vblankPhase = ((this._vblankPhase || 0) + 1) % divisor;
+        if (this._vblankPhase !== 0) {
+          this._vblankRafId = raf(onFrame);
+          return;
+        }
+        tick();
+      };
+      this._vblankRafId = raf(onFrame);
+    }
+    // Backstop. rAF stops entirely on a hidden page, which composes correctly
+    // with the hidden-pause path for a silent app — but an audible one keeps
+    // running, and it must not hang forever on a vblank that will never come.
+    // Also covers a host with no rAF at all (a worker, a test harness).
+    this._vblankPending = tick;
+    this._vblankTimer = setTimeout(() => {
+      this._vblankTimer = 0;
+      if (this._vblankPending) {
+        if (this._vblankRafId && typeof cancelAnimationFrame === 'function') {
+          cancelAnimationFrame(this._vblankRafId);
+          this._vblankRafId = 0;
+        }
+        this._vblankPending();
+      }
+    }, WineAssembly.MAX_PARK_SLEEP_MS);
+  }
+
+  // A parked vblank wait holds a rAF registration and a backstop timer, both
+  // closing over this host — which owns a 512MB shared memory. Drop both.
+  _cancelVblankWait() {
+    this._vblankPending = null;
+    if (this._vblankTimer) { clearTimeout(this._vblankTimer); this._vblankTimer = 0; }
+    if (this._vblankRafId && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(this._vblankRafId);
+    }
+    this._vblankRafId = 0;
+  }
+
+  // How long a spin park should sleep for. The two detectors wait on different
+  // things and therefore have different deadlines:
+  //
+  //  * A clock park (14) is waiting for the millisecond to change, and the
+  //    browser's guest clock is real wall time, so the deadline the guest
+  //    named is at most a millisecond away. Sleeping to it is enough — and a
+  //    1ms setTimeout is nested, so the browser's 4ms clamp batches several
+  //    of them into one wake. That is desirable, not a bug: a guest counting
+  //    milliseconds cannot tell 1ms of sleep from 4ms except by reading the
+  //    clock, which is exactly what it does on resume.
+  //
+  //  * A queue park (15) has no clock deadline at all. The things that end it
+  //    are input — which cuts the sleep short through renderer._stepWakeHooks
+  //    / _wakeMessageWait — and a WM_TIMER, which is the one wake source that
+  //    arrives with nothing touching the emulator. next_timer_due_ms is the
+  //    export that answers when. With neither, park at the cap and re-check.
+  _spinParkDelay(reason) {
+    const ex = this.instance && this.instance.exports;
+    if (!ex) return 1;
+    if (reason === 14) {
+      let due = 0, now = 0;
+      try {
+        due = ex.get_spin_deadline_ms ? (ex.get_spin_deadline_ms() >>> 0) : 0;
+        now = ex.get_tick_count ? (ex.get_tick_count() >>> 0) : 0;
+      } catch (_) { return 1; }
+      const owed = (due - now) | 0;
+      return Math.max(1, Math.min(WineAssembly.MAX_PARK_SLEEP_MS, owed));
+    }
+    let timerDue = -1;
+    try { timerDue = ex.next_timer_due_ms ? (ex.next_timer_due_ms() | 0) : -1; } catch (_) {}
+    if (timerDue < 0) return WineAssembly.MAX_PARK_SLEEP_MS;
+    return Math.max(1, Math.min(WineAssembly.MAX_PARK_SLEEP_MS, timerDue));
+  }
+
   // How long the drive loop may sleep before the next slice, given that the
   // guest's main thread is parked. 0 means "do not sleep".
   //
@@ -2733,6 +3148,11 @@ class WineAssembly {
   // a posted message, a worker thread, an async yield — either calls
   // _wakeStep() or does not park in the first place.
   _parkedSleepMs() {
+    // Single-use: this step's yield handler recorded it, this step's tail
+    // consumes it. Read before any early return so it can never leak into the
+    // next step and shorten a sleep that has nothing to do with a spin.
+    const spin = this._spinParkSleepMs | 0;
+    this._spinParkSleepMs = 0;
     if (this._paused) return 0;
     const tm = this.threadManager;
     // A worker with runnable code is the other half of this step. It is not
@@ -2763,6 +3183,9 @@ class WineAssembly {
       // Parked for a reason we do not model. Poll at the cap.
       best = Math.min(best, WineAssembly.MAX_PARK_SLEEP_MS);
     }
+    // A spin park has its own deadline, and it is the tighter one by
+    // construction (a millisecond for the clock, the next timer for the queue).
+    if (spin > 0) best = Math.min(best, spin);
     if (!Number.isFinite(best)) best = WineAssembly.MAX_PARK_SLEEP_MS;
     // A deadline that has already passed still means "park": whatever the
     // guest is waiting for did not arrive, and returning 0 here would put the
@@ -2811,6 +3234,10 @@ class WineAssembly {
   }
 
   _maybePauseForHidden() {
+    // A frozen guest already costs nothing when nobody is stepping it, and a
+    // hidden-tab pause would swallow the continuation an agent's next `step`
+    // needs. The dashboard's tiles are often not the visible tab.
+    if (this._frozen) return false;
     if (this._hiddenPaused || !this.running) return false;
     if (typeof document === 'undefined' || !document.hidden) return false;
     if (this._isAudioHot()) return false;
@@ -2848,6 +3275,7 @@ class WineAssembly {
     if (this.guestWorker) return this._runThreaded(stepsPerSlice);
     this.running = true;
     this._stopped = false;
+    this._frozenRegister();
     const self = this;
     self._installVisibilityPause();
     self._installInputWake();
@@ -3019,6 +3447,34 @@ class WineAssembly {
           if (self.running) { self._scheduleStep(step); }
           return;
         }
+        if (yieldReason === 13) {
+          // vblank_wait: a DirectDraw call is parked on the display. EIP is
+          // still on the thunk, so clearing the yield re-enters the same call,
+          // which re-tests the model and either completes or parks again.
+          self._awaitVblank(() => {
+            try { self.instance.exports.clear_yield(); } catch (_) {}
+            if (self.running) self._scheduleStep(step, 0);
+          });
+          return;
+        }
+        if (yieldReason === 14 || yieldReason === 15) {
+          // A spin park: the guest was busy-waiting on the millisecond clock
+          // (14) or on an empty message queue (15), and the handler parked
+          // instead of answering "not yet" for the thousandth time. EIP is on
+          // the thunk and the frame is intact, so clearing the yield re-enters
+          // the same call.
+          //
+          // Deliberately NOT an early return with its own timer, the way the
+          // vblank park is: this is a plain parked main thread, and the drive
+          // loop already knows how to sleep one. Falling through records the
+          // deadline for _parkedSleepMs() and lets the tail below post the
+          // next step with it — which means worker threads still get their
+          // slice while the main thread waits, and the nested-setTimeout 4ms
+          // clamp coalesces the 1ms clock sleeps for free.
+          self._spinParkSleepMs = self._spinParkDelay(yieldReason);
+          self.instance.exports.clear_yield();
+          mainParked = true;
+        }
         if (yieldReason === 8) {
           // net_wait: a blocking socket call parked itself. EIP is still on
           // the thunk, so clearing the yield re-enters the same handler with
@@ -3159,6 +3615,9 @@ class WineAssembly {
         self._scheduleStep(step, mainParked ? self._parkedSleepMs() : 0);
       }
     };
-    step();
+    // Frozen at launch (a ?frozen tile, or the box checked before the app
+    // started): park the very first slice instead of running it, so the guest
+    // is at instruction zero until an agent steps it.
+    if (self._frozen) self._scheduleStep(step, 0); else step();
   }
 }

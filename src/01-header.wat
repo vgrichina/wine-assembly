@@ -2985,7 +2985,95 @@
   ;; different bugs: what is actually wrong in that Winamp run is that a section
   ;; is orphaned by a thread that exits while owning it.
   (global $cs_steal_after (mut i32) (i32.const 0x3FFFFFFF))
-  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait, 9=cs_wait, 10=cross-thread SendMessage, 11=self-suspend, 12=io_wait (lazy VFS chunk)
+  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait, 9=cs_wait, 10=cross-thread SendMessage, 11=self-suspend, 12=io_wait (lazy VFS chunk), 13=vblank_wait, 14=clock_spin (parked on the millisecond clock), 15=peek_spin (parked on an empty message queue)
+  ;; ---- 60 Hz vertical-blank model (src/09a8-handlers-directx.wat) ----
+  ;;
+  ;; DirectDraw-era games use the display itself as their clock:
+  ;; IDirectDraw::WaitForVerticalBlank is supposed to BLOCK until the beam
+  ;; comes back, so a guest that calls it once per frame is paced by the
+  ;; monitor and costs nothing while it waits. Returning DD_OK instantly --
+  ;; what we used to do -- is not merely imprecise, it changes what the game
+  ;; decides to do: DX-Ball times 32 of these calls at startup and needs the
+  ;; total to exceed 400 ms before it will use vsync at all (see
+  ;; docs/re-notes/dxball.md).
+  ;;
+  ;; There are two clocks behind this, and they are deliberately NOT unified:
+  ;;
+  ;;  * In the browser the host drives it. requestAnimationFrame IS the
+  ;;    display's vblank as far as a page can see, so host.js bumps
+  ;;    $vblank_counter from a rAF callback (divided down to ~60 Hz on a
+  ;;    high-refresh display) and $vblank_host_driven latches on the first
+  ;;    tick. A park then ends on the real compositor beat -- no beat
+  ;;    frequency against a synthetic grid, and no standing rAF chain,
+  ;;    because the host only arms one while a guest is actually parked.
+  ;;
+  ;;  * Headless there is no rAF and no display, so the guest clock is the
+  ;;    display: the boundary is the next 1/60 s multiple of $host_get_ticks,
+  ;;    and test/run.js advances the batch clock to it (the pausedMs seam in
+  ;;    lib/batch-clock.js). Without that advance the wait could never
+  ;;    resolve at a small --tick-ms-per-batch.
+  ;;
+  ;; $vblank_deadline_ms is meaningful in both: host-driven it is only the
+  ;; no-rAF escape hatch (a hidden tab gets no callbacks at all).
+  (global $vblank_counter (mut i32) (i32.const 0))      ;; bumped by the host's vblank_tick()
+  (global $vblank_host_driven (mut i32) (i32.const 0))  ;; latched by the first vblank_tick()
+  (global $vblank_wait_active (mut i32) (i32.const 0))  ;; a WaitForVerticalBlank/Flip is parked
+  (global $vblank_wait_counter (mut i32) (i32.const 0)) ;; $vblank_counter when it parked
+  (global $vblank_deadline_ms (mut i32) (i32.const 0))  ;; guest-ms boundary it parked for
+  ;; Off by default. A vsync'd Flip is what real hardware does, but it changes
+  ;; the pacing of every Flip-presenting game at once, so it is opt-in
+  ;; (test/run.js --flip-vsync) until each of them has been measured.
+  (global $dx_flip_vsync (mut i32) (i32.const 0))
+  ;; ---- spin parking (see $clock_spin_step in src/09a-handlers.wat) ----
+  ;;
+  ;; Eight of the twenty-two games in docs/frame-pacing-census.md hold their
+  ;; frame rate by busy-waiting on the millisecond clock -- Abe's Oddysee makes
+  ;; 1.77 MILLION timeGetTime calls in three guest seconds, Half-Life Uplink
+  ;; 208 reads per batch. Four more spin on PeekMessage returning empty. Every
+  ;; one of those calls is a full API dispatch that computes "not yet", and in
+  ;; the browser that is the whole CPU.
+  ;;
+  ;; Blocking inside an API call is always behaviour-legal -- real Windows can
+  ;; preempt a thread anywhere, and these calls in particular are where a real
+  ;; machine spends its scheduling quantum -- so the guest can simply be parked
+  ;; there. That needs no loop analysis at all, which is why this is form-blind
+  ;; and works on a limiter we have never disassembled.
+  ;;
+  ;; The whole design rests on the DETECTOR being unable to fire on a healthy
+  ;; game, because a false park is a stall. Four conditions must hold K times in
+  ;; a row (K = $spin_park_k, 8):
+  ;;
+  ;;   * the same value came back (clock only) -- a 60 fps game reading
+  ;;     delta-time sees a different millisecond every frame and never trips;
+  ;;   * no OTHER Win32 call happened in between ($spin_dispatch_seq advanced by
+  ;;     exactly one, this call) -- a real frame loop renders between two clock
+  ;;     reads, and rendering is API calls;
+  ;;   * the same return address, so it is one call site, not a pump;
+  ;;   * the same ESP, so it is the same stack depth and not a recursion.
+  ;;
+  ;; Everything here is per-instance state, which is what makes it per-thread:
+  ;; a worker instantiates its own module over the shared memory, so a decode
+  ;; thread's spin cannot debounce the main thread's clock reads.
+  (global $spin_dispatch_seq (mut i32) (i32.const 0))  ;; bumped once per $win32_dispatch
+  (global $spin_park_k (mut i32) (i32.const 8))        ;; 0 disables both detectors
+  (global $spin_deadline_ms (mut i32) (i32.const 0))   ;; guest ms a clock park is due at
+  (global $clock_spin_count (mut i32) (i32.const 0))
+  (global $clock_spin_value (mut i32) (i32.const 0))
+  (global $clock_spin_seq (mut i32) (i32.const 0))
+  (global $clock_spin_ret (mut i32) (i32.const 0))
+  (global $clock_spin_esp (mut i32) (i32.const 0))
+  ;; The value a park was already taken for. One park per distinct millisecond,
+  ;; ever: if the host hands the guest back with the clock still reading the
+  ;; same thing, spinning is the honest answer until it moves. Without this the
+  ;; pair could ping-pong forever on a clock that is not advancing.
+  (global $clock_spin_parked_value (mut i32) (i32.const 0))
+  (global $clock_spin_parked_valid (mut i32) (i32.const 0))
+  (global $clock_spin_parks (mut i32) (i32.const 0))   ;; diagnostics: trips taken
+  (global $peek_spin_count (mut i32) (i32.const 0))
+  (global $peek_spin_seq (mut i32) (i32.const 0))
+  (global $peek_spin_ret (mut i32) (i32.const 0))
+  (global $peek_spin_esp (mut i32) (i32.const 0))
+  (global $peek_spin_parks (mut i32) (i32.const 0))
   ;; Parameters published when SendMessage parks on an HWND owned by another
   ;; guest thread.  They are per-instance because only that sender consumes
   ;; them; the scheduler carries them to the target instance.

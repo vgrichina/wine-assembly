@@ -2114,6 +2114,16 @@
       (then
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    ;; Nothing to deliver. If this is the Kth empty peek in a row from the same
+    ;; call site with NO other Win32 call in between, the guest is not pumping,
+    ;; it is spinning — tetrinet, GTA2, Total Annihilation and the Heroes II
+    ;; title screen all sit here. Park until input arrives or a timer comes due
+    ;; instead of returning zero and being asked again immediately. The park is
+    ;; taken before the frame is popped, so the same call re-runs on wake.
+    ;; The dispatch-adjacency test is what keeps a real game loop out: it
+    ;; renders between two empty peeks, and rendering is API calls.
+    (if (call $peek_spin_step)
+      (then (call $peek_spin_arm) (return)))
     (local.set $tmp (call $gl32 (global.get $esp)))
     (global.set $eax (i32.const 0))  ;; no message
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args

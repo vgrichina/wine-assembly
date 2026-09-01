@@ -2516,6 +2516,15 @@
   ;; 792: timeGetTime — same as GetTickCount, returns ms
   (func $handle_timeGetTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $tick_count (call $host_get_ticks))
+    ;; Same spin park as GetTickCount — timeGetTime is the one the DirectX-era
+    ;; frame limiters actually call, and Abe's Oddysee alone makes 1.77 million
+    ;; of these calls in three guest seconds. See $clock_spin_step in
+    ;; src/09a-handlers.wat. Parking before $midi_stream_service is deliberate:
+    ;; the service is idempotent in the millisecond, and re-running it on every
+    ;; spin iteration is part of what the spin costs.
+    (if (call $clock_spin_step (global.get $tick_count))
+      (then
+        (if (call $clock_spin_arm (global.get $tick_count)) (then (return)))))
     (call $midi_stream_service (global.get $tick_count))
     (global.set $eax (global.get $tick_count))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))

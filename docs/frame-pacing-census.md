@@ -619,6 +619,156 @@ Items 3-6 are all the same bug class — an unparked spin loop that names no
 deadline, so `_parkedSleepMs()` never sleeps — and together they are a larger
 and safer battery win than the cap this survey was asked to evaluate.
 
+## Spin parking
+
+Items 3-6 above are implemented. A guest that busy-waits inside `timeGetTime`,
+`GetTickCount` or `PeekMessage` is now **parked inside the API call** until the
+thing it is waiting for can have changed, instead of being handed "not yet"
+several million times.
+
+Blocking inside an API call is always behaviour-legal — real Windows can preempt
+a thread anywhere, and these calls in particular are where a real machine spends
+its quantum — so this needs **no loop analysis at all**. It is form-blind: it
+works on a limiter nobody has disassembled, which is the whole reason it is
+worth doing rather than lowering each limiter by hand.
+
+### The two detectors
+
+Both live in `src/09a-handlers.wat` (`$clock_spin_step`, `$peek_spin_step`) over
+per-instance globals declared in `src/01-header.wat` — per-instance is what makes
+them per-thread, since a worker instantiates its own module over the shared
+memory.
+
+| | clock detector | empty-PeekMessage detector |
+|---|---|---|
+| watches | `timeGetTime`, `GetTickCount` (and the `W`/alias paths that forward to them) | the "no message" tail of `PeekMessageA`/`W` |
+| K | 8 consecutive | 8 consecutive |
+| resets on | a **different millisecond** | a **non-empty peek** |
+| resets on | any other Win32 call in between | any other Win32 call in between |
+| resets on | a different return address, or a different ESP | same |
+| parks with | `yield_reason` 14, deadline = the next millisecond | `yield_reason` 15, deadline = the next timer due |
+
+The reset rules are the whole safety argument, and each is aimed at a specific
+false positive:
+
+* **The changed-value rule** is what keeps a healthy 60 fps game out. It reads
+  delta-time once a frame and sees a different millisecond every time, so it can
+  never accumulate K.
+* **The "no other call in between" rule** ($spin_dispatch_seq, bumped once per
+  `$win32_dispatch`) is what keeps an ordinary game loop out. The normal shape is
+  empty-peek → *render a frame* → empty-peek, and a frame is API calls. Without
+  this rule the peek detector would park every game in the corpus on its second
+  poll.
+* **Return address and ESP** make it one call site at one stack depth, not a
+  pump that happens to be called from two places.
+
+There is also a progress guarantee: a clock read is parked on **at most once per
+distinct millisecond**. If the host hands the guest back with the clock still
+reading the same value, spinning is the honest answer until it moves — otherwise
+the pair could ping-pong forever on a clock that is not advancing.
+
+Tier 3 (learning the deadline the guest is actually counting *to*, or lowering
+the loop) is deliberately not built.
+
+### What each host does with a park
+
+* **Browser** (`host.js`): the park is a plain parked main thread. The step's
+  yield handler records the deadline (`_spinParkDelay`) and clears the yield, and
+  the tail's existing `_parkedSleepMs()` turns it into a `setTimeout` — capped at
+  `MAX_PARK_SLEEP_MS` (50 ms) like every other park, so a wake source we got
+  wrong degrades to 20 Hz polling and never to a hang. A clock park asks for
+  ~1 ms; the nested-`setTimeout` 4 ms clamp coalescing several of those is
+  desirable, not a bug. Worker threads still get their slice, because the handler
+  falls through rather than returning early.
+* **Headless CLI** (`test/run.js`): **no guest time is charged.** The batch clock
+  already advances `--tick-ms-per-batch` per batch and a park ends its batch, so
+  the next batch hands the guest a new millisecond on the schedule the run asked
+  for. Charging the way the vblank park does would be a distortion here rather
+  than a correction — a vblank deadline is ~17 ms away and needs the lift, while
+  a clock park's deadline is the *next millisecond*, which at
+  `--tick-ms-per-batch=1` is exactly where the next batch lands. Paying it anyway
+  would run the guest clock at two to three times the requested rate and rewrite
+  every `GetTickCount` delta the app computes. The one exception is
+  `--tick-ms-per-batch=0`, where nothing else would ever move the clock.
+
+### How to verify
+
+**At the default 200 ms of guest time per batch a spin loop never spins** — the
+clock leaps past whatever the guest is waiting for on its first read (this is the
+same harness artifact as the clock-sensitivity section above). Every measurement
+below needs `--tick-ms-per-batch=1 --batch-size=100000`.
+
+```bash
+# the A/B: --no-spin-park is the off arm, --spin-park-k=N moves the threshold
+node test/run.js --app=abedemo --max-batches=800 --tick-ms-per-batch=1 \
+  --batch-size=100000 --quiet-api --no-close --frame-stats --host-census
+node test/run.js --app=abedemo ... --no-spin-park
+
+# did the batches stop because the guest was WAITING, or because it ran out of
+# budget? A parked spin reports "blocking wait"; an unparked one "budget spent".
+node test/run.js --app=abedemo ... --batch-stats=200
+```
+
+Read three things: the `[spin-park]` line (trip counts, per thread), `get_ticks`
+in the `[host-census]` final table (the host import behind both clock APIs), and
+the frame count from `--frame-stats`. **Frames are the safety number** — a park
+that bought a CPU reduction by rendering less is a bug, not a win.
+
+Measured 2026-09-01, 800 batches at `--tick-ms-per-batch=1 --batch-size=100000`:
+
+| app | clock reads, park OFF | park ON | frames (present/flush) | wall |
+|---|---|---|---|---|
+| abedemo | 76,265,793 | **4,731,638** (16x) | 25 / 25 → 25 / 25, unchanged | 30.9s → 4.6s |
+| halflife_uplink | 39,647,743 | **6,354** (6200x) | 0 / 1 → 0 / 1, unchanged | 14.1s → 2.0s |
+
+And 2000 batches on the app the sweep turned up on its own:
+
+| app | API calls, park OFF | park ON | frames (present/flush) | wall |
+|---|---|---|---|---|
+| captain_claw_demo | 48,582,714 | **503,621** (96x) | 10,414 / 5,328 → 10,412 / 5,327 (−0.02%) | 197s → 71.9s |
+
+Captain Claw is the strongest single result: presents agree to two frames out of
+ten thousand while 99% of its API traffic disappears. At 500 batches the same
+pair is exact — 163 presents in both arms against 32,641,596 vs 216,366 calls.
+
+`--batch-stats=200` on abedemo: after boot, **500 of 500 batches stop on
+`blocking wait`** and retire one block each — the steady state is exactly
+"eight reads, park, next millisecond".
+
+Abe's residual 4.7 M reads are all in the first ~200 batches, where the app is
+still loading and the clock genuinely moves between reads; the detector correctly
+does not fire there.
+
+### Where the detectors do not fire, and why that is right
+
+| app | trips | why |
+|---|---|---|
+| sol, blobby_volley, diablo_demo, jazz2_demo | 0 clock, 0 peek | the healthy set — checked at both 200 ms and 1 ms per batch |
+| heroes2_demo | 5 clock, 0 peek | its pump does real work between polls, so the "no other call in between" rule resets the run every time |
+| gta2_demo | 0 | its `GetTickCount`/`Sleep`/`GetTickCount` startup probe is untouched: byte-identical exit, API count and register dump in both arms, at 1 ms *and* 200 ms per batch |
+
+**K is the whole knob, and heroes2 shows how sharp it is.** Its clock reads come
+in runs of three to seven, so K=8 sees five trips over 1500 batches, while
+`--spin-park-k=3` sees 1127 and `--spin-park-k=2` sees 1342 — and its API count
+falls from 28,577 to 9,248 to 6,221 across those three arms. A 4.6x reduction is
+sitting behind a lower K. It is **not** taken, because a run of two identical
+reads is not evidence of a busy-wait and nothing in that measurement checked what
+happened to its frames. K=8 is chosen to be boring; `--spin-park-k=N` exists so
+the question can be re-opened per app with a frame count beside it.
+
+**The empty-PeekMessage detector is the weaker half of this, and it is worth
+being precise about why.** The empty-peek path in `09a5-handlers-window.wat`
+*already* set `yield_flag` before any of this existed, so an empty peek has
+always ended the guest slice. Two consequences: an empty peek can never repeat
+inside one batch, so the run has to accumulate across batches; and in the CLI a
+peek spin was never burning much anyway. The cost it addresses is browser-side —
+`yield_flag` there ends the slice and the drive loop reposts at **zero delay**,
+which is a full-CPU spin, and the park converts that into a sleep bounded by
+`next_timer_due_ms`. No app in the corpus reaches a pure peek spin in a state
+this harness can drive to (`tetrinet` exits after 32 batches, `gta2_demo` after
+4), so the peek half is covered by `test/test-clock-spin-park.js` and by the
+detector's own reset rules rather than by an app measurement.
+
 ## Unresolved
 
 These did not reach a classifiable state headlessly and are recorded as

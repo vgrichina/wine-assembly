@@ -171,7 +171,24 @@
                   ;; 12 = io_wait: a lazily mounted file needs a chunk the host
                   ;; has not read yet. Same contract as 8/9 — EIP is parked on
                   ;; the thunk, so clearing the yield re-enters the call.
-                  (i32.eq (global.get $yield_reason) (i32.const 12))))))))
+                  (i32.or
+                    (i32.eq (global.get $yield_reason) (i32.const 12))
+                    ;; 13 = vblank_wait: a DirectDraw call is waiting for the
+                    ;; display. Same contract again — the host clears the
+                    ;; yield on the next refresh and the call re-tests.
+                    (i32.or
+                      (i32.eq (global.get $yield_reason) (i32.const 13))
+                      ;; 14/15 = a clock or message-queue spin the detectors in
+                      ;; src/09a-handlers.wat caught. Same contract once more:
+                      ;; the frame is intact and EIP is on the thunk, so the
+                      ;; host sleeps to the deadline and the call re-runs. They
+                      ;; belong on THIS list rather than the plain yield_flag
+                      ;; path so --batch-stats attributes them to "blocking
+                      ;; wait" — the batch stopped because the guest is
+                      ;; waiting, not because it ran out of budget.
+                      (i32.or
+                        (i32.eq (global.get $yield_reason) (i32.const 14))
+                        (i32.eq (global.get $yield_reason) (i32.const 15)))))))))))
         (then (global.set $last_run_halt (i32.const 4)) (br $halt)))
       ;; The 16-bit twin of the thunk-zone check below. A far call or return
       ;; into the thunk segment is caught at the transfer, but EIP can also be
@@ -2792,6 +2809,179 @@
     (global.set $sleep_yielded (i32.const 0))
     (local.get $v))
   (func (export "get_sleep_timeout") (result i32) (global.get $sleep_timeout))
+
+  ;; ---- vertical blank (see $vblank_counter in src/01-header.wat) --------
+  ;; The host says a refresh happened. In the browser that is a
+  ;; requestAnimationFrame callback, already divided down to ~60 Hz; the CLI
+  ;; never calls this, which is exactly what leaves it on the guest-clock
+  ;; model. The first call latches $vblank_host_driven, so a page that turns
+  ;; out to have a working rAF stops using the synthetic grid from then on.
+  (func (export "vblank_tick")
+    (global.set $vblank_host_driven (i32.const 1))
+    (global.set $vblank_counter (i32.add (global.get $vblank_counter) (i32.const 1))))
+  ;; The guest millisecond a parked vblank wait is due at. The CLI advances
+  ;; its batch clock to this; the browser uses it only as a no-rAF backstop.
+  (func (export "get_vblank_deadline_ms") (result i32) (global.get $vblank_deadline_ms))
+  (func (export "get_vblank_wait_active") (result i32) (global.get $vblank_wait_active))
+  (func (export "get_vblank_counter") (result i32) (global.get $vblank_counter))
+  (func (export "set_flip_vsync") (param $on i32)
+    (global.set $dx_flip_vsync (i32.ne (local.get $on) (i32.const 0))))
+  ;; Unit-test seams for the model itself: both are pure functions of a guest
+  ;; millisecond, so they can be checked without running a guest at all.
+  (func (export "test_vblank_next_boundary") (param $now i32) (result i32)
+    (call $vblank_next_boundary (local.get $now)))
+  (func (export "test_vblank_scanline") (param $now i32) (result i32)
+    (call $vblank_scanline (local.get $now)))
+  (func (export "test_vblank_in_blank") (param $now i32) (result i32)
+    (call $vblank_in_blank (local.get $now)))
+  (func (export "test_vblank_reset")
+    (global.set $vblank_wait_active (i32.const 0))
+    (global.set $vblank_host_driven (i32.const 0))
+    (global.set $vblank_counter (i32.const 0))
+    (global.set $vblank_deadline_ms (i32.const 0)))
+  ;; Drive WaitForVerticalBlank once and report what it did, the way
+  ;; test_cs_enter does for EnterCriticalSection. Bits:
+  ;;   1  parked with yield_reason 13
+  ;;   2  left the stdcall frame alone (so the re-entry sees the same args)
+  ;;   4  raised $handler_set_eip (opts out of $run's thunk-zone auto-pop --
+  ;;      without it the parked call is spliced out and the guest resumes past
+  ;;      its own WaitForVerticalBlank)
+  ;;   8  returned DD_OK
+  ;;  16  popped exactly the 3-arg stdcall frame
+  (func (export "test_vblank_wait_once") (result i32)
+    (local $saved_esp i32) (local $saved_eip i32) (local $bits i32)
+    (local.set $saved_esp (global.get $esp))
+    (local.set $saved_eip (global.get $eip))
+    (global.set $eax (i32.const 0xDEADBEEF))
+    (call $handle_IDirectDraw_WaitForVerticalBlank
+      (i32.const 0) (i32.const 1) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (if (i32.eq (global.get $yield_reason) (i32.const 13))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 1)))))
+    (if (i32.eq (global.get $esp) (local.get $saved_esp))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 2)))))
+    (if (global.get $handler_set_eip)
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 4)))))
+    (if (i32.eqz (global.get $eax))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 8)))))
+    (if (i32.eq (global.get $esp) (i32.add (local.get $saved_esp) (i32.const 16)))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 16)))))
+    (global.set $esp (local.get $saved_esp))
+    (global.set $eip (local.get $saved_eip))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $handler_set_eip (i32.const 0))
+    (local.get $bits))
+
+  ;; ---- spin parking (see $spin_dispatch_seq in src/01-header.wat) -------
+  ;; K, the number of consecutive indistinguishable reads that classifies a
+  ;; thread as spinning. 0 disables both detectors outright, which is the A/B
+  ;; arm (test/run.js --no-spin-park) and how a suspected false park is ruled
+  ;; in or out in one run.
+  (func (export "set_spin_park_k") (param $k i32)
+    (global.set $spin_park_k (local.get $k)))
+  (func (export "get_spin_park_k") (result i32) (global.get $spin_park_k))
+  ;; The guest millisecond a clock park is due at. The CLI compares it against
+  ;; the batch clock; the browser turns it into a setTimeout.
+  (func (export "get_spin_deadline_ms") (result i32) (global.get $spin_deadline_ms))
+  ;; The last millisecond a clock API handed the guest. Paired with the
+  ;; deadline above so a host can turn "due at T" into "sleep for N" without
+  ;; having to agree with the guest about what time it is.
+  (func (export "get_tick_count") (result i32) (global.get $tick_count))
+  ;; Trip counters. These are the acceptance measurement: a game that must not
+  ;; debounce is one that ends a run with both of these at zero.
+  (func (export "get_clock_spin_parks") (result i32) (global.get $clock_spin_parks))
+  (func (export "get_peek_spin_parks") (result i32) (global.get $peek_spin_parks))
+  (func (export "get_clock_spin_count") (result i32) (global.get $clock_spin_count))
+  (func (export "get_peek_spin_count") (result i32) (global.get $peek_spin_count))
+  (func (export "test_spin_reset")
+    (global.set $spin_dispatch_seq (i32.const 0))
+    (global.set $spin_deadline_ms (i32.const 0))
+    (global.set $clock_spin_count (i32.const 0))
+    (global.set $clock_spin_value (i32.const 0))
+    (global.set $clock_spin_seq (i32.const 0))
+    (global.set $clock_spin_ret (i32.const 0))
+    (global.set $clock_spin_esp (i32.const 0))
+    (global.set $clock_spin_parked_value (i32.const 0))
+    (global.set $clock_spin_parked_valid (i32.const 0))
+    (global.set $clock_spin_parks (i32.const 0))
+    (global.set $peek_spin_count (i32.const 0))
+    (global.set $peek_spin_seq (i32.const 0))
+    (global.set $peek_spin_ret (i32.const 0))
+    (global.set $peek_spin_esp (i32.const 0))
+    (global.set $peek_spin_parks (i32.const 0)))
+  ;; Drive one timeGetTime the way $win32_dispatch would — the sequence bump
+  ;; included, because "was anything else dispatched in between" is half of
+  ;; what the detector tests and a seam that skipped it would test the other
+  ;; half twice. Bits:
+  ;;    1  parked with yield_reason 14
+  ;;    2  left the stdcall frame alone (the re-entry sees the same args)
+  ;;    4  raised $handler_set_eip (opts out of $run's thunk-zone auto-pop)
+  ;;    8  completed instead: popped exactly the 0-arg stdcall frame
+  ;;   16  completed instead: returned the clock in EAX
+  ;; ESP and EIP are put back afterwards, so repeated calls look to the
+  ;; detector like one call site spinning — which is the point.
+  (func (export "test_clock_spin_once") (result i32)
+    (local $saved_esp i32) (local $saved_eip i32) (local $bits i32)
+    (local.set $saved_esp (global.get $esp))
+    (local.set $saved_eip (global.get $eip))
+    (global.set $spin_dispatch_seq (i32.add (global.get $spin_dispatch_seq) (i32.const 1)))
+    (call $handle_timeGetTime
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (if (i32.eq (global.get $yield_reason) (i32.const 14))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 1)))))
+    (if (i32.eq (global.get $esp) (local.get $saved_esp))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 2)))))
+    (if (global.get $handler_set_eip)
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 4)))))
+    (if (i32.eq (global.get $esp) (i32.add (local.get $saved_esp) (i32.const 4)))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 8)))))
+    (if (i32.eq (global.get $eax) (global.get $tick_count))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 16)))))
+    (global.set $esp (local.get $saved_esp))
+    (global.set $eip (local.get $saved_eip))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $handler_set_eip (i32.const 0))
+    (local.get $bits))
+  ;; A Win32 call that is NOT the clock, to interleave between two reads. Any
+  ;; API would do; GetDoubleClickTime is picked because it has no side effects
+  ;; and no arguments. This is how the "no other call in between" reset is
+  ;; tested without inventing a fake dispatch.
+  (func (export "test_spin_other_call")
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (global.set $spin_dispatch_seq (i32.add (global.get $spin_dispatch_seq) (i32.const 1)))
+    (call $handle_GetDoubleClickTime
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp)))
+  ;; The PeekMessage twin. Same bits, with reason 15 and the 5-arg frame.
+  (func (export "test_peek_spin_once") (param $msg i32) (result i32)
+    (local $saved_esp i32) (local $saved_eip i32) (local $bits i32)
+    (local.set $saved_esp (global.get $esp))
+    (local.set $saved_eip (global.get $eip))
+    (global.set $spin_dispatch_seq (i32.add (global.get $spin_dispatch_seq) (i32.const 1)))
+    (call $handle_PeekMessageA
+      (local.get $msg) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (if (i32.eq (global.get $yield_reason) (i32.const 15))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 1)))))
+    (if (i32.eq (global.get $esp) (local.get $saved_esp))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 2)))))
+    (if (global.get $handler_set_eip)
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 4)))))
+    (if (i32.eq (global.get $esp) (i32.add (local.get $saved_esp) (i32.const 24)))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 8)))))
+    (if (i32.eqz (global.get $eax))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 16)))))
+    (global.set $esp (local.get $saved_esp))
+    (global.set $eip (local.get $saved_eip))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $handler_set_eip (i32.const 0))
+    (local.get $bits))
   (func $has_pending_message (export "has_pending_message") (result i32)
     (if (global.get $quit_flag) (then (return (i32.const 1))))
     (if (global.get $pending_child_create) (then (return (i32.const 1))))

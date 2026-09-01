@@ -322,6 +322,71 @@ const REAL_TICKS = hasFlag('real-ticks'); // --real-ticks: GetTickCount from the
 // nothing ever moves. Turn it down to drive a timer-paced game headlessly.
 const TICK_MS_PER_BATCH = Math.max(0, parseFloat(getArg('tick-ms-per-batch', '200')) || 0);
 const CLOCK_ORIGIN = Date.now();
+// --dx-lock-pause-ms=N: charge N milliseconds of GUEST time to every Lock of a
+// PRIMARY DirectDraw surface and to every Flip. Off (0) by default.
+//
+// Why it exists: on real hardware, locking or flipping the primary is where
+// presentation back-pressure lives -- the call blocks until the display is
+// ready. Our emulator returns instantly, so a game whose loop was throttled by
+// the display on a Pentium free-runs here, and its "fps" is a number no real
+// machine ever produced. This flag puts the back-pressure back and asks what
+// the game does about it. A CLOCK_PACED game reads the clock, sees the time it
+// lost, and keeps the same simulation speed with fewer frames -- which is
+// exactly the proof that capping frames is safe for it. A FRAME_LOCKED game
+// has nothing to read and simply gets slower.
+//
+// It is charged as GUEST time, not host wall time: the headless clock is
+// batch-driven (see TICK_MS_PER_BATCH), so a real sleep would be invisible to
+// the guest. Adding guest ms without adding guest work is precisely "the Lock
+// blocked for N ms". Offscreen/back buffers are deliberately NOT charged --
+// those are composition, not presentation, and slowing them would measure
+// something else. Zero cost when the flag is absent.
+const DX_LOCK_PAUSE = {
+  ms: Math.max(0, parseFloat(getArg('dx-lock-pause-ms', '0')) || 0),
+  clock: null,          // set once createBatchClock has run
+  guestMsAdded: 0,
+  presents: 0,        // dx_trace kind 5 -- the charged event
+  primaryLocks: 0,
+  offscreenLocks: 0,
+  flips: 0,
+};
+// --- vertical blank, headless -------------------------------------------
+// There is no display and no requestAnimationFrame out here, so the guest
+// clock IS the display (the browser instead wakes a vblank park on a real rAF
+// callback; see host.js _awaitVblank and the block comment on $vblank_counter
+// in src/01-header.wat — the two are meant to differ and should not be
+// "unified"). When a DirectDraw call parks on yield_reason 13 the model has
+// already named the guest millisecond it is due at, and the honest thing is to
+// charge exactly that much guest time and let it through. Rescheduling instead
+// would never resolve at a small --tick-ms-per-batch, and would make the wait
+// cost a variable number of batches at a large one.
+//
+// Same pausedMs seam as --dx-lock-pause-ms: guest time the harness has decided
+// elapsed outside the batch schedule. It shifts the whole clock, so it cannot
+// go backwards.
+const VBLANK = {
+  clock: null,        // set once createBatchClock has run
+  waits: 0,
+  guestMsAdded: 0,
+};
+// --flip-vsync: make IDirectDrawSurface::Flip block to the next vblank the way
+// real hardware does, instead of returning immediately. Off by default — see
+// $dx_flip_vsync in src/01-header.wat.
+const FLIP_VSYNC = hasFlag('flip-vsync');
+// --- spin parking --------------------------------------------------------
+// Eight of the games in docs/frame-pacing-census.md busy-wait on the
+// millisecond clock and four more on an empty PeekMessage. Both detectors are
+// ON; --no-spin-park is the A/B arm that turns them off in one run, which is
+// how a suspected false park is ruled in or out. --spin-park-k=N moves the
+// threshold (K consecutive indistinguishable reads) for the same purpose.
+//
+// IMPORTANT for measuring any of this: at the default 200ms of guest time per
+// batch a spin loop never spins -- the clock leaps past whatever the guest is
+// waiting for on its first read. Spin numbers need
+// `--tick-ms-per-batch=1 --batch-size=100000`.
+const NO_SPIN_PARK = hasFlag('no-spin-park');
+const SPIN_PARK_K = parseInt(getArg('spin-park-k', ''), 10);
+const SPIN_PARK = { clockWaits: 0, peekWaits: 0, guestMsAdded: 0 };
 // --trace-sched[=N]: one compact line whenever what the threads are doing
 // changes, plus a heartbeat every N batches (default 5000) so a stall shows up
 // as a repeated line rather than as silence.
@@ -2124,6 +2189,34 @@ async function main() {
     h.dx_trace = (kind, ...a) => {
       if (kind === 2 || kind === 5 || kind === 6) dxPresent.dirty = true;
       if (FRAME_STATS && (kind === 5 || kind === 6)) recordFrame(frameStats.present);
+      // --dx-lock-pause-ms: presentation back-pressure, charged at kind 5.
+      //
+      // Kind 5 is $dx_present, and it is the ONE event every presentation path
+      // funnels into: Unlock on a primary, Flip on a flip chain, a Blt or
+      // BltFast whose destination is the primary, and a palette SetEntries.
+      // It is also exactly what host.js counts as PRESENT/s. Charging the
+      // primary Lock alone (the first thing tried here) reached only the
+      // games that render straight into a locked primary and silently missed
+      // every Blt-presenting game -- DX-Ball took 0ms over 6000 batches and
+      // read as a null result rather than as an unmeasured one.
+      //
+      // Kind 1 (Lock) is still classified, for the report only: it says
+      // whether the app presents by locking the primary or by blitting to it,
+      // and offscreen/back-buffer locks are composition and stay full speed.
+      if (DX_LOCK_PAUSE.ms > 0) {
+        if (kind === 1) {
+          if ((a[1] | 0) & 1) DX_LOCK_PAUSE.primaryLocks++;
+          else DX_LOCK_PAUSE.offscreenLocks++;
+        } else if (kind === 6) {
+          DX_LOCK_PAUSE.flips++;
+        } else if (kind === 5) {
+          DX_LOCK_PAUSE.presents++;
+          if (DX_LOCK_PAUSE.clock) {
+            DX_LOCK_PAUSE.clock.state.pausedMs += DX_LOCK_PAUSE.ms;
+            DX_LOCK_PAUSE.guestMsAdded += DX_LOCK_PAUSE.ms;
+          }
+        }
+      }
       return rawDxTrace(kind, ...a);
     };
   }
@@ -2906,6 +2999,10 @@ async function main() {
   const tickCallStepMs = Math.max(1, parseInt(process.env.TICK_CALL_STEP_MS || '1', 10) || 1);
   const batchClock = createBatchClock(TICK_MS_PER_BATCH, tickCallStepMs);
   const tickState = batchClock.state;
+  // Published for the --dx-lock-pause-ms hook installed above, which runs long
+  // before this line but only ever fires during the batch loop, long after it.
+  DX_LOCK_PAUSE.clock = batchClock;
+  VBLANK.clock = batchClock;
   ctx.sharedAudio.audioClockMs = () => (tickState.batch * TICK_MS_PER_BATCH) | 0;
   // --real-ticks hands the guest the wall clock instead. Two emulator
   // processes in one room CANNOT share a batch-driven clock: a batch is not a
@@ -3623,6 +3720,12 @@ async function main() {
   if (NO_COPY_SUPEROPS) inheritWasm('set_loop_copy_emit', 0);
   if (NO_AOE_FILL) inheritWasm('set_loop_aoe_fill_emit', 0);
   if (NO_AOE_SPAN) inheritWasm('set_loop_aoe_span_emit', 0);
+  if (FLIP_VSYNC) inheritWasm('set_flip_vsync', 1);
+  // Guest threads run their own module instance over the shared memory, so the
+  // spin state is per-thread by construction — but the THRESHOLD is a setting
+  // and has to be propagated like every other one.
+  if (NO_SPIN_PARK) inheritWasm('set_spin_park_k', 0);
+  else if (Number.isFinite(SPIN_PARK_K)) inheritWasm('set_spin_park_k', SPIN_PARK_K);
   if (NO_SIB_FUSION) inheritWasm('set_sib_fusion', 0);
   if (NO_RECT_RUN) inheritWasm('set_rect_run', 0);
   if (NO_CASE_CHAIN) inheritWasm('set_case_chain', 0);
@@ -4432,6 +4535,13 @@ async function main() {
   }
   if (TRACE_LOOPMATCH && instance.exports.set_loop_trace) {
     instance.exports.set_loop_trace(1, TRACE_LOOPMATCH_EIP);
+  }
+  if (FLIP_VSYNC && instance.exports.set_flip_vsync) {
+    instance.exports.set_flip_vsync(1);
+  }
+  if (instance.exports.set_spin_park_k) {
+    if (NO_SPIN_PARK) instance.exports.set_spin_park_k(0);
+    else if (Number.isFinite(SPIN_PARK_K)) instance.exports.set_spin_park_k(SPIN_PARK_K);
   }
   if (LOOP_SUPEROPS && instance.exports.set_loop_emit) {
     instance.exports.set_loop_emit(1);
@@ -7898,6 +8008,71 @@ async function main() {
       instance.exports.clear_yield();
     }
 
+    // Handle the vertical-blank yield (yield_reason=13). A DirectDraw call
+    // parked with its stdcall frame intact and EIP on the thunk, so advancing
+    // the clock past the boundary and clearing the yield re-enters the same
+    // call, which then finds the vblank has happened and returns DD_OK.
+    if (instance.exports.get_yield_reason() === 13) {
+      const deadline = instance.exports.get_vblank_deadline_ms
+        ? instance.exports.get_vblank_deadline_ms() >>> 0 : 0;
+      // Charge against the batch BASE, not the last value handed out: the
+      // per-call step inside a batch is capped at the next base, so lifting
+      // only the last tick can leave the base short and re-park forever.
+      // +1 so the boundary is strictly passed rather than exactly met.
+      const owed = ((deadline + 1) - batchClock.batchTicks()) | 0;
+      if (owed > 0) {
+        tickState.pausedMs += owed;
+        VBLANK.guestMsAdded += owed;
+      }
+      VBLANK.waits++;
+      if (TRACE_YIELD) {
+        console.log(`[yield] T0 reason=13 (vblank_wait) due=${deadline} ` +
+          `now=${tickState.lastTick} charged=${Math.max(0, owed)}ms`);
+      }
+      instance.exports.clear_yield();
+    }
+
+    // Handle the spin parks (yield_reason 14 = clock, 15 = empty PeekMessage).
+    // Both parked with the stdcall frame intact and EIP on the thunk, so
+    // clearing the yield re-enters the same call.
+    //
+    // WHAT IS DELIBERATELY *NOT* DONE HERE: guest time is not charged by
+    // default. The headless clock already advances TICK_MS_PER_BATCH per batch
+    // and a park ends its batch, so the very next batch hands the guest a new
+    // millisecond -- the wait resolves on the schedule the run asked for, and
+    // the clock is left exactly as --tick-ms-per-batch defined it. Charging
+    // the way the vblank park does would be a real distortion here rather than
+    // a correction: a vblank deadline is ~17ms away and needs the lift, while
+    // a clock park's deadline is the NEXT MILLISECOND, which at
+    // --tick-ms-per-batch=1 is already where the next batch lands. Paying it
+    // anyway would run the guest clock at two to three times the requested
+    // rate and silently rewrite every GetTickCount-delta the app computes --
+    // exactly the kind of perturbation that would move GTA2's
+    // GetTickCount/Sleep/GetTickCount startup probe.
+    //
+    // The one case that does need a lift is a run with no batch step at all
+    // (--tick-ms-per-batch=0), where nothing else would ever move the clock.
+    {
+      const spinYield = instance.exports.get_yield_reason();
+      if (spinYield === 14 || spinYield === 15) {
+        const deadline = (spinYield === 14 && instance.exports.get_spin_deadline_ms)
+          ? instance.exports.get_spin_deadline_ms() >>> 0 : 0;
+        let owed = 0;
+        if (spinYield === 14 && TICK_MS_PER_BATCH <= 0) {
+          owed = ((deadline + 1) - batchClock.batchTicks()) | 0;
+          if (owed > 0) tickState.pausedMs += owed; else owed = 0;
+        }
+        if (spinYield === 14) SPIN_PARK.clockWaits++; else SPIN_PARK.peekWaits++;
+        SPIN_PARK.guestMsAdded += owed;
+        if (TRACE_YIELD) {
+          console.log(`[yield] T0 reason=${spinYield} `
+            + `(${spinYield === 14 ? 'clock_spin' : 'peek_spin'}) due=${deadline} `
+            + `now=${tickState.lastTick} charged=${owed}ms`);
+        }
+        instance.exports.clear_yield();
+      }
+    }
+
     // Handle the virtual LAN net_wait yield (yield_reason=8). The guest is
     // parked inside a blocking socket call with EIP still on the thunk, so
     // clearing the yield re-enters the same handler with the same
@@ -8544,6 +8719,53 @@ if (VERBOSE) {
     for (const [n, c] of top) {
       console.log(`  ${String(c).padStart(9)}  ${n}`);
     }
+  }
+
+  if (VBLANK.waits > 0) {
+    console.log(`\n[vblank] ${VBLANK.waits} vertical-blank waits`
+      + ` -> ${VBLANK.guestMsAdded}ms of guest time charged`
+      + ` (${(VBLANK.guestMsAdded / VBLANK.waits).toFixed(1)}ms each)`);
+  }
+  // Always printed when a detector fired, and the trip counters are printed
+  // even at zero when the detectors are on: "this app never debounced" is the
+  // measurement that matters for a game that must not be parked, and a missing
+  // line cannot be told apart from a run that forgot to look.
+  {
+    const ex = instance && instance.exports;
+    let clockTrips = ex && ex.get_clock_spin_parks ? ex.get_clock_spin_parks() >>> 0 : 0;
+    let peekTrips = ex && ex.get_peek_spin_parks ? ex.get_peek_spin_parks() >>> 0 : 0;
+    const perThread = [];
+    // Guest threads spin too, and on the games this exists for they are where
+    // the spinning IS: Abe's Oddysee makes 56.9 million clock reads on a
+    // spawned thread and roughly eight hundred on its main one. A main-thread
+    // total would have read as "the detector barely fires".
+    if (threadManager && threadManager.threads) {
+      for (const [, t] of threadManager.threads) {
+        const te = t.instance && t.instance.exports;
+        if (!te || !te.get_clock_spin_parks) continue;
+        const c = te.get_clock_spin_parks() >>> 0;
+        const p = te.get_peek_spin_parks() >>> 0;
+        if (c || p) perThread.push(`T${t.tid} clock=${c} peek=${p}`);
+        clockTrips += c;
+        peekTrips += p;
+      }
+    }
+    if (!NO_SPIN_PARK && (clockTrips || peekTrips || SPIN_PARK.clockWaits || SPIN_PARK.peekWaits)) {
+      console.log(`\n[spin-park] clock ${clockTrips} trips`
+        + ` (${SPIN_PARK.clockWaits} serviced on the main thread), empty-PeekMessage`
+        + ` ${peekTrips} trips (${SPIN_PARK.peekWaits} serviced on the main thread)`
+        + (SPIN_PARK.guestMsAdded ? `, ${SPIN_PARK.guestMsAdded}ms of guest time charged` : '')
+        + `; K=${ex && ex.get_spin_park_k ? ex.get_spin_park_k() : '?'}`
+        + (perThread.length ? ` — ${perThread.join(', ')}` : ''));
+    }
+  }
+
+  if (DX_LOCK_PAUSE.ms > 0) {
+    console.log(`\n[dx-lock-pause] ${DX_LOCK_PAUSE.ms}ms per present:`
+      + ` ${DX_LOCK_PAUSE.presents} presents charged`
+      + ` (${DX_LOCK_PAUSE.primaryLocks} primary locks, ${DX_LOCK_PAUSE.flips} flips,`
+      + ` ${DX_LOCK_PAUSE.offscreenLocks} offscreen locks left at full speed)`
+      + ` -> ${DX_LOCK_PAUSE.guestMsAdded}ms of guest time charged`);
   }
 
   // --gdi-stats: how much software rasterization the run actually did. Span

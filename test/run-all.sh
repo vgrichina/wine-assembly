@@ -552,6 +552,8 @@ UNIT=(
   test/test-browser-park-sleep.js
   test/test-next-timer-due.js
   test/test-app-icon-assets.js
+  test/test-vblank-vsync.js
+  test/test-clock-spin-park.js
 )
 
 E2E=(
@@ -599,6 +601,7 @@ E2E=(
   test/test-web-double-tap-single-launch.js
   test/test-web-touch-cursor.js
   test/test-web-agent-remote.js
+  test/test-web-agent-frozen.js
   test/test-web-record-audio.js
   test/test-web-audio-session.js
   test/test-web-ios-lab.js

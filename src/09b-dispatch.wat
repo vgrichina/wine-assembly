@@ -68,6 +68,16 @@
       (i32.add (global.get $thunk_guest_base)
         (i32.mul (local.get $thunk_idx) (i32.const 8))))
 
+    ;; One tick per Win32 call, and this is the single funnel every one of them
+    ;; goes through — the decoded CALL/JMP handlers dispatch inline but still
+    ;; land here. The spin detectors in src/09a-handlers.wat use it to ask "did
+    ;; anything else happen between these two reads", which is what separates a
+    ;; frame loop that renders between clock reads from a loop that does
+    ;; nothing but read the clock. A parked handler re-runs through here on
+    ;; wake, so a park costs exactly one tick, same as any other call.
+    (global.set $spin_dispatch_seq
+      (i32.add (global.get $spin_dispatch_seq) (i32.const 1)))
+
     ;; Worker threads instantiate a fresh module over the process's shared
     ;; memory. Restore per-instance COM vtable globals before any imported API
     ;; can create or return a DirectX/OLE wrapper.

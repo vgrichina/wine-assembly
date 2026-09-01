@@ -80,8 +80,12 @@ const digest = crypto.createHash('sha256')
 // 2026-08-31: 505 -> 508. MSVCRT startup helpers _lock, _unlock, and
 // __lconv_init are documented compatibility no-ops for single-threaded CRT
 // initialization paths.
-const EXPECTED_COUNT = 508;
-const EXPECTED_SHA256 = 'be47281e739001afe39867f097b692297a2bd02c6c7524f4ad2e7057479e0eeb';
+// 2026-09-01: 508 -> 507. handle_IDirectDraw_WaitForVerticalBlank was the
+// textbook silent success -- it set EAX=0 and returned, so a game that used
+// the display as its clock was told the retrace had already happened. It now
+// parks on a real vblank (yield_reason 13). Ratchet only; nothing was added.
+const EXPECTED_COUNT = 507;
+const EXPECTED_SHA256 = 'e983d2e1f0914166a0bdce2752ef8d73f19352c7ea12757f0be3d0717c5fd0b7';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
