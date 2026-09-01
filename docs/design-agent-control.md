@@ -316,7 +316,7 @@ brings the dashboard to the front before reading it.
   `keypress:65`); each reply prints on stdout as one `[ctl] {"ok":...}` line.
   For piping a generated stream or driving run.js from a parent process;
   composes with `--control` (both may be on). stdin EOF does *not* end the
-  run — `quit` (or the outer timeout) does. Not compatible with the
+  run — `quit` (or `--max-seconds`) does. Not compatible with the
   interactive debug prompt, which owns stdin. An interactive agent is better
   served by HTTP, where each reply pairs with its own request.
 

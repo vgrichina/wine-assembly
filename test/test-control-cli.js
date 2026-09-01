@@ -42,7 +42,14 @@ const check = (name, ok, detail) => {
   if (!ok) failed = true;
 };
 
-const child = spawn('node', [RUN, `--exe=${EXE}`, `--control=${PORT}`, '--quiet-api', '--quiet-blocks'],
+const child = spawn('node', [
+  RUN,
+  `--exe=${EXE}`,
+  `--control=${PORT}`,
+  '--max-seconds=45',
+  '--quiet-api',
+  '--quiet-blocks',
+],
   { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
 let childOut = '';
 child.stdout.on('data', d => { childOut += d; });
@@ -105,7 +112,7 @@ const waitFor = async (what, probe) => {
   console.log('FAIL  ' + error.message);
   failed = true;
 }).finally(() => {
-  try { child.kill('SIGKILL'); } catch (_) {}
+  try { if (child.exitCode === null) child.kill('SIGTERM'); } catch (_) {}
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
   console.log(failed ? 'TEST FAILED' : 'TEST PASSED');
   process.exit(failed ? 1 : 0);
