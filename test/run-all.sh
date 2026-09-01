@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Aggregating test runner. Classifies test/test-*.js into three tiers and runs
+# Aggregating test runner. Classifies test/test-*.js and test/*.test.js into three tiers and runs
 # them sequentially, printing a summary at the end.
 #
 # Usage:
@@ -10,7 +10,8 @@
 #   test/run-all.sh smoke      # only smoke matrix (all-exes, dialogs)
 #   test/run-all.sh quick      # unit only — the pre-commit tier
 #
-# Tiers are the explicit arrays below — a new test/test-*.js has to be added to
+# Tiers are the explicit arrays below — a new test file (test/test-NAME.js or
+# test/NAME.test.js) has to be added to
 # one of them by hand, and tools/check-test-manifest.sh (run before any tier)
 # fails if one is in none. Logs land in test/output/run-all/<tier>/<name>.log so
 # a failure can be inspected without re-running.
@@ -521,6 +522,25 @@ UNIT=(
   test/test-touch-controls.js
   test/test-display-mode-enumeration.js
   test/test-watx-compiler-layout.js
+  test/watx-compiler-alloc.test.js
+  test/watx-compiler-atomics.test.js
+  test/watx-compiler-block-result.test.js
+  test/watx-compiler-br-table.test.js
+  test/watx-compiler-bulk-memory.test.js
+  test/watx-compiler-emit-stack.test.js
+  test/watx-compiler-explicit-drop.test.js
+  test/watx-compiler-export-order.test.js
+  test/watx-compiler-i64-literal.test.js
+  test/watx-compiler-lanes.test.js
+  test/watx-compiler-literals.test.js
+  test/watx-compiler-production.test.js
+  test/watx-compiler-regions.test.js
+  test/watx-compiler-simd-memarg.test.js
+  test/watx-compiler-simd-ops.test.js
+  test/watx-compiler-simd.test.js
+  test/watx-compiler-string-pool.test.js
+  test/watx-compiler-type-index.test.js
+  test/watx-compiler-wine-parity.test.js
 )
 
 E2E=(

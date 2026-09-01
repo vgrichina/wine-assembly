@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Every test/test-*.js must be named in one of run-all.sh's tiers (UNIT, E2E,
+# Every test/test-*.js and test/*.test.js must be named in one of run-all.sh's tiers (UNIT, E2E,
 # SMOKE) or parked in QUARANTINE with a reason.
 #
 # Without this gate a test file that nobody adds to an array is not "pending" --
@@ -15,8 +15,14 @@ cd "$(dirname "$0")/.."
 
 RUNNER=test/run-all.sh
 
-listed=$(grep -oE '^[[:space:]]*test/test-[a-zA-Z0-9._-]+\.js' "$RUNNER" | tr -d ' ' | sort -u)
-actual=$(ls test/test-*.js 2>/dev/null | sort -u)
+# Two naming conventions are in use: the original test/test-NAME.js and the
+# test/NAME.test.js the WATX compiler suites adopted. Only the first was swept
+# until 2026-08-31, so all 19 test/watx-compiler-*.test.js files were run by
+# nothing at all -- the same invisibility this gate exists to prevent, reached
+# through a filename pattern instead of a missing array entry. Both patterns are
+# swept now, so either naming fails the build when it lands unwired.
+listed=$(grep -oE '^[[:space:]]*test/(test-[a-zA-Z0-9._-]+|[a-zA-Z0-9._-]+\.test)\.js' "$RUNNER" | tr -d ' ' | sort -u)
+actual=$(ls test/test-*.js test/*.test.js 2>/dev/null | sort -u)
 
 missing=$(comm -13 <(echo "$listed") <(echo "$actual"))
 stale=$(comm -23 <(echo "$listed") <(echo "$actual"))

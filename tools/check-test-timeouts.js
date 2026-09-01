@@ -68,7 +68,7 @@ function findTimeouts(source, capSeconds) {
 
 function listedTests(runnerSource) {
   return [...new Set([...runnerSource.matchAll(
-    /^\s*(test\/test-[A-Za-z0-9._-]+\.js)\s*$/gm)].map(match => match[1]))].sort();
+    /^\s*(test\/(?:test-[A-Za-z0-9._-]+|[A-Za-z0-9._-]+\.test)\.js)\s*$/gm)].map(match => match[1]))].sort();
 }
 
 function main() {
