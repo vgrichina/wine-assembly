@@ -748,6 +748,21 @@ In order:
    1024 and would move the map.
 2. Convert the memory map one region at a time to declarations; generate the JS
    constant mirror from the same source so it cannot drift.
+
+   **DONE, and then some (waves 1-3, 2026-08-31).** All 175 regions are
+   declared in `src/00-regions.wat`, the JS mirror is generated
+   (`lib/region-map.generated.js`), and step 1's "without relocating anything"
+   no longer applies: **167 of them are allocated by the compiler**. Only seven
+   are pinned, because only seven addresses are an ABI — `$GUEST_BASE` and the
+   three guest-VA-derived regions, plus the three backing windows. Everything
+   else moves when anything earlier changes size, which is why nothing may hold
+   a copy: read a base from `lib/region-map.generated.js` (JS) or
+   `tools/wat-globals.js` (tools), never retype one.
+
+   The evidence that this is safe is behavioral, not byte identity: the map is
+   permuted under three shake modes and a real app draws the identical picture
+   (`tools/region-shake-smoke.js`). See docs/watx-region-safety-design.md §8.1
+   and §13.
 3. Introduce layouts for one fixed-memory structure at a time. Replace raw
    field offsets with `offset-of`, field loads/stores and typed array
    addressing while keeping the existing explicit base address. Good early

@@ -473,6 +473,15 @@ per-commit gate. What ships afterwards is the natural allocation.
 
 ## 8.1 Gap reclamation — what has to happen before §8 can run at all
 
+> **EXECUTED 2026-08-31 (wave 3).** The plan below is what was done, and its
+> numbers held: 167 regions allocated above floor `0x00000100`, seven pinned,
+> no gap forms, `0x0047A000` free below `0x08000000` unshaken and `0x00209000`
+> in the tightest mode — against the ≈3.9 MB the `pad` mode needs. Two
+> corrections are recorded in §13: `$GUEST_BASE` stays *fixed* rather than
+> derived, and `$GUEST_HEAP_BASE` had to declare the 4MB extent it was already
+> using. §8's shake now runs a real app on a permuted map
+> (`tools/region-shake-smoke.js`).
+
 Stage A finished with a blocker: **every shake mode overflows.** The regions and
 their preserved gaps fill the 512 MB span end to end, so the allocator has
 nowhere to put the displacement a shake exists to create. This section is the
@@ -821,7 +830,72 @@ declared, block runs past 0x3240).
     empirical finding that reclaiming them is both necessary and *sufficient*
     for every shake mode.
 
-**Next, in order:** finish wave 2 (peer-dirty files, test/ conversions via the
-mirror), then §8.1's reclamation — floor to `0x100` (which also un-reds
-`region-alloc --diff`), delete all 25 gap forms, pin the seven ABI-anchored
-regions — then §8's shake against the full pool, then natural allocation.
+**Landed (wave 3, 2026-08-31) — §8.1 EXECUTED:**
+
+12. The mirrors first, because they were the real blocker and this plan did not
+    name them. Every region has a `(global $R i32 …)` / `$R_SIZE` pair and 1066
+    `global.get` sites read them; a literal mirror pins its region, so the map
+    could not move until all **348** were `(region.addr $R 0)` /
+    `(region.size $R)`. A **region constant may now initialize a global**
+    (`compiler-codegen.js`, resolved through the same `regionConstValue` as the
+    operand and data positions; regions suite 119 → 140). Plus **67 interior
+    aliases** — globals holding an address inside a region under another name,
+    `$STATIC_SYS_DIR` = `$RESERVED_PAGE_STRINGS + 0x74` and the like — and the
+    last two literal-anchored data segments. All byte-identical, which is the
+    oracle a conversion wave has while the regions are still pinned.
+13. **The map is allocated.** 167 of 175 regions are `region.declare` above
+    `(region.floor 0x00000100)`; there are no `region.gap` forms and never were
+    any in the source (stage A's 25 were *synthesized* by `region-alloc --emit`).
+    Seven stay pinned: `$GUEST_BASE` fixed (it is what `(g2w …)` resolves
+    through, so it cannot be expressed in terms of itself),
+    `$GUEST_HEAP_BASE` / `$GUEST_STACK` / `$THUNK_BASE` derived at
+    `(g2w 0x04100000 / 0x07400000 / 0x07500000)`, and the three backing windows
+    fixed. 35 holes remain, all alignment padding.
+14. **§8's shake is executed, not merely available.** `tools/region-shake-smoke.js`
+    builds the shaken wasm AND the matching JS mirror (`gen-region-map --shake
+    --out`, `$WINE_REGION_MAP`) — pairing them is not optional, because a shaken
+    artifact against the canonical mirror reads the wrong bytes and draws a
+    plausible wrong picture instead of failing. Measured: sol under `gap`,
+    `rotate` and seed `0x9E3779B9`, marbles under `pad`, **0 of 307200 pixels
+    differ** in every case. The slack each mode leaves below `0x08000000`
+    reproduces §8.1's predicted table to the byte (gap `0x0020C000`, pad
+    `0x00209000`, rotate `0x00479D80`, reverse `0x0059AC80`, seed `0x00608900`).
+
+**Wave-3 corrections to this design.**
+
+*The seven pins are four fixed + three derived, not "four derived".* §8.1 asks
+for `$GUEST_BASE` as `region.declare-derived`; the compiler refuses it, and is
+right to — a derived base is `g2w(VA)`, and `g2w` is defined by `$GUEST_BASE`.
+
+*A region's neighbour is not a bound.* Reclaiming the holes put
+`$PAGE_INDEX_ARENA` immediately above the guest heap, and `$heap_low_reserve`
+stopped there — it had been growing 4MB into an anonymous hole that the
+hand-placed map happened to leave. `$GUEST_HEAP_BASE` declares `0x3EE000` now
+and the WAT bound is `(region.end $GUEST_HEAP_BASE)`. This is the failure the
+reclamation exists to surface, and the only one the whole corpus produced.
+
+*The census measures something different now.* It counted a literal equal to a
+region base as a copy of the map. An **allocated** base is an output — written
+down nowhere, so nothing can be a second copy of it — and packing put regions
+at `0x1000`, `0x2000`, `0x3000`, `0x4000` and `0x10000`, which took the count
+from 351 to 884 on coincidence alone without one line of source changing. It
+now counts base/end literals for PINNED regions only, plus the interior rule:
+**70 across 35 files**, which is the guest ABI and the high tables — the part
+that was ever evidence.
+
+*What a moved region actually breaks is JS, and it breaks quietly.* Three
+copies survived the mirror sweep because they were in `lib/`, not in WAT:
+`$DI_MOUSE_INPUT_STATE` in `lib/renderer-input.js` and `$VIRTUAL_MAP_STATE` /
+`$VIRTUAL_MAP_TABLE` in both `lib/mem-utils.js` and `renderer-input.js`. None
+of them threw. The relative-mouse tests read zeros out of a cell nobody writes
+any more, and the stale virtual-map walk translated two font files' reads to
+the wrong place, so `test-wat-font-metrics-reference` reported Times New Roman
+and Courier New drifting off their measured budgets — a rasterizer-shaped
+symptom six regions from its cause. The census gate is the standing defence;
+the practical rule is that a JS file may not contain a hex literal that equals
+a region base, and the three that did now read the generated mirror.
+
+**Next, in order:** wire the shake into a scheduled run over more than two apps
+(the harness takes `--app`/`--modes`, nothing consumes it automatically yet);
+then decide whether `$VIRTUAL_BACKING_BASE`'s 320 MB is the right shape now
+that it is the only slack left in the map.
