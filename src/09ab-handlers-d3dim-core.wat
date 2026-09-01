@@ -3596,8 +3596,8 @@
       (then
         (local.set $entry (local.get $zbuf_guest))
         (local.set $dib (load.field.memarg DxObject misc1 (local.get $entry)))
-        (local.set $pitch (i32.load16_u offset=18 (local.get $entry)))
-        (local.set $bpp (i32.load16_u offset=16 (local.get $entry)))
+        (local.set $pitch (load.field.memarg DxObject pitch (local.get $entry)))
+        (local.set $bpp (load.field.memarg DxObject bpp (local.get $entry)))
         (local.set $z (local.get $zval))
         (if (f32.ne (local.get $z) (local.get $z)) (then (local.set $z (f32.const 1.0))))
         (if (f32.lt (local.get $z) (f32.const 0.0)) (then (local.set $z (f32.const 0.0))))

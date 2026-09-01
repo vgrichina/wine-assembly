@@ -25,12 +25,31 @@
   ;; $DX_ENTRY_SIZE and with the `(i32.mul slot (i32.const 32))` in $dx_from_this
   ;; and $dx_slot_of, which are byte-identity-pinned and deliberately untouched.
   ;;
-  ;; width/height/bpp/pitch are u16 PAIRS packed into one dword each. §3.1: a
-  ;; (layout) field has no u16 and no signed byte, so they are declared as u8[2]
-  ;; — which gets the OFFSETS and the size right, and is deliberately the wrong
-  ;; width to load through. Every i32.load16_u/i32.store16 against them stays
-  ;; hand-spelled, and the codemod declines those sites rather than widening
-  ;; them to i32 (that would read two fields as one, silently).
+  ;; width/height/bpp/pitch are u16 PAIRS packed into one dword each. They were
+  ;; declared `u8 2` through wave 4 — the right OFFSETS and size, deliberately
+  ;; the wrong width to load through — because §3.1 had no u16 field type, so
+  ;; every access stayed hand-spelled and the codemod declined those sites
+  ;; rather than widening them to i32 (which would read two fields as one).
+  ;; a5fc1b72 closed the field-type set and admitted u16/s16/s8, so they are
+  ;; now declared at their true width and the accesses go through the accessor.
+  ;;
+  ;; u16 AND NOT s16 IS A MEASURED CHOICE, NOT A DEFAULT. Signedness lives in
+  ;; the FIELD TYPE, not the access: u16 emits i32.load16_u and s16 emits
+  ;; i32.load16_s, and there is no per-site override. Every 16-bit load against
+  ;; these four across all three DX files is `_u` (0 occurrences of
+  ;; i32.load16_s in 09a8/09ab/09ad), so u16 is the type that reproduces the
+  ;; existing bytes exactly. A site that ever needs sign extension must not be
+  ;; spelled through a u16 field — split the field or keep that site by hand.
+  ;;
+  ;; +12 AND +16 ARE ALSO UNIONS, exactly like misc0/misc1/misc2 below, and the
+  ;; four names are the SURFACE arm only. Other object types use the same two
+  ;; dwords whole: a DirectInput device reads a `capacity` at +12, a D3D device
+  ;; a `version` at +16. So the codemod converts the 64 sites that spell a
+  ;; 16-bit op and DECLINES the 59 that spell i32.load/i32.store there — and
+  ;; that decline is the gate working, not the gate giving up. Widening those
+  ;; to `load.field width` would read two fields as one and label a capacity as
+  ;; a width; the width mismatch is the only thing standing between the two
+  ;; readings, because both are legal accesses to the same four bytes.
   ;;
   ;; WHY +8/+20/+24 ARE CALLED misc0/misc1/misc2 AND NOT hwnd/dib_ptr/color_key.
   ;; They are per-TYPE unions — one record serves surfaces, sound buffers,
@@ -50,10 +69,10 @@
     (field type     i32)     ;; +0   0=free,1=DDraw,2=DDSurface,3=DDPalette,...
     (field refcount i32)     ;; +4
     (field misc0    i32)     ;; +8   DDraw: hwnd | DSBuffer: wave_handle | DIDev: device_type
-    (field width    u8 2)    ;; +12  u16 — u8[2] for spacing only, see note above
-    (field height   u8 2)    ;; +14  u16
-    (field bpp      u8 2)    ;; +16  u16
-    (field pitch    u8 2)    ;; +18  u16
+    (field width    u16)     ;; +12
+    (field height   u16)     ;; +14
+    (field bpp      u16)     ;; +16
+    (field pitch    u16)     ;; +18
     (field misc1    i32)     ;; +20  union — see table above
     (field misc2    i32)     ;; +24  union — see table above
     (field flags    i32))    ;; +28  ends at +32 == $DX_ENTRY_SIZE
@@ -869,15 +888,15 @@
     (if (i32.ne (i32.and (local.get $flags) (i32.const 0xFEFFFFFF)) (i32.const 0))
       (then (return)))
     (if (i32.ne
-          (i32.load16_u offset=16 (local.get $dst_entry))
-          (i32.load16_u offset=16 (local.get $src_entry)))
+          (load.field.memarg DxObject bpp (local.get $dst_entry))
+          (load.field.memarg DxObject bpp (local.get $src_entry)))
       (then (return)))
     (local.set $dst_area
-      (i32.mul (i32.load16_u offset=12 (local.get $dst_entry))
-               (i32.load16_u offset=14 (local.get $dst_entry))))
+      (i32.mul (load.field.memarg DxObject width (local.get $dst_entry))
+               (load.field.memarg DxObject height (local.get $dst_entry))))
     (local.set $src_area
-      (i32.mul (i32.load16_u offset=12 (local.get $src_entry))
-               (i32.load16_u offset=14 (local.get $src_entry))))
+      (i32.mul (load.field.memarg DxObject width (local.get $src_entry))
+               (load.field.memarg DxObject height (local.get $src_entry))))
     (if (i32.ge_u (local.get $dst_area) (local.get $src_area)) (then (return)))
     (local.set $state (call $dx_surf_state_ptr (local.get $dst_entry)))
     (i32.store offset=4 (local.get $state)
@@ -1886,10 +1905,10 @@
     (i32.store (call $dx_surf_owner_ptr (local.get $entry))
       (i32.add (call $dx_slot_of (call $dx_from_this (local.get $arg0))) (i32.const 1)))
     ;; Fill entry
-    (i32.store16 (i32.add (local.get $entry) (i32.const 12)) (local.get $w))
-    (i32.store16 (i32.add (local.get $entry) (i32.const 14)) (local.get $h))
-    (i32.store16 (i32.add (local.get $entry) (i32.const 16)) (local.get $bpp))
-    (i32.store16 (i32.add (local.get $entry) (i32.const 18)) (local.get $pitch))
+    (store.field DxObject width (local.get $entry) (local.get $w))
+    (store.field DxObject height (local.get $entry) (local.get $h))
+    (store.field DxObject bpp (local.get $entry) (local.get $bpp))
+    (store.field DxObject pitch (local.get $entry) (local.get $pitch))
     (store.field DxObject misc1 (local.get $entry) (call $g2w (local.get $dib_guest)))
     (store.field DxObject misc2 (local.get $entry) (local.get $vidmem_bytes))
     (store.field DxObject flags (local.get $entry) (local.get $flags))
@@ -1937,10 +1956,10 @@
             (i32.or
               (i32.and (local.get $caps) (i32.const -513)) ;; ~DDSCAPS_PRIMARYSURFACE
               (i32.const 0x4)))                           ;; DDSCAPS_BACKBUFFER
-          (i32.store16 (i32.add (local.get $back_entry) (i32.const 12)) (local.get $w))
-          (i32.store16 (i32.add (local.get $back_entry) (i32.const 14)) (local.get $h))
-          (i32.store16 (i32.add (local.get $back_entry) (i32.const 16)) (local.get $bpp))
-          (i32.store16 (i32.add (local.get $back_entry) (i32.const 18)) (local.get $pitch))
+          (store.field DxObject width (local.get $back_entry) (local.get $w))
+          (store.field DxObject height (local.get $back_entry) (local.get $h))
+          (store.field DxObject bpp (local.get $back_entry) (local.get $bpp))
+          (store.field DxObject pitch (local.get $back_entry) (local.get $pitch))
           ;; Allocate separate DIB for back buffer, with the same slack rows as
           ;; the primary above -- an app that draws a couple of rows long does
           ;; it to whichever surface it is rendering into.
@@ -3415,10 +3434,10 @@
       (local.get $arg4))
     (call $d3dim_worker_fence)
     (local.set $dst_dib (load.field DxObject misc1 (local.get $dst_entry)))
-    (local.set $dst_w (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 12))))
-    (local.set $dst_h (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 14))))
-    (local.set $dst_pitch (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 18))))
-    (local.set $bpp (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 16))))
+    (local.set $dst_w (load.field DxObject width (local.get $dst_entry)))
+    (local.set $dst_h (load.field DxObject height (local.get $dst_entry)))
+    (local.set $dst_pitch (load.field DxObject pitch (local.get $dst_entry)))
+    (local.set $bpp (load.field DxObject bpp (local.get $dst_entry)))
     (local.set $bps (i32.div_u (local.get $bpp) (i32.const 8)))
     (local.set $drblt_flags (local.get $arg4))
     ;; Parse dest rect
@@ -3568,7 +3587,7 @@
         (return)))
     (local.set $src_entry (call $dx_from_this (local.get $arg2)))
     (local.set $src_dib (load.field DxObject misc1 (local.get $src_entry)))
-    (local.set $src_pitch (i32.load16_u (i32.add (local.get $src_entry) (i32.const 18))))
+    (local.set $src_pitch (load.field DxObject pitch (local.get $src_entry)))
     (local.set $ckey (load.field DxObject misc2 (local.get $src_entry)))
     (local.set $src_keyed
       (i32.and
@@ -3585,8 +3604,8 @@
         (local.set $sh (i32.sub (call $gl32 (i32.add (local.get $arg3) (i32.const 12))) (local.get $sy))))
       (else
         (local.set $sx (i32.const 0)) (local.set $sy (i32.const 0))
-        (local.set $sw (i32.load16_u (i32.add (local.get $src_entry) (i32.const 12))))
-        (local.set $sh (i32.load16_u (i32.add (local.get $src_entry) (i32.const 14))))))
+        (local.set $sw (load.field DxObject width (local.get $src_entry)))
+        (local.set $sh (load.field DxObject height (local.get $src_entry)))))
     ;; A small surface copied from this destination is commonly a saved
     ;; software-cursor background. Once Lock/Unlock has redrawn the large
     ;; surface, replaying that exact inverse copy would stamp obsolete pixels
@@ -3603,7 +3622,7 @@
           (i32.and
             (i32.ne (i32.and (local.get $drblt_flags) (i32.const 0x8000)) (i32.const 0))
             (i32.and (i32.eq (local.get $bpp) (i32.const 16))
-                     (i32.eq (i32.load16_u offset=16 (local.get $src_entry)) (i32.const 16))))
+                     (i32.eq (load.field.memarg DxObject bpp (local.get $src_entry)) (i32.const 16))))
           (i32.and
             (i32.and (i32.eq (local.get $dw) (i32.const 32))
                      (i32.eq (local.get $dh) (i32.const 32)))
@@ -3778,10 +3797,10 @@
     (call $d3dim_worker_fence)
     (local.set $dst_entry (call $dx_from_this (local.get $arg0)))
     (local.set $dst_dib (load.field DxObject misc1 (local.get $dst_entry)))
-    (local.set $dst_w (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 12))))
-    (local.set $dst_h (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 14))))
-    (local.set $dst_pitch (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 18))))
-    (local.set $bps (i32.div_u (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 16))) (i32.const 8)))
+    (local.set $dst_w (load.field DxObject width (local.get $dst_entry)))
+    (local.set $dst_h (load.field DxObject height (local.get $dst_entry)))
+    (local.set $dst_pitch (load.field DxObject pitch (local.get $dst_entry)))
+    (local.set $bps (i32.div_u (load.field DxObject bpp (local.get $dst_entry)) (i32.const 8)))
     (if (i32.eqz (local.get $arg3))
       (then
         (global.set $eax (i32.const 0))
@@ -3789,9 +3808,9 @@
         (return)))
     (local.set $src_entry (call $dx_from_this (local.get $arg3)))
     (local.set $src_dib (load.field DxObject misc1 (local.get $src_entry)))
-    (local.set $src_full_w (i32.load16_u (i32.add (local.get $src_entry) (i32.const 12))))
-    (local.set $src_full_h (i32.load16_u (i32.add (local.get $src_entry) (i32.const 14))))
-    (local.set $src_pitch (i32.load16_u (i32.add (local.get $src_entry) (i32.const 18))))
+    (local.set $src_full_w (load.field DxObject width (local.get $src_entry)))
+    (local.set $src_full_h (load.field DxObject height (local.get $src_entry)))
+    (local.set $src_pitch (load.field DxObject pitch (local.get $src_entry)))
     (local.set $trans (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; dwTrans (6th arg)
     (call $host_dx_trace (i32.const 14) (call $dx_slot_of (local.get $dst_entry))
       (call $dx_slot_of (local.get $src_entry))
@@ -3809,8 +3828,8 @@
         (local.set $sh (i32.sub (call $gl32 (i32.add (local.get $arg4) (i32.const 12))) (local.get $sy))))
       (else
         (local.set $sx (i32.const 0)) (local.set $sy (i32.const 0))
-        (local.set $sw (i32.load16_u (i32.add (local.get $src_entry) (i32.const 12))))
-        (local.set $sh (i32.load16_u (i32.add (local.get $src_entry) (i32.const 14))))))
+        (local.set $sw (load.field DxObject width (local.get $src_entry)))
+        (local.set $sh (load.field DxObject height (local.get $src_entry)))))
     ;; BltFast does not take a clipper. Treat fully out-of-bounds requests as
     ;; no-ops and clip partial requests so bad animation coordinates cannot
     ;; escape the surface DIB.
@@ -4158,7 +4177,7 @@
 
   (func $dx_fill_surface_pixel_format (param $pf_wa i32) (param $entry i32)
     (local $bpp i32) (local $fmt i32)
-    (local.set $bpp (i32.load16_u offset=16 (local.get $entry)))
+    (local.set $bpp (load.field.memarg DxObject bpp (local.get $entry)))
     (local.set $fmt (call $dx_surf_fmt_get (local.get $entry)))
     (call $dx_fill_pixel_format (local.get $pf_wa) (local.get $bpp))
     (if (i32.eq (local.get $fmt) (i32.const 2)) (then
@@ -4189,9 +4208,9 @@
     (call $zero_memory (local.get $wa) (i32.const 108))
     (i32.store (local.get $wa) (i32.const 108))
     (i32.store offset=4 (local.get $wa) (i32.const 0x100F))
-    (i32.store offset=8 (local.get $wa) (i32.load16_u offset=14 (local.get $entry)))
-    (i32.store offset=12 (local.get $wa) (i32.load16_u offset=12 (local.get $entry)))
-    (i32.store offset=16 (local.get $wa) (i32.load16_u offset=18 (local.get $entry)))
+    (i32.store offset=8 (local.get $wa) (load.field.memarg DxObject height (local.get $entry)))
+    (i32.store offset=12 (local.get $wa) (load.field.memarg DxObject width (local.get $entry)))
+    (i32.store offset=16 (local.get $wa) (load.field.memarg DxObject pitch (local.get $entry)))
     (call $dx_fill_surface_pixel_format (i32.add (local.get $wa) (i32.const 72))
       (local.get $entry))
     (if (i32.and (load.field.memarg DxObject flags (local.get $entry)) (i32.const 1))
@@ -4251,9 +4270,9 @@
     (call $zero_memory (local.get $wa) (i32.const 108))
     (i32.store (local.get $wa) (i32.const 108))
     (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x100F))
-    (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.load16_u (i32.add (local.get $entry) (i32.const 14))))
-    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.load16_u (i32.add (local.get $entry) (i32.const 12))))
-    (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
+    (i32.store (i32.add (local.get $wa) (i32.const 8)) (load.field DxObject height (local.get $entry)))
+    (i32.store (i32.add (local.get $wa) (i32.const 12)) (load.field DxObject width (local.get $entry)))
+    (i32.store (i32.add (local.get $wa) (i32.const 16)) (load.field DxObject pitch (local.get $entry)))
     ;; lpSurface points at the upper-left pixel of lpDestRect, while lPitch
     ;; remains the full surface stride. Callers can therefore treat (0,0) as
     ;; the requested rectangle's origin without losing the parent pitch.
@@ -4262,12 +4281,12 @@
       (then
         (local.set $left (call $gl32 (local.get $arg1)))
         (local.set $top (call $gl32 (i32.add (local.get $arg1) (i32.const 4))))
-        (local.set $bpp (i32.load16_u (i32.add (local.get $entry) (i32.const 16))))
+        (local.set $bpp (load.field DxObject bpp (local.get $entry)))
         (local.set $dib_wa
           (i32.add (local.get $dib_wa)
             (i32.add
               (i32.mul (local.get $top)
-                (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
+                (load.field DxObject pitch (local.get $entry)))
               (i32.div_u (i32.mul (local.get $left) (local.get $bpp))
                          (i32.const 8)))))))
     (local.set $dib_guest (call $w2g (local.get $dib_wa)))
@@ -4312,7 +4331,7 @@
     ;; on 8bpp surfaces, but per-pixel compares load only `bpp` bits, so an
     ;; un-masked key would never match → no transparency.
     (local.set $ck (call $gl32 (local.get $arg2)))
-    (local.set $bpp (i32.load16_u (i32.add (local.get $entry) (i32.const 16))))
+    (local.set $bpp (load.field DxObject bpp (local.get $entry)))
     (if (i32.eq (local.get $bpp) (i32.const 8))
       (then (local.set $ck (i32.and (local.get $ck) (i32.const 0xFF))))
       (else (if (i32.eq (local.get $bpp) (i32.const 16))
@@ -4403,8 +4422,7 @@
         (local.set $flags (i32.load offset=4 (local.get $desc)))
         ;; DDSD_PITCH
         (if (i32.and (local.get $flags) (i32.const 0x00000008))
-          (then (i32.store16 offset=18 (local.get $entry)
-            (i32.load offset=16 (local.get $desc)))))
+          (then (store.field.memarg DxObject pitch (local.get $entry) (i32.load offset=16 (local.get $desc)))))
         ;; DDSD_LPSURFACE. A null pointer remains null rather than becoming
         ;; g2w(0), which is the mapped base of the guest image.
         (if (i32.and (local.get $flags) (i32.const 0x00000800))
@@ -4950,10 +4968,8 @@
         (if (local.get $fmt_wa) (then
           (local.set $fmt_wa (call $g2w (local.get $fmt_wa)))
           ;; WAVEFORMATEX: +2 nChannels, +4 nSamplesPerSec, +14 wBitsPerSample
-          (i32.store16 (i32.add (local.get $entry) (i32.const 16))
-            (i32.load16_u (i32.add (local.get $fmt_wa) (i32.const 2)))) ;; channels in bpp field
-          (i32.store16 (i32.add (local.get $entry) (i32.const 18))
-            (i32.load16_u (i32.add (local.get $fmt_wa) (i32.const 14)))) ;; bits in pitch field
+          (store.field DxObject bpp (local.get $entry) (i32.load16_u (i32.add (local.get $fmt_wa) (i32.const 2)))) ;; channels in bpp field
+          (store.field DxObject pitch (local.get $entry) (i32.load16_u (i32.add (local.get $fmt_wa) (i32.const 14)))) ;; bits in pitch field
           (store.field DxObject misc2 (local.get $entry) (i32.load (i32.add (local.get $fmt_wa) (i32.const 4))))  ;; sampleRate in colorkey field
         ))))
     ;; *lplpDirectSoundBuffer = obj
@@ -4997,10 +5013,8 @@
     ;; Copy format info from source: bufsize(+12), channels(+16), bits(+18), sampleRate(+24)
     (local.set $buf_size (i32.load (i32.add (local.get $src_entry) (i32.const 12))))
     (i32.store (i32.add (local.get $dst_entry) (i32.const 12)) (local.get $buf_size))
-    (i32.store16 (i32.add (local.get $dst_entry) (i32.const 16))
-      (i32.load16_u (i32.add (local.get $src_entry) (i32.const 16))))
-    (i32.store16 (i32.add (local.get $dst_entry) (i32.const 18))
-      (i32.load16_u (i32.add (local.get $src_entry) (i32.const 18))))
+    (store.field DxObject bpp (local.get $dst_entry) (load.field DxObject bpp (local.get $src_entry)))
+    (store.field DxObject pitch (local.get $dst_entry) (load.field DxObject pitch (local.get $src_entry)))
     (store.field DxObject misc2 (local.get $dst_entry) (load.field DxObject misc2 (local.get $src_entry)))
     (store.field DxObject flags (local.get $dst_entry) (load.field DxObject flags (local.get $src_entry)))
     ;; Allocate new buffer and copy data
@@ -5051,8 +5065,8 @@
     (local $handle i32) (local $channels i32) (local $bits i32) (local $rate i32)
     (local.set $handle (load.field DxObject misc0 (local.get $entry)))
     (if (local.get $handle) (then (return (local.get $handle))))
-    (local.set $channels (i32.load16_u (i32.add (local.get $entry) (i32.const 16))))
-    (local.set $bits (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
+    (local.set $channels (load.field DxObject bpp (local.get $entry)))
+    (local.set $bits (load.field DxObject pitch (local.get $entry)))
     (local.set $rate (load.field DxObject misc2 (local.get $entry)))
     (if (i32.eqz (local.get $channels)) (then (local.set $channels (i32.const 1))))
     (if (i32.eqz (local.get $bits)) (then (local.set $bits (i32.const 16))))
@@ -5169,8 +5183,8 @@
         ;; 15ms of this buffer's own format, truncated to a whole sample frame
         ;; so the lead never lands mid-sample.
         (local.set $align (i32.div_u
-          (i32.mul (i32.load16_u (i32.add (local.get $entry) (i32.const 16)))
-                   (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
+          (i32.mul (load.field DxObject bpp (local.get $entry))
+                   (load.field DxObject pitch (local.get $entry)))
           (i32.const 8)))
         (local.set $lead (i32.const 0))
         (if (i32.and (i32.gt_u (local.get $size) (i32.const 0))
@@ -5220,9 +5234,9 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
     (local.set $channels
-      (i32.load16_u (i32.add (local.get $entry) (i32.const 16))))
+      (load.field DxObject bpp (local.get $entry)))
     (local.set $bits
-      (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
+      (load.field DxObject pitch (local.get $entry)))
     (local.set $rate (load.field DxObject misc2 (local.get $entry)))
     (local.set $align
       (i32.div_u (i32.mul (local.get $channels) (local.get $bits)) (i32.const 8)))
@@ -5341,8 +5355,8 @@
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $dib_wa (load.field DxObject misc1 (local.get $entry)))
     (local.set $buf_size (i32.load (i32.add (local.get $entry) (i32.const 12))))
-    (local.set $channels (i32.load16_u (i32.add (local.get $entry) (i32.const 16))))
-    (local.set $bits (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
+    (local.set $channels (load.field DxObject bpp (local.get $entry)))
+    (local.set $bits (load.field DxObject pitch (local.get $entry)))
     (local.set $rate (load.field DxObject misc2 (local.get $entry)))
     (if (i32.eqz (local.get $channels)) (then (local.set $channels (i32.const 1))))
     (if (i32.eqz (local.get $bits)) (then (local.set $bits (i32.const 16))))
@@ -5381,10 +5395,8 @@
         (return)))
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $wa (call $g2w (local.get $arg1)))
-    (i32.store16 (i32.add (local.get $entry) (i32.const 16))
-      (i32.load16_u (i32.add (local.get $wa) (i32.const 2)))) ;; nChannels
-    (i32.store16 (i32.add (local.get $entry) (i32.const 18))
-      (i32.load16_u (i32.add (local.get $wa) (i32.const 14)))) ;; wBitsPerSample
+    (store.field DxObject bpp (local.get $entry) (i32.load16_u (i32.add (local.get $wa) (i32.const 2)))) ;; nChannels
+    (store.field DxObject pitch (local.get $entry) (i32.load16_u (i32.add (local.get $wa) (i32.const 14)))) ;; wBitsPerSample
     (store.field DxObject misc2 (local.get $entry) (i32.load (i32.add (local.get $wa) (i32.const 4)))) ;; nSamplesPerSec
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
