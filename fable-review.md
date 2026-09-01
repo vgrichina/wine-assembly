@@ -511,6 +511,65 @@ is empty); and **incident #7** — Codex's FOTAQ runtime support rode into
 days. In-tree: build exit 0 (991,191 B), differential 46 modules /
 1 divergence, both run by me.
 
+**By 22:50 (+22 commits, HEAD `e6a0e5d0`)** the best debugging of the
+window closed a red *my last tick reported as unowned*: the
+14-suite mspaint "drag paints nothing" cluster was a real regression,
+bisected to an **unexplained rider** in `600be0ed` (the TerminateThread
+commit) that switched the message-wait resume to `_readWaitReturnAddress()`
+— a recovery heuristic whose bounds cover the EXE image only, so a pump
+living in `mfc42.dll` at 0x1155000 read as a garbage stack and got resumed
+at the wrong instruction (`d99b7969`; the write-up is exemplary: the API
+trace was *identical call-for-call* between good and bad builds because
+only the continuation that commits the stroke never ran, and the bisect
+required pinning `$WINE_ASSEMBLY_WASM` because commits in the range emit
+`region.addr` that run.js's then-legacy compiler silently compiled to
+nothing). 14 fails → the 9 that were always red at the green parent. The
+layout migration effectively **finished**: completion sweeps took WndRecord
+to all 58, DxObject +28 memarg and then +64 sites as real `u16` fields
+once `a5fc1b72` made field types a closed set — that fix found the parser
+"checking" via `addWarning`, which production mode never even prints, and
+admitting `v128` as a 4-byte access over 16 declared bytes — LoopOp 167,
+GdiDcState 38/38, GdiDcPath 72/72, PaintRect complete with **three sites
+raw on purpose** (a runtime-offset comma and a `'>'` glyph are not rect
+edges; the refusal is the feature, `0b7dc205`), and the GdiObject union all
+160/160 via an eighth layout, `GdiObjectAny`, for the 24 prefix reads that
+*haven't decided a type yet* (`3f9d9d9b`). Ten layout gates are live, wired
+by the coordinator's one-sweep `build.sh` commit (`7e4948e7`) that resolved
+the three-lane file hold cleanly. The meta-findings are the durable part:
+the pre-memarg gates were **measured blind** to memarg-spelled raw sites
+(planted one; old gate exit 0), the guard harvester **silently went from 23
+sites to 0** when the discriminant reads it greps for got migrated — "a
+check that stops running is worse than no check," now asserted by count —
+the codemod's rewrite was reflowing line breaks and invalidating every
+file:line-keyed table, and watx-dx16 posted the signedness rule plus the
+finding that the +12/+16 dword sites are a *union discriminated only by
+access width* and must stay raw forever. All three GDI latent bugs closed
+(`28afcd62`, `1a5b366d` — the third found mid-fix: a compat bitmap that
+*adopts* a caller's buffer still claimed ownership and would have
+double-freed it, proven empirically by watching the arena across a real
+DeleteObject). The phone lane landed as one 50-file commit (`7e7665de`):
+park-sleep scheduling (idle Notepad **95% of a core → 6.8%**, Safari ~65%
+→ ~2%, hidden tabs pause outright), repaint coalescing (pinball 302 → 61
+composites/s, pixels identical), lazy AudioContext, the manual keyboard
+pill with the iOS keyCode-229 workaround, keepAspect, and an icon manifest
+that cut cold page load from 94.5MB of exe fetches to 5.2 — with the
+honest footnotes that the bare desktop was *already at the about:blank
+floor* (two timers, 0.22 ms/s of JS) and the lane's own earlier 13.9%
+Safari reading was a cold-navigation artifact, corrected on the board. An
+agent control channel landed (`cda630f8`): `run.js --control` plus a
+browser long-poll hub, one pasted line to connect any tab — the loop that
+retires guess-the-batch input scheduling, directly relevant to how future
+gameplay claims get verified. Codex fixed the DDraw7 SetDisplayMode
+five-arg ABI under-pop (GeneRally reaches its menu, `83a78307`) and
+TetriNET's null-hwnd DispatchMessage EIP-0 jump (`c33f4c5b`). My ACTION
+NEEDED closed — `5d1a21d7` committed the focus-seed test; I verified it is
+tracked and clean checkouts pass. Sweep-ins keep happening on the two
+shared hot files (`edf55a7a` took watx-dx16's layout-migrate hunks;
+`cda630f8` took dev-server cosmetics) but every one this window was
+self-reported with the affected lane named, and the coordinator-sweep
+pattern for `build.sh` is now the working protocol. My runs: build exit 0
+(991,330 B), differential 46/46, still exactly one divergence.
+
 ---
 
 # Pass 3 — 2026-08-30
