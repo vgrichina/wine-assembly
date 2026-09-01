@@ -475,6 +475,35 @@ function successorIps(ops, why) {
 // The two costs that remain are real and are paid once per iteration rather
 // than once per branch: the budget test, and publishing $gip on the way out.
 const GIP_SET = /\(global\.set \$gip \(i32\.const (\d+)\)\)/;
+// ...and the same thing one hop away. A TRACED TWIN publishes its taken ip out
+// of the operand local rather than as a literal -- `(global.set $gip (local.get
+// $t1))` with `(local.set $t1 (i32.const 2470))` sitting at the top of the same
+// body, because the operand fold runs inside an op body and these sets are
+// emitted around it. Declining on that cost CARRIE.EXE seven of its eight
+// unlowered transfers and, through the unlowered-transfer gate, its whole
+// region. Following the local one step is exact: the definition is in the same
+// body, it is a literal, and a reassignment between definition and use is
+// checked for rather than assumed away.
+const GIP_LOCAL = /\(global\.set \$gip \(local\.get \$(t\d)\)\)/;
+
+function gipOf(arm, body, armAt) {
+  const lit = GIP_SET.exec(arm);
+  if (lit) return Number(lit[1]);
+  const via = GIP_LOCAL.exec(arm);
+  if (!via) return null;
+  const defs = [...body.slice(0, armAt).matchAll(
+    new RegExp(String.raw`\(local\.set \$${via[1]} `, 'g'))];
+  if (!defs.length) return null;
+  const last = defs[defs.length - 1].index;
+  const def = new RegExp(String.raw`^\(local\.set \$${via[1]} \(i32\.const (\d+)\)\)`)
+    .exec(body.slice(last));
+  if (!def) return null;
+  // No second definition between that one and the arm, and none inside the arm
+  // before the publish -- either would make the literal the wrong value.
+  if (new RegExp(String.raw`\(local\.set \$${via[1]} `).test(
+    body.slice(last + def[0].length, armAt) + arm.slice(0, via.index))) return null;
+  return Number(def[1]);
+}
 
 // A body is only cut where both halves stand on their own. An ALU handler can
 // have an `(if` of its own long before the transfer -- cutting at the FIRST one
@@ -489,6 +518,12 @@ function balanced(s) {
   }
   return d === 0;
 }
+
+// Why the last split declined, for the histogram. A module-level slot rather
+// than a richer return type because every caller already treats null as "not
+// lowered" and there is exactly one split in flight at a time.
+let lastSplitWhy = null;
+const no = (why) => { lastSplitWhy = why; return null; };
 
 function splitBranch(body) {
   // The LAST TOP-LEVEL `(if`: the transfer is the tail of the body, and
@@ -506,26 +541,31 @@ function splitBranch(body) {
     if (body[i] === '(') d++;
     else if (body[i] === ')') d--;
   }
-  if (at < 0) return null;
-  if (!balanced(body.slice(0, at))) return null;
-  if (!balanced(body.slice(at))) return null;
+  // Every `return null` below records WHY first. A decline is not a curiosity
+  // here -- a region with one unlowered transfer is declined outright, so this
+  // histogram is the whole work list for widening the lowerer.
+  if (at < 0) return no('no top-level (if');
+  if (!balanced(body.slice(0, at))) return no('prefix unbalanced');
+  if (!balanced(body.slice(at))) return no('transfer unbalanced');
   let j = at + 4;
   while (j < body.length && /\s/.test(body[j])) j++;
   const cond = sexpAt(body, j);
-  if (cond === null) return null;
+  if (cond === null) return no('condition not an s-expr');
   let k = j + cond.length;
   while (k < body.length && /\s/.test(body[k])) k++;
   const thenArm = body[k] === '(' ? sexpAt(body, k) : null;
-  if (thenArm === null) return null;
+  if (thenArm === null) return no('no then arm');
   let m = k + thenArm.length;
   while (m < body.length && /\s/.test(body[m])) m++;
   const elseArm = body[m] === '(' ? sexpAt(body, m) : null;
-  if (elseArm === null) return null;
-  const thenIp = GIP_SET.exec(thenArm);
-  const elseIp = GIP_SET.exec(elseArm);
-  if (!thenIp || !elseIp) return null;
-  return { pre: body.slice(0, at), cond,
-    thenIp: Number(thenIp[1]), elseIp: Number(elseIp[1]) };
+  if (elseArm === null) return no('no else arm');
+  const thenIp = gipOf(thenArm, body, k);
+  const elseIp = gipOf(elseArm, body, m);
+  if (thenIp === null || elseIp === null) {
+    return no(thenIp === null && elseIp === null ? 'neither arm publishes a resolvable $gip'
+      : `${thenIp === null ? 'then' : 'else'} arm publishes no resolvable $gip`);
+  }
+  return { pre: body.slice(0, at), cond, thenIp, elseIp };
 }
 
 // The same surgery on an unconditional transfer, which is the shape a `jmp`
@@ -536,10 +576,34 @@ function splitBranch(body) {
 // with its frame intact.
 function splitJump(body) {
   const m = GIP_SET.exec(body);
-  if (!m) return null;
-  if (/\(global\.set \$gip /.test(body.slice(m.index + m[0].length))) return null;
-  if (!balanced(body.slice(0, m.index)) || !balanced(body.slice(m.index))) return null;
+  if (!m) return no('jump: no literal $gip');
+  if (/\(global\.set \$gip /.test(body.slice(m.index + m[0].length))) return no('jump: a second $gip set follows');
+  if (!balanced(body.slice(0, m.index)) || !balanced(body.slice(m.index))) return no('jump: unbalanced at the cut');
   return { pre: body.slice(0, m.index), ip: Number(m[1]) };
+}
+
+// THE TRANSFER WHOSE DESTINATION IS NOT KNOWN AT COMPILE TIME -- a `ret`, which
+// takes its target off the guest stack. Nothing can turn that into a `br` to a
+// known label, but it does not have to stay on the interpreter's protocol
+// either: the only thing the trailing GO does is resolve $ip from an arena
+// address, and the region's epilogue re-resolves $ip from $gip on the way out
+// anyway. So cut the GO off, keep everything before it (the pop, the shadow
+// stack, and the `(global.set $gip <computed>)` itself), and leave. The result
+// has no arena constant in it at all, which is the property the install gate
+// actually wants -- "lowered" here means layout-independent, not "became a br".
+function splitExit(body) {
+  let at = -1;
+  for (let d = 0, i = 0; i < body.length; i++) {
+    if (d === 0 && body.startsWith('(if (select (i32.const 0) ', i)) at = i;
+    if (body[i] === '(') d++;
+    else if (body[i] === ')') d--;
+  }
+  if (at < 0) return no('exit: no trailing GO');
+  if (!balanced(body.slice(0, at)) || !balanced(body.slice(at))) return no('exit: unbalanced at the cut');
+  const pre = body.slice(0, at);
+  if (!/\(global\.set \$gip /.test(pre)) return no('exit: nothing publishes $gip before the GO');
+  if (/\(global\.set \$gip /.test(body.slice(at))) return no('exit: the GO publishes $gip too');
+  return { pre };
 }
 
 function buildRegion(rawOps, nexts, headIp, name) {
@@ -561,6 +625,7 @@ function buildRegion(rawOps, nexts, headIp, name) {
   let pending = 0;            // ops retired since $steps was last charged
   let exits = 0;
   let unlowered = 0;          // transfers left on the interpreter's protocol
+  const unloweredWhy = [];    // ...and why each one was left there
   // The back edge, used both mid-body and at the end. `$halt` covers everything
   // that ended the run from inside a handler -- a slice that expired through
   // $slice_exit, a self-modify break, an unimplemented op -- and none of those
@@ -617,6 +682,10 @@ function buildRegion(rawOps, nexts, headIp, name) {
       else exits++;
       continue;
     }
+    // splitJump runs second and overwrites the reason, so keep splitBranch's --
+    // for a CONDITIONAL transfer that is the interesting one, and "jump: ..."
+    // is just the unconditional path declining a two-armed body.
+    const branchWhy = lastSplitWhy;
     const jump = (branch && !flag('no-lower')) ? splitJump(t3.bodies3[i]) : null;
     if (jump) {
       const cont = isLast ? headIp : nexts[i];
@@ -628,8 +697,21 @@ function buildRegion(rawOps, nexts, headIp, name) {
       }
       continue;
     }
+    // Last resort before giving up on this transfer: strip the GO and leave.
+    // Only the ops that reach here -- a computed destination, so a `ret` -- and
+    // never the last op, whose fall-out is the back edge.
+    const exit = (branch && !flag('no-lower')) ? splitExit(t3.bodies3[i]) : null;
+    if (exit) {
+      parts.push(exit.pre);
+      parts.push(`;; ${op.name}: destination is computed, so publish $gip and let the epilogue resolve it`);
+      // As the last op its fall-out IS the back edge, which is tested below and
+      // reads the $gip this just published -- so a `ret` back to the head still
+      // keeps the loop, exactly as the lowered conditionals do.
+      if (!isLast) { parts.push('(br $out)'); exits++; }
+      continue;
+    }
     parts.push(resolveGoArena(t3.bodies3[i]));
-    if (branch) unlowered++;
+    if (branch) { unlowered++; unloweredWhy.push(`${op.name}: ${branchWhy || lastSplitWhy || 'not attempted'}`); }
     if (!branch) continue;
     if (isLast) continue;         // the back edge is tested below
     const fall = nexts[i];
@@ -716,7 +798,7 @@ function buildRegion(rawOps, nexts, headIp, name) {
   const body = flag('trap') ? '(unreachable)'
     : `${entry}\n${t3.pro}\n(block $out (loop $again\n${parts.join('\n')}\n))\n${t3.epi}\n${leave}`;
   return {
-    name, body, locals: t3.locals, exits, unlowered,
+    name, body, locals: t3.locals, exits, unlowered, unloweredWhy,
     promoted: t3.promoted, declined: t3.promoted ? null : t3.declined,
     eaFolded: t3.eaFolded, segFolded: t3.segFolded, folded: t3.folded,
     inlined: t3.inlined, strippedArena: stripped,
@@ -998,6 +1080,7 @@ async function main() {
   if (region.unlowered && !flag('allow-unlowered') && !flag('no-lower') && !flag('no-gate')) {
     console.log(`  declined: ${region.unlowered} transfer(s) could not be lowered,`
       + ' so this region depends on the install-time arena (--allow-unlowered overrides)');
+    for (const w of region.unloweredWhy) console.log(`    unlowered: ${w}`);
     process.exit(3);
   }
 
@@ -1010,6 +1093,12 @@ async function main() {
   console.log(`  guard: ${(guarded || []).reduce((n, g) => n + g.bytes.length, 0)} guest byte(s) over `
     + `${(guarded || []).length}/${(pick.heads || []).length} block(s)`
     + (!guarded ? ' -- UNGUARDABLE, running anyway under --no-gate' : ''));
+  if (flag('why')) {
+    for (const blk of pick.heads || []) {
+      const cb = parseInt(String(blk.cs), 10);
+      console.log(`    block 0x${blk.ip.toString(16)} at linear 0x${((cb + blk.ip) & 0xFFFFF).toString(16)}`);
+    }
+  }
 
   // `--emit=PREFIX` writes the two whole modules -- with the region and
   // without it -- as both .wat and .wasm. Nothing here runs them; they are for
@@ -1061,10 +1150,57 @@ async function main() {
     if (!span) return ip;
     return { ip, lin: span[0], bytes: Array.from(rr.vm.mem.slice(span[0], span[1])) };
   };
-  const succList = allSucc.slice(0, Number(arg('succ-take', allSucc.length)));
-  console.log(`  successors: ${allSucc.map((x, i) =>
-    (i < succList.length ? '' : '-') + '0x' + x.toString(16)).join(' ')}`
-    + (succList.length < allSucc.length ? `  (- = withheld by --succ-take=${succList.length})` : ''));
+  // `--succ-take=N` bisects by POSITION, which cannot separate "this address is
+  // the culprit" from "the Nth slot is". `--succ-drop=0xa74,0x9a4` removes named
+  // addresses and holds every other one still, so one variable moves.
+  const succDrop = new Set(String(arg('succ-drop', '')).split(',')
+    .filter(Boolean).map(s => Number(s.trim())));
+  // A SUCCESSOR INSIDE THE REGION'S OWN BYTES IS A SECOND COPY OF CODE THE
+  // REGION ALREADY OWNS. The region replaces the decode of its blocks;
+  // pre-compiling an address that lands in the same guest bytes puts an
+  // independent arena block over them, reached whenever an exit resolves there
+  // instead of handing back. CARRIE.EXE is the measurement: its region covers
+  // 135 bytes over six blocks, and supplying ANY ONE of the five successors
+  // that fall in its last two blocks (0xa55, 0xa5b, 0xa6e, 0xa72, 0xa74) turns
+  // a frame-identical run into a 52101-pixel divergence, with every build knob
+  // (--no-lower, --no-promote, --no-fold-ea, --no-inline-counters,
+  // --no-region-code-bits) making no difference at all. Withheld, those edges
+  // cost one handback each and the interpreter decodes them on demand, which is
+  // what the --no-succ arm already did correctly. `--succ-inside` restores them
+  // for the A/B.
+  // The test is the HULL of those spans, not the spans themselves. Three of
+  // CARRIE's five breakers (0xa5b, 0xa6e, 0xa72) are fall-through addresses
+  // that sit in the gaps BETWEEN its recorded block extents -- still the
+  // region's own territory, still bytes it was compiled from, and each one
+  // alone is enough to break the frame.
+  // ...over the blocks the region ABSORBED, not over the head. The head block
+  // is replaced one-for-one by the region entry, so the arena still owns an
+  // entry at that ip and its own edges are ordinary; it is the other blocks
+  // that the region swallowed and the arena no longer has. Scoping the hull
+  // this way also leaves a single-block region alone, which matters:
+  // acme-sns.exe is one block of 138 bytes, and withholding its own interior
+  // edges moved it from 16px (phase) to a persistent 38px.
+  const spans = flag('succ-inside') ? []
+    : (guarded || []).filter((g, i) => (pick.heads || [])[i]
+        && (pick.heads || [])[i].ip !== pick.headIp)
+      .map(g => [g.lin, g.lin + g.bytes.length]);
+  const lo = Math.min(...spans.map(s => s[0]));
+  const hi = Math.max(...spans.map(s => s[1]));
+  const insideRegion = (ip) => {
+    if (!spans.length) return false;
+    const lin = (parseInt(String(pick.cs), 10) + ip) & 0xFFFFF;
+    return lin >= lo && lin < hi;
+  };
+  const succList = allSucc.filter(ip => !succDrop.has(ip) && !insideRegion(ip))
+    .slice(0, Number(arg('succ-take', allSucc.length)));
+  // Marked by MEMBERSHIP, not by position: --succ-drop punches holes in the
+  // middle, and an index comparison here would print the wrong addresses as
+  // withheld -- which it did, and cost a bisect.
+  const kept = new Set(succList);
+  console.log(`  successors: ${allSucc.map(x =>
+    (kept.has(x) ? '' : '-') + '0x' + x.toString(16)).join(' ')}`
+    + (succList.length < allSucc.length
+      ? `  (- = withheld; ${succList.length} of ${allSucc.length} installed)` : ''));
   if (flag('why')) {
     // Whether the PROFILING run ever decoded a block at that address. A
     // successor the interpreter never entered is not proof of a bad operand --
@@ -1073,7 +1209,11 @@ async function main() {
     const known = (pick.block && pick.block.prog && pick.block.prog.blocks) || new Map();
     for (const [i, ip] of allSucc.entries()) {
       console.log(`    [${i}] 0x${ip.toString(16)} <- ${succWhy.get(ip)}`
-        + (known.has(ip) ? '' : '   (NEVER DECODED in the profiling run)'));
+        + (known.has(ip) ? '' : '   (NEVER DECODED in the profiling run)')
+        // A successor with no covered span goes in UNCHECKED, so nothing stops
+        // it being compiled from bytes the program has not written yet. That is
+        // the same hole guardBytes had, on the other list.
+        + (typeof succBytes(ip) === 'number' ? '   (NO COVERED SPAN -- unchecked)' : ''));
     }
   }
   const install = {
@@ -1228,6 +1368,25 @@ async function main() {
       + ` probes of the ${delta} dispatch gap; baseline vs region is ${gap}px`
       + `  -> ${phase ? 'PHASE, not a defect' : '*** BEYOND THE NOISE FLOOR ***'}`);
     if (phase) { process.exitCode = 6; return; }
+  }
+  // NOT CERTIFIED, AS DISTINCT FROM WRONG. A self-modify break is the emulator
+  // invalidating what it believes is code, and the two arms believe different
+  // things: a region replaces the decode of its blocks, so the walk that would
+  // have discovered and marked their neighbours never happens and `regionSucc`
+  // stands in for it. When the arms then disagree on the break COUNT, they did
+  // not run with the same idea of which bytes are code, and any frame
+  // difference that follows cannot be attributed to the region body -- on
+  // acme-sns.exe the ops themselves are proven equivalent (`--agree`: ALL THREE
+  // MATCH) and the frame is still 6-18 pixels off at every budget from 3M to
+  // 12M, always with ~5 breaks missing out of ~17600. That is an open defect,
+  // and this reports it as its own verdict rather than burying it in `differs`,
+  // where it reads as a lowering bug it demonstrably is not.
+  if (!same && (baseRun.smcBreaks || 0) !== (jitRun.smcBreaks || 0)) {
+    console.log(`  NOT CERTIFIED: the arms disagree on self-modify breaks`
+      + ` (${baseRun.smcBreaks || 0} vs ${jitRun.smcBreaks || 0}), so they did not`
+      + ' run with the same notion of what is code');
+    process.exitCode = 7;
+    return;
   }
   if (!same) process.exitCode = 4;
 }

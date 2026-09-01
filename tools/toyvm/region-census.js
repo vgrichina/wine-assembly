@@ -78,6 +78,11 @@ function classify(code, out) {
   // exit 5 is the speed gate: a region WAS built, it just did not beat the
   // interpreter, so it is a coverage/perf row and never a correctness one.
   if (code === 5) return 'gated';
+  // exit 7: the frame differed AND the arms disagreed on self-modify breaks, so
+  // they did not run with the same notion of what is code. Still an open defect
+  // -- it is broken out only because it is not a lowering bug, which is what a
+  // `differs` row means everywhere else.
+  if (code === 7) return 'smc-drift';
   if (code === null) return 'timeout';
   return 'crash';
 }
@@ -297,7 +302,10 @@ async function main() {
   for (const r of out) tally[r.verdict] = (tally[r.verdict] || 0) + 1;
   console.log('\noutcomes: ' + Object.entries(tally).sort((a, b) => b[1] - a[1])
     .map(([k, n]) => `${k} ${n}`).join(', '));
-  const bad = out.filter(r => r.verdict === 'differs' || r.verdict === 'frozen');
+  // `smc-drift` is listed here too: it is a real unresolved divergence, just one
+  // with a named cause that is not the lowering.
+  const bad = out.filter(r => r.verdict === 'differs' || r.verdict === 'frozen'
+    || r.verdict === 'smc-drift');
   if (bad.length) {
     console.log(`bugs: ${bad.map(r => `${r.name} (${r.verdict})`).join(', ')}`);
   }

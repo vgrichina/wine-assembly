@@ -1756,3 +1756,120 @@ identical at 6M dispatches and is wrong at 11M, so "identical at the census
 budget" was never proof. But the trade is steep and it names the next piece of
 work precisely: **lowering the transfers `splitBranch` declines has 55 regions
 waiting on it**, and `--why`'s decline histogram is the list.
+
+## Lowering the declined transfers, and what it uncovered
+
+The unlowered-transfer gate above named its own follow-up: 55 regions were
+declined for a transfer `splitBranch` could not turn into a `br_if`. So the
+first thing was to make the decline say *why*. `splitBranch`/`splitJump` now
+record a reason on every rejection path, `buildRegion` collects one line per
+unlowered op, and the gate prints the histogram:
+
+```
+    unlowered: cmp_ri16_jz_t: then arm publishes no resolvable $gip
+    unlowered: cmp_ri8_jnz:   then arm publishes no resolvable $gip
+    ...
+    unlowered: ret:           neither arm publishes a resolvable $gip
+```
+
+Seven of CARRIE's eight were one shape, and the `--dump` showed it immediately.
+A **traced twin** does not write its taken ip as a literal — the operand words
+are hoisted into locals first, and the arm reads one back:
+
+```wat
+(local.set $t1 (i32.const 2470))
+(local.set $t2 (i32.const 2444))
+(if (i32.eqz (global.get $fr))
+  (then (global.set $gip (local.get $t1)) ...
+  (else (global.set $gip (i32.const 2444)) ...
+```
+
+`gipOf()` follows that one hop: find the last `local.set` of that local before
+the arm, take its literal, and refuse if anything reassigns it in between. The
+eighth was a `ret`, whose destination is *computed* and can never be a literal —
+but it does not need to be. `splitExit()` keeps the part of the body that
+publishes `$gip`, drops the trailing `GO`, and lets the region epilogue's
+`$jlook` resolve it, exactly as it already does for every other exit.
+
+### The gate had been masking CARRIE, not fixing it
+
+With both lowerings in, CARRIE lowers 8 of 8, installs — and is **still wrong at
+11.04M dispatches**, 52101 pixels against a 387-dispatch gap whose measured
+noise floor is 8. Two runs settled where the fault was not:
+
+- `--no-lower` diverges **identically** (52101px). The new lowering is not the
+  cause; CARRIE was already broken and the gate was simply declining it.
+- `--no-promote`, `--no-fold-ea`, `--no-inline-counters`,
+  `--no-region-code-bits` and `--once` all diverge identically too. No knob in
+  the region build moves it.
+
+What *does* move it is the successor list — `--no-succ` is frame-identical and
+`--succ-only` (successors, no region) is frame-identical, so it is the pair.
+
+### `--succ-drop`, and the answer
+
+`--succ-take=N` bisects by position and cannot separate "this address is the
+culprit" from "the Nth slot is", so `--succ-drop=0xa74,0x9a4` was added to
+remove named addresses and hold every other one still. (The successor line also
+printed its withheld marks by *index* rather than membership, which sent one
+bisect the wrong way before it was fixed.)
+
+Dropping each of CARRIE's twenty successors one at a time, then the tail as a
+group, gives a clean split:
+
+| successors installed | frame |
+|---|---|
+| the 14 addresses below 0xa55 | identical (4px, phase) |
+| + any **one** of 0xa55, 0xa5b, 0xa6e, 0xa72, 0xa74 | 47545–52101px |
+| the 14, + 0xa7b only | identical |
+
+Those five are not a random set. CARRIE's region is six blocks — 0x983, 0x986,
+0x9c1, 0xa2b, 0xa55, 0xa74 — and the five breakers are its last two blocks plus
+the three fall-through addresses that sit in the gaps between its recorded
+extents. 0xa7b, the one address past the end of the region's bytes, is harmless.
+
+**A successor inside the region's own bytes is a second copy of code the region
+already owns.** The region replaces the decode of those blocks; pre-compiling an
+address that lands in the same guest bytes puts an independent arena block over
+them, reached whenever an exit resolves there instead of handing back. So the
+successor list is now filtered against the **hull** of the region's guarded
+spans — the hull, not the spans, because three of the five breakers live in the
+gaps between them. `--succ-inside` restores the old behaviour for the A/B.
+
+With that filter CARRIE installs one successor of twenty, costs 551 extra
+handbacks, and is frame-identical at 11.04M dispatches.
+
+This is a gate with a measurement behind it, not a root cause: *why* a second
+arena copy of the region's own bytes computes a different picture is still open,
+and every build knob says it is not the region body. The honest statement is
+that the region owns its bytes and nothing else may compile them.
+
+### The hull is over the ABSORBED blocks, not the head
+
+Scoping the filter to every guarded span cost a second program. `acme-sns.exe`
+is a **one-block** region of 138 bytes, and withholding its own interior edges
+moved it from 16px (phase) to a persistent 38px. The head block is not in the
+same position as the others: it is replaced one-for-one by the region entry, so
+the arena still owns an entry at that ip and its edges are ordinary. It is the
+blocks the region *absorbed* that the arena no longer has. So the hull is taken
+over the non-head spans, which leaves a single-block region untouched and still
+withholds all five of CARRIE's breakers.
+
+### acme-sns.exe: not certified, and not a lowering bug
+
+That program is still not clean, and it is worth being precise about what it is.
+`--agree` reports **ALL THREE MATCH** — the ops lower correctly from a seeded
+snapshot, registers and every byte of guest memory. And yet across budgets from
+3M to 12M dispatches the frame is persistently 6-18 pixels off in one 43x63 box,
+and the region arm reports about five FEWER self-modify breaks out of ~17600,
+every time.
+
+Five fewer breaks is the tell. A break is the emulator invalidating what it
+believes is code, and a region replaces the decode of its blocks — so the walk
+that would have discovered and marked their neighbours never happens, and
+`regionSucc` stands in for it. The two arms therefore do not have the same idea
+of which bytes are code, and a frame difference that follows cannot be blamed on
+the body. `region-jit.js` now says so with its own exit code (7) and
+`region-census.js` reports it as **`smc-drift`**, listed in the `bugs:` line
+alongside `differs` because it is an unresolved divergence — just one whose
+cause is named and is not the lowering.
