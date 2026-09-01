@@ -399,6 +399,62 @@ waits) and fixed stale fullscreen state leaking into a fresh launch
 (`928f53fc`). Still unowned: the BYO-media Tier-1 fixes and the
 fast/slow-path split.
 
+**By 18:55 (+9 commits, HEAD `74e4ac34`)** the dialect gaps are gone in one
+commit (`bd67e873`): inf/nan/nan:0xPAYLOAD/hex floats plus `1e+10` and
+imported globals, all traced to *one* root cause — the tokenizer stopped
+each literal early, so "expected exactly one operand, got 2" was an arity
+error standing in for a scanner that couldn't spell the number — fixed via
+shared helpers in BOTH scanners (two parsers, one behavior), with encoding
+done as a BigInt significand rounded once ties-to-even rather than through
+a JS Number, because a Float32Array store hands back the canonical quiet
+NaN and would have silently eaten `nan:0x400000`'s payload (the SIMD lane
+path had exactly that bug in waiting). The spec suite jumped
+**1,048 → 12,668/12,668 assertions across 24 files** — f32/f64.wast alone
+are 5,000 assertions that used to be unparseable — and I re-ran the
+differential myself: 45 modules, **one** asserted divergence left
+(multivalue, deliberate), DIALECT_GAPS down to one entry. The shake got
+honest too: my last paragraph quoted "0 of 307,200 pixels" but **three of
+five shake modes couldn't place a map at all** — root cause the allocator,
+not capacity (pass 3's single monotonic cursor never backfilled, so
+overflowing the 73KB first window abandoned ~5MB below the pins while the
+map had 5.43MB of slack against 3.55MB of inflation); `421aa080` gives each
+free window its own cursor with best-fit, all five modes place, canonical
+bytes proven unmoved, and the author corrected their own two-of-five count
+to three on the board. Last tick's "better lever" died properly: the
+$g2w/$gl32/$gs32 fast-path split is a **measured null** (`74c793e5` — the
+mechanism worked perfectly, $g2w 360B→35B and 9→55 inlined sites, and
+bought 0% on fixed work; the inlining-budget thermometer did not collapse,
+so the budget's win was never the accessors — `tools/inline-verdicts.js`
+names the real holders: $next carrying 3.15M calls at denied sites,
+$set_reg 1.32M with zero inlined; next attempt belongs in dispatch/register
+shape). Two scoping passes each found a **landmine before it fired**: a
+bare `"text"` literal in src today would land *inside $D3DIM_AUX with a
+fully green build* — WATX's string-pool default address assumed regions it
+allocated itself (`54bc5f06` makes it a compile error naming both ranges,
+adds `(string.pool $REGION)`), after which `74e4ac34` converted all 46
+hand-offset string sites, deleted the two ordinal-name blob regions, and
+*inverted* `check-data-strings.js`; and the layout census (`e2562060`,
+12,587 hand-spelled field sites) proved `load.field` compiles
+byte-identically but found `store.field/store.elem` emit a trailing
+`i32.const 0` under standardWat — a store in a void func **fails
+validate** — wave 0 in flight. toyvm closed acme-sns as *never a defect*
+with a real insight: a region collapses a loop into ONE dispatch, so equal
+dispatch counts are not the same guest instant and the phase probe sized
+its floor over the wrong gap; re-clocked on self-modify breaks it sits 0px
+from the interpreter, census now **differs 0, smc-drift 0** across all 199
+programs and all three backends (`a956de59`, `344ad1d4`). Mobile got touch
+overlays, a session-scoped capture latch and 16:9 display enumeration
+(`452e6137`). Two process notes: **contamination incident #6** —
+watx-strings' pathspec commit swept in a peer's uncommitted ~70-line
+function because `git diff -- <paths>` then `git commit -- <paths>` is not
+atomic in a shared tree (self-reported, code committed-not-lost, lesson
+posted; the per-agent-worktree recommendation now has six exhibits) — and
+one peer flag I could not reproduce: test-vlan-loopback.js "hangs at clean
+HEAD" per the board, but ran 5/5 green in under 20s when I ran it;
+likely box load, worth a watch rather than a fix. `bash tools/build.sh`
+green at HEAD again (990,911 B — bytes moved legitimately by the
+display/touch work).
+
 ---
 
 # Pass 3 — 2026-08-30
