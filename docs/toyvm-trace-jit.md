@@ -2027,3 +2027,88 @@ region, not reasons to reject it — publish `$gip` and let the epilogue's
 `$jlook` resolve the destination, exactly as a computed `ret` destination is
 handled today. The third is a depth/size limit (`maxDepth` 3, `maxOps` 400)
 rather than a shape the walk cannot express.
+
+### The next two coverage levers, built, measured, and removed
+
+The histogram above named `ret with no inlined call to return to` as blocking 36
+of the 72 remaining programs, and that has an obvious reading: the walk can
+follow a call DOWN and its `ret` back UP, but it cannot walk up out of the frame
+it STARTED in, because that return address is on the guest stack and is a
+runtime value. A hot block inside a subroutine — the loop living in the caller,
+the callee merely being where the samples land — dies exactly that way. The fix
+needs nothing new in the walk: root the candidate at a CALL SITE, and the call
+becomes an ordinary inlined edge whose `ret` matches a frame the walk pushed
+itself.
+
+It moved coverage by **one program**, 103 → 104.
+
+That result is worth more than the change was, because it says the histogram was
+lying. `region-why.js` was unioning the rules of *every* rejected candidate per
+program, which answers "did any candidate here meet rule X" — not "what blocked
+this program". Programs reject dozens of candidates; nearly all of them meet a
+`ret` somewhere. The fix is two-sided: `region-jit.js` now prints `[depth N]`
+with each rejection (ops accumulated when that path died) and reports the reason
+from the path that came CLOSEST TO CLOSING rather than the one tried last, and
+`region-why.js` keeps only the deepest line per program. The histogram then sums
+to the program count and cannot tell that story wrong:
+
+```
+   before (union)        after (per-program blocker)
+   36  ret ...           14  ret with no inlined call to return to
+   17  int_imm           13  walk revisited ADDR
+   16  bad-handler       10  block contains an op the walk will not cross
+   12  call_far           7  ADDR ends call_far, not jmp
+```
+
+`walk revisited` had been invisible at rank two. A revisit is a cycle, and a
+cycle is a loop — just not the one being walked; the trace is linear, so it
+cannot go round an inner loop and still close on the outer head. But that block
+is a loop head in its own right, and nothing offered it as a candidate: the
+candidate list is built from branch targets visible in the *hot block's own ops*,
+and this one is only discovered several blocks into the walk. Recording it and
+retrying there took coverage 104 → 111.
+
+**And then the census refused it.** `DRAIN.COM`, previously `no-loop`, came back
+`differs` — 12681px vs 12749px. The body itself is not the problem (`--agree`:
+all three tiers match over 200 iterations) and no install knob moves it
+(`--no-succ`, `--no-region-code-bits`, `--no-spin` are all identical). Nor is it
+certifiable as phase: `ints` and `smc` are equal in every arm at every budget, so
+there is no guest event to rematch the clock on, and swept across 3M/4M/6M/8M/12M
+the region is sometimes ahead of the interpreter and sometimes behind while the
+baseline itself drifts 7638px over a comparable gap. It is simply a program this
+harness cannot certify either way.
+
+The reason it should never have been asked to is the finding that matters:
+
+```
+region sample share, over the corpus's installed regions
+  min 0%   p10 0%   p50 12.9%   p90 66%   max 100%      25 of 103 at 0.0%
+```
+
+A region's whole-program win is capped by its share, so **a region at 0.0% of
+samples cannot help by construction and can only add risk** — and DRAIN's is one
+of those: 0.0% share, 12 ops, and a body the gate measures at 3.34x that still
+exits on every iteration. Both new roots are fallbacks reached only after the
+ranked, sampled candidates have failed, so they bypass the hotness ranking
+entirely: of the 8 programs they added, essentially all arrived at 0.0%
+(25 → 35 zero-share regions).
+
+So both were removed. Eight more programs that get a region they cannot benefit
+from, one of them uncertifiable, is not coverage — and the diagnostic work that
+found this out is what was kept: the depth-ranked rejection reason, the
+per-program blocker histogram, the share distribution, and `--pass=` for
+re-measuring coverage as an older pick behaved.
+
+Two things for whoever picks this up next:
+
+- **`25 of 103` installed regions carry 0.0% share, and that predates all of
+  this.** It is the same "no beneficiary" problem, already shipped. A
+  minimum-share floor in `pickRegion` would drop them; it would also cut the
+  headline region count by a quarter, which is why it wants to be a measured
+  decision rather than a constant somebody picks.
+- **Do not read `region-census.js`'s `%` column as a benchmark.** It runs
+  `--reps=1`, and at one rep the interleave-and-rotate in `region-jit.js` never
+  rotates: the baseline arm always runs first and the region arm always second,
+  min-of-one, on whatever the box is doing. The 2026-08-31 census returned
+  93 of 93 negative at a median of −58% on a box at load 17–27; that number
+  describes the measurement, not the JIT.

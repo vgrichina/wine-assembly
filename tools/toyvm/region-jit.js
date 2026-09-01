@@ -133,8 +133,17 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisi
   // The reason the LAST path died, reported only if the whole search does. One
   // line per candidate, as before -- a backtracking search rejects many paths
   // and printing each would bury the histogram region-why.js builds.
-  let lastWhy = null;
-  const no = (s) => { lastWhy = s; return null; };
+  // ...and it is the reason from the path that came CLOSEST TO CLOSING, not the
+  // one that happened to be tried last. Once the walk backtracks, "last" is an
+  // artifact of edge ordering: a two-op stub tried after a forty-op path that
+  // nearly made it names the stub, and the corpus histogram then counts a rule
+  // that was never the obstacle. Ops accumulated at the moment of failure is
+  // the proxy for how far the path got.
+  let lastWhy = null, lastDepth = -1;
+  const no = (s) => {
+    if (ops.length > lastDepth) { lastDepth = ops.length; lastWhy = s; }
+    return null;
+  };
 
   // `retStack` is the inlined call frames still open, innermost last. Only the
   // return ADDRESS is tracked -- the guest's own frame is built and torn down
@@ -146,6 +155,11 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisi
     // called from two places in the loop), so the revisit test is on the block
     // AND the call depth, not the block alone.
     const key = `${cur}@${retStack.length}`;
+    // A revisit is a cycle, and a cycle is a loop -- just not the one being
+    // walked. The trace is linear, so it cannot go around an inner loop and
+    // still close on the outer head; the path dies here. Offering that block as
+    // its own candidate root was tried and removed; see the negative result in
+    // docs/toyvm-trace-jit.md.
     if (seen.has(key)) return no(`walk revisited 0x${cur.toString(16)}`);
     const blk = headByAddr.get(cur);
     if (!blk) return no(`0x${cur.toString(16)} is not a block head`);
@@ -247,7 +261,11 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisi
   };
 
   const r = walk(head, []);
-  if (!r && lastWhy) why(`0x${head.toString(16)}: ${lastWhy}`);
+  // The depth is printed because it is what makes the corpus histogram
+  // meaningful: a program rejects many candidates, and a census that unions
+  // their rules reports "a rule this program met", not "the rule blocking this
+  // program". tools/toyvm/region-why.js keeps the deepest line per program.
+  if (!r && lastWhy) why(`0x${head.toString(16)}: ${lastWhy} [depth ${Math.max(lastDepth, 0)}]`);
   return r;
 }
 
@@ -271,6 +289,7 @@ function pickRegion(rr, ranked, minOps, maxOps = 400) {
   // it: "no self-loop region found" on its own says nothing about whether the
   // shape is absent or the walk never reached it.
   const why = (s) => { if (flag('why')) console.log(`  reject ${s}`); };
+
   const tried = new Set();
   for (const b of ranked) {
     const t = traceAt(b);
@@ -283,6 +302,9 @@ function pickRegion(rr, ranked, minOps, maxOps = 400) {
       // loop's head can sit at a HIGHER arena address than its back edge.
       for (const a of op.args) if (headByAddr.has(a)) cands.push(a);
     }
+    // NOT tried: the call sites that reach this block, and the blocks the walk
+    // discovers a cycle on. Both were built and measured -- see the negative
+    // result in docs/toyvm-trace-jit.md -- and both are removed.
     for (const h of cands) {
       if (tried.has(h)) continue;
       tried.add(h);
@@ -294,6 +316,9 @@ function pickRegion(rr, ranked, minOps, maxOps = 400) {
       // measured -- which is how ACCIDENT's 34-op region looked benign at 2.2M
       // and catastrophic at 12M when the two runs had picked different loops.
       if (arg('head') !== undefined && blk.ip !== Number(arg('head'))) continue;
+      // `cands` is appended to during this loop -- a for..of over an array sees
+      // pushes, and `tried` keeps it from cycling. Both extra roots are strictly
+      // fallbacks, appended only after their own candidate has already failed.
       const chain = chainFrom(h, headByAddr, traceAt, maxOps, why);
       if (!chain) continue;
       if (chain.ops.length < minOps) {

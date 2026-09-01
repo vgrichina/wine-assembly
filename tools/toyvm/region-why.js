@@ -44,8 +44,17 @@ const flag = (n) => process.argv.slice(2).includes(`--${n}`);
 // goes: hex addresses, the op counts in `N ops < M`, the handler NAME in
 // `contains foo` (that name is itself the interesting axis, so it gets its own
 // histogram rather than being folded away here).
+// How far the candidate got before it died, from the `[depth N]` region-jit.js
+// prints. See depthOf's caller for why only the deepest line per program is
+// counted.
+function depthOf(line) {
+  const m = /\[depth (\d+)\]/.exec(line);
+  return m ? Number(m[1]) : -1;
+}
+
 function ruleOf(line) {
-  const s = line.replace(/^\s*reject\s+/, '').replace(/0x[0-9a-f]+/g, 'ADDR');
+  const s = line.replace(/^\s*reject\s+/, '').replace(/\s*\[depth \d+\]/, '')
+    .replace(/0x[0-9a-f]+/g, 'ADDR');
   const contains = /contains (\S+)$/.exec(s);
   if (contains) return { rule: 'block contains an op the walk will not cross', op: contains[1] };
   return { rule: s.replace(/\d+/g, 'N').replace(/^ADDR: /, ''), op: null };
@@ -54,7 +63,7 @@ function ruleOf(line) {
 function run(exe, o) {
   return new Promise((resolve) => {
     const args = [path.join(__dirname, 'region-jit.js'), exe, '--why',
-      `--dispatches=${o.dispatches}`, '--reps=1', '--pick-only'];
+      `--dispatches=${o.dispatches}`, '--reps=1', '--pick-only', ...o.pass];
     const ch = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     ch.stdout.on('data', (d) => { out += d; });
@@ -71,6 +80,11 @@ async function main() {
     dispatches: arg('dispatches', '6m'),
     timeout: Number(arg('timeout', 180)),
     top: Number(arg('top', 20)),
+    // Extra region-jit.js flags, comma-separated and passed through verbatim:
+    // `--pass=--no-revisit-roots,--no-caller-roots` re-measures coverage as an
+    // older pick behaved, which is the only way to attribute a change in the
+    // share distribution to the thing that changed.
+    pass: String(arg('pass', '')).split(',').filter(Boolean),
   };
   const only = arg('only') ? new Set(arg('only').split(',')) : null;
   const exes = findExes(o.dir).filter(e => !only || only.has(path.basename(e)));
@@ -90,9 +104,15 @@ async function main() {
       else if (/no self-loop region found/.test(out)) verdict = 'no-loop';
       else if (!/region at guest ip/.test(out)) verdict = 'crash';
       const rejects = out.split('\n').filter(l => /^\s*reject /.test(l));
-      rows.push({ name, verdict, rejects });
+      // The share the picked region carries. A region's whole-program win is
+      // capped by its share (Amdahl), so a region at 0.0% cannot help by
+      // construction and can only add risk -- printing it here is what makes a
+      // sample floor a measured choice rather than a guessed constant.
+      const share = /, ([\d.]+)% of samples/.exec(out);
+      rows.push({ name, verdict, rejects, share: share ? Number(share[1]) : null });
       console.log(`  [${String(i + 1).padStart(3)}/${exes.length}] ${name.padEnd(14)} `
-        + `${verdict}${verdict === 'no-loop' ? `  ${rejects.length} candidate(s) rejected` : ''}`);
+        + `${verdict}${verdict === 'no-loop' ? `  ${rejects.length} candidate(s) rejected` : ''}`
+        + (share ? `  ${share[1]}%` : ''));
       if (flag('list') && rejects.length) for (const r of rejects) console.log(`      ${r.trim()}`);
     }
   };
@@ -103,19 +123,26 @@ async function main() {
   console.log('\nverdicts: ' + Object.entries(tally).sort((a, b) => b[1] - a[1])
     .map(([k, n]) => `${k} ${n}`).join(', '));
 
-  // Programs blocked, not rejections counted. One program can reject thousands
-  // of candidates for one reason; forty programs blocked by one rule is the
-  // number that decides what to work on.
+  // ONE BLOCKER PER PROGRAM: the rule that killed the candidate which came
+  // closest to closing. Unioning the rules of every rejected candidate -- what
+  // this did first -- answers a different and much weaker question ("did any
+  // candidate in this program meet rule X"), and it inflates: the first census
+  // read 36 programs on `ret with no inlined call`, rooting candidates at their
+  // call sites to fix exactly that shape moved coverage by ONE program, and the
+  // 36 barely moved either, because most of those programs were never blocked
+  // by it. A per-program-blocker histogram sums to the program count and cannot
+  // tell that story wrong.
   const byRule = new Map(), byOp = new Map();
   for (const r of rows.filter(x => x.verdict === 'no-loop')) {
-    const rules = new Set(), ops = new Set();
+    let best = null, bestDepth = -2;
     for (const line of r.rejects) {
-      const { rule, op } = ruleOf(line);
-      rules.add(rule);
-      if (op) ops.add(op);
+      const d = depthOf(line);
+      if (d > bestDepth) { bestDepth = d; best = line; }
     }
-    for (const s of rules) byRule.set(s, (byRule.get(s) || new Set()).add(r.name));
-    for (const s of ops) byOp.set(s, (byOp.get(s) || new Set()).add(r.name));
+    if (!best) continue;
+    const { rule, op } = ruleOf(best);
+    byRule.set(rule, (byRule.get(rule) || new Set()).add(r.name));
+    if (op) byOp.set(op, (byOp.get(op) || new Set()).add(r.name));
   }
   const show = (title, m) => {
     console.log(`\n${title}`);
@@ -123,6 +150,14 @@ async function main() {
       console.log(`  ${String(set.size).padStart(3)}  ${k}`);
     }
   };
+  const shares = rows.filter(r => r.share !== null).map(r => r.share).sort((a, b) => a - b);
+  if (shares.length) {
+    const at = (p) => shares[Math.min(shares.length - 1, Math.floor(shares.length * p))];
+    console.log(`\nregion sample share: min ${at(0)}%  p10 ${at(0.1)}%  p50 ${at(0.5)}%`
+      + `  p90 ${at(0.9)}%  max ${shares[shares.length - 1]}%`
+      + `   (${shares.filter(s => s < 1).length} under 1%,`
+      + ` ${shares.filter(s => s === 0).length} at 0.0%)`);
+  }
   show(`rules that blocked a program (of ${tally['no-loop'] || 0} no-loop programs)`, byRule);
   show('ops the walk refused to cross, by programs blocked', byOp);
 }
