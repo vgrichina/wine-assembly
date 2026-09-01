@@ -385,7 +385,7 @@ async function handlePerf(req, res, opts) {
     return Math.round((sum / all) * 100);
   };
   const t = new Date().toISOString().slice(11, 19);
-  const warn = guestFps > 0 && guestFps < 20 ? ' LAGGY' : '';
+  const warn = guestFps > 0 && guestFps < 20 ? ' LOW PRESENT RATE' : '';
   // Only while the pointer is actually moving. A mouse-driven game can feel
   // laggy with a spotless step histogram: what the hand notices is how often
   // the guest samples the pointer and how stale each sample is by then.
@@ -395,13 +395,167 @@ async function handlePerf(req, res, opts) {
     : '';
   console.log(
     `${t} ${String(batch.session || '?').slice(0, 6)} `
-    + `game ${String(guestFps).padStart(3)}fps  page ${String(Math.round(snap.fps || 0)).padStart(2)}  `
+    + `present ${String(guestFps).padStart(3)}/s  page ${String(Math.round(snap.fps || 0)).padStart(2)}  `
     + `steps ${((snap.stepsPerSec || 0) / 1e6).toFixed(1)}M/s  `
     + `step p50 ${pct(totals, 50).toFixed(1)} p99 ${pct(totals, 99).toFixed(1)}ms  `
     + `guest ${share(1)}% thr ${share(2)}% paint ${share(3)}%  `
     + `throttled ${Math.round((throttled / Math.max(1, steps.length)) * 100)}%  `
     + `${sparkline(steps.map(s => s[0]), 16.7)}${inp}${warn}`,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Agent control hub  (/api/agent/*, docs/design-agent-control.md)
+// ---------------------------------------------------------------------------
+//
+// A browser page cannot accept connections, so it polls for work — the shape
+// tools/ios-selftest-server.js proved for the ios lab, made session-aware:
+// lib/agent-remote.js registers with hello, long-polls /poll, executes each
+// command in the page and posts /result; tools/ctl.js (or curl) posts into
+// /ctl and its response is HELD OPEN until the page's result comes back, so
+// the shell command prints the answer itself.
+//
+// The command set includes eval, so when the server is bound beyond
+// localhost every agent route requires the token printed at startup
+// (?token=...); on a pure-localhost bind the exposure is nil and the token
+// is not asked for, to keep the connect snippet short.
+
+const AGENT_POLL_HOLD_MS = 25000;   // how long /poll parks before answering []
+const AGENT_CTL_TIMEOUT_MS = 20000; // how long /ctl waits for the page
+const AGENT_SESSION_TTL_MS = 60000; // no poll for this long = session gone
+const MAX_AGENT_BYTES = 8 * 1024 * 1024; // a PNG data URL rides /result
+
+const agentSessions = new Map(); // id -> session
+let agentCommandId = 1;
+
+function agentPrune() {
+  const now = Date.now();
+  for (const [id, s] of agentSessions) {
+    if (now - s.lastSeen > AGENT_SESSION_TTL_MS) {
+      for (const group of new Set(s.waiting.values())) {
+        clearTimeout(group.timer);
+        sendJson(group.res, 502, { ok: false, error: 'session went away' });
+      }
+      agentSessions.delete(id);
+    }
+  }
+}
+
+function agentFlushPoll(session) {
+  if (!session.pollRes || !session.queue.length) return;
+  const res = session.pollRes;
+  clearTimeout(session.pollTimer);
+  session.pollRes = null;
+  session.pollTimer = null;
+  const batch = session.queue.splice(0, session.queue.length);
+  sendJson(res, 200, batch);
+}
+
+async function handleAgent(req, res, url, opts) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+  const token = opts && opts.agentToken;
+  if (token && url.searchParams.get('token') !== token) {
+    return sendJson(res, 403, { ok: false, error: 'this hub is bound beyond localhost; pass ?token= (printed at server startup)' });
+  }
+  agentPrune();
+  const route = url.pathname.slice('/api/agent/'.length);
+
+  if (route === 'hello' && req.method === 'POST') {
+    let info = {};
+    try { info = JSON.parse(await readBody(req, 64 * 1024)) || {}; } catch (_) {}
+    const id = crypto.randomBytes(4).toString('hex');
+    agentSessions.set(id, {
+      id, kind: 'browser', app: info.app || null, href: info.href || '', ua: info.ua || '',
+      created: Date.now(), lastSeen: Date.now(),
+      queue: [], pollRes: null, pollTimer: null,
+      waiting: new Map(), // command id -> {res, timer, expect, results, single}
+    });
+    console.log(`${new Date().toISOString().slice(11, 19)}  AGENT session ${id} connected`
+      + ` app=${info.app || '?'} ${String(info.href || '').slice(0, 80)}`);
+    return sendJson(res, 200, { sessionId: id });
+  }
+
+  if (route === 'sessions' && req.method === 'GET') {
+    const now = Date.now();
+    return sendJson(res, 200, {
+      sessions: [...agentSessions.values()].map(s => ({
+        id: s.id, kind: s.kind, app: s.app, href: s.href,
+        ageSec: Math.round((now - s.created) / 1000),
+        lastSeenSec: Math.round((now - s.lastSeen) / 1000),
+      })),
+    });
+  }
+
+  const session = agentSessions.get(url.searchParams.get('s') || '');
+
+  if (route === 'poll' && req.method === 'GET') {
+    if (!session) return sendJson(res, 410, { error: 'no such session — say hello again' });
+    session.lastSeen = Date.now();
+    // One poll per session: a second one (a reloaded tab, a duplicated
+    // request) replaces the first rather than splitting the queue.
+    if (session.pollRes) {
+      clearTimeout(session.pollTimer);
+      sendJson(session.pollRes, 200, []);
+    }
+    session.pollRes = res;
+    session.pollTimer = setTimeout(() => {
+      if (session.pollRes !== res) return;
+      session.pollRes = null;
+      session.pollTimer = null;
+      sendJson(res, 200, []);
+    }, AGENT_POLL_HOLD_MS);
+    req.on('close', () => { if (session.pollRes === res) { session.pollRes = null; clearTimeout(session.pollTimer); } });
+    agentFlushPoll(session);
+    return;
+  }
+
+  if (route === 'result' && req.method === 'POST') {
+    if (!session) return sendJson(res, 410, { error: 'no such session' });
+    session.lastSeen = Date.now();
+    let body;
+    try { body = JSON.parse(await readBody(req, MAX_AGENT_BYTES)); }
+    catch (error) { return sendJson(res, 400, { error: String(error.message || error) }); }
+    const results = Array.isArray(body.results) ? body.results : [body];
+    for (const result of results) {
+      const group = session.waiting.get(result.id);
+      if (!group) continue;
+      session.waiting.delete(result.id);
+      group.results[group.slots.get(result.id)] = { ok: !!result.ok, value: result.value, error: result.error };
+      if (--group.expect === 0) {
+        clearTimeout(group.timer);
+        sendJson(group.res, 200, group.single ? group.results[0] : group.results);
+      }
+    }
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (route === 'ctl' && req.method === 'POST') {
+    if (!session) return sendJson(res, 410, { ok: false, error: 'no such session — check ctl.js sessions' });
+    let parsed;
+    try { parsed = JSON.parse(await readBody(req, 1024 * 1024)); }
+    catch (error) { return sendJson(res, 400, { ok: false, error: String(error.message || error) }); }
+    const commands = Array.isArray(parsed) ? parsed : [parsed];
+    const group = {
+      res, expect: commands.length, results: new Array(commands.length),
+      single: !Array.isArray(parsed), slots: new Map(),
+      timer: setTimeout(() => {
+        for (const [cid] of group.slots) session.waiting.delete(cid);
+        sendJson(res, 504, { ok: false, error: 'no answer from the page in 20s — is the tab still open?' });
+      }, AGENT_CTL_TIMEOUT_MS),
+    };
+    commands.forEach((cmd, slot) => {
+      const cid = agentCommandId++;
+      group.slots.set(cid, slot);
+      session.waiting.set(cid, group);
+      session.queue.push(Object.assign({}, typeof cmd === 'string' ? { cmd } : cmd, { id: cid }));
+    });
+    agentFlushPoll(session);
+    return;
+  }
+
+  return sendJson(res, 404, { error: 'agent routes: hello, poll, result, ctl, sessions' });
 }
 
 // ---------------------------------------------------------------------------
@@ -436,6 +590,14 @@ function createServer(opts) {
       return;
     }
 
+    // Agent hub traffic is long-polls and held responses; route it before
+    // the generic API logging, which would print one line per idle poll.
+    if (url.pathname.startsWith('/api/agent/')) {
+      handleAgent(req, res, url, { agentToken: opts && opts.agentToken }).catch(err => {
+        if (!res.headersSent) sendJson(res, 500, { error: String(err && err.message || err) });
+      });
+      return;
+    }
     if (url.pathname.startsWith('/api/')) {
       // Log who is asking, not just what. Two browsers failing to see each
       // other is nearly always one of two things — they are the same user, or
@@ -470,10 +632,14 @@ function main() {
   const port = parseInt(arg('port', '8080'), 10);
   const host = arg('host', '127.0.0.1');
   const perfLog = arg('perf-log', '');
+  // The agent hub carries eval into any connected page, so a bind beyond
+  // localhost requires the token on every agent route.
+  const agentToken = host === '127.0.0.1' ? null : crypto.randomBytes(8).toString('hex');
   const server = createServer({
     quiet: process.argv.includes('--quiet'),
     verbose: process.argv.includes('--verbose'),
     perfLog,
+    agentToken,
   });
   server.listen(port, host, () => {
     console.log(`wine-assembly dev server: http://${host}:${port}`);
@@ -483,6 +649,12 @@ function main() {
     console.log(`  threads probe: http://${host}:${port}/threads-probe.html`
       + (ISOLATE ? '  (COOP/COEP served: isolated)' : '  (no COOP/COEP; use --isolate or the page\'s service-worker button)'));
     if (perfLog) console.log(`  perf batches appended as NDJSON to ${perfLog}`);
+    const tokenQuery = agentToken ? `?token=${agentToken}` : '';
+    console.log(`  agent hub at /api/agent — connect a page by pasting into its console:`);
+    console.log(`    import('http://${host === '0.0.0.0' ? '<lan-ip>' : host}:${port}/lib/agent-remote.js${tokenQuery}')`
+      + `.then(m => m.connect())`);
+    console.log(`  then drive it: node tools/ctl.js sessions | node tools/ctl.js -s <ID> png out.png`);
+    if (agentToken) console.log(`  agent token (bound beyond localhost): ${agentToken}`);
     if (host === '0.0.0.0') {
       console.log('  NOTE: bound to all interfaces and unauthenticated — trusted networks only');
     }

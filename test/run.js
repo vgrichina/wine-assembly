@@ -113,7 +113,19 @@ const DUMP_DDRAW = getArg('dump-ddraw-surfaces', null); // --dump-ddraw-surfaces
 const DUMP_SDB = getArg('dump-sdb', null); // --dump-sdb=DIR: dump StretchDIBits source DIBs + per-call log
 const DUMP_CURSORS = getArg('dump-cursors', null); // --dump-cursors=DIR: PNG per cursor the guest builds (CreateIconIndirect)
 const DUMP_VIRTUAL_MAPS = hasFlag('dump-virtual-maps'); // --dump-virtual-maps: print raw sparse guest-map records
-const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
+// --control[=PORT]: live agent command channel (docs/design-agent-control.md).
+// An HTTP server accepts the same actions as --input, minus the batch prefix,
+// while the guest runs; drive it with tools/ctl.js or plain curl.
+const CONTROL_SPEC = getArg('control', null);
+const CONTROL = hasFlag('control') || CONTROL_SPEC !== null;
+const CONTROL_PORT = parseInt(CONTROL_SPEC || '8123', 10) || 8123;
+const CONTROL_HOST = getArg('control-host', '127.0.0.1'); // --control-host=0.0.0.0: explicit LAN opt-in (the channel carries eval)
+// With --control the schedule is external, so a default batch budget makes no
+// sense: the run ends on a quit command, a stop action, or the outer timeout.
+// An explicit --max-batches still bounds it.
+const MAX_BATCHES = getArg('max-batches', null) !== null
+  ? parseInt(getArg('max-batches', '200'))
+  : (CONTROL ? Infinity : 200);
 // --max-seconds=N: stop the batch loop after N seconds of wall clock, whatever
 // --max-batches says. For benchmarking, this is the useful axis: an app's cost
 // per batch is not constant (Caesar runs ~0.1ms/batch through its boot and then
@@ -1061,8 +1073,14 @@ async function main() {
   //   B:call-func:ADDR[:A0:A1:A2:A3] — call a guest function through the WASM helper
   //   B:read-dword:ADDR[:LABEL] — log a guest dword value
   const scheduledInput = [];
-  if (INPUT_SPEC) {
-    for (const spec of INPUT_SPEC.split(',')) {
+  // Parse "BATCH:kind:args" entries into scheduled events. Shared by the
+  // --input schedule and the --control live channel, which is why this is a
+  // function: the body below pushes straight into scheduledInput (100+ push
+  // sites predate the live channel) and the tail is spliced back off, so a
+  // caller gets exactly the events its own entries produced.
+  const parseInputEntries = (entries) => {
+    const first = scheduledInput.length;
+    for (const spec of entries) {
       const parts = spec.split(':');
       const batch = parseInt(parts[0]);
       const kind = parts[1];
@@ -1548,6 +1566,10 @@ async function main() {
         scheduledInput.push({ batch, msg, wParam, lParam });
       }
     }
+    return scheduledInput.splice(first);
+  };
+  if (INPUT_SPEC) {
+    scheduledInput.push(...parseInputEntries(INPUT_SPEC.split(',')));
     scheduledInput.sort((a, b) => a.batch - b.batch);
   }
   // --auto-mouse=X0,Y0,X1,Y1[,PERIOD][,START]: a hand on the mouse, scripted.
@@ -1564,6 +1586,10 @@ async function main() {
     const start = Math.max(0, n[5] || 0);
     if ([x0, y0, x1, y1].some(v => !Number.isFinite(v))) {
       console.error('--auto-mouse needs at least X0,Y0,X1,Y1');
+      process.exit(2);
+    }
+    if (!Number.isFinite(MAX_BATCHES)) {
+      console.error('--auto-mouse with --control needs an explicit --max-batches (the sweep is pre-scheduled per batch)');
       process.exit(2);
     }
     // Ping-pong, so the pointer never teleports: a jump from one edge back to
@@ -2789,7 +2815,7 @@ async function main() {
     // unused toolbar/status children during frame setup, and closing the app
     // on that leaves the real frame unpainted (fontview exited before its
     // first WM_PAINT this way).
-    if (cmd !== 0 && !inputEvent && !inputQueue && !INPUT_SPEC) {
+    if (cmd !== 0 && !inputEvent && !inputQueue && !INPUT_SPEC && !CONTROL) {
       const btnArg = args.find(a => a.startsWith('--buttons='));
       if (btnArg) {
         inputQueue = btnArg.split('=')[1].split(',').map(Number);
@@ -4770,6 +4796,96 @@ async function main() {
     }
   };
   const deadlineMs = MAX_SECONDS ? Date.now() + MAX_SECONDS * 1000 : 0;
+  // --control: live agent command channel (docs/design-agent-control.md).
+  // Commands arrive over HTTP between batches. Input entries go through the
+  // same parseInputEntries the --input schedule uses and drain through the
+  // same per-action code at the top of the next batch; eval/snapshot/ping/
+  // quit execute right here in the callback — the guest is parked between
+  // batches, so instance and renderer state are coherent.
+  const liveOutstanding = new Map(); // last parsed ev of a live command -> resolve
+  let liveLogsStart = 0;
+  const settleLiveInput = () => {
+    if (!liveOutstanding.size) return;
+    // One shared slice for every command settled this batch: per-command log
+    // attribution would need hooks all through the 2000-line action chain,
+    // and the common agent sends one command per round trip anyway.
+    const batchLogs = logs.slice(liveLogsStart);
+    for (const [ev, resolve] of liveOutstanding) {
+      if (!scheduledInput.includes(ev)) {
+        liveOutstanding.delete(ev);
+        resolve({ batch: tickState.batch | 0, logs: batchLogs });
+      }
+    }
+  };
+  const controlSafeValue = (value) => {
+    if (value === undefined) return null;
+    try {
+      return JSON.parse(JSON.stringify(value,
+        (k, v) => (typeof v === 'bigint' ? '0x' + v.toString(16) : v)));
+    } catch (_) { return String(value); }
+  };
+  const controlSnapshot = () => {
+    const we = instance.exports;
+    const windows = renderer ? Object.values(renderer.windows).map(w => ({
+      hwnd: '0x' + ((w.hwnd >>> 0) || 0).toString(16),
+      x: w.x | 0, y: w.y | 0, w: w.w | 0, h: w.h | 0,
+      visible: !!w.visible, isChild: !!w.isChild, title: w.title || '',
+    })) : [];
+    return {
+      batch: tickState.batch | 0,
+      eip: '0x' + (we.get_eip() >>> 0).toString(16),
+      quit: we.get_quit_flag ? !!we.get_quit_flag() : false,
+      yieldReason: we.get_yield_reason ? we.get_yield_reason() | 0 : 0,
+      focus: '0x' + ((we.get_focus_hwnd ? we.get_focus_hwnd() : 0) >>> 0).toString(16),
+      mainHwnd: '0x' + ((we.get_main_hwnd ? we.get_main_hwnd() : 0) >>> 0).toString(16),
+      screen: renderer && renderer.canvas
+        ? { w: renderer.canvas.width | 0, h: renderer.canvas.height | 0 } : null,
+      windows,
+    };
+  };
+  const controlEval = (code) => {
+    // Direct eval inside a non-strict function body: the params are in
+    // scope, statements work, and the last expression's value comes back.
+    const fn = new Function('instance', 'exports', 'renderer', 'memory', 'g2w', 'tickState',
+      'return eval(' + JSON.stringify(String(code)) + ')');
+    return controlSafeValue(fn(instance, instance.exports, renderer, memory, g2w, tickState));
+  };
+  const handleControlCommand = (cmdIn) => {
+    const cmd = typeof cmdIn === 'string' ? { cmd: cmdIn } : (cmdIn || {});
+    if (cmd.action === 'ping') {
+      return { pong: true, batch: tickState.batch | 0, app: APP_ID || path.basename(EXE_PATH || '') };
+    }
+    if (cmd.action === 'snapshot') return controlSnapshot();
+    if (cmd.action === 'eval') return controlEval(cmd.code || '');
+    if (cmd.action === 'quit') { stopped = true; return { quitting: true }; }
+    const entry = String(cmd.cmd || '');
+    if (!entry) throw new Error('need {cmd:"action:args"} or action: ping|snapshot|eval|quit');
+    if (/^wait-/.test(entry)) {
+      throw new Error('wait-* entries are scheduled-only; poll snapshot or png instead');
+    }
+    const evs = parseInputEntries([`${tickState.batch | 0}:${entry}`]);
+    const last = evs[evs.length - 1];
+    // The parser's fallback reads an unrecognized kind as a raw message id;
+    // NaN there is a typo'd action name, not a message.
+    if (last && last.action === undefined && !Number.isFinite(last.msg)) {
+      throw new Error(`unknown input action ${JSON.stringify(entry.split(':')[0])}`);
+    }
+    return new Promise((resolve) => {
+      liveOutstanding.set(last, resolve);
+      // After everything already due this batch, before everything scheduled
+      // later: the schedule is the fixture, the stream is the driver.
+      const now = tickState.batch | 0;
+      for (const ev of evs) ev.batch = now;
+      let at = scheduledInput.findIndex(e => e.batch > now);
+      if (at < 0) at = scheduledInput.length;
+      scheduledInput.splice(at, 0, ...evs);
+    });
+  };
+  const control = CONTROL ? require('../lib/control-server').startControlServer({
+    port: CONTROL_PORT, host: CONTROL_HOST,
+    onCommand: handleControlCommand, log: line => console.log(line),
+  }) : null;
+
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
     if (deadlineMs && Date.now() >= deadlineMs) {
       console.log(`[max-seconds] stopping after ${MAX_SECONDS}s at batch ${batch}`);
@@ -4808,6 +4924,14 @@ async function main() {
     tickStateRef.batch = batch;
     tickState.callsInBatch = 0;
     if (ctx.pumpAudioCompletions) ctx.pumpAudioCompletions();
+    // --control: give the event loop a turn every batch so the control
+    // server's socket callbacks fire and settled replies flush. Without this
+    // the loop is synchronous end to end — the same mechanism that keeps
+    // SIGTERM queued forever (see the timeout -s KILL note in CLAUDE.md).
+    if (control) {
+      await new Promise(resolve => setImmediate(resolve));
+      liveLogsStart = logs.length;
+    }
     let injectedInputThisBatch = false;
     // Inject scheduled input events at the right batch
     while (scheduledInput.length && scheduledInput[0].batch <= batch) {
@@ -7404,6 +7528,7 @@ async function main() {
         logs.push(`[input] injected msg=0x${ev.msg.toString(16)} wParam=0x${ev.wParam.toString(16)} at batch ${batch}`);
       }
     }
+    if (control) settleLiveInput();
     if (stopped) {
       while (logs.length) console.log(logs.shift());
       break;
@@ -8039,6 +8164,10 @@ if (VERBOSE) {
         // until the next scheduled click/capture. Do not let that idle time
         // accumulate and instantly trip after the last event is consumed.
         stuckCount = 0;
+      } else if (control) {
+        // A controlled session idles by design between agent commands; the
+        // stuck detector would end it the moment the message pump goes quiet.
+        stuckCount = 0;
       } else {
         stuckCount++;
         if (stuckCount > STUCK_AFTER) {
@@ -8050,6 +8179,10 @@ if (VERBOSE) {
       }
     }
   }
+
+  // The control server would otherwise hold the process open; unref lets a
+  // reply resolved in the final batch still flush while the exit path prints.
+  if (control) control.close();
 
   if (handlerHistArmed && handlerHistExports) {
     handlerHistExports.set_handler_hist_enabled(0);

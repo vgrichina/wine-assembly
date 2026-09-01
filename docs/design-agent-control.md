@@ -1,0 +1,277 @@
+# Agent control channel: live event streams into a running session
+
+Status: phases 1 and 2 IMPLEMENTED (run.js `--control` + `tools/ctl.js` +
+dev-server hub + `lib/agent-remote.js`, tests `test/test-control-cli.js` and
+`test/test-web-agent-remote.js`); phase 3 (subscribe streams, pause/step,
+record/replay) remains design. The `?agent` page hook is deferred until
+`index.html` is free of another lane's uncommitted work — until then the
+pasted `import(...).connect()` line (printed by the dev-server at startup) is
+the browser connect path.
+
+## The problem
+
+Every way we drive an emulator session today is decided **before the run starts**.
+`--input=BATCH:ACTION:ARGS` is a schedule written at launch time against batch
+numbers we have to guess; when the guess is wrong the run "fakes a BLANK"
+(dropdown sweep), or the level timer expires before the click lands (Chip's
+Challenge), or `--stuck-after` ends the run and silently drops every later
+event. There is no way to *look first, then act* — which is exactly the loop an
+agent (or a person at a shell) needs: screenshot → decide → click → screenshot.
+
+The browser has the opposite problem. A live page — the local dev-server page,
+the deployed berrry.app build, Safari on a real phone — has a running session
+an agent cannot reach at all. `tools/ios-eval.js` proved the shape of the
+answer (the page polls the server for work, evaluates it, posts the result
+back), but it only exists for the ios-lab pages, not the emulator.
+
+This design gives both hosts the same live control channel:
+
+1. **CLI VM** — `test/run.js --control` accepts a continuous stream of events
+   while the guest runs, and answers observation requests (PNG, state).
+2. **Browser** — any live page connects to the dev-server with one pasted
+   line (or a `?agent` URL param), after which the same commands drive it.
+
+One command vocabulary, one client tool, two transports.
+
+## What already exists (and is reused, not duplicated)
+
+| Piece | Where | Role here |
+|---|---|---|
+| `--input` action vocabulary (`click`, `keydown`, `drag`, `dlg-cmd`, `dump-mem`, `png`, …) | `test/run.js` ~line 966-1350 | The command set. Control commands are the same actions **without the batch prefix** — they fire at the next batch. |
+| Scheduled-input drain point | top of the batch loop, `test/run.js` ~4793 | Live commands drain at the same point, through the same per-action code. |
+| Event-loop yield inside the batch loop | the vlan-wire pattern, `test/run.js:7759` — `if ((batch & 0x3F) === 0) await setImmediate` | **Load-bearing constraint:** the batch loop is otherwise synchronous and socket callbacks never fire (same reason SIGTERM never lands). `--control` turns this periodic yield on unconditionally. |
+| Long-poll eval channel | `tools/ios-selftest-server.js:131-191` + `tools/ios-eval.js` | The browser transport, generalized: page polls `GET`, executes, `POST`s results; the asking HTTP request is held open so the shell prints the answer. |
+| `/api/*` routes, CORS-open POST, NDJSON append | `tools/dev-server.js` | The hub lives here as `/api/agent/*`. |
+| Inert-without-param page module | `lib/phone-diag.js` (`?diag`) | The pattern for `lib/agent-remote.js` (`?agent`). |
+| `--input=B:wait-go` + parent `{t:'go'}` IPC | `test/run.js:282` | Prior art for "hold until told"; superseded by this for interactive use. |
+
+## Protocol
+
+One JSON command shape on both transports:
+
+```json
+{ "id": 7, "action": "click", "args": { "x": 120, "y": 88 } }
+{ "id": 8, "action": "png" }
+{ "id": 9, "action": "eval", "args": { "code": "renderer.windows.length" } }
+```
+
+Each command gets exactly one reply: `{ "id": 7, "ok": true, "value": ... }`
+(`value` is a base64 data URL for `png`, JSON for everything else; `ok:false`
+carries the thrown message). A POST may carry an **array** of commands — that
+is the "continuous stream" case (e.g. a mousemove trail for a drag) — and the
+replies come back as an array in the same order.
+
+### Command set
+
+Phase 1 (the minimum that closes the agent loop):
+
+- **Input:** `click`, `dblclick`, `mousedown`, `mouseup`, `mousemove`,
+  `keydown`, `keyup`, `keypress`, `drag`, `dlg-cmd`, `dlg-click` — same
+  names and argument meanings as the `--input` actions, so everything already
+  known about them (e.g. *mousedown, gap, mouseup* for per-frame button
+  samplers; keydown vs keypress for dialogs) transfers verbatim.
+- **`type`** — a string, expanded host-side into the keydown/keypress/keyup
+  sequence with a per-key gap, because every agent otherwise re-implements it
+  badly.
+- **Observation:** `png` — screen capture. The CLI VM shares a filesystem
+  with the agent, so run.js **writes the file itself** through the existing
+  `png:PATH` input action and the reply's log line names the path and size —
+  no image bytes cross the wire. The browser cannot touch the agent's disk,
+  so there the page replies with `canvas.toDataURL` base64 and `ctl.js`
+  writes the file; same `ctl.js png out.png` UX either way.
+  `snapshot` (structured: batch/step
+  count, eip, window list with class/title/rect/visibility, focus hwnd, last
+  MessageBox text, quit flag), `dump-mem` (existing action, now on demand).
+- **`eval`** — the escape hatch that keeps the command set small. Browser:
+  page-context eval (reaches `window.wineShell`, `WinePerf`, the canvas).
+  CLI: evaluated with `instance.exports`, `renderer`, `mem`, `g2w` in scope.
+- **`ping`** — session liveness + identity.
+
+Phase 2:
+
+- **`subscribe`** — `{ classes: ["messagebox", "api", "frame"] }`: the session
+  pushes matching events to the hub, which appends NDJSON the agent tails
+  (same convention as `--perf-log`). Pull (`png`/`snapshot`) is enough to
+  close the loop; push is for *watching* — "tell me when a MessageBox
+  appears" without polling screenshots.
+- **`pause` / `resume` / `run N`** — batch-level stepping for the CLI VM.
+- **Record/replay** — the browser side already routes real user input through
+  `lib/renderer-input.js`; recording it as an NDJSON command stream and
+  replaying it into `--control` (or compiling it down to a `--input=` schedule)
+  turns a manual browser session into a headless regression test. This is the
+  payoff for keeping the two hosts on one vocabulary; design it, don't build
+  it yet.
+
+## Transports
+
+### CLI VM: a control server inside run.js
+
+`node test/run.js --app=sol --control[=PORT]` (default 8123, bind 127.0.0.1):
+
+- A tiny HTTP server (no deps, same style as ios-selftest-server) with:
+  - `POST /ctl` — command or command array; the response is held open until
+    the command(s) have executed in a batch, so `curl` prints the answer
+    (the ios-eval held-response trick). This is the only command route —
+    `png` writes its file server-side (same box), so no bytes endpoint
+    is needed.
+  - `GET /snapshot` — the snapshot JSON, as a curl convenience.
+- Received commands land in a `liveInput` queue drained at the top of the
+  batch loop, immediately after the `scheduledInput` drain, through the same
+  action dispatch (one implementation of `click` etc., not two).
+- `--control` forces the periodic `await setImmediate` yield (the
+  `(batch & 0x3F) === 0` vlan pattern) so the server's callbacks can fire
+  mid-run, and sets `MAX_BATCHES` to unbounded until a `quit` command or
+  signal — the schedule is now external, so a batch budget makes no sense.
+  `timeout -s KILL` on the *agent's own* commands remains the outer bound.
+- `--input=` still works alongside it (scheduled preamble + live control) and
+  auto-WM_CLOSE stays disabled exactly as it is for `--input`.
+
+Why a direct server and not "run.js polls the dev-server too": the headless
+case is the agent's bread and butter and must not require a second process.
+`run.js --control` + `curl` is self-contained. The hub exists only because a
+browser page cannot listen.
+
+### Browser: the dev-server as hub
+
+The page cannot accept connections, so it polls — the proven ios-eval shape,
+promoted from lab-only to the emulator page and made session-aware:
+
+- **`lib/agent-remote.js`** — inert unless loaded. On start: registers a
+  session (`POST /api/agent/hello` → `{sessionId}`; payload names the app id,
+  user agent, page URL), then loops `GET /api/agent/poll?s=ID` (long-poll:
+  the server holds the GET open ~25s or until a command arrives — *not* the
+  ios-lab fast-poll, which burns phone battery), executes each command, and
+  `POST /api/agent/result`. Input commands are executed by **synthesizing
+  real DOM events on the screen canvas** (PointerEvent/KeyboardEvent with the
+  right coordinates), so they exercise `lib/renderer-input.js` routing
+  identically to a human — the same reason `--trace-input` exists. `eval`
+  runs in page context. `png` is `canvas.toDataURL('image/png')`.
+- **dev-server routes** (`/api/agent/*`): `hello`, `poll` (long-poll per
+  session), `result` (routes the reply back to the held client request),
+  `sessions` (list live sessions: id, kind, app, age, last-seen), and the
+  client-facing `POST /api/agent/ctl?s=ID` which enqueues for that session
+  and holds the response until `result` arrives (20s timeout with a "is the
+  page still open?" message, like ios-eval). CORS-open like `/api/perf`,
+  because the page being driven is often served from elsewhere.
+
+### Connecting a page — the copy pasta
+
+Three ways in, cheapest first:
+
+1. **You launched the page yourself:** add `?agent` to the URL. `index.html`
+   loads `lib/agent-remote.js` the way `?diag` loads phone-diag; hub defaults
+   to the page's own origin. Zero paste. This is also the phone path —
+   typing `?agent` into Safari's URL bar beats pasting into a console that
+   iOS doesn't have.
+2. **Any other page (deployed berrry.app, someone else's tab):** paste one
+   line into the console:
+
+   ```js
+   import('http://127.0.0.1:8080/lib/agent-remote.js').then(m => m.connect('http://127.0.0.1:8080'))
+   ```
+
+   The logic stays in the repo file; the snippet never grows. dev-server
+   already serves the repo with CORS headers, and dynamic `import()` from an
+   https page to `http://127.0.0.1` is allowed in Chrome (localhost is a
+   potentially-trustworthy origin). **Safari blocks that mixed request** —
+   the Safari fallback is path 1 against a locally-served page, or a
+   `https://` hub (see Security).
+3. The same line as a bookmarklet, for repeat use.
+
+`connect(hub)` is exported precisely so the snippet is one call; with no
+argument it uses the script's own origin.
+
+## The client: `tools/ctl.js`
+
+`curl` can do everything, but the agent-facing verbs deserve a tool
+(build-tools-not-scripts):
+
+```
+node tools/ctl.js sessions                      # list live sessions (hub + default CLI port)
+node tools/ctl.js [-s ID] click 120,88
+node tools/ctl.js [-s ID] type "hello world"
+node tools/ctl.js [-s ID] key VK_RETURN         # keydown+keyup pair
+node tools/ctl.js [-s ID] png out.png
+node tools/ctl.js [-s ID] snapshot              # JSON to stdout
+node tools/ctl.js [-s ID] eval 'wineShell.apps.length'
+node tools/ctl.js [-s ID] pipe < events.ndjson  # the continuous-stream case
+node tools/ctl.js [-s ID] tail                  # phase 2: follow subscribed events
+```
+
+With exactly one live session, `-s` is optional. `-s` accepts a bare CLI port
+(`-s :8123`) or a hub session id. Exit codes compose in a shell: 0 executed,
+1 the command threw guest/page-side, 2 transport failure — same contract as
+ios-eval.
+
+The agent loop this enables, verbatim:
+
+```bash
+node tools/ctl.js png /tmp/f1.png      # look
+node tools/ctl.js click 231,110        # act
+node tools/ctl.js png /tmp/f2.png      # look again
+node tools/png-diff.js /tmp/f1.png /tmp/f2.png   # did anything happen?
+```
+
+## Timing, clocks, and what "now" means
+
+- **CLI:** a live command executes at the top of the next batch. Latency is
+  one batch of wall time — irrelevant for an agent loop. The headless clock
+  interplay does **not** go away: an app pacing on `WM_TIMER` still needs
+  `--tick-ms-per-batch` chosen for it, and an agent free-running batches
+  between its own commands advances guest time fast. That is usually what an
+  agent wants (no waiting through fades); when it isn't, phase-2
+  `pause`/`run N` is the answer, not a new clock mode.
+- **Browser:** a command executes on receipt in the page's event loop, i.e.
+  between run-loop steps — the same interleaving as real user input.
+- **Ordering:** commands within one POST array execute in order in one batch
+  (CLI) / one turn (browser). Across POSTs, arrival order. No batch-number
+  addressing on the live channel at all — that is `--input`'s job and the two
+  compose (schedule the boot, then drive live).
+
+## Security
+
+Same posture as ios-selftest-server — an unauthenticated debugging server the
+user starts by hand — but this one carries `eval`, so the defaults tighten:
+
+- run.js `--control` and the dev-server bind **127.0.0.1 by default**;
+  `--host=0.0.0.0` is the explicit opt-in for phone testing (the ios server
+  already works this way for the repo-serving half).
+- When bound beyond localhost, the dev-server prints a random token at
+  startup; `?agent=TOKEN`, the pasted snippet, and `ctl.js` (env
+  `WINE_AGENT_TOKEN` or `--token=`) must carry it, and `hello`/`poll`/`ctl`
+  reject without it. On pure-localhost binds the token is not required, to
+  keep the copy pasta short where the exposure is nil.
+- The deployed berrry.app page never gets a hub URL baked in — connecting a
+  deployed page is always an explicit local paste.
+
+## Failure modes designed for up front
+
+- **Page closed / run exited:** `poll` sessions expire after 60s without a
+  poll; `ctl` against a dead session answers immediately with "session gone"
+  instead of the 20s timeout. `ctl.js sessions` shows last-seen age.
+- **The batch loop never yields** (guest stuck inside one batch): the control
+  server goes quiet exactly like SIGTERM does today. `ctl.js` says "no answer
+  in 20s — the VM may be inside a long batch" rather than hanging; the
+  outer `timeout -s KILL` remains the guarantee.
+- **Two agents, one session:** replies are routed by command id to the asking
+  request, so interleaved clients get their own answers; no locking beyond
+  that. Coordinating *intent* stays a messageboard problem.
+- **Command throws guest-side:** `ok:false` + message, session stays up.
+  A crash of the VM itself ends the session; the next `ctl` reports it gone.
+
+## Implementation order
+
+1. **`test/run.js --control`** + `tools/ctl.js` (direct mode): server, live
+   queue drained beside `scheduledInput`, forced periodic yield, `png` /
+   `snapshot` / `eval` / input actions. This alone retires the
+   guess-the-batch-number workflow.
+   Test: `test/test-control-cli.js` — spawn `run.js --app=sol --control=PORT`,
+   wait for the ready line, `snapshot`, `click` a card, `png` twice,
+   assert `png-diff` sees the change; bounded by `timeout -s KILL`.
+2. **dev-server hub + `lib/agent-remote.js` + `?agent`**: hello/poll/result/
+   ctl/sessions routes, DOM-event synthesis, `ctl.js -s` hub mode.
+   Test: `test/test-web-agent-remote.js` in the existing headless-web
+   harness — load `?agent` page against a dev-server, drive a click, assert
+   via `eval` that the input routed.
+3. **Streams + record/replay**: `subscribe`, NDJSON event log, `tail`,
+   browser input recording. Each is independently shippable.

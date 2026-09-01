@@ -592,6 +592,7 @@ E2E=(
   test/test-web-failed-launch-recovers.js
   test/test-web-double-tap-single-launch.js
   test/test-web-touch-cursor.js
+  test/test-web-agent-remote.js
   test/test-web-record-audio.js
   test/test-web-audio-session.js
   test/test-web-ios-lab.js
@@ -633,6 +634,7 @@ E2E=(
   test/test-notepad-find-not-found-msgbox.js
   test/test-find-cancel.js
   test/test-about-cancel.js
+  test/test-control-cli.js
   test/test-calc-about.js
   test/test-calc-drag-close.js
   test/test-calc-helper-window.js
