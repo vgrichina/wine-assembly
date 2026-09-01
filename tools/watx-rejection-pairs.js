@@ -465,6 +465,45 @@ pair('literal', 'a malformed integer literal is refused',
   '(func $f (result i32) (i32.const 0x1g))\n(export "f" (func $f))',
   'literal');
 
+// ── The string pool ───────────────────────────────────────────────────────
+// A bare "text" literal, (string ...) and (cstring ...) all intern into one
+// pool. Its default address is "just above the last data segment", which is
+// only above the MAP when WATX allocated that map itself via
+// region.declare-static/-bump/-rc. With regions allocated instead, the default
+// lands inside somebody's storage — measured in wine-assembly as a literal
+// placed at 0x07B7B040, in the middle of a live region, with every gate green.
+// So the pool is either pinned by (string.pool $R) or its default is checked.
+const OK_POOL = '(region.declare-fixed $POOL (base 0x11000) (size 0x100) (owner "strings"))';
+const USES_STR = '(func $f (result i32) "hi")\n(export "f" (func $f))';
+// The legacy pool address with no data segments is 1024 = 0x400, so a region
+// placed there is exactly the collision the default cannot see for itself.
+const LOW_TENANT = '(region.declare-fixed $LOW (base 0x400) (size 0x100) (owner "a tenant at the default pool address"))';
+pair('string pool', 'a pool that lands inside an allocated region is refused',
+  `${LOW_TENANT}\n${OK_POOL}\n(string.pool $POOL)\n${USES_STR}`,
+  `${LOW_TENANT}\n${OK_POOL}\n${USES_STR}`,
+  'overlaps the storage of region');
+pair('string pool', 'string.pool is declared at most once',
+  `${OK_POOL}\n(string.pool $POOL)\n${USES_STR}`,
+  `${OK_POOL}\n(string.pool $POOL)\n(string.pool $POOL)\n${USES_STR}`,
+  'already declared');
+pair('string pool', 'string.pool names a declared region',
+  `${OK_POOL}\n(string.pool $POOL)\n${USES_STR}`,
+  `${OK_POOL}\n(string.pool $NOPE)\n${USES_STR}`,
+  'unknown region');
+pair('string pool', 'string.pool takes exactly one operand',
+  `${OK_POOL}\n(string.pool $POOL)\n${USES_STR}`,
+  `${OK_POOL}\n(string.pool $POOL $POOL)\n${USES_STR}`,
+  'exactly one operand');
+pair('string pool', 'a span owns no storage to lend the pool',
+  `${OK_POOL}\n(string.pool $POOL)\n${USES_STR}`,
+  `${OK_SPAN}\n${OK_FIXED}\n(string.pool $S)\n${USES_STR}`,
+  'is a span');
+// "hello" interns as 5 bytes + NUL, padded to 8 — which fits 0x100 and does not fit 4.
+pair('string pool', 'a pool that outgrows its region is refused',
+  `(region.declare-fixed $P2 (base 0x11000) (size 0x100) (owner "strings"))\n(string.pool $P2)\n(func $f (result i32) "hello")\n(export "f" (func $f))`,
+  `(region.declare-fixed $P2 (base 0x11000) (size 0x4) (owner "strings"))\n(string.pool $P2)\n(func $f (result i32) "hello")\n(export "f" (func $f))`,
+  'runs past');
+
 // ── The runner ────────────────────────────────────────────────────────────
 
 function runPairs({ only = null, onResult = null } = {}) {

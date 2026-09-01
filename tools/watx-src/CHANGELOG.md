@@ -17,6 +17,61 @@ Rules:
 - Every compiler change lands with a minimal regression in one of the
   `test/watx-compiler-*.test.js` suites.
 
+## 2026-08-31 — the string pool gets an address instead of a guess
+
+Manifest digest: `bb690346c9e5e1af8c0507518b88d5eca2de46fe60268de179b2d74acbb92c34`
+
+`compiler-codegen.js`. A bare `"text"` literal, `(string ...)` and `(cstring
+...)` intern into one pool, placed at `DATA_BASE = align16(max(staticCursor, max
+data-segment end))` and documented as sitting "immediately ABOVE the static
+regions so its bytes never overlap a region's storage".
+
+That is true only when WATX itself allocated the storage below, via
+`region.declare-static/-bump/-rc` — those three heads are what advance
+`staticCursor`. A module whose map comes from the `region.declare`/`-fixed`/
+`-derived` allocator never advances it, so it stays at `STATIC_REGION_BASE`
+(1024) and "above the static regions" degenerates to "above the last data
+segment" — which is not above the map but a point in the **middle** of it.
+
+Measured in this repository before the change: one bare `"ceil"` literal added
+to `src/08b-dll-loader.wat` was placed at `0x07B7B040`, inside `$D3DIM_AUX`
+`[0x07B7B000, 0x07B7C000)`, on top of live Direct3D state — and every build gate
+passed. Neither guard could see it. The pre-existing data-segment check covers
+only `[1024, staticCursor)`, which is empty here; `tools/wasm-data.js` compares
+data **segments** to each other, and a region's storage is not a segment. The
+symptom would have been corrupted 3D rendering an arbitrary distance from the
+literal. So interned strings were, in practice, unusable in this tree, and the
+first author to write one would have paid for it.
+
+Two rules replace the guess:
+
+1. **`(string.pool $REGION)`** — a new top-level declaration that pins the pool
+   at that region's base, bounds-checked against the region's size the same way
+   any `region.addr` tenant is. Declared at most once; refuses an unknown region
+   and refuses a span (a span owns no storage of its own to lend).
+2. **Without that declaration the default is checked, not trusted.** A non-empty
+   pool whose extent overlaps any declared region's storage is a hard compile
+   error naming both ranges and `(string.pool ...)` as the fix.
+
+Neither rule is reached by a module that declares no regions — the byte-identity
+case, and watjs's, which interns ~3500 strings and has no region map. Verified:
+with no `(string.pool ...)` in the tree the wine-assembly wasm is unchanged.
+
+Also decoupled from the pool: `$bump_ptr`'s initializer was
+`DATA_BASE + dataPool.bytes.length`, which double-counts once the pool moves
+elsewhere, so with a pinned pool the heap now starts after the data segments
+instead. (Unrelated latent issue, left alone and noted here because it is
+adjacent: that expression is evaluated in section 6 while the pool is only
+filled in section 10, so it reads a length of 0 for anything interned inside a
+function body. Pinning the pool makes it moot for this repository.)
+
+Regression: `test/watx-compiler-string-pool.test.js` — pinned placement and
+dedupe asserted by reading the bytes back out of an instantiated module, plus
+the overlap, overflow and legacy-default refusals. Six matched accept/reject
+pairs in `tools/watx-rejection-pairs.js` under the `string pool` group. Not
+added to `tools/watx-differential.js`: that corpus is standard WAT only, and
+`(string.pool ...)` is a WATX form wabt cannot parse.
+
 ## 2026-08-31 — import
 
 Vendored from `../android-emu` `590238be` plus its uncommitted standard folded

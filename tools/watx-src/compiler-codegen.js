@@ -895,6 +895,32 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
   // data section sits ABOVE the static regions so string bytes never collide
   // with a region's storage. It stays 1024 when there are no static regions.
   let DATA_BASE = 1024;
+  // Where the pool WOULD go under the legacy "above the last data segment" rule.
+  // Kept separate from DATA_BASE so `(string.pool ...)` can move the pool without
+  // also moving the bump heap, which is a different tenant of that same address.
+  let legacyDataBase = 1024;
+  // Set by `(string.pool $REGION)`: {name, base, size, form}. Null = legacy placement.
+  let stringPoolRegion = null;
+  // The first function whose body interned a literal. A misplaced pool is
+  // diagnosed with no form of its own to point at — it is the ABSENCE of a
+  // declaration — so the error points here instead, at a line that actually
+  // contains one of the strings being placed.
+  let firstInternFunc = null;
+  // Location-tagged error, for forms outside the region block's own `located`.
+  const locatedAt = (form, message) => {
+    const e = new Error(message);
+    const loc = form == null ? undefined : watxFormLoc(form);
+    if (loc !== undefined) {
+      e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc);
+    }
+    return e;
+  };
+  const formWhere = (form) => {
+    const loc = watxFormLoc(form);
+    if (loc === undefined) return 'an earlier line';
+    const file = watxNodeFile(loc);
+    return file ? `${file}:${watxNodeLine(loc)}` : `line ${watxNodeLine(loc)}`;
+  };
   const dataPool = { bytes: new BinaryWriter(1024), map: new Map() };
   function unescapeStr(raw) {
     // raw includes surrounding quotes; strip and process escapes
@@ -2091,8 +2117,54 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
   // never overlap a region's storage. The bump heap then starts after the data
   // (finalized at the global section, once the pool size is known). With no
   // static regions and no interned strings this stays 1024 — byte-identical.
-  DATA_BASE = Math.max(staticCursor, ...fixedDataSegments.map(seg => seg.offset + seg.bytes.length));
-  DATA_BASE = (DATA_BASE + 15) & ~15;
+  //
+  // That rule holds only when WATX itself allocated the storage below, via
+  // `region.declare-static/-bump/-rc` — those are what advance `staticCursor`.
+  // A module whose regions come from the `region.declare`/`-fixed`/`-derived`
+  // allocator leaves `staticCursor` at 1024, so "above the static regions"
+  // degenerates to "above the last data segment", which is a point in the
+  // MIDDLE of that map. Measured in wine-assembly: a single bare "ceil" literal
+  // landed at 0x07B7B040, inside $D3DIM_AUX [0x07B7B000, 0x07B7C000), and every
+  // gate passed — the check below only covers [1024, staticCursor), and a
+  // segment-vs-segment overlap check cannot see a region whose storage carries
+  // no data segment. So the pool silently overwrote live D3D state.
+  //
+  // Two things fix that, and neither changes a module that has no allocated
+  // regions (the byte-identity case, and watjs's):
+  //   1. `(string.pool $REGION)` pins the pool into a region declared for it,
+  //      bounds-checked against that region's size like any other tenant.
+  //   2. Absent that declaration, the legacy address is CHECKED against the
+  //      region map instead of trusted (see the pool emit in section 11).
+  legacyDataBase = Math.max(staticCursor, ...fixedDataSegments.map(seg => seg.offset + seg.bytes.length));
+  legacyDataBase = (legacyDataBase + 15) & ~15;
+  {
+    const poolForms = forms.filter(f => Array.isArray(f) && V(f[1]) === 'string.pool');
+    if (poolForms.length > 1) {
+      throw locatedAt(poolForms[1],
+        `(string.pool ...) is already declared at ${formWhere(poolForms[0])}; a module has one string pool`);
+    }
+    if (poolForms.length === 1) {
+      const form = poolForms[0];
+      if (watxFormLength(form) !== 2) {
+        throw locatedAt(form, `(string.pool ...) takes exactly one operand: the region to place the pool in`);
+      }
+      const rname = V(form[2]);
+      const region = rname ? regions.get(rname) : null;
+      if (!region) {
+        const known = [...regions.keys()];
+        throw locatedAt(form, `string.pool: unknown region ${rname || '<missing>'}; declared regions are ` +
+          (known.length ? known.join(', ') : '(none)'));
+      }
+      // A span names a range that other regions own; it has no storage of its
+      // own to lend, exactly as region.addr refuses one.
+      if (region.kind === 'span') {
+        throw locatedAt(form, `string.pool: ${rname} is a span, which owns no storage of its own — ` +
+          `name a region declared to hold the pool`);
+      }
+      stringPoolRegion = { name: rname, base: region.base, size: region.size, form };
+    }
+  }
+  DATA_BASE = stringPoolRegion ? stringPoolRegion.base : legacyDataBase;
 
   // Build function index map:
   // Function imports first, then optional WATX runtime builtins, then user funcs.
@@ -2510,6 +2582,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         // Bare "text" literal → a real C string ([bytes][NUL]) in the data
         // segment; push a pointer to the first byte. (Use (string "...") for a
         // length-prefixed Pascal string.)
+        if (!firstInternFunc) firstInternFunc = func;
         const ptr = internCStr(V(expr));
         bytes.byte(OP.i32_const);
         bytes.sleb(ptr);
@@ -2534,6 +2607,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     // and add (string ...) to watjs's own compiler copy.
     if (head === 'string' || head === 'cstring') {
       const raw = V(expr[2]) || '""';
+      if (!firstInternFunc) firstInternFunc = func;
       const ptr = internPString(raw);
       bytes.byte(OP.i32_const);
       bytes.sleb(ptr);
@@ -4839,7 +4913,13 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     content.uleb(globalDecls.length);
     // $bump_ptr: mut i32 = heap start = after static regions AND the string data
     // section (DATA_BASE + pool size, 16-byte aligned). 1024 when neither exists.
-    const bumpHeapStart = (DATA_BASE + dataPool.bytes.length + 15) & ~15;
+    // With the pool pinned into its own region by `(string.pool ...)`, the pool
+    // no longer sits at the top of the data segments, so the heap starts right
+    // after those instead of after the pool. Without the declaration this is
+    // the original expression, unchanged.
+    const bumpHeapStart = stringPoolRegion
+      ? (legacyDataBase + 15) & ~15
+      : (DATA_BASE + dataPool.bytes.length + 15) & ~15;
     for (const g of globalDecls) {
       content.push(valtypeOf(g.type), g.mutable ? 0x01 : 0x00);
       if (g.runtime === 'bump') {
@@ -5121,6 +5201,40 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     }
     
     appendSection(allBytes, 10, content);
+  }
+
+  // The pool's size is only final now, after every function body has been
+  // emitted and every literal interned — so this is the first point at which
+  // its extent can be checked at all.
+  if (dataPool.bytes.length > 0) {
+    const poolEnd = DATA_BASE + dataPool.bytes.length;
+    if (stringPoolRegion) {
+      const regionEnd = stringPoolRegion.base + stringPoolRegion.size;
+      if (poolEnd > regionEnd) {
+        throw locatedAt(stringPoolRegion.form,
+          `string pool (${dataPool.bytes.length} bytes of interned string/cstring data) runs past ` +
+          `the ${stringPoolRegion.size} bytes of region ${stringPoolRegion.name} ` +
+          `[0x${stringPoolRegion.base.toString(16).toUpperCase()}, 0x${regionEnd.toString(16).toUpperCase()}) — ` +
+          `grow that region by at least ${poolEnd - regionEnd} bytes`);
+      }
+    } else if (regions.size > 0) {
+      // No `(string.pool ...)`, but this module DOES have an allocated region
+      // map, so the legacy address is a guess about somebody else's memory.
+      // Check it instead of trusting it: a pool that lands inside a region's
+      // storage overwrites live state, and neither the [1024, staticCursor)
+      // guard above nor a segment-vs-segment overlap check can see it.
+      const hit = [...regions.values()].find(
+        r => r.size > 0 && DATA_BASE < r.base + r.size && poolEnd > r.base);
+      if (hit) {
+        throw locatedAt(firstInternFunc ? firstInternFunc.sourceNode : null,
+          `String pool [0x${DATA_BASE.toString(16).toUpperCase()}, 0x${poolEnd.toString(16).toUpperCase()}) ` +
+          `overlaps the storage of region ${hit.name} ` +
+          `[0x${hit.base.toString(16).toUpperCase()}, 0x${(hit.base + hit.size).toString(16).toUpperCase()}). ` +
+          `Interned strings — a bare "text" literal, (string ...) or (cstring ...) — are placed above the ` +
+          `last data segment by default, which is inside the map when regions are allocated rather than ` +
+          `declared static. Declare a region to hold them and name it with (string.pool $REGION).`);
+      }
+    }
   }
 
   // Section 11: explicit WAT data segments plus the WATX string pool.
