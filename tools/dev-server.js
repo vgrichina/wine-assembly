@@ -456,6 +456,12 @@ async function handlePerf(req, res, opts) {
 
 const AGENT_POLL_HOLD_MS = 25000;   // how long /poll parks before answering []
 const AGENT_CTL_TIMEOUT_MS = 20000; // how long /ctl waits for the page
+// A `step` is the one command whose duration the caller chose: `step 200000`
+// on a frozen session is minutes of guest work, and answering "no answer from
+// the page in 20s" to a request that is executing exactly as asked would be a
+// lie. Everything else stays on the short timeout, where a silent page really
+// does mean a closed tab.
+const AGENT_STEP_TIMEOUT_MS = 600000;
 const AGENT_SESSION_TTL_MS = 60000; // no poll for this long = session gone
 const MAX_AGENT_BYTES = 8 * 1024 * 1024; // a PNG data URL rides /result
 
@@ -511,16 +517,33 @@ async function handleAgent(req, res, url, opts) {
       "  node tools/ctl.js -s '<tab URL or ID>' click 120,88",
       '  verbs: snapshot ping apps launch APPID click dblclick rclick',
       '    mousedown mouseup mousemove drag key VK type TEXT png FILE',
-      '    eval CODE cmd RAW user-input on|off pipe',
+      '    eval CODE cmd RAW user-input on|off frozen on|off step N [MS] pipe',
       '  the page blocks the human at the keyboard from reaching the guest as',
       '  soon as you send input; `user-input on` hands it back to them',
+      '',
+      'FROZEN (agent-stepped) sessions — the browser twin of the headless CLI:',
+      "  node tools/ctl.js -s ID frozen on     # nothing runs until you say so",
+      '  node tools/ctl.js -s ID step 400      # 400 steps of guest work, then stop',
+      '  node tools/ctl.js -s ID png a.png     # byte-stable: it cannot change',
+      '  node tools/ctl.js -s ID click 231,110 # queued; consumed by the next step',
+      '  While frozen the guest CLOCK is driven by steps too (default 16ms of',
+      '  guest time per step, `step N MS` changes it) — the browser twin of',
+      "  run.js's --tick-ms-per-batch. A page loaded with ?frozen starts that",
+      '  way; the ?debug toolbar has the same switch as a checkbox.',
+      '',
+      'MANY GAMES AT ONCE:',
+      `  ${base}/dashboard  boots one emulator per tile, each its own session`,
+      '  (?apps=sol,winmine to preload tiles, &frozen to boot them stepped).',
+      '  Every tile answers ctl.js on its own session id — list them with',
+      '  `node tools/ctl.js sessions`.',
       '',
       'Raw protocol (any HTTP client):',
       `  GET  ${base}/api/agent/sessions`,
       `  POST ${base}/api/agent/ctl?s=ID   body {"action":"ping"} or an array`,
       '       reply is held open until the page executed the command(s)',
       '  actions: ping snapshot eval {code} png apps launch {app}',
-      '           user-input {mode:"on"|"off"}',
+      '           user-input {mode:"on"|"off"} frozen {mode:"on"|"off"}',
+      '           step {n,ms}  — held open until the guest is back at rest',
       '  cmd entries (run.js --input syntax): click:X:Y dblclick:X:Y',
       '    rclick:X:Y mousedown:X:Y mouseup:X:Y mousemove:X:Y wheel:X:Y:D',
       '    keydown:VK keyup:VK keypress:CHARCODE',
@@ -617,13 +640,16 @@ async function handleAgent(req, res, url, opts) {
     try { parsed = JSON.parse(await readBody(req, 1024 * 1024)); }
     catch (error) { return sendJson(res, 400, { ok: false, error: String(error.message || error) }); }
     const commands = Array.isArray(parsed) ? parsed : [parsed];
+    const isStep = c => c && (c.action === 'step'
+      || /^step(:|$)/.test(String(c.cmd || '').trim()));
+    const holdMs = commands.some(isStep) ? AGENT_STEP_TIMEOUT_MS : AGENT_CTL_TIMEOUT_MS;
     const group = {
       res, expect: commands.length, results: new Array(commands.length),
       single: !Array.isArray(parsed), slots: new Map(),
       timer: setTimeout(() => {
         for (const [cid] of group.slots) session.waiting.delete(cid);
-        sendJson(res, 504, { ok: false, error: 'no answer from the page in 20s — is the tab still open?' });
-      }, AGENT_CTL_TIMEOUT_MS),
+        sendJson(res, 504, { ok: false, error: `no answer from the page in ${Math.round(holdMs / 1000)}s — is the tab still open?` });
+      }, holdMs),
     };
     commands.forEach((cmd, slot) => {
       const cid = agentCommandId++;
@@ -702,7 +728,13 @@ function createServer(opts) {
     // page would need the agent token, and serving the token to every viewer
     // is serving control of every session.
     const agentInject = !(opts && opts.agentToken) && !(opts && opts.noAgentInject);
-    serveStatic(req, res, url.pathname === '/' ? '/index.html' : url.pathname, agentInject);
+    // /dashboard is the multi-session grid (dashboard.html). Aliased because
+    // the URL a human is handed should not carry a file extension, and because
+    // the page's own tile links are written against this path.
+    let pathname = url.pathname;
+    if (pathname === '/') pathname = '/index.html';
+    else if (pathname === '/dashboard') pathname = '/dashboard.html';
+    serveStatic(req, res, pathname, agentInject);
   });
   server.store = store;
   return server;
@@ -747,6 +779,8 @@ function main() {
     console.log(`    import('http://${host === '0.0.0.0' ? '<lan-ip>' : host}:${port}/lib/agent-remote.js${tokenQuery}')`
       + `.then(m => m.connect())`);
     console.log(`  then drive it: node tools/ctl.js sessions | node tools/ctl.js -s <ID> png out.png`);
+    console.log(`  many games at once: http://${host}:${port}/dashboard`
+      + '  (one emulator per tile, each its own agent session)');
     if (agentToken) console.log(`  agent token (bound beyond localhost): ${agentToken}`);
     if (host === '0.0.0.0') {
       console.log('  NOTE: bound to all interfaces and unauthenticated — trusted networks only');

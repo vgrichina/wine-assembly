@@ -247,6 +247,20 @@
       color: #404040;
       font-variant-numeric: tabular-nums;
     }
+    /* Frozen mode (docs/design-agent-control.md). Nothing on this page moves
+       while it is on, so the badge has to be loud enough that a human looking
+       at a still picture knows why it is still. */
+    #frozen-status {
+      font-variant-numeric: tabular-nums;
+      color: #606060;
+      white-space: nowrap;
+    }
+    #frozen-status.frozen {
+      background: #000080;
+      color: #ffffff;
+      padding: 1px 5px;
+      font-weight: bold;
+    }
     #content {
       flex: 1;
       display: flex;
@@ -1259,6 +1273,11 @@
         <label title="Experimental: opt into real guest threads. Needs cross-origin isolation; the worker backend is still phase 1."><input id="threads-toggle" type="checkbox" onchange="setThreads(this.checked)">Threads</label>
         <span id="threads-status" style="color:#606060"></span>
       </span>
+      <span class="debug-profile">
+        <label title="Freeze the emulator: no slices run, no frames are drawn and the guest clock stops until somebody steps it. The browser twin of the headless CLI — an agent screenshots, clicks, steps, screenshots again, and the picture cannot change in between. Uncheck to go back to live; the guest sees no time jump either way."><input id="frozen-toggle" type="checkbox" onchange="setFrozenMode(this.checked)">Frozen</label>
+        <button id="frozen-step-btn" onclick="frozenStepOnce(event)" title="Run one step's worth of guest work and stop again. Shift-click for 100 steps.">Step</button>
+        <span id="frozen-status"></span>
+      </span>
       <span class="debug-record">
         <button id="record-btn" onclick="toggleRecording()" title="Record screen + audio to .webm">● Record</button>
       </span>
@@ -2030,6 +2049,39 @@ Resource-aware Win98 emulator
       const box = document.getElementById('agent-input-toggle');
       if (box) box.checked = !!(e.detail && e.detail.blocked);
     });
+    // Frozen (agent-stepped) mode — docs/design-agent-control.md. host.js owns
+    // the switch (window.WineFrozen); this is the toolbar's view of it, and it
+    // mirrors changes made over the agent channel exactly the way the input
+    // checkbox above mirrors agent-initiated exclusivity. The badge is the
+    // point of the readout: a page where nothing moves is indistinguishable
+    // from a hung one until something says FROZEN.
+    function renderFrozenStatus(state) {
+      const box = document.getElementById('frozen-toggle');
+      const badge = document.getElementById('frozen-status');
+      const stepBtn = document.getElementById('frozen-step-btn');
+      const s = state || (window.WineFrozen && window.WineFrozen.status()) || { frozen: false };
+      if (box) box.checked = !!s.frozen;
+      if (stepBtn) stepBtn.disabled = !s.frozen;
+      if (!badge) return;
+      badge.classList.toggle('frozen', !!s.frozen);
+      badge.textContent = s.frozen
+        ? `FROZEN  step ${s.steps | 0}  guest ${((s.guestMs | 0) / 1000).toFixed(2)}s`
+        : '';
+    }
+    window.addEventListener('wine-frozen', (e) => renderFrozenStatus(e.detail));
+    function setFrozenMode(on) {
+      if (!window.WineFrozen) return;
+      renderFrozenStatus(window.WineFrozen.setEnabled(on, { force: true }));
+      appendDebugLog(`[frozen] ${on ? 'frozen — nothing runs until stepped' : 'live'}`);
+    }
+    async function frozenStepOnce(event) {
+      if (!window.WineFrozen) return;
+      const n = (event && event.shiftKey) ? 100 : 1;
+      try { renderFrozenStatus(await window.WineFrozen.step(n)); }
+      catch (error) { appendDebugLog(`[frozen] ${error && error.message || error}`); }
+    }
+    window.addEventListener('load', () => renderFrozenStatus());
+
     async function setAgentInputBlock(on) {
       try {
         const m = await import('./lib/agent-remote.js');
@@ -2073,6 +2125,21 @@ Resource-aware Win98 emulator
     if (new URLSearchParams(location.search).has('perf')) {
       window.addEventListener('load', () => setPerfHud(true));
     }
+    // `?app=ID` launches straight into one app. Written for dashboard.html,
+    // whose tiles are ordinary emulator pages in iframes, but it is a plain
+    // deep link: `?app=sol&frozen` is one agent-stepped Solitaire. The key
+    // goes to the shell directly rather than through the <select>, because the
+    // selector is filtered down to the desktop set outside ?debug and a valid
+    // registry id that is simply not in the dropdown should still launch.
+    (() => {
+      const wanted = new URLSearchParams(location.search).get('app');
+      if (!wanted) return;
+      window.addEventListener('load', () => {
+        const select = document.getElementById('app-select');
+        if (select && [...select.options].some(o => o.value === wanted)) select.value = wanted;
+        shell.launchApp(wanted);
+      });
+    })();
     // Decode-time superop switches. The flag is read when an instance is
     // created (host.js), so the honest A/B is toggle-then-relaunch; toggling
     // mid-run only steers blocks decoded from here on, which is why the

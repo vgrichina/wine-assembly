@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wine-Assembly — session dashboard</title>
+<!--
+  Many emulators at once, tiled (docs/design-agent-control.md).
+
+  Every tile is an ORDINARY emulator page in an iframe: same index.html, same
+  boot, same renderer, its own WineAssembly and its own 512MB memory. That is
+  the whole design decision, and it is deliberate rather than lazy — the page
+  is singleton-shaped in ways that would each have to be undone to host two
+  guests side by side in one document: one `<canvas id="screen">`, one
+  `window.sharedRenderer`, one set of window-level key listeners in
+  lib/browser-input.js, one `document.fullscreenElement`, one desktop-icon
+  grid. An iframe gives all of that per tile for free, at the cost of one
+  document each.
+
+  It also composes with the rest of the feature: the dev-server injects the
+  agent auto-connect into every index.html it serves, so each tile registers
+  its OWN hub session and answers `tools/ctl.js -s <id>` exactly like a
+  full-page session. Nothing here proxies commands; the dashboard is a
+  viewport, not a router. And because a tile is just a page, `?frozen`
+  (host.js) makes a tile agent-stepped from its first instruction.
+
+    /dashboard                          empty grid, add tiles by hand
+    /dashboard?apps=sol,winmine         two tiles, live
+    /dashboard?apps=sol,winmine&frozen  the same two, agent-stepped
+-->
+<style>
+  :root { color-scheme: light; }
+  body {
+    margin: 0;
+    background: #3a6ea5;
+    font: 13px/1.4 "Segoe UI", Tahoma, sans-serif;
+    color: #000;
+  }
+  #bar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 6px 8px;
+    background: #c0c0c0;
+    border-bottom: 2px solid #808080;
+    position: sticky; top: 0; z-index: 10;
+  }
+  #bar strong { font-size: 13px; }
+  #bar select, #bar button, #bar input { font: 12px "Segoe UI", Tahoma, sans-serif; }
+  #bar button { padding: 2px 10px; }
+  #hint { color: #404040; font-size: 11px; }
+  #grid {
+    display: flex; flex-wrap: wrap; gap: 10px; padding: 10px; align-items: flex-start;
+  }
+  .tile {
+    background: #c0c0c0;
+    border: 2px outset #dfdfdf;
+    padding: 3px;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .tile-head {
+    display: flex; align-items: center; gap: 6px;
+    background: #000080; color: #fff;
+    padding: 2px 4px; font-size: 12px;
+  }
+  .tile-head .app { font-weight: bold; }
+  .tile-head .sid { font-family: monospace; opacity: .85; }
+  .tile-head .spacer { flex: 1; }
+  .tile-head button {
+    font: 11px "Segoe UI", Tahoma, sans-serif; padding: 0 5px;
+  }
+  .tile-foot {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; color: #202020; padding: 0 2px;
+  }
+  .tile-foot label { display: flex; align-items: center; gap: 3px; }
+  .tile-foot .state { font-variant-numeric: tabular-nums; }
+  .tile-foot .state.frozen { background: #000080; color: #fff; padding: 0 4px; font-weight: bold; }
+  /* The iframe renders at a real desktop size and is scaled down for the
+     grid — scaling the picture, not the guest, so the emulated screen keeps
+     its own resolution and an agent's click coordinates stay guest-native. */
+  .tile-view { overflow: hidden; background: #000; position: relative; }
+  .tile-view iframe { border: 0; display: block; transform-origin: 0 0; }
+  .ctlline {
+    font: 11px/1.4 monospace; background: #ffffe1; border: 1px solid #808080;
+    padding: 2px 4px; width: 100%; box-sizing: border-box;
+  }
+</style>
+</head>
+<body>
+<div id="bar">
+  <strong>Wine-Assembly dashboard</strong>
+  <select id="app-select"></select>
+  <button id="add">Add tile</button>
+  <label title="A tile born frozen runs nothing at all until an agent steps it — not even its boot."><input type="checkbox" id="boot-frozen">boot frozen</label>
+  <label title="How much of the emulator page fits in a tile.">scale
+    <input type="range" id="scale" min="20" max="100" value="45" step="5" style="width:90px">
+  </label>
+  <span class="spacer" style="flex:1"></span>
+  <span id="hint"></span>
+</div>
+<div id="grid"></div>
+<script src="lib/apps.js"></script>
+<script>
+'use strict';
+
+// The page an emulator tile runs at full size, before the CSS scale. Roughly a
+// Win98 desktop plus the page's own chrome; the guest inside keeps whatever
+// resolution it asks for.
+const TILE_W = 1000;
+const TILE_H = 720;
+
+const grid = document.getElementById('grid');
+const select = document.getElementById('app-select');
+const hint = document.getElementById('hint');
+const params = new URLSearchParams(location.search);
+
+let tileSeq = 0;
+const tiles = [];
+
+// The same registry the desktop icons and test/run.js --app read.
+(function fillAppList() {
+  const reg = (window.wineApps && window.wineApps.APPS) || {};
+  const labels = new Map();
+  for (const group of ['DESKTOP_APPS', 'DEBUG_ONLY_APPS', 'LOCAL_CANDIDATE_APPS']) {
+    for (const entry of (window.wineApps && window.wineApps[group]) || []) {
+      if (Array.isArray(entry)) labels.set(entry[0], entry[1]);
+    }
+  }
+  for (const id of Object.keys(reg).sort()) {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = labels.has(id) ? `${labels.get(id)}  (${id})` : id;
+    select.appendChild(opt);
+  }
+  if (select.options.length) select.value = select.options[0].value;
+})();
+
+function scaleAll() {
+  const factor = Number(document.getElementById('scale').value) / 100;
+  for (const tile of tiles) {
+    tile.frame.style.transform = `scale(${factor})`;
+    tile.view.style.width = Math.round(TILE_W * factor) + 'px';
+    tile.view.style.height = Math.round(TILE_H * factor) + 'px';
+  }
+}
+document.getElementById('scale').addEventListener('input', scaleAll);
+
+// Reflect the live tile set into the URL, so a reload (or a link handed to
+// somebody else) brings the same grid back.
+function syncUrl() {
+  const next = new URLSearchParams();
+  const ids = tiles.map(t => t.app);
+  if (ids.length) next.set('apps', ids.join(','));
+  if (document.getElementById('boot-frozen').checked) next.set('frozen', '1');
+  const q = next.toString();
+  history.replaceState(null, '', q ? `?${q}` : location.pathname);
+}
+
+function copyText(text, statusEl) {
+  const done = () => { if (statusEl) { statusEl.value = text; statusEl.select(); } };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, done);
+  } else {
+    done();
+    try { document.execCommand('copy'); } catch (_) {}
+  }
+}
+
+function addTile(appId, frozen) {
+  const id = ++tileSeq;
+  const tile = { app: appId, id };
+
+  const box = document.createElement('div');
+  box.className = 'tile';
+
+  const head = document.createElement('div');
+  head.className = 'tile-head';
+  head.innerHTML = '<span class="app"></span><span class="sid">connecting…</span>'
+    + '<span class="spacer"></span>';
+  head.querySelector('.app').textContent = appId;
+  const copyBtn = document.createElement('button');
+  copyBtn.textContent = 'copy ctl';
+  copyBtn.title = 'Copy the tools/ctl.js line that drives THIS tile';
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '✕';
+  closeBtn.title = 'Close this tile';
+  head.appendChild(copyBtn);
+  head.appendChild(closeBtn);
+
+  const view = document.createElement('div');
+  view.className = 'tile-view';
+  const frame = document.createElement('iframe');
+  frame.width = TILE_W;
+  frame.height = TILE_H;
+  // `tile=` only exists to make each tile's href unique: two tiles of the same
+  // app would otherwise be indistinguishable to `ctl.js -s <page URL>`, which
+  // resolves a session by the link the browser shows.
+  const query = new URLSearchParams({ app: appId, tile: String(id) });
+  if (frozen) query.set('frozen', '1');
+  frame.src = `/?${query.toString()}`;
+  view.appendChild(frame);
+
+  const foot = document.createElement('div');
+  foot.className = 'tile-foot';
+  const frozenLabel = document.createElement('label');
+  const frozenBox = document.createElement('input');
+  frozenBox.type = 'checkbox';
+  frozenBox.checked = !!frozen;
+  frozenLabel.title = 'Freeze this guest: no slices, no frames, no guest clock, '
+    + 'until an agent sends `ctl.js -s <id> step N`.';
+  frozenLabel.appendChild(frozenBox);
+  frozenLabel.appendChild(document.createTextNode('frozen'));
+  const state = document.createElement('span');
+  state.className = 'state';
+  foot.appendChild(frozenLabel);
+  foot.appendChild(state);
+
+  const ctlline = document.createElement('input');
+  ctlline.className = 'ctlline';
+  ctlline.readOnly = true;
+  ctlline.spellcheck = false;
+  ctlline.hidden = true;
+
+  box.appendChild(head);
+  box.appendChild(view);
+  box.appendChild(foot);
+  box.appendChild(ctlline);
+  grid.appendChild(box);
+
+  tile.frame = frame;
+  tile.view = view;
+  tile.sidEl = head.querySelector('.sid');
+  tile.stateEl = state;
+  tile.frozenBox = frozenBox;
+  tile.session = null;
+  tiles.push(tile);
+  scaleAll();
+  syncUrl();
+
+  // Same-origin iframes, so the tile's controls reach straight into the page
+  // rather than through the hub. An agent driving the same tile goes through
+  // the hub; both end up in host.js's one frozen switch, and the checkbox
+  // below mirrors whichever moved it.
+  const win = () => { try { return frame.contentWindow; } catch (_) { return null; } };
+
+  frozenBox.addEventListener('change', () => {
+    const w = win();
+    if (w && w.WineFrozen) w.WineFrozen.setEnabled(frozenBox.checked, { force: true });
+  });
+
+  copyBtn.addEventListener('click', () => {
+    if (!tile.session) { ctlline.hidden = false; ctlline.value = 'no hub session yet — is this page served by tools/dev-server.js?'; return; }
+    ctlline.hidden = false;
+    copyText(`node tools/ctl.js -s ${tile.session} png /tmp/${appId}.png`, ctlline);
+  });
+
+  closeBtn.addEventListener('click', () => {
+    const i = tiles.indexOf(tile);
+    if (i >= 0) tiles.splice(i, 1);
+    // Drop the iframe's document before removing the node: each one owns a
+    // 512MB shared memory and a running step chain.
+    try { frame.src = 'about:blank'; } catch (_) {}
+    box.remove();
+    syncUrl();
+  });
+
+  return tile;
+}
+
+// One poll for everything the tiles report — session id and frozen state. A
+// frozen tile changes nothing on its own, so this is the only thing on the
+// page that ticks, and it touches no guest.
+setInterval(() => {
+  let connected = 0;
+  for (const tile of tiles) {
+    let w = null;
+    try { w = tile.frame.contentWindow; } catch (_) { w = null; }
+    const remote = w && w.__agentRemote;
+    if (remote && remote.session) {
+      connected++;
+      if (tile.session !== remote.session) {
+        tile.session = remote.session;
+        tile.sidEl.textContent = remote.session;
+      }
+    }
+    const status = (() => {
+      try { return w && w.WineFrozen ? w.WineFrozen.status() : null; } catch (_) { return null; }
+    })();
+    if (!status) { tile.stateEl.textContent = 'loading…'; continue; }
+    tile.frozenBox.checked = !!status.frozen;
+    tile.stateEl.classList.toggle('frozen', !!status.frozen);
+    tile.stateEl.textContent = status.frozen
+      ? `FROZEN  step ${status.steps | 0}  guest ${((status.guestMs | 0) / 1000).toFixed(2)}s`
+      : 'live';
+  }
+  hint.textContent = tiles.length
+    ? `${tiles.length} tile${tiles.length === 1 ? '' : 's'}, ${connected} on the agent hub — `
+      + 'drive one with: node tools/ctl.js sessions'
+    : 'pick an app and press Add tile';
+}, 500);
+
+document.getElementById('add').addEventListener('click', () => {
+  addTile(select.value, document.getElementById('boot-frozen').checked);
+});
+document.getElementById('boot-frozen').addEventListener('change', syncUrl);
+
+// ?apps=a,b,c[&frozen] — the shareable form of a grid.
+(function restore() {
+  const bootFrozen = params.has('frozen');
+  document.getElementById('boot-frozen').checked = bootFrozen;
+  const list = (params.get('apps') || '').split(',').map(s => s.trim()).filter(Boolean);
+  for (const id of list) addTile(id, bootFrozen);
+})();
+</script>
+</body>
+</html>

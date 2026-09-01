@@ -12,6 +12,11 @@
 //   node tools/ctl.js quit
 //   node tools/ctl.js sessions                    # list browser sessions on the hub
 //   node tools/ctl.js user-input on               # give the human back their mouse/keys
+//   node tools/ctl.js frozen on                   # stop the world (browser session)
+//   node tools/ctl.js step 400                    # run 400 steps, repaint, stop again
+//
+// Frozen mode is the browser twin of the headless CLI: nothing runs between
+// commands, so png is byte-stable and `click then step` is one atomic move.
 //
 // Targets a CLI VM (test/run.js --control, default http://127.0.0.1:8123) or,
 // with -s SESSIONID, a browser session through the dev-server hub (default
@@ -180,7 +185,7 @@ function printResult(result) {
 
 async function main() {
   if (!VERB) {
-    fail('usage: ctl.js [-s SESSION|:PORT|PAGE-URL] snapshot|ping|apps|launch APPID|click X,Y|dblclick|rclick|mousedown|mouseup|mousemove|drag X1,Y1 X2,Y2|key VK|type TEXT|png FILE|eval CODE|cmd RAW|user-input on|off|pipe|quit|sessions', 2);
+    fail('usage: ctl.js [-s SESSION|:PORT|PAGE-URL] snapshot|ping|apps|launch APPID|click X,Y|dblclick|rclick|mousedown|mouseup|mousemove|drag X1,Y1 X2,Y2|key VK|type TEXT|png FILE|eval CODE|cmd RAW|user-input on|off|frozen on|off|step N [MS]|pipe|quit|sessions', 2);
   }
 
   if (VERB === 'sessions') {
@@ -223,6 +228,24 @@ async function main() {
     const mode = positional[1];
     if (mode !== 'on' && mode !== 'off') fail("user-input needs 'on' (user may play) or 'off' (agent only)", 2);
     commands = { action: 'user-input', mode };
+  } else if (VERB === 'frozen' || VERB === 'step') {
+    // Frozen mode is a browser-page thing: the CLI VM is already stepped, by
+    // --input batch numbers and --max-batches.
+    if (target.kind === 'direct') {
+      fail(`${VERB} drives a browser session — a headless VM already runs on a batch schedule (test/run.js --input=BATCH:...)`, 2);
+    }
+    if (VERB === 'frozen') {
+      const mode = positional[1] || 'on';
+      if (mode !== 'on' && mode !== 'off') fail("frozen needs 'on' (stop the world) or 'off' (run live)", 2);
+      commands = { action: 'frozen', mode };
+    } else {
+      const n = positional[1] === undefined ? 1 : parseInt(positional[1], 10);
+      if (!Number.isFinite(n) || n < 1) fail('step needs a positive step count (default 1)', 2);
+      // Optional second argument: how much guest time one step is worth.
+      // The browser twin of --tick-ms-per-batch; see the design doc.
+      const ms = positional[2] === undefined ? undefined : parseInt(positional[2], 10);
+      commands = ms === undefined ? { action: 'step', n } : { action: 'step', n, ms };
+    }
   } else if (VERB === 'eval') {
     commands = { action: 'eval', code: positional.slice(1).join(' ') };
   } else if (VERB === 'cmd') {

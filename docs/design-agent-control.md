@@ -1,6 +1,8 @@
 # Agent control channel: live event streams into a running session
 
-Status: phases 1 and 2 IMPLEMENTED (run.js `--control`/`--control-stdin` +
+Status: phases 1 and 2 IMPLEMENTED, plus **frozen (agent-stepped) mode** and
+the **multi-session dashboard** — see those two sections below; the phase-2
+`pause`/`run N` line item is what frozen mode became, for the browser (run.js `--control`/`--control-stdin` +
 `tools/ctl.js` + dev-server hub + `lib/agent-remote.js` + dev-server
 auto-inject, tests `test/test-control-cli.js` and
 `test/test-web-agent-remote.js`); phase 3 (subscribe streams, pause/step,
@@ -129,6 +131,9 @@ take it again. The agent's side of the same switch is
 like `launch`, it refuses a direct CLI target with exit 2, since a headless VM
 has no user at its canvas.
 
+- **`frozen on|off` / `step N [MS]`** — browser sessions only; see *Frozen
+  (agent-stepped) mode* below.
+
 Phase 2:
 
 - **`subscribe`** — `{ classes: ["messagebox", "api", "frame"] }`: the session
@@ -143,6 +148,145 @@ Phase 2:
   turns a manual browser session into a headless regression test. This is the
   payoff for keeping the two hosts on one vocabulary; design it, don't build
   it yet.
+
+## Frozen (agent-stepped) mode — IMPLEMENTED
+
+A live browser session is a *running machine*, and that is a bad thing to
+photograph. Between the `png` an agent looks at and the `click` it decides on,
+the guest has run tens of thousands of slices: the menu it aimed at animated
+away, the dialog closed itself, the timer fired. The headless CLI never had
+this problem, because there the agent owns the schedule — nothing happens
+between batches unless a batch is asked for. Frozen mode gives the browser the
+same property.
+
+**What it is:** while frozen, `host.js`'s drive loop schedules *nothing*. No
+slice runs, no frame is presented, and the guest clock does not move. The
+picture on the canvas cannot change, so `png` is byte-identical between
+commands. Work happens only when the agent asks for a specific amount of it.
+
+**How to turn it on**, three ways, all the same switch (`window.WineFrozen`):
+
+| Where | How |
+|---|---|
+| URL | `?frozen` — the page is frozen from its first instruction, so `?app=sol&frozen` never even boots until stepped. `?frozen=MS` also sets the tick. |
+| `?debug` toolbar | the **Frozen** checkbox, plus a **Step** button (shift-click = 100) and a `FROZEN  step N  guest T` badge |
+| agent | `node tools/ctl.js -s ID frozen on` / `off` |
+
+**The loop it exists for:**
+
+```bash
+node tools/ctl.js -s ID frozen on
+node tools/ctl.js -s ID step 2000          # boot far enough to see something
+node tools/ctl.js -s ID png /tmp/a.png     # look — and it will still look like this
+node tools/ctl.js -s ID click 231,110      # act (queued, exactly as today)
+node tools/ctl.js -s ID step 200           # the guest consumes the click here
+node tools/ctl.js -s ID png /tmp/b.png     # look again
+node tools/png-diff.js /tmp/a.png /tmp/b.png
+```
+
+`click` + `step` is the atomic unit of play. A `POST` carrying the array
+`[{cmd:"click:231:110"},{action:"step",n:200},{action:"png"}]` executes the
+three in order in one round trip, because `lib/agent-remote.js` awaits each
+command before starting the next.
+
+**What a step is.** One step = one iteration of the page's run loop — the same
+unit `stepsPerSlice` sizes (100,000 x86 steps by default in the browser, less
+under some renderer policies). It is deliberately *not* the CLI's batch: the
+two hosts size their slices differently and always have. `step N` returns
+`{frozen, ran, steps, ticks, guestMs, tickMs, eip}` so the reply says what
+actually happened rather than what was asked for.
+
+**The clock is the part that had to be got right.** `_guestTickMs` derives
+guest time from the wall (`now - wallStartMs`). A wall clock that keeps running
+while nothing executes is worse than a stopped one: every `WM_TIMER` the app
+owns is instantly overdue when it resumes, and a `timeGetTime`-paced animation
+sees one enormous delta per step — the exact failure mode
+`docs/frame-pacing-census.md` describes from the other direction. So a frozen
+host stops reading the wall and charges **`tickMs` of guest time per executed
+step** (default 16, `step N MS` or `?frozen=MS` changes it). That is the
+browser's answer to `--tick-ms-per-batch`, and the same tuning judgement
+applies: an app that paces off `WM_TIMER` wants a small tick, an app you are
+trying to fast-forward wants a large one. `lib/batch-clock.js` is the CLI's
+implementation of the same idea over a different unit; the two are deliberately
+separate objects, and nothing but the idea is shared.
+
+Unfreezing slides `wallStartMs` forward by the interval the guest did not
+experience, so the guest never sees a jump — the trick `_resumeFromHidden`
+already used for a backgrounded tab.
+
+**Implementation** is one seam. Both drive loops (cooperative and
+worker-backed) reach their next slice through `WineAssembly._scheduleStep`, so
+frozen mode holds the continuation there instead of posting it, and
+`stepFrozen(n)` hands it back exactly `n` times. Consequences worth knowing:
+
+- Freezing takes effect at the end of the slice already in flight; a slice
+  merely *sleeping* (the parked-guest case, i.e. most of an idle app) is
+  claimed immediately rather than being allowed to land up to 50ms later.
+- The hidden-tab pause is skipped while frozen: a frozen guest already costs
+  nothing, and pausing would swallow the continuation the next `step` needs.
+  This is what lets dashboard tiles be stepped while their tab is not on top.
+- A `step` reply is held open by the hub for up to ten minutes rather than the
+  usual twenty seconds, because the caller chose the duration. The page-side
+  watchdog is on *progress*, not wall time: a step request gives up only if the
+  step count stops moving for five seconds.
+- `_stepTicks` (in every status reply as `ticks`) counts steps retired in
+  **both** modes and is the honest "is anything running at all" counter.
+  `_runSliceCount` is not one — it is bumped only on the branch where the
+  guest's main thread was runnable, so an app idling in `GetMessage` retires
+  slices forever without moving it. Neither is the guest clock: a parked app
+  may not call `GetTickCount` for seconds at a time. Both of those were tried
+  first and both quietly reported "nothing is running" about a healthy session.
+
+**Live mode is untouched** when nothing turns this on: `_scheduleStep` gains
+one counter increment and one boolean test.
+
+## The dashboard: many sessions at once — IMPLEMENTED
+
+`GET /dashboard` (dev-server, `dashboard.html`) is the human half of all this:
+one tile per emulator, each showing its live canvas, its app, its hub session
+id and its frozen state. It is for *watching* — the agents drive through
+`ctl.js`, and the only control on a tile beyond freeze/close is **copy ctl**,
+which puts that tile's own `node tools/ctl.js -s <id> …` line on the clipboard.
+
+```
+http://127.0.0.1:8080/dashboard                          empty grid, add tiles by hand
+http://127.0.0.1:8080/dashboard?apps=sol,winmine         two tiles, live
+http://127.0.0.1:8080/dashboard?apps=sol,winmine&frozen  the same two, agent-stepped
+```
+
+**Every tile is an ordinary emulator page in an iframe** — same `index.html`,
+same boot, its own `WineAssembly` and its own 512MB memory. That is the design
+decision, and it is deliberate rather than lazy: the page is singleton-shaped
+in ways that would each have to be undone to host two guests in one document —
+one `<canvas id="screen">`, one `window.sharedRenderer`, one set of
+window-level key listeners in `lib/browser-input.js`, one
+`document.fullscreenElement`, one desktop-icon grid. An iframe gives all of
+that per tile for free.
+
+It also means **no new protocol at all**. The dev-server injects the agent
+auto-connect into every `index.html` it serves, so each tile registers its own
+hub session and answers `ctl.js -s <id>` exactly like a full-page session; the
+dashboard is a viewport, not a router, and nothing is proxied through it. A
+frame-push route was considered and dropped for the same reason: the tiles
+*are* the frames.
+
+Two small supports were added for it, both useful on their own:
+
+- **`?app=ID`** in `index.html` launches straight into one app. It goes to the
+  shell's registry directly rather than through the `<select>`, because that
+  dropdown is filtered down to the desktop set outside `?debug` and a valid
+  registry id that simply is not in it should still launch.
+- **`?tile=N`** only exists to make each tile's href unique, so that two tiles
+  of the same app stay distinguishable to `ctl.js -s <page URL>`, which
+  resolves a session by the link the browser shows.
+
+The tile labels are refreshed by one 500ms `setInterval` that reads
+`contentWindow.__agentRemote.session` and `contentWindow.WineFrozen.status()`
+across the same-origin boundary — it touches no guest, and a frozen tile
+changes nothing on its own, so it is the only thing on the page that ticks.
+Chrome throttles that timer to nothing in a background tab, which is correct
+behaviour for an observer page and is why `test/test-web-agent-frozen.js`
+brings the dashboard to the front before reading it.
 
 ## Transports
 
@@ -252,6 +396,8 @@ node tools/ctl.js sessions                      # list live sessions (hub + defa
 node tools/ctl.js [-s ID] click 120,88
 node tools/ctl.js [-s ID] type "hello world"
 node tools/ctl.js [-s ID] key VK_RETURN         # keydown+keyup pair
+node tools/ctl.js [-s ID] frozen on             # stop the world (browser only)
+node tools/ctl.js [-s ID] step 400 [16]         # 400 steps of guest work, then stop
 node tools/ctl.js [-s ID] png out.png
 node tools/ctl.js [-s ID] snapshot              # JSON to stdout
 node tools/ctl.js [-s ID] eval 'wineShell.apps.length'
@@ -285,7 +431,10 @@ node tools/png-diff.js /tmp/f1.png /tmp/f2.png   # did anything happen?
   agent wants (no waiting through fades); when it isn't, phase-2
   `pause`/`run N` is the answer, not a new clock mode.
 - **Browser:** a command executes on receipt in the page's event loop, i.e.
-  between run-loop steps — the same interleaving as real user input.
+  between run-loop steps — the same interleaving as real user input. A
+  **frozen** session removes the race entirely: nothing runs between commands
+  at all, and its clock advances per step rather than per millisecond. That is
+  the browser's `--tick-ms-per-batch` conversation, and it is the same one.
 - **Ordering:** commands within one POST array execute in order in one batch
   (CLI) / one turn (browser). Across POSTs, arrival order. No batch-number
   addressing on the live channel at all — that is `--input`'s job and the two
@@ -336,5 +485,14 @@ user starts by hand — but this one carries `eval`, so the defaults tighten:
    Test: `test/test-web-agent-remote.js` in the existing headless-web
    harness — load `?agent` page against a dev-server, drive a click, assert
    via `eval` that the input routed.
-3. **Streams + record/replay**: `subscribe`, NDJSON event log, `tail`,
+3. **Frozen mode + dashboard** (done): `host.js` `_scheduleStep` seam and the
+   `window.WineFrozen` page switch, `frozen`/`step` on the channel, the
+   `?debug` checkbox and badge, `dashboard.html` + the `/dashboard` alias.
+   Test: `test/test-web-agent-frozen.js` — asserts the negative (a `?frozen`
+   page retires ZERO steps across a 2.5s sleep), then that `step N` runs
+   exactly N and stops, that `png` is byte-identical between commands, that a
+   click alone changes nothing but click+step does, that the checkbox freezes
+   and unfreezes a running session, and that `/dashboard` boots two emulators
+   that each answer `ping` and `png` on their own session.
+4. **Streams + record/replay**: `subscribe`, NDJSON event log, `tail`,
    browser input recording. Each is independently shippable.
