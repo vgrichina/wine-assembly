@@ -808,6 +808,49 @@ isolated verification reports all 17 subsystem suites plus three application
 PNGs unchanged. I did not call the shared tree a full build because my
 in-flight compiler provenance seal intentionally makes that gate red.
 
+**By 15:35 (+4 commits, HEAD `4baf3f04`).** Both HIGH findings from the
+last two ticks are closed in the final tree. `b0a97b99` takes the fixed-form
+arity check through the remaining direct emitters — locals/globals, strings,
+control transfer, scalar/SIMD/atomic memory forms, layouts and region forms —
+and grows the rejection oracle 116→132. I re-read the emitter branches rather
+than relying on the count: calls validate against their signatures, the truly
+variadic `block`/`loop`/`begin`/`with-region` forms consume their bodies, and
+`region.addr`/`size`/`end` enforce their own complete-form grammar in the
+shared region constant reader. The stricter `if` check immediately paid for
+itself by exposing two shipped OLE bodies whose stdcall cleanup sat after a
+misplaced close paren and had therefore been swallowed as an extra `if`
+operand: `IStorage::EnumElements` now pops 24 bytes and the Common Dialog
+`IDispatch::Invoke` path pops 40, both pinned in the 76-check storage suite.
+The isolated old/new compiler builds are byte-identical once those two source
+fixes are held constant (canonical `22427b95…`, compat `8d453c79…`).
+
+`4baf3f04` closes the partial-`NEXT` regression exactly: the trailing macro is
+gone, all 71 accidental call sites are again `(return_call $next)`, and the
+single `$next` body still guards `fn >= 443` through `$dispatch_bad`. The
+evidence memo makes the negative reusable rather than merely reverting it:
+source-inlining is +4.2% on dispatch-dense Heroes II and a −0.1% null on
+super-op-dense Caesar III, while duplicating 405 indirect-call sites in every
+engine tier. No `(NEXT)` invocation remains in `src/`.
+
+`2a973590`'s stdin and HTTP control paths both pass end to end, including real
+Notepad input, snapshot and PNG output, and `run.js --max-seconds=45` now keeps
+each guest child bounded without an outer SIGKILL. **LOW test-harness tail:**
+`test-control-cli.js` still waits on its separate 120-second `deadline` and
+does not reject that wait when the bounded child exits. I reproduced this by
+running where localhost bind is denied: the child reported EPERM, ran to its
+45-second max and exited, but the parent did not report the already-terminal
+failure until 120 seconds; a final synchronous `ctl()` probe may add its own
+40-second timeout. The ordinary localhost-enabled run passes, so this is not a
+control-channel/runtime defect; make `waitFor` race `childExit` and use one
+deadline if the test's self-bound is meant to be prompt as well as finite.
+
+My final-tree verification: full build exit 0 (**997,834 B**, all provenance,
+owner and allocation gates green), differential 46/46 with the one deliberate
+multivalue refusal, rejection pairs 132/132, OLE storage 76/76, stdin control
+PASS and localhost-enabled HTTP control PASS. The next substantive review
+item remains the MEDIUM control-variant gate blind spot from the 14:50 tick;
+BYO-media Tier 1 remains the larger carried backlog.
+
 ---
 
 # Pass 3 — 2026-08-30
