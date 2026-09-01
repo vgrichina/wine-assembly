@@ -248,11 +248,17 @@ function collectDeclarations(overrideFile, shake) {
 // it empty. --record-owners re-cuts it; running that to silence a failure is
 // laundering a wrong owner, and the diff will say so.
 //
-// The test is deliberately loose: read the named file, take the named line
-// plus or minus THREE, and ask whether the region's name appears anywhere in
-// that window. It is looking for "this location still knows about this
-// region", not for an exact expression, because the owner points at a use site
-// whose spelling is not this tool's business.
+// The test requires the region's name on the EXACT named line. It does not
+// demand any particular expression — the owner points at a use site whose
+// spelling is not this tool's business — but the line number itself must be
+// right. This used to be a ±3 window ("this location still knows about this
+// region"), and that window silently absorbed drift: an edit that shifted a
+// file by exactly 3 lines passed the gate while the owner pointed at the
+// wrong line, and 12 owners were found drifted when the window was removed
+// (2026-09-01, after the 09c3 bulk-memory lane shortened its file by 22 lines
+// and the gate flagged only 2 of its 6 moved owners). The window survives
+// only as a diagnostic: when the exact line misses but a nearby line hits,
+// the failure message names the corrected line so the fix is a copy-paste.
 //
 // Not covered: spans (collectDeclarations drops them before this sees them,
 // for the reasons in its comment) and owners that are deliberately not a
@@ -272,14 +278,17 @@ function ownerVerdict(d) {
   if (!fs.existsSync(file)) return { state: 'stale', why: `${m[1]} does not exist` };
   const lines = fs.readFileSync(file, 'utf8').split('\n');
   const at = Number(m[2]);
-  const lo = Math.max(1, at - OWNER_WINDOW);
-  const hi = Math.min(lines.length, at + OWNER_WINDOW);
   if (at > lines.length) {
     return { state: 'stale', why: `${m[1]} has only ${lines.length} lines` };
   }
-  const window = lines.slice(lo - 1, hi).join('\n');
-  return window.includes(d.name)
-    ? { state: 'ok' }
+  if ((lines[at - 1] || '').includes(d.name)) return { state: 'ok' };
+  // Exact line missed. Search the old ±window purely to make the failure
+  // self-repairing: if a nearby line mentions the region, name it.
+  const lo = Math.max(1, at - OWNER_WINDOW);
+  const hi = Math.min(lines.length, at + OWNER_WINDOW);
+  const rel = lines.slice(lo - 1, hi).findIndex(l => l.includes(d.name));
+  return rel >= 0
+    ? { state: 'stale', why: `${m[1]}:${at} does not mention $${d.name} — drifted; actual line is ${m[1]}:${lo + rel}` }
     : { state: 'stale', why: `${m[1]}:${lo}-${hi} does not mention $${d.name}` };
 }
 
