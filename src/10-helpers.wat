@@ -1292,8 +1292,9 @@
 
   ;; Build the ANSI CRT view of the command line beside GetCommandLineA's
   ;; immutable string. Layout within the allocation is:
-  ;;   +0    raw command line              +504  _acmdln pointer cell
-  ;;   +508  argc                          +512  token storage
+  ;;   +0    raw command line              +500  __argv pointer cell
+  ;;   +504  _acmdln pointer cell          +508  argc
+  ;;   +512  token storage
   ;;   +1024 argv pointers                 +1532 empty envp
   ;; Extra arguments are split on spaces/tabs except inside double quotes.
   (func $store_fake_argv_a (param $cmd i32) (param $path_len i32)
@@ -1354,9 +1355,29 @@
     (call $gs32
       (i32.add (local.get $argv) (i32.shl (local.get $argc) (i32.const 2)))
       (i32.const 0))
+    (call $gs32 (i32.add (local.get $cmd) (i32.const 500)) (local.get $argv))
     (call $gs32 (i32.add (local.get $cmd) (i32.const 504)) (local.get $cmd))
     (call $gs32 (i32.add (local.get $cmd) (i32.const 508)) (local.get $argc))
     (call $gs32 (i32.add (local.get $cmd) (i32.const 1532)) (i32.const 0)))
+
+  (func $resolve_msvcrt_data_import_a (param $name_wa i32) (result i32)
+    (if (i32.eqz (global.get $fake_cmdline_addr))
+      (then (call $store_fake_cmdline)))
+    ;; msvcrt exports __argc as an int data symbol and __argv as a char **
+    ;; data symbol. Import thunks need to point at cells holding those values.
+    (if (i32.and
+          (i32.and
+            (i32.eq (i32.load (local.get $name_wa)) (i32.const 0x72615f5f)) ;; "__ar"
+            (i32.eq (i32.load16_u (i32.add (local.get $name_wa) (i32.const 4))) (i32.const 0x6367))) ;; "gc"
+          (i32.eqz (i32.load8_u (i32.add (local.get $name_wa) (i32.const 6)))))
+      (then (return (i32.add (global.get $fake_cmdline_addr) (i32.const 508)))))
+    (if (i32.and
+          (i32.and
+            (i32.eq (i32.load (local.get $name_wa)) (i32.const 0x72615f5f)) ;; "__ar"
+            (i32.eq (i32.load16_u (i32.add (local.get $name_wa) (i32.const 4))) (i32.const 0x7667))) ;; "gv"
+          (i32.eqz (i32.load8_u (i32.add (local.get $name_wa) (i32.const 6)))))
+      (then (return (i32.add (global.get $fake_cmdline_addr) (i32.const 500)))))
+    (i32.const 0))
 
   (func $store_fake_cmdline
     (local $ptr i32) (local $dst i32) (local $i i32) (local $len i32) (local $extra i32)

@@ -2207,6 +2207,21 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  (func $handle_WaitForSingleObjectEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $result i32)
+    (local.set $result (call $host_wait_single (local.get $arg0) (local.get $arg1)))
+    (if (i32.eq (local.get $result) (i32.const 0xFFFF))
+      (then
+        (global.set $yield_reason (i32.const 1))
+        (global.set $wait_handle (local.get $arg0))
+        (global.set $wait_timeout (local.get $arg1))
+        (global.set $wait_stack_bytes (i32.const 16))
+        (global.set $steps (i32.const 0))
+        (return)))
+    (global.set $eax (local.get $result))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; 30: ResetEvent(hEvent) — 1 arg stdcall
   (func $handle_ResetEvent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_reset_event (local.get $arg0)))

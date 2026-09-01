@@ -26018,5 +26018,187 @@
     "nargs": 1,
     "convention": "cdecl",
     "hash": 2904511636
+  },
+  {
+    "id": 3113,
+    "name": "WaitForSingleObjectEx",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4174587921
+  },
+  {
+    "id": 3114,
+    "name": "freopen",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 4245899548
+  },
+  {
+    "id": 3115,
+    "name": "_lock",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 2732778249
+  },
+  {
+    "id": 3116,
+    "name": "_unlock",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 4091501642
+  },
+  {
+    "id": 3117,
+    "name": "__lconv_init",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 1501702210
+  },
+  {
+    "id": 3118,
+    "name": "_access",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 1192077832
+  },
+  {
+    "id": 3119,
+    "name": "_beginthreadex",
+    "nargs": 6,
+    "convention": "cdecl",
+    "hash": 2410910022
+  },
+  {
+    "id": 3120,
+    "name": "tolower",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 1042520049
+  },
+  {
+    "id": 3121,
+    "name": "towlower",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 2115628150
+  },
+  {
+    "id": 3122,
+    "name": "towupper",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 3618443395
+  },
+  {
+    "id": 3123,
+    "name": "isalnum",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 631851632
+  },
+  {
+    "id": 3124,
+    "name": "isalpha",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 1693714811
+  },
+  {
+    "id": 3125,
+    "name": "iscntrl",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 1641061662
+  },
+  {
+    "id": 3126,
+    "name": "isdigit",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 4150163750
+  },
+  {
+    "id": 3127,
+    "name": "islower",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 1894002154
+  },
+  {
+    "id": 3128,
+    "name": "isprint",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 3289732056
+  },
+  {
+    "id": 3129,
+    "name": "ispunct",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 450237863
+  },
+  {
+    "id": 3130,
+    "name": "isspace",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 2925299637
+  },
+  {
+    "id": 3131,
+    "name": "isupper",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 483381367
+  },
+  {
+    "id": 3132,
+    "name": "iswctype",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 116794247
+  },
+  {
+    "id": 3133,
+    "name": "isxdigit",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 10822032
+  },
+  {
+    "id": 3134,
+    "name": "signal",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 3179002377
+  },
+  {
+    "id": 3135,
+    "name": "localtime",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 3779973057
+  },
+  {
+    "id": 3136,
+    "name": "printf",
+    "nargs": -1,
+    "convention": "cdecl",
+    "hash": 3882857642
+  },
+  {
+    "id": 3137,
+    "name": "strtol",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 1070391503
+  },
+  {
+    "id": 3138,
+    "name": "strtoul",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 208654552
   }
 ]

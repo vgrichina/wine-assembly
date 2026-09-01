@@ -77,8 +77,11 @@ const digest = crypto.createHash('sha256')
 // 2026-08-31: 506 -> 505. Commit 34b4f08f ("Fix Win98 installer chain
 // launches") gave handle_CreateProcessA a real implementation, so it left the
 // quiet inventory. Ratchet only; nothing was added.
-const EXPECTED_COUNT = 505;
-const EXPECTED_SHA256 = '36862bb7d195921dd09919f0309c7e6ef50accf163acf93b082f90db298e3a95';
+// 2026-08-31: 505 -> 508. MSVCRT startup helpers _lock, _unlock, and
+// __lconv_init are documented compatibility no-ops for single-threaded CRT
+// initialization paths.
+const EXPECTED_COUNT = 508;
+const EXPECTED_SHA256 = 'be47281e739001afe39867f097b692297a2bd02c6c7524f4ad2e7057479e0eeb';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

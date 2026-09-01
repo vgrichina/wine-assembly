@@ -24,15 +24,11 @@ const extraWat = String.raw`
     (global.get $eax))
 `;
 
-(async () => {
+const checkCommandLine = async (extraText, expectedArgv, expectedRaw) => {
   const { exports: e } = await bootRenderHarness({ extraWat, fonts: 'none' });
 
   const memory = new Uint8Array(e.memory.buffer);
   const guestBase = e.get_guest_base() >>> 0;
-  const extra = Buffer.from('one "two words" three', 'ascii');
-  memory.set(extra, 0x500);
-  e.set_extra_cmdline(0x500, extra.length);
-
   const readCString = guest => {
     let result = '';
     for (let wa = guestBase + (guest >>> 0); memory[wa] !== 0; wa++) {
@@ -40,6 +36,10 @@ const extraWat = String.raw`
     }
     return result;
   };
+
+  const extra = Buffer.from(extraText, 'ascii');
+  memory.set(extra, 0x500);
+  e.set_extra_cmdline(0x500, extra.length);
 
   const first = e.test_get_command_line_a() >>> 0;
   const afterFirst = e.get_heap_ptr() >>> 0;
@@ -56,18 +56,29 @@ const extraWat = String.raw`
   e.test_get_main_args(argcOut, argvOut, envpOut);
   const argc = e.guest_read32(argcOut) >>> 0;
   const argv = e.guest_read32(argvOut) >>> 0;
-  assert.strictEqual(argc, 4, '__getmainargs exposes executable plus three arguments');
+  assert.strictEqual(argc, expectedArgv.length,
+    '__getmainargs exposes executable plus parsed arguments');
   assert.deepStrictEqual(Array.from({ length: argc }, (_, i) =>
-    readCString(e.guest_read32(argv + i * 4) >>> 0)),
-  ['C:\\app.exe', 'one', 'two words', 'three']);
+    readCString(e.guest_read32(argv + i * 4) >>> 0)), expectedArgv);
   assert.strictEqual(e.guest_read32(argv + argc * 4) >>> 0, 0, 'argv is NULL-terminated');
   assert.strictEqual(e.guest_read32(e.guest_read32(envpOut) >>> 0) >>> 0, 0,
     'empty envp is NULL-terminated');
   const acmdlnCell = e.test_p_acmdln() >>> 0;
   assert.strictEqual(e.guest_read32(acmdlnCell) >>> 0, first,
     '__p__acmdln points at the same full command line');
-  assert.strictEqual(readCString(first), 'C:\\app.exe one "two words" three',
-    'GetCommandLineA preserves the raw quoted command line');
+  assert.strictEqual(readCString(first), expectedRaw,
+    'GetCommandLineA preserves the raw command line');
+};
+
+(async () => {
+  await checkCommandLine('one "two words" three',
+    ['C:\\app.exe', 'one', 'two words', 'three'],
+    'C:\\app.exe one "two words" three');
+
+  await checkCommandLine('-c c:\\queen.ini --path=c:\\ queen',
+    ['C:\\app.exe', '-c', 'c:\\queen.ini', '--path=c:\\', 'queen'],
+    'C:\\app.exe -c c:\\queen.ini --path=c:\\ queen');
+
   console.log('PASS GetCommandLineA, _acmdln, and argv share one stable command-line source');
 })().catch(error => {
   console.error(error.stack || error.message);
