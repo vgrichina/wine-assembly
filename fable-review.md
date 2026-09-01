@@ -875,6 +875,52 @@ window — so changing the checker back to ±3 acceptance still leaves all 13
 checks green. Add a synthetic owner one line beside a real mention and require
 `stale` to pin the exactness rule the fix exists to enforce.
 
+**By 16:20 Sep 1 (+16 commits, HEAD `434beca7`).** This addendum gained
+a second reviewer mid-window: the five preceding ticks (14:50 through
+the 15:40 catch-up) were written by Codex/main, each board-claimed and
+released on `fable-review.md` per protocol, at finer granularity than
+my four-hour cadence can reach. I re-read all five against the commits
+rather than taking them on faith, and they hold — including the part
+that mattered most: when `68381853` fixed my flagged over-arity example,
+Codex's 14:50 tick correctly refused to call the bug class closed,
+reproduced three live silent-drop forms in the direct emitters, and
+escalated HIGH — and `b0a97b99` then swept every fixed-form emitter,
+grew the rejection oracle to 132, and the stricter `if` parsing
+immediately exposed two *shipped* OLE handlers whose stdcall cleanup sat
+outside a misplaced paren and was being silently discarded
+(IStorage::EnumElements +24, common-dialog Invoke +40). So the top
+audit item I filed at 04:20 went from flagged to genuinely closed —
+example, class, census, oracle, and two real bugs the new strictness
+caught — in under twelve hours, with the review loop itself supplying
+the escalation. The window also contains incident #9: `75a404c8` swept
+71 `(NEXT)` call sites from the dispatch-perf lane's in-flight tree
+while their defmacro stayed uncommitted, leaving main uncompilable for
+~10 minutes until `468b1afa` fixed forward by landing the definition —
+and the owning lane then measured its own experiment as a 3–4% loss and
+reverted it with an evidence memo (`4baf3f04`,
+docs/next-source-inline.md) so nobody redoes it; the guard-free trap
+window Codex flagged HIGH closed in the same commit. The owner gate
+grew teeth twice more: bb31c6af's author noticed the ±3 window silently
+accepting owners shifted by exactly 3, and `48b0bdd6` made the exact
+line mandatory, exposing 12 drifted owners tree-wide — the third
+gate-integrity hole of this shape ("a check that stops matching is
+worse than no check") found and closed this pass. Also verified:
+`f6ae1917`'s control-state union (13 variant layouts + one partial
+view, 541 sites, byte-identical on interleaved worktree builds, and a
+scoping law — the class is in the function name, which is what made
+this union tractable); the five deferred 09c3 copy loops (`bb31c6af`);
+and the bulk-memory sweep's semantic honesty (memmove vs forward-smear
+split, LZ77 expanders left alone with comments). My certification at
+`434beca7`, in a detached worktree because the shared tree carries the
+Liquid War and gate-hardening lanes: build exit 0 (**997,646 B**,
+matching all four peer attestations), differential 46/46, still exactly
+one divergence. Open: Codex's MEDIUM control-variant gate hardening
+(claimed, in flight), their two LOW test tails, the user-approved
+typed-pointers WATX feature lane (spec-first, byte-identity oracle per
+tier), BYO-media Tier 1 still unowned, and one measurement trap worth
+repeating — a caesar3 A/B under ~30k batches measures the title screen,
+not the workload (24x CPU cliff between 25k and 40k).
+
 ---
 
 # Pass 3 — 2026-08-30
