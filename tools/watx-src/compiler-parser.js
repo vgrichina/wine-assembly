@@ -35,6 +35,70 @@ for (let code = 97; code <= 122; code++) WATX_CHAR_FLAGS[code] |= WATX_CHAR_SYMB
 for (const ch of '_$-.{}+*/<>=!&|^~%?@#') WATX_CHAR_FLAGS[ch.charCodeAt(0)] |= WATX_CHAR_SYMBOL_START | WATX_CHAR_SYMBOL;
 for (const ch of '._-xXabcdefABCDEF') WATX_CHAR_FLAGS[ch.charCodeAt(0)] |= WATX_CHAR_NUMBER;
 
+// ── Source bytes → source text ───────────────────────────────────────────────
+// A host reads a source file as UTF-8 bytes and the compiler wants a string, so
+// somebody has to decode. WHICH string it gets is worth 9.7 MB of live heap on
+// the Wine closure, because of a V8 representation rule: a string whose every
+// code point is < 256 is stored one byte per character, and one code point over
+// that stores the WHOLE string two bytes per character. Wine's sources are
+// ASCII apart from the box-drawing characters in their banner comments — 21,289
+// such bytes across 29 of 62 files — and those 21 KB of decoration were doubling
+// 10.85 MB of source into 20.53 MB of heap (measured: 1.89 bytes per character).
+//
+// So: replace non-ASCII bytes that lie inside a `;;` comment with `?` before
+// decoding. One byte in, one character out, and the compiler never sees the
+// difference — the tokenizer skips comment text, and every source offset stays
+// exactly the byte offset it already was.
+//
+// It is deliberately conservative about what "inside a comment" means. The scan
+// tracks the same two constructs the reader does (`;;` to end of line, `"…"`
+// with backslash escapes) and BAILS OUT — decoding the untouched bytes as UTF-8,
+// i.e. exactly what a host used to do — the moment a non-ASCII byte turns up
+// anywhere else. A literal high byte in a data string or a symbol therefore
+// keeps its present meaning; it just costs what it always cost.
+const WATX_SOURCE_DECODER = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
+
+function watxSourceTextFromBytes(bytes) {
+  if (typeof bytes === 'string') return bytes;
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const decode = () => (WATX_SOURCE_DECODER
+    ? WATX_SOURCE_DECODER.decode(u8)
+    : Buffer.from(u8).toString('utf8'));
+  const n = u8.length;
+  let cleaned = null;
+  let i = 0;
+  while (i < n) {
+    const c = u8[i];
+    if (c >= 0x80) return decode();          // high byte in code position
+    if (c === 0x3b /* ; */ && u8[i + 1] === 0x3b) {
+      i += 2;
+      while (i < n && u8[i] !== 0x0a /* \n */) {
+        if (u8[i] >= 0x80) {
+          if (cleaned === null) cleaned = u8.slice();
+          cleaned[i] = 0x3f /* ? */;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (c === 0x22 /* " */) {
+      i++;
+      while (i < n && u8[i] !== 0x22) {
+        if (u8[i] >= 0x80) return decode();   // high byte inside a string literal
+        if (u8[i] === 0x5c /* \ */) i++;      // escape: the next byte is data
+        i++;
+      }
+      i++;
+      continue;
+    }
+    i++;
+  }
+  if (cleaned === null) return decode();
+  return WATX_SOURCE_DECODER
+    ? WATX_SOURCE_DECODER.decode(cleaned)
+    : Buffer.from(cleaned).toString('utf8');
+}
+
 // Successful production builds used to allocate a separate { line, col, file }
 // object for every list and repeat those three properties on every atom. The
 // Android tree has ~310k lists and ~540k atoms, so source locations alone

@@ -79,13 +79,13 @@ add a CHANGELOG entry in the same commit — that pairing is enforced by the sea
 at the bottom of this file, not left to whoever is editing.
 
 ```sha256
-cc9dfe2962214e5da09162844e98d359b825009a8388bb7726edaed729b37ee2  tools/watx.js
-17a14c6c447cdee48dcbd6212047d86c88087c50277b141b8d44136672732280  tools/watx-src/compiler-parser.js
+ba23df8812e5e9ad01dbeff1ac51e9684abaa51299f5f12ae048052e4a6c4341  tools/watx.js
+78e77206264fa6a936d0bf00bcd608fa883c0a2b469be9a9c794b688e2b7df6b  tools/watx-src/compiler-parser.js
 74e7c9b87c20a0b286317ee39c53cd8ce48c92f60c2dfa9ca5418a8c9dd075b4  tools/watx-src/compiler-stages.js
 b3cd9c7de45ee5e71a002a02dabffdc4c09e17ce8c63adc2196114fcf2ca7633  tools/watx-src/compiler-codegen.js
 b85a780ec3d53fa0a9a9b335839504f24c5ca7288a75885c2c0823b8bd9dd550  tools/watx-src/compiler.js
 293c1a233359bf142bf5badceb3399c92b79a653a86085681142b2037d80fce4  test/watx-compiler-wine-parity.test.js
-8c49b7fa58c856b105d1e215ce10c365500a89aed70d8e0236297ad57b6d9a2e  test/watx-compiler-production.test.js
+5a01524952e0ba40a3bf71d06dd893c9f1ac561596844253ff18cb680ac9affd  test/watx-compiler-production.test.js
 a62f1ab8fc157e97fa0ed2bb9ce321464a0b792c4d218e6bbd649c29b06c6519  test/watx-compiler-emit-stack.test.js
 5dc16a25724f8a77179a45cc5113de820c35dfaf2b620d8a940ba6c1aca275f8  test/watx-compiler-br-table.test.js
 afd4baa36b08662bbba4bc6c0ae6fa695165f9b8a2bfe2d4798d78bdfb3cadbe  test/watx-compiler-bulk-memory.test.js
@@ -146,6 +146,6 @@ without re-sealing. Both lines are rewritten together by
 CHANGELOG already names the new digest.
 
 ```seal
-manifest-sha256   f0067c83ae8d5428d65ed1c0de0b1002dd2edfe7c2133d19941008e2cf2a8613
-changelog-sha256  dc409bc4451b6f95fffa5733bd1916660005d018d308e82eb27a1a47c09b9994
+manifest-sha256   b32bc95c12f8ca4145268e76ae3dea94725b8a75e03b80fb1deeafd4bbb6d6d3
+changelog-sha256  05136cf2a35238a90ddc45a677e39ba1d16c8eaa3029691e16934add8952136d
 ```

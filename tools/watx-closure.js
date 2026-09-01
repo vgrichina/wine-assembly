@@ -26,6 +26,16 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
 
+// Sources are read as BYTES and decoded through the compiler's own boundary,
+// never with `fs.readFileSync(..., 'utf8')`. The two differ by 9.7 MB of live
+// heap on this closure — see `watxSourceTextFromBytes` in
+// tools/watx-src/compiler-parser.js for why one non-ASCII character in a banner
+// comment doubles a whole file's cost.
+function readSourceText(file) {
+  const { sourceTextFromBytes } = require(path.join(__dirname, 'watx.js'));
+  return sourceTextFromBytes(fs.readFileSync(file));
+}
+
 function watxSourceClosure() {
   const { WAT_FILES } = require(path.join(ROOT, 'lib', 'compile-wat.js'));
   const mainFile = path.join(SRC, 'main.watx');
@@ -33,16 +43,16 @@ function watxSourceClosure() {
   if (fs.existsSync(mainFile)) {
     for (const f of fs.readdirSync(SRC)) {
       if (!/\.(wat|watx)$/.test(f)) continue;
-      const text = fs.readFileSync(path.join(SRC, f), 'utf8');
+      const text = readSourceText(path.join(SRC, f));
       vfs.set(f, text);
       vfs.set(`src/${f}`, text);
       vfs.set(`./${f}`, text);
     }
-    return { source: fs.readFileSync(mainFile, 'utf8'), vfs, entry: 'src/main.watx' };
+    return { source: readSourceText(mainFile), vfs, entry: 'src/main.watx' };
   }
 
   const files = WAT_FILES.slice();
-  const texts = files.map(f => fs.readFileSync(path.join(SRC, f), 'utf8'));
+  const texts = files.map(f => readSourceText(path.join(SRC, f)));
 
   const openAt = texts[0].indexOf('(module');
   if (openAt < 0) throw new Error(`watx-closure: no "(module" in src/${files[0]}`);

@@ -40,4 +40,9 @@ module.exports = {
   tokenize: ctx.tokenize,
   parseSexpr: ctx.parseSexpr,
   parseSource: ctx.parseSource,
+  // The byte→text boundary. A host that reads sources as bytes (every host that
+  // matters: tools/watx-closure.js, lib/watx-compile-worker.js) must decode
+  // through this rather than TextDecoder, or it pays two bytes of heap per
+  // source character. See the comment on the function itself.
+  sourceTextFromBytes: ctx.watxSourceTextFromBytes,
 };

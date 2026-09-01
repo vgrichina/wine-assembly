@@ -1109,3 +1109,51 @@ pass on a section carrying the wrong indices.
 New manifest digest:
 
   f0067c83ae8d5428d65ed1c0de0b1002dd2edfe7c2133d19941008e2cf2a8613
+
+## 2026-08-31 — one JS character per source byte
+
+`watxSourceTextFromBytes(bytes)` in `compiler-parser.js` is the compiler's
+byte→text boundary, and hosts that read sources as bytes are expected to decode
+through it rather than through a bare `TextDecoder`.
+
+It exists for one V8 representation rule: a string whose every code point is
+below 256 is stored one byte per character, and a **single** code point above
+that stores the whole string at two. Wine's sources are ASCII apart from the
+box-drawing characters in their banner comments — 21,289 such bytes across 29 of
+62 files — so 21 KB of decoration was doubling 10.85 MB of source into 20.53 MB
+of live heap (measured: 1.89 bytes per character), held for the entire compile.
+
+The boundary replaces non-ASCII bytes that lie inside a `;;` comment with `?`
+and then decodes. One byte in, one character out: the tokenizer never reads
+comment text, and every source offset stays exactly the byte offset it already
+was, which matters because the streaming pass indexes bodies by offset.
+
+It is deliberately conservative about "inside a comment". The scan tracks the
+same two constructs the reader does — `;;` to end of line, and `"…"` with
+backslash escapes — and **bails out**, decoding the untouched bytes as UTF-8
+exactly as before, the moment a high byte appears anywhere else. A literal
+non-ASCII character in a data string keeps its present meaning and its present
+cost; nothing silently rewrites a data segment. The two constructs do not nest
+into each other: a `;;` inside a string opens no comment, and a quote inside a
+comment opens no string.
+
+Measured on the real closure, interleaved A/B (arms alternating, order rotated,
+5 reps each, one cold compile per process): live heap after reading the sources
+**25.3 → 16.8 MB** in every single run, whole-process max RSS 216.6 → 201.9 MB
+(median; this box is loaded and that number is noisy, the heap number is not),
+user CPU 2.14 → 2.26 s (+5.6%, the byte scan). `build/wine-assembly.wasm`
+`24beaca0…` and `build/wine-assembly.compat.wasm` `4e2891ac…` are unchanged.
+
+Callers moved to the boundary: `tools/watx.js` re-exports it as
+`sourceTextFromBytes`, `tools/watx-closure.js` reads buffers instead of `'utf8'`
+strings, and `lib/watx-compile-worker.js` now evaluates the compiler bundle
+*before* decoding the sources so it can use it (the two halves of the transfer
+are decoded separately for that reason alone).
+
+`watx-compiler-production` gains the boundary's regression: one byte per byte
+for a comment-only source, byte-identical emission against the UTF-8 decode of
+the same file, and the two bail-out cases.
+
+New manifest digest:
+
+  b32bc95c12f8ca4145268e76ae3dea94725b8a75e03b80fb1deeafd4bbb6d6d3

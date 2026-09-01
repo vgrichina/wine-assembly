@@ -2,7 +2,48 @@
 
 const assert = require('assert');
 const path = require('path');
-const { compile, parseSource } = require(path.join(__dirname, '..', 'tools', 'watx.js'));
+const { compile, parseSource, sourceTextFromBytes } = require(path.join(__dirname, '..', 'tools', 'watx.js'));
+
+// ── The byte → text boundary ────────────────────────────────────────────────
+// A source whose only non-ASCII bytes sit in `;;` comments must decode to one
+// JavaScript character per source BYTE, so V8 stores it one byte per character.
+// Decoding it as UTF-8 instead costs 9.7 MB of live heap on the Wine closure,
+// for 21 KB of banner decoration.
+const bannerBytes = Buffer.from(
+  ';; ══ banner ══\n(func $f (export "f") (result i32) (effects) (i32.const 7))\n', 'utf8');
+const bannerText = sourceTextFromBytes(bannerBytes);
+assert.strictEqual(bannerText.length, bannerBytes.length,
+  'a comment-only non-ASCII source must decode one character per byte');
+assert.strictEqual(/[^\x00-\x7f]/.test(bannerText), false,
+  'the high bytes inside the comment must not survive into the text');
+assert.strictEqual(
+  bannerText.slice(bannerText.indexOf('(func')),
+  bannerBytes.toString('utf8').slice(bannerBytes.toString('utf8').indexOf('(func')),
+  'nothing outside the comment may change');
+const bannerBuilt = compile(bannerText, new Map(), { mode: 'production' });
+const bannerUtf8 = compile(bannerBytes.toString('utf8'), new Map(), { mode: 'production' });
+assert.strictEqual(bannerBuilt.success, true, bannerBuilt.error);
+assert.deepStrictEqual(Buffer.from(bannerBuilt.wasmBinary), Buffer.from(bannerUtf8.wasmBinary),
+  'asciifying comment bytes must not change one emitted byte');
+
+// A high byte ANYWHERE else — here inside a data string — is real content, so
+// the boundary bails out and hands back exactly what UTF-8 decoding gives.
+// Getting this wrong would silently rewrite a data segment.
+const literalBytes = Buffer.from('(data (i32.const 0) "café")\n;; ══\n', 'utf8');
+assert.strictEqual(sourceTextFromBytes(literalBytes), literalBytes.toString('utf8'),
+  'a high byte outside a comment must fall back to UTF-8 decoding, untouched');
+// A string is not a comment even when it contains one, and vice versa: the `;;`
+// here opens nothing, so the `é` after it is still string content and must
+// survive. Reading it as a comment would asciify a live data byte.
+const commentInString = Buffer.from('(data (i32.const 0) ";; é")\n', 'utf8');
+assert.strictEqual(sourceTextFromBytes(commentInString), commentInString.toString('utf8'),
+  '`;;` inside a string literal must not open a comment');
+// ...and a quote inside a comment opens no string: the run of non-ASCII after
+// it is still comment text and must still be asciified.
+const quoteInComment = Buffer.from(';; a " quote ══\n(func $g (export "g") (effects))\n', 'utf8');
+assert.strictEqual(sourceTextFromBytes(quoteInComment).length, quoteInComment.length,
+  'a quote inside a comment must not open a string literal');
+assert.strictEqual(sourceTextFromBytes('already text'), 'already text');
 
 // The production AST is a dense array: packed location, head, then operands.
 // Atoms are internable primitive strings rather than per-occurrence objects.
