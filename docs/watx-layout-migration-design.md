@@ -739,6 +739,65 @@ own guard, and the remainder are typed by their **producer** — the handle came
 out of a constructor for a known type — which check (4) cannot verify and which
 `--list` names explicitly so the weak attributions stay visible.
 
+### 5.5 `Rect` — the Win32 `RECT`, and the first CLASS-C family (wave 6)
+
+```wat
+(; FROZEN: RECT — Win32 ABI, windef.h. … ;)
+(layout Rect
+  (field left   i32)    ;; +0
+  (field top    i32)    ;; +4
+  (field right  i32)    ;; +8
+  (field bottom i32))   ;; +12  ends at +16 == sizeof(RECT)
+```
+
+Declared in `src/09a-handlers.wat`. **206 sites converted** (111 memarg-spelled)
+across the **25 functions in that file whose Win32 signature takes an LPRECT**,
+and `build/wine-assembly.wasm` is unchanged at `06c4052d…` (991330 bytes).
+
+**Why a second layout for a structure `PaintRect` already describes.** §7 asks
+for a stated reason and here it is: the two records have the same four fields
+and *opposite ownership*. `PaintRect` is a slot of the emulator's own
+PAINT_SCRATCH ring, which hands out 16 opaque bytes — three of its live slots
+are a `"X, Y"` status string, a single `'>'` glyph byte, and an address passed
+straight to `$w2g`. It therefore cannot carry the FROZEN marker (a slot may
+legitimately stop being a rect) and `Rect` cannot be merged into it (a guest
+RECT may never stop being one). Merging them would have made the frozen
+guarantee meaningless for both.
+
+**What `$g2w` proves, and what it does not.** This is the finding of the wave
+and it is a *scaling* finding, not a bug. For every class-A family above,
+`--base-call` names the record: a pointer out of `$vsock_rec` is a `VSock` and
+can be nothing else, so `--base-local-from-call` is a complete derivation and
+the wave is a tool run. Class C has **one** accessor for every guest structure
+in the tree. `--base-call=$g2w` proves a local holds a guest pointer and says
+nothing whatever about which structure it points at. Read at +0/+4/+8/+12 off a
+`$g2w`'d local, in `09a-handlers.wat` alone:
+
+| function | local | what it actually is |
+|---|---|---|
+| `$handle_GetSystemDirectoryA` | `$dst` | an ANSI path buffer |
+| `$handle_CoCreateGuid` | `$wa` | a GUID |
+| `$handle_GetLogicalDriveStringsW` | `$buf` | UTF-16 text |
+| `$locale_format_enum_a` | `$wa` | a locale format record |
+| `$draw_text_ex` | `$params` | `DRAWTEXTPARAMS` (5 fields, not 4) |
+
+All five are byte-identically convertible to `Rect`, and all five would be lies
+the oracle cannot see — the §10 wave-4 `color_key_low` trap, one class down and
+with no `misc0` escape available, because a guest structure's fields are not
+ours to rename.
+
+So the attribution here is **external evidence**: each of the 25 functions takes
+an `LPRECT` at that argument position per the SDK, and the list is spelled out
+in `tools/build.sh` as `--only-func`. That list *is* the reviewable artifact of
+the wave. Adding a name to it is a claim about a Win32 prototype, and it has to
+be checked against the SDK — never against whether the build still passes,
+because it always will.
+
+Two sites stay raw for cause: `$handle_ScrollWindowEx` pair-zeroes left+top and
+right+bottom with two `(i64.store … (i64.const 0))`. The width guard declines
+them, which is the correct answer (§3.1) and needs an i64-pair spelling that
+does not exist, not a conversion.
+
 ---
 
 ## 6. Safety: what plays the role the region census played
@@ -816,12 +875,53 @@ Microsoft's, and the guest binary already contains code that reads and writes
 those offsets. Reordering one is not a refactor, it is a wire-format change that
 breaks every app at once.
 
-Every such layout carries a `(; FROZEN: Win32 ABI — offsets are fixed by the
-guest, not by us ;)` block comment naming the SDK structure, and
-`gen-layout-offsets.js --check` treats a change to a frozen layout's offsets as
-a build failure, not a regeneration. Frozen layouts are still worth writing —
-they are where a mistake is most expensive — but they are documentation of
-someone else's decision.
+Every such layout carries a `(; FROZEN: … ;)` block comment naming the SDK
+structure, and `gen-layout-offsets.js --check` treats a change to a frozen
+layout's offsets as a build failure, not a regeneration. Frozen layouts are
+still worth writing — they are where a mistake is most expensive — but they are
+documentation of someone else's decision.
+
+#### LANDED — `tools/gen-layout-offsets.js`
+
+Three refinements to the sketch above, each because the sketch would not have
+worked as written:
+
+1. **The SDK structure name comes FIRST in the marker**, so the tool (and a
+   reader scanning a build log) can say *which* structure without a heuristic:
+
+   ```wat
+   (; FROZEN: RECT — Win32 ABI, windef.h. Four LONGs, in this order, and the
+      guest binary already contains the compiled instructions that read them at
+      these offsets. … ;)
+   ```
+
+   The first token after `FROZEN:` is the structure; everything after it is
+   prose. The marker must sit in the comment block immediately above the
+   declaration — a marker separated from its layout by code is not a marker for
+   it.
+
+2. **The baseline is `tools/layout-offsets.json`, not `build/`.** `build/` is
+   gitignored, so a baseline there could only ever be compared against the same
+   build that had just written it, and `--check` would be an assertion that a
+   file equals itself. The committed baseline lives beside the generator.
+
+3. **`--write` refuses to record a frozen change** unless
+   `--force-unfreeze` is passed. Without that the whole guarantee is one
+   `--write` away from being erased by exactly the person who broke it — a
+   `--check` failure is a prompt to regenerate for every *other* generated file
+   in this build, so muscle memory is the threat model.
+
+The offsets are **not recomputed** by the tool: it loads the vendored compiler
+and calls the real `lowerIR(…, { layoutsOnly: true })`. `tools/layout-migrate.js`
+already carries a second copy of the field-width table (`FIELD_SIZE`), and
+build.sh's DxObject comment records what a drift between two such tables costs;
+a third copy would be a third chance to be wrong.
+
+Modes: no arguments prints the whole table; `--at=VSock:0x38` answers the RE
+session's question (and answers it for an offset *inside* a field, not only one
+that starts there — `--at=VSock:0x4a` reports `acc_queue element 1, 2 bytes
+into it`); `--field=VSock:flags` is the reverse; `--check` and `--write` are the
+gate. `--check` is wired into `tools/build.sh`.
 
 ### Offsets must stay discoverable
 
@@ -858,7 +958,8 @@ Ordered by risk, not by size. Each row's site count is from the census.
 | **✅** | `PaintRect` (`call $paint_scratch_take`) — the PAINT_SCRATCH ring's 16-byte RECT | `10-helpers`, `09a`, `09c4`, (`09b`) | **32 converted** | **yes** — `6378dc30…` unchanged | **DELIBERATELY PARTIAL.** Covers the 4 of 9 files unclaimed at the time; the rest are held by other lanes, not declined for cause. Needed the zero-arg `--base-call` fix below before it could convert anything |
 | **✅** | `GdiDcPath` (`call $gdi_dc_path_entry`) — the 16-byte GDI_DC_PATH_TABLE slot | `10d` | **72 of 72 converted**, all memarg | **yes** — `45f22aa8…` unchanged on interleaved builds | **DONE.** The strongest case yet for `--base-local-from-call`: 10d spells **three** record types through a local named `$entry`, and provenance converted the 20 path functions while declining all 12 clip ones. All four fields are i32, so a5fc1b72's u16/s16/s8 do not apply |
 | 5 | remaining class A families ≥ 20 sites | ~15 files | ~1,100 | mixed | mechanical once 1-4 have set the pattern |
-| 6 | class C frozen ABI layouts, one structure at a time | many | 3,798 | mixed | highest value, highest blast radius; each layout is a frozen declaration |
+| **6 ▣** | **class C — `Rect` (Win32 `RECT`), the pattern-prover** | `09a-handlers` | **206 converted** | **yes** — `06c4052d…` unchanged | **DONE for one structure in one file (§5.5).** Frozen tooling landed (`tools/gen-layout-offsets.js`). The rest of class C is **not** mechanical — see §10 |
+| 6 | class C, the remaining structures | many | ~3,590 | mixed | highest value, highest blast radius; each layout is frozen AND each needs its own external attribution |
 | 7 | class B raw families | many | 6,079 | mixed | step 1 (symbolize) only, until a family proves it is one struct |
 
 **Recommended first session: wave 0 + wave 1.** Wave 0 is a three-line fix with
@@ -945,7 +1046,57 @@ back non-empty.
   160 sites and is wired into `build.sh`; verified to fail the build (exit 1) on
   a planted mis-attribution. When §3.4(b) lands, this family converts in one
   byte-identical pass with its typing already proven.
-- Waves 3, 6-7 are still design.
+- **Wave 6 — the class-C PROVER. LANDED for `Rect`, and the honest answer to
+  "does this scale" is NO, not the way class A did.** `tools/gen-layout-offsets.js`
+  ships with the frozen marker, the committed `tools/layout-offsets.json`
+  baseline, the `--at`/`--field` lookup modes and the `--check` build gate;
+  `Rect` is declared in `src/09a-handlers.wat` with the FROZEN marker and
+  **206 sites are converted**, `build/wine-assembly.wasm` byte-identical at
+  `06c4052d…`. Both gates verified to fail: `--check` on a planted extra field
+  (and `--write` refusing to record it), and `layout-migrate --gate` on a
+  planted raw site in **both** the add form and the memarg form.
+- Wave 7 is still design.
+
+### What wave 6 says about the other 3,590 class-C sites
+
+The pattern *works* — the oracle is total, the codemod needs no new flag, the
+gate has teeth, and a frozen ABI layout is checkable. What does not carry over
+is the thing that made waves 1-5 tool runs:
+
+1. **Class C has no discriminating base call.** Every family so far was named
+   by its accessor. Class C's accessor is `$g2w` and there is exactly one of it,
+   so `--base-local-from-call` degrades from "which record is this" to "is this
+   a guest pointer" — a question whose answer is *yes* for every class-C site in
+   the tree, including the string buffers and GUIDs in §5.5's table. **The
+   provenance mechanism that made waves 2-5 safe does not exist here.**
+2. **So the unit of work is the STRUCTURE, and the evidence is the SDK.** Each
+   class-C wave is: pick a Win32 structure, enumerate the functions whose
+   prototype takes a pointer to it, list them by name, convert only there. That
+   list cannot be derived from the tree — it is external knowledge, checked
+   against the SDK by a human, once per function. `Rect` needed 25 such
+   judgements for 206 sites (8 sites per judgement); a structure reached from
+   fewer places pays worse.
+3. **Byte identity is silent about all of it.** Every mis-attribution available
+   here compiles to the bytes it replaced. The oracle proves the *program* did
+   not change, which is exactly why it says nothing about whether the *name* is
+   true. It is not a substitute for the per-function check, and on a class-C
+   wave it never will be.
+4. **The census cannot even scope the wave.** It groups class C by base symbol,
+   so its rows are `$g2w @ 09a-handlers.wat: 764` — one file, dozens of unrelated
+   structures. There is no "family" to point a wave at. A per-structure census
+   would need to key on the *API signature*, which is `src/api_table.json`'s
+   territory, not the census's.
+5. **What would actually move the needle**: a `$g2w`-shaped accessor per
+   structure (`$g2w_rect(guest) -> wa`) would restore the class-A property and
+   turn the rest of class C mechanical again — but it adds a call per site and
+   is therefore NOT byte-identical, so it cannot be done under this oracle. That
+   is a real trade and it should be decided deliberately, not drifted into.
+
+Realistic read: class C is worth doing for the structures whose offsets are
+*load-bearing and repeated* — `RECT`, `POINT`, `MSG`, `BITMAPINFOHEADER`,
+`CRITICAL_SECTION` — one structure per commit, each with its function list in
+`build.sh`. It is not worth attempting as a sweep, and any plan that quotes
+"3,798 sites" as one number has already made the mistake.
 
 **Waves 4 and 5 answered the union question two different ways, and the
 difference is the variants' *shape*, not their number.** `DxObject` names the

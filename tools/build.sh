@@ -321,6 +321,74 @@ GDI_PATH_LAYOUT_ARGS=(--file=src/10d-gdi-region-path.wat --layout=GdiDcPath
 node tools/layout-migrate.js "${GDI_PATH_LAYOUT_ARGS[@]}" --gate > /dev/null || {
   node tools/layout-migrate.js "${GDI_PATH_LAYOUT_ARGS[@]}" --gate; exit 1; }
 
+# Rect (wave 6, the FIRST CLASS-C family) — the Win32 RECT, in GUEST memory.
+# Everything above this line describes a record the emulator itself owns. This
+# one does not: the address comes out of $g2w, so the bytes are the
+# application's, and the four offsets are Microsoft's. The declaration in
+# src/09a-handlers.wat therefore carries the FROZEN marker and the gate below
+# it is TWO gates, not one.
+#
+# GATE (a) — the layout's offsets may not move. gen-layout-offsets.js --check,
+# a few lines down, compares every declared layout against the committed
+# tools/layout-offsets.json and treats movement of a FROZEN one as a build
+# failure rather than something to regenerate. A guest binary compiled in 1998
+# already contains the instruction that reads RECT.bottom at +12; changing that
+# is a wire-format change that traps nowhere and misreads every app at once.
+#
+# GATE (b) — no NEW raw site, in EITHER spelling. The --gate line below is the
+# usual §6.1 back-stop and --memarg is what makes it see both: 111 of the 206
+# converted sites spell the offset in the instruction, and a gate without the
+# flag is blind to exactly those. Verified to exit 1 on a planted
+# `(i32.load (i32.add (local.get $rect_w) (i32.const 4)))` AND on a planted
+# `(i32.load offset=4 (local.get $rect_w))`.
+#
+# --only-func IS THE WHOLE POINT OF THIS BLOCK, and it is why class C does not
+# scale the way class A did. For every family above, --base-call NAMES the
+# record: a pointer out of $vsock_rec is a VSock and nothing else. Class C has
+# ONE accessor for every guest structure in the tree, so `--base-call=$g2w`
+# proves a local holds a guest pointer and says NOTHING about which struct it
+# points at. In this file alone, read at +0/+4/+8/+12 off a $g2w'd local:
+# $handle_GetSystemDirectoryA's `$dst` is an ANSI path buffer,
+# $handle_CoCreateGuid's `$wa` is a GUID, $handle_GetLogicalDriveStringsW's
+# `$buf` is UTF-16 text. All three are byte-identically convertible and all
+# three would be lies, and the byte-identity oracle cannot say a word about a
+# name (that is the design doc's §10 wave-4 finding, one class down).
+#
+# So the attribution is EXTERNAL EVIDENCE: every function named below takes an
+# LPRECT at that argument position per the Win32 SDK signature. That list is
+# the reviewable artifact of this wave. Adding a name to it is a claim about an
+# API's prototype, and it must be checked against the SDK, not against whether
+# the build still passes — it always will.
+#
+# Two sites inside $handle_ScrollWindowEx stay raw and the codemod is right to
+# decline them: an `(i64.store ... (i64.const 0))` pair-zeroes left+top and
+# right+bottom as two 8-byte writes. Calling an 8-byte store a 4-byte field
+# would be the §3.1 widening mistake, so they need an i64 pair spelling that
+# does not exist, not a conversion.
+RECT_LAYOUT_ARGS=(--file=src/09a-handlers.wat --layout=Rect
+  --base-call='$g2w' --base-local-from-call=rc,wa,rect,rect_w,r,dst,src,s1,s2,a,b,p
+  --only-func='$handle_InvalidateRect,$handle_ValidateRect,$handle_GetUpdateRect,$handle_RedrawWindow,$handle_FillRect,$handle_FrameRect,$handle_InvertRect,$handle_DrawEdge,$handle_DrawFocusRect,$handle_DrawFrameControl,$handle_DrawCaptionTempA,$draw_text_ex,$handle_OffsetRect,$handle_InflateRect,$handle_CopyRect,$handle_IntersectRect,$handle_UnionRect,$handle_SubtractRect,$handle_IsRectEmpty,$handle_EqualRect,$handle_PtInRect,$handle_AdjustWindowRectEx,$handle_MapDialogRect,$handle_ScrollWindowEx,$handle_ClipCursor'
+  --memarg)
+node tools/layout-migrate.js "${RECT_LAYOUT_ARGS[@]}" --gate > /dev/null || {
+  node tools/layout-migrate.js "${RECT_LAYOUT_ARGS[@]}" --gate; exit 1; }
+
+# The offsets a (layout ...) declares, checked against the committed record in
+# tools/layout-offsets.json — docs/watx-layout-migration-design.md §6.2/§7.
+#
+# Two failures, and they are not the same failure. A layout that is merely
+# STALE (a new one added, a field renamed, prose reworded) says "run
+# gen-layout-offsets.js --write". A layout marked FROZEN whose fields MOVED is
+# an ABI break and says so instead: those offsets belong to the guest, and
+# --write REFUSES to record the change without --force-unfreeze, so the
+# guarantee is not one regeneration away from being erased by whoever broke it.
+#
+# It is also the answer to the question the migration otherwise makes
+# unanswerable. `tools/find_field.js` says the guest writes [esi+0x38]; the
+# number used to be greppable and now is not. `node tools/gen-layout-offsets.js
+# --at=VSock:0x38` prints the field, and with no arguments it prints the whole
+# table.
+node tools/gen-layout-offsets.js --check
+
 echo "Concatenating WAT parts..."
 # From the src/main.watx include list, not a shell glob: combined.wat must be
 # the same sequence the real compile resolves, or every function index in it

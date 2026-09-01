@@ -5,6 +5,48 @@
   ;; and adjust $esp for stdcall cleanup before returning.
   ;; ============================================================
 
+  ;; =====================================================================
+  ;; RECT — the first CLASS-C layout (docs/watx-layout-migration-design.md
+  ;; §7, wave 6). Class C is the guest's memory: the address descends from
+  ;; $g2w, so these bytes belong to the application, and the offsets below
+  ;; are not a choice we get to make.
+  ;;
+  (; FROZEN: RECT — Win32 ABI, windef.h. Four LONGs, in this order, and the
+     guest binary already contains the compiled instructions that read them at
+     these offsets. Moving one is not a refactor: it is a wire-format change,
+     it traps nowhere, and it misreads every app at once.
+     tools/gen-layout-offsets.js --check refuses any movement. ;)
+  (layout Rect
+    (field left   i32)    ;; +0
+    (field top    i32)    ;; +4
+    (field right  i32)    ;; +8
+    (field bottom i32))   ;; +12  ends at +16 == sizeof(RECT)
+
+  ;; A SECOND layout for the same C structure, deliberately, with the reason
+  ;; stated as docs/watx-layout-migration-design.md §7 requires: `PaintRect`
+  ;; (src/10-helpers.wat) describes a slot of the emulator's OWN PAINT_SCRATCH
+  ;; ring, and that ring is NOT a RECT array. It hands out 16 opaque bytes and
+  ;; three of its live slots are something else entirely — a "X, Y" status
+  ;; string, a single '>' glyph byte, an address passed straight to $w2g. So
+  ;; PaintRect cannot carry the FROZEN marker (its bytes are ours, and a slot
+  ;; may legitimately stop being a rect), and `Rect` cannot be merged into it
+  ;; (its bytes are Microsoft's, and must never stop being a rect). Same four
+  ;; fields, opposite ownership.
+  ;;
+  ;; WHAT THE $g2w BASE DOES AND DOES NOT PROVE, because this is the finding
+  ;; the class-C waves have to carry: `--base-local-from-call=$g2w` proves a
+  ;; local holds a GUEST pointer. It does not prove WHICH guest structure,
+  ;; because every class-C record in the tree arrives through the same one
+  ;; call. Read at +0/+4/+8/+12 off a $g2w'd local, in this file alone:
+  ;; $handle_GetSystemDirectoryA's `$dst` (an ANSI path buffer),
+  ;; $handle_CoCreateGuid's `$wa` (a GUID) and $handle_GetLogicalDriveStringsW's
+  ;; `$buf` (a UTF-16 buffer) are all indistinguishable from a rect to any
+  ;; mechanical rule, and all three would convert BYTE-IDENTICALLY. So the
+  ;; attribution here is the Win32 SIGNATURE — every converted function takes
+  ;; an LPRECT at that argument position per the SDK — and it is spelled as an
+  ;; explicit --only-func list in tools/build.sh, not derived.
+  ;; =====================================================================
+
   ;; ---- Timer table helpers ----
   ;; Timer table at 0x24C0: 16 entries × 20 bytes
   ;; Each entry: [hwnd:4][id:4][interval:4][last_tick:4][callback:4]
@@ -5128,10 +5170,10 @@
     (if (local.get $arg1)
       (then
         (local.set $wa (call $g2w (local.get $arg1)))
-        (local.set $l (i32.load (local.get $wa)))
-        (local.set $t (i32.load offset=4 (local.get $wa)))
-        (local.set $r (i32.load offset=8 (local.get $wa)))
-        (local.set $b (i32.load offset=12 (local.get $wa))))
+        (local.set $l (load.field Rect left (local.get $wa)))
+        (local.set $t (load.field.memarg Rect top (local.get $wa)))
+        (local.set $r (load.field.memarg Rect right (local.get $wa)))
+        (local.set $b (load.field.memarg Rect bottom (local.get $wa))))
       (else
         (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
         (local.set $l (i32.const 0)) (local.set $t (i32.const 0))
@@ -5174,8 +5216,8 @@
     (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
       (then (global.set $eax (call $gdi_fill_rect_desc
         (local.get $arg0) (local.get $desc)
-        (i32.load (local.get $rc)) (i32.load offset=4 (local.get $rc))
-        (i32.load offset=8 (local.get $rc)) (i32.load offset=12 (local.get $rc))
+        (load.field Rect left (local.get $rc)) (load.field.memarg Rect top (local.get $rc))
+        (load.field.memarg Rect right (local.get $rc)) (load.field.memarg Rect bottom (local.get $rc))
         (local.get $arg2))))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
@@ -5189,8 +5231,8 @@
     (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
       (then (global.set $eax (call $gdi_frame_rect_desc
         (local.get $arg0) (local.get $desc)
-        (i32.load (local.get $wa)) (i32.load offset=4 (local.get $wa))
-        (i32.load offset=8 (local.get $wa)) (i32.load offset=12 (local.get $wa))
+        (load.field Rect left (local.get $wa)) (load.field.memarg Rect top (local.get $wa))
+        (load.field.memarg Rect right (local.get $wa)) (load.field.memarg Rect bottom (local.get $wa))
         (local.get $arg2))))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
@@ -5736,10 +5778,10 @@
     ;; RECT: left, top, right, bottom (4 DWORDs)
     (local $wa i32)
     (local.set $wa (call $g2w (local.get $arg0)))
-    (i32.store (local.get $wa) (i32.add (i32.load (local.get $wa)) (local.get $arg1)))                        ;; left += dx
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.add (i32.load (i32.add (local.get $wa) (i32.const 4))) (local.get $arg2)))  ;; top += dy
-    (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.add (i32.load (i32.add (local.get $wa) (i32.const 8))) (local.get $arg1)))  ;; right += dx
-    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.add (i32.load (i32.add (local.get $wa) (i32.const 12))) (local.get $arg2))) ;; bottom += dy
+    (store.field Rect left (local.get $wa) (i32.add (load.field Rect left (local.get $wa)) (local.get $arg1)))                        ;; left += dx
+    (store.field Rect top (local.get $wa) (i32.add (load.field Rect top (local.get $wa)) (local.get $arg2)))  ;; top += dy
+    (store.field Rect right (local.get $wa) (i32.add (load.field Rect right (local.get $wa)) (local.get $arg1)))  ;; right += dx
+    (store.field Rect bottom (local.get $wa) (i32.add (load.field Rect bottom (local.get $wa)) (local.get $arg2))) ;; bottom += dy
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
@@ -6026,14 +6068,14 @@
         (local.set $valid (i32.ge_u (i32.load (local.get $params)) (i32.const 20)))))
     (if (i32.and (local.get $valid) (i32.ne (local.get $rect_guest) (i32.const 0)))
       (then
-        (local.set $left (i32.load (local.get $rect)))
-        (local.set $top (i32.load offset=4 (local.get $rect)))
-        (local.set $right (i32.load offset=8 (local.get $rect)))
-        (local.set $bottom (i32.load offset=12 (local.get $rect)))
+        (local.set $left (load.field Rect left (local.get $rect)))
+        (local.set $top (load.field.memarg Rect top (local.get $rect)))
+        (local.set $right (load.field.memarg Rect right (local.get $rect)))
+        (local.set $bottom (load.field.memarg Rect bottom (local.get $rect)))
         (local.set $left_margin (i32.load offset=8 (local.get $params)))
         (local.set $right_margin (i32.load offset=12 (local.get $params)))
-        (i32.store (local.get $rect) (i32.add (local.get $left) (local.get $left_margin)))
-        (i32.store offset=8 (local.get $rect)
+        (store.field Rect left (local.get $rect) (i32.add (local.get $left) (local.get $left_margin)))
+        (store.field.memarg Rect right (local.get $rect)
           (i32.sub (local.get $right) (local.get $right_margin)))))
     (if (i32.and (local.get $valid)
           (i32.ne (i32.and (local.get $format) (i32.const 0x40)) (i32.const 0)))
@@ -6063,16 +6105,16 @@
       (then
         (if (i32.ne (i32.and (local.get $format) (i32.const 0x400)) (i32.const 0))
           (then
-            (local.set $calculated_right (i32.load offset=8 (local.get $rect)))
-            (i32.store (local.get $rect) (local.get $left))
-            (i32.store offset=4 (local.get $rect) (local.get $top))
-            (i32.store offset=8 (local.get $rect)
+            (local.set $calculated_right (load.field.memarg Rect right (local.get $rect)))
+            (store.field Rect left (local.get $rect) (local.get $left))
+            (store.field.memarg Rect top (local.get $rect) (local.get $top))
+            (store.field.memarg Rect right (local.get $rect)
               (i32.add (local.get $calculated_right) (local.get $right_margin))))
           (else
-            (i32.store (local.get $rect) (local.get $left))
-            (i32.store offset=4 (local.get $rect) (local.get $top))
-            (i32.store offset=8 (local.get $rect) (local.get $right))
-            (i32.store offset=12 (local.get $rect) (local.get $bottom))))))
+            (store.field Rect left (local.get $rect) (local.get $left))
+            (store.field.memarg Rect top (local.get $rect) (local.get $top))
+            (store.field.memarg Rect right (local.get $rect) (local.get $right))
+            (store.field.memarg Rect bottom (local.get $rect) (local.get $bottom))))))
     (local.get $result))
 
   ;; DrawTextExA(hdc, lpString, nCount, lpRect, uFormat, lpDTParams)
@@ -6093,8 +6135,8 @@
     (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
       (then (global.set $eax (call $gdi_draw_edge_desc
         (local.get $arg0) (local.get $desc)
-        (i32.load (local.get $rc)) (i32.load offset=4 (local.get $rc))
-        (i32.load offset=8 (local.get $rc)) (i32.load offset=12 (local.get $rc))
+        (load.field Rect left (local.get $rc)) (load.field.memarg Rect top (local.get $rc))
+        (load.field.memarg Rect right (local.get $rc)) (load.field.memarg Rect bottom (local.get $rc))
         (local.get $arg2) (local.get $arg3) (local.get $rc))))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
@@ -9669,10 +9711,10 @@ HookEx — no next hook in chain, return 0
     (if (local.get $arg1)
       (then
         (local.set $wa (call $g2w (local.get $arg1)))
-        (local.set $l (i32.load (local.get $wa)))
-        (local.set $t (i32.load offset=4 (local.get $wa)))
-        (local.set $r (i32.load offset=8 (local.get $wa)))
-        (local.set $b (i32.load offset=12 (local.get $wa))))
+        (local.set $l (load.field Rect left (local.get $wa)))
+        (local.set $t (load.field.memarg Rect top (local.get $wa)))
+        (local.set $r (load.field.memarg Rect right (local.get $wa)))
+        (local.set $b (load.field.memarg Rect bottom (local.get $wa))))
       (else
         (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
         (local.set $l (i32.const 0)) (local.set $t (i32.const 0))
@@ -9701,10 +9743,10 @@ HookEx — no next hook in chain, return 0
     (if (local.get $arg1)
       (then
         (local.set $wa (call $g2w (local.get $arg1)))
-        (local.set $l (i32.load (local.get $wa)))
-        (local.set $t (i32.load offset=4 (local.get $wa)))
-        (local.set $r (i32.load offset=8 (local.get $wa)))
-        (local.set $b (i32.load offset=12 (local.get $wa))))
+        (local.set $l (load.field Rect left (local.get $wa)))
+        (local.set $t (load.field.memarg Rect top (local.get $wa)))
+        (local.set $r (load.field.memarg Rect right (local.get $wa)))
+        (local.set $b (load.field.memarg Rect bottom (local.get $wa))))
       (else
         (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
         (local.set $l (i32.const 0)) (local.set $t (i32.const 0))
@@ -9947,17 +9989,17 @@ HookEx — no next hook in chain, return 0
     (local $wa i32)
     (local.set $wa (call $g2w (local.get $arg0)))
     ;; left -= dx
-    (i32.store (local.get $wa)
-      (i32.sub (i32.load (local.get $wa)) (local.get $arg1)))
+    (store.field Rect left (local.get $wa)
+      (i32.sub (load.field Rect left (local.get $wa)) (local.get $arg1)))
     ;; top -= dy
-    (i32.store (i32.add (local.get $wa) (i32.const 4))
-      (i32.sub (i32.load (i32.add (local.get $wa) (i32.const 4))) (local.get $arg2)))
+    (store.field Rect top (local.get $wa)
+      (i32.sub (load.field Rect top (local.get $wa)) (local.get $arg2)))
     ;; right += dx
-    (i32.store (i32.add (local.get $wa) (i32.const 8))
-      (i32.add (i32.load (i32.add (local.get $wa) (i32.const 8))) (local.get $arg1)))
+    (store.field Rect right (local.get $wa)
+      (i32.add (load.field Rect right (local.get $wa)) (local.get $arg1)))
     ;; bottom += dy
-    (i32.store (i32.add (local.get $wa) (i32.const 12))
-      (i32.add (i32.load (i32.add (local.get $wa) (i32.const 12))) (local.get $arg2)))
+    (store.field Rect bottom (local.get $wa)
+      (i32.add (load.field Rect bottom (local.get $wa)) (local.get $arg2)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -9989,8 +10031,8 @@ HookEx — no next hook in chain, return 0
     (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
       (then (global.set $eax (call $gdi_focus_rect_desc
         (local.get $arg0) (local.get $desc)
-        (i32.load (local.get $rc)) (i32.load offset=4 (local.get $rc))
-        (i32.load offset=8 (local.get $rc)) (i32.load offset=12 (local.get $rc)))))
+        (load.field Rect left (local.get $rc)) (load.field.memarg Rect top (local.get $rc))
+        (load.field.memarg Rect right (local.get $rc)) (load.field.memarg Rect bottom (local.get $rc)))))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; ret + 2 args
   )
@@ -10002,12 +10044,12 @@ HookEx — no next hook in chain, return 0
     ;; Check: left <= x < right && top <= y < bottom
     (if (i32.and
       (i32.and
-        (i32.le_s (i32.load (local.get $rect_w)) (local.get $arg1))                          ;; left <= x
-        (i32.lt_s (local.get $arg1) (i32.load (i32.add (local.get $rect_w) (i32.const 8))))   ;; x < right
+        (i32.le_s (load.field Rect left (local.get $rect_w)) (local.get $arg1))                          ;; left <= x
+        (i32.lt_s (local.get $arg1) (load.field Rect right (local.get $rect_w)))   ;; x < right
       )
       (i32.and
-        (i32.le_s (i32.load (i32.add (local.get $rect_w) (i32.const 4))) (local.get $arg2))   ;; top <= y
-        (i32.lt_s (local.get $arg2) (i32.load (i32.add (local.get $rect_w) (i32.const 12))))  ;; y < bottom
+        (i32.le_s (load.field Rect top (local.get $rect_w)) (local.get $arg2))   ;; top <= y
+        (i32.lt_s (local.get $arg2) (load.field Rect bottom (local.get $rect_w)))  ;; y < bottom
       )
     )
     (then (global.set $eax (i32.const 1)))
@@ -10049,10 +10091,10 @@ HookEx — no next hook in chain, return 0
     (local $dst i32) (local $src i32)
     (local.set $dst (call $g2w (local.get $arg0)))
     (local.set $src (call $g2w (local.get $arg1)))
-    (i32.store (local.get $dst) (i32.load (local.get $src)))
-    (i32.store (i32.add (local.get $dst) (i32.const 4)) (i32.load (i32.add (local.get $src) (i32.const 4))))
-    (i32.store (i32.add (local.get $dst) (i32.const 8)) (i32.load (i32.add (local.get $src) (i32.const 8))))
-    (i32.store (i32.add (local.get $dst) (i32.const 12)) (i32.load (i32.add (local.get $src) (i32.const 12))))
+    (store.field Rect left (local.get $dst) (load.field Rect left (local.get $src)))
+    (store.field Rect top (local.get $dst) (load.field Rect top (local.get $src)))
+    (store.field Rect right (local.get $dst) (load.field Rect right (local.get $src)))
+    (store.field Rect bottom (local.get $dst) (load.field Rect bottom (local.get $src)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
@@ -10066,36 +10108,36 @@ HookEx — no next hook in chain, return 0
     (local.set $s2 (call $g2w (local.get $arg2)))
     ;; left = max(s1.left, s2.left)
     (local.set $left (select
-      (i32.load (local.get $s1)) (i32.load (local.get $s2))
-      (i32.gt_s (i32.load (local.get $s1)) (i32.load (local.get $s2)))))
+      (load.field Rect left (local.get $s1)) (load.field Rect left (local.get $s2))
+      (i32.gt_s (load.field Rect left (local.get $s1)) (load.field Rect left (local.get $s2)))))
     ;; top = max(s1.top, s2.top)
     (local.set $top (select
-      (i32.load (i32.add (local.get $s1) (i32.const 4))) (i32.load (i32.add (local.get $s2) (i32.const 4)))
-      (i32.gt_s (i32.load (i32.add (local.get $s1) (i32.const 4))) (i32.load (i32.add (local.get $s2) (i32.const 4))))))
+      (load.field Rect top (local.get $s1)) (load.field Rect top (local.get $s2))
+      (i32.gt_s (load.field Rect top (local.get $s1)) (load.field Rect top (local.get $s2)))))
     ;; right = min(s1.right, s2.right)
     (local.set $right (select
-      (i32.load (i32.add (local.get $s1) (i32.const 8))) (i32.load (i32.add (local.get $s2) (i32.const 8)))
-      (i32.lt_s (i32.load (i32.add (local.get $s1) (i32.const 8))) (i32.load (i32.add (local.get $s2) (i32.const 8))))))
+      (load.field Rect right (local.get $s1)) (load.field Rect right (local.get $s2))
+      (i32.lt_s (load.field Rect right (local.get $s1)) (load.field Rect right (local.get $s2)))))
     ;; bottom = min(s1.bottom, s2.bottom)
     (local.set $bottom (select
-      (i32.load (i32.add (local.get $s1) (i32.const 12))) (i32.load (i32.add (local.get $s2) (i32.const 12)))
-      (i32.lt_s (i32.load (i32.add (local.get $s1) (i32.const 12))) (i32.load (i32.add (local.get $s2) (i32.const 12))))))
+      (load.field Rect bottom (local.get $s1)) (load.field Rect bottom (local.get $s2))
+      (i32.lt_s (load.field Rect bottom (local.get $s1)) (load.field Rect bottom (local.get $s2)))))
     ;; Check if intersection is empty
     (if (i32.or (i32.ge_s (local.get $left) (local.get $right))
                 (i32.ge_s (local.get $top) (local.get $bottom)))
       (then
         ;; Empty: zero out dst, return FALSE
-        (i32.store (local.get $dst) (i32.const 0))
-        (i32.store (i32.add (local.get $dst) (i32.const 4)) (i32.const 0))
-        (i32.store (i32.add (local.get $dst) (i32.const 8)) (i32.const 0))
-        (i32.store (i32.add (local.get $dst) (i32.const 12)) (i32.const 0))
+        (store.field Rect left (local.get $dst) (i32.const 0))
+        (store.field Rect top (local.get $dst) (i32.const 0))
+        (store.field Rect right (local.get $dst) (i32.const 0))
+        (store.field Rect bottom (local.get $dst) (i32.const 0))
         (global.set $eax (i32.const 0))
       )
       (else
-        (i32.store (local.get $dst) (local.get $left))
-        (i32.store (i32.add (local.get $dst) (i32.const 4)) (local.get $top))
-        (i32.store (i32.add (local.get $dst) (i32.const 8)) (local.get $right))
-        (i32.store (i32.add (local.get $dst) (i32.const 12)) (local.get $bottom))
+        (store.field Rect left (local.get $dst) (local.get $left))
+        (store.field Rect top (local.get $dst) (local.get $top))
+        (store.field Rect right (local.get $dst) (local.get $right))
+        (store.field Rect bottom (local.get $dst) (local.get $bottom))
         (global.set $eax (i32.const 1))
       )
     )
@@ -10111,14 +10153,14 @@ HookEx — no next hook in chain, return 0
     (local.set $dst (call $g2w (local.get $arg0)))
     (local.set $s1 (call $g2w (local.get $arg1)))
     (local.set $s2 (call $g2w (local.get $arg2)))
-    (local.set $s1l (i32.load (local.get $s1)))
-    (local.set $s1t (i32.load offset=4 (local.get $s1)))
-    (local.set $s1r (i32.load offset=8 (local.get $s1)))
-    (local.set $s1b (i32.load offset=12 (local.get $s1)))
-    (local.set $s2l (i32.load (local.get $s2)))
-    (local.set $s2t (i32.load offset=4 (local.get $s2)))
-    (local.set $s2r (i32.load offset=8 (local.get $s2)))
-    (local.set $s2b (i32.load offset=12 (local.get $s2)))
+    (local.set $s1l (load.field Rect left (local.get $s1)))
+    (local.set $s1t (load.field.memarg Rect top (local.get $s1)))
+    (local.set $s1r (load.field.memarg Rect right (local.get $s1)))
+    (local.set $s1b (load.field.memarg Rect bottom (local.get $s1)))
+    (local.set $s2l (load.field Rect left (local.get $s2)))
+    (local.set $s2t (load.field.memarg Rect top (local.get $s2)))
+    (local.set $s2r (load.field.memarg Rect right (local.get $s2)))
+    (local.set $s2b (load.field.memarg Rect bottom (local.get $s2)))
     (local.set $e1 (i32.or
       (i32.ge_s (local.get $s1l) (local.get $s1r))
       (i32.ge_s (local.get $s1t) (local.get $s1b))))
@@ -10127,33 +10169,33 @@ HookEx — no next hook in chain, return 0
       (i32.ge_s (local.get $s2t) (local.get $s2b))))
     (if (i32.and (local.get $e1) (local.get $e2))
       (then
-        (i32.store (local.get $dst) (i32.const 0))
-        (i32.store offset=4 (local.get $dst) (i32.const 0))
-        (i32.store offset=8 (local.get $dst) (i32.const 0))
-        (i32.store offset=12 (local.get $dst) (i32.const 0))
+        (store.field Rect left (local.get $dst) (i32.const 0))
+        (store.field.memarg Rect top (local.get $dst) (i32.const 0))
+        (store.field.memarg Rect right (local.get $dst) (i32.const 0))
+        (store.field.memarg Rect bottom (local.get $dst) (i32.const 0))
         (global.set $eax (i32.const 0)))
       (else
         (if (local.get $e1)
           (then
-            (i32.store (local.get $dst) (local.get $s2l))
-            (i32.store offset=4 (local.get $dst) (local.get $s2t))
-            (i32.store offset=8 (local.get $dst) (local.get $s2r))
-            (i32.store offset=12 (local.get $dst) (local.get $s2b)))
+            (store.field Rect left (local.get $dst) (local.get $s2l))
+            (store.field.memarg Rect top (local.get $dst) (local.get $s2t))
+            (store.field.memarg Rect right (local.get $dst) (local.get $s2r))
+            (store.field.memarg Rect bottom (local.get $dst) (local.get $s2b)))
           (else
             (if (local.get $e2)
               (then
-                (i32.store (local.get $dst) (local.get $s1l))
-                (i32.store offset=4 (local.get $dst) (local.get $s1t))
-                (i32.store offset=8 (local.get $dst) (local.get $s1r))
-                (i32.store offset=12 (local.get $dst) (local.get $s1b)))
+                (store.field Rect left (local.get $dst) (local.get $s1l))
+                (store.field.memarg Rect top (local.get $dst) (local.get $s1t))
+                (store.field.memarg Rect right (local.get $dst) (local.get $s1r))
+                (store.field.memarg Rect bottom (local.get $dst) (local.get $s1b)))
               (else
-                (i32.store (local.get $dst)
+                (store.field Rect left (local.get $dst)
                   (select (local.get $s1l) (local.get $s2l) (i32.lt_s (local.get $s1l) (local.get $s2l))))
-                (i32.store offset=4 (local.get $dst)
+                (store.field.memarg Rect top (local.get $dst)
                   (select (local.get $s1t) (local.get $s2t) (i32.lt_s (local.get $s1t) (local.get $s2t))))
-                (i32.store offset=8 (local.get $dst)
+                (store.field.memarg Rect right (local.get $dst)
                   (select (local.get $s1r) (local.get $s2r) (i32.gt_s (local.get $s1r) (local.get $s2r))))
-                (i32.store offset=12 (local.get $dst)
+                (store.field.memarg Rect bottom (local.get $dst)
                   (select (local.get $s1b) (local.get $s2b) (i32.gt_s (local.get $s1b) (local.get $s2b))))))))
         (global.set $eax (i32.const 1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
@@ -10169,14 +10211,14 @@ HookEx — no next hook in chain, return 0
     (local.set $dst (call $g2w (local.get $arg0)))
     (local.set $s1 (call $g2w (local.get $arg1)))
     (local.set $s2 (call $g2w (local.get $arg2)))
-    (local.set $s1l (i32.load (local.get $s1)))
-    (local.set $s1t (i32.load offset=4 (local.get $s1)))
-    (local.set $s1r (i32.load offset=8 (local.get $s1)))
-    (local.set $s1b (i32.load offset=12 (local.get $s1)))
-    (local.set $s2l (i32.load (local.get $s2)))
-    (local.set $s2t (i32.load offset=4 (local.get $s2)))
-    (local.set $s2r (i32.load offset=8 (local.get $s2)))
-    (local.set $s2b (i32.load offset=12 (local.get $s2)))
+    (local.set $s1l (load.field Rect left (local.get $s1)))
+    (local.set $s1t (load.field.memarg Rect top (local.get $s1)))
+    (local.set $s1r (load.field.memarg Rect right (local.get $s1)))
+    (local.set $s1b (load.field.memarg Rect bottom (local.get $s1)))
+    (local.set $s2l (load.field Rect left (local.get $s2)))
+    (local.set $s2t (load.field.memarg Rect top (local.get $s2)))
+    (local.set $s2r (load.field.memarg Rect right (local.get $s2)))
+    (local.set $s2b (load.field.memarg Rect bottom (local.get $s2)))
     ;; If src2 fully contains src1, result is empty.
     (if (i32.and
           (i32.and (i32.le_s (local.get $s2l) (local.get $s1l))
@@ -10184,16 +10226,16 @@ HookEx — no next hook in chain, return 0
           (i32.and (i32.ge_s (local.get $s2r) (local.get $s1r))
                    (i32.ge_s (local.get $s2b) (local.get $s1b))))
       (then
-        (i32.store (local.get $dst) (i32.const 0))
-        (i32.store offset=4 (local.get $dst) (i32.const 0))
-        (i32.store offset=8 (local.get $dst) (i32.const 0))
-        (i32.store offset=12 (local.get $dst) (i32.const 0))
+        (store.field Rect left (local.get $dst) (i32.const 0))
+        (store.field.memarg Rect top (local.get $dst) (i32.const 0))
+        (store.field.memarg Rect right (local.get $dst) (i32.const 0))
+        (store.field.memarg Rect bottom (local.get $dst) (i32.const 0))
         (global.set $eax (i32.const 0)))
       (else
-        (i32.store (local.get $dst) (local.get $s1l))
-        (i32.store offset=4 (local.get $dst) (local.get $s1t))
-        (i32.store offset=8 (local.get $dst) (local.get $s1r))
-        (i32.store offset=12 (local.get $dst) (local.get $s1b))
+        (store.field Rect left (local.get $dst) (local.get $s1l))
+        (store.field.memarg Rect top (local.get $dst) (local.get $s1t))
+        (store.field.memarg Rect right (local.get $dst) (local.get $s1r))
+        (store.field.memarg Rect bottom (local.get $dst) (local.get $s1b))
         (global.set $eax (i32.const 1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
@@ -10261,10 +10303,10 @@ HookEx — no next hook in chain, return 0
     (local.set $r (call $g2w (local.get $arg0)))
     (global.set $eax
       (i32.or
-        (i32.le_s (i32.load (i32.add (local.get $r) (i32.const 8)))   ;; right
-                  (i32.load (local.get $r)))                             ;; left
-        (i32.le_s (i32.load (i32.add (local.get $r) (i32.const 12)))  ;; bottom
-                  (i32.load (i32.add (local.get $r) (i32.const 4))))))  ;; top
+        (i32.le_s (load.field Rect right (local.get $r))   ;; right
+                  (load.field Rect left (local.get $r)))                             ;; left
+        (i32.le_s (load.field Rect bottom (local.get $r))  ;; bottom
+                  (load.field Rect top (local.get $r)))))  ;; top
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -10278,10 +10320,10 @@ HookEx — no next hook in chain, return 0
         (local.set $a (call $g2w (local.get $arg0)))
         (local.set $b (call $g2w (local.get $arg1)))
         (if (i32.or
-              (i32.or (i32.ne (i32.load (local.get $a)) (i32.load (local.get $b)))
-                      (i32.ne (i32.load offset=4 (local.get $a)) (i32.load offset=4 (local.get $b))))
-              (i32.or (i32.ne (i32.load offset=8 (local.get $a)) (i32.load offset=8 (local.get $b)))
-                      (i32.ne (i32.load offset=12 (local.get $a)) (i32.load offset=12 (local.get $b)))))
+              (i32.or (i32.ne (load.field Rect left (local.get $a)) (load.field Rect left (local.get $b)))
+                      (i32.ne (load.field.memarg Rect top (local.get $a)) (load.field.memarg Rect top (local.get $b))))
+              (i32.or (i32.ne (load.field.memarg Rect right (local.get $a)) (load.field.memarg Rect right (local.get $b)))
+                      (i32.ne (load.field.memarg Rect bottom (local.get $a)) (load.field.memarg Rect bottom (local.get $b)))))
           (then (global.set $eax (i32.const 0))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
@@ -11037,10 +11079,10 @@ HookEx — no next hook in chain, return 0
             ;; Empty updateRgn. If paint_pending (main) or paint flag set (child),
             ;; the caller will paint full client — hand them the full client rect.
             (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
-            (i32.store (local.get $wa) (i32.const 0))
-            (i32.store offset=4 (local.get $wa) (i32.const 0))
-            (i32.store offset=8 (local.get $wa) (i32.and (local.get $cs) (i32.const 0xFFFF)))
-            (i32.store offset=12 (local.get $wa) (i32.shr_u (local.get $cs) (i32.const 16)))
+            (store.field Rect left (local.get $wa) (i32.const 0))
+            (store.field.memarg Rect top (local.get $wa) (i32.const 0))
+            (store.field.memarg Rect right (local.get $wa) (i32.and (local.get $cs) (i32.const 0xFFFF)))
+            (store.field.memarg Rect bottom (local.get $wa) (i32.shr_u (local.get $cs) (i32.const 16)))
             (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
               (then (local.set $rv (global.get $paint_pending)))))))
       (else (local.set $rv (call $update_get_rect (local.get $arg0) (i32.const 0)))))
@@ -14149,14 +14191,14 @@ GetTopWindow(hWnd) — 1 arg stdcall
     ;; caption (chrome 20px) only with WS_CAPTION (which == DLGFRAME|BORDER)
     (local.set $caption (i32.eq (i32.and (local.get $arg1) (i32.const 0x00C00000)) (i32.const 0x00C00000)))
     (if (i32.or (local.get $border) (local.get $caption)) (then
-      (i32.store (local.get $wa) (i32.sub (i32.load (local.get $wa)) (i32.const 4)))
-      (i32.store offset=4 (local.get $wa)
-        (i32.sub (i32.load offset=4 (local.get $wa))
+      (store.field Rect left (local.get $wa) (i32.sub (load.field Rect left (local.get $wa)) (i32.const 4)))
+      (store.field.memarg Rect top (local.get $wa)
+        (i32.sub (load.field.memarg Rect top (local.get $wa))
           (i32.add (i32.const 4)
             (i32.add (select (i32.const 20) (i32.const 0) (local.get $caption))
                      (select (i32.const 19) (i32.const 0) (local.get $arg2))))))
-      (i32.store offset=8 (local.get $wa) (i32.add (i32.load offset=8 (local.get $wa)) (i32.const 4)))
-      (i32.store offset=12 (local.get $wa) (i32.add (i32.load offset=12 (local.get $wa)) (i32.const 4)))
+      (store.field.memarg Rect right (local.get $wa) (i32.add (load.field.memarg Rect right (local.get $wa)) (i32.const 4)))
+      (store.field.memarg Rect bottom (local.get $wa) (i32.add (load.field.memarg Rect bottom (local.get $wa)) (i32.const 4)))
     ))
     ;; WS_EX_CLIENTEDGE sinks the client two pixels on every side, and
     ;; $defwndproc_do_nccalcsize takes those two pixels back out. The two have
@@ -14166,10 +14208,10 @@ GetTopWindow(hWnd) — 1 arg stdcall
     ;; seven card columns need, is handed four pixels less, decides the window
     ;; is too narrow to lay out at all, and leaves every pile at the origin.
     (if (i32.and (local.get $arg3) (i32.const 0x00000200)) (then
-      (i32.store           (local.get $wa) (i32.sub (i32.load           (local.get $wa)) (i32.const 2)))
-      (i32.store offset=4  (local.get $wa) (i32.sub (i32.load offset=4  (local.get $wa)) (i32.const 2)))
-      (i32.store offset=8  (local.get $wa) (i32.add (i32.load offset=8  (local.get $wa)) (i32.const 2)))
-      (i32.store offset=12 (local.get $wa) (i32.add (i32.load offset=12 (local.get $wa)) (i32.const 2)))
+      (store.field Rect left (local.get $wa) (i32.sub (load.field Rect left (local.get $wa)) (i32.const 2)))
+      (store.field.memarg Rect top (local.get $wa) (i32.sub (load.field.memarg Rect top (local.get $wa)) (i32.const 2)))
+      (store.field.memarg Rect right (local.get $wa) (i32.add (load.field.memarg Rect right (local.get $wa)) (i32.const 2)))
+      (store.field.memarg Rect bottom (local.get $wa) (i32.add (load.field.memarg Rect bottom (local.get $wa)) (i32.const 2)))
     ))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
@@ -14328,10 +14370,10 @@ GetTopWindow(hWnd) — 1 arg stdcall
   (func $handle_InvertRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
     (local.set $wa (call $g2w (local.get $arg1)))
-    (local.set $left (i32.load (local.get $wa)))
-    (local.set $top (i32.load (i32.add (local.get $wa) (i32.const 4))))
-    (local.set $right (i32.load (i32.add (local.get $wa) (i32.const 8))))
-    (local.set $bottom (i32.load (i32.add (local.get $wa) (i32.const 12))))
+    (local.set $left (load.field Rect left (local.get $wa)))
+    (local.set $top (load.field Rect top (local.get $wa)))
+    (local.set $right (load.field Rect right (local.get $wa)))
+    (local.set $bottom (load.field Rect bottom (local.get $wa)))
     (global.set $eax (call $host_gdi_bitblt
       (local.get $arg0) (local.get $left) (local.get $top)
       (i32.sub (local.get $right) (local.get $left))
@@ -14475,15 +14517,15 @@ rDragDrop(hwnd, pDropTarget) — return S_OK.
     (local.set $base_y
       (select (i32.const 16) (i32.const 13) (global.get $is_win16)))
     ;; x pixels = MulDiv(dialogX, baseX, 4)
-    (i32.store offset=0 (local.get $p)
-      (i32.div_s (i32.mul (i32.load offset=0 (local.get $p)) (local.get $base_x)) (i32.const 4)))
-    (i32.store offset=8 (local.get $p)
-      (i32.div_s (i32.mul (i32.load offset=8 (local.get $p)) (local.get $base_x)) (i32.const 4)))
+    (store.field.memarg Rect left (local.get $p)
+      (i32.div_s (i32.mul (load.field.memarg Rect left (local.get $p)) (local.get $base_x)) (i32.const 4)))
+    (store.field.memarg Rect right (local.get $p)
+      (i32.div_s (i32.mul (load.field.memarg Rect right (local.get $p)) (local.get $base_x)) (i32.const 4)))
     ;; y pixels = MulDiv(dialogY, baseY, 8)
-    (i32.store offset=4 (local.get $p)
-      (i32.div_s (i32.mul (i32.load offset=4 (local.get $p)) (local.get $base_y)) (i32.const 8)))
-    (i32.store offset=12 (local.get $p)
-      (i32.div_s (i32.mul (i32.load offset=12 (local.get $p)) (local.get $base_y)) (i32.const 8)))
+    (store.field.memarg Rect top (local.get $p)
+      (i32.div_s (i32.mul (load.field.memarg Rect top (local.get $p)) (local.get $base_y)) (i32.const 8)))
+    (store.field.memarg Rect bottom (local.get $p)
+      (i32.div_s (i32.mul (load.field.memarg Rect bottom (local.get $p)) (local.get $base_y)) (i32.const 8)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
@@ -14659,10 +14701,10 @@ rDragDrop(hwnd, pDropTarget) — return S_OK.
     (if (local.get $arg3)
       (then
         (local.set $wa (call $g2w (local.get $arg3)))
-        (local.set $l (i32.load (local.get $wa)))
-        (local.set $t (i32.load offset=4 (local.get $wa)))
-        (local.set $r (i32.load offset=8 (local.get $wa)))
-        (local.set $b (i32.load offset=12 (local.get $wa))))
+        (local.set $l (load.field Rect left (local.get $wa)))
+        (local.set $t (load.field.memarg Rect top (local.get $wa)))
+        (local.set $r (load.field.memarg Rect right (local.get $wa)))
+        (local.set $b (load.field.memarg Rect bottom (local.get $wa))))
       (else
         (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
         (local.set $l (i32.const 0))
@@ -14672,14 +14714,14 @@ rDragDrop(hwnd, pDropTarget) — return S_OK.
     (if (local.get $arg4)
       (then
         (local.set $wa (call $g2w (local.get $arg4)))
-        (if (i32.gt_s (i32.load (local.get $wa)) (local.get $l))
-          (then (local.set $l (i32.load (local.get $wa)))))
-        (if (i32.gt_s (i32.load offset=4 (local.get $wa)) (local.get $t))
-          (then (local.set $t (i32.load offset=4 (local.get $wa)))))
-        (if (i32.lt_s (i32.load offset=8 (local.get $wa)) (local.get $r))
-          (then (local.set $r (i32.load offset=8 (local.get $wa)))))
-        (if (i32.lt_s (i32.load offset=12 (local.get $wa)) (local.get $b))
-          (then (local.set $b (i32.load offset=12 (local.get $wa)))))))
+        (if (i32.gt_s (load.field Rect left (local.get $wa)) (local.get $l))
+          (then (local.set $l (load.field Rect left (local.get $wa)))))
+        (if (i32.gt_s (load.field.memarg Rect top (local.get $wa)) (local.get $t))
+          (then (local.set $t (load.field.memarg Rect top (local.get $wa)))))
+        (if (i32.lt_s (load.field.memarg Rect right (local.get $wa)) (local.get $r))
+          (then (local.set $r (load.field.memarg Rect right (local.get $wa)))))
+        (if (i32.lt_s (load.field.memarg Rect bottom (local.get $wa)) (local.get $b))
+          (then (local.set $b (load.field.memarg Rect bottom (local.get $wa)))))))
     ;; prcUpdate is the 7th argument at [esp+28].
     (local.set $prcUpdate (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     (if (i32.or
@@ -14697,10 +14739,10 @@ rDragDrop(hwnd, pDropTarget) — return S_OK.
     (if (local.get $prcUpdate)
       (then
         (local.set $wa (call $g2w (local.get $prcUpdate)))
-        (i32.store (local.get $wa) (local.get $l))
-        (i32.store offset=4 (local.get $wa) (local.get $t))
-        (i32.store offset=8 (local.get $wa) (local.get $r))
-        (i32.store offset=12 (local.get $wa) (local.get $b))))
+        (store.field Rect left (local.get $wa) (local.get $l))
+        (store.field.memarg Rect top (local.get $wa) (local.get $t))
+        (store.field.memarg Rect right (local.get $wa) (local.get $r))
+        (store.field.memarg Rect bottom (local.get $wa) (local.get $b))))
     (call $update_invalidate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b))
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
@@ -15034,10 +15076,10 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     (local.set $rc (call $g2w (local.get $arg0)))
-    (global.set $clip_cursor_l (i32.load (local.get $rc)))
-    (global.set $clip_cursor_t (i32.load offset=4 (local.get $rc)))
-    (global.set $clip_cursor_r (i32.load offset=8 (local.get $rc)))
-    (global.set $clip_cursor_b (i32.load offset=12 (local.get $rc)))
+    (global.set $clip_cursor_l (load.field Rect left (local.get $rc)))
+    (global.set $clip_cursor_t (load.field.memarg Rect top (local.get $rc)))
+    (global.set $clip_cursor_r (load.field.memarg Rect right (local.get $rc)))
+    (global.set $clip_cursor_b (load.field.memarg Rect bottom (local.get $rc)))
     (global.set $clip_cursor_active
       (i32.and
         (i32.lt_s (global.get $clip_cursor_l) (global.get $clip_cursor_r))
@@ -15906,8 +15948,8 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
       (then (global.set $eax (call $gdi_draw_edge_desc
         (local.get $arg0) (local.get $desc)
-        (i32.load (local.get $rc)) (i32.load offset=4 (local.get $rc))
-        (i32.load offset=8 (local.get $rc)) (i32.load offset=12 (local.get $rc))
+        (load.field Rect left (local.get $rc)) (load.field.memarg Rect top (local.get $rc))
+        (load.field.memarg Rect right (local.get $rc)) (load.field.memarg Rect bottom (local.get $rc))
         (i32.const 5) (i32.const 15) (local.get $rc))))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
@@ -15929,10 +15971,10 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
         (return)))
     (local.set $rc (call $g2w (local.get $arg2)))
-    (local.set $left (i32.load (local.get $rc)))
-    (local.set $top (i32.load offset=4 (local.get $rc)))
-    (local.set $right (i32.load offset=8 (local.get $rc)))
-    (local.set $bottom (i32.load offset=12 (local.get $rc)))
+    (local.set $left (load.field Rect left (local.get $rc)))
+    (local.set $top (load.field.memarg Rect top (local.get $rc)))
+    (local.set $right (load.field.memarg Rect right (local.get $rc)))
+    (local.set $bottom (load.field.memarg Rect bottom (local.get $rc)))
 
     ;; DC_INBUTTON uses classic button face/edge chrome.  Ordinary captions
     ;; use Win98's active/inactive caption colors and optional gradient.
