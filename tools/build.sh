@@ -126,11 +126,38 @@ node tools/layout-migrate.js --file=src/09d-winsock.wat --layout=VSock \
 # call only. Keep this list in step with the one in the wave-4 commit — dropping
 # a name from it does not make the gate stricter, it makes the codemod convert
 # sites that are not DX objects.
+#
+# --memarg (the completion wave) — wave 4 could only reach the add-form sites,
+# so the 28 that spell the offset in the instruction stayed raw AND STAYED
+# INVISIBLE TO THIS GATE. Measured: hand-respelling a converted site as
+# `(i32.load offset=4 (local.get $entry))` passed the pre-memarg gate with
+# exit 0. It fails now. That is the whole reason the flag is here.
+#
+# u16 (the 16-bit wave) — a5fc1b72 closed the compiler's field-type set and
+# gave u16/s16/s8 real opcodes, so width/height/bpp/pitch at +12/+14/+16/+18
+# are declared at their true width and their 64 sites are converted. Until then
+# they were `u8 2` for spacing and every access stayed hand-spelled, and THOSE
+# SITES WERE INVISIBLE TO THIS GATE for the same reason the memarg ones were:
+# the tool's op table had no i32.load16_u, so it did not see them at all.
+# Measured: at HEAD with the u8[2] declaration and all 64 raw sites present the
+# gate exited 0; with the u16 declaration one planted `(i32.load16_u offset=16
+# (local.get $entry))` fails it. layout-migrate.js's FIELD_SIZE table must stay
+# in step with the compiler's WATX_LAYOUT_FIELD_TYPES — the two compute the same
+# struct offsets independently, and a drift mis-attributes every later field.
+#
+# THE +12/+16 DWORD SITES IT STILL DECLINES ARE CORRECT AND MUST STAY RAW.
+# Those two dwords are UNIONS, like misc0/misc1/misc2: width/height/bpp/pitch is
+# the SURFACE arm, while a DirectInput device reads a whole-dword `capacity` at
+# +12 and a D3D device a `version` at +16. 59 sites spell i32.load/i32.store
+# there and the width mismatch is the only thing telling the two readings apart.
+# Widening them to `load.field width` would read two fields as one and label a
+# capacity as a width — byte-identically, so the oracle would not catch it.
 DX_LAYOUT_ARGS=(--file=src/09a8-handlers-directx.wat,src/09aa-handlers-d3dim.wat,src/09ab-handlers-d3dim-core.wat,src/09ad-handlers-d3d9.wat,src/09a7-handlers-dispatch.wat
   --layout=DxObject --layout-from=src/09a8-handlers-directx.wat
   --base-local=entry,dst_entry,src_entry,back_entry,parent,surf_entry,pal_entry
   --base-call='$dx_from_this'
-  --skip-func='$d3dim_stateblock_create,$d3dim_stateblock_apply,$d3dim_stateblock_capture,$d3dim_stateblock_delete,$d3dim_lights_refresh,$message_table_lookup')
+  --skip-func='$d3dim_stateblock_create,$d3dim_stateblock_apply,$d3dim_stateblock_capture,$d3dim_stateblock_delete,$d3dim_lights_refresh,$message_table_lookup'
+  --memarg)
 node tools/layout-migrate.js "${DX_LAYOUT_ARGS[@]}" --gate > /dev/null || {
   node tools/layout-migrate.js "${DX_LAYOUT_ARGS[@]}" --gate; exit 1; }
 # WndRecord (wave 2) — the 24-byte per-window record. Deliberately NO
@@ -140,10 +167,24 @@ node tools/layout-migrate.js "${DX_LAYOUT_ARGS[@]}" --gate > /dev/null || {
 # labels seven of them as fields of a record they are not in — all at offset 0,
 # so the bytes never move and the byte-identity oracle cannot catch it. In a
 # file with parallel tables, recognize the base by CALL only.
-node tools/layout-migrate.js --file=src/09c0-window-table.wat --layout=WndRecord \
-  --base-call='$wnd_record_addr' --gate > /dev/null || {
-  node tools/layout-migrate.js --file=src/09c0-window-table.wat --layout=WndRecord \
-    --base-call='$wnd_record_addr' --gate; exit 1; }
+#
+# The completion wave keeps that rule and adds the two things wave 2 could not
+# have: --memarg (30 of 09c0's own sites spell the offset in the instruction,
+# and like DxObject above they were invisible to this gate — a planted
+# `(i32.load offset=8 (local.get $ptr))` passed it with exit 0 before), and the
+# other two files of the family, 09c3-controls.wat and 09c5-menu.wat.
+#
+# --base-local-from-call, still NOT --base-local — the parallel-table hazard in
+# the comment above is exactly why. That flag accepts `rec`/`addr`/`ptr` only in
+# the functions where EVERY assignment to the local is the $wnd_record_addr
+# call, so provenance is checked rather than guessed; a plain name match on
+# `$addr` is what would have relabelled the MENU_DATA_TABLE and class-long
+# pointers as WndRecord.hwnd at offset 0, byte-identically and undetectably.
+WND_LAYOUT_ARGS=(--file=src/09c0-window-table.wat,src/09c3-controls.wat,src/09c5-menu.wat
+  --layout=WndRecord --layout-from=src/09c0-window-table.wat
+  --base-call='$wnd_record_addr' --base-local-from-call=rec,addr,ptr --memarg)
+node tools/layout-migrate.js "${WND_LAYOUT_ARGS[@]}" --gate > /dev/null || {
+  node tools/layout-migrate.js "${WND_LAYOUT_ARGS[@]}" --gate; exit 1; }
 
 # GdiObject (wave 5) — the 48-byte GDI object record, which is a DISCRIMINATED
 # UNION and so gets SEVEN variant layouts rather than one, all 48 bytes, all
@@ -174,6 +215,87 @@ TTH_LAYOUT_ARGS=(--file=src/10c1-truetype-hint.wat --layout=TthPoint
   --base-call='$tth_point' --base-local-from-call=p,point,pt,a,b,pa0,pa1,pb0,pb1 --memarg)
 node tools/layout-migrate.js "${TTH_LAYOUT_ARGS[@]}" --gate > /dev/null || {
   node tools/layout-migrate.js "${TTH_LAYOUT_ARGS[@]}" --gate; exit 1; }
+
+# GdiDcState — the 96-byte per-HDC state slot, reached through
+# $gdi_dc_state_entry. --memarg: every one of its 38 convertible sites spells
+# the offset in the instruction, so without it this family converts nothing.
+#
+# --base-local-from-call, NOT --base-local, and the reason is inside the
+# accessor itself: $gdi_dc_state_entry's own `$p` walks the table AND is the
+# scan cursor, and `$dc` in 10f/10b is also used for host DC descriptors and
+# for $gdi_surface_descriptor's `$desc` block, which has an unrelated field at
+# +36. Every one of those would have converted byte-identically under a name
+# match. Provenance declines them and converts only the 38 the call proves.
+#
+# The remaining raw sites are all inside $gdi_dc_state_entry, which BUILDS the
+# record ($empty/$p are computed from the table base, not returned by the call)
+# — the same constructor-shaped decline TthPoint has. Do not "fix" those by
+# adding --base-local; that would trade a checkable derivation for a name.
+GDI_DC_LAYOUT_ARGS=(--file=src/10f-gdi-dc.wat,src/10b-gdi-font.wat,src/10c-truetype.wat
+  --layout=GdiDcState --layout-from=src/10f-gdi-dc.wat
+  --base-call='$gdi_dc_state_entry' --base-local-from-call=dc,entry --memarg)
+node tools/layout-migrate.js "${GDI_DC_LAYOUT_ARGS[@]}" --gate > /dev/null || {
+  node tools/layout-migrate.js "${GDI_DC_LAYOUT_ARGS[@]}" --gate; exit 1; }
+
+# LoopOp — the 8-byte threaded-code op HEADER, as $te writes it, read at decode
+# time through $loop_op_at. --memarg because 85 of the 167 convertible sites
+# spell the offset in the instruction; --base-local-from-call because $p is a
+# general-purpose scratch name in this file and only the functions where every
+# assignment to it is the base call may be converted (12 of them qualify).
+#
+# This gate covers the header ONLY, and that is the finding of the wave rather
+# than a shortcut: the words at +8 and beyond are a discriminated union keyed by
+# the handler index at +0, with per-handler arity and no length field — +8 is a
+# fall-through for Jcc but the branch target for LOOP, a SIB info word for the
+# indexed forms and a bare disp32 for the _ro family. The declaration beside
+# $loop_op_at carries the evidence. --gate is safe over that union because an
+# undeclared offset is not a convertible site, so those 76 hand-spelled reads
+# neither fail the build nor get silently attributed to a field they are not.
+LOOPOP_LAYOUT_ARGS=(--file=src/07b-loop-match.wat --layout=LoopOp
+  --base-call='$loop_op_at' --base-local-from-call=p,x --memarg)
+node tools/layout-migrate.js "${LOOPOP_LAYOUT_ARGS[@]}" --gate > /dev/null || {
+  node tools/layout-migrate.js "${LOOPOP_LAYOUT_ARGS[@]}" --gate; exit 1; }
+
+# PaintRect — the 16-byte slot of the PAINT_SCRATCH ring, handed out by
+# $paint_scratch_take. A plain Win32 RECT: $paint_rect writes l/t/r/b in that
+# order and every reader takes them back the same way.
+#
+# DELIBERATELY PARTIAL. The family has 61 call sites across nine files; this
+# covers the four that were unclaimed when the wave ran (13 call sites, 32
+# memory sites). The others are NOT declined-for-cause — 09c3/09c5, 09a5,
+# 13-exports and 09a8 were simply held by other lanes. Whoever frees one should
+# ADD IT TO --file= here rather than starting a second gate: --gate fails if any
+# listed file carries a raw site, so one line covers as much of the family as
+# the list names, and a file missing from the list is silently ungated.
+#
+# 09b-dispatch.wat is in the list and converts nothing, on purpose: its single
+# site passes the slot straight to $w2g as an opaque address and never names a
+# field. Keeping it listed is what makes that stay true.
+PAINT_RECT_LAYOUT_ARGS=(--file=src/10-helpers.wat,src/09a-handlers.wat,src/09c4-defwndproc.wat,src/09b-dispatch.wat
+  --layout=PaintRect --layout-from=src/10-helpers.wat
+  --base-call='$paint_scratch_take' --base-local-from-call=rect,p,box --memarg)
+node tools/layout-migrate.js "${PAINT_RECT_LAYOUT_ARGS[@]}" --gate > /dev/null || {
+  node tools/layout-migrate.js "${PAINT_RECT_LAYOUT_ARGS[@]}" --gate; exit 1; }
+
+# GdiDcPath — the 16-byte GDI_DC_PATH_TABLE slot, one per HDC with a path open
+# or closed, reached through $gdi_dc_path_entry. All four fields are i32, so the
+# u16/s16/s8 types added in a5fc1b72 do not apply to this record.
+#
+# --base-local-from-call is LOAD-BEARING HERE more than anywhere else in this
+# block: 10d reaches THREE different record tables through a local named
+# $entry — $gdi_dc_path_entry, $gdi_dc_clip_entry and $gdi_dc_system_clip_entry
+# — and all three are small records whose low offsets would convert
+# byte-identically under a name match, with the oracle unable to say a word.
+# Provenance converts the 20 path functions and declines all 12 clip ones.
+#
+# The comment above $gdi_dc_path_discard documents a SECOND record: the
+# count/capacity/figure-start/flags header of the guest point buffer this one
+# points at. Different base ($g2w of buffer), NOT covered by this gate, and a
+# good candidate for a later wave.
+GDI_PATH_LAYOUT_ARGS=(--file=src/10d-gdi-region-path.wat --layout=GdiDcPath
+  --base-call='$gdi_dc_path_entry' --base-local-from-call=entry --memarg)
+node tools/layout-migrate.js "${GDI_PATH_LAYOUT_ARGS[@]}" --gate > /dev/null || {
+  node tools/layout-migrate.js "${GDI_PATH_LAYOUT_ARGS[@]}" --gate; exit 1; }
 
 echo "Concatenating WAT parts..."
 # From the src/main.watx include list, not a shell glob: combined.wat must be
