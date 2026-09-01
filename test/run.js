@@ -892,7 +892,11 @@ async function main() {
         String((r && (r.error || r.message)) || 'compile() returned no binary'));
       process.exit(2);
     }
-    wasmBytes = Buffer.from(r.wasmBinary);
+    // Stamp the layout fingerprint the same way tools/build-compile-wat.js
+    // does, so this path is checked by the same rule as a prebuilt artifact
+    // rather than being the one door the check does not cover.
+    const { layoutHash, appendSection } = require('../tools/region-layout-hash.js');
+    wasmBytes = appendSection(Buffer.from(r.wasmBinary), layoutHash(r.regions.regions));
   }
   const exeBytes = fs.readFileSync(EXE_PATH);
 
@@ -3157,6 +3161,40 @@ async function main() {
     console.error(`run.js: ${e && e.message ? e.message : e}`);
     process.exit(1);
   }
+
+  // THE WASM AND THE MIRROR ARE ONE MAP IN TWO PLACES. Since wave 3 the bases
+  // in both are the allocator's output, so a shaken artifact paired with the
+  // canonical lib/region-map.generated.js does not fail — every host import
+  // reads guest memory at the address the mirror names, the guest wrote it
+  // somewhere else, and the app draws a plausible wrong picture. That is what
+  // `--wasm=shaken.wasm` without $WINE_REGION_MAP used to do, silently.
+  // tools/region-shake-smoke.js pairs them; this refuses everything else.
+  //
+  // ABSENT is not a mismatch, and that costs nothing here. A stamp is written
+  // by tools/build-compile-wat.js, which is the only thing that can produce a
+  // SHAKEN artifact — the failure this guards. An unstamped .wasm came from an
+  // in-process compileClosure (tools/watx-matrix.js, test/compile-src.js and
+  // friends) with no regionShake, i.e. from this same tree, at the canonical
+  // layout the mirror already describes. Refusing those would break the
+  // compiler gates over a check they cannot satisfy.
+  {
+    const { SECTION_NAME } = require('../tools/region-layout-hash.js');
+    const found = WebAssembly.Module.customSections(wasmModule, SECTION_NAME);
+    const stamped = found.length ? new TextDecoder().decode(found[0]) : null;
+    if (stamped && stamped !== RegionMap.LAYOUT_HASH) {
+      console.error(`run.js: region layout MISMATCH between the wasm and the JS mirror.`);
+      console.error(`  wasm   ${WASM_PATH}`);
+      console.error(`         ${stamped}`);
+      console.error(`  mirror ${process.env.WINE_REGION_MAP || 'lib/region-map.generated.js'}`);
+      console.error(`         ${RegionMap.LAYOUT_HASH}`);
+      console.error(`run.js: the two halves of the memory map disagree about where the regions are. ` +
+        `A shaken artifact needs its own mirror — set $WINE_REGION_MAP, or use ` +
+        `tools/region-shake-smoke.js, which builds the pair. Running anyway would read the ` +
+        `wrong bytes and draw a plausible wrong picture rather than fail.`);
+      process.exit(2);
+    }
+  }
+
   const instance = await WebAssembly.instantiate(wasmModule, imports);
   ctx.exports = instance.exports;
   // A run that is stopped from outside still knows things worth having. The

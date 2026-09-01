@@ -1033,6 +1033,38 @@ class WineAssembly {
     // the reference that actually pins the 512MB -- see _releaseGuestMemory.
     this._hostImports = imports.host;
 
+    // THE WASM AND lib/region-map.generated.js ARE ONE MAP IN TWO PLACES.
+    // Since wave 3 the bases in both are the region allocator's output, so an
+    // artifact built against a different placement than the mirror this page
+    // loaded does not fail: every host import reads guest memory at the address
+    // the mirror names, the guest wrote it somewhere else, and the app draws a
+    // plausible wrong picture. The build stamps the layout fingerprint into a
+    // `wine-region-layout` custom section (tools/region-layout-hash.js) for
+    // exactly this comparison — the commonest way to get here is a deploy that
+    // shipped a rebuilt build/wine-assembly.wasm beside a stale mirror, or the
+    // reverse.
+    //
+    // ABSENT is not a mismatch. `?compile-wat` compiles the sources in the
+    // WATX Worker and those bytes carry no section, and neither do artifacts
+    // built before this landed; both are reported and allowed, because refusing
+    // them would break the source-compile path over a check it cannot satisfy.
+    {
+      const sections = WebAssembly.Module.customSections(wasmModule, 'wine-region-layout');
+      const stamped = sections.length ? new TextDecoder().decode(sections[0]) : null;
+      const mirror = (typeof RegionMap !== 'undefined' && RegionMap && RegionMap.LAYOUT_HASH) || null;
+      if (stamped && mirror && stamped !== mirror) {
+        throw new Error(`[host] region layout MISMATCH: the wasm was built for layout ${stamped}, ` +
+          `lib/region-map.generated.js describes ${mirror}. The two halves of the memory map ` +
+          `disagree about where the regions are; every host import would read the wrong bytes ` +
+          `and the app would draw a plausible wrong picture. Rebuild both ` +
+          `(bash tools/build.sh regenerates the mirror and the artifact together).`);
+      }
+      if (!stamped) {
+        console.warn('[host] wasm carries no wine-region-layout section; ' +
+          'cannot verify it matches lib/region-map.generated.js');
+      }
+    }
+
     this.instance = await WebAssembly.instantiate(wasmModule, imports);
     if (this.instance.exports.set_process_id) {
       this.instance.exports.set_process_id(this.processId);

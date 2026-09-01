@@ -141,9 +141,20 @@ function compileWatx(replicatedDispatch) {
   console.log(`WATX entry: ${closure.entry}`);
   if (shake) console.log(`WATX region shake: ${shake.value} (from ${shake.source})`);
   const out = {};
+  // Every artifact this function emits carries a fingerprint of the layout it
+  // was built against, in a `wine-region-layout` custom section. The mirror
+  // lib/region-map.generated.js carries the same hash in LAYOUT_HASH, and the
+  // hosts refuse to run a pair that disagrees — see tools/region-layout-hash.js
+  // for why a mismatch is otherwise silent rather than loud.
+  const { layoutHash, appendSection } = require(path.join(__dirname, 'region-layout-hash.js'));
+  let stamp = null;
   for (const [key, tailCalls] of [['bytes', true], ['compatBytes', false]]) {
     const r = compileClosure(closure, { tailCalls, regionShake: shake ? shake.value : null });
     if (tailCalls && r && r.success) reportRegionLayout(r.regions, shake);
+    if (r && r.success && r.regions && !stamp) {
+      stamp = layoutHash(r.regions.regions);
+      console.log(`Region layout hash: ${stamp}`);
+    }
     if (!r || !r.success || !r.wasmBinary) {
       const where = r && r.file ? ` at ${r.file}:${r.line || '?'}:${r.col || '?'}` : '';
       console.error(`WATX compile failed (tailCalls=${tailCalls})${where}: ` +
@@ -154,7 +165,7 @@ function compileWatx(replicatedDispatch) {
       const at = d.file ? ` (${d.file}:${d.line || '?'})` : '';
       console.warn(`WATX ${d.type || 'diagnostic'}${at}: ${d.message || JSON.stringify(d)}`);
     }
-    out[key] = Buffer.from(r.wasmBinary);
+    out[key] = appendSection(Buffer.from(r.wasmBinary), stamp);
   }
   // A THIRD, optional artifact: the same module with a wasm `name` custom
   // section. Opt in with WINE_WAT_NAMES=1 or --names.
@@ -177,7 +188,7 @@ function compileWatx(replicatedDispatch) {
         String((r && (r.error || r.message)) || 'compile() returned no binary'));
       process.exit(1);
     }
-    out.namedBytes = Buffer.from(r.wasmBinary);
+    out.namedBytes = appendSection(Buffer.from(r.wasmBinary), stamp);
   }
   return out;
 }

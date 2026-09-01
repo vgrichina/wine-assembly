@@ -25,6 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const { collectDeclarations, collectGlobals } = require('./check-region-decls.js');
+const { hashOfLayout } = require('./region-layout-hash.js');
 
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'lib', 'region-map.generated.js');
@@ -128,10 +129,19 @@ function render(shake) {
   lines.push('  const g2w = (guestAddr, imageBase) =>');
   lines.push('    (((guestAddr >>> 0) - (imageBase >>> 0) + GUEST_BASE) >>> 0);');
   lines.push('');
+  lines.push('');
+  lines.push('  // The fingerprint of THIS placement (tools/region-layout-hash.js). The');
+  lines.push('  // wasm carries the same string in its `wine-region-layout` custom');
+  lines.push('  // section, and the hosts refuse a pair that disagrees — a shaken');
+  lines.push('  // artifact run against the canonical mirror does not fail, it reads');
+  lines.push('  // guest memory at the wrong addresses and draws a plausible wrong');
+  lines.push('  // picture.');
+  lines.push(`  const LAYOUT_HASH = '${hashOfLayout(shake)}';`);
+  lines.push('');
   lines.push('  const api = Object.freeze({');
   lines.push('    REGIONS: Object.freeze(REGIONS),');
   lines.push('    BASE: Object.freeze(BASE), SIZE: Object.freeze(SIZE), END: Object.freeze(END),');
-  lines.push('    GUEST_BASE, g2w, g2wOffset,');
+  lines.push('    GUEST_BASE, g2w, g2wOffset, LAYOUT_HASH,');
   lines.push('  });');
   lines.push('');
   // A shaken wasm artifact (§8) has a different map, and every host import
