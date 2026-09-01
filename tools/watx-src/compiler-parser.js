@@ -108,7 +108,19 @@ function watxSourceTextFromBytes(bytes) {
 // Smi range. Locations therefore stay inline in tagged slots instead of
 // allocating one HeapNumber per expression. Line/column are resolved lazily
 // only when a diagnostic is produced.
-const WATX_LOC_FILE_BASE = 0x1000000;
+//
+// The split between the two fields is a budget, and the original one — 6 file
+// bits and a 24-bit (16 MB) offset — was ONE FILE from a hard stop: Wine's
+// closure is 62 sources plus `<main>`, so 63 of the 64 ids were spoken for and
+// adding two `src/*.wat` files would have failed the build with "supports at
+// most 64 source files" and nothing to connect that to the file just added.
+// Since the largest source in the tree is 953 KB, offset bits were the field
+// with slack. Seven file bits and a 23-bit (8 MB) offset keeps the same 30-bit
+// Smi and moves both limits well clear of the tree: 128 files (66 spare) and
+// 8x headroom on the biggest source. Both guards below still throw, by name.
+const WATX_LOC_FILE_BITS = 7;
+const WATX_LOC_MAX_FILES = 1 << WATX_LOC_FILE_BITS;   // 128
+const WATX_LOC_FILE_BASE = 0x40000000 / WATX_LOC_MAX_FILES;  // 8 MB per file
 const WATX_LOCATION_FILES = [];
 const WATX_LOCATION_SOURCES = [];
 const WATX_LOCATION_FILE_IDS = new Map();
@@ -117,12 +129,18 @@ function watxFileId(filename, source = '') {
   let id = WATX_LOCATION_FILE_IDS.get(filename);
   if (id === undefined) {
     id = WATX_LOCATION_FILES.length;
-    if (id >= 64) throw new Error('WATX location encoding supports at most 64 source files');
+    if (id >= WATX_LOC_MAX_FILES) {
+      throw new Error(
+        `WATX location encoding supports at most ${WATX_LOC_MAX_FILES} source files ` +
+        `(adding '${filename}' would be number ${id + 1})`);
+    }
     WATX_LOCATION_FILES.push(filename);
     WATX_LOCATION_FILE_IDS.set(filename, id);
   }
   if (source.length >= WATX_LOC_FILE_BASE) {
-    throw new Error(`WATX source '${filename}' exceeds the 16 MB location-offset limit`);
+    throw new Error(
+      `WATX source '${filename}' is ${source.length} bytes, past the ` +
+      `${WATX_LOC_FILE_BASE / 1048576} MB location-offset limit`);
   }
   WATX_LOCATION_SOURCES[id] = source;
   return id;

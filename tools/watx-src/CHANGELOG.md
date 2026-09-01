@@ -1157,3 +1157,31 @@ the same file, and the two bail-out cases.
 New manifest digest:
 
   b32bc95c12f8ca4145268e76ae3dea94725b8a75e03b80fb1deeafd4bbb6d6d3
+
+## 2026-08-31 — location packing had room for one more file
+
+A source location is one 30-bit Smi holding a file id and a byte offset into
+that file. The original split was six file bits and a 24-bit (16 MB) offset —
+64 files. Wine's closure is 62 sources plus `<main>`, so **63 of the 64 ids were
+already spoken for**: adding two `src/*.wat` files would have stopped the build
+with "WATX location encoding supports at most 64 source files", a message with
+no connection to the file somebody had just added. Measured, not inferred: after
+a real compile the parser accepted exactly one more distinct filename.
+
+The largest source in the tree is 953 KB, so the offset field was the one with
+slack. It is now seven file bits and a 23-bit (8 MB) offset: same Smi, 128 files
+(66 spare) and 8× headroom on the biggest source. Both guards still throw, and
+both now name the culprit — the file that would have been number 129, or the
+file's size against the limit it passed.
+
+`watx-compiler-production` parses 100 distinct filenames and then checks that a
+form from a high file id still reports its own file and line, so the packing is
+asserted end to end rather than by arithmetic. `tools/watx.js` re-exports
+`watxNodeFile` / `watxNodeLine` / `watxNodeCol` for it: decoding the packed
+integer by hand is exactly the dependency this change moves.
+
+Artifacts unchanged — `24beaca0…` / `4e2891ac…`.
+
+New manifest digest:
+
+  0d15bb6c0eee9e2eff5e709e1dbc724fbec4268acb56ec10074b36285125d3f9

@@ -45,4 +45,11 @@ module.exports = {
   // through this rather than TextDecoder, or it pays two bytes of heap per
   // source character. See the comment on the function itself.
   sourceTextFromBytes: ctx.watxSourceTextFromBytes,
+  // Reading a node's position back out. The location is one packed integer, so
+  // these are the only supported way to ask which file and line a form came
+  // from — a caller that decodes the integer itself is depending on the
+  // file-id/offset split, which moves.
+  watxNodeFile: ctx.watxNodeFile,
+  watxNodeLine: ctx.watxNodeLine,
+  watxNodeCol: ctx.watxNodeCol,
 };

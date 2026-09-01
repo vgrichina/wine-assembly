@@ -2,7 +2,8 @@
 
 const assert = require('assert');
 const path = require('path');
-const { compile, parseSource, sourceTextFromBytes } = require(path.join(__dirname, '..', 'tools', 'watx.js'));
+const { compile, parseSource, sourceTextFromBytes, watxNodeFile, watxNodeLine } =
+  require(path.join(__dirname, '..', 'tools', 'watx.js'));
 
 // ── The byte → text boundary ────────────────────────────────────────────────
 // A source whose only non-ASCII bytes sit in `;;` comments must decode to one
@@ -55,6 +56,21 @@ assert.strictEqual(compactAst[0][1], 'i32.add');
 assert.strictEqual(typeof compactAst[0][1], 'string');
 assert.deepStrictEqual(Array.from(compactAst[0][2].slice(1)), ['local.get', '$a']);
 assert.deepStrictEqual(Array.from(compactAst[0][3].slice(1)), ['i32.const', '1']);
+
+// ── Location packing has room for the tree to grow ──────────────────────────
+// A source location is one Smi: a file id and a byte offset into that file.
+// With six file bits the Wine closure (62 sources plus <main>) sat ONE file
+// from "supports at most 64 source files", a build failure that names no
+// culprit. Assert real headroom in the dimension that runs out first, and that
+// a location from a high file id still round-trips to the right file.
+{
+  const names = [];
+  for (let i = 0; i < 100; i++) names.push(`headroom-${i}.watx`);
+  for (const name of names) parseSource('(nop)\n(nop)', name);
+  const late = parseSource('\n\n(func $z (effects))', names[names.length - 1] + '-last');
+  assert.strictEqual(watxNodeFile(late[0]), 'headroom-99.watx-last');
+  assert.strictEqual(watxNodeLine(late[0]), 3, 'line must survive a high file id');
+}
 
 const source = `
 (func $answer (export "answer") (result i32) (effects heap)
