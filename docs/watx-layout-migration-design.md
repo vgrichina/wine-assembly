@@ -468,8 +468,8 @@ Ordered by risk, not by size. Each row's site count is from the census.
 
 | wave | scope | files | sites | byte-identical? | notes |
 |---|---|---|---|---|---|
-| **0** | compiler: `!standardWat` guard on `store.field` / `store.elem` / `store.field-elem`; spec-suite coverage for every layout op incl. a validate check | `tools/watx-src/compiler-codegen.js`, `tools/watx-spec-suite.js` | — | n/a (compiler-only; emulator wasm must be byte-identical, since nothing uses these ops) | **blocks every store conversion.** Needs a PROVENANCE note and board coordination |
-| **1** | `VSock` (`call $vsock_rec`), step 1 + step 2 | `src/09d-winsock.wat` | 179 (97 load, 82 store) | **yes, 100%** | one file, one helper, 0 memarg, 0 untypeable, layout already written in prose, 14 existing tests |
+| **0 ✅** | compiler: `!standardWat` guard on the three store paths + layout coverage in a runnable test, the differential and the rejection pairs | `tools/watx-src/compiler-codegen.js` + 4 | — | **yes** — emulator wasm unchanged at `aa65465e…` | **DONE, ae6000fc.** Stores are byte-identical too; §3.3 closed |
+| **1 ✅** | `VSock` (`call $vsock_rec`), step 1 + step 2 | `src/09d-winsock.wat` | **172 converted** (94 load, 78 store) | **yes** — `aa65465e…` unchanged | **DONE, e5ab038b.** 2 `acc_queue` array sites correctly declined |
 | 2 | `WndRecord` field constants (helper kept) | `09c0`, `09c3`, `09c5` | 72 | partial (46 memarg sites deferred) | first multi-file wave; do not touch the parallel tables |
 | 3 | decide §3.4 — memarg lowering, or accept the delta | compiler or none | — | — | gates 6,543 sites |
 | 4 | `DxObject` (`call $dx_from_this`) | `09a8`, `09aa`, `09ab` | 537 | 83% | biggest single win; 54 sites blocked on §3.1 (u16) |
@@ -512,9 +512,39 @@ back non-empty.
 
 ## 10. Status
 
-- `tools/struct-offset-census.js` — **landed** with this document.
+- `tools/struct-offset-census.js` — **landed** (e2562060) with this document.
 - Byte-identity verdict — **measured** (§3.2), against the production compiler
   options, not inferred from reading the codegen.
-- `store.field` invalid-module defect — **found and reproduced** (§3.3), not yet
-  fixed. Wave 0.
-- Everything from §4 on is design. Nothing in `src/*.wat` has been changed.
+- **Wave 0 — LANDED (ae6000fc).** The `!standardWat` guard is on all three store
+  paths, and the store half of the byte-identity verdict is now proven too:
+  `store.field` compiles to the same bytes as
+  `(i32.store (i32.add ptr (i32.const N)) v)`. Rebuilding the emulator with the
+  fixed compiler and no source change leaves `wine-assembly.wasm` at
+  `aa65465e…` byte for byte. Oracle coverage landed with it:
+  `test/test-watx-compiler-layout.js`, two `refSource` differential modules, and
+  nine rejection pairs. **§3.3 is closed — stores are no longer blocked.**
+- **Wave 1 — LANDED (e5ab038b).** `VSock` declared in `src/09d-winsock.wat`
+  exactly as §5.1 proposed; all **172** scalar sites (94 loads + 78 stores)
+  converted by `tools/layout-migrate.js`; `build/wine-assembly.wasm`
+  **byte-identical** at `aa65465e…` (989296 bytes), measured in an isolated
+  worktree at HEAD. `build.sh` carries the §6.1 back-stop gate for it. The two
+  `acc_queue` array sites were correctly declined — their
+  `(i32.add (i32.const 68) (i32.mul i 4))` associativity is not
+  `load.field-elem`'s lowering, so converting them would not have been
+  byte-identical. They are §4 step-1 (`offset-of`) material.
+- `tools/layout-migrate.js` — **landed** with wave 1, and is the wave tool for
+  everything below.
+- Waves 2-7 are still design.
+
+### Two things learned in wave 1 that change the plan slightly
+
+1. **The codemod is the safe path, not the risky one.** Byte identity is a
+   *complete* correctness proof — identical bytes are the identical program — so
+   a mechanical rewrite verified by shasum is strictly safer than 172 hand edits
+   verified by review. Expect later waves to be tool runs, not patches.
+2. **`tools/check-test-manifest.sh` only sweeps `test/test-*.js`.** The 20
+   `test/watx-compiler-*.test.js` suites are run by nothing at all — no runner,
+   no npm script. That is the same blind spot the manifest gate exists to close,
+   one filename convention over, and it is part of why the §3.3 defect was
+   reachable. Not fixed here; it needs whoever owns those suites to confirm they
+   are green before they are wired in.
