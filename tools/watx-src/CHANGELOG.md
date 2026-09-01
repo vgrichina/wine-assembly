@@ -1234,3 +1234,91 @@ instead of becoming a mode nobody runs.
 New manifest digest:
 
   3f0f07718adcabf62b9787e212768434c2e63759d24377775bc8b28ab9a7740f
+
+## 2026-08-31 — `inf`, `nan`, `nan:0xPAYLOAD` and hex float literals
+
+Four of the five entries in `DIALECT_GAPS` (tools/watx-differential.js) were one
+family: standard WAT float spellings that WATX refused with *"expected exactly
+one literal operand, got 2"*. The arity error was a symptom — the tokenizer
+stopped the literal early and the rest of it arrived as a second atom:
+
+```text
+nan:0x400000     stopped at ':'   -> symbol `nan` + number `0x400000`
+0x1p-149         stopped at 'p'   -> number `0x1` + symbol `p-149`
+1e+10            stopped at '+'   -> number `1e`  + symbol `+10`
+inf / -inf       one symbol token already; nothing downstream would encode it
+```
+
+**compiler-parser.js** — two new shared helpers, `watxScanNanPayload` and
+`watxScanNumberEnd`, and *both* scanners call them: the legacy `tokenize` and
+the production `parseSource` table walk. A literal that ends in a different
+place in each is the standing trap in this file, so the scan is written once.
+A sign may follow the exponent MARKER and nothing else, and the marker is `p`
+for a hex literal and `e` for a decimal one — which is what keeps `1-5` from
+reading as an exponent and the hex digit `e` in `0x1e-5` from being mistaken
+for one. Neither helper validates; the strict literal checkers still own that.
+
+**compiler-codegen.js** — `watxFloatLiteralBytes(raw, what, width)` is now the
+single entry point for every `TYPE.const` float site (seven of them: the two
+bare-literal paths, the const form, the SIMD lane path, and both halves of the
+global-initializer emitter). Three of the four spellings name a BIT PATTERN
+rather than a number and cannot go through a JS Number at all:
+
+- assigning any NaN to a `Float32Array`/`Float64Array` may hand back the
+  canonical quiet NaN, so the round trip that encodes every other literal would
+  quietly replace `nan:0x400000` with a plausible payload. The SIMD lane path
+  had exactly this bug in waiting — it stored each lane through a `DataView`.
+- `Number()` cannot read a hex float at all; it returns NaN.
+
+So the significand is a `BigInt` and the rounding is done on it, once,
+round-to-nearest-ties-to-even, straight into the target format — no intermediate
+double, and therefore no double-rounding for f32 to get wrong at the subnormal
+boundary. DECIMAL literals are deliberately NOT rerouted: they keep the
+`Number()` + typed-array store they always had, so every literal that compiled
+before encodes to the same bytes. A hex literal with no `.` and no `p`
+(`(f64.const 0x10)`) is an integer in a float position and stays on the old path
+for the same reason. A NaN payload of 0 (that is an infinity) or one too wide
+for the field is a located error, not a silent wrap into the exponent.
+
+`WATX_FLOAT_LITERAL_RE` gained `[+-]` on the decimal exponent; that is the only
+validator change.
+
+**Imported globals.** `(import "m" "g" (global $g i32))` parsed and then failed
+at EMIT with *"Unknown global '$g'"* — there was no global index space to put it
+in. Imported globals now occupy the FRONT of that space, mirroring
+`funcIndexMap`, with a `globalSpace` array over both halves so the bound check
+and the mutability check are asked of the INDEX rather than of whichever array
+the call site remembered. `(mut i32)` imports work; `global.set` on an immutable
+import is refused here with a line instead of by the engine with a byte offset.
+This was an `expectDivergence` witness in the differential corpus, now a
+positive test.
+
+**Canonical bytes did not move.** No `src/*.wat` uses any of these spellings (the
+only `inf`/`nan` occurrences in the tree are in comments) and there are no global
+imports, so the offset added to the defined globals is zero. Verified by
+building at `421aa080` in a clean detached worktree and again with only these two
+files copied in: `build/wine-assembly.wasm` is
+`aa65465edc9a4e95c06dadb9c3bc1fb893925cc78e01d4406ad9a6370ebf8bd1` both times.
+
+Evidence:
+
+- `test/watx-compiler-literals.test.js` 102 -> 132 checks. Section 3 asserted
+  these six literals as REFUSALS; the assertions flipped to value and BIT checks
+  rather than being deleted. The bits are read back through an
+  `i32.reinterpret_f32` / `i64.reinterpret_f64` inside the module, because a
+  returned NaN is worthless as evidence — a JS NaN has no observable payload,
+  so a probe that returned one would pass on the wrong constant.
+- `tools/watx-differential.js`: two new modules, `float-literal-bits` (28 f32 +
+  24 f64 spellings stored to memory) and `float-literal-positions` (global
+  initializers and SIMD lanes). Both come back **byte-identical to wabt**, which
+  settles the payload and the hex-float rounding against wat2wasm rather than
+  against our own arithmetic. 43/43 modules, one known divergence left
+  (multivalue) where there were two.
+- `tools/watx-spec-suite.js`: the float files are in the default set now.
+  **1048/1048 across 15 files -> 12668/12668 across 24 files**, 0 fail. f32.wast
+  and f64.wast alone are 5000 assertions that used to be uncheckable. What is
+  still skipped there is not an encoder gap: a wasm float becomes a JS number on
+  the way out and a JS NaN has no payload, so `nan:canonical`, `nan:arithmetic`
+  and `nan:0x20304` are all checked as "the result is a NaN".
+
+Manifest digest: `8033b7d1ed16150b1d488ddeeec81e8fdf116e3657386c9e3e8729130330815a`

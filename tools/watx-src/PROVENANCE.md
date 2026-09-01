@@ -80,9 +80,9 @@ at the bottom of this file, not left to whoever is editing.
 
 ```sha256
 b8068704e35bb4e41db2dd17324d5c629ac753faa64416dbdd412a97e36c40ab  tools/watx.js
-f7e40185c898b38d0d88fde80b98cd15780c23854f3e38b6b064041d209f0adf  tools/watx-src/compiler-parser.js
+005fc8b161e4486c2923ed02ea6b991eb5f8936aee00eebfe5d75d743c5d80e9  tools/watx-src/compiler-parser.js
 74e7c9b87c20a0b286317ee39c53cd8ce48c92f60c2dfa9ca5418a8c9dd075b4  tools/watx-src/compiler-stages.js
-083f978202cfbc85c2a1274f02d76f3fc4d38439277d271efff277c065aaafcf  tools/watx-src/compiler-codegen.js
+b8cf0633f19dc4a89a77fa709d27bd480849007940e8a7d3bba8b99ad94f89e4  tools/watx-src/compiler-codegen.js
 b85a780ec3d53fa0a9a9b335839504f24c5ca7288a75885c2c0823b8bd9dd550  tools/watx-src/compiler.js
 293c1a233359bf142bf5badceb3399c92b79a653a86085681142b2037d80fce4  test/watx-compiler-wine-parity.test.js
 8f545280a756dcaff9762beb4cc45645a2205eb7a9a583d00297d97a6d15cd15  test/watx-compiler-production.test.js
@@ -98,7 +98,7 @@ d3b11de0f87fdd1bdd839ea391aa551ab70d01fb917f6c696fa11559ff1fe805  test/watx-comp
 59123677f802de8f7aeb41b81d7b9b9b5bc36f334d455e136b3c936cd3afebde  test/watx-compiler-explicit-drop.test.js
 8eed348ed4515fc63c1fde3d3cfcd507a5996eade013ea565aab2ab5df7240e0  test/watx-compiler-export-order.test.js
 a1b425dc42f4fd3458cf983710c00c028c11f99afab51bd9b5c90046df0ae15b  test/watx-compiler-i64-literal.test.js
-6ef6534d87493358f2e75bf1889ae09922082a6ee370012ab93655a78c418883  test/watx-compiler-literals.test.js
+d4a612ae2c5fe9ac4f5f1d8b4223309b2ab3d1ae0d9508014d23b8c310f53f7f  test/watx-compiler-literals.test.js
 4bcc836d2a63143457c4f8edb5678920bf204db13201d58580fbe64499aed21b  test/watx-compiler-type-index.test.js
 3c3fe13c63933d12446b22aad6334fe62e57b21c9968336ef9db11d5848f7ccb  test/watx-compiler-regions.test.js
 07596a8750d10d747487c59aae5ae57cf664f42cfb32de4e43143a4bf635dadc  test/watx-compiler-alloc.test.js
@@ -146,6 +146,6 @@ without re-sealing. Both lines are rewritten together by
 CHANGELOG already names the new digest.
 
 ```seal
-manifest-sha256   3f0f07718adcabf62b9787e212768434c2e63759d24377775bc8b28ab9a7740f
-changelog-sha256  9385407b2c7999777033d96ad684965c4355ee31040ee0b95fca45774e75c1b5
+manifest-sha256   8033b7d1ed16150b1d488ddeeec81e8fdf116e3657386c9e3e8729130330815a
+changelog-sha256  656abee3f25194c8e6421a6a8fd1e71e8adec6519b4dc5eb694f122bd4724079
 ```

@@ -124,11 +124,12 @@ async function compileWabt(source) {
 // only the second one is actionable. None of them is a MISCOMPILE — WATX
 // refuses each with a located error, which is the safe direction — but every
 // one is a .wat file that cannot be handed to this compiler unedited.
+// `inf`, `nan`, `nan:0x…` and hex floats were the other four entries here. They
+// are literals now (see the `float-literal-bits` and `float-literal-positions`
+// modules below, and the spec suite, which went from 1048 assertions to 12668
+// on the strength of it). Imported globals were an `expectDivergence` witness
+// rather than an entry here, and are likewise fixed.
 const DIALECT_GAPS = [
-  { spelling: 'inf / -inf', note: 'infinity has no literal spelling; write (f32.reinterpret_i32 (i32.const 0x7f800000)) or rely on overflow (1e40)' },
-  { spelling: 'nan / -nan', note: 'quiet NaN has no literal spelling' },
-  { spelling: 'nan:0x1', note: 'the tokenizer splits on ":", so the payload arrives as a second operand ("expected exactly one literal operand, got 2")' },
-  { spelling: '0x1p-149, 0x1.fffffep+127', note: 'hex float literals split at the exponent sign, same "got 2 operands" error' },
   { spelling: '(result i32 i32) on a func/block/loop/if/import', note: 'multivalue results are refused at the declaration — a block type is emitted as one VALTYPE byte with no type-index path, and expressionType carries a single type; this used to be an accepted-invalid module instead' },
 ];
 
@@ -736,6 +737,76 @@ mod('simd-const-shape', `
   (ex) => [() => ex.c8(), () => ex.c32(), () => { ex.store(); return 'stored'; }],
   { memoryExport: 'mem', memoryBytes: 32 });
 
+// ── Float literals that name a bit pattern, not a number ──────────────────
+// `inf`, `nan`, `nan:0xPAYLOAD` and hex floats were four DIALECT_GAPS entries —
+// standard WAT that WATX refused with "expected exactly one literal operand,
+// got 2", because the tokenizer split each of them at ':' or at the exponent
+// sign.
+//
+// Every constant is STORED TO MEMORY rather than returned, and that is the
+// whole design of this module. A NaN crossing into JS becomes a JS NaN, which
+// has no observable payload, so a probe that returned these would pass just as
+// happily on the canonical quiet NaN as on `nan:0x20304` — the exact failure a
+// payload encoder has. The memory compare against wabt's module sees the bits.
+// The byte-identity path covers the same ground from the other side: the
+// f32.const/f64.const immediates are in the code section, so an encoder that
+// rounded a hex float differently diverges there even before the module runs.
+const FLOAT_BITS_F32 = [
+  'inf', '-inf', '+inf', 'nan', '-nan', 'nan:0x1', 'nan:0x400000', 'nan:0x7fffff',
+  'nan:0x200000', '0x1p-149', '0x1p-148', '0x1p-150', '0x3p-150', '0x1p-126',
+  '0x1.fffffep+127', '0x1p+0', '0x1.8p+1', '-0x1.8p+1', '0x1.000002p+0',
+  '0x1.0000011p+0', '0x1.0000010p+0', '0x0.8p-125', '0x10', '-0x1p+0',
+  '1e+10', '-1e+10', '0.0', '-0.0',
+];
+const FLOAT_BITS_F64 = [
+  'inf', '-inf', 'nan', '-nan', 'nan:0x1', 'nan:0x8000000000000',
+  'nan:0xfffffffffffff', 'nan:0x4000000000000', '0x1p-1074', '0x1p-1073',
+  '0x1p-1075', '0x3p-1075', '0x1p-1022', '0x1.fffffffffffffp+1023', '0x1p+0',
+  '0x1.8p+1', '-0x1.8p+1', '0x1.0000000000001p+0', '0x10', '-0x1p+0',
+  '1e+300', '-1e+300', '0.0', '-0.0',
+];
+mod('float-literal-bits', `
+(memory 1 1)
+(export "mem" (memory 0))
+(func $store
+${FLOAT_BITS_F32.map((lit, i) => `  (f32.store offset=${i * 4} (i32.const 0) (f32.const ${lit}))`).join('\n')}
+${FLOAT_BITS_F64.map((lit, i) => `  (f64.store offset=${256 + i * 8} (i32.const 0) (f64.const ${lit}))`).join('\n')})
+(func $isnan32 (param $i i32) (result i32)
+  (i32.and (i32.eq (i32.const 0x7f800000)
+                   (i32.and (i32.load (local.get $i)) (i32.const 0x7f800000)))
+           (i32.ne (i32.const 0) (i32.and (i32.load (local.get $i)) (i32.const 0x007fffff)))))
+(export "store" (func $store)) (export "isnan32" (func $isnan32))`,
+  (ex) => [
+    () => { ex.store(); return 'stored'; },
+    // A couple of payload reads done INSIDE the module, where the bits survive:
+    // 0x00 is `inf` (not a NaN) and 0x14 is `nan:0x1` (a NaN whose payload a
+    // canonicalizing encoder would have replaced).
+    () => ex.isnan32(0), () => ex.isnan32(20),
+  ],
+  { memoryExport: 'mem', memoryBytes: 512 });
+
+// The same four spellings in the two positions that do NOT go through a
+// function body: a global initializer and a SIMD lane. Both used to have their
+// own literal decoding, and a lane in particular went through a DataView store
+// that normalizes a NaN — so `nan:0x1` in a lane was a silently canonical NaN.
+mod('float-literal-positions', `
+(memory 1 1)
+(export "mem" (memory 0))
+(global $ginf f32 (f32.const inf))
+(global $gnan f64 (f64.const nan:0x1))
+(global $ghex f64 (f64.const 0x1.fffffffffffffp+1023))
+(global $gmut (mut f32) (f32.const -inf))
+(func $store
+  (f32.store (i32.const 0) (global.get $ginf))
+  (f64.store (i32.const 8) (global.get $gnan))
+  (f64.store (i32.const 16) (global.get $ghex))
+  (f32.store (i32.const 24) (global.get $gmut))
+  (v128.store (i32.const 32) (v128.const f32x4 inf -inf nan:0x1 0x1p-149))
+  (v128.store (i32.const 48) (v128.const f64x2 nan:0x4000000000000 0x1p-1074)))
+(export "store" (func $store))`,
+  (ex) => [() => { ex.store(); return 'stored'; }],
+  { memoryExport: 'mem', memoryBytes: 64 });
+
 // ── Globals: every type, mutable and not, and their initializers ──────────
 mod('globals', `
 (global $a (mut i32) (i32.const -1))
@@ -848,18 +919,41 @@ mod('imports', `
     memoryExport: 'mem', memoryBytes: 16,
   });
 
-// An IMPORTED GLOBAL, which WATX does not resolve at all. Kept as a witness
-// for the same reason as the SIMD one: a gap that is written down is a work
-// item, a gap that is deleted from the corpus is forgotten.
+// IMPORTED GLOBALS. This was an `expectDivergence` witness for "Unknown global
+// '$g'" — WATX parsed the import and then had no global index space to put it
+// in. Now that imports occupy the FRONT of that space (the same shape as
+// funcIndexMap), it is a plain positive test, and the interesting part is the
+// INDEX arithmetic rather than the import itself: `$own` is a defined global
+// declared after two imports, so reading 5 out of it is what proves the defined
+// half got offset past them. A compiler that ignored the offset would read an
+// import's value here and still return a plausible number.
 mod('imported-global', `
 (import "env" "g" (global $g i32))
+(import "env" "h" (global $h f64))
+(import "env" "m" (global $m (mut i32)))
+(global $own i32 (i32.const 5))
+(global $ownm (mut i32) (i32.const 6))
 (func $get (result i32) (global.get $g))
+(func $getf (result f64) (global.get $h))
+(func $own_ (result i32) (global.get $own))
 (func $add (param $a i32) (result i32) (i32.add (local.get $a) (global.get $g)))
-(export "get" (func $get)) (export "add" (func $add))`,
-  (ex) => [() => ex.get(), () => ex.add(3), () => ex.add(-1)],
+(func $bump (param $a i32) (result i32)
+  (global.set $m (local.get $a))
+  (global.set $ownm (i32.add (local.get $a) (i32.const 1)))
+  (i32.add (global.get $m) (global.get $ownm)))
+(export "get" (func $get)) (export "getf" (func $getf))
+(export "own" (func $own_)) (export "add" (func $add)) (export "bump" (func $bump))
+(export "reexport" (global $g))`,
+  (ex) => [() => ex.get(), () => ex.getf(), () => ex.own(), () => ex.add(3), () => ex.add(-1),
+           () => ex.bump(10), () => ex.bump(-5), () => ex.reexport.value],
   {
-    imports: () => ({ env: { g: 17 } }),
-    expectDivergence: 'WATX has no imported-global resolution: "Unknown global \'$g\'"',
+    imports: () => ({
+      env: {
+        g: new WebAssembly.Global({ value: 'i32', mutable: false }, 17),
+        h: new WebAssembly.Global({ value: 'f64', mutable: false }, 1.5),
+        m: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
+      },
+    }),
   });
 
 // ── Select, both typed and untyped ────────────────────────────────────────

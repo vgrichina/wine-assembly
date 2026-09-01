@@ -35,6 +35,75 @@ for (let code = 97; code <= 122; code++) WATX_CHAR_FLAGS[code] |= WATX_CHAR_SYMB
 for (const ch of '_$-.{}+*/<>=!&|^~%?@#') WATX_CHAR_FLAGS[ch.charCodeAt(0)] |= WATX_CHAR_SYMBOL_START | WATX_CHAR_SYMBOL;
 for (const ch of '._-xXabcdefABCDEF') WATX_CHAR_FLAGS[ch.charCodeAt(0)] |= WATX_CHAR_NUMBER;
 
+// ── Float spellings that are not a plain digit run ───────────────────────────
+// WAT's float grammar has shapes whose characters fall outside the number class
+// above, and each one used to split into TWO atoms at exactly the character the
+// scanner stopped on — which surfaced downstream as the const site's arity
+// error, "expected exactly one literal operand, got 2":
+//
+//   inf / -inf / nan / -nan   already arrive as one SYMBOL token; nothing here
+//   nan:0x400000              stopped at ':' -> symbol `nan` + number `0x400000`
+//   0x1p-149, 0x1.8p+3        stopped at 'p' -> number `0x1` + symbol `p-149`
+//   1e+10                     stopped at '+' -> number `1e`  + symbol `+10`
+//
+// There are two scanners in this file (the legacy `tokenize` and the production
+// `parseSource` table walk) and a literal that ends in a different place in each
+// is the classic way for one path to compile what the other refuses. Both call
+// the two helpers below, so they cannot disagree about where a literal ends.
+// Neither helper VALIDATES: the strict literal checkers in compiler-codegen.js
+// still own that, exactly as they do for `_` digit separators.
+
+// `nan:0xHEX` as a single number token. Manual character tests rather than a
+// RegExp because this runs on every symbol-shaped atom in the tree.
+function watxScanNanPayload(source, start, end) {
+  let i = start;
+  const c0 = source.charCodeAt(i);
+  if (c0 === 43 /* + */ || c0 === 45 /* - */) i++;
+  if (source.charCodeAt(i) !== 110 /* n */) return -1;
+  if (source.charCodeAt(i + 1) !== 97 /* a */) return -1;
+  if (source.charCodeAt(i + 2) !== 110 /* n */) return -1;
+  if (source.charCodeAt(i + 3) !== 58 /* : */) return -1;
+  if (source.charCodeAt(i + 4) !== 48 /* 0 */) return -1;
+  if ((source.charCodeAt(i + 5) | 32) !== 120 /* x */) return -1;
+  i += 6;
+  const digitsStart = i;
+  while (i < end) {
+    const c = source.charCodeAt(i);
+    const lo = c | 32;
+    const isHexDigit = (c >= 48 && c <= 57) || (lo >= 97 && lo <= 102) || c === 95 /* _ */;
+    if (!isHexDigit) break;
+    i++;
+  }
+  return i > digitsStart ? i : -1;
+}
+
+// Where a number token ends, exponent included. The exponent MARKER is the only
+// character a sign may follow, and only once: that is what keeps `1-5` from
+// reading as an exponent, and what keeps the hex digit 'e' in `0x1e-5` from
+// being mistaken for one (a hex float's marker is 'p', a decimal's is 'e').
+function watxScanNumberEnd(source, start, end) {
+  let i = start;
+  const c0 = source.charCodeAt(i);
+  if (c0 === 43 /* + */ || c0 === 45 /* - */) i++;
+  const isHex = source.charCodeAt(i) === 48 /* 0 */ &&
+    ((source.charCodeAt(i + 1) | 32) === 120 /* x */);
+  const expMarker = isHex ? 112 /* p */ : 101 /* e */;
+  let seenExp = false;
+  while (i < end) {
+    const c = source.charCodeAt(i);
+    if (!seenExp && i > start && (c | 32) === expMarker) {
+      seenExp = true;
+      i++;
+      const s = source.charCodeAt(i);
+      if (s === 43 /* + */ || s === 45 /* - */) i++;
+      continue;
+    }
+    if (((WATX_CHAR_FLAGS[c] || 0) & WATX_CHAR_NUMBER) !== 0) { i++; continue; }
+    break;
+  }
+  return i;
+}
+
 // ── Source bytes → source text ───────────────────────────────────────────────
 // A host reads a source file as UTF-8 bytes and the compiler wants a string, so
 // somebody has to decode. WHICH string it gets is worth 9.7 MB of live heap on
@@ -289,9 +358,22 @@ function tokenize(source, filename) {
     if (WATX_DIGIT_RE.test(ch) || (ch === '-' && WATX_DIGIT_RE.test(source[i+1]))) {
       const start = i;
       const startCol = col;
-      while (i < source.length && WATX_NUMBER_RE.test(source[i])) { i++; col++; }
+      const stop = watxScanNumberEnd(source, i, source.length);
+      col += stop - i;
+      i = stop;
       tokens.push({ type: 'number', value: source.slice(start, i), line, col: startCol, file: filename });
       continue;
+    }
+    {
+      const nanEnd = watxScanNanPayload(source, i, source.length);
+      if (nanEnd > 0) {
+        const start = i;
+        const startCol = col;
+        col += nanEnd - i;
+        i = nanEnd;
+        tokens.push({ type: 'number', value: source.slice(start, i), line, col: startCol, file: filename });
+        continue;
+      }
     }
     if (WATX_SYMBOL_START_RE.test(ch)) {
       const start = i;
@@ -366,10 +448,19 @@ function parseSource(source, filename = '<main>', parseContext = null, startOffs
     const isNumber = (flags & WATX_CHAR_DIGIT) !== 0 ||
       (ch === '-' && ((WATX_CHAR_FLAGS[source.charCodeAt(i + 1)] || 0) & WATX_CHAR_DIGIT) !== 0);
     if (isNumber) {
-      while (i < endOffset && ((WATX_CHAR_FLAGS[source.charCodeAt(i)] || 0) & WATX_CHAR_NUMBER) !== 0) i++;
+      i = watxScanNumberEnd(source, i, endOffset);
       const value = internWatxValue(parseContext, 'number', source.slice(start, i));
       append(makeWatxAtom('number', value, packWatxLocBase(fileBase, start)));
       continue;
+    }
+    {
+      const nanEnd = watxScanNanPayload(source, i, endOffset);
+      if (nanEnd > 0) {
+        i = nanEnd;
+        const value = internWatxValue(parseContext, 'number', source.slice(start, i));
+        append(makeWatxAtom('number', value, packWatxLocBase(fileBase, start)));
+        continue;
+      }
     }
     if ((flags & WATX_CHAR_SYMBOL_START) !== 0) {
       while (i < endOffset && ((WATX_CHAR_FLAGS[source.charCodeAt(i)] || 0) & WATX_CHAR_SYMBOL) !== 0) i++;

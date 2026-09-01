@@ -17,13 +17,16 @@
 //   node tools/watx-spec-suite.js --verbose       # every failing assertion
 //   node tools/watx-spec-suite.js --offline       # cache only, no fetch
 //
-// WHAT IT CAN AND CANNOT COVER. WATX does not accept several standard WAT
-// spellings the spec files lean on — `inf`, `nan`, `nan:0x…`, `nan:canonical`,
-// `nan:arithmetic` and hex float literals (measured; see DIALECT_GAPS in
-// tools/watx-differential.js). f32.wast and f64.wast are made almost entirely
-// of those, so they are not in the default set and the runner reports how many
-// assertions it had to skip rather than quietly passing a thinner suite than it
-// appears to. The integer and control files are nearly clean.
+// WHAT IT CAN AND CANNOT COVER. `inf`, `nan`, `nan:0x…` and hex float literals
+// are WATX literals now, so the float files are in the default set and the
+// suite went from 1048 assertions to 12668. What is left is not an encoder gap
+// but a property of comparing through JS: a wasm f32/f64 becomes a JS number on
+// the way out, and a JS NaN has no observable payload, so `nan:0x20304`,
+// `nan:canonical` and `nan:arithmetic` are all checked as "the result is a
+// NaN". Payload fidelity is proven where it IS observable — the differential
+// corpus stores those constants to memory and byte-compares the whole module
+// against wabt's. The runner still reports how many assertions it had to skip
+// rather than quietly passing a thinner suite than it appears to.
 //
 // The .wast dialect also carries directives that are about the TEXT format
 // rather than the encoder — assert_malformed, assert_invalid, assert_unlinkable,
@@ -42,7 +45,14 @@ const { compile } = require(path.join(__dirname, 'watx.js'));
 const BASE = 'https://raw.githubusercontent.com/WebAssembly/spec/main/test/core';
 const CACHE = path.join(os.tmpdir(), 'watx-spec-cache');
 const DEFAULT_FILES = ['i32', 'i64', 'br_table', 'memory', 'address', 'local_get',
-  'local_set', 'select', 'block', 'loop', 'if', 'call', 'nop', 'return', 'endianness'];
+  'local_set', 'select', 'block', 'loop', 'if', 'call', 'nop', 'return', 'endianness',
+  // The float files, in the default set since `inf` / `nan` / `nan:0x…` / hex
+  // floats became WATX literals. They were excluded because almost every
+  // assertion in them is written with one of those spellings, so the runner
+  // could not state an expected value; f32.wast alone is 2500 assertions that
+  // used to be uncheckable.
+  'f32', 'f64', 'f32_bitwise', 'f64_bitwise', 'f32_cmp', 'f64_cmp',
+  'float_literals', 'float_misc', 'conversions'];
 
 function fetchWast(name, { offline }) {
   const file = path.join(CACHE, `${name}.wast`);
@@ -122,6 +132,35 @@ function toBigInt(raw) {
   return neg ? -v : v;
 }
 
+// The EXPECTED value of a hex-float assertion, as an exact JS number.
+//
+// Deliberately NOT a copy of the compiler's BigInt rounder: comparing WATX
+// against a transcription of WATX's own algorithm would pass whatever that
+// algorithm did, correct or not. This works only where the answer needs no
+// rounding at all — a significand under 2^53 and a power of two that is itself
+// a finite double — so the multiply is a single exact IEEE operation, and it
+// returns null (a reported skip, not a silent pass) for anything outside that.
+// Every hex float the spec files actually assert is inside it, because an fN
+// literal carries at most 53 significant bits by construction.
+function hexFloatValue(raw) {
+  const m = /^([+-]?)0[xX]([0-9a-fA-F_]*)(?:\.([0-9a-fA-F_]*))?(?:[pP]([+-]?\d+))?$/.exec(raw);
+  if (!m) return null;
+  const intPart = (m[2] || '').replace(/_/g, '');
+  const fracPart = (m[3] || '').replace(/_/g, '');
+  const digits = (intPart + fracPart).replace(/^0+/, '');
+  if (!intPart && !fracPart) return null;
+  const sign = m[1] === '-' ? -1 : 1;
+  if (!digits) return sign * 0;
+  const mant = BigInt('0x' + digits);
+  if (mant >= (1n << 53n)) return null;                    // would need rounding
+  const exp2 = (m[4] === undefined ? 0 : parseInt(m[4], 10)) - 4 * fracPart.length;
+  const scale = Math.pow(2, exp2);
+  if (!Number.isFinite(scale) || scale === 0) return null;  // 2^exp2 is not a double
+  const v = Number(mant) * scale;
+  if (!Number.isFinite(v)) return null;
+  return sign * v;
+}
+
 function constValue(form) {
   if (!Array.isArray(form)) return { unsupported: `bare token ${form}` };
   const head = form[0];
@@ -137,7 +176,25 @@ function constValue(form) {
   }
   if (head === 'f32.const' || head === 'f64.const') {
     if (raw === undefined) return { unsupported: `${head} with no operand` };
-    if (/nan|inf|0x[0-9a-f.]*p/i.test(raw)) return { unsupported: `${head} ${raw}` };
+    // `inf` / `nan` / hex floats are WATX literals now, so the only question
+    // left is what NUMBER to compare the call's result against.
+    //
+    // Every NaN spelling collapses to one expectation, and that is a real limit
+    // of comparing through JS rather than a gap in the encoder: a wasm f32/f64
+    // crossing into JS becomes a JS number, and a JS NaN has no observable
+    // payload. `nan:0x20304`, `nan:canonical` and `nan:arithmetic` are therefore
+    // all checked as "the result is a NaN" — which is exactly what
+    // `nan:arithmetic` asserts, and strictly weaker than the other two. Payload
+    // fidelity is proven where it IS observable: the differential corpus stores
+    // these constants to memory and byte-compares the module against wabt's.
+    const m = /^([+-]?)nan(?::(0x[0-9a-fA-F_]+|canonical|arithmetic))?$/.exec(raw);
+    if (m) return { value: NaN };
+    if (/^[+-]?inf$/.test(raw)) return { value: raw[0] === '-' ? -Infinity : Infinity };
+    if (/^[+-]?0[xX]/.test(raw)) {
+      const hex = hexFloatValue(raw);
+      if (hex === null) return { unsupported: `${head} ${raw}` };
+      return { value: hex };
+    }
     return { value: Number(raw) };
   }
   return { unsupported: `${head}` };
@@ -259,7 +316,12 @@ function runFile(name, text, { verbose }) {
       const vals = expected.map(constValue);
       const bad = vals.find((v) => v.unsupported);
       if (bad) { skip(`expected value: ${bad.unsupported}`); continue; }
-      const argBad = args.find((a) => !Array.isArray(a) || !/^[fi](32|64)\.const$/.test(a[0]));
+      // `nan:canonical` / `nan:arithmetic` are .wast RESULT patterns, not WAT
+      // literals — there is no bit pattern to emit for "any NaN". They belong to
+      // no core module, so an argument written that way is skipped rather than
+      // handed to the compiler, where it would refuse the whole group.
+      const argBad = args.find((a) => !Array.isArray(a) || !/^[fi](32|64)\.const$/.test(a[0]) ||
+        /^[+-]?nan:(canonical|arithmetic)$/.test(String(a[1])));
       if (argBad) { skip(`argument form ${formatForm(argBad)}`); continue; }
       // The spec calls exports by NAME; WATX's (call …) wants the $-name, so a
       // wrapper is generated only when the export name is a legal identifier

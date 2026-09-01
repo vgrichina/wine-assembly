@@ -29,11 +29,14 @@
 // same run: never leading, trailing or doubled). Every literal that was already valid
 // keeps its exact previous value and encoding.
 //
-// NOT SUPPORTED and now rejected loudly rather than truncated: hex floats (`0x1p4`),
-// `inf`/`nan`, and a `+`-signed exponent (`1e+10`). None of them occur in the
-// Wine-Assembly closure. A NEGATIVE exponent does tokenize and still works -- there is
-// one in the tree, `(f64.const 2.2250738585072014e-308)` at src/06-fpu.wat:193, and it is
-// asserted below.
+// THE FOUR BIT-PATTERN SPELLINGS. Hex floats (`0x1p4`), `inf`, `nan`, `nan:0x...` and a
+// `+`-signed exponent (`1e+10`) were asserted in section 3 as REFUSALS, which was the
+// right answer while the tokenizer split each of them at ':' or at the exponent sign.
+// They are literals now, so those assertions flipped to value and BIT checks -- three of
+// the four name a bit pattern that no JS Number can carry, so a probe that returned them
+// would pass on the wrong constant. Section 3 reads the bits back through a reinterpret
+// inside the module instead. A NEGATIVE exponent always worked -- there is one in the
+// tree, `(f64.const 2.2250738585072014e-308)` at src/06-fpu.wat:193, asserted below.
 //
 // The assertions read the value back out of a RUNNING module wherever a value exists, so
 // they are about emitted bytes and not about a compile that merely returned success.
@@ -141,12 +144,94 @@ function constValue(type, literal) { return evalWat(constFn(type, literal)); }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 3. Unsupported-but-plausible float spellings fail loudly instead of quietly.
+// 3. The four float spellings that name a BIT PATTERN rather than a number.
+//
+//    These six literals used to be asserted here as REFUSALS — a refusal was
+//    the right answer while the tokenizer split each of them at ':' or at the
+//    exponent sign and the const site reported "expected exactly one literal
+//    operand, got 2". They are supported now, so the assertions flip: the same
+//    six literals, checked for the value the spec gives them.
+//
+//    A returned NaN is worthless as evidence — a JS NaN has no observable
+//    payload, so `nan:0x1` and the canonical quiet NaN are the same JS value —
+//    so every NaN case is checked on its BITS, read back through a reinterpret
+//    inside the module where the payload still exists. That is the difference
+//    between "an encoder that produces some NaN" and one that produces the
+//    author's.
 // ═══════════════════════════════════════════════════════════════════════════
 {
-  for (const lit of ['0x1p4', 'inf', '-inf', 'nan', 'nan:0x400000', '1e+10']) {
+  const values = [
+    ['0x1p4', 16],
+    ['inf', Infinity],
+    ['-inf', -Infinity],
+    ['1e+10', 10000000000],
+    ['0x1.8p+1', 3],
+    ['-0x1.8p+1', -3],
+  ];
+  for (const [lit, want] of values) {
     const r = constValue('f64', lit);
-    ck(`(f64.const ${lit}) is rejected rather than silently truncated`, !!r.error, r.value);
+    ck(`(f64.const ${lit}) is the spec value ${want}`, Object.is(r.value, want), r.error || r.value);
+  }
+
+  // Bits, via a reinterpret the module does itself.
+  const bitsF64 = (lit) => evalWat(
+    `(memory 1 1)\n(func $m (export "m") (result i64) (i64.reinterpret_f64 (f64.const ${lit})))`);
+  const bitsF32 = (lit) => evalWat(
+    `(memory 1 1)\n(func $m (export "m") (result i32) (i32.reinterpret_f32 (f32.const ${lit})))`);
+
+  const F64_BITS = [
+    ['nan', 0x7ff8000000000000n],
+    ['-nan', 0xfff8000000000000n],
+    ['nan:0x400000', 0x7ff0000000400000n],
+    ['nan:0x1', 0x7ff0000000000001n],
+    ['nan:0xfffffffffffff', 0x7fffffffffffffffn],
+    ['inf', 0x7ff0000000000000n],
+    ['0x1p-1074', 0x0000000000000001n],          // smallest subnormal, exact
+    ['0x1p-1075', 0x0000000000000000n],          // half of it: ties to even -> 0
+    ['0x3p-1075', 0x0000000000000002n],          // 1.5 ulp -> rounds up
+    ['0x1.fffffffffffffp+1023', 0x7fefffffffffffffn],
+  ];
+  for (const [lit, want] of F64_BITS) {
+    const r = bitsF64(lit);
+    const got = r.value === undefined ? undefined : BigInt.asUintN(64, r.value);
+    ck(`(f64.const ${lit}) encodes 0x${want.toString(16)}`, got === want,
+      r.error || (got === undefined ? undefined : `0x${got.toString(16)}`));
+  }
+
+  // f32's payload field is 23 bits wide, not 52 — a shared encoder that used one
+  // width for both would land these on the wrong bits.
+  const F32_BITS = [
+    ['nan', 0x7fc00000],
+    ['-nan', 0xffc00000 | 0],
+    ['nan:0x1', 0x7f800001],
+    ['nan:0x7fffff', 0x7fffffff | 0],
+    ['inf', 0x7f800000],
+    ['-inf', 0xff800000 | 0],
+    ['0x1p-149', 0x00000001],                    // smallest f32 subnormal, exact
+    ['0x1p-150', 0x00000000],
+    ['0x3p-150', 0x00000002],
+    ['0x1.fffffep+127', 0x7f7fffff],             // largest finite f32
+    ['0x1.0000010p+0', 0x3f800000],              // exactly half an ulp: to even
+    ['0x1.0000011p+0', 0x3f800001],              // just over: up
+  ];
+  for (const [lit, want] of F32_BITS) {
+    const r = bitsF32(lit);
+    ck(`(f32.const ${lit}) encodes 0x${(want >>> 0).toString(16)}`, r.value === want,
+      r.error || (r.value === undefined ? undefined : `0x${(r.value >>> 0).toString(16)}`));
+  }
+
+  // A payload of 0 is an INFINITY, not a NaN, and one that does not fit the
+  // field would silently wrap into the exponent. Both stay hard errors.
+  for (const [ty, lit] of [['f32', 'nan:0x0'], ['f32', 'nan:0x800000'], ['f64', 'nan:0x0'],
+                           ['f64', 'nan:0x10000000000000']]) {
+    const r = constValue(ty, lit);
+    ck(`(${ty}.const ${lit}) is rejected — payload out of range`,
+      !!r.error && /payload/i.test(r.error), r.error || r.value);
+  }
+  // Junk that merely LOOKS like a hex float is still junk.
+  for (const lit of ['0xp4', '0x1p', '0x1p4zz', '0x1.2.3p4']) {
+    const r = constValue('f64', lit);
+    ck(`(f64.const ${lit}) is still rejected`, !!r.error, r.value);
   }
 }
 

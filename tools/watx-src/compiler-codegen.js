@@ -144,15 +144,16 @@ function encodeSLEB128Big(value) {
 // or doubled. A separator is stripped before the value is computed, so every
 // literal that was already valid keeps its exact previous value and encoding.
 //
-// NOT SUPPORTED, deliberately, and now rejected loudly instead of silently
-// truncated: hex floats (`0x1p4`), `inf`/`nan[:0x…]`, and a `+`-signed exponent
-// (`1e+10`). No site in the Wine-Assembly closure uses any of them (a NEGATIVE
-// exponent, `2.2250738585072014e-308` at src/06-fpu.wat:193, does tokenize and
-// keeps working). Adding them is a tokenizer change plus an encoder, not a
-// validator change.
+// Hex floats (`0x1p4`), `inf`, `nan`, `nan:0x…` and a `+`-signed exponent
+// (`1e+10`) used to be rejected here — they are supported now. The first four
+// name a bit pattern rather than a number, so they do NOT come through these
+// validators at all: `watxSpecialFloatBits` below takes them before
+// `watxParseFloatLiteral` is reached, because a JS Number cannot carry a NaN
+// payload and Number() cannot read a hex float in the first place. Only the
+// `+`-exponent case is a change here, in the regex.
 const WATX_INT_LITERAL_RE = /^[+-]?(?:0[xX][0-9a-fA-F](?:_?[0-9a-fA-F])*|[0-9](?:_?[0-9])*)$/;
 const WATX_FLOAT_LITERAL_RE =
-  /^[+-]?(?:[0-9](?:_?[0-9])*)(?:\.(?:[0-9](?:_?[0-9])*)?)?(?:[eE]-?[0-9](?:_?[0-9])*)?$/;
+  /^[+-]?(?:[0-9](?:_?[0-9])*)(?:\.(?:[0-9](?:_?[0-9])*)?)?(?:[eE][+-]?[0-9](?:_?[0-9])*)?$/;
 
 function watxLiteralReject(raw, what, expected) {
   const shown = raw === undefined || raw === null ? '<missing>' : String(raw);
@@ -282,6 +283,137 @@ const WATX_F32_SCRATCH = new Float32Array(1);
 const WATX_F32_BYTES = new Uint8Array(WATX_F32_SCRATCH.buffer);
 const WATX_F64_SCRATCH = new Float64Array(1);
 const WATX_F64_BYTES = new Uint8Array(WATX_F64_SCRATCH.buffer);
+
+// ── Float literals that a JS Number cannot carry ────────────────────────────
+// `inf`, `nan`, `nan:0xPAYLOAD` and hex floats used to be refused (see the
+// NOT SUPPORTED note on the validators above). Three of those four spellings
+// name a bit pattern rather than a real number, so the encoder cannot go
+// through a JS Number at all:
+//
+//   * `nan:0x400000` has to land as EXACTLY that payload, and the payload is a
+//     different width in each format (23 bits in f32, 52 in f64). Assigning any
+//     NaN to a Float32Array/Float64Array is free to hand back the canonical
+//     quiet NaN instead, so the round trip that encodes every other literal
+//     would quietly replace the author's payload with a plausible one.
+//   * a hex float is exact by construction — `0x1p-149` is the smallest f32
+//     subnormal and `0x1.fffffep+127` the largest finite f32 — and JS has no
+//     parser for the spelling at all. Number() returns NaN for it.
+//
+// So these go through integers: the significand is a BigInt and the rounding is
+// done on it, once, round-to-nearest-ties-to-even, straight to the target
+// format. There is no intermediate double and therefore no double-rounding step
+// for f32 to get wrong at the subnormal boundary.
+//
+// DECIMAL literals are deliberately NOT rerouted through this path. They keep
+// going through Number() and the typed-array store they always used, so every
+// literal that compiled before this existed still encodes to the same bytes.
+const WATX_FLOAT_FORMATS = {
+  4: { mantBits: 23, expMax: 0xff, bias: 127, emin: -126, emax: 127 },
+  8: { mantBits: 52, expMax: 0x7ff, bias: 1023, emin: -1022, emax: 1023 },
+};
+
+// `mant * 2^exp2`, with `mant` a positive BigInt, correctly rounded into `width`
+// bytes of IEEE-754 and returned as the raw bit pattern.
+function watxRoundToFloatBits(neg, mant, exp2, width) {
+  const F = WATX_FLOAT_FORMATS[width];
+  const signBit = neg ? (1n << BigInt(width * 8 - 1)) : 0n;
+  if (mant === 0n) return signBit;
+
+  const nbits = mant.toString(2).length;
+  const e = nbits - 1 + exp2;                 // exponent if this were normal
+
+  // Round `mant >> shift` to nearest, ties to even. A negative shift is an exact
+  // left shift — nothing is discarded, so nothing is rounded.
+  const roundAt = (shift) => {
+    if (shift <= 0) return mant << BigInt(-shift);
+    let q = mant >> BigInt(shift);
+    const half = 1n << BigInt(shift - 1);
+    const rem = mant & ((1n << BigInt(shift)) - 1n);
+    const roundBit = (rem & half) !== 0n;
+    const sticky = (rem & (half - 1n)) !== 0n;
+    if (roundBit && (sticky || (q & 1n) !== 0n)) q += 1n;
+    return q;
+  };
+
+  if (e < F.emin) {
+    // Subnormal: the quantum is fixed at 2^(emin - mantBits), so ONE rounding at
+    // that scale answers the whole question. `q` is then the raw low bits as they
+    // stand — including the carry case q == 2^mantBits, which is the exponent
+    // field ticking from 0 to 1, i.e. the smallest normal, with no special case.
+    const q = roundAt(F.emin - F.mantBits - exp2);
+    return signBit | q;
+  }
+
+  let q = roundAt(nbits - (F.mantBits + 1));
+  let scale = exp2 + (nbits - (F.mantBits + 1));
+  if (q.toString(2).length === F.mantBits + 2) { q >>= 1n; scale += 1; }   // rounded up into a new binade
+  const e2 = F.mantBits + scale;
+  if (e2 > F.emax) return signBit | (BigInt(F.expMax) << BigInt(F.mantBits));  // overflow -> inf
+  return signBit | (BigInt(e2 + F.bias) << BigInt(F.mantBits)) | (q - (1n << BigInt(F.mantBits)));
+}
+
+const WATX_HEXFLOAT_RE =
+  /^([+-]?)0[xX]([0-9a-fA-F](?:_?[0-9a-fA-F])*)?(?:\.((?:[0-9a-fA-F](?:_?[0-9a-fA-F])*)?))?(?:[pP]([+-]?[0-9](?:_?[0-9])*))?$/;
+const WATX_INFNAN_RE = /^([+-]?)(inf|nan)(?::0[xX]([0-9a-fA-F](?:_?[0-9a-fA-F])*))?$/;
+
+// Bits for one of the four non-decimal spellings, or null when `s` is not one of
+// them and the ordinary decimal path should handle it.
+function watxSpecialFloatBits(s, what, width) {
+  const F = WATX_FLOAT_FORMATS[width];
+  const infnan = WATX_INFNAN_RE.exec(s);
+  if (infnan) {
+    const signBit = infnan[1] === '-' ? (1n << BigInt(width * 8 - 1)) : 0n;
+    const expField = BigInt(F.expMax) << BigInt(F.mantBits);
+    if (infnan[2] === 'inf') return signBit | expField;
+    if (infnan[3] === undefined) {
+      // Bare `nan` is the CANONICAL quiet NaN: the payload's top bit set and
+      // nothing else, which is what wat2wasm emits and what every engine
+      // produces for an arithmetic NaN.
+      return signBit | expField | (1n << BigInt(F.mantBits - 1));
+    }
+    const payload = BigInt('0x' + infnan[3].replace(/_/g, ''));
+    if (payload === 0n || payload >= (1n << BigInt(F.mantBits))) {
+      throw new Error(
+        `Invalid NaN payload '${s}'${what ? ` in ${what}` : ''}: an f${width * 8} payload ` +
+        `must be between 0x1 and 0x${((1n << BigInt(F.mantBits)) - 1n).toString(16)} ` +
+        `(payload 0 would be an infinity, and the field is ${F.mantBits} bits wide)`);
+    }
+    return signBit | expField | payload;
+  }
+
+  // A hex literal with no '.' and no 'p' is an ordinary hex INTEGER written in a
+  // float position (`(f64.const 0x10)`), which already compiled and must keep
+  // encoding identically. Leave it on the decimal path.
+  if (!/^[+-]?0[xX]/.test(s) || !/[.pP]/.test(s)) return null;
+  const m = WATX_HEXFLOAT_RE.exec(s);
+  if (!m) throw watxLiteralReject(s, what, 'hexadecimal floating-point');
+  const intPart = (m[2] || '').replace(/_/g, '');
+  const fracPart = (m[3] || '').replace(/_/g, '');
+  if (!intPart && !fracPart) throw watxLiteralReject(s, what, 'hexadecimal floating-point');
+  const digits = intPart + fracPart;
+  const mant = digits ? BigInt('0x' + digits) : 0n;
+  // Each hex fraction digit is four binary places, and `p` counts in binary
+  // places already.
+  const exp2 = (m[4] === undefined ? 0 : parseInt(m[4].replace(/_/g, ''), 10)) - 4 * fracPart.length;
+  return watxRoundToFloatBits(m[1] === '-', mant, exp2, width);
+}
+
+// The one entry point every `TYPE.const` float site uses. Returns `width` bytes,
+// little-endian, ready to append.
+function watxFloatLiteralBytes(raw, what, width) {
+  const s = String(raw ?? '');
+  const special = watxSpecialFloatBits(s, what, width);
+  if (special !== null) {
+    const out = new Uint8Array(width);
+    let bits = special;
+    for (let i = 0; i < width; i++) { out[i] = Number(bits & 0xffn); bits >>= 8n; }
+    return out;
+  }
+  const value = watxParseFloatLiteral(s, what);
+  if (width === 4) { WATX_F32_SCRATCH[0] = value; return WATX_F32_BYTES.slice(); }
+  WATX_F64_SCRATCH[0] = value; return WATX_F64_BYTES.slice();
+}
+
 var WATX_VALUE_OPS = null;
 var WATX_F32_OPS = null;
 var WATX_F64_OPS = null;
@@ -927,6 +1059,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
   // Collect imports. `wasm-import` is the WATX spelling; standard `import`
   // is intentionally accepted to make large existing WAT trees migratable.
   const importDecls = [];
+  const globalImportDecls = [];
   const moduleImports = [];
   let memoryDecl = null;
   for (const form of forms) {
@@ -960,6 +1093,24 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         const imp = { kind: 'func', module: mod, name, funcName, params, results };
         importDecls.push(imp);
         moduleImports.push(imp);
+      } else if (Array.isArray(sig) && V(sig[1]) === 'global') {
+        // `(import "m" "g" (global $g i32))` / `(global $g (mut i32))`. An
+        // imported global occupies the FRONT of the global index space exactly
+        // as an imported function does in the function index space, so it is
+        // collected here and `globalIndexMap` below offsets the defined globals
+        // past these. Nothing in src/*.watx imports a global today, so that
+        // offset is zero for the canonical build.
+        let j = 2;
+        const gname = V(sig[j])?.startsWith('$') ? V(sig[j++]) : `$${name}`;
+        const typeForm = sig[j];
+        const gmut = Array.isArray(typeForm) && V(typeForm[1]) === 'mut';
+        const gtype = gmut ? V(typeForm[2]) : V(typeForm);
+        if (!['i32', 'i64', 'f32', 'f64'].includes(gtype)) {
+          throw new Error(`Unsupported imported global type '${gtype}' for ${mod}.${name}`);
+        }
+        const gimp = { kind: 'global', module: mod, name, globalName: gname, type: gtype, mutable: gmut };
+        globalImportDecls.push(gimp);
+        moduleImports.push(gimp);
       } else if (Array.isArray(sig) && V(sig[1]) === 'memory') {
         if (memoryDecl) throw new Error('Only one memory declaration/import is supported');
         memoryDecl = { kind: 'memory', imported: true, module: mod, importName: name, ...parseLimits(sig) };
@@ -1825,7 +1976,25 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     globalNameSet.add(name);
     globalDecls.push({ name, type, mutable, init });
   }
-  const globalIndexMap = new Map(globalDecls.map((g, i) => [g.name, i]));
+  // The global index space, imports first — the same shape as `funcIndexMap`,
+  // where imported functions hold 0..n-1 and defined ones start after them. A
+  // module with no global imports gets exactly the map it got before, so the
+  // canonical build's indices do not move.
+  const globalIndexMap = new Map();
+  globalImportDecls.forEach((g, i) => {
+    if (globalIndexMap.has(g.globalName)) throw new Error(`Duplicate global '${g.globalName}'`);
+    globalIndexMap.set(g.globalName, i);
+  });
+  globalDecls.forEach((g, i) => {
+    if (globalIndexMap.has(g.name)) throw new Error(`Duplicate global '${g.name}'`);
+    globalIndexMap.set(g.name, globalImportDecls.length + i);
+  });
+  // One lookup table over both halves, so mutability and the bound are asked of
+  // the index and not of whichever array the caller happened to remember.
+  const globalSpace = [
+    ...globalImportDecls.map(g => ({ name: g.globalName, type: g.type, mutable: g.mutable, imported: true })),
+    ...globalDecls.map(g => ({ name: g.name, type: g.type, mutable: g.mutable, imported: false })),
+  ];
 
   // Named type declarations used by standard (call_indirect (type $t) ...).
   const namedTypes = new Map();
@@ -2260,7 +2429,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         const isHex = /^[+-]?0[xX]/.test(val);
         if (!isHex && (val.includes('.') || val.includes('e') || val.includes('E'))) {
           bytes.byte(OP.f32_const);
-          bytes.f32(watxParseFloatLiteral(val, where));
+          bytes.append(watxFloatLiteralBytes(val, where, 4));
         } else {
           const n = watxParseIntLiteral(val, where);
           bytes.byte(OP.i32_const);
@@ -2307,7 +2476,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
           const isHex = /^[+-]?0[xX]/.test(val);
           if (!isHex && (val.includes('.') || val.includes('e') || val.includes('E'))) {
             bytes.byte(OP.f32_const);
-            bytes.f32(watxParseFloatLiteral(val, where));
+            bytes.append(watxFloatLiteralBytes(val, where, 4));
           } else {
             bytes.byte(OP.i32_const);
             bytes.sleb(watxParseIntLiteral(val, where));
@@ -2398,10 +2567,10 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
           bytes.slebBig(parseI64Literal(raw));
         } else if (head === 'f32.const') {
           bytes.byte(OP.f32_const);
-          bytes.f32(watxParseFloatLiteral(raw, where));
+          bytes.append(watxFloatLiteralBytes(raw, where, 4));
         } else {
           bytes.byte(OP.f64_const);
-          bytes.f64(watxParseFloatLiteral(raw, where));
+          bytes.append(watxFloatLiteralBytes(raw, where, 8));
         }
       } catch (err) {
         const loc = watxFormLoc(expr);
@@ -2973,10 +3142,12 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
             throw v128Fail(`lane ${i} of ${shapeName} is not a numeric literal`);
           }
           if (isFloat) {
-            const f = watxParseFloatLiteral(raw, where);
-            const buf = new DataView(new ArrayBuffer(8));
-            if (width === 4) buf.setFloat32(0, f, true); else buf.setFloat64(0, f, true);
-            for (let b = 0; b < width; b++) lanes.push(buf.getUint8(b));
+            // Same encoder as a scalar `f32.const`, so a lane may be written
+            // `inf`, `nan:0x1` or a hex float exactly like a scalar can — and a
+            // NaN lane keeps its payload instead of being normalized by a store
+            // through a DataView.
+            const encoded = watxFloatLiteralBytes(raw, `lane ${i} of ${shapeName} in ${where}`, width);
+            for (let b = 0; b < width; b++) lanes.push(encoded[b]);
           } else {
             // Every integer shape goes through the i64 literal path, so a lane
             // written 0x80000000 or -1 lands as the two's-complement bit pattern
@@ -4049,7 +4220,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     if (head === 'global.get') {
       const name = V(expr[2]);
       const globalIdx = /^\d+$/.test(name || '') ? parseInt(name) : globalIndexMap.get(name);
-      if (globalIdx === undefined || globalIdx >= globalDecls.length) throw new Error(`Unknown global '${name}' in ${func.name}`);
+      if (globalIdx === undefined || globalIdx >= globalSpace.length) throw new Error(`Unknown global '${name}' in ${func.name}`);
       bytes.byte(OP.global_get);
       bytes.uleb(globalIdx);
       return bytes;
@@ -4057,8 +4228,11 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     if (head === 'global.set') {
       const name = V(expr[2]);
       const globalIdx = /^\d+$/.test(name || '') ? parseInt(name) : globalIndexMap.get(name);
-      if (globalIdx === undefined || globalIdx >= globalDecls.length) throw new Error(`Unknown global '${name}' in ${func.name}`);
-      if (!globalDecls[globalIdx].mutable) throw new Error(`Cannot set immutable global '${name}'`);
+      if (globalIdx === undefined || globalIdx >= globalSpace.length) throw new Error(`Unknown global '${name}' in ${func.name}`);
+      // An IMMUTABLE import is refused here for the same reason a defined one
+      // is: the engine would reject the module at validation with a byte offset
+      // instead of a line, and the host cannot make it writable from its side.
+      if (!globalSpace[globalIdx].mutable) throw new Error(`Cannot set immutable global '${name}'`);
       if (!expr[3]) throw new Error(`global.set for '${name}' is missing a value`);
       compileExpr(expr[3], func, depth, bytes);
       bytes.byte(OP.global_set);
@@ -4605,6 +4779,10 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       if (imp.kind === 'func') {
         content.byte(0x00);
         content.uleb(importTypeIdxs[funcImportIndex++]);
+      } else if (imp.kind === 'global') {
+        content.byte(0x03);
+        content.byte(valtypeOf(imp.type));
+        content.byte(imp.mutable ? 0x01 : 0x00);
       } else {
         content.byte(0x02);
         const flags = imp.shared ? 0x03 : imp.max !== undefined ? 0x01 : 0x00;
@@ -4691,10 +4869,10 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
           content.slebBig(parseI64Literal(raw));
         } else if (g.type === 'f32') {
           content.byte(OP.f32_const);
-          content.f32(watxParseFloatLiteral(raw, where));
+          content.append(watxFloatLiteralBytes(raw, where, 4));
         } else {
           content.byte(OP.f64_const);
-          content.f64(watxParseFloatLiteral(raw, where));
+          content.append(watxFloatLiteralBytes(raw, where, 8));
         }
       }
       content.byte(OP.end);
