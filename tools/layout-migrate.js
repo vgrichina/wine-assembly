@@ -49,6 +49,41 @@
 //   would do. --gate reports remaining raw sites and exits nonzero if any
 //   convertible one is left (the back-stop for a migrated struct).
 //
+// ── multi-file families (wave 4) ───────────────────────────────────────────
+//
+//   A record is not always confined to the file that declares it: the DX object
+//   record is reached from five files. Two options exist for that shape:
+//
+//     --file=a.wat,b.wat,c.wat   process several files in one run; the per-file
+//                                census is printed separately and --gate fails
+//                                if ANY of them still carries a raw site, so one
+//                                build.sh line covers the whole family.
+//     --layout-from=src/X.wat    read the (layout ...) declaration from X rather
+//                                than from each migrated file. Layouts are
+//                                module-global to the compiler (all WAT_FILES
+//                                are lowered as one module), so the declaration
+//                                belongs beside the record it describes and the
+//                                other files just use it.
+//
+// ── --skip-func: where a local NAME is not enough ──────────────────────────
+//
+//   Base recognition by local name has no provenance: `(local.get $entry)` is
+//   matched because of what it is CALLED, not what was assigned to it. That is
+//   fine while a name means one thing per file, and wave 4 found three places
+//   where it does not — `$entry` is a 12-byte D3DIM_STATEBLOCKS record in
+//   09ab's stateblock functions and a *packed debug key* in
+//   $d3dim_lights_refresh, and a PE message-table cursor in 09a7's
+//   $message_table_lookup.
+//
+//   Byte identity CANNOT catch this. A mislabelled site compiles to the exact
+//   same bytes as the arithmetic it replaced — the oracle proves the program is
+//   unchanged, which is precisely why it says nothing about whether the field
+//   NAME now claimed for those bytes is a lie. The only defence is to not do it.
+//
+//     --skip-func=$a,$b   inside these functions, DO NOT match a base by local
+//                         name. A `(call $dx_from_this ...)` base still
+//                         converts there: that one is self-evidencing.
+//
 const fs = require('fs');
 const path = require('path');
 
@@ -138,13 +173,41 @@ const OPS = new Set([...Object.values(LOAD_FOR), ...Object.values(STORE_FOR)]);
 
 function normalize(s) { return s.replace(/\s+/g, ' ').trim(); }
 
+// Byte extents of the named functions, so --skip-func can ask "is this site
+// inside one of them?". Recomputed per pass, because a rewrite shifts indices.
+function funcRanges(text, names) {
+  if (!names || !names.size) return [];
+  const out = [];
+  const re = /\(func\s+(\$[A-Za-z0-9_.]+)/g;
+  let m;
+  while ((m = re.exec(text))) {
+    if (!names.has(m[1])) continue;
+    const close = matchParen(text, m.index);
+    if (close < 0) continue;
+    out.push({ name: m[1], start: m.index, end: close + 1 });
+  }
+  return out;
+}
+
 function migrate(text, layout, opts) {
   const baseLocals = new Set(opts.baseLocals.map(x => `(local.get $${x})`));
-  const stats = { converted: 0, skippedOffset: [], skippedWidth: [], remaining: 0, byField: new Map() };
+  const skipNames = new Set((opts.skipFuncs || []).map(x => (x.startsWith('$') ? x : `$${x}`)));
+  const stats = {
+    converted: 0, skippedOffset: [], skippedWidth: [], remaining: 0,
+    byField: new Map(), skippedFunc: new Map(),
+  };
+  let ranges = [];
+  const skipFuncAt = (i) => {
+    for (const r of ranges) if (i >= r.start && i < r.end) return r.name;
+    return null;
+  };
 
-  const isRecordPtr = (s) => {
+  // `nameOk` is false inside a --skip-func body: there, only a base that
+  // evidences itself (a call to the accessor) may be matched. A local name
+  // proves nothing about what was assigned to it.
+  const isRecordPtr = (s, nameOk) => {
     const t = normalize(s);
-    if (baseLocals.has(t)) return true;
+    if (nameOk && baseLocals.has(t)) return true;
     if (opts.baseCall && t.startsWith(`(call ${opts.baseCall} `)) return true;
     return false;
   };
@@ -155,6 +218,8 @@ function migrate(text, layout, opts) {
     // Per-pass counters: a site the pass declined is re-examined next pass, so
     // accumulating them across passes double-counts.
     stats.remaining = 0; stats.skippedOffset = []; stats.skippedWidth = [];
+    stats.skippedFunc = new Map();
+    ranges = funcRanges(text, skipNames);
     // Scan right-to-left so a rewrite never invalidates an earlier index.
     const hits = [];
     for (let i = 0; i < text.length; i++) {
@@ -175,6 +240,8 @@ function migrate(text, layout, opts) {
       const addrForm = ops[0].text;
 
       // (i32.add ADDR (i32.const N))  or  ADDR (offset 0)
+      const inSkip = skipFuncAt(i);
+      const nameOk = inSkip === null;
       let addr = null, off = null;
       const addM = /^\(i32\.add[\s(]/.test(addrForm);
       if (addM) {
@@ -182,9 +249,11 @@ function migrate(text, layout, opts) {
         if (inner && inner.length === 2 && /^\(i32\.const\s+(-?(0x)?[0-9a-fA-F]+)\s*\)$/.test(normalize(inner[1].text))) {
           const cm = /^\(i32\.const\s+(-?(?:0x)?[0-9a-fA-F]+)\s*\)$/.exec(normalize(inner[1].text));
           const v = cm[1].startsWith('0x') ? parseInt(cm[1], 16) : parseInt(cm[1], 10);
-          if (isRecordPtr(inner[0].text)) { addr = inner[0].text; off = v; }
+          if (isRecordPtr(inner[0].text, nameOk)) { addr = inner[0].text; off = v; }
+          else if (inSkip && isRecordPtr(inner[0].text, true)) stats.skippedFunc.set(inSkip, (stats.skippedFunc.get(inSkip) || 0) + 1);
         }
-      } else if (isRecordPtr(addrForm)) { addr = addrForm; off = 0; }
+      } else if (isRecordPtr(addrForm, nameOk)) { addr = addrForm; off = 0; }
+      else if (inSkip && isRecordPtr(addrForm, true)) stats.skippedFunc.set(inSkip, (stats.skippedFunc.get(inSkip) || 0) + 1);
       if (addr === null) continue;
 
       const field = layout.byOffset.get(off);
@@ -211,59 +280,81 @@ function main() {
   const args = process.argv.slice(2);
   const opt = (n, d) => { const a = args.find(x => x.startsWith(`--${n}=`)); return a ? a.slice(n.length + 3) : d; };
   const flag = (n) => args.includes(`--${n}`);
-  const file = opt('file');
+  const fileArg = opt('file');
   const layoutName = opt('layout');
-  if (!file || !layoutName) {
-    console.error('usage: layout-migrate.js --file=src/X.wat --layout=NAME --base-local=a,b --base-call=$fn [--loads-only] [--write] [--gate]');
+  if (!fileArg || !layoutName) {
+    console.error('usage: layout-migrate.js --file=src/X.wat[,src/Y.wat] --layout=NAME --base-local=a,b --base-call=$fn');
+    console.error('       [--layout-from=src/Z.wat] [--skip-func=$a,$b] [--loads-only] [--write] [--gate]');
     process.exit(2);
   }
-  const abs = path.isAbsolute(file) ? file : path.join(path.resolve(__dirname, '..'), file);
-  const orig = fs.readFileSync(abs, 'utf8');
-  const layout = readLayout(orig, layoutName);
-  if (!layout) { console.error(`no (layout ${layoutName} ...) declaration in ${file}`); process.exit(1); }
+  const root = path.resolve(__dirname, '..');
+  const resolve = (f) => (path.isAbsolute(f) ? f : path.join(root, f));
+  const files = fileArg.split(',').map(s => s.trim()).filter(Boolean);
 
-  console.log(`layout ${layout.name}: ${layout.fields.length} fields, size-of = ${layout.totalSize}`);
+  // The layout is declared beside the record it describes; other files that
+  // reach the same record just use it (layouts are module-global — every file
+  // in WAT_FILES is lowered as one module).
+  const layoutFile = opt('layout-from', files[0]);
+  const layout = readLayout(fs.readFileSync(resolve(layoutFile), 'utf8'), layoutName);
+  if (!layout) { console.error(`no (layout ${layoutName} ...) declaration in ${layoutFile}`); process.exit(1); }
+
+  console.log(`layout ${layout.name} (declared in ${layoutFile}): ${layout.fields.length} fields, size-of = ${layout.totalSize}`);
   for (const f of layout.fields) {
-    console.log(`  +${String(f.offset).padStart(3)}  0x${f.offset.toString(16).padStart(2, '0')}  ${f.name.padEnd(12)} ${f.type}${f.count > 1 ? ` [${f.count}]` : ''}`);
+    console.log(`  +${String(f.offset).padStart(3)}  0x${f.offset.toString(16).padStart(2, '0')}  ${f.name.padEnd(14)} ${f.type}${f.count > 1 ? ` [${f.count}]` : ''}`);
   }
 
   const opts = {
     baseLocals: (opt('base-local', '') || '').split(',').filter(Boolean),
     baseCall: opt('base-call', null),
+    skipFuncs: (opt('skip-func', '') || '').split(',').map(s => s.trim()).filter(Boolean),
     loadsOnly: flag('loads-only'),
   };
-  const { text, stats } = migrate(orig, layout, opts);
 
-  console.log(`\nconverted ${stats.converted} sites in ${stats.passes} passes` + (opts.loadsOnly ? `  (${stats.remaining} store sites left by --loads-only)` : ''));
-  for (const [f, c] of [...stats.byField].sort((a, b) => b[1] - a[1])) console.log(`  ${String(c).padStart(4)}  ${f}`);
-  if (stats.skippedOffset.length) {
-    const agg = new Map();
-    for (const s of stats.skippedOffset) agg.set(`${s.off}${s.why ? ' (' + s.why + ')' : ''}`, (agg.get(`${s.off}${s.why ? ' (' + s.why + ')' : ''}`) || 0) + 1);
-    console.log(`  LEFT ALONE, offset is not a scalar field: ${[...agg].map(([k, v]) => `+${k} x${v}`).join(', ')}`);
-  }
-  if (stats.skippedWidth.length) {
-    console.log(`  LEFT ALONE, access width does not match the field type:`);
-    for (const s of stats.skippedWidth.slice(0, 20)) console.log(`    +${s.off} ${s.field}: site uses ${s.op}, field wants ${s.want}`);
-  }
+  let gateFailed = false;
+  for (const file of files) {
+    const abs = resolve(file);
+    const orig = fs.readFileSync(abs, 'utf8');
+    const { text, stats } = migrate(orig, layout, opts);
 
-  if (flag('gate')) {
-    const left = stats.remaining + stats.skippedWidth.length;
-    if (stats.converted > 0) {
-      console.error(`\nGATE FAIL: ${stats.converted} raw field access(es) against ${layout.name} remain in ${file}.`);
-      console.error(`Use (load.field ${layout.name} <name> ptr) / (store.field ...) instead of hand-spelled offsets.`);
-      process.exit(1);
+    console.log(`\n── ${file}`);
+    console.log(`converted ${stats.converted} sites in ${stats.passes} passes` + (opts.loadsOnly ? `  (${stats.remaining} store sites left by --loads-only)` : ''));
+    for (const [f, c] of [...stats.byField].sort((a, b) => b[1] - a[1])) console.log(`  ${String(c).padStart(4)}  ${f}`);
+    if (stats.skippedOffset.length) {
+      const agg = new Map();
+      for (const s of stats.skippedOffset) agg.set(`${s.off}${s.why ? ' (' + s.why + ')' : ''}`, (agg.get(`${s.off}${s.why ? ' (' + s.why + ')' : ''}`) || 0) + 1);
+      console.log(`  LEFT ALONE, offset is not a scalar field: ${[...agg].map(([k, v]) => `+${k} x${v}`).join(', ')}`);
     }
-    console.log(`\nGATE OK: no raw scalar field arithmetic against ${layout.name} in ${file}.`);
-    return;
+    if (stats.skippedWidth.length) {
+      const agg = new Map();
+      for (const s of stats.skippedWidth) { const k = `+${s.off} ${s.field}: site uses ${s.op}, field wants ${s.want}`; agg.set(k, (agg.get(k) || 0) + 1); }
+      console.log(`  LEFT ALONE, access width does not match the field type:`);
+      for (const [k, v] of agg) console.log(`    ${k}  x${v}`);
+    }
+    if (stats.skippedFunc.size) {
+      console.log(`  LEFT ALONE, --skip-func (local name is not this record here):`);
+      for (const [fn, c] of [...stats.skippedFunc].sort((a, b) => b[1] - a[1])) console.log(`    ${fn}  x${c}`);
+    }
+
+    if (flag('gate')) {
+      if (stats.converted > 0) {
+        console.error(`GATE FAIL: ${stats.converted} raw field access(es) against ${layout.name} remain in ${file}.`);
+        console.error(`Use (load.field ${layout.name} <name> ptr) / (store.field ...) instead of hand-spelled offsets.`);
+        gateFailed = true;
+      } else {
+        console.log(`GATE OK: no raw scalar field arithmetic against ${layout.name} in ${file}.`);
+      }
+      continue;
+    }
+
+    if (flag('write')) {
+      if (text === orig) { console.log('  no change'); continue; }
+      fs.writeFileSync(abs, text);
+      console.log(`  wrote ${file}`);
+    }
   }
 
-  if (flag('write')) {
-    if (text === orig) { console.log('\nno change'); return; }
-    fs.writeFileSync(abs, text);
-    console.log(`\nwrote ${file}`);
-  } else {
-    console.log('\n(dry run — pass --write to apply, --gate to enforce)');
-  }
+  if (flag('gate')) { if (gateFailed) process.exit(1); return; }
+  if (!flag('write')) console.log('\n(dry run — pass --write to apply, --gate to enforce)');
 }
 
 if (require.main === module) main();

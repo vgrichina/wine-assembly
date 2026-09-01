@@ -229,7 +229,7 @@
     (if (i32.and (i32.eq (local.get $family) (i32.const 1))
                  (i32.eq (local.get $iid0) (i32.const 0x6C14DB80))) (then
       (local.set $entry (call $dx_from_this (local.get $this)))
-      (local.set $i (i32.load (i32.add (local.get $entry) (i32.const 8))))
+      (local.set $i (load.field DxObject misc0 (local.get $entry)))
       (if (i32.ne (local.get $i) (i32.const 0)) (then
         (local.set $ptr (i32.add (global.get $DX_OBJECTS)
           (i32.mul (local.get $i) (i32.const 32))))
@@ -273,7 +273,7 @@
     (if (i32.and (i32.eq (local.get $family) (i32.const 2))
                  (i32.eq (local.get $iid0) (i32.const 0x6C14DB81))) (then
       (local.set $entry (call $dx_from_this (local.get $this)))
-      (local.set $i (i32.load (i32.add (local.get $entry) (i32.const 8)))) ;; rt_slot
+      (local.set $i (load.field DxObject misc0 (local.get $entry))) ;; rt_slot
       (if (i32.ne (local.get $i) (i32.const 0)) (then
         (local.set $ptr (i32.add (global.get $DX_OBJECTS)
           (i32.mul (local.get $i) (i32.const 32))))
@@ -334,8 +334,7 @@
         (call $dx_slot_of (local.get $entry))
         (local.get $vtbl)))
     ;; AddRef the backing slot.
-    (i32.store (i32.add (local.get $entry) (i32.const 4))
-      (i32.add (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
+    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
     (i32.const 0))
 
   ;; ── CreateDevice forwarding (D3D2/D3D7) ───────────────────────
@@ -362,7 +361,7 @@
     (if (local.get $rt_surf) (then
       (local.set $rt_entry (call $dx_from_this (local.get $rt_surf)))
       (local.set $rt_slot (call $dx_slot_of (local.get $rt_entry)))
-      (i32.store (i32.add (local.get $entry) (i32.const 8)) (local.get $rt_slot))))
+      (store.field DxObject misc0 (local.get $entry) (local.get $rt_slot))))
     (local.set $state (call $heap_alloc (i32.const 4096)))
     (call $d3ddev_init_state (local.get $state))
     (i32.store (i32.add (local.get $entry) (i32.const 16)) (local.get $state))
@@ -597,8 +596,8 @@
       (local.set $entry (i32.add (global.get $DX_OBJECTS)
         (i32.mul (local.get $i) (global.get $DX_ENTRY_SIZE))))
       (if (i32.and
-            (i32.eq (i32.load (local.get $entry)) (i32.const 21))
-            (i32.eq (i32.load (i32.add (local.get $entry) (i32.const 8))) (local.get $buf_guest)))
+            (i32.eq (load.field DxObject type (local.get $entry)) (i32.const 21))
+            (i32.eq (load.field DxObject misc0 (local.get $entry)) (local.get $buf_guest)))
         (then (br $found)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -647,7 +646,7 @@
     (local.set $cache_wa (call $g2w (local.get $cache_g)))
     (if (i32.or
           (i32.ne (i32.load (local.get $cache_wa))
-            (i32.load (i32.add (local.get $entry) (i32.const 8))))
+            (load.field DxObject misc0 (local.get $entry)))
           (i32.ne (i32.load (i32.add (local.get $cache_wa) (i32.const 4)))
             (i32.load (i32.add (local.get $entry) (i32.const 12)))))
       (then (return (i32.const 0))))
@@ -704,7 +703,7 @@
     (if (i32.eqz (local.get $entry)) (then (return)))
     (local.set $slot (call $dx_slot_of (local.get $entry)))
     (if (i32.ge_u (local.get $slot) (global.get $D3DIM_EB_CACHE_MAX)) (then (return)))
-    (local.set $buf_guest (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $buf_guest (load.field DxObject misc0 (local.get $entry)))
     (local.set $buf_size (i32.load (i32.add (local.get $entry) (i32.const 12))))
     (if (i32.or
           (i32.or (i32.eqz (local.get $buf_guest)) (i32.eqz (local.get $buf_size)))
@@ -912,16 +911,16 @@
     (local.set $data_g (call $heap_alloc (local.get $size)))
     (if (local.get $data_g) (then
       (call $zero_memory (call $g2w (local.get $data_g)) (local.get $size))
-      (i32.store (i32.add (local.get $entry) (i32.const 8)) (local.get $data_g))))
+      (store.field DxObject misc0 (local.get $entry) (local.get $data_g))))
     (i32.store (i32.add (local.get $entry) (i32.const 12)) (local.get $size))
-    (i32.store (i32.add (local.get $entry) (i32.const 20)) (local.get $fvf))
-    (i32.store (i32.add (local.get $entry) (i32.const 24)) (local.get $count))
+    (store.field DxObject misc1 (local.get $entry) (local.get $fvf))
+    (store.field DxObject misc2 (local.get $entry) (local.get $count))
     (call $gs32 (local.get $ppVB) (local.get $obj))
     (global.set $eax (i32.const 0)))
 
   (func $d3dim_vb_free_entry (param $entry i32)
     (local $ptr i32)
-    (local.set $ptr (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $ptr (load.field DxObject misc0 (local.get $entry)))
     (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
     (local.set $ptr (i32.load (i32.add (local.get $entry) (i32.const 16))))
     (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
@@ -930,7 +929,7 @@
   (func $d3dim_vb_lock (param $this i32) (param $ppData i32) (param $pSize i32)
     (local $entry i32) (local $data_g i32) (local $size i32)
     (local.set $entry (call $dx_from_this (local.get $this)))
-    (local.set $data_g (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $data_g (load.field DxObject misc0 (local.get $entry)))
     (local.set $size (i32.load (i32.add (local.get $entry) (i32.const 12))))
     (if (local.get $ppData) (then (call $gs32 (local.get $ppData) (local.get $data_g))))
     (if (local.get $pSize) (then (call $gs32 (local.get $pSize) (local.get $size))))
@@ -957,9 +956,9 @@
     (if (i32.or (i32.eqz (local.get $vb)) (i32.eqz (local.get $count)))
       (then (global.set $eax (i32.const 0)) (return)))
     (local.set $entry (call $dx_from_this (local.get $vb)))
-    (local.set $data_g (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $data_g (load.field DxObject misc0 (local.get $entry)))
     (local.set $size (i32.load (i32.add (local.get $entry) (i32.const 12))))
-    (local.set $fvf (i32.load (i32.add (local.get $entry) (i32.const 20))))
+    (local.set $fvf (load.field DxObject misc1 (local.get $entry)))
     (local.set $stride (call $d3dim_fvf_stride (local.get $fvf)))
     (local.set $vtxType (call $d3dim_fvf_vtxtype (local.get $fvf)))
     (if (i32.eqz (local.get $vtxType))
@@ -991,9 +990,9 @@
           (i32.or (i32.eqz (local.get $indices)) (i32.eqz (local.get $index_count))))
       (then (global.set $eax (i32.const 0)) (return)))
     (local.set $entry (call $dx_from_this (local.get $vb)))
-    (local.set $data_g (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $data_g (load.field DxObject misc0 (local.get $entry)))
     (local.set $size (i32.load (i32.add (local.get $entry) (i32.const 12))))
-    (local.set $fvf (i32.load (i32.add (local.get $entry) (i32.const 20))))
+    (local.set $fvf (load.field DxObject misc1 (local.get $entry)))
     (local.set $stride (call $d3dim_fvf_stride (local.get $fvf)))
     (local.set $vtxType (call $d3dim_fvf_vtxtype (local.get $fvf)))
     (if (i32.eqz (local.get $vtxType))
@@ -1148,10 +1147,10 @@
     (if (i32.or (i32.eqz (local.get $sz)) (i32.gt_u (local.get $sz) (i32.const 80)))
       (then (local.set $sz (i32.const 80))))
     (if (i32.lt_u (local.get $sz) (i32.const 4)) (then (local.set $sz (i32.const 4))))
-    (local.set $dst (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $dst (load.field DxObject misc0 (local.get $entry)))
     (if (i32.eqz (local.get $dst)) (then
       (local.set $dst (call $heap_alloc (i32.const 80)))
-      (i32.store (i32.add (local.get $entry) (i32.const 8)) (local.get $dst))))
+      (store.field DxObject misc0 (local.get $entry) (local.get $dst))))
     (call $zero_memory (call $g2w (local.get $dst)) (i32.const 80))
     (call $memcpy (call $g2w (local.get $dst)) (call $g2w (local.get $lpMat)) (local.get $sz))
     (i32.store (i32.add (local.get $entry) (i32.const 12)) (local.get $sz))
@@ -1162,7 +1161,7 @@
     (if (i32.eqz (local.get $lpMat)) (then (global.set $eax (i32.const 0)) (return)))
     (local.set $entry (call $dx_from_this (local.get $this)))
     (if (i32.eqz (local.get $entry)) (then (global.set $eax (i32.const 0)) (return)))
-    (local.set $src (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $src (load.field DxObject misc0 (local.get $entry)))
     (local.set $stored_sz (i32.load (i32.add (local.get $entry) (i32.const 12))))
     (local.set $sz (call $gl32 (local.get $lpMat)))
     (if (i32.eqz (local.get $stored_sz)) (then (local.set $stored_sz (i32.const 80))))
@@ -1366,9 +1365,9 @@
       (then (return (i32.const 0xFFFFFFFF))))
     (local.set $entry (i32.add (global.get $DX_OBJECTS)
       (i32.mul (local.get $handle) (i32.const 32))))
-    (if (i32.ne (i32.load (local.get $entry)) (i32.const 25))
+    (if (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 25))
       (then (return (i32.const 0xFFFFFFFF))))
-    (local.set $mat (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $mat (load.field DxObject misc0 (local.get $entry)))
     (local.set $sz (i32.load (i32.add (local.get $entry) (i32.const 12))))
     (if (i32.or (i32.eqz (local.get $mat)) (i32.lt_u (local.get $sz) (i32.const 20)))
       (then (return (i32.const 0xFFFFFFFF))))
@@ -1389,9 +1388,9 @@
       (then (return (i32.const 0))))
     (local.set $entry (i32.add (global.get $DX_OBJECTS)
       (i32.mul (local.get $handle) (i32.const 32))))
-    (if (i32.ne (i32.load (local.get $entry)) (i32.const 25))
+    (if (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 25))
       (then (return (i32.const 0))))
-    (local.set $mat (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $mat (load.field DxObject misc0 (local.get $entry)))
     (local.set $sz (i32.load (i32.add (local.get $entry) (i32.const 12))))
     ;; hTexture sits at +72, so a material struct shorter than that has none.
     (if (i32.or (i32.eqz (local.get $mat)) (i32.lt_u (local.get $sz) (i32.const 76)))
@@ -1417,10 +1416,10 @@
       (then (return (i32.const 0))))
     (local.set $entry (i32.add (global.get $DX_OBJECTS)
       (i32.mul (local.get $handle) (i32.const 32))))
-    (if (i32.ne (i32.load (local.get $entry)) (i32.const 25)) (then (return (i32.const 0))))
+    (if (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 25)) (then (return (i32.const 0))))
     (if (i32.lt_u (i32.load (i32.add (local.get $entry) (i32.const 12))) (i32.const 20))
       (then (return (i32.const 0))))
-    (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (load.field DxObject misc0 (local.get $entry)))
 
   ;; ── Fixed-function lighting ───────────────────────────────────
   ;; IDirect3DLight slots are DX_OBJECTS type 24 with their 76-byte D3DLIGHT
@@ -1918,7 +1917,7 @@
       (then (return (i32.const 0))))
     (local.set $entry (i32.add (global.get $DX_OBJECTS)
       (i32.mul (local.get $slot) (global.get $DX_ENTRY_SIZE))))
-    (if (i32.eqz (i32.load (local.get $entry))) (then (return (i32.const 0))))
+    (if (i32.eqz (load.field DxObject type (local.get $entry))) (then (return (i32.const 0))))
     ;; Older builds used DDSurface+12 as a source-surface slot for Texture::Load.
     ;; Accept that shape defensively, but prefer the destination surface when it
     ;; has a real DIB and dimensions.
@@ -1935,9 +1934,9 @@
                 (i32.ne (i32.load (i32.add (local.get $src) (i32.const 12))) (i32.const 0))))
           (then (return (local.get $src))))))
     (if (i32.and
-          (i32.eq (i32.load (local.get $entry)) (i32.const 2))
+          (i32.eq (load.field DxObject type (local.get $entry)) (i32.const 2))
           (i32.and
-            (i32.ne (i32.load (i32.add (local.get $entry) (i32.const 20))) (i32.const 0))
+            (i32.ne (load.field DxObject misc1 (local.get $entry)) (i32.const 0))
             (i32.ne (i32.load (i32.add (local.get $entry) (i32.const 12))) (i32.const 0))))
       (then (return (local.get $entry))))
     (i32.const 0))
@@ -2047,8 +2046,8 @@
     (local.set $sw (call $g2w (local.get $state)))
     (local.set $x (i32.load (i32.add (local.get $entry) (i32.const 12))))
     (local.set $y (i32.load (i32.add (local.get $entry) (i32.const 16))))
-    (local.set $w (i32.load (i32.add (local.get $entry) (i32.const 20))))
-    (local.set $h (i32.load (i32.add (local.get $entry) (i32.const 24))))
+    (local.set $w (load.field DxObject misc1 (local.get $entry)))
+    (local.set $h (load.field DxObject misc2 (local.get $entry)))
     (i32.store (i32.add (local.get $sw) (global.get $D3DIM_OFF_VP_RECT)) (local.get $x))
     (i32.store (i32.add (local.get $sw)
       (i32.add (global.get $D3DIM_OFF_VP_RECT) (i32.const 4))) (local.get $y))
@@ -2151,7 +2150,7 @@
     (local $entry i32) (local $rt_entry i32) (local $rt_slot i32)
     (local.set $entry (call $dx_from_this (local.get $this)))
     (if (i32.eqz (local.get $rt_surf)) (then
-      (i32.store (i32.add (local.get $entry) (i32.const 8)) (i32.const 0))
+      (store.field DxObject misc0 (local.get $entry) (i32.const 0))
       (global.set $eax (i32.const 0))
       (return)))
     (local.set $rt_entry (call $dx_from_this (local.get $rt_surf)))
@@ -2159,7 +2158,7 @@
       (global.set $eax (i32.const 0x80004005))
       (return)))
     (local.set $rt_slot (call $dx_slot_of (local.get $rt_entry)))
-    (i32.store (i32.add (local.get $entry) (i32.const 8)) (local.get $rt_slot))
+    (store.field DxObject misc0 (local.get $entry) (local.get $rt_slot))
     (global.set $eax (i32.const 0)))
 
   (func $d3dim_get_render_target (param $this i32) (param $ppRt i32)
@@ -2167,7 +2166,7 @@
     (if (i32.eqz (local.get $ppRt))
       (then (global.set $eax (i32.const 0x80004003)) (return)))
     (local.set $entry (call $dx_from_this (local.get $this)))
-    (local.set $slot (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $slot (load.field DxObject misc0 (local.get $entry)))
     (if (i32.eqz (local.get $slot)) (then
       (call $gs32 (local.get $ppRt) (i32.const 0))
       (global.set $eax (i32.const 0x80004005))
@@ -2190,14 +2189,14 @@
     (local $entry i32)
     (local.set $entry (call $dx_from_this (local.get $this)))
     (if (local.get $entry)
-      (then (i32.store (i32.add (local.get $entry) (i32.const 28)) (local.get $handle))))
+      (then (store.field DxObject flags (local.get $entry) (local.get $handle))))
     (global.set $eax (i32.const 0)))
 
   (func $d3dim_viewport_get_background (param $this i32) (param $lpHandle i32) (param $lpValid i32)
     (local $entry i32) (local $handle i32)
     (local.set $entry (call $dx_from_this (local.get $this)))
     (if (local.get $entry)
-      (then (local.set $handle (i32.load (i32.add (local.get $entry) (i32.const 28))))))
+      (then (local.set $handle (load.field DxObject flags (local.get $entry)))))
     (if (local.get $lpHandle) (then (call $gs32 (local.get $lpHandle) (local.get $handle))))
     (if (local.get $lpValid) (then (call $gs32 (local.get $lpValid) (i32.ne (local.get $handle) (i32.const 0)))))
     (global.set $eax (i32.const 0)))
@@ -2207,7 +2206,7 @@
     (local.set $entry (call $dx_from_this (local.get $this)))
     (if (i32.eqz (local.get $entry)) (then (return (i32.const 0))))
     (call $d3dim_material_color_from_handle
-      (i32.load (i32.add (local.get $entry) (i32.const 28)))))
+      (load.field DxObject flags (local.get $entry))))
 
   ;; The background material's texture, or 0 when the background is flat colour.
   (func $d3dim_viewport_background_texture (param $this i32) (result i32)
@@ -2215,7 +2214,7 @@
     (local.set $entry (call $dx_from_this (local.get $this)))
     (if (i32.eqz (local.get $entry)) (then (return (i32.const 0))))
     (call $d3dim_material_texture_entry
-      (i32.load (i32.add (local.get $entry) (i32.const 28)))))
+      (load.field DxObject flags (local.get $entry))))
 
   ;; ── Viewport rect get/set ─────────────────────────────────────
   ;; SetViewport(lpD3DVIEWPORT) / SetViewport2(lpD3DVIEWPORT2). Persist the
@@ -2231,9 +2230,9 @@
     (local.set $h (call $gl32 (i32.add (local.get $lpVp) (i32.const 16))))
     (i32.store (i32.add (local.get $entry) (i32.const 12)) (local.get $x))
     (i32.store (i32.add (local.get $entry) (i32.const 16)) (local.get $y))
-    (i32.store (i32.add (local.get $entry) (i32.const 20)) (local.get $w))
-    (i32.store (i32.add (local.get $entry) (i32.const 24)) (local.get $h))
-    (local.set $dev_this (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (store.field DxObject misc1 (local.get $entry) (local.get $w))
+    (store.field DxObject misc2 (local.get $entry) (local.get $h))
+    (local.set $dev_this (load.field DxObject misc0 (local.get $entry)))
     (if (local.get $dev_this) (then
       (local.set $state (call $d3ddev_state (local.get $dev_this)))
       (if (i32.and (i32.ne (local.get $state) (i32.const 0))
@@ -2253,8 +2252,8 @@
     (call $gs32 (local.get $lpVp)                                      (local.get $size))
     (call $gs32 (i32.add (local.get $lpVp) (i32.const 4))              (i32.load (i32.add (local.get $entry) (i32.const 12))))
     (call $gs32 (i32.add (local.get $lpVp) (i32.const 8))              (i32.load (i32.add (local.get $entry) (i32.const 16))))
-    (call $gs32 (i32.add (local.get $lpVp) (i32.const 12))             (i32.load (i32.add (local.get $entry) (i32.const 20))))
-    (call $gs32 (i32.add (local.get $lpVp) (i32.const 16))             (i32.load (i32.add (local.get $entry) (i32.const 24))))
+    (call $gs32 (i32.add (local.get $lpVp) (i32.const 12))             (load.field DxObject misc1 (local.get $entry)))
+    (call $gs32 (i32.add (local.get $lpVp) (i32.const 16))             (load.field DxObject misc2 (local.get $entry)))
     (global.set $eax (i32.const 0)))
 
   ;; DX7 stores viewport directly on the device instead of through an
@@ -2487,7 +2486,7 @@
     (local $entry i32) (local $rt_slot i32)
     (local.set $entry (call $dx_from_this (local.get $this_guest)))
     (if (i32.eqz (local.get $entry)) (then (return (i32.const 0))))
-    (local.set $rt_slot (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $rt_slot (load.field DxObject misc0 (local.get $entry)))
     (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $rt_slot) (i32.const 32))))
 
   ;; Find the DirectDraw Z surface attached to the render target, or allocate a

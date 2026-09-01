@@ -348,11 +348,35 @@ accident.
 ### 5.3 `DxObject` — `call $dx_from_this`, 537 sites
 
 The largest class-A family and the largest single win available: 537 sites, 10
-distinct offsets, only 40 memarg, 83% byte-identical-capable. Spans three files
-(`09a8-handlers-directx`, `09aa-handlers-d3dim`, `09ab-handlers-d3dim-core`),
-which is why it is not wave 1 — a three-file wave wants the one-file wave's
-lessons first. The 54 untypeable (16-bit) sites need §3.1 resolved or must stay
-hand-spelled.
+distinct offsets, only 40 memarg, 83% byte-identical-capable. The 54 untypeable
+(16-bit) sites need §3.1 resolved or must stay hand-spelled.
+
+**Corrected in the wave: it spans FIVE files, not three.** This section
+originally named `09a8-handlers-directx`, `09aa-handlers-d3dim` and
+`09ab-handlers-d3dim-core`; the census's own `files:` column also lists
+`09ad-handlers-d3d9` (33 sites) and `09a7-handlers-dispatch` (6). Landed layout,
+as declared at the top of `09a8-handlers-directx.wat` — `size-of` is 32, which
+is `$DX_ENTRY_SIZE` and the stride `$dx_from_this` multiplies by:
+
+```wat
+(layout DxObject
+  (field type     i32)     ;; +0   0=free,1=DDraw,2=DDSurface,3=DDPalette,...
+  (field refcount i32)     ;; +4
+  (field misc0    i32)     ;; +8   DDraw: hwnd | DSBuffer: wave_handle | DIDev: device_type
+  (field width    u8 2)    ;; +12  u16 — u8[2] for spacing only (§3.1)
+  (field height   u8 2)    ;; +14  u16
+  (field bpp      u8 2)    ;; +16  u16
+  (field pitch    u8 2)    ;; +18  u16
+  (field misc1    i32)     ;; +20  union: dib_ptr | palette | next-light | FVF | width
+  (field misc2    i32)     ;; +24  union: color key / size | sample rate | instr off | height
+  (field flags    i32))    ;; +28  ends at +32 == $DX_ENTRY_SIZE
+```
+
+The u16 pairs are declared `u8[2]`: that fixes the offsets and the total size
+while being deliberately the wrong width to load through, so the codemod
+declines every `i32.load16_u` site against them instead of widening it to i32
+and reading two fields as one. See §10's wave-4 notes for why +8/+20/+24 are
+`miscN` and not `hwnd`/`dib_ptr`/`color_key_low`.
 
 ### 5.4 `GdiObject` — `call $gdi_object_record`, 160 sites — **ATTEMPTED AND DECLINED**
 
@@ -545,7 +569,7 @@ Ordered by risk, not by size. Each row's site count is from the census.
 | 2 | `WndRecord` field constants (helper kept) | `09c0`, `09c3`, `09c5` | 72 | partial (46 memarg sites deferred) | first multi-file wave; do not touch the parallel tables |
 | 3 | decide §3.4 — memarg lowering, or accept the delta | compiler or none | — | — | gates 6,543 sites |
 | — | `GdiObject` (`call $gdi_object_record`) | `10a`,`10b`,`10d`,`10e`,`10f`,`10g`,`09a`,`09a4`,`01` | 160 | n/a — 0 add-form sites | **ATTEMPTED, CONVERTED NOTHING (§5.4).** Blocked twice: all 160 memarg (needs wave 3) *and* the record is a discriminated union, which no single layout can express. Needs a variant design, not a codemod |
-| 4 | `DxObject` (`call $dx_from_this`) | `09a8`, `09aa`, `09ab` | 537 | 83% | biggest single win; 54 sites blocked on §3.1 (u16) |
+| **4 ✅** | `DxObject` (`call $dx_from_this`) | `09a8`, `09aa`, `09ab`, **`09ad`**, **`09a7`** | **367 converted** | **yes** — `85edf30b…` unchanged | **DONE.** Five files, not three; 51 u16 sites declined per §3.1, 8 declined by `--skip-func` |
 | 5 | remaining class A families ≥ 20 sites | ~15 files | ~1,100 | mixed | mechanical once 1-4 have set the pattern |
 | 6 | class C frozen ABI layouts, one structure at a time | many | 3,798 | mixed | highest value, highest blast radius; each layout is a frozen declaration |
 | 7 | class B raw families | many | 6,079 | mixed | step 1 (symbolize) only, until a family proves it is one struct |
@@ -615,7 +639,53 @@ back non-empty.
   `build/wine-assembly.wasm` unchanged, necessarily: nothing under `src/` was
   touched. The finding moves this family out of "mechanical once wave 3 lands"
   and into "needs a variant-layout design first".
-- Waves 2-7 are still design.
+- **Wave 4 — LANDED.** `DxObject` declared in `src/09a8-handlers-directx.wat`;
+  **367** sites converted across **five** files (09a8 217, 09aa 80, 09ab 45,
+  09ad 19, 09a7 6); `build/wine-assembly.wasm` **byte-identical** at
+  `85edf30b…` (990911 bytes), both arms built from detached worktrees at
+  `2a5b4d58`. Marbles renders pixel-identically (0/307200 pixels differ).
+  `build.sh` carries the §6.1 back-stop, verified to fail (exit 1, all 367
+  sites named) on the unconverted tree — a gate that cannot fail is not a gate.
+  Declined by design: **51** u16 sites (§3.1) and **8** `--skip-func` sites.
+- Waves 3, 5-7 are still design.
+
+### Three things wave 4 adds
+
+1. **The census under-reported the family's file span, and it is the one number
+   a wave must not take on trust.** §5.3 said three files from the census's
+   `files:` column; the family is actually FIVE — `09ad-handlers-d3d9.wat` (33
+   sites) and `09a7-handlers-dispatch.wat` (6) were missing. Re-run
+   `--base=` yourself and read the file list before scoping a wave; a missed
+   file is not a wrong conversion, but it is a §6.1 gate that passes while the
+   family is still half hand-spelled.
+2. **A discriminated union does not have to end the wave — name the fields for
+   what they ARE.** `GdiObject` was declined partly for being a union (§5.4),
+   and `DxObject` is one too: +8/+20/+24 mean hwnd/dib_ptr/color-key for a
+   surface, wave handle/next-light/sample-rate for a sound buffer, FVF/width and
+   instruction-offset/height for D3DIM. The first draft of this layout called
+   +20 `dib_ptr` and +24 `color_key_low` after the file's own header comment —
+   and the codemod then emitted
+   `(store.field DxObject color_key_low … (local.get $size))`, a field name that
+   is a lie at 24 of its 29 sites. That is the *same* plausible-but-wrong trap
+   §1 is about, one level up, and **byte identity cannot see it**: the bytes are
+   identical either way, so the oracle says nothing about whether the name is
+   true. The fix is the convention the file had already invented for +8 —
+   `misc0`/`misc1`/`misc2` plus a table of per-type meanings — which keeps the
+   offsets in one place without asserting a type the record does not have.
+   A union blocks a layout only when its variants differ in *width or count*.
+3. **`--skip-func`: a local's NAME is not its provenance.** The codemod matches
+   `(local.get $entry)` on what it is called. A sweep of all five files found
+   three places where that name means something else — 12-byte
+   `D3DIM_STATEBLOCKS` records in 09ab's four stateblock functions, a *packed
+   debug key* in `$d3dim_lights_refresh`, and a PE message-table cursor in
+   09a7's `$message_table_lookup` — the worst being `$d3dim_lights_refresh`,
+   where the same local is a real DX entry at one line and the packed key 19
+   lines later. Converting those would have compiled, passed every test and
+   produced a byte-identical wasm while claiming `refcount` for a bit-packed
+   integer. `--skip-func` suppresses *name*-based matching inside named
+   functions; a `(call $dx_from_this …)` base still converts there, because that
+   one evidences itself. **Do the provenance sweep before the wave, not after:
+   the oracle will not do it for you.**
 
 ### Two things learned in wave 1 that change the plan slightly
 
