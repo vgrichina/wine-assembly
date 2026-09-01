@@ -13,6 +13,12 @@
 //   node tools/idle-cost.js --url=http://127.0.0.1:8080/ --seconds=15
 //   node tools/idle-cost.js --settle=0            # measure page BOOT instead
 //   node tools/idle-cost.js --headless            # only for pass/fail checks
+//   node tools/idle-cost.js --app=sol             # launch an app first, then
+//                                                 # measure it sitting idle
+//
+// With --app the report adds guestCounters: repaint composites and guest run
+// slices over the sample window, which answers "is the app one timer tick per
+// second or a 60fps blit loop" directly instead of by inference.
 //
 // HEADFUL IS THE DEFAULT ON PURPOSE. Headless Chrome has no compositor
 // surface and no display refresh to pace rAF against, so a free-running rAF
@@ -39,6 +45,7 @@ const arg = (name, dflt) => {
 const flag = name => process.argv.includes(`--${name}`);
 
 const URL = arg('url', 'http://127.0.0.1:8080/');
+const APP = arg('app', '');
 const SECONDS = Number(arg('seconds', '15'));
 const TOP = Number(arg('top', '12'));
 const SETTLE = Number(arg('settle', '6'));
@@ -172,6 +179,47 @@ async function main() {
     const page = (await browser.pages())[0] || await browser.newPage();
     await page.evaluateOnNewDocument(installProbe);
     await page.goto(URL, { waitUntil: 'load', timeout: 60000 });
+    if (APP) {
+      out.app = APP;
+      await page.waitForFunction(() => window.wineShell && window.wineShell.launchApp,
+        { timeout: 60000 });
+      await page.evaluate(id => window.wineShell.launchApp(id), APP);
+      // The window is created by the guest mid-run-slice, long after
+      // launchApp returns, so poll for a visible top-level it owns.
+      await page.waitForFunction(id => {
+        const entry = runningApps.find(item => item && item.name === id);
+        if (!entry || !entry.wine || !entry.wine.running) return false;
+        const lo = entry.wine._hwndBase || 0;
+        return Object.keys(sharedRenderer.windows)
+          .some(hwnd => Number(hwnd) >= lo && Number(hwnd) < lo + 0x10000);
+      }, { timeout: 120000 }, APP);
+      // Count the two things a sleeping app should not be doing: full
+      // composites and guest run slices. Wrapped here, not in lib/, so the
+      // page under test stays the shipped page.
+      await page.evaluate(() => {
+        window.__guestCounters = { composites: 0, slices: 0 };
+        const paint = sharedRenderer._repaintOnce.bind(sharedRenderer);
+        sharedRenderer._repaintOnce = (...a) => {
+          window.__guestCounters.composites++; return paint(...a);
+        };
+        // The drive loop calls this._scheduleStep(step, delayMs), so an
+        // instance-method wrap sees every iteration and the sleep it chose
+        // (the same seam lib/phone-diag.js uses). exports.run cannot be
+        // wrapped this way: the host captured its reference at init.
+        const wine = runningApps[0] && runningApps[0].wine;
+        if (wine && wine._scheduleStep) {
+          window.__guestCounters.sleeps = {};
+          const sched = wine._scheduleStep.bind(wine);
+          wine._scheduleStep = (fn, delayMs) => {
+            window.__guestCounters.slices++;
+            const key = String(Math.min(50, Math.round(delayMs || 0)));
+            window.__guestCounters.sleeps[key] =
+              (window.__guestCounters.sleeps[key] || 0) + 1;
+            return sched(fn, delayMs);
+          };
+        }
+      });
+    }
     // Let boot settle: first paint, icon extraction and any one-shot timers
     // are startup cost, not idle cost, and counting them would answer a
     // different question than the one asked. --settle=0 asks the OTHER
@@ -179,7 +227,26 @@ async function main() {
     // what a user reporting a spinning fan a few seconds in actually feels.
     await new Promise(r => setTimeout(r, SETTLE * 1000));
     await page.evaluate(() => window.__idleCost.reset());
+    if (APP) {
+      await page.evaluate(() => {
+        window.__guestCounters.composites = 0;
+        window.__guestCounters.slices = 0;
+        window.__guestCounters.sleeps = {};
+        window.__guestCounters.t0 = performance.now();
+      });
+    }
     out.cpuPage = await sampleCpu(profile, SECONDS);
+    if (APP) {
+      out.guestCounters = await page.evaluate(() => {
+        const c = window.__guestCounters;
+        const dt = Math.max(1, performance.now() - c.t0) / 1000;
+        return {
+          compositesPerSec: +(c.composites / dt).toFixed(1),
+          slicesPerSec: +(c.slices / dt).toFixed(1),
+          sleepHistogram: c.sleeps,
+        };
+      });
+    }
     const sched = await page.evaluate(() => window.__idleCost.read());
     out.scheduleSeconds = sched.seconds;
     out.schedule = sched.rows.slice(0, TOP);
