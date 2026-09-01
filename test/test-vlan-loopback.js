@@ -29,6 +29,29 @@ const TIMEOUT_MS = 120000;
 let passed = 0;
 function check(name) { passed++; console.log(`PASS  ${name}`); }
 
+// Everything below used to run without printing a single byte until the first
+// assertion passed -- and everything before that assertion is unbounded work:
+// TWO full in-process WATX compiles of the live src/ tree (this process, then
+// the forked run.js, whose stdout we capture rather than print), and then a
+// 120s wait for the server guest to reach listen(). A `timeout 60` around the
+// test therefore killed it mid-compile with an empty log, which reads exactly
+// like a hung virtual LAN and is not one. So: name every phase as it starts,
+// and hard-fail with that name rather than waiting for the outer timeout.
+const WATCHDOG_MS = Number(process.env.VLAN_WATCHDOG_MS || 300000);
+const t0 = Date.now();
+const el = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
+let phase = 'startup';
+function beginPhase(name) {
+  phase = name;
+  console.log(`[${el()}] ${name}...`);
+}
+const watchdog = setTimeout(() => {
+  console.error(`\ntest-vlan-loopback: WATCHDOG after ${el()} -- stuck in phase "${phase}" ` +
+    `(${passed} checks passed). Raise VLAN_WATCHDOG_MS to allow longer.`);
+  process.exit(1);
+}, WATCHDOG_MS);
+watchdog.unref();
+
 const tick = () => new Promise(r => setImmediate(r));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -48,8 +71,10 @@ function waitFor(state, pattern, what) {
 
 async function main() {
   const root = path.join(__dirname, '..');
+  beginPhase('compiling the src tree for the peer process (full WATX build, ~200MB)');
   const wasm = await compile();
 
+  beginPhase('forking the server process (it compiles the src tree again, silently)');
   const child = fork(path.join(root, 'test', 'run.js'), [
     `--exe=${SERVER_EXE}`,
     '--args=-private -6 -nobeep',
@@ -72,13 +97,16 @@ async function main() {
   child.stderr.on('data', collect);
   child.on('exit', () => { state.exited = true; });
 
+  beginPhase('booting the peer emulator node at ' + PEER_IP);
   const wire = new ProcessWire(child);
   const peer = await makeNode(wasm, wire, PEER_IP);
 
   try {
+    beginPhase('waiting for the server guest to reach listen()');
     await waitFor(state, /listen\(s=0x[0-9a-f]+, backlog=/, 'the server to listen');
     check('the server binary reaches listen() in its own process');
 
+    beginPhase(`connecting from ${PEER_IP} to ${HOST_IP}:${GAME_PORT}`);
     const cli = peer.wat.test_call_socket(AF_INET, SOCK_STREAM, 0) | 0;
     assert.notStrictEqual(cli, INVALID_SOCKET);
     peer.nonblocking(cli);
@@ -99,24 +127,28 @@ async function main() {
     assert(connected, `connect never completed\n${state.tail()}`);
     check('a connection opens from another process to 10.77.0.1:8035');
 
+    beginPhase("waiting for the server guest's own accept()");
     await waitFor(state, /accept\(s=0x[0-9a-f]+/, "the server's own accept() call");
     check('the server guest accepts the connection with accept()');
 
     // The server should now be reading from the new socket. Send it
     // something so its recv path runs against real wire bytes.
+    beginPhase("sending bytes and waiting for the server's recv()");
     const hello = Array.from(Buffer.from('\x00\x00\x00\x00wine-assembly\n'));
     const sent = peer.wat.test_call_send(cli, peer.buf(hello), hello.length, 0) | 0;
     assert.strictEqual(sent, hello.length);
     await waitFor(state, /recv\(s=0x[0-9a-f]+/, "the server's recv() on the accepted socket");
     check('bytes written by the peer process reach the server guest');
 
+    beginPhase('closing the peer socket and checking the server survives');
     peer.wat.test_call_closesocket(cli);
     for (let i = 0; i < 20; i++) { await tick(); await sleep(10); peer.pump(); }
     check('the peer closes without disturbing the server');
     assert.strictEqual(state.exited, false, 'the server must still be running');
 
-    console.log(`\n${passed}/${passed} virtual LAN loopback checks passed`);
+    console.log(`\n${passed}/${passed} virtual LAN loopback checks passed in ${el()}`);
   } finally {
+    clearTimeout(watchdog);
     child.kill('SIGKILL');
   }
 }
