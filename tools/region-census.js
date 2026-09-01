@@ -145,6 +145,33 @@ function scanTargets() {
 // it must not be counted as debt.
 const DECLARING = /^\s*\(global\s+\$[A-Za-z0-9_]+(?:_SIZE)?\s+(?:i32|\(mut\s+i32\))\s+\(i32\.const\s/;
 
+// EVERY hex literal a scanner here reads goes through this, and it accepts
+// NUMERIC SEPARATORS. `0x0001_2000` is the same number as `0x00012000` to
+// JavaScript and to a reader, and the old `0x[0-9a-fA-F]{4,8}` pattern could not
+// see it — so writing an address with an underscore in it walked straight past
+// the odometer, the ratchet and the JS-copies gate, in ANY file. That is not
+// hypothetical: tools/gen-region-map.js emits the separator DELIBERATELY, and
+// the comment there said so, which means the one spelling everybody could copy
+// from was the one spelling nothing checked. The generated mirror is exempt by
+// PATH now (GENERATED_EXEMPT), which is what it should always have been: a file
+// is trusted because of what it is, never because of how it spells a number.
+//
+// Yields { text, value } per literal; the {4,8} digit bound is applied AFTER the
+// separators come out, so it still means "an eight-digit-ish address", not
+// "eight characters".
+function* hexLiterals(code) {
+  for (const m of code.matchAll(/0[xX][0-9a-fA-F](?:[0-9a-fA-F_]*[0-9a-fA-F])?/g)) {
+    const digits = m[0].slice(2).replace(/_/g, '');
+    if (digits.length < 4 || digits.length > 8) continue;
+    yield { text: m[0], value: Number.parseInt(digits, 16) >>> 0 };
+  }
+}
+
+// Files that are ALLOWED to spell the map, because they ARE the map rendered for
+// another language. Exempt by path, so a generated file does not have to disguise
+// its own output to stay out of a census of hand-written debt.
+const GENERATED_EXEMPT = new Set(['lib/region-map.generated.js']);
+
 function stripComment(line, isWat) {
   if (isWat) {
     const at = line.indexOf(';;');
@@ -268,20 +295,21 @@ function census(options = {}) {
   for (const rel of options.targets || scanTargets()) {
     const abs = path.join(ROOT, rel);
     if (!fs.existsSync(abs)) continue;
+    if (GENERATED_EXEMPT.has(rel)) continue;
     const isWat = rel.endsWith('.wat');
     const lines = fs.readFileSync(abs, 'utf8').split(/\r?\n/);
     for (let i = 0; i < lines.length; i++) {
       const raw = lines[i];
       if (isWat && DECLARING.test(raw)) continue;
       const code = stripComment(raw, isWat);
-      for (const m of code.matchAll(/0[xX][0-9a-fA-F]{4,8}\b/g)) {
-        const value = Number.parseInt(m[0], 16) >>> 0;
+      for (const m of hexLiterals(code)) {
+        const value = m.value;
         const hit = classify(value);
         if (!hit) continue;
         const region = hit.region;
         byFile.set(rel, (byFile.get(rel) || 0) + 1);
         byRegion.set(region.name, (byRegion.get(region.name) || 0) + 1);
-        sites.push({ file: rel, line: i + 1, literal: m[0], value, region: region.name,
+        sites.push({ file: rel, line: i + 1, literal: m.text, value, region: region.name,
                      kind: hit.kind, offset: value - region.base, text: raw.trim() });
       }
     }
@@ -357,11 +385,10 @@ function jsCopies(options = {}) {
     for (let i = 0; i < lines.length; i++) {
       const at = lines[i].indexOf('//');
       const code = at === -1 ? lines[i] : lines[i].slice(0, at);
-      for (const m of code.matchAll(/0[xX][0-9a-fA-F]{4,8}\b/g)) {
-        const hit = byValue.get(Number.parseInt(m[0], 16) >>> 0);
+      for (const m of hexLiterals(code)) {
+        const hit = byValue.get(m.value);
         if (!hit) continue;
-        found.push({ file: rel, line: i + 1, literal: m[0],
-                     value: Number.parseInt(m[0], 16) >>> 0,
+        found.push({ file: rel, line: i + 1, literal: m.text, value: m.value,
                      region: hit.name, what: hit.what, text: lines[i].trim() });
       }
     }
@@ -468,7 +495,11 @@ const MEM_OPERAND = new RegExp(
   + '(?:rmw(?:8|16|32)?\\.[a-z_]+|(?:load|store)(?:8|16|32)?(?:_[su])?)'
   + '|memory\\.(?:fill|copy|init)'
   + ')\\s+(?:(?:offset|align)=[0-9A-Fa-fxX]+\\s+)*'
-  + '\\(\\s*i32\\.const\\s+(0[xX][0-9A-Fa-f]+|\\d+)\\s*\\)',
+  // The literal accepts NUMERIC SEPARATORS because the WATX compiler does:
+  // watxCheckIntLiteral strips `_` before parsing, so `(i32.const 0x0001_2000)`
+  // is a perfectly good embedded address and the pattern that could not match it
+  // was a hole, not a strictness.
+  + '\\(\\s*i32\\.const\\s+(0[xX][0-9A-Fa-f_]+|[\\d_]+)\\s*\\)',
   'g');
 
 // Blank out `;;` comments while preserving every offset, so a match's index
@@ -556,8 +587,9 @@ function embeddedWat(options = {}) {
       fragments += 1;
       const body = blankWatComments(frag.text);
       for (const m of body.matchAll(MEM_OPERAND)) {
-        const value = (m[1].startsWith('0x') || m[1].startsWith('0X')
-          ? Number.parseInt(m[1], 16) : Number.parseInt(m[1], 10)) >>> 0;
+        const lit = m[1].replace(/_/g, '');   // WATX strips separators; so do we
+        const value = (lit.startsWith('0x') || lit.startsWith('0X')
+          ? Number.parseInt(lit, 16) : Number.parseInt(lit, 10)) >>> 0;
         const region = owner(value);
         if (!region) continue;
         const at = frag.start + m.index;

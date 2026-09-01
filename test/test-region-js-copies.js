@@ -61,6 +61,19 @@ const commented = jsCopies({ sources: new Map([
 ]) });
 check(commented.hits.length === 0, 'a value in a // comment is not a copy');
 
+// 2b. A NUMERIC SEPARATOR does not launder a copy. `0x0001_2000` is the same
+//    number as `0x00012000` to JavaScript and to a reader, and the scanner's old
+//    `0x[0-9a-fA-F]{4,8}` pattern could not match it — so this one spelling
+//    walked past this gate, the census odometer and --embedded-wat alike, in any
+//    file. tools/gen-region-map.js emits the separator deliberately and its
+//    comment said why, which made the bypass the most copyable thing in the tree.
+const separated = jsCopies({ sources: new Map([
+  ['lib/fixture-not-on-disk.js',
+    `const CACHE = ${planted.replace(/^0x(....)/, '0x$1_')};\n`],
+]) });
+check(separated.hits.length === 1,
+  `a separator does not hide a copy (got ${separated.hits.length} hit(s))`);
+
 // 3. The generated mirror is the map rendered for JS and is exempt by name.
 const mirror = jsCopies({ sources: new Map([
   ['lib/region-map.generated.js', `const B = ${planted};\n`],

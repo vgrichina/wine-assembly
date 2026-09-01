@@ -32,13 +32,18 @@ const OUT = path.join(ROOT, 'lib', 'region-map.generated.js');
 const REL = 'lib/region-map.generated.js';
 
 // Emitted with a numeric separator (`0x0001_2000`), which is exactly the value a
-// plain `0x00012000` is and reads the same, for two reasons. It groups an eight
-// digit address the way the map is actually read, and it keeps the generated
-// mirror out of tools/region-census.js's raw-literal odometer, whose pattern is
-// `0x[0-9a-f]{4,8}` — the mirror is not a *copy* of the map, it is the map
-// rendered for JS, so counting its 160 entries as debt would drown the signal the
-// census exists to give. (If the census gains an explicit exemption for generated
-// files, plain hex here becomes fine again.)
+// plain `0x00012000` is and reads the same: it groups an eight-digit address the
+// way the map is actually read.
+//
+// THAT IS THE ONLY REASON LEFT, and the reason it used to have was a bug. The
+// separator was also keeping this file out of tools/region-census.js's odometer,
+// whose pattern was `0x[0-9a-f]{4,8}` and simply could not see an underscore —
+// so the spelling everybody could copy from was the spelling nothing checked, in
+// any file, for the census AND the --js-copies and --embedded-wat gates. Those
+// scanners accept separators now and the mirror is exempt by PATH instead
+// (GENERATED_EXEMPT), which is what it always should have been: a file is
+// trusted for what it is, never for how it spells a number. Plain hex here would
+// be fine today; the grouping is kept because it is easier to read.
 const hex = (n) => {
   const digits = (n >>> 0).toString(16).toUpperCase().padStart(8, '0');
   return `0x${digits.slice(0, 4)}_${digits.slice(4)}`;
