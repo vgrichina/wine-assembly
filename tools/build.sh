@@ -133,6 +133,17 @@ DX_LAYOUT_ARGS=(--file=src/09a8-handlers-directx.wat,src/09aa-handlers-d3dim.wat
   --skip-func='$d3dim_stateblock_create,$d3dim_stateblock_apply,$d3dim_stateblock_capture,$d3dim_stateblock_delete,$d3dim_lights_refresh,$message_table_lookup')
 node tools/layout-migrate.js "${DX_LAYOUT_ARGS[@]}" --gate > /dev/null || {
   node tools/layout-migrate.js "${DX_LAYOUT_ARGS[@]}" --gate; exit 1; }
+# WndRecord (wave 2) — the 24-byte per-window record. Deliberately NO
+# --base-local: 09c0-window-table.wat owns ~20 PARALLEL per-slot tables, and its
+# $addr locals also hold MENU_DATA_TABLE, class-long and WND_OWN_DC_TABLE
+# pointers. With --base-local the codemod converts 10 sites instead of 3 and
+# labels seven of them as fields of a record they are not in — all at offset 0,
+# so the bytes never move and the byte-identity oracle cannot catch it. In a
+# file with parallel tables, recognize the base by CALL only.
+node tools/layout-migrate.js --file=src/09c0-window-table.wat --layout=WndRecord \
+  --base-call='$wnd_record_addr' --gate > /dev/null || {
+  node tools/layout-migrate.js --file=src/09c0-window-table.wat --layout=WndRecord \
+    --base-call='$wnd_record_addr' --gate; exit 1; }
 
 echo "Concatenating WAT parts..."
 # From the src/main.watx include list, not a shell glob: combined.wat must be
