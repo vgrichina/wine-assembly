@@ -195,6 +195,125 @@ same two digests, in node and in headless Chrome through `?compile-wat`, where
 Solitaire launched from the in-browser-compiled module and reached its message
 loop with a clean page log.
 
+### 4.2 What the ~200 MB actually IS (2026-08-31, session `watx-mem`)
+
+§4 note 3 left "the compiler itself, ~130 MB" as one undifferentiated block and
+called optimising it future work. This is that measurement. Fresh node process,
+production compile of the real closure (10.85 MB across 62 files, tail-call arm,
+986,632 B out), the compiler loaded into a `vm` context exactly as `tools/watx.js`
+does it and its pipeline stages wrapped so each boundary can be sampled.
+
+**Phase walk**, forced GC at every boundary so `heapUsed` is live data, not
+allocator high-water:
+
+```
+                                          rss     heapUsed
+0 node started                           37.9        3.3
+1 + 10.9 MB of source bytes read         51.8        3.4
+2 + decoded to JS strings (the vfs)      74.9       23.9   <-- +20.5
+3 + compiler evaluated                   78.0       24.7
+4 + pass-1 index (prepareStreamingModule) 136.2      36.5   <-- +11.8
+5 + checkTypes                          139.8       41.5
+6 + bindFunctionDeclarations            143.0       40.9
+7 + lowerIR                             142.4       40.9
+8 + generateWasm (8,165 bodies)         169.2       42.5   <-- +1.6
+9 compile() returned                    169.3       26.1
+```
+
+The streaming design is doing its job: emitting 8,165 function bodies adds 1.6 MB
+of live heap. **Live data is not where the memory is.** At the true (un-GC'd)
+peak — `emit#5750`, RSS 200.2 MB — V8's own accounting reads:
+
+| | MB |
+|---|---:|
+| `used_heap_size` (live + not-yet-collected) | 52.8 |
+| `total_heap_size` (committed) | 83.1 |
+| — `large_object_space` (the source strings) | 21.7 |
+| — `new_space` reserved (V8's 16 MB nursery, ×2) | 32.0 |
+| — `old_space` | 23.2 |
+| external / ArrayBuffers | 3.5 |
+| **residual: RSS minus V8 heap minus external** | **111** |
+
+That residual is the story, and it is not slack in any space V8 reports: it starts
+at 32 MB (a bare node process) and climbs to 111 MB *while the committed heap
+stays flat at 83 MB*. It is the JIT. Interleaved, arms alternating:
+
+| | max RSS | wall |
+|---|---:|---:|
+| default | 195.8 / 203.3 / 201.8 MB | 3.56 / 2.29 / 2.19 s |
+| `--no-turbofan` | 152.1 / 154.9 / 155.8 MB | 2.54 / 2.20 / 2.20 s |
+| `--jitless` | 128.2 MB | 15.37 s |
+| `--max-semi-space-size=1` | 174.2 MB | — |
+| `--no-sparkplug` / `--no-maglev` | 191.8 / 201.6 MB | — |
+
+TurboFan costs ~47 MB of peak RSS on this workload and, at these input sizes,
+buys no wall time at all. GC is a non-event: 36 scavenges for the whole compile,
+mutator utilisation 0.995.
+
+**Inside the ~50 MB of live data** (heap snapshot taken mid-emission, 48.3 MB):
+strings 21.9 MB, arrays 12.1 MB, objects 7.0 MB, code 2.9 MB, ArrayBuffer data
+2.1 MB. So the single biggest live item in the compiler is *the source text*,
+not any structure the compiler builds from it — and §4.3 is why it was twice the
+size it needed to be.
+
+**The verdict the plan's sub-100 MB row needs.** Peak = ~38 MB of node baseline
++ ~47 MB of JIT + ~83 MB of committed V8 heap (of which ~50 is live) + ~30 MB of
+allocator retention. Compiler data is roughly a quarter of it. Reducing every
+byte of live compiler state to zero would still leave ~150 MB, so **sub-100 MB
+is not reachable from the data side in JavaScript**; it needs engine behaviour
+we do not control from a page (nursery sizing, optimising-tier budget). What IS
+reachable is the data quarter, and that is what §4.3 spends.
+
+### 4.3 One JS character per source byte (2026-08-31, `e375510a`)
+
+10.85 MB of source was costing 20.53 MB of live heap. Not because of the volume
+— because of a V8 representation rule. A string whose every code point is below
+256 is stored one byte per character; a **single** code point above that stores
+the whole string at two. Wine's sources are ASCII apart from the box-drawing
+characters in their banner comments: 21,289 such bytes, in 29 of the 62 files.
+21 KB of decoration, doubling 10.85 MB, held for the entire compile. Measured
+1.89 bytes per character across the closure; `Buffer#toString('latin1')` on the
+same bytes gives exactly 1.00.
+
+`watxSourceTextFromBytes` (`tools/watx-src/compiler-parser.js`) is now the
+byte→text boundary every host decodes through. It replaces non-ASCII bytes that
+lie inside a `;;` comment with `?` and then decodes: one byte in, one character
+out, every source offset still exactly the byte offset it already was — which
+the streaming pass depends on, since it indexes function bodies by range. It
+tracks the same two constructs the reader does (`;;` to end of line, `"…"` with
+backslash escapes) and bails out to a plain UTF-8 decode the moment a high byte
+appears anywhere else, so a literal non-ASCII character in a data string keeps
+its present meaning and its present cost.
+
+Interleaved A/B, arms alternating with the order rotated, one cold compile per
+process, whole-process max RSS from `/usr/bin/time -l`:
+
+| node path | before | after | Δ |
+|---|---|---|---|
+| live heap once the sources are read | 25.3 MB | 16.8 MB | **−8.5 MB, every rep (5/5)** |
+| whole-process max RSS (median of 5) | 216.6 MB | 201.9 MB | −14.7 MB, after wins 4/5 |
+| user CPU (median of 5) | 2.14 s | 2.26 s | +5.6% (the byte scan) |
+
+and in headless Chrome, compiling through `watxLauncher.compileDetailed` with no
+app launched (Wine's 512 MB would swamp the reading), whole-browser-tree RSS
+polled from `ps` at 100 ms, the `before` arm produced by rewriting one line of
+`lib/watx-compile-worker.js` **on the wire** so both arms run the same commit:
+
+| browser path | before | after | Δ |
+|---|---|---|---|
+| peak RSS over baseline (mean of 4) | 166.4 MB | 161.8 MB | **−4.6 MB, after wins 4/4** |
+| worker `compileMs` (median of 4) | 521 ms | 523 ms | +0.4% |
+| worker `decodeMs` (median of 4) | 6 ms | 25 ms | the scan |
+
+The browser Δ is smaller than node's because the reading is whole-browser RSS,
+most of which is not the worker's heap. The compile is byte-identical in both
+engines and both arms: `24beaca0f16d2f5c…`, matching `build/wine-assembly.wasm`
+built from the same tree.
+
+Note that this browser number (≈162 MB over baseline) is **not** comparable with
+the 214.6 MB in §4.1: that one measured `host.js`'s full launch path, this one
+measures the compile alone. Compare it only against its own `before` arm.
+
 ## 5. What is still unmeasurable here, and what the gate says
 
 - **Real iOS Safari on a device: not measured, cannot be measured from this
