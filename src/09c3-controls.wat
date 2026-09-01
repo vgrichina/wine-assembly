@@ -655,15 +655,12 @@
   ;; CREATESTRUCT.lpszName for the wndproc to read in WM_CREATE).
   ;; $len excludes NUL.
   (func $wat_str_to_heap (param $wa i32) (param $len i32) (result i32)
-    (local $buf i32) (local $bw i32) (local $i i32)
+    (local $buf i32) (local $bw i32)
     (local.set $buf (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
     (local.set $bw (call $g2w (local.get $buf)))
-    (block $done (loop $copy
-      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
-      (i32.store8 (i32.add (local.get $bw) (local.get $i))
-        (i32.load8_u (i32.add (local.get $wa) (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $copy)))
+    ;; $buf is a fresh allocation, so it cannot overlap $wa and memory.copy's
+    ;; memmove semantics are strictly safe here.
+    (memory.copy (local.get $bw) (local.get $wa) (local.get $len))
     (i32.store8 (i32.add (local.get $bw) (local.get $len)) (i32.const 0))
     (local.get $buf))
 
@@ -946,25 +943,16 @@
         (local.set $index (local.get $wParam))
         (if (i32.gt_u (local.get $index) (local.get $count))
           (then (local.set $index (local.get $count))))
-        ;; Shift later fixed records back one slot. Copy each record from its
-        ;; last byte so the overlapping inline move is safe.
-        (local.set $i (local.get $count))
-        (block $shift_done (loop $shift
-          (br_if $shift_done (i32.le_u (local.get $i) (local.get $index)))
-          (local.set $src (i32.add (i32.add (local.get $sw) (i32.const 8))
-            (i32.mul (i32.sub (local.get $i) (i32.const 1)) (i32.const 15))))
-          (local.set $dst (i32.add (local.get $src) (i32.const 15)))
-          (local.set $j (i32.const 14))
-          (block $bytes_done (loop $bytes
-            (i32.store8 (i32.add (local.get $dst) (local.get $j))
-              (i32.load8_u (i32.add (local.get $src) (local.get $j))))
-            (br_if $bytes_done (i32.eqz (local.get $j)))
-            (local.set $j (i32.sub (local.get $j) (i32.const 1)))
-            (br $bytes)))
-          (local.set $i (i32.sub (local.get $i) (i32.const 1)))
-          (br $shift)))
+        ;; Shift records [$index, $count) back one 15-byte slot. The old nested
+        ;; loop walked records high-to-low and each record's bytes last-to-first
+        ;; — that is exactly memmove of the whole run for a destination above
+        ;; the source, which is what memory.copy gives us in one op.
         (local.set $dst (i32.add (i32.add (local.get $sw) (i32.const 8))
           (i32.mul (local.get $index) (i32.const 15))))
+        (memory.copy
+          (i32.add (local.get $dst) (i32.const 15))
+          (local.get $dst)
+          (i32.mul (i32.sub (local.get $count) (local.get $index)) (i32.const 15)))
         (call $zero_memory (local.get $dst) (i32.const 15))
         (if (local.get $lParam)
           (then
@@ -9026,19 +9014,15 @@
       (i32.mul (local.get $idx) (i32.const 20))))
 
   (func $toolbar_memmove_right (param $src i32) (param $n i32) (param $shift i32)
-    ;; Move n bytes from src to src+shift. Copy backward so the button-array
-    ;; insert path is safe for overlapping ranges.
-    (local $i i32)
+    ;; Move n bytes from src to src+shift. The hand loop copied backward for
+    ;; overlap safety, which is memmove — memory.copy is specified as memmove,
+    ;; so it replaces the loop exactly, shift>0 or not.
     (if (i32.or (i32.eqz (local.get $n)) (i32.eqz (local.get $shift)))
       (then (return)))
-    (local.set $i (local.get $n))
-    (block $done (loop $copy
-      (br_if $done (i32.eqz (local.get $i)))
-      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
-      (i32.store8
-        (i32.add (i32.add (local.get $src) (local.get $i)) (local.get $shift))
-        (i32.load8_u (i32.add (local.get $src) (local.get $i))))
-      (br $copy))))
+    (memory.copy
+      (i32.add (local.get $src) (local.get $shift))
+      (local.get $src)
+      (local.get $n)))
 
   (func $toolbar_child_combo_raw_width_by_cmd
     (param $toolbar_hwnd i32) (param $cmd i32) (result i32)
@@ -13335,14 +13319,10 @@
 
   ;; Right-shift n bytes by 1 (memmove src→src+1). Reverse copy so overlap is safe.
   (func $edit_memmove_right (param $src i32) (param $n i32)
-    (local $i i32)
-    (local.set $i (local.get $n))
-    (block $done (loop $lp
-      (br_if $done (i32.eqz (local.get $i)))
-      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
-      (i32.store8 (i32.add (i32.add (local.get $src) (local.get $i)) (i32.const 1))
-                  (i32.load8_u (i32.add (local.get $src) (local.get $i))))
-      (br $lp)))
+    ;; Backward byte copy of n bytes to src+1 — memmove, hence memory.copy.
+    (memory.copy (i32.add (local.get $src) (i32.const 1))
+                 (local.get $src)
+                 (local.get $n))
   )
 
   ;; Ensure EditState has capacity for at least $need_cap chars (excl NUL).
@@ -13452,17 +13432,15 @@
     (call $edit_ensure_cap (local.get $state_w) (i32.add (local.get $len) (local.get $n)))
     (local.set $cur (load.field.memarg EditState cursor (local.get $state_w)))
     (local.set $buf_w (call $g2w (load.field EditState text_buf_ptr (local.get $state_w))))
-    ;; Shift tail right by $n bytes (reverse copy for overlap safety)
+    ;; Shift tail right by $n bytes. The old reverse byte loop is memmove for a
+    ;; destination above the source, so memory.copy does it in one op.
     (local.set $tail (i32.sub (local.get $len) (local.get $cur)))
     (if (local.get $tail)
       (then
-        (block $md (loop $ml
-          (br_if $md (i32.eqz (local.get $tail)))
-          (local.set $tail (i32.sub (local.get $tail) (i32.const 1)))
-          (i32.store8
-            (i32.add (local.get $buf_w) (i32.add (local.get $cur) (i32.add (local.get $tail) (local.get $n))))
-            (i32.load8_u (i32.add (local.get $buf_w) (i32.add (local.get $cur) (local.get $tail)))))
-          (br $ml)))))
+        (memory.copy
+          (i32.add (local.get $buf_w) (i32.add (local.get $cur) (local.get $n)))
+          (i32.add (local.get $buf_w) (local.get $cur))
+          (local.get $tail))))
     (local.set $src_w (call $g2w (local.get $src_g)))
     (call $memcpy
       (i32.add (local.get $buf_w) (local.get $cur))
