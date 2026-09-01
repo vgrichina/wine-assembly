@@ -69,6 +69,15 @@ const extraWat = String.raw`
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
 
+  (func (export "test_heap_set_information") (param $heap i32) (param $info_class i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_HeapSetInformation
+      (local.get $heap) (local.get $info_class) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
   (func (export "test_last_error") (result i32)
     (global.get $last_error))
 `;
@@ -96,6 +105,10 @@ const extraWat = String.raw`
   assert(first && second, 'HeapCreate allocates private heap records');
   assert.notStrictEqual(first, second, 'each HeapCreate call has distinct identity');
   assert.notStrictEqual(first, processHeap);
+  assert.strictEqual(a.test_heap_set_information(processHeap, 0), 1,
+    'HeapSetInformation accepts the process heap');
+  assert.strictEqual(a.test_heap_set_information(first, 0), 1,
+    'HeapSetInformation accepts private heap handles');
 
   const firstAllocation = b.test_heap_alloc(first, 0x08, 32) >>> 0;
   assert(firstAllocation,
@@ -121,6 +134,9 @@ const extraWat = String.raw`
   assert.strictEqual(a.test_heap_destroy(first), 0,
     'destroying the same heap twice fails');
   assert.strictEqual(a.test_last_error(), 6);
+  assert.strictEqual(a.test_heap_set_information(first, 0), 0,
+    'HeapSetInformation rejects destroyed heaps');
+  assert.strictEqual(a.test_last_error(), 6);
 
   const secondAllocation = a.test_heap_alloc(second, 0, 16) >>> 0;
   assert(secondAllocation, 'destroying one private heap leaves another usable');
@@ -129,6 +145,9 @@ const extraWat = String.raw`
 
   assert.strictEqual(a.test_heap_alloc(0x00140000, 0, 8), 0,
     'the former fixed fake heap token is no longer accepted');
+  assert.strictEqual(a.test_last_error(), 6);
+  assert.strictEqual(a.test_heap_set_information(0x00140000, 0), 0,
+    'HeapSetInformation rejects invalid heap handles');
   assert.strictEqual(a.test_last_error(), 6);
 
   console.log('PASS  HeapCreate uses distinct shared-lifetime browser handles');

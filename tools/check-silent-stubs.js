@@ -84,8 +84,10 @@ const digest = crypto.createHash('sha256')
 // textbook silent success -- it set EAX=0 and returned, so a game that used
 // the display as its clock was told the retrace had already happened. It now
 // parks on a real vblank (yield_reason 13). Ratchet only; nothing was added.
-const EXPECTED_COUNT = 507;
-const EXPECTED_SHA256 = 'e983d2e1f0914166a0bdce2752ef8d73f19352c7ea12757f0be3d0717c5fd0b7';
+// 2026-09-01: 507 -> 525. Minimal no-audio BASS compatibility handlers let
+// shareware games bundled with bass.dll continue to gameplay.
+const EXPECTED_COUNT = 525;
+const EXPECTED_SHA256 = '40334c913c6a0cb02959af71858ef21451d3e1f8fbbb1186126a1db52ea2b05f';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
