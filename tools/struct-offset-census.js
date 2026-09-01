@@ -40,7 +40,11 @@
 //   spelling would compile to the IDENTICAL wasm bytes after conversion.
 //   load.field lowers to `ptr; i32.const off; i32.add; <load align=natural>`,
 //   so an add-form site of a layout-expressible width matches exactly; a
-//   memarg (`offset=`) site or a 16-bit width does not. See
+//   memarg (`offset=`) site or a 16-bit width does not. A memarg site is still
+//   convertible byte-identically, but through the OTHER lowering —
+//   `load.field.memarg`, and `layout-migrate.js --memarg` — so it is counted
+//   separately rather than as add-form-capable. A 16-bit width has no lowering
+//   at all yet (§3.1). See
 //   docs/watx-layout-migration-design.md §"the oracle".
 //
 // ── usage ──────────────────────────────────────────────────────────────────
@@ -389,7 +393,13 @@ function main() {
   const memargTotal = all.filter(s => s.memarg).length;
   const untypeableTotal = all.filter(s => s.untypeable).length;
   const storeTotal = all.filter(s => s.isStore).length;
-  console.log(`  spelled with an offset= memarg (not byte-identical after conversion): ${memargTotal}`);
+  // NOT "not convertible" any more: since the `.memarg` lowering landed
+  // (design §3.4, resolved), these are byte-identical through
+  // `load.field.memarg` instead of `load.field`. They are counted separately
+  // because the two lowerings are different encodings and a wave has to pass
+  // layout-migrate.js --memarg to take them. `byte-identical-capable` below
+  // still means the ADD form, which is what a wave without --memarg converts.
+  console.log(`  spelled with an offset= memarg (byte-identical via .memarg, needs --memarg): ${memargTotal}`);
   console.log(`  width a (layout) field cannot express (16-bit / signed byte)        : ${untypeableTotal}`);
   console.log(`  stores (blocked until store.field drops its trailing i32.const 0)   : ${storeTotal}`);
   console.log('');
