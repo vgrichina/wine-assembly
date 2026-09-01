@@ -80,9 +80,9 @@ at the bottom of this file, not left to whoever is editing.
 
 ```sha256
 b8068704e35bb4e41db2dd17324d5c629ac753faa64416dbdd412a97e36c40ab  tools/watx.js
-005fc8b161e4486c2923ed02ea6b991eb5f8936aee00eebfe5d75d743c5d80e9  tools/watx-src/compiler-parser.js
-74e7c9b87c20a0b286317ee39c53cd8ce48c92f60c2dfa9ca5418a8c9dd075b4  tools/watx-src/compiler-stages.js
-d45fe5ae555e35c77d6c2aa2d7b7e4ffc1834a4a300d7226c82d0b562bcb2452  tools/watx-src/compiler-codegen.js
+f7b02737864024e94bb59d191bc0169291db47731cc19d9cf52822c31ba8484a  tools/watx-src/compiler-parser.js
+1a51d2f8597d75a70174125abece31a3e1d5e4a1b70a704ed26d0583fc344362  tools/watx-src/compiler-stages.js
+6c80ac75f52b331639db8cb7f892eb33eb0b969f82d8d6f144acfe7b80110389  tools/watx-src/compiler-codegen.js
 b85a780ec3d53fa0a9a9b335839504f24c5ca7288a75885c2c0823b8bd9dd550  tools/watx-src/compiler.js
 293c1a233359bf142bf5badceb3399c92b79a653a86085681142b2037d80fce4  test/watx-compiler-wine-parity.test.js
 8f545280a756dcaff9762beb4cc45645a2205eb7a9a583d00297d97a6d15cd15  test/watx-compiler-production.test.js
@@ -146,6 +146,6 @@ without re-sealing. Both lines are rewritten together by
 CHANGELOG already names the new digest.
 
 ```seal
-manifest-sha256   a933c58ab262e2f89ec0f4e1ab9a32c9548d89dadff969900bce8670958c0bdf
-changelog-sha256  080d4be3cc906082cdfb87e9b8916c53636dea31c30e5387f758cc0575bb9b80
+manifest-sha256   ae2df8439fb10bd2fea4d25698b98ac56fb4f77fd973a87f9b5c4fc0e512e042
+changelog-sha256  42b0e02c5320f2c5c7e3a8a15c7988eabcc6f6689ad61dda3d2300d22d9e59c3
 ```

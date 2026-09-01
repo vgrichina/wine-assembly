@@ -84,6 +84,52 @@
 //                         name. A `(call $dx_from_this ...)` base still
 //                         converts there: that one is self-evidencing.
 //
+// ── --base-local-from-call: provenance instead of a blacklist ──────────────
+//
+//   --skip-func is a list of the places somebody NOTICED the name meant
+//   something else. It cannot be complete, and the oracle cannot help: a
+//   mislabelled site compiles to the same bytes as what it replaced.
+//
+//   --base-local-from-call inverts that. A local is a record pointer inside a
+//   function iff, IN THAT FUNCTION, it is assigned at least once and EVERY
+//   assignment to it is `(local.set $X (call BASECALL …))` (or `local.tee`).
+//   Provenance is then derived from the source, per function, rather than
+//   asserted by a name — and the tool declines the sites nobody had noticed yet.
+//
+//   Measured on the family this landed with: `src/10d-gdi-region-path.wat` has
+//   46 assignments to `$entry` and they are THREE different records —
+//   $gdi_dc_path_entry, $gdi_dc_clip_entry and $gdi_dc_system_clip_entry, plus
+//   one hand-computed `(i32.add (global.get $GDI_DC_PATH_TABLE) …)` inside the
+//   accessor itself. `--base-local=entry` would have labelled every clip-table
+//   access as a field of the path record, byte-identically and undetectably.
+//   `--base-local-from-call=entry` converts the 8 functions where $entry
+//   provably came from $gdi_dc_path_entry and leaves the other 22 alone.
+//
+//   A `(param $entry i32)` never qualifies: a parameter has no assignment in
+//   the function, so there is nothing in scope to derive provenance from.
+//
+// ── --memarg: the other lowering (design §3.4) ─────────────────────────────
+//
+//   6,547 of the tree's 12,061 field sites spell the offset in the instruction:
+//
+//       (i32.load offset=8 (local.get $p))   ->  (load.field.memarg L f p)
+//
+//   That is a DIFFERENT encoding from the add-form — three bytes shorter — so
+//   it needs the compiler's `.memarg` modifier to stay byte-identical, and the
+//   modifier is per-site precisely because one layout's sites are spelled both
+//   ways. This rewrite is therefore OPT-IN, and deliberately so: turning it on
+//   by default would change what `--gate` means for every family already
+//   migrated (VSock, WndRecord, DxObject all still carry memarg sites), and
+//   those gate lines would start failing in build.sh with nobody having asked
+//   for a conversion. One family opts in, in one reviewed commit, at a time.
+//
+//   Declined, and reported rather than guessed:
+//     * an `align=` that is not the access's natural alignment (the emitted
+//       memarg would not match);
+//     * a memarg on top of arithmetic — `(i32.load offset=4 (i32.add p (i32.const 8)))`
+//       — where the field is at 12 but the address expression must survive;
+//     * any other bare operand.
+//
 const fs = require('fs');
 const path = require('path');
 
@@ -171,6 +217,15 @@ const LOAD_FOR = { i32: 'i32.load', ptr: 'i32.load', f32: 'f32.load', f64: 'f64.
 const STORE_FOR = { i32: 'i32.store', ptr: 'i32.store', f32: 'f32.store', f64: 'f64.store', i64: 'i64.store', u8: 'i32.store8' };
 const OPS = new Set([...Object.values(LOAD_FOR), ...Object.values(STORE_FOR)]);
 
+// log2 of the natural alignment each access carries when no `align=` is given.
+// An explicit `align=` that disagrees is a DIFFERENT memarg, so a site carrying
+// one is declined rather than converted (the compiler emits natural alignment).
+const NATURAL_ALIGN = {
+  'i32.load': 2, 'i32.store': 2, 'f32.load': 2, 'f32.store': 2,
+  'i64.load': 3, 'i64.store': 3, 'f64.load': 3, 'f64.store': 3,
+  'i32.load8_u': 0, 'i32.store8': 0,
+};
+
 function normalize(s) { return s.replace(/\s+/g, ' ').trim(); }
 
 // Byte extents of the named functions, so --skip-func can ask "is this site
@@ -189,26 +244,88 @@ function funcRanges(text, names) {
   return out;
 }
 
+// Every `(func $name …)` in the file, with its byte extent. Recomputed per pass,
+// because a rewrite shifts every index after it.
+function allFuncRanges(text) {
+  const out = [];
+  const re = /\(func\s+(\$[A-Za-z0-9_.]+)/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const close = matchParen(text, m.index);
+    if (close < 0) continue;
+    out.push({ name: m[1], start: m.index, end: close + 1 });
+  }
+  return out;
+}
+
+// Per function, the locals whose value provably came from `baseCall` — every
+// assignment to them in that function is `(local.set $X (call BASECALL …))`.
+// A local with even one other assignment is dropped: it is the SAME slot, and
+// which record it holds at a given site is a flow question this tool does not
+// answer. See --base-local-from-call in the header.
+function verifiedBaseLocals(text, ranges, names, baseCall) {
+  const perFunc = new Map();
+  if (!names || !names.size || !baseCall) return perFunc;
+  for (const r of ranges) {
+    const body = text.slice(r.start, r.end);
+    const seen = new Map();   // name -> { fromCall, other }
+    const re = /\((local\.set|local\.tee)\s+(\$[A-Za-z0-9_.]+)/g;
+    let m;
+    while ((m = re.exec(body))) {
+      const name = m[2].slice(1);
+      if (!names.has(name)) continue;
+      const close = matchParen(body, m.index);
+      if (close < 0) continue;
+      const ops = splitOperands(body, m.index + 1 + m[1].length + 1 + m[2].length, close);
+      const rhs = ops && ops.length === 1 ? normalize(ops[0].text) : null;
+      const rec = seen.get(name) || { fromCall: 0, other: 0 };
+      if (rhs && rhs.startsWith(`(call ${baseCall} `)) rec.fromCall++;
+      else rec.other++;
+      seen.set(name, rec);
+    }
+    const ok = new Set();
+    for (const [name, rec] of seen) if (rec.fromCall > 0 && rec.other === 0) ok.add(`(local.get $${name})`);
+    if (ok.size) perFunc.set(r, ok);
+  }
+  return perFunc;
+}
+
 function migrate(text, layout, opts) {
   const baseLocals = new Set(opts.baseLocals.map(x => `(local.get $${x})`));
+  const verifiedNames = new Set(opts.verifiedLocals || []);
   const skipNames = new Set((opts.skipFuncs || []).map(x => (x.startsWith('$') ? x : `$${x}`)));
   const stats = {
-    converted: 0, skippedOffset: [], skippedWidth: [], remaining: 0,
-    byField: new Map(), skippedFunc: new Map(),
+    converted: 0, convertedMemarg: 0, skippedOffset: [], skippedWidth: [], remaining: 0,
+    byField: new Map(), skippedFunc: new Map(), skippedMemarg: new Map(),
+    verifiedFuncs: new Set(),
   };
   let ranges = [];
+  let allRanges = [];
+  let verified = new Map();
   const skipFuncAt = (i) => {
     for (const r of ranges) if (i >= r.start && i < r.end) return r.name;
+    return null;
+  };
+  // The --base-local-from-call set in force at byte `i` (the enclosing
+  // function's, or none).
+  const verifiedAt = (i) => {
+    for (const [r, set] of verified) if (i >= r.start && i < r.end) return { set, name: r.name };
     return null;
   };
 
   // `nameOk` is false inside a --skip-func body: there, only a base that
   // evidences itself (a call to the accessor) may be matched. A local name
   // proves nothing about what was assigned to it.
-  const isRecordPtr = (s, nameOk) => {
+  const isRecordPtr = (s, nameOk, at) => {
     const t = normalize(s);
     if (nameOk && baseLocals.has(t)) return true;
     if (opts.baseCall && t.startsWith(`(call ${opts.baseCall} `)) return true;
+    // A local whose every assignment in this function came from the base call
+    // is evidence, not a name match — so it holds even inside a --skip-func.
+    if (verifiedNames.size) {
+      const v = verifiedAt(at);
+      if (v && v.set.has(t)) { stats.verifiedFuncs.add(v.name); return true; }
+    }
     return false;
   };
 
@@ -218,8 +335,12 @@ function migrate(text, layout, opts) {
     // Per-pass counters: a site the pass declined is re-examined next pass, so
     // accumulating them across passes double-counts.
     stats.remaining = 0; stats.skippedOffset = []; stats.skippedWidth = [];
-    stats.skippedFunc = new Map();
+    stats.skippedFunc = new Map(); stats.skippedMemarg = new Map();
+    // NOT reset per pass, unlike the decline counters: this one records where
+    // work was DONE, and the last pass is the one that converts nothing.
     ranges = funcRanges(text, skipNames);
+    allRanges = verifiedNames.size ? allFuncRanges(text) : [];
+    verified = verifiedBaseLocals(text, allRanges, verifiedNames, opts.baseCall);
     // Scan right-to-left so a rewrite never invalidates an earlier index.
     const hits = [];
     for (let i = 0; i < text.length; i++) {
@@ -235,25 +356,69 @@ function migrate(text, layout, opts) {
       const ops = splitOperands(text, i + 1 + op.length, close);
       if (!ops) continue;
       const isStore = op.startsWith('i32.store') || op.startsWith('i64.store') || op.startsWith('f32.store') || op.startsWith('f64.store');
-      if (ops.some(o => o.atom)) continue;               // memarg form — §3.4, not byte-identical
-      if (isStore ? ops.length !== 2 : ops.length !== 1) continue;
-      const addrForm = ops[0].text;
-
-      // (i32.add ADDR (i32.const N))  or  ADDR (offset 0)
       const inSkip = skipFuncAt(i);
       const nameOk = inSkip === null;
-      let addr = null, off = null;
-      const addM = /^\(i32\.add[\s(]/.test(addrForm);
-      if (addM) {
-        const inner = splitOperands(addrForm, '(i32.add'.length, addrForm.length - 1);
-        if (inner && inner.length === 2 && /^\(i32\.const\s+(-?(0x)?[0-9a-fA-F]+)\s*\)$/.test(normalize(inner[1].text))) {
-          const cm = /^\(i32\.const\s+(-?(?:0x)?[0-9a-fA-F]+)\s*\)$/.exec(normalize(inner[1].text));
-          const v = cm[1].startsWith('0x') ? parseInt(cm[1], 16) : parseInt(cm[1], 10);
-          if (isRecordPtr(inner[0].text, nameOk)) { addr = inner[0].text; off = v; }
-          else if (inSkip && isRecordPtr(inner[0].text, true)) stats.skippedFunc.set(inSkip, (stats.skippedFunc.get(inSkip) || 0) + 1);
+      let addr = null, off = null, memarg = false;
+
+      if (ops.some(o => o.atom)) {
+        // ── the memarg spelling (§3.4) ──
+        // Convertible only with --memarg, and only into the compiler's
+        // `.memarg` lowering, which is a different encoding from the add form.
+        if (!opts.memarg) continue;
+        const decline = (why) => { stats.skippedMemarg.set(why, (stats.skippedMemarg.get(why) || 0) + 1); };
+        let k = 0, mOff = 0, badAtom = null, badAlign = null;
+        while (k < ops.length && ops[k].atom) {
+          const a = ops[k].text;
+          const eq = a.indexOf('=');
+          const key = eq < 0 ? a : a.slice(0, eq);
+          const raw = eq < 0 ? '' : a.slice(eq + 1);
+          const n = /^(0x[0-9a-fA-F]+|[0-9]+)$/.test(raw) ? Number(raw) : NaN;
+          if (key === 'offset' && Number.isInteger(n)) mOff = n;
+          else if (key === 'align' && Number.isInteger(n)) {
+            // An explicit alignment that is not the natural one is a different
+            // memarg than the compiler emits, so the conversion would move bytes.
+            if (Math.log2(n) !== NATURAL_ALIGN[op]) badAlign = a;
+          } else badAtom = a;
+          k++;
         }
-      } else if (isRecordPtr(addrForm, nameOk)) { addr = addrForm; off = 0; }
-      else if (inSkip && isRecordPtr(addrForm, true)) stats.skippedFunc.set(inSkip, (stats.skippedFunc.get(inSkip) || 0) + 1);
+        if (badAtom) { decline(`unrecognized operand '${badAtom}'`); continue; }
+        if (badAlign) { decline(`explicit ${badAlign} is not this access's natural alignment`); continue; }
+        const rest = ops.slice(k);
+        if (isStore ? rest.length !== 2 : rest.length !== 1) continue;
+        const a0 = rest[0].text;
+        if (/^\(i32\.add[\s(]/.test(a0)) {
+          // offset=N ON TOP of arithmetic: the field is at N + K, but the
+          // address expression has to survive, and `.memarg` folds only the
+          // field offset. Left alone rather than guessed at.
+          const inner = splitOperands(a0, '(i32.add'.length, a0.length - 1);
+          if (inner && inner.length === 2 && isRecordPtr(inner[0].text, nameOk, i)) decline('offset= on top of an i32.add');
+          continue;
+        }
+        if (!isRecordPtr(a0, nameOk, i)) {
+          if (inSkip && isRecordPtr(a0, true, i)) stats.skippedFunc.set(inSkip, (stats.skippedFunc.get(inSkip) || 0) + 1);
+          continue;
+        }
+        addr = a0; off = mOff; memarg = true;
+        // Rewrite through the shared tail below, but with the operands the
+        // memarg form has (the value, for a store, is the second of `rest`).
+        ops.length = 0; ops.push(rest[0]); if (isStore) ops.push(rest[1]);
+      } else {
+        if (isStore ? ops.length !== 2 : ops.length !== 1) continue;
+        const addrForm = ops[0].text;
+
+        // (i32.add ADDR (i32.const N))  or  ADDR (offset 0)
+        const addM = /^\(i32\.add[\s(]/.test(addrForm);
+        if (addM) {
+          const inner = splitOperands(addrForm, '(i32.add'.length, addrForm.length - 1);
+          if (inner && inner.length === 2 && /^\(i32\.const\s+(-?(0x)?[0-9a-fA-F]+)\s*\)$/.test(normalize(inner[1].text))) {
+            const cm = /^\(i32\.const\s+(-?(?:0x)?[0-9a-fA-F]+)\s*\)$/.exec(normalize(inner[1].text));
+            const v = cm[1].startsWith('0x') ? parseInt(cm[1], 16) : parseInt(cm[1], 10);
+            if (isRecordPtr(inner[0].text, nameOk, i)) { addr = inner[0].text; off = v; }
+            else if (inSkip && isRecordPtr(inner[0].text, true, i)) stats.skippedFunc.set(inSkip, (stats.skippedFunc.get(inSkip) || 0) + 1);
+          }
+        } else if (isRecordPtr(addrForm, nameOk, i)) { addr = addrForm; off = 0; }
+        else if (inSkip && isRecordPtr(addrForm, true, i)) stats.skippedFunc.set(inSkip, (stats.skippedFunc.get(inSkip) || 0) + 1);
+      }
       if (addr === null) continue;
 
       const field = layout.byOffset.get(off);
@@ -263,11 +428,12 @@ function migrate(text, layout, opts) {
       if (want !== op) { stats.skippedWidth.push({ off, op, want, field: field.name }); continue; }
       if (isStore && opts.loadsOnly) { stats.remaining++; continue; }
 
-      const head = isStore ? 'store.field' : 'load.field';
+      const head = (isStore ? 'store.field' : 'load.field') + (memarg ? '.memarg' : '');
       const tail = isStore ? ` ${ops[1].text}` : '';
       const replacement = `(${head} ${layout.name} ${field.name} ${addr}${tail})`;
       text = text.slice(0, i) + replacement + text.slice(close + 1);
       stats.converted++;
+      if (memarg) stats.convertedMemarg++;
       stats.byField.set(field.name, (stats.byField.get(field.name) || 0) + 1);
       changed = true;
     }
@@ -285,6 +451,8 @@ function main() {
   if (!fileArg || !layoutName) {
     console.error('usage: layout-migrate.js --file=src/X.wat[,src/Y.wat] --layout=NAME --base-local=a,b --base-call=$fn');
     console.error('       [--layout-from=src/Z.wat] [--skip-func=$a,$b] [--loads-only] [--write] [--gate]');
+    console.error('       [--base-local-from-call=a,b] locals whose EVERY assignment in a function is the base call');
+    console.error('       [--memarg]                   also convert offset=N sites, via the .memarg lowering');
     process.exit(2);
   }
   const root = path.resolve(__dirname, '..');
@@ -305,10 +473,17 @@ function main() {
 
   const opts = {
     baseLocals: (opt('base-local', '') || '').split(',').filter(Boolean),
+    verifiedLocals: (opt('base-local-from-call', '') || '').split(',').map(s => s.trim().replace(/^\$/, '')).filter(Boolean),
     baseCall: opt('base-call', null),
     skipFuncs: (opt('skip-func', '') || '').split(',').map(s => s.trim()).filter(Boolean),
     loadsOnly: flag('loads-only'),
+    memarg: flag('memarg'),
   };
+  if (opts.verifiedLocals.length && !opts.baseCall) {
+    console.error('--base-local-from-call needs --base-call: the whole point is that the local is'
+      + ' matched because of what was ASSIGNED to it, not because of its name.');
+    process.exit(2);
+  }
 
   let gateFailed = false;
   for (const file of files) {
@@ -317,7 +492,12 @@ function main() {
     const { text, stats } = migrate(orig, layout, opts);
 
     console.log(`\n── ${file}`);
-    console.log(`converted ${stats.converted} sites in ${stats.passes} passes` + (opts.loadsOnly ? `  (${stats.remaining} store sites left by --loads-only)` : ''));
+    console.log(`converted ${stats.converted} sites in ${stats.passes} passes`
+      + (opts.memarg ? `  (${stats.convertedMemarg} of them memarg-spelled)` : '')
+      + (opts.loadsOnly ? `  (${stats.remaining} store sites left by --loads-only)` : ''));
+    if (opts.verifiedLocals.length) {
+      console.log(`  base locals verified from ${opts.baseCall} in ${stats.verifiedFuncs.size} function(s)`);
+    }
     for (const [f, c] of [...stats.byField].sort((a, b) => b[1] - a[1])) console.log(`  ${String(c).padStart(4)}  ${f}`);
     if (stats.skippedOffset.length) {
       const agg = new Map();
@@ -329,6 +509,10 @@ function main() {
       for (const s of stats.skippedWidth) { const k = `+${s.off} ${s.field}: site uses ${s.op}, field wants ${s.want}`; agg.set(k, (agg.get(k) || 0) + 1); }
       console.log(`  LEFT ALONE, access width does not match the field type:`);
       for (const [k, v] of agg) console.log(`    ${k}  x${v}`);
+    }
+    if (stats.skippedMemarg.size) {
+      console.log(`  LEFT ALONE, memarg site the .memarg lowering cannot reproduce byte-for-byte:`);
+      for (const [why, c] of [...stats.skippedMemarg].sort((a, b) => b[1] - a[1])) console.log(`    ${why}  x${c}`);
     }
     if (stats.skippedFunc.size) {
       console.log(`  LEFT ALONE, --skip-func (local name is not this record here):`);

@@ -1078,6 +1078,63 @@ mod('layout-elem', `${LAYOUT_DECL}
 (export "mem" (memory $m))`,
   });
 
+// The SECOND lowering of the same accessors (design §3.4): `.memarg` folds the
+// field offset into the memory instruction's memarg instead of adding it to the
+// address first. The reference here is therefore NOT the reference above — it is
+// the `offset=` spelling, the one 6,547 sites in src/*.wat actually use. Both
+// entries have to hold at once, and they are the reason the modifier is
+// per-site: it is the SOURCE's spelling that has to be reproduced byte for byte,
+// and one layout's sites are spelled both ways.
+mod('layout-field-memarg', `${LAYOUT_DECL}
+(memory $m 1)
+(func $get_state (param $p i32) (result i32) (load.field.memarg Rec state (local.get $p)))
+(func $get_value (param $p i32) (result i32) (load.field.memarg Rec value (local.get $p)))
+(func $get_flags (param $p i32) (result i32) (load.field.memarg Rec flags (local.get $p)))
+(func $set_value (param $p i32) (param $v i32) (store.field.memarg Rec value (local.get $p) (local.get $v)))
+(func $set_flags (param $p i32) (param $v i32) (store.field.memarg Rec flags (local.get $p) (local.get $v)))
+(func $rec_get (param $b i32) (param $i i32) (result i32) (load.elem.memarg Rec value (local.get $b) (local.get $i)))
+(func $rec_set (param $b i32) (param $i i32) (param $v i32) (store.elem.memarg Rec value (local.get $b) (local.get $i) (local.get $v)))
+(func $port_get (param $p i32) (param $i i32) (result i32) (load.field-elem.memarg Rec ports (local.get $p) (local.get $i)))
+(func $port_set (param $p i32) (param $i i32) (param $v i32) (store.field-elem.memarg Rec ports (local.get $p) (local.get $i) (local.get $v)))
+(export "get_state" (func $get_state)) (export "get_value" (func $get_value))
+(export "get_flags" (func $get_flags)) (export "set_value" (func $set_value))
+(export "set_flags" (func $set_flags))
+(export "rec_get" (func $rec_get)) (export "rec_set" (func $rec_set))
+(export "port_get" (func $port_get)) (export "port_set" (func $port_set))
+(export "mem" (memory $m))`,
+  (ex) => [
+    () => ex.set_value(32, 0x11223344), () => ex.get_value(32),
+    () => ex.set_flags(32, 0xAB), () => ex.get_flags(32), () => ex.get_state(32),
+    () => ex.rec_set(0, 0, 11), () => ex.rec_set(0, 3, 44),
+    () => ex.rec_get(0, 0), () => ex.rec_get(0, 3),
+    () => ex.port_set(0, 0, 0x1000), () => ex.port_set(0, 3, 0x4000),
+    () => ex.port_get(0, 0), () => ex.port_get(0, 3),
+  ],
+  {
+    memoryExport: 'mem', memoryBytes: 128,
+    refSource: `
+(memory $m 1)
+(func $get_state (param $p i32) (result i32) (i32.load (local.get $p)))
+(func $get_value (param $p i32) (result i32) (i32.load offset=8 (local.get $p)))
+(func $get_flags (param $p i32) (result i32) (i32.load8_u offset=4 (local.get $p)))
+(func $set_value (param $p i32) (param $v i32) (i32.store offset=8 (local.get $p) (local.get $v)))
+(func $set_flags (param $p i32) (param $v i32) (i32.store8 offset=4 (local.get $p) (local.get $v)))
+(func $rec_get (param $b i32) (param $i i32) (result i32)
+  (i32.load offset=8 (i32.add (local.get $b) (i32.mul (local.get $i) (i32.const 28)))))
+(func $rec_set (param $b i32) (param $i i32) (param $v i32)
+  (i32.store offset=8 (i32.add (local.get $b) (i32.mul (local.get $i) (i32.const 28))) (local.get $v)))
+(func $port_get (param $p i32) (param $i i32) (result i32)
+  (i32.load offset=12 (i32.add (local.get $p) (i32.mul (local.get $i) (i32.const 4)))))
+(func $port_set (param $p i32) (param $i i32) (param $v i32)
+  (i32.store offset=12 (i32.add (local.get $p) (i32.mul (local.get $i) (i32.const 4))) (local.get $v)))
+(export "get_state" (func $get_state)) (export "get_value" (func $get_value))
+(export "get_flags" (func $get_flags)) (export "set_value" (func $set_value))
+(export "set_flags" (func $set_flags))
+(export "rec_get" (func $rec_get)) (export "rec_set" (func $rec_set))
+(export "port_get" (func $port_get)) (export "port_set" (func $port_set))
+(export "mem" (memory $m))`,
+  });
+
 // ── Select, both typed and untyped ────────────────────────────────────────
 mod('select', `
 (func $s (param $a i32) (param $b i32) (param $c i32) (result i32)

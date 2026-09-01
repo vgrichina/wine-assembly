@@ -434,6 +434,7 @@ var WATX_SIMD_LANE_MEM_OPS = null;
 var WATX_ATOMIC_OPS = null;
 var WATX_LOAD_OPS = null;
 var WATX_STORE_OPS = null;
+var WATX_LAYOUT_ACCESS_OPS = null;
 
 function encodeString(str) {
   const encoded = WATX_UTF8_ENCODER.encode(str);
@@ -2253,6 +2254,35 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     return { offset, align, next: i };
   }
 
+  // ── The one place a layout access is encoded ───────────────────────────────
+  //
+  // Every one of the six layout accessors (load/store × field/elem/field-elem)
+  // ends in exactly one memory instruction, chosen by the FIELD's declared type
+  // — never by the site. `memargOffset` carries the fork of §3.4:
+  //
+  //   0            the add-form lowering: the caller already emitted
+  //                `i32.const OFF; i32.add`, so the instruction addresses +0.
+  //   field.offset the `.memarg` lowering: no arithmetic was emitted and the
+  //                offset rides in the instruction instead.
+  //
+  // Encoded opcode / ULEB align / ULEB offset, which is byte-for-byte what the
+  // plain `i32.load offset=N` path a few hundred lines below emits — that
+  // equality is the whole oracle, so both spellings go through this one helper
+  // rather than through six hand-written opcode triples that can drift apart.
+  function emitLayoutAccess(bytes, fieldType, isStore, memargOffset) {
+    const tbl = WATX_LAYOUT_ACCESS_OPS || (WATX_LAYOUT_ACCESS_OPS = {
+      load:  { f32: [OP.f32_load, 2],  f64: [OP.f64_load, 3],  u8: [OP.i32_load8_u, 0], i64: [OP.i64_load, 3],  i32: [OP.i32_load, 2] },
+      store: { f32: [OP.f32_store, 2], f64: [OP.f64_store, 3], u8: [OP.i32_store8, 0],  i64: [OP.i64_store, 3], i32: [OP.i32_store, 2] },
+    });
+    const group = isStore ? tbl.store : tbl.load;
+    // `ptr`/`ptr*` and anything unrecognized are 4-byte i32 accesses, which is
+    // what every one of these paths did before the encoding moved in here.
+    const spec = group[fieldType] || group.i32;
+    bytes.byte(spec[0]);
+    bytes.uleb(spec[1]);
+    bytes.uleb(memargOffset);
+  }
+
   // ── block / loop signature ─────────────────────────────────────────────────
   // Returns the declared result valtype of a `(block $l (result T) …)` / `(loop …)`,
   // or null when the node is not a signature at all. Also accepts the bare-valtype
@@ -2309,9 +2339,14 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       if (T(expr) === 'symbol') return true; // local.get or literal
       return false;
     }
-    const head = V(expr[1]);
+    // `.memarg` is a lowering modifier, not a different operation: a
+    // `load.field.memarg` produces a value exactly as `load.field` does, and a
+    // `store.field.memarg` is a statement exactly as `store.field` is. Strip it
+    // before any head test, or the valueOps set below misses the modified
+    // spelling and the auto-drop decision is made for the wrong shape.
+    const head = watxLayoutMemargHead(V(expr[1])).head;
     if (!head) return false;
-    
+
     // Constants always produce values
     if (head === 'i32.const' || head === 'f32.const' || head === 'i64.const' || head === 'f64.const') return true;
 
@@ -2591,7 +2626,22 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       return bytes;
     }
 
-    const head = V(expr[1]);
+    // A layout accessor may carry the `.memarg` modifier (§3.4 of
+    // docs/watx-layout-migration-design.md): the field offset is folded into the
+    // memory instruction's memarg instead of being added to the address first.
+    // Strip it ONCE, here, so every head test below sees the base op and only
+    // the six layout handlers ever consult the flag.
+    const headForm = watxLayoutMemargHead(V(expr[1]));
+    const head = headForm.head;
+    const layoutMemarg = headForm.memarg;
+    if (headForm.noMemarg) {
+      const base = head.slice(0, -'.memarg'.length);
+      const e = new Error(
+        `'${head}' does not exist in ${func?.name || '<expr>'}: ${base} computes an address or a ` +
+        `constant and performs no memory access, so it has no memarg to fold a field offset into.`);
+      e.line = watxNodeLine(expr); e.col = watxNodeCol(expr); e.file = watxNodeFile(expr);
+      throw e;
+    }
 
     if (head === 'unreachable') {
       bytes.push(OP.unreachable);
@@ -3890,30 +3940,19 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const offset = field.offset;
       const fieldType = field.type;
 
-      // ptr + offset
+      // ptr + offset — unless the offset is riding in the memarg instead
       compileExpr(ptrExpr, func, depth, bytes);
-      if (offset > 0) {
+      if (offset > 0 && !layoutMemarg) {
         bytes.byte(OP.i32_const);
         bytes.sleb(offset);
         bytes.push(OP.i32_add);
       }
-      
+
       // value
       compileExpr(valExpr, func, depth, bytes);
-      
-      // store based on type
-      if (fieldType === 'f32') {
-        bytes.push(OP.f32_store, 0x02, 0x00);
-      } else if (fieldType === 'f64') {
-        bytes.push(OP.f64_store, 0x03, 0x00);
-      } else if (fieldType === 'u8') {
-        bytes.push(OP.i32_store8, 0x00, 0x00);
-      } else if (fieldType === 'i64') {
-        bytes.push(OP.i64_store, 0x03, 0x00);
-      } else {
-        bytes.push(OP.i32_store, 0x02, 0x00);
-      }
-      
+
+      emitLayoutAccess(bytes, fieldType, true, layoutMemarg ? offset : 0);
+
       // store.field evaluates to 0 — in the WATX dialect, where every form is an
       // expression. NOT under standardWat, where a store is a statement: the
       // plain `i32.store` path below carries the same `!standardWat` guard, and
@@ -3942,23 +3981,13 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const fieldType = field.type;
 
       compileExpr(ptrExpr, func, depth, bytes);
-      if (offset > 0) {
+      if (offset > 0 && !layoutMemarg) {
         bytes.byte(OP.i32_const);
         bytes.sleb(offset);
         bytes.push(OP.i32_add);
       }
-      
-      if (fieldType === 'f32') {
-        bytes.push(OP.f32_load, 0x02, 0x00);
-      } else if (fieldType === 'f64') {
-        bytes.push(OP.f64_load, 0x03, 0x00);
-      } else if (fieldType === 'u8') {
-        bytes.push(OP.i32_load8_u, 0x00, 0x00);
-      } else if (fieldType === 'i64') {
-        bytes.push(OP.i64_load, 0x03, 0x00);
-      } else {
-        bytes.push(OP.i32_load, 0x02, 0x00);
-      }
+
+      emitLayoutAccess(bytes, fieldType, false, layoutMemarg ? offset : 0);
       return bytes;
     }
 
@@ -3983,23 +4012,15 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       bytes.sleb(structSize);
       bytes.push(OP.i32_mul);
       bytes.push(OP.i32_add);
-      if (fieldOffset > 0) {
+      if (fieldOffset > 0 && !layoutMemarg) {
         bytes.byte(OP.i32_const);
         bytes.sleb(fieldOffset);
         bytes.push(OP.i32_add);
       }
-      
+
       compileExpr(valExpr, func, depth, bytes);
-      
-      if (fieldType === 'f32') {
-        bytes.push(OP.f32_store, 0x02, 0x00);
-      } else if (fieldType === 'f64') {
-        bytes.push(OP.f64_store, 0x03, 0x00);
-      } else if (fieldType === 'u8') {
-        bytes.push(OP.i32_store8, 0x00, 0x00);
-      } else {
-        bytes.push(OP.i32_store, 0x02, 0x00);
-      }
+
+      emitLayoutAccess(bytes, fieldType, true, layoutMemarg ? fieldOffset : 0);
 
       // store.elem evaluates to 0 in the WATX dialect only — see store.field.
       if (!standardWat) {
@@ -4028,21 +4049,13 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       bytes.sleb(structSize);
       bytes.push(OP.i32_mul);
       bytes.push(OP.i32_add);
-      if (fieldOffset > 0) {
+      if (fieldOffset > 0 && !layoutMemarg) {
         bytes.byte(OP.i32_const);
         bytes.sleb(fieldOffset);
         bytes.push(OP.i32_add);
       }
-      
-      if (fieldType === 'f32') {
-        bytes.push(OP.f32_load, 0x02, 0x00);
-      } else if (fieldType === 'f64') {
-        bytes.push(OP.f64_load, 0x03, 0x00);
-      } else if (fieldType === 'u8') {
-        bytes.push(OP.i32_load8_u, 0x00, 0x00);
-      } else {
-        bytes.push(OP.i32_load, 0x02, 0x00);
-      }
+
+      emitLayoutAccess(bytes, fieldType, false, layoutMemarg ? fieldOffset : 0);
       return bytes;
     }
 
@@ -4064,7 +4077,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const stride = field.stride ?? sizeOfType(fieldType);
 
       compileExpr(baseExpr, func, depth, bytes);
-      if (fieldOffset > 0) {
+      if (fieldOffset > 0 && !layoutMemarg) {
         bytes.byte(OP.i32_const);
         bytes.sleb(fieldOffset);
         bytes.push(OP.i32_add);
@@ -4077,17 +4090,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
       compileExpr(valExpr, func, depth, bytes);
 
-      if (fieldType === 'f32') {
-        bytes.push(OP.f32_store, 0x02, 0x00);
-      } else if (fieldType === 'f64') {
-        bytes.push(OP.f64_store, 0x03, 0x00);
-      } else if (fieldType === 'i64') {
-        bytes.push(OP.i64_store, 0x03, 0x00);
-      } else if (fieldType === 'u8') {
-        bytes.push(OP.i32_store8, 0x00, 0x00);
-      } else {
-        bytes.push(OP.i32_store, 0x02, 0x00);
-      }
+      emitLayoutAccess(bytes, fieldType, true, layoutMemarg ? fieldOffset : 0);
 
       // store.field-elem evaluates to 0 in the WATX dialect only — see store.field.
       if (!standardWat) {
@@ -4111,7 +4114,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const stride = field.stride ?? sizeOfType(fieldType);
 
       compileExpr(baseExpr, func, depth, bytes);
-      if (fieldOffset > 0) {
+      if (fieldOffset > 0 && !layoutMemarg) {
         bytes.byte(OP.i32_const);
         bytes.sleb(fieldOffset);
         bytes.push(OP.i32_add);
@@ -4122,17 +4125,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       bytes.push(OP.i32_mul);
       bytes.push(OP.i32_add);
 
-      if (fieldType === 'f32') {
-        bytes.push(OP.f32_load, 0x02, 0x00);
-      } else if (fieldType === 'f64') {
-        bytes.push(OP.f64_load, 0x03, 0x00);
-      } else if (fieldType === 'i64') {
-        bytes.push(OP.i64_load, 0x03, 0x00);
-      } else if (fieldType === 'u8') {
-        bytes.push(OP.i32_load8_u, 0x00, 0x00);
-      } else {
-        bytes.push(OP.i32_load, 0x02, 0x00);
-      }
+      emitLayoutAccess(bytes, fieldType, false, layoutMemarg ? fieldOffset : 0);
       return bytes;
     }
 
@@ -4376,7 +4369,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       }
       return 'i32'; // unknown symbol — conservative default
     }
-    const hd = V(expr[1]);
+    // The `.memarg` modifier changes where the field offset is encoded, never
+    // what the access yields — an f64 field read `.memarg` is still an f64.
+    const hd = watxLayoutMemargHead(V(expr[1])).head;
     if (!hd) return 'i32';
 
     // f32 constants

@@ -252,6 +252,125 @@ between:
 
 (b) is the better end state and should not block (a)'s waves.
 
+#### RESOLVED — (b) landed, as a per-SITE modifier
+
+**(b), and not (a).** Weighed with waves 1, 2 and 4 already on the ground:
+
+| | (a) migrate memarg sites under a weaker oracle | (b) a second lowering |
+|---|---|---|
+| oracle for the 6,547 | corpus / frame-hash — behavioural, per-app, and silent about the sites no app exercises | byte identity, total, same as every other wave |
+| oracle for the 542 already converted | untouched | untouched |
+| cost | +3 bytes and one instruction per site, ~20KB of wasm | one modifier, one shared encoder |
+| reviewability | every wave needs a behavioural argument | a wave is a shasum |
+
+(a) is not merely weaker, it is weaker *exactly where this tree is thin*: a
+frame-hash oracle says nothing about a field only reached on an error path, and
+the whole bug class this migration deletes is the offset nobody exercised. And
+carrying two lowerings turned out to cost almost nothing — the six accessors'
+final memory instruction now goes through one `emitLayoutAccess()` helper
+instead of six hand-written opcode triples, which is *less* emitter surface than
+before, and it repaired a latent gap on the way (`load.elem`/`store.elem` had no
+`i64` branch and emitted an `i32` access for an `i64` field).
+
+**The one correction to (b) as written above: it is a per-SITE modifier, not a
+per-layout attribute.** The sentence "the choice is uniform per file" is true of
+`10f`/`10g` and false of the thing that matters — a *layout's* sites. DxObject is
+497 add-form and 40 memarg, and wave 4 has already converted 367 of them; a
+`(layout DxObject (memarg))` attribute would have silently re-encoded all 367,
+which is precisely the ambient behaviour change the migration's oracle exists to
+prevent. So the spelling lives where the information is:
+
+```wat
+(load.field        TthPoint current_y p)   ;; p; i32.const 4; i32.add; i32.load offset=0
+(load.field.memarg TthPoint current_y p)   ;; p;                        i32.load offset=4
+```
+
+`.memarg` is accepted on the six accessors that end in a memory instruction
+(`load`/`store` × `field`/`elem`/`field-elem`) and is a **hard error** on
+`elem-addr`, `size-of` and `offset-of`, which compute an address or a constant
+and have no memarg to fold into. On any other head it is left alone and lands on
+the existing unknown-head error, so `load.field.memrag` names itself rather than
+quietly becoming `load.field`.
+
+The modifier is stripped in exactly one place — `watxLayoutMemargHead()` in
+`tools/watx-src/compiler-parser.js` — and both the checker and the code
+generator call it. That matters more than it looks: a head normalized in the
+generator but not the checker is a head whose *type* is inferred for a spelling
+that is not the one being emitted, and an `f64` field read `.memarg` would then
+be typed `i32` and fail validation.
+
+Compiler manifest digest `ae2df8439fb10bd2fea4d25698b98ac56fb4f77fd973a87f9b5c4fc0e512e042`.
+Inert on the canonical build, proven in two isolated worktrees:
+`build/wine-assembly.wasm` is
+`13168b57f2e81f7b4b7df6b7885e75b07a929df6c8ed7bc148ffa229972a14e3` with the old
+compiler and with the new one.
+
+##### What the codemod needed on top of it
+
+`tools/layout-migrate.js` gained `--memarg` (opt-in, never default — turning it
+on globally would change what `--gate` means for VSock, WndRecord and DxObject,
+all of which still carry unconverted memarg sites, and their build.sh gates
+would start failing with nobody having asked for a conversion) and, more
+importantly, **`--base-local-from-call`**.
+
+That second flag is wave 2's finding turned into a mechanism. `--base-local` is
+a textual name match with no provenance, and `--skip-func` is a blacklist of the
+places somebody *noticed* the name meant something else — neither is checkable,
+and byte identity cannot help, because a mislabelled site compiles to exactly
+the bytes it replaced. `--base-local-from-call` derives the answer instead: a
+local is a record pointer inside a function iff, in that function, it is
+assigned at least once and *every* assignment to it is `(local.set $X (call
+BASECALL …))`. A parameter never qualifies — there is no assignment in scope to
+derive provenance from.
+
+It is not theoretical. Both files considered for the first memarg wave carry the
+hazard live:
+
+- `src/10d-gdi-region-path.wat`: 46 assignments to `$entry`, spanning **three**
+  records — `$gdi_dc_path_entry`, `$gdi_dc_clip_entry`,
+  `$gdi_dc_system_clip_entry` — plus one hand-computed base inside the accessor.
+- `src/10c1-truetype-hint.wat`: `$a` has 26 assignments and 2 come from
+  `$tth_point`; `$b` has 16 and 2. A global `--base-local=a,b` would have
+  labelled 24 and 14 unrelated sites as fields of `TthPoint`, byte-identically.
+
+Per-function provenance converts the two functions where `$a`/`$b` provably hold
+points and declines the rest, which is an answer no global name list can give.
+
+### 3.4b `TthPoint` — the first memarg wave (`src/10c1-truetype-hint.wat`)
+
+The pipeline's proof, chosen small and clean on purpose: `call $tth_point`, 72
+sites, 53 of them memarg, one file, and a genuine struct rather than a union
+(contrast §5.4).
+
+```wat
+(layout TthPoint
+  (field current_x       i32)   ;; +0   26.6, moved by the hinting program
+  (field current_y       i32)   ;; +4
+  (field original_x      i32)   ;; +8   26.6, the unhinted outline
+  (field original_y      i32)   ;; +12
+  (field flags           i32)   ;; +16  $TTH_P_ON_CURVE | _END | _TOUCH_X | _TOUCH_Y
+  (field original_high_x i32)   ;; +20  higher-precision original, for IUP
+  (field original_high_y i32))  ;; +24  ends at +28 == $TTH_POINT_STRIDE
+```
+
+**70 of 72 sites converted, 52 of them memarg-spelled — the first memarg sites in
+the tree — and `build/wine-assembly.wasm` is unchanged at
+`13168b57f2e81f7b4b7df6b7885e75b07a929df6c8ed7bc148ffa229972a14e3`.** The two
+declines are one `i64.store` pair-store writing `current_x` and `original_x` as
+a single 8-byte write; the width guard refuses it rather than calling an 8-byte
+store a 4-byte field, which is the correct answer and needs §3.1's missing
+widths, not a codemod change.
+
+One thing this wave found that every later one will hit:
+`test/test-wat-truetype-hinting.js` asserts on the *source text*, requiring
+`(i32.load offset=4 (local.get $b))` to appear before the `$a` one inside
+`$tth_set_line_vector`. The invariant is real — the vector must run from the
+first popped point toward the second — but it was pinned to the hand-spelled
+idiom, so a byte-identical conversion read as a regression. The assertion now
+accepts either spelling and still pins the operand order. **A source-shape
+assertion is invisible to the byte-identity oracle**, which is a second reason a
+wave must run the family's own suites and not just diff the shasum.
+
 ### 3.5 A missing primitive: no `record-addr`
 
 `elem-addr` gives the address of an element of an *array field inside* a struct.

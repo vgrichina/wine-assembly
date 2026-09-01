@@ -552,6 +552,42 @@ pair('layout', 'elem-addr names a declared layout',
   `${OK_LAYOUT}\n(func $a (param $p i32) (result i32) (elem-addr Nope ports (local.get $p) (i32.const 1)))\n(export "a" (func $a))`,
   'no such');
 
+// ── The `.memarg` lowering modifier (design §3.4) ──────────────────────────
+// `load.field.memarg` folds the field offset into the memory instruction's
+// memarg instead of adding it to the address first. The rules below all guard
+// the same failure: a modifier that is ACCEPTED where it means nothing. A site
+// spelled `.memarg` on an op that performs no memory access, or on a head that
+// is not a layout accessor at all, must not compile to something plausible —
+// it would read as converted while the offset it names went nowhere.
+pair('layout', '.memarg is accepted on an accessor and refused on elem-addr',
+  `${OK_LAYOUT}\n(func $g (param $p i32) (result i32) (load.field.memarg Rec value (local.get $p)))\n(export "g" (func $g))`,
+  `${OK_LAYOUT}\n(func $a (param $p i32) (result i32) (elem-addr.memarg Rec ports (local.get $p) (i32.const 1)))\n(export "a" (func $a))`,
+  'no memarg');
+pair('layout', '.memarg is refused on size-of, which yields a constant',
+  `${OK_LAYOUT}\n(func $z (result i32) (size-of Rec))\n(export "z" (func $z))`,
+  `${OK_LAYOUT}\n(func $z (result i32) (size-of.memarg Rec))\n(export "z" (func $z))`,
+  'no memarg');
+pair('layout', '.memarg is refused on offset-of, which yields a constant',
+  `${OK_LAYOUT}\n(func $o (result i32) (offset-of Rec value))\n(export "o" (func $o))`,
+  `${OK_LAYOUT}\n(func $o (result i32) (offset-of.memarg Rec value))\n(export "o" (func $o))`,
+  'no memarg');
+pair('layout', '.memarg on a non-layout head is an unknown head, not a modifier',
+  `${OK_LAYOUT}\n(func $g (param $p i32) (result i32) (i32.load offset=4 (local.get $p)))\n(export "g" (func $g))`,
+  `${OK_LAYOUT}\n(func $g (param $p i32) (result i32) (i32.load.memarg offset=4 (local.get $p)))\n(export "g" (func $g))`,
+  'Unknown form head');
+pair('layout', 'a misspelled modifier is not silently the plain accessor',
+  `${OK_LAYOUT}\n(func $g (param $p i32) (result i32) (load.field.memarg Rec value (local.get $p)))\n(export "g" (func $g))`,
+  `${OK_LAYOUT}\n(func $g (param $p i32) (result i32) (load.field.memrag Rec value (local.get $p)))\n(export "g" (func $g))`,
+  'Unknown form head');
+pair('layout', '.memarg still checks the layout name',
+  `${OK_LAYOUT}\n(func $g (param $p i32) (result i32) (load.field.memarg Rec value (local.get $p)))\n(export "g" (func $g))`,
+  `${OK_LAYOUT}\n(func $g (param $p i32) (result i32) (load.field.memarg Nope value (local.get $p)))\n(export "g" (func $g))`,
+  'no such');
+pair('layout', '.memarg still checks the field name',
+  `${OK_LAYOUT}\n(func $s (param $p i32) (store.field.memarg Rec value (local.get $p) (i32.const 1)))\n(export "s" (func $s))`,
+  `${OK_LAYOUT}\n(func $s (param $p i32) (store.field.memarg Rec vlaue (local.get $p) (i32.const 1)))\n(export "s" (func $s))`,
+  'Unknown field');
+
 // ── The runner ────────────────────────────────────────────────────────────
 
 function runPairs({ only = null, onResult = null } = {}) {

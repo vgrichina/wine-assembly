@@ -17,6 +17,88 @@ Rules:
 - Every compiler change lands with a minimal regression in one of the
   `test/watx-compiler-*.test.js` suites.
 
+## 2026-08-31 — a layout access can put its field offset in the memarg
+
+Manifest digest: `ae2df8439fb10bd2fea4d25698b98ac56fb4f77fd973a87f9b5c4fc0e512e042`
+
+`compiler-parser.js`, `compiler-stages.js`, `compiler-codegen.js`. Branch (b) of
+§3.4 of [docs/watx-layout-migration-design.md](../../docs/watx-layout-migration-design.md).
+
+A layout accessor had exactly one lowering:
+
+```
+  (load.field L f p)  ->  p; i32.const OFF; i32.add; i32.load align=2 offset=0
+```
+
+which is byte-for-byte the `(i32.load (i32.add p (i32.const OFF)))` idiom, and
+that byte identity is the entire oracle the layout migration is gated on. But
+**6,547 of the tree's 12,061 struct-field sites are not spelled that way** —
+they carry the offset in the instruction instead, `(i32.load offset=8 (local.get
+$p))`, which is three bytes shorter and a different encoding. Those sites could
+not be converted at all without moving the shasum, so they were parked.
+
+The six accessors that end in a memory instruction — `load.field`,
+`store.field`, `load.elem`, `store.elem`, `load.field-elem`,
+`store.field-elem` — now accept a **`.memarg` modifier** that selects the other
+lowering:
+
+```
+  (load.field.memarg L f p)  ->  p; i32.load align=2 offset=OFF
+```
+
+Same field, same layout, same byte addressed; the offset is simply encoded in
+the place the source already put it. Both populations are now convertible under
+byte identity, which is why this is a per-SITE modifier and **not** the
+per-layout attribute §3.4 originally sketched: a layout's sites are spelled both
+ways in real source (DxObject has 497 add-form and 40 memarg, and wave 4 already
+converted 367 of them), so a per-layout flag would have silently re-encoded
+work that had already been reviewed and shipped. The choice belongs where the
+information is — at the site.
+
+The modifier is stripped in exactly one place, `watxLayoutMemargHead()` in
+`compiler-parser.js`, and every head-consuming site in the checker
+(`synthesize`, `walkExpr`) and the code generator (`compileExpr`,
+`needsAutoDrop`, `inferExprType`) calls it. Stage 1 is where it lives because
+all four stage files share one global scope and a head normalized in the
+generator but not the checker is a head whose *type* is inferred for a spelling
+that is not the one being emitted — an `f64` field read `.memarg` would have
+been typed `i32` and the module would have failed validation.
+
+Two refusals come with it, because a modifier that is accepted where it means
+nothing is worse than no modifier at all — the site reads as converted while the
+offset it names went nowhere:
+
+- `elem-addr.memarg` / `size-of.memarg` / `offset-of.memarg` are a hard error
+  naming the reason (those ops compute an address or a constant and perform no
+  memory access, so there is no memarg to fold into);
+- `.memarg` on anything else (`i32.load.memarg`, a misspelling like
+  `load.field.memrag`) is left alone and lands on the existing unknown-head
+  error, which names the head the author actually wrote.
+
+**Drive-by, in the same commit because the encoding moved into one helper:** the
+final memory instruction for all six accessors is now emitted by
+`emitLayoutAccess()` rather than by six hand-written opcode triples. Two of
+those six — `load.elem` and `store.elem` — had **no `i64` branch**, so an `i64`
+field reached through them emitted an `i32.load`/`i32.store`. That was never a
+valid module (the checker types the expression `i64` and the access pushes an
+`i32`), so nothing correct can have depended on it; it is now consistent with
+the other four.
+
+Inert on the canonical build, PROVEN rather than asserted: `build/wine-assembly.wasm`
+is `13168b57f2e81f7b4b7df6b7885e75b07a929df6c8ed7bc148ffa229972a14e3` (990927
+bytes) built at `a1408777` with the HEAD compiler and with this one, in two
+isolated worktrees — nothing in `src/` spells `.memarg` yet.
+
+Regressions: `test/test-watx-compiler-layout.js` gains five checks (per-op byte
+identity against the *memarg-spelled* twin for all eight accessor shapes; the
+assertion that the two lowerings genuinely differ, by exactly the three bytes of
+`i32.const N; i32.add`, and coincide at offset 0; a cross round-trip proving both
+lowerings address the same byte; `.memarg` stores validating as statements under
+`standardWat`; and the three no-memory-access refusals).
+`tools/watx-differential.js` gains `layout-field-memarg`, whose `refSource` is
+the `offset=` spelling — byte-identical. `tools/watx-rejection-pairs.js` gains 7
+pairs, 109/109.
+
 ## 2026-08-31 — store.field stops leaving a value on the stack
 
 Manifest digest: `a933c58ab262e2f89ec0f4e1ab9a32c9548d89dadff969900bce8670958c0bdf`

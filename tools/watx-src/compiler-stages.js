@@ -238,7 +238,12 @@ function checkTypes(forms, options = {}) {
     var localEnv = new Map(); for(var pi=0;pi<params.length;pi++) if(params[pi].name) localEnv.set(params[pi].name,stackType(params[pi].type));
     var bodyExprs = []; for(var i=2;i<N(form);i++){var part=A(form,i);if(Array.isArray(part)){var k=V(A(part,0));if(k==="param"||k==="result"||k==="effects"||k==="export")continue;}bodyExprs.push(part);}
     function synthesize(expr) { if(!Array.isArray(expr)){if(T(expr)==="number")return String(V(expr)).indexOf(".")>=0?"f32":"i32";if(T(expr)==="symbol")return localEnv.has(V(expr))?localEnv.get(V(expr)):"i32";return"i32";}
-      var hd=V(A(expr,0));if(!hd)return"i32";
+      // A layout accessor's `.memarg` modifier picks the LOWERING, not the
+      // operation (see watxLayoutMemargHead in compiler-parser.js). Strip it
+      // here, or `load.field.memarg` misses every head test below and falls
+      // through to the "i32" default -- silently mistyping an f32/f64/i64 field
+      // read for the one spelling the codegen is about to emit differently.
+      var hd=watxLayoutMemargHead(V(A(expr,0))).head;if(!hd)return"i32";
       // SIMD (v128) first — scalar-returning extracts/reductions BEFORE the shape-prefix
       // fallback, so `(let $x (i32x4.extract_lane v 0))` types $x as i32, not v128.
       if(hd==="v128.any_true"||hd==="i8x16.all_true"||hd==="i16x8.all_true"||hd==="i32x4.all_true"||hd==="i64x2.all_true") return"i32";
@@ -273,7 +278,7 @@ function checkTypes(forms, options = {}) {
       if(hd==="begin"||hd==="with-region")return N(expr)>=2?synthesize(A(expr,N(expr)-1)):"i32";
       if(["nop","drop","br","br_if","return"].indexOf(hd)>=0)return"i32";return"i32";}
     function checkExpr(expr,expected,context){var actual=synthesize(expr);if(actual!==expected)addWarning("Type mismatch in "+context+": expected "+expected+", got "+actual,expr);}
-    function walkExpr(expr){if(!Array.isArray(expr))return;var hd=V(A(expr,0));if(!hd)return;
+    function walkExpr(expr){if(!Array.isArray(expr))return;var hd=watxLayoutMemargHead(V(A(expr,0))).head;if(!hd)return;
       if(hd==="let"){var nm=V(A(expr,1));if(N(expr)>=4&&T(A(expr,2))==="symbol"&&VALTYPE_TOKENS.indexOf(V(A(expr,2)))>=0){var dt=stackType(V(A(expr,2)));if(nm)localEnv.set(nm,dt);checkExpr(A(expr,3),dt,"let "+nm+" init");walkExpr(A(expr,3));}else if(nm&&A(expr,2)){localEnv.set(nm,synthesize(A(expr,2)));walkExpr(A(expr,2));}return;}
       if(hd==="set!"||hd==="local.set"){var nm=V(A(expr,1));if(nm&&localEnv.has(nm)&&A(expr,2)){checkExpr(A(expr,2),localEnv.get(nm),"set! "+nm);walkExpr(A(expr,2));}return;}
       if(hd==="call"){var fn=V(A(expr,1));var ep=null;var im=importSigs.get(fn);if(im)ep=im.params;else{var uf=functions.get(fn);if(uf)ep=uf.params.map(function(p){return p.type});}if(ep){var args=SL(expr,2);for(var ai=0;ai<Math.min(args.length,ep.length);ai++)checkExpr(args[ai],stackType(ep[ai]),"call "+fn+" arg "+ai);if(args.length!==ep.length)addError("call "+fn+": expected "+ep.length+" args, got "+args.length+" (wrong number of arguments)",expr);}for(var i=2;i<N(expr);i++)walkExpr(A(expr,i));return;}

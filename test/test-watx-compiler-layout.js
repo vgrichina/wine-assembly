@@ -166,6 +166,128 @@ check('every accessor lowers to the hand-spelled bytes', () => {
   }
 });
 
+// ── 3b. The `.memarg` lowering and ITS hand-spelled twin ───────────────────
+// §3.4 of the design doc: 6,547 sites in src/*.wat spell the field offset in the
+// instruction's memarg (`(i32.load offset=8 (local.get $p))`) rather than as an
+// explicit i32.add. That is three bytes shorter and is NOT the same wasm, so
+// those sites could not join a byte-identical wave at all. `load.field.memarg`
+// is the second lowering: same field, same layout, the offset encoded the other
+// way. Each pair below must match its OWN twin -- and section 3c asserts the two
+// lowerings really do differ, because a modifier that quietly did nothing would
+// pass every check in this section.
+check('every .memarg accessor lowers to the memarg-spelled bytes', () => {
+  const bin = build(`${LAYOUT}
+(memory $m 1)
+(func $a_hand  (param $p i32) (result i32) (i32.load offset=8 (local.get $p)))
+(func $a_field (param $p i32) (result i32) (load.field.memarg Rec value (local.get $p)))
+(func $b_hand  (param $p i32) (result i32) (i32.load (local.get $p)))
+(func $b_field (param $p i32) (result i32) (load.field.memarg Rec state (local.get $p)))
+(func $c_hand  (param $p i32) (result i32) (i32.load8_u offset=4 (local.get $p)))
+(func $c_field (param $p i32) (result i32) (load.field.memarg Rec flags (local.get $p)))
+(func $d_hand  (param $p i32) (param $v i32) (i32.store offset=8 (local.get $p) (local.get $v)))
+(func $d_field (param $p i32) (param $v i32) (store.field.memarg Rec value (local.get $p) (local.get $v)))
+(func $e_hand  (param $b i32) (param $i i32) (result i32)
+  (i32.load offset=8 (i32.add (local.get $b) (i32.mul (local.get $i) (i32.const 28)))))
+(func $e_field (param $b i32) (param $i i32) (result i32) (load.elem.memarg Rec value (local.get $b) (local.get $i)))
+(func $f_hand  (param $p i32) (param $i i32) (result i32)
+  (i32.load offset=12 (i32.add (local.get $p) (i32.mul (local.get $i) (i32.const 4)))))
+(func $f_field (param $p i32) (param $i i32) (result i32) (load.field-elem.memarg Rec ports (local.get $p) (local.get $i)))
+(func $g_hand  (param $b i32) (param $i i32) (param $v i32)
+  (i32.store offset=8 (i32.add (local.get $b) (i32.mul (local.get $i) (i32.const 28))) (local.get $v)))
+(func $g_field (param $b i32) (param $i i32) (param $v i32) (store.elem.memarg Rec value (local.get $b) (local.get $i) (local.get $v)))
+(func $h_hand  (param $p i32) (param $i i32) (param $v i32)
+  (i32.store offset=12 (i32.add (local.get $p) (i32.mul (local.get $i) (i32.const 4))) (local.get $v)))
+(func $h_field (param $p i32) (param $i i32) (param $v i32) (store.field-elem.memarg Rec ports (local.get $p) (local.get $i) (local.get $v)))
+(export "a" (func $a_field))`);
+  const bodies = codeBodies(bin);
+  const labels = ['load.field.memarg +8', 'load.field.memarg +0', 'load.field.memarg u8',
+                  'store.field.memarg', 'load.elem.memarg', 'load.field-elem.memarg',
+                  'store.elem.memarg', 'store.field-elem.memarg'];
+  assert.strictEqual(bodies.length, 16, `expected 16 function bodies, got ${bodies.length}`);
+  for (let k = 0; k < labels.length; k++) {
+    const hand = bodies[k * 2], sugar = bodies[k * 2 + 1];
+    assert.ok(hand.equals(sugar),
+      `${labels[k]} is NOT byte-identical to its hand-spelled twin\n` +
+      `         hand=${hand.toString('hex')}\n         watx=${sugar.toString('hex')}`);
+  }
+});
+
+// ── 3c. The two lowerings are actually different ───────────────────────────
+// The modifier's whole reason to exist is that these two populations cannot be
+// spelled the same way. If `.memarg` ever became a no-op suffix, section 3b
+// would still pass for the zero-offset field (where both lowerings coincide)
+// and section 3 would still pass everywhere -- and every memarg wave would then
+// silently re-encode its file. So assert the difference directly.
+check('.memarg is a different, shorter encoding at a nonzero offset', () => {
+  const bin = build(`${LAYOUT}
+(memory $m 1)
+(func $add    (param $p i32) (result i32) (load.field Rec value (local.get $p)))
+(func $memarg (param $p i32) (result i32) (load.field.memarg Rec value (local.get $p)))
+(func $add0    (param $p i32) (result i32) (load.field Rec state (local.get $p)))
+(func $memarg0 (param $p i32) (result i32) (load.field.memarg Rec state (local.get $p)))
+(export "a" (func $add))`);
+  const b = codeBodies(bin);
+  assert.ok(!b[0].equals(b[1]), 'load.field and load.field.memarg emitted the same bytes at +8');
+  assert.strictEqual(b[0].length - b[1].length, 3, 'the memarg form should be exactly 3 bytes shorter (i32.const N; i32.add)');
+  // At offset 0 there is nothing to encode either way, so they DO coincide --
+  // which is why the assertion above has to be made at a nonzero offset.
+  assert.ok(b[2].equals(b[3]), 'at offset 0 the two lowerings should coincide');
+});
+
+// ── 3d. Both lowerings address the same byte ───────────────────────────────
+check('.memarg reads back what the add-form wrote, and vice versa', () => {
+  const bin = build(`${LAYOUT}
+(memory $m 1)
+(func $set_add (param $p i32) (param $v i32) (store.field Rec value (local.get $p) (local.get $v)))
+(func $get_ma  (param $p i32) (result i32) (load.field.memarg Rec value (local.get $p)))
+(func $set_ma  (param $p i32) (param $v i32) (store.field.memarg Rec value (local.get $p) (local.get $v)))
+(func $get_add (param $p i32) (result i32) (load.field Rec value (local.get $p)))
+(func $raw     (param $p i32) (result i32) (i32.load offset=8 (local.get $p)))
+(func $pset (param $p i32) (param $i i32) (param $v i32) (store.field-elem.memarg Rec ports (local.get $p) (local.get $i) (local.get $v)))
+(func $pget (param $p i32) (param $i i32) (result i32) (load.field-elem Rec ports (local.get $p) (local.get $i)))
+(export "set_add" (func $set_add)) (export "get_ma" (func $get_ma))
+(export "set_ma" (func $set_ma)) (export "get_add" (func $get_add)) (export "raw" (func $raw))
+(export "pset" (func $pset)) (export "pget" (func $pget))`);
+  assert.ok(WebAssembly.validate(bin), 'module failed WebAssembly.validate');
+  const ex = new WebAssembly.Instance(new WebAssembly.Module(bin), {}).exports;
+  ex.set_add(64, 0x0BADF00D);
+  assert.strictEqual(ex.get_ma(64), 0x0BADF00D | 0, '.memarg load did not see the add-form store');
+  ex.set_ma(128, 0x12345678);
+  assert.strictEqual(ex.get_add(128), 0x12345678, 'add-form load did not see the .memarg store');
+  assert.strictEqual(ex.raw(128), 0x12345678, 'the .memarg store did not land at +8');
+  ex.pset(192, 2, 0x4242);
+  assert.strictEqual(ex.pget(192, 2), 0x4242, '.memarg array store did not round-trip');
+});
+
+// ── 3e. A .memarg store is still a statement under standardWat ─────────────
+check('.memarg stores in a void function validate (standardWat)', () => {
+  const bin = build(`${LAYOUT}
+(memory $m 1)
+(func $f (param $p i32) (param $i i32) (param $v i32)
+  (store.field.memarg Rec state (local.get $p) (local.get $v))
+  (store.field.memarg Rec value (local.get $p) (local.get $v))
+  (store.elem.memarg Rec value (local.get $p) (local.get $i) (local.get $v))
+  (store.field-elem.memarg Rec ports (local.get $p) (local.get $i) (local.get $v)))
+(export "f" (func $f))`);
+  assert.ok(WebAssembly.validate(bin), 'module failed WebAssembly.validate');
+});
+
+// ── 3f. The modifier is rejected where there is no memory access ───────────
+// elem-addr / size-of / offset-of compute an address or a constant. A `.memarg`
+// on one of them is a misunderstanding, and the failure mode if it were merely
+// ignored is a site that looks converted and is not.
+check('.memarg on a non-accessing layout op is a hard error', () => {
+  for (const src of [
+    `(func $f (param $p i32) (param $i i32) (result i32) (elem-addr.memarg Rec ports (local.get $p) (local.get $i)))`,
+    `(func $f (result i32) (size-of.memarg Rec))`,
+    `(func $f (result i32) (offset-of.memarg Rec value))`,
+  ]) {
+    const out = compile(`${LAYOUT}\n(memory $m 1)\n${src}\n(export "f" (func $f))`, new Map(), PROD);
+    assert.ok(!out.success, `expected a compile error for: ${src}`);
+    assert.ok(/memarg/.test(out.error || ''), `error should name the modifier, got: ${out.error}`);
+  }
+});
+
 // ── 4. The accessors actually address the right bytes ──────────────────────
 // Byte identity says the two spellings agree; this says they are both RIGHT.
 check('fields round-trip through memory at their declared offsets', () => {

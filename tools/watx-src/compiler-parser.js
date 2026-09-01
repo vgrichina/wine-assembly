@@ -290,6 +290,58 @@ function watxValue(node) {
   return typeof node === 'string' ? node : node?.value;
 }
 
+// ── The `.memarg` layout-access modifier ───────────────────────────────────
+//
+// A layout accessor lowers the field offset one of two ways, and WHICH ONE is a
+// property of the SITE, not of the layout:
+//
+//   (load.field        L f p)   ->  p; i32.const OFF; i32.add; i32.load align=2 offset=0
+//   (load.field.memarg L f p)   ->  p;                         i32.load align=2 offset=OFF
+//
+// Both address the same byte and the second is three bytes shorter, but they are
+// DIFFERENT wasm, and that is the point: the source tree spells the same records
+// both ways (6,547 sites carry an `offset=` memarg, the rest an explicit
+// `i32.add`), and a migration wave is gated on producing a byte-identical
+// build/wine-assembly.wasm. One lowering per site keeps that oracle total for
+// both populations — see §3.4 of docs/watx-layout-migration-design.md for why
+// this is per-site and NOT the per-layout attribute that section first proposed
+// (DxObject alone has 497 add-spelled and 40 memarg-spelled sites; a per-layout
+// flag would have silently re-encoded the 367 already converted).
+//
+// Declared here, in stage 1, because all four stage files share one global
+// scope and BOTH the checker (compiler-stages.js) and the code generator
+// (compiler-codegen.js) must strip the modifier the same way. A head normalized
+// in one and not the other is a head whose type is inferred for a spelling that
+// is not the one being emitted.
+const WATX_LAYOUT_MEMARG_OPS = new Set([
+  'load.field', 'store.field',
+  'load.elem', 'store.elem',
+  'load.field-elem', 'store.field-elem',
+]);
+
+// Layout ops that compute an ADDRESS or a CONSTANT rather than performing a
+// memory access. They have no memarg to put an offset in, so `.memarg` on one of
+// them is a hard error rather than a silently-ignored suffix.
+const WATX_LAYOUT_NO_MEMARG_OPS = new Set(['elem-addr', 'size-of', 'offset-of']);
+
+// Returns { head, memarg, noMemarg }: the base op, whether the site asked for
+// the memarg lowering, and whether it asked for one on an op that HAS no memory
+// access. A head that is not a layout accessor comes back untouched, so this is
+// safe to call on every form head.
+//
+// It never throws: it is called from the checker, from needsAutoDrop and from
+// the code generator, and only the last of those can attach a source location to
+// a diagnostic. `noMemarg` is reported there.
+function watxLayoutMemargHead(head) {
+  if (typeof head !== 'string' || !head.endsWith('.memarg')) return { head, memarg: false, noMemarg: false };
+  const base = head.slice(0, -'.memarg'.length);
+  if (WATX_LAYOUT_MEMARG_OPS.has(base)) return { head: base, memarg: true, noMemarg: false };
+  if (WATX_LAYOUT_NO_MEMARG_OPS.has(base)) return { head, memarg: false, noMemarg: true };
+  // Not a layout op at all (`i32.load.memarg`, a typo, a macro name). Left
+  // alone so the unknown-head diagnostic names the head the author wrote.
+  return { head, memarg: false, noMemarg: false };
+}
+
 function watxType(node) {
   if (typeof node !== 'string') return node?.type;
   if (node.charCodeAt(0) === 34) return 'string';
