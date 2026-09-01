@@ -939,11 +939,13 @@
   ;; FPU unimplemented opcode message — passed to $crash_unimplemented when an
   ;; x87 escape opcode is decoded but the (group, reg, rm) tuple has no handler.
   (data (region.addr $STRING_CONSTANTS 0x1F0) "FPU_UNIMPL\00")
-  ;; CRT exports that should stay host-dispatched even when msvcrt.dll is loaded.
-  (data (region.addr $STRING_CONSTANTS 0x200) "ceil\00sqrt\00sin\00pow\00_CIpow\00")
-  ;; Import-hint correction strings. Funtris has a stale USER32 import name
-  ;; ("GetMessageA") with the MessageBoxA export hint.
-  (data (region.addr $STRING_CONSTANTS 0x219) "MessageBoxA\00USER32.dll\00GetMessageA\00")
+  ;; 0x200..0x23C USED to hold two packed NUL-separated blobs: the CRT exports
+  ;; that stay host-dispatched even with msvcrt.dll loaded, and the import-hint
+  ;; correction pair for Funtris's stale "GetMessageA" name on the MessageBoxA
+  ;; hint. Both features are alive; neither reads bytes any more. They are
+  ;; `"text"` literals now — $str_eq/$lookup_api_id "ceil" in 08b-dll-loader.wat,
+  ;; $import_hint_override_api_id in 10-helpers.wat — which the WATX compiler
+  ;; interns, dedupes and addresses itself. 60 bytes, no reader, deleted.
   ;; MessageBox button labels — referenced by $create_msgbox_dialog.
   (data (region.addr $STRING_CONSTANTS 0x240) "Abort\00")        ;; len 5  — MB_ABORTRETRYIGNORE
   (data (region.addr $STRING_CONSTANTS 0x246) "Retry\00")        ;; len 5  — MB_ABORTRETRYIGNORE / MB_RETRYCANCEL
