@@ -16,10 +16,14 @@ const extraWat = String.raw`
     (global.set $esp (i32.const 0x00500000))
     (global.set $eip (i32.const 0x00409999))
     (global.set $font_enum_ret_thunk (i32.const 0x00402000))
-    (i32.store (i32.const 0x2DA) (i32.const 0x32353132))
-    (i32.store8 offset=4 (i32.const 0x2DA) (i32.const 0))
+    ;; The source string goes in $TEST_SCRATCH, the region declared for exactly
+    ;; this. 0x2DA used to be spelled here, which was an interior address of
+    ;; $STRING_CONSTANTS — a live region — so the test both wrote over real
+    ;; string data and held a copy of a map the allocator re-places.
+    (i32.store (region.addr $TEST_SCRATCH 0) (i32.const 0x32353132))
+    (i32.store8 offset=4 (region.addr $TEST_SCRATCH 0) (i32.const 0))
     (call $system_string_enum_a
-      (i32.const 0x00401000) (i32.const 0x2DA) (i32.const 0x00401234))
+      (i32.const 0x00401000) (region.addr $TEST_SCRATCH 0) (i32.const 0x00401234))
     (global.get $esp))
   (func (export "test_system_enum_return") (result i32)
     ;; Model the callback's stdcall RET 4: return address plus LPSTR argument.

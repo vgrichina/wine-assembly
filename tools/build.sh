@@ -40,6 +40,15 @@ node tools/gen-region-map.js --check
 # with no error anywhere — see d59ce229, a copied base that was zeroing 32KB of
 # $PE_STAGING per worker spawn. Hard gate, not a ratchet: the answer is zero.
 node tools/region-census.js --js-copies
+# ...and neither may a WAT fragment a JS test splices into our sources. That
+# fragment is compiled by our own compiler, so region.addr resolves inside it,
+# which makes a bare (i32.const N) in a MEMORY-OPERAND position a copy of the
+# map by construction. Neither gate above can see one: the ratchet skips
+# allocated bases, and --js-copies matches only CURRENT bases and ends, which a
+# STALE copy never equals. test-wave-out-get-id stored a waveOut handle at
+# 0xD160 — $WAVE_OUT_SHARED before the map moved, and by then 0x1010 into
+# $SCROLL_TABLE — and answered MMSYSERR_INVALHANDLE to a valid handle for it.
+node tools/region-census.js --embedded-wat
 # JS host-side guest-pointer translation must use the same DIB/RPC boundary as
 # WAT. A stale extra megabyte maps guest DIB addresses onto worker RPC slots.
 node test/test-wat-rpc-region.js

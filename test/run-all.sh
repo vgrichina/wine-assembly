@@ -212,6 +212,7 @@ UNIT=(
   test/test-cross-thread-send.js
   test/test-wat-rpc-region.js
   test/test-region-js-copies.js
+  test/test-region-wat-fragments.js
   test/test-region-layout-fingerprint.js
   test/test-region-shake.js
   test/test-worker-thread-scheduler.js
@@ -541,6 +542,7 @@ UNIT=(
   test/watx-compiler-string-pool.test.js
   test/watx-compiler-type-index.test.js
   test/watx-compiler-wine-parity.test.js
+  test/test-keyboard-focus-seed.js
 )
 
 E2E=(

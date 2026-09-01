@@ -16,6 +16,8 @@
 //   node tools/region-census.js --gate          # refuse an INCREASE vs baseline
 //   node tools/region-census.js --record        # rewrite the baseline
 //   node tools/region-census.js --js-copies     # refuse a hand-copied ALLOCATED base in JS
+//   node tools/region-census.js --embedded-wat  # refuse a hand-written address in a
+//                                               # WAT fragment a JS test splices into src
 //
 // THE RATCHET. --gate compares against tools/region-census.baseline.json and
 // fails when any file's count goes UP, or when a region marked `converted` in
@@ -314,7 +316,237 @@ function jsCopies(options = {}) {
   return { hits, checkedValues: byValue.size, floor: JS_COPY_FLOOR };
 }
 
+// ============================================================================
+// --embedded-wat — the half neither the ratchet nor --js-copies can see.
+//
+// A JS test may append WAT to a source part before compiling it (the
+// `String.raw` corpus: 160 files today, via bootRenderHarness({ extraWat }) or
+// compileSrcWasm). That fragment is compiled by our own compiler, so
+// `region.addr $R off` is available inside it — which makes a bare
+// `(i32.const N)` in a MEMORY-OPERAND position a copy of the map by
+// construction, with no judgement call about whether the number "looks like an
+// address": in that position it IS the address.
+//
+// --js-copies cannot catch these, and test-wave-out-get-id is the proof. It
+// stored the open waveOut handle at a hard-coded 0xD160, which was
+// $WAVE_OUT_SHARED before the map became allocated. Two independent reasons
+// that gate was blind to it: the value equals no CURRENT base or end (a STALE
+// copy matches nothing, and staleness is the entire failure mode), and 0xC140
+// — where the region actually sits — is below its measured 0x20000 floor.
+// Meanwhile 0xD160 had become an interior address of $SCROLL_TABLE, so the
+// store was quietly scribbling on the scroll table and $handle_waveOutGetID
+// answered MMSYSERR_INVALHANDLE to a valid handle.
+//
+// So this rule is INTERIOR-aware where --js-copies is base/end-only: any value
+// inside an ALLOCATED region's extent counts, not just its endpoints. It can
+// afford that precisely because the position already proved it is an address.
+//
+// PRECISION OVER RECALL. The positions checked are exactly these, all FOLDED:
+//
+//   (T.load*  <ADDR>)              T in i32/i64/f32/f64, any width/sign suffix
+//   (T.store* <ADDR> <value>)      the first operand of a store is its address
+//   (T.atomic.load|store|rmw*.OP <ADDR> ...)
+//   (memory.fill|copy|init <ADDR> ...)   destination address
+//
+// where <ADDR> is literally `(i32.const N)` and `offset=`/`align=` immediates
+// may sit between the opcode and it. NOT checked, deliberately: the stack
+// (non-folded) form, computed addresses like `(i32.add (i32.const N) ...)`,
+// and every other operand position — a store's VALUE, a call argument, a
+// global.set. Those need a judgement about what the number means, and a gate
+// that guesses is a gate that cries wolf and gets deleted. This one only ever
+// fires on a syntactic position where being wrong is not possible.
+//
+// Only ALLOCATED regions are consulted. A pinned or derived base does not move,
+// so a literal inside one is not the drift this exists to catch.
+// ============================================================================
+
+// A template literal that plausibly holds WAT. Requires a real opening form,
+// so a JS backtick string of prose or SQL is never scanned.
+const WAT_FRAGMENT = /\(\s*(?:module|func|global|memory|data|elem|type|table|local|i32|i64|f32|f64)\b/;
+
+// THE SCOPE, and why it is the file and not the fragment. "Our map" means the
+// map of the module the fragment is compiled INTO, so only a fragment SPLICED
+// INTO THE EMULATOR'S OWN SOURCES is addressing it. There are exactly two ways
+// to do that — bootRenderHarness({ extraWat }) and compileSrcWasm(), both of
+// which append to a src/*.wat part before compiling the tree.
+//
+// Everything else compiling WAT in this repo is a compiler unit test
+// (test/watx-compiler-*.test.js), which builds a SELF-CONTAINED module with its
+// own (memory ...) and sometimes its own region.declare. Its 0x100 is an offset
+// into an address space that exists for four lines and has nothing to do with
+// $STRING_CONSTANTS. Flagging those is the 884-false-positive trap of the
+// original census in a new costume: 38 hits, every one of them noise, in the
+// files whose whole job is to write small standalone modules.
+//
+// This is a discriminator, not a filename exemption — a compiler test that
+// starts splicing into our sources would be scanned, and a new appending
+// harness only has to be named here.
+const WAT_APPENDERS = /\b(?:extraWat|compileSrcWasm)\b/;
+
+// And a second guard at the fragment level, for the same reason stated locally:
+// a fragment that brings its own memory or declares its own regions carries its
+// own address space, so its literals cannot be copies of ours.
+// `memory` must be followed by whitespace or a close paren so this matches the
+// memory SECTION — `(memory 1 1 shared)` — and not the instruction
+// `(memory.fill ...)`, whose own dot is a word boundary.
+const SELF_CONTAINED = /\(\s*(?:memory[\s)]|region\.declare)/;
+
+// The address operand of every folded memory access. See the header above for
+// the positions this does and does not cover.
+const MEM_OPERAND = new RegExp(
+  '\\(\\s*(?:'
+  + '(?:i32|i64|f32|f64)\\.(?:atomic\\.)?'
+  + '(?:rmw(?:8|16|32)?\\.[a-z_]+|(?:load|store)(?:8|16|32)?(?:_[su])?)'
+  + '|memory\\.(?:fill|copy|init)'
+  + ')\\s+(?:(?:offset|align)=[0-9A-Fa-fxX]+\\s+)*'
+  + '\\(\\s*i32\\.const\\s+(0[xX][0-9A-Fa-f]+|\\d+)\\s*\\)',
+  'g');
+
+// Blank out `;;` comments while preserving every offset, so a match's index
+// still maps to the right line and an address named in prose is not a hit.
+function blankWatComments(text) {
+  return text.replace(/;;[^\n]*/g, (m) => ' '.repeat(m.length));
+}
+
+// Every template-literal body in a JS source, with its absolute start offset.
+// A real lexer pass rather than a backtick regex: a backtick inside a string or
+// a `//` comment must not open a fragment, and `${ }` may nest one template
+// inside another.
+function templateLiterals(text) {
+  const out = [];
+  // Each open template pushes { start, depth }: `depth` counts the `${ }` it is
+  // currently inside, so the backtick that closes it is the one seen at depth 0.
+  const stack = [];
+  const inTemplateBody = () => stack.length > 0 && stack[stack.length - 1].depth === 0;
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '\\') { i += 2; continue; }
+
+    // INSIDE a template body only backticks, `${` and escapes are syntax. This
+    // is not a detail: a WAT `;;` comment reading "the callback's stdcall RET 4"
+    // has an apostrophe in it, and treating that as a JS string start swallowed
+    // the rest of the file — the scanner then reported zero fragments and the
+    // gate passed everything.
+    if (inTemplateBody()) {
+      if (c === '`') {
+        const { start } = stack.pop();
+        out.push({ start, text: text.slice(start, i) });
+      } else if (c === '$' && text[i + 1] === '{') {
+        stack[stack.length - 1].depth += 1;
+        i += 1;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (c === '/' && text[i + 1] === '/') {
+      const nl = text.indexOf('\n', i);
+      i = nl === -1 ? text.length : nl;
+      continue;
+    }
+    if (c === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      i = end === -1 ? text.length : end + 2;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      i += 1;
+      while (i < text.length && text[i] !== c && text[i] !== '\n') {
+        i += (text[i] === '\\' ? 2 : 1);
+      }
+      i += 1;
+      continue;
+    }
+    if (c === '`') { stack.push({ start: i + 1, depth: 0 }); i += 1; continue; }
+    if (c === '{' && stack.length) { stack[stack.length - 1].depth += 1; i += 1; continue; }
+    if (c === '}' && stack.length && stack[stack.length - 1].depth > 0) {
+      stack[stack.length - 1].depth -= 1;
+      i += 1;
+      continue;
+    }
+    i += 1;
+  }
+  return out;
+}
+
+function embeddedWat(options = {}) {
+  const decls = collectDeclarations()
+    .filter(d => d.base !== null && d.size !== null && d.kind === 'alloc')
+    .sort((a, b) => a.base - b.base);
+
+  const owner = (v) => decls.find(d => v >= (d.base >>> 0) && v < ((d.base + d.size) >>> 0));
+
+  const scan = (rel, text) => {
+    const found = [];
+    let fragments = 0;
+    if (!WAT_APPENDERS.test(text)) return { found, fragments };
+    for (const frag of templateLiterals(text)) {
+      if (!WAT_FRAGMENT.test(frag.text)) continue;
+      if (SELF_CONTAINED.test(frag.text)) continue;
+      fragments += 1;
+      const body = blankWatComments(frag.text);
+      for (const m of body.matchAll(MEM_OPERAND)) {
+        const value = (m[1].startsWith('0x') || m[1].startsWith('0X')
+          ? Number.parseInt(m[1], 16) : Number.parseInt(m[1], 10)) >>> 0;
+        const region = owner(value);
+        if (!region) continue;
+        const at = frag.start + m.index;
+        found.push({
+          file: rel,
+          line: text.slice(0, at).split('\n').length,
+          literal: m[1],
+          value,
+          region: region.name,
+          offset: (value - region.base) >>> 0,
+          text: m[0].replace(/\s+/g, ' '),
+        });
+      }
+    }
+    return { found, fragments };
+  };
+
+  const hits = [];
+  let fragments = 0;
+  const each = (rel, text) => {
+    const r = scan(rel, text);
+    hits.push(...r.found);
+    fragments += r.fragments;
+  };
+  if (options.sources) {
+    for (const [rel, text] of options.sources) each(rel, text);
+  } else {
+    for (const rel of jsCopyTargets()) {
+      const abs = path.join(ROOT, rel);
+      if (!fs.existsSync(abs)) continue;
+      each(rel, fs.readFileSync(abs, 'utf8'));
+    }
+  }
+  return { hits, fragments, checkedRegions: decls.length };
+}
+
 function main() {
+  if (flag('embedded-wat')) {
+    const r = embeddedWat();
+    for (const h of r.hits) {
+      const name = h.region.replace(/^\$/, '');
+      console.error(`region-census: ${h.file}:${h.line} addresses ${hex(h.value)} directly, ` +
+        `which is inside ALLOCATED $${name} (+${hex(h.offset)})`);
+      console.error(`    ${h.text.slice(0, 120)}`);
+      console.error(`    write (region.addr $${name} ${hex(h.offset)}) instead`);
+    }
+    if (r.hits.length) {
+      console.error('region-census: a WAT fragment embedded in JS is compiled by our own ' +
+        'compiler, so region.addr resolves inside it. A bare address there is a copy of a ' +
+        'map the allocator re-places on every layout change — and it goes stale silently, ' +
+        'landing in whatever region moved on top of it (docs/watx-region-safety-design.md).');
+      process.exit(1);
+    }
+    console.log(`region-census OK: no embedded WAT fragment addresses the map by hand ` +
+      `(${r.fragments} fragment(s), ${r.checkedRegions} allocated region(s))`);
+    return;
+  }
+
   if (flag('js-copies')) {
     const r = jsCopies();
     for (const h of r.hits) {
@@ -421,4 +653,4 @@ function readBaseline() {
 }
 
 if (require.main === module) main();
-module.exports = { census, jsCopies, JS_COPY_FLOOR };
+module.exports = { census, jsCopies, embeddedWat, templateLiterals, JS_COPY_FLOOR };
