@@ -1012,16 +1012,16 @@
       (loop $loop
         (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
         (local.set $addr (call $wnd_record_addr (local.get $i)))
-        (local.set $hwnd (i32.load (local.get $addr)))
+        (local.set $hwnd (load.field WndRecord hwnd (local.get $addr)))
         (if (i32.and (i32.ne (local.get $hwnd) (i32.const 0))
-                     (i32.eq (i32.load offset=8 (local.get $addr)) (local.get $parent)))
+                     (i32.eq (load.field.memarg WndRecord parent (local.get $addr)) (local.get $parent)))
           (then (return (local.get $i))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $loop)))
     (i32.const -1))
 
   (func $wnd_slot_hwnd (param $slot i32) (result i32)
-    (i32.load (call $wnd_record_addr (local.get $slot))))
+    (load.field WndRecord hwnd (call $wnd_record_addr (local.get $slot))))
 
   ;; Find child control hwnd by parent and control ID
   (func $ctrl_find_by_id (param $parent_hwnd i32) (param $ctrl_id i32) (result i32)
@@ -1034,7 +1034,7 @@
       (loop $loop
         (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
         (local.set $addr (call $wnd_record_addr (local.get $i)))
-        (local.set $hwnd (i32.load (local.get $addr)))
+        (local.set $hwnd (load.field WndRecord hwnd (local.get $addr)))
         (if (i32.ne (local.get $hwnd) (i32.const 0))
           (then
             (local.set $ctrl_addr (call $ctrl_slot_addr (local.get $i)))
@@ -1069,7 +1069,7 @@
     (block $done
       (loop $loop
         (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-        (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
+        (local.set $hwnd (load.field WndRecord hwnd (call $wnd_record_addr (local.get $i))))
         (if (i32.and
               (i32.and
                 (i32.ne (local.get $hwnd) (i32.const 0))
@@ -4392,9 +4392,9 @@
       (br_if $start_done (i32.gt_u (local.get $i) (local.get $target_slot)))
       (local.set $rec (call $wnd_record_addr (local.get $i)))
       (if (i32.and
-            (i32.eq (i32.load offset=8 (local.get $rec)) (local.get $parent))
+            (i32.eq (load.field.memarg WndRecord parent (local.get $rec)) (local.get $parent))
             (i32.ne
-              (i32.and (i32.load offset=16 (local.get $rec)) (i32.const 0x00020000))
+              (i32.and (load.field.memarg WndRecord style (local.get $rec)) (i32.const 0x00020000))
               (i32.const 0)))
         (then (local.set $group_start (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -4406,9 +4406,9 @@
       (br_if $end_done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (local.set $rec (call $wnd_record_addr (local.get $i)))
       (if (i32.and
-            (i32.eq (i32.load offset=8 (local.get $rec)) (local.get $parent))
+            (i32.eq (load.field.memarg WndRecord parent (local.get $rec)) (local.get $parent))
             (i32.ne
-              (i32.and (i32.load offset=16 (local.get $rec)) (i32.const 0x00020000))
+              (i32.and (load.field.memarg WndRecord style (local.get $rec)) (i32.const 0x00020000))
               (i32.const 0)))
         (then
           (local.set $group_end (local.get $i))
@@ -4419,15 +4419,15 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (local.get $group_end)))
       (local.set $rec (call $wnd_record_addr (local.get $i)))
-      (local.set $other (i32.load (local.get $rec)))
+      (local.set $other (load.field WndRecord hwnd (local.get $rec)))
       (if (i32.and
             (i32.and (i32.ne (local.get $other) (i32.const 0))
-                     (i32.eq (i32.load offset=8 (local.get $rec)) (local.get $parent)))
+                     (i32.eq (load.field.memarg WndRecord parent (local.get $rec)) (local.get $parent)))
             ;; kind == BS_AUTORADIOBUTTON (9)
-            (i32.eq (i32.and (i32.load offset=16 (local.get $rec)) (i32.const 0x0F))
+            (i32.eq (i32.and (load.field.memarg WndRecord style (local.get $rec)) (i32.const 0x0F))
                     (i32.const 9)))
         (then
-          (local.set $st (i32.load offset=20 (local.get $rec)))
+          (local.set $st (load.field.memarg WndRecord state_ptr (local.get $rec)))
           (if (local.get $st)
             (then
               (local.set $stw (call $g2w (local.get $st)))
@@ -4461,15 +4461,15 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (local.set $rec (call $wnd_record_addr (local.get $i)))
-      (local.set $other (i32.load (local.get $rec)))
+      (local.set $other (load.field WndRecord hwnd (local.get $rec)))
       (if (i32.and
             (i32.and (i32.ne (local.get $other) (i32.const 0))
-                     (i32.eq (i32.load offset=8 (local.get $rec)) (local.get $parent)))
+                     (i32.eq (load.field.memarg WndRecord parent (local.get $rec)) (local.get $parent)))
             (i32.ne (local.get $other) (local.get $except)))
         (then
           (if (i32.eq (call $ctrl_table_get_class (local.get $other)) (i32.const 1))
             (then
-              (local.set $st (i32.load offset=20 (local.get $rec)))
+              (local.set $st (load.field.memarg WndRecord state_ptr (local.get $rec)))
               (if (local.get $st)
                 (then
                   (local.set $stw (call $g2w (local.get $st)))
@@ -4493,14 +4493,14 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (local.set $rec (call $wnd_record_addr (local.get $i)))
-      (local.set $other (i32.load (local.get $rec)))
+      (local.set $other (load.field WndRecord hwnd (local.get $rec)))
       (if (i32.and
             (i32.and (i32.ne (local.get $other) (i32.const 0))
-                     (i32.eq (i32.load offset=8 (local.get $rec)) (local.get $parent)))
+                     (i32.eq (load.field.memarg WndRecord parent (local.get $rec)) (local.get $parent)))
             (i32.eq (i32.and (call $wnd_get_style (local.get $other)) (i32.const 0x0F))
                     (i32.const 1)))
         (then
-          (local.set $st (i32.load offset=20 (local.get $rec)))
+          (local.set $st (load.field.memarg WndRecord state_ptr (local.get $rec)))
           (if (local.get $st)
             (then
               (local.set $stw (call $g2w (local.get $st)))
@@ -15915,9 +15915,9 @@
         (loop $scan
           (br_if $outer (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
           (local.set $addr (call $wnd_record_addr (local.get $i)))
-          (local.set $child (i32.load (local.get $addr)))
+          (local.set $child (load.field WndRecord hwnd (local.get $addr)))
           (if (i32.and (i32.ne (local.get $child) (i32.const 0))
-                       (i32.eq (i32.load offset=8 (local.get $addr)) (local.get $hwnd)))
+                       (i32.eq (load.field.memarg WndRecord parent (local.get $addr)) (local.get $hwnd)))
             (then
               (call $wnd_destroy_tree (local.get $child))
               (br $rescan)))

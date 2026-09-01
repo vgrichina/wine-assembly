@@ -250,7 +250,7 @@
       (local.set $ptr (call $wnd_record_addr (local.get $i)))
       (if (i32.eq (i32.atomic.load (local.get $ptr)) (local.get $hwnd))
         (then
-          (i32.store offset=4 (local.get $ptr) (local.get $wndproc))
+          (store.field.memarg WndRecord wndproc (local.get $ptr) (local.get $wndproc))
           (call $lock_wnd_release)
           (return)))
       (if (i32.and (i32.eqz (i32.atomic.load (local.get $ptr)))
@@ -265,11 +265,11 @@
         ;; stale parent/userdata/style/state_ptr from a previous window.
         ;; Build the record while it is still invisible.  Readers use hwnd as
         ;; the publication word, so it must be stored last.
-        (i32.store offset=4  (local.get $ptr) (local.get $wndproc))
-        (i32.store offset=8  (local.get $ptr) (i32.const 0))
-        (i32.store offset=12 (local.get $ptr) (i32.const 0))
-        (i32.store offset=16 (local.get $ptr) (i32.const 0))
-        (i32.store offset=20 (local.get $ptr) (i32.const 0))
+        (store.field.memarg WndRecord wndproc (local.get $ptr) (local.get $wndproc))
+        (store.field.memarg WndRecord parent (local.get $ptr) (i32.const 0))
+        (store.field.memarg WndRecord userdata (local.get $ptr) (i32.const 0))
+        (store.field.memarg WndRecord style (local.get $ptr) (i32.const 0))
+        (store.field.memarg WndRecord state_ptr (local.get $ptr) (i32.const 0))
         (call $wnd_slot_reset (local.get $empty))
         (call $wnd_z_init_slot (local.get $empty))
         (i32.store (call $wnd_thread_addr (local.get $empty))
@@ -299,7 +299,7 @@
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (local.set $ptr (call $wnd_record_addr (local.get $i)))
       (if (i32.eq (i32.atomic.load (local.get $ptr)) (local.get $hwnd))
-        (then (return (i32.load offset=4 (local.get $ptr)))))
+        (then (return (load.field.memarg WndRecord wndproc (local.get $ptr)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0)
@@ -338,7 +338,7 @@
           ;; Child removal is a no-op because child DCs resolve to that owner.
           (call $gdi_window_surface_release (local.get $hwnd))
           ;; Free control state if any
-          (local.set $state (i32.load offset=20 (local.get $ptr)))
+          (local.set $state (load.field.memarg WndRecord state_ptr (local.get $ptr)))
           (if (local.get $state) (then (call $heap_free (local.get $state))))
           ;; Drop parallel-table state tied to this slot.
           (call $wnd_bg_brush_reset_slot (local.get $i))
@@ -363,11 +363,11 @@
           ;; Unpublish first while holding the writer lock.  A reader can no
           ;; longer match this slot before any metadata becomes reusable.
           (i32.atomic.store (local.get $ptr) (i32.const 0))
-          (i32.store offset=4  (local.get $ptr) (i32.const 0))
-          (i32.store offset=8  (local.get $ptr) (i32.const 0))
-          (i32.store offset=12 (local.get $ptr) (i32.const 0))
-          (i32.store offset=16 (local.get $ptr) (i32.const 0))
-          (i32.store offset=20 (local.get $ptr) (i32.const 0))
+          (store.field.memarg WndRecord wndproc (local.get $ptr) (i32.const 0))
+          (store.field.memarg WndRecord parent (local.get $ptr) (i32.const 0))
+          (store.field.memarg WndRecord userdata (local.get $ptr) (i32.const 0))
+          (store.field.memarg WndRecord style (local.get $ptr) (i32.const 0))
+          (store.field.memarg WndRecord state_ptr (local.get $ptr) (i32.const 0))
           (call $wnd_thread_reset_slot (local.get $i))
           (call $lock_wnd_release)
           (return)))
@@ -389,7 +389,7 @@
       (local.set $ptr (call $wnd_record_addr (local.get $i)))
       (local.set $other (i32.atomic.load (local.get $ptr)))
       (if (i32.and (i32.ne (local.get $other) (i32.const 0))
-                   (i32.eq (i32.load offset=8 (local.get $ptr)) (local.get $hwnd)))
+                   (i32.eq (load.field.memarg WndRecord parent (local.get $ptr)) (local.get $hwnd)))
         (then (call $wnd_destroy_recursive (local.get $other))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -485,7 +485,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (i32.load offset=12 (call $wnd_record_addr (local.get $idx)))
+    (load.field.memarg WndRecord userdata (call $wnd_record_addr (local.get $idx)))
   )
 
   ;; Set per-window userdata; returns old value
@@ -495,8 +495,8 @@
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
     (local.set $ptr (call $wnd_record_addr (local.get $idx)))
-    (local.set $old (i32.load offset=12 (local.get $ptr)))
-    (i32.store offset=12 (local.get $ptr) (local.get $value))
+    (local.set $old (load.field.memarg WndRecord userdata (local.get $ptr)))
+    (store.field.memarg WndRecord userdata (local.get $ptr) (local.get $value))
     (local.get $old)
   )
 
@@ -632,7 +632,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (i32.load offset=8 (call $wnd_record_addr (local.get $idx)))
+    (load.field.memarg WndRecord parent (call $wnd_record_addr (local.get $idx)))
   )
 
   ;; Return the host-assigned Win32 process ID. Standalone embedders that do
@@ -650,7 +650,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.ne (local.get $idx) (i32.const -1))
       (then
-        (i32.store offset=8 (call $wnd_record_addr (local.get $idx)) (local.get $parent))))
+        (store.field.memarg WndRecord parent (call $wnd_record_addr (local.get $idx)) (local.get $parent))))
   )
 
   ;; Per-window copy of WNDCLASS.hbrBackground. Win98 stores class metadata in
@@ -1039,7 +1039,7 @@
       (local.set $ptr (call $wnd_record_addr (local.get $i)))
       (local.set $h (i32.atomic.load (local.get $ptr)))
       (if (i32.and (i32.ne (local.get $h) (i32.const 0))
-                   (i32.eq (i32.load offset=8 (local.get $ptr)) (local.get $parent)))
+                   (i32.eq (load.field.memarg WndRecord parent (local.get $ptr)) (local.get $parent)))
         (then (return (local.get $h))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -1056,7 +1056,7 @@
       (local.set $ptr (call $wnd_record_addr (local.get $i)))
       (local.set $h (i32.atomic.load (local.get $ptr)))
       (if (i32.and (i32.ne (local.get $h) (i32.const 0))
-                   (i32.eq (i32.load offset=8 (local.get $ptr)) (local.get $parent)))
+                   (i32.eq (load.field.memarg WndRecord parent (local.get $ptr)) (local.get $parent)))
         (then (local.set $last (local.get $h))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -1068,14 +1068,14 @@
     (local $idx i32) (local $parent i32) (local $i i32) (local $ptr i32) (local $h i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
-    (local.set $parent (i32.load offset=8 (call $wnd_record_addr (local.get $idx))))
+    (local.set $parent (load.field.memarg WndRecord parent (call $wnd_record_addr (local.get $idx))))
     (local.set $i (i32.add (local.get $idx) (i32.const 1)))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (local.set $ptr (call $wnd_record_addr (local.get $i)))
       (local.set $h (i32.atomic.load (local.get $ptr)))
       (if (i32.and (i32.ne (local.get $h) (i32.const 0))
-                   (i32.eq (i32.load offset=8 (local.get $ptr)) (local.get $parent)))
+                   (i32.eq (load.field.memarg WndRecord parent (local.get $ptr)) (local.get $parent)))
         (then (return (local.get $h))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -1088,13 +1088,13 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
     (if (i32.eqz (local.get $idx)) (then (return (i32.const 0))))
-    (local.set $parent (i32.load offset=8 (call $wnd_record_addr (local.get $idx))))
+    (local.set $parent (load.field.memarg WndRecord parent (call $wnd_record_addr (local.get $idx))))
     (local.set $i (i32.sub (local.get $idx) (i32.const 1)))
     (block $done (loop $scan
       (local.set $ptr (call $wnd_record_addr (local.get $i)))
       (local.set $h (i32.atomic.load (local.get $ptr)))
       (if (i32.and (i32.ne (local.get $h) (i32.const 0))
-                   (i32.eq (i32.load offset=8 (local.get $ptr)) (local.get $parent)))
+                   (i32.eq (load.field.memarg WndRecord parent (local.get $ptr)) (local.get $parent)))
         (then (return (local.get $h))))
       (br_if $done (i32.eqz (local.get $i)))
       (local.set $i (i32.sub (local.get $i) (i32.const 1)))
@@ -1108,7 +1108,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (i32.load offset=16 (call $wnd_record_addr (local.get $idx)))
+    (load.field.memarg WndRecord style (call $wnd_record_addr (local.get $idx)))
   )
 
   ;; Set window style; returns old value
@@ -1118,8 +1118,8 @@
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
     (local.set $ptr (call $wnd_record_addr (local.get $idx)))
-    (local.set $old (i32.load offset=16 (local.get $ptr)))
-    (i32.store offset=16 (local.get $ptr) (local.get $style))
+    (local.set $old (load.field.memarg WndRecord style (local.get $ptr)))
+    (store.field.memarg WndRecord style (local.get $ptr) (local.get $style))
     (if (i32.ne
           (i32.and (local.get $old) (i32.const 0x10000000))
           (i32.and (local.get $style) (i32.const 0x10000000)))
@@ -1134,7 +1134,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (i32.load offset=20 (call $wnd_record_addr (local.get $idx)))
+    (load.field.memarg WndRecord state_ptr (call $wnd_record_addr (local.get $idx)))
   )
 
   ;; Set per-window state pointer
@@ -1143,7 +1143,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.ne (local.get $idx) (i32.const -1))
       (then
-        (i32.store offset=20 (call $wnd_record_addr (local.get $idx)) (local.get $value))))
+        (store.field.memarg WndRecord state_ptr (call $wnd_record_addr (local.get $idx)) (local.get $value))))
   )
 
   ;; ---- Class table helpers ----
