@@ -1085,6 +1085,10 @@
                   (i32.gt_u (local.get $length) (i32.sub (local.get $dest_len) (local.get $dest_pos))))
               (then (return (i32.const 0))))
             (local.set $i (i32.const 0))
+            ;; NOT a memory.copy. LZ77 back-references with distance < length
+            ;; deliberately re-read bytes this very loop just wrote, which is
+            ;; how a run is spelled; memory.copy is memmove and would read the
+            ;; pre-copy source instead. Keep it byte at a time.
             (block $copy_done (loop $copy
               (br_if $copy_done (i32.ge_u (local.get $i) (local.get $length)))
               (i32.store8 (i32.add (local.get $dest) (local.get $dest_pos))
@@ -1174,6 +1178,9 @@
               (then (return (call $help_block_lz77_fail (i32.const 3)
                 (local.get $source_pos) (local.get $dest_pos) (local.get $word)))))
             (local.set $i (i32.const 0))
+            ;; NOT a memory.copy, for the same reason as the fixed-length
+            ;; expander above: distance < length re-reads bytes written inside
+            ;; this loop, and memmove semantics would break the run.
             (block $copy_done (loop $copy
               (br_if $copy_done (i32.ge_u (local.get $i) (local.get $length)))
               (i32.store8 (i32.add (local.get $dest) (local.get $dest_pos))

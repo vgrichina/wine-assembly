@@ -4230,16 +4230,10 @@
       (br $glyphs)))
 
     (local.set $face_off (local.get $data_off))
-    (local.set $code (i32.const 0))
-    (block $name_done (loop $copy
-      (br_if $name_done (i32.ge_u (local.get $code) (local.get $name_len)))
-      (local.set $ch (i32.load8_u
-        (i32.add (local.get $name) (local.get $code))))
-      (i32.store8 (i32.add (local.get $out)
-          (i32.add (local.get $face_off) (local.get $code)))
-        (local.get $ch))
-      (local.set $code (i32.add (local.get $code) (i32.const 1)))
-      (br $copy)))
+    (memory.copy
+      (i32.add (local.get $out) (local.get $face_off))
+      (local.get $name) (local.get $name_len))
+    (local.set $code (local.get $name_len))
 
     ;; FNT 3.00 header. Only the fields the strike parser reads are meaningful
     ;; here; the rest stay zero rather than carrying invented values.

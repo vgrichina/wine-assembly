@@ -190,7 +190,7 @@
   ;; and never revisit. Tetris imports win87em that way, and every call into it
   ;; arrived at the dispatcher as module 0 with no name left to identify it.
   (func $win16_dynamic_module_id (param $pstr i32) (result i32)
-    (local $i i32) (local $slot i32) (local $n i32) (local $j i32)
+    (local $i i32) (local $slot i32) (local $n i32)
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $WIN16_DYNAMIC_MODULES)))
       (local.set $slot (call $win16_dynamic_module_slot (local.get $i)))
@@ -199,11 +199,10 @@
           ;; First free slot: claim it for this name.
           (local.set $n (i32.load8_u (local.get $pstr)))
           (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
-          (block $copied (loop $copy
-            (i32.store8 (i32.add (local.get $slot) (local.get $j))
-              (i32.load8_u (i32.add (local.get $pstr) (local.get $j))))
-            (local.set $j (i32.add (local.get $j) (i32.const 1)))
-            (br_if $copy (i32.le_u (local.get $j) (local.get $n)))))
+          ;; Pascal string: the length byte plus its $n characters, so $n+1
+          ;; bytes, and the slot is a separate record from the source.
+          (memory.copy (local.get $slot) (local.get $pstr)
+            (i32.add (local.get $n) (i32.const 1)))
           (return (i32.add (local.get $i) (global.get $WIN16_DYNAMIC_BASE)))))
       (if (call $win16_pstr_eq_pstr (local.get $pstr) (local.get $slot))
         (then (return (i32.add (local.get $i) (global.get $WIN16_DYNAMIC_BASE)))))

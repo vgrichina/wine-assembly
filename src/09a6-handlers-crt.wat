@@ -436,11 +436,10 @@
       (i32.store8 (i32.add (local.get $dst) (local.get $i)) (local.get $ch))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br_if $l (local.get $ch))
-      ;; pad with zeros
-      (block $d2 (loop $l2
-        (br_if $d2 (i32.ge_u (local.get $i) (local.get $arg2)))
-        (i32.store8 (i32.add (local.get $dst) (local.get $i)) (i32.const 0))
-        (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l2)))))
+      ;; pad with zeros -- the NUL is already stored, $i is past it, and every
+      ;; remaining byte up to $arg2 gets the same value.
+      (memory.fill (i32.add (local.get $dst) (local.get $i)) (i32.const 0)
+        (i32.sub (local.get $arg2) (local.get $i)))))
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )

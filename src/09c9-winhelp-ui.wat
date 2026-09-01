@@ -2927,11 +2927,8 @@
     (if (i32.eqz (local.get $w)) (then (return (i32.const 0))))
     (if (i32.gt_u (local.get $indent) (i32.const 32))
       (then (local.set $indent (i32.const 32))))
-    (block $pad_done (loop $pad
-      (br_if $pad_done (i32.ge_u (local.get $i) (local.get $indent)))
-      (i32.store8 (i32.add (local.get $w) (local.get $i)) (i32.const 32))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $pad)))
+    (memory.fill (local.get $w) (i32.const 32) (local.get $indent))
+    (local.set $i (local.get $indent))
     (if (local.get $marker)
       (then
         (i32.store8 (i32.add (local.get $w) (local.get $i)) (local.get $marker))

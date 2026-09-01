@@ -138,19 +138,14 @@
     (local.get $r))
 
   (func $vsock_alloc_locked (result i32)
-    (local $i i32) (local $rec i32) (local $j i32)
+    (local $i i32) (local $rec i32)
     (local.set $i (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $VSOCK_MAX)))
       (local.set $rec (call $vsock_rec (local.get $i)))
       (if (i32.eqz (load.field VSock state (local.get $rec)))
         (then
-          (local.set $j (i32.const 0))
-          (block $zdone (loop $zero
-            (br_if $zdone (i32.ge_u (local.get $j) (global.get $VSOCK_REC_SIZE)))
-            (i32.store (i32.add (local.get $rec) (local.get $j)) (i32.const 0))
-            (local.set $j (i32.add (local.get $j) (i32.const 4)))
-            (br $zero)))
+          (memory.fill (local.get $rec) (i32.const 0) (global.get $VSOCK_REC_SIZE))
           (store.field VSock peer (local.get $rec) (i32.const -1))
           ;; Claim the record before releasing the lock. Every caller overwrites
           ;; this state a few instructions later, but "free until the caller gets
@@ -222,12 +217,8 @@
       (call $bswap16 (local.get $port)))
     (i32.store (i32.add (local.get $wa) (i32.const 4))
       (call $bswap32 (local.get $ip)))
-    (local.set $i (i32.const 8))
-    (block $zd (loop $z
-      (br_if $zd (i32.ge_u (local.get $i) (i32.const 16)))
-      (i32.store8 (i32.add (local.get $wa) (local.get $i)) (i32.const 0))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $z)))
+    ;; sin_zero[8]
+    (memory.fill (i32.add (local.get $wa) (i32.const 8)) (i32.const 0) (i32.const 8))
     (if (local.get $len_ga)
       (then (i32.store (call $g2w (local.get $len_ga)) (i32.const 16)))))
 
@@ -1485,14 +1476,10 @@
       (then (return (i32.const 122))))
     (i32.const 0))
 
-  ;; Zero-fill a guest range.
+  ;; Zero-fill a guest range. $guest_memset does the page chunking this used to
+  ;; get for free from one $g2w per byte, and a memory.fill per contiguous run.
   (func $wsctl_zero (param $ga i32) (param $len i32)
-    (local $i i32)
-    (block $done (loop $z
-      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
-      (i32.store8 (call $g2w (i32.add (local.get $ga) (local.get $i))) (i32.const 0))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $z))))
+    (call $guest_memset (local.get $ga) (i32.const 0) (local.get $len)))
 
   ;; Copy a NUL-terminated linear-memory string into a guest buffer.
   (func $wsctl_copy_str (param $dest_ga i32) (param $src_wa i32)
