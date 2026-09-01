@@ -194,6 +194,49 @@ async function main() {
     Buffer.from(owned.bytes).equals(Buffer.from(artifacts['tail-call'].bytes)));
   check('and lands on the same cache key', owned.cacheKey === keyTail);
 
+  console.log('== the placed map travels with the bytes ==');
+  // A source build's wasm and lib/region-map.generated.js are two halves of one
+  // memory map, and pairing halves that disagree does not FAIL — the host reads
+  // at the mirror's address, the guest wrote at the wasm's, and the app draws a
+  // plausible wrong picture. The build-time artifacts carry a layout
+  // fingerprint in a custom section; Worker-compiled bytes cannot (hashing
+  // needs crypto.subtle, absent outside a secure context), so the placement
+  // itself comes back with the bytes and host.js compares it. If this plumbing
+  // silently returns undefined, host.js's check degrades to a console warning
+  // and the whole exemption is back — so assert the shape, not just the values.
+  const layout = owned.layout;
+  check('the worker reports the region placement it compiled against',
+    Array.isArray(layout) && layout.length > 100, `${layout && layout.length} region(s)`);
+  check('every entry carries name, kind, base and size',
+    layout.every(r => typeof r.name === 'string' && typeof r.kind === 'string' &&
+      Number.isInteger(r.base) && Number.isInteger(r.size)));
+  // Spans are transparent named limits that own no bytes and have no mirror
+  // entry ($DIRECT_WINDOW), so they are excluded here exactly as host.js
+  // excludes them — a comparison that forgets this fails on every healthy build.
+  const mirror = require('../lib/region-map.generated').REGIONS;
+  const placedRegions = layout.filter(r => r.kind !== 'span');
+  check('the span is excluded, the placed regions are not',
+    placedRegions.length === layout.length - 1,
+    `${layout.length - placedRegions.length} span(s)`);
+  const mismatched = placedRegions.filter(r => {
+    const m = mirror[String(r.name).replace(/^\$/, '')];
+    return !m || m.base !== r.base || m.size !== r.size;
+  });
+  check('and it matches lib/region-map.generated.js exactly',
+    mismatched.length === 0,
+    mismatched.length ? mismatched.slice(0, 3).map(r => r.name).join(', ') : 'all agree');
+  // The comparison host.js runs must be able to FAIL, not merely to pass on a
+  // healthy tree. Move one region by a byte and check it is noticed.
+  const planted = placedRegions.map(r =>
+    r.name === placedRegions[0].name ? { ...r, base: r.base + 1 } : r);
+  const caught = planted.filter(r => {
+    const m = mirror[String(r.name).replace(/^\$/, '')];
+    return !m || m.base !== r.base || m.size !== r.size;
+  });
+  check('a one-byte move of a single region is detected',
+    caught.length === 1 && caught[0].name === placedRegions[0].name,
+    `${caught.length} flagged`);
+
   console.log('== memoisation and failed-promise reset ==');
   launcher._reset();
   const p1 = launcher.compileDetailed({ tailCalls: true }, { snapshot, timeoutMs: 240000 });

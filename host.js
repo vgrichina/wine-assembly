@@ -1121,10 +1121,14 @@ class WineAssembly {
     // shipped a rebuilt build/wine-assembly.wasm beside a stale mirror, or the
     // reverse.
     //
-    // ABSENT is not a mismatch. `?compile-wat` compiles the sources in the
-    // WATX Worker and those bytes carry no section, and neither do artifacts
-    // built before this landed; both are reported and allowed, because refusing
-    // them would break the source-compile path over a check it cannot satisfy.
+    // ABSENT is not a mismatch HERE, and no longer lets `?compile-wat` through
+    // unchecked. Worker-compiled bytes carry no section (nothing stamps one
+    // there, and hashing in a browser needs crypto.subtle, which plain-http LAN
+    // pages do not have), so that path is checked at COMPILE time instead, in
+    // _assertSourceBuildLayout, against the placement the Worker sends back
+    // with the bytes. What is still reported-and-allowed here is an artifact
+    // built before the section landed — refusing those would fail a build that
+    // simply predates the check.
     {
       const sections = WebAssembly.Module.customSections(wasmModule, 'wine-region-layout');
       const stamped = sections.length ? new TextDecoder().decode(sections[0]) : null;
@@ -1337,14 +1341,17 @@ class WineAssembly {
         // so that fallback would compile a module that fails validation, or
         // worse, one that traps mid-app.
         if (typeof window !== 'undefined' && window.watxLauncher) {
-          // compile(mode, options): tailCalls is mode; version/noStore are
-          // fetch options — in the first argument they are silently ignored
-          // and the source fetch loses its ?v= cache-buster.
-          const bytes = await window.watxLauncher.compile({ tailCalls }, {
+          // compileDetailed(mode, options): tailCalls is mode; version/noStore
+          // are fetch options — in the first argument they are silently ignored
+          // and the source fetch loses its ?v= cache-buster. Detailed rather
+          // than compile() because the region placement comes back with the
+          // bytes and has to be checked; see below.
+          const built = await window.watxLauncher.compileDetailed({ tailCalls }, {
             version: WineAssembly.SOURCE_VERSION,
             noStore: debugFetch,
           });
-          return WebAssembly.compile(bytes);
+          WineAssembly._assertSourceBuildLayout(built.layout);
+          return WebAssembly.compile(built.bytes);
         }
         throw new Error('wine-assembly artifacts missing and lib/watx-launcher.js is not ' +
           'loaded (in-page legacy source compilation is retired); run `bash tools/build.sh` ' +
@@ -1360,6 +1367,66 @@ class WineAssembly {
       });
     }
     return WineAssembly._wasmModulePromise;
+  }
+
+  // ?compile-wat USED TO BE EXEMPT FROM THE MAP CHECK, AND THAT WAS THE WRONG
+  // WAY ROUND. The instantiation check below reads a `wine-region-layout`
+  // custom section, which only tools/build-compile-wat.js stamps; bytes from
+  // the WATX Worker carry none, so `stamped` was null and the host warned and
+  // carried on. The exemption landed on the one path where the mismatch is MOST
+  // likely: a source build places the regions from whatever src/00-regions.wat
+  // says right now, while lib/region-map.generated.js is a committed file that
+  // only tools/build.sh regenerates. Editing a region size and hitting reload
+  // with ?compile-wat is a two-second round trip that produced a wasm and a
+  // mirror describing different maps, and nothing said so — every host import
+  // then reads at the mirror's address, the guest wrote at the wasm's, and the
+  // app draws a plausible wrong picture rather than failing.
+  //
+  // It is fixed at the source rather than by relaxing the check: the compile
+  // Worker now sends the PLACEMENT back with the bytes. Not a hash of it —
+  // hashing needs crypto.subtle, which is undefined outside a secure context,
+  // and http://<lan-ip>/?compile-wat is a workflow we use (see the iOS section
+  // of CLAUDE.md). Comparing the placement directly is exact, works anywhere,
+  // and can name the region that moved.
+  //
+  // A compiler too old to report regions yields null, which is reported and
+  // allowed — same rule as an unstamped artifact.
+  static _assertSourceBuildLayout(layout) {
+    const mirror = (typeof RegionMap !== 'undefined' && RegionMap && RegionMap.REGIONS) || null;
+    if (!layout || !mirror) {
+      console.warn('[host] source build did not report its region placement; ' +
+        'cannot verify it matches lib/region-map.generated.js');
+      return;
+    }
+    const diffs = [];
+    const seen = new Set();
+    for (const r of layout) {
+      // A span is a transparent named LIMIT containing other regions, owns no
+      // bytes and has no mirror entry ($DIRECT_WINDOW). Comparing it would
+      // report a missing region on every healthy build.
+      if (r.kind === 'span') continue;
+      const name = String(r.name).replace(/^\$/, '');
+      seen.add(name);
+      const m = mirror[name];
+      if (!m) { diffs.push(`${name}: compiled at 0x${(r.base >>> 0).toString(16)}, absent from the mirror`); continue; }
+      if (m.base !== r.base || m.size !== r.size) {
+        diffs.push(`${name}: compiled base 0x${(r.base >>> 0).toString(16)} size 0x${(r.size >>> 0).toString(16)}, ` +
+          `mirror base 0x${(m.base >>> 0).toString(16)} size 0x${(m.size >>> 0).toString(16)}`);
+      }
+    }
+    for (const name of Object.keys(mirror)) {
+      if (!seen.has(name)) diffs.push(`${name}: in the mirror, not in the compiled map`);
+    }
+    if (!diffs.length) return;
+    const shown = diffs.slice(0, 8).join('\n  ');
+    throw new Error(`[host] region layout MISMATCH on a ?compile-wat source build: ` +
+      `${diffs.length} region(s) differ between the wasm just compiled from src/00-regions.wat ` +
+      `and lib/region-map.generated.js.\n  ${shown}` +
+      (diffs.length > 8 ? `\n  ...and ${diffs.length - 8} more` : '') +
+      `\nThe two halves of the memory map disagree about where the regions are; every host ` +
+      `import would read the wrong bytes and the app would draw a plausible wrong picture. ` +
+      `Run \`node tools/gen-region-map.js\` to regenerate the mirror from the declarations ` +
+      `(bash tools/build.sh does it too, along with the gate that would have caught this).`);
   }
 
   static supportsWasmTailCalls() {
