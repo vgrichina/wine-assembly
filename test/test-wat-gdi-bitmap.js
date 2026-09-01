@@ -7,6 +7,9 @@ const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
+// $DIB_DEFAULT_RGB555_MASKS is an allocated region since wave 3 — the address
+// is the allocator's choice, so it is read, never retyped.
+const RegionMap = require('../lib/region-map.generated.js');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
@@ -235,7 +238,7 @@ const SRC = path.join(ROOT, 'src');
       dv.getUint32(plan + 8, true), dv.getUint32(plan + 16, true),
       dv.getUint32(plan + 20, true), dv.getUint32(plan + 24, true),
       dv.getUint32(plan + 28, true), dv.getUint32(plan + 40, true),
-    ], [16, 4, 0x32A0, 3, data + 40, 0]);
+    ], [16, 4, RegionMap.BASE.DIB_DEFAULT_RGB555_MASKS, 3, data + 40, 0]);
     const rgb555 = wat.test_gdi_bitmap_create_resource(data, 48) >>> 0;
     assert(rgb555, 'BI_RGB 16-bpp resource should materialize');
     assert.strictEqual(wat.test_gdi_raster_desc_from_bitmap(rgb555, desc), 1);
