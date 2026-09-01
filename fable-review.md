@@ -340,6 +340,65 @@ partly invisible to self-modify retirement. And a user RULING closed the
 wasm-opt question for good — no build step, no deploy step; the measured
 levers remain memory-stream folds and selective inlining of hot helpers.
 
+**By 17:35 (+25 commits, HEAD `928f53fc`)** wave 3 landed its main step and
+the tree is, for the first time in my ticks, **fully green through
+`bash tools/build.sh` at HEAD** (I ran it: exit 0, artifact 989,296 B /
+`aa65465e` — the bytes legitimately moved). The map is *allocated* now
+(`c409c554`): 167 of 175 regions placed by first-fit, 7 pinned, 1 span,
+every non-pinned address moved, 0x47A000 reclaimed — and the shake §8 asked
+for actually runs (`e9b18d38`): sol and marbles on a permuted map, **0 of
+307,200 pixels differ**, with the shaken wasm and a matching JS mirror
+built as a refuse-to-mismatch pair because a shaken artifact against the
+canonical mirror "draws a plausible wrong picture", the worst failure mode
+a verifier can have. The reclamation instantly surfaced two real bugs of
+exactly the predicted class: `_clearWorkerCacheSlot` was writing **32KB of
+zeroes into the PE staging arena on every worker spawn/teardown** — a
+hand-copied literal of the retired CACHE_INDEX base, which the allocator
+now assigns to `$PE_STAGING` (`d59ce229`, removed with a tombstone comment;
+diff verified) — and the guest low heap was bounded by "wherever the page
+indexes happen to be", so reclaiming the 4MB hole beside it left it one 1MB
+chunk (`265a04c4`; the bound is `region.end` now). The guardrails followed
+the same day: an allocated base copied into JS is a **build failure**
+(`6a01cb65`, new gate + test), and the headers still claiming "THE fixed
+memory map" were corrected in the generator template (`39217863`).
+watx-internals cleared the whole oracle queue, one commit each: multivalue
+is a located refusal at all five declaration positions (`00719526`, with
+the gotcha that there are TWO func parsers and only the streaming one is
+live), `(start $f)` emits a real start section proven *behaviorally*
+(`5bf961ca`), `\u{...}` decodes (`aa62fc9d`), macro arity is checked both
+directions — `expandForm` iterated the *parameters*, so surplus args could
+never be seen (`5a670f6f`, rejections 87/87 none unenforced) — and an
+opt-in wasm name section built from `funcIndexMap` itself, never a second
+walk, gold-checked at 8,386 names against an independent derivation
+(`57da0ef5`, `--names`, canonical bytes untouched). Two items were
+*declined by measurement*, which is the discipline holding: the parse
+cache (shareable part is ~4.9% of compile, under the 8% gate — the 24.8%
+body-parse share is unshareable by design), and emitter inlining ($next
+has no inlinable callee; $g2w/$gl32/$gs32 are two-tier with cold scan
+loops — the named better lever is a WAT-side fast/slow split so V8's own
+budget covers the tiny fast paths; queued, unowned). watx-mem attributed
+the compiler's 200MB (engine dominates: ~47MB TurboFan; sub-100MB is
+unreachable from the data side), landed one-byte source strings (-9.5MB
+live heap, byte-identical), and **cleared a landmine**: source locations
+packed six file bits — 64 files — and the closure is at 63, so the next
+`src/*.wat` would have stopped the build with an error naming nothing
+(`aa0ada2d`, now 7 bits). The differential corpus is down to **two
+asserted divergences** (multivalue, deliberately held until the emitter
+carries it; imported globals), and the marker mechanism fired twice more —
+both fixes landed without dropping their markers, the suite went red for
+two bystander agents, `eb6b1c0f` dropped them. My own bundle `--check`
+gate from the fix pass also earned its keep: it caught tools/toyvm source
+drift at HEAD, two agents flagged it, the owner rebundled (`0ec308d6`).
+toyvm confirmed CARRIE's root cause — a successor *inside the bytes a
+region absorbed* is now withheld (`418a9607`) — and with traced-twin and
+ret transfers lowering, the 199-program census reads **zero declined, zero
+differs** (87 no-loop, 77 identical, 24 no-samples, 9 phase, 2 gated).
+Codex added ScummVM's CRT startup surface (`536b4eda` — FOTAQ reaches SDL
+threads, audio and a game window; gameplay still blocked on thread/event
+waits) and fixed stale fullscreen state leaking into a fresh launch
+(`928f53fc`). Still unowned: the BYO-media Tier-1 fixes and the
+fast/slow-path split.
+
 ---
 
 # Pass 3 — 2026-08-30
