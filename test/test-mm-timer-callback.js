@@ -96,6 +96,26 @@ const extraWat = String.raw`
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
     (call $win32_dispatch (i32.const 0))
     (global.get $mm_timer_in_cb))
+  (func (export "test_dispatch_thread_message_ignored") (result i32)
+    ;; Ordinary hwnd-free thread messages are not dispatched to any WndProc.
+    ;; Returning through DispatchMessage's own caller frame keeps the message
+    ;; loop alive for applications that post private thread notifications.
+    (global.set $image_base (i32.const 0x00400000))
+    (global.set $esp (i32.const 0x00500000))
+    (global.set $eip (i32.const 0x00409999))
+    (global.set $wndproc_addr (i32.const 0x00405678))
+    (call $gs32 (global.get $esp) (i32.const 0x00401234))
+    (call $gs32 (i32.const 0x00510000) (i32.const 0))
+    (call $gs32 (i32.const 0x00510004) (i32.const 0x7FF1))
+    (call $gs32 (i32.const 0x00510008) (i32.const 0x0089146C))
+    (call $gs32 (i32.const 0x0051000C) (i32.const 0))
+    (call $handle_DispatchMessageA (i32.const 0x00510000)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.and
+      (i32.eq (global.get $eax) (i32.const 0))
+      (i32.and
+        (i32.eq (global.get $esp) (i32.const 0x00500008))
+        (i32.eq (global.get $eip) (i32.const 0x00409999)))))
 `;
 
 (async () => {
@@ -143,6 +163,8 @@ const extraWat = String.raw`
     'the message-loop callback resumes after DispatchMessage');
   assert.strictEqual(wat.get_esp() >>> 0, 0x00500008,
     'the message-loop callback restores the completed stdcall frame');
+  assert.strictEqual(wat.test_dispatch_thread_message_ignored(), 1,
+    'DispatchMessage ignores ordinary hwnd-free thread messages');
 
   console.log('PASS  multimedia timer completion is tied to its return thunk');
 })().catch(error => {

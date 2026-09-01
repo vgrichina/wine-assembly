@@ -565,6 +565,24 @@ const MATCHED_APP = (() => {
 // arbitrary EXE outside the registry still mounts no companions implicitly.
 const ASSET_ENTRY = MATCHED_APP && MATCHED_APP.entry;
 const ASSET_ENTRY_ID = MATCHED_APP && MATCHED_APP.id;
+const getAssetFiles = entry => {
+  const files = [...((entry && entry.files) || [])];
+  if (!entry || !entry.localFileManifest) return files;
+  const manifestPath = appAsset(entry.localFileManifest);
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  if (!manifest || manifest.schemaVersion !== 1 || !Array.isArray(manifest.files)) {
+    throw new Error(`${ASSET_ENTRY_ID || APP_ID || 'app'}: invalid local media manifest`);
+  }
+  const manifestDir = path.dirname(entry.localFileManifest);
+  for (const file of manifest.files) {
+    if (!file || !file.url) continue;
+    files.push({
+      ...file,
+      url: path.join(manifestDir, file.url),
+    });
+  }
+  return files;
+};
 const WASM_PATH = getArg('wasm', ENV_WASM || path.join(ROOT, 'build', 'wine-assembly.wasm')); // --wasm=FILE (or $WINE_ASSEMBLY_WASM): isolated prebuilt used with --no-build
 // Was a SPECIFIC artifact asked for, as opposed to falling back on the canonical
 // build/wine-assembly.wasm? A pin is a promise about WHICH module is under test —
@@ -3816,9 +3834,10 @@ async function main() {
     // Mount a matched registry app's data files at the same VFS paths the page
     // gives them. An entry is a repo-relative URL (-> c:\basename), or
     // {url, vfsPath}, or {url, vfsPaths} when one file needs several aliases.
-    if (ASSET_ENTRY && ASSET_ENTRY.files) {
+    if (ASSET_ENTRY) {
+      const assetFiles = getAssetFiles(ASSET_ENTRY);
       const missing = [];
-      for (const item of ASSET_ENTRY.files) {
+      for (const item of assetFiles) {
         const url = typeof item === 'string' ? item : (item && item.url);
         if (!url) continue;
         const hostPath = appAsset(url);
