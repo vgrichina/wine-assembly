@@ -684,6 +684,23 @@ worker-slice and nested-frame paths in thread-manager; build exit 0
 (994,664 B, matching `d369831d`'s attested byte-identity size),
 differential 46/46, still exactly one divergence.
 
+**By 04:35 (+1 commit, HEAD `14ffdce4`).** A thin window, minutes after
+the last tick: one commit, tools-only. `14ffdce4` promotes the
+game-driver toolkit out of session scratchpad — `tools/agent-seq.js`
+batches agent-control steps into one shell command (click/key/drag/step
+verbs, verdict verbs that diff frames into a per-session journal, and a
+dxrally reflex loop validated live clearing dxball's first board at
+score 326) — plus `tools/spawn-tile.js` for private headless tiles, and
+`.gitignore` grows `recordings/` and `tmp/` for the frozen-recorder
+output. Verified: both tools parse clean (`node --check`), the ignore
+lines are in place at .gitignore:48-49, and the commit touches nothing
+the wasm is built from, so the 04:20 verification — build exit 0 at
+994,664 B, differential 46/46, one deliberate divergence — still
+describes HEAD byte-for-byte. In flight and not yet reviewable: Codex's
+Icy Tower startup-shim lane holds staged edits across seven src/ files
+plus the API tables (board CLAIM 04:23, merge-based landing announced);
+that is next window's work.
+
 ---
 
 # Pass 3 — 2026-08-30
