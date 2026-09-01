@@ -1873,3 +1873,25 @@ the body. `region-jit.js` now says so with its own exit code (7) and
 `region-census.js` reports it as **`smc-drift`**, listed in the `bugs:` line
 alongside `differs` because it is an unresolved divergence — just one whose
 cause is named and is not the lowering.
+
+### Where all three backends stand at 418a9607
+
+```
+interp    sweep-dos.js, 199 programs, 4 dispatch shells
+          arms-disagree 0, nondeterministic 0
+micro     same run, tiers 0/1/2/3
+          mismatch 0; branchy 19 (inconclusive by construction, not defects)
+          geomean over 141 distinct traces: tier 0 -> 3  3.13x
+jit       region-census.js, 199 programs
+          no-loop 87, identical 77, no-samples 24, phase 9, gated 2
+          declined 0, differs 0
+```
+
+Seven programs — ASMINST, BYRON, DD, ANTARES, STHINTRO, CONDENZ, QUARTZ — did
+not finish the shells stage inside the sweep's 180s cap, so that first run left
+their agreement unmeasured behind a green summary. They are not broken, they are
+slow: ANTARES retires a dispatch in 102ns and STHINTRO in 388ns against a corpus
+norm near 17ns. Agreement is decided by comparing the four shells' end
+signatures and does not need the timing ladder, so re-running just those seven
+at `--dispatches=2m --reps=1` closes the hole: all seven complete, zero
+disagreements.
