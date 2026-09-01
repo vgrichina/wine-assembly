@@ -33,6 +33,13 @@ node tools/region-census.js --gate
 # copy Node, workers and the browser all read. A stale mirror is a silent
 # re-fork of the map into two truths, so hold it fresh here.
 node tools/gen-region-map.js --check
+# ...and nothing but that mirror may spell an ALLOCATED base. The ratchet above
+# cannot ask this: it ignores allocated bases on purpose, because an address the
+# allocator picked this morning cannot be "written down twice". But it is exactly
+# the address a JS file must never hold, since it MOVES on the next size change
+# with no error anywhere — see d59ce229, a copied base that was zeroing 32KB of
+# $PE_STAGING per worker spawn. Hard gate, not a ratchet: the answer is zero.
+node tools/region-census.js --js-copies
 # JS host-side guest-pointer translation must use the same DIB/RPC boundary as
 # WAT. A stale extra megabyte maps guest DIB addresses onto worker RPC slots.
 node test/test-wat-rpc-region.js

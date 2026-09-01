@@ -210,6 +210,7 @@ UNIT=(
   test/test-wat-user-threading.js
   test/test-cross-thread-send.js
   test/test-wat-rpc-region.js
+  test/test-region-js-copies.js
   test/test-worker-thread-scheduler.js
   test/test-wat-memory-map.js
   test/test-wat-window-frame.js

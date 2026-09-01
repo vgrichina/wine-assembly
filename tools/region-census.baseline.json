@@ -1,14 +1,14 @@
 {
   "recorded": "2026-09-01",
   "note": "Per-file counts of raw literals inside declared regions. This is a RATCHET: counts may fall, never rise. `converted` regions must stay at 0.",
-  "total": 70,
+  "total": 68,
   "converted": [],
   "byFile": {
     "src/09a-handlers.wat": 7,
     "test/test-cross-thread-send.js": 7,
-    "lib/thread-manager.js": 4,
     "test/watx-compiler-alloc.test.js": 4,
     "lib/renderer-input.js": 3,
+    "lib/thread-manager.js": 3,
     "src/10-helpers.wat": 3,
     "test/test-enable-window.js": 3,
     "test/test-winhelp-wat-parser.js": 3,
@@ -35,7 +35,6 @@
     "test/test-quake2-gl-web.js": 1,
     "test/test-renderer-mouse-drag-mask.js": 1,
     "test/test-system-parameters-info-nonclient.js": 1,
-    "test/test-thread-manager.js": 1,
     "test/test-win16-civ2-apis.js": 1,
     "test/test-win16-wep-gameplay.js": 1,
     "test/vlan-node.js": 1

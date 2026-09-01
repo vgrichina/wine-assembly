@@ -15,6 +15,7 @@
 //   node tools/region-census.js --json
 //   node tools/region-census.js --gate          # refuse an INCREASE vs baseline
 //   node tools/region-census.js --record        # rewrite the baseline
+//   node tools/region-census.js --js-copies     # refuse a hand-copied ALLOCATED base in JS
 //
 // THE RATCHET. --gate compares against tools/region-census.baseline.json and
 // fails when any file's count goes UP, or when a region marked `converted` in
@@ -57,6 +58,56 @@
 // other region's accounting is untouched. This is the same judgement
 // INTERIOR_FLOOR already makes: the rule only holds where a number that looks
 // like an address is one.
+//
+// ============================================================================
+// --js-copies — THE OTHER HALF, and the hole this fills.
+//
+// The ratchet above deliberately ignores ALLOCATED bases (see the WAVE 3 note
+// by `byBase`): counting a coincidence against an address the allocator picked
+// this morning took the census from 351 to 884 with no source change. That is
+// right for the odometer and wrong for the runtime, because an allocated base
+// is exactly the address a JS file must never hold: it MOVES whenever a size
+// changes or a region is added, and nothing about that edit produces an error.
+// Wave 3 spent hours on three such literals whose symptoms surfaced six regions
+// from the cause, and `d59ce229` found a fourth that was zeroing 32KB of
+// $PE_STAGING on every worker spawn.
+//
+// So this mode asks the narrower question the ratchet cannot: does a JS file
+// other than the generated mirror contain a literal EQUAL to an allocated
+// region's base or exclusive end? It is a hard gate, not a ratchet — the
+// answer must be zero.
+//
+// THE FLOOR IS MEASURED, NOT GUESSED. Allocated bases pack from 0x100 up, so
+// the low ones are 0x1000, 0x2000, 0x4000, 0x10000 — some of the commonest
+// integers in a Win32 emulator, and matching them naively is the 884-false-
+// positive trap all over again. Swept over lib/, tools/, test/ and host.js
+// against today's layout (base and end, generated mirror excluded):
+//
+//     floor        candidate values   raw hits
+//     0x00000000        202             780
+//     0x00001000        199             702
+//     0x00010000        149             205
+//     0x00020000        139               3
+//     0x00100000        139               3
+//     0x01000000        139               3
+//
+// There is a cliff at 0x20000 and a plateau above it: every allocated value in
+// the map is either below 0x20000 or above 0x100000, so 0x20000 is the LOWEST
+// floor that reaches all 139 candidate values — a higher one costs coverage for
+// nothing. Below it the map runs through the flag constants (0x10000 alone is
+// WS_TABSTOP, DT_MODIFYSTRING, the MAKEINTRESOURCE boundary and the default
+// thread stack size) and the rule stops meaning anything.
+//
+// Of the 3 hits at the chosen floor, 2 were the real $PE_STAGING scribble fixed
+// in d59ce229 and the third is `['$GUEST_HEAP_BASE', 0x03D12000]` in
+// tools/region-alloc.js — the allocator's own table of PINNED bases, which is a
+// place the map IS legitimately written down. It is not exempted by filename:
+// 0x03D12000 is $GUEST_HEAP_BASE, a derived base, that merely happens to also
+// be the exclusive end of the region packed below it, and `pinnedBases` below
+// drops every pinned/derived BASE — 139 candidates down to 138 checked. So the
+// gate stands at ZERO today with no per-file exception beyond the generated
+// mirror itself.
+// ============================================================================
 'use strict';
 
 const fs = require('fs');
@@ -167,7 +218,122 @@ function census(options = {}) {
   return { decls, byFile, byRegion, sites };
 }
 
+// ---------------------------------------------------------------------------
+// --js-copies
+// ---------------------------------------------------------------------------
+
+// See the header block. Measured, not chosen: the lowest floor that reaches
+// every checkable allocated value, and the point at which the flag constants
+// stop colliding with the map.
+const JS_COPY_FLOOR = 0x20000;
+
+// The generated mirror IS the map rendered for JS. It is the one file allowed
+// to spell these addresses, which is the whole reason the rest may not.
+const JS_COPY_EXEMPT = new Set(['lib/region-map.generated.js']);
+
+function jsCopyTargets() {
+  const targets = [];
+  const walk = (rel) => {
+    for (const e of fs.readdirSync(path.join(ROOT, rel), { withFileTypes: true })
+                      .sort((a, b) => a.name.localeCompare(b.name))) {
+      if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      const child = `${rel}/${e.name}`;
+      if (e.isDirectory()) walk(child);
+      else if (e.name.endsWith('.js')) targets.push(child);
+    }
+  };
+  for (const dir of ['lib', 'tools', 'test']) walk(dir);
+  targets.push('host.js');
+  return targets;
+}
+
+// `options.sources` is a Map(relPath -> text) that REPLACES the disk scan. It
+// exists so test/test-region-js-copies.js can plant a violation in a string and
+// prove the gate catches it, rather than proving only that today's tree is
+// clean — a gate nobody has ever seen fire is a gate nobody knows works.
+function jsCopies(options = {}) {
+  const decls = collectDeclarations().filter(d => d.base !== null && d.size !== null);
+
+  // A PINNED or DERIVED region's BASE is legitimately written down —
+  // src/00-regions.wat states it outright and tools/region-alloc.js holds the
+  // table of them — so it is not a copy of anything the allocator chose, even
+  // when the region packed below it makes that address its own exclusive end.
+  //
+  // BASES ONLY, and that is load bearing. A pinned region's END is just the
+  // next region's base: $THUNK_BASE ends at 0x07152000, which is where the
+  // allocator put $PE_STAGING, and that is the exact address d59ce229 found
+  // being scribbled. Exempting pinned ends would have let this gate report the
+  // tree clean while the bug it exists to catch sat in lib/thread-manager.js.
+  const pinnedBases = new Set();
+  for (const d of decls) if (d.kind !== 'alloc') pinnedBases.add(d.base >>> 0);
+
+  // Regions pack, so one address is routinely both a base and the region
+  // below's exclusive end. BASES ARE ENTERED FIRST so the report names the
+  // region a reader would recognise the address as, rather than the neighbour
+  // it happens to abut.
+  const byValue = new Map();
+  const claim = (value, name, what) => {
+    const v = value >>> 0;
+    if (v < JS_COPY_FLOOR || pinnedBases.has(v) || byValue.has(v)) return;
+    byValue.set(v, { name, what });
+  };
+  for (const d of decls) if (d.kind === 'alloc') claim(d.base, d.name, 'base');
+  for (const d of decls) if (d.kind === 'alloc') claim(d.base + d.size, d.name, 'end');
+
+  const scan = (rel, text) => {
+    const found = [];
+    const lines = text.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const at = lines[i].indexOf('//');
+      const code = at === -1 ? lines[i] : lines[i].slice(0, at);
+      for (const m of code.matchAll(/0[xX][0-9a-fA-F]{4,8}\b/g)) {
+        const hit = byValue.get(Number.parseInt(m[0], 16) >>> 0);
+        if (!hit) continue;
+        found.push({ file: rel, line: i + 1, literal: m[0],
+                     value: Number.parseInt(m[0], 16) >>> 0,
+                     region: hit.name, what: hit.what, text: lines[i].trim() });
+      }
+    }
+    return found;
+  };
+
+  const hits = [];
+  if (options.sources) {
+    for (const [rel, text] of options.sources) {
+      if (JS_COPY_EXEMPT.has(rel)) continue;
+      hits.push(...scan(rel, text));
+    }
+  } else {
+    for (const rel of jsCopyTargets()) {
+      if (JS_COPY_EXEMPT.has(rel)) continue;
+      const abs = path.join(ROOT, rel);
+      if (!fs.existsSync(abs)) continue;
+      hits.push(...scan(rel, fs.readFileSync(abs, 'utf8')));
+    }
+  }
+  return { hits, checkedValues: byValue.size, floor: JS_COPY_FLOOR };
+}
+
 function main() {
+  if (flag('js-copies')) {
+    const r = jsCopies();
+    for (const h of r.hits) {
+      console.error(`region-census: ${h.file}:${h.line} holds ${h.literal}, ` +
+        `which is $${h.region.replace(/^\$/, '')}'s ALLOCATED ${h.what}`);
+      console.error(`    ${h.text.slice(0, 120)}`);
+    }
+    if (r.hits.length) {
+      console.error('region-census: an allocated base is chosen by the compiler and MOVES ' +
+        'whenever a size changes or a region is added — a JS copy of one is wrong at the ' +
+        'next edit with no error to say so. Read lib/region-map.generated.js instead ' +
+        '(docs/watx-region-safety-design.md).');
+      process.exit(1);
+    }
+    console.log(`region-census OK: no JS file copies an allocated region address ` +
+      `(${r.checkedValues} value(s) checked at or above ${hex(r.floor)})`);
+    return;
+  }
+
   const result = census();
   const total = result.sites.length;
 
@@ -255,4 +421,4 @@ function readBaseline() {
 }
 
 if (require.main === module) main();
-module.exports = { census };
+module.exports = { census, jsCopies, JS_COPY_FLOOR };
