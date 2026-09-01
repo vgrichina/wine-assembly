@@ -127,6 +127,28 @@ let browser = null;
   check('handoff field is embedded in the toolbar, not a floating box',
     inline.tag === 'INPUT' && inline.inSpan && !inline.fixed, JSON.stringify(inline));
 
+  // A fragment is the one URL component whose serialized form may retain a
+  // literal apostrophe. The handoff is paste-ready shell, so prove a crafted
+  // fragment is recovered as exactly one argv value rather than executing the
+  // text between its quotes. Running only `set -- QUOTED; printf "$1"` keeps
+  // this a parser probe; a broken quote makes `id` run and the comparison fail.
+  await page.evaluate(() => { location.hash = "#';id;'"; });
+  const crafted = await page.evaluate(() => import('./lib/agent-remote.js').then(m => ({
+    href: location.href,
+    handoff: m.handoffText(),
+  })));
+  const commandLine = crafted.handoff.split('\n').find(line => line.includes('tools/ctl.js -s '));
+  const quotedArg = commandLine && /^  node tools\/ctl\.js -s (.+) snapshot$/.exec(commandLine);
+  let shellValue = '';
+  try {
+    shellValue = quotedArg && execFileSync('/bin/sh', ['-c',
+      `set -- ${quotedArg[1]}; printf '%s' "$1"`], { encoding: 'utf8' });
+  } catch (error) {
+    shellValue = `shell failed: ${error.message}`;
+  }
+  check('handoff shell-quotes apostrophes in a crafted URL fragment',
+    shellValue === crafted.href, `${JSON.stringify(commandLine)} -> ${JSON.stringify(shellValue)}`);
+
   const title = ctl('-s', sessionId, 'eval', 'document.title');
   check('eval answers from page scope', title.trim().length > 0, JSON.stringify(title));
 
