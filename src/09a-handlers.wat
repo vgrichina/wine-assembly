@@ -12116,16 +12116,9 @@ HookEx — no next hook in chain, return 0
   ;; 480: GetTimeZoneInformation(lpTZI) — zero-fill 172-byte struct, return TIME_ZONE_ID_UNKNOWN (0)
   (func $handle_GetTimeZoneInformation (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32)
-    (local $i i32)
     (local.set $wa (call $g2w (local.get $arg0)))
-    ;; Zero-fill 172 bytes (43 dwords)
-    (local.set $i (i32.const 0))
-    (block $done (loop $loop
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 172)))
-      (i32.store (i32.add (local.get $wa) (local.get $i)) (i32.const 0))
-      (local.set $i (i32.add (local.get $i) (i32.const 4)))
-      (br $loop)
-    ))
+    ;; Zero-fill 172 bytes
+    (memory.fill (local.get $wa) (i32.const 0) (i32.const 172))
     (global.set $eax (i32.const 0))  ;; TIME_ZONE_ID_UNKNOWN
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )

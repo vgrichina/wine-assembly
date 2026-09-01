@@ -524,14 +524,10 @@
   ;; Every entry starts as PAGE_INDEX_NONE: an offset that was never written is
   ;; either a mid-instruction byte or code pass 1 never reached, and both must
   ;; miss rather than resolve to chunk offset 0.
+  ;; PAGE_INDEX_NONE is 0xFFFFFFFF, so every byte of it is 0xFF and the dword
+  ;; store loop is a byte fill written the long way.
   (func $page_index_clear (param $p i32)
-    (local $i i32)
-    (local.set $i (i32.const 0))
-    (block $d (loop $s
-      (br_if $d (i32.ge_u (local.get $i) (global.get $PAGE_INDEX_BYTES)))
-      (i32.store (i32.add (local.get $p) (local.get $i)) (i32.const 0xFFFFFFFF))
-      (local.set $i (i32.add (local.get $i) (i32.const 4)))
-      (br $s))))
+    (memory.fill (local.get $p) (i32.const 0xFF) (global.get $PAGE_INDEX_BYTES)))
 
   ;; Retire one page. This is what makes the fast path safe without a
   ;; generation counter: a dropped page can no longer be named by the page
@@ -639,7 +635,7 @@
     (local $base i32) (local $slot i32) (local $used i32) (local $len i32)
     (local $desc i32) (local $class i32) (local $needed i32)
     (local $old_chunk i32) (local $new_chunk i32) (local $new_class i32)
-    (local $src i32) (local $dst i32) (local $o i32) (local $olast i32)
+    (local $o i32) (local $olast i32)
     (local.set $len (i32.sub (local.get $tend) (local.get $tstart)))
     (if (i32.le_s (local.get $len) (i32.const 0)) (then (return (i32.const -1))))
     (local.set $base (i32.and (local.get $start_eip) (i32.const 0xFFFFF000)))
@@ -693,14 +689,14 @@
         (global.set $page_chunk_grows
           (i32.add (global.get $page_chunk_grows) (i32.const 1)))
         (local.set $class (local.get $new_class))))
-    (local.set $src (local.get $tstart))
-    (local.set $dst (i32.add (global.get $cur_page_chunk) (local.get $used)))
-    (block $cdone (loop $copy
-      (br_if $cdone (i32.ge_u (local.get $src) (local.get $tend)))
-      (i32.store (local.get $dst) (i32.load (local.get $src)))
-      (local.set $src (i32.add (local.get $src) (i32.const 4)))
-      (local.set $dst (i32.add (local.get $dst) (i32.const 4)))
-      (br $copy)))
+    ;; Same move as the grow path above, over the same disjoint regions: the
+    ;; staging span [$tstart,$tend) is $len bytes and never overlaps a page
+    ;; chunk. $len is the size every bound above was decided against, so the
+    ;; copy is exactly it -- the dword loop rounded up to the next word.
+    (memory.copy
+      (i32.add (global.get $cur_page_chunk) (local.get $used))
+      (local.get $tstart)
+      (local.get $len))
     ;; Index the entry point, then mark every interior byte of the block's x86
     ;; as covered by it. The cover marks are what make section 5's invalidation
     ;; a single load: a write anywhere in the block's guest bytes names the
@@ -1100,3 +1096,56 @@
         (i32.store (local.get $base)
           (i32.add (i32.load (local.get $base)) (i32.const 1)))))
     (global.set $branch_hist_kind (i32.const 0)))
+
+  ;; ============================================================
+  ;; (NEXT) — the inner interpreter's dispatch step, written out AT the call
+  ;; site instead of called. This is $next's body; $next itself, above, stays
+  ;; for the three sites that call it in NON-tail position.
+  ;;
+  ;; WHY THIS IS A MACRO AND NOT JUST `(return_call $next)`. V8's wasm inliner
+  ;; prices a callee's wire size against a per-caller budget
+  ;; `max(--wasm-inlining-min-budget (50), --wasm-inlining-factor * caller graph
+  ;; size)`. Handlers are tiny, so their budget is the floor, and $next's 85
+  ;; wire bytes never fit: measured on Heroes II (40000 batches,
+  ;; `node --trace-wasm-inlining` + tools/inline-verdicts.js) $next is denied at
+  ;; sites carrying 3.00M calls and inlined at sites carrying 0.21M — 93%
+  ;; denied, every refusal reading "not enough inlining budget" at a caller
+  ;; graph size of 32-120. Raising the floor to 600 flips it to 3.30M inlined /
+  ;; 0.22M denied and is worth ~9.7% user CPU on the same app at 300000 batches
+  ;; (medians 28.74s -> 25.96s). No browser accepts that flag, so the portable
+  ;; form of the same transform is to do the inlining ourselves, in the source.
+  ;;
+  ;; THE BODY IS DELIBERATELY LOCAL-FREE. $next uses two locals; a macro cannot
+  ;; declare any, and adding two to each of the 400+ handlers would be a far
+  ;; larger and more fragile edit. Instead $ip is advanced first and both thread
+  ;; words are re-read at $ip-8 / $ip-4. Nothing between the reads writes
+  ;; memory, so TurboFan CSEs them back to one load each; the source cost is one
+  ;; extra `i32.sub` per dispatch and the win is that this expands anywhere.
+  ;;
+  ;; SEMANTICS ARE $next's, EXACTLY — including that `(return)` on step
+  ;; exhaustion returns from the *handler*, which is what `(return_call $next)`
+  ;; already did. Use it ONLY in tail position; the three non-tail `call $next`
+  ;; sites ($run in 13-exports.wat, one in 05-alu.wat) must keep calling the
+  ;; function.
+  ;;
+  ;; IT IS AT THE END OF THIS FILE ON PURPOSE. `defmacro` is collected from the
+  ;; whole top-level form list before any expansion, so placement is free — and
+  ;; src/00-regions.wat's (owner "file:line") clauses point INTO this file, so a
+  ;; block inserted anywhere above them shifts every one of them and fails
+  ;; tools/check-region-decls.js. Appending costs no owner line.
+  ;; ============================================================
+  (defmacro (NEXT)
+    (block $__next_inline
+      (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+      (if (i32.le_s (global.get $steps) (i32.const 0))
+        (then
+          ;; Hand $run the op we are declining to run, so it resumes the block
+          ;; instead of restarting it. See $resume_ip in 01-header.wat.
+          (global.set $resume_ip (global.get $ip))
+          (return)))
+      (if (global.get $handler_hist_enabled)
+        (then (call $handler_hist_record (i32.load (global.get $ip)))))
+      (global.set $ip (i32.add (global.get $ip) (i32.const 8)))
+      (return_call_indirect (type $handler_t)
+        (i32.load offset=4 (i32.sub (global.get $ip) (i32.const 8)))
+        (i32.load (i32.sub (global.get $ip) (i32.const 8))))))

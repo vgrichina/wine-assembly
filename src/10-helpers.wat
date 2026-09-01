@@ -137,7 +137,6 @@
   ;; decide whether it can dirty a display bitmap.
   (func $dib_alloc (param $size i32) (result i32)
     (local $pages i32) (local $page i32) (local $run i32) (local $start i32)
-    (local $i i32)
     (if (i32.eqz (local.get $size)) (then (return (i32.const 0))))
     (local.set $pages
       (i32.shr_u (i32.add (local.get $size) (i32.const 0xFFF)) (i32.const 12)))
@@ -161,21 +160,16 @@
     (i32.store16
       (i32.add (global.get $DIB_PAGE_RUNS) (i32.shl (local.get $start) (i32.const 1)))
       (local.get $pages))
-    (local.set $i (i32.const 0))
-    (block $marked (loop $mark
-      (br_if $marked (i32.ge_u (local.get $i) (local.get $pages)))
-      (i32.store8
-        (i32.add (global.get $DIB_PAGE_USED) (i32.add (local.get $start) (local.get $i)))
-        (i32.const 1))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $mark)))
+    (memory.fill
+      (i32.add (global.get $DIB_PAGE_USED) (local.get $start))
+      (i32.const 1) (local.get $pages))
     (call $zero_memory
       (i32.add (global.get $DIB_BACKING_BASE) (i32.shl (local.get $start) (i32.const 12)))
       (i32.shl (local.get $pages) (i32.const 12)))
     (i32.add (global.get $DIB_GUEST_BASE) (i32.shl (local.get $start) (i32.const 12))))
 
   (func $dib_free_wasm (param $wa i32)
-    (local $page i32) (local $pages i32) (local $i i32)
+    (local $page i32) (local $pages i32)
     (if (i32.ge_u
           (i32.sub (local.get $wa) (global.get $DIB_BACKING_BASE))
           (global.get $DIB_BACKING_BASE_SIZE))
@@ -189,13 +183,9 @@
     (i32.store16
       (i32.add (global.get $DIB_PAGE_RUNS) (i32.shl (local.get $page) (i32.const 1)))
       (i32.const 0))
-    (block $done (loop $clear
-      (br_if $done (i32.ge_u (local.get $i) (local.get $pages)))
-      (i32.store8
-        (i32.add (global.get $DIB_PAGE_USED) (i32.add (local.get $page) (local.get $i)))
-        (i32.const 0))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $clear))))
+    (memory.fill
+      (i32.add (global.get $DIB_PAGE_USED) (local.get $page))
+      (i32.const 0) (local.get $pages)))
 
   ;; Fast path for the MSVC CRT small-block heap descriptor scan:
   ;;
@@ -1296,16 +1286,10 @@
   (global $EXTRA_CMDLINE_BUFFER_SIZE i32 (region.size $EXTRA_CMDLINE_BUFFER))
   (global $extra_cmdline_len (mut i32) (i32.const 0))
   (func (export "set_extra_cmdline") (param $waddr i32) (param $len i32)
-    (local $i i32)
     (if (i32.gt_u (local.get $len) (i32.const 200))
       (then (local.set $len (i32.const 200))))
     (global.set $extra_cmdline_len (local.get $len))
-    (block $done (loop $copy
-      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
-      (i32.store8 (i32.add (global.get $EXTRA_CMDLINE_BUFFER) (local.get $i))
-        (i32.load8_u (i32.add (local.get $waddr) (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $copy))))
+    (memory.copy (global.get $EXTRA_CMDLINE_BUFFER) (local.get $waddr) (local.get $len)))
 
   ;; Build the ANSI CRT view of the command line beside GetCommandLineA's
   ;; immutable string. Layout within the allocation is:
@@ -1397,7 +1381,7 @@
     (i32.const 0))
 
   (func $store_fake_cmdline
-    (local $ptr i32) (local $dst i32) (local $i i32) (local $len i32) (local $extra i32)
+    (local $ptr i32) (local $dst i32) (local $len i32) (local $extra i32)
     (local.set $ptr (call $heap_alloc (i32.const 1536)))
     (global.set $fake_cmdline_addr (local.get $ptr))
     (global.set $msvcrt_acmdln_ptr (local.get $ptr))
@@ -1407,12 +1391,8 @@
     (i32.store8 (i32.add (local.get $dst) (i32.const 1)) (i32.const 0x3A))  ;; ':'
     (i32.store8 (i32.add (local.get $dst) (i32.const 2)) (i32.const 0x5C))  ;; '\'
     (local.set $len (global.get $exe_name_len))
-    (block $done (loop $copy
-      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
-      (i32.store8 (i32.add (local.get $dst) (i32.add (local.get $i) (i32.const 3)))
-        (i32.load8_u (i32.add (global.get $exe_name_wa) (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $copy)))
+    (memory.copy (i32.add (local.get $dst) (i32.const 3))
+      (global.get $exe_name_wa) (local.get $len))
     (local.set $len (i32.add (local.get $len) (i32.const 3)))
     ;; If extra args were set via $set_extra_cmdline, append " <args>".
     (local.set $extra (global.get $extra_cmdline_len))
@@ -1420,13 +1400,8 @@
       (then
         (i32.store8 (i32.add (local.get $dst) (local.get $len)) (i32.const 0x20)) ;; ' '
         (local.set $len (i32.add (local.get $len) (i32.const 1)))
-        (local.set $i (i32.const 0))
-        (block $done2 (loop $copy2
-          (br_if $done2 (i32.ge_u (local.get $i) (local.get $extra)))
-          (i32.store8 (i32.add (local.get $dst) (i32.add (local.get $len) (local.get $i)))
-            (i32.load8_u (i32.add (global.get $EXTRA_CMDLINE_BUFFER) (local.get $i))))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $copy2)))
+        (memory.copy (i32.add (local.get $dst) (local.get $len))
+          (global.get $EXTRA_CMDLINE_BUFFER) (local.get $extra))
         (local.set $len (i32.add (local.get $len) (local.get $extra)))))
     (i32.store8 (i32.add (local.get $dst) (local.get $len)) (i32.const 0))
     (call $store_fake_argv_a (local.get $ptr)
