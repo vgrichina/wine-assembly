@@ -118,6 +118,14 @@ const DUMP_VIRTUAL_MAPS = hasFlag('dump-virtual-maps'); // --dump-virtual-maps: 
 // while the guest runs; drive it with tools/ctl.js or plain curl.
 const CONTROL_SPEC = getArg('control', null);
 const CONTROL = hasFlag('control') || CONTROL_SPEC !== null;
+// --control-stdin: same command set over stdin NDJSON instead of (or beside)
+// the HTTP server — one command per line, a JSON object or a bare --input
+// entry string; each reply comes back on stdout as one "[ctl] {...}" line.
+// For piping a generated stream or driving run.js from a parent process; an
+// interactive agent is better served by --control, whose replies pair with
+// the request. Not compatible with the interactive debug prompt (--break
+// without --watch-log), which owns stdin.
+const CONTROL_STDIN = hasFlag('control-stdin');
 const CONTROL_PORT = parseInt(CONTROL_SPEC || '8123', 10) || 8123;
 const CONTROL_HOST = getArg('control-host', '127.0.0.1'); // --control-host=0.0.0.0: explicit LAN opt-in (the channel carries eval)
 // With --control the schedule is external, so a default batch budget makes no
@@ -125,7 +133,7 @@ const CONTROL_HOST = getArg('control-host', '127.0.0.1'); // --control-host=0.0.
 // An explicit --max-batches still bounds it.
 const MAX_BATCHES = getArg('max-batches', null) !== null
   ? parseInt(getArg('max-batches', '200'))
-  : (CONTROL ? Infinity : 200);
+  : ((CONTROL || CONTROL_STDIN) ? Infinity : 200);
 // --max-seconds=N: stop the batch loop after N seconds of wall clock, whatever
 // --max-batches says. For benchmarking, this is the useful axis: an app's cost
 // per batch is not constant (Caesar runs ~0.1ms/batch through its boot and then
@@ -2815,7 +2823,7 @@ async function main() {
     // unused toolbar/status children during frame setup, and closing the app
     // on that leaves the real frame unpainted (fontview exited before its
     // first WM_PAINT this way).
-    if (cmd !== 0 && !inputEvent && !inputQueue && !INPUT_SPEC && !CONTROL) {
+    if (cmd !== 0 && !inputEvent && !inputQueue && !INPUT_SPEC && !CONTROL && !CONTROL_STDIN) {
       const btnArg = args.find(a => a.startsWith('--buttons='));
       if (btnArg) {
         inputQueue = btnArg.split('=')[1].split(',').map(Number);
@@ -4852,6 +4860,11 @@ async function main() {
   };
   const handleControlCommand = (cmdIn) => {
     const cmd = typeof cmdIn === 'string' ? { cmd: cmdIn } : (cmdIn || {});
+    // Stdin ergonomics: a bare native name on a line ("snapshot") reads as
+    // the native action, not as an input entry that would fail to parse.
+    if (!cmd.action && /^(ping|snapshot|quit)$/.test(String(cmd.cmd || ''))) {
+      cmd.action = String(cmd.cmd);
+    }
     if (cmd.action === 'ping') {
       return { pong: true, batch: tickState.batch | 0, app: APP_ID || path.basename(EXE_PATH || '') };
     }
@@ -4881,10 +4894,34 @@ async function main() {
       scheduledInput.splice(at, 0, ...evs);
     });
   };
-  const control = CONTROL ? require('../lib/control-server').startControlServer({
-    port: CONTROL_PORT, host: CONTROL_HOST,
-    onCommand: handleControlCommand, log: line => console.log(line),
-  }) : null;
+  const control = (CONTROL || CONTROL_STDIN) ? (() => {
+    const server = CONTROL ? require('../lib/control-server').startControlServer({
+      port: CONTROL_PORT, host: CONTROL_HOST,
+      onCommand: handleControlCommand, log: line => console.log(line),
+    }) : null;
+    if (CONTROL_STDIN) {
+      const rl = require('readline').createInterface({ input: process.stdin, terminal: false });
+      rl.on('line', (line) => {
+        const text = line.trim();
+        if (!text) return;
+        let cmd;
+        try { cmd = JSON.parse(text); } catch (_) { cmd = { cmd: text }; }
+        const list = Array.isArray(cmd) ? cmd : [cmd];
+        for (const one of list) {
+          Promise.resolve().then(() => handleControlCommand(one)).then(
+            value => console.log(`[ctl] ${JSON.stringify({ ok: true, id: one.id, value })}`),
+            error => console.log(`[ctl] ${JSON.stringify({ ok: false, id: one.id, error: String(error && error.message || error) })}`));
+        }
+      });
+      // EOF just ends the stream — the pipe's producer finishing must not
+      // kill a run the HTTP channel (or a schedule) may still be driving.
+      rl.on('close', () => {});
+      // But an open stdin must not keep the process alive after the batch
+      // loop ends either (a terminal's stdin never reaches EOF).
+      return { close() { rl.close(); process.stdin.unref(); if (server) server.close(); } };
+    }
+    return { close() { if (server) server.close(); } };
+  })() : null;
 
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
     if (deadlineMs && Date.now() >= deadlineMs) {

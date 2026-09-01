@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 // The browser half of the agent control channel (docs/design-agent-control.md):
-// a real dev-server, a real Chrome tab, and the exact copy-paste connect line
-// from the doc — then the session is driven from the shell through tools/ctl.js
-// like an agent would. This covers the hub routes, lib/agent-remote.js's poll
-// loop, and ctl.js's hub mode in one pass.
+// a real dev-server, a real Chrome tab, zero paste — the dev-server injects
+// the auto-connect into the page it serves, and the copied tab URL is the
+// session selector. Then the session is driven from the shell through
+// tools/ctl.js like an agent would. This covers the injection, the hub
+// routes, lib/agent-remote.js's poll loop, and ctl.js's hub + link modes.
 //
 // PASS criteria:
-//   - the pasted import()+connect() registers a session the hub lists
-//   - ping round-trips through hub -> page -> hub with kind:browser
+//   - the served page registers a session by itself (no console paste)
+//   - the copied page URL resolves to that session and pings kind:browser
+//   - the documented paste line still works and lands on the SAME session
+//     (same module instance — a second connect() must not fork one)
 //   - eval answers with a page-side value
 //   - png hands back a data URL that ctl.js writes as a real PNG file
 //   - a click command executes page-side (transport check; app-level input
@@ -66,16 +69,28 @@ let browser = null;
   await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForSelector('#screen', { timeout: 15000 });
 
-  // The exact copy pasta from the doc, verbatim shape.
-  const sessionId = await page.evaluate(port =>
+  // No paste: the dev-server injected the auto-connect into the page it
+  // served. Wait for the session to show up on the hub by itself.
+  let sessionId = null;
+  const connectDeadline = Date.now() + 15000;
+  while (!sessionId && Date.now() < connectDeadline) {
+    const m = /^([0-9a-f]{8})\s/m.exec(ctl('sessions'));
+    if (m) sessionId = m[1];
+    else await new Promise(r => setTimeout(r, 300));
+  }
+  check('served page auto-connected (no paste)', /^[0-9a-f]{8}$/.test(sessionId || ''), ctl('sessions').trim());
+
+  // The user's whole handoff is the tab URL: ctl resolves it to the session.
+  const pageLink = `http://127.0.0.1:${PORT}/`;
+  const ping = JSON.parse(ctl('-s', pageLink, 'ping'));
+  check('copied page link drives the session', ping.pong === true && ping.kind === 'browser', JSON.stringify(ping));
+
+  // The documented paste line must still work for pages served elsewhere —
+  // and on this page it must land on the same module instance, not fork a
+  // second session.
+  const pastedId = await page.evaluate(port =>
     import(`http://127.0.0.1:${port}/lib/agent-remote.js`).then(m => m.connect()), PORT);
-  check('connect() registered a session', /^[0-9a-f]{8}$/.test(sessionId || ''), String(sessionId));
-
-  const listed = ctl('sessions');
-  check('hub lists the session', listed.includes(sessionId), listed.trim());
-
-  const ping = JSON.parse(ctl('-s', sessionId, 'ping'));
-  check('ping round-trips through the page', ping.pong === true && ping.kind === 'browser', JSON.stringify(ping));
+  check('paste line joins the same session', pastedId === sessionId, `${pastedId} vs ${sessionId}`);
 
   const title = ctl('-s', sessionId, 'eval', 'document.title');
   check('eval answers from page scope', title.trim().length > 0, JSON.stringify(title));

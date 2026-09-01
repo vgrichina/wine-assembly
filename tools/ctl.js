@@ -15,7 +15,10 @@
 // Targets a CLI VM (test/run.js --control, default http://127.0.0.1:8123) or,
 // with -s SESSIONID, a browser session through the dev-server hub (default
 // http://127.0.0.1:8080). `-s :8124` is shorthand for a CLI VM on another
-// port. The agent loop this exists for: png, look, click, png, png-diff.
+// port. `-s 'http://127.0.0.1:8080/?debug'` — a page URL copied straight from
+// the browser tab — resolves to the session the hub sees at that address (the
+// dev-server auto-connects pages it serves, so the link is all that's needed).
+// The agent loop this exists for: png, look, click, png, png-diff.
 //
 // Exit codes compose in a shell, same contract as tools/ios-eval.js:
 // 0 = executed, 1 = the command failed guest/page-side, 2 = transport.
@@ -44,8 +47,11 @@ const DIRECT = flag('url', `http://127.0.0.1:${flag('port', '8123')}`);
 const TOKEN = flag('token', process.env.WINE_AGENT_TOKEN || '');
 const tokenPart = TOKEN ? `&token=${encodeURIComponent(TOKEN)}` : '';
 
-const target = (() => {
+let target = (() => {
   if (SESSION && SESSION.startsWith(':')) return { kind: 'direct', base: `http://127.0.0.1${SESSION}` };
+  // A page URL copied from the browser tab: resolved against the hub's
+  // session list in main() (needs a request, so it can't happen here).
+  if (SESSION && /^https?:\/\//.test(SESSION)) return { kind: 'link', url: SESSION };
   if (SESSION) return { kind: 'hub', base: HUB, session: SESSION };
   return { kind: 'direct', base: DIRECT };
 })();
@@ -86,9 +92,40 @@ function get(url) {
   });
 }
 
-const ctlUrl = target.kind === 'hub'
-  ? `${target.base}/api/agent/ctl?s=${encodeURIComponent(target.session)}${tokenPart}`
-  : `${target.base}/ctl`;
+let ctlUrl = null;
+const computeCtlUrl = () => {
+  ctlUrl = target.kind === 'hub'
+    ? `${target.base}/api/agent/ctl?s=${encodeURIComponent(target.session)}${tokenPart}`
+    : `${target.base}/ctl`;
+};
+
+// Turn a copied page link into a hub session id. The page URL's origin IS the
+// hub when the dev-server served the page (it hosts both), so no --hub flag is
+// needed; an explicit --hub= still wins. Match order: exact href, then
+// origin+pathname (the copied link may have lost or gained query params),
+// then "it's the only session". Ambiguity is an error that lists the
+// candidates rather than a guess.
+async function resolveLink() {
+  const u = new URL(target.url);
+  const hubBase = argv.some(a => a.startsWith('--hub=')) ? HUB : u.origin;
+  const { body } = await get(`${hubBase}/api/agent/sessions?x=1${tokenPart}`);
+  if (!Array.isArray(body.sessions)) fail(`hub at ${hubBase} said: ${JSON.stringify(body)}`, 2);
+  const norm = (href) => { try { const h = new URL(href); return h.origin + h.pathname; } catch (_) { return ''; } };
+  let matches = body.sessions.filter(s => s.href === u.href);
+  if (!matches.length) matches = body.sessions.filter(s => norm(s.href) === u.origin + u.pathname);
+  if (!matches.length && body.sessions.length === 1) matches = body.sessions;
+  if (!matches.length) {
+    fail(`no session on ${hubBase} matches ${u.href}`
+      + (body.sessions.length
+        ? ` — live sessions:\n${body.sessions.map(s => `  ${s.id}  ${s.href}`).join('\n')}`
+        : ' — no live sessions (is the page open, served by the dev server?)'), 2);
+  }
+  if (matches.length > 1) {
+    fail(`${matches.length} sessions match ${u.href} — pick one with -s ID:\n`
+      + matches.map(s => `  ${s.id}  ${s.href}  last-seen=${s.lastSeenSec}s ago`).join('\n'), 2);
+  }
+  target = { kind: 'hub', base: hubBase, session: matches[0].id };
+}
 
 async function send(commands) {
   const single = !Array.isArray(commands);
@@ -142,7 +179,7 @@ function printResult(result) {
 
 async function main() {
   if (!VERB) {
-    fail('usage: ctl.js [-s SESSION|:PORT] snapshot|ping|click X,Y|dblclick|rclick|mousedown|mouseup|mousemove|drag X1,Y1 X2,Y2|key VK|type TEXT|png FILE|eval CODE|cmd RAW|pipe|quit|sessions', 2);
+    fail('usage: ctl.js [-s SESSION|:PORT|PAGE-URL] snapshot|ping|click X,Y|dblclick|rclick|mousedown|mouseup|mousemove|drag X1,Y1 X2,Y2|key VK|type TEXT|png FILE|eval CODE|cmd RAW|pipe|quit|sessions', 2);
   }
 
   if (VERB === 'sessions') {
@@ -150,10 +187,13 @@ async function main() {
     if (!Array.isArray(body.sessions)) fail(`hub said: ${JSON.stringify(body)}`, 2);
     if (!body.sessions.length) { console.log('no live sessions on the hub'); return; }
     for (const s of body.sessions) {
-      console.log(`${s.id}  ${s.kind || 'browser'}  app=${s.app || '?'}  age=${s.ageSec}s  last-seen=${s.lastSeenSec}s ago`);
+      console.log(`${s.id}  ${s.kind || 'browser'}  app=${s.app || '?'}  age=${s.ageSec}s  last-seen=${s.lastSeenSec}s ago  ${s.href || ''}`);
     }
     return;
   }
+
+  if (target.kind === 'link') await resolveLink();
+  computeCtlUrl();
 
   if (VERB === 'snapshot' && target.kind === 'direct') {
     const { body } = await get(`${target.base}/snapshot`);
@@ -248,4 +288,4 @@ async function main() {
   }
 }
 
-main().catch(error => fail(`no control server at ${ctlUrl} — ${error.message}`, 2));
+main().catch(error => fail(`no control server at ${ctlUrl || target.url || target.base} — ${error.message}`, 2));

@@ -1,12 +1,16 @@
 # Agent control channel: live event streams into a running session
 
-Status: phases 1 and 2 IMPLEMENTED (run.js `--control` + `tools/ctl.js` +
-dev-server hub + `lib/agent-remote.js`, tests `test/test-control-cli.js` and
+Status: phases 1 and 2 IMPLEMENTED (run.js `--control`/`--control-stdin` +
+`tools/ctl.js` + dev-server hub + `lib/agent-remote.js` + dev-server
+auto-inject, tests `test/test-control-cli.js` and
 `test/test-web-agent-remote.js`); phase 3 (subscribe streams, pause/step,
-record/replay) remains design. The `?agent` page hook is deferred until
-`index.html` is free of another lane's uncommitted work — until then the
-pasted `import(...).connect()` line (printed by the dev-server at startup) is
-the browser connect path.
+record/replay) remains design. The browser connect path is zero-paste for
+pages the dev-server serves: it injects the connect script itself, so the
+user hands the agent the tab URL and `ctl.js -s <that URL>` resolves it to
+the session. The `?agent` hook in `index.html` is thereby unnecessary for
+served pages and stays deferred (the file is held by another lane); pages
+served elsewhere still connect by the pasted `import(...).connect()` line
+printed at dev-server startup.
 
 ## The problem
 
@@ -125,6 +129,14 @@ Phase 2:
   `timeout -s KILL` on the *agent's own* commands remains the outer bound.
 - `--input=` still works alongside it (scheduled preamble + live control) and
   auto-WM_CLOSE stays disabled exactly as it is for `--input`.
+- **`--control-stdin`** — the same command set over stdin, one command per
+  line (a JSON object/array or a bare `--input` entry string like
+  `keypress:65`); each reply prints on stdout as one `[ctl] {"ok":...}` line.
+  For piping a generated stream or driving run.js from a parent process;
+  composes with `--control` (both may be on). stdin EOF does *not* end the
+  run — `quit` (or the outer timeout) does. Not compatible with the
+  interactive debug prompt, which owns stdin. An interactive agent is better
+  served by HTTP, where each reply pairs with its own request.
 
 Why a direct server and not "run.js polls the dev-server too": the headless
 case is the agent's bread and butter and must not require a second process.
@@ -154,15 +166,21 @@ promoted from lab-only to the emulator page and made session-aware:
   page still open?" message, like ios-eval). CORS-open like `/api/perf`,
   because the page being driven is often served from elsewhere.
 
-### Connecting a page — the copy pasta
+### Connecting a page — copy the link
 
 Three ways in, cheapest first:
 
-1. **You launched the page yourself:** add `?agent` to the URL. `index.html`
-   loads `lib/agent-remote.js` the way `?diag` loads phone-diag; hub defaults
-   to the page's own origin. Zero paste. This is also the phone path —
-   typing `?agent` into Safari's URL bar beats pasting into a console that
-   iOS doesn't have.
+1. **The page is served by the dev-server (the normal case):** nothing. The
+   server appends a `<script type=module>` auto-connect to `index.html` as it
+   serves it (localhost binds only; `--no-agent-inject` turns it off), so the
+   session is on the hub the moment the page loads. The user's whole handoff
+   is the tab URL: `node tools/ctl.js -s 'http://127.0.0.1:8080/?debug' png
+   out.png` resolves the link against the hub's session list (sessions record
+   their `href`; match order exact href → origin+pathname → only-session;
+   ambiguity lists ids and exits 2). This is also the phone path — Safari
+   loading the served page connects itself, no console needed. Injection is
+   never enabled on a wider bind, because the page would need the agent token
+   and serving the token to every viewer is serving control of every session.
 2. **Any other page (deployed berrry.app, someone else's tab):** paste one
    line into the console:
 
@@ -199,9 +217,11 @@ node tools/ctl.js [-s ID] tail                  # phase 2: follow subscribed eve
 ```
 
 With exactly one live session, `-s` is optional. `-s` accepts a bare CLI port
-(`-s :8123`) or a hub session id. Exit codes compose in a shell: 0 executed,
-1 the command threw guest/page-side, 2 transport failure — same contract as
-ios-eval.
+(`-s :8123`), a hub session id, or a **page URL copied from the browser tab**
+(`-s 'http://127.0.0.1:8080/?debug'` — the URL's origin is the hub, since the
+dev-server serves the page and hosts the hub; an explicit `--hub=` wins).
+Exit codes compose in a shell: 0 executed, 1 the command threw
+guest/page-side, 2 transport failure — same contract as ios-eval.
 
 The agent loop this enables, verbatim:
 

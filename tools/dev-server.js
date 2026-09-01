@@ -196,7 +196,18 @@ function resolveStatic(urlPath) {
   return full;
 }
 
-function serveStatic(req, res, urlPath) {
+// Appended to the emulator page when this server serves it (localhost binds
+// only): the page connects itself to the agent hub, so "drive my session" is
+// copying the link from the browser — no console paste. A bind beyond
+// localhost must NOT inject, because the page would need the agent token and
+// serving the token to every page viewer is serving control of every session.
+const AGENT_INJECT = '\n<script type="module">\n'
+  + '// injected by tools/dev-server.js — agent hub auto-connect\n'
+  + '// (docs/design-agent-control.md; --no-agent-inject turns this off)\n'
+  + "import('/lib/agent-remote.js').then(m => m.connect()).catch(() => {});\n"
+  + '</script>\n';
+
+function serveStatic(req, res, urlPath, agentInject) {
   const full = resolveStatic(urlPath);
   if (!full) {
     res.writeHead(403, { 'Content-Type': 'text/plain' });
@@ -224,13 +235,36 @@ function serveStatic(req, res, urlPath) {
     // no-store, not no-cache: no-cache still allows a stored copy and asks the
     // browser to revalidate, and this server sends no ETag or Last-Modified to
     // revalidate against. Nothing served here is worth caching.
-    res.writeHead(200, Object.assign({
-      'Content-Type': type,
-      'Content-Length': st.size,
-      'Cache-Control': 'no-store, must-revalidate',
-      'Pragma': 'no-cache',
-      'Expires': '0',
-    }, isolationHeaders || {}));
+    // The emulator page gets the auto-connect script appended (a trailing
+    // module script is parsed and run like any other), so its body is built
+    // in memory first — the Content-Length must describe what is actually
+    // sent, not the on-disk size. Everything else streams untouched.
+    const inject = agentInject && full === path.join(ROOT, 'index.html');
+    const sendHeaders = (length) => {
+      res.writeHead(200, Object.assign({
+        'Content-Type': type,
+        'Content-Length': length,
+        'Cache-Control': 'no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+        // A cross-origin page (the deployed build, or localhost vs 127.0.0.1 —
+        // browsers treat those as different origins) can only import() the
+        // agent-remote module if the module response says so; without this the
+        // pasted connect line fails with an opaque CORS error.
+        'Access-Control-Allow-Origin': '*',
+      }, isolationHeaders || {}));
+    };
+    if (inject) {
+      fs.readFile(full, (err2, data) => {
+        if (err2) { res.writeHead(500); res.end(); return; }
+        const body = Buffer.concat([data, Buffer.from(AGENT_INJECT)]);
+        sendHeaders(body.length);
+        if (req.method === 'HEAD') { res.end(); return; }
+        res.end(body);
+      });
+      return;
+    }
+    sendHeaders(st.size);
     if (req.method === 'HEAD') { res.end(); return; }
     fs.createReadStream(full).pipe(res)
       .on('error', () => res.destroy());
@@ -618,7 +652,11 @@ function createServer(opts) {
       return sendJson(res, 405, { error: 'method not allowed' });
     }
     if (!quiet && verbose) console.log(`${req.method} ${url.pathname}`);
-    serveStatic(req, res, url.pathname === '/' ? '/index.html' : url.pathname);
+    // Auto-connect injection only on a localhost bind: with a wider bind the
+    // page would need the agent token, and serving the token to every viewer
+    // is serving control of every session.
+    const agentInject = !(opts && opts.agentToken) && !(opts && opts.noAgentInject);
+    serveStatic(req, res, url.pathname === '/' ? '/index.html' : url.pathname, agentInject);
   });
   server.store = store;
   return server;
@@ -640,6 +678,7 @@ function main() {
     verbose: process.argv.includes('--verbose'),
     perfLog,
     agentToken,
+    noAgentInject: process.argv.includes('--no-agent-inject'),
   });
   server.listen(port, host, () => {
     console.log(`wine-assembly dev server: http://${host}:${port}`);
@@ -650,7 +689,15 @@ function main() {
       + (ISOLATE ? '  (COOP/COEP served: isolated)' : '  (no COOP/COEP; use --isolate or the page\'s service-worker button)'));
     if (perfLog) console.log(`  perf batches appended as NDJSON to ${perfLog}`);
     const tokenQuery = agentToken ? `?token=${agentToken}` : '';
-    console.log(`  agent hub at /api/agent — connect a page by pasting into its console:`);
+    const injecting = !agentToken && !process.argv.includes('--no-agent-inject');
+    if (injecting) {
+      console.log('  agent hub at /api/agent — the emulator page auto-connects when served');
+      console.log('  from here: copy the tab URL and drive it, e.g.');
+      console.log(`    node tools/ctl.js -s 'http://${host}:${port}/?debug' png out.png`);
+      console.log('  pages served elsewhere connect by console paste:');
+    } else {
+      console.log('  agent hub at /api/agent — connect a page by pasting into its console:');
+    }
     console.log(`    import('http://${host === '0.0.0.0' ? '<lan-ip>' : host}:${port}/lib/agent-remote.js${tokenQuery}')`
       + `.then(m => m.connect())`);
     console.log(`  then drive it: node tools/ctl.js sessions | node tools/ctl.js -s <ID> png out.png`);
