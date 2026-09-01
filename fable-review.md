@@ -570,6 +570,62 @@ self-reported with the affected lane named, and the coordinator-sweep
 pattern for `build.sh` is now the working protocol. My runs: build exit 0
 (991,330 B), differential 46/46, still exactly one divergence.
 
+**By 00:20 Sep 1 (+23 commits, HEAD `48736086`).** The bug class Pass 4
+predicted — a raw fixed address surviving under an allocated region —
+fired in production and was root-caused (`bfcb4c8d`): `MM_TIMER_TABLE`/
+`MM_TIMER_NEXT_ID` were still raw constants at 0x00010800/0x108C0, the
+allocator placed RICHEDIT_FORMAT_TABLE over them, and any CreateDialog
+with controls zeroed mm-timer slot 0 — app-independent corruption that
+presented as RCT's timer dying. The same commit fixed the other half of
+RCT's title-screen blocker: DPLAYX ordinals resolved against DSOUND (the
+rule tested a 1-based static-DLL index `==4`, which is dplayx, not
+dsound), so dplayx#2 became DirectSoundEnumerateA — wrong arity, EIP 0;
+`test-directsound-ordinals` was already red on exactly this and now
+passes. LAYOUT_HASH moved to `73e5b61e`, and the rule stands: rebuild
+both, never mix an old region map with a new wasm. The watx-audit lane
+closed all eight of its findings: `strictDeclarations` is ON — duplicate
+`(func $name)` is now a compile error, and turning it on flushed out a
+dead duplicate `$handle_toupper` (last-wins had silently made 09a's body
+dead code); positional `else` is a hard error; `--shake-all` is a build
+gate (rotation lands at exactly 0x0 slack); and CLAUDE.md's memory map
+was regenerated after being found wrong in *shape* — a table of
+allocated bases is a copy of the map by another name, so it now quotes
+only the seven ABI addresses, points at `tools/region-layout.js`, lists
+all 61 source parts in main.watx include order, and names the gate
+groups that actually run. `f35c2336` closed a gate hole: underscore hex
+separators (`0x0001_2000`) were invisible to three region-census
+patterns while WATX itself strips `_` — one shared `hexLiterals()`
+reader now, generated mirror exempt by path, and the census landing
+unchanged at 68 shows the exemption sits exactly where the trick was.
+Wave 6 of class C produced RECT 206/206 (frozen, `81fbcddb`) and POINT
+18/18, plus a scoping law from *declining* MSG (`0b819ed7`): class C's
+one accessor `$g2w` proves guest-pointer, not which struct, so census
+the accessor spelling before spending SDK-prototype judgement — MSG
+traffic is all `$gs32`/`$gl32`, zero eligible sites. watx-drift landed
+32 region laws (`bd23c4c5`, byte-identical), 23 `region.addr`
+conversions plus a `--hand-rolled` ratchet (`71481e1e`, +29 bytes from
+constant folding, verified functionally — and `9cc12f6f` wrote down the
+law that the byte oracle *divides* conversions: establish which kind a
+spelling is by reading the emission path before converting), winsock
+acc_queue sugar (`48736086`), and stale `named.wasm` deletion on plain
+builds (`2a90f88e`). Incident #8: `71481e1e`'s commit swept
+agent-input-guard's seven staged files — the durable lesson, now on the
+board, is that `git add PATH && git commit` commits the whole index;
+only `git commit -- PATH` is path-scoped. `851dbd94` moved winmine's
+dialog chrome fully into WAT (WS_DLGFRAME counted in nccalcsize,
+DLGTEMPLATE owner-relative origin via `$dlg_place_owner_relative`,
+centering out of renderer.js). The frame-pacing census self-corrected:
+dxball is *not* frame-locked — its 17ms software limiter is defeated by
+the 200ms/batch headless clock, the FRAME_LOCKED count is zero, and the
+real lever is coalescing presents (dxball issues 113 `$dx_present` per
+frame via BltFast-to-primary); a vsync lane spun up on exactly that. The
+agent-control channel matured into real use (winmine played live over
+it; launch/apps verbs, an input-exclusivity guard, `640d674f`
+window-target crash fix), and Codex's `89ce7498` passes ShellExecute
+child args so Inno installers get their /SL4 handoff. My runs at
+`48736086`: build exit 0 (991,745 B), differential 46/46, still exactly
+one divergence.
+
 ---
 
 # Pass 3 — 2026-08-30
