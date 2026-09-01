@@ -107,8 +107,13 @@ function utf16z(view, offset, maxChars) {
   assert.strictEqual(Number(result & 0xffffffffn), 0, 'undersized DEVMODEA is rejected');
   assert.strictEqual(bytes[wasmBuf + 124], 0xa5, 'rejected DEVMODEA payload is untouched');
 
+  // iModeNum >= 0 now walks the shared mode table (see
+  // test-display-mode-enumeration.js); what ends the enumeration is running
+  // off the end of it, not the second index.
   result = e.test_enum_display_settings_w(1, buf, 220);
-  assert.strictEqual(Number(result & 0xffffffffn), 0, 'unsupported mode index ends enumeration');
+  assert.strictEqual(Number(result & 0xffffffffn), 1, 'mode index one is a real mode');
+  result = e.test_enum_display_settings_w(1000, buf, 220);
+  assert.strictEqual(Number(result & 0xffffffffn), 0, 'an index past the table ends enumeration');
   console.log('PASS display enumeration exposes one primary adapter, monitor, and size-safe A/W modes');
 })().catch(error => {
   console.error(error.stack || error.message);

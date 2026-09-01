@@ -1959,11 +1959,16 @@
   ;; but only if we enumerated it.
   ;;
   ;; Rounded down to a multiple of 8 in both axes and clamped to 640x480 ..
-  ;; 1280x1024. The 8 is measured, not cosmetic: RCT repaints in blocks and a
-  ;; 850-pixel-tall mode leaves the last two rows black forever. The ceiling is
-  ;; measured too — at 1512 wide its engine stops drawing at x=1280, which is
-  ;; also the widest mode it ships. `lib/app-profiles.js` rounds identically;
-  ;; the two must agree exactly or the game refuses the mode it just asked for.
+  ;; 1920x1080. The 8 is measured, not cosmetic: RCT repaints in blocks and a
+  ;; 850-pixel-tall mode leaves the last two rows black forever, so the 8 stays
+  ;; whatever the ceiling is. The ceiling itself is only about what a *game*
+  ;; will draw into: RCT's engine stops drawing at x=1280, which is also the
+  ;; widest mode it ships, and it never asks for the host slot unless something
+  ;; points it there. Advertising a widescreen host slot costs RCT nothing
+  ;; (it validates against the fixed 4:3 rows it knows) and is the only way a
+  ;; 16:9 browser window can be offered at its true size.
+  ;; `lib/app-profiles.js` rounds identically; the two must agree exactly or a
+  ;; game refuses the mode it just asked for.
   (func $enum_mode_clamp (param $v i32) (param $lo i32) (param $hi i32) (result i32)
     (local.set $v (i32.and (local.get $v) (i32.const 0xFFF8)))
     (if (i32.lt_u (local.get $v) (local.get $lo)) (then (return (local.get $lo))))
@@ -1972,11 +1977,11 @@
   (func $enum_mode_host_w (result i32)
     (call $enum_mode_clamp
       (i32.and (call $host_get_screen_size) (i32.const 0xFFFF))
-      (i32.const 640) (i32.const 1280)))
+      (i32.const 640) (i32.const 1920)))
   (func $enum_mode_host_h (result i32)
     (call $enum_mode_clamp
       (i32.shr_u (call $host_get_screen_size) (i32.const 16))
-      (i32.const 480) (i32.const 1024)))
+      (i32.const 480) (i32.const 1080)))
 
   (func $enum_mode_res_w (param $r i32) (result i32)
     (if (i32.eq (local.get $r) (i32.const 1)) (then (return (i32.const 800))))
@@ -1988,6 +1993,13 @@
     ;; early Windows cinematics. Keep it after the existing table so adding it
     ;; cannot change the preferred order of a game's ordinary resolution menu.
     (if (i32.eq (local.get $r) (i32.const 6)) (then (return (i32.const 320))))
+    ;; Explicit 16:9 rows, appended after every pre-existing slot for the same
+    ;; reason: a widescreen browser window is not one of the stock 4:3 modes,
+    ;; and the host slot is a single moving target that a game's own resolution
+    ;; menu cannot present as a stable choice.
+    (if (i32.eq (local.get $r) (i32.const 7)) (then (return (i32.const 1280))))
+    (if (i32.eq (local.get $r) (i32.const 8)) (then (return (i32.const 1600))))
+    (if (i32.eq (local.get $r) (i32.const 9)) (then (return (i32.const 1920))))
     (i32.const 640))
   (func $enum_mode_res_h (param $r i32) (result i32)
     (if (i32.eq (local.get $r) (i32.const 1)) (then (return (i32.const 600))))
@@ -1996,13 +2008,42 @@
     (if (i32.eq (local.get $r) (i32.const 4)) (then (return (i32.const 1024))))
     (if (i32.eq (local.get $r) (i32.const 5)) (then (return (call $enum_mode_host_h))))
     (if (i32.eq (local.get $r) (i32.const 6)) (then (return (i32.const 200))))
+    (if (i32.eq (local.get $r) (i32.const 7)) (then (return (i32.const 720))))
+    (if (i32.eq (local.get $r) (i32.const 8)) (then (return (i32.const 900))))
+    (if (i32.eq (local.get $r) (i32.const 9)) (then (return (i32.const 1080))))
     (i32.const 480))
 
+  ;; ── The one mode table, shared by IDirectDraw::EnumDisplayModes and by
+  ;; EnumDisplaySettingsA/W in `09a3-handlers-audio.wat`. Both walk it through
+  ;; the helpers below; neither keeps a list of its own.
+  ;;
+  ;; A RAW index is (slot * 3 + depth) over the ten slots above, depth 0/1/2 =
+  ;; 8/16/32 bpp — 30 raw indices, of which slot 6 (320x200) contributes only
+  ;; its 8bpp member. Raw 19 and 20 are therefore holes: the 320x200x16 and
+  ;; 320x200x32 modes never existed and inventing them would put two bogus rows
+  ;; in a game's resolution menu.
+  ;;
+  ;; DirectDraw's callback loop tolerates holes (it just skips them). A caller
+  ;; of EnumDisplaySettings does not — the documented loop runs iModeNum upward
+  ;; until the call returns FALSE, so a hole truncates the list. That API walks
+  ;; a DENSE index instead, 0..27, which $enum_mode_dense_to_raw maps back.
+  (func $enum_mode_raw_count (result i32) (i32.const 30))
+  (func $enum_mode_raw_skipped (param $raw i32) (result i32)
+    (i32.and (i32.ge_u (local.get $raw) (i32.const 19))
+             (i32.lt_u (local.get $raw) (i32.const 21))))
+  (func $enum_mode_dense_count (result i32) (i32.const 28))
+  (func $enum_mode_dense_to_raw (param $i i32) (result i32)
+    (if (i32.lt_u (local.get $i) (i32.const 19)) (then (return (local.get $i))))
+    (i32.add (local.get $i) (i32.const 2)))
+  ;; 8 << depth, depth = raw % 3.
+  (func $enum_mode_raw_bpp (param $raw i32) (result i32)
+    (i32.shl (i32.const 8) (i32.rem_u (local.get $raw) (i32.const 3))))
+
   ;; Helper: fill DDSD for mode index $enum_modes_idx and jump to callback.
-  ;; Mode table: the existing six resolutions × 8/16/32 bpp, followed by one
-  ;; 320x200x8 entry. idx/3 picks the resolution and idx%3 the depth, so index
-  ;; 18 selects low-resolution slot 6 at its 8bpp member without advertising
-  ;; historically inauthentic 16/32bpp variants.
+  ;; Mode table: the ten resolution slots × 8/16/32 bpp. idx/3 picks the
+  ;; resolution and idx%3 the depth, so index 18 selects low-resolution slot 6
+  ;; at its 8bpp member; raw 19/20 are skipped rather than advertising
+  ;; historically inauthentic 320x200 16/32bpp variants.
   ;;
   ;; Every one of them is advertised, canvas size notwithstanding. This list is
   ;; what a game's own resolution menu offers — RCT validates the mode it is
@@ -2016,15 +2057,23 @@
     (local $ddsd_wa i32) (local $w i32) (local $h i32) (local $bpp i32)
     (local $pitch i32) (local $idx i32)
     (local.set $idx (global.get $enum_modes_idx))
+    ;; Step over the raw holes (320x200 at 16/32bpp) before the end test, so a
+    ;; hole can never be mistaken for the end of the table.
+    (block $done
+      (loop $skip
+        (br_if $done (i32.eqz (call $enum_mode_raw_skipped (local.get $idx))))
+        (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
+        (br $skip)))
+    (global.set $enum_modes_idx (local.get $idx))
     ;; If past end of table, done — return DD_OK to caller
-    (if (i32.ge_u (local.get $idx) (i32.const 19))
+    (if (i32.ge_u (local.get $idx) (call $enum_mode_raw_count))
       (then
         (global.set $eip (global.get $enum_modes_ret))
         (global.set $eax (i32.const 0))  ;; DD_OK
         (return)))
     (local.set $w (call $enum_mode_res_w (i32.div_u (local.get $idx) (i32.const 3))))
     (local.set $h (call $enum_mode_res_h (i32.div_u (local.get $idx) (i32.const 3))))
-    (local.set $bpp (i32.shl (i32.const 8) (i32.rem_u (local.get $idx) (i32.const 3))))
+    (local.set $bpp (call $enum_mode_raw_bpp (local.get $idx)))
     ;; Compute pitch: align (w * bytes_per_pixel) to 4 bytes
     (if (i32.eq (local.get $bpp) (i32.const 8))
       (then (local.set $pitch (i32.and (i32.add (local.get $w) (i32.const 3)) (i32.const 0xFFFFFFFC))))

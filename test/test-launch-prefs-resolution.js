@@ -108,16 +108,25 @@ for (const [w, h] of [[640, 480], [800, 600], [1024, 768]]) {
     `${w}x${h} is in the mode table`);
 }
 // Keep the existing six resolutions x three depths in their original order;
-// one appended 320x200x8 entry serves low-resolution Win9x cinematics.
-ok(/i32\.ge_u \(local\.get \$idx\) \(i32\.const 19\)/.test(dx),
-  'the enumeration runs to 19 entries (18 existing + 320x200x8)');
+// one appended 320x200x8 entry serves low-resolution Win9x cinematics, and the
+// three 16:9 rows are appended after that, so no existing index moves.
+ok(/i32\.ge_u \(local\.get \$idx\) \(call \$enum_mode_raw_count\)/.test(dx),
+  'the enumeration ends at the shared raw-index count');
+ok(/func \$enum_mode_raw_count \(result i32\) \(i32\.const 30\)/.test(dx),
+  'which is 30 raw entries (10 resolution slots x 3 depths)');
+for (const [w, h] of [[1280, 720], [1600, 900], [1920, 1080]]) {
+  ok(new RegExp(`i32\\.const ${w}`).test(dx) && new RegExp(`i32\\.const ${h}`).test(dx),
+    `${w}x${h} is in the mode table`);
+}
 ok(/func \$enum_mode_host_w/.test(dx) && /func \$enum_mode_host_h/.test(dx),
   'the host screen is one of the advertised resolutions');
 ok(/i32\.const 0xFFF8/.test(dx) && /\$enum_mode_clamp/.test(dx),
   'and is rounded and clamped');
-ok(/\(i32\.const 640\) \(i32\.const 1280\)/.test(dx) &&
-   /\(i32\.const 480\) \(i32\.const 1024\)/.test(dx),
-  'to the same 640x480 .. 1280x1024 bounds');
+// The multiple-of-8 rounding is RCT-measured and stays. The ceiling is raised
+// so a 16:9 browser window can be advertised at its true size.
+ok(/\(i32\.const 640\) \(i32\.const 1920\)/.test(dx) &&
+   /\(i32\.const 480\) \(i32\.const 1080\)/.test(dx),
+  'to 640x480 .. 1920x1080 bounds');
 // The list is a game's resolution *menu*, not a claim about the canvas.
 // Filtering it to the canvas deletes rows from that menu, and picking one of
 // the deleted rows looks like a mode change that does nothing.

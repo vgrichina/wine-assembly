@@ -1238,15 +1238,34 @@
   )
 
   ;; EnumDisplaySettingsA(lpszDeviceName, iModeNum, lpDevMode) — 3 args stdcall.
-  ;; Report current desktop mode for ENUM_CURRENT_SETTINGS (-1) and mode 0; FALSE otherwise.
+  ;; ENUM_CURRENT_SETTINGS (-1) reports the host canvas at 32bpp. iModeNum >= 0
+  ;; walks the *same* mode table IDirectDraw::EnumDisplayModes enumerates —
+  ;; `$enum_mode_res_w` / `$enum_mode_res_h` / `$enum_mode_raw_bpp` in
+  ;; `09a8-handlers-directx.wat`, reached through the dense index there, since a
+  ;; caller of this API loops until FALSE and a hole would truncate the list.
+  ;; There is deliberately no second copy of the resolutions here: two lists
+  ;; drift, and a display an app can set through one API but not find through
+  ;; the other is exactly the failure that produces.
   ;; dmFields bits: PELSWIDTH=0x80000, PELSHEIGHT=0x100000, BITSPERPEL=0x40000, DISPLAYFREQUENCY=0x400000.
   (func $handle_EnumDisplaySettingsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $buf i32) (local $screen i32) (local $size i32)
-    (if (i32.and
-          (i32.ne (local.get $arg1) (i32.const -1))
-          (i32.ne (local.get $arg1) (i32.const 0)))
-      (then (global.set $eax (i32.const 0))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local $w i32) (local $h i32) (local $bpp i32) (local $raw i32)
+    (if (i32.eq (local.get $arg1) (i32.const -1))
+      (then
+        (local.set $screen (call $host_get_screen_size))
+        (local.set $w (i32.and (local.get $screen) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $screen) (i32.const 16)))
+        (local.set $bpp (i32.const 32)))
+      (else
+        ;; Any other negative index (ENUM_REGISTRY_SETTINGS, -2) is unsigned-large
+        ;; here and ends the enumeration, as it did before.
+        (if (i32.ge_u (local.get $arg1) (call $enum_mode_dense_count))
+          (then (global.set $eax (i32.const 0))
+                (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+        (local.set $raw (call $enum_mode_dense_to_raw (local.get $arg1)))
+        (local.set $w (call $enum_mode_res_w (i32.div_u (local.get $raw) (i32.const 3))))
+        (local.set $h (call $enum_mode_res_h (i32.div_u (local.get $raw) (i32.const 3))))
+        (local.set $bpp (call $enum_mode_raw_bpp (local.get $raw)))))
     (if (i32.eqz (local.get $arg2))
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
@@ -1260,26 +1279,36 @@
     (memory.fill (local.get $buf) (i32.const 0)
       (select (local.get $size) (i32.const 156)
         (i32.lt_u (local.get $size) (i32.const 156))))
-    (local.set $screen (call $host_get_screen_size))
     (i32.store16 offset=36 (local.get $buf) (local.get $size))
     (i32.store offset=40 (local.get $buf) (i32.const 0x5C0000))  ;; dmFields
-    (i32.store offset=104 (local.get $buf) (i32.const 32))       ;; dmBitsPerPel
-    (i32.store offset=108 (local.get $buf) (i32.and (local.get $screen) (i32.const 0xFFFF)))  ;; dmPelsWidth
-    (i32.store offset=112 (local.get $buf) (i32.shr_u (local.get $screen) (i32.const 16)))   ;; dmPelsHeight
+    (i32.store offset=104 (local.get $buf) (local.get $bpp))     ;; dmBitsPerPel
+    (i32.store offset=108 (local.get $buf) (local.get $w))       ;; dmPelsWidth
+    (i32.store offset=112 (local.get $buf) (local.get $h))       ;; dmPelsHeight
     (i32.store offset=120 (local.get $buf) (i32.const 60))       ;; dmDisplayFrequency
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; EnumDisplaySettingsW has the same enumeration policy as the ANSI API,
-  ;; but the 32-WCHAR device name moves DEVMODEW's display fields 32 bytes.
+  ;; EnumDisplaySettingsW has the same enumeration policy as the ANSI API — the
+  ;; same shared mode table, the same dense index — but the 32-WCHAR device name
+  ;; moves DEVMODEW's display fields 32 bytes.
   (func $handle_EnumDisplaySettingsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $buf i32) (local $screen i32) (local $size i32)
-    (if (i32.and
-          (i32.ne (local.get $arg1) (i32.const -1))
-          (i32.ne (local.get $arg1) (i32.const 0)))
-      (then (global.set $eax (i32.const 0))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local $w i32) (local $h i32) (local $bpp i32) (local $raw i32)
+    (if (i32.eq (local.get $arg1) (i32.const -1))
+      (then
+        (local.set $screen (call $host_get_screen_size))
+        (local.set $w (i32.and (local.get $screen) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $screen) (i32.const 16)))
+        (local.set $bpp (i32.const 32)))
+      (else
+        (if (i32.ge_u (local.get $arg1) (call $enum_mode_dense_count))
+          (then (global.set $eax (i32.const 0))
+                (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+        (local.set $raw (call $enum_mode_dense_to_raw (local.get $arg1)))
+        (local.set $w (call $enum_mode_res_w (i32.div_u (local.get $raw) (i32.const 3))))
+        (local.set $h (call $enum_mode_res_h (i32.div_u (local.get $raw) (i32.const 3))))
+        (local.set $bpp (call $enum_mode_raw_bpp (local.get $raw)))))
     (if (i32.eqz (local.get $arg2))
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
@@ -1293,14 +1322,11 @@
     (memory.fill (local.get $buf) (i32.const 0)
       (select (local.get $size) (i32.const 220)
         (i32.lt_u (local.get $size) (i32.const 220))))
-    (local.set $screen (call $host_get_screen_size))
     (i32.store16 offset=68 (local.get $buf) (local.get $size))
     (i32.store offset=72 (local.get $buf) (i32.const 0x5C0000)) ;; dmFields
-    (i32.store offset=136 (local.get $buf) (i32.const 32))      ;; dmBitsPerPel
-    (i32.store offset=140 (local.get $buf)
-      (i32.and (local.get $screen) (i32.const 0xFFFF)))        ;; dmPelsWidth
-    (i32.store offset=144 (local.get $buf)
-      (i32.shr_u (local.get $screen) (i32.const 16)))          ;; dmPelsHeight
+    (i32.store offset=136 (local.get $buf) (local.get $bpp))    ;; dmBitsPerPel
+    (i32.store offset=140 (local.get $buf) (local.get $w))      ;; dmPelsWidth
+    (i32.store offset=144 (local.get $buf) (local.get $h))      ;; dmPelsHeight
     (i32.store offset=152 (local.get $buf) (i32.const 60))      ;; dmDisplayFrequency
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))

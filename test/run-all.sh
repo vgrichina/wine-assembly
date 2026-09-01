@@ -269,6 +269,7 @@ UNIT=(
   test/test-relative-mouse-input.js
   test/test-relative-mouse-clip-edge.js
   test/test-browser-relative-mouse-lock-gate.js
+  test/test-browser-relative-mouse-latch.js
   test/test-renderer-dialog-caption-drag.js
   test/test-renderer-shell-dialog.js
   test/test-renderer-multi-app-modal.js
@@ -517,6 +518,8 @@ UNIT=(
   test/test-fnstsw-test-jcc.js
   test/test-winsparkle-stubs.js
   test/test-worker-sparse-thread-stack.js
+  test/test-touch-controls.js
+  test/test-display-mode-enumeration.js
 )
 
 E2E=(
