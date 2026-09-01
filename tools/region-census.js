@@ -250,6 +250,50 @@ function handRolled() {
   return { hits, byFile, regions: bases.size };
 }
 
+// ---------------------------------------------------------------------------
+// Duplicate string payloads inside ONE region.
+//
+// The hand-placed string blocks in 01-header.wat write literal bytes at
+// hand-computed offsets, and 30 payloads are spelled at more than one address.
+// 28 of those 30 are CROSS-region and deliberate: $STRING_CONSTANTS sits in the
+// low scratch/null-page area a running app can disturb, so $USER_DIALOG_STRINGS
+// and $OLE_STRINGS hold stable mirrors of the same labels. The file says so at
+// 01-header.wat:1120-1129, and merging them would re-introduce exactly the bug
+// the mirror was created to fix. So this scanner does NOT look across regions —
+// double storage there is the design.
+//
+// A duplicate WITHIN one region is a different animal: one block, one lifetime,
+// one set of readers, and two copies of the same bytes for no stated reason.
+// That is the drift, and it is what this reports.
+//
+// It is a ratchet like its siblings, keyed on "$REGION\tpayload", because the
+// two that exist are in a file another lane holds open at the moment. New ones
+// are refused; the recorded pair drains when they are merged.
+function dupPayloads() {
+  const byKey = new Map();
+  const DATA = /\(data\s+\(region\.addr\s+(\$[A-Za-z0-9_]+)\s+(0x[0-9A-Fa-f]+|\d+)\)\s+("(?:[^"\\]|\\.)*")\)/g;
+  for (const f of WAT_FILES) {
+    const rel = `src/${f}`;
+    const lines = fs.readFileSync(path.join(ROOT, 'src', f), 'utf8').split(/\r?\n/);
+    lines.forEach((raw, i) => {
+      DATA.lastIndex = 0;
+      let m;
+      while ((m = DATA.exec(raw))) {
+        const key = `${m[1]}\t${m[3]}`;
+        if (!byKey.has(key)) byKey.set(key, []);
+        byKey.get(key).push({ file: rel, line: i + 1, offset: m[2], payload: m[3], region: m[1] });
+      }
+    });
+  }
+  const dups = [];
+  for (const [key, sites] of byKey) {
+    if (sites.length < 2) continue;
+    dups.push({ key, region: sites[0].region, payload: sites[0].payload, sites });
+  }
+  dups.sort((a, b) => a.key.localeCompare(b.key));
+  return { dups, payloads: byKey.size };
+}
+
 function census(options = {}) {
   const decls = collectDeclarations().filter(d => d.base !== null && d.size !== null);
   const ordered = [...decls].sort((a, b) => a.base - b.base);
@@ -673,6 +717,54 @@ function main() {
     return;
   }
 
+  if (flag('dup-payloads')) {
+    const r = dupPayloads();
+    const baseline = readBaseline() || {};
+    const recorded = new Set(baseline.dupPayloads || []);
+    if (flag('record')) {
+      const out = { ...baseline, dupPayloads: r.dups.map(d => d.key).sort() };
+      fs.writeFileSync(BASELINE, JSON.stringify(out, null, 2) + '\n');
+      console.log(`region-census --dup-payloads --record: ${r.dups.length} ` +
+        `within-region duplicate payload(s) recorded`);
+      return;
+    }
+    // A scanner that matches nothing is green forever and says so in the same
+    // words as a clean tree. The (data (region.addr $R N) "…") spelling is the
+    // only thing this pattern knows; if it is reworded, this floor is what
+    // notices rather than a decade of vacuous passes.
+    const FLOOR = 100;
+    if (r.payloads < FLOOR) {
+      console.error(`region-census: only ${r.payloads} (data (region.addr …) "…") payload(s) ` +
+        `matched, expected at least ${FLOOR}. The spelling this scanner keys on has changed ` +
+        `and it is now checking nothing — fix the pattern, do not lower the floor.`);
+      process.exit(1);
+    }
+    const fresh = r.dups.filter(d => !recorded.has(d.key));
+    for (const d of fresh) {
+      console.error(`region-census: ${d.region} declares ${d.payload} at ` +
+        `${d.sites.length} addresses:`);
+      for (const s of d.sites) console.error(`    ${s.file}:${s.line}  +${s.offset}`);
+    }
+    if (fresh.length) {
+      console.error('region-census: two copies of the same bytes in ONE region have one ' +
+        'lifetime and one set of readers between them, so the second copy is storage that ' +
+        'can only ever drift. Point the readers at the first address and delete the second ' +
+        '(the block is addressed by explicit offset, so the hole costs nothing and nothing ' +
+        'reflows). Cross-region mirrors are NOT this — see 01-header.wat:1120-1129, where ' +
+        'the low copies exist because an app can disturb that page. Ratchet baseline: ' +
+        'tools/region-census.baseline.json dupPayloads (--dup-payloads --record).');
+      process.exit(1);
+    }
+    const drained = [...recorded].filter(k => !r.dups.some(d => d.key === k)).sort();
+    console.log(`region-census OK: ${r.dups.length} within-region duplicate payload(s) ` +
+      `across ${r.payloads} declared payload(s), none above baseline`);
+    if (drained.length) {
+      console.log(`region-census: ${drained.length} baselined duplicate(s) are gone — ` +
+        `drop them with --dup-payloads --record: ${drained.map(k => k.replace('\t', ' ')).join(', ')}`);
+    }
+    return;
+  }
+
   if (flag('embedded-wat')) {
     const r = embeddedWat();
     for (const h of r.hits) {
@@ -800,4 +892,5 @@ function readBaseline() {
 }
 
 if (require.main === module) main();
-module.exports = { census, jsCopies, embeddedWat, handRolled, templateLiterals, JS_COPY_FLOOR };
+module.exports = { census, jsCopies, embeddedWat, handRolled, dupPayloads,
+  templateLiterals, JS_COPY_FLOOR };

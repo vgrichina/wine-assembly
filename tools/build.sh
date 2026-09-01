@@ -58,6 +58,13 @@ node tools/region-census.js --js-copies
 # 0xD160 — $WAVE_OUT_SHARED before the map moved, and by then 0x1010 into
 # $SCROLL_TABLE — and answered MMSYSERR_INVALHANDLE to a valid handle for it.
 node tools/region-census.js --embedded-wat
+# The same bytes written twice inside ONE region: one block, one lifetime, one
+# set of readers, and a second copy that can only ever drift out of step with
+# the first. Cross-region duplicates are deliberately NOT flagged — the low
+# $STRING_CONSTANTS copies exist because an app can disturb that page, and
+# 01-header.wat:1120-1129 says so. Ratchet; the recorded pair is in
+# region-census.baseline.json dupPayloads.
+node tools/region-census.js --dup-payloads
 # ...and the fourth form, which uses no literal address at all and is therefore
 # invisible to all three gates above: (i32.add (global.get $REGION) (i32.const N))
 # is (region.addr $REGION N) with the compile-time in-region check REMOVED. The

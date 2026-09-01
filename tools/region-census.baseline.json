@@ -44,5 +44,9 @@
     "src/09a-handlers.wat": 4,
     "src/09a5-handlers-window.wat": 2,
     "src/08b-dll-loader.wat": 1
-  }
+  },
+  "dupPayloads": [
+    "$USER_DIALOG_STRINGS\t\"Cancel\\00\"",
+    "$USER_DIALOG_STRINGS\t\"Replace\\00\""
+  ]
 }
