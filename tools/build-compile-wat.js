@@ -125,8 +125,16 @@ function reportRegionLayout(layout, shake) {
       `Convert regions to (region.declare ...) first.`);
     process.exit(1);
   }
+  // A shake's inflation is a request, not a requirement — a region that fits
+  // nowhere at its padded footprint is placed at its declared size instead. Say
+  // how often, because a shake that quietly could not inflate is a weaker
+  // experiment than the one that was asked for, and silence about that is the
+  // same trap as a mirror that quietly did not match.
+  const scaled = layout.shakeScaledDown || 0;
   console.log(`Region layout: SHAKEN (${layout.shake}) — ${layout.shaken} of ${layout.regions.length} ` +
-    `regions permuted, floor ${hx(layout.floor)}. THIS ARTIFACT IS NOT CANONICAL.`);
+    `regions permuted, floor ${hx(layout.floor)}` +
+    (scaled ? `, ${scaled} placed without their gap/padding (no window held it)` : '') +
+    `. THIS ARTIFACT IS NOT CANONICAL.`);
 }
 
 function compileWatx(replicatedDispatch) {

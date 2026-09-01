@@ -97,6 +97,9 @@ function layout(options = {}) {
     floor: report.floor,
     imageBase: report.imageBase,
     shake: report.shake,
+    // Shaken layouts only: how many regions had to be placed without their gap
+    // or padding because no free window held the inflated footprint.
+    shakeScaledDown: report.shakeScaledDown || 0,
     memoryBytes: MEMORY_PAGES * 65536,
   };
   cache.set(key, result);

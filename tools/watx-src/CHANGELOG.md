@@ -1185,3 +1185,52 @@ Artifacts unchanged — `24beaca0…` / `4e2891ac…`.
 New manifest digest:
 
   0d15bb6c0eee9e2eff5e709e1dbc724fbec4268acb56ec10074b36285125d3f9
+
+## 2026-08-31 — The shake gets a placer that flows around the pins
+
+Three of the five region shakes could not compile at all. `gap`, `pad` and
+`reverse` each died in pass 3 — "`$THREAD_CACHE_BASE` cannot be allocated at
+0x1C000000: pinned `$DIB_BACKING_BASE` occupies it, and nothing fits after it
+inside the 0x20000000 bytes of memory" — so `tools/region-shake-smoke.js`'s own
+default mode list was 1-of-3 red and the dead modes were simply never run. A
+shake mode that silently cannot run is worthless in exactly the way a green run
+suggests it is not.
+
+It was the allocator, not capacity. The pins cut the usable space into four
+disjoint windows, and the canonical placer carries ONE monotonic cursor and
+never backfills — deliberately, because backfilling would make every base depend
+on the size history of every earlier region. Under a shake that is a cliff: the
+smallest window is 0x100..0x12000, 73 KB holding 54 tiny regions with nothing
+spare, and `gap` asks to put 1.11 MB of prime gaps into it. The cursor overflowed
+into `$GUEST_BASE`, jumped past it, and abandoned every free byte of every
+earlier window; the cascade repeated until 32 MB `$THREAD_CACHE_BASE` had only a
+14.68 MB window left. Measured, the map had **5.43 MB of tail slack against
+3.55 MB of shake inflation** — it fitted the whole time.
+
+`placeShakenAroundPins` gives the shaken path its own placer: one cursor per free
+window, **best fit** across them. Best fit rather than first fit is the fix
+itself — first fit by address hands every small region to the lowest window with
+room, so the small ones eat the one big window and `$THREAD_CACHE_BASE` came up
+318 KB short of its 32 MB in a 47 MB window that had already been spent on
+regions with somewhere else to go. A region that fits nowhere at its inflated
+footprint drops its gap, then its padding, before it fails; each concession is
+counted in `shakeScaledDown` and named in the build banner, because a shake that
+quietly could not inflate is a weaker experiment than the one that was asked for.
+Today's map needs none: all five modes place with `shakeScaledDown` 0, every mode
+moves 114–167 of the 167 allocated regions, and every pin stays put.
+
+**The canonical branch is untouched, byte for byte.** `if (shake) … else …` keeps
+the original single-cursor loop verbatim for the build that ships, so a canonical
+compile cannot take the new path. Proved rather than asserted:
+`build/wine-assembly.wasm` `aa65465e…` and `build/wine-assembly.compat.wasm`
+`2ea6bcc4…` are identical before and after.
+
+`region-shake-smoke` is now 3-of-3 IDENTICAL on its default modes (0 of 307200
+pixels differ), and `reverse` and `pad` render identically too.
+`test/test-region-shake.js` asserts every mode places a legal, different map with
+its pins intact, so a future pin move that re-breaks the shake fails loudly
+instead of becoming a mode nobody runs.
+
+New manifest digest:
+
+  3f0f07718adcabf62b9787e212768434c2e63759d24377775bc8b28ab9a7740f

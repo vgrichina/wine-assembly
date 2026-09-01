@@ -212,6 +212,7 @@ UNIT=(
   test/test-wat-rpc-region.js
   test/test-region-js-copies.js
   test/test-region-layout-fingerprint.js
+  test/test-region-shake.js
   test/test-worker-thread-scheduler.js
   test/test-wat-memory-map.js
   test/test-wat-window-frame.js

@@ -603,6 +603,95 @@ function shakeRegionSequence(sequence, shake) {
   return items;
 }
 
+// Place a SHAKEN sequence around the pins, with a cursor per free window rather
+// than one for the whole memory.
+//
+// WHY THE SHAKE NEEDS ITS OWN PLACER. The canonical allocator is declaration-
+// order first-fit above a floor with ONE monotonic cursor and no backfilling,
+// deliberately: backfilling would make every base depend on the size history of
+// every earlier region, and a canonical layout that reshuffles under an
+// unrelated capacity bump is not reproducible in any useful sense. Under a
+// shake that same monotonicity is a cliff. The pins cut the usable space into
+// disjoint windows, and once the cursor overflows one it jumps past the pin and
+// every remaining free byte BELOW that pin is gone for good — so a megabyte of
+// `gap` primes aimed at a 73KB window did not cost a megabyte, it cost five,
+// and the big regions further down the sequence then had nowhere to go. The
+// map had 5.43MB of slack and the shake needed 3.55MB of it.
+//
+// So the shake gets first-fit ACROSS THE WINDOWS: each region goes in the first
+// window with room for it, each window remembers its own cursor. That is the
+// same "flow around the pins" rule, applied to space the single cursor could
+// only walk past. It is robust to any future pin, because a pin only ever adds
+// a window boundary.
+//
+// SCALING DOWN RATHER THAN FAILING. A shake's inflation is a request, not a
+// requirement — the point is that the regions MOVED, not that they moved by a
+// prime. So a region that fits nowhere at its inflated footprint is retried at
+// its declared size, and the leading gap is dropped before the region itself is.
+// Every such retry is counted and the build banner reports it: a shake that
+// quietly could not inflate is the same trap as a mirror that quietly did not
+// match, so it says so.
+function placeShakenAroundPins(placedSequence, pins, floor, memoryBytes, located, hx, alignUp) {
+  // The free windows: everything between the floor and the memory end that a
+  // pin does not occupy. Pins arrive sorted by base.
+  const windows = [];
+  let edge = floor;
+  for (const p of pins) {
+    if (p.base > edge) windows.push({ base: edge, end: p.base, cursor: edge });
+    edge = Math.max(edge, p.base + p.size);
+  }
+  if (edge < memoryBytes) windows.push({ base: edge, end: memoryBytes, cursor: edge });
+
+  // BEST fit, not first fit, and the difference is the whole fix. First fit by
+  // address hands every small region to the lowest window with room, so the
+  // small ones eat into the one big window and the big ones arrive to find it
+  // nibbled — measured, $THREAD_CACHE_BASE came up 318KB short of its 32MB in a
+  // 47MB window that first fit had already spent 15.7MB of on regions that had
+  // somewhere else to go. Best fit puts each region in the TIGHTEST window that
+  // still holds it, so small regions drain into small windows and a long run
+  // stays long for the region that actually needs one.
+  const tryPlace = (align, lead, extent) => {
+    let best = null;
+    for (const w of windows) {
+      const at = alignUp(w.cursor + lead, align);
+      if (at < w.base || at + extent > w.end) continue;
+      const leftover = w.end - (at + extent);
+      if (!best || leftover < best.leftover) best = { w, at, leftover };
+    }
+    return best;
+  };
+
+  let scaledDown = 0;
+  let pendingGap = 0;
+  for (const item of placedSequence) {
+    // A gap is a request to push the NEXT region along. Which window that
+    // region lands in is not known yet, so the gap travels with it instead of
+    // being spent on whichever window the cursor happens to be in.
+    if (item.kind === 'gap') { pendingGap += item.size; continue; }
+    const r = item.region;
+    const extent = item.extent || r.size;   // `pad` shake spaces without resizing
+
+    // Most permissive first, then give up one concession at a time: the gap,
+    // then the padding. The declared size is never negotiable.
+    let spot = tryPlace(r.align, pendingGap, extent);
+    if (!spot && pendingGap) { spot = tryPlace(r.align, 0, extent); if (spot) scaledDown++; }
+    if (!spot && extent !== r.size) {
+      spot = tryPlace(r.align, pendingGap, r.size) || tryPlace(r.align, 0, r.size);
+      if (spot) scaledDown++;
+    }
+    if (!spot) {
+      const room = windows.map(w => `${hx(w.base)}..${hx(w.end)} free from ${hx(w.cursor)}`).join(', ');
+      throw located(r.form, `${r.name} (${hx(r.size)} bytes, align ${hx(r.align)}) does not fit ` +
+        `in any free window of the SHAKEN layout, even unpadded. Windows: ${room}. ` +
+        `The pinned regions leave no run this large; this is a capacity problem, not a shake bug.`);
+    }
+    r.base = spot.at;
+    spot.w.cursor = spot.at + (spot.at + extent <= spot.w.end ? extent : r.size);
+    pendingGap = 0;
+  }
+  return scaledDown;
+}
+
 
 function generateWasm(forms, loweredForms, checkResult, options = {}) {
   const V = watxValue;
@@ -1269,32 +1358,50 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     const pins = [...regions.values()]
       .filter(r => r.kind !== 'alloc' && r.kind !== 'span')
       .sort((a, b) => a.base - b.base);
-    let cursor = floor === null ? 0 : floor;
-    let lastPlaced = null;
-    for (const item of placedSequence) {
-      if (item.kind === 'gap') { cursor += item.size; continue; }
-      const r = item.region;
-      const extent = item.extent || r.size;   // `pad` shake spaces without resizing
-      let candidate = alignUp(cursor, r.align);
-      for (;;) {
-        const hit = pins.find(p => candidate < p.base + p.size && p.base < candidate + extent);
-        if (!hit) break;
-        const next = alignUp(hit.base + hit.size, r.align);
-        if (next + extent > memoryBytes) {
-          throw located(r.form, `${r.name} cannot be allocated at ${hx(candidate)}: ` +
-            `pinned ${hit.name} occupies it, and nothing fits after it inside the ` +
-            `${hx(memoryBytes)} bytes of memory`);
+    let shakeScaledDown = 0;
+    if (shake) {
+      // ── The SHAKEN placement (see placeShakenAroundPins) ────────────────────
+      // A shake has to survive the map it is shaking. The canonical branch below
+      // carries one monotonic cursor and never backfills, which is right for a
+      // reproducible canonical layout and fatal under a shake: the pins cut the
+      // usable space into four windows, the smallest is 0x100..0x12000 (73KB
+      // holding 54 tiny regions with nothing spare), and `gap` asks to put over
+      // a megabyte of prime gaps into it. The cursor overflowed into $GUEST_BASE,
+      // jumped past it, and ABANDONED every free byte of every earlier window;
+      // the cascade repeated until 32MB $THREAD_CACHE_BASE had only a 14.68MB
+      // window left and the compile died on $DIB_BACKING_BASE. Capacity was never
+      // the problem — 5.43MB of tail slack against 3.55MB of inflation — the
+      // single cursor was.
+      shakeScaledDown = placeShakenAroundPins(placedSequence, pins,
+        floor === null ? 0 : floor, memoryBytes, located, hx, alignUp);
+    } else {
+      let cursor = floor === null ? 0 : floor;
+      let lastPlaced = null;
+      for (const item of placedSequence) {
+        if (item.kind === 'gap') { cursor += item.size; continue; }
+        const r = item.region;
+        const extent = item.extent || r.size;   // `pad` shake spaces without resizing
+        let candidate = alignUp(cursor, r.align);
+        for (;;) {
+          const hit = pins.find(p => candidate < p.base + p.size && p.base < candidate + extent);
+          if (!hit) break;
+          const next = alignUp(hit.base + hit.size, r.align);
+          if (next + extent > memoryBytes) {
+            throw located(r.form, `${r.name} cannot be allocated at ${hx(candidate)}: ` +
+              `pinned ${hit.name} occupies it, and nothing fits after it inside the ` +
+              `${hx(memoryBytes)} bytes of memory`);
+          }
+          candidate = next;
         }
-        candidate = next;
+        if (candidate + extent > memoryBytes) {
+          throw located(r.form, `allocating ${r.name} (${hx(candidate + extent)}) past the ` +
+            `${hx(memoryBytes)} bytes of memory; the last placed region was ` +
+            `${lastPlaced ? lastPlaced.name : '(none — the floor is already past it)'}`);
+        }
+        r.base = candidate;
+        cursor = candidate + extent;
+        lastPlaced = r;
       }
-      if (candidate + extent > memoryBytes) {
-        throw located(r.form, `allocating ${r.name} (${hx(candidate + extent)}) past the ` +
-          `${hx(memoryBytes)} bytes of memory; the last placed region was ` +
-          `${lastPlaced ? lastPlaced.name : '(none — the floor is already past it)'}`);
-      }
-      r.base = candidate;
-      cursor = candidate + extent;
-      lastPlaced = r;
     }
 
     // ── Pass 4: set-level validation over the FINAL bases ─────────────────────
@@ -1404,6 +1511,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     regionLayoutReport = {
       shake: shake ? shake.label : null,
       shaken: shakenCount,
+      // How many shaken regions had to give up their gap or their padding to
+      // fit. Zero on the canonical build, which does not shake at all.
+      shakeScaledDown,
       allocated: sequence.filter(item => item.kind === 'region').length,
       floor: floor === null ? 0 : floor,
       imageBase: imageBaseValue,
