@@ -384,13 +384,16 @@ assert.strictEqual(lifecycleEvents[0].suspendCount, 1, 'create event records the
 assert.strictEqual(lifecycleEvents[2].previousSuspendCount, 2, 'resume event records the previous count');
 assert.strictEqual(lifecycleEvents[3].suspendCount, 0, 'final resume event records runnable state');
 
-const fullMemory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
-const cacheTm = makeThreadManagerWithMemory(fullMemory);
-const worker1CacheIndex = 0x07152000 + 0x8000;
-const cacheBytes = new Uint8Array(fullMemory.buffer, worker1CacheIndex, 0x8000);
-cacheBytes.fill(0x7f);
-cacheTm._clearWorkerCacheSlot(1);
-assert(cacheBytes.every(byte => byte === 0), 'reused worker slot should clear its decoded-block index');
+// The host-side block-cache-index clear is GONE, deliberately. It zeroed
+// `0x07152000 + tid * 0x8000` — a hand-copied literal of the retired
+// CACHE_INDEX region, an address the region allocator now hands to
+// $PE_STAGING, so the clear had turned into a 32KB scribble on the PE staging
+// arena at every worker spawn. `init_thread` does the real per-slot
+// invalidation in WAT. This asserts nobody puts it back.
+const cacheTm = makeThreadManagerWithMemory(
+  new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true }));
+assert.strictEqual(typeof cacheTm._clearWorkerCacheSlot, 'undefined',
+  'host must not clear worker cache slots by address; init_thread does it in WAT');
 
 function makeRunnableThread(tid, onRun) {
   let heapPtr = 0;

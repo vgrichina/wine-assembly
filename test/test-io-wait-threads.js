@@ -59,7 +59,6 @@ async function testWorkerBackend() {
     getVfs: () => vfs,
   });
   tm._log = () => {};
-  tm._clearWorkerCacheSlot = () => {};
 
   tm.createThread(0x401100, 0, 0x10000, 0);
   await tm._spawnPendingWorkers();
