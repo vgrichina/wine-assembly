@@ -675,6 +675,17 @@ at byte identity on 2026-08-31 (see the checklist), and the retirement banner
 above describes what became of the selector after that. The deploy still needs
 explicit sign-off.
 
+**Where "byte identity" lives now that the selector is gone.** Every byte-for-byte
+claim on this page was measured with the legacy column beside the WATX one, and
+that column cannot be rebuilt — the legacy compiler emits `unreachable` for the
+region spellings this tree uses. The instrument that replaced it is
+build-vs-build identity ACROSS a change in one tree (compile, edit, compile,
+compare the sha256), which is what every symbolization wave has actually run.
+See docs/watx-region-safety-design.md §9's 2026-09-01 note for how it is used
+and, more importantly, for which changes it CANNOT judge: anything that alters
+what is emitted needs a functional oracle instead, and knowing which kind a
+conversion is means reading the compiler's emission path before starting.
+
 ### 5.2 Rollback drill, exercised 2026-08-31
 
 Run at `fd1b0244` in an isolated worktree. Every leg is a full
@@ -772,6 +783,32 @@ In order:
    conversion.
 5. Add small macros for repeated handler epilogues and address calculations
    only after diagnostics show useful expansion locations.
+
+   **DECIDED, 2026-09-01: not the handler epilogues, and not because macros are
+   unready.** `tools/esp-epilogue.js --check` derives every `$handle_X`'s
+   stdcall pop from `api_table.json`'s `nargs`, and it does that by SCANNING THE
+   SOURCE TEXT — a regex for
+   `(global.set $esp (i32.add (global.get $esp) (i32.const N)))` on a source
+   line, run before any expansion. A macro-spelled epilogue is invisible to it,
+   and so is the wrong number inside one. That is the exact failure the gate was
+   built with a floor to prevent: `MIN_EPILOGUE_COVERAGE = 0.5` exists because
+   the regex has already been too strict once (350 handlers silently skipped)
+   and because a register-file experiment that respelled `global.set $esp` drove
+   the gate to "0 of 0 handlers, OK" and stayed green.
+
+   The margin is not comfortable. Measured today: **1298 of 1459 eligible
+   handlers, 89.0%**, against a 50% floor. So a *partial* adoption is worse than
+   either extreme — convert 45% of the epilogues to a macro and the gate is
+   still green over a shrinking sample; convert more and the build fails on the
+   floor rather than on anything being wrong. Either way the property nobody
+   wants to lose is that a pop disagreeing with `nargs` is a wild jump reported
+   thousands of instructions later (`GlobalSize` was that bug, and this gate is
+   what found it).
+
+   A macro here is therefore blocked on the gate reading EXPANDED source, not on
+   the macro feature. Until then the epilogues stay written out, and this is the
+   answer to "why is `(macro ...)` still unused?" — the tree has a checker whose
+   instrument is the spelling.
 
 Conversions happen in place in the single source tree — no `.watx` twin files.
 

@@ -667,6 +667,37 @@ bytes and an incorrect one does. `01daf6ccfbd115e3` / `0ee6414668129ac4` is
 therefore a per-file, per-agent correctness oracle, not merely a final check —
 which is exactly what makes the fan-out safe.
 
+> **THE INSTRUMENT, RESTATED 2026-09-01 — those two hashes are history, and
+> reading them as the oracle will send you looking for a machine that no longer
+> exists.** `01daf6ccfbd115e3` / `0ee6414668129ac4` were the artifacts of one
+> commit and are wrong today; and the *two-compiler* column that made them
+> quotable — legacy beside WATX, agreeing to the byte — was retired in §11,
+> because `lib/compile-wat.js` compiles a `region.addr` to `unreachable` rather
+> than refusing it and so cannot build this tree at all.
+>
+> What every wave since has actually used, and what the next one should:
+> **build-vs-build byte identity ACROSS THE CHANGE, in one tree.** Compile
+> `build/wine-assembly.wasm`, make the edit, compile again, compare the sha256.
+> Both arms then carry whatever else is uncommitted in a shared worktree, so the
+> comparison stays controlled even when it is not reproducible from a clean
+> checkout — which is the property a fixed hash cannot offer and is why a fixed
+> hash goes stale the same afternoon somebody else lands a commit.
+>
+> The oracle still divides conversions the same way, and the division is the
+> useful part. A change that only adds compile-time CHECKS is byte-identical and
+> the hash proves it outright — the 32 region laws of `bd23c4c5` are the worked
+> example, dropping straight out at
+> `dab89c62e1279a8ac2b0bfe43ec43bfecb0ddd2b7404a17ac0e68f48caf3a260` either
+> side. A change that alters what is EMITTED cannot use it and must say so
+> rather than quietly weakening the claim: `region.addr` constant-folds where
+> `(i32.add (global.get $R) (i32.const N))` emits three instructions, so
+> `71481e1e`'s 23 conversions moved the module by 29 bytes and were verified
+> with a functional oracle instead (sol and notepad pixel-identical against a
+> pristine worktree, plus the subsystem suites). **Establish which of the two a
+> spelling is BEFORE converting it**, by reading the compiler's emission path,
+> not by hoping the hash matches: discovering it after the fact is how a wave
+> ends up with neither oracle.
+
 **Stage C — shake.** §8. Iterate until three permutations are green.
 
 **Stage D — natural allocation ships.** The map becomes data. Pins remain only
