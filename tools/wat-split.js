@@ -10,8 +10,9 @@
 //   node tools/wat-split.js --from=src/10-helpers.wat --to=src/10d-gdi-region.wat \
 //        --first=gdi_rgn_record --last=gdi_rgn_free [--header="TEXT"] [--dry-run]
 //
-// After moving, add the new file to WAT_FILES in lib/compile-wat.js —
-// tools/check-wat-manifest.js fails the build until you do.
+// After moving, add an (include "...") for the new file to src/main.watx, in
+// filename order — that list is the build, and tools/check-wat-manifest.js
+// fails the build until you do.
 'use strict';
 
 const fs = require('fs');
@@ -108,7 +109,7 @@ if (NAMES.length) {
   fs.writeFileSync(TO, existing + hdr + movedText + '\n');
   fs.writeFileSync(FROM, out);
   console.log(`  appended to ${TO}, ${FROM} is now ${out.split('\n').length} lines`);
-  console.log('  remember: add the new file to WAT_FILES in lib/compile-wat.js');
+  console.log('  remember: add an (include "...") for the new file to src/main.watx');
   process.exit(0);
 }
 

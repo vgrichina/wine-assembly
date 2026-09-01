@@ -8,9 +8,11 @@ x86 Windows 98 PE interpreter in raw WebAssembly Text (WAT). Runs real Win32 exe
 bash tools/build.sh
 ```
 
-Compiles the parts listed in `WAT_FILES` (`lib/compile-wat.js`) with the project's own pure-JS WAT compiler (`tools/build-compile-wat.js`) into `build/wine-assembly.wasm` — **`wat2wasm` is not used**. `build/combined.wat` is written from the same list for grep/`check-parens`/`func-index` and is not itself compiled.
+Compiles the `(include ...)` closure rooted at **`src/main.watx`** with the vendored WATX compiler (`tools/build-compile-wat.js`) into `build/wine-assembly.wasm` — **`wat2wasm` is not used**. `build/combined.wat` is written from the same include list for grep/`check-parens`/`func-index` and is not itself compiled.
 
-**`WAT_FILES` is the build.** A new `src/*.wat` that isn't listed there lands in `combined.wat` and is silently absent from the shipped wasm; `tools/check-wat-manifest.js` (run first in the build) now fails on that. File numbering still controls order — `WAT_FILES` must stay in the same sorted order as the filenames.
+**`src/main.watx` is the build, and it is the only place the source order is written down.** To add or reorder a part, edit its `(include "NN-name.wat")` list — nothing else. `lib/wat-manifest.js` parses that list, and every Node consumer (including `WAT_FILES` re-exported from `lib/compile-wat.js`, which is now a getter, not an array) reads it from there; the browser's `lib/watx-launcher.js` fetches `main.watx` and parses it itself. There is no second list to mirror.
+
+An `(include ...)` naming a file that does not exist is a **hard compile error** from the include resolver. The reverse is the case a compiler cannot see — a `src/*.wat` that no `(include ...)` names is simply not part of the program, so it lands in `combined.wat` and is silently absent from the shipped wasm. That, plus filename (`LC_ALL=C`) order, is what `tools/check-wat-manifest.js` (run first in the build) still exists to catch.
 
 Build gates, in order: manifest ↔ glob equality, fixed-memory-map overlaps, WAT↔JS RPC/DIB and shared-constant consistency, complete test-tier membership, `api_table.json` (id == index, append-only), generated dispatch table freshness, API hash table, ordinal data-string offsets, handler-table count, handler ESP cleanup, logical-`i32.and` operands, silent-success stubs, Worker import signatures, generated stdcall epilogues, WAT compilation, and compiled data-segment overlaps.
 
@@ -369,8 +371,9 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 - `tools/render-png.js` — Headless PNG renderer
 - `tools/check-parens.js` — WAT parenthesis balance checker (auto-diffs vs git HEAD)
 - `tools/build.sh` — Build script (gates + concat + `lib/compile-wat.js`)
-- `tools/check-wat-manifest.js` — asserts `WAT_FILES` == `src/*.wat` as a set and as an order
-- `tools/concat-wat.js` — writes `build/combined.wat` from `WAT_FILES` (not a shell glob)
+- `tools/check-wat-manifest.js` — asserts `src/main.watx`'s include list == `src/*.wat` as a set and as an order (missing/duplicate includes are compiler-enforced; this catches the file nobody includes)
+- `lib/wat-manifest.js` — parses `src/main.watx`'s include list; the one place Node reads the source order from
+- `tools/concat-wat.js` — writes `build/combined.wat` from that include list (not a shell glob)
 - `tools/check-apps-registry.js` — asserts every `lib/apps.js` entry points at files that exist (exe, path-form DLLs, data files). Both hosts read that registry now, so a typo'd path breaks `run.js --app=<id>` as well as the desktop icon.
 - `tools/check-api-table.js` — asserts `api_table.json` ids are array positions and the array is append-only vs `HEAD`
 - `tools/check-data-strings.js` — asserts every `(i32.const 0xADDR) ;; Name` string-address annotation still names the string at that address

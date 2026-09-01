@@ -5,10 +5,10 @@
 const fs = require('fs');
 
 const watArg = (process.argv.find(a => a.startsWith('--wat=')) || '').split('=')[1];
-// build/combined.wat is only written by tools/build.sh; test/run.js concatenates
-// lib/compile-wat.js's WAT_FILES in memory, so a stale combined.wat silently
-// shifts every index. Rebuild the same concatenation here unless told otherwise.
-const wat = watArg || 'src/*.wat (WAT_FILES order)';
+// build/combined.wat is only written by tools/build.sh, so a stale one silently
+// shifts every index. Rebuild the same concatenation here unless told otherwise,
+// from the src/main.watx include order — the one list the real compile uses.
+const wat = watArg || 'src/*.wat (src/main.watx include order)';
 const indices = process.argv.slice(2).filter(a => !a.startsWith('--')).map(Number);
 // --dump prints the whole table, which is how tools/cpuprof-top.js --names
 // turns wasm-function[N] frames back into source names.
@@ -20,10 +20,11 @@ if (!indices.length && !dumpAll) {
 
 const lines = (() => {
   if (watArg) return fs.readFileSync(watArg, 'utf8').split('\n');
-  const src = fs.readFileSync(require('path').join(__dirname, '../lib/compile-wat.js'), 'utf8');
-  const block = src.slice(src.indexOf('const WAT_FILES = ['));
-  const list = block.slice(0, block.indexOf(']')).match(/'([^']+\.wat)'/g).map(q => q.slice(1, -1));
-  return list.flatMap(f => fs.readFileSync(require('path').join(__dirname, '../src', f), 'utf8').split('\n'));
+  // Read the order, do not scrape it: this used to slice a `const WAT_FILES = [`
+  // literal out of lib/compile-wat.js's TEXT, which stopped existing the day
+  // that list became a parse of src/main.watx.
+  const { WAT_FILES } = require('../lib/wat-manifest.js');
+  return WAT_FILES.flatMap(f => fs.readFileSync(require('path').join(__dirname, '../src', f), 'utf8').split('\n'));
 })();
 const imports = [];
 const defs = [];

@@ -13,12 +13,11 @@
 // and both require it.
 //
 // The WATX compiler takes one source string plus a VFS the (include ...) forms
-// resolve against. src/main.watx is the authoritative entry point since
-// Milestone 2.2; the WAT_FILES fallback below is kept for a tree where that file
-// is absent, and it has to strip the (module ...) wrapper, which opens in
-// 01-header.wat and closes in 13-exports.wat, so no individual file parses on
-// its own. Both tokens are blanked in place (not deleted) so every line and
-// column in a WATX error still points at the real source position.
+// resolve against. src/main.watx is THE entry point and there is no fallback:
+// the synthesized-from-WAT_FILES branch that used to live here is gone, because
+// WAT_FILES is itself now a parse of main.watx (lib/wat-manifest.js). A tree
+// without that file has no source order at all, from any direction, so absence
+// is a hard error rather than a quiet reconstruction.
 
 const fs = require('fs');
 const path = require('path');
@@ -37,39 +36,24 @@ function readSourceText(file) {
 }
 
 function watxSourceClosure() {
-  const { WAT_FILES } = require(path.join(ROOT, 'lib', 'compile-wat.js'));
   const mainFile = path.join(SRC, 'main.watx');
-  const vfs = new Map();
-  if (fs.existsSync(mainFile)) {
-    for (const f of fs.readdirSync(SRC)) {
-      if (!/\.(wat|watx)$/.test(f)) continue;
-      const text = readSourceText(path.join(SRC, f));
-      vfs.set(f, text);
-      vfs.set(`src/${f}`, text);
-      vfs.set(`./${f}`, text);
-    }
-    return { source: readSourceText(mainFile), vfs, entry: 'src/main.watx' };
+  if (!fs.existsSync(mainFile)) {
+    throw new Error('watx-closure: src/main.watx is missing. It is the root of the ' +
+      '(include ...) closure — the build has no source order without it.');
   }
-
-  const files = WAT_FILES.slice();
-  const texts = files.map(f => readSourceText(path.join(SRC, f)));
-
-  const openAt = texts[0].indexOf('(module');
-  if (openAt < 0) throw new Error(`watx-closure: no "(module" in src/${files[0]}`);
-  texts[0] = texts[0].slice(0, openAt) + ' '.repeat('(module'.length) +
-    texts[0].slice(openAt + '(module'.length);
-
-  const last = texts.length - 1;
-  const closeAt = texts[last].lastIndexOf(')');
-  if (closeAt < 0) throw new Error(`watx-closure: no closing ")" in src/${files[last]}`);
-  texts[last] = texts[last].slice(0, closeAt) + ' ' + texts[last].slice(closeAt + 1);
-
-  files.forEach((f, i) => vfs.set(f, texts[i]));
-  return {
-    source: files.map(f => `(include "${f}")`).join('\n') + '\n',
-    vfs,
-    entry: 'synthesized from lib/compile-wat.js WAT_FILES (src/main.watx absent)',
-  };
+  // Every src file goes into the vfs under all three spellings an (include ...)
+  // may use ('f', 'src/f', './f'); main.watx's own forms name the bare basename.
+  // Only the includes actually reached are parsed, so listing a file here does
+  // not put it in the module — main.watx does.
+  const vfs = new Map();
+  for (const f of fs.readdirSync(SRC)) {
+    if (!/\.(wat|watx)$/.test(f)) continue;
+    const text = readSourceText(path.join(SRC, f));
+    vfs.set(f, text);
+    vfs.set(`src/${f}`, text);
+    vfs.set(`./${f}`, text);
+  }
+  return { source: readSourceText(mainFile), vfs, entry: 'src/main.watx' };
 }
 
 // The compile options are part of the closure contract, not a caller's choice:

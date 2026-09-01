@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// Emit build/combined.wat from WAT_FILES — the same list the real compile uses.
-// A shell glob is a second source of truth, and when it disagrees with
-// WAT_FILES every function index in combined.wat shifts relative to the shipped
-// module, so tools that map index->name (func-index.js) start naming the wrong
-// function. tools/check-wat-manifest.js proves the two lists agree; this makes
-// them literally the same list.
+// Emit build/combined.wat from the src/main.watx include list — literally the
+// same list the real compile resolves, since the shipped wasm IS main.watx's
+// (include ...) closure. A shell glob would be a second source of truth, and
+// when it disagreed every function index in combined.wat would shift relative
+// to the shipped module, so tools that map index->name (func-index.js) would
+// start naming the wrong function.
 //
 // The source parts carry NO `(module ...)` wrapper of their own (Milestone 2.2
 // of docs/watx-migration-plan.md): every src/*.wat fragment balances its own
@@ -17,7 +17,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { WAT_FILES } = require('../lib/compile-wat');
+const { WAT_FILES } = require('../lib/wat-manifest');
 
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'build', 'combined.wat');
@@ -34,4 +34,4 @@ try {
   fs.closeSync(out);
 }
 console.log(`Wrote ${path.relative(ROOT, OUT)} from ${WAT_FILES.length} parts ` +
-  `(WAT_FILES order, (module ...) wrapper added here)`);
+  `(src/main.watx include order, (module ...) wrapper added here)`);
