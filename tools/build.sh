@@ -157,6 +157,24 @@ node tools/layout-migrate.js --file=src/09c0-window-table.wat --layout=WndRecord
 # +4 discriminant guard.
 node tools/gdi-variant-gate.js > /dev/null || { node tools/gdi-variant-gate.js; exit 1; }
 
+# TthPoint (the first MEMARG wave) — the 28-byte hinted-point record. --memarg
+# is what makes this family convertible at all: 53 of its 72 sites spell the
+# offset in the instruction, and those lower through `load.field.memarg`, a
+# different encoding from the add form. It is opt-in per family on purpose —
+# VSock, WndRecord and DxObject above all still carry unconverted memarg sites,
+# and passing --memarg to their gates would fail them without anyone having
+# asked for a conversion.
+#
+# --base-local-from-call, NOT --base-local: `$a` has 26 assignments in this file
+# and 2 of them are points, `$b` has 16 and 2. A name match would label 24 and
+# 14 unrelated sites as fields of TthPoint, byte-identically, so the oracle
+# could never catch it. This flag accepts a local only in the functions where
+# EVERY assignment to it is the base call.
+TTH_LAYOUT_ARGS=(--file=src/10c1-truetype-hint.wat --layout=TthPoint
+  --base-call='$tth_point' --base-local-from-call=p,point,pt,a,b,pa0,pa1,pb0,pb1 --memarg)
+node tools/layout-migrate.js "${TTH_LAYOUT_ARGS[@]}" --gate > /dev/null || {
+  node tools/layout-migrate.js "${TTH_LAYOUT_ARGS[@]}" --gate; exit 1; }
+
 echo "Concatenating WAT parts..."
 # From the src/main.watx include list, not a shell glob: combined.wat must be
 # the same sequence the real compile resolves, or every function index in it
