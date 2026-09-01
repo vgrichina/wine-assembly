@@ -626,6 +626,64 @@ child args so Inno installers get their /SL4 handoff. My runs at
 `48736086`: build exit 0 (991,745 B), differential 46/46, still exactly
 one divergence.
 
+**By 04:20 (+14 commits, HEAD `79ad6b64`).** Two ratchets went from
+whitelist to flat refusal in one window, which is the trajectory these
+gates are supposed to have. `--dup-payloads` (`57890655`) landed with an
+honest refutation of its own premise — 28 of the 30 "duplicate" string
+payloads are deliberate cross-region mirrors of the disturbable low
+page, per 01-header's own comment, so the scanner never looks across
+regions; only two within-region duplicates existed, `bd20fa23` merged
+them, and the baseline drained to zero. The `(owner "file:line")`
+clauses — which nothing had ever read, leaving 155 of 175 pointing
+somewhere confident and irrelevant — got a ratchet (`6f76c335`,
+verified in both directions with a 12-check test so "155 stale" is a
+measurement, not a broken matcher), then the full re-derivation
+(`d369831d`): all 155 re-derived by ranked rule, baseline empty, the
+byte-identity oracle used exactly per its own law (wasm sha unchanged,
+994,664 B), and the test's "baseline non-empty" check consciously
+inverted with the reasoning written down. The frame-pacing lane's
+clock-sweep (`fee7d7c1`) generalized last tick's dxball finding: eight
+of 22 games have a frame limiter the 200ms/batch headless clock
+silently disables — every headless present-rate/frame-hash/PNG number
+ever taken at the default clock came from a game running unlimited;
+harness artifact, not user-facing, with the discriminator (clock reads
+per frame) and two harness traps documented. And the fix landed
+(`02a5da57`, a coordinated single landing of three board-released lanes
+on interleaved files): WaitForVerticalBlank really parks now (yield 13,
+rAF-woken in the browser, guest-clock headless — dxball takes its
+hardware Flip path, 243 flips vs 0, and its screen says so), clock-spin
+and empty-PeekMessage parks (yields 14/15 — abedemo clock reads
+76.3M→4.7M with frames unchanged, halflife_uplink wall 14.1s→2.0s), and
+the frozen-mode host seam. Frozen mode matured into the real agent
+loop: `_scheduleStep` holds the continuation (one seam covers both
+drive loops), each step charges tickMs on a batch-driven clock, a
+dashboard watches N sessions as N ordinary index.html iframes,
+`866c6b9c` caught a frozen DX-Ball tile riding the real compositor (one
+step = one synthesized vblank now — found by watching the dashboard),
+and `79ad6b64` records agent sessions on the guest clock so ninety
+minutes of stepping-plus-thinking reassembles into the minutes of play
+it contains. Agent-remote fixed two coordinate lies: clicks lead with
+the mousemove a human click always carries (`c1517104` — Heroes II
+picks tiles from WM_MOUSEMOVE state, not button coordinates, the exact
+split that misled two sessions) and speak guest-native coordinates
+through the exclusive-fullscreen fit box (`19646b84`). Pocket Tanks
+reaches gameplay via a no-audio BASS shim merged from a temp branch
+(`39129c77`/`00431927`) — done off-tree precisely to avoid sweeping the
+busy shared files, incident #8's lesson operating as protocol. Two
+findings every lane should read: the vendored WATX compiler silently
+accepts an over-arity folded binary op — `(i32.or A B C D)` built exit
+0 and simply dropped the extra operands' effect, where wat2wasm
+rejects; no gate exists yet and this is the top candidate for the next
+audit item — and a cooperative thread-manager yield branch must
+`continue`, not clear-and-fall-through, or the parked call re-enters in
+the same turn. Known reds, both pre-existing and named on the board:
+test-cli-worker-threads (WordPad) and test-web-record-audio's hang. My
+runs at `79ad6b64`: both new ratchets confirmed wired in build.sh with
+the owners baseline verified empty, yields 13/14/15 confirmed on the
+worker-slice and nested-frame paths in thread-manager; build exit 0
+(994,664 B, matching `d369831d`'s attested byte-identity size),
+differential 46/46, still exactly one divergence.
+
 ---
 
 # Pass 3 — 2026-08-30
