@@ -148,7 +148,8 @@ const badBulk = rejectsProduction(`
   (func $bad (effects) (memory.copy (i32.const 0) (i32.const 4)))
 `);
 assert.strictEqual(badBulk.success, false);
-assert.match(badBulk.error, /memory\.copy: expected 3 args/);
+assert.match(badBulk.error,
+  /memory\.copy in function \$bad: expected exactly 3 operand\(s\), got 2/);
 
 const standardTable = rejectsProduction(`
   (func $bad (param $i i32) (effects)

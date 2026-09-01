@@ -4823,8 +4823,8 @@
             (local.set $obj (call $ole_create_stat_enum (local.get $arg0)))
             (if (local.get $obj)
               (then (call $gs32 (local.get $arg4) (local.get $obj)) (global.set $eax (i32.const 0)))
-              (else (global.set $eax (i32.const 0x8007000E)))))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))))
+              (else (global.set $eax (i32.const 0x8007000E))))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
   (func $handle_IStorage_DestroyElement (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $ole_storage_destroy_element (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
@@ -9291,8 +9291,8 @@
                     (call $gs16 (local.get $result) (local.get $base_vt))
                     (call $gs32 (i32.add (local.get $result) (i32.const 8)) (local.get $value))
                     (global.set $eax (i32.const 0)))))
-              (else (global.set $eax (i32.const 0x80020003))))))) ;; no such method
-    (global.set $esp (i32.add (global.get $esp) (i32.const 40))))
+              (else (global.set $eax (i32.const 0x80020003)))))))) ;; no such method
+    (global.set $esp (i32.add (global.get $esp) (i32.const 40)))
   )
 
   ;; IOleCache is required by RichEdit when it reconstructs an RTF \pict

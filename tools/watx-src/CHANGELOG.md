@@ -17,6 +17,45 @@ Rules:
 - Every compiler change lands with a minimal regression in one of the
   `test/watx-compiler-*.test.js` suites.
 
+## 2026-09-01 — direct emitters consume their whole form too
+
+Manifest digest: `a67164cbb7509b6553af6f65df734e9c01e903fbb9d24edd91ab178083187b5e`
+
+`compiler-codegen.js`, `test/watx-compiler-production.test.js`.
+
+The preceding entry closed silent operand loss in the table-driven folded
+operators, but the direct emitters had the same failure mode one branch at a
+time. Forms including `local.get/set`, `global.get/set`, `return`, `drop`,
+`nop`, scalar/SIMD/atomic memory operations, the layout accessors and grouped
+`br_table` read the children they expected and returned without proving the
+form ended. A surplus call or store therefore vanished while the resulting
+wasm remained valid.
+
+All fixed-shape direct emitters now use the same located arity machinery. That
+includes zero-operand instructions; local/global operations and declarations;
+`let`, `func-slot`, `br`/`br_if`/grouped `br_table`, `return` and `drop`; the
+recognized arms of `if`; bulk, scalar, SIMD-lane and atomic memory forms after
+their optional memargs have been parsed; region allocation; and every layout
+address/load/store helper. Variable-body forms still consume their full body,
+and the ordinary `br_table` spelling still consumes every pre-tail operand as
+a target label. The type inference comment and implementation for `let` now
+match its real local-tee semantics instead of describing the now-refused
+trailing-body shape.
+
+This refusal exposed two real production bugs in `src/09a7b-ole.wat`: the
+`IStorage::EnumElements` ESP +24 cleanup and the common-dialog `IDispatch::Invoke`
+ESP +40 cleanup were accidentally fourth children of an outer `if`, so both
+had always been discarded. Their parentheses are corrected and the existing
+OLE suite now asserts both post-handler stack pointers.
+
+Coverage adds sixteen accepted/rejected direct-arity pairs, including memargs,
+layout access, a trailing `if` expression and grouped `br_table`; the complete
+oracle is 132/132. The production-mode suite's bulk-memory refusal assertion
+now pins the new function-qualified exact-arity diagnostic rather than the old
+unlocated text. Wine parity, SIMD, SIMD-op, SIMD-memarg, atomics, explicit drop,
+block-result and differential suites pass, as does the 76-check OLE storage
+suite.
+
 ## 2026-09-01 — folded operators consume their whole form
 
 Manifest digest: `c92c6ac479994083463da953384d51be9b4fe34d9a0a59471fb54948e98d8f4c`

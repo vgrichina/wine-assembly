@@ -2676,25 +2676,43 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       throw e;
     }
 
-    // Fixed-arity folded instructions must consume the WHOLE form. Emitting
+    // Folded instructions must consume the WHOLE form. Emitting
     // only expr[2]/expr[3] is not validation: before this check
     // `(i32.or A B C D)` compiled A|B and silently discarded C and D. The
     // resulting wasm validates, so neither the engine nor the type pass can
-    // recover the author's intent. Keep this helper at the common dispatch
-    // point and use it for every table-driven fixed-arity family below.
-    const requireArity = (expected) => {
-      const got = watxFormLength(expr) - 1;
-      if (got === expected) return;
-      const e = new Error(
-        `${head} in function ${func.name}: expected exactly ${expected} operand(s), got ${got}`);
+    // recover the author's intent. Keep these helpers at the common dispatch
+    // point and use them for every fixed-form family below, including direct
+    // emitters and memarg forms whose exact count is known only after parsing
+    // offset=/align= tokens.
+    const arityError = (expected, got) => {
+      const e = new Error(`${head} in function ${func.name}: expected ${expected}, got ${got}`);
       const loc = watxFormLoc(expr);
       if (loc !== undefined) {
         e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc);
       }
       throw e;
     };
+    const requireArity = (expected) => {
+      const got = watxFormLength(expr) - 1;
+      if (got === expected) return;
+      arityError(`exactly ${expected} operand(s)`, got);
+    };
+    const requireArityOneOf = (...expected) => {
+      const got = watxFormLength(expr) - 1;
+      if (expected.includes(got)) return;
+      const words = expected.length === 2
+        ? `${expected[0]} or ${expected[1]}`
+        : `${expected.slice(0, -1).join(', ')}, or ${expected[expected.length - 1]}`;
+      arityError(`${words} operand(s)`, got);
+    };
+    const requireMinArity = (expected) => {
+      const got = watxFormLength(expr) - 1;
+      if (got >= expected) return;
+      arityError(`at least ${expected} operand(s)`, got);
+    };
 
     if (head === 'unreachable') {
+      requireArity(0);
       bytes.push(OP.unreachable);
       return bytes;
     }
@@ -2707,6 +2725,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     // TODO(watjs): migrate watjs's ~3500 (cstring ...) call sites to (string ...)
     // and add (string ...) to watjs's own compiler copy.
     if (head === 'string' || head === 'cstring') {
+      requireArity(1);
       const raw = V(expr[2]) || '""';
       if (!firstInternFunc) firstInternFunc = func;
       const ptr = internPString(raw);
@@ -2869,7 +2888,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     // exprProducesValue table below) -- callers that want a value should wrap with a following i32.const.
     // We hard-code memidx 0x00 (module has a single memory); no runtime flag, baseline emit.
     if (head === 'memory.copy') {
-      if ((expr.length - 1) !== 4) throw new Error(`memory.copy: expected 3 args (dst,src,len), got ${(expr.length - 1) - 1}`);
+      requireArity(3);
       compileExpr(expr[2], func, depth, bytes);   // dst
       compileExpr(expr[3], func, depth, bytes);   // src
       compileExpr(expr[4], func, depth, bytes);   // len
@@ -2877,7 +2896,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       return bytes;
     }
     if (head === 'memory.fill') {
-      if ((expr.length - 1) !== 4) throw new Error(`memory.fill: expected 3 args (dst,val,len), got ${(expr.length - 1) - 1}`);
+      requireArity(3);
       compileExpr(expr[2], func, depth, bytes);   // dst
       compileExpr(expr[3], func, depth, bytes);   // val
       compileExpr(expr[4], func, depth, bytes);   // len
@@ -3220,6 +3239,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     if (simdMemOps[head] !== undefined) {
       const [subop, natural, isStore] = simdMemOps[head];
       const ma = parseMemarg(expr, 1, head, natural, false);
+      requireArity(ma.next + (isStore ? 1 : 0));
       let operand = ma.next;
       if (!expr[operand + 1]) throw new Error(`${head} is missing its address operand`);
       compileExpr(expr[(operand++) + 1], func, depth, bytes);
@@ -3251,6 +3271,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     if (simdLaneMemOps[head] !== undefined) {
       const [subop, natural, laneCount, isStore] = simdLaneMemOps[head];
       const ma = parseMemarg(expr, 1, head, natural, false);
+      requireArity(ma.next + 2);
       let operand = ma.next;
       const lane = laneImm(expr[operand + 1], head, laneCount, 'lane');
       operand++;
@@ -3395,6 +3416,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── local.get / local.set / local.tee ──
     if (head === 'local.get') {
+      requireArity(1);
       const name = V(expr[2]);
       const numeric = /^\d+$/.test(name || '') ? parseInt(name) : undefined;
       const localIdx = numeric ?? func.activeLocal.get(name) ?? func.localMap.get(name);
@@ -3405,6 +3427,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     }
     
     if (head === 'local.set' || head === 'local.tee' || head === 'set!') {
+      requireArity(2);
       const name = V(expr[2]);
       const numeric = /^\d+$/.test(name || '') ? parseInt(name) : undefined;
       const localIdx = numeric ?? func.activeLocal.get(name) ?? func.localMap.get(name);
@@ -3425,6 +3448,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     // emits nothing. Without this handler the generic fallback would try to
     // "compile" the bare type symbol (e.g. `i32`) as an expression.
     if (head === 'local') {
+      requireArity(2);
       return bytes;
     }
 
@@ -3436,9 +3460,11 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       // (let $name type init) or (let $name init)
       if ((expr.length - 1) >= 4 && T(expr[3]) === 'symbol' &&
           ['i32','i64','f32','f64','v128','u8','ptr','weak'].includes(V(expr[3]))) {
+        requireArity(3);
         declaredType = V(expr[3]);
         initExpr = expr[4];
       } else {
+        requireArity(2);
         initExpr = expr[3];
       }
       
@@ -3546,6 +3572,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── func-slot — the table slot index of a handler, as an i32 const ──
     if (head === 'func-slot') {
+      requireArity(1);
       const fn = V(expr[2]);
       const slot = funcSlotMap.get(fn);
       if (slot === undefined) throw new Error(`Function '${fn}' is not present in any element segment/func-table`);
@@ -3619,6 +3646,11 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
           restIdx++;
         }
       }
+
+      // The branches above deliberately accept several spellings, but every
+      // accepted spelling still has to consume the whole form. Before this
+      // check an expression after the recognized else arm simply vanished.
+      if (restIdx !== watxFormLength(expr)) requireArity(restIdx - 1);
       
       // Determine block type by checking if branches actually produce values
       let blockType = VALTYPE.void;
@@ -3784,6 +3816,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── br / br_if ──
     if (head === 'br') {
+      requireArityOneOf(1, 2);
       const label = V(expr[2]);
       let labelDepth = 0;
       if (label?.startsWith('$')) {
@@ -3809,10 +3842,12 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       // the last operand (migration gap G4).
       let label, condExpr, valueExpr = null;
       if (T(expr[2]) === 'symbol' && V(expr[2])?.startsWith('$') && (expr.length - 1) > 2) {
+        requireArityOneOf(2, 3);
         label = V(expr[2]);
         if ((expr.length - 1) > 3) { valueExpr = expr[3]; condExpr = expr[4]; }
         else condExpr = expr[3];
       } else {
+        requireArity(1);
         label = '0';
         condExpr = expr[2];
       }
@@ -3845,6 +3880,11 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     if (head === 'br_table') {
       const firstArg = expr[2];
       const grouped = Array.isArray(firstArg) && V(firstArg[1]) === 'labels';
+      // The ordinary spelling consumes every operand before its last two as a
+      // target label. The grouped spelling has exactly three operands, so an
+      // expression after its index has no possible meaning and must not vanish.
+      if (grouped) requireArity(3);
+      else requireMinArity(2);
       const labelNodes = grouped ? firstArg.slice(2) : expr.slice(2, -2);
       const defaultLabel = V(grouped ? expr[3] : expr[expr.length - 2]);
       const idxExpr = grouped ? expr[4] : expr[expr.length - 1];
@@ -3882,6 +3922,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── return ──
     if (head === 'return') {
+      requireArityOneOf(0, 1);
       if (expr[2]) {
         compileExpr(expr[2], func, depth, bytes);
       }
@@ -3891,6 +3932,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── drop ──
     if (head === 'drop') {
+      // `(drop)` is the stacked spelling: it consumes the value already left
+      // by the preceding expression. `(drop VALUE)` is the folded spelling.
+      requireArityOneOf(0, 1);
       if (expr[2]) compileExpr(expr[2], func, depth, bytes);
       bytes.push(OP.drop);
       return bytes;
@@ -3898,6 +3942,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     
     // ── nop ──
     if (head === 'nop') {
+      requireArity(0);
       bytes.push(OP.nop);
       return bytes;
     }
@@ -3939,6 +3984,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── with-region ──
     if (head === 'with-region') {
+      requireMinArity(2);
       const regionName = V(expr[2]);
       const regionSpec = expr[3];
       let regionSize = 4096;
@@ -3987,6 +4033,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── region.alloc ──
     if (head === 'region.alloc') {
+      requireArity(2);
       const layoutName = V(expr[3]);
       const size = lookupLayout(layoutName, 'region.alloc', expr[3]).totalSize;
 
@@ -3999,6 +4046,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── store.field ──
     if (head === 'store.field') {
+      requireArity(4);
       const layoutName = V(expr[2]);
       const fieldName = V(expr[3]);
       const ptrExpr = expr[4];
@@ -4040,6 +4088,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── load.field ──
     if (head === 'load.field') {
+      requireArity(3);
       const layoutName = V(expr[2]);
       const fieldName = V(expr[3]);
       const ptrExpr = expr[4];
@@ -4062,6 +4111,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── store.elem — array element store ──
     if (head === 'store.elem') {
+      requireArity(5);
       const layoutName = V(expr[2]);
       const fieldName = V(expr[3]);
       const baseExpr = expr[4];
@@ -4101,6 +4151,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── load.elem — array element load ──
     if (head === 'load.elem') {
+      requireArity(4);
       const layoutName = V(expr[2]);
       const fieldName = V(expr[3]);
       const baseExpr = expr[4];
@@ -4133,6 +4184,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     // Distinct from store.elem (which strides by the WHOLE struct size for arrays-of-structs); this
     // strides by the field's own element stride, for a `(field name type count [stride])` array member.
     if (head === 'store.field-elem') {
+      requireArity(5);
       const layoutName = V(expr[2]);
       const fieldName = V(expr[3]);
       const baseExpr = expr[4];
@@ -4171,6 +4223,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── load.field-elem — load element `idx` of an ARRAY FIELD inside a struct ──
     if (head === 'load.field-elem') {
+      requireArity(4);
       const layoutName = V(expr[2]);
       const fieldName = V(expr[3]);
       const baseExpr = expr[4];
@@ -4204,6 +4257,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     // (B's ~311 NEON `800 + rn*16` sites; RES Gl2State matrix-element addresses) -- keeps the offset+
     // stride compile-time/layout-typed without forcing a load of the element's declared width.
     if (head === 'elem-addr') {
+      requireArity(4);
       const layoutName = V(expr[2]);
       const fieldName = V(expr[3]);
       const baseExpr = expr[4];
@@ -4230,6 +4284,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── size-of ──
     if (head === 'size-of') {
+      requireArity(1);
       const layoutName = V(expr[2]);
       const size = lookupLayout(layoutName, 'size-of', expr[2]).totalSize;
       bytes.byte(OP.i32_const);
@@ -4239,6 +4294,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── offset-of ──
     if (head === 'offset-of') {
+      requireArity(2);
       const layoutName = V(expr[2]);
       const fieldName = V(expr[3]);
       const info = lookupLayout(layoutName, 'offset-of', expr[2]);
@@ -4265,6 +4321,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       });
       if (loads[head] || stores[head]) {
         const ma = parseMemarg(expr, 1, head, (loads[head] || stores[head])[1], false);
+        requireArity(ma.next + (stores[head] ? 1 : 0));
         let operand = ma.next;
         const offset = ma.offset, align = ma.align;
         if (!expr[operand + 1]) throw new Error(`${head} is missing its address operand`);
@@ -4339,12 +4396,14 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const aspec = atomics[head];
       if (aspec) {
         if (head === 'atomic.fence') {
+          requireArity(0);
           bytes.byte(0xFE);
           bytes.uleb(aspec.op);
           bytes.byte(0x00);
           return bytes;
         }
         const ma = parseMemarg(expr, 1, head, aspec.align, true);
+        requireArity(ma.next + aspec.args);
         let operand = ma.next;
         if (!expr[operand + 1]) throw new Error(`${head} is missing its address operand`);
         compileExpr(expr[(operand++) + 1], func, depth, bytes);
@@ -4370,6 +4429,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // ── global.get / global.set ──
     if (head === 'global.get') {
+      requireArity(1);
       const name = V(expr[2]);
       const globalIdx = /^\d+$/.test(name || '') ? parseInt(name) : globalIndexMap.get(name);
       if (globalIdx === undefined || globalIdx >= globalSpace.length) throw new Error(`Unknown global '${name}' in ${func.name}`);
@@ -4378,6 +4438,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       return bytes;
     }
     if (head === 'global.set') {
+      requireArity(2);
       const name = V(expr[2]);
       const globalIdx = /^\d+$/.test(name || '') ? parseInt(name) : globalIndexMap.get(name);
       if (globalIdx === undefined || globalIdx >= globalSpace.length) throw new Error(`Unknown global '${name}' in ${func.name}`);
@@ -4645,19 +4706,17 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       return inferExprType(expr[expr.length - 1]);
     }
 
-    // let — type of body (last expression after bindings)
+    // let — type of its initializer. WATX `let` is a local.tee expression, not
+    // a binding form with a trailing body; codegen's exact-arity check refuses
+    // such a body rather than silently discarding it.
     if (hd === 'let') {
-      // (let $name type? init body...)
-      // Find where body starts: after name, optional type, init
-      let bodyStart = 3; // default: (let $name init body)
       if ((expr.length - 1) >= 4 && T(expr[3]) === 'symbol' &&
           ['i32','i64','f32','f64','v128','u8','ptr','weak'].includes(V(expr[3]))) {
-        bodyStart = 4; // has explicit type: (let $name type init body)
+        const declared = V(expr[3]);
+        return declared === 'u8' || declared === 'ptr' || declared === 'weak'
+          ? 'i32' : declared;
       }
-      if ((expr.length - 1) > bodyStart) {
-        return inferExprType(expr[expr.length - 1]); // type of last body expr
-      }
-      return 'i32';
+      return inferExprType(expr[3], symTypes);
     }
 
     return 'i32'; // conservative default

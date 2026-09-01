@@ -410,7 +410,7 @@ pair('module', 'br_table needs a default label and an index',
 pair('module', 'memory.copy takes three arguments',
   '(func $f (memory.copy (i32.const 0) (i32.const 4) (i32.const 4)))\n(export "f" (func $f))',
   '(func $f (memory.copy (i32.const 0) (i32.const 4)))\n(export "f" (func $f))',
-  'expected 3 args');
+  'expected exactly 3 operand(s)');
 pair('folded op', 'a scalar binary operator takes exactly two operands',
   '(func $f (result i32) (i32.or (i32.const 1) (i32.const 2)))\n(export "f" (func $f))',
   '(func $f (result i32) (i32.or (i32.const 1) (i32.const 2) (i32.const 4) (i32.const 8)))\n(export "f" (func $f))',
@@ -423,6 +423,79 @@ pair('folded op', 'a SIMD binary operator takes exactly two operands',
   '(func $f (result v128) (v128.or (v128.const i32x4 1 2 3 4) (v128.const i32x4 5 6 7 8)))',
   '(func $f (result v128) (v128.or (v128.const i32x4 1 2 3 4) (v128.const i32x4 5 6 7 8) (v128.const i32x4 9 10 11 12)))',
   'expected exactly 2 operand(s), got 3');
+
+// Direct emitters used to be the second half of the same silent-drop class:
+// each branch read the operands it needed and returned without checking that
+// the form ended. Keep representative coverage for every direct-emitter shape
+// (zero/one/optional operands, structural control, memargs and WATX layouts),
+// so adding requireArity to the opcode tables alone cannot make this suite green.
+const SIDE = '(func $side (result i32) (i32.const 9))';
+pair('direct arity', 'a zero-operand instruction refuses a folded child',
+  '(func $f (nop))',
+  `${SIDE}\n(func $f (nop (call $side)))`,
+  'nop in function $f: expected exactly 0 operand(s), got 1');
+pair('direct arity', 'a local.get consumes only its local immediate',
+  '(func $f (param $x i32) (result i32) (local.get $x))',
+  '(func $f (param $x i32) (result i32) (local.get $x (i32.const 9)))',
+  'local.get in function $f: expected exactly 1 operand(s), got 2');
+pair('direct arity', 'a local.set consumes its local and value',
+  '(func $f (local $x i32) (drop (local.set $x (i32.const 1))))',
+  `${SIDE}\n(func $f (local $x i32) (drop (local.set $x (i32.const 1) (call $side))))`,
+  'local.set in function $f: expected exactly 2 operand(s), got 3');
+pair('direct arity', 'a local declaration has one name and one type',
+  '(func $f (local $x i32) (drop (local.get $x)))',
+  `${SIDE}\n(func $f (local $x i32 (call $side)))`,
+  'local in function $f: expected exactly 2 operand(s), got 3');
+pair('direct arity', 'a let binding has no silently discarded body operand',
+  '(func $f (drop (let $x i32 (i32.const 1))))',
+  `${SIDE}\n(func $f (drop (let $x i32 (i32.const 1) (call $side))))`,
+  'let in function $f: expected exactly 3 operand(s), got 4');
+pair('direct arity', 'a length-prefixed string takes one string token',
+  '(func $f (result i32) (string "ok"))',
+  `${SIDE}\n(func $f (result i32) (string "ok" (call $side)))`,
+  'string in function $f: expected exactly 1 operand(s), got 2');
+pair('direct arity', 'return accepts at most one folded value',
+  '(func $f (result i32) (return (i32.const 1)))',
+  `${SIDE}\n(func $f (result i32) (return (i32.const 1) (call $side)))`,
+  'return in function $f: expected 0 or 1 operand(s), got 2');
+pair('direct arity', 'drop accepts stacked or one folded value, never two',
+  '(func $f (drop (i32.const 1)))',
+  `${SIDE}\n(func $f (drop (i32.const 1) (call $side)))`,
+  'drop in function $f: expected 0 or 1 operand(s), got 2');
+pair('direct arity', 'br accepts at most one folded branch value',
+  '(func $f (block $done (br $done)))',
+  `${SIDE}\n(func $f (block $done (br $done (i32.const 1) (call $side))))`,
+  'br in function $f: expected 1 or 2 operand(s), got 3');
+pair('direct arity', 'grouped br_table consumes exactly its labels, default and index',
+  '(func $f (param $i i32) (block $done (br_table (labels $done) $done (local.get $i))))',
+  `${SIDE}\n(func $f (param $i i32) ` +
+    '(block $done (br_table (labels $done) $done (local.get $i) (call $side))))',
+  'br_table in function $f: expected exactly 3 operand(s), got 4');
+pair('direct arity', 'if refuses expressions after its recognized else arm',
+  '(func $f (if (i32.const 1) (then (nop)) (else (nop))))',
+  `${SIDE}\n(func $f (if (i32.const 1) (then (nop)) (else (nop)) (call $side)))`,
+  'if in function $f: expected exactly 3 operand(s), got 4');
+pair('direct arity', 'a scalar load counts memargs and one address',
+  '(func $f (result i32) (i32.load offset=4 align=4 (i32.const 0)))',
+  `${SIDE}\n(func $f (result i32) (i32.load offset=4 align=4 (i32.const 0) (call $side)))`,
+  'i32.load in function $f: expected exactly 3 operand(s), got 4');
+pair('direct arity', 'a SIMD load counts memargs and one address',
+  '(func $f (result v128) (v128.load offset=16 (i32.const 0)))',
+  `${SIDE}\n(func $f (result v128) (v128.load offset=16 (i32.const 0) (call $side)))`,
+  'v128.load in function $f: expected exactly 2 operand(s), got 3');
+pair('direct arity', 'an atomic operation consumes its complete operand list',
+  '(func $f (result i32) (i32.atomic.load (i32.const 0)))',
+  `${SIDE}\n(func $f (result i32) (i32.atomic.load (i32.const 0) (call $side)))`,
+  'i32.atomic.load in function $f: expected exactly 1 operand(s), got 2');
+pair('direct arity', 'a layout accessor consumes layout, field and address',
+  '(layout ArityRec (field value i32))\n(func $f (result i32) (load.field ArityRec value (i32.const 0)))',
+  `${SIDE}\n(layout ArityRec (field value i32))\n` +
+    '(func $f (result i32) (load.field ArityRec value (i32.const 0) (call $side)))',
+  'load.field in function $f: expected exactly 3 operand(s), got 4');
+pair('direct arity', 'a global.get consumes only its global immediate',
+  '(global $g (mut i32) (i32.const 1))\n(func $f (result i32) (global.get $g))',
+  '(global $g (mut i32) (i32.const 1))\n(func $f (result i32) (global.get $g (i32.const 2)))',
+  'global.get in function $f: expected exactly 1 operand(s), got 2');
 pair('module', 'a function name is declared once (strictDeclarations)',
   '(func $f (result i32) (i32.const 1))\n(export "f" (func $f))',
   '(func $f (result i32) (i32.const 1))\n(func $f (result i32) (i32.const 2))',
@@ -575,7 +648,7 @@ pair('layout', 'an ARRAY field with an unknown type is refused too',
 // v128 entry in emitLayoutAccess, so a v128 field compiled to a 4-byte i32
 // access over 16 declared bytes. Refused until both tables gain an entry.
 pair('layout', 'v128 is a valtype but not a field type',
-  '(func $z (result i32) (let $v v128 (v128.const i32x4 0 0 0 0) (i32.const 0)))\n(export "z" (func $z))',
+  '(func $z (local $v v128) (local.set $v (v128.const i32x4 0 0 0 0)) (i32.const 0))\n(export "z" (func $z))',
   '(layout T3 (field v v128))\n(func $z (result i32) (size-of T3))\n(export "z" (func $z))',
   'unknown field type');
 // The set's own boundary: the sub-width types must be ACCEPTED and must lay the

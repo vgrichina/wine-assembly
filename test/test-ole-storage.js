@@ -80,6 +80,8 @@ const extraWat = String.raw`
       (i32.const 4) (i32.const 0))
     (if (i32.eqz (global.get $eax))
       (then (local.set $bits (i32.or (local.get $bits) (i32.const 2)))))
+    (if (i32.eq (global.get $esp) (i32.const 0x00300028))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 8)))))
     (global.set $esp (i32.const 0x00300000))
     (call $gs32 (i32.const 0x00300018) (i32.const 0))
     (call $gs32 (i32.const 0x0030001c) (i32.const 0x2c60))
@@ -92,8 +94,25 @@ const extraWat = String.raw`
             (i32.eq (call $gl16 (i32.const 0x2c60)) (i32.const 3))
             (i32.eq (call $gl32 (i32.const 0x2c68)) (i32.const 112))))
       (then (local.set $bits (i32.or (local.get $bits) (i32.const 4)))))
+    (if (i32.eq (global.get $esp) (i32.const 0x00300028))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 16)))))
     (drop (call $ole_obj_release (local.get $obj)))
     (drop (call $ole_obj_release (local.get $obj)))
+    (local.get $bits))
+  (func (export "test_storage_enum_elements_handler")
+        (param $storage i32) (param $out i32) (result i32)
+    (local $bits i32)
+    (call $gs32 (local.get $out) (i32.const 0))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_IStorage_EnumElements
+      (local.get $storage) (i32.const 0) (i32.const 0) (i32.const 0)
+      (local.get $out) (i32.const 0))
+    (if (i32.eqz (global.get $eax))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 1)))))
+    (if (i32.eq (global.get $esp) (i32.const 0x00300018))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 2)))))
+    (if (call $gl32 (local.get $out))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 4)))))
     (local.get $bits))
 `;
 
@@ -204,7 +223,7 @@ async function main() {
   dv.setUint32(wa(dispatchIid), 0x00020400, true);
   dv.setUint32(wa(classOut), 0, true);
   check('Common Dialog exposes IDispatch and round-trips scalar properties',
-    e.test_common_dialog_scalar_dispatch(comClsid, dispatchIid, classOut) === 7);
+    e.test_common_dialog_scalar_dispatch(comClsid, dispatchIid, classOut) === 31);
 
   const anonymousOut = alloc(4);
   check('StgCreateDocfile creates a functional anonymous temporary storage',
@@ -551,6 +570,10 @@ async function main() {
   e.test_ole_release(moveDestination);
 
   const enumStorage = e.test_ole_create_storage(0) >>> 0;
+  const enumHandlerOut = alloc(4);
+  check('IStorage::EnumElements returns an enumerator and pops its six-word frame',
+    e.test_storage_enum_elements_handler(enumStorage, enumHandlerOut) === 7);
+  e.test_ole_release(dv.getUint32(wa(enumHandlerOut), true));
   const enumAlphaName = writeWide('Alpha');
   const enumBetaName = writeWide('Beta');
   const enumFolderName = writeWide('EnumFolder');
