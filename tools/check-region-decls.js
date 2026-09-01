@@ -47,6 +47,8 @@
 //   node tools/check-region-decls.js            # lenient (mid-edit inspection)
 //   node tools/check-region-decls.js --list     # print the declared map
 //   node tools/check-region-decls.js --file=X   # check a fixture instead of src/00-regions.wat
+//   node tools/check-region-decls.js --check-owners    # ratchet on (owner "file:line")
+//   node tools/check-region-decls.js --record-owners   # re-cut that ratchet's baseline
 'use strict';
 
 const fs = require('fs');
@@ -58,6 +60,8 @@ const SRC = path.join(ROOT, 'src');
 const DECLS = '00-regions.wat';
 const STRICT = process.argv.includes('--strict');
 const LIST = process.argv.includes('--list');
+const CHECK_OWNERS = process.argv.includes('--check-owners');
+const RECORD_OWNERS = process.argv.includes('--record-owners');
 
 const hex = (n) => `0x${(n >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
 
@@ -205,6 +209,11 @@ function collectDeclarations(overrideFile, shake) {
     const w = values.get('within');
     d.within = w && /^\$[A-Za-z0-9_]+$/.test(w) ? w.slice(1) : null;
     if (w && d.within === null) d.parseErrors.push(`(within ${w}) is not a $NAME`);
+    // Carried so --check-owners can ask whether the source location still names
+    // this region. Kept as the raw quoted text: some owners are deliberately not
+    // a file:line ("01-header.wat: (string.pool ...)"), and mangling those into a
+    // line number here would invent a target that was never claimed.
+    d.owner = values.get('owner') || null;
     // A SPAN is not in this list. Every importer — the mirror gate, the JS
     // generator, the census — means "a region that owns bytes", and a span owns
     // none: it has no mirror to hold it against, nothing to generate a base and
@@ -218,13 +227,132 @@ function collectDeclarations(overrideFile, shake) {
   return decls;
 }
 
+// ---------------------------------------------------------------------------
+// --check-owners: does the (owner "file:line") still point at this region?
+//
+// Every declaration carries an (owner "…") naming the source location that
+// USES the region. That string is a comment as far as the compiler is
+// concerned: nothing has ever checked it, and after two waves of moving code
+// around, most of them are off by tens or hundreds of lines. A wrong owner is
+// worse than none — it sends the next reader to a line that has nothing to do
+// with the region and looks authoritative doing it.
+//
+// This is a RATCHET, not a sweep. Re-deriving the ~150 already-stale owners is
+// a separate piece of work with a separate review; what this mode buys is that
+// the number cannot GROW. The currently-stale set is recorded in
+// check-region-decls.owners.json, and only a region absent from that file is
+// held to a correct owner. Fixing a stale owner and dropping it from the
+// baseline is always allowed (and --record-owners will prune it); adding a
+// region to the baseline is what review is for.
+//
+// The test is deliberately loose: read the named file, take the named line
+// plus or minus THREE, and ask whether the region's name appears anywhere in
+// that window. It is looking for "this location still knows about this
+// region", not for an exact expression, because the owner points at a use site
+// whose spelling is not this tool's business.
+//
+// Not covered: spans (collectDeclarations drops them before this sees them,
+// for the reasons in its comment) and owners that are deliberately not a
+// file:line — "01-header.wat: (string.pool …)" names a mechanism, not a
+// location, and there is nothing to grep. Both are reported as SKIP so the
+// counts add up rather than silently shrinking.
+const OWNERS_BASELINE = path.join(__dirname, 'check-region-decls.owners.json');
+const OWNER_WINDOW = 3;
+
+function ownerVerdict(d) {
+  if (!d.owner) return { state: 'missing' };
+  // The clause value arrives with its quotes still on.
+  const text = d.owner.trim().replace(/^"|"$/g, '').trim();
+  const m = /^([A-Za-z0-9_.\-]+\.wat):(\d+)$/.exec(text);
+  if (!m) return { state: 'skip', why: 'owner is not a file:line' };
+  const file = path.join(SRC, m[1]);
+  if (!fs.existsSync(file)) return { state: 'stale', why: `${m[1]} does not exist` };
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  const at = Number(m[2]);
+  const lo = Math.max(1, at - OWNER_WINDOW);
+  const hi = Math.min(lines.length, at + OWNER_WINDOW);
+  if (at > lines.length) {
+    return { state: 'stale', why: `${m[1]} has only ${lines.length} lines` };
+  }
+  const window = lines.slice(lo - 1, hi).join('\n');
+  return window.includes(d.name)
+    ? { state: 'ok' }
+    : { state: 'stale', why: `${m[1]}:${lo}-${hi} does not mention $${d.name}` };
+}
+
+function checkOwners(list) {
+  const stale = [];
+  const skipped = [];
+  let ok = 0;
+  for (const d of list) {
+    const v = ownerVerdict(d);
+    if (v.state === 'ok') { ok++; continue; }
+    if (v.state === 'skip') { skipped.push(`${d.name}: ${v.why}`); continue; }
+    if (v.state === 'missing') {
+      stale.push({ name: d.name, why: 'has no (owner "…")', where: `${d.file}:${d.line}` });
+      continue;
+    }
+    stale.push({ name: d.name, why: v.why, where: `${d.file}:${d.line}` });
+  }
+  stale.sort((a, b) => a.name.localeCompare(b.name));
+
+  if (RECORD_OWNERS) {
+    fs.writeFileSync(OWNERS_BASELINE, `${JSON.stringify({
+      comment: 'Regions whose (owner "file:line") does not point at a line ' +
+        'mentioning them. Ratchet baseline for check-region-decls.js ' +
+        '--check-owners: a region NOT listed here must have a correct owner. ' +
+        'Removing a name after fixing its owner is always welcome; adding one ' +
+        'means a new declaration shipped with a wrong owner and should be ' +
+        'fixed instead.',
+      stale: stale.map(s => s.name),
+    }, null, 2)}\n`);
+    console.log(`check-region-decls: recorded ${stale.length} stale owner(s) ` +
+      `in ${path.relative(ROOT, OWNERS_BASELINE)}`);
+    return 0;
+  }
+
+  let baseline;
+  try {
+    baseline = new Set(JSON.parse(fs.readFileSync(OWNERS_BASELINE, 'utf8')).stale);
+  } catch (err) {
+    console.error(`check-region-decls: cannot read ${path.relative(ROOT, OWNERS_BASELINE)}: ` +
+      `${err.message}\n  regenerate it with --record-owners`);
+    return 1;
+  }
+
+  const fresh = stale.filter(s => !baseline.has(s.name));
+  const fixed = [...baseline].filter(n => !stale.some(s => s.name === n)).sort();
+
+  for (const s of fresh) {
+    console.error(`check-region-decls: $${s.name} (${s.where}) ${s.why}`);
+  }
+  if (fresh.length) {
+    console.error(`check-region-decls: ${fresh.length} region(s) declared or ` +
+      `moved since the baseline have an (owner "…") that does not name them.\n` +
+      `  Point the owner at a line that uses the region. Do NOT add these to ` +
+      `${path.relative(ROOT, OWNERS_BASELINE)}.`);
+    return 1;
+  }
+  console.log(`check-region-decls: owners ok — ${ok} verified, ` +
+    `${stale.length} stale (baseline), ${skipped.length} not a file:line`);
+  if (fixed.length) {
+    console.log(`check-region-decls: ${fixed.length} baseline owner(s) now ` +
+      `correct — drop them with --record-owners: ${fixed.join(', ')}`);
+  }
+  return 0;
+}
+
 // Importable: tools/region-census.js reads the same declaration set, so the
 // odometer and the gate can never disagree about what a region is.
-module.exports = { collectDeclarations, collectGlobals };
+module.exports = { collectDeclarations, collectGlobals, ownerVerdict };
 if (require.main !== module) return;
 
 const globals = collectGlobals();
 const decls = collectDeclarations();
+
+if (CHECK_OWNERS || RECORD_OWNERS) {
+  process.exit(checkOwners(decls));
+}
 
 if (LIST) {
   for (const d of [...decls].sort((a, b) => a.base - b.base)) {

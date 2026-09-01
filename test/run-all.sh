@@ -218,6 +218,7 @@ UNIT=(
   test/test-region-wat-fragments.js
   test/test-region-layout-fingerprint.js
   test/test-region-shake.js
+  test/test-region-owner-ratchet.js
   test/test-worker-thread-scheduler.js
   test/test-wat-memory-map.js
   test/test-wat-window-frame.js

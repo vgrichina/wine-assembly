@@ -27,6 +27,13 @@ node test/test-wat-memory-map.js
 # a safety net — hold the two together here. --strict because the declaration
 # set is complete: a new sized region without a mirror declaration is an error.
 node tools/check-region-decls.js --strict
+# Each declaration's (owner "file:line") is documentation the compiler ignores,
+# and two waves of moving code left ~155 of them pointing at unrelated lines. A
+# wrong owner is worse than none: it sends the next reader somewhere confident
+# and irrelevant. Re-deriving the stale ones is separate work, so this is a
+# RATCHET on that recorded set — a region declared or moved since the baseline
+# must name itself within +/-3 lines of the location it claims.
+node tools/check-region-decls.js --check-owners
 # Raw address literals inside declared regions are a RATCHET: the count per file
 # may fall (bank it with --record), never rise, and a region marked converted
 # must stay at zero. This is what keeps the symbolization wave from regressing.
