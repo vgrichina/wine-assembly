@@ -151,6 +151,20 @@ function collectDeclarations(overrideFile, shake) {
         d.guestVa = parseInt32(g2w[1]);
       }
     }
+    // `(stride N (count N))` is the second NESTED clause in the grammar, and
+    // the flat scan below cannot read it: it would take `(count …)` for a
+    // clause of its own and leave `(stride $X` as unrecognized leftover. The
+    // law itself is the COMPILER's to check (it holds stride x count == size
+    // and resolves each $-named operand against a real i32 constant global);
+    // all this reader has to do is accept the spelling and not mistake it for
+    // a broken declaration.
+    const strideLaw = /\(stride\s+([^()\s]+)\s+\(count\s+([^()\s]+)\s*\)\s*\)/.exec(afterHead);
+    if (strideLaw) {
+      afterHead = afterHead.replace(strideLaw[0], '');
+      d.strideLaw = { stride: strideLaw[1], count: strideLaw[2] };
+    } else if (/\(stride\b/.test(afterHead)) {
+      d.parseErrors.push(`(stride ...) is spelled (stride N (count N))`);
+    }
     const seenClauses = new Set();
     const values = new Map();
     let m;

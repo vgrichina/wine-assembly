@@ -48,6 +48,44 @@ const hex = (n) => `0x${(n >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
 
 const cache = new Map();
 
+// THE LAW CLAUSES NAME GLOBALS THIS FILE DOES NOT CONTAIN.
+// `(stride $DX_ENTRY_SIZE (count $DX_MAX))` and `(mask $CS_MASK)` are checked
+// against the VALUES of i32 constant globals, and those globals live in
+// 01-header.wat and friends — not in 00-regions.wat, which is the only file
+// this synthetic module has. In the real build the whole closure compiles at
+// once and they resolve; here they would not, and the compiler's diagnostic
+// ("names no (global ...) in this module") would look like a broken
+// declaration rather than a missing input. So harvest exactly the globals the
+// laws name, from the same src/*.wat set the build compiles, and prepend them.
+//
+// Only plain `(global $NAME i32 (i32.const LITERAL))` forms are harvested: a
+// global whose initializer is itself a `region.addr`/`region.size` would need
+// the map that is being computed, and no law may name one.
+function lawGlobals(source) {
+  const wanted = new Set();
+  const clause = /\((?:stride|count|mask)\s+(\$[A-Za-z0-9_]+)/g;
+  let m;
+  while ((m = clause.exec(source))) wanted.add(m[1]);
+  if (!wanted.size) return '';
+  const found = new Map();
+  const dir = path.join(ROOT, 'src');
+  for (const f of fs.readdirSync(dir).filter(x => x.endsWith('.wat')).sort()) {
+    const txt = fs.readFileSync(path.join(dir, f), 'utf8');
+    const g = /\(global\s+(\$[A-Za-z0-9_]+)\s+i32\s+\(i32\.const\s+(-?(?:0x[0-9A-Fa-f]+|\d+))\s*\)\s*\)/g;
+    let h;
+    while ((h = g.exec(txt))) {
+      if (wanted.has(h[1]) && !found.has(h[1])) found.set(h[1], h[2]);
+    }
+  }
+  const missing = [...wanted].filter(n => !found.has(n));
+  if (missing.length) {
+    throw new Error(`region-layout: src/00-regions.wat names ${missing.join(', ')} in a ` +
+      `(stride)/(count)/(mask) law, but no src/*.wat declares it as ` +
+      `(global NAME i32 (i32.const N))`);
+  }
+  return [...found].map(([n, v]) => `(global ${n} i32 (i32.const ${v}))`).join('\n') + '\n';
+}
+
 function layout(options = {}) {
   const shake = options.shake || null;
   const key = String(shake);
@@ -57,7 +95,7 @@ function layout(options = {}) {
   const { compile } = require(path.join(__dirname, 'watx.js'));
   // A trivial function and export so the module is well formed; the declarations
   // themselves emit nothing, which is the whole point of the family.
-  const module = `(memory ${MEMORY_PAGES} ${MEMORY_PAGES})\n${source}\n` +
+  const module = `(memory ${MEMORY_PAGES} ${MEMORY_PAGES})\n${lawGlobals(source)}${source}\n` +
     `(func $noop (effects heap) (nop))\n(wasm-export "noop" $noop)\n`;
   const opts = { mode: 'production', standardWat: true, runtimeBuiltins: false, tailCalls: true };
   if (shake) opts.regionShake = shake;
