@@ -66,7 +66,10 @@ let browser = null;
 
   browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new' });
   const page = await browser.newPage();
-  await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  // ?debug so the toolbar (and its Agent handoff button) is up; the copied
+  // link below deliberately omits the query, which exercises ctl.js's
+  // origin+pathname match.
+  await page.goto(`http://127.0.0.1:${PORT}/?debug`, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForSelector('#screen', { timeout: 15000 });
 
   // No paste: the dev-server injected the auto-connect into the page it
@@ -91,6 +94,21 @@ let browser = null;
   const pastedId = await page.evaluate(port =>
     import(`http://127.0.0.1:${port}/lib/agent-remote.js`).then(m => m.connect()), PORT);
   check('paste line joins the same session', pastedId === sessionId, `${pastedId} vs ${sessionId}`);
+
+  // The in-page way to get the link: the debug toolbar's Agent handoff
+  // button. Its status line confirms the copy, and the handoff text names
+  // ctl.js with this tab's URL as the -s value.
+  await page.click('#agent-handoff-btn');
+  const copied = await page.waitForFunction(() =>
+    document.getElementById('agent-handoff-status').textContent.includes('copied'),
+    { timeout: 10000 }).then(() => true).catch(() => false);
+  check('Agent handoff button reports copied', copied,
+    await page.evaluate(() => document.getElementById('agent-handoff-status').textContent));
+  const handoff = await page.evaluate(() =>
+    import('./lib/agent-remote.js').then(m => m.handoffText()));
+  const wantLink = `-s 'http://127.0.0.1:${PORT}/?debug'`;
+  check('handoff text names ctl.js and the tab URL',
+    handoff.includes('tools/ctl.js') && handoff.includes(wantLink), handoff);
 
   const title = ctl('-s', sessionId, 'eval', 'document.title');
   check('eval answers from page scope', title.trim().length > 0, JSON.stringify(title));

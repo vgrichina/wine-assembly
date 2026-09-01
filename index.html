@@ -1265,6 +1265,10 @@
       <span class="debug-thread-state">
         <button id="thread-state-btn" onclick="openThreadState()" title="Open live scheduler, yield, and critical-section state">Thread state</button>
       </span>
+      <span class="debug-agent">
+        <button id="agent-handoff-btn" onclick="copyAgentHandoff()" title="Copy this tab's link plus the tools/ctl.js instructions that let an agent drive this session (docs/design-agent-control.md)">Agent handoff</button>
+        <span id="agent-handoff-status" style="color:#606060"></span>
+      </span>
       <a href="story.html" style="margin-left: 8px; font-size: 12px; color: #000080;">The Story</a>
       <span id="status" style="margin-left: auto; color: #808080;"></span>
     </div>
@@ -2000,6 +2004,25 @@ Resource-aware Win98 emulator
       getRunningApps: () => runningApps,
     });
     function openThreadState() { return threadStateViewer.open(); }
+
+    // Agent handoff (docs/design-agent-control.md): copy what an agent needs
+    // to drive this session — the tab URL and the ctl.js line. The module is
+    // the same instance the dev-server's auto-connect injected, so connect()
+    // just returns the live session; on a page with no hub (a deployed
+    // build) it fails and the status says so instead of copying a dud.
+    async function copyAgentHandoff() {
+      const status = document.getElementById('agent-handoff-status');
+      try {
+        const m = await import('./lib/agent-remote.js');
+        await m.connect();
+        await m.copyHandoff();
+        status.textContent = 'copied — paste it to your agent';
+      } catch (error) {
+        status.textContent = 'no agent hub (serve via tools/dev-server.js)';
+        console.warn('[agent-handoff]', error);
+      }
+      setTimeout(() => { status.textContent = ''; }, 4000);
+    }
 
     // Frame/step graph overlay (lib/perf-hud.js). Off by default even in
     // debug mode — it draws every rAF, and a profiler you cannot turn off is
