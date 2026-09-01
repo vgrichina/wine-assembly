@@ -4,6 +4,43 @@
   ;; metrics and the host_gdi_* entry points that used to look like imports.
   ;; ============================================================
 
+  ;; The per-DC state record: one 96-byte slot per live HDC in
+  ;; $GDI_DC_STATE_TABLE, found by linear scan on the handle at +0. Every field
+  ;; below is named from the code that writes it — the SetXxx/GetXxx entry
+  ;; points in this file and in 01-header.wat — and the initializer in
+  ;; $gdi_dc_state_entry is where each default comes from.
+  ;;
+  ;; This is emulator-private state, NOT a guest-visible ABI: nothing in the
+  ;; guest ever sees these offsets, so the layout is free to be reordered later.
+  ;; It is `size-of` == 96 == $GDI_DC_STATE_STRIDE that ties the two together.
+  (layout GdiDcState
+    (field handle           i32)   ;; +0   the HDC this slot is for; 0 == free
+    (field pen              i32)   ;; +4   OBJ_PEN, $host_gdi_get_current_object(1)
+    (field brush            i32)   ;; +8   OBJ_BRUSH, ..._get_current_object(2)
+    (field cur_pos_x        i32)   ;; +12  MoveToEx/LineTo current position
+    (field cur_pos_y        i32)   ;; +16
+    (field text_color       i32)   ;; +20  SetTextColor
+    (field bk_color         i32)   ;; +24  SetBkColor, default 0xFFFFFF
+    (field bk_mode          i32)   ;; +28  SetBkMode, default 2 == OPAQUE
+    (field text_align       i32)   ;; +32  SetTextAlign
+    (field map_mode         i32)   ;; +36  SetMapMode, default 1 == MM_TEXT
+    (field window_org_x     i32)   ;; +40  SetWindowOrgEx
+    (field window_org_y     i32)   ;; +44
+    (field window_ext_x     i32)   ;; +48  SetWindowExtEx, default 1
+    (field window_ext_y     i32)   ;; +52
+    (field viewport_org_x   i32)   ;; +56  SetViewportOrgEx
+    (field viewport_org_y   i32)   ;; +60
+    (field viewport_ext_x   i32)   ;; +64  SetViewportExtEx, default 1
+    (field viewport_ext_y   i32)   ;; +68
+    (field rop2             i32)   ;; +72  SetROP2, default 13 == R2_COPYPEN
+    (field poly_fill_mode   i32)   ;; +76  SetPolyFillMode, default 1 == ALTERNATE
+    (field stretch_blt_mode i32)   ;; +80  SetStretchBltMode, default 1
+    (field bitmap           i32)   ;; +84  OBJ_BITMAP, ..._get_current_object(7)
+    (field font             i32)   ;; +88  OBJ_FONT, ..._get_current_object(6)
+    (field window_binding   i32))  ;; +92  bound HWND, |0x80000000 for a window
+                                   ;;      (nonclient) DC; ends at +96 ==
+                                   ;;      $GDI_DC_STATE_STRIDE
+
   (func $gdi_dc_state_entry (param $hdc i32) (param $create i32) (result i32)
     (local $i i32) (local $p i32) (local $empty i32) (local $limit i32)
     (local $hwnd i32) (local $binding i32)
@@ -558,7 +595,7 @@
         ;; while constructing JigSawed pieces and expects SelectObject to fail.
         (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
         (if (i32.and (i32.ne (local.get $dc) (i32.const 0))
-              (i32.ne (i32.load offset=92 (local.get $dc)) (i32.const 0)))
+              (i32.ne (load.field.memarg GdiDcState window_binding (local.get $dc)) (i32.const 0)))
           (then (return (i32.const -1))))
         (if (i32.and
               (i32.and (i32.ne (local.get $handle) (i32.const 0x30007))
@@ -1013,7 +1050,7 @@
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
     (if (i32.or (i32.eqz (local.get $bitmap)) (i32.eqz (local.get $dc)))
       (then (return (i32.const 0))))
-    (i32.eq (i32.load offset=84 (local.get $dc)) (local.get $bitmap)))
+    (i32.eq (load.field.memarg GdiDcState bitmap (local.get $dc)) (local.get $bitmap)))
 
   ;; Materialize the global desktop only for APIs that read a screen DC.
   ;; The host walks global z-order and copies canonical surface storage from
@@ -1114,7 +1151,7 @@
       (then (drop (call $gdi_printer_page_ensure))))
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
     (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
-    (local.set $bmp (call $gdi_object_record (i32.load offset=84 (local.get $dc))))
+    (local.set $bmp (call $gdi_object_record (load.field.memarg GdiDcState bitmap (local.get $dc))))
     (if (i32.and (i32.ne (local.get $bmp) (i32.const 0))
           (i32.eq (i32.load offset=4 (local.get $bmp)) (i32.const 3)))
       (then (return (local.get $bmp))))
@@ -1131,7 +1168,7 @@
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
     (if (local.get $dc)
       (then
-        (local.set $binding (i32.load offset=92 (local.get $dc)))
+        (local.set $binding (load.field.memarg GdiDcState window_binding (local.get $dc)))
         (local.set $hwnd (i32.and (local.get $binding) (i32.const 0x7FFFFFFF)))
         (if (local.get $hwnd)
           (then
@@ -1394,8 +1431,7 @@
     (local $dc i32)
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 1)))
     (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
-    (i32.store offset=92 (local.get $dc)
-      (i32.or (i32.and (local.get $hwnd) (i32.const 0x7FFFFFFF))
+    (store.field.memarg GdiDcState window_binding (local.get $dc) (i32.or (i32.and (local.get $hwnd) (i32.const 0x7FFFFFFF))
         (select (i32.const 0x80000000) (i32.const 0)
           (i32.ne (local.get $whole) (i32.const 0)))))
     (i32.ne (call $gdi_window_surface_ensure (local.get $hwnd)) (i32.const 0)))
@@ -1783,7 +1819,7 @@
     ;; The host-side signature makes this a no-copy check until scene pixels or
     ;; layout change, while preserving direct screen writes above that base.
     (if (i32.and (i32.ne (global.get $gdi_screen_bitmap) (i32.const 0))
-          (i32.eq (i32.load offset=84 (local.get $dc))
+          (i32.eq (load.field.memarg GdiDcState bitmap (local.get $dc))
             (global.get $gdi_screen_bitmap)))
       (then
         (if (i32.eqz (call $gdi_screen_readback_sync (local.get $hdc)))
@@ -1811,7 +1847,7 @@
               (i32.and (i32.shr_u (i32.load offset=20 (local.get $bmp)) (i32.const 1)) (i32.const 1)))
             (local.set $surface_id (i32.load offset=40 (local.get $bmp))))
           (else
-            (local.set $binding (i32.load offset=92 (local.get $dc)))
+            (local.set $binding (load.field.memarg GdiDcState window_binding (local.get $dc)))
             (local.set $hwnd (i32.and (local.get $binding) (i32.const 0x7FFFFFFF)))
             (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
             (local.set $surface (call $gdi_window_surface_ensure (local.get $hwnd)))
@@ -1839,7 +1875,7 @@
                 (local.set $origin_y (i32.sub
                   (call $wnd_client_screen_y (local.get $hwnd))
                   (call $wnd_window_screen_y (local.get $owner))))))))))
-    (local.set $pen_handle (i32.load offset=4 (local.get $dc)))
+    (local.set $pen_handle (load.field.memarg GdiDcState pen (local.get $dc)))
     (if (i32.eq (local.get $pen_handle) (i32.const 0x30018))
       (then (local.set $pen_style (i32.const 5))))
     (local.set $pen (call $gdi_object_record (local.get $pen_handle)))
@@ -1862,14 +1898,14 @@
     (i32.store offset=20 (local.get $desc) (local.get $top_down))
     (i32.store offset=24 (local.get $desc) (local.get $pen_color))
     (i32.store offset=28 (local.get $desc) (local.get $pen_width))
-    (i32.store offset=32 (local.get $desc) (i32.load offset=40 (local.get $dc)))
-    (i32.store offset=36 (local.get $desc) (i32.load offset=44 (local.get $dc)))
-    (i32.store offset=40 (local.get $desc) (i32.load offset=48 (local.get $dc)))
-    (i32.store offset=44 (local.get $desc) (i32.load offset=52 (local.get $dc)))
-    (i32.store offset=48 (local.get $desc) (i32.load offset=56 (local.get $dc)))
-    (i32.store offset=52 (local.get $desc) (i32.load offset=60 (local.get $dc)))
-    (i32.store offset=56 (local.get $desc) (i32.load offset=64 (local.get $dc)))
-    (i32.store offset=60 (local.get $desc) (i32.load offset=68 (local.get $dc)))
+    (i32.store offset=32 (local.get $desc) (load.field.memarg GdiDcState window_org_x (local.get $dc)))
+    (i32.store offset=36 (local.get $desc) (load.field.memarg GdiDcState window_org_y (local.get $dc)))
+    (i32.store offset=40 (local.get $desc) (load.field.memarg GdiDcState window_ext_x (local.get $dc)))
+    (i32.store offset=44 (local.get $desc) (load.field.memarg GdiDcState window_ext_y (local.get $dc)))
+    (i32.store offset=48 (local.get $desc) (load.field.memarg GdiDcState viewport_org_x (local.get $dc)))
+    (i32.store offset=52 (local.get $desc) (load.field.memarg GdiDcState viewport_org_y (local.get $dc)))
+    (i32.store offset=56 (local.get $desc) (load.field.memarg GdiDcState viewport_ext_x (local.get $dc)))
+    (i32.store offset=60 (local.get $desc) (load.field.memarg GdiDcState viewport_ext_y (local.get $dc)))
     ;; Win98 geometric pens normalize the basic dash styles to a solid wide
     ;; footprint. Thin cosmetic pens retain their style for WAT dash stepping.
     (i32.store offset=64 (local.get $desc)
@@ -1894,7 +1930,7 @@
     (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
     ;; Only memory DCs qualify. Window DCs already present through their
     ;; top-level owner surface and must not be detached into child layers.
-    (if (i32.ne (i32.load offset=92 (local.get $dc)) (i32.const 0))
+    (if (i32.ne (load.field.memarg GdiDcState window_binding (local.get $dc)) (i32.const 0))
       (then (return (i32.const 0))))
     (local.set $bmp (call $gdi_dc_bitmap_record (local.get $hdc)))
     (if (i32.eqz (local.get $bmp)) (then (return (i32.const 0))))
@@ -2000,6 +2036,6 @@
       (then (return (i32.const 0))))
     (local.set $entry (call $gdi_dc_state_entry (local.get $hdc) (i32.const 1)))
     (if (i32.eqz (local.get $entry)) (then (return (i32.const 0))))
-    (local.set $old (i32.load offset=72 (local.get $entry)))
-    (i32.store offset=72 (local.get $entry) (local.get $rop2))
+    (local.set $old (load.field.memarg GdiDcState rop2 (local.get $entry)))
+    (store.field.memarg GdiDcState rop2 (local.get $entry) (local.get $rop2))
     (local.get $old))

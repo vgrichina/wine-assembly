@@ -4649,7 +4649,7 @@
       (then (return (i32.const 0))))
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
     (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
-    (local.set $handle (i32.load offset=88 (local.get $dc)))
+    (local.set $handle (load.field.memarg GdiDcState font (local.get $dc)))
     (local.set $face (call $tt_face_for_logfont
       (call $gdi_font_face (local.get $handle))
       (call $gdi_font_weight (local.get $handle))
@@ -4711,7 +4711,7 @@
 
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
     (if (i32.eqz (local.get $dc)) (then (return (i32.const -1))))
-    (local.set $handle (i32.load offset=88 (local.get $dc)))
+    (local.set $handle (load.field.memarg GdiDcState font (local.get $dc)))
     (local.set $object (call $gdi_object_record (local.get $handle)))
     (if (i32.eqz (local.get $object)) (then (return (i32.const -1))))
     (local.set $face (call $tt_face_for_logfont

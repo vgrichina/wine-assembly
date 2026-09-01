@@ -166,14 +166,24 @@ const BY_SITE = {
   '10e-gdi-metafile.wat:2596': 'GdiBrush',     // style,       under `type == 2`
   '10e-gdi-metafile.wat:2597': 'GdiBrush',     // pattern_bitmap, style is 3|6
 
-  // $gdi_object_write_pen_brush (10f:780) — style and flags are read BEFORE the
+  // $gdi_object_write_pen_brush (10f:817) — style and flags are read BEFORE the
   // pen/brush branch, which is precisely why GdiPenBrush exists.
-  '10f-gdi-dc.wat:806': 'GdiPenBrush',         // style, pre-branch
-  '10f-gdi-dc.wat:807': 'GdiPenBrush',         // flags, pre-branch
-  '10f-gdi-dc.wat:810': 'GdiPen',              // width, in the `type == 1` arm
-  '10f-gdi-dc.wat:811': 'GdiPen',              // color, in the `type == 1` arm
-  '10f-gdi-dc.wat:813': 'GdiBrush',            // color, in the `type == 2` arm
-  '10f-gdi-dc.wat:814': 'GdiBrush',            // hatch, in the `type == 2` arm
+  //
+  // These six keys are LINE NUMBERS, so any edit above them in the file moves
+  // the sites out from under their attribution and the gate fails with "NOT
+  // ATTRIBUTED" — it does not silently mis-attribute, which is the important
+  // half, but it does mean an unrelated change to 10f lands on whoever made it.
+  // They were last shifted by +37 when the GdiDcState layout block was declared
+  // at the top of 10f-gdi-dc.wat. If you are here because the gate just fired:
+  // check that the site at each new line still does what its comment says
+  // (the pre-branch pair, then the `type == 1` arm, then the else arm) and
+  // renumber; do NOT delete the entry to make the gate pass.
+  '10f-gdi-dc.wat:843': 'GdiPenBrush',         // style, pre-branch
+  '10f-gdi-dc.wat:844': 'GdiPenBrush',         // flags, pre-branch
+  '10f-gdi-dc.wat:847': 'GdiPen',              // width, in the `type == 1` arm
+  '10f-gdi-dc.wat:848': 'GdiPen',              // color, in the `type == 1` arm
+  '10f-gdi-dc.wat:850': 'GdiBrush',            // color, in the `type == 2` arm
+  '10f-gdi-dc.wat:851': 'GdiBrush',            // hatch, in the `type == 2` arm
 
   // $gdi_brush_sample (10g:775) holds a brush record AND the record of the
   // bitmap named by brush.pattern_bitmap, in one frame, and reads +16 from
