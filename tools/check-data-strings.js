@@ -175,5 +175,13 @@ if (bad && !LIST) {
 if (LIST) {
   console.log(`${checked} hand-addressed site(s) listed (${strings.size} strings indexed).`);
 } else {
-  console.log(`data strings OK: no hand-addressed string constants (${strings.size} strings indexed).`);
+  // Say what was checked, not just that it passed. This tool only sees a site
+  // whose trailing `;; Name` comment names the string, because that comment is
+  // what it resolves the address against — an unannotated
+  // `(call $dll_name_match ... (region.addr $R 0x30))` is invisible to it. Two
+  // of those are known to remain in src/09a-handlers.wat as of this writing.
+  // A pass here means "no ANNOTATED hand-addressed string constants", and a
+  // reader deserves to be told the difference.
+  console.log(`data strings OK: no annotated hand-addressed string constants ` +
+    `(${strings.size} strings indexed; unannotated address sites are not visible to this check).`);
 }
