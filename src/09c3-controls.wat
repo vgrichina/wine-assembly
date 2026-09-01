@@ -24,32 +24,286 @@
 
   ;; ---- Per-class state struct layouts ----
   ;;
-  ;; ButtonState (72 bytes, allocated in WM_CREATE)
-  ;;   +0   text_buf_ptr   guest ptr from $heap_alloc (0 = no text)
-  ;;   +4   text_len       chars, no NUL
-  ;;   +8   flags          bit0=pressed   bit1=checked
-  ;;                       bit2=default   (current paint default — flips on focus)
-  ;;                       bit3=focused
-  ;;   +12  ctrl_id
-  ;;   +16..+63  legacy embedded DRAWITEMSTRUCT scratch
-  ;;   +64  image_type     IMAGE_BITMAP=0
-  ;;   +68  image_handle   HBITMAP from BM_SETIMAGE
-  ;;
-  ;; StaticState (16 bytes)
-  ;;   +0   text_buf_ptr
-  ;;   +4   text_len
-  ;;   +8   style          (SS_LEFT=0, SS_CENTER=1, SS_RIGHT=2, SS_ICON=3 ...)
-  ;;   +12  image resource ordinal (SS_ICON/SS_BITMAP), or 0
-  ;;
-  ;; ProgressState (16 bytes)
-  ;;   +0   min
-  ;;   +4   max
-  ;;   +8   pos
-  ;;   +12  step
-  ;;
   ;; The wndproc that allocates the state struct in WM_CREATE is responsible
   ;; for freeing it AND any sub-allocations (text_buf_ptr) in WM_DESTROY,
   ;; then calling $wnd_set_state_ptr(hwnd, 0).
+  ;;
+  ;; WND_RECORDS.state_ptr IS A DISCRIMINATED UNION, NOT A STRUCT — and it is a
+  ;; stronger union than GdiObject (docs/watx-layout-migration-design.md §5.4).
+  ;; Two properties make it so:
+  ;;
+  ;;   (1) THERE IS NO SHARED PREFIX. GdiObject at least agreed on handle@0 and
+  ;;       type@4, which is what `GdiObjectAny` names. Here even +0 disagrees:
+  ;;         Button/Static/Combo/Edit  +0 = text_buf_ptr, a GUEST POINTER
+  ;;         Progress/TrackBar         +0 = min,          a signed integer
+  ;;         ListBox                   +0 = items_buf_ptr, a GUEST POINTER
+  ;;         ListView                  +0 = item_count,   a count
+  ;;         ColorGrid                 +0 = sel_idx,      -1 when none
+  ;;       so there is deliberately no `ControlStateAny` view below: there is
+  ;;       nothing true to put in it. +8 is the sharpest single word — it is a
+  ;;       Button's bit-field, a Static's SS_* enum, a Combo's full window
+  ;;       style, a Progress/TrackBar POSITION, a ListBox byte CAPACITY, an
+  ;;       Edit's char capacity, and a ListView's guest POINTER to the cell
+  ;;       array. One (layout ControlState) would compile perfectly and be
+  ;;       wrong at most of its sites.
+  ;;
+  ;;   (2) THE VARIANTS DO NOT EVEN SHARE A SIZE (8/12/16/20/24/40/44/56/72/80),
+  ;;       so unlike GdiObject's uniform 48-byte record `size-of` pins nothing
+  ;;       in common; each variant's size is its own allocation argument, cited
+  ;;       per layout below.
+  ;;
+  ;;   (3) THE DISCRIMINANT IS NOT IN THE RECORD AT ALL. GdiObject carries its
+  ;;       type at +4 and $gdi_object_delete_full dispatches on it. Here the
+  ;;       tag lives entirely OUTSIDE: in CONTROL_TABLE.class (see the ctrl
+  ;;       slot layout near $ctrl_slot_addr) and, operationally, in WHICH
+  ;;       WNDPROC allocated the record — the wndproc that ran $heap_alloc in
+  ;;       WM_CREATE is the only thing that knows what these bytes mean. So a
+  ;;       variant cannot be chosen by reading the record; it is chosen by the
+  ;;       class of the code holding the pointer.
+  ;;
+  ;; That last point is also why this family is nonetheless SAFE to convert,
+  ;; and cheaper to attribute than GdiObject was: almost every raw site lives
+  ;; in a function whose own name states the class ($btn_*, $static_*, $prog_*,
+  ;; $trk_*, $lb_*, $cb_*, $lv_*, $edit_*, $colorspectrum_*, $toolbar_*). The
+  ;; attribution is per FUNCTION, it is checked by tools/control-variant-gate.js,
+  ;; and that gate refuses any new raw offset spelled against one of these
+  ;; records in either the add form or the memarg form.
+  ;;
+  ;; A field a variant does not own is named `reserved*` rather than left
+  ;; implicit, so reaching for it is an unknown-field compile error instead of
+  ;; a plausible read (the GdiObject rule, and it applies unchanged here).
+
+  ;; Button (ctrl_class 1). 72 bytes — $button_wndproc WM_CREATE heap_alloc 72.
+  ;; flags@8 bit0=pressed bit1=checked bit2=default (the CURRENT paint default,
+  ;; which flips on focus — $btn_clear_sibling_default / $btn_restore_real_default)
+  ;; bit3=focused; read/written only through $btn_flags / $btn_set_flags, and by
+  ;; $ctrl_get_check_state / $ctrl_set_check_state which shift bit1 out as the
+  ;; legacy BM_GETCHECK answer.
+  ;; drawitem@16 is a 48-byte DRAWITEMSTRUCT scratch embedded in the record, not
+  ;; a field: $btn_drawitem_guest hands its GUEST address to the app's owner-draw
+  ;; handler, so its 12 words are the app's to write. It is named, and named as
+  ;; an array, precisely so that nothing in here can address into the middle of
+  ;; it by accident.
+  (layout ButtonState
+    (field text_buf_ptr  i32)      ;; +0   guest ptr from $heap_alloc (0 = no text)
+    (field text_len      i32)      ;; +4   chars, no NUL
+    (field flags         i32)      ;; +8   see above
+    (field ctrl_id       i32)      ;; +12
+    (field drawitem      i32 12)   ;; +16..+63 embedded DRAWITEMSTRUCT scratch
+    (field image_type    i32)      ;; +64  IMAGE_BITMAP=0
+    (field image_handle  i32))     ;; +68  HBITMAP from BM_SETIMAGE; ends at +72
+
+  ;; Static (ctrl_class 3). 20 bytes — $static_wndproc WM_CREATE heap_alloc 20,
+  ;; and $syslink_wndproc allocates the SAME 20-byte shape and reads through the
+  ;; same $static_* accessors (a SysLink is a static that paints part of its
+  ;; caption blue). image_ord@12 and text_buf_ptr@0 are exclusive in practice: a
+  ;; template static with an ORDINAL caption keeps the resource ordinal here and
+  ;; paints an icon, a string caption leaves it 0 and fills text_buf_ptr.
+  (layout StaticState
+    (field text_buf_ptr  i32)      ;; +0
+    (field text_len      i32)      ;; +4
+    (field style         i32)      ;; +8   SS_LEFT=0 SS_CENTER=1 SS_RIGHT=2 SS_ICON=3 …
+    (field image_ord     i32)      ;; +12  RT_ICON/RT_BITMAP resource ordinal, or 0
+    (field font          i32))     ;; +16  HFONT from WM_SETFONT; ends at +20
+
+  ;; Progress bar (ctrl_class 17). 16 bytes — $progress_wndproc heap_alloc 16,
+  ;; twice (WM_CREATE and the lazy path for a template control that gets PBM_*
+  ;; first). $prog_state_init writes 0/100/0/10, the comctl32 defaults.
+  ;; NOTE the trap this layout exists to close: min/max/pos land on the SAME
+  ;; three offsets as TrackBarState below, and the two records are different
+  ;; lengths — spelled as bare offsets a copy-paste between the two wndprocs
+  ;; compiles and misbehaves quietly.
+  (layout ProgressState
+    (field min   i32)              ;; +0
+    (field max   i32)              ;; +4
+    (field pos   i32)              ;; +8   clamped into [min,max] by $prog_clamp
+    (field step  i32))             ;; +12  PBM_STEPIT increment; ends at +16
+
+  ;; TrackBar (ctrl_class 19). 24 bytes — $trackbar_wndproc heap_alloc 24.
+  (layout TrackBarState
+    (field min        i32)         ;; +0
+    (field max        i32)         ;; +4
+    (field pos        i32)         ;; +8   clamped by $trk_clamp
+    (field line       i32)         ;; +12  TBM_SETLINESIZE
+    (field page       i32)         ;; +16  TBM_SETPAGESIZE
+    (field thumb_len  i32))        ;; +20  TBM_SETTHUMBLENGTH; ends at +24
+
+  ;; ListBox (ctrl_class 4). 56 bytes — $listbox_wndproc heap_alloc 56.
+  ;; Three of the four buffers are a pointer and a capacity that must be read
+  ;; together, and items_used belongs to the first of them; +4/+8, +36/+40 and
+  ;; +44/+48 look alike as bare offsets and the one that is NOT a capacity
+  ;; (count@12, which counts items while items_used@4 counts bytes) sits between
+  ;; them. item_h@52 is 0 until an owner-draw listbox has been measured; after
+  ;; that it is what WM_MEASUREITEM asked for, and $lb_row_height selects it
+  ;; against the Win98 default of 16.
+  (layout ListBoxState
+    (field items_buf_ptr   i32)    ;; +0   guest ptr, flat NUL-separated strings
+    (field items_used      i32)    ;; +4   BYTES used in items_buf (incl. NULs)
+    (field items_cap       i32)    ;; +8   BYTES allocated for items_buf
+    (field count           i32)    ;; +12  number of ITEMS
+    (field cur_sel         i32)    ;; +16  -1 = none
+    (field top_index       i32)    ;; +20  first visible row
+    (field ctrl_id         i32)    ;; +24  notification target uses this
+    (field drag_anchor_y   i32)    ;; +28
+    (field drag_anchor_top i32)    ;; +32
+    (field data_buf_ptr    i32)    ;; +36  guest ptr to u32[] (LB_SETITEMDATA)
+    (field data_cap        i32)    ;; +40  capacity in u32 SLOTS
+    (field sel_buf_ptr     i32)    ;; +44  guest ptr to u8[] multi-selection flags
+    (field sel_cap         i32)    ;; +48  capacity in BYTES
+    (field item_h          i32))   ;; +52  owner-draw row height, 0 = default; ends at +56
+
+  ;; ComboBox (ctrl_class 5). 44 bytes — $combobox_wndproc heap_alloc 44.
+  (layout ComboBoxState
+    (field text_buf_ptr         i32) ;; +0   selected/typed item text
+    (field text_len             i32) ;; +4
+    (field style                i32) ;; +8   FULL WINDOW STYLE (not an SS_*)
+    (field ctrl_id              i32) ;; +12  from CREATESTRUCT.hMenu
+    (field cur_sel              i32) ;; +16  mirror of the listbox's; -1 = none
+    (field lb_hwnd              i32) ;; +20  inner listbox
+    (field popup_hwnd           i32) ;; +24  reserved for WS_POPUP escape (0 today)
+    (field edit_hwnd            i32) ;; +28  CBS_DROPDOWN inner edit; 0 for SIMPLE/DROPDOWNLIST
+    (field is_dropped           i32) ;; +32  0/1 — CB_GETDROPPEDSTATE
+    (field variant              i32) ;; +36  1=SIMPLE 2=DROPDOWN 3=DROPDOWNLIST
+    (field suppress_edit_notify i32)) ;; +40 combo-originated edit WM_SETTEXT nesting; ends at +44
+
+  ;; ListView (ctrl_class 18). 80 bytes — $listview_wndproc heap_alloc 80.
+  ;; item_count/item_cap and col_count/col_cap are two count+capacity pairs at
+  ;; +0/+4 and +16/+20; storing an item COUNT into a CAP reads as a plausible
+  ;; line and corrupts the next grow. The three COLORREFs at +60/+64/+68 have
+  ;; the same problem in the other direction — all three take the same kind of
+  ;; value, so a wrong offset paints rather than traps.
+  (layout ListViewState
+    (field item_count        i32)  ;; +0
+    (field item_cap          i32)  ;; +4
+    (field item_cells_ptr    i32)  ;; +8   guest ptr to item_cap * 44-byte rows
+    (field reserved_12       i32)  ;; +12  written 0, never read
+    (field col_count         i32)  ;; +16
+    (field col_cap           i32)  ;; +20
+    (field col_widths_ptr    i32)  ;; +24  guest ptr to u32[]
+    (field col_texts_ptr     i32)  ;; +28  guest ptr to u32[] heap string ptrs
+    (field selected_index    i32)  ;; +32  -1 = none
+    (field top_index         i32)  ;; +36
+    (field ctrl_id           i32)  ;; +40
+    (field extended_style    i32)  ;; +44  LVM_SETEXTENDEDLISTVIEWSTYLE shadow
+    (field drag_anchor_y     i32)  ;; +48
+    (field drag_anchor_top   i32)  ;; +52
+    (field small_image_list  i32)  ;; +56  LVM_SETIMAGELIST
+    (field bk_color          i32)  ;; +60  COLORREF
+    (field text_color        i32)  ;; +64  COLORREF
+    (field text_bk_color     i32)  ;; +68  COLORREF or CLR_NONE
+    (field state_image_list  i32)  ;; +72  LVM_SETIMAGELIST(LVSIL_STATE)
+    (field normal_image_list i32)) ;; +76  LVM_SETIMAGELIST(LVSIL_NORMAL); ends at +80
+
+  ;; Edit (ctrl_class 2). 40 bytes — $edit_wndproc WM_CREATE heap_alloc 40.
+  ;; This is the one variant with NO accessor layer at all: its ~60 raw sites
+  ;; are spelled inline in the $edit_* helpers, which is why naming buys the
+  ;; most here. cursor@12 and sel_anchor@16 are equal exactly when there is no
+  ;; selection, and $edit_sel_lo / $edit_sel_hi read the pair together — the two
+  ;; are trivially swappable as bare offsets and a swap is a selection that
+  ;; extends the wrong way, not a crash.
+  (layout EditState
+    (field text_buf_ptr i32)       ;; +0   guest ptr, NUL-terminated
+    (field text_len     i32)       ;; +4   chars, excluding NUL
+    (field text_cap     i32)       ;; +8   capacity, excluding the NUL slot
+    (field cursor       i32)       ;; +12  char position
+    (field sel_anchor   i32)       ;; +16  == cursor when there is no selection
+    (field scroll_top   i32)       ;; +20  first visible line (0 single-line)
+    (field flags        i32)       ;; +24  bit0=multiline bit1=password
+                                   ;;      bit2=readonly bit3=focused
+    (field max_length   i32)       ;; +28  0 = unlimited
+    (field font         i32)       ;; +32  HFONT from WM_SETFONT (0 = GUI font)
+    (field scroll_x     i32))      ;; +36  horizontal scroll in PIXELS; ends at +40
+
+  ;; ColorGrid (ctrl_class 6). 8 bytes — $colorgrid_wndproc heap_alloc 8; the
+  ;; WM_CREATE store writes -1 then CREATESTRUCT.hMenu, which is the evidence
+  ;; for both names.
+  (layout ColorGridState
+    (field sel_idx  i32)           ;; +0   selected cell, -1 = none
+    (field ctrl_id  i32))          ;; +4   from CREATESTRUCT.hMenu; ends at +8
+
+  ;; The colour dialog's HSL spectrum child. 12 bytes — $colorspectrum_wndproc
+  ;; heap_alloc 12. The three words are named from the ONLY thing that consumes
+  ;; them: $colorspectrum_commit passes +0/+4/+8 positionally to
+  ;; $colordlg_hsl_to_rgb (param $h) (param $s) (param $l).
+  (layout ColorSpectrumState
+    (field hue  i32)               ;; +0
+    (field sat  i32)               ;; +4
+    (field lum  i32))              ;; +8   ends at +12
+
+  ;; Tooltip (ctrl_class 20). 64 bytes — $tooltip_wndproc heap_alloc 64. The
+  ;; two colour words are pinned by the messages that reach them:
+  ;; TTM_SETTIPBKCOLOR(0x0413)/TTM_GETTIPBKCOLOR(0x0416) are +20 and
+  ;; TTM_SETTIPTEXTCOLOR(0x0414)/TTM_GETTIPTEXTCOLOR(0x0417) are +24, so the
+  ;; pair is not guessable from the values (both are COLORREFs) but is exact
+  ;; from the message ids. Likewise TTM_SETMAXTIPWIDTH(0x0418) /
+  ;; TTM_GETMAXTIPWIDTH(0x0419) name +28, and TTM_SETDELAYTIME(0x0403)'s
+  ;; wParam selects +40 (TTDT_AUTOMATIC/AUTOPOP), +32 (TTDT_RESHOW) and +36
+  ;; (TTDT_INITIAL) — the WM_CREATE defaults 5000/500/100 are the cross-check.
+  (layout TooltipState
+    (field items_guest    i32)     ;; +0   guest ptr to 48-byte TOOLINFOA snapshots
+    (field count          i32)     ;; +4
+    (field capacity       i32)     ;; +8   snapshots allocated
+    (field active         i32)     ;; +12  TTM_ACTIVATE
+    (field current_index  i32)     ;; +16  tool being shown, -1 = none
+    (field bk_color       i32)     ;; +20  COLORREF, default 0x00FFFFE1
+    (field text_color     i32)     ;; +24  COLORREF, default 0
+    (field max_tip_width  i32)     ;; +28  -1 = unlimited
+    (field autopop_delay  i32)     ;; +32  ms, default 5000
+    (field initial_delay  i32)     ;; +36  ms, default 500
+    (field reshow_delay   i32)     ;; +40  ms, default 100
+    (field margin         i32 4)   ;; +44..+59  l/t/r/b
+    (field reserved_60    i32))    ;; +60  allocated, never read; ends at +64
+
+  ;; The native tab strip's shadow state — NOT reached through
+  ;; WND_RECORDS.state_ptr but through $tab_native_state_get, which keeps its
+  ;; own 32-slot (hwnd, state) table in $TAB_NATIVE_STATE_TABLE. It is declared
+  ;; here anyway because it is the same KIND of record and shares the same
+  ;; hazard: 128 bytes = two counters and eight 15-byte fixed label records, so
+  ;; the array is not i32-strided and only count@0 and selected@4 are words.
+  ;; Naming them is what stops a reader taking `offset=8` for a third counter.
+  (layout TabNativeState
+    (field count     i32)          ;; +0   tabs inserted, hard-capped at 8
+    (field selected  i32)          ;; +4   TCM_SETCURSEL
+    (field labels    u8 120))      ;; +8   8 * 15-byte fixed records; ends at +128
+
+  ;; A VIEW over the four variants that genuinely agree, and ONLY over them.
+  ;; ButtonState, StaticState, ComboBoxState and EditState all keep a guest text
+  ;; pointer at +0 and its length in chars at +4; Progress, TrackBar, ListBox,
+  ;; ListView, ColorGrid, ColorSpectrum, Tooltip and Toolbar do NOT, so this is
+  ;; a partial prefix and emphatically not a `ControlStateAny`. It exists for
+  ;; the two functions that are deliberately class-agnostic —
+  ;; $ctrl_decimal_value and $ctrl_inches_milli look a control up by DIALOG ID
+  ;; and read whatever text it has — and it stops at +8 so that reading a fifth
+  ;; word through this view, where the four classes stop agreeing, is an
+  ;; unknown-field compile error. This is the GdiPenBrush precedent: name only
+  ;; what the members share, and make a site that wants more pick a variant.
+  (layout ControlTextState
+    (field text_buf_ptr i32)       ;; +0   guest ptr
+    (field text_len     i32))      ;; +4   chars, no NUL; ends at +8
+
+  ;; Toolbar (ctrl_class 21). 80 bytes — $toolbar_ensure_state heap_alloc 80,
+  ;; which also supplies the defaults cited per field.
+  (layout ToolbarState
+    (field button_count        i32) ;; +0
+    (field button_w            i32) ;; +4   dxButton, default 23
+    (field button_h            i32) ;; +8   dyButton, default 22
+    (field bitmap_w            i32) ;; +12  dxBitmap, default 16
+    (field bitmap_h            i32) ;; +16  dyBitmap, default 15
+    (field rows                i32) ;; +20  default 1
+    (field tbutton_struct_size i32) ;; +24  sizeof(TBBUTTON), default 20
+    (field bitmap_count        i32) ;; +28
+    (field buttons_guest       i32) ;; +32  guest ptr to 20-byte TBBUTTON snapshots
+    (field capacity            i32) ;; +36  snapshots allocated
+    (field pressed_index       i32) ;; +40  default -1
+    (field hwnd                i32) ;; +44  refreshed on every $toolbar_ensure_state
+    (field bitmap_handle       i32) ;; +48
+    (field image_list          i32) ;; +52
+    (field hot_image_list      i32) ;; +56
+    (field disabled_image_list i32) ;; +60
+    (field style               i32) ;; +64
+    (field extended_style      i32) ;; +68
+    (field padding_packed      i32) ;; +72  TB_SETPADDING, cx | cy<<16
+    (field hot_index           i32)) ;; +76 default -1; ends at +80
 
   ;; ---- ButtonState accessors ----
   ;;
@@ -61,28 +315,28 @@
   ;; of the pointer part of the expression instead of something you have to
   ;; carry in your head from the wndproc entry.
   (func $btn_text_ptr (param $sw i32) (result i32)
-    (i32.load (local.get $sw)))
+    (load.field ButtonState text_buf_ptr (local.get $sw)))
   (func $btn_set_text_ptr (param $sw i32) (param $v i32)
-    (i32.store (local.get $sw) (local.get $v)))
+    (store.field ButtonState text_buf_ptr (local.get $sw) (local.get $v)))
   (func $btn_text_len (param $sw i32) (result i32)
-    (i32.load offset=4 (local.get $sw)))
+    (load.field.memarg ButtonState text_len (local.get $sw)))
   (func $btn_set_text_len (param $sw i32) (param $v i32)
-    (i32.store offset=4 (local.get $sw) (local.get $v)))
+    (store.field.memarg ButtonState text_len (local.get $sw) (local.get $v)))
   (func $btn_flags (param $sw i32) (result i32)
-    (i32.load offset=8 (local.get $sw)))
+    (load.field.memarg ButtonState flags (local.get $sw)))
   (func $btn_set_flags (param $sw i32) (param $v i32)
-    (i32.store offset=8 (local.get $sw) (local.get $v)))
+    (store.field.memarg ButtonState flags (local.get $sw) (local.get $v)))
   (func $btn_ctrl_id (param $sw i32) (result i32)
-    (i32.load offset=12 (local.get $sw)))
+    (load.field.memarg ButtonState ctrl_id (local.get $sw)))
   (func $btn_set_ctrl_id (param $sw i32) (param $v i32)
-    (i32.store offset=12 (local.get $sw) (local.get $v)))
+    (store.field.memarg ButtonState ctrl_id (local.get $sw) (local.get $v)))
   (func $btn_image_type (param $sw i32) (result i32)
-    (i32.load offset=64 (local.get $sw)))
+    (load.field.memarg ButtonState image_type (local.get $sw)))
   (func $btn_image_handle (param $sw i32) (result i32)
-    (i32.load offset=68 (local.get $sw)))
+    (load.field.memarg ButtonState image_handle (local.get $sw)))
   (func $btn_set_image (param $sw i32) (param $type i32) (param $h i32)
-    (i32.store offset=64 (local.get $sw) (local.get $type))
-    (i32.store offset=68 (local.get $sw) (local.get $h)))
+    (store.field.memarg ButtonState image_type (local.get $sw) (local.get $type))
+    (store.field.memarg ButtonState image_handle (local.get $sw) (local.get $h)))
   ;; The owner-draw DRAWITEMSTRUCT scratch lives inside the struct; the message
   ;; carries its *guest* address, so both forms are named.
   (func $btn_drawitem_guest (param $state i32) (result i32)
@@ -100,25 +354,25 @@
   ;; while a string caption leaves it 0 and fills text_ptr instead. Naming it
   ;; image_ord is what says the icon branch and the text branch are exclusive.
   (func $static_text_ptr (param $sw i32) (result i32)
-    (i32.load (local.get $sw)))
+    (load.field StaticState text_buf_ptr (local.get $sw)))
   (func $static_set_text_ptr (param $sw i32) (param $v i32)
-    (i32.store (local.get $sw) (local.get $v)))
+    (store.field StaticState text_buf_ptr (local.get $sw) (local.get $v)))
   (func $static_text_len (param $sw i32) (result i32)
-    (i32.load offset=4 (local.get $sw)))
+    (load.field.memarg StaticState text_len (local.get $sw)))
   (func $static_set_text_len (param $sw i32) (param $v i32)
-    (i32.store offset=4 (local.get $sw) (local.get $v)))
+    (store.field.memarg StaticState text_len (local.get $sw) (local.get $v)))
   (func $static_style (param $sw i32) (result i32)
-    (i32.load offset=8 (local.get $sw)))
+    (load.field.memarg StaticState style (local.get $sw)))
   (func $static_set_style (param $sw i32) (param $v i32)
-    (i32.store offset=8 (local.get $sw) (local.get $v)))
+    (store.field.memarg StaticState style (local.get $sw) (local.get $v)))
   (func $static_image_ord (param $sw i32) (result i32)
-    (i32.load offset=12 (local.get $sw)))
+    (load.field.memarg StaticState image_ord (local.get $sw)))
   (func $static_set_image_ord (param $sw i32) (param $v i32)
-    (i32.store offset=12 (local.get $sw) (local.get $v)))
+    (store.field.memarg StaticState image_ord (local.get $sw) (local.get $v)))
   (func $static_font (param $sw i32) (result i32)
-    (i32.load offset=16 (local.get $sw)))
+    (load.field.memarg StaticState font (local.get $sw)))
   (func $static_set_font (param $sw i32) (param $v i32)
-    (i32.store offset=16 (local.get $sw) (local.get $v)))
+    (store.field.memarg StaticState font (local.get $sw) (local.get $v)))
 
   ;; ---- ProgressState accessors ----
   ;;
@@ -127,21 +381,21 @@
   ;; as a progress bar that never moves rather than as a crash, so the two
   ;; bounds being named rather than offset=0 / offset=4 matters here.
   (func $prog_min (param $sw i32) (result i32)
-    (i32.load (local.get $sw)))
+    (load.field ProgressState min (local.get $sw)))
   (func $prog_set_min (param $sw i32) (param $v i32)
-    (i32.store (local.get $sw) (local.get $v)))
+    (store.field ProgressState min (local.get $sw) (local.get $v)))
   (func $prog_max (param $sw i32) (result i32)
-    (i32.load offset=4 (local.get $sw)))
+    (load.field.memarg ProgressState max (local.get $sw)))
   (func $prog_set_max (param $sw i32) (param $v i32)
-    (i32.store offset=4 (local.get $sw) (local.get $v)))
+    (store.field.memarg ProgressState max (local.get $sw) (local.get $v)))
   (func $prog_pos (param $sw i32) (result i32)
-    (i32.load offset=8 (local.get $sw)))
+    (load.field.memarg ProgressState pos (local.get $sw)))
   (func $prog_set_pos (param $sw i32) (param $v i32)
-    (i32.store offset=8 (local.get $sw) (local.get $v)))
+    (store.field.memarg ProgressState pos (local.get $sw) (local.get $v)))
   (func $prog_step (param $sw i32) (result i32)
-    (i32.load offset=12 (local.get $sw)))
+    (load.field.memarg ProgressState step (local.get $sw)))
   (func $prog_set_step (param $sw i32) (param $v i32)
-    (i32.store offset=12 (local.get $sw) (local.get $v)))
+    (store.field.memarg ProgressState step (local.get $sw) (local.get $v)))
   ;; Fresh bar: 0..100, pos 0, step 10 — the comctl32 defaults.
   (func $prog_state_init (param $sw i32)
     (call $prog_set_min (local.get $sw) (i32.const 0))
@@ -164,29 +418,29 @@
   ;; call site, so a copy-paste between the two wndprocs would have compiled.
   ;; +12 line, +16 page, +20 thumb length.
   (func $trk_min (param $sw i32) (result i32)
-    (i32.load (local.get $sw)))
+    (load.field TrackBarState min (local.get $sw)))
   (func $trk_set_min (param $sw i32) (param $v i32)
-    (i32.store (local.get $sw) (local.get $v)))
+    (store.field TrackBarState min (local.get $sw) (local.get $v)))
   (func $trk_max (param $sw i32) (result i32)
-    (i32.load offset=4 (local.get $sw)))
+    (load.field.memarg TrackBarState max (local.get $sw)))
   (func $trk_set_max (param $sw i32) (param $v i32)
-    (i32.store offset=4 (local.get $sw) (local.get $v)))
+    (store.field.memarg TrackBarState max (local.get $sw) (local.get $v)))
   (func $trk_pos (param $sw i32) (result i32)
-    (i32.load offset=8 (local.get $sw)))
+    (load.field.memarg TrackBarState pos (local.get $sw)))
   (func $trk_set_pos (param $sw i32) (param $v i32)
-    (i32.store offset=8 (local.get $sw) (local.get $v)))
+    (store.field.memarg TrackBarState pos (local.get $sw) (local.get $v)))
   (func $trk_line (param $sw i32) (result i32)
-    (i32.load offset=12 (local.get $sw)))
+    (load.field.memarg TrackBarState line (local.get $sw)))
   (func $trk_set_line (param $sw i32) (param $v i32)
-    (i32.store offset=12 (local.get $sw) (local.get $v)))
+    (store.field.memarg TrackBarState line (local.get $sw) (local.get $v)))
   (func $trk_page (param $sw i32) (result i32)
-    (i32.load offset=16 (local.get $sw)))
+    (load.field.memarg TrackBarState page (local.get $sw)))
   (func $trk_set_page (param $sw i32) (param $v i32)
-    (i32.store offset=16 (local.get $sw) (local.get $v)))
+    (store.field.memarg TrackBarState page (local.get $sw) (local.get $v)))
   (func $trk_thumb_len (param $sw i32) (result i32)
-    (i32.load offset=20 (local.get $sw)))
+    (load.field.memarg TrackBarState thumb_len (local.get $sw)))
   (func $trk_set_thumb_len (param $sw i32) (param $v i32)
-    (i32.store offset=20 (local.get $sw) (local.get $v)))
+    (store.field.memarg TrackBarState thumb_len (local.get $sw) (local.get $v)))
   ;; Fresh slider: 0..100 at 0, line 1, page 10, 16px thumb.
   (func $trk_state_init (param $sw i32)
     (call $trk_set_min (local.get $sw) (i32.const 0))
@@ -211,69 +465,69 @@
   ;; items while +4 counts bytes) sits right between them. See the layout
   ;; comment above $listbox_wndproc.
   (func $lb_items_ptr (param $sw i32) (result i32)
-    (i32.load (local.get $sw)))
+    (load.field ListBoxState items_buf_ptr (local.get $sw)))
   (func $lb_set_items_ptr (param $sw i32) (param $v i32)
-    (i32.store (local.get $sw) (local.get $v)))
+    (store.field ListBoxState items_buf_ptr (local.get $sw) (local.get $v)))
   (func $lb_items_used (param $sw i32) (result i32)
-    (i32.load offset=4 (local.get $sw)))
+    (load.field.memarg ListBoxState items_used (local.get $sw)))
   (func $lb_set_items_used (param $sw i32) (param $v i32)
-    (i32.store offset=4 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListBoxState items_used (local.get $sw) (local.get $v)))
   (func $lb_items_cap (param $sw i32) (result i32)
-    (i32.load offset=8 (local.get $sw)))
+    (load.field.memarg ListBoxState items_cap (local.get $sw)))
   (func $lb_set_items_cap (param $sw i32) (param $v i32)
-    (i32.store offset=8 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListBoxState items_cap (local.get $sw) (local.get $v)))
   (func $lb_count (param $sw i32) (result i32)
-    (i32.load offset=12 (local.get $sw)))
+    (load.field.memarg ListBoxState count (local.get $sw)))
   (func $lb_set_count (param $sw i32) (param $v i32)
-    (i32.store offset=12 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListBoxState count (local.get $sw) (local.get $v)))
   (func $lb_cur_sel (param $sw i32) (result i32)
-    (i32.load offset=16 (local.get $sw)))
+    (load.field.memarg ListBoxState cur_sel (local.get $sw)))
   (func $lb_set_cur_sel (param $sw i32) (param $v i32)
-    (i32.store offset=16 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListBoxState cur_sel (local.get $sw) (local.get $v)))
   (func $lb_top_index (param $sw i32) (result i32)
-    (i32.load offset=20 (local.get $sw)))
+    (load.field.memarg ListBoxState top_index (local.get $sw)))
   (func $lb_set_top_index (param $sw i32) (param $v i32)
-    (i32.store offset=20 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListBoxState top_index (local.get $sw) (local.get $v)))
   (func $lb_ctrl_id (param $sw i32) (result i32)
-    (i32.load offset=24 (local.get $sw)))
+    (load.field.memarg ListBoxState ctrl_id (local.get $sw)))
   (func $lb_set_ctrl_id (param $sw i32) (param $v i32)
-    (i32.store offset=24 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListBoxState ctrl_id (local.get $sw) (local.get $v)))
   (func $lb_drag_anchor_y (param $sw i32) (result i32)
-    (i32.load offset=28 (local.get $sw)))
+    (load.field.memarg ListBoxState drag_anchor_y (local.get $sw)))
   (func $lb_set_drag_anchor_y (param $sw i32) (param $v i32)
-    (i32.store offset=28 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListBoxState drag_anchor_y (local.get $sw) (local.get $v)))
   (func $lb_drag_anchor_top (param $sw i32) (result i32)
-    (i32.load offset=32 (local.get $sw)))
+    (load.field.memarg ListBoxState drag_anchor_top (local.get $sw)))
   (func $lb_set_drag_anchor_top (param $sw i32) (param $v i32)
-    (i32.store offset=32 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListBoxState drag_anchor_top (local.get $sw) (local.get $v)))
   (func $lb_data_ptr (param $sw i32) (result i32)
-    (i32.load offset=36 (local.get $sw)))
+    (load.field.memarg ListBoxState data_buf_ptr (local.get $sw)))
   (func $lb_set_data_ptr (param $sw i32) (param $v i32)
-    (i32.store offset=36 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListBoxState data_buf_ptr (local.get $sw) (local.get $v)))
   (func $lb_data_cap (param $sw i32) (result i32)
-    (i32.load offset=40 (local.get $sw)))
+    (load.field.memarg ListBoxState data_cap (local.get $sw)))
   (func $lb_set_data_cap (param $sw i32) (param $v i32)
-    (i32.store offset=40 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListBoxState data_cap (local.get $sw) (local.get $v)))
   (func $lb_sel_ptr (param $sw i32) (result i32)
-    (i32.load offset=44 (local.get $sw)))
+    (load.field.memarg ListBoxState sel_buf_ptr (local.get $sw)))
   (func $lb_set_sel_ptr (param $sw i32) (param $v i32)
-    (i32.store offset=44 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListBoxState sel_buf_ptr (local.get $sw) (local.get $v)))
   ;; +52 item_h: 0 until an owner-draw listbox has been measured; after that
   ;; the height WM_MEASUREITEM asked for. Everything else keeps the Win98
   ;; default, so $lb_row_height is what paint, hit-testing and scrolling all
   ;; ask instead of the 16 they used to hardcode.
   (func $lb_item_h (param $sw i32) (result i32)
-    (i32.load offset=52 (local.get $sw)))
+    (load.field.memarg ListBoxState item_h (local.get $sw)))
   (func $lb_set_item_h (param $sw i32) (param $v i32)
-    (i32.store offset=52 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListBoxState item_h (local.get $sw) (local.get $v)))
   (func $lb_row_height (param $sw i32) (result i32)
     (if (i32.eqz (local.get $sw)) (then (return (i32.const 16))))
     (select (call $lb_item_h (local.get $sw)) (i32.const 16)
       (call $lb_item_h (local.get $sw))))
   (func $lb_sel_cap (param $sw i32) (result i32)
-    (i32.load offset=48 (local.get $sw)))
+    (load.field.memarg ListBoxState sel_cap (local.get $sw)))
   (func $lb_set_sel_cap (param $sw i32) (param $v i32)
-    (i32.store offset=48 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListBoxState sel_cap (local.get $sw) (local.get $v)))
 
   ;; USER hides a listbox's WS_VSCROLL strip while every item fits, unless
   ;; LBS_DISABLENOSCROLL explicitly asks for a disabled strip. Paint and
@@ -327,49 +581,49 @@
   ;; listbox message to the edit hwnd is silently ignored rather than trapping.
   ;; See the layout comment above $combobox_wndproc.
   (func $cb_text_ptr (param $sw i32) (result i32)
-    (i32.load (local.get $sw)))
+    (load.field ComboBoxState text_buf_ptr (local.get $sw)))
   (func $cb_set_text_ptr (param $sw i32) (param $v i32)
-    (i32.store (local.get $sw) (local.get $v)))
+    (store.field ComboBoxState text_buf_ptr (local.get $sw) (local.get $v)))
   (func $cb_text_len (param $sw i32) (result i32)
-    (i32.load offset=4 (local.get $sw)))
+    (load.field.memarg ComboBoxState text_len (local.get $sw)))
   (func $cb_set_text_len (param $sw i32) (param $v i32)
-    (i32.store offset=4 (local.get $sw) (local.get $v)))
+    (store.field.memarg ComboBoxState text_len (local.get $sw) (local.get $v)))
   (func $cb_style (param $sw i32) (result i32)
-    (i32.load offset=8 (local.get $sw)))
+    (load.field.memarg ComboBoxState style (local.get $sw)))
   (func $cb_set_style (param $sw i32) (param $v i32)
-    (i32.store offset=8 (local.get $sw) (local.get $v)))
+    (store.field.memarg ComboBoxState style (local.get $sw) (local.get $v)))
   (func $cb_ctrl_id (param $sw i32) (result i32)
-    (i32.load offset=12 (local.get $sw)))
+    (load.field.memarg ComboBoxState ctrl_id (local.get $sw)))
   (func $cb_set_ctrl_id (param $sw i32) (param $v i32)
-    (i32.store offset=12 (local.get $sw) (local.get $v)))
+    (store.field.memarg ComboBoxState ctrl_id (local.get $sw) (local.get $v)))
   (func $cb_cur_sel (param $sw i32) (result i32)
-    (i32.load offset=16 (local.get $sw)))
+    (load.field.memarg ComboBoxState cur_sel (local.get $sw)))
   (func $cb_set_cur_sel (param $sw i32) (param $v i32)
-    (i32.store offset=16 (local.get $sw) (local.get $v)))
+    (store.field.memarg ComboBoxState cur_sel (local.get $sw) (local.get $v)))
   (func $cb_lb_hwnd (param $sw i32) (result i32)
-    (i32.load offset=20 (local.get $sw)))
+    (load.field.memarg ComboBoxState lb_hwnd (local.get $sw)))
   (func $cb_set_lb_hwnd (param $sw i32) (param $v i32)
-    (i32.store offset=20 (local.get $sw) (local.get $v)))
+    (store.field.memarg ComboBoxState lb_hwnd (local.get $sw) (local.get $v)))
   (func $cb_popup_hwnd (param $sw i32) (result i32)
-    (i32.load offset=24 (local.get $sw)))
+    (load.field.memarg ComboBoxState popup_hwnd (local.get $sw)))
   (func $cb_set_popup_hwnd (param $sw i32) (param $v i32)
-    (i32.store offset=24 (local.get $sw) (local.get $v)))
+    (store.field.memarg ComboBoxState popup_hwnd (local.get $sw) (local.get $v)))
   (func $cb_edit_hwnd (param $sw i32) (result i32)
-    (i32.load offset=28 (local.get $sw)))
+    (load.field.memarg ComboBoxState edit_hwnd (local.get $sw)))
   (func $cb_set_edit_hwnd (param $sw i32) (param $v i32)
-    (i32.store offset=28 (local.get $sw) (local.get $v)))
+    (store.field.memarg ComboBoxState edit_hwnd (local.get $sw) (local.get $v)))
   (func $cb_is_dropped (param $sw i32) (result i32)
-    (i32.load offset=32 (local.get $sw)))
+    (load.field.memarg ComboBoxState is_dropped (local.get $sw)))
   (func $cb_set_is_dropped (param $sw i32) (param $v i32)
-    (i32.store offset=32 (local.get $sw) (local.get $v)))
+    (store.field.memarg ComboBoxState is_dropped (local.get $sw) (local.get $v)))
   (func $cb_variant (param $sw i32) (result i32)
-    (i32.load offset=36 (local.get $sw)))
+    (load.field.memarg ComboBoxState variant (local.get $sw)))
   (func $cb_set_variant (param $sw i32) (param $v i32)
-    (i32.store offset=36 (local.get $sw) (local.get $v)))
+    (store.field.memarg ComboBoxState variant (local.get $sw) (local.get $v)))
   (func $cb_suppress_edit_notify (param $sw i32) (result i32)
-    (i32.load offset=40 (local.get $sw)))
+    (load.field.memarg ComboBoxState suppress_edit_notify (local.get $sw)))
   (func $cb_set_suppress_edit_notify (param $sw i32) (param $v i32)
-    (i32.store offset=40 (local.get $sw) (local.get $v)))
+    (store.field.memarg ComboBoxState suppress_edit_notify (local.get $sw) (local.get $v)))
   ;; CB_SETEXTENDEDUI has no field of its own: it rides the unused top bit of
   ;; the stored style word, which is why a plain read of +8 is not the window
   ;; style an app would recognise. Both halves of that trick live here.
@@ -682,7 +936,7 @@
     (local.set $state (call $tab_native_state_get (local.get $hwnd) (i32.const 1)))
     (if (i32.eqz (local.get $state)) (then (return)))
     (local.set $sw (call $g2w (local.get $state)))
-    (local.set $count (i32.load (local.get $sw)))
+    (local.set $count (load.field TabNativeState count (local.get $sw)))
     ;; TCM_INSERTITEMA / TCM_INSERTITEMW — TCITEMA and TCITEMW share their
     ;; layout (pszText at +12); only the string's width differs.
     (if (i32.or (i32.eq (local.get $msg) (i32.const 0x1307))
@@ -745,21 +999,21 @@
                         (if (local.get $len)
                           (then (call $memcpy (i32.add (local.get $dst) (i32.const 1))
                             (local.get $text_w) (local.get $len))))))))))))
-        (i32.store (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
+        (store.field TabNativeState count (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return)))
     ;; TCM_DELETEALLITEMS
     (if (i32.eq (local.get $msg) (i32.const 0x1309))
       (then
-        (i32.store (local.get $sw) (i32.const 0))
-        (i32.store offset=4 (local.get $sw) (i32.const 0))
+        (store.field TabNativeState count (local.get $sw) (i32.const 0))
+        (store.field.memarg TabNativeState selected (local.get $sw) (i32.const 0))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return)))
     ;; TCM_SETCURSEL
     (if (i32.eq (local.get $msg) (i32.const 0x130C))
       (then
         (if (i32.lt_u (local.get $wParam) (local.get $count))
-          (then (i32.store offset=4 (local.get $sw) (local.get $wParam))))
+          (then (store.field.memarg TabNativeState selected (local.get $sw) (local.get $wParam))))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return)))
     ;; Mirror direct mouse selection while the guest proc remains authoritative.
@@ -777,7 +1031,7 @@
           (if (i32.and (i32.ge_u (local.get $x) (local.get $left))
                        (i32.lt_u (local.get $x) (local.get $right)))
             (then
-              (i32.store offset=4 (local.get $sw) (local.get $i))
+              (store.field.memarg TabNativeState selected (local.get $sw) (local.get $i))
               (call $paint_flag_set_inv (local.get $hwnd))
               (br $hit_done)))
           (local.set $left (local.get $right))
@@ -825,8 +1079,8 @@
     (local.set $state (call $tab_native_state_get (local.get $hwnd) (i32.const 0)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $sw (call $g2w (local.get $state)))
-    (local.set $count (i32.load (local.get $sw)))
-    (local.set $selected (i32.load offset=4 (local.get $sw)))
+    (local.set $count (load.field TabNativeState count (local.get $sw)))
+    (local.set $selected (load.field.memarg TabNativeState selected (local.get $sw)))
     (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
     (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
     (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
@@ -1421,8 +1675,8 @@
                 (if (local.get $state)
                   (then
                     (local.set $state_w (call $g2w (local.get $state)))
-                    (local.set $len (i32.load offset=4 (local.get $state_w)))
-                    (local.set $text_g (i32.load (local.get $state_w)))
+                    (local.set $len (load.field.memarg EditState text_len (local.get $state_w)))
+                    (local.set $text_g (load.field EditState text_buf_ptr (local.get $state_w)))
                     (if (local.get $text_g)
                       (then (if (local.get $len)
                         (then (drop (call $host_shell_execute
@@ -1504,7 +1758,7 @@
     (local.set $buf_g (i32.load (i32.add (local.get $fr_w) (local.get $ptr_off))))
     (local.set $max_len (i32.load16_u (i32.add (local.get $fr_w) (local.get $len_off))))
     (if (i32.or (i32.eqz (local.get $buf_g)) (i32.eqz (local.get $max_len))) (then (return)))
-    (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+    (local.set $text_len (load.field.memarg EditState text_len (local.get $state_w)))
     (if (i32.ge_u (local.get $text_len) (local.get $max_len))
       (then (local.set $text_len (i32.sub (local.get $max_len) (i32.const 1)))))
     (local.set $buf_w (call $g2w (local.get $buf_g)))
@@ -1512,9 +1766,9 @@
     ;; a one-byte replacement plus an even pointer would incorrectly skip.
     (if (local.get $text_len)
       (then
-        (if (i32.load (local.get $state_w))
+        (if (load.field EditState text_buf_ptr (local.get $state_w))
           (then
-            (local.set $src_w (call $g2w (i32.load (local.get $state_w))))
+            (local.set $src_w (call $g2w (load.field EditState text_buf_ptr (local.get $state_w))))
             (call $memcpy (local.get $buf_w) (local.get $src_w) (local.get $text_len))))))
     (i32.store8 (i32.add (local.get $buf_w) (local.get $text_len)) (i32.const 0)))
 
@@ -2050,8 +2304,8 @@
     (local.set $state (call $wnd_get_state_ptr (local.get $h)))
     (if (i32.eqz (local.get $state)) (then (return (local.get $fallback))))
     (local.set $sw (call $g2w (local.get $state)))
-    (local.set $buf (i32.load (local.get $sw)))
-    (local.set $n (i32.load offset=4 (local.get $sw)))
+    (local.set $buf (load.field ControlTextState text_buf_ptr (local.get $sw)))
+    (local.set $n (load.field.memarg ControlTextState text_len (local.get $sw)))
     (if (i32.eqz (local.get $buf)) (then (return (local.get $fallback))))
     (local.set $buf (call $g2w (local.get $buf)))
     (block $done (loop $digits
@@ -2075,8 +2329,8 @@
     (if (local.get $h) (then (local.set $state (call $wnd_get_state_ptr (local.get $h)))))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 1000))))
     (local.set $sw (call $g2w (local.get $state)))
-    (local.set $buf (i32.load (local.get $sw)))
-    (local.set $n (i32.load offset=4 (local.get $sw)))
+    (local.set $buf (load.field ControlTextState text_buf_ptr (local.get $sw)))
+    (local.set $n (load.field.memarg ControlTextState text_len (local.get $sw)))
     (if (i32.eqz (local.get $buf)) (then (return (i32.const 1000))))
     (local.set $buf (call $g2w (local.get $buf)))
     (block $done (loop $scan
@@ -2930,10 +3184,10 @@
         (if (local.get $state)
           (then
             (local.set $sw (call $g2w (local.get $state)))
-            (i32.store (local.get $sw) (i32.and (local.get $packed) (i32.const 0xFF)))
-            (i32.store offset=4 (local.get $sw)
+            (store.field ColorSpectrumState hue (local.get $sw) (i32.and (local.get $packed) (i32.const 0xFF)))
+            (store.field.memarg ColorSpectrumState sat (local.get $sw)
               (i32.and (i32.shr_u (local.get $packed) (i32.const 8)) (i32.const 0xFF)))
-            (i32.store offset=8 (local.get $sw)
+            (store.field.memarg ColorSpectrumState lum (local.get $sw)
               (i32.and (i32.shr_u (local.get $packed) (i32.const 16)) (i32.const 0xFF)))))
         (call $invalidate_hwnd (local.get $picker))))
     (call $colordlg_sync_hsl_fields
@@ -3006,9 +3260,9 @@
   (func $colorspectrum_commit (param $hwnd i32) (param $sw i32)
     (local $dlg i32) (local $cc i32) (local $rgb i32)
     (local.set $rgb (call $colordlg_hsl_to_rgb
-      (i32.load (local.get $sw))
-      (i32.load offset=4 (local.get $sw))
-      (i32.load offset=8 (local.get $sw))))
+      (load.field ColorSpectrumState hue (local.get $sw))
+      (load.field.memarg ColorSpectrumState sat (local.get $sw))
+      (load.field.memarg ColorSpectrumState lum (local.get $sw))))
     (local.set $dlg (call $wnd_get_parent (local.get $hwnd)))
     (local.set $cc (call $wnd_get_userdata (local.get $dlg)))
     (if (local.get $cc)
@@ -3016,9 +3270,9 @@
     (call $colordlg_sync_rgb_fields (local.get $dlg) (local.get $rgb))
     (call $colordlg_sync_hsl_fields
       (local.get $dlg)
-      (i32.load (local.get $sw))
-      (i32.load offset=4 (local.get $sw))
-      (i32.load offset=8 (local.get $sw)))
+      (load.field ColorSpectrumState hue (local.get $sw))
+      (load.field.memarg ColorSpectrumState sat (local.get $sw))
+      (load.field.memarg ColorSpectrumState lum (local.get $sw)))
     (call $colordlg_invalidate_preview (local.get $dlg))
     (call $invalidate_hwnd (local.get $hwnd)))
 
@@ -3035,9 +3289,9 @@
       (then
         (local.set $state (call $heap_alloc (i32.const 12)))
         (local.set $sw (call $g2w (local.get $state)))
-        (i32.store (local.get $sw) (i32.const 0))
-        (i32.store offset=4 (local.get $sw) (i32.const 0))
-        (i32.store offset=8 (local.get $sw) (i32.const 0))
+        (store.field ColorSpectrumState hue (local.get $sw) (i32.const 0))
+        (store.field.memarg ColorSpectrumState sat (local.get $sw) (i32.const 0))
+        (store.field.memarg ColorSpectrumState lum (local.get $sw) (i32.const 0))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
         (return (i32.const 0))))
 
@@ -3088,7 +3342,7 @@
           (local.set $lum (i32.sub (i32.const 240)
             (i32.div_u (i32.mul (local.get $row) (i32.const 240)) (i32.const 119))))
           (local.set $c0 (call $colordlg_hsl_to_rgb
-            (i32.load (local.get $sw)) (i32.load offset=4 (local.get $sw)) (local.get $lum)))
+            (load.field ColorSpectrumState hue (local.get $sw)) (load.field.memarg ColorSpectrumState sat (local.get $sw)) (local.get $lum)))
           (drop (call $host_gdi_gradient_fill_h (local.get $hdc)
             (i32.const 176) (i32.add (local.get $row) (i32.const 2))
             (i32.const 192) (i32.add (local.get $row) (i32.const 3))
@@ -3096,10 +3350,10 @@
           (local.set $row (i32.add (local.get $row) (i32.const 1)))
           (br $paint_rows)))
         (local.set $mark_x (i32.add (i32.const 2)
-          (i32.div_u (i32.mul (i32.load (local.get $sw)) (i32.const 159)) (i32.const 240))))
+          (i32.div_u (i32.mul (load.field ColorSpectrumState hue (local.get $sw)) (i32.const 159)) (i32.const 240))))
         (local.set $mark_y (i32.add (i32.const 2)
           (i32.div_u
-            (i32.mul (i32.sub (i32.const 240) (i32.load offset=4 (local.get $sw))) (i32.const 119))
+            (i32.mul (i32.sub (i32.const 240) (load.field.memarg ColorSpectrumState sat (local.get $sw))) (i32.const 119))
             (i32.const 240))))
         (drop (call $host_gdi_draw_focus_rect (local.get $hdc)
           (i32.sub (local.get $mark_x) (i32.const 3))
@@ -3108,7 +3362,7 @@
           (i32.add (local.get $mark_y) (i32.const 4))))
         (local.set $mark_y (i32.add (i32.const 2)
           (i32.div_u
-            (i32.mul (i32.sub (i32.const 240) (i32.load offset=8 (local.get $sw))) (i32.const 119))
+            (i32.mul (i32.sub (i32.const 240) (load.field.memarg ColorSpectrumState lum (local.get $sw))) (i32.const 119))
             (i32.const 240))))
         (drop (call $host_gdi_draw_focus_rect (local.get $hdc)
           (i32.const 174) (i32.sub (local.get $mark_y) (i32.const 2))
@@ -3125,15 +3379,15 @@
               (i32.and (i32.ge_u (local.get $y) (i32.const 2))
                        (i32.lt_u (local.get $y) (i32.const 122))))
           (then
-            (i32.store (local.get $sw)
+            (store.field ColorSpectrumState hue (local.get $sw)
               (i32.div_u (i32.mul (i32.sub (local.get $x) (i32.const 2)) (i32.const 240)) (i32.const 159)))
-            (i32.store offset=4 (local.get $sw)
+            (store.field.memarg ColorSpectrumState sat (local.get $sw)
               (i32.sub (i32.const 240)
                 (i32.div_u (i32.mul (i32.sub (local.get $y) (i32.const 2)) (i32.const 240)) (i32.const 119))))
             ;; A first spectrum click should produce a visible color even when
             ;; the caller's initial black selected luminosity zero.
-            (if (i32.eqz (i32.load offset=8 (local.get $sw)))
-              (then (i32.store offset=8 (local.get $sw) (i32.const 120))))
+            (if (i32.eqz (load.field.memarg ColorSpectrumState lum (local.get $sw)))
+              (then (store.field.memarg ColorSpectrumState lum (local.get $sw) (i32.const 120))))
             (call $colorspectrum_commit (local.get $hwnd) (local.get $sw))))
         (if (i32.and
               (i32.and (i32.ge_u (local.get $x) (i32.const 176))
@@ -3141,7 +3395,7 @@
               (i32.and (i32.ge_u (local.get $y) (i32.const 2))
                        (i32.lt_u (local.get $y) (i32.const 122))))
           (then
-            (i32.store offset=8 (local.get $sw)
+            (store.field.memarg ColorSpectrumState lum (local.get $sw)
               (i32.sub (i32.const 240)
                 (i32.div_u (i32.mul (i32.sub (local.get $y) (i32.const 2)) (i32.const 240)) (i32.const 119))))
             (call $colorspectrum_commit (local.get $hwnd) (local.get $sw))))
@@ -3217,9 +3471,9 @@
     (if (i32.gt_u (local.get $s) (i32.const 240)) (then (local.set $s (i32.const 240))))
     (if (i32.gt_u (local.get $l) (i32.const 240)) (then (local.set $l (i32.const 240))))
     (local.set $sw (call $g2w (local.get $state)))
-    (i32.store (local.get $sw) (local.get $h))
-    (i32.store offset=4 (local.get $sw) (local.get $s))
-    (i32.store offset=8 (local.get $sw) (local.get $l))
+    (store.field ColorSpectrumState hue (local.get $sw) (local.get $h))
+    (store.field.memarg ColorSpectrumState sat (local.get $sw) (local.get $s))
+    (store.field.memarg ColorSpectrumState lum (local.get $sw) (local.get $l))
     (local.set $rgb (call $colordlg_hsl_to_rgb
       (local.get $h) (local.get $s) (local.get $l)))
     (i32.store offset=12 (call $g2w (local.get $cc)) (local.get $rgb))
@@ -3471,8 +3725,8 @@
         (local.set $cs_w (call $g2w (local.get $lParam)))
         (local.set $state (call $heap_alloc (i32.const 8)))
         (local.set $sw (call $g2w (local.get $state)))
-        (i32.store        (local.get $sw) (i32.const -1))                              ;; sel_idx
-        (i32.store offset=4 (local.get $sw) (i32.load offset=8 (local.get $cs_w)))    ;; ctrl_id from hMenu
+        (store.field ColorGridState sel_idx (local.get $sw) (i32.const -1))                              ;; sel_idx
+        (store.field.memarg ColorGridState ctrl_id (local.get $sw) (i32.load offset=8 (local.get $cs_w)))    ;; ctrl_id from hMenu
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
         (return (i32.const 0))))
 
@@ -3493,8 +3747,8 @@
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-        (local.set $sel (i32.load (local.get $sw)))
-        (local.set $ctrl_id (i32.load offset=4 (local.get $sw)))
+        (local.set $sel (load.field ColorGridState sel_idx (local.get $sw)))
+        (local.set $ctrl_id (load.field.memarg ColorGridState ctrl_id (local.get $sw)))
         (local.set $row_count
           (select (i32.const 2) (i32.const 6)
             (i32.eq (local.get $ctrl_id) (i32.const 0x461))))
@@ -3546,7 +3800,7 @@
       (then
         (local.set $x (i32.and (local.get $lParam) (i32.const 0xFFFF)))
         (local.set $y (i32.shr_u (local.get $lParam) (i32.const 16)))
-        (local.set $ctrl_id (i32.load offset=4 (local.get $sw)))
+        (local.set $ctrl_id (load.field.memarg ColorGridState ctrl_id (local.get $sw)))
         (local.set $row_count
           (select (i32.const 2) (i32.const 6)
             (i32.eq (local.get $ctrl_id) (i32.const 0x461))))
@@ -3563,7 +3817,7 @@
               (i32.ge_u (i32.rem_u (local.get $y) (i32.const 22)) (i32.const 18)))
           (then (return (i32.const 0))))
         (local.set $idx (i32.add (i32.mul (local.get $row) (i32.const 8)) (local.get $col)))
-        (i32.store (local.get $sw) (local.get $idx))
+        (store.field ColorGridState sel_idx (local.get $sw) (local.get $idx))
         (call $invalidate_hwnd (local.get $hwnd))
         (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
         (if (local.get $parent)
@@ -4218,9 +4472,9 @@
     (local.set $state (call $wnd_get_state_ptr (local.get $edit)))
     (if (i32.eqz (local.get $state)) (then (return)))
     (local.set $sw (call $g2w (local.get $state)))
-    (local.set $name_len (i32.load offset=4 (local.get $sw)))
+    (local.set $name_len (load.field.memarg EditState text_len (local.get $sw)))
     (if (i32.eqz (local.get $name_len)) (then (return)))
-    (local.set $name_src_w (call $g2w (i32.load (local.get $sw))))
+    (local.set $name_src_w (call $g2w (load.field EditState text_buf_ptr (local.get $sw))))
     ;; Buffer = "C:\" + name + "\0"
     (local.set $path_g (call $heap_alloc (i32.add (local.get $name_len) (i32.const 4))))
     (local.set $path_w (call $g2w (local.get $path_g)))
@@ -6449,81 +6703,81 @@
   ;; value, so a wrong offset paints rather than traps. See the layout
   ;; comment directly above.
   (func $lv_item_count (param $sw i32) (result i32)
-    (i32.load (local.get $sw)))
+    (load.field ListViewState item_count (local.get $sw)))
   (func $lv_set_item_count (param $sw i32) (param $v i32)
-    (i32.store (local.get $sw) (local.get $v)))
+    (store.field ListViewState item_count (local.get $sw) (local.get $v)))
   (func $lv_item_cap (param $sw i32) (result i32)
-    (i32.load offset=4 (local.get $sw)))
+    (load.field.memarg ListViewState item_cap (local.get $sw)))
   (func $lv_set_item_cap (param $sw i32) (param $v i32)
-    (i32.store offset=4 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState item_cap (local.get $sw) (local.get $v)))
   (func $lv_cells_ptr (param $sw i32) (result i32)
-    (i32.load offset=8 (local.get $sw)))
+    (load.field.memarg ListViewState item_cells_ptr (local.get $sw)))
   (func $lv_set_cells_ptr (param $sw i32) (param $v i32)
-    (i32.store offset=8 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState item_cells_ptr (local.get $sw) (local.get $v)))
   (func $lv_col_count (param $sw i32) (result i32)
-    (i32.load offset=16 (local.get $sw)))
+    (load.field.memarg ListViewState col_count (local.get $sw)))
   (func $lv_set_col_count (param $sw i32) (param $v i32)
-    (i32.store offset=16 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState col_count (local.get $sw) (local.get $v)))
   (func $lv_col_cap (param $sw i32) (result i32)
-    (i32.load offset=20 (local.get $sw)))
+    (load.field.memarg ListViewState col_cap (local.get $sw)))
   (func $lv_set_col_cap (param $sw i32) (param $v i32)
-    (i32.store offset=20 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState col_cap (local.get $sw) (local.get $v)))
   (func $lv_col_widths_ptr (param $sw i32) (result i32)
-    (i32.load offset=24 (local.get $sw)))
+    (load.field.memarg ListViewState col_widths_ptr (local.get $sw)))
   (func $lv_set_col_widths_ptr (param $sw i32) (param $v i32)
-    (i32.store offset=24 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState col_widths_ptr (local.get $sw) (local.get $v)))
   (func $lv_col_texts_ptr (param $sw i32) (result i32)
-    (i32.load offset=28 (local.get $sw)))
+    (load.field.memarg ListViewState col_texts_ptr (local.get $sw)))
   (func $lv_set_col_texts_ptr (param $sw i32) (param $v i32)
-    (i32.store offset=28 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState col_texts_ptr (local.get $sw) (local.get $v)))
   (func $lv_selected (param $sw i32) (result i32)
-    (i32.load offset=32 (local.get $sw)))
+    (load.field.memarg ListViewState selected_index (local.get $sw)))
   (func $lv_set_selected (param $sw i32) (param $v i32)
-    (i32.store offset=32 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState selected_index (local.get $sw) (local.get $v)))
   (func $lv_top_index (param $sw i32) (result i32)
-    (i32.load offset=36 (local.get $sw)))
+    (load.field.memarg ListViewState top_index (local.get $sw)))
   (func $lv_set_top_index (param $sw i32) (param $v i32)
-    (i32.store offset=36 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState top_index (local.get $sw) (local.get $v)))
   (func $lv_ctrl_id (param $sw i32) (result i32)
-    (i32.load offset=40 (local.get $sw)))
+    (load.field.memarg ListViewState ctrl_id (local.get $sw)))
   (func $lv_set_ctrl_id (param $sw i32) (param $v i32)
-    (i32.store offset=40 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState ctrl_id (local.get $sw) (local.get $v)))
   (func $lv_ex_style (param $sw i32) (result i32)
-    (i32.load offset=44 (local.get $sw)))
+    (load.field.memarg ListViewState extended_style (local.get $sw)))
   (func $lv_set_ex_style (param $sw i32) (param $v i32)
-    (i32.store offset=44 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState extended_style (local.get $sw) (local.get $v)))
   (func $lv_drag_anchor_y (param $sw i32) (result i32)
-    (i32.load offset=48 (local.get $sw)))
+    (load.field.memarg ListViewState drag_anchor_y (local.get $sw)))
   (func $lv_set_drag_anchor_y (param $sw i32) (param $v i32)
-    (i32.store offset=48 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState drag_anchor_y (local.get $sw) (local.get $v)))
   (func $lv_drag_anchor_top (param $sw i32) (result i32)
-    (i32.load offset=52 (local.get $sw)))
+    (load.field.memarg ListViewState drag_anchor_top (local.get $sw)))
   (func $lv_set_drag_anchor_top (param $sw i32) (param $v i32)
-    (i32.store offset=52 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState drag_anchor_top (local.get $sw) (local.get $v)))
   (func $lv_image_list (param $sw i32) (result i32)
-    (i32.load offset=56 (local.get $sw)))
+    (load.field.memarg ListViewState small_image_list (local.get $sw)))
   (func $lv_set_image_list (param $sw i32) (param $v i32)
-    (i32.store offset=56 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState small_image_list (local.get $sw) (local.get $v)))
   (func $lv_bk_color (param $sw i32) (result i32)
-    (i32.load offset=60 (local.get $sw)))
+    (load.field.memarg ListViewState bk_color (local.get $sw)))
   (func $lv_set_bk_color (param $sw i32) (param $v i32)
-    (i32.store offset=60 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState bk_color (local.get $sw) (local.get $v)))
   (func $lv_text_color (param $sw i32) (result i32)
-    (i32.load offset=64 (local.get $sw)))
+    (load.field.memarg ListViewState text_color (local.get $sw)))
   (func $lv_set_text_color (param $sw i32) (param $v i32)
-    (i32.store offset=64 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState text_color (local.get $sw) (local.get $v)))
   (func $lv_text_bk_color (param $sw i32) (result i32)
-    (i32.load offset=68 (local.get $sw)))
+    (load.field.memarg ListViewState text_bk_color (local.get $sw)))
   (func $lv_set_text_bk_color (param $sw i32) (param $v i32)
-    (i32.store offset=68 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState text_bk_color (local.get $sw) (local.get $v)))
   (func $lv_state_image_list (param $sw i32) (result i32)
-    (i32.load offset=72 (local.get $sw)))
+    (load.field.memarg ListViewState state_image_list (local.get $sw)))
   (func $lv_set_state_image_list (param $sw i32) (param $v i32)
-    (i32.store offset=72 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState state_image_list (local.get $sw) (local.get $v)))
   (func $lv_normal_image_list (param $sw i32) (result i32)
-    (i32.load offset=76 (local.get $sw)))
+    (load.field.memarg ListViewState normal_image_list (local.get $sw)))
   (func $lv_set_normal_image_list (param $sw i32) (param $v i32)
-    (i32.store offset=76 (local.get $sw) (local.get $v)))
+    (store.field.memarg ListViewState normal_image_list (local.get $sw) (local.get $v)))
 
   (func $lv_header_h (param $sw i32) (result i32)
     (if (result i32) (i32.gt_s (call $lv_col_count (local.get $sw)) (i32.const 0))
@@ -8753,22 +9007,22 @@
         (local.set $state (call $heap_alloc (i32.const 80)))
         (local.set $sw (call $g2w (local.get $state)))
         (call $zero_memory (local.get $sw) (i32.const 80))
-        (i32.store offset=4  (local.get $sw) (i32.const 23)) ;; default dxButton
-        (i32.store offset=8  (local.get $sw) (i32.const 22)) ;; default dyButton
-        (i32.store offset=12 (local.get $sw) (i32.const 16)) ;; default dxBitmap
-        (i32.store offset=16 (local.get $sw) (i32.const 15)) ;; default dyBitmap
-        (i32.store offset=20 (local.get $sw) (i32.const 1))  ;; one row
-        (i32.store offset=24 (local.get $sw) (i32.const 20)) ;; sizeof(TBBUTTON)
-        (i32.store offset=40 (local.get $sw) (i32.const -1))
-        (i32.store offset=76 (local.get $sw) (i32.const -1))
+        (store.field.memarg ToolbarState button_w (local.get $sw) (i32.const 23)) ;; default dxButton
+        (store.field.memarg ToolbarState button_h (local.get $sw) (i32.const 22)) ;; default dyButton
+        (store.field.memarg ToolbarState bitmap_w (local.get $sw) (i32.const 16)) ;; default dxBitmap
+        (store.field.memarg ToolbarState bitmap_h (local.get $sw) (i32.const 15)) ;; default dyBitmap
+        (store.field.memarg ToolbarState rows (local.get $sw) (i32.const 1))  ;; one row
+        (store.field.memarg ToolbarState tbutton_struct_size (local.get $sw) (i32.const 20)) ;; sizeof(TBBUTTON)
+        (store.field.memarg ToolbarState pressed_index (local.get $sw) (i32.const -1))
+        (store.field.memarg ToolbarState hot_index (local.get $sw) (i32.const -1))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))))
     (local.set $sw (call $g2w (local.get $state)))
-    (i32.store offset=44 (local.get $sw) (local.get $hwnd))
+    (store.field.memarg ToolbarState hwnd (local.get $sw) (local.get $hwnd))
     (local.get $state))
 
   (func $toolbar_button_ptr (param $sw i32) (param $idx i32) (result i32)
     (i32.add
-      (call $g2w (i32.load offset=32 (local.get $sw)))
+      (call $g2w (load.field.memarg ToolbarState buttons_guest (local.get $sw)))
       (i32.mul (local.get $idx) (i32.const 20))))
 
   (func $toolbar_memmove_right (param $src i32) (param $n i32) (param $shift i32)
@@ -8809,12 +9063,12 @@
   ;; any large siblings safely before choosing its own cap.
   (func $toolbar_button_raw_width (param $sw i32) (param $idx i32) (result i32)
     (local $count i32) (local $rec i32) (local $width i32) (local $combo_width i32)
-    (local.set $width (i32.load offset=4 (local.get $sw)))
+    (local.set $width (load.field.memarg ToolbarState button_w (local.get $sw)))
     (if (i32.le_s (local.get $width) (i32.const 0))
       (then (local.set $width (i32.const 23))))
-    (local.set $count (i32.load (local.get $sw)))
+    (local.set $count (load.field ToolbarState button_count (local.get $sw)))
     (if (i32.or
-          (i32.eqz (i32.load offset=32 (local.get $sw)))
+          (i32.eqz (load.field.memarg ToolbarState buttons_guest (local.get $sw)))
           (i32.ge_u (local.get $idx) (local.get $count)))
       (then (return (local.get $width))))
     (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $idx)))
@@ -8822,7 +9076,7 @@
       (then
         (local.set $combo_width
           (call $toolbar_child_combo_raw_width_by_cmd
-            (i32.load offset=44 (local.get $sw))
+            (load.field.memarg ToolbarState hwnd (local.get $sw))
             (i32.load offset=4 (local.get $rec))))
         (if (i32.gt_s (local.get $combo_width) (i32.const 0))
           (then (return (local.get $combo_width))))
@@ -8837,7 +9091,7 @@
     (local $toolbar_hwnd i32) (local $combo_width i32)
     (local $parent i32) (local $parent_w i32) (local $cap i32)
     (local $i i32) (local $count i32) (local $rec i32) (local $fixed_width i32)
-    (local.set $toolbar_hwnd (i32.load offset=44 (local.get $sw)))
+    (local.set $toolbar_hwnd (load.field.memarg ToolbarState hwnd (local.get $sw)))
     (if (i32.eqz (local.get $toolbar_hwnd)) (then (return (i32.const 0))))
     (local.set $combo_width
       (call $toolbar_child_combo_raw_width_by_cmd
@@ -8857,7 +9111,7 @@
             ;; Layout starts at x=2. Sum every raw sibling width, skipping only
             ;; this combo's separator slot, so the last button remains in bounds.
             (local.set $fixed_width (i32.const 2))
-            (local.set $count (i32.load (local.get $sw)))
+            (local.set $count (load.field ToolbarState button_count (local.get $sw)))
             (local.set $i (i32.const 0))
             (block $widths_done (loop $widths
               (br_if $widths_done (i32.ge_u (local.get $i) (local.get $count)))
@@ -8882,7 +9136,7 @@
 
   (func $toolbar_ensure_capacity (param $sw i32) (param $want i32) (result i32)
     (local $cap i32) (local $new_cap i32) (local $new_items i32)
-    (local.set $cap (i32.load offset=36 (local.get $sw)))
+    (local.set $cap (load.field.memarg ToolbarState capacity (local.get $sw)))
     (if (i32.le_u (local.get $want) (local.get $cap))
       (then (return (i32.const 1))))
     (local.set $new_cap (local.get $cap))
@@ -8894,13 +9148,13 @@
       (br $grow)))
     (local.set $new_items
       (call $heap_realloc
-        (i32.load offset=32 (local.get $sw))
+        (load.field.memarg ToolbarState buttons_guest (local.get $sw))
         (i32.mul (local.get $new_cap) (i32.const 20))
         (i32.const 0x40)))
     (if (i32.eqz (local.get $new_items))
       (then (return (i32.const 0))))
-    (i32.store offset=32 (local.get $sw) (local.get $new_items))
-    (i32.store offset=36 (local.get $sw) (local.get $new_cap))
+    (store.field.memarg ToolbarState buttons_guest (local.get $sw) (local.get $new_items))
+    (store.field.memarg ToolbarState capacity (local.get $sw) (local.get $new_cap))
     (i32.const 1))
 
   (func $toolbar_init_button (param $dst i32) (param $idx i32)
@@ -8923,9 +9177,9 @@
 
   (func $toolbar_find_command_index (param $sw i32) (param $cmd i32) (result i32)
     (local $i i32) (local $count i32) (local $rec i32)
-    (if (i32.eqz (i32.load offset=32 (local.get $sw)))
+    (if (i32.eqz (load.field.memarg ToolbarState buttons_guest (local.get $sw)))
       (then (return (i32.const -1))))
-    (local.set $count (i32.load (local.get $sw)))
+    (local.set $count (load.field ToolbarState button_count (local.get $sw)))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
@@ -8938,12 +9192,12 @@
 
   (func $toolbar_button_width (param $sw i32) (param $idx i32) (result i32)
     (local $count i32) (local $rec i32) (local $width i32) (local $combo_width i32)
-    (local.set $width (i32.load offset=4 (local.get $sw)))
+    (local.set $width (load.field.memarg ToolbarState button_w (local.get $sw)))
     (if (i32.le_s (local.get $width) (i32.const 0))
       (then (local.set $width (i32.const 23))))
-    (local.set $count (i32.load (local.get $sw)))
+    (local.set $count (load.field ToolbarState button_count (local.get $sw)))
     (if (i32.or
-          (i32.eqz (i32.load offset=32 (local.get $sw)))
+          (i32.eqz (load.field.memarg ToolbarState buttons_guest (local.get $sw)))
           (i32.ge_u (local.get $idx) (local.get $count)))
       (then (return (local.get $width))))
     (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $idx)))
@@ -8967,7 +9221,7 @@
 
   (func $toolbar_layout_width (param $sw i32) (result i32)
     (local $hwnd i32) (local $parent i32) (local $wh i32) (local $w i32) (local $parent_w i32)
-    (local.set $hwnd (i32.load offset=44 (local.get $sw)))
+    (local.set $hwnd (load.field.memarg ToolbarState hwnd (local.get $sw)))
     (if (local.get $hwnd)
       (then
         (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
@@ -8989,12 +9243,12 @@
   (func $toolbar_button_rect (param $sw i32) (param $idx i32) (param $rect i32) (result i32)
     (local $i i32) (local $count i32) (local $left i32) (local $top i32)
     (local $bw i32) (local $bh i32) (local $limit i32)
-    (local.set $count (i32.load (local.get $sw)))
+    (local.set $count (load.field ToolbarState button_count (local.get $sw)))
     (if (i32.or
           (i32.eqz (local.get $rect))
           (i32.ge_u (local.get $idx) (local.get $count)))
       (then (return (i32.const 0))))
-    (local.set $bh (i32.load offset=8 (local.get $sw)))
+    (local.set $bh (load.field.memarg ToolbarState button_h (local.get $sw)))
     (if (i32.le_s (local.get $bh) (i32.const 0))
       (then (local.set $bh (i32.const 22))))
     (local.set $limit (call $toolbar_layout_width (local.get $sw)))
@@ -9027,7 +9281,7 @@
   (func $toolbar_calc_rows (param $sw i32) (result i32)
     (local $i i32) (local $count i32) (local $left i32) (local $bw i32)
     (local $limit i32) (local $rows i32)
-    (local.set $count (i32.load (local.get $sw)))
+    (local.set $count (load.field ToolbarState button_count (local.get $sw)))
     (local.set $limit (call $toolbar_layout_width (local.get $sw)))
     (if (i32.lt_s (local.get $limit) (i32.const 24))
       (then (local.set $limit (i32.const 24))))
@@ -9089,7 +9343,7 @@
     (local.set $w (i32.and (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 0xFFFF)))
     (local.set $h (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16)))
     (if (i32.le_s (local.get $w) (i32.const 24)) (then (return)))
-    (local.set $edit (i32.load offset=28 (local.get $state_w)))
+    (local.set $edit (load.field.memarg ComboBoxState edit_hwnd (local.get $state_w)))
     (if (local.get $edit)
       (then
         (call $host_move_window (local.get $edit) (i32.const 2) (i32.const 2)
@@ -9098,7 +9352,7 @@
         (call $ctrl_geom_sync (local.get $edit) (i32.const 2) (i32.const 2)
           (i32.sub (local.get $w) (i32.const 20))
           (i32.sub (local.get $field_h) (i32.const 4)) (i32.const 0))))
-    (local.set $lb (i32.load offset=20 (local.get $state_w)))
+    (local.set $lb (load.field.memarg ComboBoxState lb_hwnd (local.get $state_w)))
     (if (local.get $lb)
       (then
         (local.set $h (i32.sub (local.get $h) (local.get $field_h)))
@@ -9117,10 +9371,10 @@
     (local $toolbar_hwnd i32) (local $slot i32) (local $ch i32) (local $child_id i32)
     (local $i i32) (local $count i32) (local $rec i32)
     (local $left i32) (local $top i32) (local $right i32) (local $brect i32)
-    (local.set $toolbar_hwnd (i32.load offset=44 (local.get $sw)))
+    (local.set $toolbar_hwnd (load.field.memarg ToolbarState hwnd (local.get $sw)))
     (if (i32.eqz (local.get $toolbar_hwnd)) (then (return)))
-    (if (i32.eqz (i32.load offset=32 (local.get $sw))) (then (return)))
-    (local.set $count (i32.load (local.get $sw)))
+    (if (i32.eqz (load.field.memarg ToolbarState buttons_guest (local.get $sw))) (then (return)))
+    (local.set $count (load.field ToolbarState button_count (local.get $sw)))
     (local.set $slot (i32.const 0))
     (block $children_done (loop $children
       (local.set $slot
@@ -9191,7 +9445,7 @@
       (then (return (i32.const -1))))
     (local.set $idx (i32.const 0))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $idx) (i32.load (local.get $sw))))
+      (br_if $done (i32.ge_u (local.get $idx) (load.field ToolbarState button_count (local.get $sw))))
       (local.set $brect (call $paint_scratch_take))
       (if (i32.eqz (call $toolbar_button_rect (local.get $sw) (local.get $idx) (local.get $brect)))
         (then (return (i32.const -1))))
@@ -9207,7 +9461,7 @@
               (i32.ge_s (local.get $y) (local.get $top))
               (i32.lt_s (local.get $y) (local.get $bottom))))
         (then
-          (if (i32.load offset=32 (local.get $sw))
+          (if (load.field.memarg ToolbarState buttons_guest (local.get $sw))
             (then
               (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $idx)))
               (if (i32.or
@@ -9286,8 +9540,8 @@
     (local.set $rows (call $toolbar_calc_rows (local.get $sw)))
     (if (i32.lt_s (local.get $rows) (i32.const 1))
       (then (local.set $rows (i32.const 1))))
-    (i32.store offset=20 (local.get $sw) (local.get $rows))
-    (local.set $bh (i32.load offset=8 (local.get $sw)))
+    (store.field.memarg ToolbarState rows (local.get $sw) (local.get $rows))
+    (local.set $bh (load.field.memarg ToolbarState button_h (local.get $sw)))
     (if (i32.le_s (local.get $bh) (i32.const 0))
       (then (local.set $bh (i32.const 22))))
     (local.set $h
@@ -9326,8 +9580,8 @@
         (if (local.get $state)
           (then
             (local.set $sw (call $g2w (local.get $state)))
-            (if (i32.load offset=32 (local.get $sw))
-              (then (call $heap_free (i32.load offset=32 (local.get $sw)))))
+            (if (load.field.memarg ToolbarState buttons_guest (local.get $sw))
+              (then (call $heap_free (load.field.memarg ToolbarState buttons_guest (local.get $sw)))))
             (call $heap_free (local.get $state))
             (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
         (return (i32.const 0))))
@@ -9351,14 +9605,14 @@
     (if (i32.eq (local.get $msg) (i32.const 0x041E))
       (then
         (if (local.get $wParam)
-          (then (i32.store offset=24 (local.get $sw) (local.get $wParam))))
+          (then (store.field.memarg ToolbarState tbutton_struct_size (local.get $sw) (local.get $wParam))))
         (return (i32.const 1))))
 
     ;; TB_ADDBITMAP (WM_USER+19): remember the caller's bitmap strip and
     ;; return the first allocated bitmap index.
     (if (i32.eq (local.get $msg) (i32.const 0x0413))
       (then
-        (local.set $old (i32.load offset=28 (local.get $sw)))
+        (local.set $old (load.field.memarg ToolbarState bitmap_count (local.get $sw)))
         (local.set $bmp (i32.const 0))
         (if (local.get $lParam)
           (then
@@ -9386,9 +9640,9 @@
                 ;; Bounded toolbar model: one strip per toolbar. Keep the
                 ;; first valid strip so returned iBitmap bases keep indexing
                 ;; into the original image list.
-                (if (i32.eqz (i32.load offset=48 (local.get $sw)))
-                  (then (i32.store offset=48 (local.get $sw) (local.get $bmp))))))))
-        (i32.store offset=28 (local.get $sw)
+                (if (i32.eqz (load.field.memarg ToolbarState bitmap_handle (local.get $sw)))
+                  (then (store.field.memarg ToolbarState bitmap_handle (local.get $sw) (local.get $bmp))))))))
+        (store.field.memarg ToolbarState bitmap_count (local.get $sw)
           (i32.add (local.get $old) (local.get $wParam)))
         (call $toolbar_repaint_now (local.get $hwnd))
         (return (local.get $old))))
@@ -9402,7 +9656,7 @@
       (then
         (if (i32.gt_u (local.get $wParam) (i32.const 0))
           (then
-            (local.set $count (i32.load (local.get $sw)))
+            (local.set $count (load.field ToolbarState button_count (local.get $sw)))
             (if (i32.eqz
                   (call $toolbar_ensure_capacity
                     (local.get $sw)
@@ -9421,15 +9675,15 @@
                   (local.set $src
                     (i32.add
                       (local.get $lParam)
-                      (i32.mul (local.get $i) (i32.load offset=24 (local.get $sw)))))))
+                      (i32.mul (local.get $i) (load.field.memarg ToolbarState tbutton_struct_size (local.get $sw)))))))
               (call $toolbar_copy_button_in
                 (local.get $dst)
                 (local.get $src)
-                (i32.load offset=24 (local.get $sw))
+                (load.field.memarg ToolbarState tbutton_struct_size (local.get $sw))
                 (i32.add (local.get $count) (local.get $i)))
               (local.set $i (i32.add (local.get $i) (i32.const 1)))
               (br $copy_buttons)))
-            (i32.store (local.get $sw)
+            (store.field ToolbarState button_count (local.get $sw)
               (i32.add (local.get $count) (local.get $wParam)))))
         (call $toolbar_autosize (local.get $hwnd))
         (return (i32.const 1))))
@@ -9441,7 +9695,7 @@
           (i32.eq (local.get $msg) (i32.const 0x0415))
           (i32.eq (local.get $msg) (i32.const 0x0443)))
       (then
-        (local.set $count (i32.load (local.get $sw)))
+        (local.set $count (load.field ToolbarState button_count (local.get $sw)))
         (local.set $idx (local.get $wParam))
         (if (i32.gt_u (local.get $idx) (local.get $count))
           (then (local.set $idx (local.get $count))))
@@ -9460,16 +9714,16 @@
         (call $toolbar_copy_button_in
           (local.get $dst)
           (local.get $lParam)
-          (i32.load offset=24 (local.get $sw))
+          (load.field.memarg ToolbarState tbutton_struct_size (local.get $sw))
           (local.get $idx))
-        (i32.store (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
+        (store.field ToolbarState button_count (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
         (call $toolbar_autosize (local.get $hwnd))
         (return (i32.const 1))))
 
     ;; TB_DELETEBUTTON (WM_USER+22): remove button by index.
     (if (i32.eq (local.get $msg) (i32.const 0x0416))
       (then
-        (local.set $count (i32.load (local.get $sw)))
+        (local.set $count (load.field ToolbarState button_count (local.get $sw)))
         (if (i32.ge_u (local.get $wParam) (local.get $count))
           (then (return (i32.const 0))))
         (local.set $dst (call $toolbar_button_ptr (local.get $sw) (local.get $wParam)))
@@ -9481,9 +9735,9 @@
               (i32.mul
                 (i32.sub (i32.sub (local.get $count) (local.get $wParam)) (i32.const 1))
                 (i32.const 20)))))
-        (i32.store (local.get $sw) (i32.sub (local.get $count) (i32.const 1)))
-        (if (i32.eq (i32.load offset=40 (local.get $sw)) (local.get $wParam))
-          (then (i32.store offset=40 (local.get $sw) (i32.const -1))))
+        (store.field ToolbarState button_count (local.get $sw) (i32.sub (local.get $count) (i32.const 1)))
+        (if (i32.eq (load.field.memarg ToolbarState pressed_index (local.get $sw)) (local.get $wParam))
+          (then (store.field.memarg ToolbarState pressed_index (local.get $sw) (i32.const -1))))
         (call $toolbar_autosize (local.get $hwnd))
         (return (i32.const 1))))
 
@@ -9492,15 +9746,15 @@
       (then
         (if (i32.or
               (i32.eqz (local.get $lParam))
-              (i32.ge_u (local.get $wParam) (i32.load (local.get $sw))))
+              (i32.ge_u (local.get $wParam) (load.field ToolbarState button_count (local.get $sw))))
           (then (return (i32.const 0))))
         (local.set $rect (call $g2w (local.get $lParam)))
-        (local.set $copy (i32.load offset=24 (local.get $sw)))
+        (local.set $copy (load.field.memarg ToolbarState tbutton_struct_size (local.get $sw)))
         (if (i32.gt_u (local.get $copy) (i32.const 20))
           (then (local.set $copy (i32.const 20))))
         (if (i32.eqz (local.get $copy))
           (then (return (i32.const 0))))
-        (if (i32.load offset=32 (local.get $sw))
+        (if (load.field.memarg ToolbarState buttons_guest (local.get $sw))
           (then
             (call $memcpy
               (local.get $rect)
@@ -9536,9 +9790,9 @@
 
     ;; TB_BUTTONCOUNT (WM_USER+24), TB_GETROWS (WM_USER+40).
     (if (i32.eq (local.get $msg) (i32.const 0x0418))
-      (then (return (i32.load (local.get $sw)))))
+      (then (return (load.field ToolbarState button_count (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x0428))
-      (then (return (i32.load offset=20 (local.get $sw)))))
+      (then (return (load.field.memarg ToolbarState rows (local.get $sw)))))
     ;; TB_COMMANDTOINDEX (WM_USER+25): map command ID to button index.
     (if (i32.eq (local.get $msg) (i32.const 0x0419))
       (then (return (call $toolbar_find_command_index (local.get $sw) (local.get $wParam)))))
@@ -9548,7 +9802,7 @@
       (then
         (if (i32.or
               (i32.eqz (local.get $lParam))
-              (i32.ge_u (local.get $wParam) (i32.load (local.get $sw))))
+              (i32.ge_u (local.get $wParam) (load.field ToolbarState button_count (local.get $sw))))
           (then (return (i32.const 0))))
         (local.set $rect (call $g2w (local.get $lParam)))
         (local.set $hit (call $toolbar_button_rect
@@ -9562,16 +9816,16 @@
       (then
         (local.set $bw (i32.and (local.get $lParam) (i32.const 0xFFFF)))
         (local.set $bh (i32.shr_u (local.get $lParam) (i32.const 16)))
-        (if (i32.gt_u (local.get $bw) (i32.const 0)) (then (i32.store offset=4 (local.get $sw) (local.get $bw))))
-        (if (i32.gt_u (local.get $bh) (i32.const 0)) (then (i32.store offset=8 (local.get $sw) (local.get $bh))))
+        (if (i32.gt_u (local.get $bw) (i32.const 0)) (then (store.field.memarg ToolbarState button_w (local.get $sw) (local.get $bw))))
+        (if (i32.gt_u (local.get $bh) (i32.const 0)) (then (store.field.memarg ToolbarState button_h (local.get $sw) (local.get $bh))))
         (call $toolbar_autosize (local.get $hwnd))
         (return (i32.const 1))))
     (if (i32.eq (local.get $msg) (i32.const 0x0420))
       (then
         (local.set $bw (i32.and (local.get $lParam) (i32.const 0xFFFF)))
         (local.set $bh (i32.shr_u (local.get $lParam) (i32.const 16)))
-        (if (i32.gt_u (local.get $bw) (i32.const 0)) (then (i32.store offset=12 (local.get $sw) (local.get $bw))))
-        (if (i32.gt_u (local.get $bh) (i32.const 0)) (then (i32.store offset=16 (local.get $sw) (local.get $bh))))
+        (if (i32.gt_u (local.get $bw) (i32.const 0)) (then (store.field.memarg ToolbarState bitmap_w (local.get $sw) (local.get $bw))))
+        (if (i32.gt_u (local.get $bh) (i32.const 0)) (then (store.field.memarg ToolbarState bitmap_h (local.get $sw) (local.get $bh))))
         (return (i32.const 1))))
     (if (i32.eq (local.get $msg) (i32.const 0x0421))
       (then
@@ -9583,55 +9837,55 @@
       (then
         (return
           (i32.or
-            (i32.and (i32.load offset=4 (local.get $sw)) (i32.const 0xFFFF))
-            (i32.shl (i32.load offset=8 (local.get $sw)) (i32.const 16))))))
+            (i32.and (load.field.memarg ToolbarState button_w (local.get $sw)) (i32.const 0xFFFF))
+            (i32.shl (load.field.memarg ToolbarState button_h (local.get $sw)) (i32.const 16))))))
     (if (i32.eq (local.get $msg) (i32.const 0x0427))
       (then
         (if (i32.gt_u (i32.and (local.get $wParam) (i32.const 0xFFFF)) (i32.const 0))
-          (then (i32.store offset=20 (local.get $sw) (i32.and (local.get $wParam) (i32.const 0xFFFF)))))
+          (then (store.field.memarg ToolbarState rows (local.get $sw) (i32.and (local.get $wParam) (i32.const 0xFFFF)))))
         (call $toolbar_autosize (local.get $hwnd))
         (return (i32.const 0))))
 
     ;; TB_SETIMAGELIST / TB_GETIMAGELIST and hot/disabled variants.
     (if (i32.eq (local.get $msg) (i32.const 0x0430))
       (then
-        (local.set $old (i32.load offset=52 (local.get $sw)))
-        (i32.store offset=52 (local.get $sw) (local.get $lParam))
+        (local.set $old (load.field.memarg ToolbarState image_list (local.get $sw)))
+        (store.field.memarg ToolbarState image_list (local.get $sw) (local.get $lParam))
         (call $toolbar_repaint_now (local.get $hwnd))
         (return (local.get $old))))
     (if (i32.eq (local.get $msg) (i32.const 0x0431))
-      (then (return (i32.load offset=52 (local.get $sw)))))
+      (then (return (load.field.memarg ToolbarState image_list (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x0434))
       (then
-        (local.set $old (i32.load offset=56 (local.get $sw)))
-        (i32.store offset=56 (local.get $sw) (local.get $lParam))
+        (local.set $old (load.field.memarg ToolbarState hot_image_list (local.get $sw)))
+        (store.field.memarg ToolbarState hot_image_list (local.get $sw) (local.get $lParam))
         (call $toolbar_repaint_now (local.get $hwnd))
         (return (local.get $old))))
     (if (i32.eq (local.get $msg) (i32.const 0x0435))
-      (then (return (i32.load offset=56 (local.get $sw)))))
+      (then (return (load.field.memarg ToolbarState hot_image_list (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x0436))
       (then
-        (local.set $old (i32.load offset=60 (local.get $sw)))
-        (i32.store offset=60 (local.get $sw) (local.get $lParam))
+        (local.set $old (load.field.memarg ToolbarState disabled_image_list (local.get $sw)))
+        (store.field.memarg ToolbarState disabled_image_list (local.get $sw) (local.get $lParam))
         (call $toolbar_repaint_now (local.get $hwnd))
         (return (local.get $old))))
     (if (i32.eq (local.get $msg) (i32.const 0x0437))
-      (then (return (i32.load offset=60 (local.get $sw)))))
+      (then (return (load.field.memarg ToolbarState disabled_image_list (local.get $sw)))))
 
     ;; TB_GETHOTITEM / TB_SETHOTITEM. The hot item is an index, not a command
     ;; id. Return the previous index exactly as the common-control contract
     ;; requires and repaint so flat toolbar edges/image lists switch at once.
     (if (i32.eq (local.get $msg) (i32.const 0x0447))
-      (then (return (i32.load offset=76 (local.get $sw)))))
+      (then (return (load.field.memarg ToolbarState hot_index (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x0448))
       (then
-        (local.set $old (i32.load offset=76 (local.get $sw)))
+        (local.set $old (load.field.memarg ToolbarState hot_index (local.get $sw)))
         (local.set $idx (local.get $wParam))
         (if (i32.and
               (i32.ne (local.get $idx) (i32.const -1))
-              (i32.ge_u (local.get $idx) (i32.load (local.get $sw))))
+              (i32.ge_u (local.get $idx) (load.field ToolbarState button_count (local.get $sw))))
           (then (local.set $idx (i32.const -1))))
-        (i32.store offset=76 (local.get $sw) (local.get $idx))
+        (store.field.memarg ToolbarState hot_index (local.get $sw) (local.get $idx))
         (if (i32.ne (local.get $idx) (local.get $old))
           (then (call $toolbar_repaint_now (local.get $hwnd))))
         (return (local.get $old))))
@@ -9639,33 +9893,33 @@
     ;; TB_SETSTYLE / TB_GETSTYLE / TB_SETEXTENDEDSTYLE / TB_GETEXTENDEDSTYLE.
     (if (i32.eq (local.get $msg) (i32.const 0x0438))
       (then
-        (i32.store offset=64 (local.get $sw) (local.get $lParam))
+        (store.field.memarg ToolbarState style (local.get $sw) (local.get $lParam))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (i32.const 0))))
     (if (i32.eq (local.get $msg) (i32.const 0x0439))
-      (then (return (i32.load offset=64 (local.get $sw)))))
+      (then (return (load.field.memarg ToolbarState style (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x0454))
       (then
-        (local.set $old (i32.load offset=68 (local.get $sw)))
+        (local.set $old (load.field.memarg ToolbarState extended_style (local.get $sw)))
         (if (local.get $wParam)
           (then
-            (i32.store offset=68 (local.get $sw)
+            (store.field.memarg ToolbarState extended_style (local.get $sw)
               (i32.or (i32.and (local.get $old) (i32.xor (local.get $wParam) (i32.const -1)))
                       (i32.and (local.get $lParam) (local.get $wParam)))))
           (else
-            (i32.store offset=68 (local.get $sw) (local.get $lParam))))
+            (store.field.memarg ToolbarState extended_style (local.get $sw) (local.get $lParam))))
         (return (local.get $old))))
     (if (i32.eq (local.get $msg) (i32.const 0x0455))
-      (then (return (i32.load offset=68 (local.get $sw)))))
+      (then (return (load.field.memarg ToolbarState extended_style (local.get $sw)))))
 
     ;; TB_SETPADDING / TB_GETPADDING.
     (if (i32.eq (local.get $msg) (i32.const 0x0457))
       (then
-        (local.set $old (i32.load offset=72 (local.get $sw)))
-        (i32.store offset=72 (local.get $sw) (local.get $lParam))
+        (local.set $old (load.field.memarg ToolbarState padding_packed (local.get $sw)))
+        (store.field.memarg ToolbarState padding_packed (local.get $sw) (local.get $lParam))
         (return (local.get $old))))
     (if (i32.eq (local.get $msg) (i32.const 0x0456))
-      (then (return (i32.load offset=72 (local.get $sw)))))
+      (then (return (load.field.memarg ToolbarState padding_packed (local.get $sw)))))
 
     ;; Basic state/probe messages by command ID.
     (if (i32.or
@@ -9761,16 +10015,16 @@
             (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $hit)))
             (if (i32.eqz (i32.and (i32.load8_u offset=8 (local.get $rec)) (i32.const 0x04)))
               (then (local.set $hit (i32.const -1))))))
-        (if (i32.ne (local.get $hit) (i32.load offset=76 (local.get $sw)))
+        (if (i32.ne (local.get $hit) (load.field.memarg ToolbarState hot_index (local.get $sw)))
           (then
-            (i32.store offset=76 (local.get $sw) (local.get $hit))
+            (store.field.memarg ToolbarState hot_index (local.get $sw) (local.get $hit))
             (call $toolbar_repaint_now (local.get $hwnd))))
         (return (i32.const 0))))
     (if (i32.eq (local.get $msg) (i32.const 0x02A3))
       (then
-        (if (i32.ne (i32.load offset=76 (local.get $sw)) (i32.const -1))
+        (if (i32.ne (load.field.memarg ToolbarState hot_index (local.get $sw)) (i32.const -1))
           (then
-            (i32.store offset=76 (local.get $sw) (i32.const -1))
+            (store.field.memarg ToolbarState hot_index (local.get $sw) (i32.const -1))
             (call $toolbar_repaint_now (local.get $hwnd))))
         (return (i32.const 0))))
 
@@ -9780,13 +10034,13 @@
         (local.set $x (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
         (local.set $y (i32.shr_s (local.get $lParam) (i32.const 16)))
         (local.set $hit (call $toolbar_hit_test (local.get $sw) (local.get $x) (local.get $y)))
-        (i32.store offset=40 (local.get $sw) (local.get $hit))
+        (store.field.memarg ToolbarState pressed_index (local.get $sw) (local.get $hit))
         (if (i32.ge_s (local.get $hit) (i32.const 0))
           (then
             (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $hit)))
             (if (i32.eqz (i32.and (i32.load8_u offset=8 (local.get $rec)) (i32.const 0x04)))
               (then
-                (i32.store offset=40 (local.get $sw) (i32.const -1))
+                (store.field.memarg ToolbarState pressed_index (local.get $sw) (i32.const -1))
                 (return (i32.const 0))))
             (i32.store8 offset=8 (local.get $rec)
               (i32.or (i32.load8_u offset=8 (local.get $rec)) (i32.const 0x02)))
@@ -9801,8 +10055,8 @@
         (local.set $x (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
         (local.set $y (i32.shr_s (local.get $lParam) (i32.const 16)))
         (local.set $hit (call $toolbar_hit_test (local.get $sw) (local.get $x) (local.get $y)))
-        (local.set $idx (i32.load offset=40 (local.get $sw)))
-        (i32.store offset=40 (local.get $sw) (i32.const -1))
+        (local.set $idx (load.field.memarg ToolbarState pressed_index (local.get $sw)))
+        (store.field.memarg ToolbarState pressed_index (local.get $sw) (i32.const -1))
         (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
           (then (global.set $capture_hwnd (i32.const 0))))
         (if (i32.ge_s (local.get $idx) (i32.const 0))
@@ -9851,8 +10105,8 @@
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)
                     (i32.const 0x04) (i32.const 0x08))) ;; BDR_RAISEDINNER | BF_BOTTOM
-            (local.set $count (i32.load (local.get $sw)))
-            (local.set $bh (i32.load offset=8 (local.get $sw)))
+            (local.set $count (load.field ToolbarState button_count (local.get $sw)))
+            (local.set $bh (load.field.memarg ToolbarState button_h (local.get $sw)))
             (if (i32.lt_s (local.get $count) (i32.const 1))
               (then (local.set $count (i32.const 1))))
             (local.set $i (i32.const 0))
@@ -9871,7 +10125,7 @@
                 (local.get $top)))
               (br_if $done (i32.ge_s (local.get $top) (i32.sub (local.get $h) (i32.const 2))))
               (local.set $state_byte (i32.const 4))
-              (if (i32.load offset=32 (local.get $sw))
+              (if (load.field.memarg ToolbarState buttons_guest (local.get $sw))
                 (then
                   (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $i)))
                   (local.set $state_byte (i32.load8_u offset=8 (local.get $rec)))))
@@ -9880,13 +10134,13 @@
                   (i32.and (local.get $state_byte) (i32.const 0x03)) ;; CHECKED | PRESSED
                   (i32.const 0)))
               (local.set $is_hot
-                (i32.eq (local.get $i) (i32.load offset=76 (local.get $sw))))
+                (i32.eq (local.get $i) (load.field.memarg ToolbarState hot_index (local.get $sw))))
               (if (i32.and (local.get $state_byte) (i32.const 0x08))
                 (then
                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
                   (br $buttons)))
               (if (i32.and
-                    (i32.and (i32.ne (i32.load offset=32 (local.get $sw)) (i32.const 0))
+                    (i32.and (i32.ne (load.field.memarg ToolbarState buttons_guest (local.get $sw)) (i32.const 0))
                       (i32.ne (local.get $rec) (i32.const 0)))
                     (i32.and (i32.load8_u offset=9 (local.get $rec)) (i32.const 0x01)))
                 (then
@@ -9915,9 +10169,9 @@
                           (select (i32.const 0x0A) (i32.const 0x05) (local.get $hit))
                           (i32.const 0x0F))))) ;; EDGE_RAISED/SUNKEN | BF_RECT
               (local.set $drawn (i32.const 0))
-              (local.set $bmp (i32.load offset=48 (local.get $sw)))
-              (local.set $bmp_draw_w (i32.load offset=12 (local.get $sw)))
-              (local.set $bmp_draw_h (i32.load offset=16 (local.get $sw)))
+              (local.set $bmp (load.field.memarg ToolbarState bitmap_handle (local.get $sw)))
+              (local.set $bmp_draw_w (load.field.memarg ToolbarState bitmap_w (local.get $sw)))
+              (local.set $bmp_draw_h (load.field.memarg ToolbarState bitmap_h (local.get $sw)))
               (local.set $mask_color (i32.const 0x00C0C0C0))
               (local.set $use_disabled_effect
                 (i32.eqz (i32.and (local.get $state_byte) (i32.const 0x04))))
@@ -9927,15 +10181,15 @@
               ;; embossed a second time.
               (local.set $image_list (i32.const 0))
               (if (local.get $use_disabled_effect)
-                (then (local.set $image_list (i32.load offset=60 (local.get $sw))))
+                (then (local.set $image_list (load.field.memarg ToolbarState disabled_image_list (local.get $sw))))
                 (else
                   (if (local.get $is_hot)
-                    (then (local.set $image_list (i32.load offset=56 (local.get $sw)))))))
+                    (then (local.set $image_list (load.field.memarg ToolbarState hot_image_list (local.get $sw)))))))
               (local.set $image_sw
                 (call $toolbar_imagelist_ptr (local.get $image_list)))
               (if (i32.eqz (local.get $image_sw))
                 (then
-                  (local.set $image_list (i32.load offset=52 (local.get $sw)))
+                  (local.set $image_list (load.field.memarg ToolbarState image_list (local.get $sw)))
                   (local.set $image_sw
                     (call $toolbar_imagelist_ptr (local.get $image_list)))))
               (if (local.get $image_sw)
@@ -9946,11 +10200,11 @@
                   (local.set $mask_color (i32.load offset=20 (local.get $image_sw)))
                   (if (i32.ne
                         (local.get $image_list)
-                        (i32.load offset=52 (local.get $sw)))
+                        (load.field.memarg ToolbarState image_list (local.get $sw)))
                     (then (local.set $use_disabled_effect (i32.const 0))))))
               (if (i32.and
                     (i32.and
-                      (i32.ne (i32.load offset=32 (local.get $sw)) (i32.const 0))
+                      (i32.ne (load.field.memarg ToolbarState buttons_guest (local.get $sw)) (i32.const 0))
                       (i32.ne (local.get $rec) (i32.const 0)))
                     (i32.and
                       (i32.ge_s (i32.load (local.get $rec)) (i32.const 0))
@@ -10037,12 +10291,12 @@
   ;; +20 bk color, +24 text color, +28 max tip width, +32 autopop delay
   ;; +36 initial delay, +40 reshow delay, +44 margin l/t/r/b.
   (func $tooltip_item_ptr (param $sw i32) (param $idx i32) (result i32)
-    (i32.add (call $g2w (i32.load (local.get $sw)))
+    (i32.add (call $g2w (load.field TooltipState items_guest (local.get $sw)))
              (i32.mul (local.get $idx) (i32.const 48))))
 
   (func $tooltip_find_tool (param $sw i32) (param $tool_hwnd i32) (param $tool_id i32) (result i32)
     (local $i i32) (local $count i32) (local $rec i32)
-    (local.set $count (i32.load offset=4 (local.get $sw)))
+    (local.set $count (load.field.memarg TooltipState count (local.get $sw)))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
@@ -10057,7 +10311,7 @@
 
   (func $tooltip_hit_test (param $sw i32) (param $tool_hwnd i32) (param $x i32) (param $y i32) (result i32)
     (local $i i32) (local $count i32) (local $rec i32)
-    (local.set $count (i32.load offset=4 (local.get $sw)))
+    (local.set $count (load.field.memarg TooltipState count (local.get $sw)))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
@@ -10100,16 +10354,16 @@
         (call $zero_memory (local.get $sw) (i32.const 64))
         (local.set $items (call $heap_alloc (i32.mul (i32.const 4) (i32.const 48))))
         (call $zero_memory (call $g2w (local.get $items)) (i32.mul (i32.const 4) (i32.const 48)))
-        (i32.store (local.get $sw) (local.get $items))
-        (i32.store offset=8 (local.get $sw) (i32.const 4))
-        (i32.store offset=12 (local.get $sw) (i32.const 1))
-        (i32.store offset=16 (local.get $sw) (i32.const -1))
-        (i32.store offset=20 (local.get $sw) (i32.const 0x00FFFFE1))
-        (i32.store offset=24 (local.get $sw) (i32.const 0x00000000))
-        (i32.store offset=28 (local.get $sw) (i32.const -1))
-        (i32.store offset=32 (local.get $sw) (i32.const 5000))
-        (i32.store offset=36 (local.get $sw) (i32.const 500))
-        (i32.store offset=40 (local.get $sw) (i32.const 100))
+        (store.field TooltipState items_guest (local.get $sw) (local.get $items))
+        (store.field.memarg TooltipState capacity (local.get $sw) (i32.const 4))
+        (store.field.memarg TooltipState active (local.get $sw) (i32.const 1))
+        (store.field.memarg TooltipState current_index (local.get $sw) (i32.const -1))
+        (store.field.memarg TooltipState bk_color (local.get $sw) (i32.const 0x00FFFFE1))
+        (store.field.memarg TooltipState text_color (local.get $sw) (i32.const 0x00000000))
+        (store.field.memarg TooltipState max_tip_width (local.get $sw) (i32.const -1))
+        (store.field.memarg TooltipState autopop_delay (local.get $sw) (i32.const 5000))
+        (store.field.memarg TooltipState initial_delay (local.get $sw) (i32.const 500))
+        (store.field.memarg TooltipState reshow_delay (local.get $sw) (i32.const 100))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))))
     (local.set $sw (call $g2w (local.get $state)))
 
@@ -10118,7 +10372,7 @@
     ;; WM_DESTROY
     (if (i32.eq (local.get $msg) (i32.const 0x0002))
       (then
-        (call $heap_free (i32.load (local.get $sw)))
+        (call $heap_free (load.field TooltipState items_guest (local.get $sw)))
         (call $heap_free (local.get $state))
         (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))
         (return (i32.const 0))))
@@ -10126,27 +10380,27 @@
     ;; TTM_ACTIVATE
     (if (i32.eq (local.get $msg) (i32.const 0x0401))
       (then
-        (i32.store offset=12 (local.get $sw) (select (i32.const 1) (i32.const 0) (i32.ne (local.get $wParam) (i32.const 0))))
+        (store.field.memarg TooltipState active (local.get $sw) (select (i32.const 1) (i32.const 0) (i32.ne (local.get $wParam) (i32.const 0))))
         (return (i32.const 0))))
 
     ;; TTM_SETDELAYTIME / TTM_GETDELAYTIME
     (if (i32.eq (local.get $msg) (i32.const 0x0403))
       (then
-        (if (i32.eq (local.get $wParam) (i32.const 1)) (then (i32.store offset=40 (local.get $sw) (local.get $lParam))))
-        (if (i32.eq (local.get $wParam) (i32.const 2)) (then (i32.store offset=32 (local.get $sw) (local.get $lParam))))
-        (if (i32.eq (local.get $wParam) (i32.const 3)) (then (i32.store offset=36 (local.get $sw) (local.get $lParam))))
+        (if (i32.eq (local.get $wParam) (i32.const 1)) (then (store.field.memarg TooltipState reshow_delay (local.get $sw) (local.get $lParam))))
+        (if (i32.eq (local.get $wParam) (i32.const 2)) (then (store.field.memarg TooltipState autopop_delay (local.get $sw) (local.get $lParam))))
+        (if (i32.eq (local.get $wParam) (i32.const 3)) (then (store.field.memarg TooltipState initial_delay (local.get $sw) (local.get $lParam))))
         (if (i32.eq (local.get $wParam) (i32.const 0))
           (then
-            (i32.store offset=36 (local.get $sw) (local.get $lParam))
-            (i32.store offset=40 (local.get $sw) (i32.div_s (local.get $lParam) (i32.const 5)))
-            (i32.store offset=32 (local.get $sw) (i32.mul (local.get $lParam) (i32.const 10)))))
+            (store.field.memarg TooltipState initial_delay (local.get $sw) (local.get $lParam))
+            (store.field.memarg TooltipState reshow_delay (local.get $sw) (i32.div_s (local.get $lParam) (i32.const 5)))
+            (store.field.memarg TooltipState autopop_delay (local.get $sw) (i32.mul (local.get $lParam) (i32.const 10)))))
         (return (i32.const 0))))
     (if (i32.eq (local.get $msg) (i32.const 0x0415))
       (then
-        (if (i32.eq (local.get $wParam) (i32.const 1)) (then (return (i32.load offset=40 (local.get $sw)))))
-        (if (i32.eq (local.get $wParam) (i32.const 2)) (then (return (i32.load offset=32 (local.get $sw)))))
-        (if (i32.eq (local.get $wParam) (i32.const 3)) (then (return (i32.load offset=36 (local.get $sw)))))
-        (return (i32.load offset=36 (local.get $sw)))))
+        (if (i32.eq (local.get $wParam) (i32.const 1)) (then (return (load.field.memarg TooltipState reshow_delay (local.get $sw)))))
+        (if (i32.eq (local.get $wParam) (i32.const 2)) (then (return (load.field.memarg TooltipState autopop_delay (local.get $sw)))))
+        (if (i32.eq (local.get $wParam) (i32.const 3)) (then (return (load.field.memarg TooltipState initial_delay (local.get $sw)))))
+        (return (load.field.memarg TooltipState initial_delay (local.get $sw)))))
 
     ;; TTM_ADDTOOLA
     (if (i32.eq (local.get $msg) (i32.const 0x0404))
@@ -10159,20 +10413,20 @@
           (then
             (call $tooltip_copy_in (call $tooltip_item_ptr (local.get $sw) (local.get $idx)) (local.get $lParam))
             (return (i32.const 1))))
-        (local.set $count (i32.load offset=4 (local.get $sw)))
-        (local.set $cap (i32.load offset=8 (local.get $sw)))
+        (local.set $count (load.field.memarg TooltipState count (local.get $sw)))
+        (local.set $cap (load.field.memarg TooltipState capacity (local.get $sw)))
         (if (i32.ge_u (local.get $count) (local.get $cap))
           (then
             (local.set $new_items (call $heap_alloc (i32.mul (i32.mul (local.get $cap) (i32.const 2)) (i32.const 48))))
             (call $zero_memory (call $g2w (local.get $new_items)) (i32.mul (i32.mul (local.get $cap) (i32.const 2)) (i32.const 48)))
-            (call $memcpy (call $g2w (local.get $new_items)) (call $g2w (i32.load (local.get $sw))) (i32.mul (local.get $count) (i32.const 48)))
-            (call $heap_free (i32.load (local.get $sw)))
-            (i32.store (local.get $sw) (local.get $new_items))
-            (i32.store offset=8 (local.get $sw) (i32.mul (local.get $cap) (i32.const 2)))))
+            (call $memcpy (call $g2w (local.get $new_items)) (call $g2w (load.field TooltipState items_guest (local.get $sw))) (i32.mul (local.get $count) (i32.const 48)))
+            (call $heap_free (load.field TooltipState items_guest (local.get $sw)))
+            (store.field TooltipState items_guest (local.get $sw) (local.get $new_items))
+            (store.field.memarg TooltipState capacity (local.get $sw) (i32.mul (local.get $cap) (i32.const 2)))))
         (call $tooltip_copy_in (call $tooltip_item_ptr (local.get $sw) (local.get $count)) (local.get $lParam))
-        (i32.store offset=4 (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
-        (if (i32.lt_s (i32.load offset=16 (local.get $sw)) (i32.const 0))
-          (then (i32.store offset=16 (local.get $sw) (local.get $count))))
+        (store.field.memarg TooltipState count (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
+        (if (i32.lt_s (load.field.memarg TooltipState current_index (local.get $sw)) (i32.const 0))
+          (then (store.field.memarg TooltipState current_index (local.get $sw) (local.get $count))))
         (return (i32.const 1))))
 
     ;; TTM_DELTOOLA
@@ -10183,16 +10437,16 @@
         (local.set $idx (call $tooltip_find_tool (local.get $sw)
           (i32.load offset=8 (local.get $src)) (i32.load offset=12 (local.get $src))))
         (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (i32.const 0))))
-        (local.set $count (i32.load offset=4 (local.get $sw)))
+        (local.set $count (load.field.memarg TooltipState count (local.get $sw)))
         (local.set $rec (call $tooltip_item_ptr (local.get $sw) (local.get $idx)))
         (if (i32.lt_u (i32.add (local.get $idx) (i32.const 1)) (local.get $count))
           (then
             (call $memcpy (local.get $rec)
               (i32.add (local.get $rec) (i32.const 48))
               (i32.mul (i32.sub (i32.sub (local.get $count) (local.get $idx)) (i32.const 1)) (i32.const 48)))))
-        (i32.store offset=4 (local.get $sw) (i32.sub (local.get $count) (i32.const 1)))
-        (if (i32.ge_s (i32.load offset=16 (local.get $sw)) (i32.sub (local.get $count) (i32.const 1)))
-          (then (i32.store offset=16 (local.get $sw) (i32.sub (i32.load offset=4 (local.get $sw)) (i32.const 1)))))
+        (store.field.memarg TooltipState count (local.get $sw) (i32.sub (local.get $count) (i32.const 1)))
+        (if (i32.ge_s (load.field.memarg TooltipState current_index (local.get $sw)) (i32.sub (local.get $count) (i32.const 1)))
+          (then (store.field.memarg TooltipState current_index (local.get $sw) (i32.sub (load.field.memarg TooltipState count (local.get $sw)) (i32.const 1)))))
         (return (i32.const 1))))
 
     ;; TTM_NEWTOOLRECTA / TTM_SETTOOLINFOA / TTM_UPDATETIPTEXTA
@@ -10225,12 +10479,12 @@
           (then (local.set $idx (local.get $wParam)))
           (else
             (if (i32.eq (local.get $msg) (i32.const 0x040F))
-              (then (local.set $idx (i32.load offset=16 (local.get $sw))))
+              (then (local.set $idx (load.field.memarg TooltipState current_index (local.get $sw))))
               (else
                 (local.set $idx (call $tooltip_find_tool (local.get $sw)
                   (i32.load offset=8 (local.get $dst)) (i32.load offset=12 (local.get $dst))))))))
         (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
-                    (i32.ge_u (local.get $idx) (i32.load offset=4 (local.get $sw))))
+                    (i32.ge_u (local.get $idx) (load.field.memarg TooltipState count (local.get $sw))))
           (then (return (i32.const 0))))
         (call $memcpy (local.get $dst) (call $tooltip_item_ptr (local.get $sw) (local.get $idx)) (i32.const 48))
         (return (i32.const 1))))
@@ -10258,7 +10512,7 @@
 
     ;; TTM_GETTOOLCOUNT
     (if (i32.eq (local.get $msg) (i32.const 0x040D))
-      (then (return (i32.load offset=4 (local.get $sw)))))
+      (then (return (load.field.memarg TooltipState count (local.get $sw)))))
 
     ;; TTM_HITTESTA. TTHITTESTINFOA: hwnd(+0), pt(+4,+8), ti(+12).
     (if (i32.eq (local.get $msg) (i32.const 0x040A))
@@ -10281,15 +10535,15 @@
         (local.set $y (i32.shr_s (i32.load offset=12 (local.get $src)) (i32.const 16)))
         (local.set $idx (call $tooltip_hit_test (local.get $sw)
           (i32.load (local.get $src)) (local.get $x) (local.get $y)))
-        (i32.store offset=16 (local.get $sw) (local.get $idx))
+        (store.field.memarg TooltipState current_index (local.get $sw) (local.get $idx))
         (return (i32.const 0))))
 
     ;; TTM_WINDOWFROMPOINT: return current matched hwnd if available.
     (if (i32.eq (local.get $msg) (i32.const 0x0410))
       (then
-        (local.set $idx (i32.load offset=16 (local.get $sw)))
+        (local.set $idx (load.field.memarg TooltipState current_index (local.get $sw)))
         (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
-                    (i32.ge_u (local.get $idx) (i32.load offset=4 (local.get $sw))))
+                    (i32.ge_u (local.get $idx) (load.field.memarg TooltipState count (local.get $sw))))
           (then (return (i32.const 0))))
         (return (i32.load offset=8 (call $tooltip_item_ptr (local.get $sw) (local.get $idx))))))
 
@@ -10302,16 +10556,16 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0412)) (then (return (i32.const 0))))
 
     ;; Colors / max width / margin.
-    (if (i32.eq (local.get $msg) (i32.const 0x0413)) (then (i32.store offset=20 (local.get $sw) (local.get $wParam)) (return (i32.const 0))))
-    (if (i32.eq (local.get $msg) (i32.const 0x0414)) (then (i32.store offset=24 (local.get $sw) (local.get $wParam)) (return (i32.const 0))))
-    (if (i32.eq (local.get $msg) (i32.const 0x0416)) (then (return (i32.load offset=20 (local.get $sw)))))
-    (if (i32.eq (local.get $msg) (i32.const 0x0417)) (then (return (i32.load offset=24 (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0413)) (then (store.field.memarg TooltipState bk_color (local.get $sw) (local.get $wParam)) (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0414)) (then (store.field.memarg TooltipState text_color (local.get $sw) (local.get $wParam)) (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0416)) (then (return (load.field.memarg TooltipState bk_color (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0417)) (then (return (load.field.memarg TooltipState text_color (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x0418))
       (then
-        (local.set $old (i32.load offset=28 (local.get $sw)))
-        (i32.store offset=28 (local.get $sw) (local.get $lParam))
+        (local.set $old (load.field.memarg TooltipState max_tip_width (local.get $sw)))
+        (store.field.memarg TooltipState max_tip_width (local.get $sw) (local.get $lParam))
         (return (local.get $old))))
-    (if (i32.eq (local.get $msg) (i32.const 0x0419)) (then (return (i32.load offset=28 (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0419)) (then (return (load.field.memarg TooltipState max_tip_width (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x041A))
       (then
         (if (local.get $lParam) (then (call $memcpy (i32.add (local.get $sw) (i32.const 44)) (call $g2w (local.get $lParam)) (i32.const 16))))
@@ -12952,15 +13206,15 @@
         (local.set $total (call $edit_layout_build (local.get $state_w)
           (i32.add (local.get $hwnd) (i32.const 0x40000)) (local.get $w)))
         (local.set $line (call $edit_layout_line_for_char (local.get $total)
-          (i32.load offset=12 (local.get $state_w)))))
+          (load.field.memarg EditState cursor (local.get $state_w)))))
       (else
         (local.set $total (i32.add
           (call $edit_line_from_char (local.get $state_w)
-            (i32.load offset=4 (local.get $state_w)))
+            (load.field.memarg EditState text_len (local.get $state_w)))
           (i32.const 1)))
         (local.set $line (call $edit_line_from_char (local.get $state_w)
-          (i32.load offset=12 (local.get $state_w))))))
-    (local.set $top (i32.load offset=20 (local.get $state_w)))
+          (load.field.memarg EditState cursor (local.get $state_w))))))
+    (local.set $top (load.field.memarg EditState scroll_top (local.get $state_w)))
     (if (i32.lt_s (local.get $line) (local.get $top))
       (then (local.set $top (local.get $line))))
     (if (i32.ge_s (local.get $line) (i32.add (local.get $top) (local.get $visible)))
@@ -12972,9 +13226,9 @@
     (if (i32.lt_s (local.get $top) (i32.const 0)) (then (local.set $top (i32.const 0))))
     (call $edit_publish_scroll_info (local.get $hwnd)
       (local.get $top) (local.get $total) (local.get $visible))
-    (if (i32.eq (local.get $top) (i32.load offset=20 (local.get $state_w)))
+    (if (i32.eq (local.get $top) (load.field.memarg EditState scroll_top (local.get $state_w)))
       (then (return (i32.const 0))))
-    (i32.store offset=20 (local.get $state_w) (local.get $top))
+    (store.field.memarg EditState scroll_top (local.get $state_w) (local.get $top))
     (i32.const 1))
 
   ;; Publish the viewport into the window's scrollbar state, which is what an
@@ -13026,7 +13280,7 @@
         (i32.add (local.get $hwnd) (i32.const 0x40000)) (local.get $w))))
       (else (local.set $total (i32.add
         (call $edit_line_from_char (local.get $state_w)
-          (i32.load offset=4 (local.get $state_w)))
+          (load.field.memarg EditState text_len (local.get $state_w)))
         (i32.const 1)))))
     (if (i32.lt_s (local.get $total) (i32.const 1)) (then (local.set $total (i32.const 1))))
     (i32.or (i32.and (local.get $total) (i32.const 0xFFFF))
@@ -13043,9 +13297,9 @@
     (if (i32.lt_s (local.get $top) (i32.const 0)) (then (local.set $top (i32.const 0))))
     (call $edit_publish_scroll_info (local.get $hwnd)
       (local.get $top) (local.get $total) (local.get $visible))
-    (if (i32.eq (local.get $top) (i32.load offset=20 (local.get $state_w)))
+    (if (i32.eq (local.get $top) (load.field.memarg EditState scroll_top (local.get $state_w)))
       (then (return (i32.const 0))))
-    (i32.store offset=20 (local.get $state_w) (local.get $top))
+    (store.field.memarg EditState scroll_top (local.get $state_w) (local.get $top))
     (i32.const 1))
 
   ;; Drop-in for $invalidate_hwnd at the sites where the user moved the caret.
@@ -13061,8 +13315,8 @@
   ;; without knowing anything about this control.
   (func $edit_reset_caret_timer (param $hwnd i32) (param $state_w i32)
     (global.set $tick_count (call $host_get_ticks))
-    (i32.store offset=24 (local.get $state_w)
-      (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x20)))
+    (store.field.memarg EditState flags (local.get $state_w)
+      (i32.or (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x20)))
     (global.set $caret_hwnd (local.get $hwnd))
     (global.set $caret_w (i32.const 2))
     (global.set $caret_h (i32.const 15))
@@ -13072,8 +13326,8 @@
   ;; anywhere to land", which is what takes a phone's keyboard back down.
   (func $edit_stop_caret_timer (param $hwnd i32) (param $state_w i32)
     (drop (call $timer_kill (local.get $hwnd) (i32.const 0xCA47)))
-    (i32.store offset=24 (local.get $state_w)
-      (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFDF)))
+    (store.field.memarg EditState flags (local.get $state_w)
+      (i32.and (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0xFFFFFFDF)))
     (if (i32.eq (global.get $caret_hwnd) (local.get $hwnd))
       (then
         (global.set $caret_visible (i32.const 0))
@@ -13094,7 +13348,7 @@
   ;; Ensure EditState has capacity for at least $need_cap chars (excl NUL).
   (func $edit_ensure_cap (param $state_w i32) (param $need_cap i32)
     (local $cap i32) (local $new_cap i32) (local $old_buf i32) (local $new_buf i32) (local $len i32)
-    (local.set $cap (i32.load offset=8 (local.get $state_w)))
+    (local.set $cap (load.field.memarg EditState text_cap (local.get $state_w)))
     (if (i32.le_u (local.get $need_cap) (local.get $cap)) (then (return)))
     (local.set $new_cap (i32.shl (local.get $cap) (i32.const 1)))
     (if (i32.lt_u (local.get $new_cap) (local.get $need_cap))
@@ -13102,8 +13356,8 @@
     (if (i32.lt_u (local.get $new_cap) (i32.const 32))
       (then (local.set $new_cap (i32.const 32))))
     (local.set $new_buf (call $heap_alloc (i32.add (local.get $new_cap) (i32.const 1))))
-    (local.set $old_buf (i32.load (local.get $state_w)))
-    (local.set $len (i32.load offset=4 (local.get $state_w)))
+    (local.set $old_buf (load.field EditState text_buf_ptr (local.get $state_w)))
+    (local.set $len (load.field.memarg EditState text_len (local.get $state_w)))
     (if (local.get $old_buf)
       (then (if (local.get $len)
               (then (call $memcpy (call $g2w (local.get $new_buf))
@@ -13111,29 +13365,29 @@
                                   (local.get $len))))))
     (i32.store8 (i32.add (call $g2w (local.get $new_buf)) (local.get $len)) (i32.const 0))
     (if (local.get $old_buf) (then (call $heap_free (local.get $old_buf))))
-    (i32.store        (local.get $state_w) (local.get $new_buf))
-    (i32.store offset=8 (local.get $state_w) (local.get $new_cap))
+    (store.field EditState text_buf_ptr (local.get $state_w) (local.get $new_buf))
+    (store.field.memarg EditState text_cap (local.get $state_w) (local.get $new_cap))
   )
 
   (func $edit_sel_lo (param $state_w i32) (result i32)
     (local $a i32) (local $b i32)
-    (local.set $a (i32.load offset=12 (local.get $state_w)))
-    (local.set $b (i32.load offset=16 (local.get $state_w)))
+    (local.set $a (load.field.memarg EditState cursor (local.get $state_w)))
+    (local.set $b (load.field.memarg EditState sel_anchor (local.get $state_w)))
     (select (local.get $a) (local.get $b) (i32.lt_u (local.get $a) (local.get $b))))
 
   (func $edit_sel_hi (param $state_w i32) (result i32)
     (local $a i32) (local $b i32)
-    (local.set $a (i32.load offset=12 (local.get $state_w)))
-    (local.set $b (i32.load offset=16 (local.get $state_w)))
+    (local.set $a (load.field.memarg EditState cursor (local.get $state_w)))
+    (local.set $b (load.field.memarg EditState sel_anchor (local.get $state_w)))
     (select (local.get $a) (local.get $b) (i32.gt_u (local.get $a) (local.get $b))))
 
   ;; Delete characters in [lo..hi). Updates text_len, cursor, sel_anchor → lo.
   (func $edit_delete_range (param $state_w i32) (param $lo i32) (param $hi i32)
     (local $buf_w i32) (local $len i32) (local $tail i32)
     (if (i32.ge_u (local.get $lo) (local.get $hi)) (then (return)))
-    (local.set $len (i32.load offset=4 (local.get $state_w)))
+    (local.set $len (load.field.memarg EditState text_len (local.get $state_w)))
     (if (i32.gt_u (local.get $hi) (local.get $len)) (then (local.set $hi (local.get $len))))
-    (local.set $buf_w (call $g2w (i32.load (local.get $state_w))))
+    (local.set $buf_w (call $g2w (load.field EditState text_buf_ptr (local.get $state_w))))
     (local.set $tail (i32.sub (local.get $len) (local.get $hi)))
     (if (local.get $tail)
       (then (call $memcpy
@@ -13141,10 +13395,10 @@
               (i32.add (local.get $buf_w) (local.get $hi))
               (local.get $tail))))
     (local.set $len (i32.sub (local.get $len) (i32.sub (local.get $hi) (local.get $lo))))
-    (i32.store offset=4  (local.get $state_w) (local.get $len))
+    (store.field.memarg EditState text_len (local.get $state_w) (local.get $len))
     (i32.store8 (i32.add (local.get $buf_w) (local.get $len)) (i32.const 0))
-    (i32.store offset=12 (local.get $state_w) (local.get $lo))
-    (i32.store offset=16 (local.get $state_w) (local.get $lo))
+    (store.field.memarg EditState cursor (local.get $state_w) (local.get $lo))
+    (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $lo))
   )
 
   ;; Insert one byte at cursor (delete selection first).
@@ -13154,14 +13408,14 @@
     (local.set $hi (call $edit_sel_hi (local.get $state_w)))
     (if (i32.ne (local.get $lo) (local.get $hi))
       (then (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi))))
-    (local.set $len (i32.load offset=4 (local.get $state_w)))
-    (local.set $maxlen (i32.load offset=28 (local.get $state_w)))
+    (local.set $len (load.field.memarg EditState text_len (local.get $state_w)))
+    (local.set $maxlen (load.field.memarg EditState max_length (local.get $state_w)))
     (if (local.get $maxlen)
       (then (if (i32.ge_u (local.get $len) (local.get $maxlen))
               (then (return)))))
     (call $edit_ensure_cap (local.get $state_w) (i32.add (local.get $len) (i32.const 1)))
-    (local.set $cur (i32.load offset=12 (local.get $state_w)))
-    (local.set $buf_w (call $g2w (i32.load (local.get $state_w))))
+    (local.set $cur (load.field.memarg EditState cursor (local.get $state_w)))
+    (local.set $buf_w (call $g2w (load.field EditState text_buf_ptr (local.get $state_w))))
     (local.set $tail (i32.sub (local.get $len) (local.get $cur)))
     (if (local.get $tail)
       (then (call $edit_memmove_right
@@ -13170,9 +13424,9 @@
     (i32.store8 (i32.add (local.get $buf_w) (local.get $cur)) (local.get $ch))
     (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
     (local.set $len (i32.add (local.get $len) (i32.const 1)))
-    (i32.store offset=4  (local.get $state_w) (local.get $len))
-    (i32.store offset=12 (local.get $state_w) (local.get $cur))
-    (i32.store offset=16 (local.get $state_w) (local.get $cur))
+    (store.field.memarg EditState text_len (local.get $state_w) (local.get $len))
+    (store.field.memarg EditState cursor (local.get $state_w) (local.get $cur))
+    (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $cur))
     (i32.store8 (i32.add (local.get $buf_w) (local.get $len)) (i32.const 0))
   )
 
@@ -13186,8 +13440,8 @@
     (local.set $hi (call $edit_sel_hi (local.get $state_w)))
     (if (i32.ne (local.get $lo) (local.get $hi))
       (then (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi))))
-    (local.set $len (i32.load offset=4 (local.get $state_w)))
-    (local.set $maxlen (i32.load offset=28 (local.get $state_w)))
+    (local.set $len (load.field.memarg EditState text_len (local.get $state_w)))
+    (local.set $maxlen (load.field.memarg EditState max_length (local.get $state_w)))
     (if (local.get $maxlen)
       (then
         (local.set $room (i32.sub (local.get $maxlen) (local.get $len)))
@@ -13196,8 +13450,8 @@
           (then (local.set $n (local.get $room))))))
     (if (i32.eqz (local.get $n)) (then (return)))
     (call $edit_ensure_cap (local.get $state_w) (i32.add (local.get $len) (local.get $n)))
-    (local.set $cur (i32.load offset=12 (local.get $state_w)))
-    (local.set $buf_w (call $g2w (i32.load (local.get $state_w))))
+    (local.set $cur (load.field.memarg EditState cursor (local.get $state_w)))
+    (local.set $buf_w (call $g2w (load.field EditState text_buf_ptr (local.get $state_w))))
     ;; Shift tail right by $n bytes (reverse copy for overlap safety)
     (local.set $tail (i32.sub (local.get $len) (local.get $cur)))
     (if (local.get $tail)
@@ -13216,9 +13470,9 @@
       (local.get $n))
     (local.set $cur (i32.add (local.get $cur) (local.get $n)))
     (local.set $len (i32.add (local.get $len) (local.get $n)))
-    (i32.store offset=4  (local.get $state_w) (local.get $len))
-    (i32.store offset=12 (local.get $state_w) (local.get $cur))
-    (i32.store offset=16 (local.get $state_w) (local.get $cur))
+    (store.field.memarg EditState text_len (local.get $state_w) (local.get $len))
+    (store.field.memarg EditState cursor (local.get $state_w) (local.get $cur))
+    (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $cur))
     (i32.store8 (i32.add (local.get $buf_w) (local.get $len)) (i32.const 0))
   )
 
@@ -13230,7 +13484,7 @@
     (if (i32.ge_u (local.get $lo) (local.get $hi)) (then (return)))
     (local.set $len (i32.sub (local.get $hi) (local.get $lo)))
     (local.set $need (i32.add (local.get $len) (i32.const 1)))
-    (local.set $src_g (i32.load (local.get $state_w)))
+    (local.set $src_g (load.field EditState text_buf_ptr (local.get $state_w)))
     (if (i32.eqz (local.get $src_g)) (then (return)))
     ;; Grow capacity if needed (round up to multiple of 64).
     (if (i32.gt_u (local.get $need) (global.get $clipboard_cap))
@@ -13266,9 +13520,9 @@
   (func $edit_doc_width (param $state_w i32) (param $hdc i32) (result i32)
     (local $buf_g i32) (local $text_len i32) (local $pos i32) (local $len i32)
     (local $best_start i32) (local $best_len i32) (local $w i32)
-    (local.set $buf_g (i32.load (local.get $state_w)))
+    (local.set $buf_g (load.field EditState text_buf_ptr (local.get $state_w)))
     (if (i32.eqz (local.get $buf_g)) (then (return (i32.const 0))))
-    (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+    (local.set $text_len (load.field.memarg EditState text_len (local.get $state_w)))
     (local.set $pos (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.gt_u (local.get $pos) (local.get $text_len)))
@@ -13301,9 +13555,9 @@
   (func $edit_hscroll_to (param $state_w i32) (param $x i32) (param $max i32) (result i32)
     (if (i32.gt_s (local.get $x) (local.get $max)) (then (local.set $x (local.get $max))))
     (if (i32.lt_s (local.get $x) (i32.const 0)) (then (local.set $x (i32.const 0))))
-    (if (i32.eq (local.get $x) (i32.load offset=36 (local.get $state_w)))
+    (if (i32.eq (local.get $x) (load.field.memarg EditState scroll_x (local.get $state_w)))
       (then (return (i32.const 0))))
-    (i32.store offset=36 (local.get $state_w) (local.get $x))
+    (store.field.memarg EditState scroll_x (local.get $state_w) (local.get $x))
     (i32.const 1))
 
   (func $edit_xy_to_offset (param $state_w i32) (param $hdc i32) (param $x i32) (param $y i32) (result i32)
@@ -13311,19 +13565,19 @@
     (local $text_len i32) (local $buf_g i32) (local $line_w i32)
     (local $i i32) (local $w i32) (local $prev_w i32) (local $mid i32)
     (local $total_lines i32)
-    (local.set $text_len (i32.load offset=4 (local.get $state_w)))
-    (local.set $buf_g (i32.load (local.get $state_w)))
+    (local.set $text_len (load.field.memarg EditState text_len (local.get $state_w)))
+    (local.set $buf_g (load.field EditState text_buf_ptr (local.get $state_w)))
     (if (i32.eqz (local.get $buf_g)) (then (return (i32.const 0))))
     ;; Subtract 4px text margin, add the horizontal scroll offset so a click
     ;; lands on the character under the cursor rather than the one that would
     ;; be there if the view were scrolled home, clamp x>=0, y>=0.
     (local.set $x (i32.sub (local.get $x) (i32.const 4)))
-    (local.set $x (i32.add (local.get $x) (i32.load offset=36 (local.get $state_w))))
+    (local.set $x (i32.add (local.get $x) (load.field.memarg EditState scroll_x (local.get $state_w))))
     (if (i32.lt_s (local.get $x) (i32.const 0)) (then (local.set $x (i32.const 0))))
     (local.set $y (i32.sub (local.get $y) (i32.const 4)))
     (if (i32.lt_s (local.get $y) (i32.const 0)) (then (local.set $y (i32.const 0))))
     (local.set $line_num (i32.div_s (local.get $y) (i32.const 16)))
-    (local.set $line_num (i32.add (local.get $line_num) (i32.load offset=20 (local.get $state_w))))
+    (local.set $line_num (i32.add (local.get $line_num) (load.field.memarg EditState scroll_top (local.get $state_w))))
     ;; Clamp to last line: total_lines = edit_line_from_char(text_len) + 1
     (local.set $total_lines (i32.add
       (call $edit_line_from_char (local.get $state_w) (local.get $text_len))
@@ -13373,8 +13627,8 @@
     (local $candidate_len i32) (local $width i32)
     (local $last_space i32) (local $break_len i32) (local $next_start i32)
 
-    (local.set $buf_g (i32.load (local.get $state_w)))
-    (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+    (local.set $buf_g (load.field EditState text_buf_ptr (local.get $state_w)))
+    (local.set $text_len (load.field.memarg EditState text_len (local.get $state_w)))
     (if (i32.eqz (local.get $buf_g))
       (then
         (call $edit_layout_store (i32.const 0) (i32.const 0) (i32.const 0))
@@ -13478,12 +13732,12 @@
     (if (i32.lt_s (local.get $y) (i32.const 0)) (then (local.set $y (i32.const 0))))
     (local.set $line_num (i32.add
       (i32.div_s (local.get $y) (i32.const 16))
-      (i32.load offset=20 (local.get $state_w))))
+      (load.field.memarg EditState scroll_top (local.get $state_w))))
     (if (i32.ge_u (local.get $line_num) (local.get $line_count))
       (then (local.set $line_num (i32.sub (local.get $line_count) (i32.const 1)))))
     (local.set $line_start (call $edit_layout_start (local.get $line_num)))
     (local.set $line_len (call $edit_layout_len (local.get $line_num)))
-    (local.set $buf_w (call $g2w (i32.load (local.get $state_w))))
+    (local.set $buf_w (call $g2w (load.field EditState text_buf_ptr (local.get $state_w))))
     (local.set $prev_w (i32.const 0))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
@@ -13518,7 +13772,7 @@
 
   (func $edit_word_start (param $state_w i32) (param $pos i32) (result i32)
     (local $buf_w i32) (local $ch i32)
-    (local.set $buf_w (i32.load (local.get $state_w)))
+    (local.set $buf_w (load.field EditState text_buf_ptr (local.get $state_w)))
     (if (i32.eqz (local.get $buf_w)) (then (return (local.get $pos))))
     (local.set $buf_w (call $g2w (local.get $buf_w)))
     (block $done (loop $scan
@@ -13531,10 +13785,10 @@
 
   (func $edit_word_end (param $state_w i32) (param $pos i32) (result i32)
     (local $buf_w i32) (local $text_len i32) (local $ch i32)
-    (local.set $buf_w (i32.load (local.get $state_w)))
+    (local.set $buf_w (load.field EditState text_buf_ptr (local.get $state_w)))
     (if (i32.eqz (local.get $buf_w)) (then (return (local.get $pos))))
     (local.set $buf_w (call $g2w (local.get $buf_w)))
-    (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+    (local.set $text_len (load.field.memarg EditState text_len (local.get $state_w)))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $pos) (local.get $text_len)))
       (local.set $ch (i32.load8_u (i32.add (local.get $buf_w) (local.get $pos))))
@@ -13661,7 +13915,7 @@
     (local $hi i32) (local $lo i32)
     (call $edit_ensure_cap (local.get $state_w) (local.get $raw_len))
     (local.set $src (call $g2w (local.get $raw_g)))
-    (local.set $dst (call $g2w (i32.load (local.get $state_w))))
+    (local.set $dst (call $g2w (load.field EditState text_buf_ptr (local.get $state_w))))
     (if (i32.eqz (local.get $is_rtf))
       (then
         (if (local.get $raw_len)
@@ -13816,9 +14070,9 @@
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $scan)))))
     (i32.store8 (i32.add (local.get $dst) (local.get $out)) (i32.const 0))
-    (i32.store offset=4 (local.get $state_w) (local.get $out))
-    (i32.store offset=12 (local.get $state_w) (local.get $out))
-    (i32.store offset=16 (local.get $state_w) (local.get $out))
+    (store.field.memarg EditState text_len (local.get $state_w) (local.get $out))
+    (store.field.memarg EditState cursor (local.get $state_w) (local.get $out))
+    (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $out))
     (local.get $out))
 
   ;; Read a documented EDITSTREAM through its callback.  The 64K ceiling is
@@ -13896,23 +14150,23 @@
         ;; WS_HSCROLL edits (Notepad with Word Wrap off).
         (local.set $state (call $heap_alloc (i32.const 40)))
         (local.set $state_w (call $g2w (local.get $state)))
-        (i32.store         (local.get $state_w) (i32.const 0))
-        (i32.store offset=4  (local.get $state_w) (i32.const 0))
-        (i32.store offset=8  (local.get $state_w) (i32.const 0))
-        (i32.store offset=12 (local.get $state_w) (i32.const 0))
-        (i32.store offset=16 (local.get $state_w) (i32.const 0))
-        (i32.store offset=20 (local.get $state_w) (i32.const 0))
-        (i32.store offset=24 (local.get $state_w) (i32.const 0))
+        (store.field EditState text_buf_ptr (local.get $state_w) (i32.const 0))
+        (store.field.memarg EditState text_len (local.get $state_w) (i32.const 0))
+        (store.field.memarg EditState text_cap (local.get $state_w) (i32.const 0))
+        (store.field.memarg EditState cursor (local.get $state_w) (i32.const 0))
+        (store.field.memarg EditState sel_anchor (local.get $state_w) (i32.const 0))
+        (store.field.memarg EditState scroll_top (local.get $state_w) (i32.const 0))
+        (store.field.memarg EditState flags (local.get $state_w) (i32.const 0))
         ;; Plain EDIT keeps the existing unlimited internal default. Both
         ;; Win9x RichEdit generations start at the documented 32,767-character
         ;; input limit until the application explicitly changes it.
-        (i32.store offset=28 (local.get $state_w)
+        (store.field.memarg EditState max_length (local.get $state_w)
           (select (i32.const 32767) (i32.const 0)
             (i32.or
               (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 24))
               (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 25)))))
-        (i32.store offset=32 (local.get $state_w) (i32.const 0))
-        (i32.store offset=36 (local.get $state_w) (i32.const 0))
+        (store.field.memarg EditState font (local.get $state_w) (i32.const 0))
+        (store.field.memarg EditState scroll_x (local.get $state_w) (i32.const 0))
         ;; Copy initial text from CREATESTRUCT if provided (lParam may be 0
         ;; when WM_CREATE is delivered via pending_child_create from GetMessageA)
         (if (local.get $lParam)
@@ -13924,26 +14178,26 @@
                 (local.set $text_len (call $strlen (call $g2w (local.get $name_ptr))))
                 (call $edit_ensure_cap (local.get $state_w) (local.get $text_len))
                 (if (local.get $text_len)
-                  (then (call $memcpy (call $g2w (i32.load (local.get $state_w)))
+                  (then (call $memcpy (call $g2w (load.field EditState text_buf_ptr (local.get $state_w)))
                                       (call $g2w (local.get $name_ptr))
                                       (local.get $text_len))))
-                (i32.store offset=4  (local.get $state_w) (local.get $text_len))
-                (i32.store offset=12 (local.get $state_w) (local.get $text_len))
-                (i32.store offset=16 (local.get $state_w) (local.get $text_len))
-                (if (i32.load (local.get $state_w))
-                  (then (i32.store8 (i32.add (call $g2w (i32.load (local.get $state_w))) (local.get $text_len))
+                (store.field.memarg EditState text_len (local.get $state_w) (local.get $text_len))
+                (store.field.memarg EditState cursor (local.get $state_w) (local.get $text_len))
+                (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $text_len))
+                (if (load.field EditState text_buf_ptr (local.get $state_w))
+                  (then (i32.store8 (i32.add (call $g2w (load.field EditState text_buf_ptr (local.get $state_w))) (local.get $text_len))
                                     (i32.const 0))))))))
         ;; Set flags from window style: ES_MULTILINE(0x04)→bit0, ES_PASSWORD(0x20)→bit1, ES_READONLY(0x800)→bit2
         (local.set $flags (call $wnd_get_style (local.get $hwnd)))
         (if (i32.and (local.get $flags) (i32.const 0x04))
-          (then (i32.store offset=24 (local.get $state_w)
-            (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x01)))))
+          (then (store.field.memarg EditState flags (local.get $state_w)
+            (i32.or (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x01)))))
         (if (i32.and (local.get $flags) (i32.const 0x0020))
-          (then (i32.store offset=24 (local.get $state_w)
-            (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x02)))))
+          (then (store.field.memarg EditState flags (local.get $state_w)
+            (i32.or (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x02)))))
         (if (i32.and (local.get $flags) (i32.const 0x0800))
-          (then (i32.store offset=24 (local.get $state_w)
-            (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x04)))))
+          (then (store.field.memarg EditState flags (local.get $state_w)
+            (i32.or (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x04)))))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
         (return (i32.const 0))))
 
@@ -13972,8 +14226,8 @@
           (then
             (drop (call $timer_kill (local.get $hwnd) (i32.const 0xCA47)))
             (local.set $state_w (call $g2w (local.get $state)))
-            (if (i32.load (local.get $state_w))
-              (then (call $heap_free (i32.load (local.get $state_w)))))
+            (if (load.field EditState text_buf_ptr (local.get $state_w))
+              (then (call $heap_free (load.field EditState text_buf_ptr (local.get $state_w)))))
             (call $heap_free (local.get $state))
             (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
         (if (i32.eq (global.get $focus_hwnd) (local.get $hwnd))
@@ -14017,9 +14271,9 @@
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (i32.store offset=4  (local.get $state_w) (i32.const 0))
-        (i32.store offset=12 (local.get $state_w) (i32.const 0))
-        (i32.store offset=16 (local.get $state_w) (i32.const 0))
+        (store.field.memarg EditState text_len (local.get $state_w) (i32.const 0))
+        (store.field.memarg EditState cursor (local.get $state_w) (i32.const 0))
+        (store.field.memarg EditState sel_anchor (local.get $state_w) (i32.const 0))
         (if (local.get $lParam)
           (then
             (local.set $text_len
@@ -14032,19 +14286,19 @@
                 (if (call $wnd_unicode_get (local.get $hwnd))
                   (then
                     (drop (call $wide_to_ansi
-                      (local.get $lParam) (i32.load (local.get $state_w))
+                      (local.get $lParam) (load.field EditState text_buf_ptr (local.get $state_w))
                       (i32.add (local.get $text_len) (i32.const 1)))))
                   (else
-                    (call $memcpy (call $g2w (i32.load (local.get $state_w)))
+                    (call $memcpy (call $g2w (load.field EditState text_buf_ptr (local.get $state_w)))
                                   (call $g2w (local.get $lParam))
                                   (local.get $text_len))))))
-            (i32.store offset=4  (local.get $state_w) (local.get $text_len))
-            (i32.store offset=12 (local.get $state_w) (local.get $text_len))
-            (i32.store offset=16 (local.get $state_w) (local.get $text_len))
-            (if (i32.load (local.get $state_w))
-              (then (i32.store8 (i32.add (call $g2w (i32.load (local.get $state_w))) (local.get $text_len))
+            (store.field.memarg EditState text_len (local.get $state_w) (local.get $text_len))
+            (store.field.memarg EditState cursor (local.get $state_w) (local.get $text_len))
+            (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $text_len))
+            (if (load.field EditState text_buf_ptr (local.get $state_w))
+              (then (i32.store8 (i32.add (call $g2w (load.field EditState text_buf_ptr (local.get $state_w))) (local.get $text_len))
                                 (i32.const 0))))))
-        (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x08))
+        (if (i32.and (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x08))
           (then
             (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))))
         (call $edit_notify_change (local.get $hwnd))
@@ -14057,20 +14311,20 @@
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (if (i32.eqz (local.get $wParam)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        (local.set $text_len (load.field.memarg EditState text_len (local.get $state_w)))
         (if (i32.ge_u (local.get $text_len) (local.get $wParam))
           (then (local.set $text_len (i32.sub (local.get $wParam) (i32.const 1)))))
-        (if (i32.load (local.get $state_w))
+        (if (load.field EditState text_buf_ptr (local.get $state_w))
           (then
             (if (call $wnd_unicode_get (local.get $hwnd))
               (then
                 (drop (call $ansi_to_wide
-                  (i32.load (local.get $state_w)) (local.get $lParam)
+                  (load.field EditState text_buf_ptr (local.get $state_w)) (local.get $lParam)
                   (i32.add (local.get $text_len) (i32.const 1)))))
               (else
                 (if (local.get $text_len)
                   (then (call $memcpy (call $g2w (local.get $lParam))
-                                      (call $g2w (i32.load (local.get $state_w)))
+                                      (call $g2w (load.field EditState text_buf_ptr (local.get $state_w)))
                                       (local.get $text_len))))))))
         (if (call $wnd_unicode_get (local.get $hwnd))
           (then
@@ -14096,9 +14350,9 @@
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (i32.store offset=4  (local.get $state_w) (i32.const 0))
-        (i32.store offset=12 (local.get $state_w) (i32.const 0))
-        (i32.store offset=16 (local.get $state_w) (i32.const 0))
+        (store.field.memarg EditState text_len (local.get $state_w) (i32.const 0))
+        (store.field.memarg EditState cursor (local.get $state_w) (i32.const 0))
+        (store.field.memarg EditState sel_anchor (local.get $state_w) (i32.const 0))
         (local.set $text_len (call $edit_stream_read
           (local.get $state_w) (local.get $lParam) (local.get $wParam)))
         (call $invalidate_hwnd (local.get $hwnd))
@@ -14109,7 +14363,7 @@
               (i32.const 0) (i32.const 0)))
             (call $update_clear_hwnd (local.get $hwnd))
             (call $paint_flag_clear_hwnd (local.get $hwnd))))
-        (return (i32.load offset=4 (local.get $state_w)))))
+        (return (load.field.memarg EditState text_len (local.get $state_w)))))
 
     ;; ---------- WM_SETFOCUS (0x0007) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0007))
@@ -14118,8 +14372,8 @@
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
-            (i32.store offset=24 (local.get $state_w)
-              (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
+            (store.field.memarg EditState flags (local.get $state_w)
+              (i32.or (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x08)))
             (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))))
         (call $edit_notify (local.get $hwnd) (i32.const 0x0100)) ;; EN_SETFOCUS
         (call $invalidate_hwnd (local.get $hwnd))
@@ -14134,8 +14388,8 @@
           (then
             (local.set $state_w (call $g2w (local.get $state)))
             (call $edit_stop_caret_timer (local.get $hwnd) (local.get $state_w))
-            (i32.store offset=24 (local.get $state_w)
-              (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFF7)))))
+            (store.field.memarg EditState flags (local.get $state_w)
+              (i32.and (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0xFFFFFFF7)))))
         (call $edit_notify (local.get $hwnd) (i32.const 0x0200)) ;; EN_KILLFOCUS
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
@@ -14160,8 +14414,8 @@
         (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
         (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
           (then (local.set $max_scroll (i32.const 0))))
-        (if (i32.gt_s (i32.load offset=20 (local.get $state_w)) (local.get $max_scroll))
-          (then (i32.store offset=20 (local.get $state_w) (local.get $max_scroll))))
+        (if (i32.gt_s (load.field.memarg EditState scroll_top (local.get $state_w)) (local.get $max_scroll))
+          (then (store.field.memarg EditState scroll_top (local.get $state_w) (local.get $max_scroll))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
@@ -14177,7 +14431,7 @@
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04))
+        (if (i32.and (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x04))
           (then (return (i32.const 0))))
         ;; VK_BACK = 0x08 — backspace
         (if (i32.eq (local.get $wParam) (i32.const 0x08))
@@ -14198,11 +14452,11 @@
         ;; CR (0x0D) — Enter key: insert newline only for multiline edits (bit 0 of flags)
         (if (i32.eq (local.get $wParam) (i32.const 0x0D))
           (then
-            (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x01))
+            (if (i32.and (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x01))
               (then
                 (call $edit_insert_char (local.get $state_w) (i32.const 0x0A))
-                (i32.store offset=24 (local.get $state_w)
-                  (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
+                (store.field.memarg EditState flags (local.get $state_w)
+                  (i32.or (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x08)))
                 (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
                 (call $edit_notify_change (local.get $hwnd))
                 (call $edit_invalidate_caret (local.get $hwnd))))
@@ -14210,8 +14464,8 @@
         (if (i32.lt_u (local.get $wParam) (i32.const 0x20))
           (then (return (i32.const 0))))
         (call $edit_insert_char (local.get $state_w) (local.get $wParam))
-        (i32.store offset=24 (local.get $state_w)
-          (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
+        (store.field.memarg EditState flags (local.get $state_w)
+          (i32.or (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x08)))
         (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
         (call $edit_notify_change (local.get $hwnd))
         (call $edit_invalidate_caret (local.get $hwnd))
@@ -14228,8 +14482,8 @@
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
         (local.set $vk (local.get $wParam))
-        (local.set $cur (i32.load offset=12 (local.get $state_w)))
-        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        (local.set $cur (load.field.memarg EditState cursor (local.get $state_w)))
+        (local.set $text_len (load.field.memarg EditState text_len (local.get $state_w)))
         (local.set $a (call $edit_shift_down))
         (local.set $b (call $edit_ctrl_down))
         ;; ---- Ctrl combos ----
@@ -14238,8 +14492,8 @@
             ;; Ctrl+A (0x41) — select all
             (if (i32.eq (local.get $vk) (i32.const 0x41))
               (then
-                (i32.store offset=16 (local.get $state_w) (i32.const 0))
-                (i32.store offset=12 (local.get $state_w) (local.get $text_len))
+                (store.field.memarg EditState sel_anchor (local.get $state_w) (i32.const 0))
+                (store.field.memarg EditState cursor (local.get $state_w) (local.get $text_len))
                 (call $edit_invalidate_caret (local.get $hwnd))
                 (return (i32.const 0))))
             ;; Ctrl+C (0x43) — copy
@@ -14255,7 +14509,7 @@
                 (local.set $lo (call $edit_sel_lo (local.get $state_w)))
                 (local.set $hi (call $edit_sel_hi (local.get $state_w)))
                 (call $edit_copy_range (local.get $state_w) (local.get $lo) (local.get $hi))
-                (if (i32.eqz (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04)))
+                (if (i32.eqz (i32.and (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x04)))
                   (then
                     (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi))
                     (call $edit_notify_change (local.get $hwnd))
@@ -14264,7 +14518,7 @@
             ;; Ctrl+V (0x56) — paste
             (if (i32.eq (local.get $vk) (i32.const 0x56))
               (then
-                (if (i32.eqz (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04)))
+                (if (i32.eqz (i32.and (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x04)))
                   (then
                     (if (global.get $clipboard_len)
                       (then (call $edit_insert_bytes (local.get $state_w)
@@ -14281,9 +14535,9 @@
                   (then (local.set $cur (call $edit_word_start (local.get $state_w)
                           (i32.sub (local.get $cur) (i32.const 1)))))
                   (else (local.set $cur (i32.sub (local.get $cur) (i32.const 1)))))
-                (i32.store offset=12 (local.get $state_w) (local.get $cur))
+                (store.field.memarg EditState cursor (local.get $state_w) (local.get $cur))
                 (if (i32.eqz (local.get $a))
-                  (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
+                  (then (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $cur))))
                 (call $edit_invalidate_caret (local.get $hwnd))))
             (return (i32.const 0))))
         ;; VK_RIGHT 0x27
@@ -14295,9 +14549,9 @@
                   (then (local.set $cur (call $edit_word_end (local.get $state_w)
                           (i32.add (local.get $cur) (i32.const 1)))))
                   (else (local.set $cur (i32.add (local.get $cur) (i32.const 1)))))
-                (i32.store offset=12 (local.get $state_w) (local.get $cur))
+                (store.field.memarg EditState cursor (local.get $state_w) (local.get $cur))
                 (if (i32.eqz (local.get $a))
-                  (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
+                  (then (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $cur))))
                 (call $edit_invalidate_caret (local.get $hwnd))))
             (return (i32.const 0))))
         ;; VK_HOME 0x24 — start of line (or start of text with Ctrl)
@@ -14306,9 +14560,9 @@
             (if (local.get $b)
               (then (local.set $cur (i32.const 0)))
               (else (local.set $cur (call $edit_line_start (local.get $state_w) (local.get $cur)))))
-            (i32.store offset=12 (local.get $state_w) (local.get $cur))
+            (store.field.memarg EditState cursor (local.get $state_w) (local.get $cur))
             (if (i32.eqz (local.get $a))
-              (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
+              (then (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $cur))))
             (call $edit_invalidate_caret (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_END 0x23 — end of line (or end of text with Ctrl)
@@ -14320,16 +14574,16 @@
                 (local.set $lo (call $edit_line_start (local.get $state_w) (local.get $cur)))
                 (local.set $cur (i32.add (local.get $lo)
                   (call $edit_line_len (local.get $state_w) (local.get $lo))))))
-            (i32.store offset=12 (local.get $state_w) (local.get $cur))
+            (store.field.memarg EditState cursor (local.get $state_w) (local.get $cur))
             (if (i32.eqz (local.get $a))
-              (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
+              (then (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $cur))))
             (call $edit_invalidate_caret (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_BACK 0x08 — backspace. Browsers don't fire keypress for VK_BACK,
         ;; so WM_CHAR 0x08 never arrives for WAT-native edits; handle it here.
         (if (i32.eq (local.get $vk) (i32.const 0x08))
           (then
-            (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04))
+            (if (i32.and (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x04))
               (then (return (i32.const 0))))
             (local.set $lo (call $edit_sel_lo (local.get $state_w)))
             (local.set $hi (call $edit_sel_hi (local.get $state_w)))
@@ -14346,7 +14600,7 @@
         ;; VK_DELETE 0x2E
         (if (i32.eq (local.get $vk) (i32.const 0x2E))
           (then
-            (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04))
+            (if (i32.and (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x04))
               (then (return (i32.const 0))))
             (local.set $lo (call $edit_sel_lo (local.get $state_w)))
             (local.set $hi (call $edit_sel_hi (local.get $state_w)))
@@ -14376,9 +14630,9 @@
                 (if (i32.gt_u (local.get $hi) (local.get $px))
                   (then (local.set $hi (local.get $px))))
                 (local.set $cur (i32.add (local.get $lo) (local.get $hi)))
-                (i32.store offset=12 (local.get $state_w) (local.get $cur))
+                (store.field.memarg EditState cursor (local.get $state_w) (local.get $cur))
                 (if (i32.eqz (local.get $a))
-                  (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
+                  (then (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $cur))))
                 (call $edit_invalidate_caret (local.get $hwnd))))
             (return (i32.const 0))))
         ;; VK_DOWN 0x28
@@ -14399,9 +14653,9 @@
                 (if (i32.gt_u (local.get $hi) (local.get $px))
                   (then (local.set $hi (local.get $px))))
                 (local.set $cur (i32.add (local.get $lo) (local.get $hi)))
-                (i32.store offset=12 (local.get $state_w) (local.get $cur))
+                (store.field.memarg EditState cursor (local.get $state_w) (local.get $cur))
                 (if (i32.eqz (local.get $a))
-                  (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
+                  (then (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $cur))))
                 (call $edit_invalidate_caret (local.get $hwnd))))
             (return (i32.const 0))))
         (return (i32.const 0))))
@@ -14437,8 +14691,8 @@
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
         ;; Mark focused + drag-tracking bit 4 (0x10).
-        (i32.store offset=24 (local.get $state_w)
-          (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x18)))
+        (store.field.memarg EditState flags (local.get $state_w)
+          (i32.or (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x18)))
         (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
 	        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
 	        (local.set $w (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
@@ -14462,7 +14716,7 @@
 	              (then
 	                (local.set $max_hscroll (call $edit_max_hscroll
 	                  (local.get $state_w) (local.get $hdc) (local.get $line_buf_w)))
-	                (local.set $lo (i32.load offset=36 (local.get $state_w)))
+	                (local.set $lo (load.field.memarg EditState scroll_x (local.get $state_w)))
 	                (local.set $b (call $sb_page_hit_part
 	                  (local.get $line_buf_w) (local.get $w) (local.get $lo)
 	                  (i32.const 0)
@@ -14497,8 +14751,8 @@
 	                    (global.set $sb_pressed_hwnd (local.get $hwnd))
 	                    (global.set $sb_pressed_part (i32.const 6))))
 	                ;; Not the start of a text selection.
-	                (i32.store offset=24 (local.get $state_w)
-	                  (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFEF)))
+	                (store.field.memarg EditState flags (local.get $state_w)
+	                  (i32.and (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0xFFFFFFEF)))
 	                (call $invalidate_hwnd (local.get $hwnd))
 	                (return (i32.const 0))))))
 	        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
@@ -14521,7 +14775,7 @@
 	                (local.set $a (call $edit_view_metrics (local.get $hwnd) (local.get $state_w)))
 	                (local.set $total_lines (i32.and (local.get $a) (i32.const 0xFFFF)))
 	                (local.set $visible_lines (i32.shr_u (local.get $a) (i32.const 16)))
-	                (local.set $lo (i32.load offset=20 (local.get $state_w)))
+	                (local.set $lo (load.field.memarg EditState scroll_top (local.get $state_w)))
 	                (local.set $b (call $sb_page_hit_part
 	                  (local.get $line_y) (local.get $h) (local.get $lo)
 	                  (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
@@ -14555,8 +14809,8 @@
 	                ;; knows where the click landed, so clear it here or every
 	                ;; following WM_MOUSEMOVE extends a selection while the user
 	                ;; is only dragging the thumb.
-	                (i32.store offset=24 (local.get $state_w)
-	                  (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFEF)))
+	                (store.field.memarg EditState flags (local.get $state_w)
+	                  (i32.and (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0xFFFFFFEF)))
 	                (drop (call $wnd_send_message
 	                  (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
 	                (call $invalidate_hwnd (local.get $hwnd))
@@ -14576,13 +14830,13 @@
             ;; Double-click: select word spanning $cur
             (local.set $lo (call $edit_word_start (local.get $state_w) (local.get $cur)))
             (local.set $hi (call $edit_word_end (local.get $state_w) (local.get $cur)))
-            (i32.store offset=16 (local.get $state_w) (local.get $lo))
-            (i32.store offset=12 (local.get $state_w) (local.get $hi)))
+            (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $lo))
+            (store.field.memarg EditState cursor (local.get $state_w) (local.get $hi)))
           (else
-            (i32.store offset=12 (local.get $state_w) (local.get $cur))
+            (store.field.memarg EditState cursor (local.get $state_w) (local.get $cur))
             ;; Only collapse anchor when Shift is NOT held (extends existing selection).
             (if (i32.eqz (call $edit_shift_down))
-              (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))))
+              (then (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $cur))))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
@@ -14654,13 +14908,13 @@
 	              (local.get $total_lines) (local.get $visible_lines)))
 	            (call $invalidate_hwnd (local.get $hwnd))
 	            (return (i32.const 0))))
-	        (local.set $flags (i32.load offset=24 (local.get $state_w)))
+	        (local.set $flags (load.field.memarg EditState flags (local.get $state_w)))
         (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x10)))
           (then (return (i32.const 0))))
         (if (i32.eqz (i32.and (local.get $wParam) (i32.const 0x0001)))
           (then
             ;; Lost the button without a WM_LBUTTONUP — clear drag flag.
-            (i32.store offset=24 (local.get $state_w)
+            (store.field.memarg EditState flags (local.get $state_w)
               (i32.and (local.get $flags) (i32.const 0xFFFFFFEF)))
             (return (i32.const 0))))
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
@@ -14676,9 +14930,9 @@
           (else
             (local.set $cur (call $edit_xy_to_offset
               (local.get $state_w) (local.get $hdc) (local.get $w) (local.get $h)))))
-        (if (i32.ne (local.get $cur) (i32.load offset=12 (local.get $state_w)))
+        (if (i32.ne (local.get $cur) (load.field.memarg EditState cursor (local.get $state_w)))
           (then
-            (i32.store offset=12 (local.get $state_w) (local.get $cur))
+            (store.field.memarg EditState cursor (local.get $state_w) (local.get $cur))
             (call $invalidate_hwnd (local.get $hwnd))))
         (return (i32.const 0))))
 
@@ -14688,8 +14942,8 @@
 	        (if (local.get $state)
 	          (then
 	            (local.set $state_w (call $g2w (local.get $state)))
-	            (i32.store offset=24 (local.get $state_w)
-	              (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFEF)))))
+	            (store.field.memarg EditState flags (local.get $state_w)
+	              (i32.and (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0xFFFFFFEF)))))
 	        (if (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))
 	          (then
 	            (global.set $sb_pressed_hwnd (i32.const 0))
@@ -14751,18 +15005,18 @@
         ;; over, so its offset is forced home rather than left stale from
         ;; before the app turned word wrap on.
         (if (call $edit_wraps (local.get $hwnd))
-          (then (i32.store offset=36 (local.get $state_w) (i32.const 0))))
+          (then (store.field.memarg EditState scroll_x (local.get $state_w) (i32.const 0))))
         (local.set $tx (i32.sub (i32.const 4)
-          (i32.load offset=36 (local.get $state_w))))
+          (load.field.memarg EditState scroll_x (local.get $state_w))))
         ;; Use the font installed with WM_SETFONT, falling back to the default
         ;; GUI font. Paint relies on this when committing its text object into
         ;; the picture memory DC.
         (drop (call $host_gdi_select_object
           (local.get $hdc)
           (select
-            (i32.load offset=32 (local.get $state_w))
+            (load.field.memarg EditState font (local.get $state_w))
             (i32.const 0x30021)
-            (i32.ne (i32.load offset=32 (local.get $state_w)) (i32.const 0)))))
+            (i32.ne (load.field.memarg EditState font (local.get $state_w)) (i32.const 0)))))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
         ;; 1) White background (WHITE_BRUSH stock obj 0 = 0x30010)
         (drop (call $host_gdi_fill_rect (local.get $hdc)
@@ -14777,8 +15031,8 @@
         ;; 3) Text — draw line by line, splitting on \n. Each line is split
         ;; into up to three segments (pre-sel / sel / post-sel) so selected
         ;; text renders white-on-blue while unselected text stays black.
-        (local.set $buf (i32.load (local.get $state_w)))
-        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        (local.set $buf (load.field EditState text_buf_ptr (local.get $state_w)))
+        (local.set $text_len (load.field.memarg EditState text_len (local.get $state_w)))
         (local.set $sel_lo (call $edit_sel_lo (local.get $state_w)))
         (local.set $sel_hi (call $edit_sel_hi (local.get $state_w)))
         ;; Multiline edits with a vertical scrollbar and no ES_AUTOHSCROLL
@@ -14800,9 +15054,9 @@
             (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
             (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
               (then (local.set $max_scroll (i32.const 0))))
-            (if (i32.gt_s (i32.load offset=20 (local.get $state_w)) (local.get $max_scroll))
-              (then (i32.store offset=20 (local.get $state_w) (local.get $max_scroll))))
-            (local.set $lo (i32.load offset=20 (local.get $state_w)))
+            (if (i32.gt_s (load.field.memarg EditState scroll_top (local.get $state_w)) (local.get $max_scroll))
+              (then (store.field.memarg EditState scroll_top (local.get $state_w) (local.get $max_scroll))))
+            (local.set $lo (load.field.memarg EditState scroll_top (local.get $state_w)))
             (local.set $line_y (i32.const 4))
             (block $wrapped_done (loop $wrapped_loop
               (br_if $wrapped_done (i32.ge_u (local.get $lo) (local.get $total_lines)))
@@ -14872,14 +15126,14 @@
               (local.set $line_y (i32.add (local.get $line_y) (i32.const 16)))
               (br $wrapped_loop)))
 
-            (local.set $flags (i32.load offset=24 (local.get $state_w)))
+            (local.set $flags (load.field.memarg EditState flags (local.get $state_w)))
             (if (i32.eq
                   (i32.and (local.get $flags) (i32.const 0x28))
                   (i32.const 0x28))
               (then
-                (local.set $cur (i32.load offset=12 (local.get $state_w)))
+                (local.set $cur (load.field.memarg EditState cursor (local.get $state_w)))
                 (local.set $lo (call $edit_layout_line_for_char (local.get $total_lines) (local.get $cur)))
-                (local.set $a (i32.sub (local.get $lo) (i32.load offset=20 (local.get $state_w))))
+                (local.set $a (i32.sub (local.get $lo) (load.field.memarg EditState scroll_top (local.get $state_w))))
                 (local.set $hi (i32.mul (local.get $a) (i32.const 16)))
                 (local.set $px (i32.const 0))
                 (local.set $line_end (call $edit_layout_start (local.get $lo)))
@@ -14909,7 +15163,7 @@
                 (call $defwndproc_paint_standard_scrollbar (local.get $hdc)
                   (i32.sub (local.get $full_w) (i32.const 16)) (i32.const 0)
                   (i32.const 16) (local.get $h) (i32.const 1)
-                  (i32.load offset=20 (local.get $state_w))
+                  (load.field.memarg EditState scroll_top (local.get $state_w))
                   (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
                   (local.get $visible_lines)
                   (select (global.get $sb_pressed_part) (i32.const 0)
@@ -14930,7 +15184,7 @@
             ;; Start at the scroll_top line (multi-line scroll). scroll_top is
             ;; 0 for single-line and by default for multi-line.
             (local.set $lo (call $edit_line_index (local.get $state_w)
-                             (i32.load offset=20 (local.get $state_w))))
+                             (load.field.memarg EditState scroll_top (local.get $state_w))))
             (local.set $line_y (i32.const 4))
             (block $lines_done (loop $line_loop
               (br_if $lines_done (i32.gt_u (local.get $lo) (local.get $text_len)))
@@ -15005,18 +15259,18 @@
         ;; SetCaretPos, not a draw: the compositor paints and blinks the USER
         ;; caret, exactly as USER does for a real EDIT. Drawing it here as well
         ;; would put two carets in the control, on two blink clocks.
-        (local.set $flags (i32.load offset=24 (local.get $state_w)))
+        (local.set $flags (load.field.memarg EditState flags (local.get $state_w)))
         (if (i32.eq
               (i32.and (local.get $flags) (i32.const 0x08))
               (i32.const 0x08))
           (then
-            (local.set $cur (i32.load offset=12 (local.get $state_w)))
+            (local.set $cur (load.field.memarg EditState cursor (local.get $state_w)))
             ;; Find which line the cursor is on and the offset within that line.
             ;; Subtract scroll_top so the caret tracks the visible viewport.
             (local.set $lo (call $edit_line_start (local.get $state_w) (local.get $cur)))
             (local.set $a (i32.sub
                             (call $edit_line_from_char (local.get $state_w) (local.get $cur))
-                            (i32.load offset=20 (local.get $state_w))))
+                            (load.field.memarg EditState scroll_top (local.get $state_w))))
             (local.set $hi (i32.mul (local.get $a) (i32.const 16)))
             (local.set $px (i32.const 0))
             (if (i32.and (i32.ne (local.get $buf) (i32.const 0)) (i32.gt_u (local.get $cur) (local.get $lo)))
@@ -15060,7 +15314,7 @@
             (call $defwndproc_paint_standard_scrollbar (local.get $hdc)
               (i32.sub (local.get $full_w) (i32.const 16)) (i32.const 0)
               (i32.const 16) (local.get $h) (i32.const 1)
-              (i32.load offset=20 (local.get $state_w))
+              (load.field.memarg EditState scroll_top (local.get $state_w))
               (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
               (local.get $visible_lines)
               (select (global.get $sb_pressed_part) (i32.const 0)
@@ -15076,14 +15330,14 @@
             ;; Text shrinking (or the window growing) can leave the stored
             ;; offset past the new end of the document.
             (drop (call $edit_hscroll_to (local.get $state_w)
-              (i32.load offset=36 (local.get $state_w)) (local.get $max_hscroll)))
+              (load.field.memarg EditState scroll_x (local.get $state_w)) (local.get $max_hscroll)))
             ;; Same page model as the vertical strip, with pixels for units:
             ;; the document is max_hscroll + one visible width wide, and the
             ;; page is that visible width.
             (call $defwndproc_paint_standard_scrollbar (local.get $hdc)
               (i32.const 0) (i32.sub (local.get $full_h) (i32.const 16))
               (local.get $w) (i32.const 16) (i32.const 0)
-              (i32.load offset=36 (local.get $state_w))
+              (load.field.memarg EditState scroll_x (local.get $state_w))
               (i32.const 0)
               (i32.sub (i32.add (local.get $max_hscroll) (local.get $w)) (i32.const 1))
               (local.get $w)
@@ -15164,7 +15418,7 @@
         (if (i32.or (i32.eqz (local.get $state)) (i32.eqz (local.get $lParam)))
           (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        (local.set $text_len (load.field.memarg EditState text_len (local.get $state_w)))
         (local.set $lo (call $gl32 (local.get $lParam)))
         (local.set $hi (call $gl32 (i32.add (local.get $lParam) (i32.const 4))))
         (if (i32.eq (local.get $lo) (i32.const -1))
@@ -15175,8 +15429,8 @@
           (then (local.set $lo (local.get $text_len))))
         (if (i32.gt_u (local.get $hi) (local.get $text_len))
           (then (local.set $hi (local.get $text_len))))
-        (i32.store offset=16 (local.get $state_w) (local.get $lo))
-        (i32.store offset=12 (local.get $state_w) (local.get $hi))
+        (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $lo))
+        (store.field.memarg EditState cursor (local.get $state_w) (local.get $hi))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (local.get $hi))))
 
@@ -15212,7 +15466,7 @@
         (local.set $lo (call $edit_sel_lo (local.get $state_w)))
         (local.set $hi (call $edit_sel_hi (local.get $state_w)))
         (call $edit_copy_range (local.get $state_w) (local.get $lo) (local.get $hi))
-        (if (i32.eqz (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04)))
+        (if (i32.eqz (i32.and (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x04)))
           (then
             (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi))
             (call $edit_notify_change (local.get $hwnd))
@@ -15224,7 +15478,7 @@
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04))
+        (if (i32.and (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x04))
           (then (return (i32.const 0))))
         (if (global.get $clipboard_len)
           (then (call $edit_insert_bytes (local.get $state_w)
@@ -15238,7 +15492,7 @@
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (if (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0x04))
+        (if (i32.and (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x04))
           (then (return (i32.const 0))))
         (local.set $lo (call $edit_sel_lo (local.get $state_w)))
         (local.set $hi (call $edit_sel_hi (local.get $state_w)))
@@ -15254,7 +15508,7 @@
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        (local.set $text_len (load.field.memarg EditState text_len (local.get $state_w)))
         ;; wParam = start, lParam = end (-1 = end of text)
         (local.set $lo (local.get $wParam))
         (local.set $hi (local.get $lParam))
@@ -15262,8 +15516,8 @@
         ;; immediately before rendering the edit into its backing bitmap.
         (if (i32.eq (local.get $lo) (i32.const -1))
           (then
-            (i32.store offset=16 (local.get $state_w) (local.get $text_len))
-            (i32.store offset=12 (local.get $state_w) (local.get $text_len))
+            (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $text_len))
+            (store.field.memarg EditState cursor (local.get $state_w) (local.get $text_len))
             (call $invalidate_hwnd (local.get $hwnd))
             (return (i32.const 0))))
         (if (i32.eq (local.get $hi) (i32.const -1))
@@ -15272,8 +15526,8 @@
           (then (local.set $lo (local.get $text_len))))
         (if (i32.gt_u (local.get $hi) (local.get $text_len))
           (then (local.set $hi (local.get $text_len))))
-        (i32.store offset=16 (local.get $state_w) (local.get $lo))  ;; sel_anchor = start
-        (i32.store offset=12 (local.get $state_w) (local.get $hi))  ;; cursor = end
+        (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $lo))  ;; sel_anchor = start
+        (store.field.memarg EditState cursor (local.get $state_w) (local.get $hi))  ;; cursor = end
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
@@ -15297,8 +15551,8 @@
               (call $edit_insert_char (local.get $state_w) (local.get $vk))
               (local.set $buf (i32.add (local.get $buf) (i32.const 1)))
               (br $ins)))))
-        (i32.store offset=24 (local.get $state_w)
-          (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
+        (store.field.memarg EditState flags (local.get $state_w)
+          (i32.or (load.field.memarg EditState flags (local.get $state_w)) (i32.const 0x08)))
         (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
         (call $edit_notify_change (local.get $hwnd))
         (call $invalidate_hwnd (local.get $hwnd))
@@ -15312,7 +15566,7 @@
         (local.set $state_w (call $g2w (local.get $state)))
         (local.set $cur (local.get $wParam))
         (if (i32.eq (local.get $cur) (i32.const -1))
-          (then (local.set $cur (i32.load offset=12 (local.get $state_w)))))
+          (then (local.set $cur (load.field.memarg EditState cursor (local.get $state_w)))))
         (return (call $edit_line_from_char (local.get $state_w) (local.get $cur)))))
 
     ;; ---------- EM_LINEINDEX (0x00BB) ----------
@@ -15324,7 +15578,7 @@
         (local.set $lo (local.get $wParam))
         (if (i32.eq (local.get $lo) (i32.const -1))
           (then (local.set $lo (call $edit_line_from_char (local.get $state_w)
-                                 (i32.load offset=12 (local.get $state_w))))))
+                                 (load.field.memarg EditState cursor (local.get $state_w))))))
         (return (call $edit_line_index (local.get $state_w) (local.get $lo)))))
 
     ;; ---------- EM_GETLINECOUNT (0x00BA) ----------
@@ -15342,7 +15596,7 @@
                   (call $edit_view_metrics (local.get $hwnd) (local.get $state_w))
                   (i32.const 0xFFFF)))))
         (return (i32.add (call $edit_line_from_char (local.get $state_w)
-                           (i32.load offset=4 (local.get $state_w)))
+                           (load.field.memarg EditState text_len (local.get $state_w)))
                          (i32.const 1)))))
 
     ;; ---------- EM_LINELENGTH (0x00C1) ----------
@@ -15393,7 +15647,7 @@
         (local.set $b (i32.and (local.get $a) (i32.const 0xFFFF)))      ;; total lines
         (local.set $a (i32.shr_u (local.get $a) (i32.const 16)))        ;; visible lines
         (if (call $edit_scroll_to (local.get $hwnd) (local.get $state_w)
-              (i32.add (i32.load offset=20 (local.get $state_w)) (local.get $vk))
+              (i32.add (load.field.memarg EditState scroll_top (local.get $state_w)) (local.get $vk))
               (local.get $b) (local.get $a))
           (then (call $invalidate_hwnd (local.get $hwnd))))
         (return (i32.const 0))))
@@ -15406,7 +15660,7 @@
   ;; Find start of line containing char at $pos. Scans backward for \n.
   (func $edit_line_start (param $state_w i32) (param $pos i32) (result i32)
     (local $buf_w i32) (local $i i32)
-    (local.set $buf_w (i32.load (local.get $state_w)))
+    (local.set $buf_w (load.field EditState text_buf_ptr (local.get $state_w)))
     (if (i32.eqz (local.get $buf_w)) (then (return (i32.const 0))))
     (local.set $buf_w (call $g2w (local.get $buf_w)))
     (local.set $i (local.get $pos))
@@ -15422,10 +15676,10 @@
   ;; Length of line starting at $line_start (chars until \n or end of text).
   (func $edit_line_len (param $state_w i32) (param $line_start i32) (result i32)
     (local $buf_w i32) (local $text_len i32) (local $i i32)
-    (local.set $buf_w (i32.load (local.get $state_w)))
+    (local.set $buf_w (load.field EditState text_buf_ptr (local.get $state_w)))
     (if (i32.eqz (local.get $buf_w)) (then (return (i32.const 0))))
     (local.set $buf_w (call $g2w (local.get $buf_w)))
-    (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+    (local.set $text_len (load.field.memarg EditState text_len (local.get $state_w)))
     (local.set $i (local.get $line_start))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (local.get $text_len)))
@@ -15438,7 +15692,7 @@
   ;; Return 0-based line number containing char at $pos.
   (func $edit_line_from_char (param $state_w i32) (param $pos i32) (result i32)
     (local $buf_w i32) (local $i i32) (local $line i32)
-    (local.set $buf_w (i32.load (local.get $state_w)))
+    (local.set $buf_w (load.field EditState text_buf_ptr (local.get $state_w)))
     (if (i32.eqz (local.get $buf_w)) (then (return (i32.const 0))))
     (local.set $buf_w (call $g2w (local.get $buf_w)))
     (block $done (loop $scan
@@ -15452,10 +15706,10 @@
   ;; Return char index of the first character on line $line_num (0-based).
   (func $edit_line_index (param $state_w i32) (param $line_num i32) (result i32)
     (local $buf_w i32) (local $text_len i32) (local $i i32) (local $line i32)
-    (local.set $buf_w (i32.load (local.get $state_w)))
+    (local.set $buf_w (load.field EditState text_buf_ptr (local.get $state_w)))
     (if (i32.eqz (local.get $buf_w)) (then (return (i32.const 0))))
     (local.set $buf_w (call $g2w (local.get $buf_w)))
-    (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+    (local.set $text_len (load.field.memarg EditState text_len (local.get $state_w)))
     (if (i32.eqz (local.get $line_num)) (then (return (i32.const 0))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (local.get $text_len)))

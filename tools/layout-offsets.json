@@ -239,6 +239,1078 @@
         }
       ]
     },
+    "ButtonState": {
+      "file": "src/09c3-controls.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 72,
+      "fields": [
+        {
+          "name": "text_buf_ptr",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "text_len",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "flags",
+          "type": "i32",
+          "offset": 8,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "ctrl_id",
+          "type": "i32",
+          "offset": 12,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "drawitem",
+          "type": "i32",
+          "offset": 16,
+          "size": 48,
+          "count": 12,
+          "stride": 4
+        },
+        {
+          "name": "image_type",
+          "type": "i32",
+          "offset": 64,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "image_handle",
+          "type": "i32",
+          "offset": 68,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
+    "StaticState": {
+      "file": "src/09c3-controls.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 20,
+      "fields": [
+        {
+          "name": "text_buf_ptr",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "text_len",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "style",
+          "type": "i32",
+          "offset": 8,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "image_ord",
+          "type": "i32",
+          "offset": 12,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "font",
+          "type": "i32",
+          "offset": 16,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
+    "ProgressState": {
+      "file": "src/09c3-controls.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 16,
+      "fields": [
+        {
+          "name": "min",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "max",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "pos",
+          "type": "i32",
+          "offset": 8,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "step",
+          "type": "i32",
+          "offset": 12,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
+    "TrackBarState": {
+      "file": "src/09c3-controls.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 24,
+      "fields": [
+        {
+          "name": "min",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "max",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "pos",
+          "type": "i32",
+          "offset": 8,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "line",
+          "type": "i32",
+          "offset": 12,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "page",
+          "type": "i32",
+          "offset": 16,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "thumb_len",
+          "type": "i32",
+          "offset": 20,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
+    "ListBoxState": {
+      "file": "src/09c3-controls.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 56,
+      "fields": [
+        {
+          "name": "items_buf_ptr",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "items_used",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "items_cap",
+          "type": "i32",
+          "offset": 8,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "count",
+          "type": "i32",
+          "offset": 12,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "cur_sel",
+          "type": "i32",
+          "offset": 16,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "top_index",
+          "type": "i32",
+          "offset": 20,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "ctrl_id",
+          "type": "i32",
+          "offset": 24,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "drag_anchor_y",
+          "type": "i32",
+          "offset": 28,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "drag_anchor_top",
+          "type": "i32",
+          "offset": 32,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "data_buf_ptr",
+          "type": "i32",
+          "offset": 36,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "data_cap",
+          "type": "i32",
+          "offset": 40,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "sel_buf_ptr",
+          "type": "i32",
+          "offset": 44,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "sel_cap",
+          "type": "i32",
+          "offset": 48,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "item_h",
+          "type": "i32",
+          "offset": 52,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
+    "ComboBoxState": {
+      "file": "src/09c3-controls.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 44,
+      "fields": [
+        {
+          "name": "text_buf_ptr",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "text_len",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "style",
+          "type": "i32",
+          "offset": 8,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "ctrl_id",
+          "type": "i32",
+          "offset": 12,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "cur_sel",
+          "type": "i32",
+          "offset": 16,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "lb_hwnd",
+          "type": "i32",
+          "offset": 20,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "popup_hwnd",
+          "type": "i32",
+          "offset": 24,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "edit_hwnd",
+          "type": "i32",
+          "offset": 28,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "is_dropped",
+          "type": "i32",
+          "offset": 32,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "variant",
+          "type": "i32",
+          "offset": 36,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "suppress_edit_notify",
+          "type": "i32",
+          "offset": 40,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
+    "ListViewState": {
+      "file": "src/09c3-controls.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 80,
+      "fields": [
+        {
+          "name": "item_count",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "item_cap",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "item_cells_ptr",
+          "type": "i32",
+          "offset": 8,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "reserved_12",
+          "type": "i32",
+          "offset": 12,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "col_count",
+          "type": "i32",
+          "offset": 16,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "col_cap",
+          "type": "i32",
+          "offset": 20,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "col_widths_ptr",
+          "type": "i32",
+          "offset": 24,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "col_texts_ptr",
+          "type": "i32",
+          "offset": 28,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "selected_index",
+          "type": "i32",
+          "offset": 32,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "top_index",
+          "type": "i32",
+          "offset": 36,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "ctrl_id",
+          "type": "i32",
+          "offset": 40,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "extended_style",
+          "type": "i32",
+          "offset": 44,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "drag_anchor_y",
+          "type": "i32",
+          "offset": 48,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "drag_anchor_top",
+          "type": "i32",
+          "offset": 52,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "small_image_list",
+          "type": "i32",
+          "offset": 56,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "bk_color",
+          "type": "i32",
+          "offset": 60,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "text_color",
+          "type": "i32",
+          "offset": 64,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "text_bk_color",
+          "type": "i32",
+          "offset": 68,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "state_image_list",
+          "type": "i32",
+          "offset": 72,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "normal_image_list",
+          "type": "i32",
+          "offset": 76,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
+    "EditState": {
+      "file": "src/09c3-controls.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 40,
+      "fields": [
+        {
+          "name": "text_buf_ptr",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "text_len",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "text_cap",
+          "type": "i32",
+          "offset": 8,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "cursor",
+          "type": "i32",
+          "offset": 12,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "sel_anchor",
+          "type": "i32",
+          "offset": 16,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "scroll_top",
+          "type": "i32",
+          "offset": 20,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "flags",
+          "type": "i32",
+          "offset": 24,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "max_length",
+          "type": "i32",
+          "offset": 28,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "font",
+          "type": "i32",
+          "offset": 32,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "scroll_x",
+          "type": "i32",
+          "offset": 36,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
+    "ColorGridState": {
+      "file": "src/09c3-controls.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 8,
+      "fields": [
+        {
+          "name": "sel_idx",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "ctrl_id",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
+    "ColorSpectrumState": {
+      "file": "src/09c3-controls.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 12,
+      "fields": [
+        {
+          "name": "hue",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "sat",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "lum",
+          "type": "i32",
+          "offset": 8,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
+    "TooltipState": {
+      "file": "src/09c3-controls.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 64,
+      "fields": [
+        {
+          "name": "items_guest",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "count",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "capacity",
+          "type": "i32",
+          "offset": 8,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "active",
+          "type": "i32",
+          "offset": 12,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "current_index",
+          "type": "i32",
+          "offset": 16,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "bk_color",
+          "type": "i32",
+          "offset": 20,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "text_color",
+          "type": "i32",
+          "offset": 24,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "max_tip_width",
+          "type": "i32",
+          "offset": 28,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "autopop_delay",
+          "type": "i32",
+          "offset": 32,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "initial_delay",
+          "type": "i32",
+          "offset": 36,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "reshow_delay",
+          "type": "i32",
+          "offset": 40,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "margin",
+          "type": "i32",
+          "offset": 44,
+          "size": 16,
+          "count": 4,
+          "stride": 4
+        },
+        {
+          "name": "reserved_60",
+          "type": "i32",
+          "offset": 60,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
+    "TabNativeState": {
+      "file": "src/09c3-controls.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 128,
+      "fields": [
+        {
+          "name": "count",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "selected",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "labels",
+          "type": "u8",
+          "offset": 8,
+          "size": 120,
+          "count": 120,
+          "stride": 1
+        }
+      ]
+    },
+    "ControlTextState": {
+      "file": "src/09c3-controls.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 8,
+      "fields": [
+        {
+          "name": "text_buf_ptr",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "text_len",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
+    "ToolbarState": {
+      "file": "src/09c3-controls.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 80,
+      "fields": [
+        {
+          "name": "button_count",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "button_w",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "button_h",
+          "type": "i32",
+          "offset": 8,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "bitmap_w",
+          "type": "i32",
+          "offset": 12,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "bitmap_h",
+          "type": "i32",
+          "offset": 16,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "rows",
+          "type": "i32",
+          "offset": 20,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "tbutton_struct_size",
+          "type": "i32",
+          "offset": 24,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "bitmap_count",
+          "type": "i32",
+          "offset": 28,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "buttons_guest",
+          "type": "i32",
+          "offset": 32,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "capacity",
+          "type": "i32",
+          "offset": 36,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "pressed_index",
+          "type": "i32",
+          "offset": 40,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "hwnd",
+          "type": "i32",
+          "offset": 44,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "bitmap_handle",
+          "type": "i32",
+          "offset": 48,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "image_list",
+          "type": "i32",
+          "offset": 52,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "hot_image_list",
+          "type": "i32",
+          "offset": 56,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "disabled_image_list",
+          "type": "i32",
+          "offset": 60,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "style",
+          "type": "i32",
+          "offset": 64,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "extended_style",
+          "type": "i32",
+          "offset": 68,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "padding_packed",
+          "type": "i32",
+          "offset": 72,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "hot_index",
+          "type": "i32",
+          "offset": 76,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
     "VSock": {
       "file": "src/09d-winsock.wat",
       "frozen": null,

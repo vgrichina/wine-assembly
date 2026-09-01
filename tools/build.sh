@@ -260,6 +260,33 @@ node tools/layout-migrate.js "${WND_LAYOUT_ARGS[@]}" --gate > /dev/null || {
 # +4 site. A gate that cannot fail is not a gate.
 node tools/gdi-variant-gate.js > /dev/null || { node tools/gdi-variant-gate.js; exit 1; }
 
+# ControlState — the per-window control state behind WND_RECORDS.state_ptr, and
+# the SECOND union in the tree. It is a harder union than GdiObject: it has no
+# shared prefix (even +0 disagrees), no shared size (8..128 bytes) and no
+# in-record discriminant at all — the tag is CONTROL_TABLE.class and, in
+# practice, which wndproc ran the heap_alloc. So it is declared as 13 variant
+# layouts plus ONE partial view (ControlTextState, over the exactly four classes
+# that agree on text_buf_ptr@0 / text_len@4 — the GdiPenBrush precedent), and
+# there is deliberately no `ControlStateAny`: there is nothing true to put in it.
+#
+# All 541 sites are converted, so like the GDI gate this both ATTRIBUTES and
+# REFUSES RAW, and it is its own tool for the same reason: a union has no single
+# layout to point a layout-migrate --gate line at. It does four things:
+#
+#   * REFUSE RAW, in BOTH spellings — `(i32.add (local.get $sw) (i32.const N))`
+#     and `offset=N (local.get $sw)`, over $sw and $state_w.
+#   * every converted site must be ATTRIBUTED to a variant by its enclosing
+#     function, and must spell the variant that attribution names.
+#   * NO DEAD ATTRIBUTION: an entry naming a function that no longer has a site
+#     fails, because it reads as coverage it no longer has.
+#   * each variant's declared size must match the allocation that pins it, so a
+#     field added without moving the heap_alloc is caught.
+#
+# Verified to exit 1 on each of four plants: a raw memarg site, the same site in
+# the add form, a ButtonState field respelled ListBoxState, and a converted site
+# added to an unattributed function. A gate that cannot fail is not a gate.
+node tools/control-variant-gate.js > /dev/null || { node tools/control-variant-gate.js; exit 1; }
+
 # TthPoint (the first MEMARG wave) — the 28-byte hinted-point record. --memarg
 # is what makes this family convertible at all: 53 of its 72 sites spell the
 # offset in the instruction, and those lower through `load.field.memarg`, a
