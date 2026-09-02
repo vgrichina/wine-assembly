@@ -118,11 +118,17 @@ function declarationSites() {
     const text = fs.readFileSync(path.join(SRCDIR, f), 'utf8');
     const lines = text.split('\n');
     for (let i = 0; i < lines.length; i++) {
-      const m = /^\s*\(layout\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(lines[i]);
+      // Four heads declare a layout now: (layout ...), the (layout-union ...)
+      // whose name is its own prefix layout, each (variant ...) inside one, and
+      // a (view ...). All four land in this table as ordinary layouts, so all
+      // four have a declaration site — without the last three, every variant
+      // reports "(unknown)" and the freshness gate reads it as a layout that
+      // moved out of the tree.
+      const m = /^\s*\((layout|layout-union|variant|view)\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(lines[i]);
       if (!m) continue;
-      if (/;;/.test(lines[i].slice(0, m.index + lines[i].indexOf('(layout')))) continue;
-      if (sites.has(m[1])) continue;
-      sites.set(m[1], { file: `src/${f}`, line: i + 1, frozen: frozenMarkerAbove(lines, i) });
+      if (/;;/.test(lines[i].slice(0, lines[i].indexOf('(' + m[1])))) continue;
+      if (sites.has(m[2])) continue;
+      sites.set(m[2], { file: `src/${f}`, line: i + 1, frozen: frozenMarkerAbove(lines, i) });
     }
   }
   return sites;
@@ -172,6 +178,12 @@ function currentModel() {
   const sites = declarationSites();
   const layouts = {};
   for (const l of lowered) {
+    // lowerIR emits more record kinds than layouts now: (enum ...),
+    // (layout-union ...) and (view ...) each lower to a record of their own
+    // alongside the ordinary layouts they produce. Only layouts have fields at
+    // offsets, which is all this table is about — a union's variants ARE
+    // ordinary layouts and appear here on their own.
+    if (l.type !== 'layout-lowered') continue;
     const site = sites.get(l.name) || { file: '(unknown)', line: 0, frozen: null };
     layouts[l.name] = {
       file: site.file,

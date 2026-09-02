@@ -518,7 +518,7 @@ and reading two fields as one. See §10's wave-4 notes for why +8/+20/+24 are
 > is now fixed rather than merely diagnosed. `src/10d-gdi-region-path.wat`
 > declares **seven variant layouts** — `GdiPen`, `GdiBrush`, `GdiPenBrush`,
 > `GdiBitmap`, `GdiFont`, `GdiPalette`, `GdiMetafile` — each exactly 48 bytes,
-> all agreeing on `handle@0` / `type@4`. `tools/gdi-variant-gate.js` attributes
+> all agreeing on `handle@0` / `type@4`. `tools/union-gate.js` attributes
 > every one of the 160 sites to a variant and checks the attribution against the
 > source. **Zero sites converted, and the build is byte-identical** — blocker 1
 > is untouched, so conversion still waits on §3.4(b). See §5.4.1.
@@ -712,7 +712,7 @@ object handle would be read as a bitmap.
 
 ### 5.4.2 What a variant gate has to check that byte identity would not
 
-Byte identity is unavailable here (blocker 1), so `tools/gdi-variant-gate.js`
+Byte identity is unavailable here (blocker 1), so `tools/union-gate.js`
 plays its role. Three of its four checks are the obvious ones — every site is
 attributed, the offset is a **named, non-reserved** field of that variant, and
 every variant is `$GDI_OBJECT_STRIDE` bytes with `handle@0`/`type@4`.
@@ -988,7 +988,7 @@ back non-empty.
 | Layout has implicit padding expectations | none — the lowering inserts **no** padding | (documented; do not add padding without changing every consumer) |
 | A store site converted before wave 0 | **build fails** — `WebAssembly.validate` rejects the module | the build itself, loudly. This one is safe |
 | The base call takes **no arguments** | the codemod converts **nothing** and says so quietly: `base locals verified in 0 function(s)`, which reads like "this family has no convertible sites" | nothing did — `$paint_scratch_take` looked unconvertible for a whole wave. Both matchers keyed on `(call $fn ` *with a trailing space*, which a zero-arg call never has. Fixed in `callsBase()`; if a family reports 0 against files you can see sites in, check the accessor's arity first |
-| A gate keyed on **source line numbers** | declaring a layout at the top of a file shifts every site below it, and the gate fails `NOT ATTRIBUTED` on code nobody touched | the gate itself, loudly — it cannot mis-attribute, only lose attribution. `tools/gdi-variant-gate.js`'s `BY_SITE` is the one that does this (10e/10f/10g). Renumber after checking each site still matches its comment; **never** delete the entry to make the build pass |
+| A gate keyed on **source line numbers** | declaring a layout at the top of a file shifts every site below it, and the gate fails `NOT ATTRIBUTED` on code nobody touched | the gate itself, loudly — it cannot mis-attribute, only lose attribution. `tools/union-gate.js`'s `BY_SITE` is the one that does this (10e/10f/10g). Renumber after checking each site still matches its comment; **never** delete the entry to make the build pass |
 | A 16-bit field "converted" by widening it to i32 | reads two fields as one; silent | §3.1 — untypeable sites stay hand-spelled; the census counts them per family |
 | memarg site converted inside a byte-identity wave | shasum differs | §6.3 |
 | A frozen ABI layout reordered "for tidiness" | every guest app breaks at once | §7 frozen marker + `--check` treating it as an error |
@@ -1042,7 +1042,7 @@ back non-empty.
   **0 of 160 sites converted**, because all 160 are memarg-spelled and
   `load.field` lowers to the add form. `build/wine-assembly.wasm` is
   **byte-identical** across the wave — `25961751…` — so the declarations and the
-  gate cost nothing and risk nothing. `tools/gdi-variant-gate.js` attributes all
+  gate cost nothing and risk nothing. `tools/union-gate.js` attributes all
   160 sites and is wired into `build.sh`; verified to fail the build (exit 1) on
   a planted mis-attribution. When §3.4(b) lands, this family converts in one
   byte-identical pass with its typing already proven.

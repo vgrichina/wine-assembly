@@ -3263,7 +3263,7 @@
     (i32.const 0))
 
   (func $dialog_first_default_button (param $dlg i32) (result i32)
-    (local $slot i32) (local $ch i32) (local $st i32) (local $state i32)
+    (local $slot i32) (local $ch i32) (local $st i32) (local $state ptr<ButtonState>)
     (local.set $slot (i32.const 0))
     (block $done (loop $scan
       (local.set $slot (call $wnd_next_child_slot (local.get $dlg) (local.get $slot)))
@@ -3276,8 +3276,8 @@
           (local.set $st (call $wnd_get_state_ptr (local.get $ch)))
           (if (local.get $st)
             (then
-              (local.set $state (call $g2w (local.get $st)))
-              (if (i32.and (i32.load offset=8 (local.get $state)) (i32.const 0x04))
+              (local.set $state (cast ptr<ButtonState> (call $g2w (local.get $st))))
+              (if (i32.and (load.field ButtonState flags (local.get $state)) (i32.const 0x04))
                 (then (return (local.get $ch))))))
           (if (i32.eq (i32.and (call $wnd_get_style (local.get $ch)) (i32.const 0x0F)) (i32.const 1))
             (then (return (local.get $ch))))))

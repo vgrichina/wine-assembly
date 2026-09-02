@@ -73,6 +73,40 @@ function fileState(vfs) {
 
 // ------------------------------------------------------------ export/import
 
+function testProviderResidency() {
+  const vfs = seedVfs();
+  let reads = 0;
+  const provider = {
+    size: 4,
+    readRange(off, len) {
+      reads++;
+      return Promise.resolve(Uint8Array.from([0xc0, 0xff, 0xee, 0x00]).subarray(off, off + len));
+    },
+  };
+  const entry = vfs.setProviderFile('C:\\Save\\FROM_CD.sav', { provider });
+  const cache = entry._provider;
+
+  const untouched = saveBundle.exportBundle({
+    appId: APP_ID, vfs, patterns: PATTERNS, createdAt: CREATED, commit: 'deadbeef',
+  });
+  const first = saveBundle.readBundle(untouched);
+  ok(!first.files.some(file => file.path === 'c:\\save\\from_cd.sav'),
+    'an unresident provider-backed glob match is skipped');
+  eq(reads, 0, 'save export does not fetch mounted content');
+  ok(entry._provider === cache, 'save export leaves provider residency unchanged');
+
+  // The VFS data setter is its copy-on-write boundary. Once a guest write has
+  // replaced the provider, the same path is state and must no longer be
+  // skipped merely because its property is still implemented by an accessor.
+  entry.data = Uint8Array.from([7, 6, 5, 4]);
+  const written = saveBundle.readBundle(saveBundle.exportBundle({
+    appId: APP_ID, vfs, patterns: PATTERNS, createdAt: CREATED, commit: 'deadbeef',
+  }));
+  const saved = written.files.find(file => file.path === 'c:\\save\\from_cd.sav');
+  ok(!!saved, 'a provider path becomes bundlable after copy-on-write');
+  eq(Array.from(saved.data), [7, 6, 5, 4], 'the guest-written bytes are bundled');
+}
+
 function testExportShape() {
   const vfs = seedVfs();
   storage.setRegValue('HKCU\\Software\\Test\\Saves', 'Slot', 4, 7);
@@ -484,6 +518,7 @@ function testCli(exported) {
 }
 
 async function main() {
+  testProviderResidency();
   const exported = testExportShape();
   testRoundTrip(exported);
   testMergeMode(exported);

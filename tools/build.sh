@@ -233,15 +233,21 @@ node tools/layout-migrate.js "${WND_LAYOUT_ARGS[@]}" --gate > /dev/null || {
   node tools/layout-migrate.js "${WND_LAYOUT_ARGS[@]}" --gate; exit 1; }
 
 # GdiObject (wave 5) — the 48-byte GDI object record, which is a DISCRIMINATED
-# UNION and so gets SEVEN variant layouts rather than one, plus GdiObjectAny for
-# the handle@0 / type@4 prefix they all share. All eight are 48 bytes, so
-# (size-of ...) pins the table stride whichever one a site reaches for.
+# UNION and is now DECLARED as one: a single (layout-union GdiObject) with a
+# shared (prefix handle type), six variants and (tag type GdiType). That moved
+# three of this gate's old checks out of it entirely, because the compiler can
+# no longer emit their violation: a variant that disagrees about the prefix (it
+# is written once), variants of differing size (padded to the widest, so
+# (size-of ...) pins the table stride whichever one a site reaches for), and a
+# union site reading above the prefix (an unknown-field compile error that names
+# the owning variant and the cast that would reach it).
 #
-# All 160 sites are CONVERTED now (the .memarg lowering of 009f35de is what made
-# that possible), so this gate does ATTRIBUTE **AND** REFUSE-RAW, like the other
-# nine — but it is not a layout-migrate --gate line, because a union has no
-# single layout to point one at. It is its own tool for that reason, and it does
-# four things a --gate line cannot:
+# What no compiler can decide is WHICH VARIANT a site holds, and that is what
+# survives here. All 160 sites are CONVERTED (the .memarg lowering of 009f35de
+# is what made that possible), so this gate does ATTRIBUTE **AND** REFUSE-RAW,
+# like the other nine — but it is not a layout-migrate --gate line, because a
+# union has no single layout to point one at. It is its own tool for that
+# reason, and it does four things a --gate line cannot:
 #
 #   * REFUSE RAW: struct-offset-census.js must find NO hand-spelled offset
 #     arithmetic left against `call $gdi_object_record`. Anything it does find
@@ -249,16 +255,21 @@ node tools/layout-migrate.js "${WND_LAYOUT_ARGS[@]}" --gate > /dev/null || {
 #   * every site must spell the variant its ATTRIBUTION names — the wrong-layout
 #     check (§6.2), which only became possible once the sites named a layout at
 #     all. A bitmap's +24 read as a font's strike compiles perfectly.
-#   * a +0/+4 site must spell GdiObjectAny, and nothing else may: those sites
-#     have not decided a type yet (they are usually the read that decides), and
-#     naming one of the seven there claims one they do not have.
-#   * the attribution must not contradict the function's own +4 discriminant
-#     guard, harvested from the source in BOTH spellings.
+#   * a prefix site must spell GdiObject, and nothing else may: those sites have
+#     not decided a type yet (they are usually the read that decides), and
+#     naming one of the six there claims one they do not have.
+#   * the attribution must not contradict the function's own discriminant guard,
+#     harvested from the source in BOTH spellings and compared against the tag
+#     values THE COMPILER LOWERED from the (enum GdiType ...) — the old gate
+#     carried a hand-copied variant->type map here, which is one more table that
+#     could drift away from the declaration it describes.
 #
-# Verified to exit 1 on each of the four: a planted raw site, a bitmap field
-# spelled GdiFont, GdiObjectAny used above the prefix, and a variant named at a
-# +4 site. A gate that cannot fail is not a gate.
-node tools/gdi-variant-gate.js > /dev/null || { node tools/gdi-variant-gate.js; exit 1; }
+# It replaces tools/gdi-variant-gate.js, and reports the identical census on the
+# identical tree: 160 sites, 24 prefix, 136 attributed, 23 cross-checked against
+# a tag guard, 26 per-arm. Verified to exit 1 on each of six planted failures by
+# test/test-union-gate.js, which plants into a COPY of src/ (`--src=DIR`) rather
+# than the shared tree. A gate that cannot fail is not a gate.
+node tools/union-gate.js > /dev/null || { node tools/union-gate.js; exit 1; }
 
 # ControlState — the per-window control state behind WND_RECORDS.state_ptr, and
 # the SECOND union in the tree. It is a harder union than GdiObject: it has no

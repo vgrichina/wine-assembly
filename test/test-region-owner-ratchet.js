@@ -54,26 +54,42 @@ const stale = ownerVerdict({ name: sample.name, owner: '"00-regions.wat:1"' });
 check(stale.state === 'stale', `a wrong line is caught (got ${stale.state})`);
 check(/does not mention/.test(stale.why || ''), 'and the message says why');
 
-// 4. An owner naming a file that does not exist is stale, not a crash.
+// 4. A near miss is stale too. This is the regression shape that justified
+//    exact matching: the former +/-3 window accepted an owner after a nearby
+//    edit shifted its real use by one line. Derive an adjacent line from the
+//    live fixture, and first prove that line does not itself repeat the name.
+const adjacentLine = selfLine < regionsLines.length ? selfLine + 1 : selfLine - 1;
+check(!(regionsLines[adjacentLine - 1] || '').includes(sample.name),
+  'the adjacent-line fixture does not itself mention the region');
+const adjacent = ownerVerdict({
+  name: sample.name,
+  owner: `"00-regions.wat:${adjacentLine}"`,
+});
+check(adjacent.state === 'stale',
+  `an owner one line beside its real use is stale (got ${adjacent.state})`);
+check((adjacent.why || '').includes(`actual line is 00-regions.wat:${selfLine}`),
+  'the near-miss diagnostic names the exact corrected line');
+
+// 5. An owner naming a file that does not exist is stale, not a crash.
 check(ownerVerdict({ name: 'X', owner: '"no-such-file.wat:1"' }).state === 'stale',
   'a vanished owner file is caught');
 
-// 5. An owner past the end of its file is stale, not a silent pass on an empty
+// 6. An owner past the end of its file is stale, not a silent pass on an empty
 //    window — this is the shape a deleted block leaves behind.
 check(ownerVerdict({ name: 'X', owner: '"00-regions.wat:999999"' }).state === 'stale',
   'an owner past EOF is caught');
 
-// 6. An owner that is deliberately not a file:line is SKIPPED, not failed.
+// 7. An owner that is deliberately not a file:line is SKIPPED, not failed.
 //    "01-header.wat: (string.pool …)" names a mechanism; there is nothing to
 //    grep and inventing a line number for it would be a fabricated claim.
 check(ownerVerdict({ name: 'X', owner: '"01-header.wat: (string.pool ...)"' }).state === 'skip',
   'a non-file:line owner is skipped, not failed');
 
-// 7. The baseline is EMPTY. It used to hold 155 names and this check used to
+// 8. The baseline is EMPTY. It used to hold 155 names and this check used to
 //    assert the opposite, on the reasoning that an empty list would make the
 //    ratchet look green while checking nothing. That reasoning belonged to the
-//    period when the drain was pending: the guarantee comes from checks 2-6
-//    (the matcher can see both verdicts) and check 8 (it verifies real owners
+//    period when the drain was pending: the guarantee comes from checks 2-7
+//    (the matcher can see both verdicts) and check 9 (it verifies real owners
 //    in the live tree), not from the whitelist having entries. Now that all 155
 //    are re-derived the list is a flat refusal, and a name reappearing here is
 //    the regression — a wrong owner laundered by --record-owners rather than
@@ -84,8 +100,8 @@ check(Array.isArray(baseline.stale), 'the recorded stale set is a list');
 check(baseline.stale.length === 0,
   `the stale baseline is drained: ${baseline.stale.join(', ')}`);
 
-// 8. And no declaration in the live tree is stale — the drain holds without the
-//    whitelist. This is what check 7 used to delegate to the baseline.
+// 9. And no declaration in the live tree is stale — the drain holds without the
+//    whitelist. This is what check 8 used to delegate to the baseline.
 const liveStale = decls.filter(d => ownerVerdict(d).state === 'stale');
 check(liveStale.length === 0,
   `no live declaration has a stale owner: ${liveStale.map(d => d.name).join(', ')}`);

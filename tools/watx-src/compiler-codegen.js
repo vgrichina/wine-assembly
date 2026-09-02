@@ -24,60 +24,361 @@ function lowerIR(forms, checkResult, options = {}) {
     return size;
   }
   
+  // ── Tier 2: (enum ...) / (layout-union ...) / (view ...) ────────────────────
+  // docs/watx-typed-pointers-design.md §4. All three are DECLARATIONS: they emit
+  // no instruction and no byte, exactly like (layout ...). What they add is the
+  // relations — variant-of, view-of, and the tag — that ptrCompatible and
+  // --checked-casts read in compiler-codegen's emitter half.
+
+  // Lay a list of (field ...) forms out from `startOffset`, sharing the array
+  // sugar and every refusal with the (layout ...) path below. Factored out
+  // because a union prefix, a variant body and a plain layout must lay out
+  // IDENTICALLY — a second copy of this arithmetic is exactly the drift the
+  // DxObject note in tools/build.sh already paid for once.
+  // A declaration refusal has to name a place. lowerIR is handed real forms, so
+  // there is no excuse for a bare Error here — an unlocated refusal in a 61-file
+  // build is barely better than none.
+  function declError(msg, form) {
+    const e = new Error(msg);
+    const loc = watxFormLoc(form);
+    if (loc !== undefined) { e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc); }
+    throw e;
+  }
+
+  function lowerFields(fieldForms, ownerLabel, startOffset, fields, fieldByName) {
+    let offset = startOffset;
+    for (const fieldForm of fieldForms) {
+      const fname = watxValue(watxAt(fieldForm, 1));
+      const ftype = watxValue(watxAt(fieldForm, 2)) || 'i32';
+      // A pointer FIELD names a pointee, and that name has to exist. It cannot
+      // be resolved here -- the layout it names may be declared in any of the
+      // 61 files, in any order -- so the check is deferred to the end of
+      // lowerDeclarations, when every name is known. Without it `ptr<Nope>` and
+      // the malformed `ptr<` compiled and silently became a plain i32 field.
+      if (typeof ftype === 'string' && ftype.indexOf('ptr<') === 0)
+        ptrFieldChecks.push({ label: ownerLabel, fname, ftype, form: fieldForm });
+      const elemSize = sizeOfType(ftype);
+      let count = 1, stride = elemSize;
+      if (watxAt(fieldForm, 3) !== undefined) {
+        const rawC = watxValue(watxAt(fieldForm, 3)); count = Number(rawC);
+        if (!Number.isInteger(count) || count < 1)
+          declError(`${ownerLabel} field '${fname}': array count must be a positive integer, got '${rawC}'.`, fieldForm);
+      }
+      if (watxAt(fieldForm, 4) !== undefined) {
+        const rawS = watxValue(watxAt(fieldForm, 4)); stride = Number(rawS);
+        if (!Number.isInteger(stride) || stride < elemSize)
+          declError(`${ownerLabel} field '${fname}': explicit stride must be an integer >= elemSize (${elemSize}), got '${rawS}'.`, fieldForm);
+      }
+      const size = stride * count;
+      if (fieldByName.has(fname))
+        declError(`${ownerLabel}: duplicate field '${fname}'.`, fieldForm);
+      const field = { name: fname, type: ftype, offset, size, count, elemSize, stride };
+      fields.push(field);
+      fieldByName.set(fname, field);
+      offset += size;
+    }
+    return offset;
+  }
+  const childForms = (form, head, from = 2) => {
+    const out = [];
+    for (let i = from; i < watxFormLength(form); i++) {
+      const c = watxAt(form, i);
+      if (Array.isArray(c) && watxValue(watxAt(c, 0)) === head) out.push(c);
+    }
+    return out;
+  };
+  const makeLayout = (name, fields, fieldByName, totalSize, extra) =>
+    Object.assign({ type: 'layout-lowered', name, fields, fieldByName, totalSize }, extra || {});
+
+  function lowerEnum(form) {
+    const name = watxValue(watxAt(form, 1));
+    const members = new Map();
+    for (let i = 2; i < watxFormLength(form); i++) {
+      const m = watxAt(form, i);
+      if (!Array.isArray(m)) continue;
+      const mn = watxValue(watxAt(m, 0));
+      const rawV = watxValue(watxAt(m, 1));
+      const v = Number(rawV);
+      if (!Number.isInteger(v))
+        declError(`Enum '${name}' member '${mn}': value must be an integer, got '${rawV}'.`, m);
+      if (members.has(mn)) declError(`Enum '${name}': duplicate member '${mn}'.`, m);
+      members.set(mn, v);
+    }
+    return { type: 'enum-lowered', name, members };
+  }
+
+  // A union lowers to N+1 ORDINARY layout records plus one union record.
+  // Ordinary is the point: gen-layout-offsets.js and every other consumer that
+  // filters on `layout-lowered` sees union variants with no change at all, which
+  // is what makes this additive rather than breaking (design doc §4.4).
+  function lowerUnion(form, enums) {
+    const name = watxValue(watxAt(form, 1));
+    const label = `Layout-union '${name}'`;
+
+    const tagForms = childForms(form, 'tag');
+    if (tagForms.length > 1) declError(`${label}: more than one (tag ...) clause.`, form);
+    const tagFieldName = tagForms.length ? watxValue(watxAt(tagForms[0], 1)) : null;
+    const enumName = tagForms.length ? watxValue(watxAt(tagForms[0], 2)) : null;
+    if (enumName && !enums.has(enumName))
+      declError(`${label}: (tag ${tagFieldName} ${enumName}) names no (enum ...) declaration (typo?).`, form);
+    const enumMembers = enumName ? enums.get(enumName).members : null;
+
+    const prefixForms = childForms(form, 'prefix');
+    if (prefixForms.length > 1) declError(`${label}: more than one (prefix ...) clause.`, form);
+    const prefixFields = [], prefixByName = new Map();
+    // `1`, not the default 2: a (prefix (field ...) ...) form carries its FIRST
+    // field at index 1, where a (layout NAME ...) or (variant NAME ...) carries a
+    // name there. Getting this wrong drops the first prefix field silently and
+    // every offset after it is short by its width — caught by asserting the
+    // actual numbers, which is why the test runs the module instead of only
+    // compiling it.
+    const prefixSize = prefixForms.length
+      ? lowerFields(childForms(prefixForms[0], 'field', 1), `${label} prefix`, 0, prefixFields, prefixByName)
+      : 0;
+    // A tag has to be something a load-and-compare can be emitted for. Without
+    // this, `(tag t E)` on an f64 field compiled and --checked-casts emitted an
+    // `f64.load` feeding an `i32.ne` — a module the validator rejects, from a
+    // flag whose whole purpose is to catch mistakes. Reported by review. i64 is
+    // out for the same reason: the check compares with i32.const/i32.ne, and an
+    // i64 discriminant has no plausible use before the comparison grows one.
+    if (tagFieldName && prefixByName.has(tagFieldName)) {
+      const tf = prefixByName.get(tagFieldName);
+      if (!/^([su](8|16)|i32)$/.test(tf.type))
+        declError(`${label}: the tag field '${tagFieldName}' is ${tf.type}. A discriminant is ` +
+          `loaded and compared as an i32, so it must be one of u8/s8/u16/s16/i32.`, form);
+    }
+    if (tagFieldName && !prefixByName.has(tagFieldName))
+      declError(`${label}: the tag field '${tagFieldName}' is not one of the prefix fields ` +
+        `[${prefixFields.map(f => f.name).join(', ')}]. A discriminant every variant must agree on ` +
+        `has to live in the prefix.`, tagForms[0]);
+
+    // Pass 1: lay each variant out after the prefix and find the union's size.
+    const variantForms = childForms(form, 'variant');
+    if (!variantForms.length) declError(`${label}: a union needs at least one (variant ...).`, form);
+    const built = [];
+    for (const vf of variantForms) {
+      const vname = watxValue(watxAt(vf, 1));
+      const fields = prefixFields.map(f => Object.assign({}, f));
+      const fieldByName = new Map(fields.map(f => [f.name, f]));
+      const size = lowerFields(childForms(vf, 'field'), `Variant '${vname}' of ${label}`,
+                               prefixSize, fields, fieldByName);
+      built.push({ vf, vname, fields, fieldByName, size });
+    }
+    const totalSize = Math.max(...built.map(b => b.size));
+
+    // Pass 2: pad every variant to the union size, so (size-of ...) pins the
+    // table stride whichever variant a site reaches for — the GdiObjectAny
+    // property, now by construction instead of by a gate checking afterwards.
+    const records = [];
+    const variants = [];
+    const claimedTagValues = new Map();
+    for (const b of built) {
+      if (b.size < totalSize) {
+        const pad = { name: WATX_UNION_REST, type: 'u8', offset: b.size, size: totalSize - b.size,
+                      count: totalSize - b.size, elemSize: 1, stride: 1 };
+        b.fields.push(pad); b.fieldByName.set(WATX_UNION_REST, pad);
+      }
+      let tagValues = [];
+      if (enumMembers) {
+        const tvForms = childForms(b.vf, 'tag-value');
+        if (tvForms.length > 1) declError(`Variant '${b.vname}' of ${label}: more than one (tag-value ...).`, form);
+        const named = tvForms.length
+          ? watxFormSlice(tvForms[0], 1).map(t => watxValue(t))
+          // No (tag-value ...): match the variant's own name with the union's
+          // name prefix stripped, case-insensitively. Ambiguity is refused
+          // below rather than guessed at.
+          : [ (b.vname.indexOf(name) === 0 ? b.vname.slice(name.length) : b.vname).toUpperCase() ];
+        for (const tok of named) {
+          if (/^-?\d+$/.test(tok)) { tagValues.push(Number(tok)); continue; }
+          const hit = [...enumMembers.keys()].find(k => k.toUpperCase() === tok.toUpperCase());
+          if (hit === undefined) {
+            if (tvForms.length)
+              declError(`Variant '${b.vname}' of ${label}: (tag-value ${tok}) names no member of ` +
+                `enum '${enumName}' [${[...enumMembers.keys()].join(', ')}].`, tvForms[0]);
+            declError(`Variant '${b.vname}' of ${label}: no (tag-value ...) and no member of enum ` +
+              `'${enumName}' is named '${tok}' [${[...enumMembers.keys()].join(', ')}]. Name it explicitly ` +
+              `with (tag-value MEMBER).`, b.vf);
+          }
+          tagValues.push(enumMembers.get(hit));
+        }
+        // A tag value outside the tag field's own range can never match: the
+        // load zero- or sign-extends into the width's range, so a checked cast
+        // against the value is a comparison that is false on every record and
+        // the "check" silently traps on the variant it was meant to admit.
+        const tagRange = tagFieldName
+          ? { u8: [0, 255], s8: [-128, 127], u16: [0, 65535], s16: [-32768, 32767] }[
+              prefixByName.get(tagFieldName).type]
+          : null;
+        for (const v of tagValues) {
+          if (tagRange && (v < tagRange[0] || v > tagRange[1]))
+            declError(`Variant '${b.vname}' of ${label}: tag value ${v} cannot fit the ` +
+              `${prefixByName.get(tagFieldName).type} tag field '${tagFieldName}' ` +
+              `(${tagRange[0]}..${tagRange[1]}) — a load of that field can never equal it.`, b.vf);
+          if (claimedTagValues.has(v))
+            declError(`${label}: tag value ${v} is claimed by both variant '${claimedTagValues.get(v)}' ` +
+              `and variant '${b.vname}'. A discriminant selects exactly one variant.`, b.vf);
+          claimedTagValues.set(v, b.vname);
+        }
+      }
+      records.push(makeLayout(b.vname, b.fields, b.fieldByName, totalSize, { unionOf: name }));
+      variants.push({ name: b.vname, tagValues, size: b.size });
+    }
+
+    // The union NAME is itself a layout of exactly the prefix, padded to the
+    // stride. So reading a non-prefix field through a ptr<Union> is already an
+    // unknown-field compile error — no new machinery, and the same diagnostic a
+    // hand-written GdiObjectAny gives today.
+    const unionFields = prefixFields.map(f => Object.assign({}, f));
+    const unionByName = new Map(unionFields.map(f => [f.name, f]));
+    if (prefixSize < totalSize) {
+      const pad = { name: WATX_UNION_REST, type: 'u8', offset: prefixSize, size: totalSize - prefixSize,
+                    count: totalSize - prefixSize, elemSize: 1, stride: 1 };
+      unionFields.push(pad); unionByName.set(WATX_UNION_REST, pad);
+    }
+    records.push(makeLayout(name, unionFields, unionByName, totalSize, { isUnion: true }));
+    records.push({
+      type: 'union-lowered', name, enumName,
+      tagField: tagFieldName ? prefixByName.get(tagFieldName) : null,
+      prefixFields, variants, totalSize,
+    });
+    return records;
+  }
+
+  // A view names the layouts it projects and takes THEIR offsets. It does not
+  // restate them: a restated offset is a second copy of a table, and the fields
+  // are checked to agree across every `of` target, which is what turns the
+  // ControlTextState comment in src/09c3-controls.wat into a build gate.
+  function lowerView(form, byName) {
+    const name = watxValue(watxAt(form, 1));
+    const label = `View '${name}'`;
+    const ofForms = childForms(form, 'of');
+    if (ofForms.length !== 1)
+      declError(`${label}: a view needs exactly one (of Layout ...) clause naming what it projects.`, form);
+    const ofNamesRaw = watxFormSlice(ofForms[0], 1).map(t => watxValue(t));
+    // `(of)` with nothing in it used to lower to a view of size 0 that agreed
+    // with everything vacuously — a projection over no layouts checks nothing,
+    // which is the opposite of what a view is for. Reported by review.
+    if (!ofNamesRaw.length)
+      declError(`${label}: (of) names no layout. A view projects the fields its targets AGREE ` +
+        `on, so it needs at least one target — over none, every field agrees vacuously.`, form);
+    // (of SomeUnion) means every variant of it.
+    const ofNames = [];
+    for (const n of ofNamesRaw) {
+      const rec = byName.get(n);
+      if (!rec) declError(`${label}: (of ${n}) names no (layout ...) or (layout-union ...) declaration (typo?).`, form);
+      if (rec.isUnion) {
+        for (const [k, v] of byName) if (v.unionOf === n) ofNames.push(k);
+      } else ofNames.push(n);
+    }
+
+    const fields = [], fieldByName = new Map();
+    let totalSize = 0;
+    for (const ff of childForms(form, 'field')) {
+      const fname = watxValue(watxAt(ff, 1));
+      const ftype = watxValue(watxAt(ff, 2)) || 'i32';
+      let agreed = null;
+      for (const on of ofNames) {
+        const target = byName.get(on).fieldByName.get(fname);
+        if (!target)
+          declError(`${label} field '${fname}': '${on}' has no such field. A view may name only ` +
+            `what ALL of its targets agree on.`, ff);
+        if (target.type !== ftype)
+          declError(`${label} field '${fname}': declared ${ftype} but '${on}' has it as ` +
+            `${target.type}. A view must agree with every target in type as well as offset.`, ff);
+        if (agreed === null) agreed = target;
+        else if (agreed.offset !== target.offset)
+          declError(`${label} field '${fname}': lands at +${agreed.offset} in one target and ` +
+            `+${target.offset} in '${on}'. The targets do not agree, so this field cannot be viewed.`, ff);
+      }
+      const field = Object.assign({}, agreed);
+      fields.push(field); fieldByName.set(fname, field);
+      totalSize = Math.max(totalSize, field.offset + field.size);
+    }
+    return [
+      makeLayout(name, fields, fieldByName, totalSize, { isView: true }),
+      { type: 'view-lowered', name, of: ofNames, fields },
+    ];
+  }
+
   function lowerForm(form) {
     if (!Array.isArray(form)) return form;
     const head = watxValue(watxAt(form, 0));
-    
+
     if (head === 'layout') {
+      // ARRAY FIELD sugar (heap-safety refactor, COMP) and every field refusal
+      // now live in lowerFields above, shared with a union's prefix and each of
+      // its variants. They MUST lay out identically, and the only way to be sure
+      // of that is for there to be one copy of the arithmetic.
       const name = watxValue(watxAt(form, 1));
-      let offset = 0;
-      const fields = [];
-      const fieldByName = new Map();
-      for (let i = 2; i < watxFormLength(form); i++) {
-        const fieldForm = watxAt(form, i);
-        if (Array.isArray(fieldForm) && watxValue(watxAt(fieldForm, 0)) === 'field') {
-          const fname = watxValue(watxAt(fieldForm, 1));
-          const ftype = watxValue(watxAt(fieldForm, 2)) || 'i32';
-          const elemSize = sizeOfType(ftype);
-          // ARRAY FIELD sugar (heap-safety refactor, COMP): an optional 4th token is the element
-          // COUNT (absent => 1 => a plain scalar field, unchanged); an optional 5th token is an
-          // explicit byte STRIDE (absent => elemSize) so access-width and element-spacing decouple
-          // (e.g. ARM V-regs: 16-byte stride but f32/f64/i64 sub-width access). Element k of the
-          // field lives at (offset + k*stride), reached via load.field-elem/store.field-elem. The
-          // field advances the struct offset by stride*count. Bad count/stride is a HARD ERROR
-          // (silent-misuse guard — the whole point of the refactor).
-          let count = 1, stride = elemSize;
-          if (watxAt(fieldForm, 3) !== undefined) {
-            const rawC = watxValue(watxAt(fieldForm, 3)); count = Number(rawC);
-            if (!Number.isInteger(count) || count < 1)
-              throw new Error(`Layout '${name}' field '${fname}': array count must be a positive integer, got '${rawC}'.`);
-          }
-          if (watxAt(fieldForm, 4) !== undefined) {
-            const rawS = watxValue(watxAt(fieldForm, 4)); stride = Number(rawS);
-            if (!Number.isInteger(stride) || stride < elemSize)
-              throw new Error(`Layout '${name}' field '${fname}': explicit stride must be an integer >= elemSize (${elemSize}), got '${rawS}'.`);
-          }
-          const size = stride * count;
-          const field = { name: fname, type: ftype, offset, size, count, elemSize, stride };
-          fields.push(field);
-          fieldByName.set(fname, field);
-          offset += size;
-        }
-      }
-      return { type: 'layout-lowered', name, fields, fieldByName, totalSize: offset };
+      const fields = [], fieldByName = new Map();
+      const totalSize = lowerFields(childForms(form, 'field'), `Layout '${name}'`, 0, fields, fieldByName);
+      return { type: 'layout-lowered', name, fields, fieldByName, totalSize };
     }
-    
+
+
     return form.map(f => lowerForm(f));
   }
   
-  if (options.layoutsOnly) {
-    const layoutsOnly = [];
+  // ── The declaration phases ─────────────────────────────────────────────────
+  // Three, and the ORDER is forced by the dependencies rather than chosen:
+  //   1. enums, because a union's (tag ... ENUM) resolves against them;
+  //   2. layouts and unions, because a view projects their offsets;
+  //   3. views.
+  // Doing it in one source-order pass would make a declaration's legality depend
+  // on where in the 61 files it happened to be written, which is exactly the
+  // install-time dependence this repository treats as a bug.
+  const ptrFieldChecks = [];
+
+  function lowerDeclarations(forms) {
+    const out = [];
+    const enums = new Map();
     for (const form of forms) {
-      if (Array.isArray(form) && watxValue(watxAt(form, 0)) === 'layout') layoutsOnly.push(lowerForm(form));
+      if (!Array.isArray(form) || watxValue(watxAt(form, 0)) !== 'enum') continue;
+      const e = lowerEnum(form);
+      if (enums.has(e.name)) declError(`Duplicate enum '${e.name}'.`, form);
+      enums.set(e.name, e);
+      out.push(e);
     }
-    return layoutsOnly;
+    const byName = new Map();
+    const add = (rec, form) => {
+      if (rec.type === 'layout-lowered') {
+        if (byName.has(rec.name))
+          declError(`Duplicate layout '${rec.name}' — a (layout ...), a (layout-union ...) ` +
+            `variant and a (view ...) all share one namespace.`, form);
+        byName.set(rec.name, rec);
+      }
+      out.push(rec);
+    };
+    for (const form of forms) {
+      if (!Array.isArray(form)) continue;
+      const head = watxValue(watxAt(form, 0));
+      if (head === 'layout') add(lowerForm(form), form);
+      else if (head === 'layout-union') for (const r of lowerUnion(form, enums)) add(r, form);
+    }
+    for (const form of forms) {
+      if (!Array.isArray(form) || watxValue(watxAt(form, 0)) !== 'view') continue;
+      for (const r of lowerView(form, byName)) add(r, form);
+    }
+    // Every name exists now, so the deferred pointer-field pointees resolve.
+    for (const c of ptrFieldChecks) {
+      const pointee = c.ftype.charAt(c.ftype.length - 1) === '>' ? c.ftype.slice(4, -1) : null;
+      if (!pointee)
+        declError(`${c.label} field '${c.fname}': '${c.ftype}' is not a well-formed pointer ` +
+          `type — write ptr<LayoutName>.`, c.form);
+      if (!byName.has(pointee))
+        declError(`${c.label} field '${c.fname}': ptr<${pointee}> names no (layout ...), ` +
+          `(layout-union ...) variant or (view ...) declaration (typo?).`, c.form);
+    }
+    return out;
   }
-  return forms.map(lowerForm);
+
+  const declarations = lowerDeclarations(forms);
+  if (options.layoutsOnly) return declarations;
+  // Debug artifacts want the whole lowered tree. The declaration forms are
+  // replaced by their lowered records, so a union does not appear twice.
+  const DECL_HEADS = new Set(['layout', 'layout-union', 'view', 'enum']);
+  const rest = forms.filter(f => !Array.isArray(f) || !DECL_HEADS.has(watxValue(watxAt(f, 0))));
+  return declarations.concat(rest.map(lowerForm));
 }
 
 
@@ -639,6 +940,33 @@ function valtypeOf(t) {
   if (t === 'v128') return VALTYPE.v128;
   return VALTYPE.i32;
 }
+// ── Typed pointers (docs/watx-typed-pointers-design.md §2) ──────────────────
+//
+// `ptr<Layout>` is a TYPE TOKEN, not a valtype. It tokenizes as one symbol
+// already (`<` and `>` are symbol characters, compiler-parser.js:35), it is
+// already 4 bytes wide as a layout field type (watxLayoutFieldSize prefix-matches
+// `ptr`), and it already ERASES to i32 on every path a valtype is asked for:
+// stackType() prefix-matches it and valtypeOf() below falls through to i32. So
+// the annotation costs nothing in the emitted module — that is the erasure
+// guarantee, and it is a property of code that already shipped rather than of
+// code this feature adds. What is new is that the pointee name is now CHECKED.
+//
+// Returns the layout name inside `ptr<...>`, or null when the token is not a
+// typed pointer at all. A malformed one (`ptr<`, `ptr<>`) returns undefined so
+// the caller can tell "not a pointer type" from "a pointer type spelled wrong"
+// and refuse the second rather than silently treating it as the first.
+// The trailing padding a layout-union gives its short variants and its own
+// prefix layout, so every one of them reports the same (size-of ...) stride. It
+// is an implementation detail: it is filtered out of diagnostics, because naming
+// it would suggest it is a field anyone should read.
+const WATX_UNION_REST = '__rest';
+
+function watxPtrLayoutName(t) {
+  if (typeof t !== 'string' || t.indexOf('ptr<') !== 0) return null;
+  if (t.charAt(t.length - 1) !== '>') return undefined;
+  const inner = t.slice(4, -1);
+  return inner.length ? inner : undefined;
+}
 // Reverse map — for disassembly output.
 function valtypeName(b) {
   if (b === VALTYPE.i32)  return 'i32';
@@ -868,9 +1196,22 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       `no (then ...) either and is a deliberate spelling.`);
   }
   const layoutInfo = new Map();
+  // Tier 2 (docs/watx-typed-pointers-design.md §4): the union/view relations
+  // that widen ptrCompatible and that tell a checked cast which tag to read.
+  // They are declared here, beside layoutInfo, and stay EMPTY in a module that
+  // declares no unions — so every rule below reads the same way whether or not
+  // Tier 2 is in play.
+  const unionInfo = new Map();     // union name -> union-lowered record
+  const variantOwner = new Map();  // variant layout name -> { union, tagValues }
+  const viewInfo = new Map();      // view name -> { of: Set<layout name> }
   for (const f of loweredForms) {
     if (f?.type === 'layout-lowered') {
       layoutInfo.set(f.name, f);
+    } else if (f?.type === 'union-lowered') {
+      unionInfo.set(f.name, f);
+      for (const v of f.variants) variantOwner.set(v.name, { union: f, tagValues: v.tagValues });
+    } else if (f?.type === 'view-lowered') {
+      viewInfo.set(f.name, { of: new Set(f.of) });
     }
   }
 
@@ -879,27 +1220,205 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
   // offset 0 / size 16 — turning a typo'd layout or field name into a read/write
   // of the WRONG memory location with no diagnostic. `srcTok` is the symbol token
   // (carries line:col) for the error.
-  function lookupLayout(layoutName, head, srcTok) {
+  // `srcTok` is normally the layout/field ATOM, which is an interned primitive
+  // string and therefore carries no source metadata at all — these refusals used
+  // to report line 0. `form` is the enclosing expression, which does carry one,
+  // so it stands in whenever the atom cannot say where it was written.
+  function locateOn(e, srcTok, form) {
+    let line = watxNodeLine(srcTok), col = watxNodeCol(srcTok), file = watxNodeFile(srcTok);
+    if (!line && form) { line = watxNodeLine(form); col = watxNodeCol(form); file = watxNodeFile(form); }
+    e.line = line; e.col = col; e.file = file;
+    return e;
+  }
+  function lookupLayout(layoutName, head, srcTok, form) {
     const info = layoutInfo.get(layoutName);
     if (!info) {
-      const e = new Error(
-        `Unknown layout '${layoutName}' in ${head}: no such (layout ...) declaration (typo?).`);
-      e.line = watxNodeLine(srcTok); e.col = watxNodeCol(srcTok); e.file = watxNodeFile(srcTok);
-      throw e;
+      throw locateOn(new Error(
+        `Unknown layout '${layoutName}' in ${head}: no such (layout ...) declaration (typo?).`),
+        srcTok, form);
     }
     return info;
   }
   // Resolve a field within a layout, or throw. Returns the lowered field record.
-  function lookupField(info, fieldName, head, srcTok) {
+  function lookupField(info, fieldName, head, srcTok, form) {
     const field = info.fieldByName.get(fieldName);
     if (!field) {
-      const e = new Error(
-        `Unknown field '${fieldName}' of layout '${info.name}' in ${head}: ` +
-        `layout has [${info.fields.map(f => f.name).join(', ')}] (typo?).`);
-      e.line = watxNodeLine(srcTok); e.col = watxNodeCol(srcTok); e.file = watxNodeFile(srcTok);
-      throw e;
+      // A union's own layout is prefix + WATX_UNION_REST padding; that padding is
+      // an implementation detail of "all variants share one stride" and naming it
+      // in a diagnostic would invite someone to try to read it. What a reader
+      // needs instead is the reason the field is missing: they are holding the
+      // union, and the field belongs to one particular variant.
+      const named = info.fields.filter(f => f.name !== WATX_UNION_REST).map(f => f.name);
+      let msg = `Unknown field '${fieldName}' of layout '${info.name}' in ${head}: ` +
+                `layout has [${named.join(', ')}] (typo?).`;
+      if (info.isUnion) {
+        const owner = unionInfo.get(info.name);
+        const holder = owner && owner.variants.find(
+          v => (layoutInfo.get(v.name) || { fieldByName: new Map() }).fieldByName.has(fieldName));
+        msg = `Unknown field '${fieldName}' of layout-union '${info.name}' in ${head}: ` +
+              `a union pointer reaches only the shared prefix [${named.join(', ')}]` +
+              (holder
+                ? `, and '${fieldName}' belongs to variant '${holder.name}'. Narrow first: ` +
+                  `(cast ptr<${holder.name}> ...).`
+                : ` (typo?).`);
+      }
+      throw locateOn(new Error(msg), srcTok, form);
     }
     return field;
+  }
+
+  // ── Typed pointers: validation, compatibility, inference ───────────────────
+  // docs/watx-typed-pointers-design.md §2. All three live HERE, in codegen,
+  // rather than in checkTypes, for the reason §1 fact 4 records: the shipped
+  // build passes requiredOnly and checkTypes returns before it walks a single
+  // function body, so a rule enforced there is a rule that does not hold for the
+  // artifact we ship. compileExpr is the only pass that sees every body in every
+  // mode, and it is where the existing unknown-layout/unknown-field refusals
+  // already are.
+
+  // Located refusal helper shared by the pointer diagnostics.
+  function ptrError(msg, srcNode) {
+    const e = new Error(msg);
+    e.line = watxNodeLine(srcNode); e.col = watxNodeCol(srcNode); e.file = watxNodeFile(srcNode);
+    throw e;
+  }
+
+  // Resolve a `ptr<L>` token to its layout name, refusing an unknown or
+  // malformed one AT THE DECLARATION. Same rationale as checkTypes' unknown
+  // field-type refusal (compiler-stages.js:236): one diagnostic naming the
+  // declaration, not one per use site. Returns null for a token that is not a
+  // typed pointer, so callers can pass any type token.
+  function ptrDeclaredLayout(typeToken, what, srcNode) {
+    const name = watxPtrLayoutName(typeToken);
+    if (name === null) return null;
+    if (name === undefined)
+      ptrError(`${what}: '${typeToken}' is not a well-formed pointer type — write ptr<LayoutName>.`, srcNode);
+    if (!layoutInfo.has(name))
+      ptrError(`${what}: no such (layout ...) declaration named '${name}' (typo?).`, srcNode);
+    return name;
+  }
+
+  // Is a value of pointer type `actual` acceptable where `expected` is wanted?
+  // Equality, plus the two WIDENING relations of §4.2/§4.3 — both one-way, and
+  // the direction is the whole point:
+  //   * a VARIANT pointer is usable where the UNION is expected (a bitmap record
+  //     IS an object record), never the reverse. The reverse is exactly the
+  //     narrowing that `(cast ...)` exists to spell out loud.
+  //   * a MEMBER pointer is usable where a VIEW over it is expected, never the
+  //     reverse. A view names only what its members agree on; going back the
+  //     other way would claim a member the site has not established.
+  function ptrCompatible(actual, expected) {
+    if (actual === expected) return true;
+    const owner = variantOwner.get(actual);
+    if (owner && owner.union.name === expected) return true;
+    const view = viewInfo.get(expected);
+    if (view) {
+      if (view.of.has(actual)) return true;
+      const o = variantOwner.get(actual);
+      if (o && view.of.has(o.union.name)) return true;
+    }
+    return false;
+  }
+
+  // The physical-local machinery already follows the active binding when one
+  // source name is reused with different types. Pointer claims must follow the
+  // same binding instead of the function-wide ptrTypes map's last declaration.
+  // `has`, not `get ||`, matters: an active untyped binding deliberately clears
+  // a pointer claim carried by an earlier binding of the same name.
+  function localPtrType(func, name) {
+    if (!func) return null;
+    if (func.activePtrTypes && func.activePtrTypes.has(name))
+      return func.activePtrTypes.get(name);
+    return func.ptrTypes ? (func.ptrTypes.get(name) || null) : null;
+  }
+
+  // The static pointer type of an expression: a layout name, or null meaning
+  // UNKNOWN. Unknown is BOTTOM, not i32 — it is compatible with everything, in
+  // both directions, silently. That is what makes the feature opt-in across 61
+  // source files instead of a cast storm (design doc §2.2). Deliberately makes
+  // no claim through if/select/block/arithmetic: a pointer that has been through
+  // i32.add has left the type system and saying otherwise would be a guess.
+  function ptrTypeOf(expr, func) {
+    if (!Array.isArray(expr)) {
+      if (T(expr) !== 'symbol') return null;
+      return localPtrType(func, V(expr));
+    }
+    const hd = watxLayoutMemargHead(V(expr[1])).head;
+    if (!hd) return null;
+    if (hd === 'cast') return watxPtrLayoutName(V(expr[2])) || null;
+    if (hd === 'local.get' || hd === 'local.tee')
+      return localPtrType(func, V(expr[2]));
+    if (hd === 'let') {
+      // (let $x ptr<L> INIT) claims L; (let $x INIT) inherits INIT's claim.
+      const declared = watxPtrLayoutName(V(expr[3]));
+      if (typeof declared === 'string') return declared;
+      return ptrTypeOf(expr[3], func);
+    }
+    if (hd === 'call') {
+      const callee = funcDeclByName.get(V(expr[2]));
+      if (callee && callee.results.length === 1) return watxPtrLayoutName(callee.results[0]) || null;
+      return null;
+    }
+    if (hd === 'load.field' || hd === 'load.elem' || hd === 'load.field-elem') {
+      const info = layoutInfo.get(V(expr[2]));
+      const field = info && info.fieldByName.get(V(expr[3]));
+      return field ? (watxPtrLayoutName(field.type) || null) : null;
+    }
+    return null;
+  }
+
+  // The one refusal every check funnels through, so the wording — and the
+  // pointer to `(cast ...)` as the way to say what you mean — is written once.
+  function ptrCheck(valueExpr, expected, func, what, srcNode) {
+    if (!expected) return;
+    const actual = ptrTypeOf(valueExpr, func);
+    if (actual === null || ptrCompatible(actual, expected)) return;
+    ptrError(
+      `${what}: ptr<${actual}> where ptr<${expected}> is required` +
+      `${func && func.name ? ` in ${func.name}` : ''}. A pointer's type is checked ` +
+      `wherever it is used; if this record really is a ${expected} here, say so with ` +
+      `(cast ptr<${expected}> ...) — the cast then becomes the one place a reader ` +
+      `can check the claim.`, srcNode);
+  }
+
+  // ── (cast ...) — Tier 3 ────────────────────────────────────────────────────
+  // OFF by default and off in tools/build.sh: a checked build is a DEBUGGING
+  // build, not the shipped one, and it is not byte-identical by construction.
+  const checkedCasts = !!options.checkedCasts;
+  const castStats = { checked: 0, skipped: 0 };
+  // The name of the one scratch local a checked cast needs (it must read the
+  // pointer twice — once for the tag, once to yield it — and wasm has no dup).
+  // Declared only in functions that contain a cast, and only in a checked build,
+  // so a default build's local vector is untouched.
+  const CAST_SCRATCH = '$__cast_tmp';
+  function castScratchLocal(func) {
+    const idx = func.localMap.get(CAST_SCRATCH);
+    if (idx === undefined)
+      throw new Error(`WATX internal: ${func.name} has a checked (cast ...) but no ${CAST_SCRATCH} slot.`);
+    return idx;
+  }
+  // What a checked cast into `target` must verify, or null when there is nothing
+  // to verify — a plain layout, an untagged union, a view, or the union name
+  // itself. That no-op is DOCUMENTED (design doc §3.2) and counted, so "I turned
+  // the flag on and nothing changed" has an answer rather than being a mystery.
+  // Pure predicate half, so the local-allocation pass can ask the SAME question
+  // the emitter will ask without perturbing the counters. Keeping these apart
+  // matters: the first version allocated the scratch slot for any cast at all,
+  // so a checked build of a module whose casts are all documented no-ops still
+  // grew a local — a difference with no instruction behind it.
+  function castIsChecked(target) {
+    const info = variantOwner.get(target);
+    return !!(info && info.union.tagField && info.tagValues.length);
+  }
+  function castTagCheck(target) {
+    const info = variantOwner.get(target);
+    if (!castIsChecked(target)) { castStats.skipped++; return null; }
+    castStats.checked++;
+    return {
+      tagOffset: info.union.tagField.offset,
+      tagType: info.union.tagField.type,
+      tagValues: info.tagValues,
+    };
   }
 
   // --- string / cstring data pool ---
@@ -1925,7 +2444,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       
       if (options.strictDeclarations && funcNameSet.has(name)) throw new Error(`Duplicate function '${name}'`);
       funcNameSet.add(name);
-        funcDecls.push({ name, params, results, locals, body, effectsClause });
+        funcDecls.push({ name, params, results, locals, body, effectsClause, sigLoc: watxFormLoc(form) });
       }
     }
   } else {
@@ -2527,6 +3046,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
 
     // (local $x type) — a WAT-style declaration; emits nothing, yields no value
     if (head === 'local') return false;
+
+    // (cast ptr<L> E) is transparent: it produces whatever E produces.
+    if (head === 'cast') return exprProducesValue(expr[3], func);
 
     // br / br_if / br_table / return / nop — no value
     if (head === 'br' || head === 'br_if' || head === 'br_table' || head === 'return' || head === 'nop' || head === 'unreachable') return false;
@@ -3433,6 +3955,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const localIdx = numeric ?? func.activeLocal.get(name) ?? func.localMap.get(name);
       if (localIdx === undefined || localIdx >= func.params.length + func.locals.length) throw new Error(`Unknown local '${name}' in ${func.name}`);
       if (!expr[3]) throw new Error(`${head} for '${name}' is missing a value`);
+      ptrCheck(expr[3], localPtrType(func, name), func, `${head} ${name}`, expr);
       compileExpr(expr[3], func, depth, bytes);
       bytes.byte(head === 'local.tee' ? OP.local_tee : OP.local_set);
       bytes.uleb(localIdx);
@@ -3458,8 +3981,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       let initExpr, declaredType;
       
       // (let $name type init) or (let $name init)
-      if ((expr.length - 1) >= 4 && T(expr[3]) === 'symbol' &&
-          ['i32','i64','f32','f64','v128','u8','ptr','weak'].includes(V(expr[3]))) {
+      if ((expr.length - 1) >= 4 && T(expr[3]) === 'symbol' && isLocalValueType(V(expr[3]))) {
         requireArity(3);
         declaredType = V(expr[3]);
         initExpr = expr[4];
@@ -3467,7 +3989,15 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         requireArity(2);
         initExpr = expr[3];
       }
-      
+      const declaredPointee = declaredType ? watxPtrLayoutName(declaredType) : null;
+      // This let is a new binding, not an assignment to whichever same-named
+      // binding collectLocals visited last. An explicit ptr<L> supplies its own
+      // expectation; an untyped/i32 let deliberately has none.
+      ptrCheck(initExpr, declaredPointee, func, `let ${name}`, expr);
+      const boundPointee = declaredType === undefined
+        ? ptrTypeOf(initExpr, func)
+        : declaredPointee;
+
       if (name && func.localMap.has(name) && initExpr) {
         // Pick the physical slot matching THIS let's type. For a name declared
         // with one type everywhere this is just localMap; for a name reused with
@@ -3482,7 +4012,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
           for (const [nm, arr] of func.localSlots) if (arr && arr.length) symT.set(nm, arr[0].type);
           slotType = inferExprType(initExpr, symT);
         }
-        if (slotType === 'u8' || slotType === 'ptr' || slotType === 'weak') slotType = 'i32';
+        slotType = physicalLocalType(slotType);
         const slots = func.localSlots.get(name) || [];
         const match = slots.find(s => s.type === slotType);
         const localIdx = match ? match.index : func.localMap.get(name);
@@ -3490,6 +4020,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         compileExpr(initExpr, func, depth, bytes);
         bytes.byte(OP.local_tee);
         bytes.uleb(localIdx);
+        func.activePtrTypes.set(name, boundPointee);
       } else {
         bytes.byte(OP.i32_const);
         bytes.sleb(0);
@@ -3504,7 +4035,16 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       if (callIdx !== undefined) {
         const expected = expectedParamCount(funcName);
         if (expected !== undefined && (expr.length - 1) - 2 !== expected) throw new Error(`call ${funcName}: expected ${expected} args, got ${(expr.length - 1) - 2}`);
+        // Typed-pointer arguments (design doc §2.3 site 3). Imports are skipped:
+        // an import's signature carries valtypes only, so there is no pointee to
+        // check against and every argument is UNKNOWN by construction.
+        const calleeDecl = funcDeclByName.get(funcName);
         for (let i = 2; i < (expr.length - 1); i++) {
+          if (calleeDecl) {
+            const p = calleeDecl.params[i - 2];
+            if (p) ptrCheck(expr[i + 1], watxPtrLayoutName(p.type) || null, func,
+              `call ${funcName} arg ${i - 2}${p.name ? ` (${p.name})` : ''}`, expr);
+          }
           compileExpr(expr[i + 1], func, depth, bytes);
         }
         bytes.byte(OP.call);
@@ -3554,6 +4094,25 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       if (callIdx !== undefined) {
         const expected = expectedParamCount(V(expr[2]));
         if (expected !== undefined && (expr.length - 1) - 2 !== expected) throw new Error(`return_call ${V(expr[2])}: expected ${expected} args, got ${(expr.length - 1) - 2}`);
+        // A tail call passes arguments and produces this function's result just
+        // as `call` + `return` does, so it gets the same two checks. Reported by
+        // review of 1fe7824c: they were checked on `call` and on an explicit
+        // `(return ...)` and skipped here, in both the tail-call and the
+        // compat lowering.
+        const tailDecl = funcDeclByName.get(V(expr[2]));
+        for (let i = 2; i < (expr.length - 1); i++) {
+          if (tailDecl) {
+            const p = tailDecl.params[i - 2];
+            if (p) ptrCheck(expr[i + 1], watxPtrLayoutName(p.type) || null, func,
+                            `return_call ${V(expr[2])} arg ${i - 2}`, expr);
+          }
+        }
+        if (tailDecl && tailDecl.results && tailDecl.results.length === 1 && func.resultPtr) {
+          const got = watxPtrLayoutName(tailDecl.results[0]);
+          if (got && !ptrCompatible(got, func.resultPtr))
+            ptrError(`return_call ${V(expr[2])}: it returns ptr<${got}>, but ${func.name} is ` +
+              `declared (result ptr<${func.resultPtr}>). A tail call IS this function's result.`, expr);
+        }
         for (let i = 2; i < (expr.length - 1); i++) compileExpr(expr[i + 1], func, depth, bytes);
         bytes.byte(tailCalls ? OP.return_call : OP.call);
         bytes.uleb(callIdx);
@@ -3924,6 +4483,11 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     if (head === 'return') {
       requireArityOneOf(0, 1);
       if (expr[2]) {
+        // Only the EXPLICIT return is checked. A fall-through result rests on
+        // "the type of the last body expression", which this compiler treats as
+        // approximate everywhere else (checkTypes only warns about it), and a
+        // hard error resting on an approximation is a false positive waiting.
+        ptrCheck(expr[2], func.resultPtr, func, `return from ${func.name}`, expr);
         compileExpr(expr[2], func, depth, bytes);
       }
       bytes.push(OP.return_);
@@ -4035,7 +4599,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     if (head === 'region.alloc') {
       requireArity(2);
       const layoutName = V(expr[3]);
-      const size = lookupLayout(layoutName, 'region.alloc', expr[3]).totalSize;
+      const size = lookupLayout(layoutName, 'region.alloc', expr[3], expr).totalSize;
 
       bytes.byte(OP.i32_const);
       bytes.sleb(size);
@@ -4052,8 +4616,15 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const ptrExpr = expr[4];
       const valExpr = expr[5];
       
-      const info = lookupLayout(layoutName, 'store.field', expr[2]);
-      const field = lookupField(info, fieldName, 'store.field', expr[3]);
+      const info = lookupLayout(layoutName, 'store.field', expr[2], expr);
+      const field = lookupField(info, fieldName, 'store.field', expr[3], expr);
+      ptrCheck(ptrExpr, layoutName, func, `${head} ${layoutName}.${fieldName}`, expr);
+      // A pointer FIELD has a pointee too, and storing the wrong record into
+      // one launders it: every later reader of that field trusts the
+      // declaration. Reported by review of 1fe7824c -- the base was checked and
+      // the VALUE was not, so `(store.field L p (ptr) wrong)` compiled.
+      ptrCheck(valExpr, watxPtrLayoutName(field.type) || null, func,
+               `${head} ${layoutName}.${fieldName} value`, expr);
       const offset = field.offset;
       const fieldType = field.type;
 
@@ -4093,8 +4664,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const fieldName = V(expr[3]);
       const ptrExpr = expr[4];
       
-      const info = lookupLayout(layoutName, 'load.field', expr[2]);
-      const field = lookupField(info, fieldName, 'load.field', expr[3]);
+      const info = lookupLayout(layoutName, 'load.field', expr[2], expr);
+      const field = lookupField(info, fieldName, 'load.field', expr[3], expr);
+      ptrCheck(ptrExpr, layoutName, func, `${head} ${layoutName}.${fieldName}`, expr);
       const offset = field.offset;
       const fieldType = field.type;
 
@@ -4118,8 +4690,15 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const indexExpr = expr[5];
       const valExpr = expr[6];
       
-      const info = lookupLayout(layoutName, 'store.elem', expr[2]);
-      const field = lookupField(info, fieldName, 'store.elem', expr[3]);
+      const info = lookupLayout(layoutName, 'store.elem', expr[2], expr);
+      const field = lookupField(info, fieldName, 'store.elem', expr[3], expr);
+      ptrCheck(baseExpr, layoutName, func, `${head} ${layoutName}.${fieldName}`, expr);
+      // A pointer FIELD has a pointee too, and storing the wrong record into
+      // one launders it: every later reader of that field trusts the
+      // declaration. Reported by review of 1fe7824c -- the base was checked and
+      // the VALUE was not, so `(store.field L p (ptr) wrong)` compiled.
+      ptrCheck(valExpr, watxPtrLayoutName(field.type) || null, func,
+               `${head} ${layoutName}.${fieldName} value`, expr);
       const fieldOffset = field.offset;
       const fieldType = field.type;
       const structSize = info.totalSize;
@@ -4157,8 +4736,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const baseExpr = expr[4];
       const indexExpr = expr[5];
       
-      const info = lookupLayout(layoutName, 'load.elem', expr[2]);
-      const field = lookupField(info, fieldName, 'load.elem', expr[3]);
+      const info = lookupLayout(layoutName, 'load.elem', expr[2], expr);
+      const field = lookupField(info, fieldName, 'load.elem', expr[3], expr);
+      ptrCheck(baseExpr, layoutName, func, `${head} ${layoutName}.${fieldName}`, expr);
       const fieldOffset = field.offset;
       const fieldType = field.type;
       const structSize = info.totalSize;
@@ -4191,8 +4771,15 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const indexExpr = expr[5];
       const valExpr = expr[6];
 
-      const info = lookupLayout(layoutName, 'store.field-elem', expr[2]);
-      const field = lookupField(info, fieldName, 'store.field-elem', expr[3]);
+      const info = lookupLayout(layoutName, 'store.field-elem', expr[2], expr);
+      const field = lookupField(info, fieldName, 'store.field-elem', expr[3], expr);
+      ptrCheck(baseExpr, layoutName, func, `${head} ${layoutName}.${fieldName}`, expr);
+      // A pointer FIELD has a pointee too, and storing the wrong record into
+      // one launders it: every later reader of that field trusts the
+      // declaration. Reported by review of 1fe7824c -- the base was checked and
+      // the VALUE was not, so `(store.field L p (ptr) wrong)` compiled.
+      ptrCheck(valExpr, watxPtrLayoutName(field.type) || null, func,
+               `${head} ${layoutName}.${fieldName} value`, expr);
       const fieldOffset = field.offset;
       const fieldType = field.type;
       const stride = field.stride ?? sizeOfType(fieldType);
@@ -4229,8 +4816,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const baseExpr = expr[4];
       const indexExpr = expr[5];
 
-      const info = lookupLayout(layoutName, 'load.field-elem', expr[2]);
-      const field = lookupField(info, fieldName, 'load.field-elem', expr[3]);
+      const info = lookupLayout(layoutName, 'load.field-elem', expr[2], expr);
+      const field = lookupField(info, fieldName, 'load.field-elem', expr[3], expr);
+      ptrCheck(baseExpr, layoutName, func, `${head} ${layoutName}.${fieldName}`, expr);
       const fieldOffset = field.offset;
       const fieldType = field.type;
       const stride = field.stride ?? sizeOfType(fieldType);
@@ -4263,8 +4851,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const baseExpr = expr[4];
       const indexExpr = expr[5];
 
-      const info = lookupLayout(layoutName, 'elem-addr', expr[2]);
-      const field = lookupField(info, fieldName, 'elem-addr', expr[3]);
+      const info = lookupLayout(layoutName, 'elem-addr', expr[2], expr);
+      const field = lookupField(info, fieldName, 'elem-addr', expr[3], expr);
+      ptrCheck(baseExpr, layoutName, func, `${head} ${layoutName}.${fieldName}`, expr);
       const fieldOffset = field.offset;
       const stride = field.stride ?? sizeOfType(field.type);
 
@@ -4282,11 +4871,64 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       return bytes;
     }
 
+    // ── (cast ptr<Layout> EXPR) — Tier 3 of docs/watx-typed-pointers-design.md ──
+    //
+    // In the default build this emits NOTHING of its own: the value of EXPR
+    // passes through untouched, and the whole form's contribution is to the
+    // static pointer type (ptrTypeOf). Adding a cast to a working file must not
+    // change one byte of the module — that is the oracle this tier is held to.
+    //
+    // Its worth is that the claim is now WRITTEN somewhere a reader and a grep
+    // can find it, at the one point where a bare i32 becomes a typed record,
+    // instead of being implicit in the whole call graph. --checked-casts turns
+    // the claim into a runtime tag check for a tagged layout-union variant.
+    if (head === 'cast') {
+      requireArity(2);
+      // `expr`, not `expr[2]`: an atom is an interned primitive string and
+      // carries no source metadata, so a diagnostic anchored to one comes out at
+      // line 0. The enclosing FORM is what has the location.
+      const target = ptrDeclaredLayout(V(expr[2]), `(cast ${V(expr[2])} ...)`, expr);
+      if (!target)
+        ptrError(`(cast ${V(expr[2])} ...) in ${func.name}: a cast target must be a ` +
+          `pointer type — write (cast ptr<LayoutName> EXPR).`, expr);
+      const check = checkedCasts ? castTagCheck(target) : null;
+      if (!check) {
+        compileExpr(expr[3], func, depth, bytes);
+        return bytes;
+      }
+      // Checked build only. Fail fast on a mismatched tag, in the emulator's own
+      // spirit: a stub that returns a plausible wrong record is worse than a
+      // crash that names the problem.
+      compileExpr(expr[3], func, depth, bytes);
+      bytes.byte(OP.local_tee);
+      bytes.uleb(castScratchLocal(func));
+      emitLayoutAccess(bytes, check.tagType, false, check.tagOffset);
+      bytes.byte(OP.i32_const);
+      bytes.sleb(check.tagValues[0]);
+      bytes.push(OP.i32_ne);
+      for (let k = 1; k < check.tagValues.length; k++) {
+        bytes.byte(OP.local_get);
+        bytes.uleb(castScratchLocal(func));
+        emitLayoutAccess(bytes, check.tagType, false, check.tagOffset);
+        bytes.byte(OP.i32_const);
+        bytes.sleb(check.tagValues[k]);
+        bytes.push(OP.i32_ne);
+        bytes.push(OP.i32_and);
+      }
+      bytes.byte(OP.if_);
+      bytes.byte(VALTYPE.void);
+      bytes.push(OP.unreachable);
+      bytes.push(OP.end);
+      bytes.byte(OP.local_get);
+      bytes.uleb(castScratchLocal(func));
+      return bytes;
+    }
+
     // ── size-of ──
     if (head === 'size-of') {
       requireArity(1);
       const layoutName = V(expr[2]);
-      const size = lookupLayout(layoutName, 'size-of', expr[2]).totalSize;
+      const size = lookupLayout(layoutName, 'size-of', expr[2], expr).totalSize;
       bytes.byte(OP.i32_const);
       bytes.sleb(size);
       return bytes;
@@ -4297,8 +4939,8 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       requireArity(2);
       const layoutName = V(expr[2]);
       const fieldName = V(expr[3]);
-      const info = lookupLayout(layoutName, 'offset-of', expr[2]);
-      const offset = lookupField(info, fieldName, 'offset-of', expr[3]).offset;
+      const info = lookupLayout(layoutName, 'offset-of', expr[2], expr);
+      const offset = lookupField(info, fieldName, 'offset-of', expr[3], expr).offset;
       bytes.byte(OP.i32_const);
       bytes.sleb(offset);
       return bytes;
@@ -4710,21 +5352,27 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     // a binding form with a trailing body; codegen's exact-arity check refuses
     // such a body rather than silently discarding it.
     if (hd === 'let') {
-      if ((expr.length - 1) >= 4 && T(expr[3]) === 'symbol' &&
-          ['i32','i64','f32','f64','v128','u8','ptr','weak'].includes(V(expr[3]))) {
-        const declared = V(expr[3]);
-        return declared === 'u8' || declared === 'ptr' || declared === 'weak'
-          ? 'i32' : declared;
+      if ((expr.length - 1) >= 4 && T(expr[3]) === 'symbol' && isLocalValueType(V(expr[3]))) {
+        return physicalLocalType(V(expr[3]));
       }
       return inferExprType(expr[3], symTypes);
     }
+
+    // (cast ptr<L> E) — a pointer is an i32, whatever it points at.
+    if (hd === 'cast') return 'i32';
 
     return 'i32'; // conservative default
   }
 
   // ── Collect function-local variable declarations ──
   const LOCAL_VALUE_TYPES = new Set(['i32','i64','f32','f64','v128','u8','ptr','weak']);
-  const physicalLocalType = (t) => (t === 'u8' || t === 'ptr' || t === 'weak') ? 'i32' : t;
+  // `ptr<L>` joins the annotation set (design doc §2.1). It is not IN the Set
+  // because the pointee name is open-ended, so both the membership test and the
+  // physical-type map have to prefix-match it — exactly as stackType() and
+  // watxLayoutFieldSize() in compiler-stages.js already do for field types.
+  const isLocalValueType = (t) => LOCAL_VALUE_TYPES.has(t) || typeof watxPtrLayoutName(t) === 'string';
+  const physicalLocalType = (t) =>
+    (t === 'u8' || t === 'ptr' || t === 'weak' || typeof watxPtrLayoutName(t) === 'string') ? 'i32' : t;
 
   function collectLocals(body, params) {
     const PHYS = physicalLocalType;
@@ -4736,6 +5384,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     // it is walked (declaration order), so later refs see earlier types.
     const symTypes = new Map();
     if (params) for (const p of params) if (p.name) symTypes.set(p.name, PHYS(p.type));
+    // name -> pointee layout, for the locals this walk declares. Params are
+    // added by prepareUserFunction, which owns the merged map.
+    const ptrLayouts = new Map();
 
     // Gather declarations and explicit-type evidence in one source-order walk.
     // Once the walk finishes, replay the tiny declaration list to assign slots.
@@ -4752,9 +5403,11 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         if (name) {
           // Determine type: explicit annotation takes priority
           let type = null;
-          const isExplicit = (expr.length - 1) >= 4 && T(expr[3]) === 'symbol' && VT.has(V(expr[3]));
+          const isExplicit = (expr.length - 1) >= 4 && T(expr[3]) === 'symbol' && isLocalValueType(V(expr[3]));
           if (isExplicit) {
             type = V(expr[3]);
+            const pointee = ptrDeclaredLayout(type, `(let ${name} ${type} ...)`, expr);
+            if (pointee) ptrLayouts.set(name, pointee);
           }
           // If no explicit type, infer from init expression (resolving bare
           // symbol refs against already-declared locals/params).
@@ -4780,7 +5433,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         const name = V(expr[2]);
         let type = V(expr[3]);
         if (name && name.startsWith('$')) {
-          if (!VT.has(type)) type = 'i32';
+          const pointee = ptrDeclaredLayout(type, `(local ${name} ${type})`, expr);
+          if (pointee) ptrLayouts.set(name, pointee);
+          if (!isLocalValueType(type)) type = 'i32';
           type = PHYS(type);
           symTypes.set(name, type);
           declarations.push({ name, type });
@@ -4808,6 +5463,25 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         locals.push(declaration);
       }
     }
+    // A checked cast reads its pointer twice and wasm has no dup, so it needs
+    // one i32 scratch slot. Appended LAST, and only in a checked build in a
+    // function that actually contains a cast, so a default build's local vector
+    // — and therefore the emitted bytes — is untouched.
+    if (checkedCasts && !seen.has(CAST_SCRATCH)) {
+      let usesCast = false;
+      const scan = (e) => {
+        if (usesCast || !Array.isArray(e)) return;
+        // A cast the emitter will SKIP needs no slot — ask the same predicate it
+        // will, not merely "is this a cast".
+        if (V(e[1]) === 'cast' && castIsChecked(watxPtrLayoutName(V(e[2])))) { usesCast = true; return; }
+        for (let i = 1; i < e.length; i++) scan(e[i]);
+      };
+      for (const e of body) scan(e);
+      if (usesCast) locals.push({ name: CAST_SCRATCH, type: 'i32' });
+    }
+    // The pointee map rides on the returned array rather than changing the
+    // return shape, so every existing caller of collectLocals is untouched.
+    locals.ptrLayouts = ptrLayouts;
     return locals;
   }
 
@@ -4922,6 +5596,20 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
   function prepareUserFunction(fd, typeInfo) {
     const declaredLocals = collectLocals(fd.body, fd.params);
 
+    // name -> pointee layout for every param and local that declared one
+    // (docs/watx-typed-pointers-design.md §2.2). A name with no entry is
+    // UNKNOWN, which is compatible with everything — that is what keeps typing
+    // opt-in rather than a tree-wide cast storm.
+    const ptrTypes = new Map(declaredLocals.ptrLayouts || []);
+    for (const p of fd.params) {
+      if (!p.name) continue;
+      const pointee = ptrDeclaredLayout(p.type, `(param ${p.name} ${p.type}) of ${fd.name}`, fd.sigLoc);
+      if (pointee) ptrTypes.set(p.name, pointee);
+    }
+    const resultPtr = fd.results.length === 1
+      ? ptrDeclaredLayout(fd.results[0], `(result ${fd.results[0]}) of ${fd.name}`, fd.sigLoc)
+      : null;
+
     // Build local map (params first, then locals).
     // localMap: name -> first slot index (back-compat: the default binding used
     //   for non-colliding names and as a fallback).
@@ -4951,6 +5639,9 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       localMap,
       localSlots,
       activeLocal: new Map(),
+      activePtrTypes: new Map(),
+      ptrTypes,
+      resultPtr,
       body: fd.body,
       name: fd.name,
       // The declaration form, so a diagnostic raised before any inner form has

@@ -1066,7 +1066,7 @@
     (local.set $handle (load.field.memarg GdiDcState font (local.get $dc)))
     (local.set $object (call $gdi_object_record (local.get $handle)))
     (if (i32.and (i32.ne (local.get $object) (i32.const 0))
-          (i32.eq (load.field.memarg GdiObjectAny type (local.get $object)) (i32.const 4)))
+          (i32.eq (load.field.memarg GdiObject type (local.get $object)) (i32.const 4)))
       (then
         (local.set $strike (load.field.memarg GdiFont strike (local.get $object)))
         (if (i32.and (i32.ne (local.get $strike) (i32.const 0))

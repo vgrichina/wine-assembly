@@ -56,6 +56,7 @@
 //
 const fs = require('fs');
 const path = require('path');
+const { parseSource, watxNodeLine } = require('./watx');
 
 const ROOT = path.resolve(__dirname, '..');
 const FILE = path.join(ROOT, 'src', '09c3-controls.wat');
@@ -64,29 +65,32 @@ const REL = 'src/09c3-controls.wat';
 // The bases a control-state record is reached through in this file. Both are
 // plain locals/params; the migration left NO raw arithmetic on either, so any
 // reappearance is a new hand-spelled offset against a union member.
-const BASES = ['sw', 'state_w'];
+const BASES = ['$sw', '$state_w'];
 
-// Declared size of each variant, and the allocation that pins it. The size is
-// checked against the (layout …) actually in the file; the allocator is cited
-// so the next reader can re-derive it rather than trust this table.
+// The allocation that pins each variant. There is deliberately NO size here:
+// the old gate duplicated all 13 numbers in this table and only interpolated
+// `alloc` into an error string, so changing a real heap_alloc independently
+// stayed green. The AST walk below reads the named local.set(call heap_alloc)
+// sites and compares their literal arguments to the parsed layout size.
+const alloc = (func, count = 1) => ({ func, target: '$state', count });
 const VARIANTS = {
-  ButtonState:        { size: 72,  alloc: '$button_wndproc WM_CREATE heap_alloc 72' },
-  StaticState:        { size: 20,  alloc: '$static_wndproc / $syslink_wndproc heap_alloc 20' },
-  ProgressState:      { size: 16,  alloc: '$progress_wndproc heap_alloc 16 (twice: WM_CREATE + lazy)' },
-  TrackBarState:      { size: 24,  alloc: '$trackbar_wndproc heap_alloc 24' },
-  ListBoxState:       { size: 56,  alloc: '$listbox_wndproc heap_alloc 56' },
-  ComboBoxState:      { size: 44,  alloc: '$combobox_wndproc heap_alloc 44' },
-  ListViewState:      { size: 80,  alloc: '$listview_wndproc heap_alloc 80' },
-  EditState:          { size: 40,  alloc: '$edit_wndproc WM_CREATE heap_alloc 40' },
-  ColorGridState:     { size: 8,   alloc: '$colorgrid_wndproc heap_alloc 8' },
-  ColorSpectrumState: { size: 12,  alloc: '$colorspectrum_wndproc heap_alloc 12' },
-  TooltipState:       { size: 64,  alloc: '$tooltip_wndproc heap_alloc 64' },
-  ToolbarState:       { size: 80,  alloc: '$toolbar_ensure_state heap_alloc 80' },
-  TabNativeState:     { size: 128, alloc: '$tab_native_state_get heap_alloc 128' },
+  ButtonState:        { allocators: [alloc('$button_wndproc')] },
+  StaticState:        { allocators: [alloc('$static_wndproc'), alloc('$syslink_wndproc')] },
+  ProgressState:      { allocators: [alloc('$progress_wndproc', 2)] },
+  TrackBarState:      { allocators: [alloc('$trackbar_wndproc')] },
+  ListBoxState:       { allocators: [alloc('$listbox_wndproc')] },
+  ComboBoxState:      { allocators: [alloc('$combobox_wndproc')] },
+  ListViewState:      { allocators: [alloc('$listview_wndproc')] },
+  EditState:          { allocators: [alloc('$edit_wndproc')] },
+  ColorGridState:     { allocators: [alloc('$colorgrid_wndproc')] },
+  ColorSpectrumState: { allocators: [alloc('$colorspectrum_wndproc')] },
+  TooltipState:       { allocators: [alloc('$tooltip_wndproc')] },
+  ToolbarState:       { allocators: [alloc('$toolbar_ensure_state')] },
+  TabNativeState:     { allocators: [alloc('$tab_native_state_get')] },
   // The partial view. Not an allocation of its own: it is a window onto the
   // first two words of ButtonState / StaticState / ComboBoxState / EditState,
   // which are the only four variants that agree there.
-  ControlTextState:   { size: 8,   alloc: 'VIEW over Button/Static/ComboBox/Edit +0/+4', view: true },
+  ControlTextState:   { viewOf: ['ButtonState', 'StaticState', 'ComboBoxState', 'EditState'] },
 };
 
 // ── The attribution, which IS the reverse-engineering result ────────────────
@@ -107,7 +111,7 @@ const add = (variant, names, why) => {
 // self-evidencing: $btn_flags is ButtonState.flags and cannot be anything else.
 add('ButtonState', [
   '$btn_text_ptr', '$btn_set_text_ptr', '$btn_text_len', '$btn_set_text_len',
-  '$btn_flags', '$btn_set_flags', '$btn_ctrl_id', '$btn_set_ctrl_id',
+  '$btn_flags', '$btn_set_flags',
   '$btn_image_type', '$btn_image_handle', '$btn_set_image',
 ], 'accessor layer: the function name is the field name');
 
@@ -132,7 +136,7 @@ add('ListBoxState', [
   '$lb_items_ptr', '$lb_set_items_ptr', '$lb_items_used', '$lb_set_items_used',
   '$lb_items_cap', '$lb_set_items_cap', '$lb_count', '$lb_set_count',
   '$lb_cur_sel', '$lb_set_cur_sel', '$lb_top_index', '$lb_set_top_index',
-  '$lb_ctrl_id', '$lb_set_ctrl_id', '$lb_drag_anchor_y', '$lb_set_drag_anchor_y',
+  '$lb_drag_anchor_y', '$lb_set_drag_anchor_y',
   '$lb_drag_anchor_top', '$lb_set_drag_anchor_top', '$lb_data_ptr', '$lb_set_data_ptr',
   '$lb_data_cap', '$lb_set_data_cap', '$lb_sel_ptr', '$lb_set_sel_ptr',
   '$lb_sel_cap', '$lb_set_sel_cap', '$lb_item_h', '$lb_set_item_h',
@@ -140,7 +144,7 @@ add('ListBoxState', [
 
 add('ComboBoxState', [
   '$cb_text_ptr', '$cb_set_text_ptr', '$cb_text_len', '$cb_set_text_len',
-  '$cb_style', '$cb_set_style', '$cb_ctrl_id', '$cb_set_ctrl_id',
+  '$cb_style', '$cb_set_style',
   '$cb_cur_sel', '$cb_set_cur_sel', '$cb_lb_hwnd', '$cb_set_lb_hwnd',
   '$cb_popup_hwnd', '$cb_set_popup_hwnd', '$cb_edit_hwnd', '$cb_set_edit_hwnd',
   '$cb_is_dropped', '$cb_set_is_dropped', '$cb_variant', '$cb_set_variant',
@@ -152,7 +156,7 @@ add('ListViewState', [
   '$lv_cells_ptr', '$lv_set_cells_ptr', '$lv_col_count', '$lv_set_col_count',
   '$lv_col_cap', '$lv_set_col_cap', '$lv_col_widths_ptr', '$lv_set_col_widths_ptr',
   '$lv_col_texts_ptr', '$lv_set_col_texts_ptr', '$lv_selected', '$lv_set_selected',
-  '$lv_top_index', '$lv_set_top_index', '$lv_ctrl_id', '$lv_set_ctrl_id',
+  '$lv_top_index', '$lv_set_top_index',
   '$lv_ex_style', '$lv_set_ex_style', '$lv_drag_anchor_y', '$lv_set_drag_anchor_y',
   '$lv_drag_anchor_top', '$lv_set_drag_anchor_top', '$lv_image_list', '$lv_set_image_list',
   '$lv_bk_color', '$lv_set_bk_color', '$lv_text_color', '$lv_set_text_color',
@@ -234,114 +238,237 @@ add('ControlTextState', ['$ctrl_decimal_value', '$ctrl_inches_milli'],
 // others are absent below despite being obvious members of their families:
 // they reach their state only through helpers, so they are not attributed.
 
-function main() {
-  const list = process.argv.includes('--list');
-  const src = fs.readFileSync(FILE, 'utf8');
-  const lines = src.split('\n');
-  const errors = [];
+const FIELD_WIDTH = {
+  i32: 4, ptr: 4, weak: 4,
+  u8: 1, s8: 1, u16: 2, s16: 2,
+  i64: 8, f32: 4, f64: 8,
+};
 
-  // ── (4) the layouts, and their sizes ─────────────────────────────────────
-  const declared = {};
-  for (let i = 0; i < lines.length; i++) {
-    const m = /^\s*\(layout\s+(\w+)\s*$/.exec(lines[i]);
-    if (!m) continue;
-    let size = 0, j = i + 1;
-    for (; j < lines.length; j++) {
-      // A field's trailing comment may continue on its own line (EditState's
-      // `flags` does). Skip pure-comment lines rather than reading them as the
-      // end of the layout — doing so measured EditState at 28 bytes instead of
-      // 40 and made the size check fire on a correct declaration.
-      if (/^\s*;;/.test(lines[j])) continue;
-      const f = /^\s*\(field\s+(\w+)\s+(\w+)(?:\s+(\d+))?\s*\)?\)?\s*(;;.*)?$/.exec(lines[j]);
-      if (!f) break;
-      const width = { i32: 4, ptr: 4, weak: 4, u8: 1, s8: 1, u16: 2, s16: 2, i64: 8, f32: 4, f64: 8 }[f[2]];
-      if (width === undefined) { errors.push(`${REL}:${j + 1}: unknown field type '${f[2]}'`); break; }
-      size += width * (f[3] ? parseInt(f[3], 10) : 1);
-      if (/\)\)\s*(;;.*)?$/.test(lines[j])) { j++; break; }
+const head = (form) => Array.isArray(form) ? form[1] : null;
+const lineOf = (form) => Array.isArray(form) ? watxNodeLine(form[0]) : 0;
+
+function integerAtom(value) {
+  if (typeof value !== 'string') return null;
+  const text = value.replace(/_/g, '');
+  if (!/^(?:0[xX][0-9a-fA-F]+|[0-9]+)$/.test(text)) return null;
+  const n = Number(text);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+// Parse layouts structurally. This is deliberately an AST walk rather than a
+// line grammar: comments, line breaks, hexadecimal counts and a closing paren
+// on the field's line cannot change which forms belong to the declaration.
+function collectLayouts(forms, rel, errors) {
+  const layouts = new Map();
+  for (const form of forms) {
+    if (head(form) !== 'layout') continue;
+    const name = form[2];
+    let offset = 0;
+    const fields = [];
+    for (const field of form.slice(3)) {
+      if (head(field) !== 'field') continue;
+      const [, , fieldName, type, countText, strideText] = field;
+      const elemSize = FIELD_WIDTH[type] ?? (/^ptr<[^>]+>$/.test(type || '') ? 4 : undefined);
+      if (elemSize === undefined) {
+        errors.push(`${rel}:${lineOf(field)}: layout ${name} has unknown field type '${type}'`);
+        continue;
+      }
+      const count = countText === undefined ? 1 : integerAtom(countText);
+      const stride = strideText === undefined ? elemSize : integerAtom(strideText);
+      if (!Number.isInteger(count) || count < 1 || !Number.isInteger(stride) || stride < elemSize) {
+        errors.push(`${rel}:${lineOf(field)}: layout ${name}.${fieldName} has invalid count/stride`);
+        continue;
+      }
+      const size = count * stride;
+      fields.push({ name: fieldName, type, offset, elemSize, count, stride, size });
+      offset += size;
     }
-    declared[m[1]] = { size, line: i + 1 };
+    layouts.set(name, { name, size: offset, fields, line: lineOf(form) });
   }
+  return layouts;
+}
+
+function walk(form, visit) {
+  if (!Array.isArray(form)) return;
+  visit(form);
+  for (let i = 2; i < form.length; i++) walk(form[i], visit);
+}
+
+function allocationsIn(funcForm, target) {
+  const found = [];
+  walk(funcForm, (form) => {
+    if ((head(form) !== 'local.set' && head(form) !== 'local.tee') || form[2] !== target) return;
+    const value = form[3];
+    if (head(value) !== 'call' || value[2] !== '$heap_alloc') return;
+    found.push({ line: lineOf(value), arg: value[3] });
+  });
+  return found;
+}
+
+function allocationSize(arg, layout) {
+  if (head(arg) === 'i32.const') return integerAtom(arg[2]);
+  if (head(arg) === 'size-of' && arg[2] === layout.name) return layout.size;
+  return null;
+}
+
+function isControlBaseGet(form) {
+  return head(form) === 'local.get' && BASES.includes(form[2]);
+}
+
+// A raw control-state address is either the state local itself (the memarg
+// offset spelling) or an i32.add whose immediate operand is that local. Do not
+// recurse through arbitrary address expressions: loading a pointer from a
+// named state field and then indexing the pointed-to array is a different
+// record, and is intentionally outside this union gate.
+function isRawControlAddress(form) {
+  if (isControlBaseGet(form)) return true;
+  return head(form) === 'i32.add' &&
+    (isControlBaseGet(form[2]) || isControlBaseGet(form[3]));
+}
+
+function memoryAddress(form) {
+  let i = 2;
+  while (typeof form[i] === 'string' && /^(?:offset|align)=/.test(form[i])) i++;
+  return form[i];
+}
+
+function sameField(a, b) {
+  return a && b && a.name === b.name && a.type === b.type &&
+    a.offset === b.offset && a.count === b.count && a.stride === b.stride;
+}
+
+function analyzeSource(src, rel = REL) {
+  const errors = [];
+  let forms;
+  try {
+    forms = parseSource(src, rel);
+  } catch (err) {
+    return { errors: [`${rel}:${err.line || 0}: cannot parse: ${err.message}`], total: 0,
+      sitesByFunc: new Map(), layouts: new Map() };
+  }
+
+  const layouts = collectLayouts(forms, rel, errors);
+  const functions = new Map();
+  for (const form of forms) if (head(form) === 'func' && typeof form[2] === 'string') functions.set(form[2], form);
+
+  // (4) Each real variant's parsed layout size must equal EVERY named state
+  // allocation. A function may allocate unrelated buffers too; the target
+  // local is part of the evidence and prevents those from entering the count.
+  // The partial text view instead has to be an exact prefix of all four real
+  // variants it claims to view.
   for (const [name, spec] of Object.entries(VARIANTS)) {
-    const d = declared[name];
-    if (!d) { errors.push(`layout ${name} is not declared in ${REL} — this gate's variant table has rotted`); continue; }
-    if (d.size !== spec.size)
-      errors.push(`${REL}:${d.line}: layout ${name} is ${d.size} bytes, expected ${spec.size} (${spec.alloc})`);
+    const layout = layouts.get(name);
+    if (!layout) {
+      errors.push(`layout ${name} is not declared in ${rel} — this gate's variant table has rotted`);
+      continue;
+    }
+    if (spec.viewOf) {
+      for (const ownerName of spec.viewOf) {
+        const owner = layouts.get(ownerName);
+        if (!owner) { errors.push(`view ${name} names missing owner layout ${ownerName}`); continue; }
+        for (const field of layout.fields) {
+          const actual = owner.fields.find((f) => f.offset === field.offset);
+          if (!sameField(field, actual)) {
+            errors.push(`${rel}:${layout.line}: view ${name}.${field.name} is not the same ` +
+              `field at +${field.offset} in ${ownerName}`);
+          }
+        }
+      }
+      continue;
+    }
+    for (const pin of spec.allocators) {
+      const func = functions.get(pin.func);
+      if (!func) {
+        errors.push(`${name} allocator ${pin.func} does not exist in ${rel}`);
+        continue;
+      }
+      const sites = allocationsIn(func, pin.target);
+      if (sites.length !== pin.count) {
+        errors.push(`${name} allocator ${pin.func} should assign ${pin.count} heap_alloc call(s) ` +
+          `to ${pin.target}, found ${sites.length}`);
+      }
+      for (const site of sites) {
+        const size = allocationSize(site.arg, layout);
+        if (size === null) {
+          errors.push(`${rel}:${site.line}: ${name} allocator ${pin.func} must use a literal ` +
+            `(i32.const N) or (size-of ${name}) for ${pin.target}`);
+        } else if (size !== layout.size) {
+          errors.push(`${rel}:${site.line}: ${name} allocator ${pin.func} requests ${size} bytes ` +
+            `for ${pin.target}, but the parsed layout is ${layout.size} bytes`);
+        }
+      }
+    }
   }
 
-  // ── walk the file, tracking the enclosing function ───────────────────────
-  const sitesByFunc = new Map();   // func -> Map(variant -> count)
-  let fn = '(top level)';
-  const rawRe = new RegExp(
-    'i32\\.(?:load|store)[a-z0-9_]*\\s+(?:offset=\\d+\\s+)?\\(local\\.get \\$(' + BASES.join('|') + ')\\)' +
-    '|i32\\.(?:load|store)[a-z0-9_]*\\s+\\(i32\\.add \\(local\\.get \\$(' + BASES.join('|') + ')\\)');
-  const fieldRe = /\((?:load|store)\.field(?:-elem)?(?:\.memarg)?\s+(\w+)\s/g;
+  // (1) raw accesses and (2) attributed converted accesses. Traversing the
+  // parsed form makes line wrapping irrelevant and sees offset=0x8 exactly as
+  // it sees offset=8. The old per-line regex missed both shapes.
+  const sitesByFunc = new Map();
+  for (const [fn, func] of functions) {
+    walk(func, (form) => {
+      const op = head(form);
+      if (/^i32\.(?:load|store)/.test(op || '')) {
+        const address = memoryAddress(form);
+        if (isRawControlAddress(address)) {
+          errors.push(`${rel}:${lineOf(form)}: ${fn}: hand-spelled offset off a control-state base. ` +
+            `Use (load.field.memarg <Variant> <field> ptr) / (store.field…) — the variant comes ` +
+            `from the class of the window whose state_ptr this is, not from the record.`);
+        }
+      }
 
-  for (let i = 0; i < lines.length; i++) {
-    const f = /^\s*\(func\s+(\$[\w.]+)/.exec(lines[i]);
-    if (f) fn = f[1];
-
-    // (1) NO RAW SITE — both spellings.
-    if (rawRe.test(lines[i]))
-      errors.push(`${REL}:${i + 1}: ${fn}: hand-spelled offset off a control-state base. ` +
-        `Use (load.field.memarg <Variant> <field> ptr) / (store.field…) — the variant comes ` +
-        `from the class of the window whose state_ptr this is, not from the record.`);
-
-    // (2) every converted site must be attributed.
-    let m;
-    fieldRe.lastIndex = 0;
-    while ((m = fieldRe.exec(lines[i])) !== null) {
-      const variant = m[1];
-      if (!VARIANTS[variant]) continue;             // some other family's layout
+      if (!/^(?:load|store)\.field(?:-elem)?(?:\.memarg)?$/.test(op || '')) return;
+      const variant = form[2];
+      if (!VARIANTS[variant]) return;
       const att = BY_FUNCTION[fn];
       if (!att) {
-        errors.push(`${REL}:${i + 1}: ${fn} reaches ${variant} but is NOT ATTRIBUTED. ` +
+        errors.push(`${rel}:${lineOf(form)}: ${fn} reaches ${variant} but is NOT ATTRIBUTED. ` +
           `Decide which control class owns this pointer and add it to BY_FUNCTION with the evidence.`);
       } else if (att.variant !== variant) {
-        errors.push(`${REL}:${i + 1}: ${fn} is attributed to ${att.variant} but reaches ${variant}.`);
+        errors.push(`${rel}:${lineOf(form)}: ${fn} is attributed to ${att.variant} but reaches ${variant}.`);
       }
       if (!sitesByFunc.has(fn)) sitesByFunc.set(fn, new Map());
-      const c = sitesByFunc.get(fn);
-      c.set(variant, (c.get(variant) || 0) + 1);
-    }
+      const counts = sitesByFunc.get(fn);
+      counts.set(variant, (counts.get(variant) || 0) + 1);
+    });
   }
 
   // (3) no dead attribution.
-  const declaredFns = new Set();
-  for (const line of lines) {
-    const f = /^\s*\(func\s+(\$[\w.]+)/.exec(line);
-    if (f) declaredFns.add(f[1]);
-  }
   for (const [name, att] of Object.entries(BY_FUNCTION)) {
-    if (!declaredFns.has(name)) {
-      errors.push(`attribution names ${name} (${att.variant}), which is not a function in ${REL}`);
-      continue;
-    }
-    if (!sitesByFunc.has(name))
+    if (!functions.has(name)) {
+      errors.push(`attribution names ${name} (${att.variant}), which is not a function in ${rel}`);
+    } else if (!sitesByFunc.has(name)) {
       errors.push(`attribution names ${name} (${att.variant}) but it has no site — dead attribution. Remove it.`);
+    }
   }
 
-  if (list) {
-    const rows = [...sitesByFunc.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-    let total = 0;
-    for (const [name, counts] of rows)
-      for (const [variant, n] of counts) {
-        total += n;
-        console.log(`  ${String(n).padStart(4)}  ${variant.padEnd(20)} ${name}`);
-      }
-    console.log(`  ${String(total).padStart(4)}  TOTAL over ${rows.length} function(s), ` +
-      `${Object.keys(VARIANTS).length} variants`);
-  }
+  const total = [...sitesByFunc.values()]
+    .reduce((sum, counts) => sum + [...counts.values()].reduce((a, b) => a + b, 0), 0);
+  return { errors, total, sitesByFunc, layouts };
+}
 
-  if (errors.length) {
-    for (const e of errors) console.error(`control-variant-gate: ${e}`);
-    console.error(`control-variant-gate: ${errors.length} problem(s).`);
+function printList(result) {
+  const rows = [...result.sitesByFunc.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  for (const [name, counts] of rows)
+    for (const [variant, n] of counts)
+      console.log(`  ${String(n).padStart(4)}  ${variant.padEnd(20)} ${name}`);
+  console.log(`  ${String(result.total).padStart(4)}  TOTAL over ${rows.length} function(s), ` +
+    `${Object.keys(VARIANTS).length} variants`);
+}
+
+function main() {
+  const list = process.argv.includes('--list');
+  const src = fs.readFileSync(FILE, 'utf8');
+  const result = analyzeSource(src, REL);
+  if (list) printList(result);
+  if (result.errors.length) {
+    for (const error of result.errors) console.error(`control-variant-gate: ${error}`);
+    console.error(`control-variant-gate: ${result.errors.length} problem(s).`);
     process.exit(1);
   }
-  const total = [...sitesByFunc.values()]
-    .reduce((a, c) => a + [...c.values()].reduce((x, y) => x + y, 0), 0);
-  console.log(`control-variant-gate: ok — ${total} site(s) across ` +
-    `${Object.keys(VARIANTS).length} variants, ${sitesByFunc.size} function(s) attributed, ` +
+  console.log(`control-variant-gate: ok — ${result.total} site(s) across ` +
+    `${Object.keys(VARIANTS).length} variants, ${result.sitesByFunc.size} function(s) attributed, ` +
     `0 raw offsets off a control-state base.`);
 }
 
-main();
+if (require.main === module) main();
+module.exports = { analyzeSource, VARIANTS, BY_FUNCTION };

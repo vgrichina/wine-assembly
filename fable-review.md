@@ -921,6 +921,180 @@ tier), BYO-media Tier 1 still unowned, and one measurement trap worth
 repeating — a caesar3 A/B under ~30k batches measures the title screen,
 not the workload (24x CPU cliff between 25k and 40k).
 
+**By 18:05 Sep 1 (+5 commits, HEAD `51c17758`).** The MEDIUM control-
+variant gate finding from 14:50 is closed rather than merely patched around.
+`f287362f` replaces the line regex with the production WATX parser, reads each
+of the 13 real layouts' sizes from its named `$heap_alloc` assignment (including
+both ProgressState paths), verifies the four-way ControlTextState projection,
+and carries six adversarial plants: allocator drift, layout drift, multiline
+raw access, hexadecimal memarg offset, multiline wrong variant and view drift.
+At this final tree its own test is 23/23 over 530 remaining sites; an isolated
+full build exits 0 at **997,678 B**.
+
+`51c17758` is a sound single-owner correction, and compaction was the right
+oracle. Five control records copied CONTROL_TABLE's id, while
+SetWindowLongA(GWL_ID) synchronized only ButtonState; the other four could
+return the new id from GetDlgCtrlID and still notify with the old one. All 25
+readers now ask `$ctrl_table_get_id(hwnd)`, the duplicate fields disappear,
+and compacting the layouts exposed raw ListBox/ComboBox reads in 13-exports
+that a reserved hole would have hidden. I independently ran the listbox 28/28,
+combobox 61/61 and rendered-combobox 5/5 suites at the landed commit, plus the
+full build. **MEDIUM follow-up:** the record gate is still scoped to
+09c3-controls.wat, not to the records. This very change removed a bare
+ButtonState `i32.store offset=12` from 09a-handlers that the gate could never
+see and that would now write into DRAWITEMSTRUCT; raw Button/ListView exports
+and 09a/10-helpers state reads remain. Make the census source-wide (or finish
+the typed-pointer retrofit) before another record compaction relies on it.
+
+The Liquid War commit's `strncat` has the expected three boundary cases pinned
+(partial count, zero count, source NUL), and its gameplay oracle reaches a real
+red/yellow arena rather than blessing the menu. One adjacent CRT detail is not
+Win98/MSVCRT-correct, however. **LOW:** `$handle___p___initenv` calls
+`$handle___p__environ` and therefore returns the exact same `char ***` slot.
+`__initenv` and `_environ` are distinct CRT globals whose *values* are made
+equal at startup (`__initenv = _environ`); the repository's authentic-DLL path
+already discovers and writes their accessor addresses separately. Allocate a
+second four-byte slot initialized to the same array, and reverse the new test's
+pointer-identity assertion. The same read exposed a separate pre-existing
+**MEDIUM typo** at `lib/dll-loader.js:609`: `__p___winitenv` is patched with
+`aEnvArray`, even though the immediately preceding code constructed
+`wEnvArray`; a wide startup path therefore receives narrow strings.
+
+`5c397054` is specification only. Its typed-pointer design matches the current
+compiler's production shape (body diagnostics must live in codegen, annotations
+erase to i32) and explicitly preserves the attribution/census half of the
+variant gates rather than pretending types prove runtime tags. Implementation
+is in flight and is not reviewed here as landed behavior. Carried LOW tails:
+the HTTP control test's split deadline and the owner-ratchet's missing ±1
+negative plant. BYO-media Tier 1 remains the larger unowned backlog.
+
+**By 18:16 Sep 1 (+2 commits, HEAD `132c610f`).** The typed-pointer compiler
+has now landed, but the first commit was not releasable as written. An exact
+detached build of `1fe7824c` stopped at `check-watx-provenance`: the compiler
+hashes were current, while the CHANGELOG seal still named `c3e14e21…` instead
+of the committed file's `f75d7013…`. `132c610f` is the correct narrow repair;
+my exact-commit full build now exits 0 at **997,678 B**, byte-for-byte the size
+of the pre-feature build, and the focused typed-pointer suite is 52/52.
+
+Those 52 checks do not yet make the new type claims sound. **MEDIUM:** a
+pointer-typed field checks the type of its *record base* but not the value being
+stored. I compiled a `Holder.child : ptr<Foo>` store of a known `ptr<Bar>`;
+`store.field` accepted it, then `load.field Holder child` reported the value as
+`ptr<Foo>`, so one unchecked store launders the wrong record into a trusted
+type. The same hole exists in the element stores. Field declarations compound
+it: both `(field next ptr<Nope>)` and malformed `(field next ptr<>)` compile,
+despite the design's declaration-site refusal. Validate every `ptr<L>` field
+target and run `ptrCheck(value, L)` in `store.field`, `store.elem` and
+`store.field-elem`; plant all three forms.
+
+**MEDIUM:** the separate direct-tail-call emitter at
+`compiler-codegen.js:4023` bypasses the ordinary call's pointer checks. A
+`return_call` passes `ptr<Bar>` to a `ptr<Foo>` parameter, and a function
+declared `(result ptr<Foo>)` may `return_call` a function returning `ptr<Bar>`;
+both compile in tail-call and compatibility-lowered modes. This is not the
+documented `call_indirect` or fall-through gap: the callee declaration is
+available and the ordinary direct call already checks it. Share the direct-call
+argument check and also compare the tail callee's pointer result to the current
+function's declared result.
+
+**MEDIUM checked-build failure:** a union tag is only required to name a
+prefix field, not an i32-producing integral field. With `(field kind f64)`,
+`--checked-casts` reports compile success but emits `f64.load; i32.const;
+i32.ne`; `WebAssembly.Module` rejects the result. Integer widths also need
+their enum values range-checked or a stored tag can never equal the comparison.
+Constrain tagged unions to the load types the comparison supports and test the
+produced module, not only the compiler result.
+
+Two **LOW Tier-2/typing tails** are also executable. `(view V (of U) ...)` is
+documented to project every variant of union `U`, but `lowerView` adds both the
+variants *and the prefix-only union record*, so a field shared by every variant
+is rejected merely because it is not in the prefix; an empty `(of)` conversely
+compiles as a zero-byte view. And the physical-local machinery explicitly
+supports one let name reused with different types in sibling scopes, while the
+new `ptrTypes` map keeps one pointee per name: two `$p` lets typed `Foo` then
+`Bar` make the first initializer get checked as `Bar`. The regression suite
+also substitutes a `.memarg` load for the advertised seventh accessor and
+never plants `store.field-elem`. Add negative/positive plants for these cases;
+the present 52/52 result cannot detect any of the findings above.
+
+**By 19:05 Sep 1 (+9 commits, current HEAD `8a8d7594`).** Every concrete
+finding in the two preceding review ticks is now closed with an executable
+regression. `55b1a42b` gives `_environ` and `__initenv` distinct four-byte
+slots initialized to the same narrow vector and patches authentic
+`__p___winitenv` with the separately constructed UTF-16 vector; its mock runs
+the real Win98 `mov eax,&global; ret` accessor shape and distinguishes the
+wide/narrow bytes. `fd05008e` plants a live adjacent-line owner and proves the
+exact-line ratchet rejects what its former ±3 search accepted. `9631b8eb`
+replaces the HTTP control test's blocking child probes with async processes,
+races every probe against guest exit and shares one 60-second wall deadline.
+
+The typed-pointer findings closed in three layers. `b9b8e177` checks the value
+stored through all three field/element forms, validates pointer field targets,
+and applies pointer argument/result checks to direct `return_call` in native
+and compatibility lowering. It also rejects non-integral union tags and empty
+views. `23132e02` closes the narrower checked-cast hole left behind: i64 tags
+are rejected because emission compares i32, and signed/unsigned tag values are
+range-checked against their storage width. `4d1807a0` makes a union-backed view
+project the union's variants rather than its prefix-only record, follows the
+active lexical binding when a typed let name is reused, and adds the omitted
+wrong-base `store.field-elem` plant. The final focused suite is **71/71**; an
+exact detached build of `4d1807a0` exits 0 at **997,703 B**, and the installed-
+dependency differential run is 46/46.
+
+`6f57042c` also turns the GDI object family into one compiler-known
+`layout-union`, replacing its hand-maintained variant gate with the generic
+union gate, and `a9981f84` types the 159 per-class state helper parameters plus
+the 11 WAT-side state-pointer materializations in 09c3. That is useful second-
+net coverage, **not closure of the earlier source-wide ControlState finding**:
+the attribution gate still scans 09c3 only, while raw Button/ListView exports
+and 09a/10-helpers reads remain outside it. A future record compaction can still
+silently corrupt one of those cross-file sites. BYO-media Tier 1 likewise
+remains unreviewed. `8a8d7594` is test-only but closes a separate oracle hole:
+the ListView suite now inserts and deletes columns/items in the middle, so its
+three shift paths move real data rather than vacuously appending/removing the
+last entry; the landed suite is 160/160.
+
+**By 20:20 Sep 1 (+23 commits, HEAD `6feb6120`).** My four-hour
+certification pass over a window the finer-grained ticks above already
+cover in detail — so this paragraph records the arcs. First: **the
+BYO-media Tier-1 backlog, unowned since Pass 4 filed it, is being
+drained** — H1 (`8ff2b10d`, bounded 4 MiB provider windows with a
+17 MB past-the-cache regression), H2 (`db182b2d`, safe-integer offsets
+proven at a sparse ≥2 GiB image), H3 (`5a46a063`, hostile ISO names —
+and the sanitizer reuse found a real ZIP bypass, an all-`../` archive
+losing its hostile component during wrapper removal), and M4
+(`6feb6120`, schema-change-safe cleanupOrphans); M1 is claimed. Each
+closed with an executable regression, several finding adjacent real
+bugs. Second: **the typed-pointers lane completed end to end** — spec
+(`5c397054`), all three tiers (`1fe7824c`), the seal lesson
+(`132c610f`: the provenance seal covers CHANGELOG *bytes*, so editing
+prose after `--update` reddens the feature's own commit), five holes
+found by Codex's executable probes and closed in three layers
+(`b9b8e177`, `23132e02`, `4d1807a0`; suite 71/71), the GDI object
+family rewritten as one compiler-known `layout-union` with the generic
+union gate replacing the hand-maintained one at exact census parity —
+three of the old gate's checks are now compile errors by construction —
+and the ControlState retrofit (`a9981f84`) with its transferable
+lesson: the type belongs on the `$g2w`'d wasm pointer, not the guest
+pointer that names the same record. Third: `51c17758` fixed a **real
+shipping bug** the dedup existed to find (SetWindowLong GWL_ID synced
+one control class of five; the other four notified with stale ids), and
+compaction-as-probe exposed 25 load-bearing raw cross-file reads a
+reserved hole would have left armed — the source-wide ControlState
+census this proves necessary is in flight (`c86e5adb` converted the
+10-helpers/13-exports reads). Fourth: coordination held under the
+densest multi-lane pressure yet — the MM-staged gate near-miss, the
+six-owner-lines-one-file deadlock, and the carry-with-credit were all
+defused on the board before any commit, zero sweeps this window.
+In flight and explicitly not yet reviewed: the shutdown lane
+(ExitWindowsEx + WAT-painted power screens, awaiting user go-ahead,
+with five pre-commit findings posted — including that standby does not
+actually pause guests and no WM_QUERYENDSESSION handshake exists), the
+remaining ControlState sites, M1, and TetriNET's WSAIsBlocking in a tmp
+worktree. My certification at `6feb6120`, detached worktree (shared
+tree carries the shutdown and ControlState lanes): build exit 0
+(**997,783 B**), differential 46/46, still exactly one divergence.
+
 ---
 
 # Pass 3 — 2026-08-30

@@ -334,6 +334,33 @@ test('a provider whose fill rejects latches a read failure, not a park loop',
     assert(asked > 0, 'the provider should actually have been asked');
   });
 
+test('a short Range response faults instead of becoming zero-filled bytes',
+  async () => {
+    let asked = 0;
+    const short = {
+      size: SIZE,
+      readRange(off, len) {
+        asked++;
+        return Promise.resolve(BYTES.subarray(off, off + Math.max(0, len - 1)));
+      },
+    };
+    const vfs = new VirtualFS();
+    vfs.setProviderFile(GUEST, {
+      provider: new bp.ChunkCache(short, { readAhead: 0 }),
+    });
+    const h = vfs.createFile(GUEST, 0x80000000, 3);
+    let r = vfs.readFile(h, new Uint8Array(4096), 4096);
+    assert(r.pending, 'the first read should park on an empty cache');
+    assert.strictEqual(await vfs.fillPendingRead(r.pending), false,
+      'a short chunk must reject the pending fill');
+    r = vfs.readFile(h, new Uint8Array(4096), 4096);
+    assert(!r.ok && r.faulted, 'the retry must fail instead of returning padded bytes');
+    assert.strictEqual(r.error, 30, 'short provider data is ERROR_READ_FAULT');
+    assert.strictEqual(vfs.handles.get(h >>> 0).pos, 0,
+      'the failed read must not advance the file position');
+    assert.strictEqual(asked, 1, 'the bad chunk is not cached and retried as if complete');
+  });
+
 test('a fill that never satisfies the read gives up instead of spinning', () => {
   // Resolves, but hands back nothing — a provider lying about its size, or a
   // Range response the server truncated.
@@ -382,7 +409,96 @@ test('vfs.materialize pre-fills an async-only provider for those consumers',
     assert.strictEqual(vfs.files.get(NORM).data.length, SIZE);
   });
 
+test('vfs.materialize streams files larger than the ChunkCache LRU bound',
+  async () => {
+    const bigSize = bp.DEFAULT_CHUNK_SIZE * (bp.DEFAULT_MAX_CHUNKS + 1) + 137;
+    const requests = [];
+    const byteAt = i => (Math.imul(i, 131) ^ (i >>> 8) ^ 0x5a) & 0xff;
+    const provider = {
+      size: bigSize,
+      readRange(off, len) {
+        requests.push({ off, len });
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) bytes[i] = byteAt(off + i);
+        return Promise.resolve(bytes);
+      },
+    };
+    const vfs = new VirtualFS();
+    const guest = 'C:\\GAME\\LARGE.EXE';
+    const norm = 'c:\\game\\large.exe';
+    vfs.setProviderFile(guest, { provider });
+
+    const data = await vfs.materialize(guest);
+    assert.strictEqual(data.length, bigSize);
+    for (let i = 0; i < data.length; i++) {
+      if (data[i] !== byteAt(i)) assert.fail(`wrong byte at ${i}`);
+    }
+    assert(requests.length > 1, 'the whole file was requested as one cache-busting range');
+    assert(Math.max(...requests.map(r => r.len)) <= 4 * 1024 * 1024,
+      'materialization requests must stay bounded');
+    assert.strictEqual(vfs.files.get(norm)._provider, null,
+      'the completed file must become an ordinary eager entry');
+    assert.strictEqual(vfs.files.get(norm).data, data,
+      'ordinary consumers must receive the materialized bytes without another read');
+  });
+
 // ---- chunk cache unit checks --------------------------------------------
+
+test('HttpRangeProvider enforces its HEAD and byte-range contract', async () => {
+  const calls = [];
+  const headers = values => ({
+    get(name) { return values[String(name).toLowerCase()] ?? null; },
+  });
+  const fetch = async (url, init) => {
+    calls.push({ url, init });
+    if (init && init.method === 'HEAD') {
+      return {
+        ok: true,
+        status: 200,
+        headers: headers({ 'accept-ranges': 'bytes', 'content-length': '8' }),
+      };
+    }
+    assert.strictEqual(init.headers.Range, 'bytes=2-4');
+    const bytes = Uint8Array.from([2, 3, 4]);
+    return { status: 206, arrayBuffer: async () => bytes.buffer };
+  };
+  const provider = await bp.HttpRangeProvider.open('https://example.test/disc.iso', { fetch });
+  assert.strictEqual(provider.size, 8);
+  assert.strictEqual(provider.name, 'disc.iso');
+  assert.deepStrictEqual(Array.from(await provider.readRange(2, 3)), [2, 3, 4]);
+  assert.strictEqual(calls[0].init.method, 'HEAD');
+  assert.strictEqual(calls.length, 2);
+
+  await assert.rejects(
+    bp.HttpRangeProvider.open('https://example.test/no-range', {
+      fetch: async () => ({
+        ok: true,
+        status: 200,
+        headers: headers({ 'content-length': '8' }),
+      }),
+    }),
+    /does not advertise Accept-Ranges/);
+
+  const ignored = new bp.HttpRangeProvider('https://example.test/ignored', 8, {
+    fetch: async () => ({ status: 200, arrayBuffer: async () => new ArrayBuffer(8) }),
+  });
+  await assert.rejects(ignored.readRange(0, 4), /answered 200, expected 206/);
+
+  const truncated = new bp.HttpRangeProvider('https://example.test/short', 8, {
+    fetch: async () => ({ status: 206, arrayBuffer: async () => new ArrayBuffer(3) }),
+  });
+  await assert.rejects(truncated.readRange(0, 4), /returned 3 bytes for @0\+4/);
+});
+
+test('ChunkCache refuses a short synchronous provider chunk', () => {
+  const cache = new bp.ChunkCache({
+    size: 8,
+    readRangeSync: () => new Uint8Array(3),
+    readRange: () => Promise.resolve(new Uint8Array(4)),
+  }, { chunkSize: 4, readAhead: 0 });
+  assert.throws(() => cache.tryRead(0, 1), /returned 3 bytes for @0\+4/);
+  assert.strictEqual(cache._chunks.size, 0, 'the short synchronous chunk must not be cached');
+});
 
 test('ChunkCache.tryRead returns null on a miss, never a partial buffer', () => {
   const cache = new bp.ChunkCache(
@@ -400,6 +516,65 @@ test('SliceProvider windows a parent provider', async () => {
     Buffer.from(BYTES.subarray(1000, 1256))) === 0);
   assert(Buffer.compare(Buffer.from(await slice.readRange(16, 16)),
     Buffer.from(BYTES.subarray(1016, 1032))) === 0);
+});
+
+test('provider windows preserve offsets above the signed 32-bit boundary',
+  async () => {
+    const high = 0x80000000 + 0x12345;
+    const parentSize = high + 0x20000;
+    const reads = [];
+    const byteAt = i => (Math.floor(i / 0x1000000) + (i % 251)) & 0xff;
+    const makeBytes = (off, len) => {
+      reads.push({ off, len });
+      const out = new Uint8Array(len);
+      for (let i = 0; i < len; i++) out[i] = byteAt(off + i);
+      return out;
+    };
+    const parent = {
+      size: parentSize,
+      readRangeSync: makeBytes,
+      readRange: (off, len) => Promise.resolve(makeBytes(off, len)),
+    };
+
+    const slice = new bp.SliceProvider(parent, high, 0x1000);
+    assert.strictEqual(slice.offset, high);
+    assert.strictEqual(slice.size, 0x1000);
+    const sliceBytes = await slice.readRange(0x20, 8);
+    assert.deepStrictEqual(Array.from(sliceBytes),
+      Array.from({ length: 8 }, (_, i) => byteAt(high + 0x20 + i)));
+    assert(reads.some(r => r.off === high + 0x20),
+      'SliceProvider truncated the parent offset');
+
+    const vfs = new VirtualFS();
+    const cache = new bp.ChunkCache(parent,
+      { chunkSize: 4096, maxChunks: 4, readAhead: 0 });
+    const guest = 'C:\\GAME\\HIGH.DAT';
+    vfs.setProviderFile(guest, { provider: cache, offset: high, length: 0x1000 });
+    const entry = vfs.files.get('c:\\game\\high.dat');
+    assert.strictEqual(entry._offset, high);
+    const handle = vfs.createFile(guest, 0x80000000, 3);
+    const buf = new Uint8Array(8);
+    const result = vfs.readFile(handle, buf, buf.length);
+    assert(result.ok && result.bytesRead === buf.length);
+    assert.deepStrictEqual(Array.from(buf),
+      Array.from({ length: 8 }, (_, i) => byteAt(high + i)));
+  });
+
+test('provider file sizes above 2 GiB stay Numbers instead of wrapping', () => {
+  const hugeLength = 0x80000000 + 17;
+  const provider = {
+    size: hugeLength + 32,
+    readRangeSync: () => new Uint8Array(0),
+    readRange: () => Promise.resolve(new Uint8Array(0)),
+  };
+  const vfs = new VirtualFS();
+  vfs.setProviderFile('C:\\GAME\\HUGE.BIN', { provider, length: hugeLength });
+  assert.strictEqual(vfs.files.get('c:\\game\\huge.bin')._size, hugeLength);
+  assert.throws(() => vfs.setProviderFile('C:\\BAD.BIN', {
+    provider, offset: Number.MAX_SAFE_INTEGER + 1, length: 0,
+  }), /safe integer/);
+  assert.throws(() => new bp.SliceProvider(provider, 0, Number.MAX_SAFE_INTEGER + 1),
+    /safe integer/);
 });
 
 test('setProviderFile honours an offset/length window', () => {

@@ -13,7 +13,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -68,15 +68,25 @@ function check(name, pass, detail) {
 const install = run([
   `--exe=${INSTALLER}`, '--args=/S',
   '--max-batches=8000', '--batch-size=5000', '--quiet-api',
+  '--overlay-flush-ms=1',
   `--overlay-dir=${overlayDir}`, `--save-vfs=${exportOne}`,
 ], 'installer run');
 
 check('installer run did not crash',
   !/\*\*\* CRASH|RuntimeError|UNIMPLEMENTED API/.test(install));
+const checkpoints = [...install.matchAll(/\[overlay\] checkpointed (\d+) record\(s\)/g)]
+  .map(match => Number(match[1]));
 const flushed = /\[overlay\] flushed (\d+) record\(s\)/.exec(install);
-check('the overlay flushed the installed tree', !!flushed && Number(flushed[1]) > 100,
-  flushed ? `only ${flushed[1]} records` : 'no flush line in the run output');
-check('the flush reported no failures', !/\[overlay\] flushed .*failed/.test(install));
+const persisted = checkpoints.reduce((sum, count) => sum + count, 0) +
+  (flushed ? Number(flushed[1]) : 0);
+check('the installer checkpointed before normal exit',
+  checkpoints.some(count => count > 0),
+  checkpoints.length ? `checkpoint counts: ${checkpoints.join(', ')}` : 'no checkpoint line');
+check('the final overlay flush completed', !!flushed,
+  'no final flush line in the run output');
+check('the overlay persisted the installed tree across all checkpoints', persisted > 100,
+  `only ${persisted} records across checkpoint + final flush`);
+check('the flush reported no failures', !/\[overlay\] (?:checkpointed|flushed) .*failed/.test(install));
 
 const index = JSON.parse(fs.readFileSync(path.join(overlayDir, 'index.json'), 'utf8'));
 check('the store index is a version 1 record list',
@@ -115,6 +125,46 @@ for (const [rel, size] of EXPECTED) {
     a.equals(b) && b.length === size, `${a.length} vs ${b.length} bytes, expected ${size}`);
 }
 
-fs.rmSync(work, { recursive: true, force: true });
-console.log(failures ? `\n${failures} failing` : '\nOverlay installer round trip passes');
-process.exit(failures ? 1 : 0);
+// --- process 3: catchable termination flushes before exit -----------------
+
+function signalFlush() {
+  const signalDir = path.join(work, 'signal-overlay');
+  const child = spawn('node', [RUN,
+    `--exe=${INSTALLER}`, '--args=/S',
+    '--max-batches=1000000', '--batch-size=5000', '--quiet-api',
+    '--control-stdin', '--overlay-flush-ms=0',
+    `--overlay-dir=${signalDir}`,
+  ], {
+    cwd: ROOT,
+    env: process.env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let out = '';
+  child.stdout.on('data', chunk => { out += chunk.toString(); });
+  child.stderr.on('data', chunk => { out += chunk.toString(); });
+  const signal = setTimeout(() => child.kill('SIGTERM'), 1000);
+  const hardStop = setTimeout(() => child.kill('SIGKILL'), 30000);
+  return new Promise(resolve => {
+    child.on('exit', code => {
+      clearTimeout(signal);
+      clearTimeout(hardStop);
+      const line = /\[overlay\] SIGTERM flushed (\d+) record\(s\)/.exec(out);
+      check('SIGTERM awaits an overlay flush before exit', !!line && code === 0,
+        line ? `exit=${code}, records=${line[1]}` :
+          `exit=${code}; tail=${out.split('\n').slice(-8).join(' | ')}`);
+      let records = [];
+      try {
+        records = JSON.parse(fs.readFileSync(path.join(signalDir, 'index.json'), 'utf8')).records;
+      } catch (_) { /* failed by the assertion below */ }
+      check('the signal flush persisted progress made before termination', records.length > 0,
+        `${records.length} records in the signal-time index`);
+      resolve();
+    });
+  });
+}
+
+signalFlush().then(() => {
+  fs.rmSync(work, { recursive: true, force: true });
+  console.log(failures ? `\n${failures} failing` : '\nOverlay installer round trip passes');
+  process.exit(failures ? 1 : 0);
+});

@@ -233,8 +233,50 @@ function checkTypes(forms, options = {}) {
         // access was silently four bytes wide over a field of some other size.
         // Refusing at the declaration rather than at the access is deliberate: one
         // diagnostic naming the field, not one per call site.
-        if (fname) { if (watxLayoutFieldSize(ftype)===null) addError("Layout "+name+": field "+fname+" has unknown field type '"+ftype+"'. Layout field types are: "+watxLayoutFieldTypeList()+".", fieldForm); var field={ name: fname, type: ftype }; fields.push(field); fieldsByLayout.set(fieldKey(name,fname),field); } } }
+        if (fname) { if (watxLayoutFieldSize(ftype)===null) addError("Layout "+name+": field "+fname+" has unknown field type '"+ftype+"'"+((ftype==="i8"||ftype==="i16")?" — a sub-width field is an ACCESS WIDTH, not a valtype, so spell the signedness: "+(ftype==="i8"?"u8 or s8":"u16 or s16"):"")+". Layout field types are: "+watxLayoutFieldTypeList()+".", fieldForm); var field={ name: fname, type: ftype }; fields.push(field); fieldsByLayout.set(fieldKey(name,fname),field); } } }
       if (layouts.has(name)) addWarning("Duplicate layout: "+name, form); layouts.set(name, fields); } }
+    // Tier 2 declarations (docs/watx-typed-pointers-design.md §4). Registered
+    // here for ONE reason that is not advisory: the unknown-field-type refusal
+    // above is the located one, and it runs in production. Without this, a
+    // `(field x i8 4)` inside a union variant would skip it and surface instead
+    // as lowerIR's unlocated "WATX internal: no byte width" — the exact wart
+    // Tier 1 just removed for plain layouts. The offsets are NOT computed here;
+    // lowerIR owns those, and a second copy of that arithmetic is what the
+    // shared lowerFields() exists to prevent.
+    if (head === "layout-union" || head === "view") {
+      var uname = V(A(form,1));
+      if (uname) {
+        var collect = function (owner, holder, target) {
+          for (var ci = 1; ci < N(holder); ci++) {
+            var cf = A(holder,ci);
+            if (!Array.isArray(cf) || V(A(cf,0)) !== "field") continue;
+            var cn = V(A(cf,1)), ct = V(A(cf,2)) || "i32";
+            if (!cn) continue;
+            if (watxLayoutFieldSize(ct)===null)
+              addError(owner+": field "+cn+" has unknown field type '"+ct+"'"+((ct==="i8"||ct==="i16")?" — a sub-width field is an ACCESS WIDTH, not a valtype, so spell the signedness: "+(ct==="i8"?"u8 or s8":"u16 or s16"):"")+". Layout field types are: "+watxLayoutFieldTypeList()+".", cf);
+            var fr = { name: cn, type: ct };
+            target.push(fr); fieldsByLayout.set(fieldKey(owner, cn), fr);
+          }
+        };
+        if (head === "view") { var vfl = []; collect(uname, form, vfl); layouts.set(uname, vfl); }
+        else {
+          var pfx = [];
+          for (var pi2 = 2; pi2 < N(form); pi2++) {
+            var pc = A(form,pi2);
+            if (Array.isArray(pc) && V(A(pc,0)) === "prefix") collect(uname, pc, pfx);
+          }
+          layouts.set(uname, pfx.slice());
+          for (var vi2 = 2; vi2 < N(form); vi2++) {
+            var vc = A(form,vi2);
+            if (!Array.isArray(vc) || V(A(vc,0)) !== "variant") continue;
+            var vn2 = V(A(vc,1)); if (!vn2) continue;
+            var vfields = pfx.map(function(f){ var c={}; for(var k in f)c[k]=f[k]; fieldsByLayout.set(fieldKey(vn2,f.name),c); return c; });
+            collect(vn2, vc, vfields);
+            layouts.set(vn2, vfields);
+          }
+        }
+      }
+    }
     if (head === "func") {
       var cursor = 1;
       var explicitName = V(A(form,cursor)) && V(A(form,cursor)).charAt(0) === "$" ? V(A(form,cursor++)) : null;
@@ -264,7 +306,7 @@ function checkTypes(forms, options = {}) {
           body.push(part);
         }
       }
-      var fd = {name:name,params:params,results:results,locals:[],body:body,effectsClause:effectsClause,form:form,hasEffects:!!effectsClause};
+      var fd = {name:name,params:params,results:results,locals:[],body:body,effectsClause:effectsClause,form:form,sigLoc:watxFormLoc(form),hasEffects:!!effectsClause};
       functionDecls.push(fd);
       declOrder.push("func");
       if (!fd.hasEffects && name.indexOf("$__")!==0) addWarning("Function "+name+" missing (effects ...) clause", form);

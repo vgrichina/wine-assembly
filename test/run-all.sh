@@ -219,6 +219,8 @@ UNIT=(
   test/test-region-layout-fingerprint.js
   test/test-region-shake.js
   test/test-region-owner-ratchet.js
+  test/test-control-variant-gate.js
+  test/test-union-gate.js
   test/test-worker-thread-scheduler.js
   test/test-wat-memory-map.js
   test/test-wat-window-frame.js
@@ -549,6 +551,7 @@ UNIT=(
   test/watx-compiler-simd.test.js
   test/watx-compiler-string-pool.test.js
   test/watx-compiler-type-index.test.js
+  test/watx-compiler-typed-pointers.test.js
   test/watx-compiler-wine-parity.test.js
   test/test-keyboard-focus-seed.js
   test/test-single-app-keep-aspect.js

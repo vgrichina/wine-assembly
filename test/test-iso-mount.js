@@ -40,6 +40,28 @@ function listing(vfs, pattern) {
   return names;
 }
 
+// Mutate one identifier inside the primary directory of an image mastered by
+// hdiutil. Keeping the byte length identical preserves the real record's
+// structure; requiring the preceding identifier-length byte prevents an
+// incidental copy of the text elsewhere in the image from becoming the test.
+function mutatePrimaryIdentifier(bytes, from, to) {
+  const needle = Buffer.from(from, 'ascii');
+  const replacement = Buffer.from(to, 'latin1');
+  assert.strictEqual(replacement.length, needle.length, 'identifier mutation must be length-neutral');
+  const haystack = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let at = -1;
+  for (let cursor = 0; cursor < haystack.length;) {
+    const found = haystack.indexOf(needle, cursor);
+    if (found < 0) break;
+    if (found > 0 && haystack[found - 1] === needle.length) { at = found; break; }
+    cursor = found + 1;
+  }
+  assert(at >= 0, `mastered primary directory has no ${from} identifier`);
+  const out = bytes.slice();
+  out.set(replacement, at);
+  return out;
+}
+
 async function main() {
   console.log('ISO 9660 mount tests:');
 
@@ -105,6 +127,21 @@ async function main() {
       /little-endian .* big-endian|corrupt/);
   });
 
+  test('hostile ISO names and Win32 path collisions are refused', () => {
+    const hostile = [
+      ['/LPHA.BIN', /unsafe directory identifier|one path component/],
+      ['../HA.BIN', /unsafe directory identifier|one path component/],
+      ['\x01LPHA.BIN', /unsafe directory identifier|cannot use/],
+      ['CON.X.BIN', /unsafe directory identifier|reserved device name/],
+      ['BRAVO.BIN', /both mount at|case-insensitive/],
+    ];
+    for (const [replacement, pattern] of hostile) {
+      const image = mutatePrimaryIdentifier(bytes, 'ALPHA.BIN', replacement);
+      assert.throws(() => iso9660.parseIso(image, { prefer: 'primary' }), pattern,
+        `hostile ISO identifier ${JSON.stringify(replacement)} must be refused`);
+    }
+  });
+
   test('the volume serial is stable and image-specific', () => {
     assert(image.volumeSerial >>> 0, 'a mounted disc must have a nonzero serial');
     assert.strictEqual(iso9660.parseIso(bytes).volumeSerial, image.volumeSerial,
@@ -124,7 +161,7 @@ async function main() {
     assert(vfs.dirs.has('d:'), 'the drive itself must be a directory');
     assert(vfs.dirs.has('d:\\'));
     assert(vfs.dirs.has('d:\\data'));
-    assert.strictEqual(mount.fileCount, 4);
+    assert.strictEqual(mount.fileCount, 6);
   });
 
   test('FindFirstFile enumerates the disc root', () => {

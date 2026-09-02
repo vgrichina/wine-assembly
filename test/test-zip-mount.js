@@ -203,6 +203,8 @@ function testHostileArchives() {
     ['\\\\server\\share\\evil.txt', /UNC path/],
     ['CON', /reserved device name/],
     ['sub/NUL.txt', /reserved device name/],
+    ['bad\x01name.txt', /cannot use/],
+    ['bad:name.txt', /cannot use/],
   ];
   for (const [name, pattern] of escapes) {
     // Paired with an innocuous sibling so the archive still has a common
@@ -210,6 +212,11 @@ function testHostileArchives() {
     assert.throws(() => mount(makeRawZip([{ name }, { name: 'ok.txt' }])), pattern,
       `hostile entry name ${JSON.stringify(name)} must be refused`);
   }
+
+  assert.throws(() => mount(makeRawZip([
+    { name: '../evil.txt' }, { name: '../also-evil.txt' },
+  ])), /escapes its mount root/,
+  'a shared hostile prefix must be checked before common-folder unwrapping');
 
   // Two names that are one path to Win32.
   assert.throws(() => mount(makeRawZip([{ name: 'Setup.EXE' }, { name: 'setup.exe' }])),

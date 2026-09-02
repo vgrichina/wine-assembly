@@ -613,7 +613,7 @@
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
     (if (i32.and (i32.ne (local.get $p) (i32.const 0))
-          (i32.eq (load.field.memarg GdiObjectAny type (local.get $p)) (i32.const 4)))
+          (i32.eq (load.field.memarg GdiObject type (local.get $p)) (i32.const 4)))
       (then (return (load.field.memarg GdiFont height (local.get $p)))))
     ;; OEM_FIXED_FONT is the native 8x12 Terminal stock object.
     (if (i32.eq (local.get $handle) (i32.const 0x3001A))
@@ -633,7 +633,7 @@
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
     (if (i32.and (i32.ne (local.get $p) (i32.const 0))
-          (i32.eq (load.field.memarg GdiObjectAny type (local.get $p)) (i32.const 4)))
+          (i32.eq (load.field.memarg GdiObject type (local.get $p)) (i32.const 4)))
       (then (return (load.field.memarg GdiFont width (local.get $p)))))
     (i32.const 0))
 
@@ -641,7 +641,7 @@
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
     (if (i32.and (i32.ne (local.get $p) (i32.const 0))
-          (i32.eq (load.field.memarg GdiObjectAny type (local.get $p)) (i32.const 4)))
+          (i32.eq (load.field.memarg GdiObject type (local.get $p)) (i32.const 4)))
       (then (store.field.memarg GdiFont width (local.get $p) (local.get $width)))))
 
   ;; Preserve LOGFONT.lfPitchAndFamily as mapper input.  In particular, an
@@ -652,7 +652,7 @@
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
     (if (i32.and (i32.ne (local.get $p) (i32.const 0))
-          (i32.eq (load.field.memarg GdiObjectAny type (local.get $p)) (i32.const 4)))
+          (i32.eq (load.field.memarg GdiObject type (local.get $p)) (i32.const 4)))
       (then (return (load.field.memarg GdiFont pitch_and_family (local.get $p)))))
     (i32.const 0))
 
@@ -660,7 +660,7 @@
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
     (if (i32.and (i32.ne (local.get $p) (i32.const 0))
-          (i32.eq (load.field.memarg GdiObjectAny type (local.get $p)) (i32.const 4)))
+          (i32.eq (load.field.memarg GdiObject type (local.get $p)) (i32.const 4)))
       (then (store.field.memarg GdiFont pitch_and_family (local.get $p)
         (i32.and (local.get $value) (i32.const 0xFF))))))
 
@@ -668,7 +668,7 @@
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
     (if (i32.and (i32.ne (local.get $p) (i32.const 0))
-          (i32.eq (load.field.memarg GdiObjectAny type (local.get $p)) (i32.const 4)))
+          (i32.eq (load.field.memarg GdiObject type (local.get $p)) (i32.const 4)))
       (then (return (load.field.memarg GdiFont weight (local.get $p)))))
     (select (i32.const 700) (i32.const 400)
       (i32.eq (local.get $handle) (i32.const 0x30022))))
@@ -677,7 +677,7 @@
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
     (if (i32.and (i32.ne (local.get $p) (i32.const 0))
-          (i32.eq (load.field.memarg GdiObjectAny type (local.get $p)) (i32.const 4)))
+          (i32.eq (load.field.memarg GdiObject type (local.get $p)) (i32.const 4)))
       (then (return (i32.and (load.field.memarg GdiFont italic (local.get $p)) (i32.const 1)))))
     (i32.const 0))
 
@@ -719,7 +719,7 @@
     (local $record i32) (local $face_guest i32)
     (local.set $record (call $gdi_object_record (local.get $handle)))
     (if (i32.and (i32.ne (local.get $record) (i32.const 0))
-          (i32.eq (load.field.memarg GdiObjectAny type (local.get $record)) (i32.const 4)))
+          (i32.eq (load.field.memarg GdiObject type (local.get $record)) (i32.const 4)))
       (then
         (local.set $face_guest (load.field.memarg GdiFont face (local.get $record)))
         (if (local.get $face_guest)
@@ -1077,7 +1077,7 @@
       (then (return (i32.const 0))))
     (local.set $record (call $gdi_object_record (global.get $printer_bitmap)))
     (if (i32.or (i32.eqz (local.get $record))
-          (i32.ne (load.field.memarg GdiObjectAny type (local.get $record)) (i32.const 3)))
+          (i32.ne (load.field.memarg GdiObject type (local.get $record)) (i32.const 3)))
       (then (return (i32.const 0))))
     (local.set $bits (load.field.memarg GdiBitmap bits (local.get $record)))
     (local.set $bytes (i32.mul
@@ -1153,7 +1153,7 @@
     (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
     (local.set $bmp (call $gdi_object_record (load.field.memarg GdiDcState bitmap (local.get $dc))))
     (if (i32.and (i32.ne (local.get $bmp) (i32.const 0))
-          (i32.eq (load.field.memarg GdiObjectAny type (local.get $bmp)) (i32.const 3)))
+          (i32.eq (load.field.memarg GdiObject type (local.get $bmp)) (i32.const 3)))
       (then (return (local.get $bmp))))
     (i32.const 0))
 

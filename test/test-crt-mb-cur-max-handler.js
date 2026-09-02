@@ -4,9 +4,88 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+const { _test: { initMsvcrtGlobals } } = require('../lib/dll-loader');
+const { GUEST_BASE } = require('../lib/region-map.generated');
 
 function guestRead16(exports, addr) {
   return (exports.guest_read8(addr) | (exports.guest_read8(addr + 1) << 8)) >>> 0;
+}
+
+// Exercise the authentic-DLL path without an external msvcrt.dll fixture. Its
+// four accessors are the Win98 x86 shape this loader recognizes —
+// `mov eax,&global; ret` — and each returns a distinct global slot. The values
+// of the current/initial pair agree, while narrow and wide arrays must not.
+function testMsvcrtEnvironmentPatches() {
+  const memory = new ArrayBuffer(0x40000);
+  const dv = new DataView(memory);
+  const mem = new Uint8Array(memory);
+  const imageBase = 0x00400000;
+  const dllBase = 0x00410000;
+  const dllTable = 0x1000;
+  const exportRva = 0x200;
+  const namesRva = 0x300;
+  const ordinalsRva = 0x340;
+  const funcsRva = 0x380;
+  const g2w = guest => guest - imageBase + GUEST_BASE;
+  const names = ['__p__wenviron', '__p__environ', '__p___winitenv', '__p___initenv'];
+  const slots = new Map();
+
+  dv.setUint32(dllTable, dllBase, true);
+  dv.setUint32(dllTable + 8, exportRva, true);
+  const exportWa = g2w(dllBase + exportRva);
+  dv.setUint32(exportWa + 24, names.length, true);
+  dv.setUint32(exportWa + 28, funcsRva, true);
+  dv.setUint32(exportWa + 32, namesRva, true);
+  dv.setUint32(exportWa + 36, ordinalsRva, true);
+
+  for (let i = 0; i < names.length; i++) {
+    const nameRva = 0x400 + i * 0x30;
+    const funcRva = 0x600 + i * 0x10;
+    const slot = dllBase + 0x900 + i * 4;
+    slots.set(names[i], slot);
+    dv.setUint32(g2w(dllBase + namesRva + i * 4), nameRva, true);
+    dv.setUint16(g2w(dllBase + ordinalsRva + i * 2), i, true);
+    dv.setUint32(g2w(dllBase + funcsRva + i * 4), funcRva, true);
+    const encoded = Buffer.from(`${names[i]}\0`, 'ascii');
+    mem.set(encoded, g2w(dllBase + nameRva));
+    const funcWa = g2w(dllBase + funcRva);
+    mem[funcWa] = 0xB8;
+    dv.setUint32(funcWa + 1, slot, true);
+    mem[funcWa + 5] = 0xC3;
+  }
+
+  let nextAlloc = imageBase + 0x24000;
+  const mock = {
+    get_image_base: () => imageBase,
+    get_dll_count: () => 1,
+    get_dll_table: () => dllTable,
+    guest_alloc(size) {
+      const result = nextAlloc;
+      nextAlloc += size;
+      return result;
+    },
+    guest_write16(addr, value) { dv.setUint16(g2w(addr), value, true); },
+    guest_write32(addr, value) { dv.setUint32(g2w(addr), value, true); },
+  };
+
+  initMsvcrtGlobals(mock, memory, dllBase);
+  const valueOf = name => dv.getUint32(g2w(slots.get(name)), true);
+  const wide = valueOf('__p__wenviron');
+  const wideInitial = valueOf('__p___winitenv');
+  const narrow = valueOf('__p__environ');
+  const narrowInitial = valueOf('__p___initenv');
+  assert.strictEqual(wideInitial, wide, '__winitenv begins at the wide environment array');
+  assert.strictEqual(narrowInitial, narrow, '__initenv begins at the narrow environment array');
+  assert.notStrictEqual(wide, narrow, 'wide and narrow environment arrays are distinct');
+  const wideBlock = dv.getUint32(g2w(wide), true);
+  assert.deepStrictEqual([
+    dv.getUint16(g2w(wideBlock), true),
+    dv.getUint16(g2w(wideBlock + 2), true),
+    dv.getUint16(g2w(wideBlock + 4), true),
+  ], [0x41, 0x3D, 0x42], 'wide environment contains UTF-16 A=B');
+  const narrowBlock = dv.getUint32(g2w(narrow), true);
+  assert.deepStrictEqual([...mem.slice(g2w(narrowBlock), g2w(narrowBlock) + 3)],
+    [0x41, 0x3D, 0x42], 'narrow environment contains ANSI A=B');
 }
 
 const extraWat = String.raw`
@@ -191,6 +270,7 @@ const extraWat = String.raw`
 `;
 
 (async () => {
+  testMsvcrtEnvironmentPatches();
   const { exports } = await bootRenderHarness({ extraWat, fonts: 'none' });
   function guestCString(text, capacity = text.length + 1) {
     assert(capacity >= text.length + 1, 'guestCString capacity holds text and NUL');
@@ -220,10 +300,21 @@ const extraWat = String.raw`
   const envp = exports.guest_read32(environSlot) >>> 0;
   assert(envp, '__p__environ slot points at the envp vector');
   assert.strictEqual(exports.guest_read32(envp) >>> 0, 0, 'envp is a valid empty vector');
+  const replacementEnvp = exports.guest_alloc(4) >>> 0;
+  exports.guest_write32(replacementEnvp, 0);
+  exports.guest_write32(environSlot, replacementEnvp);
 
   exports.call_p_initenv();
-  assert.strictEqual(exports.last_eax() >>> 0, environSlot, '__p___initenv shares the narrow environment slot');
+  const initenvSlot = exports.last_eax() >>> 0;
+  assert(initenvSlot && initenvSlot !== environSlot,
+    '__p___initenv returns its own slot, not &_environ');
+  assert.strictEqual(exports.guest_read32(initenvSlot) >>> 0, envp,
+    '__initenv preserves the startup vector after _environ is reassigned');
   assert.strictEqual(exports.last_esp_delta(), 4, '__p___initenv preserves cdecl cleanup');
+  assert.strictEqual(exports.guest_read32(environSlot) >>> 0, replacementEnvp,
+    '_environ retains its reassigned current vector');
+  exports.call_p_initenv();
+  assert.strictEqual(exports.last_eax() >>> 0, initenvSlot, '__p___initenv slot is stable');
 
   exports.call_cexit();
   assert.strictEqual(exports.last_eax() >>> 0, 0x12345678, '_cexit has no return value');
@@ -323,7 +414,7 @@ const extraWat = String.raw`
     assert(api && api.convention === 'cdecl', `${name} resolves as a cdecl CRT math export`);
   }
 
-  console.log('PASS  old MSVCRT startup helpers expose ANSI CRT state');
+  console.log('PASS  old MSVCRT startup helpers preserve narrow/wide initial environment state');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);
