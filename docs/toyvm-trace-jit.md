@@ -2106,9 +2106,58 @@ Two things for whoever picks this up next:
   minimum-share floor in `pickRegion` would drop them; it would also cut the
   headline region count by a quarter, which is why it wants to be a measured
   decision rather than a constant somebody picks.
-- **Do not read `region-census.js`'s `%` column as a benchmark.** It runs
+- **`region-census.js`'s old `%` column was never a benchmark.** It ran
   `--reps=1`, and at one rep the interleave-and-rotate in `region-jit.js` never
   rotates: the baseline arm always runs first and the region arm always second,
   min-of-one, on whatever the box is doing. The 2026-08-31 census returned
   93 of 93 negative at a median of −58% on a box at load 17–27; that number
-  describes the measurement, not the JIT.
+  described the measurement, not the JIT. Fixed 2026-09-01, see below.
+
+## Measuring whether a region pays (2026-09-01)
+
+Everything above ends at the same wall: 103 installed regions, and no number
+in the tree that says whether any of them is faster whole-program. The timing
+table now answers that two ways, one of which does not need a quiet box.
+
+```
+              dispatched  handbacks    wall ms     cpu ms
+  baseline       6010806        553       72.6       77.5
+  region         6010806        553       72.9       75.4   2.8% cpu  (-0.3% wall)
+  expected    share 10.0% x (1 - 1/7.64x) = +8.7% ceiling, handbacks +0 vs baseline
+```
+
+- **Both clocks are `run-dos`'s slice clocks**, `guestSecs` and `guestCpuSecs`,
+  bracketing only the guest slices. The `%` is taken from **CPU time**: on a
+  loaded box the process waits for a core, and the same guest work has been
+  measured at identical user CPU and three times the wall. A process-wide
+  `process.cpuUsage()` around the whole run was tried first and read DRAGON's
+  region — zero extra handbacks, +8.7% ceiling — as 11% *slower*, because V8
+  compiles the region module on background threads and at a 150ms guest run
+  that compile is the size of the work. Scoping to the slices is what turned
+  that into the +2.8% above.
+- **One rep prints `n/a`, not a number.** `--reps=1` cannot rotate, so the
+  `%` (and the census `speed` cell) exists only at `--reps=2` or more.
+- **`expected` is the load-free view.** A region's whole-program win is capped
+  by its sample share, and inside that share the body runs at the gate's
+  in-isolation tier-3 ratio, so `share × (1 − 1/ratio)` is the ceiling on what
+  the timing can show; the handback delta is the JS round trips the region adds
+  and is the usual reason a measurement lands under its ceiling. Neither input
+  moves with load, so this line is comparable across census runs where the `%`
+  is not. `region-census.js` parses it into `gate`, `ceiling` and `+hb` columns
+  beside `speed`, and into `expected` in the JSON.
+
+What the first readings say, box at load 5–7, 6M dispatches, 3 reps:
+
+| program | share | gate | ceiling | +hb | cpu `%` |
+|---|---:|---:|---:|---:|---:|
+| DRAGON.EXE | 10.0% | 7.64x | +8.7% | +0 | +2.8% |
+| CARRIE.EXE | 16.1% | 3.63x | +11.6% | +139 | +29.8% |
+
+DRAGON is coherent: a positive win under its ceiling with nothing to pay for.
+CARRIE is *above* its ceiling, which is impossible, and its baseline shows
+`cpu ms` 40% over `wall ms` — background V8 work landing inside the slices at
+a 70ms run. **6M dispatches is too short to time under load**; the ceiling and
+handback columns are the ones to rank regions by until a quiet box (or a longer
+budget) confirms the `%`. That ranking is what the min-share floor above
+should be decided from: a region whose ceiling rounds to 0.0% cannot pay by
+construction, and the column now says so per program.
