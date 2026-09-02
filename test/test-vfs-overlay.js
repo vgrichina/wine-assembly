@@ -21,6 +21,7 @@ const byteProvider = require('../lib/byte-provider');
 
 const GENERIC_WRITE = 0x40000000;
 const GENERIC_READ = 0x80000000;
+const GENERIC_ALL = 0x10000000;
 const CREATE_ALWAYS = 2;
 const OPEN_EXISTING = 3;
 
@@ -150,19 +151,25 @@ test('copy-on-write over a resident base file keeps the base mount intact', asyn
 });
 
 test('an unresident provider file opened for write fails loudly, not silently', () => {
-  const vfs = new VirtualFS();
-  mountProviderFile(vfs, 'C:\\game\\big.dat', 'x'.repeat(64));
-  const overlay = VfsOverlay.attach(vfs, { store: memoryStore() });
-  // Case 2: nothing has filled the chunk cache, so CreateFile-for-write has no
-  // synchronous way to copy on write and must not pretend otherwise.
-  const handle = vfs.createFile('C:\\game\\big.dat', GENERIC_WRITE, OPEN_EXISTING);
-  assert.strictEqual(handle, 0, 'the open must fail rather than park or truncate');
-  assert.strictEqual(overlay.lastError, VfsOverlay.ERROR_NOT_READY);
-  assert.strictEqual(overlay.errors.length, 1);
-  assert.match(overlay.errors[0].message, /materialize/);
-  // Read-only opens of the same file are unaffected.
-  const reader = vfs.createFile('C:\\game\\big.dat', GENERIC_READ, OPEN_EXISTING);
-  assert.ok(reader, 'a read-only open of a lazy entry must still succeed');
+  for (const [name, access] of [
+    ['GENERIC_WRITE', GENERIC_WRITE],
+    ['GENERIC_ALL', GENERIC_ALL],
+  ]) {
+    const vfs = new VirtualFS();
+    mountProviderFile(vfs, 'C:\\game\\big.dat', 'x'.repeat(64));
+    const overlay = VfsOverlay.attach(vfs, { store: memoryStore() });
+    // Case 2: nothing has filled the chunk cache, so CreateFile-for-write has
+    // no synchronous way to copy on write and must not pretend otherwise.
+    const handle = vfs.createFile('C:\\game\\big.dat', access, OPEN_EXISTING);
+    assert.strictEqual(handle, 0,
+      `${name} must fail at open rather than park later in WriteFile`);
+    assert.strictEqual(overlay.lastError, VfsOverlay.ERROR_NOT_READY);
+    assert.strictEqual(overlay.errors.length, 1);
+    assert.match(overlay.errors[0].message, /materialize/);
+    // Read-only opens of the same file are unaffected.
+    const reader = vfs.createFile('C:\\game\\big.dat', GENERIC_READ, OPEN_EXISTING);
+    assert.ok(reader, 'a read-only open of a lazy entry must still succeed');
+  }
 });
 
 test('a read-only drive refuses every mutation with ERROR_WRITE_PROTECT', () => {
