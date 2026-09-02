@@ -35,6 +35,8 @@ const extraWat = String.raw`
       (local.get $w) (i32.const 0))
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
+  (func (export "test_get_parent") (param $hwnd i32) (result i32)
+    (call $wnd_get_parent (local.get $hwnd)))
 `;
 
 (async () => {
@@ -126,9 +128,15 @@ const extraWat = String.raw`
   assert.deepStrictEqual(zOrders, [],
     'SWP_NOZORDER suppresses the host z-order update');
 
-  e.test_call_SetWindowPos(first, 99, 99, 150, 60, 0x03); // NOMOVE|NOSIZE
-  assert.deepStrictEqual(zOrders, [[first, 0]],
-    'SetWindowPos without SWP_NOZORDER moves the window to HWND_TOP');
+  const top = e.test_get_parent(first) >>> 0;
+  sizes.set(top, pack(40, 20));
+  e.test_call_SetWindowPos(top, 99, 99, 150, 60, 0x03); // NOMOVE|NOSIZE
+  assert.deepStrictEqual(zOrders, [[top, 0]],
+    'top-level SetWindowPos without SWP_NOZORDER moves the window to HWND_TOP');
+
+  e.test_call_SetWindowPos(first, 0, 0, 20, 10, 0x03);
+  assert.deepStrictEqual(zOrders, [[top, 0]],
+    'child z-order stays in the retained sibling model, not the host global list');
 
   console.log('PASS MoveWindow/SetWindowPos preserve geometry, repaint, and z-order flags');
 })().catch(err => {

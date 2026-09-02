@@ -6036,7 +6036,7 @@
     (local.set $old_xy (call $window_xy_packed (local.get $arg0)))
     ;; Commit geometry and z-order independently, as the SWP flags require.
     (call $host_move_window (local.get $arg0) (local.get $x) (local.get $y) (local.get $cx) (local.get $cy) (local.get $uFlags))
-    (if (i32.eqz (i32.and (local.get $uFlags) (i32.const 0x0004))) (then (call $host_set_window_zorder (local.get $arg0) (local.get $arg1))))
+    (if (i32.and (i32.eqz (i32.and (local.get $uFlags) (i32.const 0x0004))) (i32.eqz (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x40000000)))) (then (call $host_set_window_zorder (local.get $arg0) (local.get $arg1))))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $x) (local.get $y) (local.get $cx) (local.get $cy) (local.get $uFlags))
     (local.set $new_wh (call $ctrl_get_wh_packed (local.get $arg0)))
     (if (i32.eqz (local.get $new_wh))

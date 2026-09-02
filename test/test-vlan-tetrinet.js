@@ -63,7 +63,9 @@ const SERVER_INPUT = [
 
 const CLIENT_INPUT = [
   '1200:click:319:284',            // dismiss the first-run dialog
-  '1600:click:57:455',             // toolbar: the connect screen
+  '1500:click:57:455',             // initialize the lazy playing-fields form
+  '1550:click:606:15',             // close it before editing connection data
+  '1600:click:450:455',            // toolbar: Client Settings
   '1750:click:455:186',            // the server address field
   ...typed(1800, HOST_IP, 10),
   '1900:click:455:213',            // the nickname field
@@ -71,7 +73,6 @@ const CLIENT_INPUT = [
   '2000:click:437:279',            // Connect
   '4300:click:139:455',            // toolbar: Partyline
   '4400:dump-windows:partyline',
-  ...(CLIENT_PNG ? [`4520:png-pixels:${CLIENT_PNG}`] : []),
 ].join(',');
 
 // A run of this length emits far too much to hold in memory, so the full log
@@ -82,7 +83,7 @@ const WINDOW_BYTES = 64 * 1024;
 
 function spawn(name, args, logEnvVar, watch) {
   const child = fork(path.join(ROOT, 'test', 'run.js'), args,
-    { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
   const logPath = process.env[logEnvVar];
   const fd = logPath ? fs.openSync(logPath, 'w') : null;
   const state = {
@@ -129,13 +130,19 @@ const SERVER_SIGNS = {
 const CLIENT_SIGNS = {
   connect: /connect\(s=/,
   recv: /recv\(/,
+  start: /send\(s=0x[0-9a-f]+, buf=0x[0-9a-f]+, len=5, flags=0\)/,
+  fields: /\[input\] click 40,455 at batch /,
+  gameplay: /\[input\] window:client-gameplay .*visible=true.*title="TetriNET Playing Fields"/,
+  repaint: /\[ctl\] \{"ok":true,"id":"gameplay-repaint"/,
   png: /\[input\] png-pixels .* at batch /,
 };
 
 const COMMON = [
   '--vlan-wire',
   '--quiet-api',
+  '--quiet-blocks',
   '--batch-size=25000',
+  '--repaint-every=1000',
   // Both ends spend most of their life idle in their message pump waiting on
   // the other, which is exactly what the default stuck-run guard is built to
   // stop. Here it is the expected shape of a working session.
@@ -167,7 +174,8 @@ async function main() {
 
     client = spawn('client', [
       `--exe=${EXE}`, `--vlan-ip=${PEER_IP}`, `--input=${CLIENT_INPUT}`,
-    '--max-seconds=300',
+      '--max-seconds=300',
+      '--control-stdin',
       '--trace-api=socket,connect,send,recv,closesocket',
       ...COMMON, ...extra(process.env.VLAN_CLIENT_ARGS),
     ], 'VLAN_CLIENT_LOG', CLIENT_SIGNS);
@@ -196,9 +204,28 @@ async function main() {
     await waitFor(server, SERVER_SIGNS.start, 'the server to start a game');
     check('the server emits the TetriNET start-game packet');
 
+    // The two guests run at very different batch rates. A fixed client batch
+    // here used to capture its connect screen millions of server batches
+    // before the game began. The client answers the start payload with a
+    // five-byte protocol acknowledgement after constructing its game view,
+    // so use that causal marker and ask the running CLI for a screenshot.
+    await waitFor(client, CLIENT_SIGNS.start, 'the client to process the start-game packet');
+    check('the client processes the start-game packet');
+
+    client.child.stdin.write('click:40:455\n');
+    await waitFor(client, CLIENT_SIGNS.fields, 'the client to raise its playing fields');
+    client.child.stdin.write('dump-windows:client-gameplay\n');
+    await waitFor(client, CLIENT_SIGNS.gameplay, 'the visible playing-fields window');
+    check('the client opens the populated playing-fields window');
+
     if (CLIENT_PNG) {
+      client.child.stdin.write(JSON.stringify({
+        id: 'gameplay-repaint', action: 'eval', code: 'renderer.repaint()',
+      }) + '\n');
+      await waitFor(client, CLIENT_SIGNS.repaint, 'the remote gameplay repaint');
+      client.child.stdin.write(`png-pixels:${CLIENT_PNG}\n`);
       await waitFor(client, CLIENT_SIGNS.png, 'the client session screenshot', 120000);
-      check('the client session screenshot is captured');
+      check('the client gameplay screenshot is captured after game start');
     }
     if (SERVER_PNG) {
       await waitFor(server, SERVER_SIGNS.png, 'the server session screenshot', 120000);
