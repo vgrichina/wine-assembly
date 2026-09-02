@@ -126,8 +126,10 @@ const digest = crypto.createHash('sha256')
 // 2026-09-02: 497 -> 494. GetSubMenu now resolves real popup ownership,
 // ModifyMenu mutates dynamic items, and DrawMenuBar validates and redraws the
 // target window's non-client menu chrome instead of fixed success/handles.
-const EXPECTED_COUNT = 494;
-const EXPECTED_SHA256 = '7d84249359d45790f6030c6a00e6340c7251ebb3d7d54a9259f879d18b8a0a44';
+// 2026-09-02: 494 -> 493. FindWindowA now searches the live top-level USER
+// tree by optional class atom/name and title instead of always returning NULL.
+const EXPECTED_COUNT = 493;
+const EXPECTED_SHA256 = 'b9fbdeb9da905e138ca9964bb65a0cc637660c1b41bd3e982959a87444743f71';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

@@ -6980,9 +6980,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 189: FindWindowA(lpClassName, lpWindowName) — return NULL (no existing window found)
+  ;; 189: FindWindowA(lpClassName, lpWindowName). USER searches only top-level
+  ;; windows and compares both optional filters case-insensitively.
   (func $handle_FindWindowA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; NULL — no window found
+    (global.set $eax (call $find_window_core
+      (i32.const 0) (i32.const 0) (local.get $arg0) (local.get $arg1)
+      (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
@@ -7022,14 +7025,15 @@
   ;; rather than by string, so the MAKEINTATOM form of a class key selects the
   ;; same record its name does; a title is compared case-insensitively against
   ;; the window's stored text, the way USER's own comparison does.
-  (func $find_window_matches (param $hwnd i32) (param $class_g i32) (param $title_g i32)
-                             (result i32)
+  (func $find_window_matches (param $hwnd i32) (param $class_g i32)
+                             (param $title_g i32) (param $wide i32) (result i32)
     (local $slot i32) (local $title_wa i32)
     (if (local.get $class_g)
       (then
         (local.set $slot (call $class_find_slot
-          (select (local.get $class_g) (call $g2w (local.get $class_g))
-                  (i32.lt_u (local.get $class_g) (i32.const 0x10000)))))
+          (if (result i32) (local.get $wide)
+            (then (call $class_wide_name_key (local.get $class_g)))
+            (else (call $class_name_key (local.get $class_g))))))
         (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
         (if (i32.ne (local.get $slot) (call $wnd_get_class_slot (local.get $hwnd)))
           (then (return (i32.const 0))))))
@@ -7037,13 +7041,97 @@
       (then
         (local.set $title_wa (call $title_table_get_ptr (local.get $hwnd)))
         (if (i32.eqz (local.get $title_wa)) (then (return (i32.const 0))))
-        (if (i32.eqz (call $guest_ansi_eq_wasm_ci
-                       (local.get $title_g) (local.get $title_wa)))
+        (if (i32.eqz
+              (if (result i32) (local.get $wide)
+                (then (call $wide_ascii_eq
+                  (call $g2w (local.get $title_g)) (local.get $title_wa)))
+                (else (call $guest_ansi_eq_wasm_ci
+                  (local.get $title_g) (local.get $title_wa)))))
           (then (return (i32.const 0))))))
     (i32.const 1))
 
+  ;; Highest sibling in USER's WAT-owned Z order. parent=0 selects top-level
+  ;; records, the WAT equivalent of treating the desktop as their parent.
+  (func $find_window_z_first (param $parent i32) (result i32)
+    (local $i i32) (local $hwnd i32) (local $rank i32)
+    (local $best i32) (local $best_rank i32)
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $hwnd (call $wnd_slot_hwnd (local.get $i)))
+      (if (i32.and
+            (i32.ne (local.get $hwnd) (i32.const 0))
+            (i32.eq (call $wnd_get_parent (local.get $hwnd)) (local.get $parent)))
+        (then
+          (local.set $rank (call $wnd_z_get (local.get $hwnd)))
+          (if (i32.or
+                (i32.eqz (local.get $best))
+                (i32.gt_s (local.get $rank) (local.get $best_rank)))
+            (then
+              (local.set $best (local.get $hwnd))
+              (local.set $best_rank (local.get $rank))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $best))
+
+  ;; Highest sibling below hwndChildAfter. SetWindowPos owns the rank updates,
+  ;; so this follows live Z-order mutations instead of window allocation slots.
+  (func $find_window_z_next (param $parent i32) (param $after i32) (result i32)
+    (local $i i32) (local $hwnd i32) (local $rank i32)
+    (local $after_rank i32) (local $best i32) (local $best_rank i32)
+    (local.set $after_rank (call $wnd_z_get (local.get $after)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $hwnd (call $wnd_slot_hwnd (local.get $i)))
+      (if (i32.and
+            (i32.ne (local.get $hwnd) (i32.const 0))
+            (i32.eq (call $wnd_get_parent (local.get $hwnd)) (local.get $parent)))
+        (then
+          (local.set $rank (call $wnd_z_get (local.get $hwnd)))
+          (if (i32.and
+                (i32.lt_s (local.get $rank) (local.get $after_rank))
+                (i32.or
+                  (i32.eqz (local.get $best))
+                  (i32.gt_s (local.get $rank) (local.get $best_rank))))
+            (then
+              (local.set $best (local.get $hwnd))
+              (local.set $best_rank (local.get $rank))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $best))
+
+  ;; Shared FindWindow/FindWindowEx walk. A non-null hwndChildAfter must be a
+  ;; live direct child of the requested parent; accepting an unrelated window
+  ;; would silently continue in the wrong tree. Candidates are visited from
+  ;; top to bottom in the same sibling Z order SetWindowPos mutates.
+  (func $find_window_core (param $parent i32) (param $after i32)
+                          (param $class_g i32) (param $title_g i32)
+                          (param $wide i32) (result i32)
+    (local $cur i32)
+    (if (local.get $after)
+      (then
+        (if (i32.or
+              (i32.eq (call $wnd_table_find (local.get $after)) (i32.const -1))
+              (i32.ne (call $wnd_get_parent (local.get $after)) (local.get $parent)))
+          (then (return (i32.const 0))))
+        (local.set $cur
+          (call $find_window_z_next (local.get $parent) (local.get $after))))
+      (else
+        (local.set $cur (call $find_window_z_first (local.get $parent)))))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $cur)))
+      (if (call $find_window_matches
+            (local.get $cur) (local.get $class_g) (local.get $title_g)
+            (local.get $wide))
+        (then (return (local.get $cur))))
+      (local.set $cur
+        (call $find_window_z_next (local.get $parent) (local.get $cur)))
+      (br $scan)))
+    (i32.const 0))
+
   ;; 913: FindWindowExA(hwndParent, hwndChildAfter, lpszClass, lpszWindow)
-  ;; Walks hwndParent's children in creation order, resuming after
+  ;; Walks hwndParent's direct children in Z order, resuming after
   ;; hwndChildAfter when one is given. Winamp's "Winamp Gen" frame locates the
   ;; embedded plug-in window it has to size with exactly this call --
   ;; FindWindowEx(parent, 0, 0, 0) from its WM_SIZE/WM_SHOWWINDOW arm -- so
@@ -7052,27 +7140,11 @@
   ;; was the visible case: its visualisation drew as a small square over the
   ;; window's titlebar.
   ;;
-  ;; A NULL parent means "search top-level windows". That half stays
-  ;; unimplemented and answers NULL, matching $handle_FindWindowA: it is the
-  ;; form single-instance checks use, and nothing needs it yet.
   (func $handle_FindWindowExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cur i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $find_window_core
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
+      (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
-    (if (i32.eqz (local.get $arg0)) (then (return)))
-    (local.set $cur (select
-      (call $wnd_find_next_sibling (local.get $arg1))
-      (call $wnd_find_first_child (local.get $arg0))
-      (i32.ne (local.get $arg1) (i32.const 0))))
-    (block $done (loop $scan
-      (br_if $done (i32.eqz (local.get $cur)))
-      (if (call $find_window_matches
-            (local.get $cur) (local.get $arg2) (local.get $arg3))
-        (then
-          (global.set $eax (local.get $cur))
-          (return)))
-      (local.set $cur (call $wnd_find_next_sibling (local.get $cur)))
-      (br $scan)))
   )
 
   ;; 190: BringWindowToTop(hWnd) — 1 arg stdcall
@@ -16086,12 +16158,14 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 678: FindWindowW(lpClassName, lpWindowName) → HWND
-  ;; Searches for a top-level window. Returns NULL (no other instances running).
-  ;; Apps use this to detect if they're already running.
+  ;; 678: FindWindowW(lpClassName, lpWindowName) → HWND. Window records retain
+  ;; canonical byte class/title strings, so compare the caller's UTF-16 filters
+  ;; against those records rather than misreading them through the A handler.
   (func $handle_FindWindowW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_FindWindowA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+    (global.set $eax (call $find_window_core
+      (i32.const 0) (i32.const 0) (local.get $arg0) (local.get $arg1)
+      (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 679: GetTabbedTextExtentW — packed width/height for UTF-16 text.
   (func $handle_GetTabbedTextExtentW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
