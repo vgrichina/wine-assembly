@@ -27,6 +27,8 @@ const ROOT = path.join(__dirname, '..');
 const EXE = path.join(ROOT, 'test', 'binaries', 'candidates', 'tetrinet', 'TETRINET.EXE');
 const HOST_IP = '10.77.0.1';
 const PEER_IP = '10.77.0.2';
+const SERVER_PNG = process.env.VLAN_SERVER_PNG || '';
+const CLIENT_PNG = process.env.VLAN_CLIENT_PNG || '';
 
 let failures = 0;
 function check(what, ok = true) {
@@ -53,6 +55,10 @@ const SERVER_INPUT = [
   '2100:click:253:62',             // the nickname edit
   ...typed(2200, 'bob'),
   '2600:click:407:408',            // Start Server
+  '5300000:click:139:455',         // toolbar: Partyline
+  '5300050:dump-windows:server-partyline',
+  '5300100:click:529:417',         // Start New Game
+  ...(SERVER_PNG ? [`5300800:png-pixels:${SERVER_PNG}`] : []),
 ].join(',');
 
 const CLIENT_INPUT = [
@@ -63,6 +69,9 @@ const CLIENT_INPUT = [
   '1900:click:455:213',            // the nickname field
   ...typed(1920, 'ann', 10),
   '2000:click:437:279',            // Connect
+  '4300:click:139:455',            // toolbar: Partyline
+  '4400:dump-windows:partyline',
+  ...(CLIENT_PNG ? [`4520:png-pixels:${CLIENT_PNG}`] : []),
 ].join(',');
 
 // A run of this length emits far too much to hold in memory, so the full log
@@ -114,10 +123,13 @@ const SERVER_SIGNS = {
   accept: /accept\(/,
   recv: /recv\(/,
   send: /send\(/,
+  start: /send\(s=0x[0-9a-f]+, buf=0x[0-9a-f]+, len=229, flags=0\)/,
+  png: /\[input\] png-pixels .* at batch /,
 };
 const CLIENT_SIGNS = {
   connect: /connect\(s=/,
   recv: /recv\(/,
+  png: /\[input\] png-pixels .* at batch /,
 };
 
 const COMMON = [
@@ -128,13 +140,15 @@ const COMMON = [
   // the other, which is exactly what the default stuck-run guard is built to
   // stop. Here it is the expected shape of a working session.
   '--vlan-max-waits=100000000',
-  '--max-batches=200000',
+  '--stuck-after=10000000',
+  '--max-batches=100000000',
   ...NET_TRACE,
 ];
 
 async function main() {
   const server = spawn('server', [
     `--exe=${EXE}`, `--vlan-ip=${HOST_IP}`, `--input=${SERVER_INPUT}`,
+    '--max-seconds=300',
     '--trace-api=socket,bind,listen,accept,recv,send,closesocket',
     ...COMMON, ...extra(process.env.VLAN_SERVER_ARGS),
   ], 'VLAN_SERVER_LOG', SERVER_SIGNS);
@@ -153,6 +167,7 @@ async function main() {
 
     client = spawn('client', [
       `--exe=${EXE}`, `--vlan-ip=${PEER_IP}`, `--input=${CLIENT_INPUT}`,
+    '--max-seconds=300',
       '--trace-api=socket,connect,send,recv,closesocket',
       ...COMMON, ...extra(process.env.VLAN_CLIENT_ARGS),
     ], 'VLAN_CLIENT_LOG', CLIENT_SIGNS);
@@ -177,8 +192,20 @@ async function main() {
 
     await waitFor(client, CLIENT_SIGNS.recv, 'the client to read the answer');
     check('the client reads the answer, closing the round trip');
+
+    await waitFor(server, SERVER_SIGNS.start, 'the server to start a game');
+    check('the server emits the TetriNET start-game packet');
+
+    if (CLIENT_PNG) {
+      await waitFor(client, CLIENT_SIGNS.png, 'the client session screenshot', 120000);
+      check('the client session screenshot is captured');
+    }
+    if (SERVER_PNG) {
+      await waitFor(server, SERVER_SIGNS.png, 'the server session screenshot', 120000);
+      check('the server session screenshot is captured');
+    }
   } finally {
-    for (const s of [server, client]) if (s && !s.exited) s.child.kill('SIGKILL');
+    for (const s of [server, client]) if (s && !s.exited) s.child.kill('SIGTERM');
   }
 
   console.log(failures

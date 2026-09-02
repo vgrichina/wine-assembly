@@ -26676,5 +26676,12 @@
     "nargs": 0,
     "convention": "cdecl",
     "hash": 996370429
+  },
+  {
+    "id": 3207,
+    "name": "WSAIsBlocking",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3164277069
   }
 ]

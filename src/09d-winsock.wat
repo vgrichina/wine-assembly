@@ -2079,6 +2079,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
     (global.set $eax (global.get $wsa_last_error)))
 
+  ;; WSAIsBlocking() -- Winsock 1.x asks whether a blocking hook call is in
+  ;; progress. Socket waits here yield cooperatively back to the host instead
+  ;; of running a nested blocking hook, so applications should see FALSE.
+  (func $handle_WSAIsBlocking (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+                              (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    (global.set $eax (i32.const 0)))
+
   (func $handle_WSASetLastError (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
                                 (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))

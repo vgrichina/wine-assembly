@@ -175,6 +175,7 @@ const extra = [
   { name: 'VirtualQuery', nargs: 3 },
   { name: 'WaitForSingleObjectEx', nargs: 3 },
   { name: 'SleepEx', nargs: 2 },
+  { name: 'WSAIsBlocking', nargs: 0 },
   // Wide-char CRT APIs
   { name: '__getmainargs', nargs: 5, convention: 'cdecl' },
   { name: '__wgetmainargs', nargs: 5 },

@@ -4179,6 +4179,12 @@
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $sp))
     (global.get $eax))
+  (func (export "test_call_WSAIsBlocking") (result i32)
+    (local $sp i32) (local.set $sp (global.get $esp))
+    (call $handle_WSAIsBlocking
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $sp))
+    (global.get $eax))
 
   (func (export "test_call_joyGetNumDevs") (result i32)
     (call $handle_joyGetNumDevs
