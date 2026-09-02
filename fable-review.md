@@ -968,6 +968,55 @@ is in flight and is not reviewed here as landed behavior. Carried LOW tails:
 the HTTP control test's split deadline and the owner-ratchet's missing ±1
 negative plant. BYO-media Tier 1 remains the larger unowned backlog.
 
+**By 18:16 Sep 1 (+2 commits, HEAD `132c610f`).** The typed-pointer compiler
+has now landed, but the first commit was not releasable as written. An exact
+detached build of `1fe7824c` stopped at `check-watx-provenance`: the compiler
+hashes were current, while the CHANGELOG seal still named `c3e14e21…` instead
+of the committed file's `f75d7013…`. `132c610f` is the correct narrow repair;
+my exact-commit full build now exits 0 at **997,678 B**, byte-for-byte the size
+of the pre-feature build, and the focused typed-pointer suite is 52/52.
+
+Those 52 checks do not yet make the new type claims sound. **MEDIUM:** a
+pointer-typed field checks the type of its *record base* but not the value being
+stored. I compiled a `Holder.child : ptr<Foo>` store of a known `ptr<Bar>`;
+`store.field` accepted it, then `load.field Holder child` reported the value as
+`ptr<Foo>`, so one unchecked store launders the wrong record into a trusted
+type. The same hole exists in the element stores. Field declarations compound
+it: both `(field next ptr<Nope>)` and malformed `(field next ptr<>)` compile,
+despite the design's declaration-site refusal. Validate every `ptr<L>` field
+target and run `ptrCheck(value, L)` in `store.field`, `store.elem` and
+`store.field-elem`; plant all three forms.
+
+**MEDIUM:** the separate direct-tail-call emitter at
+`compiler-codegen.js:4023` bypasses the ordinary call's pointer checks. A
+`return_call` passes `ptr<Bar>` to a `ptr<Foo>` parameter, and a function
+declared `(result ptr<Foo>)` may `return_call` a function returning `ptr<Bar>`;
+both compile in tail-call and compatibility-lowered modes. This is not the
+documented `call_indirect` or fall-through gap: the callee declaration is
+available and the ordinary direct call already checks it. Share the direct-call
+argument check and also compare the tail callee's pointer result to the current
+function's declared result.
+
+**MEDIUM checked-build failure:** a union tag is only required to name a
+prefix field, not an i32-producing integral field. With `(field kind f64)`,
+`--checked-casts` reports compile success but emits `f64.load; i32.const;
+i32.ne`; `WebAssembly.Module` rejects the result. Integer widths also need
+their enum values range-checked or a stored tag can never equal the comparison.
+Constrain tagged unions to the load types the comparison supports and test the
+produced module, not only the compiler result.
+
+Two **LOW Tier-2/typing tails** are also executable. `(view V (of U) ...)` is
+documented to project every variant of union `U`, but `lowerView` adds both the
+variants *and the prefix-only union record*, so a field shared by every variant
+is rejected merely because it is not in the prefix; an empty `(of)` conversely
+compiles as a zero-byte view. And the physical-local machinery explicitly
+supports one let name reused with different types in sibling scopes, while the
+new `ptrTypes` map keeps one pointee per name: two `$p` lets typed `Foo` then
+`Bar` make the first initializer get checked as `Bar`. The regression suite
+also substitutes a `.memarg` load for the advertised seventh accessor and
+never plants `store.field-elem`. Add negative/positive plants for these cases;
+the present 52/52 result cannot detect any of the findings above.
+
 ---
 
 # Pass 3 — 2026-08-30
