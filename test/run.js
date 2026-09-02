@@ -507,7 +507,15 @@ const SAVE_VFS_SUFFIX = getArg('save-vfs-suffix', null); // --save-vfs-suffix=.g
 // installed tree is simply there the second time. Unlike the browser's
 // localStorage persistFiles path this has no glob list and no per-file cap.
 const OVERLAY_DIR = getArg('overlay-dir', null);
+// Checkpoint between guest batches, where this otherwise-synchronous runner
+// can actually await storage. A hard SIGKILL can still cut off the current
+// interval or one long WASM batch, but it no longer loses the entire run.
+// Zero deliberately restores exit-only behavior for measurement/debugging.
+const OVERLAY_FLUSH_MS = Math.max(0,
+  parseInt(getArg('overlay-flush-ms', '5000'), 10) || 0);
 let vfsOverlay = null;
+let nextOverlayFlushAt = 0;
+let signalExitStarted = false;
 const VFS_DRIVE = getArg('vfs-drive', null); // --vfs-drive=D: mirror the EXE + explicit --vfs-include files on read-only D:\
 const VFS_INCLUDE = getArgs('vfs-include'); // --vfs-include=GLOB: mount matching files relative to the EXE directory
 // --vfs-mount=HOSTPATH=GUESTPATH: mount one host file at an exact guest path.
@@ -3401,9 +3409,31 @@ async function main() {
   };
   for (const sig of ['SIGTERM', 'SIGINT']) {
     process.on(sig, () => {
+      if (signalExitStarted) return;
+      signalExitStarted = true;
       if (countAddrs.length && instance.exports.get_count) reportHitCounts(`Hit counts (on ${sig}):`);
       reportMmx();
-      process.exit(0);
+      if (!vfsOverlay) {
+        process.exit(0);
+        return;
+      }
+      // The handler runs only after the active WASM batch returns. Once it
+      // does, give the overlay's asynchronous contract a real chance to land
+      // instead of process.exit() discarding the promise immediately.
+      const fallback = setTimeout(() => {
+        console.error(`[overlay] ${sig} flush did not finish within 5 seconds`);
+        process.exit(1);
+      }, 5000);
+      Promise.resolve().then(() => vfsOverlay.flush()).then(flushed => {
+        console.log(`[overlay] ${sig} flushed ${flushed.written} record(s) to ${OVERLAY_DIR}` +
+          (flushed.failed ? `, ${flushed.failed} failed` : ''));
+      }, error => {
+        console.error(`[overlay] ${sig} flush failed: ${error && error.message || error}`);
+        process.exitCode = 1;
+      }).finally(() => {
+        clearTimeout(fallback);
+        process.exit(process.exitCode || 0);
+      });
     });
   }
   if (instance.exports.set_process_id) instance.exports.set_process_id(ctx.processId);
@@ -4096,6 +4126,7 @@ async function main() {
         `${hydrated.dirs} dir(s), ${hydrated.whiteouts} whiteout(s)` +
         (vfsOverlay.errors.length ? `, ${vfsOverlay.errors.length} error(s)` : ''));
       for (const error of vfsOverlay.errors) console.log(`[overlay] ${error.message}`);
+      nextOverlayFlushAt = Date.now() + OVERLAY_FLUSH_MS;
     }
 
     // A --reg-import snapshot stands in for the browser's localStorage: it is
@@ -5039,6 +5070,20 @@ async function main() {
       break;
     }
     batchesRun = batch + 1;
+    // Timers cannot fire while the normal runner stays in its synchronous
+    // batch loop. Poll wall time sparsely at the one safe seam and await the
+    // journal before entering the next guest batch. Sixty-four Date checks per
+    // 4096 batches keeps the disabled/no-overlay path free and the enabled
+    // path's bookkeeping negligible.
+    if (vfsOverlay && OVERLAY_FLUSH_MS && (batch & 63) === 0 &&
+        Date.now() >= nextOverlayFlushAt) {
+      const checkpoint = await vfsOverlay.flush();
+      nextOverlayFlushAt = Date.now() + OVERLAY_FLUSH_MS;
+      if (checkpoint.written || checkpoint.failed) {
+        console.log(`[overlay] checkpointed ${checkpoint.written} record(s) to ${OVERLAY_DIR}` +
+          (checkpoint.failed ? `, ${checkpoint.failed} failed` : ''));
+      }
+    }
     if (HANDLER_HIST_THREADS.length && !handlerHistDone) {
       if (!handlerHistArmed && batch >= handlerHistWindowStart) {
         armHandlerHistogram(batch);
