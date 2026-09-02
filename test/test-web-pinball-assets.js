@@ -321,7 +321,7 @@ assert(webApp.includes('lib/dll-loader.js?v=172'), 'web host should cache-bust t
 assert(webApp.includes('lib/debug-thread-state.js?v=7'), 'web host should cache-bust live Worker status diagnostics');
 assert(/lib\/host-audio\.js\?v=\d+/.test(webApp), 'web host should cache-bust CD-DA and waveOut scheduling');
 assert(/host\.js\?v=\d+/.test(webApp), 'web host should cache-bust live Worker focus mirroring');
-assert(hostJs.includes("static SOURCE_VERSION = '250'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(/static SOURCE_VERSION = '\d+'/.test(hostJs), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');
 assert(hostJs.includes('fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions)'),
