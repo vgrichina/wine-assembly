@@ -98,8 +98,11 @@ const digest = crypto.createHash('sha256')
 // browser-side input injection remains host-owned.
 // 2026-09-01: 530 -> 531. joyGetPosEx mirrors joyGetPos for a no-joystick
 // Win98 environment so startup probes can keep keyboard/mouse input.
-const EXPECTED_COUNT = 531;
-const EXPECTED_SHA256 = '007ae1a78dbf5d249db56303d4e48c0301b26607d701ba122f64ac315d4e86e6';
+// 2026-09-02: 531 -> 529. Legacy SetWindowsHookA/W now installs the same
+// process-local keyboard/CBT callbacks as the Ex path, and UnhookWindowsHook
+// removes only a matching installed procedure instead of always succeeding.
+const EXPECTED_COUNT = 529;
+const EXPECTED_SHA256 = '8f4b644b4f652684da0cde5b04f959de4c780e1ae3deff3494340e1248bd23ae';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

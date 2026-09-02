@@ -755,4 +755,10 @@ to end — run once to install, run again to prove the tree came back), and
 `opfsStore(importId)` for the browser. The OPFS store keeps one isolated
 journal per kept import, writes new blobs before publishing their index, and
 removes pre-index crash orphans when it next opens. It implements the same four
-methods and is wired as `attach(vfs, {store: opfsStore(importId)})`.
+methods and `lib/browser-shell.js` wires it as
+`attach(vfs, {store: opfsStore(importId)})` after the immutable container mount
+and before resolving the EXE. The shell checkpoints dirty paths every two
+seconds and starts a final snapshot on every stop path. Session imports use a
+memory store retained for the life of the page; if browser storage becomes
+unavailable after a kept import was restored, the shell logs the downgrade to
+session-only instead of claiming those new writes are durable.

@@ -16,7 +16,9 @@ const path = require('path');
 
 const { VirtualFS } = require('../lib/filesystem');
 const VfsOverlay = require('../lib/vfs-overlay');
-const { memoryStore, nodeDirStore, opfsStore, assertStore, metaOf } = require('../lib/overlay-store');
+const {
+  memoryStore, nodeDirStore, opfsStore, removeOpfsScope, assertStore, metaOf,
+} = require('../lib/overlay-store');
 const byteProvider = require('../lib/byte-provider');
 
 const GENERIC_WRITE = 0x40000000;
@@ -327,6 +329,10 @@ test('the browser OPFS store survives reload byte-exactly and isolates imports',
   const other = opfsStore('kept-disc-b', { root });
   assert.deepStrictEqual(await other.list(), [],
     'one imported disc must not see another import\'s writable C: journal');
+  assert.strictEqual(await removeOpfsScope('kept-disc-a', { root }), true);
+  assert.deepStrictEqual(await opfsStore('kept-disc-a', { root }).list(), [],
+    'removing a kept import must remove its otherwise-unreachable C: journal');
+  assert.strictEqual(await removeOpfsScope('missing-disc', { root }), false);
 });
 
 test('overlay metadata keeps safe-integer sizes instead of wrapping at 2GB', () => {
