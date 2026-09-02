@@ -269,7 +269,11 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisi
   return r;
 }
 
-function pickRegion(rr, ranked, minOps, maxOps = 400) {
+// `state` persists across calls so the picker can be asked for the NEXT region:
+// `tried` holds every candidate head already walked (a walk is deterministic,
+// so retrying one is only cost), and `taken` holds every block an installed
+// region absorbed, so a later region cannot be built over the same code.
+function pickRegion(rr, ranked, minOps, maxOps = 400, state = { tried: new Set(), taken: new Set() }) {
   // The hottest BLOCK is usually not the loop's head. A traced conditional
   // stitches its fall-through in behind it, so the profiler's samples pile up
   // on whichever sub-block the ip happened to be in -- DRAGON's 64.6% lands on
@@ -290,8 +294,9 @@ function pickRegion(rr, ranked, minOps, maxOps = 400) {
   // shape is absent or the walk never reached it.
   const why = (s) => { if (flag('why')) console.log(`  reject ${s}`); };
 
-  const tried = new Set();
+  const { tried, taken } = state;
   for (const b of ranked) {
+    if (taken.has(b.addr)) continue;
     const t = traceAt(b);
     // Candidate heads: this block itself, plus anything at or before it that a
     // branch in it targets. Operand-holds-a-known-block-head is the structural
@@ -306,7 +311,7 @@ function pickRegion(rr, ranked, minOps, maxOps = 400) {
     // discovers a cycle on. Both were built and measured -- see the negative
     // result in docs/toyvm-trace-jit.md -- and both are removed.
     for (const h of cands) {
-      if (tried.has(h)) continue;
+      if (tried.has(h) || taken.has(h)) continue;
       tried.add(h);
       const blk = headByAddr.get(h);
       if (!blk) { why(`0x${h.toString(16)}: not a block head`); continue; }
@@ -325,6 +330,21 @@ function pickRegion(rr, ranked, minOps, maxOps = 400) {
         why(`0x${h.toString(16)}: ${chain.ops.length} ops < ${minOps}`);
         continue;
       }
+      // A walk may start outside every installed region and still run THROUGH
+      // one: ADDY_II's second pick was a 47-op chain over the same nest as its
+      // first, and six such regions summed to 391% of samples and 1039 extra
+      // handbacks. Two regions over one block would also both claim its
+      // entry, and only one can own it.
+      if (chain.heads.some(hb => taken.has(hb.addr))) {
+        why(`0x${h.toString(16)}: overlaps a region already picked`);
+        continue;
+      }
+      // ...and the arena test alone is not enough, for the same reason the
+      // share is measured in guest bytes below: the interpreter holds several
+      // arena copies of one loop, so a second walk over ADDY_II's nest from
+      // another entry shares no arena block with the first and still compiles
+      // the same guest bytes twice (three such regions read 196% of samples).
+      // The guest extents of the region's blocks are the durable identity.
       // The region's share is every sample inside the GUEST bytes it was
       // compiled from, in its code segment -- not the arena extents of the
       // blocks the walk happened to go through. A region is installed by guest
@@ -376,17 +396,35 @@ function pickRegion(rr, ranked, minOps, maxOps = 400) {
       // program), and a hull that wide overlaps everything.
       const ranges = chain.heads.map(b => guestExtent({ ...b, bip: b.ip }));
       const inRegion = (ip) => ranges.some(([lo, hi]) => ip >= lo && ip < hi);
-      const samples = ranked.filter(x => {
+      const clash = (state.ranges || []).find(r => r.cs === blk.cs
+        && ranges.some(([lo, hi]) => lo < r.hi && hi > r.lo));
+      if (clash) {
+        why(`0x${h.toString(16)}: guest bytes ${blk.cs.toString(16)}:${clash.lo.toString(16)}-`
+          + `${clash.hi.toString(16)} already belong to the region at 0x${clash.head.toString(16)}`);
+        continue;
+      }
+      // A sampled block is credited to ONE region -- the first that claims
+      // it -- so the shares of several regions add up to the share of their
+      // union, which is what the composed ceiling in main() multiplies.
+      const credited = state.credited || (state.credited = new Set());
+      const mine = ranked.filter(x => {
+        if (credited.has(x.addr)) return false;
         if (chain.spans.some(([a, e]) => x.addr >= a && x.addr < e)) return true;
         if (x.cs !== blk.cs) return false;
         const [lo, hi, targets] = guestExtent(x);
         return ranges.some(([rlo, rhi]) => lo < rhi && hi > rlo) || targets.some(inRegion);
-      }).reduce((n, x) => n + x.samples, 0);
+      });
+      const samples = mine.reduce((n, x) => n + x.samples, 0);
+      for (const x of mine) credited.add(x.addr);
+      (state.ranges || (state.ranges = [])).push(...ranges.map(([lo, hi]) =>
+        ({ cs: blk.cs, lo, hi, head: chain.headIp })));
       why(`share: region guest ${blk.cs.toString(16)}:${glo.toString(16)}-${ghi.toString(16)}; `
         + `top sampled blocks ${ranked.slice(0, 6).map(x => {
           const [lo, hi] = guestExtent(x);
           return `${x.cs.toString(16)}:${lo.toString(16)}-${hi.toString(16)} x${x.samples}`;
         }).join(', ')}`);
+      for (const hb of chain.heads) taken.add(hb.addr);
+      taken.add(b.addr);
       return { block: blk, cs: blk.cs, ops: chain.ops, nexts: chain.nexts,
         blocks: chain.spans.length, heads: chain.heads, headIp: chain.headIp, samples };
     }
@@ -1062,11 +1100,30 @@ async function main() {
   const { r: rr, ranked, total } = await findHotTrace(exe,
     { budget: o.budget, slice: o.slice, cpu: o.cpu, sampleFrom: o.sampleFrom });
   if (!ranked.length) { console.log('no samples landed in a live block'); process.exit(2); }
-  const pick = pickRegion(rr, ranked, o.minOps);
-  if (!pick) { console.log('no self-loop region found'); process.exit(2); }
-  const share = 100 * pick.samples / total;
-  console.log(`region at guest ip 0x${pick.headIp.toString(16)}: `
-    + `${pick.blocks} block(s), ${pick.ops.length} ops, ${share.toFixed(1)}% of samples`);
+  // `--regions=N` asks for up to N regions, hottest first, each built over
+  // code no earlier one absorbed. One is the historical default and what every
+  // census before 2026-09-02 measured; the whole-program question -- what does
+  // compiling EVERY hot loop buy -- is `--regions=8` or so. `--min-share=X`
+  // skips a pick below X% of samples, which is the floor the census's ceiling
+  // column exists to set.
+  const maxRegions = Number(arg('regions', 1));
+  const minShare = Number(arg('min-share', 0));
+  const pickState = { tried: new Set(), taken: new Set() };
+  const picks = [];
+  for (let attempt = 0; attempt < maxRegions * 4 && picks.length < maxRegions; attempt++) {
+    const p = pickRegion(rr, ranked, o.minOps, 400, pickState);
+    if (!p) break;
+    p.share = 100 * p.samples / total;
+    if (p.share < minShare) {
+      console.log(`  skipped region at 0x${p.headIp.toString(16)}: ${p.share.toFixed(1)}% share is below --min-share=${minShare}`);
+      continue;
+    }
+    picks.push(p);
+    console.log(`region at guest ip 0x${p.headIp.toString(16)}: `
+      + `${p.blocks} block(s), ${p.ops.length} ops, ${p.share.toFixed(1)}% of samples`);
+  }
+  if (!picks.length) { console.log('no self-loop region found'); process.exit(2); }
+  const pick = picks[0];
 
   // `--pick-only` stops here: profile, pick, report, exit. Nothing is built,
   // installed, compared or timed. It exists for tools/toyvm/region-why.js,
@@ -1075,8 +1132,13 @@ async function main() {
   // per program would have made that census too slow to run at all.
   if (flag('pick-only')) return;
 
-  const region = buildRegion(pick.ops, pick.nexts, pick.headIp, 'region_0');
-  if (region.declined && !region.body) { console.log(`declined: ${region.declined}`); process.exit(3); }
+  // Everything from the build to the successor list is per region. A decline
+  // returns the exit code it used to exit with; main exits with the first one
+  // only when NO region survives, so the single-region contract is unchanged.
+  const prepareRegion = async (pick, idx) => {
+  const share = pick.share;
+  const region = buildRegion(pick.ops, pick.nexts, pick.headIp, `region_${idx}`);
+  if (region.declined && !region.body) { console.log(`declined: ${region.declined}`); return { declined: 3 }; }
   console.log(`  ${region.exits} in-body exit(s), ${region.eaFolded} addresses folded, `
     + `${region.folded} register-file calls folded, `
     + `${region.inlined} counter call(s) inlined, `
@@ -1097,14 +1159,14 @@ async function main() {
   // compares every register and every byte of guest memory afterwards. A
   // MISMATCH here is a lowering bug; ALL THREE MATCH moves the search to the
   // control flow this file supplies.
-  if (flag('agree')) {
+  if (flag('agree') && idx === 0) {
     // `--agree-ops=N` truncates the op list to its first N. It is the manual
     // form of the prefix walk below: once that has named a k, this prints the
     // full register and memory report for exactly that prefix.
     const n = Number(arg('agree-ops', pick.ops.length));
     await benchTiers(exe, snapshotFor(rr, pick), pick.ops.slice(0, n),
       { iters: Number(arg('agree-iters', 200)), reps: 1, passes: passSpec() });
-    return;
+    return { stop: true };
   }
 
   // `--agree-bisect` turns that yes/no into an address. It runs the same
@@ -1123,7 +1185,7 @@ async function main() {
   // Few iterations on purpose. This is not a measurement, and a divergence that
   // needs thousands of iterations to appear is not a divergence, it is a
   // counter running to a different value.
-  if (flag('agree-bisect')) {
+  if (flag('agree-bisect') && idx === 0) {
     const iters = Number(arg('agree-bisect-iters', 50));
     for (let k = Number(arg('agree-bisect-from', 1)); k <= pick.ops.length; k++) {
       // A FRESH snapshot per prefix, not one hoisted out of the loop. The bench
@@ -1140,14 +1202,14 @@ async function main() {
         console.log(`  first disagreement at op ${k - 1}: ${op.name} `
           + `[${op.args.join(' ')}]${isTransfer(op) ? '  (a TRANSFER -- the arms '
             + 'stop running the same program here, which the bench cannot see past)' : ''}`);
-        return;
+        return { stop: true };
       }
       if (flag('verbose')) {
         console.log(`  ops[0..${k}] agree (${op.name})  seed mem=${memHash(hot.memSnapshot)}`);
       }
     }
     console.log(`  all ${pick.ops.length} prefixes agree over ${iters} iterations`);
-    return;
+    return { stop: true };
   }
 
   // THE GATE. Everything below this point installs the region into a whole-app
@@ -1210,12 +1272,24 @@ async function main() {
       : branchy ? 'INCONCLUSIVE -- the arms disagree, and the op list branches '
         + 'internally, so they did not run the same program'
         : 'the lowering DISAGREES with the interpreter over these ops'}`);
+    // An EXTRA region (anything past the primary pick under `--regions=N`)
+    // is installed on the strength of the gate alone, so an inconclusive
+    // gate is a decline for it: ASYLUM'95's fifth region at 0x760 -- 255 ops,
+    // 32 exits, no register promotion, gate INCONCLUSIVE -- was entered 3404
+    // times at 0.3 iterations per entry and added 3213 handbacks to a run
+    // whose four other regions added none. The primary pick keeps the
+    // single-region contract: it is installed and the whole-program run is
+    // its measurement.
+    if (!g.agree && branchy && idx > 0) {
+      console.log('  DECLINED: an extra region needs a measured gate -- not installing (--no-gate overrides)');
+      return { declined: 5 };
+    }
     if ((!g.agree && !branchy) || (g.agree && ratio < gateAt)) {
       console.log(`  DECLINED: ${g.agree
         ? `${ratio.toFixed(2)}x is below the ${gateAt.toFixed(2)}x bar`
         : 'a region that computes something else is not faster'}`
         + ' -- not installing (--no-gate overrides)');
-      process.exit(5);
+      return { declined: 5 };
     }
   }
 
@@ -1236,14 +1310,14 @@ async function main() {
     console.log(`  declined: ${region.unlowered} transfer(s) could not be lowered,`
       + ' so this region depends on the install-time arena (--allow-unlowered overrides)');
     for (const w of region.unloweredWhy) console.log(`    unlowered: ${w}`);
-    process.exit(3);
+    return { declined: 3 };
   }
 
   const guarded = guardBytes(rr, pick);
   if (!guarded && !flag('no-gate')) {
     console.log('  declined: a block of this region has no covered span, so its bytes'
       + ' cannot be guarded (--no-gate overrides)');
-    process.exit(3);
+    return { declined: 3 };
   }
   console.log(`  guard: ${(guarded || []).reduce((n, g) => n + g.bytes.length, 0)} guest byte(s) over `
     + `${(guarded || []).length}/${(pick.heads || []).length} block(s)`
@@ -1371,11 +1445,31 @@ async function main() {
         + (typeof succBytes(ip) === 'number' ? '   (NO COVERED SPAN -- unchecked)' : ''));
     }
   }
+  return { pick, region, guarded, succList, succBytes, gateRatio, share };
+  };
+
+  const prepared = [];
+  let firstDecline = null;
+  for (const [idx, p] of picks.entries()) {
+    if (picks.length > 1) console.log(`-- region ${idx}: 0x${p.headIp.toString(16)}, ${p.share.toFixed(1)}%`);
+    const got = await prepareRegion(p, idx);
+    if (got.stop) return;
+    if (got.declined) { if (firstDecline === null) firstDecline = got.declined; continue; }
+    prepared.push(got);
+  }
+  if (!prepared.length) process.exit(firstDecline || 3);
+  if (picks.length > 1) {
+    console.log(`installing ${prepared.length} of ${picks.length} region(s): `
+      + prepared.map(x => `0x${x.pick.headIp.toString(16)}`).join(' ')
+      + `  (${prepared.reduce((n, x) => n + x.share, 0).toFixed(1)}% of samples)`);
+  }
+  const key = (x) => `${x.pick.cs}:${x.pick.headIp}`;
   const install = {
-    jitRegions: flag('succ-only') ? null : [region],
+    jitRegions: flag('succ-only') ? null : prepared.map(x => x.region),
     // WHICH region, not where it sits in the table: only the built module knows
-    // that, and it reports it as `vm.regionBase`.
-    regionAt: flag('succ-only') ? new Map() : new Map([[`${pick.cs}:${pick.headIp}`, 0]]),
+    // that, and it reports it as `vm.regionBase`. The ordinal is the position
+    // in `jitRegions`, so both are built from the same list in the same order.
+    regionAt: new Map(flag('succ-only') ? [] : prepared.map((x, i) => [key(x), i])),
     // Every guest ip a branch in the region names, so the decoder still walks
     // out of a block whose body it never decodes. Over-approximating is free:
     // an address that turns out to be unreachable just gets compiled and never
@@ -1384,17 +1478,23 @@ async function main() {
     // the claim above: CARRIE.EXE is frame-identical under `--no-succ` and
     // wrong with the full list, so over-approximating is NOT always free and
     // the list has to be cut down to the address that does it.
-    regionSucc: flag('no-succ') ? new Map()
-      : new Map([[`${pick.cs}:${pick.headIp}`,
-        succList.map(ip => (flag('succ-unchecked') ? ip : succBytes(ip)))]]),
+    regionSucc: new Map(flag('no-succ') ? [] : prepared.map(x => [key(x),
+      x.succList.map(ip => (flag('succ-unchecked') ? ip : x.succBytes(ip)))])),
     // The guest bytes this region was compiled from, one entry per block the
     // walk covered. compile.js checks them before installing, so a program that
     // rewrites its own loop gets the decoder back instead of a stale region.
-    regionBytes: new Map([[`${pick.cs}:${pick.headIp}`, guarded || []]]),
+    regionBytes: new Map(prepared.map(x => [key(x), x.guarded || []])),
     // ...and those same bytes marked as compiled code, so a store into them
     // still trips the self-modify check. `--no-region-code-bits` is the A/B.
     regionCodeBits: !flag('no-region-code-bits'),
   };
+  const share = prepared.reduce((n, x) => n + x.share, 0);
+  // The composed ceiling: each region's share at its own gate ratio, summed.
+  // Printed as one effective ratio so the line keeps the shape the census parses.
+  const ceilingPct = prepared.reduce((n, x) =>
+    n + (x.gateRatio ? (x.share / 100) * (1 - 1 / x.gateRatio) * 100 : 0), 0);
+  const gateRatio = prepared.some(x => x.gateRatio !== null)
+    ? (share > ceilingPct ? 1 / (1 - ceilingPct / share) : Infinity) : null;
 
   // HOW MANY TIMES DOES ONE ENTRY GO ROUND? This is the number that decides
   // whether a region is worth installing at all, and nothing else reported here
@@ -1411,7 +1511,6 @@ async function main() {
   if (flag('trips')) {
     const h = await once(exe, o, { ...install, hist: 1 });
     const u32 = new Uint32Array(h.r.vm.mem.buffer);
-    const entries = u32[(isa.HIST_BASE >> 2) + h.r.vm.regionBase];
     if (flag('why')) {
       let best = 0, at = -1, sum = 0;
       for (let i = 0; i < isa.HIST_SLOTS; i++) {
@@ -1421,9 +1520,13 @@ async function main() {
       }
       console.log(`  hist: ${sum} counted, busiest slot ${at} x${best}`);
     }
-    const iters = (share / 100) * h.dispatched / pick.ops.length;
-    console.log(`  ${entries} region entries, ~${(iters / Math.max(1, entries)).toFixed(1)}`
-      + ` iterations per entry (estimated from the ${share.toFixed(1)}% share)`);
+    for (const [i, x] of prepared.entries()) {
+      const entries = u32[(isa.HIST_BASE >> 2) + h.r.vm.regionBase + i];
+      const iters = (x.share / 100) * h.dispatched / x.pick.ops.length;
+      console.log(`  ${prepared.length > 1 ? `region ${i} (0x${x.pick.headIp.toString(16)}): ` : ''}`
+        + `${entries} region entries, ~${(iters / Math.max(1, entries)).toFixed(1)}`
+        + ` iterations per entry (estimated from the ${x.share.toFixed(1)}% share)`);
+    }
   }
 
   // Interleaved, order rotated, minima -- the method every timing tool in this
