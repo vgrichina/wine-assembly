@@ -365,7 +365,7 @@ async function runDos(o) {
           + `${ax === before[0] ? '' : ` -> ax=${ax.toString(16)}`}`
           + `${ok ? '' : '   UNHANDLED'}`);
       },
-      onEntry: (!report && !traceEntry && !traceV86) ? undefined : (cs, ip, handbacks) => {
+      onEntry: (!report && !traceEntry && !traceV86) ? undefined : (cs, ip, handbacks, dispatched) => {
         // Every crossing of the virtual-8086 boundary, in both directions, with
         // the vector that caused the one going in and the ring-0 stack pointer
         // it landed on. A V86 guest and its monitor are two programs sharing a
@@ -420,7 +420,10 @@ async function runDos(o) {
             // them. BLINKY.EXE's copier writes DS:0x486d over a region that
             // holds live code; only DS says whether that is intentional.
             + ` ds=${h4(vm.get('ds'))} es=${h4(vm.get('es'))}`
-            + ` ss:sp=${h4(vm.get('ss'))}:${h4(vm.get('sp'))}`);
+            + ` ss:sp=${h4(vm.get('ss'))}:${h4(vm.get('sp'))}`
+            // ...and the emulated clock, which is what two arms that reach
+            // the same registers at different handbacks disagree about.
+            + ` d=${dispatched}`);
         }
       },
       beforeSlice: () => {
@@ -687,6 +690,11 @@ async function main() {
   }
   const report = flag('report');
   const pre = arg('pre', '');
+  // The port-poll twin for `in al,dx / cmp al,imm / jcc head`, which turns the
+  // retrace wait inside one handler against the VGA clock. `--no-port-spin` is
+  // ITS A/B partner (same clock, same frame, fewer dispatches); `--no-spin`
+  // turns every collapse off. A compile-time switch, like `--no-fusecond`.
+  require('./compile').setPortSpin(!flag('no-port-spin'));
   const r = await (pre ? runDosWithPre : runDos)({
     exe,
     // `--pre=SETUP.EXE`, resolved next to the executable, with `--pre-keys=`

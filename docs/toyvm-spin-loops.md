@@ -97,12 +97,12 @@ counts down and ends, and collapsing it would be wrong rather than slow.
 **Never under `oneInsn`.** With TF set the CPU owes the guest an INT 1 after
 every instruction, so the loop does *not* run to the end of the slice.
 
-**`in_8 -> cmp_ri8_jz` is correctly declined.** CMA_SHRT spends 84.4% of its
-dispatches on that pair — a VGA status-register retrace poll — and the port read
-goes out to the host, which returns a different answer each time. It is a real
-loop with a real exit and this must not touch it. (It is worth its own look:
-2.15M host import calls in an 8M-dispatch run is a different problem with a
-different answer.)
+**`in_8 -> cmp_ri8_jz` is correctly declined here.** CMA_SHRT spends 84.4% of
+its dispatches on that pair, and the port read goes out to the host, which can
+return a different answer each time. It is a real loop with a real exit and the
+1-op rule must not touch it. It has since got its own twin for the one port
+whose answer is a pure function of the clock — see the last section — and
+CMA_SHRT's pair turned out not to be that port at all.
 
 ## Measured
 
@@ -228,12 +228,67 @@ uncollapsed ones, which are sampled honestly.
   is in CX, so the fold is a different one — charge `min(cx * S, budget)` and
   zero CX — and three sites across 199 programs is not a general primitive. It
   belongs to the counted case of the stream fold, not to this one.
-- **The port poll.** `in_8 -> cmp_ri8_jz` cannot be collapsed, but 2.15M crossings
-  into JS for a retrace bit can be answered inside wasm. That is a host-interface
-  change, not a compiler one — and the census now shows the same
-  `in_8 -> test_ri8 -> jnz` shape recurring across the corpus, so it is the
-  broader of the two remaining leads.
+- **The port poll.** Done, below: `in_8 -> cmp_ri8_jz` is collapsible after
+  all, once what the port answers is a function of the clock.
 
 The next idea after this one — pinning the register a handler reaches, which
 the same twin-swap machinery makes almost free to express — was tried and did
 not pay. [toyvm-reg-specialization.md](toyvm-reg-specialization.md).
+
+## The port poll, and the clock it needed (2026-09-02)
+
+The retrace wait — `in al,dx / test al,8 / jz $-4` or its `cmp` spelling — was
+the one spin the twin above could not take: the `in` writes AL, so the block is
+not "over nothing". It was also mis-modelled. Port 3DAh flipped bit 3 on every
+read, so a wait ended after at most two reads, the *guest time* a frame-paced
+demo spent per frame depended on how many times it happened to poll, and the
+retrace IRQ ran on its own `irqEvery/4` cadence with no relation to what the
+port said.
+
+Both are fixed by the same move: **the port is a function of the dispatch
+clock.** `$vga_status` in `emit.js` computes where the current dispatch sits in
+the frame — `(phase0 + slice_budget − $steps) mod period`, with the host
+writing `phase0 = dispatched mod period` before each slice — and answers bit 3
+for the first 9% of the period, bit 0 through that and through the first fifth
+of every scanline. The read is pure. `in al,dx` answers 3DAh inline and never
+calls the host; `in ax,dx` and the host's `--trace-io` path ask the same
+function. The attribute flip-flop moved into a wasm global with it, because
+the 3DAh read that resets it no longer reaches `dos.js`. The period is quoted
+against the same timer interval the old cadence was, `irqEvery × 18.2 / 70`
+(26000 dispatches; `/60` over 525 lines for the 480-line modes), and IRQ2 is
+now the rising edge of that bit: `dos-loop.js` arms it when `dispatched`
+crosses a period boundary and delivers it at the next handback.
+
+With the port pure inside a slice, the poll is a loop over nothing but the
+clock, and `in_{cmp,test}_ri8_j<cc>_pspin` turns it inside one handler: read
+the status for the current `$steps`, run the pair, and if the branch is still
+taken charge the three steps the interpreter would have (the `in` dispatch,
+the pair's dispatch, the one the fused handler charges itself), test the
+budget where the block transfer would have, go round. The arena keeps its
+shape — the twin's operands are the `in`'s port word, the swallowed handler's
+own index, then the pair's operands where they were — so every census still
+reads it. A port other than 3DAh runs the three ops as the interpreter would.
+`test_ri8` joined `FUSE_FIRST` for this; the 1-op twin gets `test_ri8_jcc`
+spins for free.
+
+**Equivalence, 20 programs × 12M dispatches, `--no-port-spin` as the other
+arm:** handbacks, interrupts and frame hash identical on all 20. That is the
+whole check, the same one every twin here passes.
+
+**What the clock changed** (against the old alternating port, same 20 programs):
+12 frames moved, all of them frame-paced demos whose guest time per frame is
+now a period rather than two polls (ADDY_II, COMPOVRS, COPPER, CORE-ADD,
+CONTACT, ASYLUM, DSTNFO, DREAM, DHADREN…); eight are bit-identical. DRAGON's
+title is the same 10634 pixels at 14–30M and blank at 12M because the capture
+now lands mid page-flip — the same picture, a different moment.
+
+**The number this was supposed to move did not, and the reason is worth more
+than the number.** CMA_SHRT.EXE spends 90% of its dispatches in
+`in_8 -> cmp_ri8_jz`, which read as the retrace poll of the century. It is
+port **60h**: a keyboard wait, and `dos.js` makes a 60h read impure on purpose
+(every 4096th read on an empty queue asks `kbFill` for a key, which is how a
+program that polls the port with no INT 9 handler ever gets one). Collapsing
+it would change when the key arrives. The twin declines it — the port test
+takes the interpreter path — and CMA_SHRT is a keyboard-model question, not a
+spin one. daretro's `in_8 -> test_ri8` (2.7%) sits behind a `jmp`, a 3-op
+block, so it gets the clock and not the twin.

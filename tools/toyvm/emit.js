@@ -167,6 +167,9 @@ function memAccessors() {
 }
 
 const SPIN = new Map();
+// fused cmp/test_ri8 + jcc handler index -> { takenAt, twin } for the 2-op
+// `in al,dx / cmp al,imm / jcc head` block. See genFusedBranches().
+const PSPIN = new Map();
 
 // A branch handler index -> which operand word holds its TAKEN edge's guest ip.
 //
@@ -1940,13 +1943,22 @@ function genArithIO() {
   // Port I/O. Demos reach the VGA palette through 0x3C8/0x3C9 and wait on the
   // retrace bit of 0x3DA, so these must exist even though nothing here is a
   // real peripheral -- tools/toyvm/dos.js models the few ports that matter.
+  //
+  // The VGA status port is the exception, and it is answered here rather than
+  // by the host: it is the most-read port in the corpus by orders of magnitude
+  // (CMA_SHRT.EXE: 3.48M reads in 12M dispatches, 90% of everything it does,
+  // each one a host call), and what it answers is a function of the dispatch
+  // clock -- see $vga_status and the globals it reads. `in ax,dx` from 3DAh
+  // still goes to the host, which answers from the same clock.
   for (const w of [8, 16]) {
     h(`in_${w}`, 1, `
   ${ops(1)}
-  (call $rset${w} (i32.const 0)
-    (call $port_in (select (call $rget16 (i32.const 2)) (local.get $t0)
-                           (i32.eq (local.get $t0) (i32.const -1)))
-                   (i32.const ${w})))
+  (local.set $t1 (select (call $rget16 (i32.const 2)) (local.get $t0)
+                         (i32.eq (local.get $t0) (i32.const -1))))
+  ${w === 8 ? `(if (i32.eq (local.get $t1) (i32.const 0x3DA))
+    (then (call $rset8 (i32.const 0) (call $vga_status)))
+    (else (call $rset8 (i32.const 0) (call $port_in (local.get $t1) (i32.const 8)))))`
+    : `(call $rset${w} (i32.const 0) (call $port_in (local.get $t1) (i32.const ${w})))`}
 `);
     h(`out_${w}`, 1, `
   ${ops(1)}
@@ -3062,6 +3074,10 @@ genArithIO();
 // that is invisible until some program takes the other edge.
 const FUSE_FIRST = [
   ['cmp_ri8', { fop: 'SUB', w: 8 }],
+  // `in al,dx / test al,8 / jz` is the other spelling of the retrace wait
+  // (daretro.exe: 97% of its `in` dispatches are followed by test_ri8), and
+  // the port-poll twin below needs the pair fused to see it as one block.
+  ['test_ri8', { fop: 'LOGIC', w: 8 }],
   ['cmp_rm8', { fop: 'SUB', w: 8 }],
   ['sbb_ri16', { fop: 'SUB', w: 16 }],
   ['cmp_ri16', { fop: 'SUB', w: 16 }],
@@ -3156,6 +3172,73 @@ function genFusedBranches() {
         SPIN.set(tidx, { takenAt: a.args + 1, twin: stidx });
         TAKEN_AT.set(sidx, a.args + 1);
         TAKEN_AT.set(stidx, a.args + 1);
+      }
+      // The port-poll twin: `in al,dx / cmp al,imm / jcc $-4`, the wait for
+      // retrace every frame-paced demo in the corpus has somewhere, and 90% of
+      // every dispatch CMA_SHRT.EXE retires. It is not a spin the 1-op twin
+      // above can take -- the `in` changes AL -- but with 3DAh answered from
+      // the dispatch clock (see $vga_status) it is a loop over nothing but the
+      // clock, so it can turn inside one handler: read the status for the
+      // current $steps, compare, and go round again until the branch falls
+      // through or the budget runs out. Every turn charges the three steps the
+      // interpreter would have (the `in` dispatch, the fused pair's dispatch
+      // and the one the fused handler charges itself), $steps is tested where
+      // the block transfer would have tested it, and AL, the flags and $gip
+      // are what the last turn left -- so the run is the same run and only
+      // the dispatch count is different, which is what lets the corpus check
+      // it.
+      //
+      // The block keeps its shape in the arena: this twin's operands are the
+      // `in`'s port word, the swallowed fused handler's own index (skipped),
+      // then the fused pair's operands where they already were. A port other
+      // than 3DAh runs the three ops exactly as the interpreter would.
+      if (/^(cmp|test)_ri8$/.test(alu)) {
+        // `jn` is the branch's operand count: four for the plain pair, three
+        // for the traced one whose fall-through is the next word. Both the
+        // read and the rewind have to agree with it -- one word over and the
+        // loop compares against the next block's first word and never leaves.
+        const turn = (fall, jn) => `
+  (block $done
+    (loop $spin
+      (call $rset8 (i32.const 0) (call $vga_status))
+      (global.set $steps (i32.sub (global.get $steps) (i32.const 2)))
+      ${a.body}
+      ${ops(jn)}
+      (if ${half || CONDS[cc]}
+        (then
+          (global.set $gip (local.get $t1))
+          (if (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0)))
+            (then ${SLICE_EXIT} (br $done)))
+          (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+          (global.set $ip (i32.sub (global.get $ip) (i32.const ${(a.args + jn) * 4})))
+          (br $spin))
+        (else ${fall}))))`;
+        const other = (jb) => `
+      (call $rset8 (i32.const 0) (call $port_in (local.get $t1) (i32.const 8)))
+      (global.set $steps (i32.sub (global.get $steps) (i32.const 2)))
+      ${a.body}
+      ${jb}`;
+        const head = `
+  ${ops(2)}
+  (local.set $t1 (select (call $rget16 (i32.const 2)) (local.get $t0)
+                         (i32.eq (local.get $t0) (i32.const -1))))`;
+        const pidx = h(`in_${alu}_j${cc}_pspin`, 2 + a.args + j.args, `${head}
+  (if (i32.ne (local.get $t1) (i32.const 0x3DA))
+    (then ${other(half ? jccBody(half) : j.body)})
+    (else ${turn(GO('(local.get $t2)', '(local.get $t3)'), j.args)}))
+`);
+        const ptidx = h(`in_${alu}_j${cc}_t_pspin`, 2 + a.args + j.args - 1, `${head}
+  (if (i32.ne (local.get $t1) (i32.const 0x3DA))
+    (then ${other(jccTraceBody(half || CONDS[cc]))})
+    (else ${turn(`
+      (global.set $gip (local.get $t2))
+      (if (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0)))
+        (then ${SLICE_EXIT}))`, j.args - 1)}))
+`);
+        PSPIN.set(idx, { takenAt: a.args + 1, twin: pidx });
+        PSPIN.set(tidx, { takenAt: a.args + 1, twin: ptidx });
+        TAKEN_AT.set(pidx, 2 + a.args + 1);
+        TAKEN_AT.set(ptidx, 2 + a.args + 1);
       }
     }
   }
@@ -3704,6 +3787,7 @@ function buildHandlers(lazy, fuseCond) {
   FUSE.clear();
   TRACE.clear();
   SPIN.clear();
+  PSPIN.clear();
   TAKEN_AT.clear();
   NOFLAG.clear();
   SPEC.clear();
@@ -3770,6 +3854,33 @@ function helpers() {
   // flag analysis can tell it from `end` and a fault, which cannot.
   s += `(func $slice_exit
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))\n`;
+
+  // Port 3DAh, from the VGA clock (see the globals). Where in the frame we are
+  // is the dispatches retired so far in this slice on top of the phase the host
+  // handed in; $steps is what is left of the budget, so that is a subtraction.
+  // Reading resets the attribute flip-flop, as on the hardware, and is counted.
+  s += `(func $vga_status (result i32) (local $now i32) (local $st i32)
+  (local.set $now (i32.rem_u
+    (i32.add (global.get $vga_phase0) (i32.sub (global.get $slice_budget) (global.get $steps)))
+    (global.get $vga_period)))
+  (global.set $attr_flip (i32.const 0))
+  (global.set $vga_reads (i32.add (global.get $vga_reads) (i32.const 1)))
+  (if (i32.lt_u (local.get $now) (global.get $vga_vb))
+    (then (return (i32.const 0x09))))
+  (i32.lt_u (i32.rem_u (local.get $now) (global.get $vga_line)) (global.get $vga_hb)))\n`;
+  // The period and its derived spans, from the frame length in dispatches and
+  // the line count of the mode: retrace is ~9% of the frame (2 of 449 lines
+  // of vertical sync, but bit 3 reads set through the whole blanking interval
+  // on real cards, which is about 45 lines in a 400-line mode); horizontal
+  // blanking is a fifth of each line.
+  s += `(func (export "set_vga_period") (param $p i32) (param $lines i32)
+  (if (i32.lt_s (local.get $p) (i32.const 100)) (then (local.set $p (i32.const 100))))
+  (if (i32.lt_s (local.get $lines) (i32.const 1)) (then (local.set $lines (i32.const 449))))
+  (global.set $vga_period (local.get $p))
+  (global.set $vga_vb (i32.div_u (i32.mul (local.get $p) (i32.const 9)) (i32.const 100)))
+  (global.set $vga_line (i32.div_u (local.get $p) (local.get $lines)))
+  (if (i32.eqz (global.get $vga_line)) (then (global.set $vga_line (i32.const 1))))
+  (global.set $vga_hb (i32.div_u (global.get $vga_line) (i32.const 5))))\n`;
 
   // The register file holds the FULL 32 bits. A 16-bit write leaves the upper
   // half alone and an 8-bit write leaves the other three bytes alone, exactly
@@ -5197,6 +5308,35 @@ const EXTRA_GLOBALS = `
 ;; MUL touching only CF and OF, or a shift, or SAHF -- calls $flags_sync first
 ;; and then works on the word. Cold paths, so they pay for the laziness of the
 ;; hot ones.
+;; --- The VGA clock ---------------------------------------------------------
+;;
+;; Emulated time is the dispatch count (see dos-loop.js), and a slice is a
+;; budget of $slice_budget steps counted down in $steps -- so "now", inside a
+;; slice, is $vga_phase0 + $slice_budget - $steps dispatches into the current
+;; frame, where the host wrote $vga_phase0 = dispatched mod $vga_period before
+;; it called run(). That is the number port 3DAh answers from: bit 3 (vertical
+;; retrace) for the first $vga_vb dispatches of each period, bit 0 (display
+;; disabled) through the retrace and through the first $vga_hb of every
+;; $vga_line-long scanline. The read is PURE. The old model flipped bit 3 on
+;; every read, so a frame-paced demo's guest time per frame depended on how
+;; many times it polled -- twice, in the best case -- and the retrace IRQ ran
+;; on its own cadence with no relation to what the port said.
+;;
+;; The defaults are a 70Hz frame on the 100k-dispatch timer interval dos-loop
+;; uses (100e3 * 18.2 / 70 = 26000), 449 lines, so a build that never sets
+;; them still answers with a moving clock rather than trapping on a zero
+;; divisor.
+(global $slice_budget (mut i32) (i32.const 0))
+(global $vga_phase0 (mut i32) (i32.const 0))
+(global $vga_period (mut i32) (i32.const 26000))
+(global $vga_vb (mut i32) (i32.const 2340))
+(global $vga_line (mut i32) (i32.const 57))
+(global $vga_hb (mut i32) (i32.const 11))
+;; The attribute controller's index/data flip-flop lives here because reading
+;; 3DAh resets it, and that read no longer reaches the host.
+(global $attr_flip (mut i32) (i32.const 0))
+;; 3DAh reads, for the run report (the host's clock.retrace).
+(global $vga_reads (mut i32) (i32.const 0))
 (global $fop (mut i32) (i32.const 0))
 (global $fa (mut i32) (i32.const 0))   ;; first operand
 (global $fb (mut i32) (i32.const 0))   ;; second operand
@@ -5397,6 +5537,16 @@ ${EXTRA_GLOBALS}
 (func (export "get_d32") (result i32) (global.get $d32))
 (func (export "get_cr0") (result i32) (global.get $cr0))
 (func (export "get_vm86") (result i32) (global.get $vm86))
+;; The VGA clock's host side: the phase dos-loop writes before every slice,
+;; the attribute flip-flop the host's out 3C0h reads, and the read count.
+(func (export "set_vga_phase0") (param $v i32) (global.set $vga_phase0 (local.get $v)))
+(func (export "get_vga_phase0") (result i32) (global.get $vga_phase0))
+(func (export "get_vga_period") (result i32) (global.get $vga_period))
+(func (export "get_attr_flip") (result i32) (global.get $attr_flip))
+(func (export "set_attr_flip") (param $v i32) (global.set $attr_flip (local.get $v)))
+(func (export "get_vga_reads") (result i32) (global.get $vga_reads))
+(func (export "set_vga_reads") (param $v i32) (global.set $vga_reads (local.get $v)))
+(func (export "vga_status") (result i32) (call $vga_status))
 ;; A hardware IRQ, delivered the same way the CPU delivers everything else.
 ;;
 ;; The host used to build this frame itself, and could only build the real-mode
@@ -5605,6 +5755,7 @@ function runExport() {
 (func (export "run") (param $entry i32) (param $budget i32)
   (global.set $ip (local.get $entry))
   (global.set $steps (local.get $budget))
+  (global.set $slice_budget (local.get $budget))
   (global.set $left (i32.const -1))
   (global.set $halt (i32.const 0))
   (call $next))
@@ -5694,6 +5845,10 @@ module.exports = {
   // instead of running it. The compiler swaps it in when the taken edge goes
   // back to the branch's own block head.
   SPIN,
+  // A fused cmp/test_ri8+jcc handler -> the twin of the whole `in al,dx` +
+  // pair block that polls 3DAh inside one handler. The compiler swaps it in
+  // for a 2-op block [in_8, fused] whose taken edge is its own head.
+  PSPIN,
   // Every branch handler -> where its taken edge's guest ip sits in the operand
   // list, eligible for collapse or not. tools/toyvm/spin-census.js reads it to
   // find self-loop blocks the current rule declines.

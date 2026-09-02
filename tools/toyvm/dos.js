@@ -2048,6 +2048,30 @@ class Machine {
     return 0x0A;
   }
 
+  // The frame rate the VGA clock runs at, and the line count it divides the
+  // frame into: 70Hz over 449 lines for every 200/350/400-line mode, 60Hz over
+  // 525 for the 480-line ones (mode 11h/12h and the VESA 640x480 modes). The
+  // run loop reads this every slice and sets the VM's period from it.
+  vgaTiming() {
+    const h = this.vesa && this.vesa.mode ? this.vesa.height : 0;
+    const tall = h >= 480 || this.videoMode === 0x11 || this.videoMode === 0x12;
+    return tall ? { hz: 60, lines: 525 } : { hz: 70, lines: 449 };
+  }
+
+  // The attribute controller's index/data flip-flop. It is the VM's global
+  // when a VM is attached (reading 3DAh resets it, and that read is answered
+  // inside the VM now); the machine's own field otherwise.
+  getAttrFlip() {
+    const ex = this.vmExports;
+    return ex && ex.get_attr_flip ? ex.get_attr_flip() : this.vga.attrFlip;
+  }
+
+  setAttrFlip(v) {
+    const ex = this.vmExports;
+    if (ex && ex.set_attr_flip) ex.set_attr_flip(v);
+    this.vga.attrFlip = v;
+  }
+
   timerVector() {
     if (this.hookedVector(0x08)) return 0x08;
     if (this.hookedVector(0x1C)) return 0x1C;
@@ -2077,13 +2101,20 @@ class Machine {
 
   portIn_(port, w) {
     if (port === 0x3DA) {
-      // Bit 3 is vertical retrace, bit 0 "display disabled". A demo that waits
-      // for retrace to start needs to see the bit both clear and set or it
-      // spins forever, so this alternates on every read.
+      // Bit 3 is vertical retrace, bit 0 "display disabled", and the answer is
+      // a function of the dispatch clock: the VM's $vga_status (emit.js) is
+      // the one place that formula lives, and `in al,dx` never gets here at
+      // all -- the handler answers it inline. This path is `in ax,dx` and the
+      // rare `in al,imm`, and it asks the same clock so the two agree. Reading
+      // the status register also puts the attribute controller's shared
+      // index/data flip-flop back into "next write is an index", which the
+      // VM does in the same place.
       this.clock.retrace++;
+      const ex = this.vmExports;
+      if (ex && ex.vga_status) return ex.vga_status();
+      // No VM attached (unit harnesses): the old alternating answer, so a
+      // wait for retrace still sees the bit both ways.
       this.retraceToggle ^= 1;
-      // Reading the status register is also how the attribute controller's
-      // shared index/data flip-flop is put back into "next write is an index".
       this.vga.attrFlip = 0;
       return this.retraceToggle ? 0x09 : 0x00;
     }
@@ -2254,9 +2285,11 @@ class Machine {
         this.syncVga();
         return;
       case 0x3C0:
-        // Index and data alternate through one port.
-        if (v.attrFlip === 0) { v.attrIndex = value & 0x1F; v.attrFlip = 1; }
-        else { v.attr[v.attrIndex] = value; v.attrFlip = 0; }
+        // Index and data alternate through one port. The flip-flop is the
+        // VM's when one is attached, because the 3DAh read that resets it
+        // no longer reaches the host (see portIn_).
+        if (this.getAttrFlip() === 0) { v.attrIndex = value & 0x1F; this.setAttrFlip(1); }
+        else { v.attr[v.attrIndex] = value; this.setAttrFlip(0); }
         return;
       case 0x3D4: case 0x3B4: v.crtcIndex = value & 0x1F; return;
       case 0x3D5: case 0x3B5:
@@ -2624,6 +2657,7 @@ class Machine {
       // Setting a mode clears the display and re-chains the planes -- a demo
       // that unchains does it AFTER asking the BIOS for mode 13h.
       resetVgaMode(this.vga, this.videoMode);
+      this.setAttrFlip(0);                   // the VM's copy of the flip-flop too
       this.setTextPage(0);                   // a mode set always shows page 0
       this.syncVga();
       if (this.videoMode === 0x13) this.mem.fill(0, VGA_BASE, VGA_BASE + 320 * 200);

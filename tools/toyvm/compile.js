@@ -17,7 +17,7 @@
 
 const isa = require('./isa');
 const { decodeOne, H } = require('./decode');
-const { ARITY, FUSE, TRACE, SPIN, SPEC, applyExtract, NOFLAG, FLAG_EFFECTS,
+const { ARITY, FUSE, TRACE, SPIN, PSPIN, SPEC, applyExtract, NOFLAG, FLAG_EFFECTS,
   prepareTables } = require('./emit');
 
 function compileProgram(readByte, cs, entryIp, opts = {}) {
@@ -95,6 +95,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // instruction and the loop therefore does NOT run to the end of the slice.
   // `--no-spin` is the A/B partner.
   const spinLoops = opts.spinLoops !== false && !opts.oneInsn;
+  const portSpin = PORT_SPIN;
   // Swap each register-file access on a runtime index for the twin that has
   // the register as a literal. Safe under oneInsn too -- it changes no control
   // flow and no step accounting. OFF unless the twins were generated: opting
@@ -602,6 +603,32 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       spinBlocks++;
     }
   }
+  // The port poll: `in al,dx / cmp al,imm / jcc head` is TWO ops, and the
+  // first one changes AL, so the rule above is right to leave it alone. But
+  // port 3DAh is answered from the dispatch clock now (emit.js, $vga_status),
+  // so the twin can turn the loop inside one handler until the status the
+  // clock gives makes the branch fall through. The arena keeps its shape: the
+  // twin's operands are the `in`'s port word, the fused handler's own index
+  // (skipped), and the pair's operands where they were.
+  if (spinLoops && portSpin) {
+    const in8 = require('./emit').HANDLERS.findIndex(x => x.name === 'in_8');
+    for (let b = 0; b < blockStarts.length; b++) {
+      const start = blockStarts[b];
+      const end = b + 1 < blockStarts.length ? blockStarts[b + 1] : words.length;
+      if (words[start] !== in8) continue;
+      const second = start + 1 + ARITY[in8];
+      if (second >= end) continue;
+      const s = PSPIN.get(words[second]);
+      if (s === undefined) continue;
+      if (second + 1 + ARITY[words[second]] !== end) continue;
+      if (words[second + 1 + s.takenAt] !== blockIps[b]) continue;
+      if (ARITY[s.twin] !== end - start - 1) {
+        throw new Error(`port-spin twin of handler ${words[second]} has arity ${ARITY[s.twin]}, block has ${end - start - 1} words`);
+      }
+      words[start] = s.twin;
+      spinBlocks++;
+    }
+  }
 
   // Flag liveness over the finished region. Per block this is the same
   // backward walk as before; what is new is where it starts from.
@@ -736,4 +763,11 @@ function install(vm, prog) {
   return prog.entryAddr;
 }
 
-module.exports = { compileProgram, install };
+// Collapse the `in al,dx / cmp al,imm / jcc head` port poll into its twin
+// (see the pass in compileProgram). `--no-port-spin` is the A/B partner: both
+// arms run the same clock and reach the same frame at the same step count,
+// and differ only in how many dispatches the poll cost.
+let PORT_SPIN = true;
+function setPortSpin(on) { PORT_SPIN = !!on; }
+
+module.exports = { compileProgram, install, setPortSpin };
