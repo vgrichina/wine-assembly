@@ -4721,12 +4721,12 @@
   ;; Caller is responsible for the destination buffer; we NUL-terminate.
   (func (export "get_edit_text")
     (param $hwnd i32) (param $dest_guest i32) (param $max i32) (result i32)
-    (local $state i32) (local $state_w i32) (local $len i32) (local $src i32)
+    (local $state i32) (local $state_w ptr<EditState>) (local $len i32) (local $src i32)
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-    (local.set $state_w (call $g2w (local.get $state)))
-    (local.set $len (i32.load offset=4 (local.get $state_w)))
-    (local.set $src (i32.load (local.get $state_w)))
+    (local.set $state_w (cast ptr<EditState> (call $g2w (local.get $state))))
+    (local.set $len (load.field EditState text_len (local.get $state_w)))
+    (local.set $src (load.field EditState text_buf_ptr (local.get $state_w)))
     (if (i32.le_u (local.get $max) (i32.const 0)) (then (return (i32.const 0))))
     (if (i32.ge_u (local.get $len) (local.get $max))
       (then (local.set $len (i32.sub (local.get $max) (i32.const 1)))))
@@ -4740,31 +4740,35 @@
 
   ;; EditState cursor position (offset+12).
   (func (export "get_edit_cursor") (param $hwnd i32) (result i32)
-    (local $s i32)
+    (local $s i32) (local $sw ptr<EditState>)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
-    (i32.load offset=12 (call $g2w (local.get $s))))
+    (local.set $sw (cast ptr<EditState> (call $g2w (local.get $s))))
+    (load.field EditState cursor (local.get $sw)))
 
   ;; EditState selection anchor (offset+16).
   (func (export "get_edit_sel_start") (param $hwnd i32) (result i32)
-    (local $s i32)
+    (local $s i32) (local $sw ptr<EditState>)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
-    (i32.load offset=16 (call $g2w (local.get $s))))
+    (local.set $sw (cast ptr<EditState> (call $g2w (local.get $s))))
+    (load.field EditState sel_anchor (local.get $sw)))
 
   ;; EditState flags (offset+24), used by tests/debugging to verify focus.
   (func (export "get_edit_flags") (param $hwnd i32) (result i32)
-    (local $s i32)
+    (local $s i32) (local $sw ptr<EditState>)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
-    (i32.load offset=24 (call $g2w (local.get $s))))
+    (local.set $sw (cast ptr<EditState> (call $g2w (local.get $s))))
+    (load.field EditState flags (local.get $sw)))
 
   ;; EditState text length (offset+4).
   (func (export "get_edit_text_len") (param $hwnd i32) (result i32)
-    (local $s i32)
+    (local $s i32) (local $sw ptr<EditState>)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
-    (i32.load offset=4 (call $g2w (local.get $s))))
+    (local.set $sw (cast ptr<EditState> (call $g2w (local.get $s))))
+    (load.field EditState text_len (local.get $sw)))
 
   ;; Test helper: create a parent + EDIT child, return EDIT hwnd. The caller
   ;; passes the full EDIT/WS_* style and optional initial text guest pointer.
@@ -4784,10 +4788,10 @@
 
   (func $test_edit_visual_line_count (export "test_edit_visual_line_count")
     (param $hwnd i32) (result i32)
-    (local $s i32) (local $sw i32) (local $sz i32) (local $w i32) (local $style i32)
+    (local $s i32) (local $sw ptr<EditState>) (local $sz i32) (local $w i32) (local $style i32)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
-    (local.set $sw (call $g2w (local.get $s)))
+    (local.set $sw (cast ptr<EditState> (call $g2w (local.get $s))))
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
     (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
     (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
@@ -4803,7 +4807,7 @@
           (local.get $sw) (i32.add (local.get $hwnd) (i32.const 0x40000))
           (local.get $w)))))
     (i32.add
-      (call $edit_line_from_char (local.get $sw) (i32.load offset=4 (local.get $sw)))
+      (call $edit_line_from_char (local.get $sw) (load.field EditState text_len (local.get $sw)))
       (i32.const 1)))
 
   (func (export "test_edit_max_scroll")
@@ -5154,10 +5158,11 @@
 
   ;; Current selection for a colorgrid hwnd (reads ColorGridState[0]).
   (func (export "colorgrid_get_sel") (param $hwnd i32) (result i32)
-    (local $s i32)
+    (local $s i32) (local $sw ptr<ColorGridState>)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $s)) (then (return (i32.const -1))))
-    (i32.load (call $g2w (local.get $s))))
+    (local.set $sw (cast ptr<ColorGridState> (call $g2w (local.get $s))))
+    (load.field ColorGridState sel_idx (local.get $sw)))
 
   ;; Test helper: build a Color dialog standalone (no x86 caller).
   (func (export "test_create_color_dialog") (result i32)
@@ -5376,28 +5381,32 @@
       (local.get $style) (local.get $text_g)))
 
   (func (export "listview_get_count") (param $hwnd i32) (result i32)
-    (local $s i32)
+    (local $s i32) (local $sw ptr<ListViewState>)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
-    (i32.load (call $g2w (local.get $s))))
+    (local.set $sw (cast ptr<ListViewState> (call $g2w (local.get $s))))
+    (load.field ListViewState item_count (local.get $sw)))
 
   (func (export "listview_get_column_count") (param $hwnd i32) (result i32)
-    (local $s i32)
+    (local $s i32) (local $sw ptr<ListViewState>)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
-    (i32.load offset=16 (call $g2w (local.get $s))))
+    (local.set $sw (cast ptr<ListViewState> (call $g2w (local.get $s))))
+    (load.field ListViewState col_count (local.get $sw)))
 
   (func (export "listview_get_top_index") (param $hwnd i32) (result i32)
-    (local $s i32)
+    (local $s i32) (local $sw ptr<ListViewState>)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
-    (i32.load offset=36 (call $g2w (local.get $s))))
+    (local.set $sw (cast ptr<ListViewState> (call $g2w (local.get $s))))
+    (load.field ListViewState top_index (local.get $sw)))
 
   (func (export "listview_get_selected_index") (param $hwnd i32) (result i32)
-    (local $s i32)
+    (local $s i32) (local $sw ptr<ListViewState>)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $s)) (then (return (i32.const -1))))
-    (i32.load offset=32 (call $g2w (local.get $s))))
+    (local.set $sw (cast ptr<ListViewState> (call $g2w (local.get $s))))
+    (load.field ListViewState selected_index (local.get $sw)))
 
   (func (export "listview_get_debug_notify_count") (result i32)
     (global.get $lv_debug_notify_count))
@@ -5427,14 +5436,14 @@
     (call $lv_max_scroll_for_h (local.get $sw) (i32.shr_u (local.get $sz) (i32.const 16))))
 
   (func (export "listview_get_column_width") (param $hwnd i32) (param $idx i32) (result i32)
-    (local $s i32) (local $sw i32)
+    (local $s i32) (local $sw ptr<ListViewState>)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
-    (local.set $sw (call $g2w (local.get $s)))
+    (local.set $sw (cast ptr<ListViewState> (call $g2w (local.get $s))))
     (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
-                (i32.ge_s (local.get $idx) (i32.load offset=16 (local.get $sw))))
+                (i32.ge_s (local.get $idx) (load.field ListViewState col_count (local.get $sw))))
       (then (return (i32.const 0))))
-    (i32.load (i32.add (call $g2w (i32.load offset=24 (local.get $sw))) (i32.mul (local.get $idx) (i32.const 4)))))
+    (i32.load (i32.add (call $g2w (load.field ListViewState col_widths_ptr (local.get $sw))) (i32.mul (local.get $idx) (i32.const 4)))))
 
   (func (export "listview_get_item_text")
     (param $hwnd i32) (param $idx i32) (param $sub i32) (param $dest_guest i32) (param $max i32) (result i32)
@@ -5692,10 +5701,11 @@
       (i32.shl (local.get $slot) (i32.const 2)))))
 
   (func (export "static_get_image_ordinal") (param $hwnd i32) (result i32)
-    (local $state i32)
+    (local $state i32) (local $sw ptr<StaticState>)
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-    (i32.load offset=12 (call $g2w (local.get $state))))
+    (local.set $sw (cast ptr<StaticState> (call $g2w (local.get $state))))
+    (load.field StaticState image_ord (local.get $sw)))
 
   ;; NO closing paren for `(module` here — this fragment is self-balanced.
   ;; See the banner at the top of src/01-header.wat.
