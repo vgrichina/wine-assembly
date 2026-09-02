@@ -151,6 +151,7 @@ function decoderWat() {
 (global $dc_blockBulk (mut i32) (i32.const 0))  ;; ...and any stored a range
 
 (global $dc_nfix (mut i32) (i32.const 0))
+(global $dc_ninsn (mut i32) (i32.const 0))  ;; entries in the [wordIndex, ip] instruction table
 
 ;; How an instruction pointer wraps in this segment: 16 bits normally, 32 in a
 ;; segment whose descriptor has the D bit set. Getting this wrong does not
@@ -622,6 +623,7 @@ function decoderWat() {
   (global.set $dc_out (i32.const 0))
   (global.set $dc_bad (i32.const 0))
   (global.set $dc_nfix (i32.const 0))
+  (global.set $dc_ninsn (i32.const 0))
   (global.set $dc_stopped (i32.const 0))
   (global.set $dc_outAtInsn (i32.const 0))
   ;; Seeded, not zeroed. One host block can take several calls -- wasm stops at
@@ -653,12 +655,22 @@ function decoderWat() {
                             (i32.const 1)))
         (then (global.set $dc_stopped (i32.const ${STOP.HEAD})) (br $done)))
       (global.set $dc_ip (local.get $cur))
+      ;; Where this instruction's words start, for the host's word -> ip map.
+      (if (i32.lt_u (global.get $dc_ninsn) (i32.const ${isa.DEC_INSNS_MAX}))
+        (then
+          (i32.store (i32.add (i32.const ${isa.DEC_INSNS}) (i32.shl (global.get $dc_ninsn) (i32.const 3)))
+                     (global.get $dc_out))
+          (i32.store offset=4 (i32.add (i32.const ${isa.DEC_INSNS}) (i32.shl (global.get $dc_ninsn) (i32.const 3)))
+                     (local.get $cur))
+          (global.set $dc_ninsn (i32.add (global.get $dc_ninsn) (i32.const 1)))))
       (call $dc_one)
       ;; An unimplemented opcode has emitted nothing this host can use, but it
       ;; may have emitted words before it noticed. The out cursor is rewound to
       ;; where the instruction started so the host's decoder writes over them.
       (if (global.get $dc_bad)
         (then (global.set $dc_out (global.get $dc_outAtInsn))
+              ;; The host decodes this one itself; its entry goes with its words.
+              (global.set $dc_ninsn (i32.sub (global.get $dc_ninsn) (i32.const 1)))
               (global.set $dc_stopped (i32.const ${STOP.UNIMPL}))
               (br $done)))
       ;; Which bytes this decoded is NOT recorded here. The host derives the
@@ -680,6 +692,7 @@ function decoderWat() {
 
 ;; Readers, so the host can pull the side tables back without knowing the map.
 (func (export "dc_fixups") (result i32) (global.get $dc_nfix))
+(func (export "dc_insns") (result i32) (global.get $dc_ninsn))
 ;; The decoded ModRM, exported so decode-diff can say WHICH part of an operand
 ;; disagreed rather than only that the emitted word did.
 (func (export "dc_ea") (result i32) (global.get $dc_ea))

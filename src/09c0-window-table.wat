@@ -1500,6 +1500,12 @@
     (if (i32.eq (local.get $wp) (global.get $WNDPROC_CTRL_NATIVE))
       (then
         (local.set $ret (call $control_wndproc_dispatch (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))
+        ;; Built-in controls use DefWindowProc for the legacy geometry-message
+        ;; epilog after their own WM_WINDOWPOSCHANGED handling.
+        (if (i32.eq (local.get $msg) (i32.const 0x0047))
+          (then
+            (call $windowpos_defproc_geometry
+              (local.get $hwnd) (local.get $lParam))))
         ;; WM_SETCURSOR: zero means the control did not claim the cursor, which
         ;; in Win32 is the caller's cue to fall through to DefWindowProc. Only
         ;; the edit control's HTCLIENT branch sets one, so without this its
@@ -1520,9 +1526,19 @@
           (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
         (if (i32.eq (local.get $msg) (i32.const 0x0083))
           (then (call $defwndproc_do_nccalcsize (local.get $hwnd)) (return (i32.const 0))))
+        (if (i32.eq (local.get $msg) (i32.const 0x0047))
+          (then
+            (call $windowpos_defproc_geometry
+              (local.get $hwnd) (local.get $lParam))
+            (return (i32.const 0))))
         (return (call $console_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; WM_NCPAINT / WM_NCCALCSIZE default chrome for WAT-native top-levels.
     ;; Help wndproc never overrides these so we take the default directly.
+    (if (i32.eq (local.get $msg) (i32.const 0x0047))
+      (then
+        (call $windowpos_defproc_geometry
+          (local.get $hwnd) (local.get $lParam))
+        (return (i32.const 0))))
     (if (i32.eq (local.get $msg) (i32.const 0x0085))
       (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
     (if (i32.eq (local.get $msg) (i32.const 0x0083))

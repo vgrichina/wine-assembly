@@ -786,8 +786,8 @@
   ;; com_revoke_class_object(cookie) → HRESULT
   ;; Returns 0=S_OK, 0x800401F0=CO_E_DLLNOTFOUND (need async load), other=error
   (import "host" "com_get_pending_dll" (func $host_com_get_pending_dll (result i32)))
-  ;; com_get_pending_dll() → WASM addr of pending DLL name string (0=none)
-
+  (import "host" "com_initialize_thread" (func $host_com_initialize_thread (param i32 i32 i32) (result i32)))
+  (import "host" "com_uninitialize_thread" (func $host_com_uninitialize_thread (param i32) (result i32)))
   ;; Thread/event host imports
   ;; create_thread(start, param, stackSize, flags, lpThreadIdWA) returns the
   ;; kernel HANDLE and writes the distinct Win32 thread id through the optional
@@ -796,6 +796,8 @@
   (import "host" "duplicate_current_thread" (func $host_duplicate_current_thread (param i32) (result i32)))
   (import "host" "suspend_thread" (func $host_suspend_thread (param i32) (result i32)))
   (import "host" "resume_thread" (func $host_resume_thread (param i32) (result i32)))
+  (import "host" "get_thread_priority" (func $host_get_thread_priority (param i32 i32) (result i32)))
+  (import "host" "set_thread_priority" (func $host_set_thread_priority (param i32 i32 i32) (result i32)))
   (import "host" "exit_thread" (func $host_exit_thread (param i32)))
   (import "host" "get_exit_code_thread" (func $host_get_exit_code_thread (param i32) (result i32)))
   (import "host" "terminate_thread" (func $host_terminate_thread (param i32 i32) (result i32)))
@@ -2358,10 +2360,15 @@
   ;; nothing here takes them together (rule 2), and because a window claim and a
   ;; class claim are each a few hundred instructions of pure table arithmetic.
   (global $LOCK_WND i32 (region.addr $LOCK_TABLE 0x00000180))
-  ;; Process-wide allocators that were mutable globals — i.e. a private copy per
-  ;; instance, handing out the same value twice. +0: the class atom counter. Two
-  ;; instances each starting at 0xC000 give two DIFFERENT classes the SAME atom,
-  ;; and CreateWindowA by atom then builds the wrong class's window.
+  ;; Process-wide cells that cannot be mutable globals because every guest
+  ;; thread is a separate WASM instance over this shared memory:
+  ;;   +0  class atom counter
+  ;;   +4  decoded-code invalidation generation
+  ;;   +8  process priority class (0 => NORMAL, 0x20); +12 process error mode
+  ;; Two instances each starting a private atom counter at 0xC000 give two
+  ;; DIFFERENT classes the SAME atom, and CreateWindowA by atom then builds the
+  ;; wrong class's window. Priority has the same cross-instance requirement:
+  ;; a worker must observe the class selected by the UI thread.
   ;; In the gap between CS_TABLE and GDI_REGION_TABLE. It went at 0x07F0B400
   ;; first, which the memory map's comments show as free and which
   ;; $TT_SUBST_TABLE in 10c-truetype.wat actually owns — so every class

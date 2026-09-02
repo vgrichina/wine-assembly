@@ -20,5 +20,10 @@ for (const label of ['EIP=', 'prev_eip=', 'prev2_eip=', 'ESP=', 'EBP=', 'EAX=',
   'EBX=', 'ECX=', 'EDX=', 'ESI=', 'EDI=', 'stack=[', 'yield=']) {
   assert(fatal.includes(label), `cooperative fatal report should print ${label}`);
 }
+assert(fatal.includes("typeof self.onFatal === 'function'"),
+  'a runtime WASM crash should be forwarded to the browser crash-report UI');
+for (const field of ['error: e', 'state', 'tag']) {
+  assert(fatal.includes(field), `runtime crash forwarding should retain ${field}`);
+}
 
 console.log('browser cooperative crash register diagnostics: ok');

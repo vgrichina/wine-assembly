@@ -1644,6 +1644,14 @@ arms happen to agree is luck, not evidence. Nor can the gap be closed by asking
 the interpreter for the region's exact dispatch count: it too stops only at a
 block boundary, and a request for 8054341 dispatches ran 8062431 of them.
 
+*2026-09-02:* most of that gap was ours. `dos-loop.js` billed an exhausted
+slice as its quantum and dropped the overshoot, which is one block under the
+interpreter and one billed chunk in a region; it now bills `budget - $steps`,
+and the two arms stop within tens of dispatches of each other at the same
+guest state (`--peek-ds`). The check below still matters for what is left —
+the arms still stop at different *instructions* — but it is no longer
+deciding thousands of dispatches of drift. See toyvm-bench-20.md §9.
+
 So `region-jit.js` measures the noise floor instead. On a differing frame it
 re-runs the *interpreter* at the region's dispatch count and counts the pixels
 the baseline moved **by itself** over that gap. That is how much picture this
@@ -2105,7 +2113,12 @@ Two things for whoever picks this up next:
   this.** It is the same "no beneficiary" problem, already shipped. A
   minimum-share floor in `pickRegion` would drop them; it would also cut the
   headline region count by a quarter, which is why it wants to be a measured
-  decision rather than a constant somebody picks.
+  decision rather than a constant somebody picks. **2026-09-02: that share
+  was a profiler-attribution bug, not a property of the regions** — the two
+  biggest JIT wins in the twenty-program set (COMPOVRS +125%, CONTACT +119%)
+  were among the "0.0%" rows. Fixed in `pickRegion`; the mechanism and the
+  measured revisions are in `docs/toyvm-bench-20.md` §7. The 25-of-103 figure
+  has to be re-taken with `region-why.js` before any floor is discussed.
 - **`region-census.js`'s old `%` column was never a benchmark.** It ran
   `--reps=1`, and at one rep the interleave-and-rotate in `region-jit.js` never
   rotates: the baseline arm always runs first and the region arm always second,
@@ -2161,3 +2174,27 @@ handback columns are the ones to rank regions by until a quiet box (or a longer
 budget) confirms the `%`. That ranking is what the min-share floor above
 should be decided from: a region whose ceiling rounds to 0.0% cannot pay by
 construction, and the column now says so per program.
+
+## Two items checked off the loop list without a change (2026-09-02)
+
+**`ret`-terminated traces already install.** The straight walk keeps the
+block that ends in an un-inlined `ret` and `splitExit` publishes its computed
+`$gip`; DREAM's 15-op, 3-block region at 0x997 ends exactly that way. The
+`reject 0x...: straight, N ops, stops: ret with no inlined call` line that
+made it look declined is the walk's own log of *why the walk stopped*, printed
+for every non-closing candidate whether or not it is then installed. The
+`unreadable:ret` = 168 figure came from `loop-match.js --why`, which is the
+static Design-A matcher, not this JIT.
+
+**daretro's 0.3% trace is a correct decline, but the profile behind it is
+odd and unexplained.** 297 of 300 samples (487 of 500 with a jittered slice)
+sit on one 1-op block — the `cmp_mi8_jz_spin` twin, 238 entries, ~3M of the
+12M dispatches — and every candidate region reads 0–5 samples. A
+slice-length jitter (deterministic LCG, ¼–1× the quantum, profiling runs
+only) was built on the theory that a fixed slice phase-locks to the wait; it
+moved nothing and was removed. Its frame is byte-identical under
+`--irq-every=25000` and `--dispatches-per-tick=50000`, so whatever that spin
+waits for is neither the timer IRQ nor the BIOS tick word. Next step, if it
+matters: `--trace-at` the spin's ip with `--trace-entry` past the depacker
+and read what byte it compares — `--trace-entry=N` only prints the first N
+handbacks, which on daretro are all the depacker.

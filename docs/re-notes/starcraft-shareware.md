@@ -326,6 +326,308 @@ The latest gameplay probe narrows the known-good boundary to display work:
 `[0x696fac]` behaves like a display flush/dirty-rect sequence. This is useful
 for DirectDraw backpressure accounting, but it is still not the simulation tick.
 
+## Timer dispatcher and frame-boundary candidate (2026-09-01)
+
+The best current disassembly lead for StarCraft's own update cadence is not a
+DirectDraw call. It is the EXE timer-list dispatcher:
+
+```text
+0x0043bd2a -> 0x004cc000
+0x004cc000 reads GetTickCount, walks list head 0x696fc0, and dispatches expired
+timer nodes.
+0x004cc049 calls the per-node callback stored at [esi+0x8].
+0x004cc05f calls the default helper 0x004cc0e0 when [esi+0x8] is zero.
+```
+
+The node fields observed in disassembly are:
+
+```text
+[node+0x04] callback object/context passed in ecx
+[node+0x08] callback eip, called at 0x004cc049
+[node+0x0c] last GetTickCount timestamp
+[node+0x10] interval in ms
+[node+0x14] timer id, passed in dx
+[node+0x18] drift/smoothing accumulator
+```
+
+A focused trace of `0x004cc049` while driving toward the mission saw the active
+callback set change by phase:
+
+| Phase | Callback | Interval | Notes |
+|---|---:|---:|---|
+| Early/movie/UI | `0x004ab130` | `0x1f4` (500 ms) | Too slow; not a gameplay frame. |
+| Mission-load/briefing UI | `0x004cdde0` | `0x1e` (30 ms) | UI/object timer family. |
+| Mission-load transition | `0x00451080` | `0x14` (20 ms) | Counts down `[0x623950]`; not a frame. |
+| Mission-load transition | `0x00458b80` | `0x64` (100 ms) | Calls `0x004c9dc0`/`0x004cbed0`; not enough evidence for frame. |
+| In-mission/tips window | `0x0049cc90` | `0x32` (50 ms) | Best current app-level update candidate. |
+| In-mission/tips window | `0x00464b10` | `0xc8` (200 ms) | Watches globals `0x4edfc8/0x4edfca`, marks a UI/display object dirty through `0x004c9d80`; not a frame. |
+
+The static registration site around `0x00464113` installs `0x00464b10` as a
+200 ms callback and `0x00464900` as another 200 ms callback, so those are
+confirmed scheduled timers, not guessed callsites. `0x00464b10` only compares
+two globals with `0x631e60/0x631e64` and jumps to the object dirty/display
+helper `0x004c9d80` when they changed.
+
+`0x0049cc90` looked like the closest thing to an actual gameplay/update tick
+in the first timer-dispatch pass, but later disassembly weakens that
+interpretation. It is registered as a callback in the `0x0049ca..0x0049d0`
+region and branches on the timer id in `dx`; one branch calls `0x004cbed0` to
+remove or reschedule timer entries, and other branches update state rooted
+around `0x66c270..0x66c3dc`. The branch bodies set object fields
+`+0x24/+0x26`, call `0x0049c640`, touch screen-coordinate globals
+`0x4eeb2c/0x4eeb30`, and end by dirtying the object through `0x004c9d80`.
+That makes it a timed UI/selection/object callback, not a proven RTS simulation
+frame.
+
+Matched 4300/4700 counter runs are partially useful but not definitive. The
+4300 baseline reached the post-OK click point:
+
+| Counter | 4300 | Notes |
+|---|---:|---|
+| `dx_present` | 5910 | DirectDraw display work, still too hot. |
+| `0x0049cc90` | 1062 | Timer callback candidate. |
+| `0x00464b10` | 405 | 200 ms UI/display watcher. |
+| `0x004cc049` | 8232 | Generic timer callback dispatch, too hot. |
+| `0x004c4800` / `0x004cbaf0` | 7981 / 7981 | Display flush path. |
+| Smacker `_SmackDoFrame` / `_SmackNextFrame` | 3570 / 3533 | Startup/transition movie work still contributes before gameplay. |
+
+A later 4700 count run hit a StarCraft critical-error modal before the end, so
+its deltas are tainted and should not be used as proof. It still showed
+`0x0049cc90` rising to 1848 and Smacker almost flat at 3573/3536, which is
+consistent with the callback remaining active after the movie phase, but not a
+clean oracle.
+
+Cleaner 4550/4700 reruns with a narrower counter set did reach the in-mission
+state without the critical-error modal:
+
+| Counter | 4550 | 4700 | Delta | Notes |
+|---|---:|---:|---:|---|
+| `dx_present` | 6949 | 7624 | +675 | DirectDraw display work, not one frame. |
+| `0x0049cc90` | 1725 | 2150 | +425 | Timed object callback; count alone does not prove a sim frame. |
+| `0x004cc049` | 9835 | 10868 | +1033 | Generic timer callback edge; too hot. |
+| `0x004c4800` / `0x004cbaf0` | 8857 / 8857 | 9434 / 9434 | +577 / +577 | Display flush path. |
+| Smacker `_SmackDoFrame` / `_SmackNextFrame` | 3570 / 3533 | 3573 / 3536 | +3 / +3 | Movie path mostly flat in this window. |
+
+Two pause-oracle attempts are not usable as proof. Injecting F10 at batch 4550
+made a byte-identical batch-4690 screenshot and nearly identical counters.
+Injecting VK_PAUSE at batch 4550 changed only 335 pixels in an 18x32 box
+against the unpaused capture, while the timer/display counters stayed within
+normal run-to-run noise (`0x0049cc90` 2149 vs 2150, `0x004cc049` 10865 vs
+10868, display flushes 9427 vs 9434). This does not show the game simulation
+paused.
+
+## 20 ms Win32 timer and clock catch-up path (2026-09-01)
+
+A stack trace of `GetTickCount` did find a stronger timing path than
+`0x0049cc90`. The partial run was killed at the hard timeout, but it still
+named the dominant return sites:
+
+| API return site | Partial count | Notes |
+|---|---:|---|
+| `GetTickCount -> 0x004652c8` | 158220 | Inner clock-poll loop in `0x00465260`. |
+| `GetTickCount -> 0x004cc00f` | 9130 | Generic timer-list dispatcher. |
+| `GetTickCount -> 0x0043bcaa` | 9130 | Main message/timer pump before `0x004cc000`. |
+| `GetTickCount -> 0x004c8438` | 3448 | Timeout/slot expiry helper already noted above. |
+| `GetTickCount -> 0x0046ca76` | 1151 | 250 ms network/player-message pump in `0x0046ca60`; rejected as a frame boundary. |
+
+The `0x004650d0..0x00465346` family is a Win32 timer/catch-up driver:
+
+```text
+0x004650f8 calls SetTimer(hwnd=[0x62fb04], id=3, interval=0x14, proc=0x00465140)
+0x00465140 is the timer proc; when active it advances [0x631e98] by 0x190.
+0x00465260 is a synchronous drain/catch-up helper.
+0x004652b7 loads KERNEL32!GetTickCount from IAT 0x004d517c.
+0x004652c6..0x004652cc polls GetTickCount until the delta is non-negative.
+0x004652d7..0x004652e5 subtracts 5 from [0x631e98].
+0x004652e7 calls Storm ordinal #261 through thunk 0x004b5f8e.
+```
+
+The Storm import map makes `0x004b5f8e` slot 39 of the EXE's `storm.dll` IAT,
+ordinal `#261` (`0x004d53d8`). The catch-up helper passes
+`[0x631e8c]`, the accumulator value, and zero to that thunk.
+
+A focused count to batch 4700 showed why this still is not a single frame
+boundary:
+
+| Counter | Count | Interpretation |
+|---|---:|---|
+| `0x00465140` | 6 | 20 ms Win32 timer proc; only a few firings in this route/window. |
+| `0x00465260` | 3 | Synchronous catch-up/drain helper. |
+| `0x004652c6` | 451316 | Tight `GetTickCount` polling loop; definitely not a frame. |
+| `0x004652e7` | 64 | Emission of catch-up events through Storm `#261`. |
+| `0x004b5f8e` | 73 | Total calls through Storm `#261` in the counted run. |
+| `0x0049cc90` | 2147 | Timed object callback still active, but not the best frame lead. |
+| `0x004c4800` / `0x004cbaf0` | 9435 / 9435 | Display flush path. |
+
+Static Storm disassembly resolves and rejects the `#261` leg as a logical frame
+boundary. The bundled `storm.dll` export table maps ordinal `#261` to
+`0x15011b80` in the original image (`storm.dll` sha256
+`d28093f889f2d9fe1475ee55b47fbfab4d8241fdf73af105d0b85c1514875290`). That
+function enters critical section `0x1502d308`, stores/validates the first
+argument through `0x1500fc90`, looks up a node in list head `0x1502d330` by
+`node+0x8 == arg0`, then updates `node+0x28` and `node+0x2c` from args 2/3.
+When those fields change it invokes methods on `node+0x30` at vtable offsets
+`0x3c` and `0x40`.
+
+The surrounding exports identify this subsystem as Storm sound/WAVE streaming,
+not gameplay simulation. `#254` (`0x1500fca0`) is a wrapper into
+`0x1500fcd0`; the create path requires global `0x1502d374`, opens the resource,
+checks `RIFF` and `WAVE`, seeks `fmt ` and `data` chunks, allocates backing
+buffers, and initializes DirectSound worker state through `0x150100f0`.
+Adjacent exports `#257/#258/#259` unregister/query the same list nodes and call
+other vtable offsets on the same sound object. So `0x004652e7`/Storm `#261`
+should be counted as sound/clock catch-up parameter updates, not a game frame.
+
+This path still explains why StarCraft can generate many display flushes per
+real app cadence, and why adding backpressure at the DirectDraw present/unlock
+boundary changes clock-paced animation. It does **not** prove that any single
+one of `0x00465140`, `0x00465260`, `0x004652e7`, or Storm `#261` is the logical
+RTS frame boundary; `#261` is now specifically rejected for that purpose.
+
+The remaining `GetTickCount -> 0x0046ca76` consumer is also rejected. Static
+disassembly puts it in function `0x0046ca60`, with a 250 ms gate against
+`[0x632520]`:
+
+```text
+0046ca74 call GetTickCount
+0046ca76 mov edx, [0x632520]
+0046ca7e sub eax, edx
+0046ca84 cmp eax, 0xfa
+```
+
+The taken path walks eight per-player/network slots under globals
+`0x632190`, `0x6322b0`, and `0x6322f0`, calls Storm ordinal `#122` through
+`0x004b5fb2` from helper `0x0046a7b0`, dispatches messages through
+`0x0046bf90`, and eventually refreshes `[0x632520]` at `0x0046ccfc`.
+Its caller `0x00458560` maps the result to coarse UI/status state
+`[0x695ed8] = 0x64/0x65` and then calls `0x004c91a0`. A clean in-mission count
+to batch 4550 hit `0x0046ca60` only `1138` times while `0x004c4800` and
+`0x004cbaf0` hit `8868` times and `dx_present` hit `6956` times, which is the
+wrong cadence for a per-frame boundary.
+
+The main pump is similarly only an outer scheduler boundary. Function
+`0x0043bb75` loops `PeekMessageA`/`GetMessageA`/`TranslateMessage`/
+`DispatchMessageA`, then runs 100 ms and 1000 ms housekeeping from the
+`GetTickCount -> 0x0043bcaa` site:
+
+```text
+0043bca4 call GetTickCount
+0043bcaa mov ecx, [0x61ef54]
+0043bcb5 cmp edx, 0x64
+...
+0043bd00 cmp eax, 0x3e8
+0043bd0d call 0x492f80
+0043bd12 call 0x464ea0
+0043bd2a call 0x4cc000
+```
+
+`0x004cc000` is the timer-list dispatcher, not a frame callback. Its nodes are
+0x1c bytes: `[+4]` owner/context, `[+8]` optional function callback, `[+0c]`
+last `GetTickCount`, `[+10]` period, `[+14]` tag, and `[+18]` smoothing/carry.
+At `0x004cc049` it calls `[node+8]` when present; otherwise `0x004cc0e0`
+invokes the owner object at vtable offset `+0x2a`. `0x004cbed0` removes nodes
+by owner/tag, and direct refs show dozens of UI/game objects using this list,
+so counting the dispatcher is counting scheduled callbacks, not game frames.
+
+Gameplay-only hot-block profiling found the game-step edge above the hottest
+rendering loops. A clean worktree run with `--handler-hist-thread=0
+--handler-hist-start=4550 --handler-hist-stop=4700
+--hot-block-dump=/private/tmp/sc-hot-4550-4700.txt` recorded 7,539 distinct
+main-thread blocks in that in-mission window. The top blocks were
+decompression/blit/display work, not a low-frequency simulation tick:
+
+| Block | Hits | Classification |
+|---|---:|---|
+| `storm.dll runtime 0x007c108b..0x007c10ce` | 1.39M-1.78M each | Storm/DLL inner loops, too hot and not EXE frame state. |
+| `0x004b48aa` | 1,239,329 | Byte decode/copy loop through table `0x4e8701`. |
+| `0x004c4670` / `0x004c4678` | 611,974 / 611,787 | Display copy/scan loop reached from the `0x004c4800` presenter path. |
+| `0x0046201f` / `0x00461fe4` | 511,494 / 499,458 | 640x400-ish tile/pixel scan loop. |
+| `0x00441d56` / `0x00441db6` | 498,644 / 510,680 | 16x16 row/terrain blit helper; calls `0x461fc0`, `0x4618d0`, `0x4b2640`, `0x412760` after the scan. |
+| `0x0046263a` | 457,758 | Tile lookup loop from `0x630770 + index*4`. |
+
+This profile is useful negative evidence: once StarCraft is in mission, the
+hottest blocks are rendering/decode loops. The logical step boundary is the
+caller above them:
+
+```
+0x004410e1  call 0x0043bb50        ; message/timer pump
+0x004410eb  call ebp               ; current tick/time source
+...
+0x00441144  sub esi, [0x61fcc8]    ; elapsed >= accumulator?
+0x00441152  call 0x00441330        ; gate for another catch-up step
+...
+0x004411db  call 0x004b2ed0        ; game-step/update service
+0x004411ed  mov edx, [0x61fcc8]
+0x004411f5  mov al, [ecx+0x4d563c] ; step quantum from current mode data
+0x004411fb  add edx, eax
+0x004411fd  mov [0x61fcc8], edx    ; advance simulated time accumulator
+```
+
+The in-mission hot-block window counted `0x004410e1` 570 times, but the actual
+step call at `0x004411db -> 0x004b2ed0` only 519 times. That matches the
+control flow: the outer loop may pump messages/display without consuming a
+sim step, while the inner path consumes one accumulated game step. In the same
+window, `0x004b2f79` and `0x004b3197` also hit 519 times, confirming they are
+inside the step service rather than independent frame clocks.
+
+Matched-route counter runs strengthen that from a profiling observation into a
+boundary: the function entry and the accumulator-after-call sites move together
+within each run, while display presents and generic timer callbacks do not. The
+4550 and 4700 runs are separate launches, so read the delta as a route-window
+comparison rather than same-process subtraction.
+
+| Counter | 4550 | 4700 | Delta | Interpretation |
+|---|---:|---:|---:|---|
+| `dx_present` | 6956 | 7623 | +667 | Primary-surface present events, not logical frames. |
+| `0x004410e1` | 2458 | 3024 | +566 | Outer catch-up/message loop; can spin without a game step. |
+| `0x00441150` | 2025 | 2542 | +517 | Step-gate path before the game-step call. |
+| `0x004411e7` / `0x00441205` | 2025 / 2025 | 2542 / 2542 | +517 / +517 | Post-call accumulator path. |
+| `0x004b2ed0` | 2025 | 2542 | +517 | Game-step/update service entered from `0x004411db`. |
+| `0x004b3197` | 2025 | 2542 | +517 | Same service, same cadence as the step call. |
+| `0x004b2fc7` | 54 | 87 | +33 | Derived elapsed-game timer, about every 16 in-mission steps. |
+| `0x004c4800` / `0x004cbaf0` | 8868 / 8868 | 9432 / 9432 | +564 / +564 | Display flush path; more frequent than game steps. |
+| `0x004cc049` | 9844 | 10860 | +1016 | Generic timer callback dispatcher, far hotter than game steps. |
+| `0x0049cc90` | 1722 | 2146 | +424 | Timed UI/object callback; not tied to the accumulator path. |
+| `0x0046ca60` | 1138 | 1138 | 0 | 250 ms network/player-message pump; inactive in this window. |
+
+`0x004b2ed0` itself walks per-player/unit turn state and then maintains
+coarser countdowns. Its `0x004b2fc7 -> 0x004b2fce` path increments global
+`0x4fc4f0`, but only when the `0x68f7a0` countdown reaches zero; in the
+gameplay-only window `0x004b2fc7` hit 33 times, i.e. about once every 16 game
+steps. `0x4fc4f0` is therefore a derived elapsed-game timer, not the frame
+boundary itself. Its xrefs compare it to timer-like constants such as `0x3c`,
+`0x258`, `0x5dc`, `0xa8c`, and `0x1194`, and `0x004b2fce` is its only steady
+increment while `0x004b3853` resets it.
+
+Current answer: the actual EXE-side logical step boundary to count is
+`0x004411db -> 0x004b2ed0`, with `0x004410e1` as the enclosing catch-up loop.
+The display boundary remains
+`0x004cbaf0 -> 0x004c4800 -> Storm #356 Unlock -> $dx_present`; count that for
+"surface flushes/presents", not simulation frames. The strongest generic timer
+boundary remains `0x004cc049`; count that for "scheduled callback dispatches".
+The `0x004650d0..0x00465346` Win32 timer/catch-up path is real clock work, but
+its Storm `#261` call is sound-state work, not the game frame. The remaining
+known `GetTickCount` consumer at `0x0046ca76` is a 250 ms network/player-message
+path, also not the game frame.
+
+Browser measurement hint: `lib/apps.js` now declares
+`starcraft_shareware.perf.logicalFrame` with primary counter `0x004b2ed0` and
+verifier `0x004411e7`. The perf HUD should show that as `GAME/s` and keep the
+generic DirectDraw path as `PRESENT/s`. The verifier is not a second FPS
+number; it is the post-call accumulator path that should stay 1:1 with the
+primary counter.
+
+DirectDraw Lock/Unlock coordinate answer for this build: `Lock(this,
+lpDestRect, lpDDSD, dwFlags, hEvent)` can carry a rectangle. The WAT handler
+uses `lpDestRect.left/top` to return an `lpSurface` pointer offset into the
+same surface DIB while keeping the full pitch. `Unlock(this, lpRect)` has a
+second argument in the API table and handler, but the current implementation
+does not read it; every unlock notes CPU write for the whole surface object and
+presents if that surface has the primary flag. The current `host_dx_trace`
+Lock/Unlock records only kind, slot, flags, DIB pointer, and zero for the last
+field, so updated-region bounding boxes are not available from the existing
+Lock/Unlock trace.
+
 ## Candidate boundaries
 
 - Good DirectDraw boundary for display-work accounting:
@@ -349,21 +651,50 @@ for DirectDraw backpressure accounting, but it is still not the simulation tick.
   `starcraft.exe` around `0x00474d02..0x00474d32` calls the message pump at
   `0x0043bb50` and then `Sleep(0)`. Low-overhead `--count` probes hit these
   addresses constantly, but that only proves loop/message-pump cadence.
+- Actual game-step boundary:
+  the catch-up loop at `0x004410e1` calls `0x0043bb50`, samples time through
+  `ebp`, checks elapsed time against accumulator `0x61fcc8`, and consumes a
+  step at `0x004411db -> 0x004b2ed0`. After that call it advances `0x61fcc8`
+  by `[0x695ab8+0x4d563c]`. Count `0x004b2ed0`/`0x004411db` for logical
+  game steps; count `0x004410e1` for outer loop iterations.
+- Derived elapsed-game timer, not the frame boundary:
+  inside `0x004b2ed0`, `0x004b2f79` runs once per consumed step, but
+  `0x004b2fc7 -> 0x004b2fce` increments `0x4fc4f0` only every 16 steps via the
+  `0x68f7a0` countdown. In the gameplay-only window the counts were 519 step
+  hits and 33 elapsed-timer increments.
+- Non-display timing leads now rejected:
+  `0x004cc049` is the generic timer-dispatch edge. `0x0049cc90` is a 50 ms
+  timed object/UI callback, no longer the best frame candidate. The
+  `0x004650d0..0x00465346` Win32 timer/catch-up family is real clock work:
+  `0x00465140` is installed with `SetTimer(..., id=3, interval=0x14)` and
+  `0x004652c6` is the tight `GetTickCount` poll, but its `0x004652e7` call to
+  Storm ordinal `#261` lands in sound/WAVE state and is now rejected as a game
+  frame boundary. `0x0046ca60`/`0x0046ca76` is now rejected too: it is a
+  250 ms network/player-message pump over eight slots, with Storm ordinal
+  `#122` receive/status work and coarse status writes to `0x695ed8`.
+- Gameplay-only hot blocks, not frame boundaries:
+  `/private/tmp/sc-hot-4550-4700.txt` shows the main-thread hot set after
+  mission entry is dominated by Storm loops, `0x004b48aa` decode/copy,
+  `0x004c4670` display copy, `0x0046201f`/`0x00461fe4` pixel/tile scans, and
+  `0x00441d56` terrain/blit helpers. These are the work done inside frames or
+  display flushes, not the boundary that schedules a frame.
 - One-off EXE surface path:
   `0x004c7a1d`/`0x004c7a9d` are a rare local Lock/Unlock pair observed once in
   the same trace, not the steady presenter.
 
 ## Next probes
 
-- Drive StarCraft into the same in-mission state as the screenshot, then count
-  `wine.onGuestFrame` kinds while also sampling canvas hashes once per rAF.
+- Drive StarCraft into the same in-mission state as the screenshot with a small
+  enough `--batch-size` that DirectDraw present intervals are resolved below
+  one batch, then count `wine.onGuestFrame` kinds while also sampling canvas
+  hashes once per rAF.
 - Add a focused trace/counter for Storm ordinal `#356` and compare it with
   `dx_trace` kind 5. If they match closely, the HUD can be relabeled more
   honestly as DirectDraw presents or primary unlock presents.
-- Find an EXE-level render/simulation tick by tracing callers around the main
-  loop (`0x00474d02`) and filtering out message pump / `Sleep(0)` traffic.
-- Next best route to the actual game frame is to watch timer/state globals
-  rather than display functions: trace `timeGetTime`/`GetTickCount` consumers
-  after batch 4300, and use `--watch-log` on likely game-loop counters once a
-  write site is found. Confirm by comparing against visible canvas hashes while
-  Smacker counts remain flat.
+- Trace `0x004411db` with a small `--batch-size` and a canvas hash sampler to
+  quantify how many DirectDraw presents each logical step produces in a live
+  browser run. The current disassembly shows why multiple presents per step are
+  plausible; this probe would put the ratio on the HUD path directly.
+- Use `--watch-log` on `0x631e8c`, `0x631e98`, and `0x631e9c` only as clock
+  plumbing. Confirm any proposed frame boundary against canvas hashes while
+  Smacker counts and DirectSound/Storm `#261` counts remain flat.

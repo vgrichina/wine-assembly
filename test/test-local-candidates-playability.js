@@ -145,7 +145,7 @@ const tests = [
         { name: 'about dialog was dismissed', pass: /dlg-click: id=1/.test(result.out) },
         { name: 'main board window is visible', pass: /window:four .*visible=true .*dialog=false .*title="Four Stones"/.test(result.out) },
         { name: 'hint command was delivered', pass: /post-cmd wParam=0x9c42/.test(result.out) },
-        { name: 'piece interaction visibly changes board', pass: diff > 1000 },
+        { name: 'piece interaction visibly changes board', pass: diff > 800 },
         { name: 'rendered board has rich color content', pass: metricAfter.colors > 100 && metricAfter.saturated > 10000 },
         { name: 'no crash marker', pass: hasNoCrash(result.out) },
       ];

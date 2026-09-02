@@ -16,7 +16,9 @@ const path = require('path');
 
 const { VirtualFS } = require('../lib/filesystem');
 const VfsOverlay = require('../lib/vfs-overlay');
-const { memoryStore, nodeDirStore, assertStore } = require('../lib/overlay-store');
+const {
+  memoryStore, nodeDirStore, opfsStore, removeOpfsScope, assertStore, metaOf,
+} = require('../lib/overlay-store');
 const byteProvider = require('../lib/byte-provider');
 
 const GENERIC_WRITE = 0x40000000;
@@ -70,6 +72,70 @@ class AsyncOnlyProvider {
     return Promise.resolve(this.bytes.subarray(off, Math.min(this.size, off + len)));
   }
   close() {}
+}
+
+function notFound(name) {
+  const error = new Error(`${name} was not found`);
+  error.name = 'NotFoundError';
+  return error;
+}
+
+// The four OPFS methods the store uses, backed by Maps so the browser backend
+// can be proved across fresh store instances without a browser or IndexedDB.
+class FakeOpfsFileHandle {
+  constructor(dir, name) { this.dir = dir; this.name = name; }
+  async getFile() {
+    if (!this.dir.files.has(this.name)) throw notFound(this.name);
+    const snapshot = new Uint8Array(this.dir.files.get(this.name));
+    return {
+      size: snapshot.length,
+      arrayBuffer: async () => snapshot.buffer.slice(
+        snapshot.byteOffset, snapshot.byteOffset + snapshot.byteLength),
+    };
+  }
+  async createWritable() {
+    let staged = new Uint8Array(0);
+    let finished = false;
+    return {
+      write: async value => { staged = new Uint8Array(value); },
+      close: async () => {
+        if (finished) return;
+        this.dir.files.set(this.name, new Uint8Array(staged));
+        finished = true;
+      },
+      abort: async () => { finished = true; },
+    };
+  }
+}
+
+class FakeOpfsDirectoryHandle {
+  constructor() {
+    this.dirs = new Map();
+    this.files = new Map();
+  }
+  async getDirectoryHandle(name, options) {
+    if (!this.dirs.has(name)) {
+      if (!options || !options.create) throw notFound(name);
+      this.dirs.set(name, new FakeOpfsDirectoryHandle());
+    }
+    return this.dirs.get(name);
+  }
+  async getFileHandle(name, options) {
+    if (!this.files.has(name)) {
+      if (!options || !options.create) throw notFound(name);
+      this.files.set(name, new Uint8Array(0));
+    }
+    return new FakeOpfsFileHandle(this, name);
+  }
+  async removeEntry(name) {
+    if (this.files.delete(name)) return;
+    if (this.dirs.delete(name)) return;
+    throw notFound(name);
+  }
+  async *keys() {
+    for (const name of this.dirs.keys()) yield name;
+    for (const name of this.files.keys()) yield name;
+  }
 }
 
 function mountProviderFile(vfs, guestPath, contents) {
@@ -229,6 +295,51 @@ test('paths are journalled under VirtualFS normalization, case-folded once', asy
   const second = new VirtualFS();
   await VfsOverlay.attach(second, { store }).hydrate();
   assert.strictEqual(text(second.files.get('c:\\docs\\mixed case.txt').data), 'two');
+});
+
+// -------------------------------------------------------------- OPFS store
+
+test('the browser OPFS store survives reload byte-exactly and isolates imports', async () => {
+  const root = new FakeOpfsDirectoryHandle();
+  const first = new VirtualFS();
+  first.files.set('c:\\old.txt', { data: bytes('base'), attrs: 0x20 });
+  const overlay = VfsOverlay.attach(first, {
+    store: opfsStore('kept-disc-a', { root }),
+  });
+  writeGuestFile(first, 'C:\\installed\\game.exe', 'MZ\0browser overlay');
+  assert.ok(first.deleteFile('C:\\old.txt'));
+  const flushed = await overlay.flush();
+  assert.deepStrictEqual({ written: flushed.written, failed: flushed.failed },
+    { written: 2, failed: 0 });
+
+  // A new store object is a reload: no in-memory map is shared with the first.
+  const second = new VirtualFS();
+  second.files.set('c:\\old.txt', { data: bytes('base'), attrs: 0x20 });
+  const replay = VfsOverlay.attach(second, {
+    store: opfsStore('kept-disc-a', { root }),
+  });
+  const hydrated = await replay.hydrate();
+  assert.deepStrictEqual(
+    { files: hydrated.files, whiteouts: hydrated.whiteouts, errors: hydrated.errors.length },
+    { files: 1, whiteouts: 1, errors: 0 });
+  assert.strictEqual(text(second.files.get('c:\\installed\\game.exe').data),
+    'MZ\0browser overlay');
+  assert.ok(!second.files.has('c:\\old.txt'), 'the OPFS whiteout resurrected after reload');
+
+  const other = opfsStore('kept-disc-b', { root });
+  assert.deepStrictEqual(await other.list(), [],
+    'one imported disc must not see another import\'s writable C: journal');
+  assert.strictEqual(await removeOpfsScope('kept-disc-a', { root }), true);
+  assert.deepStrictEqual(await opfsStore('kept-disc-a', { root }).list(), [],
+    'removing a kept import must remove its otherwise-unreachable C: journal');
+  assert.strictEqual(await removeOpfsScope('missing-disc', { root }), false);
+});
+
+test('overlay metadata keeps safe-integer sizes instead of wrapping at 2GB', () => {
+  const size = 0x80000001;
+  assert.strictEqual(metaOf({ path: 'c:\\large.bin', kind: 'file', size }).size, size);
+  assert.throws(() => metaOf({ path: 'c:\\bad.bin', kind: 'file', size: Number.MAX_SAFE_INTEGER + 1 }),
+    /safe integer/);
 });
 
 // --------------------------------------------------------------- node store

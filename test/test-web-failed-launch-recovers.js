@@ -114,15 +114,53 @@ async function main() {
         // and a pointer-events hole alike: can a tap on this icon reach it?
         iconReachable: !!hit && !!icon && (hit === icon || icon.contains(hit)),
         status: (document.getElementById('status') || {}).textContent || '',
+        crashVisible: (document.getElementById('wine-crash-report') || {}).style?.display === 'flex',
+        crashText: (document.querySelector('.wine-crash-text') || {}).value || '',
       };
     });
 
     assert(!state.classes.includes('app-booting'),
       `a failed launch left the boot cursor on for good, body was "${state.classes}"`);
     assert.strictEqual(state.running, 0, 'a launch that never started must not register an app');
-    assert(state.iconReachable, 'the desktop icons must still take a tap after a failed launch');
     assert(/ERROR launching/.test(state.status),
       `the failure should be reported to the visitor, status was "${state.status}"`);
+    assert(state.crashVisible, 'a fatal launch failure must open a visible crash-report dialog');
+    assert(state.crashText.includes('Wine-Assembly crash report'));
+    assert(state.crashText.includes('kind: launch'));
+    assert(state.crashText.includes('app: notepad'));
+    assert(state.crashText.includes('RangeError: WebAssembly.Memory(): could not allocate memory'));
+    assert(state.crashText.includes('user-agent: '));
+
+    // Exercise the plain-HTTP phone path even though Chromium treats localhost
+    // as trustworthy: no Clipboard API, successful legacy selection copy.
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+      document.execCommand = command => command === 'copy';
+    });
+    await page.click('.wine-crash-copy');
+    await page.waitForFunction(() =>
+      /^(Copied|Select all & copy)$/.test(document.querySelector('.wine-crash-copy').textContent));
+    const copyState = await page.evaluate(() => ({
+      label: document.querySelector('.wine-crash-copy').textContent,
+      selected: document.querySelector('.wine-crash-text').selectionEnd >
+        document.querySelector('.wine-crash-text').selectionStart,
+    }));
+    assert.strictEqual(copyState.label, 'Copied',
+      'the insecure-origin execCommand fallback should copy the report');
+    await page.click('.wine-crash-close');
+    const recovered = await page.evaluate(() => {
+      const icon = document.querySelector('.desktop-icon');
+      const rect = icon && icon.getBoundingClientRect();
+      const hit = rect && document.elementFromPoint(
+        rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return {
+        reportHidden: document.getElementById('wine-crash-report').style.display === 'none',
+        iconReachable: !!hit && !!icon && (hit === icon || icon.contains(hit)),
+      };
+    });
+    assert(recovered.reportHidden, 'Close must dismiss the crash report');
+    assert(recovered.iconReachable,
+      'the desktop icons must take taps again after the crash report is closed');
     console.log('PASS  a failed launch clears the boot cursor and leaves the desktop usable');
   } finally {
     await browser.close();

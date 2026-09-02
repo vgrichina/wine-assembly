@@ -5706,7 +5706,7 @@
     (i32.load (i32.add (global.get $GDI_TABLE_MARKS)
       (i32.shl (local.get $slot) (i32.const 2)))))
 
-  ;; The shutting-down (0) and safe-to-turn-off (1) pictures, painted by GDI
+  ;; The shutting-down (0), safe-to-turn-off (1) and its footered form (2), painted by GDI
   ;; into a 320x400 32bpp DIB; returns the linear address of the pixels or 0.
   (func (export "paint_power_screen") (param $kind i32) (result i32)
     (call $paint_power_screen (local.get $kind)))

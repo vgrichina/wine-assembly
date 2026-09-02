@@ -1715,6 +1715,10 @@
   ;; The wordmark is this machine's, not Microsoft's.
   (data (region.addr $POWER_SCREEN_STRINGS 0x55) "Wine-Assembly\00")
   (data (region.addr $POWER_SCREEN_STRINGS 0x63) "by berrry.app\00")
+  ;; The footer the safe-to-turn-off screen grows a moment later (kind 2).
+  (data (region.addr $POWER_SCREEN_STRINGS 0x71) "Thanks for running Wine-Assembly.\00")
+  (data (region.addr $POWER_SCREEN_STRINGS 0x93) "Restart\00")
+  (data (region.addr $POWER_SCREEN_STRINGS 0x9B) "berrry.app\00")
 
   ;; Text centred on $cx, top at $y, in the DC's current font and colour.
   (func $power_text_centred (param $hdc i32) (param $cx i32) (param $y i32)
@@ -1861,8 +1865,23 @@
     (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))
     (drop (call $host_gdi_delete_object (local.get $font))))
 
-  ;; LOGOS.SYS: two orange lines on black.
-  (func $power_paint_off (param $hdc i32)
+  ;; A 1px box in the current colour: the footer's two buttons.
+  (func $power_box (param $hdc i32) (param $left i32) (param $top i32)
+    (param $right i32) (param $bottom i32) (param $color i32)
+    (call $power_fill (local.get $hdc) (local.get $left) (local.get $top)
+      (local.get $right) (i32.add (local.get $top) (i32.const 1)) (local.get $color))
+    (call $power_fill (local.get $hdc) (local.get $left) (i32.sub (local.get $bottom) (i32.const 1))
+      (local.get $right) (local.get $bottom) (local.get $color))
+    (call $power_fill (local.get $hdc) (local.get $left) (local.get $top)
+      (i32.add (local.get $left) (i32.const 1)) (local.get $bottom) (local.get $color))
+    (call $power_fill (local.get $hdc) (i32.sub (local.get $right) (i32.const 1)) (local.get $top)
+      (local.get $right) (local.get $bottom) (local.get $color)))
+
+  ;; LOGOS.SYS: two orange lines on black. With $footer, the bottom of the
+  ;; picture also carries a thank-you line and two boxed choices in the same
+  ;; orange -- Restart at (40,352)-(152,376) and berrry.app at
+  ;; (168,352)-(280,376), which lib/shutdown.js hit-tests by those numbers.
+  (func $power_paint_off (param $hdc i32) (param $footer i32)
     (local $font i32) (local $old i32)
     (call $power_fill (local.get $hdc) (i32.const 0) (i32.const 0)
       (i32.const 320) (i32.const 400) (i32.const 0x00000000))
@@ -1875,9 +1894,34 @@
     (call $power_text_centred (local.get $hdc) (i32.const 160) (i32.const 202)
       (region.addr $POWER_SCREEN_STRINGS 0x46) (i32.const 14))
     (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))
-    (drop (call $host_gdi_delete_object (local.get $font))))
+    (drop (call $host_gdi_delete_object (local.get $font)))
+    (if (local.get $footer)
+      (then
+        ;; The thank-you, in a dimmer orange, plain face.
+        (local.set $font (call $power_font (i32.const 13) (i32.const 400)))
+        (local.set $old (call $host_gdi_select_object (local.get $hdc) (local.get $font)))
+        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00245E92)))
+        (call $power_text_centred (local.get $hdc) (i32.const 160) (i32.const 326)
+          (region.addr $POWER_SCREEN_STRINGS 0x71) (i32.const 33))
+        (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))
+        (drop (call $host_gdi_delete_object (local.get $font)))
+        ;; The two choices, boxed, bold, in the screen's own orange.
+        (local.set $font (call $power_font (i32.const 13) (i32.const 700)))
+        (local.set $old (call $host_gdi_select_object (local.get $hdc) (local.get $font)))
+        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x003A9CF4)))
+        (call $power_box (local.get $hdc) (i32.const 40) (i32.const 352)
+          (i32.const 152) (i32.const 376) (i32.const 0x003A9CF4))
+        (call $power_text_centred (local.get $hdc) (i32.const 96) (i32.const 357)
+          (region.addr $POWER_SCREEN_STRINGS 0x93) (i32.const 7))
+        (call $power_box (local.get $hdc) (i32.const 168) (i32.const 352)
+          (i32.const 280) (i32.const 376) (i32.const 0x003A9CF4))
+        (call $power_text_centred (local.get $hdc) (i32.const 224) (i32.const 357)
+          (region.addr $POWER_SCREEN_STRINGS 0x9B) (i32.const 10))
+        (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))
+        (drop (call $host_gdi_delete_object (local.get $font))))))
 
-  ;; Paint screen $kind (0 shutting down, 1 safe to turn off) and return the
+  ;; Paint screen $kind (0 shutting down, 1 safe to turn off, 2 the same with
+  ;; the what-now footer) and return the
   ;; linear address of its pixels: 320 columns of BGRX, 1280 bytes a row,
   ;; 400 rows top-down. 0 when the DIB could not be made. The bitmap is left
   ;; alive on purpose -- the host reads it and the machine goes down.
@@ -1903,7 +1947,7 @@
         (return (i32.const 0))))
     (local.set $old (call $host_gdi_select_object (local.get $hdc) (local.get $bmp)))
     (if (local.get $kind)
-      (then (call $power_paint_off (local.get $hdc)))
+      (then (call $power_paint_off (local.get $hdc) (i32.eq (local.get $kind) (i32.const 2))))
       (else (call $power_paint_wait (local.get $hdc))))
     (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))
     (drop (call $host_gdi_delete_dc (local.get $hdc)))
@@ -2070,7 +2114,7 @@
 
   (func $findreplace_native_richedit_replace
     (param $owner i32) (param $fr_w i32) (result i32)
-    (local $replace_g i32) (local $state i32) (local $empty_g i32)
+    (local $replace_g i32) (local $state i32) (local $state_w ptr<EditState>) (local $empty_g i32)
     (if (i32.or
           (i32.ne (call $ctrl_table_get_class (local.get $owner)) (i32.const 0))
           (i32.eqz (call $wnd_get_parent (local.get $owner))))
@@ -2080,7 +2124,9 @@
     ;; ReplaceTextA returns, while the modeless WAT edit remains authoritative.
     (local.set $state (call $wnd_get_state_ptr (global.get $findreplace_replace_hwnd)))
     (if (local.get $state)
-      (then (local.set $replace_g (i32.load (call $g2w (local.get $state)))))
+      (then
+        (local.set $state_w (cast ptr<EditState> (call $g2w (local.get $state))))
+        (local.set $replace_g (load.field EditState text_buf_ptr (local.get $state_w))))
       ;; Only when there is no dialog edit at all does lpstrReplaceWith get a
       ;; say. An edit that exists and is EMPTY still answers the question --
       ;; "replace with nothing" -- and its text_buf is a null pointer, which is
@@ -2108,7 +2154,7 @@
     (param $owner i32) (param $fr_w i32) (param $flags i32) (result i32)
     (local $find_g i32) (local $range_g i32) (local $range_w i32)
     (local $sel_a i32) (local $sel_b i32) (local $start i32) (local $ret i32)
-    (local $find_state i32)
+    (local $find_state i32) (local $find_state_w ptr<EditState>)
     ;; A class-0 child with a real native wndproc is the shape used by
     ;; RichEdit20A. Plain WAT Edit owners (Notepad) continue through their
     ;; application FINDMSGSTRING handler below.
@@ -2125,7 +2171,9 @@
     ;; and Replace All matched nothing at all.
     (local.set $find_state (call $wnd_get_state_ptr (global.get $findreplace_edit_hwnd)))
     (if (local.get $find_state)
-      (then (local.set $find_g (i32.load (call $g2w (local.get $find_state))))))
+      (then
+        (local.set $find_state_w (cast ptr<EditState> (call $g2w (local.get $find_state))))
+        (local.set $find_g (load.field EditState text_buf_ptr (local.get $find_state_w)))))
     (if (i32.eqz (local.get $find_g))
       (then
         (if (call $findreplace_struct_live (local.get $fr_w))
@@ -2173,11 +2221,11 @@
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $cmd i32) (local $fr i32) (local $fr_w i32)
     (local $owner i32) (local $flags i32)
-    (local $edit_h i32) (local $edit_state i32) (local $edit_sw i32)
+    (local $edit_h i32) (local $edit_state i32) (local $edit_sw ptr<EditState>)
     (local $text_src_w i32) (local $text_len i32) (local $max_len i32)
     (local $find_buf_g i32) (local $find_buf_w i32) (local $i i32)
     (local $mc_h i32) (local $rd_h i32)
-    (local $main_edit_h i32) (local $main_state i32) (local $main_state_w i32)
+    (local $main_edit_h i32) (local $main_state i32) (local $main_state_w ptr<EditState>)
     (local $main_len i32) (local $start_g i32) (local $end_g i32)
     (local $sel_start i32) (local $sel_end i32) (local $replace_count i32)
     (local $replace_ready i32)
@@ -2345,8 +2393,8 @@
           (then (local.set $edit_state (i32.const 0))))
         (if (local.get $edit_state)
           (then
-            (local.set $edit_sw (call $g2w (local.get $edit_state)))
-            (local.set $text_len (i32.load offset=4 (local.get $edit_sw)))
+            (local.set $edit_sw (cast ptr<EditState> (call $g2w (local.get $edit_state))))
+            (local.set $text_len (load.field.memarg EditState text_len (local.get $edit_sw)))
             (local.set $find_buf_g (i32.load offset=16 (local.get $fr_w)))
             (local.set $max_len (i32.load16_u offset=24 (local.get $fr_w)))
             ;; Nested ifs — do NOT use i32.and as logical AND on pointer/length
@@ -2358,9 +2406,9 @@
                 (local.set $find_buf_w (call $g2w (local.get $find_buf_g)))
                 (if (i32.ge_u (local.get $text_len) (local.get $max_len))
                   (then (local.set $text_len (i32.sub (local.get $max_len) (i32.const 1)))))
-                (if (i32.load (local.get $edit_sw))
+                (if (load.field EditState text_buf_ptr (local.get $edit_sw))
                   (then
-                    (local.set $text_src_w (call $g2w (i32.load (local.get $edit_sw))))
+                    (local.set $text_src_w (call $g2w (load.field EditState text_buf_ptr (local.get $edit_sw))))
                 (if (local.get $text_len)
                   (then (call $memcpy (local.get $find_buf_w)
                                           (local.get $text_src_w)
@@ -2379,13 +2427,13 @@
             (local.set $main_state (call $wnd_get_state_ptr (local.get $main_edit_h)))
             (if (local.get $main_state)
               (then
-                (local.set $main_state_w (call $g2w (local.get $main_state)))
-                (local.set $main_len (i32.load offset=4 (local.get $main_state_w)))
+                (local.set $main_state_w (cast ptr<EditState> (call $g2w (local.get $main_state))))
+                (local.set $main_len (load.field.memarg EditState text_len (local.get $main_state_w)))
                 (if (i32.and
                       (i32.gt_u (local.get $main_len) (i32.const 0))
                       (i32.and
-                        (i32.eq (i32.load offset=12 (local.get $main_state_w)) (local.get $main_len))
-                        (i32.eq (i32.load offset=16 (local.get $main_state_w)) (local.get $main_len))))
+                        (i32.eq (load.field.memarg EditState cursor (local.get $main_state_w)) (local.get $main_len))
+                        (i32.eq (load.field.memarg EditState sel_anchor (local.get $main_state_w)) (local.get $main_len))))
                   (then (drop (call $wnd_send_message
                     (local.get $main_edit_h) (i32.const 0x00B1) (i32.const 0) (i32.const 0)))))))))
         ;; Native RichEdit was handled synchronously above; avoid duplicating
@@ -3582,14 +3630,7 @@
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
-      (then
-        (local.set $state (call $heap_alloc (i32.const 12)))
-        (local.set $sw (cast ptr<ColorSpectrumState> (call $g2w (local.get $state))))
-        (store.field ColorSpectrumState hue (local.get $sw) (i32.const 0))
-        (store.field.memarg ColorSpectrumState sat (local.get $sw) (i32.const 0))
-        (store.field.memarg ColorSpectrumState lum (local.get $sw) (i32.const 0))
-        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
-        (return (i32.const 0))))
+      (then (local.set $state (call $heap_alloc (i32.const 12)))))
 
     (if (i32.eq (local.get $msg) (i32.const 0x0002))
       (then
@@ -3599,6 +3640,13 @@
         (return (i32.const 0))))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $sw (cast ptr<ColorSpectrumState> (call $g2w (local.get $state))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0001))
+      (then
+        (store.field ColorSpectrumState hue (local.get $sw) (i32.const 0))
+        (store.field.memarg ColorSpectrumState sat (local.get $sw) (i32.const 0))
+        (store.field.memarg ColorSpectrumState lum (local.get $sw) (i32.const 0))
+        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
+        (return (i32.const 0))))
 
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
@@ -3903,6 +3951,7 @@
     (local $cc i32) (local $custom i32) (local $rgb i32)
     (local $r i32) (local $g i32) (local $b i32) (local $idx i32)
     (local $grid i32) (local $state i32) (local $basic i32)
+    (local $grid_sw ptr<ColorGridState>) (local $basic_sw ptr<ColorGridState>)
     (local.set $cc (call $wnd_get_userdata (local.get $dlg)))
     (if (i32.eqz (local.get $cc)) (then (return)))
     (local.set $custom (i32.load offset=16 (call $g2w (local.get $cc))))
@@ -3921,19 +3970,26 @@
     (if (local.get $grid)
       (then
         (local.set $state (call $wnd_get_state_ptr (local.get $grid)))
-        (if (local.get $state) (then (local.set $idx (i32.load (call $g2w (local.get $state))))))
+        (if (local.get $state)
+          (then
+            (local.set $grid_sw (cast ptr<ColorGridState> (call $g2w (local.get $state))))
+            (local.set $idx (load.field ColorGridState sel_idx (local.get $grid_sw)))))
         (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
                     (i32.ge_s (local.get $idx) (i32.const 16)))
           (then (local.set $idx (i32.const 0))))
         (i32.store (i32.add (call $g2w (local.get $custom))
           (i32.mul (local.get $idx) (i32.const 4))) (local.get $rgb))
-        (if (local.get $state) (then (i32.store (call $g2w (local.get $state)) (local.get $idx))))
+        (if (local.get $state)
+          (then (store.field ColorGridState sel_idx (local.get $grid_sw) (local.get $idx))))
         (call $invalidate_hwnd (local.get $grid))))
     (local.set $basic (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x460)))
     (if (local.get $basic)
       (then
         (local.set $state (call $wnd_get_state_ptr (local.get $basic)))
-        (if (local.get $state) (then (i32.store (call $g2w (local.get $state)) (i32.const -1))))
+        (if (local.get $state)
+          (then
+            (local.set $basic_sw (cast ptr<ColorGridState> (call $g2w (local.get $state))))
+            (store.field ColorGridState sel_idx (local.get $basic_sw) (i32.const -1))))
         (call $invalidate_hwnd (local.get $basic))))
     (i32.store offset=12 (call $g2w (local.get $cc)) (local.get $rgb))
     (call $colordlg_sync_from_rgb (local.get $dlg) (local.get $rgb)))
@@ -4012,19 +4068,14 @@
     (local $idx i32) (local $parent i32) (local $ctrl_id i32)
     (local $hdc i32) (local $sel i32) (local $brush i32)
     (local $cx i32) (local $cy i32) (local $row_count i32)
-    (local $other i32) (local $other_state i32) (local $cc i32) (local $rgb i32)
+    (local $other i32) (local $other_state i32) (local $other_sw ptr<ColorGridState>) (local $cc i32) (local $rgb i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $state (call $heap_alloc (i32.const 4)))
-        (local.set $sw (cast ptr<ColorGridState> (call $g2w (local.get $state))))
-        (store.field ColorGridState sel_idx (local.get $sw) (i32.const -1))                              ;; sel_idx
-        ;; CREATESTRUCT.hMenu is not copied in: it is already CONTROL_TABLE+4.
-        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
-        (return (i32.const 0))))
+        (local.set $state (call $heap_alloc (i32.const 4)))))
 
     (if (i32.eq (local.get $msg) (i32.const 0x0002))
       (then
@@ -4035,6 +4086,12 @@
 
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $sw (cast ptr<ColorGridState> (call $g2w (local.get $state))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0001))
+      (then
+        (store.field ColorGridState sel_idx (local.get $sw) (i32.const -1))
+        ;; CREATESTRUCT.hMenu is not copied in: it is already CONTROL_TABLE+4.
+        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
+        (return (i32.const 0))))
 
     ;; ---------- WM_PAINT (0x000F) ----------
     ;; Basic grid = 8x6; custom grid = 8x2. Each 26x22 cell contains a
@@ -4126,7 +4183,9 @@
               (then
                 (local.set $other_state (call $wnd_get_state_ptr (local.get $other)))
                 (if (local.get $other_state)
-                  (then (i32.store (call $g2w (local.get $other_state)) (i32.const -1))))
+                  (then
+                    (local.set $other_sw (cast ptr<ColorGridState> (call $g2w (local.get $other_state))))
+                    (store.field ColorGridState sel_idx (local.get $other_sw) (i32.const -1))))
                 (call $invalidate_hwnd (local.get $other))))
             ;; Keep rgbResult current for both basic and custom selections.
             (local.set $cc (call $wnd_get_userdata (local.get $parent)))
@@ -4230,7 +4289,8 @@
 
   (func $create_color_dialog (param $dlg i32) (param $owner i32) (param $cc i32)
     (local $grid i32) (local $custom_grid i32) (local $rgb i32)
-    (local $i i32) (local $sw i32) (local $flags i32)
+    (local $i i32) (local $sw i32) (local $basic_sw ptr<ColorGridState>)
+    (local $custom_sw ptr<ColorGridState>) (local $flags i32)
     (local $custom i32) (local $found i32)
     (call $host_register_dialog_frame
       (local.get $dlg) (local.get $owner)
@@ -4285,7 +4345,9 @@
             (then
               (local.set $sw (call $wnd_get_state_ptr (local.get $grid)))
               (if (local.get $sw)
-                (then (i32.store (call $g2w (local.get $sw)) (local.get $i))))
+                (then
+                  (local.set $basic_sw (cast ptr<ColorGridState> (call $g2w (local.get $sw))))
+                  (store.field ColorGridState sel_idx (local.get $basic_sw) (local.get $i))))
               (local.set $found (i32.const 1))
               (br $basic_done)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -4305,7 +4367,9 @@
                     (then
                       (local.set $sw (call $wnd_get_state_ptr (local.get $custom_grid)))
                       (if (local.get $sw)
-                        (then (i32.store (call $g2w (local.get $sw)) (local.get $i))))
+                        (then
+                          (local.set $custom_sw (cast ptr<ColorGridState> (call $g2w (local.get $sw))))
+                          (store.field ColorGridState sel_idx (local.get $custom_sw) (local.get $i))))
                       (br $custom_done)))
                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
                   (br $scan_custom)))))))))
@@ -4499,7 +4563,7 @@
   (func $opendlg_wndproc
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $cmd i32) (local $notif i32) (local $ofn i32) (local $ofn_w i32)
-    (local $edit_h i32) (local $edit_state i32) (local $edit_sw i32)
+    (local $edit_h i32) (local $edit_state i32) (local $edit_sw ptr<EditState>)
     (local $text_len i32) (local $text_src_w i32)
     (local $dst_g i32) (local $dst_w i32) (local $max_len i32)
     (local $filter_cb i32) (local $filter_sel i32)
@@ -4547,20 +4611,20 @@
             (local.set $edit_state (call $wnd_get_state_ptr (local.get $edit_h)))
             (if (local.get $edit_state)
               (then
-                (local.set $edit_sw (call $g2w (local.get $edit_state)))
-                (local.set $text_len (i32.load offset=4 (local.get $edit_sw)))
+                (local.set $edit_sw (cast ptr<EditState> (call $g2w (local.get $edit_state))))
+                (local.set $text_len (load.field.memarg EditState text_len (local.get $edit_sw)))
                 (local.set $dst_w (call $g2w (local.get $dst_g)))
                 (if (i32.ge_u (local.get $text_len) (local.get $max_len))
                   (then (local.set $text_len (i32.sub (local.get $max_len) (i32.const 1)))))
-                (if (i32.load (local.get $edit_sw))
+                (if (load.field EditState text_buf_ptr (local.get $edit_sw))
                   (then
-                    (local.set $text_src_w (call $g2w (i32.load (local.get $edit_sw))))
+                    (local.set $text_src_w (call $g2w (load.field EditState text_buf_ptr (local.get $edit_sw))))
                     (if (local.get $text_len)
                       (then
                         (if (global.get $opendlg_wide)
                           (then
                             (drop (call $ansi_to_wide
-                              (i32.load (local.get $edit_sw)) (local.get $dst_g)
+                              (load.field EditState text_buf_ptr (local.get $edit_sw)) (local.get $dst_g)
                               (local.get $max_len))))
                           (else
                             (call $memcpy (local.get $dst_w)
@@ -9298,12 +9362,15 @@
   ;; +64 style, +68 extended_style, +72 padding packed, +76 hot_index.
 
   (func $toolbar_ensure_state (param $hwnd i32) (result i32)
-    (local $state i32) (local $sw ptr<ToolbarState>)
+    (local $state i32) (local $sw ptr<ToolbarState>) (local $created i32)
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state))
       (then
         (local.set $state (call $heap_alloc (i32.const 80)))
-        (local.set $sw (cast ptr<ToolbarState> (call $g2w (local.get $state))))
+        (local.set $created (i32.const 1))))
+    (local.set $sw (cast ptr<ToolbarState> (call $g2w (local.get $state))))
+    (if (local.get $created)
+      (then
         (call $zero_memory (local.get $sw) (i32.const 80))
         (store.field.memarg ToolbarState button_w (local.get $sw) (i32.const 23)) ;; default dxButton
         (store.field.memarg ToolbarState button_h (local.get $sw) (i32.const 22)) ;; default dyButton
@@ -9314,7 +9381,6 @@
         (store.field.memarg ToolbarState pressed_index (local.get $sw) (i32.const -1))
         (store.field.memarg ToolbarState hot_index (local.get $sw) (i32.const -1))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))))
-    (local.set $sw (cast ptr<ToolbarState> (call $g2w (local.get $state))))
     (store.field.memarg ToolbarState hwnd (local.get $sw) (local.get $hwnd))
     (local.get $state))
 
@@ -9615,13 +9681,14 @@
   ;; dialogs stopped every menu item from responding. Closed, a combobox owns
   ;; its field and nothing more.
   (func $combobox_hit_h (param $hwnd i32) (param $full_h i32) (result i32)
-    (local $state_g i32)
+    (local $state_g i32) (local $state_w ptr<ComboBoxState>)
     (if (i32.eq (global.get $combo_open_hwnd) (local.get $hwnd))
       (then (return (local.get $full_h))))
     (local.set $state_g (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (local.get $state_g)
       (then
-        (if (i32.load offset=32 (call $g2w (local.get $state_g)))
+        (local.set $state_w (cast ptr<ComboBoxState> (call $g2w (local.get $state_g))))
+        (if (load.field.memarg ComboBoxState variant (local.get $state_w))
           (then (return (local.get $full_h))))))
     (if (i32.gt_s (local.get $full_h) (i32.const 21))
       (then (return (i32.const 21))))
@@ -9867,21 +9934,23 @@
     (local $mask_color i32) (local $use_disabled_effect i32) (local $is_hot i32)
     (local $brect i32)
 
+    (local.set $state
+      (if (result i32) (i32.eq (local.get $msg) (i32.const 0x0002))
+        (then (call $wnd_get_state_ptr (local.get $hwnd)))
+        (else (call $toolbar_ensure_state (local.get $hwnd)))))
+    (if (local.get $state)
+      (then (local.set $sw (cast ptr<ToolbarState> (call $g2w (local.get $state))))))
+
     ;; WM_DESTROY
     (if (i32.eq (local.get $msg) (i32.const 0x0002))
       (then
-        (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
         (if (local.get $state)
           (then
-            (local.set $sw (cast ptr<ToolbarState> (call $g2w (local.get $state))))
             (if (load.field.memarg ToolbarState buttons_guest (local.get $sw))
               (then (call $heap_free (load.field.memarg ToolbarState buttons_guest (local.get $sw)))))
             (call $heap_free (local.get $state))
             (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
         (return (i32.const 0))))
-
-    (local.set $state (call $toolbar_ensure_state (local.get $hwnd)))
-    (local.set $sw (cast ptr<ToolbarState> (call $g2w (local.get $state))))
 
     ;; WM_CREATE
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
@@ -10639,12 +10708,16 @@
     (local $count i32) (local $cap i32) (local $idx i32) (local $rec i32)
     (local $src i32) (local $dst i32) (local $text_src i32) (local $text_dst i32)
     (local $len i32) (local $ti i32) (local $x i32) (local $y i32) (local $old i32)
+    (local $created i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state))
       (then
         (local.set $state (call $heap_alloc (i32.const 64)))
-        (local.set $sw (cast ptr<TooltipState> (call $g2w (local.get $state))))
+        (local.set $created (i32.const 1))))
+    (local.set $sw (cast ptr<TooltipState> (call $g2w (local.get $state))))
+    (if (local.get $created)
+      (then
         (call $zero_memory (local.get $sw) (i32.const 64))
         (local.set $items (call $heap_alloc (i32.mul (i32.const 4) (i32.const 48))))
         (call $zero_memory (call $g2w (local.get $items)) (i32.mul (i32.const 4) (i32.const 48)))
@@ -10659,7 +10732,6 @@
         (store.field.memarg TooltipState initial_delay (local.get $sw) (i32.const 500))
         (store.field.memarg TooltipState reshow_delay (local.get $sw) (i32.const 100))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))))
-    (local.set $sw (cast ptr<TooltipState> (call $g2w (local.get $state))))
 
     ;; WM_CREATE
     (if (i32.eq (local.get $msg) (i32.const 0x0001)) (then (return (i32.const 0))))
@@ -12643,7 +12715,8 @@
     (local $px i32) (local $py i32)
     (local $scan_slot i32) (local $sibling_hwnd i32)
     (local $combo_max_x i32) (local $sibling_right i32)
-    (local $paint_state_w i32)
+    (local $paint_state_w ptr<ControlTextState>) (local $edit_text_w ptr<ControlTextState>)
+    (local $paint_state_g i32)
     (local $prev_lb i32) (local $prev_edit i32) (local $prev_popup i32)
 
     (local.set $field_h (i32.const 21))
@@ -13388,20 +13461,23 @@
             (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
             ;; CBS_DROPDOWN delegates text ownership to its inner EDIT. Paint
             ;; from that same state so WM_PAINT agrees with WM_GETTEXT.
-            (local.set $paint_state_w (local.get $state_w))
+            (local.set $paint_state_w (cast ptr<ControlTextState> (local.get $state_w)))
             (if (i32.eq (local.get $variant) (i32.const 2))
               (then
-                (local.set $paint_state_w
+                (local.set $paint_state_g
                   (call $wnd_get_state_ptr (call $cb_edit_hwnd (local.get $state_w))))
-                (if (local.get $paint_state_w)
-                  (then (local.set $paint_state_w (call $g2w (local.get $paint_state_w)))))))
+                (if (local.get $paint_state_g)
+                  (then
+                    (local.set $edit_text_w (cast ptr<ControlTextState>
+                      (call $g2w (local.get $paint_state_g))))
+                    (local.set $paint_state_w (local.get $edit_text_w))))))
             (if (i32.and
                   (i32.ne (local.get $paint_state_w) (i32.const 0))
-                  (i32.ne (i32.load (local.get $paint_state_w)) (i32.const 0)))
+                  (i32.ne (load.field ControlTextState text_buf_ptr (local.get $paint_state_w)) (i32.const 0)))
               (then
                 (drop (call $host_gdi_draw_text (local.get $hdc)
-                        (call $g2w (i32.load (local.get $paint_state_w)))
-                        (i32.load offset=4 (local.get $paint_state_w))
+                        (call $g2w (load.field ControlTextState text_buf_ptr (local.get $paint_state_w)))
+                        (load.field.memarg ControlTextState text_len (local.get $paint_state_w))
                         (call $paint_rect (i32.const 4) (i32.const 2)
                                           (i32.sub (local.get $arrow_x) (i32.const 2))
                                           (i32.sub (local.get $h) (i32.const 2)))
@@ -14498,14 +14574,14 @@
       (then
         (if (local.get $state)
           (then
-            (i32.store offset=32 (call $g2w (local.get $state)) (local.get $wParam))
+            (store.field.memarg EditState font (call $g2w (local.get $state)) (local.get $wParam))
             (if (local.get $lParam)
               (then (call $invalidate_hwnd (local.get $hwnd))))))
         (return (i32.const 0))))
     (if (i32.eq (local.get $msg) (i32.const 0x0031))
       (then
         (if (local.get $state)
-          (then (return (i32.load offset=32 (call $g2w (local.get $state))))))
+          (then (return (load.field.memarg EditState font (call $g2w (local.get $state))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_DESTROY (0x0002) ----------
@@ -14628,7 +14704,7 @@
     (if (i32.eq (local.get $msg) (i32.const 0x000E))
       (then
         (if (local.get $state)
-          (then (return (i32.load offset=4 (call $g2w (local.get $state))))))
+          (then (return (load.field.memarg EditState text_len (call $g2w (local.get $state))))))
         (return (i32.const 0))))
 
     ;; ---------- EM_STREAMIN (0x0449) ----------
@@ -15665,14 +15741,14 @@
                 (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 24))
                 (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 25))))
           (then (local.set $text_len (i32.const 64000))))
-        (i32.store offset=28 (call $g2w (local.get $state)) (local.get $text_len))
+        (store.field.memarg EditState max_length (call $g2w (local.get $state)) (local.get $text_len))
         (return (i32.const 0))))
 
     ;; ---------- EM_GETLIMITTEXT (0x00D5) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x00D5))
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-        (return (i32.load offset=28 (call $g2w (local.get $state))))))
+        (return (load.field.memarg EditState max_length (call $g2w (local.get $state))))))
 
     ;; ---------- RichEdit 2.0+ extended range/limit messages ----------
     ;; RichEdit 1.0 intentionally leaves these unsupported and continues to
@@ -15697,7 +15773,7 @@
         (local.set $text_len (local.get $lParam))
         (if (i32.eqz (local.get $text_len))
           (then (local.set $text_len (i32.const 64000))))
-        (i32.store offset=28 (call $g2w (local.get $state)) (local.get $text_len))
+        (store.field.memarg EditState max_length (call $g2w (local.get $state)) (local.get $text_len))
         (return (i32.const 0))))
 
     (if (i32.and
@@ -15911,7 +15987,7 @@
     (if (i32.eq (local.get $msg) (i32.const 0x00CE))
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-        (return (i32.load offset=20 (call $g2w (local.get $state))))))
+        (return (load.field.memarg EditState scroll_top (call $g2w (local.get $state))))))
 
     ;; ---------- WM_MOUSEWHEEL (0x020A) ----------
     ;; wParam hi-word = signed wheel delta (120 per notch, positive = scroll up).
@@ -16046,7 +16122,8 @@
     (local $old_ebx i32) (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
     (local $old_handler_set_eip i32) (local $old_steps i32)
     (local $old_yield_reason i32) (local $old_yield_flag i32)
-    (local $result i32) (local $edit_state i32) (local $edit_len_before i32)
+    (local $result i32) (local $edit_state i32) (local $edit_state_w ptr<EditState>)
+    (local $edit_len_before i32)
     (local $sync_rounds i32)
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
@@ -16113,8 +16190,10 @@
       (then
         (local.set $edit_state (call $wnd_get_state_ptr (local.get $hwnd)))
         (if (local.get $edit_state)
-          (then (local.set $edit_len_before
-            (i32.load offset=4 (call $g2w (local.get $edit_state))))))))
+          (then
+            (local.set $edit_state_w (cast ptr<EditState> (call $g2w (local.get $edit_state))))
+            (local.set $edit_len_before
+              (load.field.memarg EditState text_len (local.get $edit_state_w)))))))
     ;; A 16-bit task's window procedure cannot be entered this way. The frame
     ;; built below is stdcall with 32-bit arguments and a near return thunk,
     ;; and $wp is a packed selector:offset rather than a linear address — the
@@ -16209,7 +16288,7 @@
     (if (i32.and
           (i32.ne (local.get $edit_state) (i32.const 0))
           (i32.eq
-            (i32.load offset=4 (call $g2w (local.get $edit_state)))
+            (load.field.memarg EditState text_len (local.get $edit_state_w))
             (local.get $edit_len_before)))
       (then
         (drop (call $control_wndproc_dispatch
@@ -16270,6 +16349,13 @@
                     (i32.eq (local.get $msg) (i32.const 0x0037)))))) ;; WM_QUERYDRAGICON
           (then (return (local.get $handled))))
         (return (call $dialog_extra_get (local.get $hwnd) (i32.const 0)))))
+    ;; FALSE from the DLGPROC hands WM_WINDOWPOSCHANGED to DefDlgProc's
+    ;; DefWindowProc tail, which owns the derived WM_MOVE/WM_SIZE messages.
+    (if (i32.eq (local.get $msg) (i32.const 0x0047))
+      (then
+        (call $windowpos_defproc_geometry
+          (local.get $hwnd) (local.get $lParam))
+        (return (i32.const 0))))
     ;; A FALSE DLGPROC result falls through to DefDlgProc's default work. In
     ;; particular, WM_PAINT is not merely validated: BeginPaint first erases
     ;; an invalid dialog whose update region carries the erase bit. Keeping

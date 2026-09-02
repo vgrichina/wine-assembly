@@ -2,7 +2,7 @@
 'use strict';
 //
 // control-variant-gate.js — the completeness + wrong-variant gate for the
-// per-window CONTROL STATE union in src/09c3-controls.wat
+// per-window CONTROL STATE layout family across the complete src/main.watx closure
 // (docs/watx-layout-migration-design.md §5.4, §6.1, §6.2; wave 7, class B).
 //
 // ── tl;dr (ASCII) ───────────────────────────────────────────────────────────
@@ -57,15 +57,10 @@
 const fs = require('fs');
 const path = require('path');
 const { parseSource, watxNodeLine } = require('./watx');
+const { WAT_FILES } = require('../lib/wat-manifest');
 
 const ROOT = path.resolve(__dirname, '..');
-const FILE = path.join(ROOT, 'src', '09c3-controls.wat');
-const REL = 'src/09c3-controls.wat';
-
-// The bases a control-state record is reached through in this file. Both are
-// plain locals/params; the migration left NO raw arithmetic on either, so any
-// reappearance is a new hand-spelled offset against a union member.
-const BASES = ['$sw', '$state_w'];
+const SOURCE_FILES = WAT_FILES.map((file) => `src/${file}`);
 
 // The allocation that pins each variant. There is deliberately NO size here:
 // the old gate duplicated all 13 numbers in this table and only interpolated
@@ -218,16 +213,48 @@ add('EditState', ['$opendlg_trigger_download'],
   'reads the state of $edit = the file-name EDIT it just looked up, to build "C:\\" + name');
 add('EditState', ['$findreplace_copy_edit_to_buffer'],
   'copies the find/replace EDIT\'s text into the guest FINDREPLACE buffer');
+add('EditState', [
+  '$findreplace_native_richedit_replace', '$findreplace_native_richedit_find',
+  '$findreplace_wndproc', '$opendlg_wndproc', '$wnd_send_message_inner',
+], 'cross-control message/dialog paths resolve an EDIT hwnd before following its state_ptr');
 add('EditState', ['$shelldlg_wndproc'],
   'reads $shelldlg_edit_hwnd\'s state; the code comment beside it says so — ' +
   '"An EDIT keeps its text pointer at +0 of its state block and the length at +4"');
 add('ComboBoxState', ['$combobox_relayout_children'],
   'reads +28 = edit_hwnd to move the combo\'s inner EDIT child');
+add('ComboBoxState', ['$combobox_hit_h'],
+  'receives a combo hwnd and reads its style while calculating the hit height');
+add('ColorGridState', ['$colordlg_add_custom', '$create_color_dialog'],
+  'the colour dialog resolves its ColorGrid child before reading or initializing its selection');
 // The one genuinely class-agnostic pair, and the reason ControlTextState exists.
 add('ControlTextState', ['$ctrl_decimal_value', '$ctrl_inches_milli'],
   'looks a control up by DIALOG ID and parses whatever text it has, so it must NOT claim ' +
   'a class: it is used on Print/PageSetup EDITs but nothing in the function restricts it ' +
   'to one. It reads only +0/+4, which is exactly where Button/Static/ComboBox/Edit agree');
+
+// Cross-file readers. Anonymous exported functions get a stable `export:name`
+// identity from functionIdentity() below. These used to be invisible because
+// the gate parsed only 09c3; several still spelled the record as raw offsets
+// even after the in-file migration was complete.
+add('EditState', [
+  'export:get_edit_text', 'export:get_edit_cursor', 'export:get_edit_sel_start',
+  'export:get_edit_flags', 'export:get_edit_text_len', '$test_edit_visual_line_count',
+], '13-exports test/renderer readers receive an EDIT hwnd and follow its state_ptr');
+add('ButtonState', ['$dialog_first_default_button'],
+  '10-helpers filters children to ctrl_class 1 before following state_ptr');
+add('ColorGridState', ['export:colorgrid_get_sel'],
+  '13-exports receives a ColorGrid hwnd and reads its selected-cell word');
+add('ListViewState', [
+  'export:listview_get_count', 'export:listview_get_column_count',
+  'export:listview_get_top_index', 'export:listview_get_selected_index',
+  'export:listview_get_column_width',
+], '13-exports ListView renderer/test readers receive a ListView hwnd');
+add('StaticState', ['export:static_get_image_ordinal'],
+  '13-exports receives a STATIC hwnd and reads the resource ordinal used by its icon branch');
+add('ControlTextState', ['$handle_GetDlgItemInt'],
+  '09a resolves a dialog child by id and may read any of the four text-bearing control variants');
+add('ControlTextState', ['$combobox_wndproc'],
+  'the combo wndproc reads the shared text prefix of its inner EDIT child');
 
 // There is deliberately NO "attributed but siteless" allowance. A function that
 // does not reach the record does not need an attribution, and listing one is
@@ -311,19 +338,66 @@ function allocationSize(arg, layout) {
   return null;
 }
 
-function isControlBaseGet(form) {
-  return head(form) === 'local.get' && BASES.includes(form[2]);
+function functionIdentity(form) {
+  if (typeof form[2] === 'string' && form[2].startsWith('$')) return form[2];
+  for (const child of form.slice(2)) {
+    if (head(child) === 'export' && typeof child[2] === 'string') {
+      const atom = child[2];
+      const name = atom.startsWith('"') ? JSON.parse(atom) : atom;
+      return `export:${name}`;
+    }
+  }
+  return null;
 }
 
-// A raw control-state address is either the state local itself (the memarg
-// offset spelling) or an i32.add whose immediate operand is that local. Do not
-// recurse through arbitrary address expressions: loading a pointer from a
-// named state field and then indexing the pointed-to array is a different
-// record, and is intentionally outside this union gate.
-function isRawControlAddress(form) {
-  if (isControlBaseGet(form)) return true;
+function pointerVariant(type) {
+  const match = /^ptr<([^>]+)>$/.exec(type || '');
+  return match && VARIANTS[match[1]] ? match[1] : null;
+}
+
+// Find the linear-memory locals that really hold a control-state record. This
+// is provenance, not a spelling convention: typed ptr<Variant> params/locals
+// are roots, and legacy cross-file readers are followed from
+// wnd_get_state_ptr -> g2w. A fixed point also follows local copies and casts.
+function controlStateBases(func) {
+  const guest = new Set();
+  const linear = new Set();
+
+  for (const child of func.slice(2)) {
+    if ((head(child) === 'param' || head(child) === 'local') &&
+        typeof child[2] === 'string' && pointerVariant(child[3])) linear.add(child[2]);
+  }
+
+  const isGuestValue = (value) =>
+    (head(value) === 'local.get' && guest.has(value[2])) ||
+    (head(value) === 'call' && value[2] === '$wnd_get_state_ptr');
+  const isLinearValue = (value) => {
+    if (head(value) === 'cast' && pointerVariant(value[2])) return true;
+    if (head(value) === 'local.get' && linear.has(value[2])) return true;
+    return head(value) === 'call' && value[2] === '$g2w' && isGuestValue(value[3]);
+  };
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    walk(func, (form) => {
+      if ((head(form) !== 'local.set' && head(form) !== 'local.tee') ||
+          typeof form[2] !== 'string') return;
+      if (isGuestValue(form[3]) && !guest.has(form[2])) { guest.add(form[2]); changed = true; }
+      if (isLinearValue(form[3]) && !linear.has(form[2])) { linear.add(form[2]); changed = true; }
+    });
+  }
+  return { guest, linear, isGuestValue, isLinearValue };
+}
+
+// A raw control-state address is either the state pointer itself (the memarg
+// offset spelling) or an i32.add whose immediate operand is that pointer. Do
+// not recurse through arbitrary expressions: a pointer loaded from a named
+// state field and indexed afterward belongs to a different record.
+function isRawControlAddress(form, bases) {
+  if (bases.isLinearValue(form)) return true;
   return head(form) === 'i32.add' &&
-    (isControlBaseGet(form[2]) || isControlBaseGet(form[3]));
+    (bases.isLinearValue(form[2]) || bases.isLinearValue(form[3]));
 }
 
 function memoryAddress(form) {
@@ -337,19 +411,31 @@ function sameField(a, b) {
     a.offset === b.offset && a.count === b.count && a.stride === b.stride;
 }
 
-function analyzeSource(src, rel = REL) {
+function analyzeSources(sources) {
   const errors = [];
-  let forms;
-  try {
-    forms = parseSource(src, rel);
-  } catch (err) {
-    return { errors: [`${rel}:${err.line || 0}: cannot parse: ${err.message}`], total: 0,
-      sitesByFunc: new Map(), layouts: new Map() };
-  }
-
-  const layouts = collectLayouts(forms, rel, errors);
+  const layouts = new Map();
   const functions = new Map();
-  for (const form of forms) if (head(form) === 'func' && typeof form[2] === 'string') functions.set(form[2], form);
+
+  for (const { src, rel } of sources) {
+    let forms;
+    try {
+      forms = parseSource(src, rel);
+    } catch (err) {
+      errors.push(`${rel}:${err.line || 0}: cannot parse: ${err.message}`);
+      continue;
+    }
+    for (const [name, layout] of collectLayouts(forms, rel, errors)) {
+      if (layouts.has(name)) errors.push(`${rel}:${layout.line}: duplicate layout ${name}`);
+      else layouts.set(name, { ...layout, rel });
+    }
+    for (const form of forms) {
+      if (head(form) !== 'func') continue;
+      const name = functionIdentity(form);
+      if (!name) continue;
+      if (functions.has(name)) errors.push(`${rel}:${lineOf(form)}: duplicate function identity ${name}`);
+      else functions.set(name, { form, rel });
+    }
+  }
 
   // (4) Each real variant's parsed layout size must equal EVERY named state
   // allocation. A function may allocate unrelated buffers too; the target
@@ -359,7 +445,7 @@ function analyzeSource(src, rel = REL) {
   for (const [name, spec] of Object.entries(VARIANTS)) {
     const layout = layouts.get(name);
     if (!layout) {
-      errors.push(`layout ${name} is not declared in ${rel} — this gate's variant table has rotted`);
+      errors.push(`layout ${name} is not declared in the source closure — this gate's variant table has rotted`);
       continue;
     }
     if (spec.viewOf) {
@@ -369,7 +455,7 @@ function analyzeSource(src, rel = REL) {
         for (const field of layout.fields) {
           const actual = owner.fields.find((f) => f.offset === field.offset);
           if (!sameField(field, actual)) {
-            errors.push(`${rel}:${layout.line}: view ${name}.${field.name} is not the same ` +
+            errors.push(`${layout.rel}:${layout.line}: view ${name}.${field.name} is not the same ` +
               `field at +${field.offset} in ${ownerName}`);
           }
         }
@@ -377,12 +463,12 @@ function analyzeSource(src, rel = REL) {
       continue;
     }
     for (const pin of spec.allocators) {
-      const func = functions.get(pin.func);
-      if (!func) {
-        errors.push(`${name} allocator ${pin.func} does not exist in ${rel}`);
+      const entry = functions.get(pin.func);
+      if (!entry) {
+        errors.push(`${name} allocator ${pin.func} does not exist in the source closure`);
         continue;
       }
-      const sites = allocationsIn(func, pin.target);
+      const sites = allocationsIn(entry.form, pin.target);
       if (sites.length !== pin.count) {
         errors.push(`${name} allocator ${pin.func} should assign ${pin.count} heap_alloc call(s) ` +
           `to ${pin.target}, found ${sites.length}`);
@@ -390,10 +476,10 @@ function analyzeSource(src, rel = REL) {
       for (const site of sites) {
         const size = allocationSize(site.arg, layout);
         if (size === null) {
-          errors.push(`${rel}:${site.line}: ${name} allocator ${pin.func} must use a literal ` +
+          errors.push(`${entry.rel}:${site.line}: ${name} allocator ${pin.func} must use a literal ` +
             `(i32.const N) or (size-of ${name}) for ${pin.target}`);
         } else if (size !== layout.size) {
-          errors.push(`${rel}:${site.line}: ${name} allocator ${pin.func} requests ${size} bytes ` +
+          errors.push(`${entry.rel}:${site.line}: ${name} allocator ${pin.func} requests ${size} bytes ` +
             `for ${pin.target}, but the parsed layout is ${layout.size} bytes`);
         }
       }
@@ -404,13 +490,21 @@ function analyzeSource(src, rel = REL) {
   // parsed form makes line wrapping irrelevant and sees offset=0x8 exactly as
   // it sees offset=8. The old per-line regex missed both shapes.
   const sitesByFunc = new Map();
-  for (const [fn, func] of functions) {
-    walk(func, (form) => {
+  for (const [fn, entry] of functions) {
+    const bases = controlStateBases(entry.form);
+    const castsByDestination = new Map();
+    walk(entry.form, (form) => {
       const op = head(form);
+      if ((op === 'local.set' || op === 'local.tee') &&
+          typeof form[2] === 'string' && head(form[3]) === 'cast' && pointerVariant(form[3][2])) {
+        const key = `${form[2]}:${form[3][2]}`;
+        if (!castsByDestination.has(key)) castsByDestination.set(key, []);
+        castsByDestination.get(key).push(lineOf(form));
+      }
       if (/^i32\.(?:load|store)/.test(op || '')) {
         const address = memoryAddress(form);
-        if (isRawControlAddress(address)) {
-          errors.push(`${rel}:${lineOf(form)}: ${fn}: hand-spelled offset off a control-state base. ` +
+        if (isRawControlAddress(address, bases)) {
+          errors.push(`${entry.rel}:${lineOf(form)}: ${fn}: hand-spelled offset off a control-state base. ` +
             `Use (load.field.memarg <Variant> <field> ptr) / (store.field…) — the variant comes ` +
             `from the class of the window whose state_ptr this is, not from the record.`);
         }
@@ -421,21 +515,35 @@ function analyzeSource(src, rel = REL) {
       if (!VARIANTS[variant]) return;
       const att = BY_FUNCTION[fn];
       if (!att) {
-        errors.push(`${rel}:${lineOf(form)}: ${fn} reaches ${variant} but is NOT ATTRIBUTED. ` +
+        errors.push(`${entry.rel}:${lineOf(form)}: ${fn} reaches ${variant} but is NOT ATTRIBUTED. ` +
           `Decide which control class owns this pointer and add it to BY_FUNCTION with the evidence.`);
       } else if (att.variant !== variant) {
-        errors.push(`${rel}:${lineOf(form)}: ${fn} is attributed to ${att.variant} but reaches ${variant}.`);
+        errors.push(`${entry.rel}:${lineOf(form)}: ${fn} is attributed to ${att.variant} but reaches ${variant}.`);
       }
       if (!sitesByFunc.has(fn)) sitesByFunc.set(fn, new Map());
       const counts = sitesByFunc.get(fn);
       counts.set(variant, (counts.get(variant) || 0) + 1);
     });
+    const duplicateReports = new Set();
+    const reportDuplicate = (label, lines) => {
+      if (lines.length <= 1) return;
+      const reportKey = lines.join(',');
+      if (duplicateReports.has(reportKey)) return;
+      duplicateReports.add(reportKey);
+      errors.push(`${entry.rel}:${lines[1]}: ${fn} repeats ${label} ${lines.length} times ` +
+        `(lines ${lines.join(', ')}). Cast once when the pointer enters a typed local, then use ` +
+        `that binding; repeating the claim defeats the active type.`);
+    };
+    for (const [binding, lines] of castsByDestination) {
+      const split = binding.indexOf(':');
+      reportDuplicate(`the ${binding.slice(split + 1)} binding ${binding.slice(0, split)}`, lines);
+    }
   }
 
   // (3) no dead attribution.
   for (const [name, att] of Object.entries(BY_FUNCTION)) {
     if (!functions.has(name)) {
-      errors.push(`attribution names ${name} (${att.variant}), which is not a function in ${rel}`);
+      errors.push(`attribution names ${name} (${att.variant}), which is not a function in the source closure`);
     } else if (!sitesByFunc.has(name)) {
       errors.push(`attribution names ${name} (${att.variant}) but it has no site — dead attribution. Remove it.`);
     }
@@ -443,7 +551,7 @@ function analyzeSource(src, rel = REL) {
 
   const total = [...sitesByFunc.values()]
     .reduce((sum, counts) => sum + [...counts.values()].reduce((a, b) => a + b, 0), 0);
-  return { errors, total, sitesByFunc, layouts };
+  return { errors, total, sitesByFunc, layouts, sourceCount: sources.length };
 }
 
 function printList(result) {
@@ -457,8 +565,8 @@ function printList(result) {
 
 function main() {
   const list = process.argv.includes('--list');
-  const src = fs.readFileSync(FILE, 'utf8');
-  const result = analyzeSource(src, REL);
+  const sources = SOURCE_FILES.map((rel) => ({ rel, src: fs.readFileSync(path.join(ROOT, rel), 'utf8') }));
+  const result = analyzeSources(sources);
   if (list) printList(result);
   if (result.errors.length) {
     for (const error of result.errors) console.error(`control-variant-gate: ${error}`);
@@ -467,8 +575,8 @@ function main() {
   }
   console.log(`control-variant-gate: ok — ${result.total} site(s) across ` +
     `${Object.keys(VARIANTS).length} variants, ${result.sitesByFunc.size} function(s) attributed, ` +
-    `0 raw offsets off a control-state base.`);
+    `0 raw offsets off a control-state base in ${result.sourceCount} source files.`);
 }
 
 if (require.main === module) main();
-module.exports = { analyzeSource, VARIANTS, BY_FUNCTION };
+module.exports = { analyzeSources, VARIANTS, BY_FUNCTION, SOURCE_FILES };

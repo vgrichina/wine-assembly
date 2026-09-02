@@ -84,46 +84,30 @@ const extraWat = String.raw`
     'first child resize succeeds');
   assert.strictEqual(e.test_call_MoveWindow(second, 20, 24, 90, 35, 0), 1,
     'second child resize succeeds');
-  assert.strictEqual(e.get_post_queue_count(), 4,
-    'each changed child keeps both queued geometry messages');
-
-  const q = new DataView(memory.buffer, 0x400, 96);
-  assert.strictEqual(q.getUint32(0, true), first, 'first queue entry targets first child');
-  assert.strictEqual(q.getUint32(4, true), 0x0003, 'first queue entry is WM_MOVE');
-  assert.strictEqual(q.getUint32(12, true), pack(10, 12),
-    'first WM_MOVE carries the new position');
-  assert.strictEqual(q.getUint32(20, true), 0x0005, 'second queue entry is WM_SIZE');
-  assert.strictEqual(q.getUint32(28, true), pack(80, 30),
-    'first WM_SIZE carries the new client size');
-  assert.strictEqual(q.getUint32(32, true), second, 'third queue entry targets second child');
-  assert.strictEqual(q.getUint32(36, true), 0x0003, 'third queue entry is WM_MOVE');
-  assert.strictEqual(q.getUint32(52, true), 0x0005, 'fourth queue entry is WM_SIZE');
-  assert.strictEqual(q.getUint32(60, true), pack(90, 35),
-    'second WM_SIZE carries the new client size');
+  assert.strictEqual(e.get_post_queue_count(), 0,
+    'built-in default processing sends geometry messages synchronously');
+  assert.strictEqual(positions.get(first), pack(10, 12));
+  assert.strictEqual(sizes.get(first), pack(80, 30));
+  assert.strictEqual(positions.get(second), pack(20, 24));
+  assert.strictEqual(sizes.get(second), pack(90, 35));
   assert.strictEqual(moveFlags[0], 0x14,
     'bRepaint=TRUE keeps redraw enabled while preserving z-order and activation');
   assert.strictEqual(moveFlags[1], 0x1c,
     'bRepaint=FALSE maps to SWP_NOREDRAW');
 
   e.test_call_MoveWindow(second, 20, 24, 90, 35, 1);
-  assert.strictEqual(e.get_post_queue_count(), 4,
-    'same-geometry MoveWindow creates neither WM_MOVE nor WM_SIZE loops');
+  assert.strictEqual(e.get_post_queue_count(), 0,
+    'same-geometry MoveWindow creates no deferred geometry-message loop');
 
   assert.strictEqual(e.test_call_SetWindowPos(first, 30, 32, 100, 40, 0x14), 1,
     'SetWindowPos move and resize succeeds');
-  assert.strictEqual(e.get_post_queue_count(), 6,
-    'SetWindowPos queues both derived geometry messages');
-  assert.strictEqual(q.getUint32(68, true), 0x0003,
-    'SetWindowPos derives WM_MOVE after WM_WINDOWPOSCHANGED');
-  assert.strictEqual(q.getUint32(76, true), pack(30, 32),
-    'SetWindowPos WM_MOVE carries the committed position');
-  assert.strictEqual(q.getUint32(84, true), 0x0005,
-    'SetWindowPos derives WM_SIZE after WM_WINDOWPOSCHANGED');
-  assert.strictEqual(q.getUint32(92, true), pack(100, 40),
-    'SetWindowPos WM_SIZE carries the committed client size');
+  assert.strictEqual(e.get_post_queue_count(), 0,
+    'SetWindowPos default geometry messages are not posted');
+  assert.strictEqual(positions.get(first), pack(30, 32));
+  assert.strictEqual(sizes.get(first), pack(100, 40));
 
   e.test_call_SetWindowPos(first, 99, 99, 150, 60, 0x17); // NOMOVE|NOSIZE
-  assert.strictEqual(e.get_post_queue_count(), 6,
+  assert.strictEqual(e.get_post_queue_count(), 0,
     'SWP_NOMOVE|SWP_NOSIZE suppress derived WM_MOVE/WM_SIZE');
   assert.deepStrictEqual(zOrders, [],
     'SWP_NOZORDER suppresses the host z-order update');

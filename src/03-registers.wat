@@ -444,11 +444,14 @@
       (then (global.get $flag_b))  ;; Shift: flag_b stores last bit shifted out
     (else (if (result i32) (i32.eq (global.get $flag_op) (i32.const 8))
       (then (global.get $flag_a))  ;; Raw mode: CF stored in flag_a
-    (else (i32.const 0))))))))))))))
+    (else (if (result i32) (i32.eq (global.get $flag_op) (i32.const 9))
+      (then (i32.and (global.get $flag_a) (i32.const 1)))  ;; Exact raw: packed CF
+    (else (i32.const 0))))))))))))))))
   (func $get_of (result i32)
     (local $sa i32) (local $sb i32) (local $sr i32)
     ;; Raw mode: OF stored in flag_b
-    (if (i32.eq (global.get $flag_op) (i32.const 8))
+    (if (i32.or (i32.eq (global.get $flag_op) (i32.const 8))
+                 (i32.eq (global.get $flag_op) (i32.const 9)))
       (then (return (global.get $flag_b))))
     ;; MUL/IMUL: OF = CF = flag_b
     (if (i32.eq (global.get $flag_op) (i32.const 6))
@@ -461,6 +464,16 @@
     (else (if (result i32) (i32.or (i32.eq (global.get $flag_op) (i32.const 2)) (i32.eq (global.get $flag_op) (i32.const 5)))
       (then (i32.and (i32.ne (local.get $sa) (local.get $sb)) (i32.eq (local.get $sb) (local.get $sr))))
     (else (i32.const 0))))))
+
+  ;; SAHF/POPF supply independently writable flags. In exact raw mode (9),
+  ;; flag_a packs CF in bit 0 and PF in bit 1. Other modes derive parity from
+  ;; the lazy arithmetic result as before.
+  (func $get_pf (result i32)
+    (if (result i32) (i32.eq (global.get $flag_op) (i32.const 9))
+      (then (i32.and (i32.shr_u (global.get $flag_a) (i32.const 1)) (i32.const 1)))
+      (else (i32.eqz (i32.and
+        (i32.popcnt (i32.and (global.get $flag_res) (i32.const 0xFF)))
+        (i32.const 1))))))
 
   ;; Evaluate condition code (same encoding as x86 Jcc lower nibble)
   ;; 0=O,1=NO,2=B,3=AE,4=Z,5=NZ,6=BE,7=A,8=S,9=NS,A=P,B=NP,C=L,D=GE,E=LE,F=G
@@ -477,9 +490,9 @@
     (if (i32.eq (local.get $cc) (i32.const 0x8)) (then (return (call $get_sf))))
     (if (i32.eq (local.get $cc) (i32.const 0x9)) (then (return (i32.eqz (call $get_sf)))))
     ;; 0xA=P (parity even): low byte of result has even number of set bits
-    (if (i32.eq (local.get $cc) (i32.const 0xA)) (then (return (i32.eqz (i32.and (i32.popcnt (i32.and (global.get $flag_res) (i32.const 0xFF))) (i32.const 1))))))
+    (if (i32.eq (local.get $cc) (i32.const 0xA)) (then (return (call $get_pf))))
     ;; 0xB=NP (parity odd)
-    (if (i32.eq (local.get $cc) (i32.const 0xB)) (then (return (i32.and (i32.popcnt (i32.and (global.get $flag_res) (i32.const 0xFF))) (i32.const 1)))))
+    (if (i32.eq (local.get $cc) (i32.const 0xB)) (then (return (i32.eqz (call $get_pf)))))
     ;; 0xC=L: SF!=OF
     (if (i32.eq (local.get $cc) (i32.const 0xC)) (then (return (i32.ne (call $get_sf) (call $get_of)))))
     ;; 0xD=GE: SF==OF
@@ -507,13 +520,12 @@
         (i32.shl (global.get $df) (i32.const 10))
         (i32.shl (call $get_of) (i32.const 11))))
       (i32.or
-        (i32.shl (i32.eqz (i32.and (i32.popcnt (i32.and (global.get $flag_res) (i32.const 0xFF))) (i32.const 1)))
-                 (i32.const 2))  ;; PF
+        (i32.shl (call $get_pf) (i32.const 2))  ;; PF
         (global.get $eflags_extra)))
   )
 
   ;; Restore flags from EFLAGS value (for popfd)
-  ;; Uses flag_op=8 (raw mode): CF/ZF/SF/OF stored directly in flag globals
+  ;; Uses flag_op=9 (exact raw mode): CF/PF/ZF/SF/OF are independent.
   (func $load_eflags (param $f i32)
     ;; Everything outside the six bits we model is remembered verbatim, so
     ;; pushfd hands it back. Dropping it used to break the standard CPUID probe
@@ -524,27 +536,22 @@
     ;; blitters. Mask = ~(CF|bit1|PF|AF|ZF|SF|DF|OF).
     (global.set $eflags_extra (i32.and (local.get $f) (i32.const 0xFFFFF328)))
     (global.set $df (i32.and (i32.shr_u (local.get $f) (i32.const 10)) (i32.const 1)))
-    (global.set $flag_op (i32.const 8))  ;; raw flags mode
-    ;; Store individual flag bits in globals: CF in flag_a, OF in flag_b, ZF/SF encoded in flag_res
-    (global.set $flag_a (i32.and (local.get $f) (i32.const 1)))  ;; CF = bit 0
+    (global.set $flag_op (i32.const 9))  ;; exact raw flags mode
+    ;; Pack CF/PF in flag_a, OF in flag_b, and encode ZF/SF in flag_res.
+    (global.set $flag_a (i32.or
+      (i32.and (local.get $f) (i32.const 1))
+      (i32.and (i32.shr_u (local.get $f) (i32.const 1)) (i32.const 2))))
     (global.set $flag_b (i32.and (i32.shr_u (local.get $f) (i32.const 11)) (i32.const 1)))  ;; OF = bit 11
     ;; flag_res: bit 31 = SF, zero iff ZF. This makes get_zf and get_sf work with flag_sign_shift=31.
     ;;
-    ;; The low byte is otherwise free, and PF is read from it, so the two
-    ;; ZF=0 cases pick between an even- and an odd-parity low byte to carry PF
-    ;; through as well. ZF=1 forces flag_res to 0, hence PF=1 -- which is not a
-    ;; loss: a zero result has a zero low byte, so a genuine flag word with
-    ;; ZF set always has PF set too.
+    ;; PF is carried independently in flag_a, so even synthetic combinations
+    ;; such as ZF=1/PF=0 round-trip exactly.
     (global.set $flag_sign_shift (i32.const 31))
     (if (i32.and (local.get $f) (i32.const 0x40))  ;; ZF = bit 6
       (then (global.set $flag_res (i32.const 0)))
       (else (if (i32.and (local.get $f) (i32.const 0x80))  ;; SF = bit 7
-        (then (if (i32.and (local.get $f) (i32.const 4))  ;; PF = bit 2
-          (then (global.set $flag_res (i32.const 0x80000003)))   ;; two set bits: even
-          (else (global.set $flag_res (i32.const 0x80000001))))) ;; one set bit: odd
-        (else (if (i32.and (local.get $f) (i32.const 4))
-          (then (global.set $flag_res (i32.const 3)))
-          (else (global.set $flag_res (i32.const 1))))))))
+        (then (global.set $flag_res (i32.const 0x80000001)))
+        (else (global.set $flag_res (i32.const 1))))))
   )
 
   ;; Save caller-saved registers + lazy flags onto guest stack (9 dwords = 36 bytes)

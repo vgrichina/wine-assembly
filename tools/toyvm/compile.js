@@ -17,7 +17,7 @@
 
 const isa = require('./isa');
 const { decodeOne, H } = require('./decode');
-const { ARITY, FUSE, TRACE, SPIN, SPEC, applyExtract, NOFLAG, FLAG_EFFECTS,
+const { ARITY, FUSE, TRACE, SPIN, PSPIN, SPEC, applyExtract, NOFLAG, FLAG_EFFECTS,
   prepareTables } = require('./emit');
 
 function compileProgram(readByte, cs, entryIp, opts = {}) {
@@ -63,6 +63,11 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // marks them in isa.CODE_BITMAP so a later store into any of them is seen for
   // what it is: a program rewriting code that has already been compiled.
   const covered = [];
+  // Word index -> guest ip of the instruction emitted there. Only a branch
+  // publishes an ip into the arena, so without this a reader of the words
+  // cannot say where a mid-block op sits in the guest; region-jit needs
+  // that to turn a branch to an ip inside its own body into a wasm `br`.
+  const wordIp = new Map();
 
   // Superinstruction formation. Off with `fuse: false` (run-dos.js --no-fuse),
   // which is the A/B partner: fusing preserves $steps exactly (see
@@ -90,6 +95,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // instruction and the loop therefore does NOT run to the end of the slice.
   // `--no-spin` is the A/B partner.
   const spinLoops = opts.spinLoops !== false && !opts.oneInsn;
+  const portSpin = PORT_SPIN;
   // Swap each register-file access on a runtime index for the twin that has
   // the register as a literal. Safe under oneInsn too -- it changes no control
   // flow and no step accounting. OFF unless the twins were generated: opting
@@ -122,6 +128,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     if (fused === undefined) return;
     words[prevStart] = fused;
     words.splice(lastStart, 1);
+    wordIp.delete(lastStart);
     // The branch's own fixups point at operand words that just moved down one.
     // They are the last fixups pushed and the only ones past `lastStart` --
     // every earlier block ended below `start` -- so the scan stops at the first
@@ -279,6 +286,29 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   const fixupView = wd
     ? new Int32Array(wd.mem.buffer, isa.DEC_FIXUPS,
         isa.DEC_FIXUPS_MAX * isa.DEC_FIXUP_WORDS) : null;
+  const insnView = wd
+    ? new Int32Array(wd.mem.buffer, isa.DEC_INSNS, isa.DEC_INSNS_MAX * 2) : null;
+
+  // A REGION HEAD IS A BLOCK HEAD BEFORE ANYTHING ELSE IS DECODED. A region
+  // is entered only by a dispatch to its head ip, and the decoder stitches a
+  // conditional's fall-through -- and a `jmp`'s target -- into the block in
+  // front of it whenever that ip is not yet a head. Compiled in discovery
+  // order, ADDY_II's head at 0xb3 was reached first as the fall-through of the
+  // `loop` at 0xb1 and absorbed into that block, so the loop ran through the
+  // head without ever dispatching to it: with the region installed the
+  // interpreter still counted 8.3M of the 12M dispatches, and a region over
+  // 98.8% of the samples bought -2%. Marking every region head up front, and
+  // compiling it first, makes each of them the boundary the region needs.
+  if (opts.regionAt) {
+    const myKey = `${d32 ? `${codeBase}d` : codeBase}:`;
+    for (const key of opts.regionAt.keys()) {
+      if (!key.startsWith(myKey)) continue;
+      const rip = Number(key.slice(myKey.length));
+      if (blocks.has(rip)) continue;
+      markHead(rip);
+      pending.push(rip);
+    }
+  }
 
   while (pending.length) {
     const blockIp = pending.pop();
@@ -392,11 +422,13 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     let justOpened = -1;
     for (;;) {
       if (words.length > maxWords) { words.push(H.end, cur); break; }
+      wordIp.set(words.length, cur);
 
       // Reaching the head of a block we already emitted: jump to it rather than
       // emitting a second copy of an entire loop body.
       if (cur !== blockIp && cur !== justOpened && blocks.has(cur)) {
-        words.push(H.jmp, 0, cur);
+        // The synthetic twin: a dispatch, but not a step (see emit.js).
+        words.push(H.jmp_syn, 0, cur);
         fixups.push({ wordIndex: words.length - 2, ip: cur });
         break;
       }
@@ -421,6 +453,8 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
         if (n > 0) {
           const base = words.length;
           for (let i = 0; i < n; i++) words.push(scratchView[i]);
+          const ni = wd.exports.dc_insns();
+          for (let i = 0; i < ni; i++) wordIp.set(base + insnView[2 * i], insnView[2 * i + 1]);
 
           // Replay the host's decryptor rule over the run, per instruction and
           // unchanged: each fixup carries the ip of the instruction that emitted
@@ -569,6 +603,32 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       spinBlocks++;
     }
   }
+  // The port poll: `in al,dx / cmp al,imm / jcc head` is TWO ops, and the
+  // first one changes AL, so the rule above is right to leave it alone. But
+  // port 3DAh is answered from the dispatch clock now (emit.js, $vga_status),
+  // so the twin can turn the loop inside one handler until the status the
+  // clock gives makes the branch fall through. The arena keeps its shape: the
+  // twin's operands are the `in`'s port word, the fused handler's own index
+  // (skipped), and the pair's operands where they were.
+  if (spinLoops && portSpin) {
+    const in8 = require('./emit').HANDLERS.findIndex(x => x.name === 'in_8');
+    for (let b = 0; b < blockStarts.length; b++) {
+      const start = blockStarts[b];
+      const end = b + 1 < blockStarts.length ? blockStarts[b + 1] : words.length;
+      if (words[start] !== in8) continue;
+      const second = start + 1 + ARITY[in8];
+      if (second >= end) continue;
+      const s = PSPIN.get(words[second]);
+      if (s === undefined) continue;
+      if (second + 1 + ARITY[words[second]] !== end) continue;
+      if (words[second + 1 + s.takenAt] !== blockIps[b]) continue;
+      if (ARITY[s.twin] !== end - start - 1) {
+        throw new Error(`port-spin twin of handler ${words[second]} has arity ${ARITY[s.twin]}, block has ${end - start - 1} words`);
+      }
+      words[start] = s.twin;
+      spinBlocks++;
+    }
+  }
 
   // Flag liveness over the finished region. Per block this is the same
   // backward walk as before; what is new is where it starts from.
@@ -684,7 +744,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   }
 
   return {
-    words, blocks, fixups, unresolved, covered,
+    words, blocks, fixups, unresolved, covered, wordIp,
     unimplemented: [...unimplemented],
     entryAddr: blocks.get(entry),
     deadFlags: deadFlagCount,
@@ -703,4 +763,11 @@ function install(vm, prog) {
   return prog.entryAddr;
 }
 
-module.exports = { compileProgram, install };
+// Collapse the `in al,dx / cmp al,imm / jcc head` port poll into its twin
+// (see the pass in compileProgram). `--no-port-spin` is the A/B partner: both
+// arms run the same clock and reach the same frame at the same step count,
+// and differ only in how many dispatches the poll cost.
+let PORT_SPIN = true;
+function setPortSpin(on) { PORT_SPIN = !!on; }
+
+module.exports = { compileProgram, install, setPortSpin };

@@ -1044,11 +1044,25 @@
     ;; enumerators retain the original saved-return-address form.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0011))
       (then
+        ;; DirectPlay player/group enumeration leaves its reentrant DPEN frame
+        ;; at ESP after the five-argument callback returns.
+        (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x4E455044))
+          (then
+            (call $dp_enum_continue)
+            (return)))
         ;; DirectInput EnumDevices/EnumObjects callbacks leave their reentrant
         ;; stack-resident DIEN frame at ESP after stdcall pops both arguments.
         (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x4E454944))
           (then
             (call $di_enum_continue)
+            (return)))
+        ;; DirectPlayLobby EnumAddress/EnumAddressTypes callbacks leave a
+        ;; reentrant DPLA/DPLT frame after popping four/three arguments.
+        (if (i32.or
+              (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x414C5044))
+              (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x544C5044)))
+          (then
+            (call $dpl_enum_continue)
             (return)))
         ;; WH_KEYBOARD callbacks use this existing one-callback thunk with a
         ;; tiny typed context. KeyboardProc's stdcall return leaves KHK1 at

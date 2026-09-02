@@ -98,10 +98,50 @@ const digest = crypto.createHash('sha256')
 // browser-side input injection remains host-owned.
 // 2026-09-01: 530 -> 531. joyGetPosEx mirrors joyGetPos for a no-joystick
 // Win98 environment so startup probes can keep keyboard/mouse input.
-// 2026-09-01: 531 -> 532. WSAIsBlocking reports FALSE because this host never
-// runs a nested Winsock blocking hook; socket waits yield cooperatively.
-const EXPECTED_COUNT = 532;
-const EXPECTED_SHA256 = 'c067eaeb1db9f3708bcbd3902a178e85e56988aaa13a7a6f6b6a0a82c1a61c57';
+// 2026-09-02: 531 -> 529. Legacy SetWindowsHookA/W now installs the same
+// process-local keyboard/CBT callbacks as the Ex path, and UnhookWindowsHook
+// removes only a matching installed procedure instead of always succeeding.
+// 2026-09-02: 529 -> 516. DirectPlay's bounded local session now retains
+// player/group identities, names, flags and memberships; its lifecycle and
+// four entity enumerators update or traverse that state instead of returning
+// success without work.
+// 2026-09-02: 516 -> 514. SetPlayerData and SetGroupData now retain copied
+// local/remote application data in the DirectPlay entity repository; their
+// matching getters implement the Win98 size-query and readback contract.
+// 2026-09-02: 514 -> 512. DirectPlayLobby EnumAddress now walks bounded
+// compound-address chunks through a cancellation-aware callback, while
+// EnumAddressTypes reports the local TCP/IP provider's required DPAID_INet.
+// 2026-09-02: 512 -> 511. EnumLocalApplications validates its required
+// callback and reserved flags, then truthfully enumerates the browser Win98
+// machine's empty set of registered lobby-aware applications.
+// 2026-09-02: 511 -> 502. Win32 DDEML now owns instance, copied HSZ,
+// registered-service, conversation and data-object state; invalid, stale and
+// cross-instance handles fail instead of fixed values succeeding silently.
+// 2026-09-02: 502 -> 500. Begin/EndDeferWindowPos now allocate, validate,
+// consume and free real bounded HDWP transactions; queued geometry remains
+// unchanged until End applies it through the SetWindowPos behavior path.
+// 2026-09-02: 500 -> 497. OpenClipboard/CloseClipboard now own an exclusive
+// USER transaction, and GetClipboardOwner reports ownership assigned by
+// EmptyClipboard instead of three fixed success/null answers.
+// 2026-09-02: 497 -> 494. GetSubMenu now resolves real popup ownership,
+// ModifyMenu mutates dynamic items, and DrawMenuBar validates and redraws the
+// target window's non-client menu chrome instead of fixed success/handles.
+// 2026-09-02: 494 -> 493. FindWindowA now searches the live top-level USER
+// tree by optional class atom/name and title instead of always returning NULL.
+// 2026-09-02: 493 -> 491. SetPriorityClass/GetPriorityClass now validate the
+// emulated process handle and retain one shared Win98 priority class.
+// 2026-09-02: 491 -> 489. GetThreadPriority/SetThreadPriority now validate
+// thread identity and retain the Win98 relative priority on the thread object.
+// 2026-09-02: 489 -> 488. SetErrorMode now atomically replaces and returns the
+// shared Win98 x86 process error mode instead of always returning zero.
+// 2026-09-02: 488 -> 483. COM/OLE initialization now owns per-thread apartment
+// model and nesting state; the dead duplicate OleInitialize body is gone.
+// 2026-09-02: 483 -> 482. TranslateMessage now distinguishes the four
+// virtual-key messages from unrelated MSGs instead of always returning TRUE.
+// 2026-09-01: 482 -> 483 after merge. WSAIsBlocking reports FALSE because
+// this host never runs a nested Winsock blocking hook; waits yield cooperatively.
+const EXPECTED_COUNT = 483;
+const EXPECTED_SHA256 = 'b423497f67f8223bf9b8414d43a43e70f7445f9104a8ce9fa80343d7b82ff71b';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

@@ -167,6 +167,9 @@ function memAccessors() {
 }
 
 const SPIN = new Map();
+// fused cmp/test_ri8 + jcc handler index -> { takenAt, twin } for the 2-op
+// `in al,dx / cmp al,imm / jcc head` block. See genFusedBranches().
+const PSPIN = new Map();
 
 // A branch handler index -> which operand word holds its TAKEN edge's guest ip.
 //
@@ -694,6 +697,22 @@ function genBranches() {
   ${ops(2)}
   ${GO('(local.get $t0)', '(local.get $t1)')}
 `);
+  // THE COMPILER'S OWN TRANSFER, not the guest's. compile.js emits one when a
+  // decode runs into the head of a block it already holds, so the arena has
+  // one copy of that code instead of two. It is a dispatch like any other,
+  // and $next charges every dispatch a step -- which made the guest's clock
+  // depend on the ORDER blocks were compiled in: the same instructions cost
+  // one step more wherever a head happened to exist first. Installing a
+  // region moves heads, and on ADDY_II that alone put the region arm 45,000
+  // steps ahead of the interpreter at the same budget -- a "wrong frame"
+  // from a region that computed nothing wrong. So this twin gives the step
+  // back: the transfer stays a dispatch, the budget no longer sees it.
+  const jmpSyn = h('jmp_syn', 2, `
+  ${ops(2)}
+  (global.set $steps (i32.add (global.get $steps) (i32.const 1)))
+  ${GO('(local.get $t0)', '(local.get $t1)')}
+`);
+  TAKEN_AT.set(jmpSyn, 1);
   // `jmp $` is the purest spin there is, and the one a demo parks on when it
   // is finished. The compiler only offers this twin for a block that is the
   // jump and nothing else, so a `jmp` back to the head from further down a
@@ -1373,10 +1392,68 @@ function genStrings() {
         // this must also charge the host's step budget; here that is $steps,
         // decremented per element.
         const isCompare = name === 'scas' || name === 'cmps';
+        // The widened form of MOVS/STOS: see $rep_span_ok. Locals: t1 = n,
+        // t2 = bytes, t3 = di, t4 = dst lin, t5 = si (or the pattern for
+        // STOS), t6 = src lin, t7 = end. Every `br $slow` is a condition the
+        // byte loop would have handled one element at a time.
+        const decl = (k, cond) => `(if ${cond} (then (call $rep_decl (i32.const ${k}) (i32.mul (local.get $t1) (i32.const ${sz}))) (br $slow)))`;
+        const noWrap = (off, bytes) => decl(3, a === 32
+          ? `(i32.lt_u (i32.add ${off} ${bytes}) ${off})`
+          : `(i32.gt_u (i32.add ${off} ${bytes}) (i32.const 0x10000))`);
+        const bumpBy = (reg, bytes) =>
+          `(call ${st} (i32.const ${{ si: 6, di: 7 }[reg]}) (i32.add ${idx(reg)} ${bytes}))`;
+        const cxZero = a === 32
+          ? '(global.set $cx (i32.const 0))'
+          : '(global.set $cx (i32.and (global.get $cx) (i32.const 0xFFFF0000)))';
+        // Fill [t4, t4+t2) with one element: memory.fill for bytes, a store
+        // loop for words and dwords (t5 the pattern, t6 the cursor, t7 the end).
+        const fillWith = (v) => sz === 1
+          ? `(memory.fill (local.get $t4) ${v} (local.get $t2))`
+          : `(local.set $t5 ${v})
+      (local.set $t6 (local.get $t4))
+      (local.set $t7 (i32.add (local.get $t4) (local.get $t2)))
+      (loop $f
+        (i32.store${w === 32 ? '' : '16'} (local.get $t6) (local.get $t5))
+        (local.set $t6 (i32.add (local.get $t6) (i32.const ${sz})))
+        (br_if $f (i32.lt_u (local.get $t6) (local.get $t7))))`;
+        const fast = isCompare ? '' : `
+  (block $slow
+    (local.set $t1 (call ${count}))
+    (br_if $slow (i32.eqz (local.get $t1)))
+    ${decl(0, '(i32.eqz (global.get $rep_fast))')}
+    ${decl(1, bit(F.DF))}
+    ${decl(2, '(i32.ge_u (local.get $t1) (i32.const 0x10000000))')}
+    (local.set $t2 (i32.mul (local.get $t1) (i32.const ${sz})))
+    (local.set $t3 ${idx('di')})
+    ${noWrap('(local.get $t3)', '(local.get $t2)')}
+    (local.set $t4 (call $lin (i32.const 0) (local.get $t3)))
+    ${decl(4, '(i32.eqz (call $rep_span_ok (local.get $t4) (local.get $t2)))')}
+    ${decl(5, '(i32.eqz (call $code_clear (local.get $t4) (local.get $t2)))')}
+    ${name === 'movs' ? `
+    (local.set $t5 ${idx('si')})
+    ${noWrap('(local.get $t5)', '(local.get $t2)')}
+    (local.set $t6 (call $lin (local.get $t0) (local.get $t5)))
+    ${decl(4, '(i32.eqz (call $rep_span_ok (local.get $t6) (local.get $t2)))')}
+    ;; A forward copy whose destination starts inside its source replicates
+    ;; (the 8086 reads what it just wrote); memory.copy would not. One element
+    ;; ahead is the memset idiom -- write a[0], then copy a[0..n) to a[1..n] --
+    ;; and IS a fill with that element; any other stride goes to the loop.
+    (if (i32.and (i32.gt_u (local.get $t4) (local.get $t6))
+                 (i32.lt_u (local.get $t4) (i32.add (local.get $t6) (local.get $t2))))
+      (then
+        ${decl(6, `(i32.ne (i32.sub (local.get $t4) (local.get $t6)) (i32.const ${sz}))`)}
+        ${fillWith(`(i32.load${w === 32 ? '' : w + '_u'} (local.get $t6))`)})
+      (else (memory.copy (local.get $t4) (local.get $t6) (local.get $t2))))
+    ${bumpBy('si', '(local.get $t2)')}` : fillWith(`(call $rget${w} (i32.const 0))`)}
+    ${bumpBy('di', '(local.get $t2)')}
+    ${cxZero}
+    (global.set $rep_runs (i32.add (global.get $rep_runs) (i32.const 1)))
+    (global.set $rep_bytes (i32.add (global.get $rep_bytes) (local.get $t2)))
+    (global.set $steps (i32.sub (global.get $steps) (local.get $t1))))`;
         for (const rep of (isCompare ? ['rep', 'repne'] : ['rep'])) {
           const zWant = rep === 'rep' ? 1 : 0;
           h(`${rep}_${name}${suffix}${asfx}`, 1, `
-  ${ops(1)}
+  ${ops(1)}${fast}
   (block $done
     (loop $l
       (br_if $done (i32.eqz (call ${count})))
@@ -1924,13 +2001,22 @@ function genArithIO() {
   // Port I/O. Demos reach the VGA palette through 0x3C8/0x3C9 and wait on the
   // retrace bit of 0x3DA, so these must exist even though nothing here is a
   // real peripheral -- tools/toyvm/dos.js models the few ports that matter.
+  //
+  // The VGA status port is the exception, and it is answered here rather than
+  // by the host: it is the most-read port in the corpus by orders of magnitude
+  // (CMA_SHRT.EXE: 3.48M reads in 12M dispatches, 90% of everything it does,
+  // each one a host call), and what it answers is a function of the dispatch
+  // clock -- see $vga_status and the globals it reads. `in ax,dx` from 3DAh
+  // still goes to the host, which answers from the same clock.
   for (const w of [8, 16]) {
     h(`in_${w}`, 1, `
   ${ops(1)}
-  (call $rset${w} (i32.const 0)
-    (call $port_in (select (call $rget16 (i32.const 2)) (local.get $t0)
-                           (i32.eq (local.get $t0) (i32.const -1)))
-                   (i32.const ${w})))
+  (local.set $t1 (select (call $rget16 (i32.const 2)) (local.get $t0)
+                         (i32.eq (local.get $t0) (i32.const -1))))
+  ${w === 8 ? `(if (i32.eq (local.get $t1) (i32.const 0x3DA))
+    (then (call $rset8 (i32.const 0) (call $vga_status)))
+    (else (call $rset8 (i32.const 0) (call $port_in (local.get $t1) (i32.const 8)))))`
+    : `(call $rset${w} (i32.const 0) (call $port_in (local.get $t1) (i32.const ${w})))`}
 `);
     h(`out_${w}`, 1, `
   ${ops(1)}
@@ -3046,6 +3132,10 @@ genArithIO();
 // that is invisible until some program takes the other edge.
 const FUSE_FIRST = [
   ['cmp_ri8', { fop: 'SUB', w: 8 }],
+  // `in al,dx / test al,8 / jz` is the other spelling of the retrace wait
+  // (daretro.exe: 97% of its `in` dispatches are followed by test_ri8), and
+  // the port-poll twin below needs the pair fused to see it as one block.
+  ['test_ri8', { fop: 'LOGIC', w: 8 }],
   ['cmp_rm8', { fop: 'SUB', w: 8 }],
   ['sbb_ri16', { fop: 'SUB', w: 16 }],
   ['cmp_ri16', { fop: 'SUB', w: 16 }],
@@ -3140,6 +3230,73 @@ function genFusedBranches() {
         SPIN.set(tidx, { takenAt: a.args + 1, twin: stidx });
         TAKEN_AT.set(sidx, a.args + 1);
         TAKEN_AT.set(stidx, a.args + 1);
+      }
+      // The port-poll twin: `in al,dx / cmp al,imm / jcc $-4`, the wait for
+      // retrace every frame-paced demo in the corpus has somewhere, and 90% of
+      // every dispatch CMA_SHRT.EXE retires. It is not a spin the 1-op twin
+      // above can take -- the `in` changes AL -- but with 3DAh answered from
+      // the dispatch clock (see $vga_status) it is a loop over nothing but the
+      // clock, so it can turn inside one handler: read the status for the
+      // current $steps, compare, and go round again until the branch falls
+      // through or the budget runs out. Every turn charges the three steps the
+      // interpreter would have (the `in` dispatch, the fused pair's dispatch
+      // and the one the fused handler charges itself), $steps is tested where
+      // the block transfer would have tested it, and AL, the flags and $gip
+      // are what the last turn left -- so the run is the same run and only
+      // the dispatch count is different, which is what lets the corpus check
+      // it.
+      //
+      // The block keeps its shape in the arena: this twin's operands are the
+      // `in`'s port word, the swallowed fused handler's own index (skipped),
+      // then the fused pair's operands where they already were. A port other
+      // than 3DAh runs the three ops exactly as the interpreter would.
+      if (/^(cmp|test)_ri8$/.test(alu)) {
+        // `jn` is the branch's operand count: four for the plain pair, three
+        // for the traced one whose fall-through is the next word. Both the
+        // read and the rewind have to agree with it -- one word over and the
+        // loop compares against the next block's first word and never leaves.
+        const turn = (fall, jn) => `
+  (block $done
+    (loop $spin
+      (call $rset8 (i32.const 0) (call $vga_status))
+      (global.set $steps (i32.sub (global.get $steps) (i32.const 2)))
+      ${a.body}
+      ${ops(jn)}
+      (if ${half || CONDS[cc]}
+        (then
+          (global.set $gip (local.get $t1))
+          (if (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0)))
+            (then ${SLICE_EXIT} (br $done)))
+          (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+          (global.set $ip (i32.sub (global.get $ip) (i32.const ${(a.args + jn) * 4})))
+          (br $spin))
+        (else ${fall}))))`;
+        const other = (jb) => `
+      (call $rset8 (i32.const 0) (call $port_in (local.get $t1) (i32.const 8)))
+      (global.set $steps (i32.sub (global.get $steps) (i32.const 2)))
+      ${a.body}
+      ${jb}`;
+        const head = `
+  ${ops(2)}
+  (local.set $t1 (select (call $rget16 (i32.const 2)) (local.get $t0)
+                         (i32.eq (local.get $t0) (i32.const -1))))`;
+        const pidx = h(`in_${alu}_j${cc}_pspin`, 2 + a.args + j.args, `${head}
+  (if (i32.ne (local.get $t1) (i32.const 0x3DA))
+    (then ${other(half ? jccBody(half) : j.body)})
+    (else ${turn(GO('(local.get $t2)', '(local.get $t3)'), j.args)}))
+`);
+        const ptidx = h(`in_${alu}_j${cc}_t_pspin`, 2 + a.args + j.args - 1, `${head}
+  (if (i32.ne (local.get $t1) (i32.const 0x3DA))
+    (then ${other(jccTraceBody(half || CONDS[cc]))})
+    (else ${turn(`
+      (global.set $gip (local.get $t2))
+      (if (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0)))
+        (then ${SLICE_EXIT}))`, j.args - 1)}))
+`);
+        PSPIN.set(idx, { takenAt: a.args + 1, twin: pidx });
+        PSPIN.set(tidx, { takenAt: a.args + 1, twin: ptidx });
+        TAKEN_AT.set(pidx, 2 + a.args + 1);
+        TAKEN_AT.set(ptidx, 2 + a.args + 1);
       }
     }
   }
@@ -3688,6 +3845,7 @@ function buildHandlers(lazy, fuseCond) {
   FUSE.clear();
   TRACE.clear();
   SPIN.clear();
+  PSPIN.clear();
   TAKEN_AT.clear();
   NOFLAG.clear();
   SPEC.clear();
@@ -3754,6 +3912,33 @@ function helpers() {
   // flag analysis can tell it from `end` and a fault, which cannot.
   s += `(func $slice_exit
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))\n`;
+
+  // Port 3DAh, from the VGA clock (see the globals). Where in the frame we are
+  // is the dispatches retired so far in this slice on top of the phase the host
+  // handed in; $steps is what is left of the budget, so that is a subtraction.
+  // Reading resets the attribute flip-flop, as on the hardware, and is counted.
+  s += `(func $vga_status (result i32) (local $now i32) (local $st i32)
+  (local.set $now (i32.rem_u
+    (i32.add (global.get $vga_phase0) (i32.sub (global.get $slice_budget) (global.get $steps)))
+    (global.get $vga_period)))
+  (global.set $attr_flip (i32.const 0))
+  (global.set $vga_reads (i32.add (global.get $vga_reads) (i32.const 1)))
+  (if (i32.lt_u (local.get $now) (global.get $vga_vb))
+    (then (return (i32.const 0x09))))
+  (i32.lt_u (i32.rem_u (local.get $now) (global.get $vga_line)) (global.get $vga_hb)))\n`;
+  // The period and its derived spans, from the frame length in dispatches and
+  // the line count of the mode: retrace is ~9% of the frame (2 of 449 lines
+  // of vertical sync, but bit 3 reads set through the whole blanking interval
+  // on real cards, which is about 45 lines in a 400-line mode); horizontal
+  // blanking is a fifth of each line.
+  s += `(func (export "set_vga_period") (param $p i32) (param $lines i32)
+  (if (i32.lt_s (local.get $p) (i32.const 100)) (then (local.set $p (i32.const 100))))
+  (if (i32.lt_s (local.get $lines) (i32.const 1)) (then (local.set $lines (i32.const 449))))
+  (global.set $vga_period (local.get $p))
+  (global.set $vga_vb (i32.div_u (i32.mul (local.get $p) (i32.const 9)) (i32.const 100)))
+  (global.set $vga_line (i32.div_u (local.get $p) (local.get $lines)))
+  (if (i32.eqz (global.get $vga_line)) (then (global.set $vga_line (i32.const 1))))
+  (global.set $vga_hb (i32.div_u (global.get $vga_line) (i32.const 5))))\n`;
 
   // The register file holds the FULL 32 bits. A 16-bit write leaves the upper
   // half alone and an 8-bit write leaves the other three bytes alone, exactly
@@ -4128,6 +4313,82 @@ ${memAccessors()}
 (func $ecxdec (result i32)
   (global.set $cx (i32.sub (global.get $cx) (i32.const 1)))
   (global.get $cx))
+
+;; --- The widened REP -------------------------------------------------------
+;;
+;; A REP MOVS/STOS iteration goes through $rd8/$wr8 per byte, and each of those
+;; is a call, a segment-base br_table, an address mask, the VGA-window key
+;; compare and (for a write) a code-bitmap probe -- ten calls or so per byte
+;; moved. Measured over bench-set-20 at 12M dispatches, the bytes retired
+;; inside REP handlers are 85-88% of everything COPPER and DSTNFO do, 67% of
+;; COMPOVRS, 40-55% of daretro, DHADREN, CORE-ADD and CONTACT.
+;;
+;; So when the whole run can be shown, up front, to be a plain range in the
+;; guest's own RAM, it is ONE memory.copy or memory.fill. "Shown up front" is
+;; every condition the per-byte path would have tested, hoisted: the offsets do
+;; not wrap in their segment (16-bit addressing) or overflow (32-bit), the
+;; linear range does not wrap the address mask or leave the wasm memory, it
+;; does not touch the VGA window while the planar key is on, no byte of the
+;; destination is compiled code, and a forward copy does not overlap its own
+;; destination (where the 8086 replicates and memory.copy would memmove). Any
+;; of those failing falls into the byte loop, which is unchanged -- the fast
+;; path leaves CX at zero and the loop finds nothing to do. The registers, the
+;; step charge (one per element) and the flags come out exactly as the loop
+;; would have left them, which is what lets the corpus check this; the direction
+;; flag set is left to the loop too.
+;;
+;; $rep_fast is the A/B switch (--no-rep-fast); 1 by default.
+(global $rep_fast (mut i32) (i32.const 1))
+;; The census: runs widened and bytes they moved, and declined runs by reason
+;; (0 switch off, 1 DF set, 2 count too big, 3 offset wrap, 4 address-mask /
+;; memory / VGA window, 5 compiled code under the destination, 6 forward
+;; overlap). One add per REP run, not per element; get_rep_stat(i) reads them.
+(global $rep_runs (mut i32) (i32.const 0))
+(global $rep_bytes (mut i32) (i32.const 0))
+(global $rep_d0 (mut i32) (i32.const 0)) (global $rep_d1 (mut i32) (i32.const 0))
+(global $rep_d2 (mut i32) (i32.const 0)) (global $rep_d3 (mut i32) (i32.const 0))
+(global $rep_d4 (mut i32) (i32.const 0)) (global $rep_d5 (mut i32) (i32.const 0))
+(global $rep_d6 (mut i32) (i32.const 0))
+(global $rep_dbytes (mut i32) (i32.const 0))
+(func $rep_decl (param $k i32) (param $bytes i32)
+  (global.set $rep_dbytes (i32.add (global.get $rep_dbytes) (local.get $bytes)))
+  ${[0, 1, 2, 3, 4, 5, 6].map(k =>
+    `(if (i32.eq (local.get $k) (i32.const ${k})) (then (global.set $rep_d${k} (i32.add (global.get $rep_d${k}) (i32.const 1)))))`).join('\n  ')})
+(func (export "get_rep_stat") (param $i i32) (result i32)
+  (if (i32.eq (local.get $i) (i32.const 0)) (then (return (global.get $rep_runs))))
+  (if (i32.eq (local.get $i) (i32.const 1)) (then (return (global.get $rep_bytes))))
+  ${[0, 1, 2, 3, 4, 5, 6].map(k =>
+    `(if (i32.eq (local.get $i) (i32.const ${k + 2})) (then (return (global.get $rep_d${k}))))`).join('\n  ')}
+  (if (i32.eq (local.get $i) (i32.const 9)) (then (return (global.get $rep_dbytes))))
+  (i32.const 0))
+
+;; Is [lin, lin+bytes) one plain range: inside the address mask and the wasm
+;; memory, and clear of the VGA window when the planar key is on?
+(func $rep_span_ok (param $lin i32) (param $bytes i32) (result i32)
+  (local $key i32) (local $win i32)
+  (if (i32.gt_u (local.get $bytes)
+                (i32.sub (i32.add (global.get $linmask) (i32.const 1)) (local.get $lin)))
+    (then (return (i32.const 0))))
+  (if (i32.gt_u (local.get $bytes) (i32.sub (i32.const ${isa.MEM_PAGES * 65536}) (local.get $lin)))
+    (then (return (i32.const 0))))
+  (local.set $key (i32.load (i32.const ${isa.VGA_CTL_KEY})))
+  (if (i32.eqz (local.get $key)) (then (return (i32.const 1))))
+  (local.set $win (i32.and (local.get $key) (i32.const 0xFFF0000)))
+  (i32.eqz (i32.and (i32.lt_u (local.get $lin) (i32.add (local.get $win) (i32.const 0x10000)))
+                    (i32.gt_u (i32.add (local.get $lin) (local.get $bytes)) (local.get $win)))))
+
+;; No byte of [lin, lin+bytes) is compiled code. A byte of the bitmap covers
+;; eight guest bytes, so this is bytes/8 loads; conservative at the ends.
+(func $code_clear (param $lin i32) (param $bytes i32) (result i32)
+  (local $p i32) (local $e i32)
+  (local.set $p (i32.add (i32.const ${isa.CODE_BITMAP}) (i32.shr_u (local.get $lin) (i32.const 3))))
+  (local.set $e (i32.add (i32.const ${isa.CODE_BITMAP})
+    (i32.shr_u (i32.add (local.get $lin) (i32.sub (local.get $bytes) (i32.const 1))) (i32.const 3))))
+  (loop $l
+    (if (i32.load8_u (local.get $p)) (then (return (i32.const 0))))
+    (local.set $p (i32.add (local.get $p) (i32.const 1)))
+    (br_if $l (i32.le_u (local.get $p) (local.get $e))))
+  (i32.const 1))
 
 ;; Absolute physical read, for the interrupt vector table at address 0. It is
 ;; not reachable through $rd16, which always goes via a segment register.
@@ -5181,6 +5442,35 @@ const EXTRA_GLOBALS = `
 ;; MUL touching only CF and OF, or a shift, or SAHF -- calls $flags_sync first
 ;; and then works on the word. Cold paths, so they pay for the laziness of the
 ;; hot ones.
+;; --- The VGA clock ---------------------------------------------------------
+;;
+;; Emulated time is the dispatch count (see dos-loop.js), and a slice is a
+;; budget of $slice_budget steps counted down in $steps -- so "now", inside a
+;; slice, is $vga_phase0 + $slice_budget - $steps dispatches into the current
+;; frame, where the host wrote $vga_phase0 = dispatched mod $vga_period before
+;; it called run(). That is the number port 3DAh answers from: bit 3 (vertical
+;; retrace) for the first $vga_vb dispatches of each period, bit 0 (display
+;; disabled) through the retrace and through the first $vga_hb of every
+;; $vga_line-long scanline. The read is PURE. The old model flipped bit 3 on
+;; every read, so a frame-paced demo's guest time per frame depended on how
+;; many times it polled -- twice, in the best case -- and the retrace IRQ ran
+;; on its own cadence with no relation to what the port said.
+;;
+;; The defaults are a 70Hz frame on the 100k-dispatch timer interval dos-loop
+;; uses (100e3 * 18.2 / 70 = 26000), 449 lines, so a build that never sets
+;; them still answers with a moving clock rather than trapping on a zero
+;; divisor.
+(global $slice_budget (mut i32) (i32.const 0))
+(global $vga_phase0 (mut i32) (i32.const 0))
+(global $vga_period (mut i32) (i32.const 26000))
+(global $vga_vb (mut i32) (i32.const 2340))
+(global $vga_line (mut i32) (i32.const 57))
+(global $vga_hb (mut i32) (i32.const 11))
+;; The attribute controller's index/data flip-flop lives here because reading
+;; 3DAh resets it, and that read no longer reaches the host.
+(global $attr_flip (mut i32) (i32.const 0))
+;; 3DAh reads, for the run report (the host's clock.retrace).
+(global $vga_reads (mut i32) (i32.const 0))
 (global $fop (mut i32) (i32.const 0))
 (global $fa (mut i32) (i32.const 0))   ;; first operand
 (global $fb (mut i32) (i32.const 0))   ;; second operand
@@ -5381,6 +5671,18 @@ ${EXTRA_GLOBALS}
 (func (export "get_d32") (result i32) (global.get $d32))
 (func (export "get_cr0") (result i32) (global.get $cr0))
 (func (export "get_vm86") (result i32) (global.get $vm86))
+;; The VGA clock's host side: the phase dos-loop writes before every slice,
+;; the attribute flip-flop the host's out 3C0h reads, and the read count.
+(func (export "set_vga_phase0") (param $v i32) (global.set $vga_phase0 (local.get $v)))
+(func (export "get_vga_phase0") (result i32) (global.get $vga_phase0))
+(func (export "get_vga_period") (result i32) (global.get $vga_period))
+(func (export "get_attr_flip") (result i32) (global.get $attr_flip))
+(func (export "set_attr_flip") (param $v i32) (global.set $attr_flip (local.get $v)))
+(func (export "get_vga_reads") (result i32) (global.get $vga_reads))
+(func (export "set_vga_reads") (param $v i32) (global.set $vga_reads (local.get $v)))
+(func (export "vga_status") (result i32) (call $vga_status))
+;; The widened REP MOVS/STOS (see $rep_span_ok); --no-rep-fast is the A/B arm.
+(func (export "set_rep_fast") (param $v i32) (global.set $rep_fast (local.get $v)))
 ;; A hardware IRQ, delivered the same way the CPU delivers everything else.
 ;;
 ;; The host used to build this frame itself, and could only build the real-mode
@@ -5589,6 +5891,7 @@ function runExport() {
 (func (export "run") (param $entry i32) (param $budget i32)
   (global.set $ip (local.get $entry))
   (global.set $steps (local.get $budget))
+  (global.set $slice_budget (local.get $budget))
   (global.set $left (i32.const -1))
   (global.set $halt (i32.const 0))
   (call $next))
@@ -5678,6 +5981,10 @@ module.exports = {
   // instead of running it. The compiler swaps it in when the taken edge goes
   // back to the branch's own block head.
   SPIN,
+  // A fused cmp/test_ri8+jcc handler -> the twin of the whole `in al,dx` +
+  // pair block that polls 3DAh inside one handler. The compiler swaps it in
+  // for a 2-op block [in_8, fused] whose taken edge is its own head.
+  PSPIN,
   // Every branch handler -> where its taken edge's guest ip sits in the operand
   // list, eligible for collapse or not. tools/toyvm/spin-census.js reads it to
   // find self-loop blocks the current rule declines.

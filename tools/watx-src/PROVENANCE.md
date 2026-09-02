@@ -79,13 +79,13 @@ add a CHANGELOG entry in the same commit — that pairing is enforced by the sea
 at the bottom of this file, not left to whoever is editing.
 
 ```sha256
-b8068704e35bb4e41db2dd17324d5c629ac753faa64416dbdd412a97e36c40ab  tools/watx.js
-f7b02737864024e94bb59d191bc0169291db47731cc19d9cf52822c31ba8484a  tools/watx-src/compiler-parser.js
+d04ed1d5ca74fc1b6f10357576a38e726d58f0ad908ccf34a29de35052aa1a33  tools/watx.js
+ea4a14dd488cddf51ca135a2aeddc93cc60c3f8daf132044eb7c5d73e8803f8b  tools/watx-src/compiler-parser.js
 04e4cd47eed87f1842fac3e3df5cc42c31ef9ff39634b8c153304927e14f257a  tools/watx-src/compiler-stages.js
-fd26c5c414fdb980b213f2072f9490037c2a0f41fde006332a0da8b532588fcc  tools/watx-src/compiler-codegen.js
-b85a780ec3d53fa0a9a9b335839504f24c5ca7288a75885c2c0823b8bd9dd550  tools/watx-src/compiler.js
+84744dbdef3897f589f1c1465cc6d3025448250df09b1254369fdb16f73fa94d  tools/watx-src/compiler-codegen.js
+0633b916abfcab30ba5f2698b27da2454ae387afd3c781e1c35d21c8506f5175  tools/watx-src/compiler.js
 293c1a233359bf142bf5badceb3399c92b79a653a86085681142b2037d80fce4  test/watx-compiler-wine-parity.test.js
-0621e7d6662f2ba61051741a58180fb28e4eb8a899260c7ad0c475e73ba46784  test/watx-compiler-production.test.js
+282b11b841b8e676c7d514280cf9794795c1c367a28a5e3a2742733b3b27caf8  test/watx-compiler-production.test.js
 a62f1ab8fc157e97fa0ed2bb9ce321464a0b792c4d218e6bbd649c29b06c6519  test/watx-compiler-emit-stack.test.js
 5dc16a25724f8a77179a45cc5113de820c35dfaf2b620d8a940ba6c1aca275f8  test/watx-compiler-br-table.test.js
 afd4baa36b08662bbba4bc6c0ae6fa695165f9b8a2bfe2d4798d78bdfb3cadbe  test/watx-compiler-bulk-memory.test.js
@@ -146,6 +146,6 @@ without re-sealing. Both lines are rewritten together by
 CHANGELOG already names the new digest.
 
 ```seal
-manifest-sha256   4bb4f93624faee26c4d4ceb13da53cae958f509627883db49c6b46199a989e11
-changelog-sha256  de03ed981eff139e4a9e8a75014e80b8a0967f99a62828dd47eb794e2d61a3d0
+manifest-sha256   f01eda98e2243b5bd64ade886fac9caa162a11455ad21e974b749c814bd8246b
+changelog-sha256  005825db990212427008adcf7c5837f44e906d57101434359ce0643c2f960896
 ```

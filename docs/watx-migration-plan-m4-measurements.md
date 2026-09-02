@@ -314,6 +314,33 @@ Note that this browser number (≈162 MB over baseline) is **not** comparable wi
 the 214.6 MB in §4.1: that one measured `host.js`'s full launch path, this one
 measures the compile alone. Compare it only against its own `before` arm.
 
+### 4.4 Intern the body vocabulary, not every literal (2026-09-01)
+
+Production deliberately reparses and recycles one function body at a time. The
+list arena was already reused, but every occurrence of common symbols such as
+`local.get`, `$x`, and `i32.const` still allocated a fresh sliced string. Keeping
+only the body parser's symbol pool across functions reduces that nursery churn;
+number and string literals remain uninterned, so their module-wide unique set is
+not retained.
+
+Fresh-process A/B runs used the current 1,000,009-byte tail-call closure and
+`process.resourceUsage().maxRSS`, with arm order rotated. The Wasm SHA-256 was
+`6ce062465d447a30f91e9015d2cf2d47e040f4210a1d31770d2fa15c4d3f5760` in every
+arm.
+
+| | no body interning | symbols only | delta |
+|---|---:|---:|---:|
+| median max RSS (4 pairs) | 213.2 MB | 207.2 MB | **-5.9 MB** |
+| paired result | — | lower in 4/4 | -4.0 to -8.4 MB |
+| median compile wall | 2.06 s | 2.07 s | noise |
+
+Interning numbers and strings as well was rejected: it retained about 2 MB more
+live heap and lost the peak-RSS comparison in 4 of 5 rotated pairs. Trying to
+discourage optimization of the monolithic expression dispatcher was worse too:
+RSS rose by tens of MB and compile time by roughly a third. The symbols-only
+change is the measured middle ground: a small additional dictionary replaces a
+large stream of short-lived duplicate strings.
+
 ## 5. What is still unmeasurable here, and what the gate says
 
 - **Real iOS Safari on a device: not measured, cannot be measured from this

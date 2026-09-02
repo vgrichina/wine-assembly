@@ -203,3 +203,403 @@ Reading it:
    without a payoff on this corpus.
 4. A `nocache` arm needs an agreement rule that tolerates a moving dispatch
    count, or the block cache stays unmeasurable.
+
+## 5. Re-measure of the two unresolved arms (2026-09-02)
+
+Same 20, `--dispatches=12m --reps=7 --cpu-time`, fusion kept as the control.
+Load 3.0 at start, **13.2 at end** (other agents), spread p50 26%.
+
+| arm removed | min-of-7 | paired | arm ahead (min / paired) |
+|---|---:|---:|---:|
+| fusion | **−8.6%** | −7.7% | 2/20 / 1/20 |
+| dead-flag elimination | −1.1% | −0.2% | 5/20 / 9/20 |
+| decoder in wasm | −0.3% | +0.1% | 6/20 / 6/20 |
+
+The section-2 "slightly negative" reading on dead flags and the wasm decoder
+was load: at 7 reps both are **zero** on this corpus, in both statistics, with
+the arm-ahead counts sitting at chance. The control sharpened the other way
+(−5.5% → −8.6%, 17/20 → 19/20 losing). Neither pass pays here and neither
+costs; they stay on the "complexity without a measured payoff" list.
+
+## 6. All three backends on one scale
+
+Every column below is a **whole-program percentage against the `tailcall`
+interpreter**. The interpreter arms and the region census measure it directly
+(CPU time). The micro-op tiers measure a hot-trace ratio, so they are converted
+with the same formula the region ceiling uses, `share × (1 − 1/tier-3 ratio)`,
+using `sweep-dos`'s own hot-trace share. Shell columns are `sweep-dos` wall
+minima (it has no `--cpu-time`); everything else is CPU.
+
+```
+program       ns    repl% nofuse% nodead% nowasm%  mshare% t03x  mceil%  jshare% gate  jceil%  +hb  jcpu%  verdict
+DHADREN.EXE   15.69  6.3   -5.2    -2.1    -1.0      -      -     -        -      -     -      -     -     no-samples
+DTM2.EXE       8.09  5.8  -21.6    -0.7    -0.3     51.2   2.04  26.1      -      -     -      -     -     no-loop
+ACCIDENT.EXE  12.33  6.5  -10.0    -3.7    -0.6      1.9   3.44   1.3     10.7    -     -      -    -5.3   identical
+B-STEEL.EXE   11.52 10.0   -3.9    -0.5    -0.2     15.0   -      -       22.2    -     -      -    14.4   identical
+RUNDEMO.EXE   10.23  2.6  -10.0     0.0    -0.5      1.7   1.79   0.7      0.0   3.79   0.0    0     8.5   identical
+CMA_SHRT.EXE  14.00 11.1   -2.4    -2.2     0.1    100.0   3.47  71.2      -      -     -      -     -     no-loop
+CONTAGIO.EXE  47.26  0.9   -0.1     2.3    -0.7     17.4   2.22   9.5      0.0   5.33   0.0  -32     1.7   identical
+CYCLE.EXE     13.11  7.2  -13.3    -2.3     2.4      2.7   3.72   1.9     12.7   1.73   5.4    0    -6.8   identical
+DEMO5.EXE      9.97  9.4   -3.9     0.3    -1.2    100.0   1.36  26.4      -      -     -      -     -     no-loop
+BRW.EXE       20.80 17.5   -3.1    -2.1    -2.4      6.8   5.61   5.6      1.4   3.04   0.9  -17    14.6   identical
+ADDY_II.EXE   17.12  9.4   -6.5    -0.1    -1.2      7.5   2.55   4.6     28.0   4.18  21.3    0     3.2   identical
+COMPOVRS.EXE  11.98  8.6   -6.7    -2.1    -0.2    100.0   3.49  71.4      0.0   5.21   0.0 -184    71.0   phase
+COPPER.EXE    28.89  9.3    0.6     1.0     1.4      -      -     -        -      -     -      -     -     no-samples
+CORE-ADD.EXE  13.86 11.1   -2.4    -2.7     0.4     26.3   1.91  12.5      -      -     -      -     -     no-loop
+CONTACT.EXE   14.14 14.9    0.3     1.7    -3.0     99.7   3.19  68.4      0.0   4.67   0.0 -241   117.5   phase
+DRAGON.EXE    13.61 13.9   -4.8    -3.1     0.0      2.2   8.79   2.0     10.0   8.33   8.8    0    -4.5   identical
+ASYLUM.EXE*   15.07  8.5   -3.8    -1.3    -1.5      5.4   4.68   4.3     45.5   1.92  21.8    0    22.0   identical
+DSTNFO.EXE    10.75  8.9  -17.1    -2.1     1.1     12.3   3.49   8.8      -      -     -      -     -     no-loop
+DREAM.EXE     16.10  8.8   -7.4    -0.3     1.6      3.2   5.00   2.5    100.0   2.39  58.1  -15    27.6   identical
+daretro.exe    9.80  8.4  -40.3    -0.8    -0.4     99.7   2.50  59.8      -      -     -      -     -     no-loop
+```
+
+`ns` = tailcall ns/dispatch. `repl` = `repl_tailcall` shell. `nofuse/nodead/
+nowasm` = arm without that pass (section 5). `mshare/t03x/mceil` = micro-op
+hot-trace share, tier-3 ratio, converted whole-program ceiling. `jshare/gate/
+jceil/+hb/jcpu` = region census share, gate ratio, ceiling, handback delta,
+measured CPU %. `*` the census's ASYLUM columns are `1995-a-asylum/`, matched by
+basename; the set's 1994 file is `no-loop`.
+
+Geomeans on that scale: `repl_tailcall` **+8.9%**; fusion **+8.6%** (the
+arm without it is −8.6%, median program −4.8%); dead flags 0; wasm decoder 0;
+micro-op ceiling over the 17 benchable **+19.7%** (median 8.8%: bimodal, see
+outliers); region JIT measured over the 12 census rows **+18%**, and **+7%**
+over the 10 `identical` ones (the two `phase` rows are the +71/+117 pair).
+
+### Outliers, with their numbers
+
+- **daretro.exe: −40.3% without fusion.** A 3-op hot loop at 99.7% share;
+  fusion is most of its interpreter speed. DTM2 −21.6%, DSTNFO −17.1%, CYCLE
+  −13.3% are the same effect on 1–6-op loops. Fusion's +8.6% geomean is
+  carried by these; the median program is −4.
+- **CONTAGIO.EXE: 47.26 ns/dispatch, 3.5x the corpus median (13.6).** Every
+  interpreter pass is ±2% on it and `repl_tailcall` is +0.9%, its only
+  sub-1% row. It takes 20,360 interrupts in 6M dispatches; the cost is
+  host-side, and no VM-side optimization reaches it. COPPER (28.89 ns) is the
+  same shape with no samples at all.
+- **COMPOVRS +71%, CONTACT +117.5%, at a reported 0.0% share.** The region
+  removes 184 and 241 handbacks and the micro-op sweep puts the same loop at
+  100% of samples with a 71%/68% ceiling. The census share is wrong for
+  both; they are the two biggest JIT wins in the set and the census cannot
+  see why. Both are `phase`, not `identical`, so a verdict at a second budget
+  is still owed.
+- **DREAM: region +27.6% under a +58.1% ceiling, share 100%** — while the
+  micro-op sampler puts its hot trace at 3.2%. Same sampler disagreement as
+  above, in the other direction.
+- **Five programs with a big micro-op ceiling and no region**: daretro 59.8%,
+  CMA_SHRT 71.2%, DEMO5 26.4%, DTM2 26.1%, CORE-ADD 12.5% are all `no-loop`.
+  That is 5 of the 7 `no-loop` rows, and it is the JIT's real coverage gap:
+  the hottest code is a loop the tier ladder can bench but `pickRegion`
+  cannot close.
+- **DRAGON: tier 3 is 8.79x on its hot trace and that is worth 2.0%**
+  whole-program (2.2% share). Highest ratio in the set, smallest payoff;
+  ratios without shares are not numbers.
+- **BRW: `repl_tailcall` +17.5%**, twice the geomean, on the longest hot
+  trace (43 ops).
+- **B-STEEL: region +14.4% with no gate ratio** — the gate returned
+  INCONCLUSIVE (internal branch), so its ceiling is unknown and the +14.4%
+  stands alone. ACCIDENT (−5.3%) is the same case.
+- **CMA_SHRT's section-2 row (+22–28% on every removed arm) did not recur**:
+  at 7 reps it is −2.4/−2.2/+0.1. Load artifact, confirmed.
+
+## 7. Iterating on the outliers (2026-09-02)
+
+### The 0.0% share was a profiler-attribution bug, now fixed
+
+`pickRegion` credited a region with the samples inside the *arena spans* of
+the blocks its walk went through. Two things break that. A region installs
+by guest ip and absorbs every arena copy of that code, while the interpreter
+holds several (COMPOVRS's loop is entered at 0x338 and at 0x353, and 0x353 is
+its own block). And the profiler charges each sample to its block's *head*:
+COMPOVRS's 142 samples all sit in a block traced from 0x329 — fifteen bytes of
+run-in ending in `jmp 0x338` — whose head is outside the region while nearly
+every word of it is inside. Under `--why` the pick now prints the region's
+guest range beside the top sampled blocks, which is how this was seen:
+
+```
+COMPOVRS   region guest 1100:338-353; top sampled blocks 1100:329-32a x142
+CONTACT    region guest 1d790:cf-ec;  top sampled blocks 1d790:cd-ce x148
+```
+
+The share is now counted per region block by **guest extent overlap or a
+branch target inside the region** — the only two things an arena block
+publishes about where it is. Three revisions were needed, each measured:
+
+| test | COMPOVRS | CONTACT | RUNDEMO | B-STEEL | ADDY_II |
+|---|---:|---:|---:|---:|---:|
+| arena spans (old) | 0.0% | 0.0% | 0.0% | 22.2% | 28.0% |
+| head ip in region hull | 0.0% | 0.0% | 0.0% | 22.2% | 28.0% |
+| extent overlaps hull | 0.0% | 0.0% | 32.5% | **96.5%** | 41.5% |
+| extent overlap **or branch target**, per block | **100%** | **100%** | 32.5% | 28.5% | 48.3% |
+
+The hull version over-credited B-STEEL to 96.5% because a chain's farthest
+fall-through can be a call's return point far away; per-block ranges fix it.
+CONTAGIO stays at 2.2% — its samples are in another segment — and it is the
+one region in the set that really is cold.
+
+Census over the 20 with the fix (`--dispatches=6m --reps=2`, load 3–4):
+
+| program | share | gate | ceiling | +hb | speed |
+|---|---:|---:|---:|---:|---:|
+| COMPOVRS | 100.0% | 3.16x | +68.3% | -184 | +125.4% |
+| CONTACT | 100.0% | 3.38x | +70.4% | -241 | +119% |
+| DREAM | 100.0% | 1.98x | +49.4% | -15 | +29.3% |
+| ASYLUM (1995) | 76.1% | 3.69x | +55.5% | +0 | +22.2% |
+| ADDY_II | 48.3% | 2.47x | +28.8% | +0 | +9.5% |
+| RUNDEMO | 32.5% | 4.16x | +24.6% | +0 | -14.5% |
+| B-STEEL | 28.5% | — | — | — | +0.1% |
+| CYCLE | 13.3% | 1.89x | +6.3% | +0 | -28.9% |
+| DRAGON | 12.9% | 4.06x | +9.7% | +0 | -7% |
+| BRW | 11.1% | 5.36x | +9% | -17 | +10% |
+| ACCIDENT | 10.7% | — | — | — | +0.9% |
+| CONTAGIO | 2.2% | 3.26x | +1.5% | -32 | +12.1% |
+
+Two readings. **The ceiling now ranks the JIT wins correctly**: the four
+largest ceilings are the four largest measurements. And **a measurement above
+its ceiling is the handback column**: COMPOVRS and CONTACT beat theirs by
+~50 points while removing 184 and 241 handbacks, so the formula, which prices
+the body only, is a floor whenever `+hb` is negative. The `speed` column at
+2 reps and 6M dispatches is still ±20% (RUNDEMO −14.5% and CYCLE −28.9% with
+zero extra handbacks are noise; CYCLE read −6.8% the night before), so the
+share fix moved the *ceiling* column, which is the one to rank by.
+
+### The five `no-loop` programs with big micro-op ceilings
+
+`--why` at 12M, deepest rejection per program:
+
+| program | micro ceiling | why no region | what that means |
+|---|---:|---|---|
+| daretro.exe | 59.8% | `1 ops < 4` | the hot loop is **one fused op**; it is what fusion's −40% is. Nothing for a region to fold |
+| DEMO5.EXE | 26.4% | `ends jmp_spin` | a spin-wait the spin pass already rewrote; the tier ladder benched a busy loop. **The 26% is a phantom** |
+| DTM2.EXE | 26.1% | `ret with no inlined call` ×3 | loop through `ret`; the `splitExit()` work item |
+| CORE-ADD.EXE | 12.5% | `ends call_far` ×6 | loop through a far call; Design B territory |
+| CMA_SHRT.EXE | 71.2% | (region at 12M, not at 6M) | installed: **+0.9%**, frame identical, +284 handbacks, gate INCONCLUSIVE (internal branch). The body exits every iteration; the 71% does not convert |
+
+So of the five, two are not gaps at all (daretro is fusion's win already
+taken, DEMO5 is a spin), one converts to nothing when built, and two are the
+known `ret`/`call_far` blockers. The micro-op ceiling column over-promises on
+exactly the loops a region cannot close, which is worth knowing before
+quoting its +19.7% geomean as JIT headroom: the realizable part is what
+`region-census` measures.
+
+## 8. Whole programs: every hot loop, then every hot trace (2026-09-02)
+
+§3–§7 installed **one** region per program, so "region JIT" there meant
+"the single hottest loop", and the micro-op tiers were only ever a snapshot
+bench of one trace. Both limits are ours, not the backends', so this section
+removes them and re-measures the 20 on one scale.
+
+**What changed in `region-jit.js`** (commit after dd7426dd):
+
+- `--regions=N` picks up to N regions. A pick state carries across picks: a
+  second walk may not share an arena block with an installed region, nor
+  *guest bytes* (the interpreter holds several arena copies of one loop, and
+  ADDY_II's nest read 391% of samples over six overlapping regions before the
+  guest-extent gate; 196% after an arena-only gate), and a sampled block is
+  credited to one region, so the shares add to the union's share.
+- An extra region past the primary pick is declined when its gate is
+  INCONCLUSIVE. ASYLUM'95's fifth region (255 ops, 32 exits, no register
+  promotion) was entered 3404 times at 0.3 iterations per entry and added
+  3213 handbacks; with it declined the four others add −2.
+- `--straight` is the trace-JIT form: every candidate is tried as a closing
+  loop first, and what does not close is walked greedily along the hotter
+  edge and installed as a region whose last transfer exits with `$gip`
+  published. A walk that revisits a block on its own path anchors there (that
+  block is a loop head — without this ADDY_II's trace left through the inner
+  back edge every pass, 98.8% share, −0.2%). Trying the loop pass over all
+  candidates before any trace pass matters too: ASYLUM'95's hottest block
+  does not close and its greedy trace is 328 ops at 1.06x, while the 9-op
+  loop its branch targets is 2.0x (+0.2% against +17–21%).
+- `--straight --once` is the pure micro-op arm: the same regions with the
+  back edge disabled, so a loop pays an entry and an exit per iteration.
+  That is "compile the hot blocks, keep the interpreter's control flow".
+- `region-census.js` gained an `n` column (regions installed) and reports
+  the combined share.
+
+**The four arms**, all `--dispatches=12m --reps=2 --jobs=2`, same profile
+budget so the picks are comparable, load 4–9 during the runs (so `speed` is
+±10% and `ceiling` is the load-free column). `n` = regions installed; `-`
+= no region; the two `no-samples` programs (DHADREN, COPPER) and DEMO5
+(spin loop) get nothing in any arm and are omitted.
+
+| program | 1 loop ceil / speed | all loops n / ceil / speed | loops+traces n / share / ceil / speed | traces, no back edge speed |
+|---|---:|---:|---:|---:|
+| COMPOVRS | +81 / **+197** | 1 / +79 / +199 | 1 / 100% / +80 / **+205** | +123 |
+| CONTACT | +77 / +189 | 1 / +76 / +187 | 1 / 100% / +76 / **+200** | +185 |
+| DTM2 | - | - | 1 / 100% / (gate n/a) / **+55** | +14 |
+| DREAM | +49 / +25 | 2 / +72 / +35 | 2 / 99% / +71 / +34 | +36 |
+| ASYLUM (1995) | +32 / +22 | 4 / +40 / +20 | 4 / 72% / +38 / +17 | +21 |
+| B-STEEL | - / +10 | 1 / - / +7 | 4 / 55% / +13 / **+21** | +22 |
+| BRW | +5 / −3 | 5 / +19 / +7 | 6 / 28% / +21 / +10 | +20 |
+| CORE-ADD | - | - | 1 / 2.5% / +2 / +11 | +12 |
+| ADDY_II | +38 / +1 | 2 / +58 / **+15** | 2 / 99% / +59 / +9 | +8 |
+| DRAGON | +25 / +15 | 2 / +25 / +4 | 6 / 87% / +37 / +8 | +16 |
+| CMA_SHRT | - / +1 | 1 / - / +3 | 1 / 100% / - / +10 | +3 |
+| ASYLUM (1994) | +4 / +1 | 1 / +4 / −2 | 3 / 20% / +8 / +5 | −5 |
+| RUNDEMO | +25 / +3 | 1 / +25 / +3 | 1 / 34% / +26 / −7 | −2 |
+| CONTAGIO | +2 / +9 | 1 / +2 / −2 | 1 / 2% / +2 / −1 | +2 |
+| CYCLE | +3 / −4 | 3 / +5 / −2 | 3 / 21% / +12 / −3 | −3 |
+| ACCIDENT | +3 / 0 | 5 / +7 / −2 | 8 / 27% / +13 / −5 | −2 |
+| DSTNFO | - | - | 2 / 25% / 0 (gate 1.00x) / −7 | −1 |
+| daretro | - | - | 1 / 0.3% / - / −8 | −4 |
+| programs measured | 14 | 14 | 18 | 18 |
+| mean speed, same 14 | +33.2 | +33.7 | **+35.9** | +30.2 |
+| mean ceiling, same 14 | +24.6 | +29.5 | **+32.5** | — |
+| mean speed, all 18 | — | — | +30.8 | +24.7 |
+
+Frame-identical (or `phase`, the known COMPOVRS/CONTACT phase difference) on
+every row of every arm.
+
+**Readings.**
+
+1. **Coverage is the lever, not the body.** Going from one loop to all
+   loops moves the mean ceiling from +24.6 to +29.5; adding traces moves it
+   to +32.5 and reaches four more programs. The per-program share tells the
+   story: DRAGON 65%→87%, BRW 7%→28%, B-STEEL 22%→55%, ACCIDENT 9%→27%,
+   ADDY_II 58%→99%, DREAM 68%→99%. Nothing about the compiled body changed
+   between the arms.
+2. **The back edge is what the region JIT buys over micro-ops.** The last
+   two columns are the same regions with and without it. Where a loop
+   iterates many times per entry the gap is the whole win: COMPOVRS +205
+   against +123, DTM2 +55 against +14, CMA_SHRT +10 against +3. Where the
+   loop runs a few iterations per entry (ASYLUM'95 at ~3.8, DREAM, B-STEEL)
+   the two arms read the same, because an entry and an exit per pass is what
+   the interpreter's dispatch already cost. So "micro-ops on hot blocks" is
+   worth about **+30** on the same 14 where loops are worth **+36**, and the
+   difference is concentrated in the four long-running loops.
+3. **Traces reach what loops cannot, cheaply.** DTM2 (loop through `ret`)
+   and CORE-ADD (loop through `call_far`) were `no-loop` in every earlier
+   census; as straight traces they measure +55 and +11 with `+0` handbacks.
+   B-STEEL, whose one loop bought nothing, gets four regions at 1.29x for
+   +21. The straight walk stops *before* a block that ends in an un-inlined
+   `ret` or a non-transfer, so a trace is never installed without an ip to
+   leave on.
+4. **The small ceilings are noise either way.** CYCLE, ACCIDENT, CONTAGIO,
+   RUNDEMO, DSTNFO, the 1994 ASYLUM: every arm's ceiling is under +13 and
+   every measurement is within the ±10% the load allows. RUNDEMO's 34% share
+   at 3.3–5.0x reads −7 to +3 across the arms — its region is 4 ops, and
+   the entry cost per pass is the same order as the body. Rank these by
+   ceiling and do not expect a run at load 5 to separate them.
+5. **What is still ours.** No nested regions: ADDY_II's outer 46-op loop and
+   its inner 6-op loop share bytes, so only one is installed per profile
+   (the outer in the loop arms at +15, both never). A region's ops column
+   sums the *picked* regions, declined ones included. And `+hb` counts
+   `$slice_exit` handbacks only — a `--once` region's per-iteration exit is
+   resolved through the block-cache lookup and is invisible there; the
+   `--trips` line's region-entry count is where it shows.
+
+Reproduce: `node tools/toyvm/region-census.js --dir=/tmp/demos
+--only=<bench-set-20 basenames> --dispatches=12m --reps=2 --jobs=2
+--args='--straight --regions=8'` (add `--once` to the args for the last
+column, drop `--straight` for the loops-only arm, drop `--args` for the
+single-loop arm).
+
+
+## 9. Detour arms, and two clocks that were ours (2026-09-02)
+
+§8 left ADDY_II at +15 with its whole nest (99% share) compiled, and three
+things stood between that and its ceiling. All three were in our tooling,
+not in the demo, and each one showed up as a frame that DIFFERED against a
+region that was executing every instruction correctly.
+
+**What changed** (commit after 69c61d37):
+
+- **Detour arms.** The unfollowed edge of a conditional inside the region,
+  when what lies behind it is a few straight blocks that rejoin the path, is
+  compiled *inside the branch arm* instead of being an exit: the ops, then
+  the join (`br` to a forward block, an inner-loop `br`, or the head's back
+  edge). ADDY_II's row loop takes its `jb` arm (`inc [x]; jmp rejoin`) on
+  nearly every row, so the 50-op region that was frame-IDENTICAL absorbed
+  0.9% of dispatches — every row left through that exit. With the arm: 49%.
+- **Structure inside a detour.** A detour is walked as straight blocks, but
+  what it *contains* can loop: ADDY_II's fall-first pick puts the whole L1
+  row body (`cld; mov; mov; cmp/jz; mov; cmp/ja; mov; add; add; loop`) behind
+  its `jle`. As a flat arm that drew ONE pixel and left (21,244 exits for
+  21,609 entries, +20% against a +67% ceiling). A transfer whose edge names
+  an earlier op of its own arm is now an inner loop `(block (loop ...))`,
+  and one naming a later op is a forward block — the main path's shape in
+  miniature, with steps billed before every label boundary. 86.5% absorbed,
+  573 entries at ~518 iterations each, **+51% CPU** (loops arm), frame
+  IDENTICAL and the guest counters exact at the stop.
+- **The synthetic jump charged a step.** `compile.js` emits a `jmp` word when
+  a decode runs into an existing block head, and `$next` charged it like any
+  other dispatch — so guest time depended on *which ips were heads*, i.e. on
+  compile order. Installing a region changes the heads, and the interpreter
+  arm paid ~45k fewer of these on ADDY_II than the baseline, with nothing
+  else different. It is now `jmp_syn`, a step-neutral twin (the decoder
+  oracle: 20000 random cases, 0 mismatches).
+- **The slice bill dropped the overshoot.** `$next` charges a step before it
+  runs a handler and a block only tests the budget at its transfer, so an
+  exhausted slice ends with `$steps` a few below zero. `dos-loop.js` billed
+  the quantum alone when `$left` came back negative; the overshoot is one
+  block under the interpreter and one billed chunk (or a whole `--once`
+  body) in a region, and the emulated clock IS the dispatch count. Two arms
+  doing identical work drifted apart by thousands of dispatches (−4356 at
+  4.7M on ADDY_II with the same registers and counters), the timer IRQ landed
+  on a different instruction, and the frame diverged. Every slice now bills
+  `budget - $steps`; the two arms agree to within tens at the same state.
+- **Diagnostics that found these:** `--peek-ds=OFF,…` prints guest counters
+  and registers at the stop for both arms — the exact-state check that a
+  frame cannot give (a demo holds one picture for ~50k dispatches);
+  `--exit-census` counts every `br $out` site by target ip; `--step-audit`
+  compares what a region charged against its instruction weights;
+  `--hist-diff` lists per-handler dispatch deltas between the arms; the
+  `hist region` line no longer sums the census slots as dispatches.
+
+**The three arms**, same 20 programs, `--dispatches=12m --reps=2 --jobs=3`,
+load 3.3–5.2. Cells are `n / share / ceiling / speed`; `-` = no region.
+
+| program | all loops n / share / ceil / speed | loops+traces n / share / ceil / speed | traces, no back edge n / share / ceil / speed |
+|---|---:|---:|---:|
+| COMPOVRS | 1 / 100% / +39 / +155 (phase) | 1 / 100% / +81 / +154 (phase) | 1 / 100% / +71 / +92 (phase) |
+| CONTACT | 1 / 100% / +76 / +190 (phase) | 1 / 100% / +77 / +152 (phase) | 1 / 100% / +65 / +145 (phase) |
+| DTM2 | - | 1 / 100% / - / +64 | 1 / 100% / - / +13 |
+| DREAM | 2 / 99% / +74 / +144 | 2 / 99% / +70 / +147 | 2 / 99% / +72 / +87 |
+| ASYLUM (1995) | 3 / 68% / +30 / +25 | 3 / 68% / +39 / +20 | 3 / 68% / +35 / +16 |
+| B-STEEL | 1 / 22% / - / +7 | 2 / 36% / +8 / +24 | 3 / 55% / +13 / +22 |
+| BRW | 6 / 30% / +20 / +5 | 7 / 32% / +19 / +7 | 7 / 32% / +22 / +7 |
+| CORE-ADD | - | 3 / 35% / +8 / -4 (phase) | 3 / 35% / +8 / +4 (phase) |
+| ADDY_II | 1 / 99% / +56 / +51 | 1 / 99% / +63 / +44 | 1 / 99% / +58 / +7 |
+| DRAGON | 3 / 71% / +25 / +15 | 5 / 31% / +16 / -3 | 5 / 93% / +44 / +9 |
+| CMA_SHRT | 1 / 100% / +67 / +3 | 1 / 100% / +59 / +2 | 1 / 100% / +65 / -2 |
+| ASYLUM (1994) | 1 / 5% / +3 / +0 | 3 / 20% / +8 / -10 | 3 / 20% / +8 / -3 |
+| RUNDEMO | 1 / 34% / +25 / -12 | 1 / 34% / +25 / -17 | 1 / 34% / +29 / -0 |
+| CONTAGIO | - | 1 / 2% / - / -11 | 1 / 2% / - / -11 |
+| CYCLE | 2 / 8% / +3 / -0 | 4 / 19% / +9 / -7 | 4 / 19% / +9 / +11 |
+| ACCIDENT | 1 / 7% / +3 / -19 | 8 / 25% / +10 / +24 | 8 / 25% / +9 / +19 |
+| DSTNFO | - | 1 / 80% / - / -8 | 1 / 80% / - / -5 |
+| daretro | - | 1 / 0% / - / -12 | 1 / 0% / - / +3 |
+| programs measured | 13 | 18 | 18 |
+| mean speed, same 14 (n) | +43.5 (13) | +37.6 (14) | +28.5 (14) |
+| mean ceiling, same 14 (n) | +35.1 (12) | +37.3 (13) | +38.3 (13) |
+| mean speed, all measured | +43.5 | +31.5 | +23.0 |
+
+Every installed region is frame-identical or `phase` (the known COMPOVRS /
+CONTACT / CORE-ADD phase differences) in every arm; no `differs`, no
+`frozen`.
+
+**Readings.**
+
+1. **ADDY_II is the point of this section:** +15 → **+51** in the loops arm
+   and +9 → +44 with traces, on the same 99% share, by giving the region the
+   other arm of its `if` and letting that arm loop. The remaining gap to the
+   +56 ceiling is the slice-end exits (`--exit-census`: 207 out of each row
+   loop head, 141 out of the palette loop) and the gate's own snapshot
+   error; there is no exit left that the guest's control flow forces.
+2. **The mean moved, on the same 14, from +33.7 to +43.5 (loops) and +35.9 to
+   +37.6 (loops+traces).** The loops column's mean is over 13: CONTAGIO's
+   profile picked no loop this run (its one region in §8 was 2% share, −2).
+   The `--once` arm reads +28.5 against +30.2 — noise at this load.
+3. **DRAGON's traces pick is unstable.** 93% share at +8 in §8, 31% at −3 in
+   this run's loops+traces column and 93% at +9 in the `--once` column of
+   the *same* build: the profile at 12M lands on different blocks between
+   runs and the greedy walk follows. That is a profiler-variance problem,
+   not a region one, and `--pick-only --why` on two runs shows it.
+4. **The billing change touches every dispatch count in this document.** A
+   count now includes each exhausted slice's overshoot (a few steps per
+   slice), so a frame taken at a fixed budget in §1–§8 may sit at a
+   different instruction under this build. The per-row verdicts here were
+   all re-taken; the older sections' *ratios* stand, their hashes do not.
+
+Reproduce: as §8, on this commit.

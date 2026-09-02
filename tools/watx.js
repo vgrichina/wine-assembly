@@ -28,6 +28,7 @@ const ctx = {
   TextEncoder, TextDecoder,
   Float32Array, Float64Array, Uint8Array, ArrayBuffer,
   Map, Set, RegExp, Array, Object, String, Number, Math,
+  Promise, Date, setTimeout, clearTimeout, setImmediate,
   parseInt, parseFloat, isNaN,
 };
 vm.createContext(ctx);
@@ -37,6 +38,7 @@ for (const f of FILES) {
 
 module.exports = {
   compile: ctx.compile,
+  compileAsync: ctx.compileAsync,
   tokenize: ctx.tokenize,
   parseSexpr: ctx.parseSexpr,
   parseSource: ctx.parseSource,

@@ -453,7 +453,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '251';
+  static SOURCE_VERSION = '272';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -596,6 +596,9 @@ class WineAssembly {
     this.onOpenGLContextCountChange = null;
     this.onGuestFrame = null;
     this.onRegistryValueChanged = null;
+    this._perfLogicalFrame = null;
+    this._perfCounterPoll = null;
+    this._perfCounterPollBusy = false;
     // Most programs replace a destroyed startup window immediately. A few
     // games tear down a warning/splash before doing substantial renderer
     // initialization, so the browser launcher may opt them into a longer
@@ -606,6 +609,95 @@ class WineAssembly {
     // they are not pumping messages. This remains opt-in per app: the normal
     // path still delivers the callback through the guest message loop.
     this.asyncMultimediaTimer = false;
+  }
+
+  _normalizePerfLogicalFrame(perf) {
+    const metric = perf && perf.logicalFrame;
+    if (!metric) return null;
+    const address = Number(metric.address);
+    if (!Number.isFinite(address) || address <= 0) return null;
+    const out = {
+      label: String(metric.label || 'GAME').slice(0, 12) || 'GAME',
+      address: address >>> 0,
+      verifier: 0,
+    };
+    const verifier = Number(metric.verifier);
+    if (Number.isFinite(verifier) && verifier > 0) out.verifier = verifier >>> 0;
+    return out;
+  }
+
+  async configurePerf(perf) {
+    this._stopPerfCounterPoll();
+    this._perfLogicalFrame = this._normalizePerfLogicalFrame(perf);
+    const hud = (typeof window !== 'undefined' && window.WinePerf) || null;
+    if (!this._perfLogicalFrame) {
+      if (hud && hud.setLogicalFrameMetric) hud.setLogicalFrameMetric(null);
+      return false;
+    }
+
+    const metric = this._perfLogicalFrame;
+    if (hud && hud.setLogicalFrameMetric) hud.setLogicalFrameMetric(metric);
+    try {
+      await this._armPerfCounter(0, metric.address);
+      if (metric.verifier) await this._armPerfCounter(1, metric.verifier);
+    } catch (err) {
+      console.warn('[perf] logical frame counter disabled:', err && err.message || err);
+      this._perfLogicalFrame = null;
+      if (hud && hud.setLogicalFrameMetric) hud.setLogicalFrameMetric(null);
+      return false;
+    }
+    this._startPerfCounterPoll();
+    return true;
+  }
+
+  async _armPerfCounter(slot, address) {
+    slot |= 0;
+    address >>>= 0;
+    if (this.guestWorker) {
+      await this.guestWorker.callExport('set_count', slot, address);
+      return;
+    }
+    const ex = this.instance && this.instance.exports;
+    if (ex && typeof ex.set_count === 'function') ex.set_count(slot, address);
+  }
+
+  async _readPerfCounter(slot) {
+    slot |= 0;
+    if (this.guestWorker) {
+      return (await this.guestWorker.callExport('get_count', slot)) >>> 0;
+    }
+    const ex = this.instance && this.instance.exports;
+    return ex && typeof ex.get_count === 'function' ? ex.get_count(slot) >>> 0 : 0;
+  }
+
+  _startPerfCounterPoll() {
+    if (typeof window === 'undefined' || this._perfCounterPoll || !this._perfLogicalFrame) return;
+    const poll = async () => {
+      if (this._perfCounterPollBusy || !this._perfLogicalFrame || this._stopped) return;
+      const hud = window.WinePerf;
+      if (!hud || !hud.logicalFrameCount) return;
+      this._perfCounterPollBusy = true;
+      try {
+        const primary = await this._readPerfCounter(0);
+        const verifier = this._perfLogicalFrame.verifier ? await this._readPerfCounter(1) : null;
+        hud.logicalFrameCount(primary, verifier);
+      } catch (_) {
+        this._stopPerfCounterPoll();
+      } finally {
+        this._perfCounterPollBusy = false;
+      }
+    };
+    poll();
+    this._perfCounterPoll = setInterval(poll, 500);
+  }
+
+  _stopPerfCounterPoll() {
+    if (this._perfCounterPoll) clearInterval(this._perfCounterPoll);
+    this._perfCounterPoll = null;
+    this._perfCounterPollBusy = false;
+    if (typeof window !== 'undefined' && window.WinePerf && window.WinePerf.setLogicalFrameMetric) {
+      window.WinePerf.setLogicalFrameMetric(null);
+    }
   }
 
   _pumpMultimediaTimer() {
@@ -1406,6 +1498,14 @@ class WineAssembly {
     h.duplicate_current_thread = (tid) => self.threadManager ? self.threadManager.duplicateCurrentThread(tid) : 0;
     h.suspend_thread = (handle) => self.threadManager ? self.threadManager.suspendThread(handle) : 0xFFFFFFFF;
     h.resume_thread = (handle) => self.threadManager ? self.threadManager.resumeThread(handle) : 0xFFFFFFFF;
+    h.get_thread_priority = (handle, tid) => self.threadManager
+      ? self.threadManager.getThreadPriority(handle, tid) : 0x7FFFFFFF;
+    h.set_thread_priority = (handle, priority, tid) => self.threadManager
+      ? self.threadManager.setThreadPriority(handle, priority, tid) : 0;
+    h.com_initialize_thread = (reserved, flags, tid) => self.threadManager
+      ? self.threadManager.initializeComApartment(reserved, flags, tid) : 0x8000FFFF;
+    h.com_uninitialize_thread = (tid) => self.threadManager
+      ? self.threadManager.uninitializeComApartment(tid) : 0;
     h.exit_thread = (c) => self.threadManager && self.threadManager.exitThread(c);
     h.get_exit_code_thread = (handle) => self.threadManager ? self.threadManager.getExitCodeThread(handle) : 0x103;
     h.terminate_thread = (handle, exitCode) => self.threadManager
@@ -1819,6 +1919,13 @@ class WineAssembly {
           const built = await window.watxLauncher.compileDetailed({ tailCalls }, {
             version: WineAssembly.SOURCE_VERSION,
             noStore: debugFetch,
+            // Diagnostic/low-memory escape hatch: compile cooperatively on the
+            // page thread, yielding between compiler stages and function
+            // bodies. The default remains a disposable Worker because it can
+            // compute in parallel; both paths dispose their compiler realm
+            // before Wine allocates shared memory.
+            cooperative: typeof location !== 'undefined' &&
+              new URLSearchParams(location.search).has('watx-main-thread'),
           });
           WineAssembly._assertSourceBuildLayout(built.layout);
           return WebAssembly.compile(built.bytes);
@@ -1971,7 +2078,7 @@ class WineAssembly {
       return;
     }
     try {
-      const res = await fetch('lib/host-import-sigs.generated.json?v=5');
+      const res = await fetch('lib/host-import-sigs.generated.json?v=7');
       if (!res.ok) throw new Error(`sigs HTTP ${res.status}`);
       const sigs = (await res.json()).sigs;
       const self = this;
@@ -1980,7 +2087,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=15',
+        workerUrl: 'lib/guest-worker.js?v=17',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
@@ -2682,6 +2789,7 @@ class WineAssembly {
     // loop that restarted itself on the second launch would be back to
     // holding a dead host forever.
     this._stopped = true;
+    this._stopPerfCounterPoll();
     this._cleanupAudio();
     // A deferred last-window teardown has nothing left to finish, and leaving
     // the deadline armed would run this a second time.
@@ -3966,6 +4074,10 @@ class WineAssembly {
           `EDX=${hex(edx)} ESI=${hex(esi)} EDI=${hex(edi)} stack=[${stack.join(',')}] yield=${yr}`;
         console.error('WASM crash:', e, state, tag);
         self.logToUI('ERROR: ' + e.message + ' @ ' + state + tag);
+        if (typeof self.onFatal === 'function') {
+          try { self.onFatal({ error: e, state, tag }); }
+          catch (reportError) { console.error('Unable to show crash report:', reportError); }
+        }
         // Repaints, unlike before: a crash that left the option off held the
         // dead app's last frame on screen, which reads as a hang rather than
         // as the exit it is.

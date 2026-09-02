@@ -4,22 +4,26 @@
 
   ;; 702: SetRectEmpty — zeroes out RECT
   (func $handle_SetRectEmpty (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
     ;; Zero out RECT at arg0: left, top, right, bottom = 0
-    (i32.store (call $g2w (local.get $arg0)) (i32.const 0))
-    (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 4)) (i32.const 0))
-    (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 8)) (i32.const 0))
-    (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 12)) (i32.const 0))
+    (i32.store (local.get $wa) (i32.const 0))
+    (i32.store offset=4 (local.get $wa) (i32.const 0))
+    (i32.store offset=8 (local.get $wa) (i32.const 0))
+    (i32.store offset=12 (local.get $wa) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; stdcall 1 param
   )
 
   ;; 703: SetRect — stores left, top, right, bottom into RECT
   (func $handle_SetRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
     ;; Store left, top, right, bottom into RECT at arg0
-    (i32.store (call $g2w (local.get $arg0)) (local.get $arg1))
-    (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 4)) (local.get $arg2))
-    (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 8)) (local.get $arg3))
-    (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 12)) (local.get $arg4))
+    (i32.store (local.get $wa) (local.get $arg1))
+    (i32.store offset=4 (local.get $wa) (local.get $arg2))
+    (i32.store offset=8 (local.get $wa) (local.get $arg3))
+    (i32.store offset=12 (local.get $wa) (local.get $arg4))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) ;; stdcall 5 params
   )
@@ -250,7 +254,7 @@
   ;; 713: OpenFile(lpFileName, lpReOpenBuff, uStyle) — delegate to host_fs_create_file
   ;; arg0=lpFileName, arg1=lpReOpenBuff (OFSTRUCT), arg2=uStyle
   (func $handle_OpenFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $handle i32) (local $buf_wa i32) (local $i i32) (local $ch i32)
+    (local $handle i32) (local $buf_wa i32) (local $i i32) (local $ch i32) (local $path_wa i32)
     (local $access i32) (local $creation i32)
     ;; OF_READ=0, OF_WRITE=1, OF_READWRITE=2. OF_CREATE=0x1000 creates or
     ;; truncates the destination; InstallShield combines it with READWRITE
@@ -265,8 +269,9 @@
     (local.set $creation
       (select (i32.const 2) (i32.const 3)
         (i32.ne (i32.and (local.get $arg2) (i32.const 0x1000)) (i32.const 0))))
+    (local.set $path_wa (call $g2w (local.get $arg0)))
     (local.set $handle (call $host_fs_create_file
-      (call $g2w (local.get $arg0))
+      (local.get $path_wa)
       (local.get $access)
       (local.get $creation)
       (i32.const 0x80)        ;; FILE_ATTRIBUTE_NORMAL
@@ -294,7 +299,7 @@
         (local.set $i (i32.const 0))
         (block $named (loop $chars
           (br_if $named (i32.ge_u (local.get $i) (i32.const 127)))
-          (local.set $ch (i32.load8_u (i32.add (call $g2w (local.get $arg0)) (local.get $i))))
+          (local.set $ch (i32.load8_u (i32.add (local.get $path_wa) (local.get $i))))
           ;; DOS reports the path in upper case and callers compare it.
           (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61))
                        (i32.le_u (local.get $ch) (i32.const 0x7A)))
@@ -478,15 +483,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; cdecl
   )
 
-  ;; 752: SetWindowsHookW(idHook, lpfn) — old-style hook, return fake handle
+  ;; 752: SetWindowsHookW(idHook, lpfn) — code pointers need no widening.
   (func $handle_SetWindowsHookW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_SetWindowsHookA
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
-  ;; SetWindowsHookA(idHook, lpfn) — old-style hook, return fake handle
+  ;; SetWindowsHookA(idHook, lpfn) — legacy spelling of the process-local
+  ;; hook install. It shares the Ex path's supported classes and handles.
   (func $handle_SetWindowsHookA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x00DEAD02))
+    (global.set $eax
+      (call $install_supported_hook (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
@@ -1573,14 +1580,15 @@
   ;; aliased, since both variants are independently owned and either may be
   ;; cleared first; every other type in a VARIANT is inline.
   (func $handle_VariantCopy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $vt i32) (local $src_bstr i32) (local $len i32) (local $copy i32)
+    (local $vt i32) (local $src_bstr i32) (local $len i32) (local $copy i32) (local $dst_wa i32)
     (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
       (then
         (global.set $eax (i32.const 0x80070057))  ;; E_INVALIDARG
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
-    (call $zero_memory (call $g2w (local.get $arg0)) (i32.const 16))
-    (memory.copy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (i32.const 16))
+    (local.set $dst_wa (call $g2w (local.get $arg0)))
+    (call $zero_memory (local.get $dst_wa) (i32.const 16))
+    (memory.copy (local.get $dst_wa) (call $g2w (local.get $arg1)) (i32.const 16))
     (local.set $vt (call $gl16 (local.get $arg1)))
     (if (i32.eq (local.get $vt) (i32.const 8))    ;; VT_BSTR
       (then
@@ -2555,8 +2563,9 @@
   ;; 814: PathFindFileNameA(lpszPath) → pointer to filename component
   ;; Walks backwards from end of path string, returns pointer after last '\' or '/'
   (func $handle_PathFindFileNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ptr i32) (local $last i32) (local $ch i32)
-    (local.set $ptr (call $g2w (local.get $arg0)))
+    (local $base i32) (local $ptr i32) (local $last i32) (local $ch i32)
+    (local.set $base (call $g2w (local.get $arg0)))
+    (local.set $ptr (local.get $base))
     (local.set $last (local.get $ptr))
     (block $done (loop $scan
       (local.set $ch (i32.load8_u (local.get $ptr)))
@@ -2567,13 +2576,13 @@
       (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
       (br $scan)))
     ;; Convert WASM pointer back to guest address
-    (global.set $eax (i32.add (i32.sub (local.get $last) (call $g2w (local.get $arg0))) (local.get $arg0)))
+    (global.set $eax (i32.add (i32.sub (local.get $last) (local.get $base)) (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 815: StrStrIA(lpFirst, lpSrch) → pointer to match or NULL
   ;; Case-insensitive substring search using byte-by-byte comparison
   (func $handle_StrStrIA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $hay i32) (local $ndl i32) (local $hi i32) (local $ni i32)
+    (local $hay_base i32) (local $hay i32) (local $ndl i32) (local $hi i32) (local $ni i32)
     (local $hc i32) (local $nc i32) (local $ndl_len i32)
     ;; Get needle length
     (local.set $ndl (call $g2w (local.get $arg1)))
@@ -2581,7 +2590,8 @@
     (if (i32.eqz (local.get $ndl_len))
       (then (global.set $eax (local.get $arg0))
              (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    (local.set $hay (call $g2w (local.get $arg0)))
+    (local.set $hay_base (call $g2w (local.get $arg0)))
+    (local.set $hay (local.get $hay_base))
     ;; Outer loop: try each position in haystack
     (block $not_found (loop $outer
       (br_if $not_found (i32.eqz (i32.load8_u (local.get $hay))))
@@ -2592,7 +2602,7 @@
         (local.set $nc (i32.load8_u (local.get $ni)))
         (if (i32.eqz (local.get $nc))
           (then ;; needle exhausted = match found
-            (global.set $eax (i32.add (i32.sub (local.get $hay) (call $g2w (local.get $arg0))) (local.get $arg0)))
+            (global.set $eax (i32.add (i32.sub (local.get $hay) (local.get $hay_base)) (local.get $arg0)))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
         (local.set $hc (i32.load8_u (local.get $hi)))
         (br_if $mismatch (i32.eqz (local.get $hc)))
@@ -2993,14 +3003,16 @@
     (global.set $steps (i32.const 0)))
   ;; mciSendStringA(cmd, retbuf, retlen, hCallback) → MCIERR (0 = no error)
   (func $handle_mciSendStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret_wa i32)
+    (if (local.get $arg1) (then (local.set $ret_wa (call $g2w (local.get $arg1)))))
     ;; Clear return buffer if provided, then let the host parse/execute the
     ;; command string. The host owns MCI aliases and MIDI sequencing.
     (if (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.ne (local.get $arg2) (i32.const 0)))
-      (then (i32.store8 (call $g2w (local.get $arg1)) (i32.const 0))))
+      (then (i32.store8 (local.get $ret_wa) (i32.const 0))))
     (global.set $eax
       (call $host_mci_string
         (if (result i32) (local.get $arg0) (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
-        (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+        (local.get $ret_wa)
         (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
@@ -3144,8 +3156,9 @@
 
   ;; 820: PathGetArgsA(pszPath) → pointer to args after first unquoted space
   (func $handle_PathGetArgsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ptr i32) (local $ch i32) (local $in_quote i32)
-    (local.set $ptr (call $g2w (local.get $arg0)))
+    (local $base i32) (local $ptr i32) (local $ch i32) (local $in_quote i32)
+    (local.set $base (call $g2w (local.get $arg0)))
+    (local.set $ptr (local.get $base))
     (block $done (loop $scan
       (local.set $ch (i32.load8_u (local.get $ptr)))
       (br_if $done (i32.eqz (local.get $ch)))
@@ -3159,12 +3172,12 @@
             (br_if $end_sp (i32.ne (i32.load8_u (local.get $ptr)) (i32.const 0x20)))
             (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
             (br $sp)))
-          (global.set $eax (i32.add (i32.sub (local.get $ptr) (call $g2w (local.get $arg0))) (local.get $arg0)))
+          (global.set $eax (i32.add (i32.sub (local.get $ptr) (local.get $base)) (local.get $arg0)))
           (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
       (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
       (br $scan)))
     ;; No args found, return pointer to NUL terminator
-    (global.set $eax (i32.add (i32.sub (local.get $ptr) (call $g2w (local.get $arg0))) (local.get $arg0)))
+    (global.set $eax (i32.add (i32.sub (local.get $ptr) (local.get $base)) (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 818: FindResourceExA(hModule, lpType, lpName, wLanguage) → HRSRC
@@ -3178,14 +3191,15 @@
 
   ;; 819: StrChrA(lpStart, wMatch) → pointer to first occurrence or NULL
   (func $handle_StrChrA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ptr i32) (local $ch i32)
-    (local.set $ptr (call $g2w (local.get $arg0)))
+    (local $base i32) (local $ptr i32) (local $ch i32)
+    (local.set $base (call $g2w (local.get $arg0)))
+    (local.set $ptr (local.get $base))
     (block $not_found (loop $scan
       (local.set $ch (i32.load8_u (local.get $ptr)))
       (br_if $not_found (i32.eqz (local.get $ch)))
       (if (i32.eq (local.get $ch) (i32.and (local.get $arg1) (i32.const 0xFF)))
         (then
-          (global.set $eax (i32.add (i32.sub (local.get $ptr) (call $g2w (local.get $arg0))) (local.get $arg0)))
+          (global.set $eax (i32.add (i32.sub (local.get $ptr) (local.get $base)) (local.get $arg0)))
           (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
       (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
       (br $scan)))
@@ -3202,7 +3216,7 @@
   ;; do not yet implement, so fail it explicitly instead of silently returning
   ;; a plausibly formatted but wrong number.
   (func $handle_GetNumberFormatA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cch i32) (local $required i32)
+    (local $cch i32) (local $required i32) (local $value_wa i32)
     (local.set $cch (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (global.set $eax (i32.const 0))
     (if (i32.eqz (local.get $arg2))
@@ -3215,8 +3229,9 @@
         (global.set $last_error (i32.const 120)) ;; ERROR_CALL_NOT_IMPLEMENTED
         (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
         (return)))
+    (local.set $value_wa (call $g2w (local.get $arg2)))
     (local.set $required
-      (i32.add (call $strlen_a (call $g2w (local.get $arg2))) (i32.const 1)))
+      (i32.add (call $strlen_a (local.get $value_wa)) (i32.const 1)))
     (if (i32.eqz (local.get $cch))
       (then (global.set $eax (local.get $required)))
       (else
@@ -3227,7 +3242,7 @@
           (else
             (call $memcpy
               (call $g2w (local.get $arg4))
-              (call $g2w (local.get $arg2))
+              (local.get $value_wa)
               (local.get $required))
             (global.set $eax (local.get $required))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))

@@ -76,7 +76,11 @@ check('every documented key is one the list actually names', () => {
     'a duplicated key means two people added it without reading');
 });
 
-check('all twelve thread primitives are adopted', () => {
+check('every declared thread primitive is adopted', () => {
+  assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('get_thread_priority'));
+  assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('set_thread_priority'));
+  assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('com_initialize_thread'));
+  assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('com_uninitialize_thread'));
   const main = {};
   for (const name of THREAD_PRIMITIVE_IMPORTS) main[name] = () => name;
   const worker = { wait_single: () => 0 };  // the stub host-imports installs

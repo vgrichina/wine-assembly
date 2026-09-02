@@ -83,7 +83,12 @@ UNIT=(
   test/test-vfs-export.js
   test/test-codepage-dbcs.js
   test/test-atom-table.js
+  test/test-find-window.js
+  test/test-process-priority-class.js
+  test/test-process-error-mode.js
+  test/test-thread-priority.js
   test/test-menu-insert.js
+  test/test-menu-modify-submenu.js
   test/test-menu-check-position.js
   test/test-image-list-icons.js
   test/test-insert-menu-item-host-bar.js
@@ -334,11 +339,13 @@ UNIT=(
   test/test-aoe-stack-packet-handler.js
   test/test-aoe-grid-fill-run.js
   test/test-aoe2-span-prefix.js
+  test/test-clipboard-open-state.js
   test/test-clipboard-rtf-api.js
   test/test-coinitialize-ex.js
   test/test-commondialog-props.js
   test/test-critical-section-threading.js
   test/test-ddraw-surface-dirty-rect.js
+  test/test-defer-window-pos.js
   test/test-defer-window-pos-visibility.js
   test/test-delphi-seh-mutated-chain.js
   test/test-button-focus-notify.js
@@ -346,6 +353,7 @@ UNIT=(
   test/test-dialog-setfocus-tabstop.js
   test/test-dialog-idok-handled.js
   test/test-isdialogmessage-enter.js
+  test/test-translate-message.js
   test/test-dialog-custom-dispatch.js
   test/test-end-dialog-lifecycle.js
   test/test-modal-common-dialog-worker.js
@@ -438,6 +446,7 @@ UNIT=(
   test/test-wat-winsock-hostname.js
   test/test-window-control-id.js
   test/test-window-exstyle.js
+  test/test-windowpos-changing.js
   test/test-compile-wat-unknown-name.js
   test/test-compile-wat-structure.js
   test/test-compile-wat-replicated-dispatch.js
@@ -628,6 +637,7 @@ E2E=(
   test/test-taskman-arrange.js
   test/test-taskman-web.js
   test/test-taskman-shutdown.js
+  test/test-web-shutdown.js
   test/test-wordpad-web.js
   test/test-wordpad-thread-startup.js
   test/test-cli-worker-threads.js

@@ -175,7 +175,7 @@ async function runDos(o) {
     traceIo = null,
     shots = null, shotEvery = 20,
     mouse = [0, 0], clicks = [], dumpAt = [],
-    cpu = 386, report = false, log = console.log, autoKey = false,
+    cpu = 386, report = false, log = console.log, autoKey = false, repFast = true,
     // Build the instrumented dispatch and print the census at exit. `hist` is
     // how many handlers to list, `histPairs` how many pairs; 0 for either
     // suppresses that table. Timings from such a run are meaningless -- three
@@ -263,6 +263,10 @@ async function runDos(o) {
   // a build that decodes 386 encodings but reports an 8086 FLAGS register fails
   // the CPU detection every one of those demos opens with.
   vm.exports.set_cpu(cpu);
+  // The widened REP MOVS/STOS (one memory.copy/memory.fill when the whole run
+  // is plain RAM). `--no-rep-fast` is its A/B partner; same registers, same
+  // step charge, so the frame and the handback count must agree.
+  if (vm.exports.set_rep_fast) vm.exports.set_rep_fast(repFast ? 1 : 0);
   machine.setMemory(vm.mem, vm.exports);
   machine.installIvt();
   machine.setTicks(0, { force: true });
@@ -365,7 +369,7 @@ async function runDos(o) {
           + `${ax === before[0] ? '' : ` -> ax=${ax.toString(16)}`}`
           + `${ok ? '' : '   UNHANDLED'}`);
       },
-      onEntry: (!report && !traceEntry && !traceV86) ? undefined : (cs, ip, handbacks) => {
+      onEntry: (!report && !traceEntry && !traceV86) ? undefined : (cs, ip, handbacks, dispatched) => {
         // Every crossing of the virtual-8086 boundary, in both directions, with
         // the vector that caused the one going in and the ring-0 stack pointer
         // it landed on. A V86 guest and its monitor are two programs sharing a
@@ -420,7 +424,10 @@ async function runDos(o) {
             // them. BLINKY.EXE's copier writes DS:0x486d over a region that
             // holds live code; only DS says whether that is intentional.
             + ` ds=${h4(vm.get('ds'))} es=${h4(vm.get('es'))}`
-            + ` ss:sp=${h4(vm.get('ss'))}:${h4(vm.get('sp'))}`);
+            + ` ss:sp=${h4(vm.get('ss'))}:${h4(vm.get('sp'))}`
+            // ...and the emulated clock, which is what two arms that reach
+            // the same registers at different handbacks disagree about.
+            + ` d=${dispatched}`);
         }
       },
       beforeSlice: () => {
@@ -554,7 +561,7 @@ async function runDos(o) {
   const {
     dispatched, handbacks, ints, irqs, smcBreaks, traps, icebps, stuckAt, blockedOn32, badSelector,
     compiles, compiledWords, arenaResets, unimplemented, regions, jtab, smcSites, retiredPatches,
-    deadFlagsDropped, tracedBlocks, spinBlocks, specOps,
+    deadFlagsDropped, tracedBlocks, spinBlocks, specOps, rep,
   } = session.stats();
 
   if (bestPng) keepBest();
@@ -572,7 +579,7 @@ async function runDos(o) {
     guestSecs: Number(guestNs) / 1e9,
     guestCpuSecs: guestCpuUs / 1e6,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets, deadFlagsDropped,
-    tracedBlocks, spinBlocks, specOps,
+    tracedBlocks, spinBlocks, specOps, rep,
     smcBreaks, traps, icebps, smcSites, retiredPatches,
     stuckAt, blockedOn32, badSelector, ranOutOfTime,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
@@ -687,6 +694,11 @@ async function main() {
   }
   const report = flag('report');
   const pre = arg('pre', '');
+  // The port-poll twin for `in al,dx / cmp al,imm / jcc head`, which turns the
+  // retrace wait inside one handler against the VGA clock. `--no-port-spin` is
+  // ITS A/B partner (same clock, same frame, fewer dispatches); `--no-spin`
+  // turns every collapse off. A compile-time switch, like `--no-fusecond`.
+  require('./compile').setPortSpin(!flag('no-port-spin'));
   const r = await (pre ? runDosWithPre : runDos)({
     exe,
     // `--pre=SETUP.EXE`, resolved next to the executable, with `--pre-keys=`
@@ -751,6 +763,7 @@ async function main() {
     // two arms retire the same steps and reach the same frame, and differ only
     // in the dispatch count it took to get there.
     spinLoops: !flag('no-spin'),
+    repFast: !flag('no-rep-fast'),
     // Swap each register access on a runtime index for the twin that has the
     // register as a literal. OPT-IN: the two arms dispatch the same handlers in
     // the same order and differ only in whether the register file is reached
@@ -899,6 +912,16 @@ async function main() {
     // thrash: a program storing data into a paragraph a region happens to have
     // decoded, one bitmap bit away from its code.
     + (r.smcBreaks ? `\n  ${r.smcBreaks} self-modify breaks` : '')
+    // The widened REP MOVS/STOS: runs that became one memory.copy/fill, the
+    // bytes they moved, and every run that fell back to the byte loop, by the
+    // guard that sent it there. A big `vga` count is a planar-mode program
+    // writing its screen through the graphics controller -- the byte path is
+    // the only one that knows the write modes -- not a missed case.
+    + (r.rep && (r.rep[0] || r.rep.slice(2).some(Boolean))
+      ? `\n  rep widened: ${r.rep[0]} runs, ${r.rep[1]} bytes; declined:`
+        + ['off', 'df', 'big', 'wrap', 'vga/mask', 'code', 'overlap']
+            .map((k, i) => r.rep[i + 2] ? ` ${k}=${r.rep[i + 2]}` : '').join('') + (r.rep[9] ? ` (${r.rep[9]} bytes)` : '')
+      : '')
     // Store sites where "a CS override means self-patching code" was watched
     // being wrong and withdrawn. Nonzero means this run took the benignPatch
     // path at all; zero means the decoder behaved exactly as it always did.

@@ -371,7 +371,7 @@ async function main() {
 
     // The real test of "kept": a page that never saw the File.
     await page.close();
-    const fresh = await openPage(browser, base, 'reload');
+    let fresh = await openPage(browser, base, 'reload');
     await fresh.waitForFunction(
       () => !!document.querySelector('.desktop-icon[data-media-badge="kept"]'), { timeout: 60000 });
     const restored = await fresh.evaluate(() => {
@@ -398,6 +398,77 @@ async function main() {
     }, { timeout: 180000 });
     await fresh.screenshot({ path: path.join(OUT, 'kept-relaunched.png') });
     console.log('  ok    kept media survived a reload and launched from OPFS');
+
+    // The imported media is the immutable base; an installer's C: writes are
+    // a second OPFS journal keyed by this media row. Exercise both record kinds
+    // through the real browser shell: create one file, delete one mounted file,
+    // flush, then throw the whole page away. The next page must hydrate the
+    // file and whiteout after re-mounting the ZIP, before it loads the EXE.
+    const overlayMutation = await fresh.evaluate(async () => {
+      const running = runningApps.find(item => item && item.wine && item.wine.running);
+      const wine = running.wine;
+      const vfs = wine._helpCtx.vfs;
+      const readme = [...vfs.files.keys()].find(name =>
+        /notepad-game.*readme\.txt$/i.test(name));
+      const proof = 'C:\\browser-overlay-proof.dat';
+      const handle = vfs.createFile(proof, 0x40000000, 2);
+      const bytes = new Uint8Array([0x4d, 0x5a, 0x98, 0x01]);
+      const wrote = handle && vfs.writeFile(handle, bytes, bytes.length);
+      if (handle) vfs.closeHandle(handle);
+      const deleted = readme ? vfs.deleteFile(readme) : false;
+      // Do not call the test seam: the regression is specifically that the
+      // browser used to flush nothing until exit. Let the production two-
+      // second checkpoint own durability, then inspect its real dirty/error
+      // state before discarding the page.
+      await new Promise(resolve => setTimeout(resolve, 2600));
+      return {
+        durable: wine._vfsOverlayDurable,
+        storeKind: wine._vfsOverlay && wine._vfsOverlay.store.kind,
+        wrote: !!(wrote && wrote.ok),
+        deleted,
+        readme,
+        dirty: wine._vfsOverlay.dirtyPaths(),
+        errors: wine._vfsOverlay.errors.map(error => error.message),
+      };
+    });
+    assert.strictEqual(overlayMutation.durable, true,
+      `a kept import must use its OPFS overlay: ${JSON.stringify(overlayMutation)}`);
+    assert.strictEqual(overlayMutation.storeKind, 'opfs');
+    assert.strictEqual(overlayMutation.wrote, true);
+    assert.strictEqual(overlayMutation.deleted, true,
+      `the mounted README was not available to whiteout: ${overlayMutation.readme}`);
+    assert.deepStrictEqual(overlayMutation.dirty, [],
+      `the periodic browser checkpoint left changes dirty: ${JSON.stringify(overlayMutation)}`);
+    assert.deepStrictEqual(overlayMutation.errors, []);
+
+    await fresh.evaluate(() => stopAllApps());
+    await fresh.close();
+    fresh = await openPage(browser, base, 'overlay-reload');
+    await fresh.waitForFunction(
+      () => !!document.querySelector('.desktop-icon[data-media-badge="kept"]'), { timeout: 60000 });
+    await fresh.evaluate((appId) => window.wineMedia.launch(appId), restored.appId);
+    await fresh.waitForFunction(() => {
+      const app = runningApps.find(item => item && item.wine && item.wine.running);
+      return !!(app && app.wine._vfsOverlay);
+    }, { timeout: 180000 });
+    const overlayRestored = await fresh.evaluate(() => {
+      const wine = runningApps.find(item => item && item.wine && item.wine.running).wine;
+      const vfs = wine._helpCtx.vfs;
+      const proof = vfs.files.get('c:\\browser-overlay-proof.dat');
+      const readme = [...vfs.files.keys()].find(name =>
+        /notepad-game.*readme\.txt$/i.test(name));
+      return {
+        durable: wine._vfsOverlayDurable,
+        proof: proof ? Array.from(proof.data) : null,
+        readme: readme || null,
+      };
+    });
+    assert.strictEqual(overlayRestored.durable, true);
+    assert.deepStrictEqual(overlayRestored.proof, [0x4d, 0x5a, 0x98, 0x01],
+      'a file written to an imported app\'s C: must survive a fresh browser page');
+    assert.strictEqual(overlayRestored.readme, null,
+      'the overlay whiteout must beat the ZIP base mount after a fresh browser page');
+    console.log('  ok    writable C: file and deletion survived a fresh page through OPFS');
 
     // My Media lists it, and says the honest thing about durability.
     const shelf = await fresh.evaluate(async () => {

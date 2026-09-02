@@ -1720,14 +1720,15 @@
   )
 
   (func $handle__stat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $attrs i32) (local $scratch i32) (local $find i32)
+    (local $attrs i32) (local $scratch i32) (local $find i32) (local $path_wa i32)
     (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
       (then
         (global.set $eax (i32.const -1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
         (return)))
+    (local.set $path_wa (call $g2w (local.get $arg0)))
     (local.set $attrs (call $host_fs_get_file_attributes
-      (call $g2w (local.get $arg0)) (i32.const 0)))
+      (local.get $path_wa) (i32.const 0)))
     (if (i32.eq (local.get $attrs) (i32.const -1))
       (then
         (global.set $eax (i32.const -1))
@@ -1743,7 +1744,7 @@
     (if (local.get $scratch)
       (then
         (local.set $find (call $host_fs_find_first_file
-          (call $g2w (local.get $arg0)) (local.get $scratch) (i32.const 0)))
+          (local.get $path_wa) (local.get $scratch) (i32.const 0)))
         (if (i32.ne (local.get $find) (i32.const -1))
           (then
             (call $gs32 (i32.add (local.get $arg1) (i32.const 20))

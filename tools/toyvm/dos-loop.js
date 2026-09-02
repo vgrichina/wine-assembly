@@ -468,7 +468,13 @@ class DosSession {
     this.lastIrq = 0;
     this.lastKbIrq = 0;
     this.lastSbIrq = 0;
-    this.lastRetraceIrq = 0;
+    // The VGA clock: frame rate last handed to the VM, its period in
+    // dispatches, the frame index at the last handback, and whether a frame
+    // edge is waiting to be delivered as IRQ2.
+    this.vgaHz = 0;
+    this.vgaPeriod = 0;
+    this.vgaFrame = 0;
+    this.retraceEdge = false;
     this.lastKey = '';
     this.lastWritten = 0;
     this.lastRegs = 0;
@@ -593,7 +599,7 @@ class DosSession {
     // Where a slice re-enters is the whole cost model of this harness: each one
     // is a JS round trip, and a hot loop whose back edge the compiler could not
     // resolve turns into hundreds of thousands of them.
-    if (this.hooks.onEntry) this.hooks.onEntry(cs, ip, this.handbacks);
+    if (this.hooks.onEntry) this.hooks.onEntry(cs, ip, this.handbacks, this.dispatched);
 
     // CS's linear base and the address bus width, read fresh each slice: both
     // change under the guest's feet when it switches to protected mode or opens
@@ -703,6 +709,21 @@ class DosSession {
     // before stopping. The quantum cannot drift because it does not remember
     // anything.
     const budget = Math.min(this.slice, Math.max(1, Math.floor(this.irqEvery / 4)));
+    // The VGA clock. Port 3DAh is answered inside the VM from where the
+    // dispatch count sits in the current frame (emit.js, $vga_status), so hand
+    // it the phase this slice starts at, and the period whenever the mode's
+    // frame rate changed. The period is quoted against the timer interval the
+    // same way the retrace IRQ's cadence always was: irqEvery is the 18.2Hz
+    // tick, so one 70Hz frame is irqEvery * 18.2 / 70 dispatches.
+    if (vm.exports.set_vga_phase0) {
+      const t = machine.vgaTiming ? machine.vgaTiming() : { hz: 70, lines: 449 };
+      if (t.hz !== this.vgaHz) {
+        this.vgaHz = t.hz;
+        this.vgaPeriod = Math.max(100, Math.round(this.irqEvery * 18.2 / t.hz));
+        vm.exports.set_vga_period(this.vgaPeriod, t.lines);
+      }
+      vm.exports.set_vga_phase0(this.dispatched % this.vgaPeriod);
+    }
     vm.exports.run(entry, budget);
     // $left is -1 when the slice ran to exhaustion and holds the unspent budget
     // when a handler handed control back early. Billing the slice either way
@@ -712,9 +733,35 @@ class DosSession {
     // the guest promptly) reports $left as -1 like an exhausted one, so ask for
     // the count it saved on the way out rather than billing the whole budget.
     const cut = this.machine.takeSliceCut ? this.machine.takeSliceCut() : -1;
-    const left = cut >= 0 ? cut : vm.raw('left');
-    this.dispatched += left < 0 ? budget : budget - left;
+    // Bill the steps actually charged, overshoot included. $next charges a step
+    // BEFORE it runs a handler and a block only tests the budget at its
+    // transfer, so an exhausted slice ends with $steps a few below zero -- the
+    // ops the guest ran past the quantum. Billing the quantum alone dropped
+    // that overshoot, and it is a different size in a region (a chunk of ops
+    // billed at once before a transfer, the whole body on a `--once` exit) than
+    // under the interpreter (one block). The emulated clock is the dispatch
+    // count, so two arms doing IDENTICAL guest work drifted apart by thousands
+    // of dispatches (ADDY_II: -4356 at 4.7M with the same registers and
+    // counters), the timer IRQ landed on a different instruction, and the
+    // frame diverged with nothing wrong in either arm. $steps is read directly:
+    // $left is the same value on every exit that writes it, and the sentinel
+    // -1 it starts at cannot tell "exhausted" from "one op past".
+    const left = cut >= 0 ? cut : vm.raw('steps');
+    this.dispatched += budget - left;
     this.handbacks++;
+    // The retrace IRQ is the rising edge of the bit the port reports, so it is
+    // armed when the dispatch count crosses into a new frame -- the interrupt
+    // and the status the guest polls come from ONE clock. It is delivered at
+    // the next handback (interrupts only go in at instruction boundaries) and
+    // stays armed until the rung below fires it or finds nobody listening.
+    if (this.vgaPeriod) {
+      const frame = Math.floor(this.dispatched / this.vgaPeriod);
+      if (frame !== this.vgaFrame) { this.vgaFrame = frame; this.retraceEdge = true; }
+    }
+    if (vm.exports.get_vga_reads) {
+      machine.clock.retrace += vm.exports.get_vga_reads();
+      vm.exports.set_vga_reads(0);
+    }
     if (this.hooks.afterSlice) this.hooks.afterSlice({ left, dispatched: this.dispatched, cs, ip });
 
     // A block that patched its own code hands back with $smc set. The block it
@@ -809,9 +856,12 @@ class DosSession {
     // second against the timer's 18.2, so it is the fastest thing here. Asked
     // for the vector up front like the Sound Blaster's, so that a rung which
     // declines to fire cannot swallow the keyboard's turn below it.
-    const rvec = (vm.get('flags') & 0x200)
-      && this.dispatched - this.lastRetraceIrq >= this.irqEvery / 4
-      ? machine.retraceIrq() : 0;
+    // Since the VGA clock (see the slice above) the cadence is the frame edge
+    // the status port itself reports, not a fixed irqEvery/4. An edge nobody
+    // hooked is consumed here, not saved: a program that hooks IRQ2 later
+    // should get its first interrupt at the next edge, not at once.
+    const rvec = this.retraceEdge && (vm.get('flags') & 0x200) ? machine.retraceIrq() : 0;
+    if (this.retraceEdge && !machine.retraceIrq()) this.retraceEdge = false;
     if (svec) {
       this.lastSbIrq = this.dispatched;
       this.raise(svec);
@@ -819,7 +869,7 @@ class DosSession {
       this.lastIrq = this.dispatched;
       this.raise(tvec);
     } else if (rvec) {
-      this.lastRetraceIrq = this.dispatched;
+      this.retraceEdge = false;
       this.raise(rvec);
     // IRQ1. A program with its own INT 9 handler reads the keyboard as hardware
     // and never calls the BIOS, so answering INT 16h reaches it not at all --
@@ -996,6 +1046,10 @@ class DosSession {
       specOps: this.cache.specOps,
       arenaResets: this.cache.arenaResets, unimplemented: this.cache.unimplemented,
       regions: this.cache.regions, jtab: this.cache.jtab,
+      // The widened-REP census: [runs, bytes, declined by reason 0..6, declined bytes].
+      rep: this.vm.exports.get_rep_stat
+        ? [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => this.vm.exports.get_rep_stat(i) >>> 0)
+        : null,
     };
   }
 }

@@ -870,15 +870,15 @@
     (local $wa i32) (local $hdc i32)
     (if (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.ne (local.get $arg0) (i32.const 0)))
       (then
-        (local.set $wa (i32.add (call $g2w (local.get $arg1)) (i32.const 8)))
+        (local.set $wa (call $g2w (local.get $arg1)))
         (drop (call $update_validate_rect
           (local.get $arg0)
-          (i32.load (local.get $wa))
-          (i32.load offset=4 (local.get $wa))
           (i32.load offset=8 (local.get $wa))
-          (i32.load offset=12 (local.get $wa))))
+          (i32.load offset=12 (local.get $wa))
+          (i32.load offset=16 (local.get $wa))
+          (i32.load offset=20 (local.get $wa))))
         ;; PAINTSTRUCT.hdc is at +0
-        (local.set $hdc (i32.load (call $g2w (local.get $arg1))))
+        (local.set $hdc (i32.load (local.get $wa)))
         (drop (call $host_release_dc (local.get $hdc)))
         ;; Child controls share the top-level canonical surface. Their queued
         ;; paint must run after the parent finishes, otherwise the parent's
@@ -1203,32 +1203,27 @@
 
   (func $handle_GetGlyphOutlineA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $buffer_g i32) (local $mat2_g i32) (local $result i32)
+    (local $metrics_wa i32) (local $buffer_wa i32) (local $mat2_wa i32)
     (local.set $buffer_g (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $mat2_g (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (if (local.get $arg3) (then (local.set $metrics_wa (call $g2w (local.get $arg3)))))
+    (if (local.get $buffer_g) (then (local.set $buffer_wa (call $g2w (local.get $buffer_g)))))
+    (if (local.get $mat2_g) (then (local.set $mat2_wa (call $g2w (local.get $mat2_g)))))
     (local.set $result (call $tt_gdi_glyph_outline_a
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (if (result i32) (local.get $arg3)
-        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))
+      (local.get $metrics_wa)
       (local.get $arg4)
-      (if (result i32) (local.get $buffer_g)
-        (then (call $g2w (local.get $buffer_g))) (else (i32.const 0)))
-      (if (result i32) (local.get $mat2_g)
-        (then (call $g2w (local.get $mat2_g))) (else (i32.const 0)))))
+      (local.get $buffer_wa) (local.get $mat2_wa)))
     (if (i32.eq (local.get $result) (i32.const -2))
       (then (local.set $result (call $gdi_bitmap_glyph_outline_a
         (local.get $arg0) (local.get $arg1) (local.get $arg2)
-        (if (result i32) (local.get $arg3)
-          (then (call $g2w (local.get $arg3))) (else (i32.const 0)))
+        (local.get $metrics_wa)
         (local.get $arg4)
-        (if (result i32) (local.get $buffer_g)
-          (then (call $g2w (local.get $buffer_g))) (else (i32.const 0)))
-        (if (result i32) (local.get $mat2_g)
-          (then (call $g2w (local.get $mat2_g))) (else (i32.const 0)))))))
+        (local.get $buffer_wa) (local.get $mat2_wa)))))
     (if (i32.eq (local.get $result) (i32.const -2))
       (then (local.set $result (call $gdi_glyph_metrics_a
         (local.get $arg0) (local.get $arg1) (local.get $arg2)
-        (if (result i32) (local.get $arg3)
-          (then (call $g2w (local.get $arg3))) (else (i32.const 0)))))))
+        (local.get $metrics_wa)))))
     (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
 
@@ -1692,9 +1687,10 @@
 
   ;; 314: GetTextMetricsW — zero-fill, return 1
   (func $handle_GetTextMetricsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $packed i32) (local $h i32) (local $aveW i32)
+    (local $packed i32) (local $h i32) (local $aveW i32) (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
     (if (call $gdi_bitmap_text_metrics_write
-          (local.get $arg0) (call $g2w (local.get $arg1)) (i32.const 1))
+          (local.get $arg0) (local.get $wa) (i32.const 1))
       (then
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
@@ -1702,7 +1698,7 @@
     (local.set $packed (call $host_get_text_metrics (local.get $arg0)))
     (local.set $h (i32.and (local.get $packed) (i32.const 0xFFFF)))
     (local.set $aveW (i32.shr_u (local.get $packed) (i32.const 16)))
-    (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 60))
+    (call $zero_memory (local.get $wa) (i32.const 60))
     (call $gs32 (local.get $arg1) (local.get $h))                                    ;; tmHeight
     (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
       (i32.sub (local.get $h) (i32.const 3)))                                        ;; tmAscent
@@ -1717,7 +1713,7 @@
     (call $gs16 (i32.add (local.get $arg1) (i32.const 46)) (i32.const 255))          ;; tmLastChar
     (call $gs16 (i32.add (local.get $arg1) (i32.const 48)) (i32.const 31))           ;; tmDefaultChar
     (call $gs16 (i32.add (local.get $arg1) (i32.const 50)) (i32.const 32))           ;; tmBreakChar
-    (i32.store8 (i32.add (call $g2w (local.get $arg1)) (i32.const 55)) (i32.const 0x26)) ;; tmPitchAndFamily
+    (i32.store8 offset=55 (local.get $wa) (i32.const 0x26)) ;; tmPitchAndFamily
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -2372,17 +2368,18 @@
 
   ;; 451: Polygon(hdc, lpPoints, nCount) — 3 args stdcall
   (func $handle_Polygon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $desc i32)
+    (local $desc i32) (local $points_wa i32)
+    (local.set $points_wa (call $g2w (local.get $arg1)))
     (if (call $gdi_dc_path_is_open (local.get $arg0))
       (then
         (global.set $eax (call $gdi_dc_path_record_polygon
-          (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
+          (local.get $arg0) (local.get $points_wa) (local.get $arg2)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
     (local.set $desc (global.get $GDI_LINE_DESC))
     (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
       (then (global.set $eax (call $gdi_polygon_desc
-        (local.get $arg0) (local.get $desc) (call $g2w (local.get $arg1)) (local.get $arg2)
+        (local.get $arg0) (local.get $desc) (local.get $points_wa) (local.get $arg2)
         (call $gdi_dc_get_field (local.get $arg0) (i32.const 4) (i32.const 0x30017))
         (call $gdi_dc_get_field (local.get $arg0) (i32.const 8) (i32.const 0x30010))
         (call $gdi_dc_get_rop2 (local.get $arg0))
@@ -2417,11 +2414,13 @@
 
   ;; 455: PolyBezier(hdc, lppt, cPoints)
   (func $handle_PolyBezier (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $points_wa i32)
+    (local.set $points_wa (call $g2w (local.get $arg1)))
     (if (call $gdi_dc_path_is_open (local.get $arg0))
       (then (global.set $eax (call $gdi_dc_path_record_bezier
-        (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 0))))
+        (local.get $arg0) (local.get $points_wa) (local.get $arg2) (i32.const 0))))
       (else (global.set $eax (call $host_gdi_poly_bezier
-        (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 0)))))
+        (local.get $arg0) (local.get $points_wa) (local.get $arg2) (i32.const 0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -2695,11 +2694,13 @@
 
   ;; 568: PolyBezierTo(hdc, lppt, cPoints)
   (func $handle_PolyBezierTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $points_wa i32)
+    (local.set $points_wa (call $g2w (local.get $arg1)))
     (if (call $gdi_dc_path_is_open (local.get $arg0))
       (then (global.set $eax (call $gdi_dc_path_record_bezier
-        (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 1))))
+        (local.get $arg0) (local.get $points_wa) (local.get $arg2) (i32.const 1))))
       (else (global.set $eax (call $host_gdi_poly_bezier
-        (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 1)))))
+        (local.get $arg0) (local.get $points_wa) (local.get $arg2) (i32.const 1)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -3246,20 +3247,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_PolyPolyline (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $points_wa i32) (local $counts_wa i32)
+    (if (local.get $arg1) (then (local.set $points_wa (call $g2w (local.get $arg1)))))
+    (if (local.get $arg2) (then (local.set $counts_wa (call $g2w (local.get $arg2)))))
     (if (call $gdi_dc_path_is_open (local.get $arg0))
       (then (global.set $eax (call $gdi_dc_path_record_poly_polyline
-        (local.get $arg0)
-        (if (result i32) (local.get $arg1)
-          (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-        (if (result i32) (local.get $arg2)
-          (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+        (local.get $arg0) (local.get $points_wa) (local.get $counts_wa)
         (local.get $arg3))))
       (else (global.set $eax (call $gdi_poly_polyline_try
-        (local.get $arg0)
-        (if (result i32) (local.get $arg1)
-          (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-        (if (result i32) (local.get $arg2)
-          (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+        (local.get $arg0) (local.get $points_wa) (local.get $counts_wa)
         (local.get $arg3)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
