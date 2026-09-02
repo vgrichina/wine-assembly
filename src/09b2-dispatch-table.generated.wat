@@ -54,7 +54,7 @@
       (then
         (call $dispatch_api_table_page_11 (i32.sub (local.get $api_id) (i32.const 2816)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
-    (if (i32.lt_u (local.get $api_id) (i32.const 3209))
+    (if (i32.lt_u (local.get $api_id) (i32.const 3239))
       (then
         (call $dispatch_api_table_page_12 (i32.sub (local.get $api_id) (i32.const 3072)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
@@ -12446,8 +12446,38 @@
   )
 
   (func $dispatch_api_table_page_12 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; api ids 3072..3208
+    ;; api ids 3072..3238
     (block $fallback
+    (block $api_166
+    (block $api_165
+    (block $api_164
+    (block $api_163
+    (block $api_162
+    (block $api_161
+    (block $api_160
+    (block $api_159
+    (block $api_158
+    (block $api_157
+    (block $api_156
+    (block $api_155
+    (block $api_154
+    (block $api_153
+    (block $api_152
+    (block $api_151
+    (block $api_150
+    (block $api_149
+    (block $api_148
+    (block $api_147
+    (block $api_146
+    (block $api_145
+    (block $api_144
+    (block $api_143
+    (block $api_142
+    (block $api_141
+    (block $api_140
+    (block $api_139
+    (block $api_138
+    (block $api_137
     (block $api_136
     (block $api_135
     (block $api_134
@@ -12585,7 +12615,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $api_137 $api_138 $api_139 $api_140 $api_141 $api_142 $api_143 $api_144 $api_145 $api_146 $api_147 $api_148 $api_149 $api_150 $api_151 $api_152 $api_153 $api_154 $api_155 $api_156 $api_157 $api_158 $api_159 $api_160 $api_161 $api_162 $api_163 $api_164 $api_165 $api_166 $fallback (local.get $api_id))
     ) ;; 3072: FindFirstChangeNotificationA
       (call $handle_FindFirstChangeNotificationA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -12996,6 +13026,96 @@
       (return)
     ) ;; 3208: WSAIsBlocking
       (call $handle_WSAIsBlocking (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3209: IShellLinkA_QueryInterface
+      (call $handle_IShellLinkA_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3210: IShellLinkA_AddRef
+      (call $handle_IShellLinkA_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3211: IShellLinkA_Release
+      (call $handle_IShellLinkA_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3212: IShellLinkA_GetPath
+      (call $handle_IShellLinkA_GetPath (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3213: IShellLinkA_GetIDList
+      (call $handle_IShellLinkA_GetIDList (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3214: IShellLinkA_SetIDList
+      (call $handle_IShellLinkA_SetIDList (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3215: IShellLinkA_GetDescription
+      (call $handle_IShellLinkA_GetDescription (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3216: IShellLinkA_SetDescription
+      (call $handle_IShellLinkA_SetDescription (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3217: IShellLinkA_GetWorkingDirectory
+      (call $handle_IShellLinkA_GetWorkingDirectory (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3218: IShellLinkA_SetWorkingDirectory
+      (call $handle_IShellLinkA_SetWorkingDirectory (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3219: IShellLinkA_GetArguments
+      (call $handle_IShellLinkA_GetArguments (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3220: IShellLinkA_SetArguments
+      (call $handle_IShellLinkA_SetArguments (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3221: IShellLinkA_GetHotkey
+      (call $handle_IShellLinkA_GetHotkey (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3222: IShellLinkA_SetHotkey
+      (call $handle_IShellLinkA_SetHotkey (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3223: IShellLinkA_GetShowCmd
+      (call $handle_IShellLinkA_GetShowCmd (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3224: IShellLinkA_SetShowCmd
+      (call $handle_IShellLinkA_SetShowCmd (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3225: IShellLinkA_GetIconLocation
+      (call $handle_IShellLinkA_GetIconLocation (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3226: IShellLinkA_SetIconLocation
+      (call $handle_IShellLinkA_SetIconLocation (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3227: IShellLinkA_SetRelativePath
+      (call $handle_IShellLinkA_SetRelativePath (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3228: IShellLinkA_Resolve
+      (call $handle_IShellLinkA_Resolve (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3229: IShellLinkA_SetPath
+      (call $handle_IShellLinkA_SetPath (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3230: IPersistFile_QueryInterface
+      (call $handle_IPersistFile_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3231: IPersistFile_AddRef
+      (call $handle_IPersistFile_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3232: IPersistFile_Release
+      (call $handle_IPersistFile_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3233: IPersistFile_GetClassID
+      (call $handle_IPersistFile_GetClassID (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3234: IPersistFile_IsDirty
+      (call $handle_IPersistFile_IsDirty (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3235: IPersistFile_Load
+      (call $handle_IPersistFile_Load (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3236: IPersistFile_Save
+      (call $handle_IPersistFile_Save (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3237: IPersistFile_SaveCompleted
+      (call $handle_IPersistFile_SaveCompleted (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3238: IPersistFile_GetCurFile
+      (call $handle_IPersistFile_GetCurFile (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 3072)))

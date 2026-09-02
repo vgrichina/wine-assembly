@@ -427,6 +427,7 @@ UNIT=(
   test/test-richedit-version-compat.js
   test/test-rtf-stylesheet.js
   test/test-shell-desktop-fallback.js
+  test/test-shell-link-com.js
   test/test-solitaire-web.js
   test/test-sparse-width-boundary.js
   test/test-string-ops-sparse-boundary.js

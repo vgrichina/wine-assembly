@@ -1300,6 +1300,224 @@
       (i32.ne (local.get $arg2) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
+  ;; CLSID_ShellLink's Win98 interfaces. Inno Setup configures IShellLinkA,
+  ;; queries IPersistFile, then saves a .lnk. The browser does not consume the
+  ;; shortcut, but Save still creates a valid minimal Shell Link Header in the
+  ;; VFS so success means persistence actually happened.
+  (global $SHELL_LINK_VTBL (mut i32) (i32.const 0))
+  (global $PERSIST_FILE_VTBL (mut i32) (i32.const 0))
+
+  (func $shell_link_init_vtables
+    (if (i32.eqz (global.get $SHELL_LINK_VTBL))
+      (then
+        (global.set $SHELL_LINK_VTBL
+          (call $init_com_vtable (i32.const 3209) (i32.const 21)))
+        (global.set $PERSIST_FILE_VTBL
+          (call $init_com_vtable (i32.const 3230) (i32.const 9))))))
+
+  (func $shell_link_mark (param $this i32) (param $bit i32)
+    (local $entry i32)
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (store.field DxObject flags (local.get $entry)
+      (i32.or (load.field DxObject flags (local.get $entry)) (local.get $bit))))
+
+  (func $shell_link_query_interface (param $this i32) (param $iid i32)
+      (param $out i32) (result i32)
+    (local $d1 i32) (local $entry i32) (local $wrapper i32)
+    (if (i32.eqz (local.get $out))
+      (then (return (i32.const 0x80004003)))) ;; E_POINTER
+    (call $gs32 (local.get $out) (i32.const 0))
+    (if (i32.eqz (local.get $iid))
+      (then (return (i32.const 0x80004003))))
+    (call $shell_link_init_vtables)
+    (if (i32.or
+          (i32.ne (call $gl32 (i32.add (local.get $iid) (i32.const 4))) (i32.const 0))
+          (i32.or
+            (i32.ne (call $gl32 (i32.add (local.get $iid) (i32.const 8))) (i32.const 0x000000C0))
+            (i32.ne (call $gl32 (i32.add (local.get $iid) (i32.const 12))) (i32.const 0x46000000))))
+      (then (return (i32.const 0x80004002))))
+    (local.set $d1 (call $gl32 (local.get $iid)))
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (if (i32.eq (local.get $d1) (i32.const 0x0000010B)) ;; IID_IPersistFile
+      (then
+        (local.set $wrapper (call $dx_get_wrapper_for_vtbl
+          (call $dx_slot_of (local.get $entry)) (global.get $PERSIST_FILE_VTBL))))
+      (else
+        (if (i32.or (i32.eqz (local.get $d1))
+                    (i32.eq (local.get $d1) (i32.const 0x000214EE))) ;; IUnknown/IShellLinkA
+          (then
+            (local.set $wrapper (call $dx_get_wrapper_for_vtbl
+              (call $dx_slot_of (local.get $entry)) (global.get $SHELL_LINK_VTBL)))))))
+    (if (i32.eqz (local.get $wrapper))
+      (then (return (i32.const 0x80004002)))) ;; E_NOINTERFACE
+    (store.field DxObject refcount (local.get $entry)
+      (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (call $gs32 (local.get $out) (local.get $wrapper))
+    (i32.const 0))
+
+  (func $shell_link_empty_a (param $buffer i32) (param $chars i32)
+    (if (i32.and (local.get $buffer) (local.get $chars))
+      (then (i32.store8 (call $g2w (local.get $buffer)) (i32.const 0)))))
+
+  (func $handle_IShellLinkA_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $shell_link_query_interface
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_IShellLinkA_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IDirectMusic_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+  (func $handle_IShellLinkA_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IDirectMusic_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+  (func $handle_IShellLinkA_GetPath (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $shell_link_empty_a (local.get $arg1) (local.get $arg2))
+    (if (local.get $arg3) (then (call $zero_memory (call $g2w (local.get $arg3)) (i32.const 320))))
+    (global.set $eax (i32.const 1)) ;; S_FALSE: no resolvable target in this host
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+  (func $handle_IShellLinkA_GetIDList (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (select (i32.const 1) (i32.const 0x80004003) (i32.ne (local.get $arg1) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IShellLinkA_SetIDList (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $shell_link_mark (local.get $arg0) (i32.const 1))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IShellLinkA_GetDescription (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $shell_link_empty_a (local.get $arg1) (local.get $arg2))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_IShellLinkA_SetDescription (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $shell_link_mark (local.get $arg0) (i32.const 2))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IShellLinkA_GetWorkingDirectory (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $shell_link_empty_a (local.get $arg1) (local.get $arg2))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_IShellLinkA_SetWorkingDirectory (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (store.field DxObject misc2 (call $dx_from_this (local.get $arg0)) (local.get $arg1))
+    (call $shell_link_mark (local.get $arg0) (i32.const 4))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IShellLinkA_GetArguments (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $shell_link_empty_a (local.get $arg1) (local.get $arg2))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_IShellLinkA_SetArguments (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (store.field DxObject misc1 (call $dx_from_this (local.get $arg0)) (local.get $arg1))
+    (call $shell_link_mark (local.get $arg0) (i32.const 8))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IShellLinkA_GetHotkey (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs16 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (i32.ne (local.get $arg1) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IShellLinkA_SetHotkey (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $shell_link_mark (local.get $arg0) (i32.const 16))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IShellLinkA_GetShowCmd (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 1))))
+    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (i32.ne (local.get $arg1) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IShellLinkA_SetShowCmd (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (store.field DxObject width (call $dx_from_this (local.get $arg0)) (local.get $arg1))
+    (call $shell_link_mark (local.get $arg0) (i32.const 32))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IShellLinkA_GetIconLocation (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $shell_link_empty_a (local.get $arg1) (local.get $arg2))
+    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+  (func $handle_IShellLinkA_SetIconLocation (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $shell_link_mark (local.get $arg0) (i32.const 64))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_IShellLinkA_SetRelativePath (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $shell_link_mark (local.get $arg0) (i32.const 128))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_IShellLinkA_Resolve (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $shell_link_mark (local.get $arg0) (i32.const 256))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_IShellLinkA_SetPath (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (store.field DxObject misc0 (call $dx_from_this (local.get $arg0)) (local.get $arg1))
+    (call $shell_link_mark (local.get $arg0) (i32.const 512))
+    (global.set $eax (select (i32.const 0) (i32.const 0x80070057) (i32.ne (local.get $arg1) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IPersistFile_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $shell_link_query_interface
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_IPersistFile_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IDirectMusic_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+  (func $handle_IPersistFile_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IDirectMusic_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+  (func $handle_IPersistFile_GetClassID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then
+        (call $gs32 (local.get $arg1) (i32.const 0x00021401))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 0x000000C0))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 12)) (i32.const 0x46000000))))
+    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (i32.ne (local.get $arg1) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IPersistFile_IsDirty (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (select (i32.const 0) (i32.const 1)
+      (i32.ne (load.field DxObject flags (call $dx_from_this (local.get $arg0))) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+  (func $handle_IPersistFile_Load (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80070057))) ;; E_INVALIDARG
+      (else (global.set $eax (i32.const 0x80004001)))) ;; output-only host
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_IPersistFile_Save (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $header i32) (local $header_wa i32) (local $written i32) (local $handle i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80070057))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $header (call $heap_alloc (i32.const 80)))
+    (local.set $written (call $heap_alloc (i32.const 4)))
+    (if (i32.or (i32.eqz (local.get $header)) (i32.eqz (local.get $written)))
+      (then
+        (global.set $eax (i32.const 0x8007000E))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $header_wa (call $g2w (local.get $header)))
+    (call $zero_memory (local.get $header_wa) (i32.const 80))
+    (i32.store offset=0 (local.get $header_wa) (i32.const 0x4C))
+    (i32.store offset=4 (local.get $header_wa) (i32.const 0x00021401))
+    (i32.store offset=12 (local.get $header_wa) (i32.const 0x000000C0))
+    (i32.store offset=16 (local.get $header_wa) (i32.const 0x46000000))
+    (i32.store offset=60 (local.get $header_wa) (i32.const 1)) ;; SW_SHOWNORMAL
+    (local.set $handle (call $host_fs_create_file
+      (call $g2w (local.get $arg1)) (i32.const 0x40000000)
+      (i32.const 2) (i32.const 0x80) (i32.const 1)))
+    (if (i32.eq (local.get $handle) (i32.const -1))
+      (then (global.set $eax (i32.const 0x80004005)))
+      (else
+        (if (i32.and
+              (call $host_fs_write_file (local.get $handle) (local.get $header)
+                (i32.const 76) (local.get $written))
+              (i32.eq (call $gl32 (local.get $written)) (i32.const 76)))
+          (then
+            (store.field DxObject flags (call $dx_from_this (local.get $arg0)) (i32.const 0))
+            (global.set $eax (i32.const 0)))
+          (else (global.set $eax (i32.const 0x80004005))))
+        (drop (call $host_fs_close_handle (local.get $handle)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_IPersistFile_SaveCompleted (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $shell_link_mark (local.get $arg0) (i32.const 1024))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IPersistFile_GetCurFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (i32.const 0x80004001))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
   ;; 769: CoCreateInstance(rclsid, pUnkOuter, dwClsContext, riid, ppv) — 5 args stdcall
   (func $handle_CoCreateInstance (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $hr i32) (local $clsid_d1 i32) (local $obj_guest i32)
@@ -1307,6 +1525,25 @@
     ;; from ddrawex.dll. Used by CORBIS/FASHION/HORROR/WOTRAVEL screensavers; we
     ;; manufacture an IDirectDrawFactory directly so the guest never needs the DLL.
     (local.set $clsid_d1 (call $gl32 (local.get $arg0)))
+    ;; CLSID_ShellLink {00021401-0000-0000-C000-000000000046}. Inno Setup
+    ;; requests IShellLinkA, configures it, then queries IPersistFile.
+    (if (i32.eq (local.get $clsid_d1) (i32.const 0x00021401))
+      (then
+        (if (i32.or (local.get $arg1) (i32.eqz (local.get $arg4)))
+          (then
+            (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
+            (global.set $eax (select (i32.const 0x80040110) (i32.const 0x80004003)
+              (i32.ne (local.get $arg4) (i32.const 0))))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)))
+        (call $shell_link_init_vtables)
+        (local.set $obj_guest (call $dx_create_com_obj
+          (i32.const 36) (global.get $SHELL_LINK_VTBL)))
+        (call $gs32 (local.get $arg4) (local.get $obj_guest))
+        (global.set $eax (select (i32.const 0) (i32.const 0x8007000E)
+          (i32.ne (local.get $obj_guest) (i32.const 0))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
     ;; CLSID_DirectX7 {E1211353-8E94-11D1-8808-00C04FC2C602}, the VB6
     ;; DX7VB automation bootstrap. Its first direct method manufactures the
     ;; existing IDirectDraw7-compatible wrapper.
