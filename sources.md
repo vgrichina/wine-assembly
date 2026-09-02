@@ -938,6 +938,25 @@ the historical package can be obtained and inspected, not by itself permission
 to redistribute it with this repository; keep external downloads and verify
 the original package terms before bundling any commercial demo.
 
+### Little Fighter 2 v1.9 freeware
+
+The exact 12,669,116-byte `lf2_v19.exe` archived at
+[Archive.org](https://archive.org/details/lf2_v19) is pinned as
+`little-fighter-2-installer` with SHA-1
+`708c6be6dc4a195c1011fde480157862c60fbdee`. The unchanged Win32 installer now
+completes under Wine-Assembly and its installed game reaches interactive
+three-fighter VS combat. See
+[`docs/re-notes/little-fighter-2.md`](docs/re-notes/little-fighter-2.md) for the
+installer route, hashes, DirectDraw fix, and frozen gameplay gate.
+
+The [official LF2 introduction](https://www.lf2.net/en/intro.html) describes
+the game as freeware, and the [official FAQ](https://www.lf2.net/faq_en.html)
+confirms that the authors intended it to be free to play. The package readme
+still says **All rights reserved**, and no inspected official page expressly
+permits redistribution. Keep both the installer and prepared game payload
+local/gitignored; freeware status permits this compatibility target under the
+candidate policy but does not clear it for public deployment.
+
 Recommended order:
 
 1. [Jazz Jackrabbit 2 Demo v1.23s](https://archive.org/details/JazzJackrabbit2Demo)
