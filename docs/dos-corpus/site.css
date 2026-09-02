@@ -105,7 +105,11 @@ figure .runnable {
 figure:hover .runnable, figure:focus-within .runnable { background: var(--accent); color: var(--ground); }
 button.open { display: block; width: 100%; padding: 0; border: 0; background: #000; cursor: zoom-in; }
 button.open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-figure img { display: block; width: 100%; image-rendering: pixelated; }
+/* Every mode in this corpus was shown on a 4:3 monitor: 320x200, 640x200,
+   640x350 and the 80x25 text page all fill the same glass with non-square
+   pixels. Shown at the raw pixel grid a mode 13h demo is 16:10 and everything
+   in it is squashed, so the picture is stretched to 4:3 the way the CRT did. */
+figure img { display: block; width: 100%; aspect-ratio: 4 / 3; image-rendering: pixelated; }
 figcaption { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-top: 7px; font-family: var(--mono); font-size: 11px; }
 .fn { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fp { color: var(--faint); white-space: nowrap; }
@@ -128,14 +132,20 @@ dialog {
   padding: 0; width: min(96vw, 1600px); max-width: 96vw; max-height: 94vh;
 }
 dialog::backdrop { background: rgba(2,2,6,.86); }
-dialog img, dialog canvas { display: block; max-width: 100%; max-height: 80vh; margin: 0 auto; background: #000; image-rendering: pixelated; }
+/* 4:3 here too, sized from the width unless the height would exceed the
+   viewport, in which case the width follows the height -- a fixed
+   width:100% with a max-height would squash the picture instead. */
+dialog img, dialog canvas {
+  display: block; width: min(100%, calc(80vh * 4 / 3)); aspect-ratio: 4 / 3; height: auto;
+  margin: 0 auto; background: #000; image-rendering: pixelated;
+}
 /* The UA stylesheet gives [hidden] display:none at the lowest possible
    specificity, and the rule above outranks it -- so the screenshot stayed on
    screen underneath the live canvas the whole time a demo was running. */
 dialog img[hidden], dialog canvas[hidden] { display: none; }
 /* The guest's own resolution is the backing store and CSS does the scaling, so
    a 320x200 demo stays a 320x200 demo instead of a blurred one. */
-dialog canvas { width: 100%; height: auto; outline: none; }
+dialog canvas { outline: none; }
 dialog canvas:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
 /* The Run control sits ON the screenshot, because what it replaces is the
    screenshot: press it and the same frame becomes a live one in place. */
