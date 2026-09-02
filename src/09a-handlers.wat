@@ -6940,6 +6940,12 @@
     (drop (local.get $arg3))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
+    (if (i32.eqz (global.get $clipboard_open))
+      (then
+        (global.set $last_error (i32.const 1418)) ;; ERROR_CLIPBOARD_NOT_OPEN
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (global.set $eax (call $clipboard_get_data_handle (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -8330,19 +8336,45 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 244: OpenClipboard(hwndNewOwner) — single-process clipboard, always open.
+  ;; USER's clipboard transaction is exclusive even though this emulator has
+  ;; one Windows process. EmptyClipboard later transfers ownership to the HWND
+  ;; associated here; a NULL HWND means the task may inspect the clipboard but
+  ;; cannot publish new data after emptying it.
+  (global $clipboard_open (mut i32) (i32.const 0))
+  (global $clipboard_open_hwnd (mut i32) (i32.const 0))
+  (global $clipboard_owner_hwnd (mut i32) (i32.const 0))
+  (global $clipboard_emptied_by_opener (mut i32) (i32.const 0))
+
+  ;; 244: OpenClipboard(hwndNewOwner).
   (func $handle_OpenClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (drop (local.get $arg0))
     (drop (local.get $arg1))
     (drop (local.get $arg2))
     (drop (local.get $arg3))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
+    (if (global.get $clipboard_open)
+      (then
+        (global.set $last_error (i32.const 5)) ;; ERROR_ACCESS_DENIED
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (if (i32.and
+          (i32.ne (local.get $arg0) (i32.const 0))
+          (i32.lt_s (call $wnd_table_find (local.get $arg0)) (i32.const 0)))
+      (then
+        (global.set $last_error (i32.const 1400)) ;; ERROR_INVALID_WINDOW_HANDLE
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (global.set $clipboard_open (i32.const 1))
+    (global.set $clipboard_open_hwnd (local.get $arg0))
+    (global.set $clipboard_emptied_by_opener (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 245: CloseClipboard() — single-process clipboard, always succeeds.
+  ;; 245: CloseClipboard(). Ownership survives closing; only the exclusive
+  ;; access transaction ends.
   (func $handle_CloseClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (drop (local.get $arg0))
     (drop (local.get $arg1))
@@ -8350,6 +8382,15 @@
     (drop (local.get $arg3))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
+    (if (i32.eqz (global.get $clipboard_open))
+      (then
+        (global.set $last_error (i32.const 1418)) ;; ERROR_CLIPBOARD_NOT_OPEN
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (global.set $clipboard_open (i32.const 0))
+    (global.set $clipboard_open_hwnd (i32.const 0))
+    (global.set $clipboard_emptied_by_opener (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
@@ -16218,7 +16259,8 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; EmptyClipboard() — clear all supported non-OLE clipboard data.
+  ;; EmptyClipboard() — clear all supported clipboard data, notify the old
+  ;; owner synchronously, then make the opening HWND the new owner.
   (func $handle_EmptyClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (drop (local.get $arg0))
     (drop (local.get $arg1))
@@ -16226,7 +16268,25 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (drop (local.get $arg3))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
+    (if (i32.eqz (global.get $clipboard_open))
+      (then
+        (global.set $last_error (i32.const 1418)) ;; ERROR_CLIPBOARD_NOT_OPEN
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (if (i32.and
+          (i32.ne (global.get $clipboard_owner_hwnd) (i32.const 0))
+          (i32.ge_s
+            (call $wnd_table_find (global.get $clipboard_owner_hwnd))
+            (i32.const 0)))
+      (then
+        (drop (call $wnd_send_message
+          (global.get $clipboard_owner_hwnd)
+          (i32.const 0x0307) ;; WM_DESTROYCLIPBOARD
+          (i32.const 0) (i32.const 0)))))
     (call $clipboard_clear_all_data)
+    (global.set $clipboard_owner_hwnd (global.get $clipboard_open_hwnd))
+    (global.set $clipboard_emptied_by_opener (i32.const 1))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
@@ -16241,6 +16301,18 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (drop (local.get $arg3))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
+    (if (i32.eqz
+          (i32.and
+            (i32.ne (global.get $clipboard_open) (i32.const 0))
+            (i32.and
+              (i32.ne
+                (global.get $clipboard_emptied_by_opener) (i32.const 0))
+              (i32.ne (global.get $clipboard_owner_hwnd) (i32.const 0)))))
+      (then
+        (global.set $last_error (i32.const 1418)) ;; ERROR_CLIPBOARD_NOT_OPEN
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (if (i32.eqz (local.get $arg1))
       (then
         (global.set $eax (i32.const 0))
@@ -16291,7 +16363,9 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; GetClipboardOwner() — no cross-window ownership model yet.
+  ;; GetClipboardOwner() returns the HWND that most recently emptied the
+  ;; clipboard. Data remains valid if that window has since gone away, but the
+  ;; stale HWND is no longer an owner.
   (func $handle_GetClipboardOwner (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (drop (local.get $arg0))
     (drop (local.get $arg1))
@@ -16299,7 +16373,13 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (drop (local.get $arg3))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
-    (global.set $eax (i32.const 0))
+    (if (i32.and
+          (i32.ne (global.get $clipboard_owner_hwnd) (i32.const 0))
+          (i32.lt_s
+            (call $wnd_table_find (global.get $clipboard_owner_hwnd))
+            (i32.const 0)))
+      (then (global.set $clipboard_owner_hwnd (i32.const 0))))
+    (global.set $eax (global.get $clipboard_owner_hwnd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 

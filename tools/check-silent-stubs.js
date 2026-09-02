@@ -120,8 +120,11 @@ const digest = crypto.createHash('sha256')
 // 2026-09-02: 502 -> 500. Begin/EndDeferWindowPos now allocate, validate,
 // consume and free real bounded HDWP transactions; queued geometry remains
 // unchanged until End applies it through the SetWindowPos behavior path.
-const EXPECTED_COUNT = 500;
-const EXPECTED_SHA256 = '9dd9d6388753dc6081e351a26ff85c496fedcc7d538637491b80d86819ad2310';
+// 2026-09-02: 500 -> 497. OpenClipboard/CloseClipboard now own an exclusive
+// USER transaction, and GetClipboardOwner reports ownership assigned by
+// EmptyClipboard instead of three fixed success/null answers.
+const EXPECTED_COUNT = 497;
+const EXPECTED_SHA256 = '1c75d0ae95fe75b4a07fe2171bf420995ca2c24830a375c0a8190a697f31b1d0';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

@@ -194,7 +194,7 @@
   (region.declare $USER_DIALOG_STRINGS (size 0x00000270) (align 0x00001000)
     (owner "01-header.wat:1139"))
   (region.declare $DX_VERSION_INFO (size 0x0000005C) (align 0x00000010)
-    (owner "09a-handlers.wat:17705"))
+    (owner "09a-handlers.wat:17785"))
   ;; Storage for every string the compiler interns from a `"text"` literal.
   ;; Named by `(string.pool $WATX_STRING_POOL)` in 01-header.wat; without that
   ;; declaration the pool is placed above the last data segment, which in this
@@ -390,7 +390,7 @@
     (owner "01-header.wat:2339"))
   (region.declare $CS_TABLE (size 0x00000400) (align 0x00000010)
     (stride 0x4 (count $CS_TABLE_ENTRIES))
-    (owner "09a-handlers.wat:9803"))
+    (owner "09a-handlers.wat:9844"))
   (region.declare $SHARED_COUNTERS (size 0x00000010) (align 0x00000010)
     (owner "01-header.wat:2371"))
   (region.declare $GDI_TABLE_MARKS (size 0x00000010) (align 0x00000010)
@@ -476,9 +476,9 @@
     (stride 0x4 (count $DX_MAX))
     (owner "09a8-handlers-directx.wat:688"))
   (region.declare $CP1252_TO_CP437 (size 0x00000100) (align 0x00001000)
-    (owner "09a-handlers.wat:16717"))
+    (owner "09a-handlers.wat:16797"))
   (region.declare $CP437_TO_CP1252 (size 0x00000100) (align 0x00000100)
-    (owner "09a-handlers.wat:16718"))
+    (owner "09a-handlers.wat:16798"))
   (region.declare $BRANCH_CMP_JCC_HIST (size 0x00001000) (align 0x00001000)
     (owner "04-cache.wat:1074"))
   (region.declare $BRANCH_TEST_JCC_HIST (size 0x00001000) (align 0x00001000)
