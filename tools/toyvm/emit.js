@@ -1396,7 +1396,7 @@ function genStrings() {
         // t2 = bytes, t3 = di, t4 = dst lin, t5 = si (or the pattern for
         // STOS), t6 = src lin, t7 = end. Every `br $slow` is a condition the
         // byte loop would have handled one element at a time.
-        const decl = (k, cond) => `(if ${cond} (then (call $rep_decl (i32.const ${k})) (br $slow)))`;
+        const decl = (k, cond) => `(if ${cond} (then (call $rep_decl (i32.const ${k}) (i32.mul (local.get $t1) (i32.const ${sz}))) (br $slow)))`;
         const noWrap = (off, bytes) => decl(3, a === 32
           ? `(i32.lt_u (i32.add ${off} ${bytes}) ${off})`
           : `(i32.gt_u (i32.add ${off} ${bytes}) (i32.const 0x10000))`);
@@ -4349,7 +4349,9 @@ ${memAccessors()}
 (global $rep_d2 (mut i32) (i32.const 0)) (global $rep_d3 (mut i32) (i32.const 0))
 (global $rep_d4 (mut i32) (i32.const 0)) (global $rep_d5 (mut i32) (i32.const 0))
 (global $rep_d6 (mut i32) (i32.const 0))
-(func $rep_decl (param $k i32)
+(global $rep_dbytes (mut i32) (i32.const 0))
+(func $rep_decl (param $k i32) (param $bytes i32)
+  (global.set $rep_dbytes (i32.add (global.get $rep_dbytes) (local.get $bytes)))
   ${[0, 1, 2, 3, 4, 5, 6].map(k =>
     `(if (i32.eq (local.get $k) (i32.const ${k})) (then (global.set $rep_d${k} (i32.add (global.get $rep_d${k}) (i32.const 1)))))`).join('\n  ')})
 (func (export "get_rep_stat") (param $i i32) (result i32)
@@ -4357,6 +4359,7 @@ ${memAccessors()}
   (if (i32.eq (local.get $i) (i32.const 1)) (then (return (global.get $rep_bytes))))
   ${[0, 1, 2, 3, 4, 5, 6].map(k =>
     `(if (i32.eq (local.get $i) (i32.const ${k + 2})) (then (return (global.get $rep_d${k}))))`).join('\n  ')}
+  (if (i32.eq (local.get $i) (i32.const 9)) (then (return (global.get $rep_dbytes))))
   (i32.const 0))
 
 ;; Is [lin, lin+bytes) one plain range: inside the address mask and the wasm

@@ -353,6 +353,7 @@ UNIT=(
   test/test-dialog-setfocus-tabstop.js
   test/test-dialog-idok-handled.js
   test/test-isdialogmessage-enter.js
+  test/test-translate-message.js
   test/test-dialog-custom-dispatch.js
   test/test-end-dialog-lifecycle.js
   test/test-modal-common-dialog-worker.js

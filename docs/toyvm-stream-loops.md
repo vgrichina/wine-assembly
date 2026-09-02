@@ -342,3 +342,9 @@ obvious next form of this and has ADDY_II and DHADREN as beneficiaries.
 What remains of the "byte loops" idea after this is the *unrolled* string op —
 daretro's 353K `lodsb`, CONTACT's 783K `lodsb` + 388K `stosb` — which sit inside
 guest loops with real bodies. That is the trace JIT's population, not REP's.
+
+Sized after the fact with the census's declined-bytes figure: ADDY_II declines
+1.42 MB per 12M dispatches to the planar guard against 1.29 MB it widens, and
+DSTNFO 84 KB. So the planar fill is worth at most what the plain widening was
+worth to ADDY_II (about +10%), not a COPPER-sized win; it stays on the list
+behind the trace JIT work.

@@ -920,7 +920,7 @@ async function main() {
     + (r.rep && (r.rep[0] || r.rep.slice(2).some(Boolean))
       ? `\n  rep widened: ${r.rep[0]} runs, ${r.rep[1]} bytes; declined:`
         + ['off', 'df', 'big', 'wrap', 'vga/mask', 'code', 'overlap']
-            .map((k, i) => r.rep[i + 2] ? ` ${k}=${r.rep[i + 2]}` : '').join('')
+            .map((k, i) => r.rep[i + 2] ? ` ${k}=${r.rep[i + 2]}` : '').join('') + (r.rep[9] ? ` (${r.rep[9]} bytes)` : '')
       : '')
     // Store sites where "a CS override means self-patching code" was watched
     // being wrong and withdrawn. Nonzero means this run took the benignPatch

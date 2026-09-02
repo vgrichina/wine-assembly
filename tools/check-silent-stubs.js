@@ -136,8 +136,10 @@ const digest = crypto.createHash('sha256')
 // shared Win98 x86 process error mode instead of always returning zero.
 // 2026-09-02: 488 -> 483. COM/OLE initialization now owns per-thread apartment
 // model and nesting state; the dead duplicate OleInitialize body is gone.
-const EXPECTED_COUNT = 483;
-const EXPECTED_SHA256 = 'f43e2241cf05bde95b76598cf6a39e1d716a0d909689592109ed581fe23dc593';
+// 2026-09-02: 483 -> 482. TranslateMessage now distinguishes the four
+// virtual-key messages from unrelated MSGs instead of always returning TRUE.
+const EXPECTED_COUNT = 482;
+const EXPECTED_SHA256 = '2a85c6a4f215947b7e2871e0a0e3414f99cb63c91b60259159452de1c3292b9f';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
