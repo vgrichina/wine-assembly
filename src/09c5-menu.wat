@@ -722,9 +722,10 @@
         (param $blob_w i32) (param $hdr i32) (param $hdc i32) (result i32)
     (local $count i32) (local $i i32) (local $it i32) (local $flags i32)
     (local $label_w i32) (local $sc_w i32) (local $candidate i32)
-    (local $width i32) (local $sc_len i32)
+    (local $width i32) (local $sc_len i32) (local $old_font i32)
     (if (i32.eqz (local.get $hdr)) (then (return (i32.const 0))))
-    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+    (local.set $old_font
+      (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
     (local.set $count (i32.load (local.get $hdr)))
     (local.set $width (i32.const 180))
     (local.set $i (i32.const 0))
@@ -756,6 +757,7 @@
             (then (local.set $width (local.get $candidate))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
+    (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old_font)))
     (local.get $width))
 
   ;; ----- bar item geometry walker -----

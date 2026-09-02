@@ -79,8 +79,13 @@ function check(label, fn) {
   });
 
   check('popup width grows to keep long labels and shortcuts in separate columns', () => {
+    const menuHdc = 0x40000; // hwnd 0's pseudo window DC
+    wat.test_call_SelectObject(menuHdc, 0x3001D); // SYSTEM_FIXED_FONT
+    const selectedFontBefore = wat.test_gdi_bitmap_font_selected(menuHdc) >>> 0;
     const width = wat.menu_dropdown_width(0, 0) | 0;
     assert(width > 180, `long popup stayed at the legacy 180px width (${width})`);
+    assert.strictEqual(wat.test_gdi_bitmap_font_selected(menuHdc) >>> 0, selectedFontBefore,
+      'a width query must restore the font that was selected in the caller DC');
     assert.strictEqual(wat.menu_hittest_dropdown(0, 0, 40, 40,
       40 + width - 3, 43), 0,
     'the widened painted area must also belong to the first menu item');
