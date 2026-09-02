@@ -2174,3 +2174,27 @@ handback columns are the ones to rank regions by until a quiet box (or a longer
 budget) confirms the `%`. That ranking is what the min-share floor above
 should be decided from: a region whose ceiling rounds to 0.0% cannot pay by
 construction, and the column now says so per program.
+
+## Two items checked off the loop list without a change (2026-09-02)
+
+**`ret`-terminated traces already install.** The straight walk keeps the
+block that ends in an un-inlined `ret` and `splitExit` publishes its computed
+`$gip`; DREAM's 15-op, 3-block region at 0x997 ends exactly that way. The
+`reject 0x...: straight, N ops, stops: ret with no inlined call` line that
+made it look declined is the walk's own log of *why the walk stopped*, printed
+for every non-closing candidate whether or not it is then installed. The
+`unreadable:ret` = 168 figure came from `loop-match.js --why`, which is the
+static Design-A matcher, not this JIT.
+
+**daretro's 0.3% trace is a correct decline, but the profile behind it is
+odd and unexplained.** 297 of 300 samples (487 of 500 with a jittered slice)
+sit on one 1-op block — the `cmp_mi8_jz_spin` twin, 238 entries, ~3M of the
+12M dispatches — and every candidate region reads 0–5 samples. A
+slice-length jitter (deterministic LCG, ¼–1× the quantum, profiling runs
+only) was built on the theory that a fixed slice phase-locks to the wait; it
+moved nothing and was removed. Its frame is byte-identical under
+`--irq-every=25000` and `--dispatches-per-tick=50000`, so whatever that spin
+waits for is neither the timer IRQ nor the BIOS tick word. Next step, if it
+matters: `--trace-at` the spin's ip with `--trace-entry` past the depacker
+and read what byte it compares — `--trace-entry=N` only prints the first N
+handbacks, which on daretro are all the depacker.

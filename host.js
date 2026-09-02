@@ -453,7 +453,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '271';
+  static SOURCE_VERSION = '272';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -4074,6 +4074,10 @@ class WineAssembly {
           `EDX=${hex(edx)} ESI=${hex(esi)} EDI=${hex(edi)} stack=[${stack.join(',')}] yield=${yr}`;
         console.error('WASM crash:', e, state, tag);
         self.logToUI('ERROR: ' + e.message + ' @ ' + state + tag);
+        if (typeof self.onFatal === 'function') {
+          try { self.onFatal({ error: e, state, tag }); }
+          catch (reportError) { console.error('Unable to show crash report:', reportError); }
+        }
         // Repaints, unlike before: a crash that left the option off held the
         // dead app's last frame on screen, which reads as a hang rather than
         // as the exit it is.
