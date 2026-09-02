@@ -2490,6 +2490,15 @@
   ;; 78: DefWindowProcA
   (func $handle_DefWindowProcA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $text_wa i32) (local $text_len i32)
+    ;; WM_WINDOWPOSCHANGED: USER derives WM_MOVE/WM_SIZE only when the
+    ;; application passes this message to DefWindowProc. A wndproc that
+    ;; consumes it intentionally suppresses both legacy messages.
+    (if (i32.eq (local.get $arg1) (i32.const 0x0047))
+      (then
+        (call $windowpos_defproc_geometry (local.get $arg0) (local.get $arg3))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; USER's built-in BUTTON class has an internal default procedure. Native
     ;; comctl32 property sheets temporarily subclass their navigation buttons,
     ;; then restore a tiny DefWindowProcA thunk; treat that thunk as the class

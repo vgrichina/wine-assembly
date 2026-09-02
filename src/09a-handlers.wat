@@ -5908,42 +5908,64 @@
         (i32.and (i32.load offset=4 (global.get $WINDOW_RECT_SCRATCH)) (i32.const 0xFFFF))
         (i32.const 16))))
 
-  ;; Queue the legacy geometry messages that USER derives from a completed
-  ;; position change. Only actual changes generate messages, and SWP_NOMOVE /
-  ;; SWP_NOSIZE suppress their respective halves.
-  (func $windowpos_post_geometry
-      (param $hwnd i32) (param $old_xy i32) (param $new_xy i32)
-      (param $old_wh i32) (param $new_wh i32) (param $flags i32)
-    (if (i32.and
-          (i32.eqz (i32.and (local.get $flags) (i32.const 2))) ;; !SWP_NOMOVE
-          (i32.ne (local.get $old_xy) (local.get $new_xy)))
-      (then (drop (call $post_queue_push
-        (local.get $hwnd) (i32.const 0x0003) (i32.const 0) (local.get $new_xy)))))
-    (if (i32.and
-          (i32.eqz (i32.and (local.get $flags) (i32.const 1))) ;; !SWP_NOSIZE
-          (i32.ne (local.get $old_wh) (local.get $new_wh)))
-      (then (drop (call $post_queue_push
-        (local.get $hwnd) (i32.const 0x0005) (i32.const 0) (local.get $new_wh))))))
-
   ;; 120: MoveWindow — hwnd(arg0), x(arg1), y(arg2), w(arg3), h(arg4), bRepaint=[esp+24]
   ;; MoveWindow is SetWindowPos without z-order/activation changes. A false
   ;; bRepaint maps to SWP_NOREDRAW and suppresses update-region creation.
-  ;; A same-size MoveWindow is a geometry no-op and must not enqueue another
-  ;; WM_SIZE. Some applications enforce an aspect ratio from WM_SIZE by calling
-  ;; MoveWindow with the dimensions they already have; requeueing in that case
-  ;; creates an infinite WM_SIZE -> MoveWindow loop and starves paint/timers.
+  ;; A same-size MoveWindow is marked SWP_NOSIZE before WM_WINDOWPOSCHANGED, so
+  ;; DefWindowProc does not send another WM_SIZE. Some applications enforce an
+  ;; aspect ratio from WM_SIZE by calling MoveWindow with the dimensions they
+  ;; already have; repeating the message would recurse forever.
   (func $handle_MoveWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cx i32) (local $cy i32) (local $cs i32) (local $old_cs i32) (local $dlg_rec i32)
-    (local $old_xy i32) (local $new_xy i32) (local $flags i32) (local $repaint i32)
+    (local $x i32) (local $y i32) (local $old_xy i32) (local $new_xy i32)
+    (local $flags i32) (local $original_flags i32) (local $repaint i32)
+    (local $insert_after i32) (local $windowpos i32)
+    (local.set $x (local.get $arg1))
+    (local.set $y (local.get $arg2))
+    (local.set $cx (local.get $arg3))
+    (local.set $cy (local.get $arg4))
     (local.set $repaint (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $flags (i32.const 0x0014)) ;; SWP_NOZORDER | SWP_NOACTIVATE
     (if (i32.eqz (local.get $repaint))
       (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x0008))))) ;; SWP_NOREDRAW
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    (local.set $original_flags (local.get $flags))
+    (local.set $windowpos (call $windowpos_message_begin
+      (local.get $arg0) (local.get $insert_after)
+      (local.get $x) (local.get $y) (local.get $cx) (local.get $cy)
+      (local.get $flags)))
+    (if (local.get $windowpos)
+      (then
+        (local.set $insert_after
+          (call $gl32 (i32.add (local.get $windowpos) (i32.const 4))))
+        (local.set $x
+          (call $gl32 (i32.add (local.get $windowpos) (i32.const 8))))
+        (local.set $y
+          (call $gl32 (i32.add (local.get $windowpos) (i32.const 12))))
+        (local.set $cx
+          (call $gl32 (i32.add (local.get $windowpos) (i32.const 16))))
+        (local.set $cy
+          (call $gl32 (i32.add (local.get $windowpos) (i32.const 20))))
+        (local.set $flags
+          (i32.or
+            (i32.and
+              (call $gl32 (i32.add (local.get $windowpos) (i32.const 24)))
+              (i32.const 0xFFFFFDEF))
+            (i32.and (local.get $original_flags) (i32.const 0x00000210))))
+        (if (i32.lt_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
+          (then
+            (call $windowpos_message_cancel (local.get $windowpos))
+            (global.set $last_error (i32.const 1400))
+            (global.set $eax (i32.const 0))
+            (return)))))
+    (local.set $repaint
+      (i32.eqz (i32.and (local.get $flags) (i32.const 0x0008))))
     (local.set $old_cs (call $host_get_window_client_size (local.get $arg0)))
     (local.set $old_xy (call $window_xy_packed (local.get $arg0)))
-    (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $flags))
-    (call $ctrl_geom_sync (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $flags))
+    (call $host_move_window (local.get $arg0) (local.get $x) (local.get $y)
+      (local.get $cx) (local.get $cy) (local.get $flags))
+    (call $ctrl_geom_sync (local.get $arg0) (local.get $x) (local.get $y)
+      (local.get $cx) (local.get $cy) (local.get $flags))
     (call $defwndproc_do_nccalcsize (local.get $arg0))
     (call $host_sync_window_client
       (local.get $arg0)
@@ -5957,8 +5979,17 @@
     ;; after a real client-size transition.
     (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
     (local.set $new_xy (call $window_xy_packed (local.get $arg0)))
+    (if (i32.eq (local.get $old_xy) (local.get $new_xy))
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 2)))))
+    (if (i32.eq (local.get $old_cs) (local.get $cs))
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 1)))))
     (if (i32.ne (local.get $cs) (local.get $old_cs))
       (then (call $gdi_refresh_window_dc_system_clips)))
+    (call $windowpos_message_update
+      (local.get $windowpos) (local.get $arg0) (local.get $insert_after)
+      (local.get $x) (local.get $y) (local.get $cx) (local.get $cy)
+      (local.get $flags))
+    (call $windowpos_message_end (local.get $windowpos) (local.get $arg0))
     (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $arg0)))
     (if (i32.and
           (i32.and
@@ -5992,23 +6023,6 @@
               ;; way USER's invalidate-on-resize does.
               (if (local.get $repaint)
                 (then (call $nc_flags_set (local.get $arg0) (i32.const 2))))))))
-    ;; A 16-bit window with a real far procedure already received WM_MOVE /
-    ;; WM_SIZE synchronously from $win16_MoveWindow.
-    (if (i32.eqz (i32.and
-          (i32.ne (global.get $code16) (i32.const 0))
-          (call $win16_is_far_proc (call $wnd_table_get (local.get $arg0)))))
-      (then
-        ;; Before the main window's first ShowWindow, its pending WM_SIZE is the
-        ;; single source of startup geometry. Visible mains and every child use
-        ;; the ordinary queued geometry notifications.
-        (if (i32.or
-              (i32.ne (local.get $arg0) (global.get $main_hwnd))
-              (i32.ne
-                (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000))
-                (i32.const 0)))
-          (then (call $windowpos_post_geometry
-            (local.get $arg0) (local.get $old_xy) (local.get $new_xy)
-            (local.get $old_cs) (local.get $cs) (local.get $flags))))))
     (global.set $eax (i32.const 1))
     (return)
   )
@@ -6519,36 +6533,37 @@
   (global $WINDOWPOS_SLOT i32 (i32.const 32))   ;; 28-byte struct, padded
   (global $WINDOWPOS_DEPTH_MAX i32 (i32.const 8))
 
-  ;; Tell a window it was moved or resized.
-  ;;
-  ;; Win32 sends this synchronously from inside SetWindowPos, and VCL depends
-  ;; on that precise timing: TWinControl.SetBounds does not cache the new size
-  ;; when the window has a handle. It calls SetWindowPos and lets
-  ;; WM_WINDOWPOSCHANGED -> UpdateBounds -> GetWindowRect write FLeft/FTop/
-  ;; FWidth/FHeight back. Without the message those fields keep whatever the
-  ;; window was created with, so the next SetBounds — setting height, say —
-  ;; passes a stale width alongside it and silently undoes the previous call.
-  ;; Posting the message instead of sending it does not help: the whole
-  ;; sequence runs before the app pumps its queue again.
-  (func $windowpos_notify
+  ;; Allocate one reentrant guest-visible WINDOWPOS and send the mutable
+  ;; WM_WINDOWPOSCHANGING half of USER's positioning transaction. The same
+  ;; slot remains live until $windowpos_message_end sends WM_WINDOWPOSCHANGED,
+  ;; so nested SetWindowPos calls cannot rewrite the outer wndproc's lParam.
+  ;; SWP_NOSENDCHANGING suppresses only the first message.
+  (func $windowpos_message_begin
     (param $hwnd i32) (param $insert_after i32) (param $x i32) (param $y i32)
-    (param $cx i32) (param $cy i32) (param $flags i32)
+    (param $cx i32) (param $cy i32) (param $flags i32) (result i32)
     (local $wp i32) (local $slot i32) (local $w i32)
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
-    (if (i32.eqz (local.get $wp)) (then (return)))
-    ;; WAT-native and builtin procs keep their own geometry; only a guest
-    ;; wndproc has bookkeeping that can drift out of sync with ours.
-    (if (i32.eq (local.get $wp) (global.get $WNDPROC_BUILTIN)) (then (return)))
-    (if (i32.ge_u (local.get $wp) (i32.const 0xFFFF0000)) (then (return)))
-    ;; WAT-owned controls are already tracked by $ctrl_geom_sync above.
-    (if (call $ctrl_table_get_class (local.get $hwnd)) (then (return)))
+    (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
+    ;; 0xFFFE_xxxx values are emulator markers, not callable procedures. WAT
+    ;; wndprocs live at 0xFFFF_xxxx and are safe through $wnd_send_message.
+    (if (i32.and
+          (i32.ge_u (local.get $wp) (i32.const 0xFFFE0000))
+          (i32.lt_u (local.get $wp) (i32.const 0xFFFF0000)))
+      (then (return (i32.const 0))))
+    ;; The Win16 far-procedure path constructs its own Pascal message frames;
+    ;; this 32-bit stdcall sender cannot keep a queued WINDOWPOS alive for it.
+    (if (i32.and
+          (i32.ne (global.get $code16) (i32.const 0))
+          (call $win16_is_far_proc (local.get $wp)))
+      (then (return (i32.const 0))))
     (if (i32.ge_u (global.get $windowpos_depth) (global.get $WINDOWPOS_DEPTH_MAX))
-      (then (return)))
+      (then (return (i32.const 0))))
     (if (i32.eqz (global.get $windowpos_ring))
       (then
         (global.set $windowpos_ring (call $heap_alloc
           (i32.mul (global.get $WINDOWPOS_SLOT) (global.get $WINDOWPOS_DEPTH_MAX))))))
-    (if (i32.eqz (global.get $windowpos_ring)) (then (return)))
+    (if (i32.eqz (global.get $windowpos_ring))
+      (then (return (i32.const 0))))
     (local.set $slot (i32.add (global.get $windowpos_ring)
       (i32.mul (global.get $windowpos_depth) (global.get $WINDOWPOS_SLOT))))
     (local.set $w (call $g2w (local.get $slot)))
@@ -6560,16 +6575,100 @@
     (i32.store offset=20 (local.get $w) (local.get $cy))
     (i32.store offset=24 (local.get $w) (local.get $flags))
     (global.set $windowpos_depth (i32.add (global.get $windowpos_depth) (i32.const 1)))
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x0400))) ;; !SWP_NOSENDCHANGING
+      (then
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0046) (i32.const 0) (local.get $slot)))))
+    (local.get $slot))
+
+  ;; Publish the final values through the same WINDOWPOS before the changed
+  ;; notification. Mutating this second message has no effect because USER has
+  ;; already committed the operation.
+  (func $windowpos_message_update
+    (param $slot i32) (param $hwnd i32) (param $insert_after i32)
+    (param $x i32) (param $y i32) (param $cx i32) (param $cy i32)
+    (param $flags i32)
+    (local $w i32)
+    (if (i32.eqz (local.get $slot)) (then (return)))
+    (local.set $w (call $g2w (local.get $slot)))
+    (i32.store (local.get $w) (local.get $hwnd))
+    (i32.store offset=4 (local.get $w) (local.get $insert_after))
+    (i32.store offset=8 (local.get $w) (local.get $x))
+    (i32.store offset=12 (local.get $w) (local.get $y))
+    (i32.store offset=16 (local.get $w) (local.get $cx))
+    (i32.store offset=20 (local.get $w) (local.get $cy))
+    (i32.store offset=24 (local.get $w) (local.get $flags)))
+
+  (func $windowpos_message_end (param $slot i32) (param $hwnd i32)
+    (if (i32.eqz (local.get $slot)) (then (return)))
     (drop (call $wnd_send_message
       (local.get $hwnd) (i32.const 0x0047) (i32.const 0) (local.get $slot)))
     (global.set $windowpos_depth (i32.sub (global.get $windowpos_depth) (i32.const 1)))
   )
 
+  (func $windowpos_message_cancel (param $slot i32)
+    (if (i32.eqz (local.get $slot)) (then (return)))
+    (global.set $windowpos_depth
+      (i32.sub (global.get $windowpos_depth) (i32.const 1))))
+
+  ;; WM_MOVE carries the upper-left of the client area. Top-level coordinates
+  ;; are screen-relative; child coordinates are relative to the parent's
+  ;; client origin.
+  (func $window_client_xy_packed (param $hwnd i32) (result i32)
+    (local $x i32) (local $y i32) (local $parent i32)
+    (local.set $x (call $wnd_client_screen_x (local.get $hwnd)))
+    (local.set $y (call $wnd_client_screen_y (local.get $hwnd)))
+    (if (i32.ne
+          (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x40000000))
+          (i32.const 0))
+      (then
+        (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+        (if (local.get $parent)
+          (then
+            (local.set $x (i32.sub (local.get $x)
+              (call $wnd_client_screen_x (local.get $parent))))
+            (local.set $y (i32.sub (local.get $y)
+              (call $wnd_client_screen_y (local.get $parent))))))))
+    (i32.or
+      (i32.and (local.get $x) (i32.const 0xFFFF))
+      (i32.shl (i32.and (local.get $y) (i32.const 0xFFFF)) (i32.const 16))))
+
+  ;; DefWindowProc owns the legacy geometry messages. A wndproc that consumes
+  ;; WM_WINDOWPOSCHANGED without chaining here intentionally receives neither,
+  ;; exactly as USER documents.
+  (func $windowpos_defproc_geometry (param $hwnd i32) (param $windowpos i32)
+    (local $flags i32) (local $wh i32)
+    (if (i32.eqz (local.get $windowpos)) (then (return)))
+    (local.set $flags
+      (call $gl32 (i32.add (local.get $windowpos) (i32.const 24))))
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 2))) ;; !SWP_NOMOVE
+      (then
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0003) (i32.const 0)
+          (call $window_client_xy_packed (local.get $hwnd))))))
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 1))) ;; !SWP_NOSIZE
+      (then
+        (local.set $wh (i32.or
+          (i32.and
+            (i32.sub (call $client_rect_get_r (local.get $hwnd))
+              (call $client_rect_get_l (local.get $hwnd)))
+            (i32.const 0xFFFF))
+          (i32.shl
+            (i32.and
+              (i32.sub (call $client_rect_get_b (local.get $hwnd))
+                (call $client_rect_get_t (local.get $hwnd)))
+              (i32.const 0xFFFF))
+            (i32.const 16))))
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0005) (i32.const 0) (local.get $wh))))))
+
   (func $handle_SetWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; SetWindowPos(hwnd, hWndInsertAfter, X, Y, cx, cy, uFlags)
     (local $x i32) (local $y i32) (local $cx i32) (local $cy i32)
-    (local $uFlags i32) (local $dlg_rec i32) (local $screen i32)
+    (local $uFlags i32) (local $original_flags i32) (local $dlg_rec i32)
+    (local $screen i32) (local $insert_after i32) (local $windowpos i32)
     (local $old_wh i32) (local $new_wh i32) (local $old_xy i32) (local $new_xy i32)
+    (local.set $insert_after (local.get $arg1))
     (local.set $x (local.get $arg2))
     (local.set $y (local.get $arg3))
     (local.set $cx (local.get $arg4))
@@ -6607,6 +6706,41 @@
                 (i32.sub (i32.shr_u (local.get $screen) (i32.const 16)) (local.get $cy))
                 (i32.const 2)))
               (else (i32.const 0))))))))
+    ;; USER exposes one mutable WINDOWPOS before touching geometry. The app
+    ;; may change position, size, z-order and most flags. NOACTIVATE and
+    ;; NOOWNERZORDER are explicitly documented as immutable in this message.
+    (local.set $original_flags (local.get $uFlags))
+    (local.set $windowpos (call $windowpos_message_begin
+      (local.get $arg0) (local.get $insert_after)
+      (local.get $x) (local.get $y) (local.get $cx) (local.get $cy)
+      (local.get $uFlags)))
+    (if (local.get $windowpos)
+      (then
+        (local.set $insert_after
+          (call $gl32 (i32.add (local.get $windowpos) (i32.const 4))))
+        (local.set $x
+          (call $gl32 (i32.add (local.get $windowpos) (i32.const 8))))
+        (local.set $y
+          (call $gl32 (i32.add (local.get $windowpos) (i32.const 12))))
+        (local.set $cx
+          (call $gl32 (i32.add (local.get $windowpos) (i32.const 16))))
+        (local.set $cy
+          (call $gl32 (i32.add (local.get $windowpos) (i32.const 20))))
+        (local.set $uFlags
+          (i32.or
+            (i32.and
+              (call $gl32 (i32.add (local.get $windowpos) (i32.const 24)))
+              (i32.const 0xFFFFFDEF))
+            (i32.and (local.get $original_flags) (i32.const 0x00000210))))
+        ;; A wndproc is allowed to destroy the target while processing the
+        ;; synchronous changing message. Never apply its stale HWND afterward.
+        (if (i32.lt_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
+          (then
+            (call $windowpos_message_cancel (local.get $windowpos))
+            (global.set $last_error (i32.const 1400)) ;; ERROR_INVALID_WINDOW_HANDLE
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+            (return)))))
     (local.set $old_wh (call $ctrl_get_wh_packed (local.get $arg0)))
     (if (i32.eqz (local.get $old_wh))
       (then (local.set $old_wh (call $host_get_window_client_size (local.get $arg0)))))
@@ -6618,6 +6752,12 @@
     (if (i32.eqz (local.get $new_wh))
       (then (local.set $new_wh (call $host_get_window_client_size (local.get $arg0)))))
     (local.set $new_xy (call $window_xy_packed (local.get $arg0)))
+    ;; Make the changed WINDOWPOS describe what USER actually changed, so its
+    ;; default procedure does not derive geometry messages for a no-op half.
+    (if (i32.eq (local.get $old_xy) (local.get $new_xy))
+      (then (local.set $uFlags (i32.or (local.get $uFlags) (i32.const 2)))))
+    (if (i32.eq (local.get $old_wh) (local.get $new_wh))
+      (then (local.set $uFlags (i32.or (local.get $uFlags) (i32.const 1)))))
     ;; Keep WAT's GWL_STYLE in sync with SetWindowPos visibility flags. Apps
     ;; such as Tetravex show custom child panels via SWP_SHOWWINDOW instead of
     ;; ShowWindow; if WS_VISIBLE stays clear here, WAT's paint selector treats
@@ -6652,6 +6792,11 @@
     ;; Refresh only after NCCALCSIZE publishes the new client rectangle.
     (if (i32.ne (local.get $new_wh) (local.get $old_wh))
       (then (call $gdi_refresh_window_dc_system_clips)))
+    (call $windowpos_message_update
+      (local.get $windowpos) (local.get $arg0) (local.get $insert_after)
+      (local.get $x) (local.get $y) (local.get $cx) (local.get $cy)
+      (local.get $uFlags))
+    (call $windowpos_message_end (local.get $windowpos) (local.get $arg0))
     ;; Repaint a moved WAT-native control immediately, but only if it is
     ;; actually on screen. Its own WS_VISIBLE bit is not enough: a control
     ;; inside a hidden dialog page keeps that bit set, and painting it writes
@@ -6675,12 +6820,6 @@
                 (i32.ne (i32.load offset=4 (local.get $dlg_rec)) (i32.const 0)))
               (i32.lt_s (call $wnd_get_class_slot (local.get $arg0)) (i32.const 0)))
           (then (drop (call $host_erase_background (local.get $arg0) (i32.const 16)))))))
-    ;; Last, so the window sees the geometry we have already committed.
-    (call $windowpos_notify (local.get $arg0) (local.get $arg1) (local.get $x)
-      (local.get $y) (local.get $cx) (local.get $cy) (local.get $uFlags))
-    (call $windowpos_post_geometry
-      (local.get $arg0) (local.get $old_xy) (local.get $new_xy)
-      (local.get $old_wh) (local.get $new_wh) (local.get $uFlags))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
@@ -8737,6 +8876,12 @@
 
   ;; 289: DefWindowProcW — same as DefWindowProcA
   (func $handle_DefWindowProcW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eq (local.get $arg1) (i32.const 0x0047))
+      (then
+        (call $windowpos_defproc_geometry (local.get $arg0) (local.get $arg3))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; WM_NCCREATE (0x81): accepting non-client creation is the documented
     ;; default. Returning zero aborts CreateWindowEx before WM_CREATE.
     (if (i32.eq (local.get $arg1) (i32.const 0x0081))

@@ -16349,6 +16349,13 @@
                     (i32.eq (local.get $msg) (i32.const 0x0037)))))) ;; WM_QUERYDRAGICON
           (then (return (local.get $handled))))
         (return (call $dialog_extra_get (local.get $hwnd) (i32.const 0)))))
+    ;; FALSE from the DLGPROC hands WM_WINDOWPOSCHANGED to DefDlgProc's
+    ;; DefWindowProc tail, which owns the derived WM_MOVE/WM_SIZE messages.
+    (if (i32.eq (local.get $msg) (i32.const 0x0047))
+      (then
+        (call $windowpos_defproc_geometry
+          (local.get $hwnd) (local.get $lParam))
+        (return (i32.const 0))))
     ;; A FALSE DLGPROC result falls through to DefDlgProc's default work. In
     ;; particular, WM_PAINT is not merely validated: BeginPaint first erases
     ;; an invalid dialog whose update region carries the erase bit. Keeping

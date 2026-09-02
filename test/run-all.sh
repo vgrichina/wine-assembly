@@ -438,6 +438,7 @@ UNIT=(
   test/test-wat-winsock-hostname.js
   test/test-window-control-id.js
   test/test-window-exstyle.js
+  test/test-windowpos-changing.js
   test/test-compile-wat-unknown-name.js
   test/test-compile-wat-structure.js
   test/test-compile-wat-replicated-dispatch.js
