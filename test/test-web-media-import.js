@@ -208,6 +208,55 @@ async function main() {
     assert.strictEqual(bundleStorage.restoredTracks, 1);
     assert.strictEqual(bundleStorage.remaining, 0, 'removing a bundle removes its one catalog row');
 
+    // A schema number is migration metadata, not evidence of an interrupted
+    // copy. Plant the row and bytes independently, as an older release would
+    // have left them, then run the real startup sweep. This must stay an
+    // in-browser test: IndexedDB and OPFS are the two stores whose seam is at
+    // risk, and a pure helper test cannot prove either half survived.
+    const schemaSurvival = await page.evaluate(async () => {
+      const lib = await window.mediaLibrary.MediaLibrary.open();
+      const id = 'legacy-schema-complete';
+      const expected = new Uint8Array([0x4d, 0x5a, 0x90, 0x00]);
+      await lib._put({
+        id,
+        schema: 0,
+        name: 'legacy.exe',
+        kind: 'exe',
+        size: expected.length,
+        addedAt: 1,
+        state: 'complete',
+      });
+      const handle = await lib.dir.getFileHandle(id, { create: true });
+      const writable = await handle.createWritable();
+      await writable.write(expected);
+      await writable.close();
+
+      const removed = await lib.cleanupOrphans();
+      const row = await lib.get(id);
+      let bytes = null;
+      try {
+        const file = await (await lib.dir.getFileHandle(id)).getFile();
+        bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+      } catch (_) { /* reported as null below */ }
+
+      await lib.remove(id).catch(() => {});
+      lib.close();
+      return {
+        rowSchema: row && row.schema,
+        rowState: row && row.state,
+        bytes,
+        removedRecords: removed.records,
+        removedFiles: removed.files,
+      };
+    });
+    assert.strictEqual(schemaSurvival.rowSchema, 0,
+      'cleanup preserves a completed row from an older schema');
+    assert.strictEqual(schemaSurvival.rowState, 'complete');
+    assert.deepStrictEqual(schemaSurvival.bytes, [0x4d, 0x5a, 0x90, 0x00],
+      'cleanup preserves the older row\'s OPFS bytes');
+    assert.ok(!schemaSurvival.removedRecords.includes('legacy-schema-complete'));
+    assert.ok(!schemaSurvival.removedFiles.includes('legacy-schema-complete'));
+
     await uploadThroughInput(page, fixture.zipPath);
 
     await page.waitForFunction(() => !!document.querySelector('.wa-media-modal'), { timeout: 30000 });
