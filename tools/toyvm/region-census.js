@@ -139,8 +139,17 @@ function runOne(exe, o, dispatches = o.dispatches) {
       clearTimeout(timer);
       const killed = signal === 'SIGKILL';
       const row = { name: path.basename(exe), exe, verdict: classify(killed ? null : code, out) };
-      const p = RE.pick.exec(out);
-      if (p) row.region = { headIp: parseInt(p[1], 16), blocks: +p[2], ops: +p[3], share: +p[4] };
+      // One line per picked region; under `--regions=N` there can be several,
+      // and the row reports the first head, the region COUNT and the summed
+      // ops. The combined share comes from the `expected` line, which region-jit
+      // computes over the union of the installed regions.
+      const picks = [...out.matchAll(new RegExp(RE.pick.source, 'g'))];
+      const inst = /installing (\d+) of (\d+) region\(s\)/.exec(out);
+      if (picks.length) {
+        const p = picks[0];
+        row.region = { headIp: parseInt(p[1], 16), blocks: +p[2], ops: picks.reduce((n, q) => n + +q[3], 0),
+          share: +p[4], regions: inst ? +inst[1] : 1, picked: picks.length };
+      }
       const d = RE.declined.exec(out);
       if (d) row.declined = d[1];
       const f = RE.frame.exec(out);
@@ -210,15 +219,16 @@ function markdown(rows, o) {
   const RANK = { frozen: 0, differs: 1, phase: 2, identical: 3 };
   const shown = rows.filter(r => RANK[r.verdict] !== undefined);
   L.push('');
-  L.push('| program | head | ops | share | gate | ceiling | +hb | speed | frame | baseline | region | ints | smc |');
-  L.push('|---|---|---:|---:|---:|---:|---:|---:|---|---|---|---|---|');
+  L.push('| program | head | n | ops | share | gate | ceiling | +hb | speed | frame | baseline | region | ints | smc |');
+  L.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|---|');
   const signed = (n) => (n >= 0 ? '+' : '') + n;
   for (const r of shown.sort((a, b) => RANK[a.verdict] - RANK[b.verdict])) {
     const g = r.region || {};
     const f = r.frame;
     const x = r.expected;
     L.push(`| ${r.name} | ${g.headIp === undefined ? '' : '0x' + g.headIp.toString(16)}`
-      + ` | ${g.ops || ''} | ${g.share === undefined ? '' : g.share.toFixed(1) + '%'}`
+      + ` | ${g.regions || ''} | ${g.ops || ''}`
+      + ` | ${x ? x.share.toFixed(1) + '%' : g.share === undefined ? '' : g.share.toFixed(1) + '%'}`
       + ` | ${x ? x.ratio.toFixed(2) + 'x' : ''}`
       + ` | ${x ? signed(x.ceiling) + '%' : ''}`
       + ` | ${x ? signed(x.handbacks) : ''}`

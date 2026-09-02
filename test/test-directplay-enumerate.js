@@ -86,6 +86,33 @@ const extraWat = String.raw`
       (i32.const 0) (i32.const 0))
     (global.get $eax))
 
+  (func (export "test_dp_get_name")
+      (param $id i32) (param $type i32) (param $out i32) (param $size_ptr i32)
+      (result i32)
+    (global.set $esp (i32.const 0x074FF000))
+    (call $gs32 (global.get $esp) (i32.const 0))
+    (if (local.get $type)
+      (then (call $handle_IDirectPlay3_GetPlayerName
+        (i32.const 0) (local.get $id) (local.get $out) (local.get $size_ptr)
+        (i32.const 0) (i32.const 0)))
+      (else (call $handle_IDirectPlay3_GetGroupName
+        (i32.const 0) (local.get $id) (local.get $out) (local.get $size_ptr)
+        (i32.const 0) (i32.const 0))))
+    (global.get $eax))
+
+  (func (export "test_dp_get_flags")
+      (param $id i32) (param $type i32) (param $out i32) (result i32)
+    (global.set $esp (i32.const 0x074FF000))
+    (call $gs32 (global.get $esp) (i32.const 0))
+    (if (local.get $type)
+      (then (call $handle_IDirectPlay3_GetPlayerFlags
+        (i32.const 0) (local.get $id) (local.get $out)
+        (i32.const 0) (i32.const 0) (i32.const 0)))
+      (else (call $handle_IDirectPlay3_GetGroupFlags
+        (i32.const 0) (local.get $id) (local.get $out)
+        (i32.const 0) (i32.const 0) (i32.const 0))))
+    (global.get $eax))
+
   (func (export "test_dp_destroy")
       (param $id i32) (param $type i32) (result i32)
     (global.set $esp (i32.const 0x074FF000))
@@ -262,6 +289,50 @@ const extraWat = String.raw`
   assert.strictEqual(new Set([groupId, player1, player2]).size, 3,
     'created DirectPlay entities receive unique IDs');
 
+  const sizePtr = e.guest_alloc(4) >>> 0;
+  const flagsOut = e.guest_alloc(4) >>> 0;
+  e.guest_write32(sizePtr, 0);
+  assert.strictEqual(e.test_dp_get_name(player1, 1, 0, sizePtr) >>> 0, 0x8877001e,
+    'GetPlayerName size query returns DPERR_BUFFERTOOSMALL');
+  const playerNameSize = e.guest_read32(sizePtr) >>> 0;
+  assert.strictEqual(playerNameSize, 34,
+    'GetPlayerName reports DPNAME plus both retained strings');
+  const playerNameOut = e.guest_alloc(playerNameSize) >>> 0;
+  e.guest_write32(sizePtr, playerNameSize - 1);
+  assert.strictEqual(
+    e.test_dp_get_name(player1, 1, playerNameOut, sizePtr) >>> 0, 0x8877001e,
+    'GetPlayerName rejects an undersized non-null buffer');
+  assert.strictEqual(e.guest_read32(sizePtr), playerNameSize,
+    'undersized GetPlayerName republishes the required size');
+  assert.strictEqual(e.test_dp_get_name(player1, 1, playerNameOut, sizePtr), 0,
+    'GetPlayerName fills a sufficiently sized buffer');
+  assert.strictEqual(e.guest_read32(playerNameOut), 16,
+    'GetPlayerName returns a DPNAME header');
+  assert.strictEqual(e.guest_read32(playerNameOut + 4), 0x41,
+    'GetPlayerName preserves application DPNAME flags');
+  assert.strictEqual(readAnsi(e.guest_read32(playerNameOut + 8) >>> 0), 'Alice',
+    'GetPlayerName packs the retained short name into the caller buffer');
+  assert.strictEqual(readAnsi(e.guest_read32(playerNameOut + 12) >>> 0), 'Alice local',
+    'GetPlayerName packs the retained long name into the caller buffer');
+  assert.strictEqual(e.test_dp_get_flags(player1, 1, flagsOut), 0,
+    'GetPlayerFlags accepts a live player');
+  assert.strictEqual(e.guest_read32(flagsOut), 0x209,
+    'GetPlayerFlags reports creation flags plus DPPLAYER_LOCAL');
+  assert.strictEqual(e.test_dp_get_flags(groupId, 0, flagsOut), 0,
+    'GetGroupFlags accepts a live group');
+  assert.strictEqual(e.guest_read32(flagsOut), 0x109,
+    'GetGroupFlags reports creation flags plus DPGROUP_LOCAL');
+
+  e.guest_write32(sizePtr, 0);
+  assert.strictEqual(e.test_dp_get_name(groupId, 0, 0, sizePtr) >>> 0, 0x8877001e,
+    'GetGroupName exposes the same two-call buffer contract');
+  const groupNameSize = e.guest_read32(sizePtr) >>> 0;
+  const groupNameOut = e.guest_alloc(groupNameSize) >>> 0;
+  assert.strictEqual(e.test_dp_get_name(groupId, 0, groupNameOut, sizePtr), 0,
+    'GetGroupName fills the caller buffer');
+  assert.strictEqual(readAnsi(e.guest_read32(groupNameOut + 8) >>> 0), 'Red',
+    'GetGroupName returns the retained group name');
+
   // The provider owns the name after CreatePlayer. Overwriting the caller's
   // source proves enumeration receives a retained copy, not a borrowed stack
   // pointer that happened to remain readable.
@@ -343,6 +414,10 @@ const extraWat = String.raw`
   });
   assert.strictEqual(e.test_dp_destroy(player1, 1) >>> 0, 0x80070057,
     'DestroyPlayer rejects an already-destroyed ID');
+  assert.strictEqual(e.test_dp_get_flags(player1, 1, flagsOut) >>> 0, 0x80070057,
+    'GetPlayerFlags rejects a destroyed player');
+  assert.strictEqual(e.guest_read32(flagsOut), 0,
+    'failed GetPlayerFlags clears its output');
 
   assert.strictEqual(e.test_dp_destroy(groupId, 0), 0,
     'DestroyGroup removes the parent group');
@@ -359,7 +434,7 @@ const extraWat = String.raw`
   runEntityEnum(0, 0, continueCallback, 0, 0, 0);
   runEntityEnum(1, 0, continueCallback, 0, 0, 0);
 
-  console.log('PASS  DirectPlay providers and local entities enumerate with Win98 callback semantics');
+  console.log('PASS  DirectPlay local entities retain, query, and enumerate with Win98 semantics');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);
