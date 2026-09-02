@@ -34,34 +34,38 @@ const extraWat = String.raw`
       (i64.shl (i64.extend_i32_u (global.get $esp)) (i64.const 32))))
 
   (func (export "test_dp_create_group")
-      (param $out i32) (param $name i32) (param $flags i32) (result i32)
+      (param $out i32) (param $name i32) (param $data i32) (param $size i32)
+      (param $flags i32) (result i32)
     (global.set $esp (i32.const 0x074FF000))
     (call $gs32 (global.get $esp) (i32.const 0))
     (call $gs32 (i32.add (global.get $esp) (i32.const 24)) (local.get $flags))
     (call $handle_IDirectPlay3_CreateGroup
-      (i32.const 0) (local.get $out) (local.get $name) (i32.const 0)
-      (i32.const 0) (i32.const 0))
+      (i32.const 0) (local.get $out) (local.get $name) (local.get $data)
+      (local.get $size) (i32.const 0))
     (global.get $eax))
 
   (func (export "test_dp_create_player")
-      (param $out i32) (param $name i32) (param $flags i32) (result i32)
+      (param $out i32) (param $name i32) (param $data i32) (param $size i32)
+      (param $flags i32) (result i32)
     (global.set $esp (i32.const 0x074FF000))
     (call $gs32 (global.get $esp) (i32.const 0))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 24)) (local.get $size))
     (call $gs32 (i32.add (global.get $esp) (i32.const 28)) (local.get $flags))
     (call $handle_IDirectPlay3_CreatePlayer
       (i32.const 0) (local.get $out) (local.get $name) (i32.const 0)
-      (i32.const 0) (i32.const 0))
+      (local.get $data) (i32.const 0))
     (global.get $eax))
 
   (func (export "test_dp_create_group_in_group")
-      (param $parent i32) (param $out i32) (param $name i32) (param $flags i32)
-      (result i32)
+      (param $parent i32) (param $out i32) (param $name i32) (param $data i32)
+      (param $size i32) (param $flags i32) (result i32)
     (global.set $esp (i32.const 0x074FF000))
     (call $gs32 (global.get $esp) (i32.const 0))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 24)) (local.get $size))
     (call $gs32 (i32.add (global.get $esp) (i32.const 28)) (local.get $flags))
     (call $handle_IDirectPlay3_CreateGroupInGroup
       (i32.const 0) (local.get $parent) (local.get $out) (local.get $name)
-      (i32.const 0) (i32.const 0))
+      (local.get $data) (i32.const 0))
     (global.get $eax))
 
   (func (export "test_dp_player_membership")
@@ -111,6 +115,34 @@ const extraWat = String.raw`
       (else (call $handle_IDirectPlay3_GetGroupFlags
         (i32.const 0) (local.get $id) (local.get $out)
         (i32.const 0) (i32.const 0) (i32.const 0))))
+    (global.get $eax))
+
+  (func (export "test_dp_set_data")
+      (param $id i32) (param $type i32) (param $data i32) (param $size i32)
+      (param $flags i32) (result i32)
+    (global.set $esp (i32.const 0x074FF000))
+    (call $gs32 (global.get $esp) (i32.const 0))
+    (if (local.get $type)
+      (then (call $handle_IDirectPlay3_SetPlayerData
+        (i32.const 0) (local.get $id) (local.get $data) (local.get $size)
+        (local.get $flags) (i32.const 0)))
+      (else (call $handle_IDirectPlay3_SetGroupData
+        (i32.const 0) (local.get $id) (local.get $data) (local.get $size)
+        (local.get $flags) (i32.const 0))))
+    (global.get $eax))
+
+  (func (export "test_dp_get_data")
+      (param $id i32) (param $type i32) (param $out i32) (param $size_ptr i32)
+      (param $flags i32) (result i32)
+    (global.set $esp (i32.const 0x074FF000))
+    (call $gs32 (global.get $esp) (i32.const 0))
+    (if (local.get $type)
+      (then (call $handle_IDirectPlay3_GetPlayerData
+        (i32.const 0) (local.get $id) (local.get $out) (local.get $size_ptr)
+        (local.get $flags) (i32.const 0)))
+      (else (call $handle_IDirectPlay3_GetGroupData
+        (i32.const 0) (local.get $id) (local.get $out) (local.get $size_ptr)
+        (local.get $flags) (i32.const 0))))
     (global.get $eax))
 
   (func (export "test_dp_destroy")
@@ -274,13 +306,19 @@ const extraWat = String.raw`
   const red = makeName('Red', 'Red team', 0x31);
   const alice = makeName('Alice', 'Alice local', 0x41);
   const bob = makeName('Bob', 'Bob local', 0x42);
+  const initialGroupData = e.guest_alloc(3) >>> 0;
+  bytes.set([0x10, 0x20, 0x30], wa(initialGroupData));
+  const initialPlayerData = e.guest_alloc(2) >>> 0;
+  bytes.set([0x44, 0x55], wa(initialPlayerData));
   runEntityEnum(0, 0, continueCallback, 0, 0, 0);
   runEntityEnum(1, 0, continueCallback, 0, 0, 0);
-  assert.strictEqual(e.test_dp_create_group(groupOut, red.name, 0x101), 0,
+  assert.strictEqual(
+    e.test_dp_create_group(groupOut, red.name, initialGroupData, 3, 0x101), 0,
     'CreateGroup creates a local group');
-  assert.strictEqual(e.test_dp_create_player(player1Out, alice.name, 0x201), 0,
+  assert.strictEqual(e.test_dp_create_player(player1Out, alice.name, 0, 0, 0x201), 0,
     'CreatePlayer creates the first local player');
-  assert.strictEqual(e.test_dp_create_player(player2Out, bob.name, 0x102), 0,
+  assert.strictEqual(
+    e.test_dp_create_player(player2Out, bob.name, initialPlayerData, 2, 0x102), 0,
     'CreatePlayer creates a second local player');
   const groupId = e.guest_read32(groupOut) >>> 0;
   const player1 = e.guest_read32(player1Out) >>> 0;
@@ -291,6 +329,108 @@ const extraWat = String.raw`
 
   const sizePtr = e.guest_alloc(4) >>> 0;
   const flagsOut = e.guest_alloc(4) >>> 0;
+  const dataOut = e.guest_alloc(8) >>> 0;
+
+  // Create/Set copy caller-owned bytes, and DirectPlay maintains independent
+  // remote/shared and local-only application-data values for each entity.
+  bytes[wa(initialGroupData)] = 0xff;
+  e.guest_write32(sizePtr, 0);
+  assert.strictEqual(
+    e.test_dp_get_data(groupId, 0, 0, sizePtr, 0) >>> 0, 0x8877001e,
+    'GetGroupData size query reports the retained initial data');
+  assert.strictEqual(e.guest_read32(sizePtr), 3,
+    'GetGroupData publishes the required byte count');
+  e.guest_write32(sizePtr, 3);
+  assert.strictEqual(e.test_dp_get_data(groupId, 0, dataOut, sizePtr, 0), 0,
+    'GetGroupData fills a sufficiently sized buffer');
+  assert.deepStrictEqual(Array.from(bytes.slice(wa(dataOut), wa(dataOut) + 3)),
+    [0x10, 0x20, 0x30], 'CreateGroup retains its own data copy');
+  const replacementGroupData = e.guest_alloc(2) >>> 0;
+  bytes.set([0x31, 0x32], wa(replacementGroupData));
+  assert.strictEqual(e.test_dp_set_data(groupId, 0, replacementGroupData, 2, 0), 0,
+    'SetGroupData replaces remote group data');
+  e.guest_write32(sizePtr, 2);
+  assert.strictEqual(e.test_dp_get_data(groupId, 0, dataOut, sizePtr, 0), 0,
+    'GetGroupData reads data written through SetGroupData');
+  assert.deepStrictEqual(Array.from(bytes.slice(wa(dataOut), wa(dataOut) + 2)),
+    [0x31, 0x32], 'group data replacement round-trips');
+
+  bytes[wa(initialPlayerData)] = 0xff;
+  e.guest_write32(sizePtr, 2);
+  assert.strictEqual(e.test_dp_get_data(player2, 1, dataOut, sizePtr, 0), 0,
+    'CreatePlayer accepts initial application data');
+  assert.deepStrictEqual(Array.from(bytes.slice(wa(dataOut), wa(dataOut) + 2)),
+    [0x44, 0x55], 'CreatePlayer retains its own initial-data copy');
+
+  e.guest_write32(sizePtr, 0xfeedface);
+  assert.strictEqual(e.test_dp_get_data(player1, 1, 0, sizePtr, 0), 0,
+    'an unset remote player-data value is an empty successful result');
+  assert.strictEqual(e.guest_read32(sizePtr), 0,
+    'empty player data reports zero bytes');
+
+  const remoteData = e.guest_alloc(4) >>> 0;
+  bytes.set([1, 2, 3, 4], wa(remoteData));
+  assert.strictEqual(e.test_dp_set_data(player1, 1, remoteData, 4, 2), 0,
+    'DPSET_GUARANTEED is accepted for remote player data');
+  bytes[wa(remoteData)] = 9;
+  e.guest_write32(sizePtr, 0);
+  assert.strictEqual(
+    e.test_dp_get_data(player1, 1, 0, sizePtr, 0) >>> 0, 0x8877001e,
+    'GetPlayerData supports a NULL size-query buffer');
+  assert.strictEqual(e.guest_read32(sizePtr), 4,
+    'GetPlayerData size query reports the remote byte count');
+  e.guest_write32(sizePtr, 3);
+  assert.strictEqual(
+    e.test_dp_get_data(player1, 1, dataOut, sizePtr, 0) >>> 0, 0x8877001e,
+    'GetPlayerData rejects an undersized buffer');
+  assert.strictEqual(e.guest_read32(sizePtr), 4,
+    'undersized GetPlayerData republishes the required size');
+  e.guest_write32(sizePtr, 4);
+  assert.strictEqual(e.test_dp_get_data(player1, 1, dataOut, sizePtr, 0), 0,
+    'GetPlayerData returns copied remote bytes');
+  assert.deepStrictEqual(Array.from(bytes.slice(wa(dataOut), wa(dataOut) + 4)),
+    [1, 2, 3, 4], 'SetPlayerData retains its own data copy');
+
+  const localData = e.guest_alloc(2) >>> 0;
+  bytes.set([0xaa, 0xbb], wa(localData));
+  assert.strictEqual(e.test_dp_set_data(player1, 1, localData, 2, 1), 0,
+    'DPSET_LOCAL stores a separate private player value');
+  e.guest_write32(sizePtr, 2);
+  assert.strictEqual(e.test_dp_get_data(player1, 1, dataOut, sizePtr, 1), 0,
+    'DPGET_LOCAL selects the private player value');
+  assert.deepStrictEqual(Array.from(bytes.slice(wa(dataOut), wa(dataOut) + 2)),
+    [0xaa, 0xbb], 'local data round-trips independently');
+  e.guest_write32(sizePtr, 4);
+  assert.strictEqual(e.test_dp_get_data(player1, 1, dataOut, sizePtr, 0), 0,
+    'setting local data leaves remote data intact');
+  assert.deepStrictEqual(Array.from(bytes.slice(wa(dataOut), wa(dataOut) + 4)),
+    [1, 2, 3, 4], 'remote data remains independent of local data');
+
+  assert.strictEqual(
+    e.test_dp_set_data(player1, 1, remoteData, 4, 4) >>> 0, 0x88770078,
+    'SetPlayerData rejects unknown flags');
+  e.guest_write32(sizePtr, 0x12345678);
+  assert.strictEqual(
+    e.test_dp_get_data(player1, 1, dataOut, sizePtr, 2) >>> 0, 0x88770078,
+    'GetPlayerData rejects flags other than DPGET_LOCAL');
+  assert.strictEqual(e.guest_read32(sizePtr) >>> 0, 0x12345678,
+    'invalid GetPlayerData flags do not rewrite caller state');
+  assert.strictEqual(
+    e.test_dp_set_data(player1, 1, 0, 1, 0) >>> 0, 0x80070057,
+    'SetPlayerData rejects a NULL source with nonzero size');
+  assert.strictEqual(e.test_dp_set_data(player1, 1, 0, 0, 0), 0,
+    'zero-length SetPlayerData clears the remote value');
+  e.guest_write32(sizePtr, 99);
+  assert.strictEqual(e.test_dp_get_data(player1, 1, 0, sizePtr, 0), 0,
+    'reading a cleared remote value succeeds');
+  assert.strictEqual(e.guest_read32(sizePtr), 0,
+    'a cleared remote value reports zero bytes');
+  e.guest_write32(sizePtr, 2);
+  assert.strictEqual(e.test_dp_get_data(player1, 1, dataOut, sizePtr, 1), 0,
+    'clearing remote data preserves local data');
+  assert.deepStrictEqual(Array.from(bytes.slice(wa(dataOut), wa(dataOut) + 2)),
+    [0xaa, 0xbb], 'local bytes survive a remote clear');
+
   e.guest_write32(sizePtr, 0);
   assert.strictEqual(e.test_dp_get_name(player1, 1, 0, sizePtr) >>> 0, 0x8877001e,
     'GetPlayerName size query returns DPERR_BUFFERTOOSMALL');
@@ -384,10 +524,18 @@ const extraWat = String.raw`
   });
 
   const blue = makeName('Blue', 'Blue subgroup', 0x51);
+  const childData = e.guest_alloc(1) >>> 0;
+  bytes[wa(childData)] = 0xcc;
   assert.strictEqual(
-    e.test_dp_create_group_in_group(groupId, childOut, blue.name, 0x301), 0,
+    e.test_dp_create_group_in_group(groupId, childOut, blue.name, childData, 1, 0x301), 0,
     'CreateGroupInGroup creates and links a child group');
   const childId = e.guest_read32(childOut) >>> 0;
+  bytes[wa(childData)] = 0;
+  e.guest_write32(sizePtr, 1);
+  assert.strictEqual(e.test_dp_get_data(childId, 0, dataOut, sizePtr, 0), 0,
+    'CreateGroupInGroup accepts initial application data');
+  assert.strictEqual(bytes[wa(dataOut)], 0xcc,
+    'CreateGroupInGroup retains its own initial-data copy');
   runEntityEnum(3, groupId, continueCallback, 0, 0, 1, stack => {
     assert.strictEqual(e.guest_read32(stack + 4) >>> 0, childId,
       'EnumGroupsInGroup reports the linked child');
@@ -414,13 +562,31 @@ const extraWat = String.raw`
   });
   assert.strictEqual(e.test_dp_destroy(player1, 1) >>> 0, 0x80070057,
     'DestroyPlayer rejects an already-destroyed ID');
-  assert.strictEqual(e.test_dp_get_flags(player1, 1, flagsOut) >>> 0, 0x80070057,
+  assert.strictEqual(e.test_dp_get_flags(player1, 1, flagsOut) >>> 0, 0x88770096,
     'GetPlayerFlags rejects a destroyed player');
   assert.strictEqual(e.guest_read32(flagsOut), 0,
     'failed GetPlayerFlags clears its output');
+  e.guest_write32(sizePtr, 99);
+  assert.strictEqual(
+    e.test_dp_get_data(player1, 1, dataOut, sizePtr, 1) >>> 0, 0x88770096,
+    'GetPlayerData rejects a destroyed player with DPERR_INVALIDPLAYER');
+  assert.strictEqual(e.guest_read32(sizePtr), 0,
+    'failed GetPlayerData clears its required-size output');
+  e.guest_write32(sizePtr, 99);
+  assert.strictEqual(
+    e.test_dp_get_name(player1, 1, dataOut, sizePtr) >>> 0, 0x88770096,
+    'GetPlayerName rejects a destroyed player with DPERR_INVALIDPLAYER');
+  assert.strictEqual(e.guest_read32(sizePtr), 0,
+    'failed GetPlayerName clears its required-size output');
 
   assert.strictEqual(e.test_dp_destroy(groupId, 0), 0,
     'DestroyGroup removes the parent group');
+  e.guest_write32(sizePtr, 99);
+  assert.strictEqual(
+    e.test_dp_get_data(groupId, 0, dataOut, sizePtr, 0) >>> 0, 0x8877009b,
+    'GetGroupData rejects a destroyed group with DPERR_INVALIDGROUP');
+  assert.strictEqual(e.guest_read32(sizePtr), 0,
+    'failed GetGroupData clears its required-size output');
   runEntityEnum(1, 0, continueCallback, 0, 0, 1, stack => {
     assert.strictEqual(e.guest_read32(stack + 4) >>> 0, childId,
       'destroying a parent leaves the child as a live top-level group');

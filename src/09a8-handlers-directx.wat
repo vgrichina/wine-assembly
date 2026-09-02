@@ -7063,11 +7063,13 @@
   ;; is real state: IDs are unique, DPNAMEs are copied, membership survives
   ;; until removal, and enumeration calls back for every matching live entity.
   ;;
-  ;; Entity entry (guest heap, 32 entries x 24 bytes):
+  ;; Entity entry (guest heap, 32 entries x 40 bytes):
   ;;   +0 id, +4 type (0 group, 1 player), +8 copied DPNAME,
-  ;;   +12 create flags, +16 group-membership bitset, +20 live.
+  ;;   +12 create flags, +16 group-membership bitset, +20 live,
+  ;;   +24 remote/shared data pointer, +28 remote size,
+  ;;   +32 local-only data pointer, +36 local size.
   (global $DP_ENTITY_MAX i32 (i32.const 32))
-  (global $DP_ENTITY_STRIDE i32 (i32.const 24))
+  (global $DP_ENTITY_STRIDE i32 (i32.const 40))
   (global $dp_entity_table (mut i32) (i32.const 0))
   (global $dp_entity_next_id (mut i32) (i32.const 0x100))
 
@@ -7171,15 +7173,55 @@
       (br $scan)))
     (i32.const 0))
 
-  (func $dp_create_entity
-      (param $out_id i32) (param $name i32) (param $flags i32) (param $type i32)
+  (func $dp_replace_data
+      (param $entry i32) (param $data i32) (param $size i32) (param $local_only i32)
       (result i32)
-    (local $entry i32)
+    (local $offset i32) (local $old i32) (local $copy i32)
+    (if (i32.and
+          (i32.ne (local.get $size) (i32.const 0))
+          (i32.eqz (local.get $data)))
+      (then (return (i32.const 0x80070057))))
+    (if (local.get $size)
+      (then
+        (local.set $copy (call $heap_alloc (local.get $size)))
+        (if (i32.eqz (local.get $copy))
+          (then (return (i32.const 0x8007000E))))
+        (memory.copy (call $g2w (local.get $copy)) (call $g2w (local.get $data))
+          (local.get $size))))
+    (local.set $offset
+      (select (i32.const 32) (i32.const 24) (local.get $local_only)))
+    (local.set $old (call $gl32 (i32.add (local.get $entry) (local.get $offset))))
+    (if (local.get $old) (then (call $heap_free (local.get $old))))
+    (call $gs32 (i32.add (local.get $entry) (local.get $offset)) (local.get $copy))
+    (call $gs32
+      (i32.add (local.get $entry) (i32.add (local.get $offset) (i32.const 4)))
+      (local.get $size))
+    (i32.const 0))
+
+  (func $dp_invalid_entity (param $type i32) (result i32)
+    (select
+      (i32.const 0x8877009B) ;; DPERR_INVALIDGROUP
+      (i32.const 0x88770096) ;; DPERR_INVALIDPLAYER
+      (i32.eqz (local.get $type))))
+
+  (func $dp_create_entity
+      (param $out_id i32) (param $name i32) (param $data i32) (param $size i32)
+      (param $flags i32) (param $type i32)
+      (result i32)
+    (local $entry i32) (local $hr i32)
     (if (i32.eqz (local.get $out_id)) (then (return (i32.const 0x80070057))))
     (call $gs32 (local.get $out_id) (i32.const 0))
     (local.set $entry
       (call $dp_alloc_entity (local.get $type) (local.get $name) (local.get $flags)))
     (if (i32.eqz (local.get $entry)) (then (return (i32.const 0x8007000E))))
+    (local.set $hr
+      (call $dp_replace_data
+        (local.get $entry) (local.get $data) (local.get $size) (i32.const 0)))
+    (if (local.get $hr)
+      (then
+        (call $dp_free_name (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+        (call $zero_memory (call $g2w (local.get $entry)) (global.get $DP_ENTITY_STRIDE))
+        (return (local.get $hr))))
     (call $gs32 (local.get $out_id) (call $gl32 (local.get $entry)))
     (i32.const 0))
 
@@ -7225,6 +7267,12 @@
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $clear_members)))))
     (call $dp_free_name (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+    (if (call $gl32 (i32.add (local.get $entry) (i32.const 24)))
+      (then (call $heap_free
+        (call $gl32 (i32.add (local.get $entry) (i32.const 24))))))
+    (if (call $gl32 (i32.add (local.get $entry) (i32.const 32)))
+      (then (call $heap_free
+        (call $gl32 (i32.add (local.get $entry) (i32.const 32))))))
     (call $zero_memory (call $g2w (local.get $entry)) (global.get $DP_ENTITY_STRIDE))
     (i32.const 1))
 
@@ -7251,7 +7299,7 @@
     (if (i32.eqz (local.get $entry))
       (then
         (call $gs32 (local.get $size_ptr) (i32.const 0))
-        (return (i32.const 0x80070057))))
+        (return (call $dp_invalid_entity (local.get $type)))))
     (local.set $name (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
     (local.set $short (call $gl32 (i32.add (local.get $name) (i32.const 8))))
     (local.set $long (call $gl32 (i32.add (local.get $name) (i32.const 12))))
@@ -7296,9 +7344,60 @@
     (if (i32.eqz (local.get $entry))
       (then
         (call $gs32 (local.get $out) (i32.const 0))
-        (return (i32.const 0x80070057))))
+        (return (call $dp_invalid_entity (local.get $type)))))
     (call $gs32 (local.get $out)
       (call $gl32 (i32.add (local.get $entry) (i32.const 12))))
+    (i32.const 0))
+
+  (func $dp_set_data
+      (param $id i32) (param $type i32) (param $data i32) (param $size i32)
+      (param $flags i32) (result i32)
+    (local $entry i32)
+    ;; DPSET_LOCAL (1) selects the private copy; DPSET_GUARANTEED (2) is a
+    ;; propagation request and has no extra work in this no-network session.
+    (if (i32.ne
+          (i32.and (local.get $flags) (i32.const 0xFFFFFFFC))
+          (i32.const 0))
+      (then (return (i32.const 0x88770078)))) ;; DPERR_INVALIDFLAGS
+    (local.set $entry (call $dp_find_entity (local.get $id) (local.get $type)))
+    (if (i32.eqz (local.get $entry))
+      (then (return (call $dp_invalid_entity (local.get $type)))))
+    (call $dp_replace_data
+      (local.get $entry) (local.get $data) (local.get $size)
+      (i32.and (local.get $flags) (i32.const 1))))
+
+  (func $dp_get_data
+      (param $id i32) (param $type i32) (param $out i32) (param $size_ptr i32)
+      (param $flags i32) (result i32)
+    (local $entry i32) (local $offset i32) (local $data i32)
+    (local $size i32) (local $capacity i32)
+    (if (i32.eqz (local.get $size_ptr))
+      (then (return (i32.const 0x80070057))))
+    (if (i32.ne
+          (i32.and (local.get $flags) (i32.const 0xFFFFFFFE))
+          (i32.const 0))
+      (then (return (i32.const 0x88770078)))) ;; DPERR_INVALIDFLAGS
+    (local.set $entry (call $dp_find_entity (local.get $id) (local.get $type)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (call $gs32 (local.get $size_ptr) (i32.const 0))
+        (return (call $dp_invalid_entity (local.get $type)))))
+    (local.set $offset
+      (select (i32.const 32) (i32.const 24)
+        (i32.and (local.get $flags) (i32.const 1))))
+    (local.set $data (call $gl32 (i32.add (local.get $entry) (local.get $offset))))
+    (local.set $size
+      (call $gl32
+        (i32.add (local.get $entry) (i32.add (local.get $offset) (i32.const 4)))))
+    (local.set $capacity (call $gl32 (local.get $size_ptr)))
+    (call $gs32 (local.get $size_ptr) (local.get $size))
+    (if (i32.eqz (local.get $size)) (then (return (i32.const 0))))
+    (if (i32.or
+          (i32.eqz (local.get $out))
+          (i32.lt_u (local.get $capacity) (local.get $size)))
+      (then (return (i32.const 0x8877001E)))) ;; DPERR_BUFFERTOOSMALL
+    (memory.copy (call $g2w (local.get $out)) (call $g2w (local.get $data))
+      (local.get $size))
     (i32.const 0))
 
   (func $dp_clear_entities
@@ -7310,8 +7409,14 @@
         (i32.add (global.get $dp_entity_table)
           (i32.mul (local.get $i) (global.get $DP_ENTITY_STRIDE))))
       (if (call $gl32 (i32.add (local.get $entry) (i32.const 20)))
-        (then (call $dp_free_name
-          (call $gl32 (i32.add (local.get $entry) (i32.const 8))))))
+        (then
+          (call $dp_free_name (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+          (if (call $gl32 (i32.add (local.get $entry) (i32.const 24)))
+            (then (call $heap_free
+              (call $gl32 (i32.add (local.get $entry) (i32.const 24))))))
+          (if (call $gl32 (i32.add (local.get $entry) (i32.const 32)))
+            (then (call $heap_free
+              (call $gl32 (i32.add (local.get $entry) (i32.const 32))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $clear)))
     (call $zero_memory (call $g2w (global.get $dp_entity_table))
@@ -7457,14 +7562,17 @@
     (local.set $flags (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (global.set $eax
       (call $dp_create_entity
-        (local.get $arg1) (local.get $arg2) (local.get $flags) (i32.const 0)))
+        (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+        (local.get $flags) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
   (func $handle_IDirectPlay3_CreatePlayer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $flags i32)
+    (local $size i32) (local $flags i32)
+    (local.set $size (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $flags (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     (global.set $eax
       (call $dp_create_entity
-        (local.get $arg1) (local.get $arg2) (local.get $flags) (i32.const 1)))
+        (local.get $arg1) (local.get $arg2) (local.get $arg4) (local.get $size)
+        (local.get $flags) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
   (func $handle_IDirectPlay3_DeletePlayerFromGroup (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax
@@ -7564,8 +7672,11 @@
     (if (local.get $arg1) (then (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 64))))
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IDirectPlay3_GetGroupData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+    (global.set $eax
+      (call $dp_get_data
+        (local.get $arg1) (i32.const 0) (local.get $arg2) (local.get $arg3)
+        (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
   (func $handle_IDirectPlay3_GetGroupName (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax
       (call $dp_get_name
@@ -7581,8 +7692,11 @@
     (if (local.get $arg2) (then (call $zero_memory (call $g2w (local.get $arg2)) (i32.const 64))))
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
   (func $handle_IDirectPlay3_GetPlayerData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+    (global.set $eax
+      (call $dp_get_data
+        (local.get $arg1) (i32.const 1) (local.get $arg2) (local.get $arg3)
+        (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
   (func $handle_IDirectPlay3_GetPlayerName (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax
       (call $dp_get_name
@@ -7600,14 +7714,22 @@
   (func $handle_IDirectPlay3_Send (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
   (func $handle_IDirectPlay3_SetGroupData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+    (global.set $eax
+      (call $dp_set_data
+        (local.get $arg1) (i32.const 0) (local.get $arg2) (local.get $arg3)
+        (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
   (func $handle_IDirectPlay3_SetGroupName (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax
       (select (i32.const 0) (i32.const 0x80070057)
         (call $dp_replace_name (local.get $arg1) (i32.const 0) (local.get $arg2))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
   (func $handle_IDirectPlay3_SetPlayerData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+    (global.set $eax
+      (call $dp_set_data
+        (local.get $arg1) (i32.const 1) (local.get $arg2) (local.get $arg3)
+        (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
   (func $handle_IDirectPlay3_SetPlayerName (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax
       (select (i32.const 0) (i32.const 0x80070057)
@@ -7621,7 +7743,8 @@
         (call $dp_set_membership (local.get $arg2) (local.get $arg1) (i32.const 1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IDirectPlay3_CreateGroupInGroup (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $flags i32) (local $hr i32) (local $id i32)
+    (local $size i32) (local $flags i32) (local $hr i32) (local $id i32)
+    (local.set $size (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $flags (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     (if (i32.eqz (call $dp_find_entity (local.get $arg1) (i32.const 0)))
       (then
@@ -7630,7 +7753,8 @@
         (return)))
     (local.set $hr
       (call $dp_create_entity
-        (local.get $arg2) (local.get $arg3) (local.get $flags) (i32.const 0)))
+        (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $size)
+        (local.get $flags) (i32.const 0)))
     (if (i32.eqz (local.get $hr))
       (then
         (local.set $id (call $gl32 (local.get $arg2)))

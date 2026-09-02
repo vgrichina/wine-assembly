@@ -105,8 +105,11 @@ const digest = crypto.createHash('sha256')
 // player/group identities, names, flags and memberships; its lifecycle and
 // four entity enumerators update or traverse that state instead of returning
 // success without work.
-const EXPECTED_COUNT = 516;
-const EXPECTED_SHA256 = '094232e3519ad2bf6ae71a27b0372e3346f754a6446d90632183d6cecca14f44';
+// 2026-09-02: 516 -> 514. SetPlayerData and SetGroupData now retain copied
+// local/remote application data in the DirectPlay entity repository; their
+// matching getters implement the Win98 size-query and readback contract.
+const EXPECTED_COUNT = 514;
+const EXPECTED_SHA256 = '7e151a70683b7e3afae53945c664ac4a2a09274fbddf11a8129aacecc57fc279';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
