@@ -921,6 +921,53 @@ tier), BYO-media Tier 1 still unowned, and one measurement trap worth
 repeating — a caesar3 A/B under ~30k batches measures the title screen,
 not the workload (24x CPU cliff between 25k and 40k).
 
+**By 18:05 Sep 1 (+5 commits, HEAD `51c17758`).** The MEDIUM control-
+variant gate finding from 14:50 is closed rather than merely patched around.
+`f287362f` replaces the line regex with the production WATX parser, reads each
+of the 13 real layouts' sizes from its named `$heap_alloc` assignment (including
+both ProgressState paths), verifies the four-way ControlTextState projection,
+and carries six adversarial plants: allocator drift, layout drift, multiline
+raw access, hexadecimal memarg offset, multiline wrong variant and view drift.
+At this final tree its own test is 23/23 over 530 remaining sites; an isolated
+full build exits 0 at **997,678 B**.
+
+`51c17758` is a sound single-owner correction, and compaction was the right
+oracle. Five control records copied CONTROL_TABLE's id, while
+SetWindowLongA(GWL_ID) synchronized only ButtonState; the other four could
+return the new id from GetDlgCtrlID and still notify with the old one. All 25
+readers now ask `$ctrl_table_get_id(hwnd)`, the duplicate fields disappear,
+and compacting the layouts exposed raw ListBox/ComboBox reads in 13-exports
+that a reserved hole would have hidden. I independently ran the listbox 28/28,
+combobox 61/61 and rendered-combobox 5/5 suites at the landed commit, plus the
+full build. **MEDIUM follow-up:** the record gate is still scoped to
+09c3-controls.wat, not to the records. This very change removed a bare
+ButtonState `i32.store offset=12` from 09a-handlers that the gate could never
+see and that would now write into DRAWITEMSTRUCT; raw Button/ListView exports
+and 09a/10-helpers state reads remain. Make the census source-wide (or finish
+the typed-pointer retrofit) before another record compaction relies on it.
+
+The Liquid War commit's `strncat` has the expected three boundary cases pinned
+(partial count, zero count, source NUL), and its gameplay oracle reaches a real
+red/yellow arena rather than blessing the menu. One adjacent CRT detail is not
+Win98/MSVCRT-correct, however. **LOW:** `$handle___p___initenv` calls
+`$handle___p__environ` and therefore returns the exact same `char ***` slot.
+`__initenv` and `_environ` are distinct CRT globals whose *values* are made
+equal at startup (`__initenv = _environ`); the repository's authentic-DLL path
+already discovers and writes their accessor addresses separately. Allocate a
+second four-byte slot initialized to the same array, and reverse the new test's
+pointer-identity assertion. The same read exposed a separate pre-existing
+**MEDIUM typo** at `lib/dll-loader.js:609`: `__p___winitenv` is patched with
+`aEnvArray`, even though the immediately preceding code constructed
+`wEnvArray`; a wide startup path therefore receives narrow strings.
+
+`5c397054` is specification only. Its typed-pointer design matches the current
+compiler's production shape (body diagnostics must live in codegen, annotations
+erase to i32) and explicitly preserves the attribution/census half of the
+variant gates rather than pretending types prove runtime tags. Implementation
+is in flight and is not reviewed here as landed behavior. Carried LOW tails:
+the HTTP control test's split deadline and the owner-ratchet's missing ±1
+negative plant. BYO-media Tier 1 remains the larger unowned backlog.
+
 ---
 
 # Pass 3 — 2026-08-30
