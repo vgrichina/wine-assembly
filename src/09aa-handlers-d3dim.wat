@@ -746,16 +746,18 @@
 
   ;; IDirect3DDevice_GetPickRecords — 3 args (incl. this)
   (func $handle_IDirect3DDevice_GetPickRecords (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $record_wa i32)
     (if (local.get $arg1) (then
       (call $gs32 (local.get $arg1) (global.get $D3DIM_PICK_COUNT))
       (if (i32.and (i32.ne (local.get $arg2) (i32.const 0))
                    (i32.ne (global.get $D3DIM_PICK_COUNT) (i32.const 0))) (then
+        (local.set $record_wa (call $g2w (local.get $arg2)))
         ;; D3DPICKRECORD is {u8 opcode, u8 pad, 2 alignment bytes,
         ;; u32 instruction offset, float z}.
-        (i32.store8 (call $g2w (local.get $arg2)) (global.get $D3DIM_PICK_OPCODE))
-        (i32.store8 (i32.add (call $g2w (local.get $arg2)) (i32.const 1)) (i32.const 0))
+        (i32.store8 (local.get $record_wa) (global.get $D3DIM_PICK_OPCODE))
+        (i32.store8 offset=1 (local.get $record_wa) (i32.const 0))
         (call $gs32 (i32.add (local.get $arg2) (i32.const 4)) (global.get $D3DIM_PICK_OFFSET))
-        (f32.store (i32.add (call $g2w (local.get $arg2)) (i32.const 8)) (global.get $D3DIM_PICK_Z))))))
+        (f32.store offset=8 (local.get $record_wa) (global.get $D3DIM_PICK_Z))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
@@ -807,20 +809,22 @@
 
   ;; IDirect3DDevice_SetMatrix(this, handle, lpMatrix) — 3 args (incl. this)
   (func $handle_IDirect3DDevice_SetMatrix (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $matrix_wa i32)
     (if (i32.or (i32.eqz (local.get $arg2))
                 (i32.or (i32.lt_u (local.get $arg1) (i32.const 1))
                         (i32.gt_u (local.get $arg1) (global.get $D3DIM_MATRIX_MAX))))
       (then (call $crash_unimplemented (local.get $name_ptr))))
+    (local.set $matrix_wa (call $g2w (local.get $arg2)))
     ;; Matrix dump goes through the dx trace channel, which is silent unless
     ;; --trace-dx is on. As seventeen bare $host_log_i32 calls it cost every
     ;; D3DIM app 17 console writes per SetMatrix -- scr_oasaver sets 16269
     ;; matrices in a single run, i.e. 276k lines of output nobody asked for.
     (call $host_dx_trace (i32.const 20) (local.get $arg1)
-      (call $g2w (local.get $arg2)) (i32.const 0) (i32.const 0))
+      (local.get $matrix_wa) (i32.const 0) (i32.const 0))
     (call $memcpy
       (i32.add (global.get $D3DIM_MATRICES)
                (i32.mul (i32.sub (local.get $arg1) (i32.const 1)) (i32.const 64)))
-      (call $g2w (local.get $arg2))
+      (local.get $matrix_wa)
       (i32.const 64))
     (call $d3dim_refresh_bound_matrix (local.get $arg0) (local.get $arg1))
     (global.set $eax (i32.const 0))

@@ -351,8 +351,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
   (func $handle_IRunningObjectTable_GetTimeOfLastChange (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (if (local.get $arg2) (then (call $zero_memory (call $g2w (local.get $arg2)) (i32.const 8))))
+    (local $entry i32) (local $out_wa i32)
+    (if (local.get $arg2)
+      (then
+        (local.set $out_wa (call $g2w (local.get $arg2)))
+        (call $zero_memory (local.get $out_wa) (i32.const 8))))
     (if (i32.eqz (local.get $arg2))
       (then (global.set $eax (i32.const 0x80004003))))
     (if (local.get $arg2)
@@ -363,7 +366,7 @@
             (local.set $entry (call $ole_rot_find_moniker (local.get $arg1)))
             (if (local.get $entry)
               (then
-                (memory.copy (call $g2w (local.get $arg2))
+                (memory.copy (local.get $out_wa)
                   (call $g2w (i32.add (local.get $entry) (i32.const 16))) (i32.const 8))
                 (global.set $eax (i32.const 0)))
               (else (global.set $eax (i32.const 1))))))))
@@ -1216,18 +1219,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   (func $handle_IMoniker_GetTimeOfLastChange (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
+    (local $entry i32) (local $out_wa i32)
     (if (i32.eqz (local.get $arg3))
       (then (global.set $eax (i32.const 0x80004003)))
       (else
-        (call $zero_memory (call $g2w (local.get $arg3)) (i32.const 8))
+        (local.set $out_wa (call $g2w (local.get $arg3)))
+        (call $zero_memory (local.get $out_wa) (i32.const 8))
         (if (i32.eqz (local.get $arg1))
           (then (global.set $eax (i32.const 0x80070057)))
           (else
             (local.set $entry (call $ole_rot_find_moniker (local.get $arg0)))
             (if (local.get $entry)
               (then
-                (memory.copy (call $g2w (local.get $arg3))
+                (memory.copy (local.get $out_wa)
                   (call $g2w (i32.add (local.get $entry) (i32.const 16))) (i32.const 8))
                 (global.set $eax (i32.const 0)))
               (else (global.set $eax (i32.const 0x800401E5))))))))

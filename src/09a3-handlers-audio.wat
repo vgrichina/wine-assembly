@@ -572,7 +572,7 @@
     (local $ck_wa i32) (local $pos i32) (local $ckid i32) (local $cksize i32)
     (local $search_id i32) (local $search_type i32) (local $fcc_type i32)
     (local $end_pos i32) (local $bytes_read_ga i32) (local $bytes_read_wa i32)
-    (local $data_offset i32)
+    (local $data_offset i32) (local $parent_wa i32)
     (local.set $ck_wa (call $g2w (local.get $arg1)))
     ;; arg3 = wFlags (passed as 5th stack arg), read from [esp+24] in caller
     ;; Actually arg3 = wFlags since dispatcher reads 5 args
@@ -587,9 +587,10 @@
     (local.set $end_pos (i32.const 0x7FFFFFFF))  ;; no limit if no parent
     (if (local.get $arg2)
       (then
+        (local.set $parent_wa (call $g2w (local.get $arg2)))
         (local.set $end_pos (i32.add
-          (i32.load (i32.add (call $g2w (local.get $arg2)) (i32.const 12)))  ;; parent dwDataOffset
-          (i32.load (i32.add (call $g2w (local.get $arg2)) (i32.const 4)))))))  ;; + parent cksize
+          (i32.load offset=12 (local.get $parent_wa))  ;; parent dwDataOffset
+          (i32.load offset=4 (local.get $parent_wa))))))  ;; + parent cksize
     ;; Scratch area for bytesRead on stack
     (local.set $bytes_read_ga (i32.sub (global.get $esp) (i32.const 4)))
     (local.set $bytes_read_wa (call $g2w (local.get $bytes_read_ga)))
