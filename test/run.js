@@ -21,7 +21,7 @@ const { saveVfsToHost } = require('../lib/vfs-export');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
-const { APPS } = require('../lib/apps');
+const { APPS, resolveCopySuperops } = require('../lib/apps');
 const { CliVideoRecorder } = require('../lib/cli-recorder');
 const { createBatchClock } = require('../lib/batch-clock');
 // Fixed memory-map addresses, from the map declared in src/00-regions.wat.
@@ -219,7 +219,7 @@ const LOOP_SUPEROPS = hasFlag('loop-superops');
 const NO_LOOP_SUPEROPS = hasFlag('no-loop-superops');
 const LUT_SUPEROPS = hasFlag('lut-superops');
 const NO_LUT_SUPEROPS = hasFlag('no-lut-superops');
-const COPY_SUPEROPS = hasFlag('copy-superops');
+const COPY_SUPEROPS_ARG = hasFlag('copy-superops');
 const NO_COPY_SUPEROPS = hasFlag('no-copy-superops');
 const NO_AOE_FILL = hasFlag('no-aoe-fill');
 const NO_AOE_SPAN = hasFlag('no-aoe-span');
@@ -636,6 +636,10 @@ const APP_ENTRY = (() => {
     Object.keys(APPS).sort().join(' '));
   process.exit(1);
 })();
+// Match the browser: an app registry opt-in is launch behavior, not a UI-only
+// hint. Keep explicit CLI flags as the A/B override, with `--no-…` strongest.
+const COPY_SUPEROPS = resolveCopySuperops(
+  APP_ENTRY, COPY_SUPEROPS_ARG, NO_COPY_SUPEROPS);
 // Registry paths are repo-relative and lean on the top-level `binaries`
 // symlink, so they resolve the same from the page and from here.
 const appAsset = p => (path.isAbsolute(p) ? p : path.join(ROOT, p));
