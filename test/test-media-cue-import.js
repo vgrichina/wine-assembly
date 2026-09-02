@@ -71,8 +71,16 @@ function makeIso() {
 function rawMode1(iso) {
   const raw = new Uint8Array((iso.length / ISO_SECTOR) * SECTOR_BYTES);
   for (let sector = 0; sector < iso.length / ISO_SECTOR; sector++) {
+    const offset = sector * SECTOR_BYTES;
+    raw.fill(0xff, offset + 1, offset + 11); // 00 ff×10 00 sync pattern
+    const absoluteFrame = sector + 150;      // raw CD addresses include 2s lead-in
+    const bcd = value => ((Math.floor(value / 10) << 4) | (value % 10));
+    raw[offset + 12] = bcd(Math.floor(absoluteFrame / (60 * 75)));
+    raw[offset + 13] = bcd(Math.floor(absoluteFrame / 75) % 60);
+    raw[offset + 14] = bcd(absoluteFrame % 75);
+    raw[offset + 15] = 1;                    // Mode 1
     raw.set(iso.subarray(sector * ISO_SECTOR, (sector + 1) * ISO_SECTOR),
-      sector * SECTOR_BYTES + 16);
+      offset + 16);
   }
   return raw;
 }
@@ -153,6 +161,118 @@ async function main() {
   assert.strictEqual(cookedMounted.disc.leadOutSector, 20);
   assert.deepStrictEqual(Array.from(await cookedVfs.materialize('D:\\CIV2.EXE')),
     [0x4d, 0x5a, 0x90, 0x00]);
+
+  // A standalone raw-sector BIN has enough information to expose its ISO data
+  // volume. The fixture carries real Mode 1 sync/header bytes rather than only
+  // mirroring the implementation's 16-byte payload offset.
+  const standaloneRaw = rawMode1(makeIso());
+  const standalonePlans = await mediaImport.analyzeFiles([
+    { name: 'Civilization II.bin', size: standaloneRaw.length,
+      source: countingSource(standaloneRaw) },
+  ]);
+  assert.strictEqual(standalonePlans.length, 1);
+  assert.strictEqual(standalonePlans[0].kind, 'iso');
+  assert.strictEqual(standalonePlans[0].flavor, 'mode1/2352');
+  assert.match(standalonePlans[0].label, /Raw Mode 1/);
+  assert.match(standalonePlans[0].warning, /matching \.cue file is required/i);
+  assert.strictEqual(standalonePlans[0].inferredTrackLayout, true);
+  assert.strictEqual(standalonePlans[0].unparsedTrailingBytes, 0);
+  assert.strictEqual(standalonePlans[0].volumeLabel, 'CIV2_TEST');
+  assert.deepStrictEqual(standalonePlans[0].exeCandidates.map(item => item.path),
+    ['D:\\CIV2.EXE']);
+  const standaloneVfs = new VirtualFS();
+  await standalonePlans[0].mount(standaloneVfs);
+  assert.deepStrictEqual(Array.from(await standaloneVfs.materialize('D:\\CIV2.EXE')),
+    [0x4d, 0x5a, 0x90, 0x00]);
+
+  // CD001 at the payload-shaped offset alone is not evidence of a raw CD. The
+  // sector must also carry the raw Mode 1 sync/header framing.
+  const headerlessRaw = standaloneRaw.slice();
+  headerlessRaw.fill(0, 16 * SECTOR_BYTES, 16 * SECTOR_BYTES + 16);
+  const headerlessPlans = await mediaImport.analyzeFiles([
+    { name: 'headerless.bin', size: headerlessRaw.length,
+      source: countingSource(headerlessRaw) },
+  ]);
+  assert.strictEqual(headerlessPlans[0].kind, 'unknown');
+
+  // Extra raw sectors could be padding or CD-DA. Mount the ISO data volume as
+  // a best effort, but preserve that uncertainty as a user-visible warning.
+  const possibleMixedMode = new Uint8Array(standaloneRaw.length + SECTOR_BYTES);
+  possibleMixedMode.set(standaloneRaw);
+  const ambiguousPlans = await mediaImport.analyzeFiles([
+    { name: 'possibly-mixed.bin', size: possibleMixedMode.length,
+      source: countingSource(possibleMixedMode) },
+  ]);
+  assert.strictEqual(ambiguousPlans.length, 1);
+  assert.strictEqual(ambiguousPlans[0].kind, 'iso');
+  assert.strictEqual(ambiguousPlans[0].unparsedTrailingBytes, SECTOR_BYTES);
+  assert.match(ambiguousPlans[0].warning, /could not be identified as CD audio/i);
+  assert.deepStrictEqual(ambiguousPlans[0].exeCandidates.map(item => item.path),
+    ['D:\\CIV2.EXE']);
+  const ambiguousVfs = new VirtualFS();
+  await ambiguousPlans[0].mount(ambiguousVfs);
+  assert.deepStrictEqual(Array.from(await ambiguousVfs.materialize('D:\\CIV2.EXE')),
+    [0x4d, 0x5a, 0x90, 0x00]);
+
+  function pcmSectors(count, startFrame = 0) {
+    const bytes = new Uint8Array(count * SECTOR_BYTES);
+    const view = new DataView(bytes.buffer);
+    for (let at = 0, frame = startFrame; at < bytes.length; at += 4, frame++) {
+      const sample = Math.round(Math.sin(frame / 24) * 12000);
+      view.setInt16(at, sample, true);
+      view.setInt16(at + 2, Math.round(sample * 0.8), true);
+    }
+    return bytes;
+  }
+
+  // Repeated Red Book-sized silence pregaps plus smooth PCM recover separate
+  // tracks. The final 150-sector silence is lead-out, not another track.
+  const gap = new Uint8Array(150 * SECTOR_BYTES);
+  const song1 = pcmSectors(800);
+  const song2 = pcmSectors(800, song1.length / 4);
+  const inferredTail = new Uint8Array(gap.length * 3 + song1.length + song2.length);
+  let tailAt = 0;
+  for (const part of [gap, song1, gap, song2, gap]) {
+    inferredTail.set(part, tailAt);
+    tailAt += part.length;
+  }
+  const rawWithTracks = new Uint8Array(standaloneRaw.length + inferredTail.length);
+  rawWithTracks.set(standaloneRaw);
+  rawWithTracks.set(inferredTail, standaloneRaw.length);
+  const inferredPlans = await mediaImport.analyzeFiles([
+    { name: 'two-songs.bin', size: rawWithTracks.length,
+      source: countingSource(rawWithTracks) },
+  ]);
+  const inferred = inferredPlans[0];
+  assert.strictEqual(inferred.inferredAudioLayout.confidence, 'high');
+  assert.deepStrictEqual(inferred.inferredAudioLayout.tracks, [
+    { index0Sector: 20, index1Sector: 170 },
+    { index0Sector: 970, index1Sector: 1120 },
+  ]);
+  assert.match(inferred.warning, /Recovered 2 likely audio tracks/);
+  const inferredVfs = new VirtualFS();
+  const inferredMounted = await inferred.mount(inferredVfs);
+  assert.strictEqual(inferredMounted.disc.audioTracks.length, 2);
+  assert.strictEqual(inferredMounted.disc.track(1).playableSectors, 20);
+  assert.strictEqual(inferredMounted.disc.track(2).index1Sector, 170);
+  assert.strictEqual(inferredMounted.disc.track(3).index1Sector, 1120);
+
+  // Smooth PCM with no convincing gaps still gets useful playback as one
+  // combined track, without pretending to know song boundaries.
+  const joinedTail = pcmSectors(800);
+  const rawWithJoinedAudio = new Uint8Array(standaloneRaw.length + joinedTail.length);
+  rawWithJoinedAudio.set(standaloneRaw);
+  rawWithJoinedAudio.set(joinedTail, standaloneRaw.length);
+  const joinedPlans = await mediaImport.analyzeFiles([
+    { name: 'joined-soundtrack.bin', size: rawWithJoinedAudio.length,
+      source: countingSource(rawWithJoinedAudio) },
+  ]);
+  assert.strictEqual(joinedPlans[0].inferredAudioLayout.confidence, 'combined');
+  assert.strictEqual(joinedPlans[0].inferredAudioLayout.tracks.length, 1);
+  assert.match(joinedPlans[0].warning, /joined as one audio track/);
+  const joinedVfs = new VirtualFS();
+  const joinedMounted = await joinedPlans[0].mount(joinedVfs);
+  assert.strictEqual(joinedMounted.disc.audioTracks.length, 1);
 
   await assert.rejects(() => mediaImport.analyzeFiles([
     { name: 'Civilization II.cue', size: cue.size, source: cue },

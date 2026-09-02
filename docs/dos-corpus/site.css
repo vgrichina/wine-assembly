@@ -1,0 +1,188 @@
+/* One visual world: a CRT in a dark room. No web fonts -- these pages are
+   opened off the filesystem as often as off a server, and a font that only
+   arrives over the network is a font that is usually missing. */
+:root {
+  --ground: #08070d; --panel: #12111c; --panel-2: #191826; --rule: #282539;
+  --ink: #dcd9e8; --dim: #8b87a3; --faint: #5d5a71;
+  --accent: #ff3fc5; --cyan: #3fe0d0; --amber: #f0a63c;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 0 20px 90px; background: var(--ground); color: var(--ink);
+  font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; }
+a { color: var(--cyan); }
+nav.top {
+  display: flex; align-items: center; gap: 18px; padding: 16px 0; border-bottom: 1px solid var(--rule);
+  font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+}
+nav.top .brand { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 14px; letter-spacing: .12em; }
+nav.top .links { display: flex; gap: 4px; flex-wrap: wrap; }
+nav.top .links a { color: var(--dim); text-decoration: none; padding: 5px 10px; border: 1px solid transparent; }
+nav.top .links a:hover, nav.top .links a:focus-visible { color: var(--ink); border-color: var(--rule); }
+nav.top .links a[aria-current="page"] { color: var(--cyan); border-color: var(--cyan); }
+nav.top .ext { margin-left: auto; color: var(--faint); text-decoration: none; }
+nav.top .ext:hover { color: var(--ink); }
+header { padding: 46px 0 28px; border-bottom: 1px solid var(--rule); }
+.eyebrow {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .14em;
+  color: var(--accent); text-transform: uppercase; margin: 0 0 16px;
+}
+h1 { font-size: clamp(26px, 5vw, 40px); line-height: 1.15; margin: 0 0 18px; text-wrap: balance; }
+h1 .b { color: var(--cyan); }
+.lede { max-width: 66ch; color: var(--dim); font-size: 16.5px; margin: 0; }
+.lede strong { color: var(--ink); font-weight: 600; }
+h2 {
+  font-family: var(--mono); font-size: 15px; letter-spacing: .05em;
+  color: var(--cyan); text-transform: uppercase; margin: 0 0 6px;
+}
+h3 { font-size: 17px; margin: 26px 0 8px; }
+section { padding: 44px 0 0; }
+.sub { color: var(--faint); font-size: 13px; margin: 0 0 20px; font-family: var(--mono); }
+p { max-width: 68ch; }
+p.note { color: var(--dim); }
+.m { font-family: var(--mono); font-size: .92em; color: var(--amber); }
+.stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px; margin: 32px 0 0;
+}
+.stat { background: var(--panel); border: 1px solid var(--rule); border-left: 3px solid var(--accent); padding: 18px 20px; }
+.stat:nth-child(2) { border-left-color: var(--cyan); }
+.stat:nth-child(3) { border-left-color: var(--amber); }
+.stat:nth-child(4) { border-left-color: var(--faint); }
+.stat .k { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin: 0 0 8px; }
+.stat .v { font-family: var(--mono); font-weight: 600; font-size: 30px; line-height: 1; font-variant-numeric: tabular-nums; }
+.stat .d { font-size: 13px; color: var(--dim); margin-top: 8px; line-height: 1.45; }
+.scroll { overflow-x: auto; margin: 20px 0 0; border: 1px solid var(--rule); background: var(--panel); }
+pre.fig {
+  margin: 0; padding: 16px 18px; font-family: var(--mono); font-size: 12px;
+  line-height: 1.55; color: var(--dim); white-space: pre; tab-size: 2;
+}
+pre.fig b { color: var(--cyan); font-weight: 600; }
+pre.fig i { color: var(--amber); font-style: normal; }
+pre.fig u { color: var(--accent); text-decoration: none; }
+pre.fig s { color: var(--faint); text-decoration: none; }
+.figcap { font-family: var(--mono); font-size: 11px; color: var(--faint); margin: 7px 0 0; letter-spacing: .04em; }
+table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 13px; }
+th, td { padding: 8px 12px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--rule); }
+th { color: var(--faint); font-weight: 500; text-transform: uppercase; font-size: 11px; letter-spacing: .07em; }
+td.l, th.l { text-align: left; }
+tbody tr:last-child td { border-bottom: 0; }
+/* The gallery toolbar: a filter is a claim about the corpus ("show me what
+   drew nothing"), so the count beside it updates with the selection. */
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 22px 0 0; font-family: var(--mono); font-size: 12px; }
+.bar button {
+  font: inherit; letter-spacing: .06em; text-transform: uppercase; color: var(--dim);
+  background: var(--panel); border: 1px solid var(--rule); padding: 6px 12px; cursor: pointer;
+}
+.bar button[aria-pressed="true"] { color: var(--cyan); border-color: var(--cyan); }
+.bar input {
+  font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--rule);
+  padding: 6px 10px; min-width: 200px;
+}
+.bar input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.bar .count { color: var(--faint); margin-left: auto; }
+.shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; margin: 24px 0 0; }
+figure { margin: 0; background: var(--panel); border: 1px solid var(--rule); padding: 8px; position: relative; }
+figure.blank { opacity: .5; }
+figure[hidden] { display: none; }
+figure .mx {
+  position: absolute; top: 12px; right: 12px; font-family: var(--mono); font-size: 9px;
+  letter-spacing: .08em; text-transform: uppercase; border: 1px solid var(--cyan);
+  color: var(--cyan); padding: 1px 4px; background: rgba(8,7,13,.75);
+}
+/* A runnable tile has to say so on the tile. The Run button lives inside the
+   lightbox, so without this the only way to find out which screenshots will
+   actually start is to open them one at a time. */
+figure .runnable {
+  position: absolute; bottom: 34px; left: 12px; font-family: var(--mono); font-size: 9px;
+  letter-spacing: .08em; text-transform: uppercase; border: 1px solid var(--accent);
+  color: var(--accent); padding: 1px 5px; background: rgba(8,7,13,.8); pointer-events: none;
+}
+figure:hover .runnable, figure:focus-within .runnable { background: var(--accent); color: var(--ground); }
+button.open { display: block; width: 100%; padding: 0; border: 0; background: #000; cursor: zoom-in; }
+button.open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Every mode in this corpus was shown on a 4:3 monitor: 320x200, 640x200,
+   640x350 and the 80x25 text page all fill the same glass with non-square
+   pixels. Shown at the raw pixel grid a mode 13h demo is 16:10 and everything
+   in it is squashed, so the picture is stretched to 4:3 the way the CRT did. */
+figure img { display: block; width: 100%; aspect-ratio: 4 / 3; image-rendering: pixelated; }
+figcaption { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-top: 7px; font-family: var(--mono); font-size: 11px; }
+.fn { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp { color: var(--faint); white-space: nowrap; }
+.fp b { color: var(--ink); font-weight: 600; }
+/* The reading list. */
+ul.docs { list-style: none; padding: 0; margin: 20px 0 0; border: 1px solid var(--rule); background: var(--panel); }
+ul.docs li { padding: 14px 18px; border-bottom: 1px solid var(--rule); display: grid; gap: 3px; }
+ul.docs li:last-child { border-bottom: 0; }
+ul.docs a { font-weight: 600; text-decoration: none; }
+ul.docs a:hover { text-decoration: underline; }
+ul.docs .gloss { color: var(--dim); font-size: 14px; }
+ul.docs .m { font-size: 11px; color: var(--faint); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin: 22px 0 0; }
+.card { background: var(--panel); border: 1px solid var(--rule); padding: 18px 20px; }
+.card h3 { margin: 0 0 6px; font-size: 15px; }
+.card h3 a { text-decoration: none; }
+.card p { margin: 0; color: var(--dim); font-size: 14px; }
+dialog {
+  border: 1px solid var(--rule); background: var(--panel); color: var(--ink);
+  padding: 0; width: min(96vw, 1600px); max-width: 96vw; max-height: 94vh;
+}
+dialog::backdrop { background: rgba(2,2,6,.86); }
+/* 4:3 here too, sized from the width unless the height would exceed the
+   viewport, in which case the width follows the height -- a fixed
+   width:100% with a max-height would squash the picture instead. */
+dialog img, dialog canvas {
+  display: block; width: min(100%, calc(80vh * 4 / 3)); aspect-ratio: 4 / 3; height: auto;
+  margin: 0 auto; background: #000; image-rendering: pixelated;
+}
+/* The UA stylesheet gives [hidden] display:none at the lowest possible
+   specificity, and the rule above outranks it -- so the screenshot stayed on
+   screen underneath the live canvas the whole time a demo was running. */
+dialog img[hidden], dialog canvas[hidden] { display: none; }
+/* The guest's own resolution is the backing store and CSS does the scaling, so
+   a 320x200 demo stays a 320x200 demo instead of a blurred one. */
+dialog canvas { outline: none; }
+dialog canvas:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
+/* The Run control sits ON the screenshot, because what it replaces is the
+   screenshot: press it and the same frame becomes a live one in place. */
+.dlg-stage { background: #000; position: relative; line-height: 0; }
+#lb-play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 10px;
+  font: 600 13px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink); background: rgba(8, 7, 13, .72); border: 1px solid var(--cyan);
+  padding: 14px 22px; cursor: pointer; backdrop-filter: blur(3px);
+  transition: background .12s, color .12s;
+}
+#lb-play:hover, #lb-play:focus-visible { background: var(--cyan); color: var(--ground); }
+#lb-play:hover .tri, #lb-play:focus-visible .tri { border-left-color: var(--ground); }
+#lb-play[disabled] { border-color: var(--rule); color: var(--faint); cursor: default; background: rgba(8,7,13,.8); }
+#lb-play[disabled]:hover { background: rgba(8,7,13,.8); color: var(--faint); }
+#lb-play[hidden] { display: none; }
+.tri {
+  width: 0; height: 0; border: 7px solid transparent;
+  border-left: 12px solid var(--cyan); margin-right: -2px;
+}
+#lb-play[disabled] .tri { border-left-color: var(--faint); }
+/* While it runs, the only chrome over the picture is one line at the bottom. */
+.run-note {
+  position: absolute; left: 0; right: 0; bottom: 0; margin: 0; padding: 7px 12px;
+  font: 11px/1.4 var(--mono); color: var(--dim);
+  background: linear-gradient(rgba(8,7,13,0), rgba(8,7,13,.88) 40%);
+  text-align: center; pointer-events: none;
+}
+.run-note[hidden] { display: none; }
+.run-note.live { color: var(--cyan); }
+.dlg-bar { display: flex; justify-content: space-between; gap: 14px; padding: 10px 14px; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid var(--rule); }
+.dlg-bar .r { color: var(--faint); }
+.dlg-bar .pouet { margin-left: auto; color: var(--cyan); text-decoration: none; border-bottom: 1px solid transparent; }
+.dlg-bar .pouet:hover, .dlg-bar .pouet:focus-visible { border-bottom-color: var(--cyan); }
+.dlg-bar .pouet[hidden] { display: none; }
+.dlg-screen { margin: 0; padding: 12px 14px; border-top: 1px solid var(--rule); font-family: var(--mono); font-size: 11px; line-height: 1.3; color: var(--dim); white-space: pre; overflow: auto; max-height: 18vh; }
+.dlg-screen[hidden] { display: none; }
+footer { margin-top: 60px; padding-top: 22px; border-top: 1px solid var(--rule); color: var(--faint); font-family: var(--mono); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

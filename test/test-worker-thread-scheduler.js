@@ -135,13 +135,16 @@ function makeManager(backend, extraOpts) {
     const h2 = tm.createThread(0x401600, 0xbeef, 0, 0);
     check(tm.setThreadPriority(h1, 2, 1) === 1,
       'a pending real Worker accepts THREAD_PRIORITY_HIGHEST');
+    check(tm.setThreadLocale(0x0419, 1) === 1,
+      'the creating main thread can select a concrete locale');
+    const inherited = tm.createThread(0x401700, 0xcafe, 0, 0, 0, 1);
     check(tm.initializeComApartment(0, 2, 2) === 0 &&
       tm.initializeComApartment(0, 2, 2) === 1,
       'a pending real Worker owns a nested STA apartment');
     const h1Duplicate = tm.duplicateCurrentThread(2);
     check(!!h1Duplicate, 'a pending real Worker can materialize a durable duplicate');
     await tm.runWorkerSlices(50000);
-    check(backend.specs.length === 2, 'each CreateThread became a Worker', `${backend.specs.length}`);
+    check(backend.specs.length === 3, 'each CreateThread became a Worker', `${backend.specs.length}`);
     const s = backend.specs[0];
     check(s.imageBase === 0x400000 && s.codeStart === 0x401000,
       'PE metadata came from the guest main thread, not the idle main instance',
@@ -158,6 +161,8 @@ function makeManager(backend, extraOpts) {
       'both threads are live in the same handle map the waits read');
     check(tm.getThreadPriority(h1, 1) === 2 && tm.getThreadPriority(h1Duplicate, 1) === 2,
       'priority and duplicated identity survive pending-to-Worker record replacement');
+    check(tm.getThreadLocale(4) === 0x0419 && tm.threads.get(inherited).locale === 0x0419,
+      'creator locale survives pending-to-Worker record replacement');
     check(tm.setThreadPriority(h1Duplicate, -1, 1) === 1 && tm.getThreadPriority(h1, 1) === -1,
       'a real Worker handle and its duplicate keep one priority state');
     check((tm.initializeComApartment(0, 0, 2) >>> 0) === 0x80010106,

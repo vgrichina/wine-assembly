@@ -140,8 +140,14 @@ const digest = crypto.createHash('sha256')
 // virtual-key messages from unrelated MSGs instead of always returning TRUE.
 // 2026-09-01: 482 -> 483 after merge. WSAIsBlocking reports FALSE because
 // this host never runs a nested Winsock blocking hook; waits yield cooperatively.
-const EXPECTED_COUNT = 483;
-const EXPECTED_SHA256 = 'b423497f67f8223bf9b8414d43a43e70f7445f9104a8ce9fa80343d7b82ff71b';
+// 2026-09-02: 482 -> 480. SetThreadLocale and GetThreadLocale now retain real
+// per-thread LCID state and carry it into newly created threads.
+// 2026-09-02: 480 -> 479. BringWindowToTop now changes sibling/top-level
+// z-order and activation state instead of reporting unconditional success.
+// 2026-09-02: 479 -> 477. SetActiveWindow/GetActiveWindow now retain this
+// thread queue's active top-level and deliver real activation transitions.
+const EXPECTED_COUNT = 478;
+const EXPECTED_SHA256 = 'e179ea9a0195e14e3f76456768a8ec74190780321c70443b7a9842ecf3a2def1';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

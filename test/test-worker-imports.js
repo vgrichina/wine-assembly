@@ -79,6 +79,8 @@ check('every documented key is one the list actually names', () => {
 check('every declared thread primitive is adopted', () => {
   assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('get_thread_priority'));
   assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('set_thread_priority'));
+  assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('get_thread_locale'));
+  assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('set_thread_locale'));
   assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('com_initialize_thread'));
   assert.ok(THREAD_PRIMITIVE_IMPORTS.includes('com_uninitialize_thread'));
   const main = {};

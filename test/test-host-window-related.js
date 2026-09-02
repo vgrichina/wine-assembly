@@ -21,6 +21,7 @@ const wasm = {
 const renderer = {
   _nextZ: 100,
   repaintScheduled: false,
+  keyboardOwner: null,
   inputQueue: [
     { type: 'mouse', hwnd: 110, msg: 0x0202 },
     { type: 'paint', hwnd: 120, msg: 0x000F },
@@ -34,6 +35,9 @@ const renderer = {
   _clampToolbarWidth() { return false; },
   scheduleRepaint() {
     this.repaintScheduled = true;
+  },
+  _setKeyboardInputOwner(win) {
+    this.keyboardOwner = win;
   },
   windows: {
     100: { hwnd: 100, title: 'Tasks', className: 'MSTaskSwWClass', style: 0x10c00000, visible: true, enabled: true, isChild: false, zOrder: 10, processId: 4321, wasm },
@@ -89,6 +93,20 @@ assert.deepStrictEqual(posted.pop(), { hwnd: 100, msg: 0x0111, wParam: 123, lPar
 assert.strictEqual(host.activate_window(100), 1, 'activate_window succeeds');
 assert(renderer.windows[100].zOrder >= 100, 'activate_window raises z-order');
 assert(renderer.repaintScheduled, 'activate_window schedules repaint');
+assert.strictEqual(renderer.keyboardOwner, renderer.windows[100],
+  'activate_window assigns keyboard input to the activated top-level');
+
+const topZBeforeChildActivation = renderer.windows[100].zOrder;
+host.set_window_zorder(110, 0);
+assert(renderer.windows[110].zOrder > renderer.windows[120].zOrder,
+  'HWND_TOP raises a child above its siblings without disturbing other groups');
+assert.strictEqual(host.activate_window(110), 1, 'activate_window accepts a child HWND');
+assert(renderer.windows[100].zOrder > topZBeforeChildActivation,
+  'activating a child raises its associated top-level window');
+assert.strictEqual(renderer.keyboardOwner, renderer.windows[100],
+  'activating a child assigns keyboard input to its top-level ancestor');
+assert.strictEqual(host.activate_window(0x7ffffffe), 0,
+  'activate_window rejects an unknown HWND');
 
 const activatedZ = renderer.windows[100].zOrder;
 host.move_window(300, 0, 0, 0, 0, 0x43); // SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW

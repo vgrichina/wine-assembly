@@ -2,32 +2,38 @@
 
 'use strict';
 
-// Does the corpus report's "Run it" button actually start the emulator?
+// Does every "Run it" button on the site actually start the emulator?
 //
-//   node tools/toyvm/check-live-report.js                       # every runnable tile
+//   node tools/toyvm/check-live-report.js                       # every tile
 //   node tools/toyvm/check-live-report.js --name=BOB.COM        # just one
-//   node tools/toyvm/check-live-report.js --seconds=8 --headful
+//   node tools/toyvm/check-live-report.js --from=100 --count=50 # a slice
+//   node tools/toyvm/check-live-report.js --seconds=8 --headful --json=out.json
 //
-// docs/dos-corpus/index.html ships twelve demos as bytes, and those tiles get
-// a Run button that loads half a megabyte of generated VM and runs the program
-// in the tab. Nothing tested that path: the page is built from sweep data by
-// sweep-report.js, but the bundle under live/ is written separately by
-// bundle-browser.js and bundle-programs.js, so the two can drift apart with no
-// error anywhere -- a report rebuilt against a newer VM keeps serving an older
-// bundle, and the only symptom is a button that does nothing when a visitor
-// presses it.
+// docs/dos-corpus/demos.html ships the whole corpus as bytes, and every tile
+// gets a Run button that loads half a megabyte of generated VM and runs the
+// program in the tab. The page is built from sweep data by site.js, but the
+// bundle under live/ is written separately by bundle-browser.js and
+// bundle-programs.js, so the two can drift apart with no error anywhere -- a
+// site rebuilt against a newer VM keeps serving an older bundle, and the only
+// symptom is a button that does nothing when a visitor presses it.
 //
 // What it checks, per tile: the button appears, pressing it loads the bundle
-// without a console error, and the canvas ends up with a non-black pixel. That
-// last one is the point. "The script loaded" is not "the demo runs" -- the
-// failure this was written for is a LiveRun that constructs happily and then
-// paints nothing, which from the page looks exactly like a demo that is still
-// warming up.
+// without a console error, the VM dispatches, and the canvas ends up with a
+// non-black pixel. "The script loaded" is not "the demo runs" -- the failure
+// this was written for is a LiveRun that constructs happily and then paints
+// nothing, which from the page looks exactly like a demo still warming up.
 //
-// A tile that legitimately shows a text screen has no pixels to light, so the
-// canvas check is "changed from its initial state", not "is colourful".
+// A tile the sweep photographed blank is held to what the sweep saw: the VM
+// has to start and dispatch, and pixels are reported but not required. The
+// page must not promise more than the sweep did, and it must not promise less.
+//
+// Served over http from a throwaway server rather than opened as file://:
+// puppeteer's file:// origin rules are not the ones a person double-clicking
+// the page gets, and 199 lazily appended <script> tags are exactly the kind of
+// thing that behaves differently between the two.
 
 const fs = require('fs');
+const http = require('http');
 const path = require('path');
 const puppeteer = require('puppeteer');
 
@@ -37,16 +43,41 @@ function arg(name, fallback) {
 }
 const flag = (n) => process.argv.slice(2).includes(`--${n}`);
 
+const TYPES = {
+  '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/png',
+  '.json': 'application/json', '.css': 'text/css',
+};
+
+function serve(dir) {
+  return new Promise((ok) => {
+    const server = http.createServer((req, res) => {
+      const rel = decodeURIComponent(req.url.split('?')[0]).replace(/^\/+/, '') || 'index.html';
+      const file = path.join(dir, rel);
+      if (!file.startsWith(dir) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+        res.writeHead(404); res.end('no'); return;
+      }
+      res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
+      res.end(fs.readFileSync(file));
+    });
+    server.listen(0, '127.0.0.1', () => ok(server));
+  });
+}
+
 async function main() {
   const dir = path.resolve(arg('dir', path.join(__dirname, '..', '..', 'docs', 'dos-corpus')));
-  const page404 = path.join(dir, 'index.html');
-  if (!fs.existsSync(page404)) {
-    console.error(`no report at ${page404} -- build it with sweep-report.js first`);
+  const pageFile = path.join(dir, 'demos.html');
+  if (!fs.existsSync(pageFile)) {
+    console.error(`no gallery at ${pageFile} -- build it with tools/toyvm/site.js first`);
     process.exit(2);
   }
   const only = arg('name');
   const seconds = Number(arg('seconds', 6));
+  const from = Number(arg('from', 0));
+  const count = Number(arg('count', 1e9));
+  const jsonOut = arg('json');
 
+  const server = await serve(dir);
+  const port = server.address().port;
   // The system browser, same as tools/profile-web-frames.js: puppeteer's own
   // download is not installed here and a check that cannot find a browser is
   // indistinguishable from a page that does not work.
@@ -54,7 +85,7 @@ async function main() {
     headless: !flag('headful'),
     executablePath: process.env.CHROME
       || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    args: ['--no-sandbox', '--allow-file-access-from-files'],
+    args: ['--no-sandbox'],
   });
   const page = await browser.newPage();
   const errors = [];
@@ -62,34 +93,44 @@ async function main() {
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('requestfailed', (r) => errors.push(`${r.url()} ${r.failure()?.errorText}`));
 
-  await page.goto(`file://${page404}`, { waitUntil: 'load' });
+  await page.goto(`http://127.0.0.1:${port}/demos.html`, { waitUntil: 'load' });
 
-  const names = await page.$$eval('figure[data-live]', (els) => els.map((e) => e.dataset.live));
-  if (!names.length) {
+  // Every tile, by its unique id: the corpus has two ASYLUM.EXEs, and a name
+  // cannot pick one of them.
+  const tiles = await page.$$eval('figure[data-live]', (els) => els.map((e) => ({
+    id: e.dataset.liveId, name: e.dataset.live, kind: e.dataset.kind,
+  })));
+  if (!tiles.length) {
     console.log('0 runnable tiles -- the page has no data-live figures.');
     console.log('That means live/programs-index.json named nothing the sweep also had,');
     console.log('so re-run tools/toyvm/bundle-programs.js against the current corpus.');
-    await browser.close();
+    await browser.close(); server.close();
     process.exit(1);
   }
-  const wanted = only ? names.filter((n) => n === only) : names;
+  let wanted = only ? tiles.filter((t) => t.name === only) : tiles.slice(from, from + count);
   if (!wanted.length) {
-    console.log(`${only} is not a runnable tile. Runnable: ${names.join(', ')}`);
-    await browser.close();
+    console.log(`${only} is not a runnable tile. Runnable: ${tiles.map((t) => t.name).join(', ')}`);
+    await browser.close(); server.close();
     process.exit(2);
   }
 
-  console.log(`${names.length} runnable tile(s) in ${path.relative(process.cwd(), dir)}`);
+  const total = await page.$$eval('figure', (els) => els.length);
+  console.log(`${tiles.length} runnable of ${total} tiles in ${path.relative(process.cwd(), dir)}`
+    + (wanted.length !== tiles.length ? `; checking ${wanted.length}` : ''));
   let bad = 0;
-  for (const name of wanted) {
+  const results = [];
+  for (const t of wanted) {
     errors.length = 0;
-    const r = await runOne(page, name, seconds);
+    const r = await runOne(page, t, seconds);
     const verdict = r.ok ? 'ok' : 'FAILED';
-    console.log(`  ${name.padEnd(16)} ${verdict.padEnd(7)} ${r.note}`
+    console.log(`  ${t.name.padEnd(16)} ${verdict.padEnd(7)} ${r.note}`
       + (errors.length ? `\n      console: ${errors.slice(0, 3).join(' | ')}` : ''));
+    results.push({ ...t, ...r, errors: errors.slice(0, 3) });
     if (!r.ok) bad++;
   }
   await browser.close();
+  server.close();
+  if (jsonOut) fs.writeFileSync(jsonOut, `${JSON.stringify(results, null, 1)}\n`);
   console.log(bad ? `\n${bad} of ${wanted.length} did not run.` : `\nall ${wanted.length} ran.`);
   process.exit(bad ? 1 : 0);
 }
@@ -98,14 +139,14 @@ async function main() {
 // The canvas is read as a pixel histogram rather than a hash because the
 // question is "is anything on it", and a hash cannot tell an all-black surface
 // from a painted one.
-async function runOne(page, name, seconds) {
-  const opened = await page.evaluate((n) => {
-    const fig = document.querySelector(`figure[data-live="${CSS.escape(n)}"]`);
+async function runOne(page, tile, seconds) {
+  const opened = await page.evaluate((id) => {
+    const fig = document.querySelector(`figure[data-live-id="${CSS.escape(id)}"]`);
     if (!fig) return false;
     fig.querySelector('button.open').click();
     return true;
-  }, name);
-  if (!opened) return { ok: false, note: 'no tile with that data-live' };
+  }, tile.id);
+  if (!opened) return { ok: false, note: 'no tile with that data-live-id' };
 
   const hasButton = await page.evaluate(() => {
     const b = document.getElementById('lb-play');
@@ -140,6 +181,9 @@ async function runOne(page, name, seconds) {
     });
     lit = s.lit; dispatched = s.dispatched; status = s.status;
     if (lit > 0) break;
+    // A blank-as-swept tile is done as soon as the VM is demonstrably running;
+    // waiting the whole budget for pixels the sweep never saw is not a check.
+    if (tile.kind === 'blank' && dispatched > 1e6) break;
   }
 
   await page.evaluate(() => {
@@ -150,11 +194,13 @@ async function runOne(page, name, seconds) {
   // Dispatches but no pixels is a real state, not a pass: it is what a demo
   // that is still unpacking looks like, and also what a broken video path
   // looks like. Say which one the numbers support instead of picking.
-  if (lit > 0) return { ok: true, note: `${lit.toLocaleString()} lit px, ${dispatched.toLocaleString()} dispatches` };
+  const px = `${lit.toLocaleString()} lit px, ${dispatched.toLocaleString()} dispatches`;
+  if (lit > 0) return { ok: true, lit, dispatched, note: px };
   if (dispatched > 0) {
-    return { ok: false, note: `ran ${dispatched.toLocaleString()} dispatches but painted nothing (status: ${status || 'none'})` };
+    if (tile.kind === 'blank') return { ok: true, lit, dispatched, note: `${px} (blank as swept)` };
+    return { ok: false, lit, dispatched, note: `ran ${dispatched.toLocaleString()} dispatches but painted nothing (status: ${status || 'none'})` };
   }
-  return { ok: false, note: `the VM never started (status: ${status || 'none'})` };
+  return { ok: false, lit, dispatched, note: `the VM never started (status: ${status || 'none'})` };
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

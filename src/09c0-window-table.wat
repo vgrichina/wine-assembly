@@ -411,6 +411,8 @@
     ;; (WordPad File>New + Cancel, mfc42 6.00).
     (if (i32.eq (global.get $focus_hwnd) (local.get $hwnd))
       (then (global.set $focus_hwnd (i32.const 0))))
+    (if (i32.eq (global.get $active_hwnd) (local.get $hwnd))
+      (then (global.set $active_hwnd (i32.const 0))))
     (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
       (then (global.set $capture_hwnd (i32.const 0))))
     (call $post_queue_purge_hwnd (local.get $hwnd))

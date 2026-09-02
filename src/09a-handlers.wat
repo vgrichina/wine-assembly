@@ -1190,9 +1190,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
 
-  ;; SetThreadLocale(Locale) → BOOL. We don't track thread locales; accept and return TRUE.
+  ;; SetThreadLocale(Locale) → BOOL. Locale identity belongs to the calling
+  ;; thread. The host retains it on the same durable record as priority and COM
+  ;; apartment state, so cooperative and real Worker threads agree.
   (func $handle_SetThreadLocale (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $host_set_thread_locale
+      (local.get $arg0) (global.get $current_thread_id)))
+    (if (i32.eqz (global.get $eax))
+      (then (global.set $last_error (i32.const 87)))) ;; ERROR_INVALID_PARAMETER
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
@@ -2861,7 +2866,8 @@
       (local.get $arg2) (local.get $arg3) (local.get $arg1) (local.get $arg4)
       (if (result i32) (local.get $lpThreadId)
         (then (call $g2w (local.get $lpThreadId)))
-        (else (i32.const 0)))))
+        (else (i32.const 0)))
+      (global.get $current_thread_id)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
@@ -4916,12 +4922,24 @@
 
   ;; 105: SetForegroundWindow(hWnd) — 1 arg stdcall
   (func $handle_SetForegroundWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $top i32)
+    (local.set $top (call $wnd_top_level (local.get $arg0)))
+    (if (i32.and
+          (i32.ge_s (call $wnd_table_find (local.get $top)) (i32.const 0))
+          (i32.eq (call $wnd_get_thread (local.get $top)) (global.get $current_thread_id)))
+      (then (drop (call $active_window_transition (local.get $top)))))
     (global.set $eax (call $host_activate_window (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; SwitchToThisWindow(hWnd, fAltTab) — activate renderer window
   (func $handle_SwitchToThisWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $top i32)
+    (local.set $top (call $wnd_top_level (local.get $arg0)))
+    (if (i32.and
+          (i32.ge_s (call $wnd_table_find (local.get $top)) (i32.const 0))
+          (i32.eq (call $wnd_get_thread (local.get $top)) (global.get $current_thread_id)))
+      (then (drop (call $active_window_transition (local.get $top)))))
     (drop (call $host_activate_window (local.get $arg0)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
@@ -7156,9 +7174,15 @@
   )
 
   ;; 190: BringWindowToTop(hWnd) — 1 arg stdcall
-  ;; Sets window to top of Z-order. Single-window model: always succeeds.
+  ;; Raise the HWND among siblings, then activate its associated top-level window.
   (func $handle_BringWindowToTop (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (local $top i32)
+    (local.set $top (call $wnd_top_level (local.get $arg0)))
+    (call $host_set_window_zorder (local.get $arg0) (i32.const 0)) (global.set $eax (call $host_activate_window (local.get $arg0))) ;; HWND_TOP then activate
+    (if (i32.and
+          (i32.ge_s (call $wnd_table_find (local.get $top)) (i32.const 0))
+          (i32.eq (call $wnd_get_thread (local.get $top)) (global.get $current_thread_id)))
+      (then (drop (call $active_window_transition (local.get $top)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
@@ -11392,9 +11416,106 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 406: SetActiveWindow(hwnd) — return previous active window (fake: return arg)
+  ;; Change this thread queue's active top-level and synchronously deliver the
+  ;; documented WM_ACTIVATE pair. State changes before callbacks so a wndproc
+  ;; that calls GetActiveWindow observes the new window. If the callback picks
+  ;; a descendant focus itself, preserve that choice; otherwise DefWindowProc's
+  ;; default is represented by moving focus to the activated top-level.
+  (func $active_window_transition (param $target i32) (result i32)
+    (local $previous i32) (local $old_focus i32)
+    (local.set $previous (global.get $active_hwnd))
+    (if (i32.and
+          (i32.ne (local.get $previous) (i32.const 0))
+          (i32.lt_s (call $wnd_table_find (local.get $previous)) (i32.const 0)))
+      (then
+        (local.set $previous (i32.const 0))
+        (global.set $active_hwnd (i32.const 0))))
+    (if (i32.eq (local.get $previous) (local.get $target))
+      (then (return (local.get $previous))))
+
+    (global.set $active_hwnd (local.get $target))
+    (if (local.get $previous)
+      (then
+        (drop (call $wnd_send_message
+          (local.get $previous) (i32.const 0x0006) ;; WM_ACTIVATE
+          (i32.shl (call $wnd_min_get (local.get $previous)) (i32.const 16)) ;; WA_INACTIVE
+          (local.get $target)))
+        (call $host_invalidate_frame (local.get $previous))))
+    (if (i32.and
+          (i32.ne (local.get $target) (i32.const 0))
+          (i32.ge_s (call $wnd_table_find (local.get $target)) (i32.const 0)))
+      (then
+        (drop (call $wnd_send_message
+          (local.get $target) (i32.const 0x0006) ;; WM_ACTIVATE
+          (i32.or (i32.const 1) ;; WA_ACTIVE
+            (i32.shl (call $wnd_min_get (local.get $target)) (i32.const 16)))
+          (local.get $previous)))
+        (call $host_invalidate_frame (local.get $target))))
+
+    ;; WM_ACTIVATE's default procedure assigns focus only when the window is
+    ;; not minimized. Respect an application-selected child focus established
+    ;; by the activation callback itself.
+    (local.set $old_focus (global.get $focus_hwnd))
+    (if (i32.and
+          (i32.and
+            (i32.ne (local.get $target) (i32.const 0))
+            (i32.eq (global.get $active_hwnd) (local.get $target)))
+          (i32.and
+            (i32.ge_s (call $wnd_table_find (local.get $target)) (i32.const 0))
+            (i32.eqz (call $wnd_min_get (local.get $target)))))
+      (then
+        (if (i32.or
+              (i32.eqz (local.get $old_focus))
+              (i32.ne (call $wnd_top_level (local.get $old_focus)) (local.get $target)))
+          (then
+            (global.set $focus_hwnd (local.get $target))
+            (if (i32.and
+                  (i32.ne (local.get $old_focus) (i32.const 0))
+                  (i32.ge_s (call $wnd_table_find (local.get $old_focus)) (i32.const 0)))
+              (then
+                (drop (call $wnd_send_message
+                  (local.get $old_focus) (i32.const 0x0008) ;; WM_KILLFOCUS
+                  (local.get $target) (i32.const 0)))))
+            (drop (call $wnd_send_message
+              (local.get $target) (i32.const 0x0007) ;; WM_SETFOCUS
+              (local.get $old_focus) (i32.const 0))))))
+      (else
+        ;; Clearing this thread's active window also releases focus belonging
+        ;; to the window being deactivated.
+        (if (i32.and
+              (i32.ne (local.get $old_focus) (i32.const 0))
+              (i32.or
+                (i32.eqz (local.get $previous))
+                (i32.eq (call $wnd_top_level (local.get $old_focus))
+                        (local.get $previous))))
+          (then
+            (global.set $focus_hwnd (i32.const 0))
+            (if (i32.ge_s (call $wnd_table_find (local.get $old_focus)) (i32.const 0))
+              (then
+                (drop (call $wnd_send_message
+                  (local.get $old_focus) (i32.const 0x0008) ;; WM_KILLFOCUS
+                  (i32.const 0) (i32.const 0)))))))))
+    (local.get $previous))
+
+  ;; 406: SetActiveWindow(hwnd) — previous active top-level for this thread.
   (func $handle_SetActiveWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (local.get $arg0))
+    (if (i32.or
+          (i32.lt_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
+          (i32.ne (i32.and (call $wnd_get_style (local.get $arg0))
+                           (i32.const 0x40000000)) (i32.const 0)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (if (i32.ne (call $wnd_get_thread (local.get $arg0))
+                (global.get $current_thread_id))
+      (then
+        ;; USER clears the calling queue's active status when hWnd belongs to
+        ;; another thread; it does not transfer ownership across queues.
+        (global.set $eax (call $active_window_transition (i32.const 0))))
+      (else
+        (global.set $eax (call $active_window_transition (local.get $arg0)))
+        (drop (call $host_activate_window (local.get $arg0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -13835,9 +13956,11 @@ HookEx — no next hook in chain, return 0
       (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
-  ;; 521: GetThreadLocale() → LCID — returns US English
+  ;; 521: GetThreadLocale() → LCID. A new process begins at the en-US user
+  ;; locale, and subsequently returns the calling thread's retained setting.
   (func $handle_GetThreadLocale (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x0409))  ;; MAKELCID(LANG_ENGLISH, SUBLANG_ENGLISH_US)
+    (global.set $eax (call $host_get_thread_locale
+      (global.get $current_thread_id)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   ;; 522: CreateSemaphoreW(lpAttr, lInit, lMax, lpName) → real counted semaphore via host.
@@ -15763,9 +15886,13 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; 642: GetActiveWindow — return main window handle
+  ;; 642: GetActiveWindow — active top-level attached to this thread queue.
   (func $handle_GetActiveWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (global.get $main_hwnd))
+    (if (i32.and
+          (i32.ne (global.get $active_hwnd) (i32.const 0))
+          (i32.lt_s (call $wnd_table_find (global.get $active_hwnd)) (i32.const 0)))
+      (then (global.set $active_hwnd (i32.const 0))))
+    (global.set $eax (global.get $active_hwnd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
