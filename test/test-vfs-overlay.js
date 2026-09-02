@@ -287,18 +287,57 @@ test('a short blob is reported, never mounted as a truncated file', async () => 
 
 test('a failing store is held in errors, not swallowed', async () => {
   const vfs = new VirtualFS();
+  const backing = memoryStore();
+  let attempts = 0;
   const broken = {
-    list: () => Promise.resolve([]),
-    read: () => Promise.resolve(null),
-    writeBatch: () => Promise.reject(new Error('QuotaExceededError')),
-    remove: () => Promise.resolve(),
+    list: () => backing.list(),
+    read: path => backing.read(path),
+    writeBatch: records => (++attempts === 1
+      ? Promise.reject(new Error('QuotaExceededError'))
+      : backing.writeBatch(records)),
+    remove: path => backing.remove(path),
   };
   const overlay = VfsOverlay.attach(vfs, { store: broken });
   writeGuestFile(vfs, 'C:\\save.dat', 'progress');
-  const report = await overlay.flush();
-  assert.strictEqual(report.written, 0);
-  assert.strictEqual(report.failed, 1);
+  const first = await overlay.flush();
+  assert.strictEqual(first.written, 0);
+  assert.strictEqual(first.failed, 1);
   assert.match(overlay.errors[0].message, /QuotaExceededError/);
+  assert.deepStrictEqual(overlay.dirtyPaths(), ['c:\\save.dat'],
+    'a failed store write must restore the consumed dirty mark');
+
+  writeGuestFile(vfs, 'C:\\save.dat', 'new progress');
+  const retry = await overlay.flush();
+  assert.strictEqual(retry.written, 1);
+  assert.strictEqual(retry.failed, 0);
+  assert.deepStrictEqual(overlay.dirtyPaths(), []);
+  assert.strictEqual(text(await backing.read('c:\\save.dat')), 'new progress',
+    'the retry persists the current VFS state, not the failed snapshot');
+});
+
+test('a queued flush snapshots bytes before later guest writes', async () => {
+  const vfs = new VirtualFS();
+  const store = memoryStore();
+  const overlay = VfsOverlay.attach(vfs, { store });
+  const handle = vfs.createFile('C:\\slot.sav', GENERIC_WRITE, CREATE_ALWAYS);
+  assert.ok(handle);
+  assert.ok(vfs.writeFile(handle, bytes('old'), 3).ok);
+
+  // recordFor() runs synchronously, but writeBatch() starts on the promise
+  // chain. Mutate the same capacity buffer before that microtask consumes the
+  // record; without a snapshot, the first flush stores "new" retroactively.
+  const first = overlay.flush();
+  assert.strictEqual(vfs.setFilePointer(handle, 0, 0), 0);
+  assert.ok(vfs.writeFile(handle, bytes('new'), 3).ok);
+  await first;
+  assert.strictEqual(text(await store.read('c:\\slot.sav')), 'old',
+    'an in-flight record is an immutable point-in-time snapshot');
+  assert.deepStrictEqual(overlay.dirtyPaths(), ['c:\\slot.sav'],
+    'the later write remains pending after the earlier snapshot lands');
+
+  await overlay.flush();
+  assert.strictEqual(text(await store.read('c:\\slot.sav')), 'new');
+  vfs.closeHandle(handle);
 });
 
 test('detach flushes and restores the original VirtualFS methods', async () => {
