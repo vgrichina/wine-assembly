@@ -7778,14 +7778,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
-  ;; __p__environ() — cdecl, returns &environ for the narrow CRT.
+  ;; __p__environ() — cdecl, returns &_environ for the narrow CRT. Keep the
+  ;; distinct __initenv slot in the adjacent word: MSVCRT initializes
+  ;; `__initenv = _environ`, but they remain two globals so a later assignment
+  ;; through &_environ does not rewrite the initial-environment snapshot.
   (func $handle___p__environ (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.eqz (global.get $fake_cmdline_addr))
       (then (call $store_fake_cmdline)))
     (if (i32.eqz (global.get $msvcrt_environ_ptr))
       (then
-        (global.set $msvcrt_environ_ptr (call $heap_alloc (i32.const 4)))
+        (global.set $msvcrt_environ_ptr (call $heap_alloc (i32.const 8)))
         (call $gs32 (global.get $msvcrt_environ_ptr)
+          (i32.add (global.get $fake_cmdline_addr) (i32.const 1532)))
+        (call $gs32 (i32.add (global.get $msvcrt_environ_ptr) (i32.const 4))
           (i32.add (global.get $fake_cmdline_addr) (i32.const 1532)))))
     (global.set $eax (global.get $msvcrt_environ_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
@@ -7796,6 +7801,7 @@
     (call $handle___p__environ
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (global.set $eax (i32.add (global.get $msvcrt_environ_ptr) (i32.const 4)))
   )
 
   ;; 260: __set_app_type(type) — cdecl; sets GUI vs console, no-op for us
