@@ -26,10 +26,12 @@
     (local $tmp i32) (local $v i32) (local $i i32) (local $menu_id i32) (local $parent_hwnd i32) (local $hwnd i32)
     (local $win_x i32) (local $win_y i32) (local $win_cx i32) (local $win_cy i32)
     (local $host_win_x i32) (local $host_win_y i32) (local $host_win_cx i32) (local $host_win_cy i32)
-    (local $detected_class i32) (local $wat_statusbar i32) (local $wat_tab i32)
+    (local $detected_class i32) (local $wat_statusbar i32) (local $wat_tab i32) (local $class_wa i32) (local $title_wa i32)
     ;; Copy stack parameters that USER32 owns for the whole CreateWindowExA
     ;; operation. Later helper/import calls may use scratch paths; do not keep
     ;; treating the caller's stack frame as the source of truth.
+    (local.set $class_wa (call $g2w (local.get $arg1)))
+    (if (local.get $arg2) (then (local.set $title_wa (call $g2w (local.get $arg2)))))
     (local.set $hwnd (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (local.get $hwnd) (i32.const 1)))
     (global.set $eax (local.get $hwnd))
@@ -235,7 +237,7 @@
     (local.get $host_win_y)                                    ;; y
     (local.get $host_win_cx)                                   ;; cx
     (local.get $host_win_cy)                                   ;; cy
-    (select (i32.const 0) (call $g2w (local.get $arg2)) (i32.eqz (local.get $arg2)))  ;; title_ptr (NULL→0)
+    (local.get $title_wa)                                  ;; title_ptr (NULL→0)
     (local.get $tmp)                                            ;; resolved menu
     ))
     ;; Save resolved top-level menu ID; later code reuses $tmp/$v for wnd/control slots.
@@ -245,7 +247,7 @@
       (local.get $tmp)
       (i32.ne (i32.and (local.get $arg3) (i32.const 0x40000000)) (i32.const 0))))
     ;; Pass className to host so it knows the window type (e.g. "Edit")
-    (call $host_set_window_class (local.get $hwnd) (call $g2w (local.get $arg1)))
+    (call $host_set_window_class (local.get $hwnd) (local.get $class_wa))
     ;; Paint's MFC status bar needs the registered common-control wndproc for
     ;; its automatic CCS_BOTTOM layout, but WAT must own WM_PAINT. Remember the
     ;; exact class here; after wndproc selection we set a separate paint marker
@@ -253,12 +255,12 @@
     (if (i32.and
           (i32.ge_u (local.get $arg1) (i32.const 0x10000))
           (i32.and
-            (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+            (i32.eq (i32.or (i32.load (local.get $class_wa)) (i32.const 0x20202020))
                     (i32.const 0x7463736d)) ;; "msct"
             (i32.and
-              (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+              (i32.eq (i32.or (i32.load offset=4 (local.get $class_wa)) (i32.const 0x20202020))
                       (i32.const 0x737f736c)) ;; "ls_s" after lowercase mask
-              (i32.eq (i32.or (i32.load offset=8 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+              (i32.eq (i32.or (i32.load offset=8 (local.get $class_wa)) (i32.const 0x20202020))
                       (i32.const 0x75746174))))) ;; "tatu"
       (then (local.set $wat_statusbar (i32.const 1))))
     ;; SysTabControl32 keeps the authentic COMCTL32 wndproc for layout and
@@ -267,9 +269,9 @@
     (if (i32.and
           (i32.ge_u (local.get $arg1) (i32.const 0x10000))
           (i32.and
-            (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+            (i32.eq (i32.or (i32.load (local.get $class_wa)) (i32.const 0x20202020))
                     (i32.const 0x74737973)) ;; "syst"
-            (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+            (i32.eq (i32.or (i32.load offset=4 (local.get $class_wa)) (i32.const 0x20202020))
                     (i32.const 0x6f636261)))) ;; "abco"
       (then (local.set $wat_tab (i32.const 1))))
     ;; Store style before any native control WM_CREATE. Edit/Button/etc. read
@@ -283,7 +285,7 @@
     (if (i32.and
           (i32.ge_u (local.get $arg1) (i32.const 0x10000))
           (i32.and
-            (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+            (i32.eq (i32.or (i32.load (local.get $class_wa)) (i32.const 0x20202020))
                     (i32.const 0x7463736d)) ;; "msct"
             (i32.eqz (call $address_in_loaded_dll (local.get $tmp)))))
       (then (local.set $tmp (i32.const 0))))
@@ -294,9 +296,9 @@
     (if (i32.and
           (i32.ge_u (local.get $arg1) (i32.const 0x10000))
           (i32.and
-            (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+            (i32.eq (i32.or (i32.load (local.get $class_wa)) (i32.const 0x20202020))
                     (i32.const 0x6c737973)) ;; "sysl"
-            (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+            (i32.eq (i32.or (i32.load offset=4 (local.get $class_wa)) (i32.const 0x20202020))
                     (i32.const 0x76747369)))) ;; "istv"
       (then (local.set $tmp (i32.const 0))))
     ;; Prefer the WAT-native TreeView for SysTreeView32 as well. Winamp's
@@ -305,12 +307,12 @@
     (if (i32.and
           (i32.ge_u (local.get $arg1) (i32.const 0x10000))
           (i32.and
-            (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+            (i32.eq (i32.or (i32.load (local.get $class_wa)) (i32.const 0x20202020))
                     (i32.const 0x74737973)) ;; "syst"
             (i32.and
-              (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+              (i32.eq (i32.or (i32.load offset=4 (local.get $class_wa)) (i32.const 0x20202020))
                       (i32.const 0x76656572)) ;; "reev"
-              (i32.eq (i32.or (i32.load offset=8 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+              (i32.eq (i32.or (i32.load offset=8 (local.get $class_wa)) (i32.const 0x20202020))
                       (i32.const 0x33776569))))) ;; "iew3"
       (then (local.set $tmp (i32.const 0))))
     ;; Same for tooltips_class32. Match the stable "tooltips" prefix because
@@ -318,9 +320,9 @@
     (if (i32.and
           (i32.ge_u (local.get $arg1) (i32.const 0x10000))
           (i32.and
-            (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+            (i32.eq (i32.or (i32.load (local.get $class_wa)) (i32.const 0x20202020))
                     (i32.const 0x6c6f6f74)) ;; "tool"
-            (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+            (i32.eq (i32.or (i32.load offset=4 (local.get $class_wa)) (i32.const 0x20202020))
                           (i32.const 0x73706974)))) ;; "tips"
       (then (local.set $tmp (i32.const 0))))
     ;; Prefer the WAT-native ToolbarWindow32 default proc for MFC control bars.
@@ -340,12 +342,12 @@
           (i32.and
           (i32.ge_u (local.get $arg1) (i32.const 0x10000))
           (i32.and
-            (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+            (i32.eq (i32.or (i32.load (local.get $class_wa)) (i32.const 0x20202020))
                     (i32.const 0x6c6f6f74)) ;; "tool"
             (i32.and
-              (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+              (i32.eq (i32.or (i32.load offset=4 (local.get $class_wa)) (i32.const 0x20202020))
                       (i32.const 0x77726162)) ;; "barw"
-              (i32.eq (i32.or (i32.load offset=8 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+              (i32.eq (i32.or (i32.load offset=8 (local.get $class_wa)) (i32.const 0x20202020))
                       (i32.const 0x6f646e69)))))) ;; "indo"
       (then (local.set $tmp (i32.const 0))))
     (if (local.get $tmp)
@@ -503,7 +505,7 @@
     ;; Seed TITLE_TABLE from lpWindowName (arg2). Title may be NULL; handled by set.
     (if (local.get $arg2)
       (then (call $title_table_set (local.get $hwnd)
-                (call $g2w (local.get $arg2))
+                (local.get $title_wa)
                 (call $guest_strlen (local.get $arg2)))))
     ;; Seed client geometry immediately. The renderer may query it before
     ;; deferred visible-window NC work runs, and child controls depend on their
@@ -694,12 +696,12 @@
           (i32.and
             (i32.ge_u (local.get $arg1) (i32.const 0x10000))
             (i32.and
-              (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+              (i32.eq (i32.or (i32.load (local.get $class_wa)) (i32.const 0x20202020))
                       (i32.const 0x6c6f6f74)) ;; "tool"
               (i32.and
-                (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                (i32.eq (i32.or (i32.load offset=4 (local.get $class_wa)) (i32.const 0x20202020))
                         (i32.const 0x77726162)) ;; "barw"
-                (i32.eq (i32.or (i32.load offset=8 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                (i32.eq (i32.or (i32.load offset=8 (local.get $class_wa)) (i32.const 0x20202020))
                         (i32.const 0x6f646e69)))))) ;; "indo"
       (then
         (local.set $tmp (call $wnd_table_get (local.get $hwnd)))

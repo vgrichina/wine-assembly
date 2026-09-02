@@ -645,7 +645,9 @@
   (func $handle_GetProcAddress (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $v i32) (local $i i32) (local $dll_base i32) (local $resolved i32)
     (local $tbl i32) (local $export i32) (local $dll_name i32)
-    (local $api_id i32) (local $thunk_wa i32)
+    (local $api_id i32) (local $thunk_wa i32) (local $name_wa i32)
+    (if (i32.ge_u (local.get $arg1) (i32.const 0x10000))
+      (then (local.set $name_wa (call $g2w (local.get $arg1)))))
     (block $gpa
     ;; Default return value: NULL (function not found)
     (global.set $eax (i32.const 0))
@@ -703,7 +705,7 @@
               (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
               (return)))
           ;; Found matching DLL — resolve export by name
-          (local.set $resolved (call $resolve_name_export (local.get $i) (call $g2w (local.get $arg1))))
+          (local.set $resolved (call $resolve_name_export (local.get $i) (local.get $name_wa)))
           (if (local.get $resolved)
             (then
               (global.set $eax (local.get $resolved))
@@ -721,7 +723,7 @@
     (i32.store16 (call $g2w (local.get $v)) (i32.const 0))
     ;; Copy name string
     (call $memcpy (i32.add (call $g2w (local.get $v)) (i32.const 2))
-    (call $g2w (local.get $arg1)) (i32.add (local.get $tmp) (i32.const 1)))
+    (local.get $name_wa) (i32.add (local.get $tmp) (i32.const 1)))
     ;; Look up api_id — if unknown (0xFFFF), return NULL instead of creating broken thunk
     (local.set $i (call $lookup_api_id (i32.add (call $g2w (local.get $v)) (i32.const 2))))
     (if (i32.eq (local.get $i) (i32.const 0xFFFF))
@@ -1196,7 +1198,7 @@
 
   ;; 12: LoadLibraryA
   (func $handle_LoadLibraryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $src i32) (local $dst i32) (local $ch i32)
+    (local $tmp i32) (local $src i32) (local $dst i32) (local $ch i32) (local $name_wa i32)
     (local.set $tmp (call $find_loaded_dll (local.get $arg0)))
     (if (i32.ge_s (local.get $tmp) (i32.const 0))
       (then
@@ -1215,10 +1217,11 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     ;; Not already loaded — check if DLL file exists in VFS
-    (if (call $host_has_dll_file (call $g2w (local.get $arg0)))
+    (local.set $name_wa (call $g2w (local.get $arg0)))
+    (if (call $host_has_dll_file (local.get $name_wa))
       (then
         ;; DLL file found — yield to JS for loading
-        (global.set $loadlib_name_ptr (call $g2w (local.get $arg0)))
+        (global.set $loadlib_name_ptr (local.get $name_wa))
         (global.set $eip (call $gl32 (global.get $esp)))
         (global.set $handler_set_eip (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
@@ -2262,8 +2265,9 @@
     (i32.const 0))
 
   (func $handle_CreateFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa_esp i32) (local $creation i32) (local $flags i32) (local $device i32)
-    (local.set $device (call $console_device_name (call $g2w (local.get $arg0)) (i32.const 0)))
+    (local $wa_esp i32) (local $creation i32) (local $flags i32) (local $device i32) (local $path_wa i32)
+    (local.set $path_wa (call $g2w (local.get $arg0)))
+    (local.set $device (call $console_device_name (local.get $path_wa) (i32.const 0)))
     (if (local.get $device)
       (then
         (global.set $eax (local.get $device))
@@ -2274,7 +2278,7 @@
     (local.set $creation (local.get $arg4))
     (local.set $flags (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
     (global.set $eax (call $host_fs_create_file
-      (call $g2w (local.get $arg0))  ;; pathWA
+      (local.get $path_wa)           ;; pathWA
       (local.get $arg1)               ;; access
       (local.get $creation)            ;; creation disposition
       (local.get $flags)               ;; flags and attributes
@@ -3190,11 +3194,13 @@
 
   ;; 43: MultiByteToWideChar
   (func $handle_MultiByteToWideChar (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $v i32) (local $i i32)
+    (local $v i32) (local $i i32) (local $src_wa i32) (local $dst_wa i32)
     ;; Simple: copy each byte to 16-bit. arg2=src, arg3=srcLen, arg4=dst, [esp+24]=dstLen
     (local.set $v (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; arg5: dstLen
+    (local.set $src_wa (call $g2w (local.get $arg2)))
+    (if (local.get $arg4) (then (local.set $dst_wa (call $g2w (local.get $arg4)))))
     (if (i32.eq (local.get $arg3) (i32.const -1)) ;; srcLen=-1 means NUL-terminated
-    (then (local.set $arg3 (i32.add (call $strlen (call $g2w (local.get $arg2))) (i32.const 1)))))
+    (then (local.set $arg3 (i32.add (call $strlen (local.get $src_wa)) (i32.const 1)))))
     (if (i32.eqz (local.get $arg4)) ;; query required size
     (then (global.set $eax (local.get $arg3)))
     (else
@@ -3202,8 +3208,8 @@
     (block $done (loop $lp
     (br_if $done (i32.ge_u (local.get $i) (local.get $arg3)))
     (br_if $done (i32.ge_u (local.get $i) (local.get $v)))
-    (i32.store16 (i32.add (call $g2w (local.get $arg4)) (i32.shl (local.get $i) (i32.const 1)))
-    (i32.load8_u (i32.add (call $g2w (local.get $arg2)) (local.get $i))))
+    (i32.store16 (i32.add (local.get $dst_wa) (i32.shl (local.get $i) (i32.const 1)))
+    (i32.load8_u (i32.add (local.get $src_wa) (local.get $i))))
     (local.set $i (i32.add (local.get $i) (i32.const 1)))
     (br $lp)))
     (global.set $eax (local.get $i))))
@@ -3212,15 +3218,17 @@
 
   ;; 44: WideCharToMultiByte
   (func $handle_WideCharToMultiByte (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $v i32) (local $i i32)
+    (local $v i32) (local $i i32) (local $src_wa i32) (local $dst_wa i32)
     ;; Simple: copy low byte of each 16-bit char. arg2=src, arg3=srcLen, arg4=dst, [esp+24]=dstLen
     (local.set $v (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; arg5: dstLen
+    (local.set $src_wa (call $g2w (local.get $arg2)))
+    (if (local.get $arg4) (then (local.set $dst_wa (call $g2w (local.get $arg4)))))
     (if (i32.eq (local.get $arg3) (i32.const -1))
     (then
     ;; Count wide string length
     (local.set $arg3 (i32.const 0))
     (block $d2 (loop $l2
-    (br_if $d2 (i32.eqz (i32.load16_u (i32.add (call $g2w (local.get $arg2)) (i32.shl (local.get $arg3) (i32.const 1))))))
+    (br_if $d2 (i32.eqz (i32.load16_u (i32.add (local.get $src_wa) (i32.shl (local.get $arg3) (i32.const 1))))))
     (local.set $arg3 (i32.add (local.get $arg3) (i32.const 1)))
     (br $l2)))
     (local.set $arg3 (i32.add (local.get $arg3) (i32.const 1)))))
@@ -3231,8 +3239,8 @@
     (block $done (loop $lp
     (br_if $done (i32.ge_u (local.get $i) (local.get $arg3)))
     (br_if $done (i32.ge_u (local.get $i) (local.get $v)))
-    (i32.store8 (i32.add (call $g2w (local.get $arg4)) (local.get $i))
-    (i32.load8_u (i32.add (call $g2w (local.get $arg2)) (i32.shl (local.get $i) (i32.const 1)))))
+    (i32.store8 (i32.add (local.get $dst_wa) (local.get $i))
+    (i32.load8_u (i32.add (local.get $src_wa) (i32.shl (local.get $i) (i32.const 1)))))
     (local.set $i (i32.add (local.get $i) (i32.const 1)))
     (br $lp)))
     (global.set $eax (local.get $i))))
@@ -8225,7 +8233,8 @@
       (i32.ne (i32.and (call $nc_flags_test (local.get $arg0)) (i32.const 2))
               (i32.const 0)))
     ;; Fill PAINTSTRUCT: hdc(+0), fErase(+4), rcPaint(+8: left,top,right,bottom)
-    (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 64))
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (call $zero_memory (local.get $wa) (i32.const 64))
     (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 0)))
     (if (local.get $hdc)
       (then (call $host_paint_begin (local.get $arg0))))
@@ -8233,16 +8242,16 @@
     (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0)) ;; fErase
     ;; WAT owns the update rect. rcPaint is the pending update bbox; if no
     ;; update exists, return the full client rect like Win32's empty fallback.
-    (local.set $wa (i32.add (call $g2w (local.get $arg1)) (i32.const 8)))
+    (local.set $wa (i32.add (local.get $wa) (i32.const 8)))
     (local.set $partial (call $update_get_rect (local.get $arg0) (local.get $wa)))
 	    (if (i32.eqz (local.get $partial))
 	      (then
 	        ;; Empty update rect: rcPaint = full client.
 	        (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
-	        (i32.store offset=8  (call $g2w (local.get $arg1)) (i32.const 0))
-	        (i32.store offset=12 (call $g2w (local.get $arg1)) (i32.const 0))
-	        (i32.store offset=16 (call $g2w (local.get $arg1)) (i32.and (local.get $cs) (i32.const 0xFFFF)))
-	        (i32.store offset=20 (call $g2w (local.get $arg1)) (i32.shr_u (local.get $cs) (i32.const 16)))))
+	        (i32.store (local.get $wa) (i32.const 0))
+	        (i32.store offset=4 (local.get $wa) (i32.const 0))
+	        (i32.store offset=8 (local.get $wa) (i32.and (local.get $cs) (i32.const 0xFFFF)))
+	        (i32.store offset=12 (local.get $wa) (i32.shr_u (local.get $cs) (i32.const 16)))))
 	    ;; Some Win9x games resize/maximize from inside WM_PAINT and then draw a
 	    ;; complete redraw-class scene while the old partial update region is still
 	    ;; installed. For maximized CS_HREDRAW/CS_VREDRAW top-levels, promote that
@@ -8253,10 +8262,10 @@
 	          (i32.ne (i32.and (global.get $wndclass_style) (i32.const 0x0003)) (i32.const 0)))
 	      (then
 	        (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
-	        (i32.store offset=8  (call $g2w (local.get $arg1)) (i32.const 0))
-	        (i32.store offset=12 (call $g2w (local.get $arg1)) (i32.const 0))
-	        (i32.store offset=16 (call $g2w (local.get $arg1)) (i32.and (local.get $cs) (i32.const 0xFFFF)))
-	        (i32.store offset=20 (call $g2w (local.get $arg1)) (i32.shr_u (local.get $cs) (i32.const 16)))
+	        (i32.store (local.get $wa) (i32.const 0))
+	        (i32.store offset=4 (local.get $wa) (i32.const 0))
+	        (i32.store offset=8 (local.get $wa) (i32.and (local.get $cs) (i32.const 0xFFFF)))
+	        (i32.store offset=12 (local.get $wa) (i32.shr_u (local.get $cs) (i32.const 16)))
 	        (local.set $partial (i32.const 0))))
     ;; Win16/VBRUN paint code commonly probes GetClipBox immediately after
     ;; BeginPaint and uses that rectangle to copy an AutoRedraw backing bitmap
@@ -10548,16 +10557,18 @@ nW — STUB: unimplemented
 
   ;; 351: CreateDirectoryW — STUB: unimplemented
   (func $handle_CreateDirectoryW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $path_wa i32)
+    (local.set $path_wa (call $g2w (local.get $arg0)))
     ;; CreateDirectoryW(lpPathName, lpSecurityAttributes) — 2 args
     (global.set $eax (call $host_fs_create_directory
-      (call $g2w (local.get $arg0)) (i32.const 1)))
+      (local.get $path_wa) (i32.const 1)))
     (if (global.get $eax)
       (then (global.set $last_error (i32.const 0)))
       (else
         (global.set $last_error
           (if (result i32)
             (i32.ne (call $host_fs_get_file_attributes
-              (call $g2w (local.get $arg0)) (i32.const 1)) (i32.const -1))
+              (local.get $path_wa) (i32.const 1)) (i32.const -1))
             (then (i32.const 183)) ;; ERROR_ALREADY_EXISTS
             (else (i32.const 5)))))) ;; ERROR_ACCESS_DENIED
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
@@ -11800,8 +11811,9 @@ HookEx — no next hook in chain, return 0
   ;; 426: CreateFileW — STUB: unimplemented
   (func $handle_CreateFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; CreateFileW — 7 args, same as CreateFileA but wide
-    (local $wa_esp_w i32) (local $creation_w i32) (local $flags_w i32) (local $device i32)
-    (local.set $device (call $console_device_name (call $g2w (local.get $arg0)) (i32.const 1)))
+    (local $wa_esp_w i32) (local $creation_w i32) (local $flags_w i32) (local $device i32) (local $path_wa i32)
+    (local.set $path_wa (call $g2w (local.get $arg0)))
+    (local.set $device (call $console_device_name (local.get $path_wa) (i32.const 1)))
     (if (local.get $device)
       (then
         (global.set $eax (local.get $device))
@@ -11812,7 +11824,7 @@ HookEx — no next hook in chain, return 0
     (local.set $creation_w (local.get $arg4))
     (local.set $flags_w (i32.load (i32.add (local.get $wa_esp_w) (i32.const 24))))
     (global.set $eax (call $host_fs_create_file
-      (call $g2w (local.get $arg0)) (local.get $arg1)
+      (local.get $path_wa) (local.get $arg1)
       (local.get $creation_w) (local.get $flags_w) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
@@ -12136,10 +12148,12 @@ HookEx — no next hook in chain, return 0
 
   ;; 459: GetCaretPos(lpPoint) — report the last USER caret coordinates.
   (func $handle_GetCaretPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
     (if (local.get $arg0)
       (then
-        (i32.store (call $g2w (local.get $arg0)) (global.get $caret_x))
-        (i32.store (i32.add (call $g2w (local.get $arg0)) (i32.const 4)) (global.get $caret_y))))
+        (local.set $wa (call $g2w (local.get $arg0)))
+        (i32.store (local.get $wa) (global.get $caret_x))
+        (i32.store offset=4 (local.get $wa) (global.get $caret_y))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
   )
@@ -13408,16 +13422,18 @@ HookEx — no next hook in chain, return 0
 
   ;; 492: CreateDirectoryA — STUB: unimplemented
   (func $handle_CreateDirectoryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $path_wa i32)
+    (local.set $path_wa (call $g2w (local.get $arg0)))
     ;; CreateDirectoryA(lpPathName, lpSecurityAttributes) — 2 args
     (global.set $eax (call $host_fs_create_directory
-      (call $g2w (local.get $arg0)) (i32.const 0)))
+      (local.get $path_wa) (i32.const 0)))
     (if (global.get $eax)
       (then (global.set $last_error (i32.const 0)))
       (else
         (global.set $last_error
           (if (result i32)
             (i32.ne (call $host_fs_get_file_attributes
-              (call $g2w (local.get $arg0)) (i32.const 0)) (i32.const -1))
+              (local.get $path_wa) (i32.const 0)) (i32.const -1))
             (then (i32.const 183)) ;; ERROR_ALREADY_EXISTS
             (else (i32.const 5)))))) ;; ERROR_ACCESS_DENIED
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
@@ -13943,13 +13959,14 @@ HookEx — no next hook in chain, return 0
 
   ;; 527: WaitForMultipleObjects(nCount, lpHandles, bWaitAll, dwMilliseconds) — 4 args stdcall
   (func $handle_WaitForMultipleObjects (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $result i32)
-    (local.set $result (call $host_wait_multiple (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (local.get $arg3)))
+    (local $result i32) (local $handles_wa i32)
+    (local.set $handles_wa (call $g2w (local.get $arg1)))
+    (local.set $result (call $host_wait_multiple (local.get $arg0) (local.get $handles_wa) (local.get $arg2) (local.get $arg3)))
     (if (i32.eq (local.get $result) (i32.const 0xFFFF))
       (then
         (global.set $yield_reason (i32.const 1))
         (global.set $wait_handle (local.get $arg0)) ;; nCount
-        (global.set $wait_handles_ptr (call $g2w (local.get $arg1)))
+        (global.set $wait_handles_ptr (local.get $handles_wa))
         (global.set $wait_all (i32.ne (local.get $arg2) (i32.const 0)))
         (global.set $wait_timeout (local.get $arg3))
         (global.set $wait_stack_bytes (i32.const 20))
@@ -14573,11 +14590,14 @@ SetColorAdjustment — validate and copy complete per-DC state.
 
 ;; 571: PolyDraw — WAT-owned PT_MOVETO/PT_LINETO/PT_BEZIERTO path execution.
   (func $handle_PolyDraw (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $points_wa i32) (local $types_wa i32)
+    (local.set $points_wa (call $g2w (local.get $arg1)))
+    (local.set $types_wa (call $g2w (local.get $arg2)))
     (if (call $gdi_dc_path_is_open (local.get $arg0))
       (then (global.set $eax (call $gdi_dc_path_record_polydraw (local.get $arg0)
-        (call $g2w (local.get $arg1)) (call $g2w (local.get $arg2)) (local.get $arg3))))
+        (local.get $points_wa) (local.get $types_wa) (local.get $arg3))))
       (else (global.set $eax (call $gdi_poly_draw (local.get $arg0)
-        (call $g2w (local.get $arg1)) (call $g2w (local.get $arg2)) (local.get $arg3)))))
+        (local.get $points_wa) (local.get $types_wa) (local.get $arg3)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
