@@ -257,6 +257,91 @@ async function main() {
     assert.ok(!schemaSurvival.removedRecords.includes('legacy-schema-complete'));
     assert.ok(!schemaSurvival.removedFiles.includes('legacy-schema-complete'));
 
+    // An inserted audio disc must follow the user into the separately
+    // launched Win98 CD Player. This uses the real guest executable and its
+    // Play button: opening an MCI device or drawing the window is not enough.
+    const playerBinding = await page.evaluate(async () => {
+      const sectors = 75;
+      const bytes = new Uint8Array(sectors * 2352);
+      const view = new DataView(bytes.buffer);
+      for (let off = 0, frame = 0; off < bytes.length; off += 4, frame++) {
+        const sample = Math.round(Math.sin(frame / 20) * 12000);
+        view.setInt16(off, sample, true);
+        view.setInt16(off + 2, -sample, true);
+      }
+      const cueText = 'FILE "music.bin" BINARY\n' +
+        '  TRACK 01 AUDIO\n' +
+        '    INDEX 01 00:00:00\n';
+      await window.wineMedia.importFiles([
+        new File([cueText], 'music.cue'),
+        new File([bytes], 'music.bin'),
+      ], { choice: { exePath: null, keep: false, launch: false, label: 'music' } });
+      return {
+        name: window.wineApps.APPS.cdplayer.mediaName,
+        mounts: (window.wineApps.APPS.cdplayer.mounts || []).length,
+      };
+    });
+    assert.deepStrictEqual(playerBinding, { name: 'music.cue', mounts: 1 });
+
+    await page.evaluate(() => window.wineShell.launchApp('cdplayer'));
+    await page.waitForFunction(() => {
+      const app = runningApps.find(item => item && item.name === 'cdplayer');
+      return app && app.wine && app.wine.running && app.wine._helpCtx._mci &&
+        app.wine._helpCtx._mci.devices.size;
+    }, { timeout: 180000 });
+    const beforePlay = await page.evaluate(() => {
+      const wine = runningApps.find(item => item.name === 'cdplayer').wine;
+      const dev = [...wine._helpCtx._mci.devices.values()][0];
+      return { tracks: dev.disc.tracks.length, audioTracks: dev.disc.audioTracks.length };
+    });
+    assert.deepStrictEqual(beforePlay, { tracks: 1, audioTracks: 1 });
+
+    const playPoint = await page.evaluate(() => {
+      const main = Object.values(sharedRenderer.windows)
+        .find(win => !win.isChild && win.title === 'CD Player');
+      const canvas = document.getElementById('screen');
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: rect.left + (main.x + 145) * rect.width / canvas.width,
+        y: rect.top + (main.y + 58) * rect.height / canvas.height,
+      };
+    });
+    await page.mouse.click(playPoint.x, playPoint.y);
+    await page.waitForFunction(() => {
+      const wine = runningApps.find(item => item.name === 'cdplayer').wine;
+      const dev = [...wine._helpCtx._mci.devices.values()][0];
+      return dev.state === 'playing' && dev.cdSources.length > 0;
+    }, { timeout: 30000 });
+    const playing = await page.evaluate(() => {
+      const wine = runningApps.find(item => item.name === 'cdplayer').wine;
+      const dev = [...wine._helpCtx._mci.devices.values()][0];
+      const buffer = dev.cdSources[0].buffer;
+      return {
+        state: dev.state,
+        start: dev.cdStartSector,
+        position: dev.cdPositionSector,
+        channels: buffer.numberOfChannels,
+        rate: buffer.sampleRate,
+        audibleSample: Math.abs(buffer.getChannelData(0)[100]),
+        audioContext: wine._helpCtx._audioCtx && wine._helpCtx._audioCtx.state,
+      };
+    });
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const laterPosition = await page.evaluate(() => {
+      const wine = runningApps.find(item => item.name === 'cdplayer').wine;
+      return [...wine._helpCtx._mci.devices.values()][0].cdPositionSector;
+    });
+    assert.strictEqual(playing.state, 'playing');
+    assert.strictEqual(playing.channels, 2);
+    assert.strictEqual(playing.rate, 44100);
+    assert(playing.audibleSample > 0.01, 'CD Player should decode non-silent PCM');
+    assert.strictEqual(playing.audioContext, 'running');
+    assert(laterPosition > playing.start,
+      `CD playback position should advance beyond ${playing.start}, got ${laterPosition}`);
+
+    await page.evaluate(() => stopAllApps());
+    await page.waitForFunction(() => runningApps.length === 0, { timeout: 30000 });
+
     await uploadThroughInput(page, fixture.zipPath);
 
     await page.waitForFunction(() => !!document.querySelector('.wa-media-modal'), { timeout: 30000 });

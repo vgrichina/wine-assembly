@@ -228,6 +228,37 @@ setImmediate(() => {
 
   assert.strictEqual(imports.mci_command(id, 0x0804, 0, 0), 0);
   assert.strictEqual(imports.mci_get_device_id(0x40), 0, 'closing should remove the cdaudio name');
+
+  // Win98 CD Player opens the drive on a short-lived probe thread, then sends
+  // status and play commands from its UI thread. MCI handles are process-wide,
+  // so both HostImports closures must resolve the same device table.
+  const probeCtx = {
+    vfs,
+    _audioCtx: ac,
+    getMemory: () => memory,
+    sharedAudio: ctx.sharedAudio,
+    sharedMixer: ctx.sharedMixer,
+  };
+  let probeImports;
+  const probeAudio = createAudioHost(probeCtx, {
+    readStr,
+    readStrW: readStr,
+    readVfsFile: () => null,
+    readVfsFileAsync: () => Promise.resolve(null),
+    profileNow: () => 0,
+    profileEvent: () => {},
+    getHost: () => probeImports,
+  });
+  probeImports = probeAudio.imports;
+  const probeId = probeImports.mci_open(516, 0, 0x1000);
+  assert(probeId, 'the probe thread should open cdaudio');
+  assert.strictEqual(ctx._mci.devices, probeCtx._mci.devices,
+    'UI and probe threads should share one process MCI table');
+  dv.setUint32(status + 8, 5, true); // MCI_STATUS_MEDIA_PRESENT
+  assert.strictEqual(imports.mci_command(probeId, 0x0814, 0x100, status), 0,
+    'the UI thread should query a device opened by the probe thread');
+  assert.strictEqual(dv.getUint32(status + 4, true), 1);
+  assert.strictEqual(imports.mci_command(probeId, 0x0804, 0, 0), 0);
   audio.pumpWaveOutCompletions();
   console.log('PASS CUE/BIN CD-DA mounts lazily and MCI plays TMSF tracks with status + notify');
 });
