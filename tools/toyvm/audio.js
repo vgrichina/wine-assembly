@@ -31,6 +31,8 @@
 // which reads the VM's remaining step budget) and replayed at the right
 // sample when the slice is rendered.
 
+const { Opl } = require('./opl');
+
 const PIT_HZ = 1193182;
 
 // Which page register belongs to which channel.
@@ -173,6 +175,8 @@ class Dma {
 // without clipping the sum.
 const SPEAKER_LEVEL = 0.2;
 const SB_LEVEL = 0.7;
+// The FM chip's output is already normalized to its own 16-bit headroom.
+const OPL_LEVEL = 1.0;
 // A one-pole high-pass on the mix, so a speaker left at a DC level or a
 // finished single-cycle block holding its last sample settles to silence
 // instead of sitting on an offset that clicks when it changes. 20ms, at
@@ -197,6 +201,16 @@ class Sound {
     this.buf = new Float32Array(0);
     this.rendered = 0;            // output frames handed to the sink
     this.speakerWrites = 0;
+    this.opl = new Opl();
+    this.oplEvents = [];          // {at, reg, v} register writes not yet rendered
+  }
+
+  // An OPL2 register write, stamped with when. Applied at once when nothing
+  // renders; otherwise held until the slice is rendered so the note starts
+  // at its own sample.
+  noteOpl(at, reg, v) {
+    if (!this.rate || !this.sink) { this.opl.write(reg, v); return; }
+    this.oplEvents.push({ at, reg, v });
   }
 
   // A port 61h write or a PIT channel-2 reload, stamped with when it happened.
@@ -246,6 +260,7 @@ class Sound {
         for (let i = 0; i < n && sb.pending; i++) this.sbNext();
       }
       this.events.length = 0;
+      this.applyOpl(Infinity);
       return;
     }
     this.outAcc += dt * this.rate;
@@ -257,6 +272,10 @@ class Sound {
     const events = this.events;
     if (events.length > 1) events.sort((a, b) => a.at - b.at);
     let ev = 0;
+    const opl = this.opl, oplEvents = this.oplEvents;
+    opl.setRate(this.rate);
+    if (oplEvents.length > 1) oplEvents.sort((a, b) => a.at - b.at);
+    let oe = 0;
     const spk = this.spk;
     const step = sb.rate / this.rate;
     const perSample = spent / n;
@@ -266,6 +285,10 @@ class Sound {
       while (ev < events.length && events[ev].at <= at) {
         const e = events[ev++];
         spk.gate = e.gate; spk.data = e.data; spk.latch = e.latch;
+      }
+      while (oe < oplEvents.length && oplEvents[oe].at <= at) {
+        const e = oplEvents[oe++];
+        opl.write(e.reg, e.v);
       }
       // The speaker: bit 1 of port 61h is the speaker's data line, ANDed with
       // the timer's output when bit 0 gates the counter. Gate off leaves the
@@ -287,7 +310,9 @@ class Sound {
         this.sbPos += step;
         while (this.sbPos >= 1 && sb.pending) { this.sbPos -= 1; this.sbNext(); }
       }
-      const l = x + sb.lastL * SB_LEVEL, r = x + sb.lastR * SB_LEVEL;
+      // The FM chip, mono.
+      const fm = opl.next() * OPL_LEVEL;
+      const l = x + fm + sb.lastL * SB_LEVEL, r = x + fm + sb.lastR * SB_LEVEL;
       const yl = l - this.hpx[0] + HP * this.hpy[0];
       const yr = r - this.hpx[1] + HP * this.hpy[1];
       this.hpx[0] = l; this.hpy[0] = yl; this.hpx[1] = r; this.hpy[1] = yr;
@@ -304,6 +329,14 @@ class Sound {
       if (e.at <= at) { this.spk.gate = e.gate; this.spk.data = e.data; this.spk.latch = e.latch; }
     }
     this.events.length = 0;
+    this.applyOpl(at);
+  }
+
+  applyOpl(at) {
+    const evs = this.oplEvents;
+    if (evs.length > 1) evs.sort((a, b) => a.at - b.at);
+    for (const e of evs) if (e.at <= at) this.opl.write(e.reg, e.v);
+    evs.length = 0;
   }
 }
 

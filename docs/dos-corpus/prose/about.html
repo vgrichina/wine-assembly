@@ -97,10 +97,12 @@
   <p>What it does not do is protected mode. A dozen programs in the corpus are
   the same 32-bit DOS extender, and they stop at <span class="m">LGDT</span>:
   descriptor tables and a 32-bit code segment are a second addressing mode for
-  the whole machine, and they are the largest thing left. There is no sound
-  hardware either, which is why so many of these demos are running in their
-  own silent mode. The <a href="notes.html">notes</a> page is the record of
-  each of those findings, in the order they were made.</p>
+  the whole machine, and they are the largest thing left. The sound hardware
+  came late: for most of the corpus's history the machine answered the
+  detection handshake and nothing else, which is why the headless sweep runs
+  so many of these demos in their own silent mode. The <a href="notes.html">notes</a>
+  page is the record of each of those findings, in the order they were
+  made.</p>
 
   <div class="shots" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">
     __FEATURED__
@@ -139,7 +141,12 @@
   channel, plus the PC speaker, rendered on the main thread and handed to a
   Web Audio node; the sound button mutes it and is remembered, and with sound
   off the menu answerer takes the silent option the way the sweep did. The
-  OPL2 is still detection only &mdash; an AdLib tune is silent here for now.
+  OPL2 is a real synthesizer &mdash; nine two-operator FM channels, the four
+  waveforms, the vibrato and tremolo LFOs and the rhythm mode, modelled in
+  floating point at the output rate with the chip's own attenuation units and
+  envelope timings &mdash; so an AdLib tune plays; eighteen programs in the
+  corpus write to it and fifteen key notes. With sound on, a menu that offers
+  no Sound Blaster but does offer AdLib gets the AdLib.
   Full screen is the Fullscreen API where a browser has one and a
   viewport-sized dialog where it does not, which on a phone is the same
   picture with our own bar hidden.</p>
