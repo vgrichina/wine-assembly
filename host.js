@@ -453,7 +453,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '267';
+  static SOURCE_VERSION = '268';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -596,6 +596,9 @@ class WineAssembly {
     this.onOpenGLContextCountChange = null;
     this.onGuestFrame = null;
     this.onRegistryValueChanged = null;
+    this._perfLogicalFrame = null;
+    this._perfCounterPoll = null;
+    this._perfCounterPollBusy = false;
     // Most programs replace a destroyed startup window immediately. A few
     // games tear down a warning/splash before doing substantial renderer
     // initialization, so the browser launcher may opt them into a longer
@@ -606,6 +609,95 @@ class WineAssembly {
     // they are not pumping messages. This remains opt-in per app: the normal
     // path still delivers the callback through the guest message loop.
     this.asyncMultimediaTimer = false;
+  }
+
+  _normalizePerfLogicalFrame(perf) {
+    const metric = perf && perf.logicalFrame;
+    if (!metric) return null;
+    const address = Number(metric.address);
+    if (!Number.isFinite(address) || address <= 0) return null;
+    const out = {
+      label: String(metric.label || 'GAME').slice(0, 12) || 'GAME',
+      address: address >>> 0,
+      verifier: 0,
+    };
+    const verifier = Number(metric.verifier);
+    if (Number.isFinite(verifier) && verifier > 0) out.verifier = verifier >>> 0;
+    return out;
+  }
+
+  async configurePerf(perf) {
+    this._stopPerfCounterPoll();
+    this._perfLogicalFrame = this._normalizePerfLogicalFrame(perf);
+    const hud = (typeof window !== 'undefined' && window.WinePerf) || null;
+    if (!this._perfLogicalFrame) {
+      if (hud && hud.setLogicalFrameMetric) hud.setLogicalFrameMetric(null);
+      return false;
+    }
+
+    const metric = this._perfLogicalFrame;
+    if (hud && hud.setLogicalFrameMetric) hud.setLogicalFrameMetric(metric);
+    try {
+      await this._armPerfCounter(0, metric.address);
+      if (metric.verifier) await this._armPerfCounter(1, metric.verifier);
+    } catch (err) {
+      console.warn('[perf] logical frame counter disabled:', err && err.message || err);
+      this._perfLogicalFrame = null;
+      if (hud && hud.setLogicalFrameMetric) hud.setLogicalFrameMetric(null);
+      return false;
+    }
+    this._startPerfCounterPoll();
+    return true;
+  }
+
+  async _armPerfCounter(slot, address) {
+    slot |= 0;
+    address >>>= 0;
+    if (this.guestWorker) {
+      await this.guestWorker.callExport('set_count', slot, address);
+      return;
+    }
+    const ex = this.instance && this.instance.exports;
+    if (ex && typeof ex.set_count === 'function') ex.set_count(slot, address);
+  }
+
+  async _readPerfCounter(slot) {
+    slot |= 0;
+    if (this.guestWorker) {
+      return (await this.guestWorker.callExport('get_count', slot)) >>> 0;
+    }
+    const ex = this.instance && this.instance.exports;
+    return ex && typeof ex.get_count === 'function' ? ex.get_count(slot) >>> 0 : 0;
+  }
+
+  _startPerfCounterPoll() {
+    if (typeof window === 'undefined' || this._perfCounterPoll || !this._perfLogicalFrame) return;
+    const poll = async () => {
+      if (this._perfCounterPollBusy || !this._perfLogicalFrame || this._stopped) return;
+      const hud = window.WinePerf;
+      if (!hud || !hud.logicalFrameCount) return;
+      this._perfCounterPollBusy = true;
+      try {
+        const primary = await this._readPerfCounter(0);
+        const verifier = this._perfLogicalFrame.verifier ? await this._readPerfCounter(1) : null;
+        hud.logicalFrameCount(primary, verifier);
+      } catch (_) {
+        this._stopPerfCounterPoll();
+      } finally {
+        this._perfCounterPollBusy = false;
+      }
+    };
+    poll();
+    this._perfCounterPoll = setInterval(poll, 500);
+  }
+
+  _stopPerfCounterPoll() {
+    if (this._perfCounterPoll) clearInterval(this._perfCounterPoll);
+    this._perfCounterPoll = null;
+    this._perfCounterPollBusy = false;
+    if (typeof window !== 'undefined' && window.WinePerf && window.WinePerf.setLogicalFrameMetric) {
+      window.WinePerf.setLogicalFrameMetric(null);
+    }
   }
 
   _pumpMultimediaTimer() {
@@ -2682,6 +2774,7 @@ class WineAssembly {
     // loop that restarted itself on the second launch would be back to
     // holding a dead host forever.
     this._stopped = true;
+    this._stopPerfCounterPoll();
     this._cleanupAudio();
     // A deferred last-window teardown has nothing left to finish, and leaving
     // the deadline armed would run this a second time.
