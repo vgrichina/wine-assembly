@@ -7239,6 +7239,68 @@
     (call $gs32 (i32.add (local.get $entry) (i32.const 8)) (local.get $copy))
     (i32.const 1))
 
+  (func $dp_get_name
+      (param $id i32) (param $type i32) (param $out i32) (param $size_ptr i32)
+      (result i32)
+    (local $entry i32) (local $name i32) (local $short i32) (local $long i32)
+    (local $short_size i32) (local $long_size i32) (local $required i32)
+    (local $cursor i32) (local $capacity i32)
+    (if (i32.eqz (local.get $size_ptr))
+      (then (return (i32.const 0x80070057))))
+    (local.set $entry (call $dp_find_entity (local.get $id) (local.get $type)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (call $gs32 (local.get $size_ptr) (i32.const 0))
+        (return (i32.const 0x80070057))))
+    (local.set $name (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $short (call $gl32 (i32.add (local.get $name) (i32.const 8))))
+    (local.set $long (call $gl32 (i32.add (local.get $name) (i32.const 12))))
+    (if (local.get $short)
+      (then (local.set $short_size
+        (i32.add (call $guest_strlen (local.get $short)) (i32.const 1)))))
+    (if (local.get $long)
+      (then (local.set $long_size
+        (i32.add (call $guest_strlen (local.get $long)) (i32.const 1)))))
+    (local.set $required
+      (i32.add (i32.const 16)
+        (i32.add (local.get $short_size) (local.get $long_size))))
+    (local.set $capacity (call $gl32 (local.get $size_ptr)))
+    (call $gs32 (local.get $size_ptr) (local.get $required))
+    (if (i32.or
+          (i32.eqz (local.get $out))
+          (i32.lt_u (local.get $capacity) (local.get $required)))
+      (then (return (i32.const 0x8877001E)))) ;; DPERR_BUFFERTOOSMALL
+    (call $zero_memory (call $g2w (local.get $out)) (local.get $required))
+    (call $gs32 (local.get $out) (i32.const 16))
+    (call $gs32 (i32.add (local.get $out) (i32.const 4))
+      (call $gl32 (i32.add (local.get $name) (i32.const 4))))
+    (local.set $cursor (i32.add (local.get $out) (i32.const 16)))
+    (if (local.get $short_size)
+      (then
+        (call $gs32 (i32.add (local.get $out) (i32.const 8)) (local.get $cursor))
+        (memory.copy (call $g2w (local.get $cursor)) (call $g2w (local.get $short))
+          (local.get $short_size))
+        (local.set $cursor (i32.add (local.get $cursor) (local.get $short_size)))))
+    (if (local.get $long_size)
+      (then
+        (call $gs32 (i32.add (local.get $out) (i32.const 12)) (local.get $cursor))
+        (memory.copy (call $g2w (local.get $cursor)) (call $g2w (local.get $long))
+          (local.get $long_size))))
+    (i32.const 0))
+
+  (func $dp_get_flags
+      (param $id i32) (param $type i32) (param $out i32) (result i32)
+    (local $entry i32)
+    (if (i32.eqz (local.get $out)) (then (return (i32.const 0x80070057))))
+    (local.set $entry (call $dp_find_entity (local.get $id) (local.get $type)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (call $gs32 (local.get $out) (i32.const 0))
+        (return (i32.const 0x80070057))))
+    (call $gs32 (local.get $out)
+      (call $gl32 (i32.add (local.get $entry) (i32.const 12))))
+    (i32.const 0))
+
   (func $dp_clear_entities
     (local $i i32) (local $entry i32)
     (if (i32.eqz (global.get $dp_entity_table)) (then (return)))
@@ -7505,8 +7567,10 @@
     (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
   (func $handle_IDirectPlay3_GetGroupName (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+    (global.set $eax
+      (call $dp_get_name
+        (local.get $arg1) (i32.const 0) (local.get $arg2) (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
   (func $handle_IDirectPlay3_GetMessageCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
@@ -7520,8 +7584,10 @@
     (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
   (func $handle_IDirectPlay3_GetPlayerName (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+    (global.set $eax
+      (call $dp_get_name
+        (local.get $arg1) (i32.const 1) (local.get $arg2) (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
   (func $handle_IDirectPlay3_GetSessionDesc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
@@ -7653,8 +7719,9 @@
   (func $handle_IDirectPlay3_StartSession (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IDirectPlay3_GetGroupFlags (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (global.set $eax
+      (call $dp_get_flags (local.get $arg1) (i32.const 0) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IDirectPlay3_GetGroupParent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
@@ -7662,8 +7729,9 @@
     (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
   (func $handle_IDirectPlay3_GetPlayerFlags (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (global.set $eax
+      (call $dp_get_flags (local.get $arg1) (i32.const 1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirectPlayLobby2A — local/no-network lobby shim. Used by DX SDK samples
   ;; that create a lobby object during startup; no actual launched-from-lobby
