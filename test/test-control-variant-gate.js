@@ -11,10 +11,13 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { analyzeSource } = require('../tools/control-variant-gate');
+const { analyzeSources, SOURCE_FILES } = require('../tools/control-variant-gate');
 
+const ROOT = path.join(__dirname, '..');
 const rel = 'src/09c3-controls.wat';
-const source = fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const liveSources = new Map(SOURCE_FILES.map((file) =>
+  [file, fs.readFileSync(path.join(ROOT, file), 'utf8')]));
+const source = liveSources.get(rel);
 let checks = 0;
 
 function check(cond, message) {
@@ -29,14 +32,27 @@ function replaceOnce(text, before, after, label) {
   return text.slice(0, first) + after + text.slice(first + before.length);
 }
 
-function expectError(label, planted, pattern) {
-  const result = analyzeSource(planted, `${label}.wat`);
+function analyze(overrides = new Map()) {
+  return analyzeSources(SOURCE_FILES.map((file) => ({
+    rel: file,
+    src: overrides.has(file) ? overrides.get(file) : liveSources.get(file),
+  })));
+}
+
+function expectError(label, planted, pattern, targetRel = rel) {
+  const result = analyze(new Map([[targetRel, planted]]));
   check(result.errors.some((error) => pattern.test(error)),
     `${label}: expected ${pattern}, got:\n${result.errors.join('\n')}`);
 }
 
-const baseline = analyzeSource(source, rel);
-check(baseline.errors.length === 0, `live source passes: ${baseline.errors.join('\n')}`);
+const baseline = analyze();
+check(baseline.sourceCount === SOURCE_FILES.length,
+  `all ${SOURCE_FILES.length} manifest sources were analyzed`);
+if (process.env.CONTROL_VARIANT_EXPECT_FINDINGS === '1') {
+  check(baseline.errors.length > 0, 'pre-conversion source exposes expected live findings');
+} else {
+  check(baseline.errors.length === 0, `live source passes: ${baseline.errors.join('\n')}`);
+}
 check(baseline.total > 500, `live source has a substantive attributed-site set (got ${baseline.total})`);
 
 const buttonInitMatch = /        ;; Allocate ButtonState\n(        \(local\.set \$state \(call \$heap_alloc \(i32\.const (\d+)\)\)\)\n        \(local\.set \$state_w \(call \$g2w \(local\.get \$state\)\)\))/.exec(source);
@@ -60,6 +76,31 @@ expectError('multiline-raw',
 expectError('hex-raw',
   replaceOnce(source, buttonStateInit, `${buttonStateInit}\n` +
     '        (drop (i32.load offset=0x8 (local.get $state_w)))',
+    'ButtonState allocation block'),
+  /\$button_wndproc: hand-spelled offset off a control-state base/);
+
+const exportsRel = 'src/13-exports.wat';
+const exportsSource = liveSources.get(exportsRel);
+const typedExportBind =
+  '    (local.set $state_w (cast ptr<EditState> (call $g2w (local.get $state))))';
+expectError('duplicate-cast-binding',
+  replaceOnce(exportsSource, typedExportBind, `${typedExportBind}\n${typedExportBind}`,
+    'get_edit_text typed binding'),
+  /export:get_edit_text repeats the ptr<EditState> binding \$state_w 2 times/,
+  exportsRel);
+const namedExportRead = '    (local.set $len (load.field EditState text_len (local.get $state_w)))';
+expectError('cross-file-raw',
+  replaceOnce(exportsSource, namedExportRead,
+    '    (local.set $len (i32.load offset=4 (local.get $state_w)))',
+    'named get_edit_text length read'),
+  /src\/13-exports\.wat:\d+: export:get_edit_text: hand-spelled offset off a control-state base/,
+  exportsRel);
+
+expectError('renamed-provenance-raw',
+  replaceOnce(source, buttonStateInit, `${buttonStateInit}\n` +
+    '        (local.set $opaque_guest (call $wnd_get_state_ptr (local.get $hwnd)))\n' +
+    '        (local.set $opaque_linear (call $g2w (local.get $opaque_guest)))\n' +
+    '        (drop (i32.load offset=8 (local.get $opaque_linear)))',
     'ButtonState allocation block'),
   /\$button_wndproc: hand-spelled offset off a control-state base/);
 
