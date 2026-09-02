@@ -17,6 +17,121 @@ Rules:
 - Every compiler change lands with a minimal regression in one of the
   `test/watx-compiler-*.test.js` suites.
 
+## 2026-09-01 — typed pointers, layout unions, views and `(cast ...)`
+
+Manifest digest: `645366f9c897b95193b40486a856b69b23a7367f270cb0f63f744eeb1adf0ba2`
+
+`compiler-codegen.js`, `compiler-stages.js`. All three tiers of
+[docs/watx-typed-pointers-design.md](../../docs/watx-typed-pointers-design.md),
+user-signed-off 2026-09-01. They land together because they are one language
+feature and one seal: Tier 2's unions are the thing Tier 1's checking and Tier
+3's `--checked-casts` exist to make safe, and splitting them would mean two
+provenance seals over one interleaved edit to `compiler-codegen.js`.
+
+**A layout accessor now checks the type of its BASE.** `(load.field GdiBitmap
+bits p)` has always compiled to `p + 24` and an `i32.load` with no opinion about
+what `p` points at, which is the wrong-layout bug of
+`docs/watx-layout-migration-design.md` §5.4: a font record read at +24 yields a
+plausible pointer, no trap, and a symptom thousands of instructions away. A
+param, local, `let` or result may now be declared `ptr<LayoutName>`, and at
+every accessor, `local.set`/`set!`/`let`, `call` argument and explicit `(return
+...)` the compiler refuses a pointer whose declared pointee disagrees.
+
+**Unknown is BOTTOM, not i32.** An expression with no pointer claim is
+compatible with everything, silently, in both directions. That is what makes
+this opt-in across 61 source files instead of a tree-wide cast storm: a cast is
+required to move between two KNOWN and different pointer types, never to enter
+the type system from ordinary i32 code. `call_indirect` is deliberately outside
+it — its signature is a `(type ...)` reference, which carries valtypes and
+cannot carry a pointee.
+
+**Checked in codegen, not in `checkTypes`.** `compile()` passes
+`requiredOnly: production`, and `checkTypes` returns before it walks a single
+function body; in streaming mode the bodies are not even parsed at check time.
+A rule enforced there is a rule that does not hold for the artifact we ship, so
+these refusals sit in `compileExpr` beside the existing located unknown-layout
+and unknown-field ones, and hold in every mode.
+
+**`(cast ptr<L> EXPR)` emits nothing.** In the default build the value of `EXPR`
+passes through untouched; the form's whole contribution is to the static type.
+Its worth is that the claim is written at the one point where a bare i32 becomes
+a typed record, where a reader and a grep can find it, instead of being implicit
+in the call graph. `--checked-casts` (off in `tools/build.sh`, and a debugging
+build by construction) turns a cast into a *tagged layout-union variant* into a
+load-tag/compare/`unreachable` — fail fast, the `$crash_unimplemented`
+philosophy. For a plain layout, an untagged union or a view it is a **documented
+no-op**, and the counters say so rather than leaving "I turned it on and nothing
+happened" a mystery.
+
+One bug found and fixed while testing that flag: the first version allocated the
+`$__cast_tmp` scratch local for *any* cast, so a checked build of a module whose
+casts were all no-ops grew a local with no instruction behind it. The
+local-allocation pass now asks the same `castIsChecked` predicate the emitter
+will.
+
+**`(field x i8 4)` is a located refusal instead of an internal error.** `i8` was
+never in `WATX_LAYOUT_FIELD_TYPES`, so it reached `lowerIR`'s `sizeOfType` and
+threw *"WATX internal: no byte width for layout field type 'i8'"* — a compiler-bug
+message, with no file or line, for a source typo. The declaration check now names
+the fix: a sub-width field is an access WIDTH, not a valtype, so spell the
+signedness (`u8`/`s8`, `u16`/`s16`).
+
+**`(layout-union ...)` states the shared-prefix discipline instead of asking a
+gate to check it afterwards.** Eight hand-written layouts that must agree on
+`handle` and `type` at +0 and +4, must not overlap, and must all report one
+stride is a rule enforced today by `tools/gdi-variant-gate.js` reading the
+source back. A union writes the prefix once, prepends it to every variant at
+identical offsets, and pads every variant and the union's own layout to the
+widest — so `(size-of AnyVariant)` pins one table stride *by construction*.
+`(enum ...)` names the discriminant values, `(tag FIELD ENUM)` says which prefix
+field carries them, and a variant takes `(tag-value MEMBER ...)` or matches an
+enum member by its own name with the union prefix stripped. Two variants
+claiming one tag value, a tag outside the prefix, an unknown enum or member, and
+a variant name colliding with a layout are all located refusals.
+
+**`(view Name (of A B ...) (field ...)+)` is a partial projection.** It is the
+shape `ControlTextState` has today: several unrelated layouts that happen to
+agree on two fields, read through one helper. A view does not lay anything out
+— it *adopts* its targets' offsets and refuses to exist if they disagree, if a
+target lacks the field, or if the types differ. That is the deliberate
+divergence recorded in the design doc §4: a view restating explicit offsets
+would be a second copy of a table, and the 4th token of `(field ...)` already
+means an array count.
+
+**Pointer compatibility is widening only.** A `ptr<Variant>` is accepted where
+`ptr<Union>` is wanted, and a member is accepted where a view over it is wanted;
+neither holds in reverse, so narrowing a union back to a variant needs the cast
+— which is exactly the point at which `--checked-casts` can put a tag test. A
+union pointer reaches only prefix fields, and the refusal for a variant field
+now names the variant that owns it and the cast that would get there.
+
+Declarations are lowered in three ordered phases (enums, then layouts and
+unions, then views) rather than in source order, so a declaration's legality
+does not depend on which of the 61 files it happened to be written in. The
+lowered union/tag/variant table rides on the existing
+`lowerIR({ layoutsOnly: true })` surface that `tools/gen-layout-offsets.js`
+already consumes — no parallel channel.
+
+One bug worth recording, because it is why the regression suite asserts offsets
+by *running* the module rather than by reading the source: the first
+implementation collected a `(prefix ...)` form's children from index 2, which is
+right for `(layout NAME ...)` and `(variant NAME ...)` — both keep a name
+there — and wrong for `(prefix ...)`, which does not. The first prefix field was
+silently dropped. Every variant still compiled, every type check still passed,
+and every offset past the tag was short by four bytes.
+
+**Canonical bytes did not move.** Every annotation reaches `valtypeOf` /
+`physicalLocalType` and becomes the `i32` those functions already answered for an
+unrecognized token, so Tier 1 emits no byte of its own, Tier 3's default lowering
+is `compileExpr(EXPR)` and nothing else, and Tier 2 lowers to the ordinary
+`layout-lowered` records the compiler already had. Verified by building
+`bd715687` in a clean detached worktree and again with only these files copied
+in: `build/wine-assembly.wasm` is
+`f9f20d1692425690f2188ff71acdf78c65ef6c5449a890a6c9432bd9d08a4b70` (997678 B)
+both times. A same-process A/B on a small module also comes back identical with
+the annotations and the cast added, and identical again under `--checked-casts`
+once the phantom local was fixed.
+
 ## 2026-09-01 — direct emitters consume their whole form too
 
 Manifest digest: `a67164cbb7509b6553af6f65df734e9c01e903fbb9d24edd91ab178083187b5e`

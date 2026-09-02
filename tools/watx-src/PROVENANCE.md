@@ -81,8 +81,8 @@ at the bottom of this file, not left to whoever is editing.
 ```sha256
 b8068704e35bb4e41db2dd17324d5c629ac753faa64416dbdd412a97e36c40ab  tools/watx.js
 f7b02737864024e94bb59d191bc0169291db47731cc19d9cf52822c31ba8484a  tools/watx-src/compiler-parser.js
-05b4dd8f55b909d466cb4097357935321ade9ee72cd53c45f69da1305044b12c  tools/watx-src/compiler-stages.js
-617e81087a2f5bcab145763e69e7e5c941d7d823b21d00231b48bdd5a91add26  tools/watx-src/compiler-codegen.js
+04e4cd47eed87f1842fac3e3df5cc42c31ef9ff39634b8c153304927e14f257a  tools/watx-src/compiler-stages.js
+1ab102323105671320174dc96c944299fe686c0776330715f6baa9397c060944  tools/watx-src/compiler-codegen.js
 b85a780ec3d53fa0a9a9b335839504f24c5ca7288a75885c2c0823b8bd9dd550  tools/watx-src/compiler.js
 293c1a233359bf142bf5badceb3399c92b79a653a86085681142b2037d80fce4  test/watx-compiler-wine-parity.test.js
 0621e7d6662f2ba61051741a58180fb28e4eb8a899260c7ad0c475e73ba46784  test/watx-compiler-production.test.js
@@ -146,6 +146,6 @@ without re-sealing. Both lines are rewritten together by
 CHANGELOG already names the new digest.
 
 ```seal
-manifest-sha256   a67164cbb7509b6553af6f65df734e9c01e903fbb9d24edd91ab178083187b5e
-changelog-sha256  683c78010e56211f8c4c833b31b97bc7dcda2fc3168304d76873a14f9aa0039c
+manifest-sha256   645366f9c897b95193b40486a856b69b23a7367f270cb0f63f744eeb1adf0ba2
+changelog-sha256  c3e14e21f4202fc26f7805d185dfd85f6373d69e95b3db65c293e7ba8481873a
 ```

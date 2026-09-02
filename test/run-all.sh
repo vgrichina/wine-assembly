@@ -550,6 +550,7 @@ UNIT=(
   test/watx-compiler-simd.test.js
   test/watx-compiler-string-pool.test.js
   test/watx-compiler-type-index.test.js
+  test/watx-compiler-typed-pointers.test.js
   test/watx-compiler-wine-parity.test.js
   test/test-keyboard-focus-seed.js
   test/test-single-app-keep-aspect.js
