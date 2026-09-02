@@ -6659,8 +6659,10 @@
     ;; where nothing will erase it. $handle_DeferWindowPos already tests it
     ;; this way.
     (if (i32.and
-          (i32.ne (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0))
-          (call $wnd_is_effectively_visible (local.get $arg0)))
+          (i32.and
+            (i32.ne (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0))
+            (call $wnd_is_effectively_visible (local.get $arg0)))
+          (i32.eqz (i32.and (local.get $uFlags) (i32.const 0x0008)))) ;; !SWP_NOREDRAW
       (then
         (drop (call $control_wndproc_dispatch
           (local.get $arg0) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
@@ -14634,82 +14636,334 @@ SetColorAdjustment — validate and copy complete per-DC state.
     (global.set $steps (i32.const 0))
   )
 
+  ;; Deferred-window-position repositories. USER owns the opaque HDWP and the
+  ;; WINDOWPOS array behind it; callers only receive a typed handle. Geometry
+  ;; remains unchanged until EndDeferWindowPos walks the retained entries.
+  ;;
+  ;; HDWP record (8 x 24): handle, entries, count, capacity, common parent,
+  ;; state (0=collecting, 1=End is applying it).
+  ;; Entry (up to the 256-window USER table): hwnd, insert-after, x, y, cx,
+  ;; cy, flags, padding.
+  (global $HDWP_MAX i32 (i32.const 8))
+  (global $HDWP_ENTRY_MAX i32 (i32.const 256))
+  (global $hdwp_table (mut i32) (i32.const 0))
+  (global $hdwp_next_handle (mut i32) (i32.const 0xDDF00001))
+
+  (func $hdwp_table_ensure (result i32)
+    (local $size i32)
+    (if (i32.eqz (global.get $hdwp_table))
+      (then
+        (local.set $size (i32.mul (global.get $HDWP_MAX) (i32.const 24)))
+        (global.set $hdwp_table (call $heap_alloc (local.get $size)))
+        (if (global.get $hdwp_table)
+          (then
+            (call $zero_memory
+              (call $g2w (global.get $hdwp_table)) (local.get $size))))))
+    (global.get $hdwp_table))
+
+  (func $hdwp_find (param $handle i32) (result i32)
+    (local $i i32) (local $record i32)
+    (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $hdwp_table)) (then (return (i32.const 0))))
+    (block $missing (loop $scan
+      (br_if $missing (i32.ge_u (local.get $i) (global.get $HDWP_MAX)))
+      (local.set $record
+        (i32.add (global.get $hdwp_table)
+          (i32.mul (local.get $i) (i32.const 24))))
+      (if (i32.eq (call $gl32 (local.get $record)) (local.get $handle))
+        (then (return (local.get $record))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $hdwp_release (param $record i32)
+    (local $entries i32)
+    (if (i32.eqz (local.get $record)) (then (return)))
+    (local.set $entries
+      (call $gl32 (i32.add (local.get $record) (i32.const 4))))
+    (if (local.get $entries) (then (call $heap_free (local.get $entries))))
+    (call $zero_memory (call $g2w (local.get $record)) (i32.const 24)))
+
+  (func $hdwp_abort (param $record i32) (param $error i32)
+    ;; Microsoft documents a failed DeferWindowPos as abandoning the entire
+    ;; sequence. Reclaim it here so an application that correctly omits End
+    ;; cannot exhaust the browser's bounded HDWP table.
+    (call $hdwp_release (local.get $record))
+    (global.set $last_error (local.get $error)))
+
+  (func $hdwp_resize (param $record i32) (param $capacity i32) (result i32)
+    (local $old i32) (local $fresh i32) (local $count i32)
+    (local.set $fresh
+      (call $heap_alloc (i32.mul (local.get $capacity) (i32.const 32))))
+    (if (i32.eqz (local.get $fresh)) (then (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $fresh))
+      (i32.mul (local.get $capacity) (i32.const 32)))
+    (local.set $old (call $gl32 (i32.add (local.get $record) (i32.const 4))))
+    (local.set $count (call $gl32 (i32.add (local.get $record) (i32.const 8))))
+    (if (local.get $old)
+      (then
+        (if (local.get $count)
+          (then
+            (memory.copy (call $g2w (local.get $fresh)) (call $g2w (local.get $old))
+              (i32.mul (local.get $count) (i32.const 32)))))
+        (call $heap_free (local.get $old))))
+    (call $gs32 (i32.add (local.get $record) (i32.const 4)) (local.get $fresh))
+    (call $gs32 (i32.add (local.get $record) (i32.const 12)) (local.get $capacity))
+    (i32.const 1))
+
+  (func $hdwp_ensure_capacity (param $record i32) (param $needed i32) (result i32)
+    (local $capacity i32)
+    (if (i32.gt_u (local.get $needed) (global.get $HDWP_ENTRY_MAX))
+      (then (return (i32.const 0))))
+    (local.set $capacity
+      (call $gl32 (i32.add (local.get $record) (i32.const 12))))
+    (if (i32.ge_u (local.get $capacity) (local.get $needed))
+      (then (return (i32.const 1))))
+    (if (i32.eqz (local.get $capacity))
+      (then (local.set $capacity (i32.const 1))))
+    (block $ready (loop $grow
+      (br_if $ready (i32.ge_u (local.get $capacity) (local.get $needed)))
+      (local.set $capacity (i32.mul (local.get $capacity) (i32.const 2)))
+      (if (i32.gt_u (local.get $capacity) (global.get $HDWP_ENTRY_MAX))
+        (then (local.set $capacity (global.get $HDWP_ENTRY_MAX))))
+      (br $grow)))
+    (call $hdwp_resize (local.get $record) (local.get $capacity)))
+
   ;; 632: BeginDeferWindowPos(nNumWindows) → HDWP handle
   (func $handle_BeginDeferWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0xDEF00001))  ;; fake HDWP handle
+    (local $i i32) (local $record i32) (local $capacity i32) (local $handle i32)
+    (if (i32.lt_s (local.get $arg0) (i32.const 0))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (if (i32.gt_u (local.get $arg0) (global.get $HDWP_ENTRY_MAX))
+      (then
+        (global.set $last_error (i32.const 8)) ;; ERROR_NOT_ENOUGH_MEMORY
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (if (i32.eqz (call $hdwp_table_ensure))
+      (then
+        (global.set $last_error (i32.const 8))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (block $found (loop $scan
+      (br_if $found (i32.ge_u (local.get $i) (global.get $HDWP_MAX)))
+      (local.set $record
+        (i32.add (global.get $hdwp_table) (i32.mul (local.get $i) (i32.const 24))))
+      (if (i32.eqz (call $gl32 (local.get $record))) (then (br $found)))
+      (local.set $record (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (local.get $record))
+      (then
+        (global.set $last_error (i32.const 8))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $capacity
+      (select (local.get $arg0) (i32.const 1) (i32.ne (local.get $arg0) (i32.const 0))))
+    (if (i32.eqz (call $hdwp_resize (local.get $record) (local.get $capacity)))
+      (then
+        (global.set $last_error (i32.const 8))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $handle (global.get $hdwp_next_handle))
+    (global.set $hdwp_next_handle
+      (i32.add (global.get $hdwp_next_handle) (i32.const 1)))
+    (call $gs32 (local.get $record) (local.get $handle))
+    (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 633: DeferWindowPos(hWinPosInfo, hWnd, hWndInsertAfter, x, y, cx, cy, uFlags) → HDWP
   (func $handle_DeferWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $old_cs i32) (local $new_cs i32) (local $flags i32)
-    ;; Apply position immediately (no batching needed)
-    ;; arg0=hDWP, arg1=hWnd, arg2=hInsertAfter, arg3=x, arg4=y, cx=stack[24], cy=stack[28], uFlags=stack[32]
-    (local.set $old_cs (call $host_get_window_client_size (local.get $arg1)))
+    (local $record i32) (local $entries i32) (local $entry i32)
+    (local $count i32) (local $parent i32) (local $insert_slot i32)
+    (local $cx i32) (local $cy i32) (local $flags i32)
+    ;; arg0=hDWP, arg1=hWnd, arg2=hInsertAfter, arg3=x, arg4=y,
+    ;; cx=stack[24], cy=stack[28], uFlags=stack[32].
+    (local.set $cx (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $cy (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     (local.set $flags (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
-    (call $host_move_window (local.get $arg1) (local.get $arg3) (local.get $arg4)
-      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
-      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
-      (local.get $flags))
-    (call $ctrl_geom_sync (local.get $arg1) (local.get $arg3) (local.get $arg4)
-      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
-      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
-      (local.get $flags))
-    ;; Keep the WAT window style synchronized with the host visibility, just
-    ;; as SetWindowPos and ShowWindow do. MFC hides dock bars with deferred
-    ;; SWP_HIDEWINDOW calls during Print Preview, then consults GWL_STYLE when
-    ;; restoring the layout. A stale WS_VISIBLE makes it omit SWP_SHOWWINDOW.
-    (if (i32.ne
-          (i32.and (local.get $flags) (i32.const 0x0040)) ;; SWP_SHOWWINDOW
-          (i32.const 0))
+    (local.set $record (call $hdwp_find (local.get $arg0)))
+    (if (i32.eqz (local.get $record))
       (then
-        (drop (call $wnd_set_style (local.get $arg1)
-          (i32.or (call $wnd_get_style (local.get $arg1)) (i32.const 0x10000000))))))
-    (if (i32.ne
-          (i32.and (local.get $flags) (i32.const 0x0080)) ;; SWP_HIDEWINDOW
-          (i32.const 0))
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+        (return)))
+    (if (call $gl32 (i32.add (local.get $record) (i32.const 20)))
       (then
-        (drop (call $wnd_set_style (local.get $arg1)
-          (i32.and (call $wnd_get_style (local.get $arg1)) (i32.const 0xEFFFFFFF))))
-        (call $paint_clear_subtree (local.get $arg1))))
-    ;; Refresh CLIENT_RECT now (MFC's AfxWndProc may not forward NCCALCSIZE to
-    ;; DefWindowProc, so queuing the message alone doesn't update our table),
-    ;; and queue a paint so the moved child redraws.
-    (call $defwndproc_do_nccalcsize (local.get $arg1))
-    (call $host_sync_window_client
-      (local.get $arg1)
-      (call $wnd_client_screen_x (local.get $arg1))
-      (call $wnd_client_screen_y (local.get $arg1))
-      (i32.sub (call $client_rect_get_r (local.get $arg1)) (call $client_rect_get_l (local.get $arg1)))
-      (i32.sub (call $client_rect_get_b (local.get $arg1)) (call $client_rect_get_t (local.get $arg1))))
-    (local.set $new_cs (call $host_get_window_client_size (local.get $arg1)))
-    (if (i32.and
-          (i32.eqz (i32.and (local.get $flags) (i32.const 1))) ;; !SWP_NOSIZE
-          (i32.ne (local.get $new_cs) (local.get $old_cs)))
+        (global.set $last_error (i32.const 6))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+        (return)))
+    (if (i32.or
+          (i32.eqz (local.get $arg1))
+          (i32.lt_s (call $wnd_table_find (local.get $arg1)) (i32.const 0)))
       (then
-        (drop (call $post_queue_push
-          (local.get $arg1) (i32.const 0x0005) (i32.const 0) (local.get $new_cs)))))
-    ;; Hidden windows have no update region, and SWP_NOREDRAW must not create
-    ;; one. Queue/dispatch paint only for an effectively visible target.
+        (call $hdwp_abort (local.get $record) (i32.const 1400)) ;; ERROR_INVALID_WINDOW_HANDLE
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+        (return)))
+    (local.set $parent (call $wnd_get_parent (local.get $arg1)))
+    (local.set $count (call $gl32 (i32.add (local.get $record) (i32.const 8))))
     (if (i32.and
-          (i32.eqz (i32.and (local.get $flags) (i32.const 0x0008))) ;; !SWP_NOREDRAW
-          (call $wnd_is_effectively_visible (local.get $arg1)))
-      (then (call $paint_flag_set_inv (local.get $arg1))))
+          (i32.ne (local.get $count) (i32.const 0))
+          (i32.ne
+            (call $gl32 (i32.add (local.get $record) (i32.const 16)))
+            (local.get $parent)))
+      (then
+        (call $hdwp_abort (local.get $record) (i32.const 87))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+        (return)))
+    ;; A real sibling HWND is required for z-order insertion unless one of
+    ;; USER's four sentinel values was supplied. SWP_NOZORDER ignores it.
     (if (i32.and
+          (i32.eqz (i32.and (local.get $flags) (i32.const 4)))
           (i32.and
-            (i32.ne (call $ctrl_table_get_class (local.get $arg1)) (i32.const 0))
-            (call $wnd_is_effectively_visible (local.get $arg1)))
-          (i32.eqz (i32.and (local.get $flags) (i32.const 0x0008))))
+            (i32.ne (local.get $arg2) (i32.const 0))
+            (i32.and
+              (i32.ne (local.get $arg2) (i32.const 1))
+              (i32.and
+                (i32.ne (local.get $arg2) (i32.const -1))
+                (i32.ne (local.get $arg2) (i32.const -2))))))
       (then
-        (drop (call $control_wndproc_dispatch
-          (local.get $arg1) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
-    (global.set $eax (local.get $arg0))  ;; return same HDWP handle
+        (local.set $insert_slot (call $wnd_table_find (local.get $arg2)))
+        (if (i32.or
+              (i32.lt_s (local.get $insert_slot) (i32.const 0))
+              (i32.ne (call $wnd_get_parent (local.get $arg2)) (local.get $parent)))
+          (then
+            (call $hdwp_abort (local.get $record) (i32.const 1400))
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+            (return)))))
+    (if (i32.eqz (call $hdwp_ensure_capacity
+          (local.get $record) (i32.add (local.get $count) (i32.const 1))))
+      (then
+        (call $hdwp_abort (local.get $record) (i32.const 8))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+        (return)))
+    (local.set $entries (call $gl32 (i32.add (local.get $record) (i32.const 4))))
+    (local.set $entry
+      (i32.add (local.get $entries) (i32.mul (local.get $count) (i32.const 32))))
+    (call $gs32 (local.get $entry) (local.get $arg1))
+    (call $gs32 (i32.add (local.get $entry) (i32.const 4)) (local.get $arg2))
+    (call $gs32 (i32.add (local.get $entry) (i32.const 8)) (local.get $arg3))
+    (call $gs32 (i32.add (local.get $entry) (i32.const 12)) (local.get $arg4))
+    (call $gs32 (i32.add (local.get $entry) (i32.const 16)) (local.get $cx))
+    (call $gs32 (i32.add (local.get $entry) (i32.const 20)) (local.get $cy))
+    (call $gs32 (i32.add (local.get $entry) (i32.const 24)) (local.get $flags))
+    (call $gs32 (i32.add (local.get $record) (i32.const 8))
+      (i32.add (local.get $count) (i32.const 1)))
+    (if (i32.eqz (local.get $count))
+      (then
+        (call $gs32 (i32.add (local.get $record) (i32.const 16)) (local.get $parent))))
+    (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))  ;; stdcall, 8 args
   )
 
   ;; 631: EndDeferWindowPos(hWinPosInfo) → BOOL
   (func $handle_EndDeferWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))  ;; TRUE
+    (local $record i32) (local $entries i32) (local $entry i32)
+    (local $count i32) (local $i i32) (local $saved_esp i32)
+    (local $hwnd i32) (local $after i32) (local $flags i32) (local $parent i32)
+    (local.set $record (call $hdwp_find (local.get $arg0)))
+    (if (i32.eqz (local.get $record))
+      (then
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (if (call $gl32 (i32.add (local.get $record) (i32.const 20)))
+      (then
+        ;; A guest wndproc re-entering End with the handle currently being
+        ;; applied must not double-apply or free the outer operation.
+        (global.set $last_error (i32.const 6))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $entries (call $gl32 (i32.add (local.get $record) (i32.const 4))))
+    (local.set $count (call $gl32 (i32.add (local.get $record) (i32.const 8))))
+    (local.set $parent (call $gl32 (i32.add (local.get $record) (i32.const 16))))
+    ;; Validate the complete set before committing the first operation. A
+    ;; window destroyed/reparented between Defer and End, or a stale sibling
+    ;; insertion target, fails the sequence atomically.
+    (block $valid (loop $validate
+      (br_if $valid (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $entry
+        (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 32))))
+      (local.set $hwnd (call $gl32 (local.get $entry)))
+      (local.set $after (call $gl32 (i32.add (local.get $entry) (i32.const 4))))
+      (local.set $flags (call $gl32 (i32.add (local.get $entry) (i32.const 24))))
+      (if (i32.or
+            (i32.eqz (local.get $hwnd))
+            (i32.lt_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0)))
+        (then
+          (call $hdwp_abort (local.get $record) (i32.const 1400))
+          (global.set $eax (i32.const 0))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+          (return)))
+      (if (i32.ne (call $wnd_get_parent (local.get $hwnd)) (local.get $parent))
+        (then
+          (call $hdwp_abort (local.get $record) (i32.const 87))
+          (global.set $eax (i32.const 0))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+          (return)))
+      (if (i32.and
+            (i32.eqz (i32.and (local.get $flags) (i32.const 4)))
+            (i32.and
+              (i32.ne (local.get $after) (i32.const 0))
+              (i32.and
+                (i32.ne (local.get $after) (i32.const 1))
+                (i32.and
+                  (i32.ne (local.get $after) (i32.const -1))
+                  (i32.ne (local.get $after) (i32.const -2))))))
+        (then
+          (if (i32.or
+                (i32.lt_s (call $wnd_table_find (local.get $after)) (i32.const 0))
+                (i32.ne (call $wnd_get_parent (local.get $after)) (local.get $parent)))
+            (then
+              (call $hdwp_abort (local.get $record) (i32.const 1400))
+              (global.set $eax (i32.const 0))
+              (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+              (return)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $validate)))
+    (call $gs32 (i32.add (local.get $record) (i32.const 20)) (i32.const 1))
+    (local.set $saved_esp (global.get $esp))
+    (local.set $i (i32.const 0))
+    (block $done (loop $apply
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $entry
+        (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 32))))
+      ;; Reuse the one SetWindowPos implementation so deferred changes retain
+      ;; its CLIENT_RECT, visibility, WM_WINDOWPOSCHANGED, WM_MOVE/WM_SIZE and
+      ;; paint behavior. The temporary 7-argument frame lives below End's.
+      (global.set $esp (i32.sub (local.get $saved_esp) (i32.const 32)))
+      (call $gs32 (i32.add (global.get $esp) (i32.const 24))
+        (call $gl32 (i32.add (local.get $entry) (i32.const 20))))
+      (call $gs32 (i32.add (global.get $esp) (i32.const 28))
+        (call $gl32 (i32.add (local.get $entry) (i32.const 24))))
+      (call $handle_SetWindowPos
+        (call $gl32 (local.get $entry))
+        (call $gl32 (i32.add (local.get $entry) (i32.const 4)))
+        (call $gl32 (i32.add (local.get $entry) (i32.const 8)))
+        (call $gl32 (i32.add (local.get $entry) (i32.const 12)))
+        (call $gl32 (i32.add (local.get $entry) (i32.const 16)))
+        (i32.const 0))
+      (global.set $esp (local.get $saved_esp))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $apply)))
+    (call $hdwp_release (local.get $record))
+    (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 

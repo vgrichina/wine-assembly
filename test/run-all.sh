@@ -339,6 +339,7 @@ UNIT=(
   test/test-commondialog-props.js
   test/test-critical-section-threading.js
   test/test-ddraw-surface-dirty-rect.js
+  test/test-defer-window-pos.js
   test/test-defer-window-pos-visibility.js
   test/test-delphi-seh-mutated-chain.js
   test/test-button-focus-notify.js

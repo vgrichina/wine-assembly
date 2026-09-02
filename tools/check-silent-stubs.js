@@ -117,8 +117,11 @@ const digest = crypto.createHash('sha256')
 // 2026-09-02: 511 -> 502. Win32 DDEML now owns instance, copied HSZ,
 // registered-service, conversation and data-object state; invalid, stale and
 // cross-instance handles fail instead of fixed values succeeding silently.
-const EXPECTED_COUNT = 502;
-const EXPECTED_SHA256 = '5627cf796140096ce61c9a1275f37777667f2f73d07880fc5e98788843a82ed9';
+// 2026-09-02: 502 -> 500. Begin/EndDeferWindowPos now allocate, validate,
+// consume and free real bounded HDWP transactions; queued geometry remains
+// unchanged until End applies it through the SetWindowPos behavior path.
+const EXPECTED_COUNT = 500;
+const EXPECTED_SHA256 = '9dd9d6388753dc6081e351a26ff85c496fedcc7d538637491b80d86819ad2310';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
