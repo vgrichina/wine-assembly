@@ -77,7 +77,7 @@ function u32(value) {
   const bytes = new Uint8Array(memory.buffer);
   const view = new DataView(memory.buffer);
   const count = e.guest_alloc(4) >>> 0;
-  const messages = e.guest_alloc(16) >>> 0;
+  const messages = e.guest_alloc(20) >>> 0;
   const proc = e.guest_alloc(64) >>> 0;
 
   // DLGPROC: messages[count++] = msg; return TRUE.
@@ -100,14 +100,16 @@ function u32(value) {
     'shown retained-DLGPROC top-level replaces the invisible helper as main HWND');
   assert.strictEqual(e.test_show_window_activated(), 1,
     'first ShowWindow consumes the application activation gate');
+  assert.strictEqual(e.get_focus_hwnd() >>> 0, dialog,
+    'focus state names the dialog before its WM_SETFOCUS callback returns');
   assert.strictEqual(e.test_dialog_marker_installed(dialog), 1,
     'synchronous activation restores USER\'s retained dialog marker');
-  assert.strictEqual(view.getUint32(toWasm(count), true), 4,
+  assert.strictEqual(view.getUint32(toWasm(count), true), 5,
     'dialog procedure receives the complete startup sequence');
-  assert.deepStrictEqual(Array.from({ length: 4 }, (_, i) =>
+  assert.deepStrictEqual(Array.from({ length: 5 }, (_, i) =>
     view.getUint32(toWasm(messages + i * 4), true)),
-  [0x001c, 0x0006, 0x0007, 0x0005],
-  'startup order is WM_ACTIVATEAPP, WM_ACTIVATE, WM_SETFOCUS, WM_SIZE');
+  [0x001c, 0x0006, 0x0007, 0x0003, 0x0005],
+  'startup order is WM_ACTIVATEAPP, WM_ACTIVATE, WM_SETFOCUS, WM_MOVE, WM_SIZE');
 
   console.log('PASS  first ShowWindow promotes and activates a retained top-level dialog');
 })().catch(error => {

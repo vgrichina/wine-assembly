@@ -2634,7 +2634,8 @@
   ;; Synchronous activation chain (first ShowWindow): ACTIVATEAPP → ACTIVATE → SETFOCUS → done
   (global $createwnd_activate_thunk (mut i32) (i32.const 0))   ;; CACA0022: WM_ACTIVATE
   (global $createwnd_setfocus_thunk (mut i32) (i32.const 0))   ;; CACA0023: WM_SETFOCUS
-  (global $createwnd_size_thunk     (mut i32) (i32.const 0))   ;; CACA0024: WM_SIZE
+  (global $createwnd_move_thunk     (mut i32) (i32.const 0))   ;; CACA0024: WM_MOVE
+  (global $createwnd_size_thunk     (mut i32) (i32.const 0))   ;; CACA0031: WM_SIZE
   (global $createwnd_saved_hwnd (mut i32) (i32.const 0))
   (global $createwnd_saved_ret  (mut i32) (i32.const 0))
   (global $show_window_activated (mut i32) (i32.const 0))      ;; first-ShowWindow gate

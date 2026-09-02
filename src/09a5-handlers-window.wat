@@ -1127,6 +1127,7 @@
     (local $packed i32) (local $wndproc i32) (local $app_wndproc i32)
     (local $client_size i32)
     (local $was_visible i32)
+    (local $rect i32)
     (local.set $was_visible (i32.ne
       (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000))
       (i32.const 0)))
@@ -1283,8 +1284,18 @@
             (drop (call $dialog_default_proc
               (global.get $main_hwnd) (i32.const 0x0006) (i32.const 1)
               (global.get $main_hwnd)))
+            (global.set $focus_hwnd (global.get $main_hwnd))
             (drop (call $dialog_default_proc
               (global.get $main_hwnd) (i32.const 0x0007) (i32.const 0) (i32.const 0)))
+            (local.set $rect (call $paint_scratch_take))
+            (call $host_get_window_rect (global.get $main_hwnd) (local.get $rect))
+            (drop (call $dialog_default_proc
+              (global.get $main_hwnd) (i32.const 0x0003) (i32.const 0)
+              (i32.or
+                (i32.and (load.field PaintRect left (local.get $rect))
+                  (i32.const 0xFFFF))
+                (i32.shl (load.field.memarg PaintRect top (local.get $rect))
+                  (i32.const 16)))))
             (local.set $packed (global.get $pending_wm_size))
             (if (i32.eqz (local.get $packed))
               (then (local.set $packed (local.get $client_size))))

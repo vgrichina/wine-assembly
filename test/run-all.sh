@@ -593,6 +593,9 @@ E2E=(
   test/test-quake2-menu-keys-web.js
   test/test-quake2-input-web.js
   test/test-jazz2-demo-web.js
+  test/test-jazz2-gameplay-candidate.js
+  test/test-cave-story-candidate.js
+  test/test-generally-candidate.js
   test/test-diablo2-demo-installer.js
   test/test-diablo2-demo-installed.js
   test/test-diablo2-demo-gameplay.js
@@ -608,6 +611,7 @@ E2E=(
   test/test-web-touch-cursor.js
   test/test-web-agent-remote.js
   test/test-web-agent-frozen.js
+  test/test-web-shutdown.js
   test/test-web-frozen-recording.js
   test/test-web-record-audio.js
   test/test-web-audio-session.js
@@ -622,6 +626,7 @@ E2E=(
   test/test-taskman-tasks.js
   test/test-taskman-arrange.js
   test/test-taskman-web.js
+  test/test-taskman-shutdown.js
   test/test-wordpad-web.js
   test/test-wordpad-thread-startup.js
   test/test-cli-worker-threads.js
