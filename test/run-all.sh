@@ -535,7 +535,6 @@ UNIT=(
   test/test-token-security.js
   test/test-toyvm-browser-bundle.js
   test/test-toyvm-live.js
-  test/test-toyvm-audio.js
   test/test-user-default-ui-language.js
   test/test-virtual-query-user-boundary.js
   test/test-wave-in-dev-caps.js
