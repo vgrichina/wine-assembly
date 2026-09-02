@@ -1783,7 +1783,7 @@
   (func $handle__beginthread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_create_thread
       (local.get $arg0) (local.get $arg2) (local.get $arg1)
-      (i32.const 0) (i32.const 0)))
+      (i32.const 0) (i32.const 0) (global.get $current_thread_id)))
     (if (i32.eqz (global.get $eax))
       (then (global.set $eax (i32.const -1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
@@ -1793,7 +1793,7 @@
     (local $thread_id_ptr i32)
     (global.set $eax (call $host_create_thread
       (local.get $arg2) (local.get $arg3) (local.get $arg1)
-      (local.get $arg4) (i32.const 0)))
+      (local.get $arg4) (i32.const 0) (global.get $current_thread_id)))
     (local.set $thread_id_ptr (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (if (local.get $thread_id_ptr)
       (then (call $gs32 (local.get $thread_id_ptr) (global.get $eax))))

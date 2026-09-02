@@ -87,6 +87,7 @@ UNIT=(
   test/test-process-priority-class.js
   test/test-process-error-mode.js
   test/test-thread-priority.js
+  test/test-thread-locale.js
   test/test-menu-insert.js
   test/test-menu-modify-submenu.js
   test/test-menu-check-position.js

@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 226,
+  "count": 228,
   "sigs": {
     "log": {
       "params": [
@@ -1618,6 +1618,7 @@
         "i32",
         "i32",
         "i32",
+        "i32",
         "i32"
       ],
       "results": [
@@ -1660,6 +1661,23 @@
     "set_thread_priority": {
       "params": [
         "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "get_thread_locale": {
+      "params": [
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "set_thread_locale": {
+      "params": [
         "i32",
         "i32"
       ],

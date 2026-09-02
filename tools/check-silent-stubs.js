@@ -138,8 +138,10 @@ const digest = crypto.createHash('sha256')
 // model and nesting state; the dead duplicate OleInitialize body is gone.
 // 2026-09-02: 483 -> 482. TranslateMessage now distinguishes the four
 // virtual-key messages from unrelated MSGs instead of always returning TRUE.
-const EXPECTED_COUNT = 482;
-const EXPECTED_SHA256 = '2a85c6a4f215947b7e2871e0a0e3414f99cb63c91b60259159452de1c3292b9f';
+// 2026-09-02: 482 -> 480. SetThreadLocale and GetThreadLocale now retain real
+// per-thread LCID state and carry it into newly created threads.
+const EXPECTED_COUNT = 480;
+const EXPECTED_SHA256 = '5ba7eb11b05df2dba2e8afc35e8748d2efc896d1030f92bdbd74438c90fff94c';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

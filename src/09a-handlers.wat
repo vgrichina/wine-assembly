@@ -1190,9 +1190,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
 
-  ;; SetThreadLocale(Locale) → BOOL. We don't track thread locales; accept and return TRUE.
+  ;; SetThreadLocale(Locale) → BOOL. Locale identity belongs to the calling
+  ;; thread. The host retains it on the same durable record as priority and COM
+  ;; apartment state, so cooperative and real Worker threads agree.
   (func $handle_SetThreadLocale (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $host_set_thread_locale
+      (local.get $arg0) (global.get $current_thread_id)))
+    (if (i32.eqz (global.get $eax))
+      (then (global.set $last_error (i32.const 87)))) ;; ERROR_INVALID_PARAMETER
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
@@ -2861,7 +2866,8 @@
       (local.get $arg2) (local.get $arg3) (local.get $arg1) (local.get $arg4)
       (if (result i32) (local.get $lpThreadId)
         (then (call $g2w (local.get $lpThreadId)))
-        (else (i32.const 0)))))
+        (else (i32.const 0)))
+      (global.get $current_thread_id)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
@@ -13835,9 +13841,11 @@ HookEx — no next hook in chain, return 0
       (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
-  ;; 521: GetThreadLocale() → LCID — returns US English
+  ;; 521: GetThreadLocale() → LCID. A new process begins at the en-US user
+  ;; locale, and subsequently returns the calling thread's retained setting.
   (func $handle_GetThreadLocale (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x0409))  ;; MAKELCID(LANG_ENGLISH, SUBLANG_ENGLISH_US)
+    (global.set $eax (call $host_get_thread_locale
+      (global.get $current_thread_id)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   ;; 522: CreateSemaphoreW(lpAttr, lInit, lMax, lpName) → real counted semaphore via host.

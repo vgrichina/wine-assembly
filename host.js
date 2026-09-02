@@ -453,7 +453,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '272';
+  static SOURCE_VERSION = '273';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -1493,8 +1493,8 @@ class WineAssembly {
     };
 
     // Wire thread/event imports to ThreadManager
-    h.create_thread = (s, p, sz, flags, threadIdWa) => self.threadManager
-      ? self.threadManager.createThread(s, p, sz, flags, threadIdWa) : 0;
+    h.create_thread = (s, p, sz, flags, threadIdWa, creatorTid) => self.threadManager
+      ? self.threadManager.createThread(s, p, sz, flags, threadIdWa, creatorTid) : 0;
     h.duplicate_current_thread = (tid) => self.threadManager ? self.threadManager.duplicateCurrentThread(tid) : 0;
     h.suspend_thread = (handle) => self.threadManager ? self.threadManager.suspendThread(handle) : 0xFFFFFFFF;
     h.resume_thread = (handle) => self.threadManager ? self.threadManager.resumeThread(handle) : 0xFFFFFFFF;
@@ -1502,6 +1502,10 @@ class WineAssembly {
       ? self.threadManager.getThreadPriority(handle, tid) : 0x7FFFFFFF;
     h.set_thread_priority = (handle, priority, tid) => self.threadManager
       ? self.threadManager.setThreadPriority(handle, priority, tid) : 0;
+    h.get_thread_locale = (tid) => self.threadManager
+      ? self.threadManager.getThreadLocale(tid) : 0x0409;
+    h.set_thread_locale = (locale, tid) => self.threadManager
+      ? self.threadManager.setThreadLocale(locale, tid) : 0;
     h.com_initialize_thread = (reserved, flags, tid) => self.threadManager
       ? self.threadManager.initializeComApartment(reserved, flags, tid) : 0x8000FFFF;
     h.com_uninitialize_thread = (tid) => self.threadManager
@@ -2078,7 +2082,7 @@ class WineAssembly {
       return;
     }
     try {
-      const res = await fetch('lib/host-import-sigs.generated.json?v=7');
+      const res = await fetch('lib/host-import-sigs.generated.json?v=8');
       if (!res.ok) throw new Error(`sigs HTTP ${res.status}`);
       const sigs = (await res.json()).sigs;
       const self = this;

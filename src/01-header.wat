@@ -789,15 +789,18 @@
   (import "host" "com_initialize_thread" (func $host_com_initialize_thread (param i32 i32 i32) (result i32)))
   (import "host" "com_uninitialize_thread" (func $host_com_uninitialize_thread (param i32) (result i32)))
   ;; Thread/event host imports
-  ;; create_thread(start, param, stackSize, flags, lpThreadIdWA) returns the
+  ;; create_thread(start, param, stackSize, flags, lpThreadIdWA, creatorTid)
+  ;; returns the
   ;; kernel HANDLE and writes the distinct Win32 thread id through the optional
   ;; translated output pointer.
-  (import "host" "create_thread" (func $host_create_thread (param i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "create_thread" (func $host_create_thread (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "host" "duplicate_current_thread" (func $host_duplicate_current_thread (param i32) (result i32)))
   (import "host" "suspend_thread" (func $host_suspend_thread (param i32) (result i32)))
   (import "host" "resume_thread" (func $host_resume_thread (param i32) (result i32)))
   (import "host" "get_thread_priority" (func $host_get_thread_priority (param i32 i32) (result i32)))
   (import "host" "set_thread_priority" (func $host_set_thread_priority (param i32 i32 i32) (result i32)))
+  (import "host" "get_thread_locale" (func $host_get_thread_locale (param i32) (result i32)))
+  (import "host" "set_thread_locale" (func $host_set_thread_locale (param i32 i32) (result i32)))
   (import "host" "exit_thread" (func $host_exit_thread (param i32)))
   (import "host" "get_exit_code_thread" (func $host_get_exit_code_thread (param i32) (result i32)))
   (import "host" "terminate_thread" (func $host_terminate_thread (param i32 i32) (result i32)))
