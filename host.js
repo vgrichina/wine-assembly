@@ -453,7 +453,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '250';
+  static SOURCE_VERSION = '251';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -1266,6 +1266,22 @@ class WineAssembly {
       }
       if (/^https?:/i.test(file)) window.open(file, '_blank');
       return 33;
+    };
+    // The guest asked for the machine to go down (Shut Down Windows dialog,
+    // ExitWindowsEx). This is called from inside a guest batch, and the
+    // sequence tears every guest down, this one included -- so it is deferred
+    // to after the batch returns, and the guest gets to finish its own quit.
+    h.exit_windows = (mode) => {
+      const names = ['standby', 'shutdown', 'restart', 'logoff'];
+      const name = names[mode] || 'unknown';
+      console.log(`[ExitWindows] mode=${mode} (${name})`);
+      self.logToUI(`[ExitWindows] ${name}`);
+      const power = window.wineShutdown;
+      if (!power || !power.run) return 0;
+      // This instance paints the screens (its GDI is already up) before it
+      // is stopped with the rest.
+      setTimeout(() => power.run(name, self), 0);
+      return 1;
     };
     h.message_box = (hWnd, textPtr, captionPtr, uType) => {
       const text = self.readString(textPtr);

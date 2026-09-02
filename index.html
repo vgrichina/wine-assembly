@@ -1332,6 +1332,8 @@ Resource-aware Win98 emulator
       <a class="item" href="#" id="start-record-item" onclick="toggleRecordingFromStart(event)" title="Record screen + audio to video"><span class="ico" id="start-record-ico">&#9679;</span><span id="start-record-label">Record Screen</span></a>
       <div class="sep"></div>
       <a class="item" href="?debug"><span class="ico">&#128295;</span>Debug Mode</a>
+      <div class="sep"></div>
+      <a class="item" href="#" id="start-shutdown-item" onclick="openShutdownFromStart(event)" title="Shut Down Windows"><span class="ico"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="0.5" y="1.5" width="13" height="9" fill="#c0c0c0" stroke="#000"/><rect x="2" y="3" width="10" height="6" fill="#1084d0"/><rect x="5" y="11" width="4" height="2" fill="#808080"/><rect x="3" y="13" width="8" height="1.5" fill="#000"/><circle cx="12.5" cy="12" r="3" fill="#ffd700" stroke="#000"/></svg></span>Shut Down...</a>
     </div>
   </div>
   <!-- Both belong to scroll-to-collapse and are display:none until it is on.
@@ -1362,6 +1364,15 @@ Resource-aware Win98 emulator
       closeStartMenu();
       if (typeof toggleRecording === 'function') toggleRecording();
     }
+    function openShutdownFromStart(e) {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      closeStartMenu();
+      // Installed further down, once the shell exists (lib/shutdown.js).
+      if (window.wineShutdown) window.wineShutdown.open();
+    }
     document.addEventListener('click', (e) => {
       const m = document.getElementById('start-menu');
       if (!m.classList.contains('open')) return;
@@ -1387,7 +1398,7 @@ Resource-aware Win98 emulator
   <script src="lib/dll-registry.js?v=2"></script>
   <script src="lib/apps.js?v=17"></script>
   <script src="lib/debug-app-picker.js?v=1"></script>
-  <script src="lib/browser-input.js?v=14"></script>
+  <script src="lib/browser-input.js?v=15"></script>
   <script src="lib/mobile-keyboard.js?v=3"></script>
   <!-- Touch devices have no pointer, so every cursor shape the guest sets is
        invisible there and a busy app looks like a dead one. Draws the cursor
@@ -1417,7 +1428,9 @@ Resource-aware Win98 emulator
   <script src="lib/media-library.js?v=2"></script>
   <script src="lib/media-import.js?v=2"></script>
   <script src="lib/media-import-ui.js?v=3"></script>
-  <script src="lib/browser-shell.js?v=27"></script>
+  <!-- Start > Shut Down..., and the exit_windows host import's landing. -->
+  <script src="lib/shutdown.js?v=8"></script>
+  <script src="lib/browser-shell.js?v=28"></script>
   <script src="lib/pe.js?v=1"></script>
   <script src="lib/process-boot.js?v=3"></script>
   <script src="lib/app-profiles.js?v=1"></script>
@@ -1444,7 +1457,7 @@ Resource-aware Win98 emulator
   <script src="lib/vlan-lobby.js?v=1"></script>
   <script src="lib/guest-rpc.js?v=8"></script>
   <script src="lib/guest-thread-host.js?v=10"></script>
-  <script src="host.js?v=264"></script>
+  <script src="host.js?v=265"></script>
   <script src="lib/recorder.js?v=172"></script>
   <script src="lib/perf-hud.js?v=1"></script>
   <script>
@@ -1990,6 +2003,13 @@ Resource-aware Win98 emulator
     // a second guest (WRITE.EXE -> WordPad). host.js has no other handle on
     // the page's process list.
     window.wineShell = shell;
+    // Start > Shut Down... and the guest's own ExitWindowsDialog/ExitWindowsEx
+    // (through host.js's exit_windows import) both land here.
+    window.wineShutdown = window.wineShutdownUI.install({
+      shell, closeStartMenu,
+      // Any running instance can paint the shutting-down screens.
+      instances: () => runningApps.filter(app => app && app.wine).map(app => app.wine),
+    });
     // Tests, devtools and the inline toolbar handlers reach for these by name.
     // The shell owns the state; these are live views of it, not copies.
     Object.defineProperty(window, 'wine', { configurable: true, get: () => shell.currentWine });

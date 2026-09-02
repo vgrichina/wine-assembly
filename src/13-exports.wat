@@ -3348,7 +3348,7 @@
   (func (export "set_sib_fusion") (param $flag i32)
     (global.set $sib_fusion_enabled (local.get $flag)))
 
-  ;; The unrolled-rectangle fold (handler 422). Same rules: before the first
+  ;; The unrolled-rectangle fold ($th_rect_run). Same rules: before the first
   ;; decode, and on every per-thread instance.
   (func (export "set_rect_run") (param $flag i32)
     (global.set $rect_run_enabled (local.get $flag)))
@@ -3356,7 +3356,7 @@
   (func (export "set_case_chain") (param $flag i32)
     (global.set $case_chain_enabled (local.get $flag)))
 
-  ;; The run-length blit fold (handler 424). Decode-time, so this only steers
+  ;; The run-length blit fold ($th_rle_run). Decode-time, so this only steers
   ;; blocks decoded after it is called -- set it before the first decode for a
   ;; clean A/B, and on every per-thread instance.
   (func (export "set_rle_run") (param $flag i32)
@@ -5699,6 +5699,11 @@
     (if (i32.ge_u (local.get $slot) (i32.const 4)) (then (return (i32.const -1))))
     (i32.load (i32.add (global.get $GDI_TABLE_MARKS)
       (i32.shl (local.get $slot) (i32.const 2)))))
+
+  ;; The shutting-down (0) and safe-to-turn-off (1) pictures, painted by GDI
+  ;; into a 320x400 32bpp DIB; returns the linear address of the pixels or 0.
+  (func (export "paint_power_screen") (param $kind i32) (result i32)
+    (call $paint_power_screen (local.get $kind)))
 
   (func (export "static_get_image_ordinal") (param $hwnd i32) (result i32)
     (local $state i32) (local $sw ptr<StaticState>)

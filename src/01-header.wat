@@ -139,6 +139,12 @@
   (import "host" "file_download"
     (func $host_file_download (param i32)))
   (import "host" "shell_execute" (func $host_shell_execute (param i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; exit_windows(mode) — the machine, not the process. The Shut Down Windows
+  ;; dialog (09c3-controls.wat) and ExitWindowsEx both end here, with the
+  ;; guest's own quit already decided; what the host does with the box is
+  ;; its business. mode: 0 stand by, 1 shut down, 2 restart, 3 log off.
+  ;; Returns 1 when the host took the request.
+  (import "host" "exit_windows" (func $host_exit_windows (param i32) (result i32)))
   ;; has_dom() → 1 in browser, 0 in headless. Used by $create_open_dialog
   ;; to decide whether to render the Upload/Download buttons.
   (import "host" "has_dom"
