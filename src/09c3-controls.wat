@@ -73,25 +73,28 @@
   ;; implicit, so reaching for it is an unknown-field compile error instead of
   ;; a plausible read (the GdiObject rule, and it applies unchanged here).
 
-  ;; Button (ctrl_class 1). 72 bytes — $button_wndproc WM_CREATE heap_alloc 72.
+  ;; Button (ctrl_class 1). 68 bytes — $button_wndproc WM_CREATE heap_alloc 68.
   ;; flags@8 bit0=pressed bit1=checked bit2=default (the CURRENT paint default,
   ;; which flips on focus — $btn_clear_sibling_default / $btn_restore_real_default)
   ;; bit3=focused; read/written only through $btn_flags / $btn_set_flags, and by
   ;; $ctrl_get_check_state / $ctrl_set_check_state which shift bit1 out as the
   ;; legacy BM_GETCHECK answer.
-  ;; drawitem@16 is a 48-byte DRAWITEMSTRUCT scratch embedded in the record, not
+  ;; drawitem@12 is a 48-byte DRAWITEMSTRUCT scratch embedded in the record, not
   ;; a field: $btn_drawitem_guest hands its GUEST address to the app's owner-draw
   ;; handler, so its 12 words are the app's to write. It is named, and named as
   ;; an array, precisely so that nothing in here can address into the middle of
   ;; it by accident.
+  ;; NO ctrl_id HERE, deliberately: the child/menu id lives once, in
+  ;; CONTROL_TABLE+4, and is read with $ctrl_table_get_id($hwnd). A second copy
+  ;; in the record went stale the moment SetWindowLongA(GWL_ID) moved the table
+  ;; entry, and every WM_COMMAND this control sent afterwards carried the old id.
   (layout ButtonState
     (field text_buf_ptr  i32)      ;; +0   guest ptr from $heap_alloc (0 = no text)
     (field text_len      i32)      ;; +4   chars, no NUL
     (field flags         i32)      ;; +8   see above
-    (field ctrl_id       i32)      ;; +12
-    (field drawitem      i32 12)   ;; +16..+63 embedded DRAWITEMSTRUCT scratch
-    (field image_type    i32)      ;; +64  IMAGE_BITMAP=0
-    (field image_handle  i32))     ;; +68  HBITMAP from BM_SETIMAGE; ends at +72
+    (field drawitem      i32 12)   ;; +12..+59 embedded DRAWITEMSTRUCT scratch
+    (field image_type    i32)      ;; +60  IMAGE_BITMAP=0
+    (field image_handle  i32))     ;; +64  HBITMAP from BM_SETIMAGE; ends at +68
 
   ;; Static (ctrl_class 3). 20 bytes — $static_wndproc WM_CREATE heap_alloc 20,
   ;; and $syslink_wndproc allocates the SAME 20-byte shape and reads through the
@@ -128,14 +131,16 @@
     (field page       i32)         ;; +16  TBM_SETPAGESIZE
     (field thumb_len  i32))        ;; +20  TBM_SETTHUMBLENGTH; ends at +24
 
-  ;; ListBox (ctrl_class 4). 56 bytes — $listbox_wndproc heap_alloc 56.
+  ;; ListBox (ctrl_class 4). 52 bytes — $listbox_wndproc heap_alloc 52.
   ;; Three of the four buffers are a pointer and a capacity that must be read
-  ;; together, and items_used belongs to the first of them; +4/+8, +36/+40 and
-  ;; +44/+48 look alike as bare offsets and the one that is NOT a capacity
+  ;; together, and items_used belongs to the first of them; +4/+8, +32/+36 and
+  ;; +40/+44 look alike as bare offsets and the one that is NOT a capacity
   ;; (count@12, which counts items while items_used@4 counts bytes) sits between
-  ;; them. item_h@52 is 0 until an owner-draw listbox has been measured; after
+  ;; them. item_h@48 is 0 until an owner-draw listbox has been measured; after
   ;; that it is what WM_MEASUREITEM asked for, and $lb_row_height selects it
   ;; against the Win98 default of 16.
+  ;; The notification id is NOT here: see ButtonState above — one copy, in
+  ;; CONTROL_TABLE+4, read with $ctrl_table_get_id($hwnd).
   (layout ListBoxState
     (field items_buf_ptr   i32)    ;; +0   guest ptr, flat NUL-separated strings
     (field items_used      i32)    ;; +4   BYTES used in items_buf (incl. NULs)
@@ -143,35 +148,38 @@
     (field count           i32)    ;; +12  number of ITEMS
     (field cur_sel         i32)    ;; +16  -1 = none
     (field top_index       i32)    ;; +20  first visible row
-    (field ctrl_id         i32)    ;; +24  notification target uses this
-    (field drag_anchor_y   i32)    ;; +28
-    (field drag_anchor_top i32)    ;; +32
-    (field data_buf_ptr    i32)    ;; +36  guest ptr to u32[] (LB_SETITEMDATA)
-    (field data_cap        i32)    ;; +40  capacity in u32 SLOTS
-    (field sel_buf_ptr     i32)    ;; +44  guest ptr to u8[] multi-selection flags
-    (field sel_cap         i32)    ;; +48  capacity in BYTES
-    (field item_h          i32))   ;; +52  owner-draw row height, 0 = default; ends at +56
+    (field drag_anchor_y   i32)    ;; +24
+    (field drag_anchor_top i32)    ;; +28
+    (field data_buf_ptr    i32)    ;; +32  guest ptr to u32[] (LB_SETITEMDATA)
+    (field data_cap        i32)    ;; +36  capacity in u32 SLOTS
+    (field sel_buf_ptr     i32)    ;; +40  guest ptr to u8[] multi-selection flags
+    (field sel_cap         i32)    ;; +44  capacity in BYTES
+    (field item_h          i32))   ;; +48  owner-draw row height, 0 = default; ends at +52
 
-  ;; ComboBox (ctrl_class 5). 44 bytes — $combobox_wndproc heap_alloc 44.
+  ;; ComboBox (ctrl_class 5). 40 bytes — $combobox_wndproc heap_alloc 40.
+  ;; The notification id is NOT here: see ButtonState above — one copy, in
+  ;; CONTROL_TABLE+4, read with $ctrl_table_get_id($hwnd).
   (layout ComboBoxState
     (field text_buf_ptr         i32) ;; +0   selected/typed item text
     (field text_len             i32) ;; +4
     (field style                i32) ;; +8   FULL WINDOW STYLE (not an SS_*)
-    (field ctrl_id              i32) ;; +12  from CREATESTRUCT.hMenu
-    (field cur_sel              i32) ;; +16  mirror of the listbox's; -1 = none
-    (field lb_hwnd              i32) ;; +20  inner listbox
-    (field popup_hwnd           i32) ;; +24  reserved for WS_POPUP escape (0 today)
-    (field edit_hwnd            i32) ;; +28  CBS_DROPDOWN inner edit; 0 for SIMPLE/DROPDOWNLIST
-    (field is_dropped           i32) ;; +32  0/1 — CB_GETDROPPEDSTATE
-    (field variant              i32) ;; +36  1=SIMPLE 2=DROPDOWN 3=DROPDOWNLIST
-    (field suppress_edit_notify i32)) ;; +40 combo-originated edit WM_SETTEXT nesting; ends at +44
+    (field cur_sel              i32) ;; +12  mirror of the listbox's; -1 = none
+    (field lb_hwnd              i32) ;; +16  inner listbox
+    (field popup_hwnd           i32) ;; +20  reserved for WS_POPUP escape (0 today)
+    (field edit_hwnd            i32) ;; +24  CBS_DROPDOWN inner edit; 0 for SIMPLE/DROPDOWNLIST
+    (field is_dropped           i32) ;; +28  0/1 — CB_GETDROPPEDSTATE
+    (field variant              i32) ;; +32  1=SIMPLE 2=DROPDOWN 3=DROPDOWNLIST
+    (field suppress_edit_notify i32)) ;; +36 combo-originated edit WM_SETTEXT nesting; ends at +40
 
-  ;; ListView (ctrl_class 18). 80 bytes — $listview_wndproc heap_alloc 80.
+  ;; ListView (ctrl_class 18). 76 bytes — $listview_wndproc heap_alloc 76.
   ;; item_count/item_cap and col_count/col_cap are two count+capacity pairs at
   ;; +0/+4 and +16/+20; storing an item COUNT into a CAP reads as a plausible
-  ;; line and corrupts the next grow. The three COLORREFs at +60/+64/+68 have
+  ;; line and corrupts the next grow. The three COLORREFs at +56/+60/+64 have
   ;; the same problem in the other direction — all three take the same kind of
   ;; value, so a wrong offset paints rather than traps.
+  ;; The notification id is NOT here: see ButtonState above — one copy, in
+  ;; CONTROL_TABLE+4. This record's copy was written at WM_CREATE and never
+  ;; read by anything at all, which is the same redundancy one stage further on.
   (layout ListViewState
     (field item_count        i32)  ;; +0
     (field item_cap          i32)  ;; +4
@@ -183,16 +191,15 @@
     (field col_texts_ptr     i32)  ;; +28  guest ptr to u32[] heap string ptrs
     (field selected_index    i32)  ;; +32  -1 = none
     (field top_index         i32)  ;; +36
-    (field ctrl_id           i32)  ;; +40
-    (field extended_style    i32)  ;; +44  LVM_SETEXTENDEDLISTVIEWSTYLE shadow
-    (field drag_anchor_y     i32)  ;; +48
-    (field drag_anchor_top   i32)  ;; +52
-    (field small_image_list  i32)  ;; +56  LVM_SETIMAGELIST
-    (field bk_color          i32)  ;; +60  COLORREF
-    (field text_color        i32)  ;; +64  COLORREF
-    (field text_bk_color     i32)  ;; +68  COLORREF or CLR_NONE
-    (field state_image_list  i32)  ;; +72  LVM_SETIMAGELIST(LVSIL_STATE)
-    (field normal_image_list i32)) ;; +76  LVM_SETIMAGELIST(LVSIL_NORMAL); ends at +80
+    (field extended_style    i32)  ;; +40  LVM_SETEXTENDEDLISTVIEWSTYLE shadow
+    (field drag_anchor_y     i32)  ;; +44
+    (field drag_anchor_top   i32)  ;; +48
+    (field small_image_list  i32)  ;; +52  LVM_SETIMAGELIST
+    (field bk_color          i32)  ;; +56  COLORREF
+    (field text_color        i32)  ;; +60  COLORREF
+    (field text_bk_color     i32)  ;; +64  COLORREF or CLR_NONE
+    (field state_image_list  i32)  ;; +68  LVM_SETIMAGELIST(LVSIL_STATE)
+    (field normal_image_list i32)) ;; +72  LVM_SETIMAGELIST(LVSIL_NORMAL); ends at +76
 
   ;; Edit (ctrl_class 2). 40 bytes — $edit_wndproc WM_CREATE heap_alloc 40.
   ;; This is the one variant with NO accessor layer at all: its ~60 raw sites
@@ -214,12 +221,13 @@
     (field font         i32)       ;; +32  HFONT from WM_SETFONT (0 = GUI font)
     (field scroll_x     i32))      ;; +36  horizontal scroll in PIXELS; ends at +40
 
-  ;; ColorGrid (ctrl_class 6). 8 bytes — $colorgrid_wndproc heap_alloc 8; the
-  ;; WM_CREATE store writes -1 then CREATESTRUCT.hMenu, which is the evidence
-  ;; for both names.
+  ;; ColorGrid (ctrl_class 6). 4 bytes — $colorgrid_wndproc heap_alloc 4; the
+  ;; WM_CREATE store writes -1, which is the evidence for the name. It used to
+  ;; store CREATESTRUCT.hMenu in a second word as well; that copy is gone and
+  ;; the three places that read it (the 0x461 "custom colours" grid test) now
+  ;; ask $ctrl_table_get_id($hwnd), which is where the id already lived.
   (layout ColorGridState
-    (field sel_idx  i32)           ;; +0   selected cell, -1 = none
-    (field ctrl_id  i32))          ;; +4   from CREATESTRUCT.hMenu; ends at +8
+    (field sel_idx  i32))          ;; +0   selected cell, -1 = none; ends at +4
 
   ;; The colour dialog's HSL spectrum child. 12 bytes — $colorspectrum_wndproc
   ;; heap_alloc 12. The three words are named from the ONLY thing that consumes
@@ -326,10 +334,6 @@
     (load.field.memarg ButtonState flags (local.get $sw)))
   (func $btn_set_flags (param $sw i32) (param $v i32)
     (store.field.memarg ButtonState flags (local.get $sw) (local.get $v)))
-  (func $btn_ctrl_id (param $sw i32) (result i32)
-    (load.field.memarg ButtonState ctrl_id (local.get $sw)))
-  (func $btn_set_ctrl_id (param $sw i32) (param $v i32)
-    (store.field.memarg ButtonState ctrl_id (local.get $sw) (local.get $v)))
   (func $btn_image_type (param $sw i32) (result i32)
     (load.field.memarg ButtonState image_type (local.get $sw)))
   (func $btn_image_handle (param $sw i32) (result i32)
@@ -488,10 +492,6 @@
     (load.field.memarg ListBoxState top_index (local.get $sw)))
   (func $lb_set_top_index (param $sw i32) (param $v i32)
     (store.field.memarg ListBoxState top_index (local.get $sw) (local.get $v)))
-  (func $lb_ctrl_id (param $sw i32) (result i32)
-    (load.field.memarg ListBoxState ctrl_id (local.get $sw)))
-  (func $lb_set_ctrl_id (param $sw i32) (param $v i32)
-    (store.field.memarg ListBoxState ctrl_id (local.get $sw) (local.get $v)))
   (func $lb_drag_anchor_y (param $sw i32) (result i32)
     (load.field.memarg ListBoxState drag_anchor_y (local.get $sw)))
   (func $lb_set_drag_anchor_y (param $sw i32) (param $v i32)
@@ -592,10 +592,6 @@
     (load.field.memarg ComboBoxState style (local.get $sw)))
   (func $cb_set_style (param $sw i32) (param $v i32)
     (store.field.memarg ComboBoxState style (local.get $sw) (local.get $v)))
-  (func $cb_ctrl_id (param $sw i32) (result i32)
-    (load.field.memarg ComboBoxState ctrl_id (local.get $sw)))
-  (func $cb_set_ctrl_id (param $sw i32) (param $v i32)
-    (store.field.memarg ComboBoxState ctrl_id (local.get $sw) (local.get $v)))
   (func $cb_cur_sel (param $sw i32) (result i32)
     (load.field.memarg ComboBoxState cur_sel (local.get $sw)))
   (func $cb_set_cur_sel (param $sw i32) (param $v i32)
@@ -2999,9 +2995,9 @@
   ;; COLOR_BTNFACE gutter. Clicks pick a cell and notify the parent through
   ;; WM_COMMAND + LBN_SELCHANGE (we reuse notification code 1).
   ;;
-  ;; ColorGridState (8 bytes, allocated in WM_CREATE)
+  ;; ColorGridState (4 bytes, allocated in WM_CREATE)
   ;;   +0   sel_idx       selected cell, -1 = none
-  ;;   +4   ctrl_id
+  ;; The control id is NOT in the record: $ctrl_table_get_id($hwnd).
   ;;
   ;; The predefined values match the classic comdlg32 6x8 palette. Custom
   ;; colors are read directly from CHOOSECOLOR.lpCustColors so the application's
@@ -3687,7 +3683,7 @@
     (local $cc i32) (local $custom i32)
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0x00FFFFFF))))
-    (local.set $ctrl_id (i32.load offset=4 (call $g2w (local.get $state))))
+    (local.set $ctrl_id (call $ctrl_table_get_id (local.get $hwnd)))
     (if (i32.ne (local.get $ctrl_id) (i32.const 0x461))
       (then (return (call $colorgrid_color_for_idx (local.get $idx)))))
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
@@ -3711,10 +3707,10 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $state (call $heap_alloc (i32.const 8)))
+        (local.set $state (call $heap_alloc (i32.const 4)))
         (local.set $sw (call $g2w (local.get $state)))
         (store.field ColorGridState sel_idx (local.get $sw) (i32.const -1))                              ;; sel_idx
-        (store.field.memarg ColorGridState ctrl_id (local.get $sw) (i32.load offset=8 (local.get $cs_w)))    ;; ctrl_id from hMenu
+        ;; CREATESTRUCT.hMenu is not copied in: it is already CONTROL_TABLE+4.
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
         (return (i32.const 0))))
 
@@ -3736,7 +3732,7 @@
       (then
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
         (local.set $sel (load.field ColorGridState sel_idx (local.get $sw)))
-        (local.set $ctrl_id (load.field.memarg ColorGridState ctrl_id (local.get $sw)))
+        (local.set $ctrl_id (call $ctrl_table_get_id (local.get $hwnd)))
         (local.set $row_count
           (select (i32.const 2) (i32.const 6)
             (i32.eq (local.get $ctrl_id) (i32.const 0x461))))
@@ -3788,7 +3784,7 @@
       (then
         (local.set $x (i32.and (local.get $lParam) (i32.const 0xFFFF)))
         (local.set $y (i32.shr_u (local.get $lParam) (i32.const 16)))
-        (local.set $ctrl_id (load.field.memarg ColorGridState ctrl_id (local.get $sw)))
+        (local.set $ctrl_id (call $ctrl_table_get_id (local.get $hwnd)))
         (local.set $row_count
           (select (i32.const 2) (i32.const 6)
             (i32.eq (local.get $ctrl_id) (i32.const 0x461))))
@@ -4777,7 +4773,7 @@
     (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
     (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
     (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
-    (local.set $ctrl_id (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF)))
+    (local.set $ctrl_id (i32.and (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xFFFF)))
     (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
     (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
     (local.set $state_bits
@@ -4893,7 +4889,7 @@
     (local $cs_w i32) (local $hdc i32) (local $sz i32)
     (local $w i32) (local $h i32) (local $flags i32)
     (local $edge_flags i32) (local $text_w i32) (local $text_len i32)
-    (local $brush i32) (local $name_ptr i32) (local $hmenu i32)
+    (local $brush i32) (local $name_ptr i32)
     (local $kind i32) (local $box_y i32) (local $tw i32) (local $calc i32)
     (local $img i32) (local $img_w i32) (local $img_h i32) (local $img_x i32) (local $img_y i32)
     (local $parent i32) (local $cmd_id i32)
@@ -4920,10 +4916,14 @@
         ;; CREATESTRUCT: hMenu(+8) hwndParent(+12) cy(+16) cx(+20) y(+24) x(+28)
         ;;               style(+32) lpszName(+36) lpszClass(+40) dwExStyle(+44)
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $hmenu    (i32.load offset=8  (local.get $cs_w)))
+        ;; CREATESTRUCT.hMenu is NOT read here: $ctrl_table_set already stored
+        ;; that same value in CONTROL_TABLE+4 before this WM_CREATE was sent
+        ;; (every creation path does — CreateWindowExA, $dlg_load,
+        ;; $ctrl_create_child, the Win16 dialog loader), and that is the copy
+        ;; SetWindowLongA(GWL_ID) later updates.
         (local.set $name_ptr (i32.load offset=36 (local.get $cs_w)))
         ;; Allocate ButtonState
-        (local.set $state (call $heap_alloc (i32.const 72)))
+        (local.set $state (call $heap_alloc (i32.const 68)))
         (local.set $state_w (call $g2w (local.get $state)))
         (call $btn_set_text_ptr (local.get $state_w) (i32.const 0))
         (call $btn_set_text_len (local.get $state_w) (i32.const 0))
@@ -4934,7 +4934,6 @@
           (select (i32.const 0x04) (i32.const 0)
                   (i32.eq (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F))
                           (i32.const 1))))
-        (call $btn_set_ctrl_id (local.get $state_w) (local.get $hmenu))
         (call $btn_set_image (local.get $state_w) (i32.const 0) (i32.const 0))
         ;; Copy initial text from CREATESTRUCT.lpszName
         (if (local.get $name_ptr)
@@ -4986,7 +4985,7 @@
                 (drop (call $wnd_send_message
                   (local.get $parent) (i32.const 0x0111)
                   (i32.or
-                    (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF))
+                    (i32.and (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xFFFF))
                     (i32.shl (i32.const 6) (i32.const 16))) ;; BN_SETFOCUS
                   (local.get $hwnd)))))))
         (return (i32.const 0))))
@@ -5025,7 +5024,7 @@
                     (drop (call $wnd_send_message
                       (local.get $parent) (i32.const 0x0111)
                       (i32.or
-                        (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF))
+                        (i32.and (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xFFFF))
                         (i32.shl (i32.const 7) (i32.const 16))) ;; BN_KILLFOCUS
                       (local.get $hwnd)))))))))
         (return (i32.const 0))))
@@ -5044,7 +5043,7 @@
                 (drop (call $post_queue_push
                   (call $wnd_get_parent (local.get $hwnd))
                   (i32.const 0x0111)
-                  (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF))
+                  (i32.and (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xFFFF))
                   (local.get $hwnd)))))))
         (return (i32.const 0))))
 
@@ -5152,7 +5151,7 @@
                         (drop (call $wnd_send_message
                           (local.get $parent) (i32.const 0x0111)
                           (i32.or
-                            (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF))
+                            (i32.and (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xFFFF))
                             (i32.shl (i32.const 5) (i32.const 16))) ;; BN_DOUBLECLICKED
                           (local.get $hwnd)))))))))))
         (return (i32.const 0))))
@@ -5552,7 +5551,7 @@
             (local.set $edge_flags (call $g2w (call $btn_drawitem_guest (local.get $state))))
             (i32.store         (local.get $edge_flags) (i32.const 4))  ;; CtlType = ODT_BUTTON
             (i32.store offset=4  (local.get $edge_flags)
-              (call $btn_ctrl_id (local.get $state_w)))                ;; CtlID
+              (call $ctrl_table_get_id (local.get $hwnd)))                ;; CtlID
             (i32.store offset=8  (local.get $edge_flags) (i32.const 0)) ;; itemID
             (i32.store offset=12 (local.get $edge_flags) (i32.const 1)) ;; itemAction = ODA_DRAWENTIRE
             (i32.store offset=16 (local.get $edge_flags)
@@ -5593,7 +5592,7 @@
             (drop (call $wnd_send_message
               (call $wnd_get_parent (local.get $hwnd))
               (i32.const 0x002B)
-              (call $btn_ctrl_id (local.get $state_w))
+              (call $ctrl_table_get_id (local.get $hwnd))
               (call $btn_drawitem_guest (local.get $state))))
             ;; This WM_PAINT was handled by delegating WM_DRAWITEM to the
             ;; owner. Keep validation in WAT so owner-draw buttons do not
@@ -6670,16 +6669,16 @@
   ;;   +28  col_texts_ptr    guest ptr to u32[] heap string pointers
   ;;   +32  selected_index   -1 = none
   ;;   +36  top_index
-  ;;   +40  ctrl_id
-  ;;   +44  extended_style   LVM_SETEXTENDEDLISTVIEWSTYLE shadow
-  ;;   +48  drag_anchor_y
-  ;;   +52  drag_anchor_top
-  ;;   +56  small_image_list handle from LVM_SETIMAGELIST
-  ;;   +60  bk_color COLORREF
-  ;;   +64  text_color COLORREF
-  ;;   +68  text_bk_color COLORREF or CLR_NONE
-  ;;   +72  state_image_list handle from LVM_SETIMAGELIST(LVSIL_STATE)
-  ;;   +76  normal_image_list handle from LVM_SETIMAGELIST(LVSIL_NORMAL)
+  ;;   +40  extended_style   LVM_SETEXTENDEDLISTVIEWSTYLE shadow
+  ;;   +44  drag_anchor_y
+  ;;   +48  drag_anchor_top
+  ;;   +52  small_image_list handle from LVM_SETIMAGELIST
+  ;;   +56  bk_color COLORREF
+  ;;   +60  text_color COLORREF
+  ;;   +64  text_bk_color COLORREF or CLR_NONE
+  ;;   +68  state_image_list handle from LVM_SETIMAGELIST(LVSIL_STATE)
+  ;;   +72  normal_image_list handle from LVM_SETIMAGELIST(LVSIL_NORMAL)
+  ;; The control id is NOT in the record: $ctrl_table_get_id($hwnd).
 
   ;; ---- ListViewState accessors ----
   ;;
@@ -6726,10 +6725,6 @@
     (load.field.memarg ListViewState top_index (local.get $sw)))
   (func $lv_set_top_index (param $sw i32) (param $v i32)
     (store.field.memarg ListViewState top_index (local.get $sw) (local.get $v)))
-  (func $lv_ctrl_id (param $sw i32) (result i32)
-    (load.field.memarg ListViewState ctrl_id (local.get $sw)))
-  (func $lv_set_ctrl_id (param $sw i32) (param $v i32)
-    (store.field.memarg ListViewState ctrl_id (local.get $sw) (local.get $v)))
   (func $lv_ex_style (param $sw i32) (result i32)
     (load.field.memarg ListViewState extended_style (local.get $sw)))
   (func $lv_set_ex_style (param $sw i32) (param $v i32)
@@ -7586,11 +7581,12 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $state (call $heap_alloc (i32.const 80)))
+        (local.set $state (call $heap_alloc (i32.const 76)))
         (local.set $sw (call $g2w (local.get $state)))
-        (call $zero_memory (local.get $sw) (i32.const 80))
+        (call $zero_memory (local.get $sw) (i32.const 76))
         (call $lv_set_selected (local.get $sw) (i32.const -1))
-        (call $lv_set_ctrl_id (local.get $sw) (i32.load offset=8 (local.get $cs_w)))
+        ;; CREATESTRUCT.hMenu is not copied in: it is already CONTROL_TABLE+4.
+        ;; Nothing ever read the copy that used to be stored here.
         (call $lv_set_bk_color (local.get $sw) (i32.const 0x00FFFFFF))
         (call $lv_set_text_color (local.get $sw) (i32.const 0x00000000))
         (call $lv_set_text_bk_color (local.get $sw) (i32.const 0x00FFFFFF))
@@ -10865,7 +10861,7 @@
     (local.set $mis (call $heap_alloc (i32.const 24)))
     (local.set $misw (call $g2w (local.get $mis)))
     (i32.store           (local.get $misw) (i32.const 2))   ;; ODT_LISTBOX
-    (i32.store offset=4  (local.get $misw) (call $lb_ctrl_id (local.get $sw)))
+    (i32.store offset=4  (local.get $misw) (call $ctrl_table_get_id (local.get $hwnd)))
     (i32.store offset=8  (local.get $misw) (i32.const 0))
     (i32.store offset=12 (local.get $misw) (i32.const 0))
     (i32.store offset=16 (local.get $misw) (i32.const 16))
@@ -10873,7 +10869,7 @@
     (drop (call $wnd_send_message
             (call $wnd_get_parent (local.get $hwnd))
             (i32.const 0x002C)
-            (call $lb_ctrl_id (local.get $sw))
+            (call $ctrl_table_get_id (local.get $hwnd))
             (local.get $mis)))
     (local.set $h (i32.load offset=16 (local.get $misw)))
     (call $heap_free (local.get $mis))
@@ -10910,7 +10906,7 @@
     (local.set $dis (call $heap_alloc (i32.const 48)))
     (local.set $disw (call $g2w (local.get $dis)))
     (i32.store           (local.get $disw) (i32.const 2))    ;; ODT_LISTBOX
-    (i32.store offset=4  (local.get $disw) (call $lb_ctrl_id (local.get $sw)))
+    (i32.store offset=4  (local.get $disw) (call $ctrl_table_get_id (local.get $hwnd)))
     (i32.store offset=8  (local.get $disw) (local.get $idx))
     (i32.store offset=12 (local.get $disw) (i32.const 1))     ;; ODA_DRAWENTIRE
     (i32.store offset=16 (local.get $disw)
@@ -10925,7 +10921,7 @@
     (drop (call $wnd_send_message
             (call $wnd_get_parent (local.get $hwnd))
             (i32.const 0x002B)
-            (call $lb_ctrl_id (local.get $sw))
+            (call $ctrl_table_get_id (local.get $hwnd))
             (local.get $dis)))
     (call $heap_free (local.get $dis)))
 
@@ -10941,13 +10937,14 @@
   ;;   +12  count            number of items
   ;;   +16  cur_sel          current selection (-1 = none)
   ;;   +20  top_index        first visible row (vertical scroll)
-  ;;   +24  ctrl_id          control id (notification target uses this)
-  ;;   +28  drag_anchor_y
-  ;;   +32  drag_anchor_top
-  ;;   +36  data_buf_ptr     guest ptr to u32[] parallel item-data array (LB_SETITEMDATA)
-  ;;   +40  data_cap         capacity of data array, in u32 slots
-  ;;   +44  sel_buf_ptr      guest ptr to u8[] multi-selection flags
-  ;;   +48  sel_cap          capacity of selection array, in bytes
+  ;;   +24  drag_anchor_y
+  ;;   +28  drag_anchor_top
+  ;;   +32  data_buf_ptr     guest ptr to u32[] parallel item-data array (LB_SETITEMDATA)
+  ;;   +36  data_cap         capacity of data array, in u32 slots
+  ;;   +40  sel_buf_ptr      guest ptr to u8[] multi-selection flags
+  ;;   +44  sel_cap          capacity of selection array, in bytes
+  ;;   +48  item_h           owner-draw row height, 0 = default
+  ;; The control id is NOT in the record: $ctrl_table_get_id($hwnd).
   ;;
   ;; Items are stored as concatenated NUL-terminated strings. LB_ADDSTRING
   ;; appends; LB_RESETCONTENT zeros count + items_used (keeps the buffer for
@@ -10997,7 +10994,7 @@
             (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
             (if (local.get $parent)
               (then (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
-                      (i32.or (i32.and (call $lb_ctrl_id (local.get $sw)) (i32.const 0xFFFF))
+                      (i32.or (i32.and (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xFFFF))
                               (i32.shl (select (i32.const 4) (i32.const 5)
                                          (i32.eq (local.get $msg) (i32.const 0x0007)))
                                        (i32.const 16)))
@@ -11009,7 +11006,7 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $state (call $heap_alloc (i32.const 56)))
+        (local.set $state (call $heap_alloc (i32.const 52)))
         (local.set $sw (call $g2w (local.get $state)))
         (call $lb_set_item_h (local.get $sw) (i32.const 0))
         (call $lb_set_items_ptr (local.get $sw) (i32.const 0))
@@ -11018,8 +11015,7 @@
         (call $lb_set_count (local.get $sw) (i32.const 0))
         (call $lb_set_cur_sel (local.get $sw) (i32.const -1))
         (call $lb_set_top_index (local.get $sw) (i32.const 0))
-        ;; ctrl_id from CREATESTRUCT.hMenu
-        (call $lb_set_ctrl_id (local.get $sw) (i32.load offset=8 (local.get $cs_w)))
+        ;; CREATESTRUCT.hMenu is not copied in: it is already CONTROL_TABLE+4.
         (call $lb_set_drag_anchor_y (local.get $sw) (i32.const 0))
         (call $lb_set_drag_anchor_top (local.get $sw) (i32.const 0))
         (call $lb_set_data_ptr (local.get $sw) (i32.const 0))
@@ -11455,7 +11451,7 @@
         (if (local.get $parent)
           (then
             (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
-                    (i32.or (call $lb_ctrl_id (local.get $sw))
+                    (i32.or (call $ctrl_table_get_id (local.get $hwnd))
                             (i32.shl (local.get $notif) (i32.const 16)))
                     (local.get $hwnd)))))
         (call $invalidate_hwnd (local.get $hwnd))
@@ -11569,7 +11565,7 @@
         (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
         (if (local.get $parent)
           (then (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
-                  (i32.or (call $lb_ctrl_id (local.get $sw))
+                  (i32.or (call $ctrl_table_get_id (local.get $hwnd))
                           (i32.shl (i32.const 1) (i32.const 16)))  ;; LBN_SELCHANGE
                   (local.get $hwnd)))))
         (call $invalidate_hwnd (local.get $hwnd))
@@ -11984,18 +11980,18 @@
   ;;   2=CBS_DROPDOWN     listbox toggled by click/F4/Alt+Down; field is editable
   ;;   3=CBS_DROPDOWNLIST listbox toggled, field shows selection (read-only)
   ;;
-  ;; ComboBoxState (44 bytes, allocated in WM_CREATE)
+  ;; ComboBoxState (40 bytes, allocated in WM_CREATE)
   ;;   +0   text_buf_ptr   guest ptr to selected/typed item text
   ;;   +4   text_len
   ;;   +8   style          full window style
-  ;;   +12  ctrl_id        from CREATESTRUCT.hMenu
-  ;;   +16  cur_sel        mirror of listbox cur_sel; -1 = none
-  ;;   +20  lb_hwnd        inner listbox hwnd
-  ;;   +24  popup_hwnd     reserved for future WS_POPUP escape (0 today)
-  ;;   +28  edit_hwnd      CBS_DROPDOWN inner edit child; 0 for SIMPLE/DROPDOWNLIST
-  ;;   +32  is_dropped     0/1 — CB_GETDROPPEDSTATE
-  ;;   +36  variant        1=SIMPLE 2=DROPDOWN 3=DROPDOWNLIST
-  ;;   +40  suppress_edit_notify — combo-originated edit WM_SETTEXT nesting
+  ;;   +12  cur_sel        mirror of listbox cur_sel; -1 = none
+  ;;   +16  lb_hwnd        inner listbox hwnd
+  ;;   +20  popup_hwnd     reserved for future WS_POPUP escape (0 today)
+  ;;   +24  edit_hwnd      CBS_DROPDOWN inner edit child; 0 for SIMPLE/DROPDOWNLIST
+  ;;   +28  is_dropped     0/1 — CB_GETDROPPEDSTATE
+  ;;   +32  variant        1=SIMPLE 2=DROPDOWN 3=DROPDOWNLIST
+  ;;   +36  suppress_edit_notify — combo-originated edit WM_SETTEXT nesting
+  ;; The control id is NOT in the record: $ctrl_table_get_id($hwnd).
   ;;
   ;; FIELD_H = 21 px; arrow box = 16 px wide on right edge.
 
@@ -12173,7 +12169,7 @@
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
     (if (local.get $parent)
       (then (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
-              (i32.or (i32.and (call $cb_ctrl_id (local.get $sw)) (i32.const 0xFFFF))
+              (i32.or (i32.and (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xFFFF))
                       (i32.shl (i32.const 7) (i32.const 16)))
               (local.get $hwnd)))))
     (call $invalidate_hwnd (local.get $hwnd))
@@ -12227,7 +12223,7 @@
                          (i32.eq (global.get $capture_hwnd) (local.get $popup))))
       (then (global.set $capture_hwnd (i32.const 0))))
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
-    (local.set $ctrl_id (i32.and (call $cb_ctrl_id (local.get $sw)) (i32.const 0xFFFF)))
+    (local.set $ctrl_id (i32.and (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xFFFF)))
     (if (local.get $parent)
       (then
         ;; CBN_SELENDOK(9) or CBN_SELENDCANCEL(10) — POSTED, not sent.
@@ -12361,13 +12357,14 @@
               (call $cb_popup_hwnd (call $g2w (local.get $state))))
             (local.set $prev_edit
               (call $cb_edit_hwnd (call $g2w (local.get $state))))))
-        (local.set $state (call $heap_alloc (i32.const 44)))
+        (local.set $state (call $heap_alloc (i32.const 40)))
         (local.set $state_w (call $g2w (local.get $state)))
         (call $cb_set_text_ptr (local.get $state_w) (i32.const 0))
         (call $cb_set_text_len (local.get $state_w) (i32.const 0))
         (call $cb_set_style (local.get $state_w) (local.get $style))
-        (call $cb_set_ctrl_id (local.get $state_w)
-          (i32.and (i32.load offset=8 (local.get $cs_w)) (i32.const 0xFFFF)))
+        ;; CREATESTRUCT.hMenu is not copied in: it is already CONTROL_TABLE+4.
+        ;; Readers mask it to 16 bits at the point of use, where the WM_COMMAND
+        ;; wParam packing needs that, rather than truncating the stored id.
         (call $cb_set_cur_sel (local.get $state_w) (i32.const -1))
         (call $cb_set_lb_hwnd (local.get $state_w) (local.get $prev_lb))
         (call $cb_set_popup_hwnd (local.get $state_w) (local.get $prev_popup))
@@ -12518,7 +12515,7 @@
             ;; sentinel to literal point-size text "1638.5". Normalize that
             ;; exact value only in its toolbar size combo (control id 166).
             (if (i32.and
-                  (i32.eq (call $cb_ctrl_id (local.get $state_w)) (i32.const 166))
+                  (i32.eq (i32.and (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xFFFF)) (i32.const 166))
                   (i32.and
                     (i32.eq (call $strlen (call $g2w (local.get $lParam))) (i32.const 6))
                     (i32.and
@@ -12595,7 +12592,7 @@
         (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
         (if (local.get $parent)
           (then (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
-                  (i32.or (i32.and (call $cb_ctrl_id (local.get $state_w)) (i32.const 0xFFFF))
+                  (i32.or (i32.and (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xFFFF))
                           (i32.shl (i32.const 3) (i32.const 16)))
                   (local.get $hwnd)))))
         (return (i32.const 0))))
@@ -12610,7 +12607,7 @@
         (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
         (if (local.get $parent)
           (then (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
-                  (i32.or (i32.and (call $cb_ctrl_id (local.get $state_w)) (i32.const 0xFFFF))
+                  (i32.or (i32.and (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xFFFF))
                           (i32.shl (i32.const 4) (i32.const 16)))
                   (local.get $hwnd)))))
         (return (i32.const 0))))
@@ -12947,7 +12944,7 @@
             (if (local.get $cmd)
               (then
                 (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
-                (local.set $ctrl_id (i32.and (call $cb_ctrl_id (local.get $state_w)) (i32.const 0xFFFF)))
+                (local.set $ctrl_id (i32.and (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xFFFF)))
                 (if (local.get $parent)
                   (then
                     ;; Every relayed edit notification is posted. They originate
@@ -12988,7 +12985,7 @@
                 (if (local.get $cmd)
                   (then
                     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
-                    (local.set $ctrl_id (i32.and (call $cb_ctrl_id (local.get $state_w)) (i32.const 0xFFFF)))
+                    (local.set $ctrl_id (i32.and (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xFFFF)))
                     (if (local.get $parent)
                       (then (drop (call $post_queue_push (local.get $parent) (i32.const 0x0111)
                               (i32.or (local.get $ctrl_id) (i32.shl (local.get $cmd) (i32.const 16)))
@@ -13000,7 +12997,7 @@
               (then
                 (call $combobox_sync_text (local.get $state_w))
                 (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
-                (local.set $ctrl_id (i32.and (call $cb_ctrl_id (local.get $state_w)) (i32.const 0xFFFF)))
+                (local.set $ctrl_id (i32.and (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xFFFF)))
                 ;; CBN_SELCHANGE(1) → parent dialog. POSTED for the same
                 ;; reentrancy reason as CBN_SELENDOK below (close_dropdown).
                 (if (local.get $parent)

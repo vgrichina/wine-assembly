@@ -243,7 +243,7 @@
       "file": "src/09c3-controls.wat",
       "frozen": null,
       "frozenNote": null,
-      "size": 72,
+      "size": 68,
       "fields": [
         {
           "name": "text_buf_ptr",
@@ -270,17 +270,9 @@
           "stride": 4
         },
         {
-          "name": "ctrl_id",
-          "type": "i32",
-          "offset": 12,
-          "size": 4,
-          "count": 1,
-          "stride": 4
-        },
-        {
           "name": "drawitem",
           "type": "i32",
-          "offset": 16,
+          "offset": 12,
           "size": 48,
           "count": 12,
           "stride": 4
@@ -288,7 +280,7 @@
         {
           "name": "image_type",
           "type": "i32",
-          "offset": 64,
+          "offset": 60,
           "size": 4,
           "count": 1,
           "stride": 4
@@ -296,7 +288,7 @@
         {
           "name": "image_handle",
           "type": "i32",
-          "offset": 68,
+          "offset": 64,
           "size": 4,
           "count": 1,
           "stride": 4
@@ -451,7 +443,7 @@
       "file": "src/09c3-controls.wat",
       "frozen": null,
       "frozenNote": null,
-      "size": 56,
+      "size": 52,
       "fields": [
         {
           "name": "items_buf_ptr",
@@ -502,7 +494,7 @@
           "stride": 4
         },
         {
-          "name": "ctrl_id",
+          "name": "drag_anchor_y",
           "type": "i32",
           "offset": 24,
           "size": 4,
@@ -510,7 +502,7 @@
           "stride": 4
         },
         {
-          "name": "drag_anchor_y",
+          "name": "drag_anchor_top",
           "type": "i32",
           "offset": 28,
           "size": 4,
@@ -518,7 +510,7 @@
           "stride": 4
         },
         {
-          "name": "drag_anchor_top",
+          "name": "data_buf_ptr",
           "type": "i32",
           "offset": 32,
           "size": 4,
@@ -526,7 +518,7 @@
           "stride": 4
         },
         {
-          "name": "data_buf_ptr",
+          "name": "data_cap",
           "type": "i32",
           "offset": 36,
           "size": 4,
@@ -534,7 +526,7 @@
           "stride": 4
         },
         {
-          "name": "data_cap",
+          "name": "sel_buf_ptr",
           "type": "i32",
           "offset": 40,
           "size": 4,
@@ -542,7 +534,7 @@
           "stride": 4
         },
         {
-          "name": "sel_buf_ptr",
+          "name": "sel_cap",
           "type": "i32",
           "offset": 44,
           "size": 4,
@@ -550,17 +542,9 @@
           "stride": 4
         },
         {
-          "name": "sel_cap",
-          "type": "i32",
-          "offset": 48,
-          "size": 4,
-          "count": 1,
-          "stride": 4
-        },
-        {
           "name": "item_h",
           "type": "i32",
-          "offset": 52,
+          "offset": 48,
           "size": 4,
           "count": 1,
           "stride": 4
@@ -571,7 +555,7 @@
       "file": "src/09c3-controls.wat",
       "frozen": null,
       "frozenNote": null,
-      "size": 44,
+      "size": 40,
       "fields": [
         {
           "name": "text_buf_ptr",
@@ -598,7 +582,7 @@
           "stride": 4
         },
         {
-          "name": "ctrl_id",
+          "name": "cur_sel",
           "type": "i32",
           "offset": 12,
           "size": 4,
@@ -606,7 +590,7 @@
           "stride": 4
         },
         {
-          "name": "cur_sel",
+          "name": "lb_hwnd",
           "type": "i32",
           "offset": 16,
           "size": 4,
@@ -614,7 +598,7 @@
           "stride": 4
         },
         {
-          "name": "lb_hwnd",
+          "name": "popup_hwnd",
           "type": "i32",
           "offset": 20,
           "size": 4,
@@ -622,7 +606,7 @@
           "stride": 4
         },
         {
-          "name": "popup_hwnd",
+          "name": "edit_hwnd",
           "type": "i32",
           "offset": 24,
           "size": 4,
@@ -630,7 +614,7 @@
           "stride": 4
         },
         {
-          "name": "edit_hwnd",
+          "name": "is_dropped",
           "type": "i32",
           "offset": 28,
           "size": 4,
@@ -638,7 +622,7 @@
           "stride": 4
         },
         {
-          "name": "is_dropped",
+          "name": "variant",
           "type": "i32",
           "offset": 32,
           "size": 4,
@@ -646,17 +630,9 @@
           "stride": 4
         },
         {
-          "name": "variant",
-          "type": "i32",
-          "offset": 36,
-          "size": 4,
-          "count": 1,
-          "stride": 4
-        },
-        {
           "name": "suppress_edit_notify",
           "type": "i32",
-          "offset": 40,
+          "offset": 36,
           "size": 4,
           "count": 1,
           "stride": 4
@@ -667,7 +643,7 @@
       "file": "src/09c3-controls.wat",
       "frozen": null,
       "frozenNote": null,
-      "size": 80,
+      "size": 76,
       "fields": [
         {
           "name": "item_count",
@@ -750,7 +726,7 @@
           "stride": 4
         },
         {
-          "name": "ctrl_id",
+          "name": "extended_style",
           "type": "i32",
           "offset": 40,
           "size": 4,
@@ -758,7 +734,7 @@
           "stride": 4
         },
         {
-          "name": "extended_style",
+          "name": "drag_anchor_y",
           "type": "i32",
           "offset": 44,
           "size": 4,
@@ -766,7 +742,7 @@
           "stride": 4
         },
         {
-          "name": "drag_anchor_y",
+          "name": "drag_anchor_top",
           "type": "i32",
           "offset": 48,
           "size": 4,
@@ -774,7 +750,7 @@
           "stride": 4
         },
         {
-          "name": "drag_anchor_top",
+          "name": "small_image_list",
           "type": "i32",
           "offset": 52,
           "size": 4,
@@ -782,7 +758,7 @@
           "stride": 4
         },
         {
-          "name": "small_image_list",
+          "name": "bk_color",
           "type": "i32",
           "offset": 56,
           "size": 4,
@@ -790,7 +766,7 @@
           "stride": 4
         },
         {
-          "name": "bk_color",
+          "name": "text_color",
           "type": "i32",
           "offset": 60,
           "size": 4,
@@ -798,7 +774,7 @@
           "stride": 4
         },
         {
-          "name": "text_color",
+          "name": "text_bk_color",
           "type": "i32",
           "offset": 64,
           "size": 4,
@@ -806,7 +782,7 @@
           "stride": 4
         },
         {
-          "name": "text_bk_color",
+          "name": "state_image_list",
           "type": "i32",
           "offset": 68,
           "size": 4,
@@ -814,17 +790,9 @@
           "stride": 4
         },
         {
-          "name": "state_image_list",
-          "type": "i32",
-          "offset": 72,
-          "size": 4,
-          "count": 1,
-          "stride": 4
-        },
-        {
           "name": "normal_image_list",
           "type": "i32",
-          "offset": 76,
+          "offset": 72,
           "size": 4,
           "count": 1,
           "stride": 4
@@ -923,20 +891,12 @@
       "file": "src/09c3-controls.wat",
       "frozen": null,
       "frozenNote": null,
-      "size": 8,
+      "size": 4,
       "fields": [
         {
           "name": "sel_idx",
           "type": "i32",
           "offset": 0,
-          "size": 4,
-          "count": 1,
-          "stride": 4
-        },
-        {
-          "name": "ctrl_id",
-          "type": "i32",
-          "offset": 4,
           "size": 4,
           "count": 1,
           "stride": 4

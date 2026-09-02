@@ -111,7 +111,7 @@ const add = (variant, names, why) => {
 // self-evidencing: $btn_flags is ButtonState.flags and cannot be anything else.
 add('ButtonState', [
   '$btn_text_ptr', '$btn_set_text_ptr', '$btn_text_len', '$btn_set_text_len',
-  '$btn_flags', '$btn_set_flags', '$btn_ctrl_id', '$btn_set_ctrl_id',
+  '$btn_flags', '$btn_set_flags',
   '$btn_image_type', '$btn_image_handle', '$btn_set_image',
 ], 'accessor layer: the function name is the field name');
 
@@ -136,7 +136,7 @@ add('ListBoxState', [
   '$lb_items_ptr', '$lb_set_items_ptr', '$lb_items_used', '$lb_set_items_used',
   '$lb_items_cap', '$lb_set_items_cap', '$lb_count', '$lb_set_count',
   '$lb_cur_sel', '$lb_set_cur_sel', '$lb_top_index', '$lb_set_top_index',
-  '$lb_ctrl_id', '$lb_set_ctrl_id', '$lb_drag_anchor_y', '$lb_set_drag_anchor_y',
+  '$lb_drag_anchor_y', '$lb_set_drag_anchor_y',
   '$lb_drag_anchor_top', '$lb_set_drag_anchor_top', '$lb_data_ptr', '$lb_set_data_ptr',
   '$lb_data_cap', '$lb_set_data_cap', '$lb_sel_ptr', '$lb_set_sel_ptr',
   '$lb_sel_cap', '$lb_set_sel_cap', '$lb_item_h', '$lb_set_item_h',
@@ -144,7 +144,7 @@ add('ListBoxState', [
 
 add('ComboBoxState', [
   '$cb_text_ptr', '$cb_set_text_ptr', '$cb_text_len', '$cb_set_text_len',
-  '$cb_style', '$cb_set_style', '$cb_ctrl_id', '$cb_set_ctrl_id',
+  '$cb_style', '$cb_set_style',
   '$cb_cur_sel', '$cb_set_cur_sel', '$cb_lb_hwnd', '$cb_set_lb_hwnd',
   '$cb_popup_hwnd', '$cb_set_popup_hwnd', '$cb_edit_hwnd', '$cb_set_edit_hwnd',
   '$cb_is_dropped', '$cb_set_is_dropped', '$cb_variant', '$cb_set_variant',
@@ -156,7 +156,7 @@ add('ListViewState', [
   '$lv_cells_ptr', '$lv_set_cells_ptr', '$lv_col_count', '$lv_set_col_count',
   '$lv_col_cap', '$lv_set_col_cap', '$lv_col_widths_ptr', '$lv_set_col_widths_ptr',
   '$lv_col_texts_ptr', '$lv_set_col_texts_ptr', '$lv_selected', '$lv_set_selected',
-  '$lv_top_index', '$lv_set_top_index', '$lv_ctrl_id', '$lv_set_ctrl_id',
+  '$lv_top_index', '$lv_set_top_index',
   '$lv_ex_style', '$lv_set_ex_style', '$lv_drag_anchor_y', '$lv_set_drag_anchor_y',
   '$lv_drag_anchor_top', '$lv_set_drag_anchor_top', '$lv_image_list', '$lv_set_image_list',
   '$lv_bk_color', '$lv_set_bk_color', '$lv_text_color', '$lv_set_text_color',

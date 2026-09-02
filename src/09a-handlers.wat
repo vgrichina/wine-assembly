@@ -4065,21 +4065,19 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (if (i32.eq (local.get $arg1) (i32.const -12))  ;; GWL_ID
       (then
+        ;; CONTROL_TABLE+4 is the ONLY copy of the notification id, so this one
+        ;; store is the whole of GWL_ID. There used to be a second store here
+        ;; hand-syncing ButtonState's own copy — a bare (i32.store offset=12)
+        ;; against a record declared in another file — because a control whose
+        ;; id is reassigned after creation must notify with the NEW id (VCL
+        ;; creates TNewButton with hMenu=0 and assigns its id immediately
+        ;; afterward; a stale zero made its mouse release notify the form as
+        ;; command 0). That sync covered ctrl_class 1 and no other, so combo
+        ;; boxes, list boxes, list views and colour grids kept notifying with
+        ;; the id they were created with. Deleting the duplicate field fixes
+        ;; all five at once and removes the raw offset.
         (global.set $eax
           (call $ctrl_table_set_id (local.get $arg0) (local.get $arg2)))
-        ;; GWL_ID is also the hMenu-derived notification ID stored in each
-        ;; native control's private state. Keep BUTTON's copy synchronized so
-        ;; a subclass that chains through CallWindowProc sends BN_CLICKED with
-        ;; the replacement ID. VCL creates TNewButton with hMenu=0 and assigns
-        ;; its ID immediately afterward; leaving ButtonState at zero makes its
-        ;; otherwise-correct mouse release notify the form as command 0.
-        (if (i32.and
-              (i32.eq (call $ctrl_table_get_class (local.get $arg0)) (i32.const 1))
-              (i32.ne (call $wnd_get_state_ptr (local.get $arg0)) (i32.const 0)))
-          (then
-            (i32.store offset=12
-              (call $g2w (call $wnd_get_state_ptr (local.get $arg0)))
-              (local.get $arg2))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (if (i32.eq (local.get $arg1) (i32.const -16))  ;; GWL_STYLE
       (then
