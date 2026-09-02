@@ -9266,9 +9266,9 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
-  ;; 298: SetErrorMode — return 0, 1 arg stdcall
+  ;; 298: SetErrorMode — atomically replace the process-wide Win98 x86 mode.
   (func $handle_SetErrorMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (i32.atomic.rmw.xchg offset=12 (global.get $SHARED_COUNTERS) (i32.and (local.get $arg0) (i32.const 0x8003))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 

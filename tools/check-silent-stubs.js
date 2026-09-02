@@ -132,8 +132,10 @@ const digest = crypto.createHash('sha256')
 // emulated process handle and retain one shared Win98 priority class.
 // 2026-09-02: 491 -> 489. GetThreadPriority/SetThreadPriority now validate
 // thread identity and retain the Win98 relative priority on the thread object.
-const EXPECTED_COUNT = 489;
-const EXPECTED_SHA256 = 'd5105ef6d0c80e5b95c409d352067858ead956cb4c34b34ee62b02954d626aee';
+// 2026-09-02: 489 -> 488. SetErrorMode now atomically replaces and returns the
+// shared Win98 x86 process error mode instead of always returning zero.
+const EXPECTED_COUNT = 488;
+const EXPECTED_SHA256 = 'c90fa4d4175aaa4f64435b297c8d15a34b638b8b3b55047b71075db54091859a';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

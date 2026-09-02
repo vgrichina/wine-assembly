@@ -2364,7 +2364,7 @@
   ;; thread is a separate WASM instance over this shared memory:
   ;;   +0  class atom counter
   ;;   +4  decoded-code invalidation generation
-  ;;   +8  process priority class (0 means the initial NORMAL class, 0x20)
+  ;;   +8  process priority class (0 => NORMAL, 0x20); +12 process error mode
   ;; Two instances each starting a private atom counter at 0xC000 give two
   ;; DIFFERENT classes the SAME atom, and CreateWindowA by atom then builds the
   ;; wrong class's window. Priority has the same cross-instance requirement:
