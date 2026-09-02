@@ -1,0 +1,130 @@
+<!-- Hand-written. tools/toyvm/site.js splices this into index.html and fills
+     the __COUNT__ placeholders from the sweep JSON, so the prose can quote the
+     corpus without going stale the next time the sweep runs. Figures cite
+     shots/NAME.png, which the same build copies in. -->
+
+<section>
+  <h2>What this is</h2>
+  <p class="sub">a 16-bit PC, written as a wasm generator, driven by real demos</p>
+
+  <p><span class="m">tools/toyvm</span> is a DOS machine. The CPU is an x86
+  running real-mode code, the video card is a VGA with its planes and its
+  palette and its retrace bit, the keyboard is a BIOS queue and a port, and DOS
+  is the interrupt vector a program lands in when it asks for a file. All of it
+  runs in the browser, on this page: every tile in the <a href="demos.html">gallery</a>
+  has a Run button, and pressing it starts the same emulator that took the
+  screenshot, in the tab, with the keyboard live.</p>
+
+  <p>It is called a toy because it began as one &mdash; a small threaded
+  interpreter built to <em>measure</em> dispatch strategies before committing
+  the large Windows emulator next door to any of them. It stopped being a toy
+  when the measurements needed real programs. Synthetic loops are perfectly
+  predicted by any dispatch scheme, which is the one property real code does
+  not have, so the benchmark had to be a corpus: <strong>__TOTAL__ demoscene
+  productions from 1993&ndash;1995</strong>, the years when a demo was a
+  hand-written real-mode program that talked to the hardware directly. Getting
+  those to run meant building the machine they expected.</p>
+</section>
+
+<section>
+  <h2>How it runs an instruction</h2>
+  <p class="sub">decode once, then walk an array</p>
+
+  <p>The interpreter is not written by hand. <span class="m">emit.js</span> is
+  a generator that describes every handler once and emits the WebAssembly text
+  for whichever <em>dispatch shell</em> is asked for: a shared
+  <span class="m">$next</span> with one indirect tail call, that same tail
+  replicated into every handler, a <span class="m">br_table</span> switch, or
+  classic subroutine threading. The shipped shell is the replicated tail call.
+  It won on every program it was measured on, by about ten percent, for a
+  reason a microbenchmark cannot show: an indirect branch per <em>predecessor</em>
+  opcode gives the branch predictor one history per pair, and real instruction
+  streams are made of pairs.</p>
+
+  <p>x86 bytes are decoded exactly once into an <b>arena</b> of 32-bit words: a
+  handler index, then the operand words that handler consumes. Running the
+  program is walking that array. A store into a paragraph some compiled code
+  came from sets a flag, and the arena for it is thrown away &mdash; nearly the
+  whole corpus is LZEXE or PKLITE packed, so the program that eventually runs
+  is one the depacker wrote, and an interpreter that decodes ahead of the guest
+  has to notice that.</p>
+
+  <p>On top of the walk sit the optimizations the <a href="benchmarks.html">benchmarks</a>
+  page prices one by one: fused instruction pairs, a decoder that lives in wasm,
+  dead flag elimination, handlers pinned to the register they reach for. Then
+  the wait loops. A demo spends most of its dispatches not in the effect but in
+  the loop that waits for the next frame, so the retrace poll, the keyboard
+  poll and the tick poll are each recognised and <em>turned inside one
+  handler</em>, and the VGA status port is answered from the dispatch clock
+  itself rather than from the host. The other loop that matters is the copy:
+  <span class="m">REP MOVS</span> and <span class="m">REP STOS</span> become a
+  single <span class="m">memory.copy</span> or <span class="m">memory.fill</span>
+  when their span is plain RAM, with the planar VGA window, the wrap at the
+  segment end and code bytes all guarded.</p>
+
+  <p>Above the interpreter is a trace JIT. A hot trace is stitched into one wasm
+  function with its operands folded to constants, then three whole-trace passes
+  &mdash; constant propagation, register-file folding, dead flags &mdash; take
+  it to about 3x the interpreter on the traces that were measured, and a region
+  compiler installs those into the running program. What it does not yet do is
+  register allocation: guest registers still live in wasm globals across the
+  trace, which is the single largest item on the list.</p>
+</section>
+
+<section>
+  <h2>How it runs a program</h2>
+  <p class="sub">the machine is most of the work</p>
+
+  <p>Not one blocker in the corpus has ever been an instruction. Every program
+  that stopped was stopped by the <em>machine</em>: a driver it probed for and
+  did not find, a file it could not open, a paragraph of memory it could not
+  get, a key nobody pressed. So the machine grew to meet them. DOS opens,
+  reads, seeks, creates and runs files &mdash; created files live in memory,
+  and <span class="m">EXEC</span> loads a child with its own PSP and returns
+  through a stack of parents. There is an environment block with the
+  program's own path in it, a command tail, XMS with lockable blocks above the
+  megabyte, EMS mapping four pages at <span class="m">E000</span>, and sixteen
+  megabytes of RAM behind an address bus that stays a 20-bit one until the
+  guest takes an XMS handle.</p>
+
+  <p>The VGA knows mode 13h, the unchained and planar modes, the text pages
+  and the CRTC start address a demo flips between them. A headless run has to
+  answer the menus these programs open on &mdash; <em>Do YOU have a GUS
+  [Y/N]</em> &mdash; so the harness reads the text screen, finds the option
+  that means silence, and presses it, once per distinct screen. In the browser
+  that same answerer runs until you press a key yourself.</p>
+
+  <p>What it does not do is protected mode. A dozen programs in the corpus are
+  the same 32-bit DOS extender, and they stop at <span class="m">LGDT</span>:
+  descriptor tables and a 32-bit code segment are a second addressing mode for
+  the whole machine, and they are the largest thing left. There is no sound
+  hardware either, which is why so many of these demos are running in their
+  own silent mode. The <a href="notes.html">notes</a> page is the record of
+  each of those findings, in the order they were made.</p>
+
+  <div class="shots" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">
+    __FEATURED__
+  </div>
+  <p class="figcap">a few of the __DREW__ that draw &mdash; click one to run it here</p>
+</section>
+
+<section>
+  <h2>How it runs in a page</h2>
+  <p class="sub">the same modules, packed, on the main thread</p>
+
+  <p>The browser build is not a port. <span class="m">bundle-browser.js</span>
+  packs the Node modules the headless sweep uses &mdash; the decoder, the
+  machine, the frame reader &mdash; behind a small <span class="m">require</span>
+  and an <span class="m">fs</span> whose disk is a map of the demo's directory.
+  A page-side driver runs the guest in eight-millisecond chunks per animation
+  frame and paints whatever surface the program is on, at the guest's own
+  resolution, so a 320x200 demo stays a 320x200 demo. The wasm tail-call
+  proposal is probed with a thirty-byte module rather than sniffed from a
+  version string; an engine without it gets the subroutine-threaded shell,
+  which is four percent slower and otherwise the same machine.</p>
+
+  <p>Every demo ships with the site as bytes, one script per production, and
+  only the one you press loads. Nothing here needs a server: the pages work
+  from a <span class="m">file://</span> URL, which is why the bytes arrive as
+  script tags and not as a fetch.</p>
+</section>

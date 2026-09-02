@@ -2,25 +2,28 @@
 
 'use strict';
 
-// Pack a few demos into a <script> the report page can load.
+// Pack the corpus into <script>s the site can load, one per production.
 //
-//   node tools/toyvm/bundle-programs.js --dir=/tmp/demos --json=/tmp/shots.json
+//   node tools/toyvm/bundle-programs.js --json=/tmp/shots.json [--out=docs/dos-corpus/live]
+//   node tools/toyvm/bundle-programs.js --json=... --ids=BTW.EXE,AMBIENT.EXE
 //
-// The page runs off the filesystem, where `fetch` is refused, so a program's
-// bytes have to arrive as JavaScript or not at all. Each demo becomes one entry
-// of base64 per file in its directory -- the whole directory, because a DOS
-// program's data sits next to it and that directory is the entire filesystem it
-// gets.
+// The pages run off the filesystem, where `fetch` is refused, so a program's
+// bytes have to arrive as JavaScript or not at all. Each production directory
+// becomes one script holding base64 of every file in it -- the whole
+// directory, because a DOS program's data sits next to it and that directory
+// is the entire filesystem it gets.
 //
-// Which demos: the pickable ones are chosen by what the sweep measured, not by
-// hand. Most pixels first, smallest directory as the tiebreak, one per
-// directory so the slots are that many different demos rather than four
-// productions with their menu programs. `--ids=` overrides the whole thing when
-// the question is "does THIS one run in a page".
+// One script per DIRECTORY, not per program. The corpus has directories that
+// ship three or four executables (a menu, the parts, a viewer) over the same
+// data files, and a per-program bundle would carry that data once per tile.
+// Two rows from one directory point at the same script and differ only in
+// which file to start.
 //
-// Each demo is written to its own live/programs/<slug>.js. The page loads only
-// the one whose Run button was pressed, so how many demos ship is a question
-// about repo size and nothing else -- the visitor pays for one.
+// Every row is packed by default -- a blank tile gets a Run button too, because
+// "it drew nothing headless" is a claim a visitor should be able to check, and
+// a demo that waits for a key the sweep never sent is exactly the kind that
+// draws in a page. `--ids=` narrows it to a list when the question is "does
+// THIS one still run".
 
 const fs = require('fs');
 const path = require('path');
@@ -32,7 +35,6 @@ function arg(name, fallback) {
   return hit === undefined ? fallback : hit.slice(name.length + 3);
 }
 
-// Total bytes of a directory's regular files, and the files themselves.
 function dirFiles(dir) {
   const out = [];
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -43,134 +45,89 @@ function dirFiles(dir) {
   return out;
 }
 
+const slugOf = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
 function main() {
   const json = arg('json');
-  const out = arg('out', path.join('docs', 'dos-corpus', 'live'));
-  // 96 is above the number of one-per-directory candidates the corpus has, so
-  // the real limit is --max-kb: every demo that drew pixels and whose whole
-  // directory fits gets a Run button. Only the pressed demo is ever downloaded,
-  // so the count costs the visitor nothing -- it costs repo bytes, and --max-kb
-  // is where that is priced. Measured on the v17 sweep: 96KB gives 76 demos for
-  // 3.7MB, 192KB gives 84 for 5.1MB, 400KB gives 96 for 9.5MB.
-  const want = Number(arg('count', 96));
-  const maxKb = Number(arg('max-kb', 192));
-  const ids = arg('ids', '').split(',').map(s => s.trim()).filter(Boolean);
+  const out = path.resolve(ROOT, arg('out', path.join('docs', 'dos-corpus', 'live')));
+  const ids = arg('ids', '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
   if (!json) {
-    console.error('usage: bundle-programs.js --json=SWEEP.json [--count=12] '
-      + '[--max-kb=96] [--ids=NAME,NAME] [--out=DIR]');
+    console.error('usage: bundle-programs.js --json=SWEEP.json [--ids=NAME,NAME] [--out=DIR]');
     process.exit(2);
   }
 
   const sweep = JSON.parse(fs.readFileSync(json, 'utf8'));
-  const rows = sweep.rows.filter(r => r.exe && fs.existsSync(r.exe));
+  const rows = sweep.rows.filter(r => r.exe && fs.existsSync(r.exe)
+    && (!ids.length || ids.includes(r.name.toLowerCase())));
+  const missing = sweep.rows.filter(r => !r.exe || !fs.existsSync(r.exe));
 
-  // One candidate per directory, and only demos that actually drew something --
-  // a Run button on a blank screen is a bug report, not a demo.
-  const byDir = new Map();
+  // Directory -> its files, gathered once however many rows live in it.
+  const dirs = new Map();
   for (const r of rows) {
-    if (!ids.length && !((r.pixels || 0) > 0)) continue;
     const dir = path.dirname(r.exe);
-    const files = dirFiles(dir);
-    const bytes = files.reduce((n, f) => n + f.size, 0);
-    const cand = { row: r, dir, files, bytes };
-    const prev = byDir.get(dir);
-    if (!prev || (r.pixels || 0) > (prev.row.pixels || 0)) byDir.set(dir, cand);
+    if (!dirs.has(dir)) dirs.set(dir, dirFiles(dir));
   }
 
-  let picked;
-  if (ids.length) {
-    picked = ids.map((id) => {
-      const hit = [...byDir.values()].find(c => c.row.name.toLowerCase() === id.toLowerCase());
-      if (!hit) throw new Error(`no swept program named ${id}`);
-      return hit;
-    });
-  } else {
-    // One per NAME as well as one per directory. The page addresses a demo by
-    // its executable's name and nothing else -- that is what the tile's
-    // data-live holds -- so two directories that both ship an ASYLUM.EXE
-    // collapse to one entry, and the tile for the loser silently runs the
-    // winner's bytes. Sorted first, so the survivor is the one with more
-    // pixels rather than whichever the directory walk reached last.
-    const seen = new Set();
-    picked = [...byDir.values()]
-      .filter(c => c.bytes <= maxKb * 1024)
-      .sort((a, b) => (b.row.pixels || 0) - (a.row.pixels || 0) || a.bytes - b.bytes)
-      .filter((c) => {
-        const key = c.row.name.toLowerCase();
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .slice(0, want);
+  const programs = path.join(out, 'programs');
+  fs.mkdirSync(programs, { recursive: true });
+  for (const f of fs.readdirSync(programs)) {
+    if (f.endsWith('.js')) fs.unlinkSync(path.join(programs, f));
   }
 
-  const programs = {};
-  let total = 0;
-  for (const c of picked) {
-    const files = {};
-    for (const f of c.files) {
-      files[f.name.toLowerCase()] = fs.readFileSync(f.full).toString('base64');
-      total += f.size;
+  // Two corpus directories can share a basename once the year prefix is gone,
+  // so the slug is the whole directory name, and a collision is an error
+  // rather than a silent overwrite.
+  const slugs = new Map();
+  let guestBytes = 0, jsBytes = 0, largest = 0;
+  for (const [dir, files] of dirs) {
+    const slug = slugOf(path.basename(dir));
+    if (slugs.has(slug)) throw new Error(`${dir} and ${slugs.get(slug)} both slug to ${slug}`);
+    slugs.set(slug, dir);
+    const packed = {};
+    let bytes = 0;
+    for (const f of files) {
+      packed[f.name.toLowerCase()] = fs.readFileSync(f.full).toString('base64');
+      bytes += f.size;
     }
-    programs[c.row.name] = {
-      exe: c.row.name.toLowerCase(),
-      dir: path.basename(c.dir),
-      pixels: c.row.pixels || 0,
-      mode: c.row.mode || 0,
-      width: c.row.width || 320,
-      height: c.row.height || 200,
-      files,
-    };
-  }
-
-  // ONE FILE PER PROGRAM, not one file for all of them. The page cannot fetch
-  // from a file:// URL, so a program's bytes arrive as a <script> tag either
-  // way -- but a single bundle means pressing Run on any one demo downloads
-  // every demo, which is what capped this at twelve. Per-program scripts make
-  // the cost proportional to what somebody actually presses, so the number of
-  // runnable tiles can be most of the corpus instead of a token few.
-  fs.mkdirSync(path.join(ROOT, out, 'programs'), { recursive: true });
-  for (const f of fs.readdirSync(path.join(ROOT, out, 'programs'))) {
-    if (f.endsWith('.js')) fs.unlinkSync(path.join(ROOT, out, 'programs', f));
-  }
-  const index = {};
-  let jsBytes = 0;
-  const exeOf = new Map(picked.map(c => [c.row.name, c.row.exe]));
-  for (const [name, program] of Object.entries(programs)) {
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    guestBytes += bytes;
+    largest = Math.max(largest, bytes);
     // A function replacement, not a string one: base64 has no `$` in it, but
     // the habit is what keeps the next payload that does from corrupting the
     // file.
     const js = '// GENERATED by tools/toyvm/bundle-programs.js -- do not edit.\n'
-      + `// ${name}, as bytes, for the report page to run.\n`
+      + `// ${path.basename(dir)}, every file in it as bytes, for the site to run.\n`
       + '(self.ToyVMPrograms = self.ToyVMPrograms || {})[__N__] = __P__;\n'
-        .replace('__N__', () => JSON.stringify(name))
-        .replace('__P__', () => JSON.stringify(program));
-    fs.writeFileSync(path.join(ROOT, out, 'programs', `${slug}.js`), js);
-    index[exeOf.get(name)] = `programs/${slug}.js`;
+        .replace('__N__', () => JSON.stringify(slug))
+        .replace('__P__', () => JSON.stringify({ dir: path.basename(dir), files: packed }));
+    fs.writeFileSync(path.join(programs, `${slug}.js`), js);
     jsBytes += js.length;
   }
+
   // Keyed by the sweep's path to the executable, not by its name: the corpus
-  // has two directories shipping an ASYLUM.EXE, and a name-keyed index marks
-  // both tiles runnable while only one of them has bytes here. The path is what
-  // distinguishes the two rows the report is drawing.
-  //
-  // The report generator has to know which tiles get a Run button before the
-  // page is opened, and the page has to know which single script to load when
-  // one is pressed.
-  fs.writeFileSync(path.join(ROOT, out, 'programs-index.json'),
-    `${JSON.stringify(index, null, 2)}\n`);
-  // The old single bundle, if one is still lying about, is now dead weight that
-  // the page no longer loads.
-  const stale = path.join(ROOT, out, 'programs.js');
+  // has two directories shipping an ASYLUM.EXE, and the path is what tells the
+  // two tiles apart. The value names the script, the file to start inside it,
+  // and the command tail the sweep found it wanted -- AMBIENT.EXE renders only
+  // with `/no_snd`, and a page that dropped that would show a screenshot the
+  // Run button cannot reproduce.
+  const index = {};
+  for (const r of rows) {
+    index[r.exe] = {
+      src: `programs/${slugOf(path.basename(path.dirname(r.exe)))}.js`,
+      exe: path.basename(r.exe).toLowerCase(),
+      args: r.args || '',
+    };
+  }
+  fs.writeFileSync(path.join(out, 'programs-index.json'), `${JSON.stringify(index, null, 2)}\n`);
+  const stale = path.join(out, 'programs.js');
   if (fs.existsSync(stale)) fs.unlinkSync(stale);
-  console.log(`${path.relative(ROOT, path.join(ROOT, out, 'programs'))}/: ${picked.length} programs, `
-    + `${(total / 1024).toFixed(0)}KB of guest files, ${(jsBytes / 1024).toFixed(0)}KB of JS `
-    + `(largest single load ${(Math.max(...Object.values(programs)
-      .map(p => Object.values(p.files).reduce((n, b) => n + b.length, 0))) / 1024).toFixed(0)}KB)`);
-  for (const c of picked) {
-    console.log(`  ${c.row.name.padEnd(16)} ${String(c.row.pixels || 0).padStart(7)} px  `
-      + `${c.files.length} file(s)  ${(c.bytes / 1024).toFixed(0)}KB  ${path.basename(c.dir)}`);
+
+  console.log(`${path.relative(ROOT, programs)}/: ${dirs.size} productions, ${rows.length} programs, `
+    + `${(guestBytes / 1024 / 1024).toFixed(1)}MB of guest files, `
+    + `${(jsBytes / 1024 / 1024).toFixed(1)}MB of JS `
+    + `(largest single load ${(largest / 1024).toFixed(0)}KB)`);
+  if (missing.length) {
+    console.log(`  ${missing.length} sweep row(s) have no executable on disk and are not packed: `
+      + missing.map(r => r.name).join(', '));
   }
 }
 

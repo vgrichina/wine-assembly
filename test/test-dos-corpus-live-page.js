@@ -9,8 +9,11 @@
 // says they are, and whether anything reaches the canvas.
 //
 // Those are exactly the failures that look fine from Node and show a black
-// rectangle to a person, so this opens docs/dos-corpus/index.html, clicks a
-// tile's Run button and reads the pixels back off the canvas.
+// rectangle to a person, so this opens docs/dos-corpus/demos.html, clicks a
+// tile's Run button and reads the pixels back off the canvas. Every tile in
+// the gallery is checked, one by one, by tools/toyvm/check-live-report.js;
+// this is the one that runs in the suite, so it takes one tile and asserts
+// hard about it.
 //
 // It runs over http rather than file://, because puppeteer's file:// origin
 // rules are not the ones a person double-clicking the page gets, and a test
@@ -51,9 +54,10 @@ function serve(dir) {
 }
 
 async function main() {
-  for (const f of ['index.html', 'live/toyvm-bundle.js', 'live/programs.js']) {
+  for (const f of ['index.html', 'demos.html', 'site.js', 'site.css',
+    'live/toyvm-bundle.js', 'live/programs-index.json']) {
     assert.ok(fs.existsSync(path.join(DOCS, f)),
-      `docs/dos-corpus/${f} is missing -- run bundle-browser.js, bundle-programs.js and sweep-report.js`);
+      `docs/dos-corpus/${f} is missing -- run bundle-browser.js, bundle-programs.js and site.js`);
   }
 
   const server = await serve(DOCS);
@@ -63,7 +67,7 @@ async function main() {
     const page = await browser.newPage();
     const errors = [];
     page.on('pageerror', (e) => errors.push(String(e)));
-    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'load' });
+    await page.goto(`http://127.0.0.1:${port}/demos.html`, { waitUntil: 'load' });
 
     // A tile that ships its bytes. There is at least one or the payload was
     // never generated, which is a failure worth naming rather than skipping.
@@ -143,7 +147,12 @@ async function main() {
         };
       }, 150);
     });
-    await page.waitForFunction(() => self.__best.lit > 500, { timeout: 90000, polling: 500 });
+    // Wait for a frame with colours in it, not merely a lit one. The first
+    // frame over 500 pixels is routinely a fade-in from black in two colours
+    // (B-STEEL.EXE, first in the grid, does exactly that), and stopping the
+    // sampler there reads the demo's opening fade as a broken palette.
+    await page.waitForFunction(() => self.__best.lit > 500 && self.__best.colours > 2,
+      { timeout: 90000, polling: 500 });
     const shot = await page.evaluate(() => {
       clearInterval(self.__sampler);
       return self.__best;

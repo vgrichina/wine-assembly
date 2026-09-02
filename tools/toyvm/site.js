@@ -1,0 +1,880 @@
+#!/usr/bin/env node
+
+'use strict';
+
+// Build the toyvm mini-site into docs/dos-corpus from the sweep JSON.
+//
+//   node tools/toyvm/shot-sweep.js --dir=/tmp/demos --out=/tmp/shots --json=/tmp/shots.json
+//   node tools/toyvm/bundle-browser.js --out=docs/dos-corpus/live
+//   node tools/toyvm/bundle-programs.js --json=/tmp/shots.json
+//   node tools/toyvm/site.js --json=/tmp/shots.json [--out=docs/dos-corpus]
+//
+// Five pages sharing one stylesheet and one script:
+//
+//   index.html       what the emulator is and how it works, with a few
+//                    runnable tiles
+//   demos.html       the whole corpus, one screenshot each, every tile runnable
+//   benchmarks.html  the dispatch shells, the JIT tiers, the twenty-program
+//                    table read out of docs/toyvm-bench-20.md at build time
+//   notes.html       the findings, in the order they were made
+//   docs.html        the design documents, linked
+//
+// The prose is NOT generated. docs/dos-corpus/prose/*.html are written by hand
+// and spliced in; only the numbers, the tiles, the tables and the chrome come
+// from here. Screenshots are copied in as files rather than inlined, so git
+// stores one object per program and shows which pictures changed between two
+// runs of the VM. `.gitignore` has a blanket `*.png`, so the output directory
+// carries its own negation.
+//
+// Every tile is runnable: bundle-programs.js packs the corpus one script per
+// production under live/programs/, and the tile carries the path to its own
+// bytes, so pressing Run loads one production and nothing else.
+
+const fs = require('fs');
+const path = require('path');
+
+const ROOT = path.join(__dirname, '..', '..');
+const REPO = 'https://github.com/vgrichina/wine-assembly';
+
+function arg(name, fallback) {
+  const hit = process.argv.slice(2).find(a => a.startsWith(`--${name}=`));
+  return hit === undefined ? fallback : hit.slice(name.length + 3);
+}
+
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// A row drew something if either surface has content. Both are counted: a text
+// demo that fills the console is not a lesser result than a mode 13h one, and
+// treating a 0-pixel text screen as blank is exactly the mistake that made an
+// earlier sweep report 159 identical black rectangles.
+const drew = (r) => (r.pixels || 0) > 0 || (r.cells || 0) > 0;
+const kind = (r) => (!drew(r) ? 'blank' : ((r.pixels || 0) > 0 ? 'vga' : 'text'));
+
+// exe path -> { src, exe, args }, written by bundle-programs.js. Absent is
+// fine: the pages are then exactly what they were before -- screenshots.
+function liveIndex(out) {
+  const f = path.join(out, 'live', 'programs-index.json');
+  try {
+    const parsed = JSON.parse(fs.readFileSync(f, 'utf8'));
+    if (Array.isArray(parsed)) return new Map();
+    return new Map(Object.entries(parsed)
+      .map(([k, v]) => [k, typeof v === 'string' ? { src: v, exe: path.basename(k).toLowerCase(), args: '' } : v]));
+  } catch {
+    return new Map();
+  }
+}
+
+const slugOf = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+// What to call this release when asking pouet about it. The corpus keeps one
+// directory per production, named `YYYY-x-slug` by the fetcher, and the slug
+// is the release -- the EXE inside is often an abbreviation of it or just
+// INTRO.EXE, which finds nothing. A search rather than a permalink because
+// nothing here carries a pouet id, and a link that guessed one would point at
+// the wrong production rather than at no production.
+function prodOf(r) {
+  const dir = path.basename(path.dirname(r.exe || ''));
+  const m = /^(\d{4})-[a-z0-9]+-(.*)$/.exec(dir);
+  return {
+    year: m ? m[1] : '',
+    prod: (m ? m[2] : dir).replace(/[_-]+/g, ' ').trim(),
+  };
+}
+
+function tile(r, file, live) {
+  const what = (r.pixels || 0) > 0 ? `<b>${r.pixels.toLocaleString()}</b> px`
+    : ((r.cells || 0) > 0 ? `<b>${r.cells}</b> cells` : 'blank');
+  const k = kind(r);
+  // The screen text is what a text tile's caption actually wants: at tile size
+  // the glyphs are unreadable, and the first line is usually the whole finding
+  // ("HIMEM.SYS NEEDED !!!").
+  const first = (r.screen || '').split('\n').map((s) => s.trim()).filter(Boolean)[0] || '';
+  const alt = k === 'text'
+    ? `${r.name}: DOS text screen${first ? `, reading "${first.slice(0, 90)}"` : ''}`
+    : `${r.name}: mode ${(r.mode || 0).toString(16)}h graphics frame`;
+  const geom = k === 'text' ? '80x25 text'
+    : `mode ${(r.mode || 0).toString(16)}h - ${r.width}x${r.height}`
+      + `${r.planar ? ` planar ${r.bpp}bpp` : ''}`;
+  const { year, prod } = prodOf(r);
+  const l = live && live.get(r.exe);
+  return `<figure class="${k}" data-kind="${k}" data-what="${esc(what.replace(/<\/?b>/g, ''))}"`
+    + ` data-geom="${esc(geom)}"`
+    + (prod ? ` data-prod="${esc(prod)}"` : '')
+    + (year ? ` data-year="${year}"` : '')
+    // The tile carries the path to its own bytes, so pressing Run loads one
+    // production instead of all of them -- there is no page-wide manifest to
+    // keep in step with the tiles. The id is unique per ROW: two directories
+    // ship an ASYLUM.EXE and the name alone cannot pick one.
+    + (l ? ` data-live="${esc(r.name)}" data-live-id="${esc(slugOf(path.basename(path.dirname(r.exe)) + '-' + r.name))}"`
+      + ` data-live-src="live/${esc(l.src)}" data-live-exe="${esc(l.exe)}"`
+      + (l.args ? ` data-live-args="${esc(l.args)}"` : '') : '')
+    + (r.screen ? ` data-screen="${esc(r.screen)}"` : '')
+    + (r.stuckAt ? ` data-stuck="${esc(r.stuckAt)}"` : '')
+    + `><button class="open" type="button" title="${esc(r.name)} - full size">`
+    + `<img loading="lazy" src="shots/${esc(file)}" alt="${esc(alt)}"></button>`
+    + (k === 'text' ? '<span class="mx">text</span>' : '')
+    + (l ? '<span class="runnable">&#9654; run</span>' : '')
+    + `<figcaption><span class="fn" title="${esc(r.name)}">${esc(r.name)}</span>`
+    + `<span class="fp">${what}</span></figcaption></figure>`;
+}
+
+// --- the twenty-program table, read out of the benchmark document -----------
+// Section 6 of docs/toyvm-bench-20.md is a fenced, space-aligned table; the
+// page shows it as HTML so it can be read on a phone. Parsed at build time so
+// the site cannot quote a number the document no longer has.
+function benchTable(md) {
+  if (!md) return '';
+  const lines = md.split('\n');
+  const at = lines.findIndex((l) => /^## 6\./.test(l));
+  if (at < 0) return '';
+  const open = lines.findIndex((l, i) => i > at && l.startsWith('```'));
+  const close = lines.findIndex((l, i) => i > open && l.startsWith('```'));
+  if (open < 0 || close < 0) return '';
+  const rows = lines.slice(open + 1, close).map((l) => l.trim()).filter(Boolean)
+    .map((l) => l.split(/\s+/));
+  const head = rows.shift();
+  const cell = (v, i) => `<td class="${i === 0 || i === head.length - 1 ? 'l' : ''}">${esc(v)}</td>`;
+  return `<div class="scroll"><table>
+    <thead><tr>${head.map((h, i) => `<th class="${i === 0 || i === head.length - 1 ? 'l' : ''}">${esc(h)}</th>`).join('')}</tr></thead>
+    <tbody>
+${rows.map((r) => `      <tr>${r.map(cell).join('')}</tr>`).join('\n')}
+    </tbody>
+  </table></div>`;
+}
+
+// --- the design documents -----------------------------------------------------
+// Title from the file's first heading; the one-line gloss is written here,
+// because a document's own first paragraph is rarely its summary.
+const DOC_GLOSS = {
+  'toyvm-dispatch-shootout.md': 'four dispatch shells on real 16-bit programs; why replicated tail calls win and the giant switch does not',
+  'toyvm-superinstructions.md': 'fusing instruction pairs in threaded code, and what the census said was worth fusing',
+  'toyvm-lazy-flags.md': 'computing flags on demand instead of after every ALU op, measured',
+  'toyvm-dead-flags.md': 'the flag writes nothing reads, found at decode time',
+  'toyvm-decoder-in-wasm.md': 'moving the x86 decoder from JS into the module',
+  'toyvm-reg-specialization.md': 'pinning the register a handler reaches for instead of a jump table into the register file',
+  'toyvm-spin-loops.md': 'the wait loops that were most of the dispatches, and turning them inside one handler',
+  'toyvm-stream-loops.md': 'REP MOVS/STOS as memory.copy, and which other loops are worth folding',
+  'toyvm-trace-blocks.md': 'compiling through a conditional branch',
+  'toyvm-trace-jit.md': 'pricing a trace JIT before building one: the tiers and what each removes',
+  'toyvm-bench-20.md': 'every optimization on the same twenty programs, one evening, one scale',
+};
+const DOC_ORDER = Object.keys(DOC_GLOSS);
+
+function docList() {
+  const items = [];
+  for (const f of DOC_ORDER) {
+    const full = path.join(ROOT, 'docs', f);
+    if (!fs.existsSync(full)) continue;
+    const first = fs.readFileSync(full, 'utf8').split('\n').find((l) => l.startsWith('# ')) || f;
+    items.push(`<li><a href="${REPO}/blob/main/docs/${f}">${esc(first.replace(/^# /, ''))}</a>`
+      + `<span class="gloss">${esc(DOC_GLOSS[f])}</span><span class="m">docs/${f}</span></li>`);
+  }
+  return items.join('\n');
+}
+
+// --- the page shell -------------------------------------------------------------
+const NAV = [
+  ['index.html', 'About'], ['demos.html', 'Demos'], ['benchmarks.html', 'Benchmarks'],
+  ['notes.html', 'Notes'], ['docs.html', 'Docs'],
+];
+
+function page({ file, title, eyebrow, h1, lede, body, stats = '', footer }) {
+  const nav = NAV.map(([href, label]) => `<a href="${href}"${href === file ? ' aria-current="page"' : ''}>${label}</a>`).join('');
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(title)}</title>
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="top"><a class="brand" href="index.html">toyvm</a><span class="links">${nav}</span>
+  <a class="ext" href="${REPO}/tree/main/tools/toyvm">source &#8599;</a></nav>
+
+<header>
+  <p class="eyebrow">${eyebrow}</p>
+  <h1>${h1}</h1>
+  <p class="lede">${lede}</p>
+${stats}
+</header>
+
+${body}
+
+<footer>${footer}</footer>
+
+</div>
+
+<dialog id="lb">
+  <div class="dlg-bar"><span id="lb-name"></span>
+    <a class="r pouet" id="lb-pouet" target="_blank" rel="noopener noreferrer" hidden>pouet &#8599;</a>
+    <span class="r" id="lb-meta"></span></div>
+  <div class="dlg-stage">
+    <img id="lb-img" alt="">
+    <canvas id="lb-canvas" width="320" height="200" hidden tabindex="0"
+      aria-label="live emulator output"></canvas>
+    <button type="button" id="lb-play" hidden
+      title="run this demo here"><span class="tri"></span>Run it</button>
+    <p class="run-note" id="lb-status" hidden></p>
+  </div>
+  <pre class="dlg-screen" id="lb-screen" hidden></pre>
+</dialog>
+
+<script src="site.js"></script>
+</body>
+</html>
+`;
+}
+
+const CSS = `/* One visual world: a CRT in a dark room. No web fonts -- these pages are
+   opened off the filesystem as often as off a server, and a font that only
+   arrives over the network is a font that is usually missing. */
+:root {
+  --ground: #08070d; --panel: #12111c; --panel-2: #191826; --rule: #282539;
+  --ink: #dcd9e8; --dim: #8b87a3; --faint: #5d5a71;
+  --accent: #ff3fc5; --cyan: #3fe0d0; --amber: #f0a63c;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 0 20px 90px; background: var(--ground); color: var(--ink);
+  font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; }
+a { color: var(--cyan); }
+nav.top {
+  display: flex; align-items: center; gap: 18px; padding: 16px 0; border-bottom: 1px solid var(--rule);
+  font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+}
+nav.top .brand { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 14px; letter-spacing: .12em; }
+nav.top .links { display: flex; gap: 4px; flex-wrap: wrap; }
+nav.top .links a { color: var(--dim); text-decoration: none; padding: 5px 10px; border: 1px solid transparent; }
+nav.top .links a:hover, nav.top .links a:focus-visible { color: var(--ink); border-color: var(--rule); }
+nav.top .links a[aria-current="page"] { color: var(--cyan); border-color: var(--cyan); }
+nav.top .ext { margin-left: auto; color: var(--faint); text-decoration: none; }
+nav.top .ext:hover { color: var(--ink); }
+header { padding: 46px 0 28px; border-bottom: 1px solid var(--rule); }
+.eyebrow {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .14em;
+  color: var(--accent); text-transform: uppercase; margin: 0 0 16px;
+}
+h1 { font-size: clamp(26px, 5vw, 40px); line-height: 1.15; margin: 0 0 18px; text-wrap: balance; }
+h1 .b { color: var(--cyan); }
+.lede { max-width: 66ch; color: var(--dim); font-size: 16.5px; margin: 0; }
+.lede strong { color: var(--ink); font-weight: 600; }
+h2 {
+  font-family: var(--mono); font-size: 15px; letter-spacing: .05em;
+  color: var(--cyan); text-transform: uppercase; margin: 0 0 6px;
+}
+h3 { font-size: 17px; margin: 26px 0 8px; }
+section { padding: 44px 0 0; }
+.sub { color: var(--faint); font-size: 13px; margin: 0 0 20px; font-family: var(--mono); }
+p { max-width: 68ch; }
+p.note { color: var(--dim); }
+.m { font-family: var(--mono); font-size: .92em; color: var(--amber); }
+.stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px; margin: 32px 0 0;
+}
+.stat { background: var(--panel); border: 1px solid var(--rule); border-left: 3px solid var(--accent); padding: 18px 20px; }
+.stat:nth-child(2) { border-left-color: var(--cyan); }
+.stat:nth-child(3) { border-left-color: var(--amber); }
+.stat:nth-child(4) { border-left-color: var(--faint); }
+.stat .k { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin: 0 0 8px; }
+.stat .v { font-family: var(--mono); font-weight: 600; font-size: 30px; line-height: 1; font-variant-numeric: tabular-nums; }
+.stat .d { font-size: 13px; color: var(--dim); margin-top: 8px; line-height: 1.45; }
+.scroll { overflow-x: auto; margin: 20px 0 0; border: 1px solid var(--rule); background: var(--panel); }
+pre.fig {
+  margin: 0; padding: 16px 18px; font-family: var(--mono); font-size: 12px;
+  line-height: 1.55; color: var(--dim); white-space: pre; tab-size: 2;
+}
+pre.fig b { color: var(--cyan); font-weight: 600; }
+pre.fig i { color: var(--amber); font-style: normal; }
+pre.fig u { color: var(--accent); text-decoration: none; }
+pre.fig s { color: var(--faint); text-decoration: none; }
+.figcap { font-family: var(--mono); font-size: 11px; color: var(--faint); margin: 7px 0 0; letter-spacing: .04em; }
+table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 13px; }
+th, td { padding: 8px 12px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--rule); }
+th { color: var(--faint); font-weight: 500; text-transform: uppercase; font-size: 11px; letter-spacing: .07em; }
+td.l, th.l { text-align: left; }
+tbody tr:last-child td { border-bottom: 0; }
+/* The gallery toolbar: a filter is a claim about the corpus ("show me what
+   drew nothing"), so the count beside it updates with the selection. */
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 22px 0 0; font-family: var(--mono); font-size: 12px; }
+.bar button {
+  font: inherit; letter-spacing: .06em; text-transform: uppercase; color: var(--dim);
+  background: var(--panel); border: 1px solid var(--rule); padding: 6px 12px; cursor: pointer;
+}
+.bar button[aria-pressed="true"] { color: var(--cyan); border-color: var(--cyan); }
+.bar input {
+  font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--rule);
+  padding: 6px 10px; min-width: 200px;
+}
+.bar input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.bar .count { color: var(--faint); margin-left: auto; }
+.shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; margin: 24px 0 0; }
+figure { margin: 0; background: var(--panel); border: 1px solid var(--rule); padding: 8px; position: relative; }
+figure.blank { opacity: .5; }
+figure[hidden] { display: none; }
+figure .mx {
+  position: absolute; top: 12px; right: 12px; font-family: var(--mono); font-size: 9px;
+  letter-spacing: .08em; text-transform: uppercase; border: 1px solid var(--cyan);
+  color: var(--cyan); padding: 1px 4px; background: rgba(8,7,13,.75);
+}
+/* A runnable tile has to say so on the tile. The Run button lives inside the
+   lightbox, so without this the only way to find out which screenshots will
+   actually start is to open them one at a time. */
+figure .runnable {
+  position: absolute; bottom: 34px; left: 12px; font-family: var(--mono); font-size: 9px;
+  letter-spacing: .08em; text-transform: uppercase; border: 1px solid var(--accent);
+  color: var(--accent); padding: 1px 5px; background: rgba(8,7,13,.8); pointer-events: none;
+}
+figure:hover .runnable, figure:focus-within .runnable { background: var(--accent); color: var(--ground); }
+button.open { display: block; width: 100%; padding: 0; border: 0; background: #000; cursor: zoom-in; }
+button.open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+figure img { display: block; width: 100%; image-rendering: pixelated; }
+figcaption { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-top: 7px; font-family: var(--mono); font-size: 11px; }
+.fn { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp { color: var(--faint); white-space: nowrap; }
+.fp b { color: var(--ink); font-weight: 600; }
+/* The reading list. */
+ul.docs { list-style: none; padding: 0; margin: 20px 0 0; border: 1px solid var(--rule); background: var(--panel); }
+ul.docs li { padding: 14px 18px; border-bottom: 1px solid var(--rule); display: grid; gap: 3px; }
+ul.docs li:last-child { border-bottom: 0; }
+ul.docs a { font-weight: 600; text-decoration: none; }
+ul.docs a:hover { text-decoration: underline; }
+ul.docs .gloss { color: var(--dim); font-size: 14px; }
+ul.docs .m { font-size: 11px; color: var(--faint); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin: 22px 0 0; }
+.card { background: var(--panel); border: 1px solid var(--rule); padding: 18px 20px; }
+.card h3 { margin: 0 0 6px; font-size: 15px; }
+.card h3 a { text-decoration: none; }
+.card p { margin: 0; color: var(--dim); font-size: 14px; }
+dialog {
+  border: 1px solid var(--rule); background: var(--panel); color: var(--ink);
+  padding: 0; width: min(96vw, 1600px); max-width: 96vw; max-height: 94vh;
+}
+dialog::backdrop { background: rgba(2,2,6,.86); }
+dialog img, dialog canvas { display: block; max-width: 100%; max-height: 80vh; margin: 0 auto; background: #000; image-rendering: pixelated; }
+/* The UA stylesheet gives [hidden] display:none at the lowest possible
+   specificity, and the rule above outranks it -- so the screenshot stayed on
+   screen underneath the live canvas the whole time a demo was running. */
+dialog img[hidden], dialog canvas[hidden] { display: none; }
+/* The guest's own resolution is the backing store and CSS does the scaling, so
+   a 320x200 demo stays a 320x200 demo instead of a blurred one. */
+dialog canvas { width: 100%; height: auto; outline: none; }
+dialog canvas:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
+/* The Run control sits ON the screenshot, because what it replaces is the
+   screenshot: press it and the same frame becomes a live one in place. */
+.dlg-stage { background: #000; position: relative; line-height: 0; }
+#lb-play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 10px;
+  font: 600 13px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink); background: rgba(8, 7, 13, .72); border: 1px solid var(--cyan);
+  padding: 14px 22px; cursor: pointer; backdrop-filter: blur(3px);
+  transition: background .12s, color .12s;
+}
+#lb-play:hover, #lb-play:focus-visible { background: var(--cyan); color: var(--ground); }
+#lb-play:hover .tri, #lb-play:focus-visible .tri { border-left-color: var(--ground); }
+#lb-play[disabled] { border-color: var(--rule); color: var(--faint); cursor: default; background: rgba(8,7,13,.8); }
+#lb-play[disabled]:hover { background: rgba(8,7,13,.8); color: var(--faint); }
+#lb-play[hidden] { display: none; }
+.tri {
+  width: 0; height: 0; border: 7px solid transparent;
+  border-left: 12px solid var(--cyan); margin-right: -2px;
+}
+#lb-play[disabled] .tri { border-left-color: var(--faint); }
+/* While it runs, the only chrome over the picture is one line at the bottom. */
+.run-note {
+  position: absolute; left: 0; right: 0; bottom: 0; margin: 0; padding: 7px 12px;
+  font: 11px/1.4 var(--mono); color: var(--dim);
+  background: linear-gradient(rgba(8,7,13,0), rgba(8,7,13,.88) 40%);
+  text-align: center; pointer-events: none;
+}
+.run-note[hidden] { display: none; }
+.run-note.live { color: var(--cyan); }
+.dlg-bar { display: flex; justify-content: space-between; gap: 14px; padding: 10px 14px; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid var(--rule); }
+.dlg-bar .r { color: var(--faint); }
+.dlg-bar .pouet { margin-left: auto; color: var(--cyan); text-decoration: none; border-bottom: 1px solid transparent; }
+.dlg-bar .pouet:hover, .dlg-bar .pouet:focus-visible { border-bottom-color: var(--cyan); }
+.dlg-bar .pouet[hidden] { display: none; }
+.dlg-screen { margin: 0; padding: 12px 14px; border-top: 1px solid var(--rule); font-family: var(--mono); font-size: 11px; line-height: 1.3; color: var(--dim); white-space: pre; overflow: auto; max-height: 18vh; }
+.dlg-screen[hidden] { display: none; }
+footer { margin-top: 60px; padding-top: 22px; border-top: 1px solid var(--rule); color: var(--faint); font-family: var(--mono); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+`;
+
+const JS = `// GENERATED by tools/toyvm/site.js -- do not edit.
+//
+// The lightbox is where a text capture becomes readable: at tile size the
+// CP437 strike is a texture, and the screen it drew is usually the finding.
+// The same dialog is also where a screenshot becomes a running program.
+(function () {
+  var dlg = document.getElementById('lb');
+  if (!dlg) return;
+  var img = document.getElementById('lb-img');
+  var name = document.getElementById('lb-name');
+  var meta = document.getElementById('lb-meta');
+  var screen = document.getElementById('lb-screen');
+  var pouet = document.getElementById('lb-pouet');
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('button.open') : null;
+    if (!btn) return;
+    var fig = btn.closest('figure');
+    var src = btn.querySelector('img');
+    img.src = src.getAttribute('src');
+    img.alt = src.getAttribute('alt') || '';
+    name.textContent = fig.querySelector('.fn').textContent;
+    var bits = [fig.dataset.geom, fig.dataset.what];
+    if (fig.dataset.stuck) bits.push('stuck at ' + fig.dataset.stuck);
+    meta.textContent = bits.filter(Boolean).join('  -  ');
+    if (fig.dataset.prod) {
+      pouet.href = 'https://www.pouet.net/search.php?type=prod&what='
+        + encodeURIComponent(fig.dataset.prod);
+      pouet.title = 'look up "' + fig.dataset.prod + '" on pouet.net';
+      pouet.hidden = false;
+    } else { pouet.hidden = true; }
+    if (fig.dataset.screen) { screen.textContent = fig.dataset.screen; screen.hidden = false; }
+    else { screen.textContent = ''; screen.hidden = true; }
+    showLive(fig.dataset.live ? {
+      name: fig.dataset.live, src: fig.dataset.liveSrc, exe: fig.dataset.liveExe,
+      args: fig.dataset.liveArgs || '',
+    } : null);
+    dlg.showModal();
+  });
+  dlg.addEventListener('click', function (e) { if (e.target === dlg) dlg.close(); });
+  dlg.addEventListener('close', function () { stopLive(); });
+
+  // --- the live half -------------------------------------------------------
+  // Every demo ships with the site as bytes, and its tile gets a Run button:
+  // the same emulator that took the screenshot, in this tab, driven a few
+  // milliseconds per animation frame so the page stays responsive.
+  //
+  // The VM is half a megabyte of script and most visitors are here to look at
+  // screenshots, so none of it loads until someone presses Run. From a file://
+  // URL that has to be a <script> tag -- fetch, modules and workers are all
+  // refused there -- which is also why the emulator runs on this thread.
+  var playBtn = document.getElementById('lb-play');
+  var statusEl = document.getElementById('lb-status');
+  var canvas = document.getElementById('lb-canvas');
+  var current = null, run = null, loading = null;
+  var fetched = {};
+
+  function showLive(what) {
+    stopLive();
+    current = what;
+    playBtn.hidden = !what;
+    playBtn.disabled = false;
+    say('', false);
+  }
+
+  function say(text, live) {
+    statusEl.textContent = text;
+    statusEl.hidden = !text;
+    statusEl.className = 'run-note' + (live ? ' live' : '');
+  }
+
+  // Back to the screenshot. The button comes back with it, because the two are
+  // one control: the picture is either the frame we took or the one running.
+  function stopLive() {
+    if (run) { run.stop(); run = null; self.liveRun = null; }
+    canvas.hidden = true;
+    img.hidden = false;
+    if (current) { playBtn.hidden = false; playBtn.disabled = false; }
+    say('', false);
+  }
+
+  // One <script> tag, resolved when it has run. This is how the bytes arrive
+  // from a file:// URL, where fetch is refused.
+  function script(src) {
+    return new Promise(function (ok, fail) {
+      var el = document.createElement('script');
+      el.src = src;
+      el.onload = function () { ok(); };
+      el.onerror = function () { fail(new Error(src + ' did not load')); };
+      document.head.appendChild(el);
+    });
+  }
+
+  function loadVm() {
+    if (!loading) loading = script('live/toyvm-bundle.js');
+    return loading;
+  }
+
+  // Only the production that was pressed. Every demo in one script would mean
+  // each visitor downloads the whole corpus to watch one of them.
+  function loadProgram() {
+    if (!current.src) return Promise.reject(new Error(current.name + ' has no bytes with the page'));
+    if (!fetched[current.src]) fetched[current.src] = script(current.src);
+    return fetched[current.src];
+  }
+
+  function b64(s) {
+    var bin = atob(s);
+    var b = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+    return b;
+  }
+
+  playBtn.addEventListener('click', function () {
+    if (!current || run) return;
+    playBtn.disabled = true;
+    say('loading the emulator...');
+    loadVm().then(loadProgram).then(function () {
+      var key = current.src.split('/').pop().replace(/\\.js$/, '');
+      var program = self.ToyVMPrograms && self.ToyVMPrograms[key];
+      if (!program) throw new Error(current.name + ' was not packed with the page');
+      // base64 in, bytes out, mounted as the bundle's disk: DOS opens a data
+      // file by name through the shim's fs, and the shim reads from exactly
+      // this map. A previous page handed the bytes to LiveRun and never
+      // mounted them, so every demo with a data file beside it opened nothing.
+      var ToyVM = self.ToyVM;
+      ToyVM.unmountAll();
+      var files = {};
+      Object.keys(program.files).forEach(function (n) {
+        files[n] = b64(program.files[n]);
+        ToyVM.mount(n, files[n]);
+      });
+      var LiveRun = ToyVM.require('tools/toyvm/live.js').LiveRun;
+      run = new LiveRun({
+        canvas: canvas,
+        exe: current.exe,
+        args: current.args,
+        files: files,
+        // The same menu answerer the sweep ran with. The tile above this canvas
+        // is a screenshot taken WITH it, so without it the page promises a
+        // picture and then sits on "waiting for a key". It only answers when
+        // the guest is blocked and nothing real is queued, so a visitor who
+        // types still drives.
+        autoKey: true,
+        onStatus: function (s) {
+          if (s.state === 'running') say('running - click the screen, then type', true);
+          else if (s.state === 'exited') say('the program exited');
+          else if (s.state === 'waiting') say('waiting for a key - click the screen and press one');
+        },
+      });
+      // Reachable from the console, on purpose: liveRun.session.dispatched is
+      // the only way to tell a demo that is drawing nothing yet from one that
+      // is not running at all, and both look like a black rectangle.
+      self.liveRun = run;
+      // The screenshot steps aside and the button goes with it: from here the
+      // picture IS the program, and closing the lightbox is how you stop it.
+      img.hidden = true;
+      canvas.hidden = false;
+      playBtn.hidden = true;
+      return run.start().then(function () { canvas.focus(); });
+    }).catch(function (e) {
+      playBtn.disabled = false;
+      say(String((e && e.message) || e));
+    });
+  });
+
+  // Keys go to the guest only while the canvas has focus, so the dialog's own
+  // Escape-to-close keeps working everywhere else on the page.
+  canvas.addEventListener('keydown', function (e) {
+    if (!run) return;
+    e.preventDefault();
+    e.stopPropagation();
+    run.key(e);
+  });
+})();
+
+// --- the gallery filter --------------------------------------------------------
+// Only on pages that have one. A filter is a claim about the corpus, so the
+// count next to it says how many tiles the claim covers.
+(function () {
+  var bar = document.getElementById('filter');
+  if (!bar) return;
+  var grid = document.getElementById('grid');
+  var count = document.getElementById('filter-count');
+  var q = document.getElementById('filter-q');
+  var kindSel = 'all';
+  function apply() {
+    var text = (q.value || '').trim().toLowerCase();
+    var shown = 0;
+    Array.prototype.forEach.call(grid.querySelectorAll('figure'), function (f) {
+      var ok = (kindSel === 'all' || f.dataset.kind === kindSel)
+        && (!text || (f.querySelector('.fn').textContent + ' ' + (f.dataset.prod || '')
+          + ' ' + (f.dataset.year || '') + ' ' + (f.dataset.screen || '')).toLowerCase().indexOf(text) >= 0);
+      f.hidden = !ok;
+      if (ok) shown++;
+    });
+    count.textContent = shown + ' of ' + grid.querySelectorAll('figure').length;
+  }
+  bar.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button[data-kind]') : null;
+    if (!b) return;
+    kindSel = b.dataset.kind;
+    Array.prototype.forEach.call(bar.querySelectorAll('button[data-kind]'), function (x) {
+      x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
+    });
+    apply();
+  });
+  q.addEventListener('input', apply);
+  apply();
+})();
+`;
+
+function main() {
+  const json = arg('json');
+  const out = path.resolve(ROOT, arg('out', path.join('docs', 'dos-corpus')));
+  const benchMd = arg('bench', path.join(ROOT, 'docs', 'toyvm-bench-20.md'));
+  if (!json) {
+    console.error('usage: site.js --json=SWEEP.json [--out=docs/dos-corpus] [--bench=docs/toyvm-bench-20.md]');
+    process.exit(2);
+  }
+  const sweep = JSON.parse(fs.readFileSync(json, 'utf8'));
+  const shots = path.join(out, 'shots');
+  fs.mkdirSync(shots, { recursive: true });
+
+  // Graphics first, then text, each by how much is on the surface; the blanks
+  // last, so the tail of the grid is the honest part.
+  const rank = { vga: 3, text: 2, blank: 0 };
+  const rows = sweep.rows.filter((r) => r.png && fs.existsSync(r.png));
+  // A run that never came back has no picture to show and is not a blank
+  // screen: it is a program the harness could not finish photographing. Those
+  // rows get no tile, but they belong in the table -- dropping them would make
+  // the corpus look smaller than it is and hide the slowest failures.
+  const failed = sweep.rows.filter((r) => !r.png);
+  rows.sort((a, b) => rank[kind(b)] - rank[kind(a)]
+    || (b.pixels || 0) - (a.pixels || 0) || (b.cells || 0) - (a.cells || 0)
+    || (a.name < b.name ? -1 : 1));
+
+  // A stale shot from a program that has since been dropped from the corpus
+  // would sit in the directory forever, so the copy is a replace.
+  for (const f of fs.readdirSync(shots)) fs.unlinkSync(path.join(shots, f));
+  const files = new Map();
+  for (const r of rows) {
+    const file = path.basename(r.png);
+    files.set(r, file);
+    fs.copyFileSync(r.png, path.join(shots, file));
+  }
+
+  const n = { vga: 0, text: 0, blank: 0 };
+  for (const r of rows) n[kind(r)]++;
+  const total = rows.length + failed.length;
+  const live = liveIndex(out);
+  const runnable = rows.filter((r) => live.has(r.exe)).length;
+  const prods = new Set(rows.map((r) => path.dirname(r.exe || ''))).size;
+
+  const statsHtml = (list) => `  <div class="stats">
+${list.map(([k, v, d]) => `    <div class="stat"><p class="k">${k}</p>`
+    + `<p class="v">${v}</p><p class="d">${d}</p></div>`).join('\n')}
+  </div>`;
+
+  const prose = (name) => {
+    const f = path.join(out, 'prose', name);
+    return fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '';
+  };
+  const stamp = `Generated by <span class="m">tools/toyvm/site.js</span> from
+<span class="m">${esc(path.basename(json))}</span>. Corpus:
+<span class="m">${esc(sweep.dir || '')}</span>, fetched by
+<span class="m">tools/toyvm/fetch-demos.js</span>. Source:
+<a href="${REPO}/tree/main/tools/toyvm">${REPO.replace('https://', '')}/tools/toyvm</a>.`;
+
+  // --- index.html --------------------------------------------------------------
+  // A handful of the runnable graphics tiles, one per production, most pixels
+  // first: the front page should show the machine doing the thing.
+  const seenProd = new Set();
+  const featured = rows.filter((r) => kind(r) === 'vga' && live.has(r.exe)).filter((r) => {
+    const d = path.dirname(r.exe);
+    if (seenProd.has(d)) return false;
+    seenProd.add(d);
+    return true;
+  }).slice(0, 8);
+  const about = prose('about.html')
+    .replace(/__TOTAL__/g, String(total))
+    .replace(/__DREW__/g, String(n.vga + n.text))
+    .replace(/__RUNNABLE__/g, String(runnable))
+    .replace(/__FEATURED__/g, () => featured.map((r) => tile(r, files.get(r), live)).join('\n    '));
+  fs.writeFileSync(path.join(out, 'index.html'), page({
+    file: 'index.html',
+    title: 'toyvm - a DOS machine in WebAssembly',
+    eyebrow: 'tools/toyvm - a 16-bit PC in WebAssembly',
+    h1: `A DOS machine, generated as wasm,<br>that runs <span class="b">${total} demos</span> in this tab`,
+    lede: `A threaded-code x86 interpreter with a trace JIT above it and a VGA, a
+  keyboard and DOS around it, built to measure dispatch strategies on real
+  programs and grown into a machine that runs them. <strong>${n.vga + n.text} of
+  ${total}</strong> demoscene productions from 1993&ndash;1995 draw a screen; every
+  one of them has a Run button on the <a href="demos.html">demos</a> page.`,
+    stats: statsHtml([
+      ['programs', total, `${prods} productions, fetched and unpacked by the harness`],
+      ['draw a screen', n.vga + n.text, `${n.vga} in a VGA mode, ${n.text} on the text console`],
+      ['runnable here', runnable, 'ship as bytes with the site; press Run on any tile'],
+      ['dispatch shells', 4, 'plus three JIT tiers, all measured on these programs'],
+    ]),
+    body: about,
+    footer: stamp,
+  }));
+
+  // --- demos.html --------------------------------------------------------------
+  // The blanks, with whatever the run last knew about them. This is the table
+  // that gets shorter; it is worth having it generated rather than retyped.
+  const blanks = rows.filter((r) => kind(r) === 'blank');
+  const state = (r) => (!r.png ? `never finished (${r.failed || 'no capture'})`
+    : r.blockedOn32 ? `32-bit protected-mode code at ${r.blockedOn32}`
+      : r.badSelector ? `CS names no GDT descriptor at ${r.badSelector}`
+        : r.stuckAt ? `stuck at ${r.stuckAt}`
+          : r.blockedOnKey ? 'waiting for a key' : 'ran out of budget');
+  const blankRows = [...blanks, ...failed]
+    .map((r) => `<tr><td class="l">${esc(r.name)}</td>`
+      + `<td class="l">${esc(state(r))}</td>`
+      + `<td>${r.dispatched ? r.dispatched.toLocaleString() : '&mdash;'}</td></tr>`).join('\n');
+  const pm32 = blanks.filter((r) => r.blockedOn32).length;
+  fs.writeFileSync(path.join(out, 'demos.html'), page({
+    file: 'demos.html',
+    title: 'toyvm - the DOS corpus, one screenshot each',
+    eyebrow: 'tools/toyvm - dos corpus sweep',
+    h1: `${total} DOS demos,<br>one screenshot <span class="b">each</span></h1>`.replace('</h1>', ''),
+    lede: `Every program in the corpus is run headless in the toy VM and
+  photographed off whichever surface it actually drew on -- the VGA planes or
+  the text console. <strong>${n.vga + n.text} of ${total}</strong> put something
+  on screen. The ${n.blank} that drew nothing are on the page too, marked,
+  because a blank tile is the work list. Click a tile for full size; press
+  <strong>Run it</strong> to start that program here, with your keyboard.`,
+    stats: statsHtml([
+      ['programs swept', total, 'every executable the fetch unpacked, one child process each'],
+      ['drew graphics', n.vga, 'wrote pixels to a VGA mode'],
+      ['drew text', n.text, 'filled the console grid instead'],
+      ['nothing to show', n.blank + failed.length,
+        `${n.blank} drew nothing, ${failed.length} never finished -- the work list`],
+    ]),
+    body: `<section>
+  <h2>The whole corpus</h2>
+  <p class="sub">graphics first, then text, then the blanks - ${runnable} of ${rows.length} tiles run in the page</p>
+  <div class="bar" id="filter">
+    <button type="button" data-kind="all" aria-pressed="true">all</button>
+    <button type="button" data-kind="vga" aria-pressed="false">graphics</button>
+    <button type="button" data-kind="text" aria-pressed="false">text</button>
+    <button type="button" data-kind="blank" aria-pressed="false">blank</button>
+    <input type="search" id="filter-q" placeholder="name, production, year, or screen text" aria-label="filter tiles">
+    <span class="count" id="filter-count"></span>
+  </div>
+  <div class="shots" id="grid">
+${rows.map((r) => tile(r, files.get(r), live)).join('\n')}
+  </div>
+</section>
+
+<section>
+  <h2>What is still blank</h2>
+  <p class="sub">${blanks.length + failed.length} programs, and where each one stopped${
+  pm32 ? ` &mdash; ${pm32} of them reached 32-bit protected-mode code, which this decoder does not read and does not guess at` : ''}</p>
+  <div class="scroll"><table>
+    <thead><tr><th class="l">program</th><th class="l">last known state</th><th>dispatches</th></tr></thead>
+    <tbody>
+${blankRows}
+    </tbody>
+  </table></div>
+</section>`,
+    footer: stamp,
+  }));
+
+  // --- benchmarks.html ---------------------------------------------------------
+  const md = fs.existsSync(benchMd) ? fs.readFileSync(benchMd, 'utf8') : '';
+  const table = benchTable(md);
+  fs.writeFileSync(path.join(out, 'benchmarks.html'), page({
+    file: 'benchmarks.html',
+    title: 'toyvm - benchmarks',
+    eyebrow: 'tools/toyvm - measured on the corpus',
+    h1: 'Seven ways to run<br>the same <span class="b">x86</span>',
+    lede: `Four dispatch shells, a stack of interpreter passes and three JIT tiers,
+  every one of them measured on the demos in the gallery rather than on a
+  synthetic loop -- because a synthetic loop is perfectly predicted by any
+  scheme, which is the one property real programs do not have.`,
+    body: `${prose('benchmarks.html')}
+${table ? `<section>
+  <h2>All three backends on one scale</h2>
+  <p class="sub">twenty programs, every column a whole-program percentage against the shipped interpreter</p>
+  <p>Read across a row before reading down a column. <span class="m">ns</span>
+  is the shipped shell's cost per dispatch; <span class="m">repl</span> the
+  replicated-tail shell; the <span class="m">no…</span> columns are the run
+  <em>without</em> that pass, so a negative number is what the pass is worth.
+  <span class="m">mshare/t03x/mceil</span> are the micro-op hot-trace share, its
+  tier-3 ratio and the whole-program ceiling that implies;
+  <span class="m">jshare/gate/jceil/+hb/jcpu</span> are the region JIT's share,
+  gate ratio, ceiling, handback delta and measured CPU change. A
+  <span class="m">-</span> is a measurement the tool could not take on that
+  program, and the verdict says why. The full method, the raw outputs and the
+  outliers are in <a href="${REPO}/blob/main/docs/toyvm-bench-20.md">docs/toyvm-bench-20.md</a>.</p>
+  ${table}
+</section>` : ''}
+<section>
+  <h2>Further reading</h2>
+  <p class="sub">the measurements, one page each</p>
+  <div class="cards">
+    <div class="card"><h3><a href="../toyvm-core10/index.html">Nine traces, four tiers</a></h3>
+      <p>The trace JIT priced tier by tier on the hot loops of the core set: what each pass removes and what it is worth.</p></div>
+    <div class="card"><h3><a href="${REPO}/blob/main/docs/toyvm-dispatch-shootout.md">The dispatch shootout</a></h3>
+      <p>The four shells on ten real programs, three independent sweeps, and why the microbenchmark got the switch wrong.</p></div>
+    <div class="card"><h3><a href="docs.html">Every design document</a></h3>
+      <p>Superinstructions, lazy and dead flags, the decoder in wasm, spin loops, stream loops, the trace JIT.</p></div>
+  </div>
+</section>`,
+    footer: stamp,
+  }));
+
+  // --- notes.html --------------------------------------------------------------
+  fs.writeFileSync(path.join(out, 'notes.html'), page({
+    file: 'notes.html',
+    title: 'toyvm - notes from the corpus',
+    eyebrow: 'tools/toyvm - what the demos taught the machine',
+    h1: 'They were asking for DOS,<br>not for a <span class="b">CPU</span>',
+    lede: `The record of what stopped each program and what was built to get it
+  past that, in the order it happened. Not one blocker has been an instruction:
+  every one was a driver, a file, a paragraph of memory or a keystroke the
+  machine did not yet provide. Figures here are the same captures as the tiles
+  in the <a href="demos.html">gallery</a>, and they run.`,
+    body: prose('notes.html'),
+    footer: stamp,
+  }));
+
+  // --- docs.html ---------------------------------------------------------------
+  fs.writeFileSync(path.join(out, 'docs.html'), page({
+    file: 'docs.html',
+    title: 'toyvm - design documents',
+    eyebrow: 'tools/toyvm - reading list',
+    h1: 'The design documents,<br>in the order to <span class="b">read</span> them',
+    lede: `Each one is a measurement with a question in front of it. They live in
+  the repository beside the code they describe; these are links to them there.`,
+    body: `<section>
+  <h2>Documents</h2>
+  <p class="sub">docs/toyvm-*.md on GitHub</p>
+  <ul class="docs">
+${docList()}
+  </ul>
+</section>
+<section>
+  <h2>The code</h2>
+  <p class="sub">where each part of the machine lives</p>
+  <div class="cards">
+    <div class="card"><h3><a href="${REPO}/blob/main/tools/toyvm/emit.js">emit.js</a></h3><p>The generator: every handler once, emitted behind whichever dispatch shell is asked for.</p></div>
+    <div class="card"><h3><a href="${REPO}/blob/main/tools/toyvm/decode.js">decode.js</a></h3><p>x86 bytes into arena words, with the fusion and spin-loop passes.</p></div>
+    <div class="card"><h3><a href="${REPO}/blob/main/tools/toyvm/dos.js">dos.js</a></h3><p>The machine: DOS, BIOS, XMS, EMS, the VGA, the keyboard, the menu reader.</p></div>
+    <div class="card"><h3><a href="${REPO}/blob/main/tools/toyvm/trace-jit.js">trace-jit.js</a></h3><p>The tiers: stitching, constant propagation, register-file folding, dead flags.</p></div>
+    <div class="card"><h3><a href="${REPO}/blob/main/tools/toyvm/region-jit.js">region-jit.js</a></h3><p>Installing a compiled region into the running program, and the gate that prices it.</p></div>
+    <div class="card"><h3><a href="${REPO}/blob/main/tools/toyvm/live.js">live.js</a></h3><p>The page-side driver behind every Run button here.</p></div>
+    <div class="card"><h3><a href="${REPO}/blob/main/tools/toyvm/shot-sweep.js">shot-sweep.js</a></h3><p>The headless sweep that photographs the corpus and writes the JSON this site is built from.</p></div>
+    <div class="card"><h3><a href="${REPO}/blob/main/tools/toyvm/site.js">site.js</a></h3><p>This site, generated.</p></div>
+  </div>
+</section>`,
+    footer: stamp,
+  }));
+
+  fs.writeFileSync(path.join(out, 'site.css'), CSS);
+  fs.writeFileSync(path.join(out, 'site.js'), JS);
+  // The single-page report this replaced spliced its prose from here; a copy
+  // left behind would be a second, stale source of the same text.
+  const oldProse = path.join(out, 'sections.html');
+  if (fs.existsSync(oldProse)) fs.unlinkSync(oldProse);
+
+  console.log(`${path.relative(ROOT, out)}/: index, demos, benchmarks, notes, docs; `
+    + `${rows.length} tiles (${n.vga} graphics, ${n.text} text, ${n.blank} blank), `
+    + `${runnable} runnable, ${files.size} PNGs`);
+}
+
+main();

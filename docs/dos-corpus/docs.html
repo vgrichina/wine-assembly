@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>toyvm - design documents</title>
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav class="top"><a class="brand" href="index.html">toyvm</a><span class="links"><a href="index.html">About</a><a href="demos.html">Demos</a><a href="benchmarks.html">Benchmarks</a><a href="notes.html">Notes</a><a href="docs.html" aria-current="page">Docs</a></span>
+  <a class="ext" href="https://github.com/vgrichina/wine-assembly/tree/main/tools/toyvm">source &#8599;</a></nav>
+
+<header>
+  <p class="eyebrow">tools/toyvm - reading list</p>
+  <h1>The design documents,<br>in the order to <span class="b">read</span> them</h1>
+  <p class="lede">Each one is a measurement with a question in front of it. They live in
+  the repository beside the code they describe; these are links to them there.</p>
+
+</header>
+
+<section>
+  <h2>Documents</h2>
+  <p class="sub">docs/toyvm-*.md on GitHub</p>
+  <ul class="docs">
+<li><a href="https://github.com/vgrichina/wine-assembly/blob/main/docs/toyvm-dispatch-shootout.md">The toy VM: comparing dispatch shells on real 16-bit programs</a><span class="gloss">four dispatch shells on real 16-bit programs; why replicated tail calls win and the giant switch does not</span><span class="m">docs/toyvm-dispatch-shootout.md</span></li>
+<li><a href="https://github.com/vgrichina/wine-assembly/blob/main/docs/toyvm-superinstructions.md">Superinstructions in the toy VM's threaded code</a><span class="gloss">fusing instruction pairs in threaded code, and what the census said was worth fusing</span><span class="m">docs/toyvm-superinstructions.md</span></li>
+<li><a href="https://github.com/vgrichina/wine-assembly/blob/main/docs/toyvm-lazy-flags.md">Lazy flags in the toy VM</a><span class="gloss">computing flags on demand instead of after every ALU op, measured</span><span class="m">docs/toyvm-lazy-flags.md</span></li>
+<li><a href="https://github.com/vgrichina/wine-assembly/blob/main/docs/toyvm-dead-flags.md">Dead flag writes in the toy VM</a><span class="gloss">the flag writes nothing reads, found at decode time</span><span class="m">docs/toyvm-dead-flags.md</span></li>
+<li><a href="https://github.com/vgrichina/wine-assembly/blob/main/docs/toyvm-decoder-in-wasm.md">Moving the toy VM's decoder into wasm</a><span class="gloss">moving the x86 decoder from JS into the module</span><span class="m">docs/toyvm-decoder-in-wasm.md</span></li>
+<li><a href="https://github.com/vgrichina/wine-assembly/blob/main/docs/toyvm-reg-specialization.md">Pinning the register a handler reaches for</a><span class="gloss">pinning the register a handler reaches for instead of a jump table into the register file</span><span class="m">docs/toyvm-reg-specialization.md</span></li>
+<li><a href="https://github.com/vgrichina/wine-assembly/blob/main/docs/toyvm-spin-loops.md">Not running the loop that waits</a><span class="gloss">the wait loops that were most of the dispatches, and turning them inside one handler</span><span class="m">docs/toyvm-spin-loops.md</span></li>
+<li><a href="https://github.com/vgrichina/wine-assembly/blob/main/docs/toyvm-stream-loops.md">The loops that are worth folding are not the ones that stop</a><span class="gloss">REP MOVS/STOS as memory.copy, and which other loops are worth folding</span><span class="m">docs/toyvm-stream-loops.md</span></li>
+<li><a href="https://github.com/vgrichina/wine-assembly/blob/main/docs/toyvm-trace-blocks.md">Compiling through a conditional branch</a><span class="gloss">compiling through a conditional branch</span><span class="m">docs/toyvm-trace-blocks.md</span></li>
+<li><a href="https://github.com/vgrichina/wine-assembly/blob/main/docs/toyvm-trace-jit.md">Pricing a trace JIT before building one</a><span class="gloss">pricing a trace JIT before building one: the tiers and what each removes</span><span class="m">docs/toyvm-trace-jit.md</span></li>
+<li><a href="https://github.com/vgrichina/wine-assembly/blob/main/docs/toyvm-bench-20.md">The three backends over the twenty-program set (2026-09-01)</a><span class="gloss">every optimization on the same twenty programs, one evening, one scale</span><span class="m">docs/toyvm-bench-20.md</span></li>
+  </ul>
+</section>
+<section>
+  <h2>The code</h2>
+  <p class="sub">where each part of the machine lives</p>
+  <div class="cards">
+    <div class="card"><h3><a href="https://github.com/vgrichina/wine-assembly/blob/main/tools/toyvm/emit.js">emit.js</a></h3><p>The generator: every handler once, emitted behind whichever dispatch shell is asked for.</p></div>
+    <div class="card"><h3><a href="https://github.com/vgrichina/wine-assembly/blob/main/tools/toyvm/decode.js">decode.js</a></h3><p>x86 bytes into arena words, with the fusion and spin-loop passes.</p></div>
+    <div class="card"><h3><a href="https://github.com/vgrichina/wine-assembly/blob/main/tools/toyvm/dos.js">dos.js</a></h3><p>The machine: DOS, BIOS, XMS, EMS, the VGA, the keyboard, the menu reader.</p></div>
+    <div class="card"><h3><a href="https://github.com/vgrichina/wine-assembly/blob/main/tools/toyvm/trace-jit.js">trace-jit.js</a></h3><p>The tiers: stitching, constant propagation, register-file folding, dead flags.</p></div>
+    <div class="card"><h3><a href="https://github.com/vgrichina/wine-assembly/blob/main/tools/toyvm/region-jit.js">region-jit.js</a></h3><p>Installing a compiled region into the running program, and the gate that prices it.</p></div>
+    <div class="card"><h3><a href="https://github.com/vgrichina/wine-assembly/blob/main/tools/toyvm/live.js">live.js</a></h3><p>The page-side driver behind every Run button here.</p></div>
+    <div class="card"><h3><a href="https://github.com/vgrichina/wine-assembly/blob/main/tools/toyvm/shot-sweep.js">shot-sweep.js</a></h3><p>The headless sweep that photographs the corpus and writes the JSON this site is built from.</p></div>
+    <div class="card"><h3><a href="https://github.com/vgrichina/wine-assembly/blob/main/tools/toyvm/site.js">site.js</a></h3><p>This site, generated.</p></div>
+  </div>
+</section>
+
+<footer>Generated by <span class="m">tools/toyvm/site.js</span> from
+<span class="m">shots.json</span>. Corpus:
+<span class="m">/tmp/demos</span>, fetched by
+<span class="m">tools/toyvm/fetch-demos.js</span>. Source:
+<a href="https://github.com/vgrichina/wine-assembly/tree/main/tools/toyvm">github.com/vgrichina/wine-assembly/tools/toyvm</a>.</footer>
+
+</div>
+
+<dialog id="lb">
+  <div class="dlg-bar"><span id="lb-name"></span>
+    <a class="r pouet" id="lb-pouet" target="_blank" rel="noopener noreferrer" hidden>pouet &#8599;</a>
+    <span class="r" id="lb-meta"></span></div>
+  <div class="dlg-stage">
+    <img id="lb-img" alt="">
+    <canvas id="lb-canvas" width="320" height="200" hidden tabindex="0"
+      aria-label="live emulator output"></canvas>
+    <button type="button" id="lb-play" hidden
+      title="run this demo here"><span class="tri"></span>Run it</button>
+    <p class="run-note" id="lb-status" hidden></p>
+  </div>
+  <pre class="dlg-screen" id="lb-screen" hidden></pre>
+</dialog>
+
+<script src="site.js"></script>
+</body>
+</html>
