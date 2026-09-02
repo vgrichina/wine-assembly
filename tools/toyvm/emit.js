@@ -1392,10 +1392,68 @@ function genStrings() {
         // this must also charge the host's step budget; here that is $steps,
         // decremented per element.
         const isCompare = name === 'scas' || name === 'cmps';
+        // The widened form of MOVS/STOS: see $rep_span_ok. Locals: t1 = n,
+        // t2 = bytes, t3 = di, t4 = dst lin, t5 = si (or the pattern for
+        // STOS), t6 = src lin, t7 = end. Every `br $slow` is a condition the
+        // byte loop would have handled one element at a time.
+        const decl = (k, cond) => `(if ${cond} (then (call $rep_decl (i32.const ${k})) (br $slow)))`;
+        const noWrap = (off, bytes) => decl(3, a === 32
+          ? `(i32.lt_u (i32.add ${off} ${bytes}) ${off})`
+          : `(i32.gt_u (i32.add ${off} ${bytes}) (i32.const 0x10000))`);
+        const bumpBy = (reg, bytes) =>
+          `(call ${st} (i32.const ${{ si: 6, di: 7 }[reg]}) (i32.add ${idx(reg)} ${bytes}))`;
+        const cxZero = a === 32
+          ? '(global.set $cx (i32.const 0))'
+          : '(global.set $cx (i32.and (global.get $cx) (i32.const 0xFFFF0000)))';
+        // Fill [t4, t4+t2) with one element: memory.fill for bytes, a store
+        // loop for words and dwords (t5 the pattern, t6 the cursor, t7 the end).
+        const fillWith = (v) => sz === 1
+          ? `(memory.fill (local.get $t4) ${v} (local.get $t2))`
+          : `(local.set $t5 ${v})
+      (local.set $t6 (local.get $t4))
+      (local.set $t7 (i32.add (local.get $t4) (local.get $t2)))
+      (loop $f
+        (i32.store${w === 32 ? '' : '16'} (local.get $t6) (local.get $t5))
+        (local.set $t6 (i32.add (local.get $t6) (i32.const ${sz})))
+        (br_if $f (i32.lt_u (local.get $t6) (local.get $t7))))`;
+        const fast = isCompare ? '' : `
+  (block $slow
+    (local.set $t1 (call ${count}))
+    (br_if $slow (i32.eqz (local.get $t1)))
+    ${decl(0, '(i32.eqz (global.get $rep_fast))')}
+    ${decl(1, bit(F.DF))}
+    ${decl(2, '(i32.ge_u (local.get $t1) (i32.const 0x10000000))')}
+    (local.set $t2 (i32.mul (local.get $t1) (i32.const ${sz})))
+    (local.set $t3 ${idx('di')})
+    ${noWrap('(local.get $t3)', '(local.get $t2)')}
+    (local.set $t4 (call $lin (i32.const 0) (local.get $t3)))
+    ${decl(4, '(i32.eqz (call $rep_span_ok (local.get $t4) (local.get $t2)))')}
+    ${decl(5, '(i32.eqz (call $code_clear (local.get $t4) (local.get $t2)))')}
+    ${name === 'movs' ? `
+    (local.set $t5 ${idx('si')})
+    ${noWrap('(local.get $t5)', '(local.get $t2)')}
+    (local.set $t6 (call $lin (local.get $t0) (local.get $t5)))
+    ${decl(4, '(i32.eqz (call $rep_span_ok (local.get $t6) (local.get $t2)))')}
+    ;; A forward copy whose destination starts inside its source replicates
+    ;; (the 8086 reads what it just wrote); memory.copy would not. One element
+    ;; ahead is the memset idiom -- write a[0], then copy a[0..n) to a[1..n] --
+    ;; and IS a fill with that element; any other stride goes to the loop.
+    (if (i32.and (i32.gt_u (local.get $t4) (local.get $t6))
+                 (i32.lt_u (local.get $t4) (i32.add (local.get $t6) (local.get $t2))))
+      (then
+        ${decl(6, `(i32.ne (i32.sub (local.get $t4) (local.get $t6)) (i32.const ${sz}))`)}
+        ${fillWith(`(i32.load${w === 32 ? '' : w + '_u'} (local.get $t6))`)})
+      (else (memory.copy (local.get $t4) (local.get $t6) (local.get $t2))))
+    ${bumpBy('si', '(local.get $t2)')}` : fillWith(`(call $rget${w} (i32.const 0))`)}
+    ${bumpBy('di', '(local.get $t2)')}
+    ${cxZero}
+    (global.set $rep_runs (i32.add (global.get $rep_runs) (i32.const 1)))
+    (global.set $rep_bytes (i32.add (global.get $rep_bytes) (local.get $t2)))
+    (global.set $steps (i32.sub (global.get $steps) (local.get $t1))))`;
         for (const rep of (isCompare ? ['rep', 'repne'] : ['rep'])) {
           const zWant = rep === 'rep' ? 1 : 0;
           h(`${rep}_${name}${suffix}${asfx}`, 1, `
-  ${ops(1)}
+  ${ops(1)}${fast}
   (block $done
     (loop $l
       (br_if $done (i32.eqz (call ${count})))
@@ -4256,6 +4314,79 @@ ${memAccessors()}
   (global.set $cx (i32.sub (global.get $cx) (i32.const 1)))
   (global.get $cx))
 
+;; --- The widened REP -------------------------------------------------------
+;;
+;; A REP MOVS/STOS iteration goes through $rd8/$wr8 per byte, and each of those
+;; is a call, a segment-base br_table, an address mask, the VGA-window key
+;; compare and (for a write) a code-bitmap probe -- ten calls or so per byte
+;; moved. Measured over bench-set-20 at 12M dispatches, the bytes retired
+;; inside REP handlers are 85-88% of everything COPPER and DSTNFO do, 67% of
+;; COMPOVRS, 40-55% of daretro, DHADREN, CORE-ADD and CONTACT.
+;;
+;; So when the whole run can be shown, up front, to be a plain range in the
+;; guest's own RAM, it is ONE memory.copy or memory.fill. "Shown up front" is
+;; every condition the per-byte path would have tested, hoisted: the offsets do
+;; not wrap in their segment (16-bit addressing) or overflow (32-bit), the
+;; linear range does not wrap the address mask or leave the wasm memory, it
+;; does not touch the VGA window while the planar key is on, no byte of the
+;; destination is compiled code, and a forward copy does not overlap its own
+;; destination (where the 8086 replicates and memory.copy would memmove). Any
+;; of those failing falls into the byte loop, which is unchanged -- the fast
+;; path leaves CX at zero and the loop finds nothing to do. The registers, the
+;; step charge (one per element) and the flags come out exactly as the loop
+;; would have left them, which is what lets the corpus check this; the direction
+;; flag set is left to the loop too.
+;;
+;; $rep_fast is the A/B switch (--no-rep-fast); 1 by default.
+(global $rep_fast (mut i32) (i32.const 1))
+;; The census: runs widened and bytes they moved, and declined runs by reason
+;; (0 switch off, 1 DF set, 2 count too big, 3 offset wrap, 4 address-mask /
+;; memory / VGA window, 5 compiled code under the destination, 6 forward
+;; overlap). One add per REP run, not per element; get_rep_stat(i) reads them.
+(global $rep_runs (mut i32) (i32.const 0))
+(global $rep_bytes (mut i32) (i32.const 0))
+(global $rep_d0 (mut i32) (i32.const 0)) (global $rep_d1 (mut i32) (i32.const 0))
+(global $rep_d2 (mut i32) (i32.const 0)) (global $rep_d3 (mut i32) (i32.const 0))
+(global $rep_d4 (mut i32) (i32.const 0)) (global $rep_d5 (mut i32) (i32.const 0))
+(global $rep_d6 (mut i32) (i32.const 0))
+(func $rep_decl (param $k i32)
+  ${[0, 1, 2, 3, 4, 5, 6].map(k =>
+    `(if (i32.eq (local.get $k) (i32.const ${k})) (then (global.set $rep_d${k} (i32.add (global.get $rep_d${k}) (i32.const 1)))))`).join('\n  ')})
+(func (export "get_rep_stat") (param $i i32) (result i32)
+  (if (i32.eq (local.get $i) (i32.const 0)) (then (return (global.get $rep_runs))))
+  (if (i32.eq (local.get $i) (i32.const 1)) (then (return (global.get $rep_bytes))))
+  ${[0, 1, 2, 3, 4, 5, 6].map(k =>
+    `(if (i32.eq (local.get $i) (i32.const ${k + 2})) (then (return (global.get $rep_d${k}))))`).join('\n  ')}
+  (i32.const 0))
+
+;; Is [lin, lin+bytes) one plain range: inside the address mask and the wasm
+;; memory, and clear of the VGA window when the planar key is on?
+(func $rep_span_ok (param $lin i32) (param $bytes i32) (result i32)
+  (local $key i32) (local $win i32)
+  (if (i32.gt_u (local.get $bytes)
+                (i32.sub (i32.add (global.get $linmask) (i32.const 1)) (local.get $lin)))
+    (then (return (i32.const 0))))
+  (if (i32.gt_u (local.get $bytes) (i32.sub (i32.const ${isa.MEM_PAGES * 65536}) (local.get $lin)))
+    (then (return (i32.const 0))))
+  (local.set $key (i32.load (i32.const ${isa.VGA_CTL_KEY})))
+  (if (i32.eqz (local.get $key)) (then (return (i32.const 1))))
+  (local.set $win (i32.and (local.get $key) (i32.const 0xFFF0000)))
+  (i32.eqz (i32.and (i32.lt_u (local.get $lin) (i32.add (local.get $win) (i32.const 0x10000)))
+                    (i32.gt_u (i32.add (local.get $lin) (local.get $bytes)) (local.get $win)))))
+
+;; No byte of [lin, lin+bytes) is compiled code. A byte of the bitmap covers
+;; eight guest bytes, so this is bytes/8 loads; conservative at the ends.
+(func $code_clear (param $lin i32) (param $bytes i32) (result i32)
+  (local $p i32) (local $e i32)
+  (local.set $p (i32.add (i32.const ${isa.CODE_BITMAP}) (i32.shr_u (local.get $lin) (i32.const 3))))
+  (local.set $e (i32.add (i32.const ${isa.CODE_BITMAP})
+    (i32.shr_u (i32.add (local.get $lin) (i32.sub (local.get $bytes) (i32.const 1))) (i32.const 3))))
+  (loop $l
+    (if (i32.load8_u (local.get $p)) (then (return (i32.const 0))))
+    (local.set $p (i32.add (local.get $p) (i32.const 1)))
+    (br_if $l (i32.le_u (local.get $p) (local.get $e))))
+  (i32.const 1))
+
 ;; Absolute physical read, for the interrupt vector table at address 0. It is
 ;; not reachable through $rd16, which always goes via a segment register.
 (func $rdphys16 (param $lin i32) (result i32)
@@ -5547,6 +5678,8 @@ ${EXTRA_GLOBALS}
 (func (export "get_vga_reads") (result i32) (global.get $vga_reads))
 (func (export "set_vga_reads") (param $v i32) (global.set $vga_reads (local.get $v)))
 (func (export "vga_status") (result i32) (call $vga_status))
+;; The widened REP MOVS/STOS (see $rep_span_ok); --no-rep-fast is the A/B arm.
+(func (export "set_rep_fast") (param $v i32) (global.set $rep_fast (local.get $v)))
 ;; A hardware IRQ, delivered the same way the CPU delivers everything else.
 ;;
 ;; The host used to build this frame itself, and could only build the real-mode

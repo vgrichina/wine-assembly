@@ -292,3 +292,53 @@ What replaces it: the wrapper has to remove the dispatch, so it has to inline,
 so it has to be generated — at run time, because 500 body shapes defeat a static
 library. `handler-effects.js` and `loop-match.js` remain the right front end for
 picking *which* loop; the back end is [the trace JIT](toyvm-trace-jit.md).
+
+## The one stream that was already a super-op: REP MOVS/STOS (2026-09-02)
+
+Everything above is about loops the guest writes by hand. The guest also writes
+loops the CPU runs for it, and those were already one dispatch: `rep movsb`
+retires its whole count inside one handler. What it was not was *wide* — each
+element went through `$rd8`/`$wr8`, a call, a segment-base `br_table`, the
+address mask, the VGA-window key compare and a code-bitmap probe, per byte.
+
+`rep movs{b,w,d}` and `rep stos{b,w,d}` (both address sizes) now open with a
+guarded fast path: when the run is provably one plain range in RAM it is a
+single `memory.copy` / `memory.fill` (a store loop for a 16/32-bit STOS
+pattern), and the registers, CX and the step charge come out exactly as the
+byte loop leaves them. The guards are the byte path's per-element checks,
+hoisted — DF clear, no offset wrap in the segment (or no 32-bit overflow), the
+linear range inside the address mask and the wasm memory, clear of the VGA
+window while the planar key is on, no compiled code under the destination, and
+no forward overlap unless the destination is exactly one element ahead, which
+is the memset idiom and a fill with that element. Anything else falls into the
+unchanged loop. `--no-rep-fast` is the A/B arm; the summary prints
+`rep widened: N runs, B bytes; declined: ...` by guard.
+
+Measured, bench-set-20 at 12M dispatches, both arms: **20/20 identical**
+handbacks, interrupts, frame hash, pixel count and self-modify count; the 8088
+single-step corpus (A4-AB, a quarter of its 32000 vectors REP-prefixed with
+random CX, DF and segment wraps) passes 100%. Speed, 60M dispatches
+interleaved:
+
+| program | bytes widened / 12M | wasm M/s, byte loop → widened |
+|---|---|---|
+| COPPER | 21.2 MB | 34-41 → 308-363 (**~9x**) |
+| ACCIDENT | 4.3 MB | 59 → 70 |
+| CMA_SHRT, CONTAGIO, ADDY_II | 1.3-1.6 MB | within noise to +15% |
+| everything else | < 0.5 MB | unchanged |
+
+Two corrections to the estimate that motivated this. The "REP share of the
+dispatch clock" figures (COPPER 85%, DSTNFO 88%, daretro 55%…) were derived as
+*dispatches minus handler entries*, and that remainder is not only REP elements
+— a region or a spin twin also retires many steps per entry — so most of those
+shares were regions, not string ops. The census above is the real population:
+COPPER is the one program that moves tens of megabytes through REP, and it is
+the one that moved. And DSTNFO's 88% (EGA planar) and ADDY_II's 5488 declines
+are `vga/mask`: a planar-mode program writing its screen through the graphics
+controller, which only the byte path's write-mode pipeline can do. A widened
+*planar* fill (write mode 0, all-ones bit mask, per-plane `memory.fill`) is the
+obvious next form of this and has ADDY_II and DHADREN as beneficiaries.
+
+What remains of the "byte loops" idea after this is the *unrolled* string op —
+daretro's 353K `lodsb`, CONTACT's 783K `lodsb` + 388K `stosb` — which sit inside
+guest loops with real bodies. That is the trace JIT's population, not REP's.
