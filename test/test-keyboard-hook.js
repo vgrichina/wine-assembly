@@ -21,11 +21,56 @@ const extraWat = String.raw`
   (func (export "test_install_keyboard_hook") (param $proc i32) (result i32)
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
-    (call $handle_SetWindowsHookExA
-      (i32.const 2) (local.get $proc) (i32.const 0) (i32.const 1)
+    (call $handle_SetWindowsHookA
+      (i32.const 2) (local.get $proc) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $saved_esp))
-    (global.get $keyboard_hook_proc))
+    (global.get $eax))
+
+  (func (export "test_install_wide_hook")
+      (param $id_hook i32) (param $proc i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetWindowsHookW
+      (local.get $id_hook) (local.get $proc) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_uninstall_legacy_hook")
+      (param $id_hook i32) (param $proc i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_UnhookWindowsHook
+      (local.get $id_hook) (local.get $proc) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_install_ex_hook")
+      (param $id_hook i32) (param $proc i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetWindowsHookExA
+      (local.get $id_hook) (local.get $proc) (i32.const 0) (i32.const 1)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_uninstall_ex_hook") (param $hook i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_UnhookWindowsHookEx
+      (local.get $hook) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_hook_proc") (param $id_hook i32) (result i32)
+    (select
+      (global.get $keyboard_hook_proc)
+      (global.get $cbt_hook_proc)
+      (i32.eq (local.get $id_hook) (i32.const 2))))
 
   (func (export "test_begin_keyboard_peek")
       (param $msg_ptr i32) (param $remove i32) (result i32)
@@ -93,8 +138,11 @@ function u32(value) {
     0xc2, 0x0c, 0x00,
   ]), toWasm(hook));
 
-  assert.strictEqual(e.test_install_keyboard_hook(hook) >>> 0, hook,
-    'SetWindowsHookExA(WH_KEYBOARD) retains the guest KeyboardProc');
+  const legacyHandle = e.test_install_keyboard_hook(hook) >>> 0;
+  assert.strictEqual(legacyHandle, 0xbeef0002,
+    'SetWindowsHookA(WH_KEYBOARD) returns the keyboard hook handle');
+  assert.strictEqual(e.test_hook_proc(2) >>> 0, hook,
+    'SetWindowsHookA retains the guest KeyboardProc');
   assert.notStrictEqual(e.test_keyboard_hook_thunk() >>> 0, 0,
     'generic callback continuation is initialized');
   assert.strictEqual(e.test_begin_keyboard_peek(msg, 1) >>> 0, hook,
@@ -121,7 +169,42 @@ function u32(value) {
   assert.strictEqual(view.getUint32(toWasm(msg + 12), true), KEY_LPARAM,
     'PeekMessage preserves the hardware key flags in MSG.lParam');
 
-  console.log('PASS  WH_KEYBOARD sees queued keys before PeekMessage returns');
+  assert.strictEqual(e.test_uninstall_legacy_hook(2, hook + 4), 0,
+    'UnhookWindowsHook rejects a different procedure');
+  assert.strictEqual(e.test_hook_proc(2) >>> 0, hook,
+    'a failed legacy unhook leaves the KeyboardProc installed');
+  assert.strictEqual(e.test_uninstall_legacy_hook(2, hook), 1,
+    'UnhookWindowsHook removes the matching KeyboardProc');
+  assert.strictEqual(e.test_hook_proc(2), 0,
+    'the removed KeyboardProc is no longer dispatchable');
+  assert.strictEqual(e.test_uninstall_legacy_hook(2, hook), 0,
+    'UnhookWindowsHook rejects an already-removed procedure');
+
+  assert.strictEqual(e.test_install_wide_hook(5, hook) >>> 0, 0xbeef0005,
+    'SetWindowsHookW shares the CBT installation path');
+  assert.strictEqual(e.test_hook_proc(5) >>> 0, hook,
+    'SetWindowsHookW retains the guest CBTProc');
+  assert.strictEqual(e.test_uninstall_legacy_hook(5, hook), 1,
+    'the legacy remover clears the matching CBTProc');
+
+  assert.strictEqual(e.test_install_keyboard_hook(0), 0,
+    'a null legacy hook procedure fails instead of returning a fake handle');
+  assert.strictEqual(e.test_install_wide_hook(3, hook), 0,
+    'an unsupported legacy hook class fails instead of returning a fake handle');
+
+  const exHandle = e.test_install_ex_hook(5, hook) >>> 0;
+  assert.strictEqual(exHandle, 0xbeef0005,
+    'SetWindowsHookExA returns the class-specific CBT handle');
+  assert.strictEqual(e.test_uninstall_ex_hook(0xbeef0002), 0,
+    'UnhookWindowsHookEx rejects a handle for a different empty slot');
+  assert.strictEqual(e.test_hook_proc(5) >>> 0, hook,
+    'a failed Ex unhook leaves the CBTProc installed');
+  assert.strictEqual(e.test_uninstall_ex_hook(exHandle), 1,
+    'UnhookWindowsHookEx removes the hook named by its returned handle');
+  assert.strictEqual(e.test_hook_proc(5), 0,
+    'the Ex-removed CBTProc is no longer dispatchable');
+
+  console.log('PASS  legacy and Ex keyboard/CBT hooks install, dispatch, and unhook');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

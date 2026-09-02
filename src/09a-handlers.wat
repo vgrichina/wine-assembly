@@ -9768,22 +9768,65 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
+  ;; USER currently dispatches one process-local hook for each of the two
+  ;; classes below. Keep installation behind one helper so SetWindowsHook and
+  ;; SetWindowsHookEx cannot drift. Distinct opaque handles let the Ex remover
+  ;; identify the slot instead of clearing an unrelated hook.
+  (func $install_supported_hook (param $id_hook i32) (param $proc i32) (result i32)
+    (if (i32.eqz (local.get $proc))
+      (then (return (i32.const 0))))
+    (if (i32.eq (local.get $id_hook) (i32.const 2)) ;; WH_KEYBOARD
+      (then
+        (global.set $keyboard_hook_proc (local.get $proc))
+        (return (i32.const 0xBEEF0002))))
+    (if (i32.eq (local.get $id_hook) (i32.const 5)) ;; WH_CBT
+      (then
+        (global.set $cbt_hook_proc (local.get $proc))
+        (return (i32.const 0xBEEF0005))))
+    (i32.const 0)
+  )
+
   ;; 380: UnhookWindowsHookEx(hhk) → BOOL
   (func $handle_UnhookWindowsHookEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Hook handles are currently one opaque process-local value. Clear the
-    ;; keyboard callback when that value is released; CBT retains its legacy
-    ;; lifetime because its users install it for the process window factory.
-    (if (i32.eq (local.get $arg0) (i32.const 0xBEEF))
-      (then (global.set $keyboard_hook_proc (i32.const 0))))
-    (global.set $eax (i32.const 1))
+    (local $removed i32)
+    (if (i32.and
+          (i32.eq (local.get $arg0) (i32.const 0xBEEF0002))
+          (i32.ne (global.get $keyboard_hook_proc) (i32.const 0)))
+      (then
+        (global.set $keyboard_hook_proc (i32.const 0))
+        (local.set $removed (i32.const 1))))
+    (if (i32.and
+          (i32.eq (local.get $arg0) (i32.const 0xBEEF0005))
+          (i32.ne (global.get $cbt_hook_proc) (i32.const 0)))
+      (then
+        (global.set $cbt_hook_proc (i32.const 0))
+        (local.set $removed (i32.const 1))))
+    (global.set $eax (local.get $removed))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 854: UnhookWindowsHook(nCode, pfnFilterProc) → BOOL — legacy version
   (func $handle_UnhookWindowsHook (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (local $removed i32)
+    (if (i32.and
+          (i32.eq (local.get $arg0) (i32.const 2))
+          (i32.and
+            (i32.ne (global.get $keyboard_hook_proc) (i32.const 0))
+            (i32.eq (global.get $keyboard_hook_proc) (local.get $arg1))))
+      (then
+        (global.set $keyboard_hook_proc (i32.const 0))
+        (local.set $removed (i32.const 1))))
+    (if (i32.and
+          (i32.eq (local.get $arg0) (i32.const 5))
+          (i32.and
+            (i32.ne (global.get $cbt_hook_proc) (i32.const 0))
+            (i32.eq (global.get $cbt_hook_proc) (local.get $arg1))))
+      (then
+        (global.set $cbt_hook_proc (i32.const 0))
+        (local.set $removed (i32.const 1))))
+    (global.set $eax (local.get $removed))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 381: SetWindowsHookExW — return fake handle, 4 args stdcall
+  ;; 381: SetWindowsHookExW — same class-specific handle as the A path.
   ;; SetWindowsHookExW(idHook, lpfn, hMod, dwThreadId) — the hook proc is a
   ;; code pointer, so there is nothing to widen; the A path is the whole story.
   (func $handle_SetWindowsHookExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -9791,19 +9834,11 @@ HookEx — no next hook in chain, return 0
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
-  ;; SetWindowsHookExA — return fake handle, 4 args stdcall
+  ;; SetWindowsHookExA — install one of USER's process-local hook classes.
   (func $handle_SetWindowsHookExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; SetWindowsHookExA(idHook, lpfn, hMod, dwThreadId)
-    ;; Retain the two hook classes USER currently dispatches into guest code.
-    ;; WH_KEYBOARD is thread-local in the programs that use it (dwThreadId is
-    ;; their own thread); this single-process USER model therefore needs one
-    ;; callback slot, just like its existing WH_CBT slot.
-    (if (i32.eq (local.get $arg0) (i32.const 2)) ;; WH_KEYBOARD
-      (then (global.set $keyboard_hook_proc (local.get $arg1)))
-      (else
-        (if (i32.eq (local.get $arg0) (i32.const 5)) ;; WH_CBT
-          (then (global.set $cbt_hook_proc (local.get $arg1))))))
-    (global.set $eax (i32.const 0xBEEF))
+    (global.set $eax
+      (call $install_supported_hook (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 

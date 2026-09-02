@@ -478,15 +478,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; cdecl
   )
 
-  ;; 752: SetWindowsHookW(idHook, lpfn) — old-style hook, return fake handle
+  ;; 752: SetWindowsHookW(idHook, lpfn) — code pointers need no widening.
   (func $handle_SetWindowsHookW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_SetWindowsHookA
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
-  ;; SetWindowsHookA(idHook, lpfn) — old-style hook, return fake handle
+  ;; SetWindowsHookA(idHook, lpfn) — legacy spelling of the process-local
+  ;; hook install. It shares the Ex path's supported classes and handles.
   (func $handle_SetWindowsHookA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x00DEAD02))
+    (global.set $eax
+      (call $install_supported_hook (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
