@@ -28,6 +28,11 @@ function contents() {
     { path: 'SETUP.EXE', data: Buffer.from('MZ\x90\x00fake executable payload\n', 'latin1') },
     { path: 'ReadMe Long Name.txt', data: Buffer.from('long joliet name\r\n') },
     { path: 'BIG.DAT', data: big },
+    // Same-length names let the hostile-ISO test turn one real mastered
+    // directory record into a case-fold collision without rebuilding the
+    // record or sharing a hand-written ISO encoder with the parser.
+    { path: 'ALPHA.BIN', data: Buffer.from('alpha\n') },
+    { path: 'BRAVO.BIN', data: Buffer.from('bravo\n') },
     { path: path.join('DATA', 'NESTED.BIN'), data: Buffer.from([0, 1, 2, 3, 250, 251, 252, 253]) },
   ];
 }
