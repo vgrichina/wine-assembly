@@ -37,6 +37,17 @@ const extraWat = String.raw`
       (i32.const 0) (local.get $callback) (local.get $provider)
       (local.get $context) (local.get $flags) (i32.const 0))
     (global.get $eip))
+
+  (func (export "test_dplobby_enum_local_applications")
+      (param $callback i32) (param $context i32) (param $flags i32)
+      (result i32)
+    (global.set $eip (i32.const 0))
+    (global.set $esp (i32.const 0x074FF000))
+    (call $gs32 (global.get $esp) (i32.const 0))
+    (call $handle_IDirectPlayLobby2_EnumLocalApplications
+      (i32.const 0) (local.get $callback) (local.get $context)
+      (local.get $flags) (i32.const 0) (i32.const 0))
+    (global.get $eax))
 `;
 
 (async () => {
@@ -217,7 +228,29 @@ const extraWat = String.raw`
     'EnumAddressTypes rejects nonzero reserved flags synchronously');
   assert.strictEqual(wat.get_eax() >>> 0, 0x80070057);
 
-  console.log('PASS  DirectPlayLobby2 packs and enumerates Win98 compound addresses');
+  wat.guest_write32(count, 0);
+  assert.strictEqual(
+    wat.test_dplobby_enum_local_applications(enumTypesContinue, 0x12345678, 0)
+      >>> 0,
+    0, 'an empty installed-application set is a successful enumeration');
+  assert.strictEqual(wat.get_eip(), 0,
+    'an empty application enumeration must not enter the callback');
+  assert.strictEqual(wat.guest_read32(count), 0,
+    'Win98 reports no lobby-aware applications when none are registered');
+  assert.strictEqual(wat.get_esp() >>> 0, 0x074ff014,
+    'EnumLocalApplications honors its four-argument stdcall frame');
+  assert.strictEqual(
+    wat.test_dplobby_enum_local_applications(0, 0, 0) >>> 0,
+    0x80070057, 'EnumLocalApplications requires a callback');
+  assert.strictEqual(wat.get_esp() >>> 0, 0x074ff014);
+  assert.strictEqual(
+    wat.test_dplobby_enum_local_applications(enumTypesContinue, 0, 1) >>> 0,
+    0x80070057, 'EnumLocalApplications rejects nonzero reserved flags');
+  assert.strictEqual(wat.get_eip(), 0,
+    'invalid flags must fail before entering the callback');
+  assert.strictEqual(wat.guest_read32(count), 0);
+
+  console.log('PASS  DirectPlayLobby2 packs addresses and enumerates Win98 lobby state');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

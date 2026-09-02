@@ -111,8 +111,11 @@ const digest = crypto.createHash('sha256')
 // 2026-09-02: 514 -> 512. DirectPlayLobby EnumAddress now walks bounded
 // compound-address chunks through a cancellation-aware callback, while
 // EnumAddressTypes reports the local TCP/IP provider's required DPAID_INet.
-const EXPECTED_COUNT = 512;
-const EXPECTED_SHA256 = 'a1f6127ccdc3e35686499abc66635e5897f2905a231532e5b106124130e5a17d';
+// 2026-09-02: 512 -> 511. EnumLocalApplications validates its required
+// callback and reserved flags, then truthfully enumerates the browser Win98
+// machine's empty set of registered lobby-aware applications.
+const EXPECTED_COUNT = 511;
+const EXPECTED_SHA256 = 'd9a4f1c2b93a7f8d6401d2d7a9b78e88950af74c3830a9b124e6ac2473577393';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

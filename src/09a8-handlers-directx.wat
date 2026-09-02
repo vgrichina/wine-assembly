@@ -8060,7 +8060,17 @@
       (i32.const 0x544C5044) (local.get $ret) (local.get $arg1)
       (local.get $arg3) (local.get $arg2) (i32.const 0) (local.get $arg4)))
   (func $handle_IDirectPlayLobby2_EnumLocalApplications (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+    ;; Win98 enumerates lobby-aware applications registered on the local
+    ;; machine.  This browser machine has no DirectPlay application registry,
+    ;; so a valid enumeration completes successfully without callbacks.  Do
+    ;; still enforce the API contract: the callback is required and dwFlags is
+    ;; reserved (zero), rather than letting every malformed call succeed.
+    (if (i32.or
+          (i32.eqz (local.get $arg1))
+          (i32.ne (local.get $arg3) (i32.const 0)))
+      (then (global.set $eax (i32.const 0x80070057)))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   (func $handle_IDirectPlayLobby2_GetConnectionSettings (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
