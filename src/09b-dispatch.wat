@@ -166,6 +166,7 @@
           (then
             (global.set $createwnd_implicit_show (i32.const 0))
             (global.set $show_window_activated (i32.const 1))
+            (global.set $active_hwnd (global.get $main_hwnd))
             (local.set $arg0 (call $wnd_table_get (global.get $main_hwnd)))
             ;; A CreateDialogParamA top-level can retain USER's dialog marker
             ;; when no framework CBT hook subclasses it.  Run the same safe

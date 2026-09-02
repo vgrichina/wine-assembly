@@ -48,6 +48,9 @@ const extraWat = String.raw`
   (func (export "test_show_window_activated") (result i32)
     (global.get $show_window_activated))
 
+  (func (export "test_active_hwnd") (result i32)
+    (global.get $active_hwnd))
+
   (func (export "test_dialog_marker_installed") (param $hwnd i32) (result i32)
     (i32.eq (call $wnd_table_get (local.get $hwnd))
       (global.get $WNDPROC_DIALOG)))
@@ -100,6 +103,8 @@ function u32(value) {
     'shown retained-DLGPROC top-level replaces the invisible helper as main HWND');
   assert.strictEqual(e.test_show_window_activated(), 1,
     'first ShowWindow consumes the application activation gate');
+  assert.strictEqual(e.test_active_hwnd() >>> 0, dialog,
+    'first ShowWindow makes the promoted dialog active on this thread queue');
   assert.strictEqual(e.test_dialog_marker_installed(dialog), 1,
     'synchronous activation restores USER\'s retained dialog marker');
   assert.strictEqual(view.getUint32(toWasm(count), true), 4,

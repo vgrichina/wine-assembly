@@ -1271,6 +1271,7 @@
                           (i32.eq (local.get $arg0) (global.get $main_hwnd)))
                  (i32.eqz (global.get $show_window_activated)))
       (then
+        (global.set $active_hwnd (global.get $main_hwnd))
         (local.set $wndproc (call $wnd_table_get (global.get $main_hwnd)))
         ;; Dialog HWNDs store USER's WNDPROC_DIALOG marker rather than an x86
         ;; callback address.  Entering that marker as guest code strands the

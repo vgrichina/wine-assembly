@@ -2655,6 +2655,10 @@
   ;; — they probe display state immediately after CreateWindowEx and expect WM_SIZE
   ;; to have populated client-rect globals before they look at them.
   (global $createwnd_implicit_show (mut i32) (i32.const 0))
+  ;; Active top-level window for this thread's message queue. Each guest
+  ;; thread owns a separate WASM instance, so this mutable global is naturally
+  ;; per-thread while WND_RECORDS remains process-shared.
+  (global $active_hwnd (mut i32) (i32.const 0))
   (global $focus_hwnd (mut i32) (i32.const 0))
   (global $clipboard_format_counter (mut i32) (i32.const 0xBFFF))
   ;; Legacy Win9x RegisterShellHook subscriber. The registered SHELLHOOK

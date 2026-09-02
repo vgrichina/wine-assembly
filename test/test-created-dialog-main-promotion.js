@@ -47,6 +47,17 @@ const extraWat = String.raw`
     (call $created_dialog_promote_app_main
       (local.get $dialog) (i32.const 0x00401234))
     (i32.eq (global.get $main_hwnd) (local.get $main)))
+
+  (func (export "test_finish_implicit_show") (param $stack i32) (result i32)
+    ;; Model the WM_CREATE continuation frame consumed by CACA0001. The
+    ;; retained-dialog branch completes its activation chain synchronously.
+    (global.set $esp (local.get $stack))
+    (call $gs32 (local.get $stack) (i32.const 0x00405678))
+    (call $gs32 (i32.add (local.get $stack) (i32.const 4))
+      (global.get $main_hwnd))
+    (i32.store (global.get $THUNK_BASE) (i32.const 0xCACA0001))
+    (call $win32_dispatch (i32.const 0))
+    (global.get $active_hwnd))
 `;
 
 (async () => {
@@ -59,6 +70,8 @@ const extraWat = String.raw`
     'retained top-level dialog replaces the first hidden helper HWND');
   assert.strictEqual(armed, 1,
     'created dialog arms activation immediately after WM_INITDIALOG');
+  assert.strictEqual(e.test_finish_implicit_show(0x074ff000) >>> 0, main,
+    'the WM_CREATE continuation makes the visible dialog active');
   assert.strictEqual(e.test_created_owned_dialog_not_promoted(), 1,
     'owned dialogs do not replace the application main window');
 

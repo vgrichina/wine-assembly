@@ -142,8 +142,10 @@ const digest = crypto.createHash('sha256')
 // per-thread LCID state and carry it into newly created threads.
 // 2026-09-02: 480 -> 479. BringWindowToTop now changes sibling/top-level
 // z-order and activation state instead of reporting unconditional success.
-const EXPECTED_COUNT = 479;
-const EXPECTED_SHA256 = 'a4cb6913fc640866f8d270230860b17fcd5d386272fe45c2da697ca52c781a69';
+// 2026-09-02: 479 -> 477. SetActiveWindow/GetActiveWindow now retain this
+// thread queue's active top-level and deliver real activation transitions.
+const EXPECTED_COUNT = 477;
+const EXPECTED_SHA256 = '39325595e40dc7a2ac426c45c9f90cdf07a9649889d5732923c58b0335dc28f0';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
