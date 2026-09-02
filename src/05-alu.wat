@@ -869,7 +869,7 @@
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 10))))
     (local.set $fall (call $read_thread_word)) (local.set $target (call $read_thread_word))
-    (if (i32.eqz (i32.and (i32.popcnt (i32.and (global.get $flag_res) (i32.const 0xFF))) (i32.const 1)))
+    (if (call $get_pf)
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
@@ -878,7 +878,7 @@
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 11))))
     (local.set $fall (call $read_thread_word)) (local.set $target (call $read_thread_word))
-    (if (i32.and (i32.popcnt (i32.and (global.get $flag_res) (i32.const 0xFF))) (i32.const 1))
+    (if (i32.eqz (call $get_pf))
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
@@ -3112,20 +3112,16 @@
     (local $saved_of i32)
     (local.set $saved_of (call $get_of))
     (local.set $ah (i32.and (i32.shr_u (global.get $eax) (i32.const 8)) (i32.const 0xFF)))
-    (global.set $flag_op (i32.const 8))
+    (global.set $flag_op (i32.const 9))
     (global.set $flag_sign_shift (i32.const 31))
-    (global.set $flag_a (i32.and (local.get $ah) (i32.const 1)))  ;; CF = bit 0
+    (global.set $flag_a (i32.or
+      (i32.and (local.get $ah) (i32.const 1))
+      (i32.and (i32.shr_u (local.get $ah) (i32.const 1)) (i32.const 2)))) ;; CF/PF
     (global.set $flag_b (local.get $saved_of))  ;; OF preserved
-    ;; The current lazy raw-flag encoding cannot represent ZF and PF
-    ;; independently. Preserve PF here because x87 reductions consume
-    ;; FNSTSW's C2 through `SAHF; JP/JNP`, and TOP bits can set AH bit 6 even
-    ;; when C2/PF is clear.
-    (if (i32.and (local.get $ah) (i32.const 0x80))  ;; SF = bit 7
-      (then (if (i32.and (local.get $ah) (i32.const 4))  ;; PF = bit 2
-        (then (global.set $flag_res (i32.const 0x80000003)))
-        (else (global.set $flag_res (i32.const 0x80000001)))))
-      (else (if (i32.and (local.get $ah) (i32.const 4))
-        (then (global.set $flag_res (i32.const 3)))
+    (if (i32.and (local.get $ah) (i32.const 0x40))  ;; ZF = bit 6
+      (then (global.set $flag_res (i32.const 0)))
+      (else (if (i32.and (local.get $ah) (i32.const 0x80))  ;; SF = bit 7
+        (then (global.set $flag_res (i32.const 0x80000001)))
         (else (global.set $flag_res (i32.const 1))))))
     (return_call $next))
 
@@ -3142,6 +3138,7 @@
     (local $ah i32)
     (local.set $ah (i32.const 0x02))  ;; bit 1 always set
     (local.set $ah (i32.or (local.get $ah) (call $get_cf)))  ;; CF = bit 0
+    (local.set $ah (i32.or (local.get $ah) (i32.shl (call $get_pf) (i32.const 2))))  ;; PF = bit 2
     (local.set $ah (i32.or (local.get $ah) (i32.shl (call $get_zf) (i32.const 6))))  ;; ZF = bit 6
     (local.set $ah (i32.or (local.get $ah) (i32.shl (call $get_sf) (i32.const 7))))  ;; SF = bit 7
     (global.set $eax (i32.or

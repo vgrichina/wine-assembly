@@ -506,6 +506,24 @@ async function main() {
   ], () => e.set_eax(0));
   test('SAHF PF=0 survives AH status bits', e.get_eax() & 0xFF, 0);
 
+  runCode([
+    0xB4, 0x40,       // mov ah, 0x40 (ZF=1, PF=0)
+    0x9E,             // sahf
+    0x0F, 0x94, 0xC0, // setz al
+    0x0F, 0x9A, 0xC1, // setp cl
+  ], () => { e.set_eax(0); e.set_ecx(0); });
+  test('SAHF ZF=1 is independent of PF', e.get_eax() & 0xFF, 1);
+  test('SAHF PF=0 is independent of ZF', e.get_ecx() & 0xFF, 0);
+
+  runCode([
+    0xB4, 0x04,       // mov ah, 0x04 (ZF=0, PF=1)
+    0x9E,             // sahf
+    0x0F, 0x94, 0xC0, // setz al
+    0x0F, 0x9A, 0xC1, // setp cl
+  ], () => { e.set_eax(0); e.set_ecx(0); });
+  test('SAHF ZF=0 is independent of PF', e.get_eax() & 0xFF, 0);
+  test('SAHF PF=1 is independent of ZF', e.get_ecx() & 0xFF, 1);
+
   // LAHF: store flags to AH
   runCode([
     0xF9,       // stc (CF=1)
