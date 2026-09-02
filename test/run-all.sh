@@ -334,6 +334,7 @@ UNIT=(
   test/test-vk-key-scan.js
   test/test-wait-for-input-idle.js
   test/test-win16-winexec.js
+  test/test-winexec-vfs-launch.js
   test/test-win32-dde-progman.js
   test/test-win98-scm-probe.js
   test/test-x86-16bit-upper-half.js

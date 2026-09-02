@@ -1343,7 +1343,7 @@ class WineAssembly {
         // just wrote); that beats the registered-app basename heuristic,
         // which could resolve "diablo.exe" to a different registered build.
         const absolute = /^[a-z]:\\/i.test(file);
-        if (absolute && shell.launchVfsExe && shell.launchVfsExe(file, self, dir, params)) {
+        if (shell.launchVfsExe && shell.launchVfsExe(file, self, dir, params)) {
           self.logToUI(`[ShellExecute] launching ${file} from the caller's filesystem`);
           return 33;
         }

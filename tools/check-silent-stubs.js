@@ -148,8 +148,10 @@ const digest = crypto.createHash('sha256')
 // thread queue's active top-level and deliver real activation transitions.
 // 2026-09-02: 477 -> 476. UnregisterClassA/W now remove the matching owned
 // class only after its last window is gone instead of always returning TRUE.
-const EXPECTED_COUNT = 477;
-const EXPECTED_SHA256 = 'd67e769f7ab5f28e923e9b99e441697b6b2d5a82293ffce9233a12a7f36c8b40';
+// 2026-09-02: 477 -> 476 after branch merge. WinExec now delegates relative
+// sibling executables to the host's VFS-backed process launcher.
+const EXPECTED_COUNT = 476;
+const EXPECTED_SHA256 = '230d88238b1b041da755ce7fc0478638711b0c9053d4d23f201bb64f43d9a56d';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

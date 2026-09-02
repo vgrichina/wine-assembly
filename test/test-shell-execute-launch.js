@@ -79,7 +79,12 @@ function makeShell(opts = {}) {
     files,
     dirs: new Set(['c:\\windows\\temp\\is-test.tmp']),
     readOnlyDrives: new Set(),
+    cwd: 'c:\\windows\\temp\\is-test.tmp\\',
     _normPath: p => String(p).toLowerCase(),
+    _resolvePath(p) {
+      const value = /^[a-z]:/i.test(p) ? p : this.cwd + p;
+      return this._normPath(value).replace(/\\+/g, '\\');
+    },
     adoptFrom(other) {
       for (const [p, entry] of other.files) this.files.set(p, entry);
       for (const dir of other.dirs) this.dirs.add(dir);
@@ -93,10 +98,19 @@ function makeShell(opts = {}) {
   assert.strictEqual(child.args, '/SL4 $10001 "C:\\ptanks.exe" 2743738 52736',
     'dynamic child command line is preserved');
 
+  assert.strictEqual(shell.launchVfsExe('child.tmp', { _helpCtx: { vfs } }, '', ''), true,
+    'relative child exe resolves against the caller working directory');
+  assert.ok(apps['vfs:c:\\windows\\temp\\is-test.tmp\\child.tmp'],
+    'relative launch registers the normalized absolute VFS executable');
+
   const shellSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'browser-shell.js'), 'utf8');
   assert.match(shellSource,
     /wine\.loadExe\(app\.exe,\s*\{[\s\S]*?\bargs:\s*app\.args,[\s\S]*?\}\)/,
     'browser launch must pass app.args into loadExe before PE startup');
+  const hostSource = fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8');
+  assert.match(hostSource,
+    /if \(shell\.launchVfsExe && shell\.launchVfsExe\(file, self, dir, params\)\)/,
+    'browser host offers relative and absolute executable names to the caller VFS');
   console.log('ok: vfs child launch keeps args before PE startup');
 }
 
