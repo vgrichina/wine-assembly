@@ -13923,7 +13923,16 @@ SetColorAdjustment — validate and copy complete per-DC state.
             (if (i32.eq (local.get $arg2) (i32.const 0x000F))
               (then (call $nc_flags_clear (local.get $arg1) (i32.const 2))))
             (global.set $eax (call $control_wndproc_dispatch
-              (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4))))
+              (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+            ;; A stock control subclass chains WM_NCCREATE through the native
+            ;; marker before its WM_CREATE. The control dispatcher has no
+            ;; per-class work for WM_NCCREATE and returns zero, but USER's
+            ;; default control proc must accept creation. Returning that zero
+            ;; makes CreateWindowEx tear down the new control. This is the same
+            ;; contract as the WNDPROC_SYSCLASS marker above, including for a
+            ;; class (such as ToolbarWindow32) routed native from creation.
+            (if (i32.eq (local.get $arg2) (i32.const 0x0081))
+              (then (global.set $eax (i32.const 1)))))
           (else
             (global.set $eax (call $wat_wndproc_dispatch
               (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))))
