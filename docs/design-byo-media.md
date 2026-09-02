@@ -289,6 +289,14 @@ stored in the row, so a reload can resolve the CUE again even though the OPFS
 filenames themselves are opaque. Existing schema-1 single-file library rows
 remain valid.
 
+A standalone raw BIN gets a deliberately best-effort fallback. If its
+2352-byte Mode 1 sectors expose a valid ISO 9660 volume, that data volume is
+mounted at `D:\` and the insert dialog warns that a matching CUE is required
+for the correct track layout, pregaps, and CD audio. Bytes after the
+ISO-declared volume are left uninterpreted and reported as such: headerless
+CD-DA carries no trustworthy track numbers or boundaries, so the importer does
+not guess from byte statistics or fabricate a playable TOC.
+
 The same multi-file selection rule covers offline installers: a setup `.exe`
 and numbered `.bin` files sharing its full basename are one import, stored
 together and mounted beside one another on `C:\`. This is the generic path for
@@ -400,6 +408,7 @@ it in the Win98 style it already draws.
                   sniff magic
                     │
                     ├─ "CD001" @ 0x8001 ──▶ ISO dialog ──▶ D:\ + tray CD
+                    ├─ raw Mode 1 + ISO  ──▶ warned best effort ──▶ D:\ data
                     ├─ "PK.." zip        ──▶ ZIP dialog ──▶ folder + icon
                     ├─ "MZ" + NSIS sig   ──▶ installer  ──▶ run in guest
                     ├─ "MZ" plain        ──▶ bare exe   ──▶ desktop icon

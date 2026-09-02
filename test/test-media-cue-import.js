@@ -177,6 +177,7 @@ async function main() {
   assert.match(standalonePlans[0].warning, /matching \.cue file is required/i);
   assert.strictEqual(standalonePlans[0].inferredTrackLayout, true);
   assert.strictEqual(standalonePlans[0].unparsedTrailingBytes, 0);
+  assert.strictEqual(standalonePlans[0].trailingSectorGuess, 'none');
   assert.strictEqual(standalonePlans[0].volumeLabel, 'CIV2_TEST');
   assert.deepStrictEqual(standalonePlans[0].exeCandidates.map(item => item.path),
     ['D:\\CIV2.EXE']);
@@ -206,6 +207,7 @@ async function main() {
   assert.strictEqual(ambiguousPlans.length, 1);
   assert.strictEqual(ambiguousPlans[0].kind, 'iso');
   assert.strictEqual(ambiguousPlans[0].unparsedTrailingBytes, SECTOR_BYTES);
+  assert.strictEqual(ambiguousPlans[0].trailingSectorGuess, 'silence-or-padding');
   assert.match(ambiguousPlans[0].warning, /may contain CD audio or padding/i);
   assert.deepStrictEqual(ambiguousPlans[0].exeCandidates.map(item => item.path),
     ['D:\\CIV2.EXE']);
@@ -213,6 +215,39 @@ async function main() {
   await ambiguousPlans[0].mount(ambiguousVfs);
   assert.deepStrictEqual(Array.from(await ambiguousVfs.materialize('D:\\CIV2.EXE')),
     [0x4d, 0x5a, 0x90, 0x00]);
+
+  const audioTail = new Uint8Array(SECTOR_BYTES * 4);
+  const audioView = new DataView(audioTail.buffer);
+  for (let at = 0, frame = 0; at < audioTail.length; at += 4, frame++) {
+    const sample = Math.round(Math.sin(frame / 24) * 12000);
+    audioView.setInt16(at, sample, true);
+    audioView.setInt16(at + 2, Math.round(sample * 0.8), true);
+  }
+  const rawWithAudio = new Uint8Array(standaloneRaw.length + audioTail.length);
+  rawWithAudio.set(standaloneRaw);
+  rawWithAudio.set(audioTail, standaloneRaw.length);
+  const audioPlans = await mediaImport.analyzeFiles([
+    { name: 'data-plus-audio.bin', size: rawWithAudio.length,
+      source: countingSource(rawWithAudio) },
+  ]);
+  assert.strictEqual(audioPlans[0].trailingSectorGuess, 'likely-audio');
+  assert.match(audioPlans[0].warning, /look like CD audio/i);
+  assert.match(audioPlans[0].warning, /boundaries cannot be recovered/i);
+
+  const randomTail = new Uint8Array(SECTOR_BYTES * 4);
+  let randomState = 0x12345678;
+  for (let i = 0; i < randomTail.length; i++) {
+    randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
+    randomTail[i] = randomState >>> 24;
+  }
+  const rawWithRandom = new Uint8Array(standaloneRaw.length + randomTail.length);
+  rawWithRandom.set(standaloneRaw);
+  rawWithRandom.set(randomTail, standaloneRaw.length);
+  const randomPlans = await mediaImport.analyzeFiles([
+    { name: 'data-plus-compressed.bin', size: rawWithRandom.length,
+      source: countingSource(rawWithRandom) },
+  ]);
+  assert.strictEqual(randomPlans[0].trailingSectorGuess, 'unknown');
 
   await assert.rejects(() => mediaImport.analyzeFiles([
     { name: 'Civilization II.cue', size: cue.size, source: cue },
