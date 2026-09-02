@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 224,
+  "count": 226,
   "sigs": {
     "log": {
       "params": [
@@ -1590,6 +1590,24 @@
     },
     "com_get_pending_dll": {
       "params": [],
+      "results": [
+        "i32"
+      ]
+    },
+    "com_initialize_thread": {
+      "params": [
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "com_uninitialize_thread": {
+      "params": [
+        "i32"
+      ],
       "results": [
         "i32"
       ]

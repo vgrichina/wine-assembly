@@ -134,8 +134,10 @@ const digest = crypto.createHash('sha256')
 // thread identity and retain the Win98 relative priority on the thread object.
 // 2026-09-02: 489 -> 488. SetErrorMode now atomically replaces and returns the
 // shared Win98 x86 process error mode instead of always returning zero.
-const EXPECTED_COUNT = 488;
-const EXPECTED_SHA256 = 'c90fa4d4175aaa4f64435b297c8d15a34b638b8b3b55047b71075db54091859a';
+// 2026-09-02: 488 -> 483. COM/OLE initialization now owns per-thread apartment
+// model and nesting state; the dead duplicate OleInitialize body is gone.
+const EXPECTED_COUNT = 483;
+const EXPECTED_SHA256 = 'f43e2241cf05bde95b76598cf6a39e1d716a0d909689592109ed581fe23dc593';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

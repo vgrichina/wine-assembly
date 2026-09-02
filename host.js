@@ -453,7 +453,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '270';
+  static SOURCE_VERSION = '271';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -1502,6 +1502,10 @@ class WineAssembly {
       ? self.threadManager.getThreadPriority(handle, tid) : 0x7FFFFFFF;
     h.set_thread_priority = (handle, priority, tid) => self.threadManager
       ? self.threadManager.setThreadPriority(handle, priority, tid) : 0;
+    h.com_initialize_thread = (reserved, flags, tid) => self.threadManager
+      ? self.threadManager.initializeComApartment(reserved, flags, tid) : 0x8000FFFF;
+    h.com_uninitialize_thread = (tid) => self.threadManager
+      ? self.threadManager.uninitializeComApartment(tid) : 0;
     h.exit_thread = (c) => self.threadManager && self.threadManager.exitThread(c);
     h.get_exit_code_thread = (handle) => self.threadManager ? self.threadManager.getExitCodeThread(handle) : 0x103;
     h.terminate_thread = (handle, exitCode) => self.threadManager
@@ -2074,7 +2078,7 @@ class WineAssembly {
       return;
     }
     try {
-      const res = await fetch('lib/host-import-sigs.generated.json?v=6');
+      const res = await fetch('lib/host-import-sigs.generated.json?v=7');
       if (!res.ok) throw new Error(`sigs HTTP ${res.status}`);
       const sigs = (await res.json()).sigs;
       const self = this;
@@ -2083,7 +2087,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=16',
+        workerUrl: 'lib/guest-worker.js?v=17',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },

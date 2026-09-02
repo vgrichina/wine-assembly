@@ -135,6 +135,9 @@ function makeManager(backend, extraOpts) {
     const h2 = tm.createThread(0x401600, 0xbeef, 0, 0);
     check(tm.setThreadPriority(h1, 2, 1) === 1,
       'a pending real Worker accepts THREAD_PRIORITY_HIGHEST');
+    check(tm.initializeComApartment(0, 2, 2) === 0 &&
+      tm.initializeComApartment(0, 2, 2) === 1,
+      'a pending real Worker owns a nested STA apartment');
     const h1Duplicate = tm.duplicateCurrentThread(2);
     check(!!h1Duplicate, 'a pending real Worker can materialize a durable duplicate');
     await tm.runWorkerSlices(50000);
@@ -157,6 +160,13 @@ function makeManager(backend, extraOpts) {
       'priority and duplicated identity survive pending-to-Worker record replacement');
     check(tm.setThreadPriority(h1Duplicate, -1, 1) === 1 && tm.getThreadPriority(h1, 1) === -1,
       'a real Worker handle and its duplicate keep one priority state');
+    check((tm.initializeComApartment(0, 0, 2) >>> 0) === 0x80010106,
+      'the STA model survives pending-to-Worker record replacement');
+    tm.uninitializeComApartment(2);
+    tm.uninitializeComApartment(2);
+    check(tm.initializeComApartment(0, 0, 2) === 0,
+      'balanced teardown after replacement permits MTA reinitialization');
+    tm.uninitializeComApartment(2);
   }
 
   // --- real concurrency ------------------------------------------------------

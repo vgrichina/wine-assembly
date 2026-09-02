@@ -7,18 +7,36 @@
   ;; Split out of 09a7-handlers-dispatch.wat, which was 81% this and 1% dispatch.
   ;; ============================================================
 
-  ;; 759: CoInitialize(pvReserved) — return S_OK
+  ;; One current-thread entry point for COM and OLE. CoInitialize and
+  ;; OleInitialize are STA requests; CoInitializeEx supplies its own model.
+  (func $com_initialize_current (param $reserved i32) (param $flags i32) (result i32)
+    (call $host_com_initialize_thread
+      (local.get $reserved) (local.get $flags) (global.get $current_thread_id)))
+
+  (func $com_uninitialize_current
+    (drop (call $host_com_uninitialize_thread (global.get $current_thread_id))))
+
+  ;; 759: CoInitialize(pvReserved) — STA initialization on the current thread.
   (func $handle_CoInitialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; S_OK
+    (global.set $eax
+      (call $com_initialize_current (local.get $arg0) (i32.const 2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; CoInitializeEx(pvReserved, dwCoInit) — this single-apartment runtime does
-  ;; not distinguish COM concurrency models, but successful initialization is
-  ;; observable to applications probing the Win98 DCOM update.
+  ;; CoInitializeEx(pvReserved, dwCoInit) — retain STA/MTA choice and nesting.
   (func $handle_CoInitializeEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; S_OK
+    (global.set $eax
+      (call $com_initialize_current (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) ;; stdcall, 2 args
+  )
+
+  ;; OleInitialize is CoInitializeEx(COINIT_APARTMENTTHREADED) plus OLE
+  ;; services. The runtime's OLE objects are already process-local, while the
+  ;; apartment result and balance are owned here per calling thread.
+  (func $handle_OleInitialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (call $com_initialize_current (local.get $arg0) (i32.const 2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; CoGetMalloc(dwMemContext, ppMalloc) — return a process-local IMalloc
@@ -61,8 +79,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 760: CoUninitialize() — no-op
+  ;; 760: CoUninitialize() — balance one successful initialization.
   (func $handle_CoUninitialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $com_uninitialize_current)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
@@ -78,8 +97,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; 761: OleUninitialize() — no-op
+  ;; 761: OleUninitialize() calls CoUninitialize internally on Windows.
   (func $handle_OleUninitialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $com_uninitialize_current)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 

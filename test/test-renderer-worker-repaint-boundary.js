@@ -32,7 +32,7 @@ assert(modalPump && /\(drop \(call \$wat_wndproc_dispatch[\s\S]*?\n\s*\(call \$h
 assert(hostImports.includes('paint_begin: (hwnd) =>') &&
   hostImports.includes('paint_end: (hwnd) =>'),
   'host imports must forward paint transactions to the renderer');
-assert(browserHost.includes("fetch('lib/host-import-sigs.generated.json?v=6')"),
+assert(browserHost.includes("fetch('lib/host-import-sigs.generated.json?v=7')"),
   'Worker launch must cache-bust the signature table containing paint brackets');
 assert(guestRpc.includes("'paint_begin',") && guestRpc.includes("'paint_end',"),
   'value-only paint brackets must not add two blocking RPCs per control paint');

@@ -786,8 +786,8 @@
   ;; com_revoke_class_object(cookie) → HRESULT
   ;; Returns 0=S_OK, 0x800401F0=CO_E_DLLNOTFOUND (need async load), other=error
   (import "host" "com_get_pending_dll" (func $host_com_get_pending_dll (result i32)))
-  ;; com_get_pending_dll() → WASM addr of pending DLL name string (0=none)
-
+  (import "host" "com_initialize_thread" (func $host_com_initialize_thread (param i32 i32 i32) (result i32)))
+  (import "host" "com_uninitialize_thread" (func $host_com_uninitialize_thread (param i32) (result i32)))
   ;; Thread/event host imports
   ;; create_thread(start, param, stackSize, flags, lpThreadIdWA) returns the
   ;; kernel HANDLE and writes the distinct Win32 thread id through the optional

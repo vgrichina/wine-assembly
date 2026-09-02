@@ -9741,11 +9741,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 310: OleInitialize(pvReserved) — 1 arg stdcall, return S_OK
-  (func $handle_OleInitialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
+  ;; OleInitialize lives with the other COM/OLE apartment handlers in
+  ;; 09a7b-ole.wat. The old fixed-S_OK duplicate here was dead after WATX name
+  ;; resolution and made the silent-stub inventory count one API twice.
+  ;; Keeping one definition also makes the handler table's name resolve to one
+  ;; implementation instead of depending on source-order shadowing.
 
   ;; 311: CoTaskMemFree(pv) — 1 arg stdcall, free via heap_free
   (func $handle_CoTaskMemFree (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
