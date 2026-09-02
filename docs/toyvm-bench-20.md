@@ -494,3 +494,112 @@ Reproduce: `node tools/toyvm/region-census.js --dir=/tmp/demos
 --args='--straight --regions=8'` (add `--once` to the args for the last
 column, drop `--straight` for the loops-only arm, drop `--args` for the
 single-loop arm).
+
+
+## 9. Detour arms, and two clocks that were ours (2026-09-02)
+
+§8 left ADDY_II at +15 with its whole nest (99% share) compiled, and three
+things stood between that and its ceiling. All three were in our tooling,
+not in the demo, and each one showed up as a frame that DIFFERED against a
+region that was executing every instruction correctly.
+
+**What changed** (commit after 69c61d37):
+
+- **Detour arms.** The unfollowed edge of a conditional inside the region,
+  when what lies behind it is a few straight blocks that rejoin the path, is
+  compiled *inside the branch arm* instead of being an exit: the ops, then
+  the join (`br` to a forward block, an inner-loop `br`, or the head's back
+  edge). ADDY_II's row loop takes its `jb` arm (`inc [x]; jmp rejoin`) on
+  nearly every row, so the 50-op region that was frame-IDENTICAL absorbed
+  0.9% of dispatches — every row left through that exit. With the arm: 49%.
+- **Structure inside a detour.** A detour is walked as straight blocks, but
+  what it *contains* can loop: ADDY_II's fall-first pick puts the whole L1
+  row body (`cld; mov; mov; cmp/jz; mov; cmp/ja; mov; add; add; loop`) behind
+  its `jle`. As a flat arm that drew ONE pixel and left (21,244 exits for
+  21,609 entries, +20% against a +67% ceiling). A transfer whose edge names
+  an earlier op of its own arm is now an inner loop `(block (loop ...))`,
+  and one naming a later op is a forward block — the main path's shape in
+  miniature, with steps billed before every label boundary. 86.5% absorbed,
+  573 entries at ~518 iterations each, **+51% CPU** (loops arm), frame
+  IDENTICAL and the guest counters exact at the stop.
+- **The synthetic jump charged a step.** `compile.js` emits a `jmp` word when
+  a decode runs into an existing block head, and `$next` charged it like any
+  other dispatch — so guest time depended on *which ips were heads*, i.e. on
+  compile order. Installing a region changes the heads, and the interpreter
+  arm paid ~45k fewer of these on ADDY_II than the baseline, with nothing
+  else different. It is now `jmp_syn`, a step-neutral twin (the decoder
+  oracle: 20000 random cases, 0 mismatches).
+- **The slice bill dropped the overshoot.** `$next` charges a step before it
+  runs a handler and a block only tests the budget at its transfer, so an
+  exhausted slice ends with `$steps` a few below zero. `dos-loop.js` billed
+  the quantum alone when `$left` came back negative; the overshoot is one
+  block under the interpreter and one billed chunk (or a whole `--once`
+  body) in a region, and the emulated clock IS the dispatch count. Two arms
+  doing identical work drifted apart by thousands of dispatches (−4356 at
+  4.7M on ADDY_II with the same registers and counters), the timer IRQ landed
+  on a different instruction, and the frame diverged. Every slice now bills
+  `budget - $steps`; the two arms agree to within tens at the same state.
+- **Diagnostics that found these:** `--peek-ds=OFF,…` prints guest counters
+  and registers at the stop for both arms — the exact-state check that a
+  frame cannot give (a demo holds one picture for ~50k dispatches);
+  `--exit-census` counts every `br $out` site by target ip; `--step-audit`
+  compares what a region charged against its instruction weights;
+  `--hist-diff` lists per-handler dispatch deltas between the arms; the
+  `hist region` line no longer sums the census slots as dispatches.
+
+**The three arms**, same 20 programs, `--dispatches=12m --reps=2 --jobs=3`,
+load 3.3–5.2. Cells are `n / share / ceiling / speed`; `-` = no region.
+
+| program | all loops n / share / ceil / speed | loops+traces n / share / ceil / speed | traces, no back edge n / share / ceil / speed |
+|---|---:|---:|---:|
+| COMPOVRS | 1 / 100% / +39 / +155 (phase) | 1 / 100% / +81 / +154 (phase) | 1 / 100% / +71 / +92 (phase) |
+| CONTACT | 1 / 100% / +76 / +190 (phase) | 1 / 100% / +77 / +152 (phase) | 1 / 100% / +65 / +145 (phase) |
+| DTM2 | - | 1 / 100% / - / +64 | 1 / 100% / - / +13 |
+| DREAM | 2 / 99% / +74 / +144 | 2 / 99% / +70 / +147 | 2 / 99% / +72 / +87 |
+| ASYLUM (1995) | 3 / 68% / +30 / +25 | 3 / 68% / +39 / +20 | 3 / 68% / +35 / +16 |
+| B-STEEL | 1 / 22% / - / +7 | 2 / 36% / +8 / +24 | 3 / 55% / +13 / +22 |
+| BRW | 6 / 30% / +20 / +5 | 7 / 32% / +19 / +7 | 7 / 32% / +22 / +7 |
+| CORE-ADD | - | 3 / 35% / +8 / -4 (phase) | 3 / 35% / +8 / +4 (phase) |
+| ADDY_II | 1 / 99% / +56 / +51 | 1 / 99% / +63 / +44 | 1 / 99% / +58 / +7 |
+| DRAGON | 3 / 71% / +25 / +15 | 5 / 31% / +16 / -3 | 5 / 93% / +44 / +9 |
+| CMA_SHRT | 1 / 100% / +67 / +3 | 1 / 100% / +59 / +2 | 1 / 100% / +65 / -2 |
+| ASYLUM (1994) | 1 / 5% / +3 / +0 | 3 / 20% / +8 / -10 | 3 / 20% / +8 / -3 |
+| RUNDEMO | 1 / 34% / +25 / -12 | 1 / 34% / +25 / -17 | 1 / 34% / +29 / -0 |
+| CONTAGIO | - | 1 / 2% / - / -11 | 1 / 2% / - / -11 |
+| CYCLE | 2 / 8% / +3 / -0 | 4 / 19% / +9 / -7 | 4 / 19% / +9 / +11 |
+| ACCIDENT | 1 / 7% / +3 / -19 | 8 / 25% / +10 / +24 | 8 / 25% / +9 / +19 |
+| DSTNFO | - | 1 / 80% / - / -8 | 1 / 80% / - / -5 |
+| daretro | - | 1 / 0% / - / -12 | 1 / 0% / - / +3 |
+| programs measured | 13 | 18 | 18 |
+| mean speed, same 14 (n) | +43.5 (13) | +37.6 (14) | +28.5 (14) |
+| mean ceiling, same 14 (n) | +35.1 (12) | +37.3 (13) | +38.3 (13) |
+| mean speed, all measured | +43.5 | +31.5 | +23.0 |
+
+Every installed region is frame-identical or `phase` (the known COMPOVRS /
+CONTACT / CORE-ADD phase differences) in every arm; no `differs`, no
+`frozen`.
+
+**Readings.**
+
+1. **ADDY_II is the point of this section:** +15 → **+51** in the loops arm
+   and +9 → +44 with traces, on the same 99% share, by giving the region the
+   other arm of its `if` and letting that arm loop. The remaining gap to the
+   +56 ceiling is the slice-end exits (`--exit-census`: 207 out of each row
+   loop head, 141 out of the palette loop) and the gate's own snapshot
+   error; there is no exit left that the guest's control flow forces.
+2. **The mean moved, on the same 14, from +33.7 to +43.5 (loops) and +35.9 to
+   +37.6 (loops+traces).** The loops column's mean is over 13: CONTAGIO's
+   profile picked no loop this run (its one region in §8 was 2% share, −2).
+   The `--once` arm reads +28.5 against +30.2 — noise at this load.
+3. **DRAGON's traces pick is unstable.** 93% share at +8 in §8, 31% at −3 in
+   this run's loops+traces column and 93% at +9 in the `--once` column of
+   the *same* build: the profile at 12M lands on different blocks between
+   runs and the greedy walk follows. That is a profiler-variance problem,
+   not a region one, and `--pick-only --why` on two runs shows it.
+4. **The billing change touches every dispatch count in this document.** A
+   count now includes each exhausted slice's overshoot (a few steps per
+   slice), so a frame taken at a fixed budget in §1–§8 may sit at a
+   different instruction under this build. The per-row verdicts here were
+   all re-taken; the older sections' *ratios* stand, their hashes do not.
+
+Reproduce: as §8, on this commit.

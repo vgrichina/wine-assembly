@@ -1644,6 +1644,14 @@ arms happen to agree is luck, not evidence. Nor can the gap be closed by asking
 the interpreter for the region's exact dispatch count: it too stops only at a
 block boundary, and a request for 8054341 dispatches ran 8062431 of them.
 
+*2026-09-02:* most of that gap was ours. `dos-loop.js` billed an exhausted
+slice as its quantum and dropped the overshoot, which is one block under the
+interpreter and one billed chunk in a region; it now bills `budget - $steps`,
+and the two arms stop within tens of dispatches of each other at the same
+guest state (`--peek-ds`). The check below still matters for what is left —
+the arms still stop at different *instructions* — but it is no longer
+deciding thousands of dispatches of drift. See toyvm-bench-20.md §9.
+
 So `region-jit.js` measures the noise floor instead. On a differing frame it
 re-runs the *interpreter* at the region's dispatch count and counts the pixels
 the baseline moved **by itself** over that gap. That is how much picture this

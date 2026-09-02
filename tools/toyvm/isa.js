@@ -244,7 +244,15 @@ const DEC_HEADS_SIZE = 0x10000 >> 3;
 
 const DEC_SCRATCH = DEC_HEADS + DEC_HEADS_SIZE;
 const DEC_SCRATCH_WORDS = 0x10000;
-const DEC_END = DEC_SCRATCH + DEC_SCRATCH_WORDS * 4;
+// [wordIndex, ip] per instruction the wasm decoder emitted in one call. A
+// fixup names an ip only for a branch, so without this nothing says where a
+// mid-block op sits in the guest; region-jit needs that to turn a branch to an
+// ip inside its own body into a wasm `br` instead of an exit. Past the cap the
+// decoder simply stops recording -- the map is a hint, never a correctness
+// input.
+const DEC_INSNS = DEC_SCRATCH + DEC_SCRATCH_WORDS * 4;
+const DEC_INSNS_MAX = 0x4000;
+const DEC_END = DEC_INSNS + DEC_INSNS_MAX * 8;
 
 const MEM_PAGES = ((DEC_END + 0xFFFF) & ~0xFFFF) >> 16;
 
@@ -283,6 +291,6 @@ module.exports = {
   VESA_FB, VESA_FB_SIZE,
   CODE_BITMAP, CODE_BITMAP_SIZE,
   DEC_TAB, DEC_TAB_SIZE, DEC_FIXUPS, DEC_FIXUPS_MAX, DEC_FIXUP_WORDS,
-  DEC_HEADS, DEC_HEADS_SIZE, DEC_SCRATCH, DEC_SCRATCH_WORDS, DEC_END,
+  DEC_HEADS, DEC_HEADS_SIZE, DEC_SCRATCH, DEC_SCRATCH_WORDS, DEC_INSNS, DEC_INSNS_MAX, DEC_END,
   EA, EA_DEFAULT_SEG, EA_A32,
 };

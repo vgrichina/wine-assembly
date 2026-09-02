@@ -712,8 +712,21 @@ class DosSession {
     // the guest promptly) reports $left as -1 like an exhausted one, so ask for
     // the count it saved on the way out rather than billing the whole budget.
     const cut = this.machine.takeSliceCut ? this.machine.takeSliceCut() : -1;
-    const left = cut >= 0 ? cut : vm.raw('left');
-    this.dispatched += left < 0 ? budget : budget - left;
+    // Bill the steps actually charged, overshoot included. $next charges a step
+    // BEFORE it runs a handler and a block only tests the budget at its
+    // transfer, so an exhausted slice ends with $steps a few below zero -- the
+    // ops the guest ran past the quantum. Billing the quantum alone dropped
+    // that overshoot, and it is a different size in a region (a chunk of ops
+    // billed at once before a transfer, the whole body on a `--once` exit) than
+    // under the interpreter (one block). The emulated clock is the dispatch
+    // count, so two arms doing IDENTICAL guest work drifted apart by thousands
+    // of dispatches (ADDY_II: -4356 at 4.7M with the same registers and
+    // counters), the timer IRQ landed on a different instruction, and the
+    // frame diverged with nothing wrong in either arm. $steps is read directly:
+    // $left is the same value on every exit that writes it, and the sentinel
+    // -1 it starts at cannot tell "exhausted" from "one op past".
+    const left = cut >= 0 ? cut : vm.raw('steps');
+    this.dispatched += budget - left;
     this.handbacks++;
     if (this.hooks.afterSlice) this.hooks.afterSlice({ left, dispatched: this.dispatched, cs, ip });
 

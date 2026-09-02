@@ -126,8 +126,42 @@ function count(s, d) {
 // A dead end is now a dead end for that PATH rather than for the candidate, so
 // every rule below returns to the search instead of failing it. `--no-backtrack`
 // restores the old single-path walk for the A/B.
-function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisits = 3000) {
+function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisits = 3000, policy = {}) {
   const ops = [], nexts = [], spans = [], heads = [];
+  // The head is a guest ip, not an arena block: the interpreter holds several
+  // copies of one loop, and a walk that only closed on the arena it started
+  // from ran through a second copy of ADDY_II's head before it noticed.
+  const headIpOf = headByAddr.get(head).ip;
+  // Edge order. Taken first is the loop shape (the back edge of a bottom-
+  // tested loop is its taken edge); `fallFirst` follows the fall-through of a
+  // FORWARD conditional instead -- an if-skip inside a body -- so the skip
+  // lands on the path as a forward branch rather than an exit. Neither order
+  // is right for every branch, so the picker walks each head both ways and
+  // ranks the results.
+  const fallFirst = !!policy.fallFirst;
+  // NESTED LOOPS. A conditional whose taken edge lands on a block already on
+  // this path (not the head, same call depth) is an inner loop's back edge:
+  // the walk records it here as {headOp, backOp, headIp} -- the op index the
+  // inner head's block starts at, the branch's own index, and the guest ip
+  // -- and carries on along the branch's OTHER edge, which is the inner
+  // loop's exit. buildRegion wraps ops[headOp..backOp] in a nested wasm loop.
+  // Before this a revisit killed the path, so ADDY_II's outer loop was walked
+  // AROUND its inner one: the region ran one pass of the inner body, left on
+  // the inner back edge, and the interpreter ran the rest of the outer
+  // iteration -- 99% share, +58% ceiling, +9-15% measured.
+  const inner = [];
+  // FORWARD BRANCHES INSIDE THE REGION. The unfollowed edge of every
+  // conditional is recorded; when the walk closes, each whose target turns
+  // out to be an op LATER in the region becomes a `br` to a block ending at
+  // that op instead of an exit. Without this every `jz` that skips a few
+  // instructions inside a loop body leaves the region for the interpreter,
+  // which then runs the rest of the iteration: ADDY_II's inner body has two
+  // such skips, and its 62-op region was entered 348409 times at 0.5
+  // iterations each.
+  const fwdCand = [];
+  const opIp = [];                      // guest ip of each op, where the compiler recorded one
+  const depthAt = [];                   // call depth each op was walked at
+  const startOp = new Map();
   const seen = new Set();
   let visits = 0;
   // The reason the LAST path died, reported only if the whole search does. One
@@ -141,6 +175,7 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisi
   // the proxy for how far the path got.
   let lastWhy = null, lastDepth = -1;
   const no = (s) => {
+    if (flag('why-walk') && why) why(`  walk[${ops.length} ops; path ${heads.map(b => '0x' + b.ip.toString(16)).join(' ')}]: ${s}`);
     if (ops.length > lastDepth) { lastDepth = ops.length; lastWhy = s; }
     return null;
   };
@@ -149,7 +184,75 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisi
   // return ADDRESS is tracked -- the guest's own frame is built and torn down
   // by the ops. It is copied on the call edge rather than mutated, so a
   // backtrack out of a callee cannot leave a frame behind.
-  const walk = (cur, retStack) => {
+  // The ops a block really owns. See fallArena: cut at the first branch whose
+  // fall-through lives somewhere other than the words behind it. Everything
+  // past that point is another block's code that readTrace ran into.
+  const blockOps = (blk) => {
+    const t = traceAt(blk);
+    const bad = t.ops.find(o => /^(int|into)/.test(o.name));
+    let cut = t.ops.length;
+    for (let i = 0; i < t.ops.length - 1; i++) {
+      const fa = fallArena(t.ops[i]);
+      if (fa === null) continue;
+      if (fa !== blk.prog.arenaBase + (t.ops[i + 1].at << 2)) { cut = i + 1; break; }
+    }
+    const tops = t.ops.slice(0, cut);
+    const truncated = cut < t.ops.length;
+    const endWord = truncated ? t.ops[cut].at : t.nextWord;
+    const span = [blk.addr, blk.addr + ((endWord - ((blk.addr - blk.prog.arenaBase) >> 2)) << 2)];
+    return { tops, endWord, bad, span, truncated, t };
+  };
+
+  // A DETOUR: the edge the walk did not follow, when what lies behind it is a
+  // few straight blocks that come back onto the path. That is the other arm
+  // of an if/else, and it is the shape that kept ADDY_II's region cold: its
+  // 50 ops were faithful (frame IDENTICAL) and absorbed 0.9% of dispatches,
+  // because the row loop's `jb` took its TAKEN arm (`inc [x]; jmp rejoin`) on
+  // nearly every row and the region had compiled only the fall-through, so
+  // every row left through that exit. The walk could not take that arm
+  // itself: the rejoin block was already on the path, and a revisit is how a
+  // linear walk detects a cycle. Here the revisit is what qualifies it.
+  //
+  // Only depth 0, only `jmp`/fall-through chains (a conditional inside the
+  // detour is allowed when one of its edges is the path; the other is an
+  // exit), no calls, no `int`, at most a handful of ops. The ops are compiled
+  // inside the branch arm and the arm ends with the join: a `br` to a forward
+  // block when the rejoin is later on the path, an inner-loop `br` when it is
+  // an inner head the branch sits in, the back edge when it is the region head.
+  const DETOUR_MAX_OPS = 24;
+  const onPath = (ip) => ip === headIpOf || opIp.some((x, n) => x === ip && depthAt[n] === 0);
+  const detourFrom = (arena, why2) => {
+    const dOps = [], dNexts = [], dHeads = [], dSpans = [], dIps = [], dseen = new Set();
+    let cur = arena;
+    for (let n = 0; n < 4; n++) {
+      if (dseen.has(cur)) return why2('revisits itself');
+      dseen.add(cur);
+      const blk = headByAddr.get(cur);
+      if (!blk) return why2(`0x${cur.toString(16)} is not a block head`);
+      const bo = blockOps(blk);
+      if (bo.bad) return why2(`contains ${bo.bad.name}`);
+      const cr = bo.tops.find(o => /^(call|ret)/.test(o.name));
+      if (cr) return why2(`contains ${cr.name}`);
+      if (dOps.length + bo.tops.length > DETOUR_MAX_OPS) return why2(`over ${DETOUR_MAX_OPS} ops`);
+      const wip = blk.prog.wordIp;
+      for (const op of bo.tops) { dOps.push(op); dNexts.push(fallThroughIp(op)); dIps.push(wip ? wip.get(op.at) : undefined); }
+      dHeads.push(blk); dSpans.push(bo.span);
+      const last = bo.tops[bo.tops.length - 1];
+      const at = TAKEN_AT.get(last.fn);
+      const fall = fallThroughIp(last);
+      if (at === undefined) return why2(`ends in ${last.name}, not a transfer`);
+      const tip = last.args[at], tarena = last.args[at - 1];
+      if (tip !== undefined && onPath(tip)) return { ops: dOps, nexts: dNexts, heads: dHeads, spans: dSpans, ips: dIps, join: tip };
+      if (fall !== null && onPath(fall)) return { ops: dOps, nexts: dNexts, heads: dHeads, spans: dSpans, ips: dIps, join: fall };
+      if (fall !== null) return why2(`${last.name} leaves the path both ways`);
+      if (tarena === undefined || tip === undefined) return why2(`${last.name} has no readable edge`);
+      dNexts[dNexts.length - 1] = tip;
+      cur = tarena;
+    }
+    return why2('over 4 blocks without rejoining');
+  };
+
+  const walk = (cur, retStack, via = 'root') => {
     if (++visits > maxVisits) return no(`search gave up after ${maxVisits} blocks`);
     // A block may legitimately appear twice once calls are inlined (one helper
     // called from two places in the loop), so the revisit test is on the block
@@ -160,46 +263,48 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisi
     // still close on the outer head; the path dies here. Offering that block as
     // its own candidate root was tried and removed; see the negative result in
     // docs/toyvm-trace-jit.md.
-    if (seen.has(key)) return no(`walk revisited 0x${cur.toString(16)}`);
+    if (seen.has(key)) return no(`walk revisited 0x${cur.toString(16)} via ${via} at depth ${retStack.length}`);
     const blk = headByAddr.get(cur);
     if (!blk) return no(`0x${cur.toString(16)} is not a block head`);
-    const t = traceAt(blk);
+    const bo = blockOps(blk);
     // `int` still ends the walk: it hands the machine to the host by design and
     // there is nothing to inline.
-    const bad = t.ops.find(o => /^(int|into)/.test(o.name));
-    if (bad) return no(`0x${cur.toString(16)} contains ${bad.name}`);
-    // See fallArena: cut the block at the first branch whose fall-through lives
-    // somewhere other than the words behind it. Everything past that point is
-    // another block's code that readTrace ran into.
-    let cut = t.ops.length;
-    for (let i = 0; i < t.ops.length - 1; i++) {
-      const fa = fallArena(t.ops[i]);
-      if (fa === null) continue;
-      if (fa !== blk.prog.arenaBase + (t.ops[i + 1].at << 2)) { cut = i + 1; break; }
-    }
-    const tops = t.ops.slice(0, cut);
-    const truncated = cut < t.ops.length;
-    const endWord = truncated ? t.ops[cut].at : t.nextWord;
+    if (bo.bad) return no(`0x${cur.toString(16)} contains ${bo.bad.name}`);
+    const { tops, endWord, truncated, t } = bo;
 
-    const mark = { ops: ops.length, spans: spans.length, heads: heads.length };
+    const mark = { ops: ops.length, spans: spans.length, heads: heads.length, inner: inner.length, fwd: fwdCand.length };
     const undo = () => {
-      ops.length = mark.ops; nexts.length = mark.ops;
+      ops.length = mark.ops; nexts.length = mark.ops; opIp.length = mark.ops; depthAt.length = mark.ops;
       spans.length = mark.spans; heads.length = mark.heads;
-      seen.delete(key);
+      inner.length = mark.inner; fwdCand.length = mark.fwd;
+      seen.delete(key); startOp.delete(key);
     };
-    seen.add(key);
+    seen.add(key); startOp.set(key, mark.ops);
     heads.push(blk);
-    for (const op of tops) { ops.push(op); nexts.push(fallThroughIp(op)); }
+    if (flag('why-walk') && why) {
+      why(`  walk enter 0x${blk.ip.toString(16)} (arena 0x${cur.toString(16)}, via ${via}): `
+        + tops.map(o => `${o.name}${TAKEN_AT.has(o.fn) ? '->' + (o.args[TAKEN_AT.get(o.fn)] || 0).toString(16) : ''}`).join(' '));
+    }
+    const wip = blk.prog.wordIp;
+    for (const op of tops) {
+      // A conditional the tracer folded mid-block (the `_t` twins) never
+      // reaches the edges loop below; its taken edge is a candidate too.
+      const at = TAKEN_AT.get(op.fn);
+      if (op !== tops[tops.length - 1] && at !== undefined && op.args[at] !== undefined) {
+        fwdCand.push({ op: ops.length, ip: op.args[at], arena: op.args[at - 1], depth: retStack.length });
+      }
+      ops.push(op); nexts.push(fallThroughIp(op)); opIp.push(wip ? wip.get(op.at) : undefined); depthAt.push(retStack.length);
+    }
     spans.push([cur, cur + ((endWord - ((cur - blk.prog.arenaBase) >> 2)) << 2)]);
     const last = tops[tops.length - 1];
     // Follow one edge: rewrite the terminator's required-gip, recurse, and undo
     // everything this block added if the path behind it dies.
     const follow = (arena, ip, stack) => {
       if (ops.length > maxOps) return no(`over ${maxOps} ops without closing`);
-      if (arena === head && !stack.length) return { ops, nexts, spans, heads, headIp: ip };
+      if ((arena === head || ip === headIpOf) && !stack.length) return close(ip);
       if (!headByAddr.has(arena)) return no(`edge to 0x${(arena >>> 0).toString(16)} is not a block head`);
       nexts[nexts.length - 1] = ip;
-      return walk(arena, stack);
+      return walk(arena, stack, `${ops[ops.length - 1].name}${stack.length !== retStack.length ? ' (call/ret)' : ''}`);
     };
 
     // A DIRECT CALL IS AN EDGE LIKE ANY OTHER, and inlining it is the whole
@@ -240,7 +345,7 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisi
     // A truncated block ends at the branch the cut found, which IS a
     // terminator; `t.end` describes the op readTrace ran on to and no longer
     // applies.
-    if (!truncated && t.end !== 'jmp') { undo(); return no(`0x${cur.toString(16)} ends ${t.end}, not jmp`); }
+    if (!truncated && !/^jmp(_syn)?$/.test(t.end)) { undo(); return no(`0x${cur.toString(16)} ends ${t.end}, not jmp`); }
     const at = TAKEN_AT.get(last.fn);
     if (at === undefined) { undo(); return no(`terminator ${last.name} has no edge tail`); }
     // The terminator's arena target sits one slot in front of its guest ip.
@@ -251,13 +356,198 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisi
     const fa = fallArena(last), fi = fallThroughIp(last);
     if (!flag('no-backtrack') && fa !== null && fi !== null && fa !== last.args[at - 1]) {
       edges.push([fa, fi]);
+      if (fallFirst && last.args[at] > fi) edges.reverse();
+    }
+    // An inner back edge: the taken edge revisits this path. Only a
+    // bottom-tested loop is recognised -- one whose back edge is the
+    // conditional itself, the 8086 `loop` shape -- because its exit is then
+    // the same branch's fall-through. A `jmp` back to a top-tested head has
+    // no second edge to continue on and still ends the path. `--no-nested`
+    // is the A/B.
+    // The inner head is very often NOT a block boundary on this path: the
+    // outer loop enters the inner one through a run-in block that starts
+    // above the inner head and runs straight through it (ADDY_II enters
+    // 0xc9 from a block headed at 0xb5), so the back edge names an arena
+    // block the path never visited. The target block's ops are then a
+    // SUFFIX-ALIGNED run inside the path -- the same guest code decoded
+    // twice -- and matching them, arena operands stripped, finds the op the
+    // inner head sits at. Every branch's guest-ip operand takes part in the
+    // match, so a coincidental run of the same handlers elsewhere does not.
+    const findInnerHead = (arena, ip) => {
+      const nest = (j) => (inner.some(e => e.headOp < j && j <= e.backOp) ? undefined : j);
+      // Exact first: the compiler's per-op ip map says where the target's
+      // code sits on this path, whatever arena copy the edge names. The
+      // signature match below is the fallback for ops the map does not cover.
+      if (ip !== undefined) {
+        const j = opIp.findIndex((x, n) => x === ip && depthAt[n] === retStack.length);
+        if (j >= 0) return nest(j);
+      }
+      const k = `${arena}@${retStack.length}`;
+      if (seen.has(k)) return nest(startOp.get(k));
+      if (!headByAddr.has(arena)) return undefined;
+      const T = headByAddr.get(arena);
+      const tt = traceAt(T).ops;
+      let tcut = tt.length;
+      for (let i = 0; i < tt.length - 1; i++) {
+        const fa = fallArena(tt[i]);
+        if (fa !== null && fa !== T.prog.arenaBase + (tt[i + 1].at << 2)) { tcut = i + 1; break; }
+      }
+      const sig = (op) => { const o = stripArenaOperands([op]).ops[0]; return `${o.fn}:${o.args.join(',')}`; };
+      const want = tt.slice(0, tcut).map(sig);
+      for (let j = ops.length - want.length; j >= 0; j--) {
+        if (want.every((w, k) => sig(ops[j + k]) === w) && nest(j) !== undefined) return j;
+      }
+      return undefined;
+    };
+    // EITHER edge can be a back edge, and one branch can close two loops.
+    // ADDY_II's outer loop enters at its bottom test, so the test's block is
+    // on the path before the body; the `loop` that ends the body then has
+    // its taken edge back to the innermost head and its FALL-THROUGH back
+    // to that test. A back edge closes the inner loop [headOp..this op]; if
+    // the other edge is an ordinary one it is that loop's exit (bottom-
+    // tested), and if there is none -- a `jmp`, or both edges back -- the
+    // exit is an unfollowed edge of a conditional inside the OUTERMOST loop
+    // closed here (top-tested), each tried in turn, nearest the head first.
+    const backs = flag('no-nested') ? [] : edges.map(([a, ip]) => (a !== head && ip !== headIpOf ? findInnerHead(a, ip) : undefined));
+    const backIdx = backs.map((b, i) => (b !== undefined ? i : -1)).filter(i => i >= 0);
+    if (backIdx.length) {
+      const backOp = ops.length - 1;
+      const mark2 = inner.length;
+      // Outermost first, so an outer loop's `(block (loop` opens before an
+      // inner one's at the same op.
+      for (const i of [...backIdx].sort((x, y) => backs[x] - backs[y])) {
+        inner.push({ headOp: backs[i], backOp, headIp: edges[i][1] });
+      }
+      const exitEdges = edges.filter((_, i) => backs[i] === undefined);
+      if (exitEdges.length) {
+        const r = follow(exitEdges[0][0], exitEdges[0][1], retStack);
+        if (r) return r;
+        why(`0x${cur.toString(16)}: inner loop at ip ${edges[backIdx[0]][1].toString(16)} closed but the path after it died: ${lastWhy}`);
+        undo();
+        return no(`inner loop at 0x${edges[backIdx[0]][0].toString(16)} closed but the path after it died`);
+      }
+      const outer = inner[mark2];
+      nexts[backOp] = outer.headIp;
+      for (let k = outer.headOp; k < backOp; k++) {
+        const o = ops[k];
+        const a = TAKEN_AT.get(o.fn);
+        if (a === undefined) continue;
+        const fa2 = fallArena(o), fi2 = fallThroughIp(o);
+        if (fa2 === null || fi2 === null) continue;
+        const other = nexts[k] === o.args[a] ? [fa2, fi2] : [o.args[a - 1], o.args[a]];
+        if (other[0] === undefined || other[0] === null) continue;
+        if (ops.length > maxOps) break;
+        outer.exitOp = k; outer.exitIp = other[1];
+        if ((other[0] === head || other[1] === headIpOf) && !retStack.length) return close(other[1]);
+        if (headByAddr.has(other[0])) {
+          const r = walk(other[0], retStack, `inner exit from op ${k}`);
+          if (r) return r;
+        }
+      }
+      why(`0x${cur.toString(16)}: top-tested inner loop at ip ${outer.headIp.toString(16)}: no exit continued: ${lastWhy}`);
+      undo();
+      return no(`inner loop at 0x${edges[backIdx[0]][0].toString(16)} has no exit the walk could continue on`);
+    }
+    // A branch with one edge back to the head and one onward is the region's
+    // own back edge with the body continuing past it -- ADDY_II's `loop
+    // 0xa1` at 0xb1 closes the pixel loop and falls into the row loop, and
+    // closing there left the row loop outside. Walk the onward edge; if
+    // nothing past it closes, close here as before.
+    if (!retStack.length && edges.length === 2) {
+      const hi = edges.findIndex(e => e[0] === head || e[1] === headIpOf);
+      if (hi >= 0) {
+        const onward = edges[1 - hi];
+        if (headByAddr.has(onward[0]) && !flag('no-head-continue')) {
+          const r = follow(onward[0], onward[1], retStack);
+          if (r) return r;
+        }
+        return close(edges[hi][1]);
+      }
     }
     for (const [arena, ip] of edges) {
+      const other = edges.find(e => e !== ([arena, ip]) && e[0] !== arena);
+      const mark3 = fwdCand.length;
+      if (other) fwdCand.push({ op: ops.length - 1, ip: other[1], arena: other[0], depth: retStack.length });
       const r = follow(arena, ip, retStack);
       if (r) return r;
+      fwdCand.length = mark3;
     }
     undo();
     return null;
+  };
+  // The op an arena block's code sits at inside the finished path, if it
+  // does: a block boundary the walk crossed, or -- the inner-head case
+  // again -- a run the same guest code was decoded into mid-block.
+  const opOf = (arena, ip, depth, after) => {
+    const byIp = opIp.findIndex((x, j) => j > after && x === ip);
+    if (byIp >= 0) return byIp;
+    const k = `${arena}@${depth}`;
+    if (seen.has(k) && startOp.get(k) > after) return startOp.get(k);
+    if (!headByAddr.has(arena)) return undefined;
+    const T = headByAddr.get(arena);
+    const tt = traceAt(T).ops;
+    let tcut = tt.length;
+    for (let i = 0; i < tt.length - 1; i++) {
+      const fa = fallArena(tt[i]);
+      if (fa !== null && fa !== T.prog.arenaBase + (tt[i + 1].at << 2)) { tcut = i + 1; break; }
+    }
+    const sig = (op) => { const o = stripArenaOperands([op]).ops[0]; return `${o.fn}:${o.args.join(',')}`; };
+    const want = tt.slice(0, tcut).map(sig);
+    if (!want.length) return undefined;
+    for (let j = after + 1; j + want.length <= ops.length; j++) {
+      if (want.every((w, k) => sig(ops[j + k]) === w)) return j;
+    }
+    return undefined;
+  };
+  const close = (headIp) => {
+    const forwards = [];
+    // Edges that land on the region's own code and still exit: a target the
+    // structure cannot reach (a back edge to an ip later on the path, or a
+    // forward branch the planner drops). Head choice decides how many there
+    // are -- ADDY_II's nest read as 62 ops from four different heads with
+    // identical samples, and from 0xac the `loop 0xa1` wrapping the head was
+    // an exit on every iteration (348409 entries at 0.5 iterations).
+    let inRegionExits = 0, detours = 0;
+    const ips = new Set(opIp.filter(x => x !== undefined));
+    for (const f of fwdCand) {
+      const t = opOf(f.arena, f.ip, f.depth, f.op);
+      if (t !== undefined) { forwards.push({ op: f.op, ip: f.ip, targetOp: t }); continue; }
+      if (f.ip !== headIp && ips.has(f.ip)
+        && !inner.some(e => e.headIp === f.ip && (e.backOp === f.op || e.exitOp === f.op))) inRegionExits++;
+      if (f.depth || f.ip === headIp || ips.has(f.ip) || flag('no-detours')) continue;
+      // Off the path: is it a detour that comes back?
+      let dwhy = null;
+      const d = detourFrom(f.arena, (s) => { dwhy = s; return null; });
+      if (!d) {
+        if (flag('why-walk') && why) why(`  detour from op ${f.op} to 0x${f.ip.toString(16)}: ${dwhy}`);
+        continue;
+      }
+      // Where the detour lands decides the join's shape. Later on the path:
+      // a forward branch carrying the arm. The region head: the back edge.
+      // Earlier: only an inner-loop head whose loop the branch sits in.
+      let entry = null;
+      if (d.join === headIp) entry = { kind: 'head' };
+      else {
+        const j = opIp.findIndex((x, n) => x === d.join && depthAt[n] === 0);
+        if (j > f.op) entry = { kind: 'fwd', targetOp: j };
+        else {
+          const n = inner.findIndex(e => e.headOp === j && e.headOp <= f.op && e.backOp >= f.op);
+          if (n >= 0) entry = { kind: 'inner', n };
+        }
+      }
+      if (!entry) {
+        if (flag('why-walk') && why) why(`  detour from op ${f.op} to 0x${f.ip.toString(16)} rejoins at 0x${d.join.toString(16)}, which the structure cannot reach`);
+        continue;
+      }
+      if (flag('why-walk') && why) {
+        why(`  detour from op ${f.op} to 0x${f.ip.toString(16)}: ${d.ops.map(o => o.name).join(' ')} -> 0x${d.join.toString(16)} (${entry.kind})`);
+      }
+      forwards.push({ op: f.op, ip: f.ip, ...entry, detour: d });
+      heads.push(...d.heads); spans.push(...d.spans);
+      detours++;
+    }
+    inRegionExits += planForwards(inner, forwards).dropped.length;
+    return { ops, nexts, spans, heads, headIp, inner, forwards, opIp: opIp.slice(), inRegionExits, detours, policy: fallFirst ? 'fall-first' : 'taken-first' };
   };
 
   const r = walk(head, []);
@@ -323,7 +613,7 @@ function traceFrom(head, headByAddr, traceAt, maxOps, why, heat, maxDepth = 3, a
     const isCall = /^call_rel(32)?$/.test(last.name);
     const isRet = /^ret(32)?$/.test(last.name);
     const at = TAKEN_AT.get(last.fn);
-    if (!isCall && !isRet && ((!truncated && t.end !== 'jmp') || at === undefined)) {
+    if (!isCall && !isRet && ((!truncated && !/^jmp(_syn)?$/.test(t.end)) || at === undefined)) {
       stop = `0x${cur.toString(16)} ends ${t.end}, not a transfer`; break;
     }
     seen.add(key);
@@ -407,7 +697,18 @@ function pickRegion(rr, ranked, minOps, maxOps = 400, state = { tried: new Set()
     // 2.0x that its own branch targets, which is what the second pass finds.
     const straight = flag('straight') || arg('straight') !== undefined;
     const modes = arg('straight') === 'greedy' ? ['trace'] : straight ? ['loop', 'trace'] : ['loop'];
-    for (const mode of modes) for (const h of cands) {
+    // EVERY candidate is walked and the one with the most samples wins,
+    // rather than the first that closes. The hottest block's own address is
+    // tried first, and a block whose terminator jumps BACK to an earlier
+    // head closes from its own address too -- as the body of the loop that
+    // wraps it. ADDY_II's hottest block is ac..b3, ending in `loop a1`; from
+    // ac the walk closed a 62-op region through the whole nest below, with
+    // the a1..ac loop -- the one the block is actually in -- as an exit and
+    // re-entry on every one of its iterations (348409 entries at 0.5
+    // iterations each, -0.5%). From a1 the same nest is an inner structure.
+    for (const mode of modes) {
+    const found = [];
+    for (const h of cands) {
       const tkey = mode === 'loop' ? h : `t${h}`;
       if (tried.has(tkey) || taken.has(h)) continue;
       tried.add(tkey);
@@ -427,9 +728,11 @@ function pickRegion(rr, ranked, minOps, maxOps = 400, state = { tried: new Set()
       // from ASYLUM'95's hottest block it followed the hot edges into a
       // 328-op trace at 1.06x over the bytes where the closing walk finds a
       // 9-op loop at 2.0x -- +0.2% against +20% on the same program.
-      const chain = mode === 'loop'
-        ? chainFrom(h, headByAddr, traceAt, maxOps, why)
-        : traceFrom(h, headByAddr, traceAt, maxOps, why, heat);
+      const chains = mode === 'loop'
+        ? [flag('fall-first-only') ? null : chainFrom(h, headByAddr, traceAt, maxOps, why),
+           flag('no-fall-first') ? null : chainFrom(h, headByAddr, traceAt, maxOps, why, 3, 3000, { fallFirst: true })]
+        : [traceFrom(h, headByAddr, traceAt, maxOps, why, heat)];
+      for (const chain of chains) {
       if (!chain) continue;
       if (chain.ops.length < minOps) {
         why(`0x${h.toString(16)}: ${chain.ops.length} ops < ${minOps}`);
@@ -511,7 +814,7 @@ function pickRegion(rr, ranked, minOps, maxOps = 400, state = { tried: new Set()
       // A sampled block is credited to ONE region -- the first that claims
       // it -- so the shares of several regions add up to the share of their
       // union, which is what the composed ceiling in main() multiplies.
-      const credited = state.credited || (state.credited = new Set());
+      const credited = state.credited || new Set();
       const mine = ranked.filter(x => {
         if (credited.has(x.addr)) return false;
         if (chain.spans.some(([a, e]) => x.addr >= a && x.addr < e)) return true;
@@ -520,19 +823,29 @@ function pickRegion(rr, ranked, minOps, maxOps = 400, state = { tried: new Set()
         return ranges.some(([rlo, rhi]) => lo < rhi && hi > rlo) || targets.some(inRegion);
       });
       const samples = mine.reduce((n, x) => n + x.samples, 0);
-      for (const x of mine) credited.add(x.addr);
-      (state.ranges || (state.ranges = [])).push(...ranges.map(([lo, hi]) =>
-        ({ cs: blk.cs, lo, hi, head: chain.headIp })));
       why(`share: region guest ${blk.cs.toString(16)}:${glo.toString(16)}-${ghi.toString(16)}; `
         + `top sampled blocks ${ranked.slice(0, 6).map(x => {
           const [lo, hi] = guestExtent(x);
           return `${x.cs.toString(16)}:${lo.toString(16)}-${hi.toString(16)} x${x.samples}`;
         }).join(', ')}`);
-      for (const hb of chain.heads) taken.add(hb.addr);
-      taken.add(b.addr);
-      return { block: blk, cs: blk.cs, ops: chain.ops, nexts: chain.nexts,
+      why(`0x${h.toString(16)}: candidate region at ip 0x${chain.headIp.toString(16)}, ${chain.ops.length} ops, ${samples} samples, ${chain.inRegionExits || 0} in-region exit(s)${chain.policy ? ', ' + chain.policy : ''}`);
+      found.push({ pick: { block: blk, cs: blk.cs, ops: chain.ops, nexts: chain.nexts,
         blocks: chain.spans.length, heads: chain.heads, headIp: chain.headIp, samples,
-        closed: chain.closed !== false };
+        closed: chain.closed !== false, inner: chain.inner || [], forwards: chain.forwards || [], opIp: chain.opIp || [] }, mine, ranges, blk, chain });
+      }
+    }
+    if (!found.length) continue;
+    found.sort((x, y) => y.pick.samples - x.pick.samples
+      || (x.chain.inRegionExits || 0) - (y.chain.inRegionExits || 0)
+      || x.pick.ops.length - y.pick.ops.length);
+    const { pick, mine, ranges, blk, chain } = found[0];
+    const credited = state.credited || (state.credited = new Set());
+    for (const x of mine) credited.add(x.addr);
+    (state.ranges || (state.ranges = [])).push(...ranges.map(([lo, hi]) =>
+      ({ cs: blk.cs, lo, hi, head: chain.headIp })));
+    for (const hb of chain.heads) taken.add(hb.addr);
+    taken.add(b.addr);
+    return pick;
     }
   }
   return null;
@@ -878,8 +1191,45 @@ function splitExit(body) {
   return { pre };
 }
 
-function buildRegion(rawOps, nexts, headIp, name, closed = true) {
+// Which forward branches can be wasm blocks. A block opens before the branch
+// -- or before the head of any loop the branch sits in and the target does
+// not, so the br leaves that loop too -- and closes just before the target
+// op. One that would cut across a loop or another block is dropped and stays
+// the exit it was. Shared by the picker (to price a candidate head) and the
+// builder (to emit).
+function planForwards(inner, forwards) {
+  const spans = [], kept = [], dropped = [];
+  const nestsWith = (lo, hi, a, b) => b < lo || a >= hi || (a >= lo && b < hi) || (a < lo && b >= hi);
+  for (const f of forwards) {
+    // A detour joining the head or an inner head needs no block of its own.
+    if (f.kind && f.kind !== 'fwd') continue;
+    let lo = f.op;
+    const hi = f.targetOp;              // block covers ops lo .. hi-1
+    for (const e of inner) if (e.headOp <= f.op && e.backOp < hi && e.backOp >= f.op) lo = Math.min(lo, e.headOp);
+    const ok = inner.every(e => nestsWith(lo, hi, e.headOp, e.backOp))
+      && spans.every(([a, b]) => nestsWith(lo, hi, a, b));
+    if (!ok) { dropped.push(f); continue; }
+    spans.push([lo, hi - 1]);
+    kept.push({ ...f, lo, n: spans.length - 1 });
+  }
+  return { spans, kept, dropped };
+}
+
+const EXIT_SITES = [];   // --exit-census: one entry per `br $out` site, across regions
+
+function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], forwards = []) {
   prepareTables();
+  // Detour arms ride behind the path's ops so the tiers see them as part of
+  // one region (the same promoted registers, the same folded operands); each
+  // one remembers where its ops start. The path is ops 0..mainLen-1.
+  const mainLen = rawOps.length;
+  nexts = nexts.slice();
+  for (const f of forwards) {
+    if (!f.detour) continue;
+    f.start = rawOps.length;
+    rawOps = rawOps.concat(f.detour.ops);
+    nexts.push(...f.detour.nexts);
+  }
   // Before anything else, and never optional: the profiling run's arena
   // addresses are not addresses in the run that will execute this region.
   const { ops, stripped } = flag('keep-arena-operands')
@@ -923,9 +1273,193 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true) {
     + ` (i32.eq (global.get $gip) (i32.const ${headIp}))`
     + ` (i32.eqz (global.get $halt)))`
     + ` (i32.gt_s (global.get $steps) (i32.const 0))))`;
-  for (const [i, op] of ops.entries()) {
+  // Inner loops, by the op that opens them and the branch that closes them.
+  // `try/finally` around the op so every `continue` still emits the close.
+  const opensAt = new Map(), closesAt = new Map(), exitsAt = new Map();
+  inner.forEach((e, n) => {
+    if (!opensAt.has(e.headOp)) opensAt.set(e.headOp, []);
+    opensAt.get(e.headOp).push(n);
+    if (!closesAt.has(e.backOp)) closesAt.set(e.backOp, []);
+    closesAt.get(e.backOp).push(n);
+    if (e.exitOp !== undefined) exitsAt.set(e.exitOp, n);
+  });
+  // The inner loop (if any) whose head this branch's edge names.
+  const closing = (i, ip) => (closesAt.get(i) || []).find(n => inner[n].headIp === ip);
+  // Forward branches become `(block $f_n ...)` opened before the branch --
+  // or before the head of any loop the branch sits in and the target does
+  // not, so the br leaves that loop too -- and closed just before the
+  // target op. One that would cut across a loop or another block is left
+  // as the exit it was.
+  const fwdOpen = new Map(), fwdClose = new Map(), fwdAt = new Map();
+  const plan = planForwards(inner, forwards);
+  const fwdSpans = plan.spans;
+  const fwdDropped = plan.dropped.length;
+  for (const f of plan.kept) {
+    const n = f.n, lo = f.lo, hi = f.targetOp;
+    if (!fwdOpen.has(lo)) fwdOpen.set(lo, []);
+    fwdOpen.get(lo).push(n);
+    if (!fwdClose.has(hi)) fwdClose.set(hi, []);
+    fwdClose.get(hi).push(n);
+    if (!fwdAt.has(f.op)) fwdAt.set(f.op, new Map());
+    fwdAt.get(f.op).set(f.ip, n);
+  }
+  const innerBr = (n) => `(if ${okToLoop} (then (br $il_${n}))`
+    + ` (else (global.set $gip (i32.const ${inner[n].headIp})) (br $out)))`;
+  const headBr = `(if ${okToLoop} (then (br $again))`
+    + ` (else (global.set $gip (i32.const ${headIp})) (br $out)))`;
+  const exitTo = (ip) => `(global.set $gip (i32.const ${ip})) (br $out)`;
+  // Detours, by the branch they hang off and the edge they cover.
+  const detourAt = new Map();
+  for (const f of forwards) {
+    if (!f.detour) continue;
+    if (!detourAt.has(f.op)) detourAt.set(f.op, new Map());
+    detourAt.get(f.op).set(f.ip, f);
+  }
+  let detoursBuilt = 0;
+  // THE ARM OF A DETOUR: its ops, then the join. Steps are billed inside the
+  // arm before each of its transfers and before any label boundary, so the
+  // skipping path pays nothing for it. A transfer inside the detour that will
+  // not lower makes the whole arm null, and the edge stays the exit it was.
+  //
+  // The arm has the main path's structure in miniature. A transfer whose edge
+  // names an EARLIER op of the arm is a back edge, and the ops between become
+  // an inner loop `(block $dx (loop $dl ...))` with the same may-it-go-round
+  // test as every other loop here; one that names a LATER op is a forward
+  // branch and becomes `(block $df ...)` closed before its target. Without
+  // either, a detour is one pass over the arm and out: ADDY_II's fall-first
+  // pick put the whole L1 row body (`cld; mov; mov; cmp/jz; mov; cmp/ja; mov;
+  // add; add; loop`) in a detour, and every row taking that arm ran ONE pixel
+  // inside the region, left through the `jz` or the `loop`, and let the
+  // interpreter draw the rest of the row -- 21,244 exits for 21,609 entries,
+  // 49% absorbed, +20% against a +67% ceiling, with the frame IDENTICAL.
+  // Anything that would cross a block boundary stays the exit it was.
+  const detourArm = (f) => {
+    const join = f.kind === 'head' ? headBr : f.kind === 'inner' ? innerBr(f.n)
+      : (fwdAt.get(f.op) && fwdAt.get(f.op).has(f.ip)) ? `(br $f_${fwdAt.get(f.op).get(f.ip)})` : null;
+    if (join === null) return null;
+    const d = f.detour, id = f.start, ips = d.ips || [];
+    const out = [`;; detour: ${d.ops.map(o => o.name).join(' ')} -> 0x${d.join.toString(16)}`];
+    const n = d.ops.length;
+    // Pass 1: lower every transfer and name each edge.
+    const low = [];
+    for (let k = 0; k < n; k++) {
+      const idx = f.start + k, op = d.ops[k];
+      if (!isTransfer(op)) { low.push(null); continue; }
+      const c = splitBranch(t3.bodies3[idx]);
+      if (c) { low.push({ cond: true, pre: c.pre, test: c.cond, edges: [c.thenIp, c.elseIp] }); continue; }
+      const j = splitJump(t3.bodies3[idx]);
+      if (j) { low.push({ cond: false, pre: j.pre, edges: [j.ip] }); continue; }
+      return null;
+    }
+    const kindOf = (k, ip) => {
+      const last = k === n - 1;
+      if (ip === d.join) return { t: 'join' };
+      if (!last && ip === nexts[f.start + k]) return { t: 'fall' };
+      const j = ips.findIndex(x => x !== undefined && x === ip);
+      if (j >= 0 && j <= k) return { t: 'loop', j };
+      if (j > k) return { t: 'fwd', j };
+      return { t: 'exit', ip };
+    };
+    // Pass 2: the structure. Loops are (head op, back op); forwards are
+    // (branch op, target op), opened before the outermost loop the branch
+    // sits in and the target does not. Anything that crosses is dropped to
+    // the exit it was.
+    const loops = [], fwds = [];
+    const okLoop = (a, b) => loops.every(l => (b < l.a) || (a > l.b) || (a >= l.a && b <= l.b) || (a <= l.a && b >= l.b));
+    for (let k = 0; k < n; k++) {
+      const l = low[k]; if (!l) continue;
+      for (const ip of l.edges) {
+        const e = kindOf(k, ip);
+        if (e.t === 'loop' && okLoop(e.j, k) && !loops.some(x => x.a === e.j && x.b === k)) loops.push({ a: e.j, b: k });
+      }
+    }
+    for (let k = 0; k < n; k++) {
+      const l = low[k]; if (!l) continue;
+      for (const ip of l.edges) {
+        const e = kindOf(k, ip);
+        if (e.t !== 'fwd') continue;
+        let lo = k, cross = false;
+        for (const L of loops) {
+          if (k >= L.a && k <= L.b && e.j > L.b) lo = Math.min(lo, L.a);          // leaves the loop: open outside it
+          else if (!(k >= L.a && k <= L.b) && e.j > L.a && e.j <= L.b) cross = true; // lands inside a loop it is not in
+        }
+        if (cross) continue;
+        if (fwds.some(x => (x.lo < lo && x.hi > lo && x.hi < e.j) || (lo < x.lo && e.j > x.lo && e.j < x.hi))) continue;
+        if (!fwds.some(x => x.op === k && x.ip === ip)) fwds.push({ op: k, ip, lo, hi: e.j });
+      }
+    }
+    const loopN = new Map(loops.map((l, i) => [`${l.a}:${l.b}`, i]));
+    const fwdN = new Map(fwds.map((x, i) => [`${x.op}:${x.ip}`, i]));
+    let owed = 0;
+    const bill = () => {
+      if (owed) out.push(`(global.set $steps (i32.sub (global.get $steps) (i32.const ${owed})))`);
+      owed = 0;
+    };
+    const armOf = (k, ip) => {
+      const e = kindOf(k, ip);
+      if (e.t === 'join') return join;
+      if (e.t === 'fall') return '';
+      if (e.t === 'loop') {
+        const l = loops.find(x => x.a === e.j && x.b === k);
+        if (!l) return exitTo(ip);
+        return `(if ${okToLoop} (then (br $dl_${id}_${loopN.get(`${l.a}:${l.b}`)}))`
+          + ` (else ${exitTo(ip)}))`;
+      }
+      if (e.t === 'fwd' && fwdN.has(`${k}:${ip}`)) return `(br $df_${id}_${fwdN.get(`${k}:${ip}`)})`;
+      return exitTo(ip);
+    };
+    for (let k = 0; k < n; k++) {
+      const idx = f.start + k, op = d.ops[k], last = k === n - 1;
+      const closeF = fwds.filter(x => x.hi === k), openL = loops.filter(x => x.a === k), openF = fwds.filter(x => x.lo === k);
+      if (closeF.length || openL.length || openF.length) bill();
+      for (const x of closeF) out.push(`) ;; end detour forward ${fwdN.get(`${x.op}:${x.ip}`)}`);
+      for (const x of openL.sort((p, q) => q.b - p.b)) out.push(`(block $dx_${id}_${loopN.get(`${x.a}:${x.b}`)} (loop $dl_${id}_${loopN.get(`${x.a}:${x.b}`)}`);
+      for (const x of openF.sort((p, q) => q.hi - p.hi)) out.push(`(block $df_${id}_${fwdN.get(`${x.op}:${x.ip}`)}`);
+      owed++;
+      const l = low[k];
+      if (!l) { out.push(resolveGoArena(t3.bodies3[idx])); }
+      else {
+        bill();
+        out.push(l.pre);
+        if (l.cond) {
+          const a = armOf(k, l.edges[0]), b = armOf(k, l.edges[1]);
+          if (last && a === '' || last && b === '') return null;
+          out.push(`(if ${l.test}\n  (then ${a})\n  (else ${b}))`);
+        } else {
+          const a = armOf(k, l.edges[0]);
+          if (last && a === '') return null;
+          if (a) out.push(a);
+        }
+      }
+      for (const x of loops.filter(x => x.b === k)) out.push(`)) ;; end detour loop ${loopN.get(`${x.a}:${x.b}`)}`);
+      if (last && !l) { bill(); out.push(join); }
+    }
+    detoursBuilt++;
+    // The arm sits inside `(then ...)`: it must not END with a comment, or
+    // the paren that closes the `then` is swallowed by it.
+    return out.join('\n') + '\n';
+  };
+  for (const [i, op] of ops.slice(0, mainLen).entries()) {
+    // Steps still owed are billed before any label boundary, not only before
+    // a branch: a `br` over a forward block skips the ops inside it, and a
+    // bill deferred past the block's end would charge them on the skipping
+    // path too (ADDY_II's 7-op pixel loop stopped at a different instruction
+    // from the interpreter for exactly that). A loop head is the same case
+    // from the other side -- ops before it must not be re-billed per pass.
+    if (pending && (fwdClose.has(i) || opensAt.has(i))) {
+      parts.push(`(global.set $steps (i32.sub (global.get $steps) (i32.const ${pending})))`);
+      pending = 0;
+    }
+    // Forward blocks ending here close before anything opens here.
+    for (const n of fwdClose.get(i) || []) parts.push(`) ;; end forward block ${n}`);
+    // Outermost first: entries are pushed in walk order, and an outer loop's
+    // head is walked before an inner one's. A forward block that starts at
+    // a loop head opens inside the loop (it ends before the loop does).
+    for (const n of opensAt.get(i) || []) parts.push(`(block $ix_${n} (loop $il_${n}`);
+    for (const n of (fwdOpen.get(i) || []).slice().sort((a, b) => fwdSpans[b][1] - fwdSpans[a][1])) parts.push(`(block $f_${n}`);
+    try {
     pending++;
-    const isLast = i === ops.length - 1;
+    const isLast = i === mainLen - 1;
     const branch = isTransfer(op);
     // $steps is only ever READ by a branch handler (it is what makes a slice
     // end), so charging it just before one is exact rather than approximate:
@@ -940,18 +1474,38 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true) {
     // the two can be measured against each other on the same region.
     const lowered = (branch && !flag('no-lower')) ? splitBranch(t3.bodies3[i]) : null;
     if (lowered) {
-      const cont = isLast ? headIp : nexts[i];
-      const act = (ip) => (ip === cont && !isLast ? ''
+      const cont = isLast && !closesAt.has(i) && !exitsAt.has(i) ? headIp : nexts[i];
+      const ex = exitsAt.get(i);
+      // The exit of a top-tested inner loop leaves its block; when that
+      // exit is also the region's closing edge (the walk ended there) it is
+      // the outer back edge instead.
+      // An edge that closes an inner loop is tested FIRST: the walk records
+      // the inner head as the branch's continuation when both of its edges
+      // are back edges, and "continues to the next op" would fall out of
+      // the loop instead of taking it (ADDY_II: 348409 entries at 0.5
+      // iterations each, -1.4%, with the whole nest compiled).
+      const fw = fwdAt.get(i), dt = detourAt.get(i);
+      const detourMemo = new Map();
+      const detour = (ip) => {
+        if (!dt || !dt.has(ip)) return null;
+        if (!detourMemo.has(ip)) detourMemo.set(ip, detourArm(dt.get(ip)));
+        return detourMemo.get(ip);
+      };
+      const act = (ip) => (closing(i, ip) !== undefined ? innerBr(closing(i, ip))
+        : ip === cont && !isLast ? ''
+        : detour(ip) !== null ? detour(ip)
+        : fw && fw.has(ip) ? `(br $f_${fw.get(ip)})`
         : ip === headIp ? `(if ${okToLoop} (then (br $again))`
           + ` (else (global.set $gip (i32.const ${ip})) (br $out)))`
+        : ex !== undefined && ip === inner[ex].exitIp && !isLast ? `(br $ix_${ex})`
           : `(global.set $gip (i32.const ${ip})) (br $out)`);
       if (lowered.thenIp !== cont && lowered.elseIp !== cont && !isLast) {
         return { declined: `${op.name} continues to ${cont} which is neither of its edges` };
       }
       parts.push(lowered.pre);
-      parts.push(`(if ${lowered.cond}\n  (then ${act(lowered.thenIp)})\n  (else ${act(lowered.elseIp)}))`);
-      if (lowered.thenIp !== cont && lowered.elseIp !== cont) exits += 2;
-      else exits++;
+      const thenAct = act(lowered.thenIp), elseAct = act(lowered.elseIp);
+      parts.push(`(if ${lowered.cond}\n  (then ${thenAct})\n  (else ${elseAct}))`);
+      exits += (thenAct.includes('$out') ? 1 : 0) + (elseAct.includes('$out') ? 1 : 0);
       continue;
     }
     // splitJump runs second and overwrites the reason, so keep splitBranch's --
@@ -960,7 +1514,7 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true) {
     const branchWhy = lastSplitWhy;
     const jump = (branch && !flag('no-lower')) ? splitJump(t3.bodies3[i]) : null;
     if (jump) {
-      const cont = isLast ? headIp : nexts[i];
+      const cont = isLast && !closesAt.has(i) ? headIp : nexts[i];
       // A straight region ends where its walk stopped, so its last jump is an
       // exit like any other: publish the ip and fall out through the back-edge
       // test, which cannot pass because the ip is not the head.
@@ -971,7 +1525,9 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true) {
       }
       if (jump.ip !== cont) return { declined: `${op.name} goes to ${jump.ip}, not ${cont}` };
       parts.push(jump.pre);
-      if (jump.ip === headIp) {
+      if (closing(i, jump.ip) !== undefined) {
+        parts.push(innerBr(closing(i, jump.ip)));
+      } else if (jump.ip === headIp) {
         parts.push(`(if ${okToLoop} (then (br $again))`
           + ` (else (global.set $gip (i32.const ${jump.ip})) (br $out)))`);
       }
@@ -1042,6 +1598,12 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true) {
     parts.push('(br_if $out (i32.or (global.get $halt)'
       + ` (i32.ne (global.get $gip) (i32.const ${fall}))))`);
     exits++;
+    } finally {
+      // A branch that could not be lowered leaves through `(br $out)` above,
+      // so closing the inner loop after it is dead code, but it must still
+      // close for the wasm to validate.
+      for (const n of closesAt.get(i) || []) parts.push(`)) ;; end inner loop ${n}`);
+    }
   }
   if (pending) {
     parts.push(`(global.set $steps (i32.sub (global.get $steps) (i32.const ${pending})))`);
@@ -1070,15 +1632,44 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true) {
   // constantly. DRAGON.EXE re-enters its region through 18 exits and ran 24
   // interrupts to the interpreter's 107 on the same dispatch budget: the region
   // was not slower at the work, it was being charged for work it had not done.
-  const entry = '(global.set $steps (i32.add (global.get $steps) (i32.const 1)))';
+  const entry = flag('no-entry-refund') ? ';; --no-entry-refund' : '(global.set $steps (i32.add (global.get $steps) (i32.const 1)))';
   // `--trap` replaces the whole body with `unreachable`. It answers the one
   // question no A/B on the body can: is this region being ENTERED at all. A run
   // that finishes normally with it on has never dispatched the region -- and
   // every measurement of that region is a measurement of something else.
+  // `--exit-census`: count every `br $out` site, in the top slots of the
+  // dispatch histogram (the handler indices grow from the bottom). Read back
+  // by `--trips`. It is what says WHICH exit is draining a region whose
+  // share is high and whose absorption is not.
+  let inner_parts = parts.join('\n');
+  if (flag('exit-census')) {
+    inner_parts = inner_parts.replace(/(\(global\.set \$gip \(i32\.const (\d+)\)\) )?\(br \$out\)/g, (m, g, ip) => {
+      const site = EXIT_SITES.length;
+      EXIT_SITES.push({ region: name, ip: ip === undefined ? null : Number(ip) });
+      const addr = isa.HIST_BASE + (isa.HIST_SLOTS - 1 - site) * 4;
+      return `(i32.store (i32.const ${addr}) (i32.add (i32.load (i32.const ${addr})) (i32.const 1))) ${m}`;
+    });
+  }
+  // `--step-audit`: does the region charge $steps exactly one per x86
+  // instruction it retires (two for a fused pair)? Every charge in the body
+  // is mirrored into one histogram slot and every op's weight into another;
+  // `--trips` prints both. Unequal means the region itself; equal moves the
+  // question to the dispatch into it.
+  if (flag('step-audit')) {
+    const chargeAddr = isa.HIST_BASE + (isa.HIST_SLOTS - 200) * 4;
+    const weightAddr = chargeAddr + 4;
+    const bump = (addr, n) => `(i32.store (i32.const ${addr}) (i32.add (i32.load (i32.const ${addr})) (i32.const ${n})))`;
+    inner_parts = inner_parts.replace(/\(global\.set \$steps \(i32\.sub \(global\.get \$steps\) \(i32\.const (\d+)\)\)\)/g,
+      (m, n) => `${bump(chargeAddr, Number(n))} ${m}`);
+    inner_parts = inner_parts.replace(/\(global\.set \$steps \(i32\.add \(global\.get \$steps\) \(i32\.const 1\)\)\)/g,
+      (m) => `${bump(chargeAddr, -1)} ${m}`);
+    inner_parts = inner_parts.replace(/^;; ([a-z0-9_]+)$/gm,
+      (m, nm) => `${m}\n${bump(weightAddr, nm === 'jmp_syn' ? 0 : /_j[a-z]+(_t)?(_spin)?$/.test(nm) ? 2 : 1)}`);
+  }
   const body = flag('trap') ? '(unreachable)'
-    : `${entry}\n${t3.pro}\n(block $out (loop $again\n${parts.join('\n')}\n))\n${t3.epi}\n${leave}`;
+    : `${entry}\n${t3.pro}\n(block $out (loop $again\n${inner_parts}\n))\n${t3.epi}\n${leave}`;
   return {
-    name, body, locals: t3.locals, exits, unlowered, unloweredWhy,
+    name, body, locals: t3.locals, exits, unlowered, unloweredWhy, fwdKept: fwdSpans.length, fwdDropped, detours: detoursBuilt,
     promoted: t3.promoted, declined: t3.promoted ? null : t3.declined,
     eaFolded: t3.eaFolded, segFolded: t3.segFolded, folded: t3.folded,
     inlined: t3.inlined, strippedArena: stripped,
@@ -1235,10 +1826,46 @@ async function main() {
     picks.push(p);
     console.log(`region at guest ip 0x${p.headIp.toString(16)}: `
       + `${p.blocks} block(s), ${p.ops.length} ops, ${p.share.toFixed(1)}% of samples`
-      + (p.closed === false ? ' (straight)' : ''));
+      + (p.closed === false ? ' (straight)' : '')
+      + (p.inner && p.inner.length ? ` (${p.inner.length} nested loop(s))` : '')
+      + (p.forwards && p.forwards.length ? ` (${p.forwards.length} forward branch(es))` : ''));
   }
   if (!picks.length) { console.log('no self-loop region found'); process.exit(2); }
   const pick = picks[0];
+  // `--dump-ops`: the picked region's op list with the walk's structure on
+  // it -- where each nested loop opens, which branch closes it, which edge
+  // leaves it -- so a region that does not iterate can be read rather than
+  // re-derived from the emitted wasm.
+  if (flag('dump-ops')) {
+    for (const p of picks) {
+      console.log(`ops of region at 0x${p.headIp.toString(16)} (${p.inner.length} nested):`);
+      p.inner.forEach((e, n) => console.log(`  loop ${n}: ops ${e.headOp}..${e.backOp} head ip 0x${e.headIp.toString(16)}`
+        + (e.exitOp !== undefined ? ` exit at op ${e.exitOp} to 0x${e.exitIp.toString(16)}` : '')));
+      p.ops.forEach((op, i) => {
+        const at = TAKEN_AT.get(op.fn);
+        const marks = [];
+        p.inner.forEach((e, n) => {
+          if (e.headOp === i) marks.push(`open L${n}`);
+          if (e.backOp === i) marks.push(`close L${n}`);
+          if (e.exitOp === i) marks.push(`exit L${n}`);
+        });
+        (p.forwards || []).forEach((f) => {
+          if (f.op === i) marks.push(`fwd 0x${f.ip.toString(16)} -> op ${f.targetOp}`);
+        });
+        const oip = (p.opIp || [])[i];
+        if (flag('dump-words') && p.heads[0] && p.heads[0].prog.wordIp) {
+          const m = p.heads[0].prog.wordIp; const near = [];
+          for (let k = op.at - 2; k <= op.at + 4; k++) if (m.has(k)) near.push(`${k}:${m.get(k).toString(16)}`);
+          console.log(`        at=${op.at} args=${op.args.length} wordIp near: ${near.join(' ')}`);
+        }
+        console.log(`  [${String(i).padStart(3)}] ${(oip !== undefined ? '@' + oip.toString(16) : '@?').padEnd(6)} ${op.name.padEnd(18)}`
+          + (at !== undefined ? ` taken 0x${(op.args[at] || 0).toString(16)}` : '')
+          + (fallThroughIp(op) !== null && fallThroughIp(op) !== undefined ? ` fall 0x${fallThroughIp(op).toString(16)}` : '')
+          + (p.nexts[i] !== null && p.nexts[i] !== undefined ? ` next 0x${p.nexts[i].toString(16)}` : '')
+          + (marks.length ? `   <- ${marks.join(', ')}` : ''));
+      });
+    }
+  }
 
   // `--pick-only` stops here: profile, pick, report, exit. Nothing is built,
   // installed, compared or timed. It exists for tools/toyvm/region-why.js,
@@ -1252,9 +1879,9 @@ async function main() {
   // only when NO region survives, so the single-region contract is unchanged.
   const prepareRegion = async (pick, idx) => {
   const share = pick.share;
-  const region = buildRegion(pick.ops, pick.nexts, pick.headIp, `region_${idx}`, pick.closed !== false);
+  const region = buildRegion(pick.ops, pick.nexts, pick.headIp, `region_${idx}`, pick.closed !== false, pick.inner || [], pick.forwards || []);
   if (region.declined && !region.body) { console.log(`declined: ${region.declined}`); return { declined: 3 }; }
-  console.log(`  ${region.exits} in-body exit(s), ${region.eaFolded} addresses folded, `
+  console.log(`  ${region.exits} in-body exit(s), ${region.fwdKept || 0} forward branch(es) kept, ${region.fwdDropped || 0} dropped, ${region.detours || 0} detour arm(s), ${region.eaFolded} addresses folded, `
     + `${region.folded} register-file calls folded, `
     + `${region.inlined} counter call(s) inlined, `
     + `${region.strippedArena} stale arena operand(s) stripped, `
@@ -1480,7 +2107,7 @@ async function main() {
   // An edge that is taken later costs one handback and is decoded on demand,
   // exactly as the interpreter would decode it. `--succ-unseen` restores the
   // old behaviour for the A/B.
-  const allSucc = successorIps(pick.ops, succWhy)
+  const allSucc = successorIps(pick.ops.concat(...(pick.forwards || []).filter(f => f.detour).map(f => f.detour.ops)), succWhy)
     .filter(ip => flag('succ-unseen') || knownBlocks.has(ip));
   // ...and each one carries the bytes the profiling run decoded it from, so
   // compile.js can decline any whose code has not been written yet. Same span
@@ -1627,13 +2254,39 @@ async function main() {
     const h = await once(exe, o, { ...install, hist: 1 });
     const u32 = new Uint32Array(h.r.vm.mem.buffer);
     if (flag('why')) {
-      let best = 0, at = -1, sum = 0;
-      for (let i = 0; i < isa.HIST_SLOTS; i++) {
-        const n = u32[(isa.HIST_BASE >> 2) + i];
-        sum += n;
-        if (n > best) { best = n; at = i; }
+      // What the interpreter still dispatches with the region in, against
+      // what it dispatched without: the difference is what the region
+      // absorbed, and a region whose share says 98% while this says 30% is
+      // being run around, not through.
+      const histOf = (mem) => {
+        const v = new Uint32Array(mem.buffer);
+        const top = [];
+        let sum = 0;
+        // Handler slots only: the top of the table holds the --exit-census and
+        // --step-audit counters.
+        for (let i = 0; i < isa.HIST_SLOTS - 256; i++) { const n = v[(isa.HIST_BASE >> 2) + i]; sum += n; top.push([i, n]); }
+        top.sort((a, b) => b[1] - a[1]);
+        return { sum, top: top.slice(0, 10).map(([i, n]) => `${(HANDLERS[i] || {}).name || ('#' + i)} x${n}`).join(', ') };
+      };
+      const hb = await once(exe, o, { hist: 1 });
+      const a = histOf(hb.r.vm.mem), b = histOf(h.r.vm.mem);
+      console.log(`  hist baseline: ${a.sum} dispatches: ${a.top}`);
+      console.log(`  hist region:   ${b.sum} dispatches (${(100 * (1 - b.sum / Math.max(1, a.sum))).toFixed(1)}% absorbed): ${b.top}`);
+      if (arg('hist-diff')) {
+        // Every handler whose dispatch count moved, most-moved first: what the
+        // region took over and, just as telling, what the interpreter now
+        // runs that it did not before (a synthetic jump into the region, a
+        // block cut where none was).
+        const va = new Uint32Array(hb.r.vm.mem.buffer), vb = new Uint32Array(h.r.vm.mem.buffer);
+        const rows = [];
+        for (let i = 0; i < isa.HIST_SLOTS; i++) {
+          const x = va[(isa.HIST_BASE >> 2) + i], y = vb[(isa.HIST_BASE >> 2) + i];
+          if (x !== y) rows.push([(HANDLERS[i] || {}).name || ('#' + i), x, y]);
+        }
+        rows.sort((p, q) => Math.abs(q[2] - q[1]) - Math.abs(p[2] - p[1]));
+        const n = Number(arg('hist-diff'));
+        for (const [nm, x, y] of rows.slice(0, n > 1 ? n : 40)) console.log(`    ${nm.padEnd(22)} ${String(x).padStart(9)} -> ${String(y).padStart(9)}  (${y >= x ? '+' : ''}${y - x})`);
       }
-      console.log(`  hist: ${sum} counted, busiest slot ${at} x${best}`);
     }
     for (const [i, x] of prepared.entries()) {
       const entries = u32[(isa.HIST_BASE >> 2) + h.r.vm.regionBase + i];
@@ -1641,6 +2294,15 @@ async function main() {
       console.log(`  ${prepared.length > 1 ? `region ${i} (0x${x.pick.headIp.toString(16)}): ` : ''}`
         + `${entries} region entries, ~${(iters / Math.max(1, entries)).toFixed(1)}`
         + ` iterations per entry (estimated from the ${x.share.toFixed(1)}% share)`);
+    }
+    if (flag('step-audit')) {
+      const base = (isa.HIST_BASE >> 2) + isa.HIST_SLOTS - 200;
+      console.log(`  step audit: regions charged ${u32[base]} steps for ${u32[base + 1]} instruction weights`);
+    }
+    if (flag('exit-census')) {
+      const rows = EXIT_SITES.map((e, k) => ({ ...e, n: u32[(isa.HIST_BASE >> 2) + isa.HIST_SLOTS - 1 - k] }))
+        .filter(e => e.n > 0).sort((a, b) => b.n - a.n);
+      for (const e of rows) console.log(`  exit ${e.region} -> ${e.ip === null ? 'computed' : '0x' + e.ip.toString(16)}: ${e.n}`);
     }
   }
 
@@ -1760,6 +2422,45 @@ async function main() {
   // repaints in the distance between the two stops. A baseline-vs-region
   // difference no bigger than the baseline's own drift is phase; a difference
   // far above it is the region computing something else.
+  // `--peek-ds=OFF,OFF`: the guest's own counters at the stop, per arm. A
+  // frame hash cannot see a ~1-step-per-entry accounting error (a demo holds
+  // one picture for tens of thousands of dispatches); a row counter can.
+  if (arg('peek-ds')) {
+    const offs = String(arg('peek-ds')).split(',').map(Number);
+    for (const [tag, run] of [['baseline', baseRun], ['region', jitRun]]) {
+      const ex = run.r.vm.exports, mem = new Uint8Array(run.r.vm.mem.buffer);
+      const dsb = ex.get_dsb();
+      const w = (off) => mem[dsb + off] | (mem[dsb + off + 1] << 8);
+      console.log(`  peek ${tag} (${run.dispatched} dispatches, stop ${run.cs.toString(16)}:${run.ip.toString(16)}):`
+        + ` ${offs.map(o => `ds:${o}=${w(o)}`).join(' ')} cx=${ex.get_cx()} di=${ex.get_di()} si=${ex.get_si()}`);
+    }
+  }
+  // `--peek-block=0xIP,...`: the arena words the LAST compile of each arm
+  // left at a guest ip, as handler names. It is how "the interpreter stopped
+  // dispatching X" (from --hist-diff) turns into the words that replaced it.
+  if (arg('peek-block')) {
+    const { ARITY } = require('./emit');
+    const ips = String(arg('peek-block')).split(',').map(Number);
+    for (const [tag, run] of [['baseline', baseRun], ['region', jitRun]]) {
+      const r = run.r, u32 = new Uint32Array(r.vm.mem.buffer);
+      for (const ip of ips) {
+        const slot = isa.jhash(run.cs, ip) * 4;
+        const arena = r.jtab[slot] === ip && r.jtab[slot + 1] === (run.cs & 0xFFFF) ? r.jtab[slot + 2] : 0;
+        if (!arena) { console.log(`  peek-block ${tag} ${run.cs.toString(16)}:${ip.toString(16)}: not in the block table`); continue; }
+        const parts = [];
+        let w = arena >> 2;
+        for (let n = 0; n < 12; n++) {
+          const fn = u32[w];
+          const h = HANDLERS[fn];
+          const ar = h ? ARITY[fn] : 0;
+          parts.push(`${h ? h.name : '#' + fn}${ar ? '(' + Array.from({ length: ar }, (_, k) => u32[w + 1 + k]).map(v => '0x' + (v >>> 0).toString(16)).join(',') + ')' : ''}`);
+          if (!h || /^(jmp|ret|end|loop)|_j[a-z]+(_t)?$|^j[a-z]+$/.test(h.name) || fn >= (r.vm.regionBase || 1e9)) break;
+          w += 1 + ar;
+        }
+        console.log(`  peek-block ${tag} ${run.cs.toString(16)}:${ip.toString(16)} @0x${arena.toString(16)}: ${parts.join(' ')}`);
+      }
+    }
+  }
   if (!same && !flag('no-rematch') && baseRun.dispatched !== jitRun.dispatched) {
     const { readFrame } = require('./run-dos');
     const px = (run) => readFrame(run.r.vm.mem, run.r.surface.geom).pixels;

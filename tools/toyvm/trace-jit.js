@@ -1503,7 +1503,7 @@ function straightLineProgram(ops, base) {
     const h = HANDLERS[op.fn];
     const nextArena = base + (starts[i + 1] === undefined ? endAt : starts[i + 1]) * 4;
     const nextGuest = 0;
-    if (h.name === 'jmp') {
+    if (h.name === 'jmp' || h.name === 'jmp_syn') {
       // A jmp is REDIRECTED at its fall-through, exactly like a conditional
       // branch below, and terminates only when it is the last op (where the
       // fall-through IS the end word). What must not happen is a jmp that

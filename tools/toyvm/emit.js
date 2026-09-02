@@ -694,6 +694,22 @@ function genBranches() {
   ${ops(2)}
   ${GO('(local.get $t0)', '(local.get $t1)')}
 `);
+  // THE COMPILER'S OWN TRANSFER, not the guest's. compile.js emits one when a
+  // decode runs into the head of a block it already holds, so the arena has
+  // one copy of that code instead of two. It is a dispatch like any other,
+  // and $next charges every dispatch a step -- which made the guest's clock
+  // depend on the ORDER blocks were compiled in: the same instructions cost
+  // one step more wherever a head happened to exist first. Installing a
+  // region moves heads, and on ADDY_II that alone put the region arm 45,000
+  // steps ahead of the interpreter at the same budget -- a "wrong frame"
+  // from a region that computed nothing wrong. So this twin gives the step
+  // back: the transfer stays a dispatch, the budget no longer sees it.
+  const jmpSyn = h('jmp_syn', 2, `
+  ${ops(2)}
+  (global.set $steps (i32.add (global.get $steps) (i32.const 1)))
+  ${GO('(local.get $t0)', '(local.get $t1)')}
+`);
+  TAKEN_AT.set(jmpSyn, 1);
   // `jmp $` is the purest spin there is, and the one a demo parks on when it
   // is finished. The compiler only offers this twin for a block that is the
   // jump and nothing else, so a `jmp` back to the head from further down a

@@ -63,6 +63,11 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // marks them in isa.CODE_BITMAP so a later store into any of them is seen for
   // what it is: a program rewriting code that has already been compiled.
   const covered = [];
+  // Word index -> guest ip of the instruction emitted there. Only a branch
+  // publishes an ip into the arena, so without this a reader of the words
+  // cannot say where a mid-block op sits in the guest; region-jit needs
+  // that to turn a branch to an ip inside its own body into a wasm `br`.
+  const wordIp = new Map();
 
   // Superinstruction formation. Off with `fuse: false` (run-dos.js --no-fuse),
   // which is the A/B partner: fusing preserves $steps exactly (see
@@ -122,6 +127,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     if (fused === undefined) return;
     words[prevStart] = fused;
     words.splice(lastStart, 1);
+    wordIp.delete(lastStart);
     // The branch's own fixups point at operand words that just moved down one.
     // They are the last fixups pushed and the only ones past `lastStart` --
     // every earlier block ended below `start` -- so the scan stops at the first
@@ -279,6 +285,29 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   const fixupView = wd
     ? new Int32Array(wd.mem.buffer, isa.DEC_FIXUPS,
         isa.DEC_FIXUPS_MAX * isa.DEC_FIXUP_WORDS) : null;
+  const insnView = wd
+    ? new Int32Array(wd.mem.buffer, isa.DEC_INSNS, isa.DEC_INSNS_MAX * 2) : null;
+
+  // A REGION HEAD IS A BLOCK HEAD BEFORE ANYTHING ELSE IS DECODED. A region
+  // is entered only by a dispatch to its head ip, and the decoder stitches a
+  // conditional's fall-through -- and a `jmp`'s target -- into the block in
+  // front of it whenever that ip is not yet a head. Compiled in discovery
+  // order, ADDY_II's head at 0xb3 was reached first as the fall-through of the
+  // `loop` at 0xb1 and absorbed into that block, so the loop ran through the
+  // head without ever dispatching to it: with the region installed the
+  // interpreter still counted 8.3M of the 12M dispatches, and a region over
+  // 98.8% of the samples bought -2%. Marking every region head up front, and
+  // compiling it first, makes each of them the boundary the region needs.
+  if (opts.regionAt) {
+    const myKey = `${d32 ? `${codeBase}d` : codeBase}:`;
+    for (const key of opts.regionAt.keys()) {
+      if (!key.startsWith(myKey)) continue;
+      const rip = Number(key.slice(myKey.length));
+      if (blocks.has(rip)) continue;
+      markHead(rip);
+      pending.push(rip);
+    }
+  }
 
   while (pending.length) {
     const blockIp = pending.pop();
@@ -392,11 +421,13 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     let justOpened = -1;
     for (;;) {
       if (words.length > maxWords) { words.push(H.end, cur); break; }
+      wordIp.set(words.length, cur);
 
       // Reaching the head of a block we already emitted: jump to it rather than
       // emitting a second copy of an entire loop body.
       if (cur !== blockIp && cur !== justOpened && blocks.has(cur)) {
-        words.push(H.jmp, 0, cur);
+        // The synthetic twin: a dispatch, but not a step (see emit.js).
+        words.push(H.jmp_syn, 0, cur);
         fixups.push({ wordIndex: words.length - 2, ip: cur });
         break;
       }
@@ -421,6 +452,8 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
         if (n > 0) {
           const base = words.length;
           for (let i = 0; i < n; i++) words.push(scratchView[i]);
+          const ni = wd.exports.dc_insns();
+          for (let i = 0; i < ni; i++) wordIp.set(base + insnView[2 * i], insnView[2 * i + 1]);
 
           // Replay the host's decryptor rule over the run, per instruction and
           // unchanged: each fixup carries the ip of the instruction that emitted
@@ -684,7 +717,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   }
 
   return {
-    words, blocks, fixups, unresolved, covered,
+    words, blocks, fixups, unresolved, covered, wordIp,
     unimplemented: [...unimplemented],
     entryAddr: blocks.get(entry),
     deadFlags: deadFlagCount,
