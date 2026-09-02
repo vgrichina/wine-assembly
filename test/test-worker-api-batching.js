@@ -174,6 +174,28 @@ class FakeRenderWorker {
   }
   terminate() {}
 }
+
+let defaultWorkerUrl = null;
+const savedWorker = global.Worker;
+global.Worker = class extends FakeRenderWorker {
+  constructor(url) {
+    super();
+    defaultWorkerUrl = url;
+  }
+};
+const defaultD3d = new D3D.Encoder({
+  memory: d3dMemory, module: {}, sigs: {}, capacity: 8192, bufferCount: 2,
+  guestToWasm: value => value, getImageBase: () => 0x400000,
+});
+defaultD3d.stop();
+if (savedWorker === undefined) delete global.Worker;
+else global.Worker = savedWorker;
+const guestWorkerSource = fs.readFileSync(path.join(ROOT, 'lib', 'guest-worker.js'), 'utf8');
+const renderWorkerUrl = /workerUrl:\s*'(d3d-render-worker\.js\?v=\d+)'/.exec(guestWorkerSource);
+assert(renderWorkerUrl, 'guest-worker declares its versioned D3D render-worker URL');
+assert.strictEqual(defaultWorkerUrl, renderWorkerUrl[1],
+  'the standalone Encoder default and guest-worker must load the same render-worker version');
+
 const d3d = new D3D.Encoder({
   memory: d3dMemory, module: {}, sigs: {}, capacity: 8192, bufferCount: 2,
   guestToWasm: value => value, getImageBase: () => 0x400000,
