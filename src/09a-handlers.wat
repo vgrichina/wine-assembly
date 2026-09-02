@@ -7305,6 +7305,26 @@
         (return)))
     (local.set $dst (call $g2w (local.get $arg4)))
 
+    ;; CSIDL_DESKTOPDIRECTORY(0x10): the current user's physical desktop.
+    ;; Inno Setup requests this for its {userdesktop} shortcut target.
+    (if (i32.eq (local.get $folder) (i32.const 0x10))
+      (then
+        ;; UTF-16LE "C:\\WINDOWS\\Desktop\0".
+        (i32.store (local.get $dst) (i32.const 0x003a0043))
+        (i32.store offset=4 (local.get $dst) (i32.const 0x0057005c))
+        (i32.store offset=8 (local.get $dst) (i32.const 0x004e0049))
+        (i32.store offset=12 (local.get $dst) (i32.const 0x004f0044))
+        (i32.store offset=16 (local.get $dst) (i32.const 0x00530057))
+        (i32.store offset=20 (local.get $dst) (i32.const 0x0044005c))
+        (i32.store offset=24 (local.get $dst) (i32.const 0x00730065))
+        (i32.store offset=28 (local.get $dst) (i32.const 0x0074006b))
+        (i32.store offset=32 (local.get $dst) (i32.const 0x0070006f))
+        (i32.store16 offset=36 (local.get $dst) (i32.const 0))
+        (call $sh_folder_maybe_create (local.get $arg1) (local.get $dst))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+
     ;; CSIDL_PROGRAMS(0x02): the Win2k shfolder used by Unicode Inno Setup
     ;; reads the all-users Common Programs value on this compatibility path.
     (if (i32.eq (local.get $folder) (i32.const 0x02))

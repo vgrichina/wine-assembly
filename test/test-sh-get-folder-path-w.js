@@ -58,6 +58,12 @@ const extraWat = String.raw`
   assert.strictEqual(e.test_sh_get_folder_path_w(0x8002, buffer) | 0, 0,
     'CSIDL_PROGRAMS succeeds with CSIDL_FLAG_CREATE');
   assert.strictEqual(readWide(), 'C:\\WINDOWS\\Start Menu\\Programs');
+  assert.strictEqual(e.test_sh_get_folder_path_w(0x8010, buffer) | 0, 0,
+    'CSIDL_DESKTOPDIRECTORY succeeds with CSIDL_FLAG_CREATE');
+  assert.strictEqual(readWide(), 'C:\\WINDOWS\\Desktop');
+  assert.strictEqual(hostCtx.vfs.getFileAttributes(
+    'C:\\WINDOWS\\Desktop'), 0x10,
+  'CSIDL_FLAG_CREATE materializes the user desktop directory');
   assert.strictEqual(e.test_sh_get_folder_path_w(0x17, buffer) | 0, 0,
     'CSIDL_COMMON_APPDATA succeeds without CSIDL_FLAG_CREATE');
   assert.strictEqual(hostCtx.vfs.getFileAttributes(
