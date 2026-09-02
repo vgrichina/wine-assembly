@@ -658,6 +658,7 @@ E2E=(
   test/test-about-cancel.js
   test/test-control-cli.js
   test/test-control-stdin-cli.js
+  test/test-control-stdin-frozen-cli.js
   test/test-calc-about.js
   test/test-calc-drag-close.js
   test/test-calc-helper-window.js

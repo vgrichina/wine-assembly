@@ -126,6 +126,7 @@ const CONTROL = hasFlag('control') || CONTROL_SPEC !== null;
 // the request. Not compatible with the interactive debug prompt (--break
 // without --watch-log), which owns stdin.
 const CONTROL_STDIN = hasFlag('control-stdin');
+const CLI_FROZEN_START = hasFlag('frozen'); // --frozen: wait for control-channel step commands before running guest batches
 const CONTROL_PORT = parseInt(CONTROL_SPEC || '8123', 10) || 8123;
 const CONTROL_HOST = getArg('control-host', '127.0.0.1'); // --control-host=0.0.0.0: explicit LAN opt-in (the channel carries eval)
 // With --control the schedule is external, so a default batch budget makes no
@@ -313,6 +314,12 @@ if (process.send) {
 }
 const TIME_SCALE = parseFloat(getArg('time-scale', '1')) || 1;  // --time-scale=10: guest clock runs 10x
 const REAL_TICKS = hasFlag('real-ticks'); // --real-ticks: GetTickCount from the wall clock, not the batch counter
+if (CLI_FROZEN_START && !(CONTROL || CONTROL_STDIN)) {
+  throw new Error('--frozen needs --control or --control-stdin');
+}
+if (CLI_FROZEN_START && REAL_TICKS) {
+  throw new Error('--frozen is incompatible with --real-ticks; use the deterministic batch clock');
+}
 // --tick-ms-per-batch=N: how much guest time one batch is worth on the
 // batch-driven clock (default 200). Neither default clock suits a game whose
 // engine steps on a WM_TIMER: at 200ms/batch Chip's Challenge burns its whole
@@ -4949,6 +4956,26 @@ async function main() {
     }
   };
   const deadlineMs = MAX_SECONDS ? Date.now() + MAX_SECONDS * 1000 : 0;
+  let cliFrozen = CLI_FROZEN_START;
+  let cliFrozenSteps = 0;
+  let cliStepBudget = 0;
+  let cliStepWaiter = null;
+  let cliWake = null;
+  let cliWakeTimer = null;
+  const wakeCliLoop = () => {
+    if (!cliWake) return;
+    const wake = cliWake;
+    cliWake = null;
+    if (cliWakeTimer) clearTimeout(cliWakeTimer);
+    cliWakeTimer = null;
+    wake();
+  };
+  const waitForCliStep = () => new Promise(resolve => {
+    cliWake = resolve;
+    if (deadlineMs) {
+      cliWakeTimer = setTimeout(wakeCliLoop, Math.max(0, deadlineMs - Date.now()));
+    }
+  });
   // --control: live agent command channel (docs/design-agent-control.md).
   // Commands arrive over HTTP between batches. Input entries go through the
   // same parseInputEntries the --input schedule uses and drain through the
@@ -4986,6 +5013,7 @@ async function main() {
     })) : [];
     return {
       batch: tickState.batch | 0,
+      frozen: cliFrozen,
       eip: '0x' + (we.get_eip() >>> 0).toString(16),
       quit: we.get_quit_flag ? !!we.get_quit_flag() : false,
       yieldReason: we.get_yield_reason ? we.get_yield_reason() | 0 : 0,
@@ -5003,21 +5031,78 @@ async function main() {
       'return eval(' + JSON.stringify(String(code)) + ')');
     return controlSafeValue(fn(instance, instance.exports, renderer, memory, g2w, tickState));
   };
+  const controlPng = (filename) => {
+    if (!renderer || !renderer.canvas) throw new Error('renderer is unavailable');
+    if (!filename) throw new Error('png needs a path');
+    if (typeof renderer.repaint === 'function') renderer.repaint();
+    const buf = canvasToPng(renderer.canvas);
+    fs.writeFileSync(filename, buf);
+    return { batch: tickState.batch | 0, frozen: cliFrozen, path: filename, bytes: buf.length };
+  };
   const handleControlCommand = (cmdIn) => {
     const cmd = typeof cmdIn === 'string' ? { cmd: cmdIn } : (cmdIn || {});
+    const native = String(cmd.cmd || '').trim();
+    let match;
+    if (!cmd.action && /^(pause|resume)$/.test(native)) {
+      cmd.action = 'frozen';
+      cmd.mode = native === 'pause' ? 'on' : 'off';
+    } else if (!cmd.action && (match = native.match(/^(?:step|run)\s+(\d+)$/))) {
+      cmd.action = 'step';
+      cmd.n = Number(match[1]);
+    } else if (!cmd.action && (match = native.match(/^frozen\s+(on|off)$/))) {
+      cmd.action = 'frozen';
+      cmd.mode = match[1];
+    }
     // Stdin ergonomics: a bare native name on a line ("snapshot") reads as
     // the native action, not as an input entry that would fail to parse.
-    if (!cmd.action && /^(ping|snapshot|quit)$/.test(String(cmd.cmd || ''))) {
-      cmd.action = String(cmd.cmd);
+    if (!cmd.action && /^(ping|snapshot|quit)$/.test(native)) {
+      cmd.action = native;
     }
     if (cmd.action === 'ping') {
-      return { pong: true, batch: tickState.batch | 0, app: APP_ID || path.basename(EXE_PATH || '') };
+      return {
+        pong: true,
+        batch: tickState.batch | 0,
+        frozen: cliFrozen,
+        app: APP_ID || path.basename(EXE_PATH || ''),
+      };
     }
     if (cmd.action === 'snapshot') return controlSnapshot();
     if (cmd.action === 'eval') return controlEval(cmd.code || '');
-    if (cmd.action === 'quit') { stopped = true; return { quitting: true }; }
+    if (cmd.action === 'png') return controlPng(String(cmd.path || ''));
+    if (cmd.action === 'frozen') {
+      const mode = String(cmd.mode || '').toLowerCase();
+      if (mode !== 'on' && mode !== 'off') throw new Error('frozen needs mode on or off');
+      if (mode === 'on' && REAL_TICKS) {
+        throw new Error('frozen is incompatible with --real-ticks; use the deterministic batch clock');
+      }
+      if (mode === 'off' && cliStepWaiter) throw new Error('cannot unfreeze while a step is pending');
+      cliFrozen = mode === 'on';
+      wakeCliLoop();
+      return { frozen: cliFrozen, batch: tickState.batch | 0 };
+    }
+    if (cmd.action === 'step') {
+      if (!cliFrozen) throw new Error('step needs frozen mode');
+      if (cliStepWaiter) throw new Error('a step command is already pending');
+      const n = Number(cmd.n);
+      if (!Number.isSafeInteger(n) || n < 1 || n > 10000000) {
+        throw new Error('step n must be an integer in 1..10000000');
+      }
+      cliStepBudget = n;
+      wakeCliLoop();
+      return new Promise(resolve => {
+        cliStepWaiter = { requested: n, ran: 0, resolve };
+      });
+    }
+    if (cmd.action === 'quit') {
+      stopped = true;
+      wakeCliLoop();
+      return { quitting: true, frozen: cliFrozen };
+    }
+    if (cliFrozen && native.startsWith('png:')) {
+      return controlPng(native.slice('png:'.length));
+    }
     const entry = String(cmd.cmd || '');
-    if (!entry) throw new Error('need {cmd:"action:args"} or action: ping|snapshot|eval|quit');
+    if (!entry) throw new Error('need {cmd:"action:args"} or action: ping|snapshot|eval|png|frozen|step|quit');
     if (/^wait-/.test(entry)) {
       throw new Error('wait-* entries are scheduled-only; poll snapshot or png instead');
     }
@@ -5027,6 +5112,14 @@ async function main() {
     // NaN there is a typo'd action name, not a message.
     if (last && last.action === undefined && !Number.isFinite(last.msg)) {
       throw new Error(`unknown input action ${JSON.stringify(entry.split(':')[0])}`);
+    }
+    if (cliFrozen) {
+      const now = tickState.batch | 0;
+      for (const ev of evs) ev.batch = now;
+      let at = scheduledInput.findIndex(e => e.batch > now);
+      if (at < 0) at = scheduledInput.length;
+      scheduledInput.splice(at, 0, ...evs);
+      return { queued: evs.length, batch: now, frozen: true };
     }
     return new Promise((resolve) => {
       liveOutstanding.set(last, resolve);
@@ -5069,10 +5162,17 @@ async function main() {
   })() : null;
 
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
+    while (cliFrozen && cliStepBudget === 0 && !stopped &&
+           (!deadlineMs || Date.now() < deadlineMs)) {
+      await waitForCliStep();
+    }
+    if (stopped) break;
     if (deadlineMs && Date.now() >= deadlineMs) {
       console.log(`[max-seconds] stopping after ${MAX_SECONDS}s at batch ${batch}`);
       break;
     }
+    const cliSteppedBatch = cliFrozen;
+    if (cliSteppedBatch) cliStepBudget--;
     batchesRun = batch + 1;
     // Timers cannot fire while the normal runner stays in its synchronous
     // batch loop. Poll wall time sparsely at the one safe seam and await the
@@ -8439,8 +8539,36 @@ if (VERBOSE) {
         }
       }
     }
+    if (cliSteppedBatch && cliStepWaiter) {
+      cliFrozenSteps++;
+      cliStepWaiter.ran++;
+      if (cliStepWaiter.ran >= cliStepWaiter.requested) {
+        const waiter = cliStepWaiter;
+        cliStepWaiter = null;
+        waiter.resolve({
+          frozen: true,
+          ran: waiter.ran,
+          steps: cliFrozenSteps,
+          ticks: batchesRun,
+          guestMs: ((tickState.batch + 1) * TICK_MS_PER_BATCH + tickState.pausedMs) | 0,
+          tickMs: TICK_MS_PER_BATCH,
+          eip: '0x' + (instance.exports.get_eip() >>> 0).toString(16),
+        });
+      }
+    }
   }
 
+  if (cliStepWaiter) {
+    const waiter = cliStepWaiter;
+    cliStepWaiter = null;
+    waiter.resolve({
+      frozen: cliFrozen,
+      ran: waiter.ran,
+      steps: cliFrozenSteps,
+      stopped: true,
+      eip: '0x' + (instance.exports.get_eip() >>> 0).toString(16),
+    });
+  }
   // The control server would otherwise hold the process open; unref lets a
   // reply resolved in the final batch still flush while the exit path prints.
   if (control) control.close();

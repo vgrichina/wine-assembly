@@ -2,10 +2,10 @@
 
 Status: phases 1 and 2 IMPLEMENTED, plus **frozen (agent-stepped) mode** and
 the **multi-session dashboard** — see those two sections below; the phase-2
-`pause`/`run N` line item is what frozen mode became, for the browser (run.js `--control`/`--control-stdin` +
+`pause`/`run N` line item is what frozen mode became, for both the browser and CLI (run.js `--control`/`--control-stdin` +
 `tools/ctl.js` + dev-server hub + `lib/agent-remote.js` + dev-server
 auto-inject, tests `test/test-control-cli.js` and
-`test/test-web-agent-remote.js`); phase 3 (subscribe streams, pause/step,
+`test/test-web-agent-remote.js`); phase 3 (subscribe streams and
 record/replay) remains design. The browser connect path is zero-paste for
 pages the dev-server serves: it injects the connect script itself, so the
 user hands the agent the tab URL and `ctl.js -s <that URL>` resolves it to
@@ -131,8 +131,9 @@ take it again. The agent's side of the same switch is
 like `launch`, it refuses a direct CLI target with exit 2, since a headless VM
 has no user at its canvas.
 
-- **`frozen on|off` / `step N [MS]`** — browser sessions only; see *Frozen
-  (agent-stepped) mode* below.
+- **`frozen on|off` / `step N [MS]`** — browser sessions, plus CLI
+  `--frozen` with `step N` over `--control` or `--control-stdin`; see
+  *Frozen (agent-stepped) mode* below.
 
 Phase 2:
 
@@ -141,7 +142,6 @@ Phase 2:
   (same convention as `--perf-log`). Pull (`png`/`snapshot`) is enough to
   close the loop; push is for *watching* — "tell me when a MessageBox
   appears" without polling screenshots.
-- **`pause` / `resume` / `run N`** — batch-level stepping for the CLI VM.
 - **Record/replay** — the browser side already routes real user input through
   `lib/renderer-input.js`; recording it as an NDJSON command stream and
   replaying it into `--control` (or compiling it down to a `--input=` schedule)
@@ -151,26 +151,25 @@ Phase 2:
 
 ## Frozen (agent-stepped) mode — IMPLEMENTED
 
-A live browser session is a *running machine*, and that is a bad thing to
+A live controlled session is a *running machine*, and that is a bad thing to
 photograph. Between the `png` an agent looks at and the `click` it decides on,
 the guest has run tens of thousands of slices: the menu it aimed at animated
-away, the dialog closed itself, the timer fired. The headless CLI never had
-this problem, because there the agent owns the schedule — nothing happens
-between batches unless a batch is asked for. Frozen mode gives the browser the
-same property.
+away, the dialog closed itself, the timer fired. Frozen mode gives both hosts
+an explicit schedule: nothing happens unless a step is requested.
 
 **What it is:** while frozen, `host.js`'s drive loop schedules *nothing*. No
 slice runs, no frame is presented, and the guest clock does not move. The
 picture on the canvas cannot change, so `png` is byte-identical between
 commands. Work happens only when the agent asks for a specific amount of it.
 
-**How to turn it on**, three ways, all the same switch (`window.WineFrozen`):
+**How to turn it on:**
 
 | Where | How |
 |---|---|
 | URL | `?frozen` — the page is frozen from its first instruction, so `?app=sol&frozen` never even boots until stepped. `?frozen=MS` also sets the tick. |
 | `?debug` toolbar | the **Frozen** checkbox, plus a **Step** button (shift-click = 100) and a `FROZEN  step N  guest T` badge |
 | agent | `node tools/ctl.js -s ID frozen on` / `off` |
+| CLI | Start `test/run.js` with `--control-stdin --frozen`; send `step N`, `pause`, `resume`, or JSON equivalents on stdin. |
 
 **The loop it exists for:**
 
@@ -184,15 +183,31 @@ node tools/ctl.js -s ID png /tmp/b.png     # look again
 node tools/png-diff.js /tmp/a.png /tmp/b.png
 ```
 
+The direct CLI equivalent is:
+
+```bash
+node test/run.js --app=sol --control-stdin --frozen --max-seconds=60
+{"id":"boot","cmd":"step 2000"}
+{"id":"shot","action":"png","path":"/tmp/sol.png"}
+{"id":"click","cmd":"click:231:110"}
+{"id":"advance","action":"step","n":200}
+{"id":"done","action":"quit"}
+```
+
+While the CLI is frozen, input commands acknowledge when queued; their effects
+become visible only after a step. `png`, `snapshot`, `eval`, and `ping`
+inspect the stopped machine immediately. `--max-seconds` still measures wall
+time and wakes a CLI paused past its deadline, so tests remain self-bounded.
+
 `click` + `step` is the atomic unit of play. A `POST` carrying the array
 `[{cmd:"click:231:110"},{action:"step",n:200},{action:"png"}]` executes the
 three in order in one round trip, because `lib/agent-remote.js` awaits each
 command before starting the next.
 
-**What a step is.** One step = one iteration of the page's run loop — the same
-unit `stepsPerSlice` sizes (100,000 x86 steps by default in the browser, less
-under some renderer policies). It is deliberately *not* the CLI's batch: the
-two hosts size their slices differently and always have. `step N` returns
+**What a step is.** In the browser, one step is one iteration of the page's run
+loop — the unit `stepsPerSlice` sizes (100,000 x86 steps by default, less
+under some renderer policies). In the CLI, one step is one existing headless
+batch of `--batch-size` x86 steps. `step N` returns
 `{frozen, ran, steps, ticks, guestMs, tickMs, eip}` so the reply says what
 actually happened rather than what was asked for.
 
