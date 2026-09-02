@@ -260,6 +260,26 @@ async function main() {
     // An inserted audio disc must follow the user into the separately
     // launched Win98 CD Player. This uses the real guest executable and its
     // Play button: opening an MCI device or drawing the window is not enough.
+    // Launch it before insertion to reproduce the normal desktop flow and its
+    // visible "Please insert..." state; inserting media must work live.
+    await page.evaluate(() => window.wineShell.launchApp('cdplayer'));
+    await page.waitForFunction(() => {
+      const app = runningApps.find(item => item && item.name === 'cdplayer');
+      return app && app.wine && app.wine.running &&
+        Object.values(sharedRenderer.windows)
+          .some(win => !win.isChild && win.title === 'CD Player');
+    }, { timeout: 180000 });
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const emptyPlayer = await page.evaluate(() => {
+      const wine = runningApps.find(item => item.name === 'cdplayer').wine;
+      return {
+        discs: wine._helpCtx.vfs.cdAudioDrives ? wine._helpCtx.vfs.cdAudioDrives.size : 0,
+        devices: wine._helpCtx._mci ? wine._helpCtx._mci.devices.size : 0,
+      };
+    });
+    assert.deepStrictEqual(emptyPlayer, { discs: 0, devices: 0 },
+      'CD Player should begin in its no-disc polling state');
+
     const playerBinding = await page.evaluate(async () => {
       const sectors = 75;
       const bytes = new Uint8Array(sectors * 2352);
@@ -283,7 +303,6 @@ async function main() {
     });
     assert.deepStrictEqual(playerBinding, { name: 'music.cue', mounts: 1 });
 
-    await page.evaluate(() => window.wineShell.launchApp('cdplayer'));
     await page.waitForFunction(() => {
       const app = runningApps.find(item => item && item.name === 'cdplayer');
       return app && app.wine && app.wine.running && app.wine._helpCtx._mci &&
