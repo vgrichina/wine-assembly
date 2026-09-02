@@ -362,8 +362,9 @@ function cloneWatxAtomValue(atom, value) {
 
 function createParseContext(options = {}) {
   const internValues = options.internValues !== false;
+  const internSymbols = internValues || options.internSymbols === true;
   return {
-    symbols: internValues ? new Map() : null,
+    symbols: internSymbols ? new Map() : null,
     numbers: internValues ? new Map() : null,
     strings: internValues ? new Map() : null,
     listPool: options.reuseLists ? [] : null,

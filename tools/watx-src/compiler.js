@@ -70,7 +70,11 @@ function prepareStreamingModule(source, vfs) {
   const descriptors = [];
   const included = new Set();
   let headerContext = createParseContext();
-  const bodyContext = createParseContext({ internValues: false, reuseLists: true });
+  // Function bodies are reparsed one at a time. Keep their small, heavily
+  // repeated symbol vocabulary (`local.get`, `$x`, `i32.const`, ...) but not
+  // number or string literals: this lowers nursery churn without retaining
+  // every distinct literal until the module is done.
+  const bodyContext = createParseContext({ internValues: false, internSymbols: true, reuseLists: true });
 
   function indexSource(text, filename) {
     for (const range of scanWatxTopLevelForms(text, filename)) {

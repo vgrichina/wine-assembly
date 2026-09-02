@@ -17,6 +17,28 @@ Rules:
 - Every compiler change lands with a minimal regression in one of the
   `test/watx-compiler-*.test.js` suites.
 
+## 2026-09-01 — intern the streaming body vocabulary, not its literals
+
+Manifest digest: `66bc73d2fafbcf3a01698f9a7f251c06c9fae243417f9ac3aa2315da5e48b1bc`
+
+`compiler-parser.js`, `compiler.js`. Production reparses one function body at a
+time and recycles its list arena, but it previously sliced a new string for
+every atom in every body. The common symbol vocabulary (`local.get`, `$x`,
+`i32.const`, and so on) is now interned across bodies while number and string
+literals remain ephemeral. This keeps the streaming memory strategy—no retained
+module-wide body trees or unique literal set—while reducing nursery churn.
+
+On the current 1,000,009-byte production closure, four fresh-process A/B pairs
+with rotated order produced the identical SHA-256 in every arm. Symbols-only
+interning lowered median max RSS from 213.2 to 207.2 MB and won all four pairs
+by 4.0–8.4 MB; median compile wall time was unchanged. Interning every atom was
+measured and rejected because it retained about 2 MB more live heap and lost
+the peak comparison in four of five pairs.
+
+Regression: `test/watx-compiler-production.test.js` compiles 129 repeated-symbol
+function bodies through both streaming and full-tree paths, requires byte
+identity, instantiates the streamed module, and observes the exported result.
+
 ## 2026-09-01 — views expand unions to variants; pointer claims follow active lets
 
 Manifest digest: `4bb4f93624faee26c4d4ceb13da53cae958f509627883db49c6b46199a989e11`
