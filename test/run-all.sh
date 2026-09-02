@@ -622,6 +622,8 @@ E2E=(
   test/test-taskman-tasks.js
   test/test-taskman-arrange.js
   test/test-taskman-web.js
+  test/test-taskman-shutdown.js
+  test/test-web-shutdown.js
   test/test-wordpad-web.js
   test/test-wordpad-thread-startup.js
   test/test-cli-worker-threads.js
