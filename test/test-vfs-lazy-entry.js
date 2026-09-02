@@ -435,6 +435,65 @@ test('SliceProvider windows a parent provider', async () => {
     Buffer.from(BYTES.subarray(1016, 1032))) === 0);
 });
 
+test('provider windows preserve offsets above the signed 32-bit boundary',
+  async () => {
+    const high = 0x80000000 + 0x12345;
+    const parentSize = high + 0x20000;
+    const reads = [];
+    const byteAt = i => (Math.floor(i / 0x1000000) + (i % 251)) & 0xff;
+    const makeBytes = (off, len) => {
+      reads.push({ off, len });
+      const out = new Uint8Array(len);
+      for (let i = 0; i < len; i++) out[i] = byteAt(off + i);
+      return out;
+    };
+    const parent = {
+      size: parentSize,
+      readRangeSync: makeBytes,
+      readRange: (off, len) => Promise.resolve(makeBytes(off, len)),
+    };
+
+    const slice = new bp.SliceProvider(parent, high, 0x1000);
+    assert.strictEqual(slice.offset, high);
+    assert.strictEqual(slice.size, 0x1000);
+    const sliceBytes = await slice.readRange(0x20, 8);
+    assert.deepStrictEqual(Array.from(sliceBytes),
+      Array.from({ length: 8 }, (_, i) => byteAt(high + 0x20 + i)));
+    assert(reads.some(r => r.off === high + 0x20),
+      'SliceProvider truncated the parent offset');
+
+    const vfs = new VirtualFS();
+    const cache = new bp.ChunkCache(parent,
+      { chunkSize: 4096, maxChunks: 4, readAhead: 0 });
+    const guest = 'C:\\GAME\\HIGH.DAT';
+    vfs.setProviderFile(guest, { provider: cache, offset: high, length: 0x1000 });
+    const entry = vfs.files.get('c:\\game\\high.dat');
+    assert.strictEqual(entry._offset, high);
+    const handle = vfs.createFile(guest, 0x80000000, 3);
+    const buf = new Uint8Array(8);
+    const result = vfs.readFile(handle, buf, buf.length);
+    assert(result.ok && result.bytesRead === buf.length);
+    assert.deepStrictEqual(Array.from(buf),
+      Array.from({ length: 8 }, (_, i) => byteAt(high + i)));
+  });
+
+test('provider file sizes above 2 GiB stay Numbers instead of wrapping', () => {
+  const hugeLength = 0x80000000 + 17;
+  const provider = {
+    size: hugeLength + 32,
+    readRangeSync: () => new Uint8Array(0),
+    readRange: () => Promise.resolve(new Uint8Array(0)),
+  };
+  const vfs = new VirtualFS();
+  vfs.setProviderFile('C:\\GAME\\HUGE.BIN', { provider, length: hugeLength });
+  assert.strictEqual(vfs.files.get('c:\\game\\huge.bin')._size, hugeLength);
+  assert.throws(() => vfs.setProviderFile('C:\\BAD.BIN', {
+    provider, offset: Number.MAX_SAFE_INTEGER + 1, length: 0,
+  }), /safe integer/);
+  assert.throws(() => new bp.SliceProvider(provider, 0, Number.MAX_SAFE_INTEGER + 1),
+    /safe integer/);
+});
+
 test('setProviderFile honours an offset/length window', () => {
   const vfs = new VirtualFS();
   vfs.setProviderFile('C:\\GAME\\ENTRY.BIN', {
