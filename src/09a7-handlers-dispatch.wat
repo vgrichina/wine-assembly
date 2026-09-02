@@ -1117,9 +1117,28 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; cdecl
   )
 
-  ;; 766: UnregisterClassA(lpClassName, hInstance) — return TRUE
+  ;; Shared A/W implementation. USER only removes application classes owned by
+  ;; the supplied module, and refuses while any window of that class survives.
+  (func $unregister_class_core
+      (param $class_name i32) (param $hinstance i32) (param $wide i32) (result i32)
+    (local $key i32) (local $error i32)
+    (local.set $key
+      (if (result i32) (local.get $wide)
+        (then (call $class_wide_name_key (local.get $class_name)))
+        (else (call $class_name_key (local.get $class_name)))))
+    (local.set $error
+      (call $class_table_unregister (local.get $key) (local.get $hinstance)))
+    (if (local.get $error)
+      (then
+        (global.set $last_error (local.get $error))
+        (return (i32.const 0))))
+    (i32.const 1))
+
+  ;; 766: UnregisterClassA(lpClassName, hInstance)
   (func $handle_UnregisterClassA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax
+      (call $unregister_class_core
+        (local.get $arg0) (local.get $arg1) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 

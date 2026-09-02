@@ -1482,6 +1482,71 @@
           (br $ascan)))))
     (i32.const -1))
 
+  ;; Remove an application-registered class. Returns ERROR_SUCCESS, or the
+  ;; documented USER error that explains why the class remains registered.
+  ;;
+  ;; The class and window tables share $LOCK_WND, so the live-window scan and
+  ;; removal are one transaction with respect to window/class writers. The
+  ;; hash is the class record's publication word and is cleared first; readers
+  ;; can no longer discover the record while the remaining fields are reset.
+  (func $class_table_unregister (param $name_wa i32) (param $hinstance i32) (result i32)
+    (local $hash i32) (local $slot i32) (local $i i32)
+    (local $ptr i32) (local $wnd_ptr i32)
+    ;; USER's built-in control classes belong to the system, not the caller.
+    (if (call $builtin_ctrl_class_id_key (local.get $name_wa))
+      (then (return (i32.const 1411)))) ;; ERROR_CLASS_DOES_NOT_EXIST
+    (local.set $hash (call $class_name_hash (local.get $name_wa)))
+    (local.set $slot (i32.const -1))
+    (call $lock_wnd_acquire)
+    (block $class_done (loop $class_scan
+      (br_if $class_done (i32.ge_u (local.get $i) (global.get $MAX_CLASSES)))
+      (local.set $ptr (call $class_record_addr (local.get $i)))
+      (if (i32.or
+            (i32.eq (i32.atomic.load (local.get $ptr)) (local.get $hash))
+            (i32.and
+              (i32.lt_u (local.get $name_wa) (i32.const 0x10000))
+              (i32.and
+                (i32.ne (i32.atomic.load (local.get $ptr)) (i32.const 0))
+                (i32.eq (i32.load offset=4 (local.get $ptr))
+                        (local.get $name_wa)))))
+        (then
+          (local.set $slot (local.get $i))
+          (br $class_done)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $class_scan)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0))
+      (then
+        (call $lock_wnd_release)
+        (return (i32.const 1411)))) ;; ERROR_CLASS_DOES_NOT_EXIST
+    (local.set $ptr (call $class_record_addr (local.get $slot)))
+    ;; WNDCLASS.hInstance is +16 in the embedded record at +8.
+    (if (i32.ne (i32.load offset=24 (local.get $ptr)) (local.get $hinstance))
+      (then
+        (call $lock_wnd_release)
+        (return (i32.const 1411)))) ;; ERROR_CLASS_DOES_NOT_EXIST
+    (local.set $i (i32.const 0))
+    (block $window_done (loop $window_scan
+      (br_if $window_done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $wnd_ptr (call $wnd_record_addr (local.get $i)))
+      (if (i32.and
+            (i32.ne (i32.atomic.load (local.get $wnd_ptr)) (i32.const 0))
+            (i32.eq
+              (i32.load8_u (i32.add (global.get $WND_CLASS_SLOT_TABLE) (local.get $i)))
+              (local.get $slot)))
+        (then
+          (call $lock_wnd_release)
+          (return (i32.const 1412)))) ;; ERROR_CLASS_HAS_WINDOWS
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $window_scan)))
+    (i32.atomic.store (local.get $ptr) (i32.const 0))
+    (call $zero_memory (i32.add (local.get $ptr) (i32.const 4)) (i32.const 44))
+    (call $zero_memory
+      (i32.add (global.get $CLASS_EXTRA_TABLE)
+        (i32.mul (local.get $slot) (global.get $CLASS_EXTRA_STRIDE)))
+      (global.get $CLASS_EXTRA_STRIDE))
+    (call $lock_wnd_release)
+    (i32.const 0))
+
   ;; Look up wndproc by class name (WASM addr); returns 0 if not found.
   ;; Reads WNDCLASSA.lpfnWndProc which lives at record + 12.
   (func $class_table_lookup (param $name_wa i32) (result i32)

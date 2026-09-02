@@ -144,8 +144,10 @@ const digest = crypto.createHash('sha256')
 // z-order and activation state instead of reporting unconditional success.
 // 2026-09-02: 479 -> 477. SetActiveWindow/GetActiveWindow now retain this
 // thread queue's active top-level and deliver real activation transitions.
-const EXPECTED_COUNT = 477;
-const EXPECTED_SHA256 = '39325595e40dc7a2ac426c45c9f90cdf07a9649889d5732923c58b0335dc28f0';
+// 2026-09-02: 477 -> 476. UnregisterClassA/W now remove the matching owned
+// class only after its last window is gone instead of always returning TRUE.
+const EXPECTED_COUNT = 476;
+const EXPECTED_SHA256 = 'ad5ac0f385a8836e1074e225fd2c93201b07a3053aa577339562951b2f1602fd';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
