@@ -181,6 +181,11 @@ async function main() {
   check('cooperative Node compile validates', cooperative.valid === true);
   check('cooperative and Worker paths are byte-identical',
     Buffer.from(cooperative.bytes).equals(Buffer.from(artifacts['tail-call'].bytes)));
+  check('cooperative placement has the same flat-array protocol as the Worker',
+    Array.isArray(cooperative.layout) && cooperative.layout.length > 100 &&
+    cooperative.layout.every(r => typeof r.name === 'string' &&
+      typeof r.kind === 'string' && Number.isInteger(r.base) && Number.isInteger(r.size)),
+    `${cooperative.layout && cooperative.layout.length} region(s)`);
   check('cooperative compile yielded throughout emission', progressTurns > 100,
     `${progressTurns} event-loop turns`);
   check('cooperative compiler lifetime closes before returning',
