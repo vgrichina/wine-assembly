@@ -144,7 +144,7 @@ async function runGameplay(gameExe, screenshotDir) {
     '--batch-size=100000',
     '--control-stdin',
     '--frozen',
-    '--max-seconds=600',
+    '--max-seconds=300',
     '--quiet-api',
     '--quiet-blocks',
     '--no-build',

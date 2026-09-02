@@ -606,6 +606,7 @@ E2E=(
   test/test-jazz2-gameplay-candidate.js
   test/test-cave-story-candidate.js
   test/test-generally-candidate.js
+  test/test-little-fighter-2-candidate.js
   test/test-diablo2-demo-installer.js
   test/test-diablo2-demo-installed.js
   test/test-diablo2-demo-gameplay.js
@@ -669,6 +670,7 @@ E2E=(
   test/test-control-cli.js
   test/test-control-stdin-cli.js
   test/test-control-stdin-frozen-cli.js
+  test/test-cli-capture-launch.js
   test/test-calc-about.js
   test/test-calc-drag-close.js
   test/test-calc-helper-window.js
