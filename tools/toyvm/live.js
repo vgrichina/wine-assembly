@@ -258,16 +258,49 @@ class LiveRun {
     this.ring = ring;
     this.machine.audio.rate = rate;
     this.machine.audio.sink = (buf, frames) => ring.write(buf, frames);
-    const node = ctx.createScriptProcessor(2048, 0, 2);
+    // One input channel, with a silent source on it, and not zero: WebKit
+    // never calls onaudioprocess on a ScriptProcessorNode that has no input
+    // feeding it, so a node made with (2048, 0, 2) plays in Chrome and is
+    // silent in Safari with nothing to say so.
+    const node = ctx.createScriptProcessor(2048, 1, 2);
     node.onaudioprocess = (e) => {
       const out = e.outputBuffer;
+      ring.pulls++;
       ring.read(out.getChannelData(0), out.getChannelData(1), out.length);
     };
+    let feed = null;
+    try {
+      if (typeof ctx.createConstantSource === 'function') {
+        feed = ctx.createConstantSource();
+        feed.offset.value = 0;
+      } else {
+        feed = ctx.createBufferSource();
+        feed.buffer = ctx.createBuffer(1, 2048, rate);
+        feed.loop = true;
+      }
+      feed.connect(node);
+      feed.start();
+    } catch (e) { feed = null; }
+    this.feed = feed;
     this.node = node;
     // A quarter second of lead so a frame the browser drops does not become
     // a gap in the sound.
     ring.prime(Math.round(rate / 4));
     if (this.sound) node.connect(ctx.destination);
+  }
+
+  // What the sound path is doing, for the status line: null without a
+  // context, else the context's state and rate, how many times the browser
+  // has pulled a buffer, and how many of those found the ring empty.
+  audioStats() {
+    const ctx = this.audioContext;
+    if (!ctx || !this.ring) return null;
+    return {
+      state: ctx.state, rate: ctx.sampleRate, pulls: this.ring.pulls,
+      underruns: this.ring.underruns, rendered: this.machine.audio.rendered,
+      sb: this.machine.sb.irqs, opl: this.machine.audio.opl.keyOns,
+      speaker: this.machine.audio.speakerWrites,
+    };
   }
 
   // Mute or unmute. The machine keeps rendering either way, so a demo's
@@ -390,6 +423,7 @@ class LiveRun {
     this.running = false;
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
+    if (this.feed) { try { this.feed.stop(); this.feed.disconnect(); } catch { /* already */ } this.feed = null; }
     if (this.node) { try { this.node.disconnect(); } catch { /* already */ } this.node = null; }
     if (this.machine) this.machine.audio.sink = null;
     this.onStatus({ state: 'stopped' });
@@ -409,6 +443,7 @@ class AudioRing {
     this.r = 0;                   // frames read, ever
     this.underruns = 0;
     this.dropped = 0;
+    this.pulls = 0;               // buffers the browser has asked for
   }
 
   get available() { return this.w - this.r; }

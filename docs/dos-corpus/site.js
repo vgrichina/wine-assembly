@@ -53,6 +53,22 @@
   var canvas = document.getElementById('lb-canvas');
   var current = null, run = null, loading = null;
   var fetched = {};
+  var runState = '', statusTimer = null;
+
+  // " - sound: 48000Hz running, 312 pulls, sb 40 irqs, fm 120 notes" or
+  // what is wrong with it. Nothing when sound is off.
+  function soundLine() {
+    if (!run || !prefs.sound) return prefs.sound ? '' : ' - sound off';
+    var a = run.audioStats();
+    if (!a) return ' - sound: no audio context';
+    var src = [];
+    if (a.sb) src.push('sb ' + a.sb + ' irqs');
+    if (a.opl) src.push('fm ' + a.opl + ' notes');
+    if (a.speaker) src.push('speaker ' + a.speaker + ' writes');
+    return ' - sound: ' + a.rate + 'Hz ' + a.state + ', ' + a.pulls + ' pulls'
+      + (a.underruns ? ', ' + a.underruns + ' gaps' : '')
+      + (src.length ? ', ' + src.join(', ') : ', nothing played yet');
+  }
 
   function showLive(what) {
     stopLive();
@@ -72,6 +88,8 @@
   // one control: the picture is either the frame we took or the one running.
   function stopLive() {
     if (run) { run.stop(); run = null; self.liveRun = null; }
+    if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+    runState = '';
     canvas.hidden = true;
     img.hidden = false;
     if (current) { playBtn.hidden = false; playBtn.disabled = false; }
@@ -253,11 +271,21 @@
         sound: prefs.sound,
         soundPref: prefs.sound ? 'sb' : 'silent',
         onStatus: function (s) {
-          if (s.state === 'running') say('running - click the screen, then type', true);
+          runState = s.state;
+          if (s.state === 'running') say('running - click the screen, then type' + soundLine(), true);
           else if (s.state === 'exited') say('the program exited');
           else if (s.state === 'waiting') say('waiting for a key - click or tap the screen and press one');
         },
       });
+      // The sound path, in the status line, refreshed once a second while the
+      // program runs: which sources have played and whether the browser is
+      // actually pulling buffers. A count of pulls that stays at zero is a
+      // context that never started -- that is what "silent" looks like from
+      // inside, and it is a different fix from a demo that never touched the
+      // card.
+      statusTimer = setInterval(function () {
+        if (run && runState === 'running') say('running - click the screen, then type' + soundLine(), true);
+      }, 1000);
       // Reachable from the console, on purpose: liveRun.session.dispatched is
       // the only way to tell a demo that is drawing nothing yet from one that
       // is not running at all, and both look like a black rectangle.
