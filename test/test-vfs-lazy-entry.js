@@ -334,6 +334,33 @@ test('a provider whose fill rejects latches a read failure, not a park loop',
     assert(asked > 0, 'the provider should actually have been asked');
   });
 
+test('a short Range response faults instead of becoming zero-filled bytes',
+  async () => {
+    let asked = 0;
+    const short = {
+      size: SIZE,
+      readRange(off, len) {
+        asked++;
+        return Promise.resolve(BYTES.subarray(off, off + Math.max(0, len - 1)));
+      },
+    };
+    const vfs = new VirtualFS();
+    vfs.setProviderFile(GUEST, {
+      provider: new bp.ChunkCache(short, { readAhead: 0 }),
+    });
+    const h = vfs.createFile(GUEST, 0x80000000, 3);
+    let r = vfs.readFile(h, new Uint8Array(4096), 4096);
+    assert(r.pending, 'the first read should park on an empty cache');
+    assert.strictEqual(await vfs.fillPendingRead(r.pending), false,
+      'a short chunk must reject the pending fill');
+    r = vfs.readFile(h, new Uint8Array(4096), 4096);
+    assert(!r.ok && r.faulted, 'the retry must fail instead of returning padded bytes');
+    assert.strictEqual(r.error, 30, 'short provider data is ERROR_READ_FAULT');
+    assert.strictEqual(vfs.handles.get(h >>> 0).pos, 0,
+      'the failed read must not advance the file position');
+    assert.strictEqual(asked, 1, 'the bad chunk is not cached and retried as if complete');
+  });
+
 test('a fill that never satisfies the read gives up instead of spinning', () => {
   // Resolves, but hands back nothing — a provider lying about its size, or a
   // Range response the server truncated.
@@ -416,6 +443,62 @@ test('vfs.materialize streams files larger than the ChunkCache LRU bound',
   });
 
 // ---- chunk cache unit checks --------------------------------------------
+
+test('HttpRangeProvider enforces its HEAD and byte-range contract', async () => {
+  const calls = [];
+  const headers = values => ({
+    get(name) { return values[String(name).toLowerCase()] ?? null; },
+  });
+  const fetch = async (url, init) => {
+    calls.push({ url, init });
+    if (init && init.method === 'HEAD') {
+      return {
+        ok: true,
+        status: 200,
+        headers: headers({ 'accept-ranges': 'bytes', 'content-length': '8' }),
+      };
+    }
+    assert.strictEqual(init.headers.Range, 'bytes=2-4');
+    const bytes = Uint8Array.from([2, 3, 4]);
+    return { status: 206, arrayBuffer: async () => bytes.buffer };
+  };
+  const provider = await bp.HttpRangeProvider.open('https://example.test/disc.iso', { fetch });
+  assert.strictEqual(provider.size, 8);
+  assert.strictEqual(provider.name, 'disc.iso');
+  assert.deepStrictEqual(Array.from(await provider.readRange(2, 3)), [2, 3, 4]);
+  assert.strictEqual(calls[0].init.method, 'HEAD');
+  assert.strictEqual(calls.length, 2);
+
+  await assert.rejects(
+    bp.HttpRangeProvider.open('https://example.test/no-range', {
+      fetch: async () => ({
+        ok: true,
+        status: 200,
+        headers: headers({ 'content-length': '8' }),
+      }),
+    }),
+    /does not advertise Accept-Ranges/);
+
+  const ignored = new bp.HttpRangeProvider('https://example.test/ignored', 8, {
+    fetch: async () => ({ status: 200, arrayBuffer: async () => new ArrayBuffer(8) }),
+  });
+  await assert.rejects(ignored.readRange(0, 4), /answered 200, expected 206/);
+
+  const truncated = new bp.HttpRangeProvider('https://example.test/short', 8, {
+    fetch: async () => ({ status: 206, arrayBuffer: async () => new ArrayBuffer(3) }),
+  });
+  await assert.rejects(truncated.readRange(0, 4), /returned 3 bytes for @0\+4/);
+});
+
+test('ChunkCache refuses a short synchronous provider chunk', () => {
+  const cache = new bp.ChunkCache({
+    size: 8,
+    readRangeSync: () => new Uint8Array(3),
+    readRange: () => Promise.resolve(new Uint8Array(4)),
+  }, { chunkSize: 4, readAhead: 0 });
+  assert.throws(() => cache.tryRead(0, 1), /returned 3 bytes for @0\+4/);
+  assert.strictEqual(cache._chunks.size, 0, 'the short synchronous chunk must not be cached');
+});
 
 test('ChunkCache.tryRead returns null on a miss, never a partial buffer', () => {
   const cache = new bp.ChunkCache(

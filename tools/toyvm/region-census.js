@@ -65,8 +65,11 @@ const RE = {
   declined: /^declined: (.*)$/m,
   // `frame IDENTICAL  ints 1567/1567  smc 1/1  (baseline HASH 18447px stop a11:399 / region HASH 18447px stop a11:399)`
   frame: /frame (IDENTICAL|\*\*\* DIFFERS \*\*\*)\s+ints (\d+)\/(\d+)\s+smc (\d+)\/(\d+)\s+\(baseline (\S+) (\d+)px[^/]*\/ region (\S+) (\d+)px/,
-  // the `region` row of the timing table, whose last column is the speedup
-  speed: /^\s*region\s+\d+\s+\d+\s+[\d.]+\s+(-?[\d.]+)%/m,
+  // the `region` row of the timing table: `wall ms  cpu ms   +3.1% cpu  (-2.0% wall)`.
+  // Only printed at --reps>=2; a one-rep run prints `n/a` there on purpose.
+  speed: /^\s*region\s+\d+\s+\d+\s+[\d.]+\s+[\d.]+\s+(-?[\d.]+)% cpu/m,
+  // `expected    share 9.4% x (1 - 1/2.10x) = +4.9% ceiling, handbacks +12 vs baseline`
+  expected: /^\s*expected\s+share ([\d.]+)% x \(1 - 1\/([\d.]+)x\) = ([-+][\d.]+)% ceiling, handbacks ([-+]\d+) vs baseline/m,
 };
 
 function classify(code, out) {
@@ -148,6 +151,8 @@ function runOne(exe, o, dispatches = o.dispatches) {
       }
       const s = RE.speed.exec(out);
       if (s) row.speedup = +s[1];
+      const x = RE.expected.exec(out);
+      if (x) row.expected = { share: +x[1], ratio: +x[2], ceiling: +x[3], handbacks: +x[4] };
       // Only kept for a row that went wrong: a passing row's prose is noise, and
       // 199 of them is a file nobody opens.
       if (row.verdict === 'differs' || row.verdict === 'crash' || row.verdict === 'timeout') {
@@ -170,10 +175,18 @@ function markdown(rows, o) {
   // does not care about the neighbours -- and that makes every `speed` cell a
   // measurement of a loaded box. It is here to spot a region that is
   // catastrophically slower, not to be quoted.
-  L.push('`speed` is the region against the interpreter in the same child.'
-    + ` This census ran ${o.jobs} programs concurrently, so treat it as an order`
-    + ' of magnitude and re-time anything interesting on a quiet box with'
-    + ' `region-jit.js` alone.');
+  L.push('`speed` is the region against the interpreter in the same child, by'
+    + ' CPU time (min of interleaved, order-rotated reps). It is blank at'
+    + ' `--reps=1`, where the arms never rotate and the number would describe'
+    + ` the order, not the JIT. This census ran ${o.jobs} programs concurrently;`
+    + ' CPU time is far less sensitive to that than the wall clock, but re-time'
+    + ' anything interesting on a quiet box with `region-jit.js` alone.');
+  L.push('');
+  L.push('`ceiling` is the load-free view: `share x (1 - 1/gate ratio)`, the most'
+    + ' the region can win whole-program given how much of the run it covers and'
+    + ' how much faster its body is in isolation. `+hb` is the handbacks the'
+    + ' region adds over the interpreter, each a JS round trip; a `speed` well'
+    + ' under its `ceiling` is nearly always that column.');
   L.push('');
   L.push('A region is a drop-in replacement only if the demo draws the SAME frame'
     + ' with it installed. `no-loop`, `no-samples` and `declined` mean no region'
@@ -197,14 +210,19 @@ function markdown(rows, o) {
   const RANK = { frozen: 0, differs: 1, phase: 2, identical: 3 };
   const shown = rows.filter(r => RANK[r.verdict] !== undefined);
   L.push('');
-  L.push('| program | head | ops | share | speed | frame | baseline | region | ints | smc |');
-  L.push('|---|---|---:|---:|---:|---|---|---|---|---|');
+  L.push('| program | head | ops | share | gate | ceiling | +hb | speed | frame | baseline | region | ints | smc |');
+  L.push('|---|---|---:|---:|---:|---:|---:|---:|---|---|---|---|---|');
+  const signed = (n) => (n >= 0 ? '+' : '') + n;
   for (const r of shown.sort((a, b) => RANK[a.verdict] - RANK[b.verdict])) {
     const g = r.region || {};
     const f = r.frame;
+    const x = r.expected;
     L.push(`| ${r.name} | ${g.headIp === undefined ? '' : '0x' + g.headIp.toString(16)}`
       + ` | ${g.ops || ''} | ${g.share === undefined ? '' : g.share.toFixed(1) + '%'}`
-      + ` | ${r.speedup === undefined ? '' : (r.speedup >= 0 ? '+' : '') + r.speedup + '%'}`
+      + ` | ${x ? x.ratio.toFixed(2) + 'x' : ''}`
+      + ` | ${x ? signed(x.ceiling) + '%' : ''}`
+      + ` | ${x ? signed(x.handbacks) : ''}`
+      + ` | ${r.speedup === undefined ? '' : signed(r.speedup) + '%'}`
       + ` | ${r.verdict === 'identical' || r.verdict === 'phase' ? r.verdict : `**${r.verdict}**`}`
       + ` | ${f ? `${f.base.hash} ${f.base.px}px` : ''}`
       + ` | ${f ? `${f.jit.hash} ${f.jit.px}px` : ''}`

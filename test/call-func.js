@@ -7,7 +7,7 @@
 //   node test/call-func.js --exe=test/binaries/calc.exe --boot=8000 --bignum-test
 
 const fs = require('fs');
-const { parseResources } = require('../lib/resources');
+const { createHostImports } = require('../lib/host-imports');
 
 const args = process.argv.slice(2);
 const getArg = (name, def) => { const a = args.find(a => a.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; };
@@ -24,35 +24,32 @@ const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
 async function main() {
   const wasmBytes = fs.readFileSync('build/wine-assembly.wasm');
   const exeBytes = fs.readFileSync(EXE_PATH);
-  const resourceJson = parseResources(exeBytes);
 
-  let apiLog = [];
-  const imports = { host: {
-    log: () => {}, log_i32: (v) => { apiLog.push(v); },
-    message_box: () => 1, exit: (code) => { console.log('exit(' + code + ')'); },
-    draw_rect: () => {}, read_file: () => 0,
-    create_window: () => 0x10001, show_window: () => {},
-    dialog_loaded: () => {},
-    set_window_text: () => {}, invalidate: () => {}, draw_text: () => {},
-    check_input: () => 0, check_input_lparam: () => 0, check_input_hwnd: () => 0,
-    set_window_class: () => {}, set_menu: () => {},
-    shell_about: () => 0,
-    check_dlg_button: () => {}, check_radio_button: () => {},
-    gdi_create_pen: () => 1, gdi_create_solid_brush: () => 1,
-    gdi_create_compat_dc: () => 1, gdi_create_compat_bitmap: () => 1, gdi_create_bitmap: () => 1,
-    gdi_get_object_bits: () => 0, gdi_get_object_storage: () => 0, gdi_get_object_bpp: () => 0,
-    gdi_select_object: () => 0, gdi_delete_object: () => 1, gdi_delete_dc: () => 1,
-    gdi_rectangle: () => 1, gdi_ellipse: () => 1,
-    gdi_move_to: () => 1, gdi_line_to: () => 1, gdi_arc: () => 1, gdi_bitblt: () => 1,
-    set_dlg_item_text: (h, c, tp) => {
-      const mem = new Uint8Array(instance.exports.memory.buffer);
-      let s = '';
-      for (let i = tp; mem[i]; i++) s += String.fromCharCode(mem[i]);
-      if (c === 403) console.log('[display] "' + s + '"');
-    },
-  }};
+  const memory = new WebAssembly.Memory({
+    initial: 8192,
+    maximum: 8192,
+    shared: true,
+  });
+  let instance = null;
+  const base = createHostImports({
+    getMemory: () => memory.buffer,
+    renderer: null,
+    resourceJson: {},
+    onExit: code => console.log('exit(' + code + ')'),
+  });
+  const h = base.host;
+  h.memory = memory;
+  h.log = () => {};
+  h.log_i32 = () => {};
+  h.message_box = () => 1;
+  h.set_dlg_item_text = (hwnd, ctrlId, textPtr) => {
+    const bytes = new Uint8Array(memory.buffer);
+    let text = '';
+    for (let i = textPtr; bytes[i]; i++) text += String.fromCharCode(bytes[i]);
+    if (ctrlId === 403) console.log('[display] "' + text + '"');
+  };
 
-  const { instance } = await WebAssembly.instantiate(wasmBytes, imports);
+  ({ instance } = await WebAssembly.instantiate(wasmBytes, { host: h }));
   const e = instance.exports;
   const mem = new Uint8Array(e.memory.buffer);
   mem.set(exeBytes, e.get_staging());

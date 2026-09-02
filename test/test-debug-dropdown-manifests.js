@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const { APPS } = require(path.join(ROOT, 'lib', 'apps.js'));
+const { APPS, resolveCopySuperops } = require(path.join(ROOT, 'lib', 'apps.js'));
 const {
   buildCatalog,
   categorizeCatalog,
@@ -137,6 +137,14 @@ assert((APPS.mw3.dlls || []).some(url =>
   'MechWarrior 3 must preload its app-local menu-caption resource DLL');
 assert.strictEqual(APPS.mw3.copySuperops, true,
   'MechWarrior 3 must explicitly opt into its bound-derived RGB565 row');
+assert.strictEqual(resolveCopySuperops(APPS.mw3, false, false), true,
+  'an app registry copySuperops opt-in reaches a host without a manual flag');
+assert.strictEqual(resolveCopySuperops(APPS.mw3, false, true), false,
+  'an explicit CLI rollback disables the app registry opt-in');
+assert.strictEqual(resolveCopySuperops({}, true, false), true,
+  'the explicit CLI enable still supports ad-hoc A/B runs');
+assert.strictEqual(resolveCopySuperops(APPS.mw3, true, true), false,
+  'the rollback wins if contradictory CLI flags are supplied');
 assert.strictEqual(APPS.mw3.requiredFiles, true,
   'MechWarrior 3 database files must be launch-critical');
 

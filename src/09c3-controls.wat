@@ -1506,6 +1506,9 @@
   (global $shelldlg_kind (mut i32) (i32.const 0))        ;; 1 = Run, 2 = Shut Down
   (global $shelldlg_edit_hwnd (mut i32) (i32.const 0))
   (global $shelldlg_owner (mut i32) (i32.const 0))
+  ;; Shut Down: hwnd of the first of the four option radios. They are created
+  ;; back to back, so the option index is the hwnd's distance from this one.
+  (global $shelldlg_option0 (mut i32) (i32.const 0))
 
   (data (region.addr $RESERVED_PAGE_STRINGS 0x180) "Run\00")
   (data (region.addr $RESERVED_PAGE_STRINGS 0x184) "Type the name of a program, folder, or\00")
@@ -1513,8 +1516,15 @@
   (data (region.addr $RESERVED_PAGE_STRINGS 0x1D7) "Open:\00")
   (data (region.addr $RESERVED_PAGE_STRINGS 0x1DD) "Browse...\00")
   (data (region.addr $RESERVED_PAGE_STRINGS 0x1E7) "Shut Down Windows\00")
-  (data (region.addr $RESERVED_PAGE_STRINGS 0x1F9) "Shut down the computer\00")
-  (data (region.addr $RESERVED_PAGE_STRINGS 0x210) "Restart the computer\00")
+  ;; The options, in dialog order. Windows 98 also offered "Restart in
+  ;; MS-DOS mode"; there is no DOS under this machine, so it is not listed.
+  ;; The prompt lives in the gap after KERNEL32_Ordinal99 (0x50..0x90)
+  ;; because the run from 0x1F9 to the module list at 0x228 is too short.
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x1F9) "Stand by\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x202) "Shut down\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x20C) "Restart\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x50) "What do you want the computer to do?\00")
+  (data (region.addr $RESERVED_PAGE_STRINGS 0x75) "Help\00")
 
   ;; Shared frame setup for both dialogs. $title_wa is a linear address.
   (func $shelldlg_frame (param $dlg i32) (param $owner i32)
@@ -1585,35 +1595,321 @@
             (i32.const 0x50010000)
             (call $wat_str_to_heap (region.addr $RESERVED_PAGE_STRINGS 0x1DD) (i32.const 9)))))
 
+  ;; The Windows 98 Shut Down Windows dialog, laid out from shell32.dll
+  ;; 4.72's dialog 1064 (as carried by aubymori/ClassicShutdown):
+  ;;
+  ;;   ICON            7,11  18x20      LTEXT  38,11  151x10
+  ;;   radios          38,27 155x10, one every 12 DLU
+  ;;   OK/Cancel/Help  39|95|151, 52x14, 21 DLU under the last option
+  ;;   dialog          211 wide, 127 high with all six options
+  ;;
+  ;; in dialog units of the 8pt MS Shell Dlg (x*3/2, y*13/8 in pixels,
+  ;; docs: reference_dialog_units). Three options are listed, so the dialog
+  ;; is 36 DLU shorter and the buttons sit that much higher, exactly what the
+  ;; real one does when it drops an option it cannot offer. What OK does is
+  ;; the host's: $shelldlg_wndproc hands the chosen option to
+  ;; $host_exit_windows and the guest quits on its own.
   (func $create_shutdown_dialog (param $dlg i32) (param $owner i32)
-    (local $first i32)
+    (local $first i32) (local $second i32)
     (global.set $shelldlg_kind (i32.const 2))
     (global.set $shelldlg_owner (local.get $owner))
     (global.set $shelldlg_edit_hwnd (i32.const 0))
+    ;; Client 316x148 plus the caption and the 3px frame on each side.
     (call $shelldlg_frame (local.get $dlg) (local.get $owner)
-      (region.addr $RESERVED_PAGE_STRINGS 0x1E7) (i32.const 300) (i32.const 160))
-    ;; BS_AUTORADIOBUTTON = 9. The first carries WS_GROUP so the pair behaves
-    ;; as one group, which is what makes the selection exclusive.
+      (region.addr $RESERVED_PAGE_STRINGS 0x1E7) (i32.const 322) (i32.const 172))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+            (i32.const 57) (i32.const 18) (i32.const 226) (i32.const 16)
+            (i32.const 0x50000000)
+            (call $wat_str_to_heap (region.addr $RESERVED_PAGE_STRINGS 0x50) (i32.const 36))))
+    ;; BS_AUTORADIOBUTTON = 9. The first carries WS_GROUP so the three behave
+    ;; as one group, which is what makes the selection exclusive. Created
+    ;; back to back so $shelldlg_option0 + index names each one.
     (local.set $first (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1010)
-            (i32.const 20) (i32.const 20) (i32.const 250) (i32.const 20)
+            (i32.const 57) (i32.const 44) (i32.const 232) (i32.const 16)
             (i32.const 0x50030009)
-            (call $wat_str_to_heap (region.addr $RESERVED_PAGE_STRINGS 0x1F9) (i32.const 22))))
-    ;; Windows opens this dialog with the first option already chosen, so OK
-    ;; is immediately meaningful. BM_SETCHECK = 0x00F1.
-    (drop (call $wnd_send_message (local.get $first) (i32.const 0x00F1)
-            (i32.const 1) (i32.const 0)))
-    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1011)
-            (i32.const 20) (i32.const 44) (i32.const 250) (i32.const 20)
+            (call $wat_str_to_heap (region.addr $RESERVED_PAGE_STRINGS 0x1F9) (i32.const 8))))
+    (global.set $shelldlg_option0 (local.get $first))
+    (local.set $second (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1011)
+            (i32.const 57) (i32.const 63) (i32.const 232) (i32.const 16)
             (i32.const 0x50010009)
-            (call $wat_str_to_heap (region.addr $RESERVED_PAGE_STRINGS 0x210) (i32.const 20))))
+            (call $wat_str_to_heap (region.addr $RESERVED_PAGE_STRINGS 0x202) (i32.const 9))))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1012)
+            (i32.const 57) (i32.const 83) (i32.const 232) (i32.const 16)
+            (i32.const 0x50010009)
+            (call $wat_str_to_heap (region.addr $RESERVED_PAGE_STRINGS 0x20C) (i32.const 7))))
+    ;; Windows 98 opens this dialog with "Shut down" already chosen, so OK is
+    ;; immediately meaningful. BM_SETCHECK = 0x00F1.
+    (drop (call $wnd_send_message (local.get $second) (i32.const 0x00F1)
+            (i32.const 1) (i32.const 0)))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
-            (i32.const 66) (i32.const 96) (i32.const 72) (i32.const 24)
+            (i32.const 58) (i32.const 117) (i32.const 78) (i32.const 23)
             (i32.const 0x50010001)
             (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2))))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
-            (i32.const 152) (i32.const 96) (i32.const 72) (i32.const 24)
+            (i32.const 142) (i32.const 117) (i32.const 78) (i32.const 23)
             (i32.const 0x50010000)
-            (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6)))))
+            (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6))))
+    ;; Help (IDHELP = 9) is on the real dialog; there is no help topic behind
+    ;; it here, so it is there and disabled (WS_DISABLED) rather than absent.
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 9)
+            (i32.const 226) (i32.const 117) (i32.const 78) (i32.const 23)
+            (i32.const 0x58010000)
+            (call $wat_str_to_heap (region.addr $RESERVED_PAGE_STRINGS 0x75) (i32.const 4)))))
+
+  ;; The dialog's icon: the small monitor shell32 shows beside the prompt,
+  ;; drawn with GDI at client (10,16), 32x32. The dialog owns no guest
+  ;; resource to load one from.
+  (func $shutdown_dialog_paint_icon (param $hwnd i32)
+    (local $hdc i32)
+    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    ;; Bezel: dark outline, light face, highlight along the top-left.
+    (call $power_fill (local.get $hdc) (i32.const 11) (i32.const 17) (i32.const 41) (i32.const 40) (i32.const 0x00000000))
+    (call $power_fill (local.get $hdc) (i32.const 12) (i32.const 18) (i32.const 40) (i32.const 39) (i32.const 0x00C0C0C0))
+    (call $power_fill (local.get $hdc) (i32.const 12) (i32.const 18) (i32.const 39) (i32.const 19) (i32.const 0x00FFFFFF))
+    (call $power_fill (local.get $hdc) (i32.const 12) (i32.const 18) (i32.const 13) (i32.const 38) (i32.const 0x00FFFFFF))
+    (call $power_fill (local.get $hdc) (i32.const 12) (i32.const 38) (i32.const 40) (i32.const 39) (i32.const 0x00808080))
+    (call $power_fill (local.get $hdc) (i32.const 39) (i32.const 18) (i32.const 40) (i32.const 39) (i32.const 0x00808080))
+    ;; Screen: navy with a lighter window in it.
+    (call $power_fill (local.get $hdc) (i32.const 15) (i32.const 21) (i32.const 37) (i32.const 35) (i32.const 0x00000000))
+    (call $power_fill (local.get $hdc) (i32.const 16) (i32.const 22) (i32.const 36) (i32.const 34) (i32.const 0x00800000))
+    (call $power_fill (local.get $hdc) (i32.const 18) (i32.const 24) (i32.const 34) (i32.const 32) (i32.const 0x00D08410))
+    (call $power_fill (local.get $hdc) (i32.const 18) (i32.const 24) (i32.const 34) (i32.const 26) (i32.const 0x00800000))
+    ;; Neck and base.
+    (call $power_fill (local.get $hdc) (i32.const 23) (i32.const 40) (i32.const 29) (i32.const 44) (i32.const 0x00808080))
+    (call $power_fill (local.get $hdc) (i32.const 17) (i32.const 44) (i32.const 35) (i32.const 48) (i32.const 0x00C0C0C0))
+    (call $power_fill (local.get $hdc) (i32.const 17) (i32.const 44) (i32.const 35) (i32.const 45) (i32.const 0x00FFFFFF))
+    (call $power_fill (local.get $hdc) (i32.const 17) (i32.const 47) (i32.const 35) (i32.const 48) (i32.const 0x00000000)))
+
+  ;; Which of the three options is checked, as the exit_windows mode (0 stand
+  ;; by, 1 shut down, 2 restart). BM_GETCHECK = 0x00F0. Nothing checked reads
+  ;; as shut down, the option the dialog opened on.
+  (func $shutdown_dialog_mode (result i32)
+    (local $i i32)
+    (if (i32.eqz (global.get $shelldlg_option0)) (then (return (i32.const 1))))
+    (loop $scan
+      (if (call $wnd_send_message
+            (i32.add (global.get $shelldlg_option0) (local.get $i))
+            (i32.const 0x00F0) (i32.const 0) (i32.const 0))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $scan (i32.lt_u (local.get $i) (i32.const 3))))
+    (i32.const 1))
+
+  ;; ---- The power screens -------------------------------------------------
+  ;;
+  ;; Windows 98 kept LOGOW.SYS ("Please wait while your computer shuts
+  ;; down.") and LOGOS.SYS ("It's now safe to turn off your computer.") as
+  ;; 320x400 bitmaps that the display stretched to 640x480, which is where
+  ;; their wide pixels come from. The shell paints those two pictures here
+  ;; with the same GDI every guest draws with -- the strike fonts included --
+  ;; into a 320x400 32bpp top-down DIB, and the host shows the DIB stretched
+  ;; the same way. Nothing about the picture lives on the host side.
+  ;;
+  ;; The strings have a small region of their own (00-regions.wat); the
+  ;; dialog-string regions are full.
+  (global $POWER_SCREEN_STRINGS i32 (region.addr $POWER_SCREEN_STRINGS 0))
+  (global $POWER_SCREEN_STRINGS_SIZE i32 (region.size $POWER_SCREEN_STRINGS))
+  (data (region.addr $POWER_SCREEN_STRINGS 0x00) "Please wait while your computer shuts down.\00")
+  (data (region.addr $POWER_SCREEN_STRINGS 0x2C) "It's now safe to turn off\00")
+  (data (region.addr $POWER_SCREEN_STRINGS 0x46) "your computer.\00")
+  ;; The wordmark is this machine's, not Microsoft's.
+  (data (region.addr $POWER_SCREEN_STRINGS 0x55) "Wine-Assembly\00")
+  (data (region.addr $POWER_SCREEN_STRINGS 0x63) "by berrry.app\00")
+
+  ;; Text centred on $cx, top at $y, in the DC's current font and colour.
+  (func $power_text_centred (param $hdc i32) (param $cx i32) (param $y i32)
+                            (param $text i32) (param $len i32)
+    (local $w i32)
+    (local.set $w (call $host_measure_text (local.get $hdc) (local.get $text)
+                    (local.get $len) (i32.const 0)))
+    (drop (call $host_gdi_text_out (local.get $hdc)
+      (i32.sub (local.get $cx) (i32.shr_u (local.get $w) (i32.const 1)))
+      (local.get $y) (local.get $text) (local.get $len) (i32.const 0))))
+
+  ;; One solid-colour rectangle: a brush made and thrown away, so callers do
+  ;; not carry handles around. $color is a COLORREF (0x00BBGGRR).
+  (func $power_fill (param $hdc i32) (param $left i32) (param $top i32)
+                    (param $right i32) (param $bottom i32) (param $color i32)
+    (local $brush i32)
+    (local.set $brush (call $host_gdi_create_solid_brush (local.get $color)))
+    (drop (call $host_gdi_fill_rect (local.get $hdc) (local.get $left) (local.get $top)
+      (local.get $right) (local.get $bottom) (local.get $brush)))
+    (drop (call $host_gdi_delete_object (local.get $brush))))
+
+  ;; A face at a pixel height, bound to its strike. MS Sans Serif carries
+  ;; 13, 16 and 20 pixel strikes; anything else rounds to the nearest.
+  (func $power_font (param $height i32) (param $weight i32) (result i32)
+    (local $font i32)
+    (local.set $font (call $gdi_font_create (local.get $height) (local.get $weight)
+      (i32.const 0) (region.addr $STRING_CONSTANTS 0x170)))
+    (call $gdi_bitmap_font_bind (local.get $font) (region.addr $STRING_CONSTANTS 0x170))
+    (local.get $font))
+
+  ;; The 8-bit channel mix of two COLORREFs at $t/256.
+  (func $power_lerp (param $a i32) (param $b i32) (param $t i32) (result i32)
+    (local $out i32) (local $shift i32) (local $ca i32) (local $cb i32)
+    (loop $chan
+      (local.set $ca (i32.and (i32.shr_u (local.get $a) (local.get $shift)) (i32.const 0xFF)))
+      (local.set $cb (i32.and (i32.shr_u (local.get $b) (local.get $shift)) (i32.const 0xFF)))
+      (local.set $out (i32.or (local.get $out)
+        (i32.shl
+          (i32.add (local.get $ca)
+            (i32.shr_s (i32.mul (i32.sub (local.get $cb) (local.get $ca)) (local.get $t)) (i32.const 8)))
+          (local.get $shift))))
+      (local.set $shift (i32.add (local.get $shift) (i32.const 8)))
+      (br_if $chan (i32.lt_u (local.get $shift) (i32.const 24))))
+    (local.get $out))
+
+  ;; The waving flag: four panes, each a stack of 2px strips whose x offset
+  ;; follows one period of a wave down the pane, and the trail of black
+  ;; squares flying off to the left that the logo has always had.
+  (func $power_flag (param $hdc i32) (param $x i32) (param $y i32)
+    (local $pane i32) (local $strip i32) (local $dx i32) (local $px i32) (local $py i32)
+    (local $color i32) (local $row i32) (local $col i32)
+    ;; Trail: three columns of squares that thin out to the left.
+    (local.set $row (i32.const 0))
+    (loop $rows
+      (local.set $col (i32.const 0))
+      (loop $cols
+        (if (i32.and
+              (i32.lt_u (local.get $col) (i32.sub (i32.const 3) (i32.rem_u (local.get $row) (i32.const 2))))
+              (i32.eqz (i32.and (i32.add (local.get $row) (local.get $col)) (i32.const 1))))
+          (then
+            (local.set $px (i32.sub (local.get $x) (i32.add (i32.const 10) (i32.mul (local.get $col) (i32.const 9)))))
+            (local.set $py (i32.add (local.get $y) (i32.add (i32.const 8) (i32.mul (local.get $row) (i32.const 7)))))
+            (call $power_fill (local.get $hdc) (local.get $px) (local.get $py)
+              (i32.add (local.get $px) (i32.const 4)) (i32.add (local.get $py) (i32.const 4))
+              (i32.const 0x00000000))))
+        (local.set $col (i32.add (local.get $col) (i32.const 1)))
+        (br_if $cols (i32.lt_u (local.get $col) (i32.const 3))))
+      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+      (br_if $rows (i32.lt_u (local.get $row) (i32.const 10))))
+    ;; Panes: red, green over blue, yellow. 30x30 each, 4px apart.
+    (local.set $pane (i32.const 0))
+    (loop $panes
+      (local.set $color
+        (select (i32.const 0x000000FF)
+          (select (i32.const 0x0000A000)
+            (select (i32.const 0x00FF0000) (i32.const 0x0000FFFF)
+              (i32.eq (local.get $pane) (i32.const 2)))
+            (i32.eq (local.get $pane) (i32.const 1)))
+          (i32.eqz (local.get $pane))))
+      (local.set $px (i32.add (local.get $x) (i32.mul (i32.and (local.get $pane) (i32.const 1)) (i32.const 34))))
+      (local.set $py (i32.add (local.get $y) (i32.mul (i32.shr_u (local.get $pane) (i32.const 1)) (i32.const 34))))
+      (local.set $strip (i32.const 0))
+      (loop $strips
+        ;; A gentle S down each pane: offsets 0..3..0..-3..0 over 15 strips.
+        (local.set $dx (i32.sub (i32.const 3)
+          (i32.shr_s (i32.mul (i32.sub (i32.rem_u (i32.add (local.get $strip) (i32.const 4)) (i32.const 15)) (i32.const 7)) (i32.const 6)) (i32.const 3))))
+        (local.set $dx (select (local.get $dx) (i32.sub (i32.const 0) (local.get $dx))
+          (i32.lt_u (i32.rem_u (i32.add (local.get $strip) (i32.const 4)) (i32.const 15)) (i32.const 8))))
+        (call $power_fill (local.get $hdc)
+          (i32.add (local.get $px) (local.get $dx))
+          (i32.add (local.get $py) (i32.mul (local.get $strip) (i32.const 2)))
+          (i32.add (i32.add (local.get $px) (local.get $dx)) (i32.const 30))
+          (i32.add (local.get $py) (i32.mul (i32.add (local.get $strip) (i32.const 1)) (i32.const 2)))
+          (local.get $color))
+        (local.set $strip (i32.add (local.get $strip) (i32.const 1)))
+        (br_if $strips (i32.lt_u (local.get $strip) (i32.const 15))))
+      (local.set $pane (i32.add (local.get $pane) (i32.const 1)))
+      (br_if $panes (i32.lt_u (local.get $pane) (i32.const 4)))))
+
+  ;; LOGOW.SYS: a sky that deepens towards the top, the flag with this
+  ;; machine's wordmark under it, and the line at the bottom.
+  (func $power_paint_wait (param $hdc i32)
+    (local $y i32) (local $font i32) (local $old i32)
+    (local.set $y (i32.const 0))
+    (loop $sky
+      (call $power_fill (local.get $hdc) (i32.const 0) (local.get $y)
+        (i32.const 320) (i32.add (local.get $y) (i32.const 4))
+        (call $power_lerp (i32.const 0x00A0501A) (i32.const 0x00F0C890)
+          (i32.div_u (i32.mul (local.get $y) (i32.const 256)) (i32.const 400))))
+      (local.set $y (i32.add (local.get $y) (i32.const 4)))
+      (br_if $sky (i32.lt_u (local.get $y) (i32.const 400))))
+    (call $power_flag (local.get $hdc) (i32.const 128) (i32.const 96))
+    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+    ;; The wordmark, bold: shadow first, then white; then who made it.
+    (local.set $font (call $power_font (i32.const 20) (i32.const 700)))
+    (local.set $old (call $host_gdi_select_object (local.get $hdc) (local.get $font)))
+    (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
+    (call $power_text_centred (local.get $hdc) (i32.const 161) (i32.const 175)
+      (region.addr $POWER_SCREEN_STRINGS 0x55) (i32.const 13))
+    (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00FFFFFF)))
+    (call $power_text_centred (local.get $hdc) (i32.const 160) (i32.const 174)
+      (region.addr $POWER_SCREEN_STRINGS 0x55) (i32.const 13))
+    (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))
+    (drop (call $host_gdi_delete_object (local.get $font)))
+    (local.set $font (call $power_font (i32.const 13) (i32.const 400)))
+    (local.set $old (call $host_gdi_select_object (local.get $hdc) (local.get $font)))
+    (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
+    (call $power_text_centred (local.get $hdc) (i32.const 161) (i32.const 201)
+      (region.addr $POWER_SCREEN_STRINGS 0x63) (i32.const 13))
+    (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00FFFFFF)))
+    (call $power_text_centred (local.get $hdc) (i32.const 160) (i32.const 200)
+      (region.addr $POWER_SCREEN_STRINGS 0x63) (i32.const 13))
+    (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))
+    (drop (call $host_gdi_delete_object (local.get $font)))
+    ;; The line, in the dialog face.
+    (local.set $font (call $power_font (i32.const 13) (i32.const 400)))
+    (local.set $old (call $host_gdi_select_object (local.get $hdc) (local.get $font)))
+    (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
+    (call $power_text_centred (local.get $hdc) (i32.const 161) (i32.const 301)
+      (region.addr $POWER_SCREEN_STRINGS 0x00) (i32.const 43))
+    (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00FFFFFF)))
+    (call $power_text_centred (local.get $hdc) (i32.const 160) (i32.const 300)
+      (region.addr $POWER_SCREEN_STRINGS 0x00) (i32.const 43))
+    (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))
+    (drop (call $host_gdi_delete_object (local.get $font))))
+
+  ;; LOGOS.SYS: two orange lines on black.
+  (func $power_paint_off (param $hdc i32)
+    (local $font i32) (local $old i32)
+    (call $power_fill (local.get $hdc) (i32.const 0) (i32.const 0)
+      (i32.const 320) (i32.const 400) (i32.const 0x00000000))
+    (local.set $font (call $power_font (i32.const 20) (i32.const 700)))
+    (local.set $old (call $host_gdi_select_object (local.get $hdc) (local.get $font)))
+    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+    (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x003A9CF4)))
+    (call $power_text_centred (local.get $hdc) (i32.const 160) (i32.const 176)
+      (region.addr $POWER_SCREEN_STRINGS 0x2C) (i32.const 25))
+    (call $power_text_centred (local.get $hdc) (i32.const 160) (i32.const 202)
+      (region.addr $POWER_SCREEN_STRINGS 0x46) (i32.const 14))
+    (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))
+    (drop (call $host_gdi_delete_object (local.get $font))))
+
+  ;; Paint screen $kind (0 shutting down, 1 safe to turn off) and return the
+  ;; linear address of its pixels: 320 columns of BGRX, 1280 bytes a row,
+  ;; 400 rows top-down. 0 when the DIB could not be made. The bitmap is left
+  ;; alive on purpose -- the host reads it and the machine goes down.
+  (func $paint_power_screen (param $kind i32) (result i32)
+    (local $info_g i32) (local $info i32) (local $hdc i32) (local $bmp i32)
+    (local $old i32)
+    (local.set $info_g (call $heap_alloc (i32.const 40)))
+    (if (i32.eqz (local.get $info_g)) (then (return (i32.const 0))))
+    (local.set $info (call $g2w (local.get $info_g)))
+    (memory.fill (local.get $info) (i32.const 0) (i32.const 40))
+    (i32.store (local.get $info) (i32.const 40))                 ;; biSize
+    (i32.store offset=4 (local.get $info) (i32.const 320))       ;; biWidth
+    (i32.store offset=8 (local.get $info) (i32.const -400))      ;; biHeight: top-down
+    (i32.store16 offset=12 (local.get $info) (i32.const 1))      ;; biPlanes
+    (i32.store16 offset=14 (local.get $info) (i32.const 32))     ;; biBitCount
+    (local.set $hdc (call $host_gdi_create_compat_dc (i32.const 0)))
+    (local.set $bmp (call $gdi_bitmap_create_dib_section
+      (local.get $hdc) (local.get $info) (i32.const 0)))
+    (call $heap_free (local.get $info_g))
+    (if (i32.eqz (local.get $bmp))
+      (then
+        (drop (call $host_gdi_delete_dc (local.get $hdc)))
+        (return (i32.const 0))))
+    (local.set $old (call $host_gdi_select_object (local.get $hdc) (local.get $bmp)))
+    (if (local.get $kind)
+      (then (call $power_paint_off (local.get $hdc)))
+      (else (call $power_paint_wait (local.get $hdc))))
+    (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))
+    (drop (call $host_gdi_delete_dc (local.get $hdc)))
+    ;; A DIB section's bits are public by construction, so this is the
+    ;; type-checked read of the record's pixel pointer.
+    (call $gdi_bitmap_public_bits (local.get $bmp)))
 
   ;; Class 29. Frame painting and the title-bar-X translation are the same as
   ;; every other WAT-built dialog; what differs is what OK means.
@@ -1624,8 +1920,15 @@
     (local.set $close (i32.const 0))
     (if (i32.eq (local.get $msg) (i32.const 0x0085))
       (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
+    ;; Everything on both dialogs is a child that paints itself, except the
+    ;; Shut Down dialog's icon, which goes down with the background: the
+    ;; erase is the one paint the dialog face itself gets.
     (if (i32.eq (local.get $msg) (i32.const 0x0014))
-      (then (return (call $host_erase_background (local.get $hwnd) (i32.const 16)))))
+      (then
+        (local.set $cmd (call $host_erase_background (local.get $hwnd) (i32.const 16)))
+        (if (i32.eq (global.get $shelldlg_kind) (i32.const 2))
+          (then (call $shutdown_dialog_paint_icon (local.get $hwnd))))
+        (return (local.get $cmd))))
     (if (i32.eq (local.get $msg) (i32.const 0x0010))
       (then (local.set $close (i32.const 1))))
     (if (i32.and
@@ -1668,12 +1971,21 @@
                           (i32.const 0) (call $g2w (local.get $text_g))
                           (i32.const 0) (i32.const 0) (i32.const 1)))))))))))
             (if (i32.eq (global.get $shelldlg_kind) (i32.const 2))
-              (then (global.set $quit_flag (i32.const 1))))
+              (then
+                ;; Shut Down: the host powers the machine down (or restarts
+                ;; it); this process quits on its own,
+                ;; the way every process does when Windows shuts down. Stand
+                ;; by is the one option that keeps everything running.
+                (local.set $cmd (call $shutdown_dialog_mode))
+                (drop (call $host_exit_windows (local.get $cmd)))
+                (if (local.get $cmd)
+                  (then (global.set $quit_flag (i32.const 1))))))
             (local.set $close (i32.const 1))))))
     (if (local.get $close)
       (then
         (global.set $shelldlg_kind (i32.const 0))
         (global.set $shelldlg_edit_hwnd (i32.const 0))
+        (global.set $shelldlg_option0 (i32.const 0))
         (call $wnd_destroy_tree (local.get $hwnd))
         (call $host_destroy_window (local.get $hwnd))
         (return (i32.const 0))))
@@ -1758,7 +2070,7 @@
 
   (func $findreplace_native_richedit_replace
     (param $owner i32) (param $fr_w i32) (result i32)
-    (local $replace_g i32) (local $state i32) (local $empty_g i32)
+    (local $replace_g i32) (local $state i32) (local $state_w ptr<EditState>) (local $empty_g i32)
     (if (i32.or
           (i32.ne (call $ctrl_table_get_class (local.get $owner)) (i32.const 0))
           (i32.eqz (call $wnd_get_parent (local.get $owner))))
@@ -1768,7 +2080,9 @@
     ;; ReplaceTextA returns, while the modeless WAT edit remains authoritative.
     (local.set $state (call $wnd_get_state_ptr (global.get $findreplace_replace_hwnd)))
     (if (local.get $state)
-      (then (local.set $replace_g (i32.load (call $g2w (local.get $state)))))
+      (then
+        (local.set $state_w (cast ptr<EditState> (call $g2w (local.get $state))))
+        (local.set $replace_g (load.field EditState text_buf_ptr (local.get $state_w))))
       ;; Only when there is no dialog edit at all does lpstrReplaceWith get a
       ;; say. An edit that exists and is EMPTY still answers the question --
       ;; "replace with nothing" -- and its text_buf is a null pointer, which is
@@ -1796,7 +2110,7 @@
     (param $owner i32) (param $fr_w i32) (param $flags i32) (result i32)
     (local $find_g i32) (local $range_g i32) (local $range_w i32)
     (local $sel_a i32) (local $sel_b i32) (local $start i32) (local $ret i32)
-    (local $find_state i32)
+    (local $find_state i32) (local $find_state_w ptr<EditState>)
     ;; A class-0 child with a real native wndproc is the shape used by
     ;; RichEdit20A. Plain WAT Edit owners (Notepad) continue through their
     ;; application FINDMSGSTRING handler below.
@@ -1813,7 +2127,9 @@
     ;; and Replace All matched nothing at all.
     (local.set $find_state (call $wnd_get_state_ptr (global.get $findreplace_edit_hwnd)))
     (if (local.get $find_state)
-      (then (local.set $find_g (i32.load (call $g2w (local.get $find_state))))))
+      (then
+        (local.set $find_state_w (cast ptr<EditState> (call $g2w (local.get $find_state))))
+        (local.set $find_g (load.field EditState text_buf_ptr (local.get $find_state_w)))))
     (if (i32.eqz (local.get $find_g))
       (then
         (if (call $findreplace_struct_live (local.get $fr_w))
@@ -1861,11 +2177,11 @@
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $cmd i32) (local $fr i32) (local $fr_w i32)
     (local $owner i32) (local $flags i32)
-    (local $edit_h i32) (local $edit_state i32) (local $edit_sw i32)
+    (local $edit_h i32) (local $edit_state i32) (local $edit_sw ptr<EditState>)
     (local $text_src_w i32) (local $text_len i32) (local $max_len i32)
     (local $find_buf_g i32) (local $find_buf_w i32) (local $i i32)
     (local $mc_h i32) (local $rd_h i32)
-    (local $main_edit_h i32) (local $main_state i32) (local $main_state_w i32)
+    (local $main_edit_h i32) (local $main_state i32) (local $main_state_w ptr<EditState>)
     (local $main_len i32) (local $start_g i32) (local $end_g i32)
     (local $sel_start i32) (local $sel_end i32) (local $replace_count i32)
     (local $replace_ready i32)
@@ -2033,8 +2349,8 @@
           (then (local.set $edit_state (i32.const 0))))
         (if (local.get $edit_state)
           (then
-            (local.set $edit_sw (call $g2w (local.get $edit_state)))
-            (local.set $text_len (i32.load offset=4 (local.get $edit_sw)))
+            (local.set $edit_sw (cast ptr<EditState> (call $g2w (local.get $edit_state))))
+            (local.set $text_len (load.field.memarg EditState text_len (local.get $edit_sw)))
             (local.set $find_buf_g (i32.load offset=16 (local.get $fr_w)))
             (local.set $max_len (i32.load16_u offset=24 (local.get $fr_w)))
             ;; Nested ifs — do NOT use i32.and as logical AND on pointer/length
@@ -2046,9 +2362,9 @@
                 (local.set $find_buf_w (call $g2w (local.get $find_buf_g)))
                 (if (i32.ge_u (local.get $text_len) (local.get $max_len))
                   (then (local.set $text_len (i32.sub (local.get $max_len) (i32.const 1)))))
-                (if (i32.load (local.get $edit_sw))
+                (if (load.field EditState text_buf_ptr (local.get $edit_sw))
                   (then
-                    (local.set $text_src_w (call $g2w (i32.load (local.get $edit_sw))))
+                    (local.set $text_src_w (call $g2w (load.field EditState text_buf_ptr (local.get $edit_sw))))
                 (if (local.get $text_len)
                   (then (call $memcpy (local.get $find_buf_w)
                                           (local.get $text_src_w)
@@ -2067,13 +2383,13 @@
             (local.set $main_state (call $wnd_get_state_ptr (local.get $main_edit_h)))
             (if (local.get $main_state)
               (then
-                (local.set $main_state_w (call $g2w (local.get $main_state)))
-                (local.set $main_len (i32.load offset=4 (local.get $main_state_w)))
+                (local.set $main_state_w (cast ptr<EditState> (call $g2w (local.get $main_state))))
+                (local.set $main_len (load.field.memarg EditState text_len (local.get $main_state_w)))
                 (if (i32.and
                       (i32.gt_u (local.get $main_len) (i32.const 0))
                       (i32.and
-                        (i32.eq (i32.load offset=12 (local.get $main_state_w)) (local.get $main_len))
-                        (i32.eq (i32.load offset=16 (local.get $main_state_w)) (local.get $main_len))))
+                        (i32.eq (load.field.memarg EditState cursor (local.get $main_state_w)) (local.get $main_len))
+                        (i32.eq (load.field.memarg EditState sel_anchor (local.get $main_state_w)) (local.get $main_len))))
                   (then (drop (call $wnd_send_message
                     (local.get $main_edit_h) (i32.const 0x00B1) (i32.const 0) (i32.const 0)))))))))
         ;; Native RichEdit was handled synchronously above; avoid duplicating
@@ -2412,7 +2728,7 @@
       (call $wat_str_to_heap (region.addr $USER_DIALOG_STRINGS 0x1A8) (i32.const 3))))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1057)
       (i32.const 92) (i32.const 64) (i32.const 70) (i32.const 20) (i32.const 0x50010009)
-      (call $wat_str_to_heap (region.addr $USER_DIALOG_STRINGS 0x208) (i32.const 5))))
+      (call $wat_str_to_heap (region.addr $POWER_SCREEN_STRINGS 0x67) (i32.const 5))))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
       (i32.const 24) (i32.const 94) (i32.const 42) (i32.const 18) (i32.const 0x50000000)
       (call $wat_str_to_heap (region.addr $USER_DIALOG_STRINGS 0x1AC) (i32.const 5))))
@@ -3270,14 +3586,7 @@
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
-      (then
-        (local.set $state (call $heap_alloc (i32.const 12)))
-        (local.set $sw (cast ptr<ColorSpectrumState> (call $g2w (local.get $state))))
-        (store.field ColorSpectrumState hue (local.get $sw) (i32.const 0))
-        (store.field.memarg ColorSpectrumState sat (local.get $sw) (i32.const 0))
-        (store.field.memarg ColorSpectrumState lum (local.get $sw) (i32.const 0))
-        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
-        (return (i32.const 0))))
+      (then (local.set $state (call $heap_alloc (i32.const 12)))))
 
     (if (i32.eq (local.get $msg) (i32.const 0x0002))
       (then
@@ -3287,6 +3596,13 @@
         (return (i32.const 0))))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $sw (cast ptr<ColorSpectrumState> (call $g2w (local.get $state))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0001))
+      (then
+        (store.field ColorSpectrumState hue (local.get $sw) (i32.const 0))
+        (store.field.memarg ColorSpectrumState sat (local.get $sw) (i32.const 0))
+        (store.field.memarg ColorSpectrumState lum (local.get $sw) (i32.const 0))
+        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
+        (return (i32.const 0))))
 
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
@@ -3591,6 +3907,7 @@
     (local $cc i32) (local $custom i32) (local $rgb i32)
     (local $r i32) (local $g i32) (local $b i32) (local $idx i32)
     (local $grid i32) (local $state i32) (local $basic i32)
+    (local $grid_sw ptr<ColorGridState>) (local $basic_sw ptr<ColorGridState>)
     (local.set $cc (call $wnd_get_userdata (local.get $dlg)))
     (if (i32.eqz (local.get $cc)) (then (return)))
     (local.set $custom (i32.load offset=16 (call $g2w (local.get $cc))))
@@ -3609,19 +3926,26 @@
     (if (local.get $grid)
       (then
         (local.set $state (call $wnd_get_state_ptr (local.get $grid)))
-        (if (local.get $state) (then (local.set $idx (i32.load (call $g2w (local.get $state))))))
+        (if (local.get $state)
+          (then
+            (local.set $grid_sw (cast ptr<ColorGridState> (call $g2w (local.get $state))))
+            (local.set $idx (load.field ColorGridState sel_idx (local.get $grid_sw)))))
         (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
                     (i32.ge_s (local.get $idx) (i32.const 16)))
           (then (local.set $idx (i32.const 0))))
         (i32.store (i32.add (call $g2w (local.get $custom))
           (i32.mul (local.get $idx) (i32.const 4))) (local.get $rgb))
-        (if (local.get $state) (then (i32.store (call $g2w (local.get $state)) (local.get $idx))))
+        (if (local.get $state)
+          (then (store.field ColorGridState sel_idx (local.get $grid_sw) (local.get $idx))))
         (call $invalidate_hwnd (local.get $grid))))
     (local.set $basic (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x460)))
     (if (local.get $basic)
       (then
         (local.set $state (call $wnd_get_state_ptr (local.get $basic)))
-        (if (local.get $state) (then (i32.store (call $g2w (local.get $state)) (i32.const -1))))
+        (if (local.get $state)
+          (then
+            (local.set $basic_sw (cast ptr<ColorGridState> (call $g2w (local.get $state))))
+            (store.field ColorGridState sel_idx (local.get $basic_sw) (i32.const -1))))
         (call $invalidate_hwnd (local.get $basic))))
     (i32.store offset=12 (call $g2w (local.get $cc)) (local.get $rgb))
     (call $colordlg_sync_from_rgb (local.get $dlg) (local.get $rgb)))
@@ -3700,19 +4024,14 @@
     (local $idx i32) (local $parent i32) (local $ctrl_id i32)
     (local $hdc i32) (local $sel i32) (local $brush i32)
     (local $cx i32) (local $cy i32) (local $row_count i32)
-    (local $other i32) (local $other_state i32) (local $cc i32) (local $rgb i32)
+    (local $other i32) (local $other_state i32) (local $other_sw ptr<ColorGridState>) (local $cc i32) (local $rgb i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $state (call $heap_alloc (i32.const 4)))
-        (local.set $sw (cast ptr<ColorGridState> (call $g2w (local.get $state))))
-        (store.field ColorGridState sel_idx (local.get $sw) (i32.const -1))                              ;; sel_idx
-        ;; CREATESTRUCT.hMenu is not copied in: it is already CONTROL_TABLE+4.
-        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
-        (return (i32.const 0))))
+        (local.set $state (call $heap_alloc (i32.const 4)))))
 
     (if (i32.eq (local.get $msg) (i32.const 0x0002))
       (then
@@ -3723,6 +4042,12 @@
 
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $sw (cast ptr<ColorGridState> (call $g2w (local.get $state))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0001))
+      (then
+        (store.field ColorGridState sel_idx (local.get $sw) (i32.const -1))
+        ;; CREATESTRUCT.hMenu is not copied in: it is already CONTROL_TABLE+4.
+        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
+        (return (i32.const 0))))
 
     ;; ---------- WM_PAINT (0x000F) ----------
     ;; Basic grid = 8x6; custom grid = 8x2. Each 26x22 cell contains a
@@ -3814,7 +4139,9 @@
               (then
                 (local.set $other_state (call $wnd_get_state_ptr (local.get $other)))
                 (if (local.get $other_state)
-                  (then (i32.store (call $g2w (local.get $other_state)) (i32.const -1))))
+                  (then
+                    (local.set $other_sw (cast ptr<ColorGridState> (call $g2w (local.get $other_state))))
+                    (store.field ColorGridState sel_idx (local.get $other_sw) (i32.const -1))))
                 (call $invalidate_hwnd (local.get $other))))
             ;; Keep rgbResult current for both basic and custom selections.
             (local.set $cc (call $wnd_get_userdata (local.get $parent)))
@@ -3918,7 +4245,8 @@
 
   (func $create_color_dialog (param $dlg i32) (param $owner i32) (param $cc i32)
     (local $grid i32) (local $custom_grid i32) (local $rgb i32)
-    (local $i i32) (local $sw i32) (local $flags i32)
+    (local $i i32) (local $sw i32) (local $basic_sw ptr<ColorGridState>)
+    (local $custom_sw ptr<ColorGridState>) (local $flags i32)
     (local $custom i32) (local $found i32)
     (call $host_register_dialog_frame
       (local.get $dlg) (local.get $owner)
@@ -3973,7 +4301,9 @@
             (then
               (local.set $sw (call $wnd_get_state_ptr (local.get $grid)))
               (if (local.get $sw)
-                (then (i32.store (call $g2w (local.get $sw)) (local.get $i))))
+                (then
+                  (local.set $basic_sw (cast ptr<ColorGridState> (call $g2w (local.get $sw))))
+                  (store.field ColorGridState sel_idx (local.get $basic_sw) (local.get $i))))
               (local.set $found (i32.const 1))
               (br $basic_done)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -3993,7 +4323,9 @@
                     (then
                       (local.set $sw (call $wnd_get_state_ptr (local.get $custom_grid)))
                       (if (local.get $sw)
-                        (then (i32.store (call $g2w (local.get $sw)) (local.get $i))))
+                        (then
+                          (local.set $custom_sw (cast ptr<ColorGridState> (call $g2w (local.get $sw))))
+                          (store.field ColorGridState sel_idx (local.get $custom_sw) (local.get $i))))
                       (br $custom_done)))
                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
                   (br $scan_custom)))))))))
@@ -4187,7 +4519,7 @@
   (func $opendlg_wndproc
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $cmd i32) (local $notif i32) (local $ofn i32) (local $ofn_w i32)
-    (local $edit_h i32) (local $edit_state i32) (local $edit_sw i32)
+    (local $edit_h i32) (local $edit_state i32) (local $edit_sw ptr<EditState>)
     (local $text_len i32) (local $text_src_w i32)
     (local $dst_g i32) (local $dst_w i32) (local $max_len i32)
     (local $filter_cb i32) (local $filter_sel i32)
@@ -4235,20 +4567,20 @@
             (local.set $edit_state (call $wnd_get_state_ptr (local.get $edit_h)))
             (if (local.get $edit_state)
               (then
-                (local.set $edit_sw (call $g2w (local.get $edit_state)))
-                (local.set $text_len (i32.load offset=4 (local.get $edit_sw)))
+                (local.set $edit_sw (cast ptr<EditState> (call $g2w (local.get $edit_state))))
+                (local.set $text_len (load.field.memarg EditState text_len (local.get $edit_sw)))
                 (local.set $dst_w (call $g2w (local.get $dst_g)))
                 (if (i32.ge_u (local.get $text_len) (local.get $max_len))
                   (then (local.set $text_len (i32.sub (local.get $max_len) (i32.const 1)))))
-                (if (i32.load (local.get $edit_sw))
+                (if (load.field EditState text_buf_ptr (local.get $edit_sw))
                   (then
-                    (local.set $text_src_w (call $g2w (i32.load (local.get $edit_sw))))
+                    (local.set $text_src_w (call $g2w (load.field EditState text_buf_ptr (local.get $edit_sw))))
                     (if (local.get $text_len)
                       (then
                         (if (global.get $opendlg_wide)
                           (then
                             (drop (call $ansi_to_wide
-                              (i32.load (local.get $edit_sw)) (local.get $dst_g)
+                              (load.field EditState text_buf_ptr (local.get $edit_sw)) (local.get $dst_g)
                               (local.get $max_len))))
                           (else
                             (call $memcpy (local.get $dst_w)
@@ -7172,17 +7504,19 @@
     (local.set $texts_w (call $g2w (call $lv_col_texts_ptr (local.get $sw))))
     (local.set $ptr (i32.load (i32.add (local.get $texts_w) (i32.mul (local.get $idx) (i32.const 4)))))
     (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
-    (local.set $i (local.get $idx))
-    (block $col_shift_done (loop $col_shift
-      (br_if $col_shift_done (i32.ge_s (local.get $i) (i32.sub (local.get $col_count) (i32.const 1))))
-      (i32.store
-        (i32.add (local.get $widths_w) (i32.mul (local.get $i) (i32.const 4)))
-        (i32.load (i32.add (local.get $widths_w) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 4)))))
-      (i32.store
-        (i32.add (local.get $texts_w) (i32.mul (local.get $i) (i32.const 4)))
-        (i32.load (i32.add (local.get $texts_w) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 4)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $col_shift)))
+    ;; Close the hole at $idx: columns (idx, col_count) move down one slot. The
+    ;; ranges overlap with the destination BELOW the source, which memory.copy
+    ;; handles because it is specified as memmove -- one $memcpy per array. The
+    ;; guard above bounds $idx to [0, col_count), so the length is never
+    ;; negative and is zero exactly when $idx is the last column.
+    (call $memcpy
+      (i32.add (local.get $widths_w) (i32.mul (local.get $idx) (i32.const 4)))
+      (i32.add (local.get $widths_w) (i32.mul (i32.add (local.get $idx) (i32.const 1)) (i32.const 4)))
+      (i32.mul (i32.sub (i32.sub (local.get $col_count) (local.get $idx)) (i32.const 1)) (i32.const 4)))
+    (call $memcpy
+      (i32.add (local.get $texts_w) (i32.mul (local.get $idx) (i32.const 4)))
+      (i32.add (local.get $texts_w) (i32.mul (i32.add (local.get $idx) (i32.const 1)) (i32.const 4)))
+      (i32.mul (i32.sub (i32.sub (local.get $col_count) (local.get $idx)) (i32.const 1)) (i32.const 4)))
     (i32.store
       (i32.add (local.get $widths_w) (i32.mul (i32.sub (local.get $col_count) (i32.const 1)) (i32.const 4)))
       (i32.const 0))
@@ -7801,17 +8135,18 @@
         (call $lv_ensure_col_capacity (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
         (local.set $widths_w (call $g2w (call $lv_col_widths_ptr (local.get $sw))))
         (local.set $texts_w (call $g2w (call $lv_col_texts_ptr (local.get $sw))))
-        (local.set $i (local.get $count))
-        (block $shift_done (loop $shift
-          (br_if $shift_done (i32.le_s (local.get $i) (local.get $idx)))
-          (i32.store
-            (i32.add (local.get $widths_w) (i32.mul (local.get $i) (i32.const 4)))
-            (i32.load (i32.add (local.get $widths_w) (i32.mul (i32.sub (local.get $i) (i32.const 1)) (i32.const 4)))))
-          (i32.store
-            (i32.add (local.get $texts_w) (i32.mul (local.get $i) (i32.const 4)))
-            (i32.load (i32.add (local.get $texts_w) (i32.mul (i32.sub (local.get $i) (i32.const 1)) (i32.const 4)))))
-          (local.set $i (i32.sub (local.get $i) (i32.const 1)))
-          (br $shift)))
+        ;; Open a hole at $idx: columns [idx, count) move up one slot. The loop
+        ;; walked high-to-low for the overlap, which is memmove of the whole run
+        ;; for a destination above the source -- one $memcpy per parallel array.
+        ;; $idx is clamped to [0, count] above, so the length is never negative.
+        (call $memcpy
+          (i32.add (local.get $widths_w) (i32.mul (i32.add (local.get $idx) (i32.const 1)) (i32.const 4)))
+          (i32.add (local.get $widths_w) (i32.mul (local.get $idx) (i32.const 4)))
+          (i32.mul (i32.sub (local.get $count) (local.get $idx)) (i32.const 4)))
+        (call $memcpy
+          (i32.add (local.get $texts_w) (i32.mul (i32.add (local.get $idx) (i32.const 1)) (i32.const 4)))
+          (i32.add (local.get $texts_w) (i32.mul (local.get $idx) (i32.const 4)))
+          (i32.mul (i32.sub (local.get $count) (local.get $idx)) (i32.const 4)))
         (local.set $col_w (call $g2w (local.get $lParam)))
         (local.set $mask (i32.load (local.get $col_w)))
         (local.set $width (i32.const 80))
@@ -8132,15 +8467,14 @@
         (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (local.set $idx (i32.const 0))))
         (if (i32.gt_s (local.get $idx) (local.get $count)) (then (local.set $idx (local.get $count))))
         (call $lv_ensure_item_capacity (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
-        (local.set $i (local.get $count))
-        (block $item_shift_done (loop $item_shift
-          (br_if $item_shift_done (i32.le_s (local.get $i) (local.get $idx)))
-          (call $memcpy
-            (call $lv_cell_addr (local.get $sw) (local.get $i) (i32.const 0))
-            (call $lv_cell_addr (local.get $sw) (i32.sub (local.get $i) (i32.const 1)) (i32.const 0))
-            (i32.const 44))
-          (local.set $i (i32.sub (local.get $i) (i32.const 1)))
-          (br $item_shift)))
+        ;; Open a hole at $idx: records [idx, count) move up one 44-byte slot.
+        ;; The loop copied one record at a time from the top for the overlap,
+        ;; and $lv_cell_addr is linear in $item, so the whole run is one
+        ;; memmove -- the mirror of the single $memcpy in $lv_delete_item.
+        (call $memcpy
+          (call $lv_cell_addr (local.get $sw) (i32.add (local.get $idx) (i32.const 1)) (i32.const 0))
+          (call $lv_cell_addr (local.get $sw) (local.get $idx) (i32.const 0))
+          (i32.mul (i32.sub (local.get $count) (local.get $idx)) (i32.const 44)))
         (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $idx) (i32.const 0)) (i32.const 44))
         (i32.store (call $lv_item_image_addr (local.get $sw) (local.get $idx)) (i32.const -1))
         (call $lv_set_item_count (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
@@ -8984,12 +9318,15 @@
   ;; +64 style, +68 extended_style, +72 padding packed, +76 hot_index.
 
   (func $toolbar_ensure_state (param $hwnd i32) (result i32)
-    (local $state i32) (local $sw ptr<ToolbarState>)
+    (local $state i32) (local $sw ptr<ToolbarState>) (local $created i32)
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state))
       (then
         (local.set $state (call $heap_alloc (i32.const 80)))
-        (local.set $sw (cast ptr<ToolbarState> (call $g2w (local.get $state))))
+        (local.set $created (i32.const 1))))
+    (local.set $sw (cast ptr<ToolbarState> (call $g2w (local.get $state))))
+    (if (local.get $created)
+      (then
         (call $zero_memory (local.get $sw) (i32.const 80))
         (store.field.memarg ToolbarState button_w (local.get $sw) (i32.const 23)) ;; default dxButton
         (store.field.memarg ToolbarState button_h (local.get $sw) (i32.const 22)) ;; default dyButton
@@ -9000,7 +9337,6 @@
         (store.field.memarg ToolbarState pressed_index (local.get $sw) (i32.const -1))
         (store.field.memarg ToolbarState hot_index (local.get $sw) (i32.const -1))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))))
-    (local.set $sw (cast ptr<ToolbarState> (call $g2w (local.get $state))))
     (store.field.memarg ToolbarState hwnd (local.get $sw) (local.get $hwnd))
     (local.get $state))
 
@@ -9301,13 +9637,14 @@
   ;; dialogs stopped every menu item from responding. Closed, a combobox owns
   ;; its field and nothing more.
   (func $combobox_hit_h (param $hwnd i32) (param $full_h i32) (result i32)
-    (local $state_g i32)
+    (local $state_g i32) (local $state_w ptr<ComboBoxState>)
     (if (i32.eq (global.get $combo_open_hwnd) (local.get $hwnd))
       (then (return (local.get $full_h))))
     (local.set $state_g (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (local.get $state_g)
       (then
-        (if (i32.load offset=32 (call $g2w (local.get $state_g)))
+        (local.set $state_w (cast ptr<ComboBoxState> (call $g2w (local.get $state_g))))
+        (if (load.field.memarg ComboBoxState variant (local.get $state_w))
           (then (return (local.get $full_h))))))
     (if (i32.gt_s (local.get $full_h) (i32.const 21))
       (then (return (i32.const 21))))
@@ -9553,21 +9890,23 @@
     (local $mask_color i32) (local $use_disabled_effect i32) (local $is_hot i32)
     (local $brect i32)
 
+    (local.set $state
+      (if (result i32) (i32.eq (local.get $msg) (i32.const 0x0002))
+        (then (call $wnd_get_state_ptr (local.get $hwnd)))
+        (else (call $toolbar_ensure_state (local.get $hwnd)))))
+    (if (local.get $state)
+      (then (local.set $sw (cast ptr<ToolbarState> (call $g2w (local.get $state))))))
+
     ;; WM_DESTROY
     (if (i32.eq (local.get $msg) (i32.const 0x0002))
       (then
-        (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
         (if (local.get $state)
           (then
-            (local.set $sw (cast ptr<ToolbarState> (call $g2w (local.get $state))))
             (if (load.field.memarg ToolbarState buttons_guest (local.get $sw))
               (then (call $heap_free (load.field.memarg ToolbarState buttons_guest (local.get $sw)))))
             (call $heap_free (local.get $state))
             (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
         (return (i32.const 0))))
-
-    (local.set $state (call $toolbar_ensure_state (local.get $hwnd)))
-    (local.set $sw (cast ptr<ToolbarState> (call $g2w (local.get $state))))
 
     ;; WM_CREATE
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
@@ -10325,12 +10664,16 @@
     (local $count i32) (local $cap i32) (local $idx i32) (local $rec i32)
     (local $src i32) (local $dst i32) (local $text_src i32) (local $text_dst i32)
     (local $len i32) (local $ti i32) (local $x i32) (local $y i32) (local $old i32)
+    (local $created i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state))
       (then
         (local.set $state (call $heap_alloc (i32.const 64)))
-        (local.set $sw (cast ptr<TooltipState> (call $g2w (local.get $state))))
+        (local.set $created (i32.const 1))))
+    (local.set $sw (cast ptr<TooltipState> (call $g2w (local.get $state))))
+    (if (local.get $created)
+      (then
         (call $zero_memory (local.get $sw) (i32.const 64))
         (local.set $items (call $heap_alloc (i32.mul (i32.const 4) (i32.const 48))))
         (call $zero_memory (call $g2w (local.get $items)) (i32.mul (i32.const 4) (i32.const 48)))
@@ -10345,7 +10688,6 @@
         (store.field.memarg TooltipState initial_delay (local.get $sw) (i32.const 500))
         (store.field.memarg TooltipState reshow_delay (local.get $sw) (i32.const 100))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))))
-    (local.set $sw (cast ptr<TooltipState> (call $g2w (local.get $state))))
 
     ;; WM_CREATE
     (if (i32.eq (local.get $msg) (i32.const 0x0001)) (then (return (i32.const 0))))
@@ -12329,7 +12671,8 @@
     (local $px i32) (local $py i32)
     (local $scan_slot i32) (local $sibling_hwnd i32)
     (local $combo_max_x i32) (local $sibling_right i32)
-    (local $paint_state_w i32)
+    (local $paint_state_w ptr<ControlTextState>) (local $edit_text_w ptr<ControlTextState>)
+    (local $paint_state_g i32)
     (local $prev_lb i32) (local $prev_edit i32) (local $prev_popup i32)
 
     (local.set $field_h (i32.const 21))
@@ -13074,20 +13417,23 @@
             (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
             ;; CBS_DROPDOWN delegates text ownership to its inner EDIT. Paint
             ;; from that same state so WM_PAINT agrees with WM_GETTEXT.
-            (local.set $paint_state_w (local.get $state_w))
+            (local.set $paint_state_w (cast ptr<ControlTextState> (local.get $state_w)))
             (if (i32.eq (local.get $variant) (i32.const 2))
               (then
-                (local.set $paint_state_w
+                (local.set $paint_state_g
                   (call $wnd_get_state_ptr (call $cb_edit_hwnd (local.get $state_w))))
-                (if (local.get $paint_state_w)
-                  (then (local.set $paint_state_w (call $g2w (local.get $paint_state_w)))))))
+                (if (local.get $paint_state_g)
+                  (then
+                    (local.set $edit_text_w (cast ptr<ControlTextState>
+                      (call $g2w (local.get $paint_state_g))))
+                    (local.set $paint_state_w (local.get $edit_text_w))))))
             (if (i32.and
                   (i32.ne (local.get $paint_state_w) (i32.const 0))
-                  (i32.ne (i32.load (local.get $paint_state_w)) (i32.const 0)))
+                  (i32.ne (load.field ControlTextState text_buf_ptr (local.get $paint_state_w)) (i32.const 0)))
               (then
                 (drop (call $host_gdi_draw_text (local.get $hdc)
-                        (call $g2w (i32.load (local.get $paint_state_w)))
-                        (i32.load offset=4 (local.get $paint_state_w))
+                        (call $g2w (load.field ControlTextState text_buf_ptr (local.get $paint_state_w)))
+                        (load.field.memarg ControlTextState text_len (local.get $paint_state_w))
                         (call $paint_rect (i32.const 4) (i32.const 2)
                                           (i32.sub (local.get $arrow_x) (i32.const 2))
                                           (i32.sub (local.get $h) (i32.const 2)))
@@ -14184,14 +14530,14 @@
       (then
         (if (local.get $state)
           (then
-            (i32.store offset=32 (call $g2w (local.get $state)) (local.get $wParam))
+            (store.field.memarg EditState font (call $g2w (local.get $state)) (local.get $wParam))
             (if (local.get $lParam)
               (then (call $invalidate_hwnd (local.get $hwnd))))))
         (return (i32.const 0))))
     (if (i32.eq (local.get $msg) (i32.const 0x0031))
       (then
         (if (local.get $state)
-          (then (return (i32.load offset=32 (call $g2w (local.get $state))))))
+          (then (return (load.field.memarg EditState font (call $g2w (local.get $state))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_DESTROY (0x0002) ----------
@@ -14314,7 +14660,7 @@
     (if (i32.eq (local.get $msg) (i32.const 0x000E))
       (then
         (if (local.get $state)
-          (then (return (i32.load offset=4 (call $g2w (local.get $state))))))
+          (then (return (load.field.memarg EditState text_len (call $g2w (local.get $state))))))
         (return (i32.const 0))))
 
     ;; ---------- EM_STREAMIN (0x0449) ----------
@@ -15351,14 +15697,14 @@
                 (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 24))
                 (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 25))))
           (then (local.set $text_len (i32.const 64000))))
-        (i32.store offset=28 (call $g2w (local.get $state)) (local.get $text_len))
+        (store.field.memarg EditState max_length (call $g2w (local.get $state)) (local.get $text_len))
         (return (i32.const 0))))
 
     ;; ---------- EM_GETLIMITTEXT (0x00D5) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x00D5))
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-        (return (i32.load offset=28 (call $g2w (local.get $state))))))
+        (return (load.field.memarg EditState max_length (call $g2w (local.get $state))))))
 
     ;; ---------- RichEdit 2.0+ extended range/limit messages ----------
     ;; RichEdit 1.0 intentionally leaves these unsupported and continues to
@@ -15383,7 +15729,7 @@
         (local.set $text_len (local.get $lParam))
         (if (i32.eqz (local.get $text_len))
           (then (local.set $text_len (i32.const 64000))))
-        (i32.store offset=28 (call $g2w (local.get $state)) (local.get $text_len))
+        (store.field.memarg EditState max_length (call $g2w (local.get $state)) (local.get $text_len))
         (return (i32.const 0))))
 
     (if (i32.and
@@ -15597,7 +15943,7 @@
     (if (i32.eq (local.get $msg) (i32.const 0x00CE))
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-        (return (i32.load offset=20 (call $g2w (local.get $state))))))
+        (return (load.field.memarg EditState scroll_top (call $g2w (local.get $state))))))
 
     ;; ---------- WM_MOUSEWHEEL (0x020A) ----------
     ;; wParam hi-word = signed wheel delta (120 per notch, positive = scroll up).
@@ -15732,7 +16078,8 @@
     (local $old_ebx i32) (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
     (local $old_handler_set_eip i32) (local $old_steps i32)
     (local $old_yield_reason i32) (local $old_yield_flag i32)
-    (local $result i32) (local $edit_state i32) (local $edit_len_before i32)
+    (local $result i32) (local $edit_state i32) (local $edit_state_w ptr<EditState>)
+    (local $edit_len_before i32)
     (local $sync_rounds i32)
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
@@ -15799,8 +16146,10 @@
       (then
         (local.set $edit_state (call $wnd_get_state_ptr (local.get $hwnd)))
         (if (local.get $edit_state)
-          (then (local.set $edit_len_before
-            (i32.load offset=4 (call $g2w (local.get $edit_state))))))))
+          (then
+            (local.set $edit_state_w (cast ptr<EditState> (call $g2w (local.get $edit_state))))
+            (local.set $edit_len_before
+              (load.field.memarg EditState text_len (local.get $edit_state_w)))))))
     ;; A 16-bit task's window procedure cannot be entered this way. The frame
     ;; built below is stdcall with 32-bit arguments and a near return thunk,
     ;; and $wp is a packed selector:offset rather than a linear address — the
@@ -15895,7 +16244,7 @@
     (if (i32.and
           (i32.ne (local.get $edit_state) (i32.const 0))
           (i32.eq
-            (i32.load offset=4 (call $g2w (local.get $edit_state)))
+            (load.field.memarg EditState text_len (local.get $edit_state_w))
             (local.get $edit_len_before)))
       (then
         (drop (call $control_wndproc_dispatch

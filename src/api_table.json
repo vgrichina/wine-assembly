@@ -26676,5 +26676,23 @@
     "nargs": 0,
     "convention": "cdecl",
     "hash": 996370429
+  },
+  {
+    "id": 3207,
+    "name": "ExitWindowsEx",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1716482207,
+    "args": [
+      {
+        "name": "uFlags",
+        "type": "flags:EWX"
+      },
+      {
+        "name": "dwReserved",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "BOOL"
   }
 ]

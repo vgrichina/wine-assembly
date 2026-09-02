@@ -1054,6 +1054,47 @@ the ListView suite now inserts and deletes columns/items in the middle, so its
 three shift paths move real data rather than vacuously appending/removing the
 last entry; the landed suite is 160/160.
 
+**By 20:20 Sep 1 (+23 commits, HEAD `6feb6120`).** My four-hour
+certification pass over a window the finer-grained ticks above already
+cover in detail — so this paragraph records the arcs. First: **the
+BYO-media Tier-1 backlog, unowned since Pass 4 filed it, is being
+drained** — H1 (`8ff2b10d`, bounded 4 MiB provider windows with a
+17 MB past-the-cache regression), H2 (`db182b2d`, safe-integer offsets
+proven at a sparse ≥2 GiB image), H3 (`5a46a063`, hostile ISO names —
+and the sanitizer reuse found a real ZIP bypass, an all-`../` archive
+losing its hostile component during wrapper removal), and M4
+(`6feb6120`, schema-change-safe cleanupOrphans); M1 is claimed. Each
+closed with an executable regression, several finding adjacent real
+bugs. Second: **the typed-pointers lane completed end to end** — spec
+(`5c397054`), all three tiers (`1fe7824c`), the seal lesson
+(`132c610f`: the provenance seal covers CHANGELOG *bytes*, so editing
+prose after `--update` reddens the feature's own commit), five holes
+found by Codex's executable probes and closed in three layers
+(`b9b8e177`, `23132e02`, `4d1807a0`; suite 71/71), the GDI object
+family rewritten as one compiler-known `layout-union` with the generic
+union gate replacing the hand-maintained one at exact census parity —
+three of the old gate's checks are now compile errors by construction —
+and the ControlState retrofit (`a9981f84`) with its transferable
+lesson: the type belongs on the `$g2w`'d wasm pointer, not the guest
+pointer that names the same record. Third: `51c17758` fixed a **real
+shipping bug** the dedup existed to find (SetWindowLong GWL_ID synced
+one control class of five; the other four notified with stale ids), and
+compaction-as-probe exposed 25 load-bearing raw cross-file reads a
+reserved hole would have left armed — the source-wide ControlState
+census this proves necessary is in flight (`c86e5adb` converted the
+10-helpers/13-exports reads). Fourth: coordination held under the
+densest multi-lane pressure yet — the MM-staged gate near-miss, the
+six-owner-lines-one-file deadlock, and the carry-with-credit were all
+defused on the board before any commit, zero sweeps this window.
+In flight and explicitly not yet reviewed: the shutdown lane
+(ExitWindowsEx + WAT-painted power screens, awaiting user go-ahead,
+with five pre-commit findings posted — including that standby does not
+actually pause guests and no WM_QUERYENDSESSION handshake exists), the
+remaining ControlState sites, M1, and TetriNET's WSAIsBlocking in a tmp
+worktree. My certification at `6feb6120`, detached worktree (shared
+tree carries the shutdown and ControlState lanes): build exit 0
+(**997,783 B**), differential 46/46, still exactly one divergence.
+
 ---
 
 # Pass 3 — 2026-08-30

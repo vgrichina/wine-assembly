@@ -133,6 +133,27 @@ async function main() {
   await vfs.cdAudioDrives.get('d').track(2).load();
   assert(audio.reads > 0, 'playing/loading track 2 should fetch its BIN on demand');
 
+  // MODE1/2048 is already the cooked ISO byte stream. This fixture is
+  // deliberately not wrapped in a synthetic +16 raw-sector header: applying
+  // the MODE1/2352 shortcut to it shifts every volume descriptor and fails.
+  const cookedCueText = `FILE "disc.iso" BINARY\n` +
+    `  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n`;
+  const cookedCue = countingSource(new TextEncoder().encode(cookedCueText));
+  const cookedData = countingSource(makeIso());
+  const cookedPlans = await mediaImport.analyzeFiles([
+    { name: 'Civilization II cooked.cue', size: cookedCue.size, source: cookedCue },
+    { name: 'disc.iso', size: cookedData.size, source: cookedData },
+  ]);
+  assert.strictEqual(cookedPlans.length, 1);
+  assert.strictEqual(cookedPlans[0].volumeLabel, 'CIV2_TEST');
+  assert.deepStrictEqual(cookedPlans[0].exeCandidates.map(item => item.path), ['D:\\CIV2.EXE']);
+  const cookedVfs = new VirtualFS();
+  const cookedMounted = await cookedPlans[0].mount(cookedVfs);
+  assert.strictEqual(cookedMounted.disc.track(1).playableSectors, 20);
+  assert.strictEqual(cookedMounted.disc.leadOutSector, 20);
+  assert.deepStrictEqual(Array.from(await cookedVfs.materialize('D:\\CIV2.EXE')),
+    [0x4d, 0x5a, 0x90, 0x00]);
+
   await assert.rejects(() => mediaImport.analyzeFiles([
     { name: 'Civilization II.cue', size: cue.size, source: cue },
     { name: 'track01.bin', size: data.size, source: data },

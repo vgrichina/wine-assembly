@@ -255,16 +255,19 @@ function imageSummary(filename) {
   };
 }
 
-function logSummary(filename) {
-  if (!fs.existsSync(filename)) return null;
-  const text = fs.readFileSync(filename, 'utf8');
+function summarizeLogText(text) {
   const crash = text.match(/\*\*\* CRASH[^\n]*|UNIMPLEMENTED API[^\n]*|RuntimeError[^\n]*|Unreachable code[^\n]*/i);
   return {
     crashed: !!crash,
     crash: crash ? crash[0] : null,
-    windows: (text.match(/^\[CreateWindowEx/gm) || []).length,
+    windows: (text.match(/^\[CreateWindow\]/gm) || []).length,
     dialogs: (text.match(/^\[CreateDialog/gm) || []).length,
   };
+}
+
+function logSummary(filename) {
+  if (!fs.existsSync(filename)) return null;
+  return summarizeLogText(fs.readFileSync(filename, 'utf8'));
 }
 
 function makePair(app, outDir) {
@@ -360,4 +363,5 @@ function main() {
   if (rows.some(row => row.nativeError || row.localError || row.localRun?.crashed)) process.exitCode = 1;
 }
 
-main();
+if (require.main === module) main();
+module.exports = { summarizeLogText };

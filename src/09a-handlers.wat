@@ -11717,14 +11717,33 @@ HookEx — no next hook in chain, return 0
   )
 
   ;; ExitWindowsDialog(hwndOwner) — SHELL32 ordinal 60, Task Manager's
-  ;; File > Shutdown Windows... OK sets the quit flag, which is as far as
-  ;; "shut down" goes when the emulator is the machine.
+  ;; File > Shutdown Windows... The dialog's OK hands the chosen option to
+  ;; $host_exit_windows (09c3-controls.wat) and this process quits.
   (func $handle_ExitWindowsDialog (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dlg i32)
     (local.set $dlg (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (call $create_shutdown_dialog (local.get $dlg) (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; ExitWindowsEx(uFlags, dwReserved) — the programmatic Shut Down. The
+  ;; flags word names what the machine does next: EWX_REBOOT (2) restarts,
+  ;; EWX_SHUTDOWN (1) / EWX_POWEROFF (8) power it off, and a bare EWX_LOGOFF
+  ;; (0) only ends the session. EWX_FORCE (4) changes how apps are asked, not
+  ;; what happens, so it is not consulted. The host owns the box; this
+  ;; process quits the way every process does when Windows goes down.
+  (func $handle_ExitWindowsEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $mode i32)
+    (local.set $mode (i32.const 3))                        ;; log off
+    (if (i32.and (local.get $arg0) (i32.const 0x9))        ;; EWX_SHUTDOWN | EWX_POWEROFF
+      (then (local.set $mode (i32.const 1))))
+    (if (i32.and (local.get $arg0) (i32.const 0x2))        ;; EWX_REBOOT
+      (then (local.set $mode (i32.const 2))))
+    (drop (call $host_exit_windows (local.get $mode)))
+    (global.set $quit_flag (i32.const 1))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; Return the modifiers that are physically down in the emulated desktop.
@@ -14807,7 +14826,7 @@ rDragDrop(hwnd, pDropTarget) — return S_OK.
   ;; parses a decimal integer. bSigned lets a leading '-' flip the sign.
   ;; *lpTranslated receives TRUE iff at least one digit was consumed.
   (func $handle_GetDlgItemInt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $child i32) (local $state i32) (local $state_w i32)
+    (local $child i32) (local $state i32) (local $state_w ptr<ControlTextState>)
     (local $buf_wa i32) (local $text_len i32)
     (local $i i32) (local $c i32) (local $val i32)
     (local $neg i32) (local $ok i32)
@@ -14820,13 +14839,13 @@ rDragDrop(hwnd, pDropTarget) — return S_OK.
         (local.set $state (call $wnd_get_state_ptr (local.get $child)))
         (if (local.get $state)
           (then
-            (local.set $state_w (call $g2w (local.get $state)))
-            (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+            (local.set $state_w (cast ptr<ControlTextState> (call $g2w (local.get $state))))
+            (local.set $text_len (load.field.memarg ControlTextState text_len (local.get $state_w)))
             (if (i32.and
-                  (i32.ne (i32.const 0) (i32.load (local.get $state_w)))
+                  (i32.ne (i32.const 0) (load.field ControlTextState text_buf_ptr (local.get $state_w)))
                   (i32.ne (i32.const 0) (local.get $text_len)))
               (then
-                (local.set $buf_wa (call $g2w (i32.load (local.get $state_w))))
+                (local.set $buf_wa (call $g2w (load.field ControlTextState text_buf_ptr (local.get $state_w))))
                 (local.set $i (i32.const 0))
                 (block $skip_done (loop $skip
                   (br_if $skip_done (i32.ge_u (local.get $i) (local.get $text_len)))

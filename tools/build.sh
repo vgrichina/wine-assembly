@@ -130,6 +130,10 @@ node tools/gen-host-import-sigs.js --check
 # regeneration ships old code to the page while every test stays green on the
 # committed bytes — that drift went unnoticed across whole commit windows twice.
 node tools/toyvm/bundle-browser.js --check
+# The toy VM has independent JS and WAT decoders. A deterministic byte-level
+# differential catches a wrong opcode/ModRM/immediate claim before either
+# backend's execution tests can disguise it behind the same final state.
+node tools/toyvm/decode-diff.js --random=20000 --seed=12345
 # Every handler's stdcall epilogue, checked against api_table.json's nargs —
 # the values are derived from the table now, not typed. `--sync` rewrites any
 # that drift.
