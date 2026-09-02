@@ -453,7 +453,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '269';
+  static SOURCE_VERSION = '270';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -1498,6 +1498,10 @@ class WineAssembly {
     h.duplicate_current_thread = (tid) => self.threadManager ? self.threadManager.duplicateCurrentThread(tid) : 0;
     h.suspend_thread = (handle) => self.threadManager ? self.threadManager.suspendThread(handle) : 0xFFFFFFFF;
     h.resume_thread = (handle) => self.threadManager ? self.threadManager.resumeThread(handle) : 0xFFFFFFFF;
+    h.get_thread_priority = (handle, tid) => self.threadManager
+      ? self.threadManager.getThreadPriority(handle, tid) : 0x7FFFFFFF;
+    h.set_thread_priority = (handle, priority, tid) => self.threadManager
+      ? self.threadManager.setThreadPriority(handle, priority, tid) : 0;
     h.exit_thread = (c) => self.threadManager && self.threadManager.exitThread(c);
     h.get_exit_code_thread = (handle) => self.threadManager ? self.threadManager.getExitCodeThread(handle) : 0x103;
     h.terminate_thread = (handle, exitCode) => self.threadManager
@@ -2070,7 +2074,7 @@ class WineAssembly {
       return;
     }
     try {
-      const res = await fetch('lib/host-import-sigs.generated.json?v=5');
+      const res = await fetch('lib/host-import-sigs.generated.json?v=6');
       if (!res.ok) throw new Error(`sigs HTTP ${res.status}`);
       const sigs = (await res.json()).sigs;
       const self = this;

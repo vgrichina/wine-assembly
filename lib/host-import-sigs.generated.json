@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 222,
+  "count": 224,
   "sigs": {
     "log": {
       "params": [
@@ -1624,6 +1624,25 @@
     },
     "resume_thread": {
       "params": [
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "get_thread_priority": {
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "set_thread_priority": {
+      "params": [
+        "i32",
+        "i32",
         "i32"
       ],
       "results": [

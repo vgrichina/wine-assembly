@@ -92,12 +92,21 @@ assert(handlersWat.includes('(global.set $yield_reason (i32.const 11))'),
   'SuspendThread self-calls park the current guest slice before it can suspend again');
 
 const duplicateTm = makeThreadManager();
+assert.strictEqual(duplicateTm.getThreadPriority(0xfffffffe, 1), 0,
+  'the main thread starts at THREAD_PRIORITY_NORMAL');
+assert.strictEqual(duplicateTm.setThreadPriority(0xfffffffe, 2, 1), 1,
+  'the current-thread pseudo handle sets main-thread priority');
 const duplicatedMainA = duplicateTm.duplicateCurrentThread(1);
 const duplicatedMainB = duplicateTm.duplicateCurrentThread(1);
 assert(duplicatedMainA && duplicatedMainB && duplicatedMainA !== duplicatedMainB,
   'each DuplicateHandle call returns a distinct real current-thread handle');
 assert.notStrictEqual(duplicatedMainA >>> 0, 0xfffffffe,
   'a duplicated current-thread handle must not preserve the contextual pseudo handle');
+assert.strictEqual(duplicateTm.getThreadPriority(duplicatedMainA, 77), 2,
+  'a durable duplicate observes the underlying main-thread priority');
+assert.strictEqual(duplicateTm.setThreadPriority(duplicatedMainB, -1, 77), 1);
+assert.strictEqual(duplicateTm.getThreadPriority(0xfffffffe, 1), -1,
+  'pseudo and duplicated handles mutate one main-thread object');
 assert.strictEqual(duplicateTm.suspendThread(duplicatedMainA), 0,
   'the first duplicated-handle suspend returns the previous main-thread count');
 assert.strictEqual(duplicateTm.isMainThreadSuspended(), true,
@@ -120,6 +129,19 @@ assert.strictEqual(duplicateTm.resumeThread(duplicatedMainB), 1);
 duplicateTm.createThread(0x6200, 0, 0, 0);
 const duplicatedWorker = duplicateTm.duplicateCurrentThread(2);
 assert(duplicatedWorker, 'a worker can duplicate its own current-thread pseudo handle');
+const priorityWorkerHandle = duplicateTm._pendingThreads[0].handle;
+assert.strictEqual(duplicateTm.getThreadPriority(priorityWorkerHandle, 1), 0,
+  'a newly created pending thread starts at THREAD_PRIORITY_NORMAL');
+assert.strictEqual(duplicateTm.setThreadPriority(priorityWorkerHandle, 15, 1), 1,
+  'a CreateThread handle can set priority before worker instantiation');
+assert.strictEqual(duplicateTm.getThreadPriority(0xfffffffe, 2), 15,
+  'the worker contextual pseudo handle resolves the same pending object');
+assert.strictEqual(duplicateTm.getThreadPriority(duplicatedWorker, 1), 15,
+  'a pending worker duplicate shares the retained priority');
+assert.strictEqual(duplicateTm.getThreadPriority(0xdeadbeef, 1), 0x7fffffff,
+  'an invalid handle returns THREAD_PRIORITY_ERROR_RETURN');
+assert.strictEqual(duplicateTm.setThreadPriority(0xdeadbeef, 0, 1), 0,
+  'an invalid handle cannot mutate thread-priority state');
 assert.strictEqual(duplicateTm.suspendThread(duplicatedWorker), 0,
   'the duplicated worker handle shares its pending thread suspend state');
 assert.strictEqual(duplicateTm._pendingThreads[0].suspendCount, 1);
@@ -462,6 +484,30 @@ messageTm.threads.set(0xe1000, makeRunnableThread(1, () => { messageRuns++; }));
 const messageStats = messageTm.runBudgeted({ quantumSteps: 100, maxTotalSteps: 1000, maxWallMs: 5, stopIfMessagePending: true });
 assert.strictEqual(messageRuns, 0, 'budgeted scheduler should not run workers when main messages are pending');
 assert.strictEqual(messageStats.stoppedForMessage, true, 'budgeted scheduler should report message stops');
+
+const win32PriorityTm = makeThreadManager();
+win32PriorityTm._now = () => now;
+now = 0;
+const win32PriorityRuns = [];
+const lowPriorityThread = makeRunnableThread(1, () => {
+  win32PriorityRuns.push('low');
+  now += 10;
+});
+lowPriorityThread.priority = -2;
+const highPriorityThread = makeRunnableThread(2, () => {
+  win32PriorityRuns.push('high');
+  now += 10;
+});
+highPriorityThread.priority = 2;
+win32PriorityTm.threads.set(0xe1000, lowPriorityThread);
+win32PriorityTm.threads.set(0xe1001, highPriorityThread);
+win32PriorityTm.runBudgeted({
+  quantumSteps: 100,
+  maxTotalSteps: 1000,
+  maxWallMs: 5,
+});
+assert.deepStrictEqual(win32PriorityRuns, ['high'],
+  'a bounded cooperative browser slice runs the higher-priority thread first');
 
 const priorityTm = makeThreadManager();
 priorityTm._now = () => now;

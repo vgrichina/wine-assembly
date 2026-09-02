@@ -10457,10 +10457,17 @@ nW — STUB: unimplemented
     (global.set $eax (call $process_priority_class_get))
   )
 
-  ;; 1265: GetThreadPriority(hThread) — return THREAD_PRIORITY_NORMAL (0)
+  ;; 1265: GetThreadPriority(hThread). The host owns thread HANDLE identity;
+  ;; pass the contextual Win32 tid as well so pseudo-handle -2 resolves to the
+  ;; calling guest thread rather than always meaning the UI thread.
   (func $handle_GetThreadPriority (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (local $priority i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (local.set $priority (call $host_get_thread_priority
+      (local.get $arg0) (global.get $current_thread_id)))
+    (if (i32.eq (local.get $priority) (i32.const 0x7fffffff))
+      (then (global.set $last_error (i32.const 6)))) ;; ERROR_INVALID_HANDLE
+    (global.set $eax (local.get $priority))
   )
 
   ;; 1266: GetUpdateRgn(hWnd, hRgn, bErase) — copy updateRgn into hRgn.
@@ -14167,11 +14174,39 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
   )
 
-  ;; 539: SetThreadPriority — STUB: unimplemented
+  ;; Win98 accepts the seven ordinary relative values. A REALTIME process also
+  ;; accepts the intermediate -7..6 values documented for that priority class;
+  ;; background-processing mode is a post-Win98 API and stays invalid here.
+  (func $win98_thread_priority_valid (param $priority i32) (result i32)
+    (i32.or
+      (i32.or
+        (i32.eq (local.get $priority) (i32.const -15)) ;; THREAD_PRIORITY_IDLE
+        (i32.eq (local.get $priority) (i32.const 15))) ;; THREAD_PRIORITY_TIME_CRITICAL
+      (if (result i32)
+        (i32.eq (call $process_priority_class_get) (i32.const 0x100))
+        (then
+          (i32.and
+            (i32.ge_s (local.get $priority) (i32.const -7))
+            (i32.le_s (local.get $priority) (i32.const 6))))
+        (else
+          (i32.and
+            (i32.ge_s (local.get $priority) (i32.const -2))
+            (i32.le_s (local.get $priority) (i32.const 2)))))))
+
+  ;; 539: SetThreadPriority(hThread, nPriority). ThreadManager retains the value
+  ;; on the underlying thread object, so CreateThread handles and duplicates
+  ;; observe the same state in cooperative and real-Worker backends.
   (func $handle_SetThreadPriority (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; SetThreadPriority(hThread, nPriority) — return TRUE
-    (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (if (i32.eqz (call $win98_thread_priority_valid (local.get $arg1)))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0))
+        (return)))
+    (global.set $eax (call $host_set_thread_priority
+      (local.get $arg0) (local.get $arg1) (global.get $current_thread_id)))
+    (if (i32.eqz (global.get $eax))
+      (then (global.set $last_error (i32.const 6)))) ;; ERROR_INVALID_HANDLE
   )
 
   ;; 1250: GetExitCodeThread(hThread, lpExitCode) — 2 args stdcall

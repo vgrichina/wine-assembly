@@ -130,8 +130,10 @@ const digest = crypto.createHash('sha256')
 // tree by optional class atom/name and title instead of always returning NULL.
 // 2026-09-02: 493 -> 491. SetPriorityClass/GetPriorityClass now validate the
 // emulated process handle and retain one shared Win98 priority class.
-const EXPECTED_COUNT = 491;
-const EXPECTED_SHA256 = '5941406c5024f2add4ba0d3ee57b16ef119c6b836079126f2369b2c78e1b4074';
+// 2026-09-02: 491 -> 489. GetThreadPriority/SetThreadPriority now validate
+// thread identity and retain the Win98 relative priority on the thread object.
+const EXPECTED_COUNT = 489;
+const EXPECTED_SHA256 = 'd5105ef6d0c80e5b95c409d352067858ead956cb4c34b34ee62b02954d626aee';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

@@ -3162,6 +3162,8 @@ async function main() {
   h.duplicate_current_thread = (tid) => threadManager.duplicateCurrentThread(tid);
   h.suspend_thread = (handle) => threadManager.suspendThread(handle);
   h.resume_thread = (handle) => threadManager.resumeThread(handle);
+  h.get_thread_priority = (handle, tid) => threadManager.getThreadPriority(handle, tid);
+  h.set_thread_priority = (handle, priority, tid) => threadManager.setThreadPriority(handle, priority, tid);
   h.exit_thread = (exitCode) => threadManager.exitThread(exitCode);
   h.get_exit_code_thread = (handle) => threadManager.getExitCodeThread(handle);
   h.terminate_thread = (handle, exitCode) => threadManager.terminateThread(handle, exitCode);
