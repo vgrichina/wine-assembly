@@ -382,3 +382,115 @@ known `ret`/`call_far` blockers. The micro-op ceiling column over-promises on
 exactly the loops a region cannot close, which is worth knowing before
 quoting its +19.7% geomean as JIT headroom: the realizable part is what
 `region-census` measures.
+
+## 8. Whole programs: every hot loop, then every hot trace (2026-09-02)
+
+§3–§7 installed **one** region per program, so "region JIT" there meant
+"the single hottest loop", and the micro-op tiers were only ever a snapshot
+bench of one trace. Both limits are ours, not the backends', so this section
+removes them and re-measures the 20 on one scale.
+
+**What changed in `region-jit.js`** (commit after dd7426dd):
+
+- `--regions=N` picks up to N regions. A pick state carries across picks: a
+  second walk may not share an arena block with an installed region, nor
+  *guest bytes* (the interpreter holds several arena copies of one loop, and
+  ADDY_II's nest read 391% of samples over six overlapping regions before the
+  guest-extent gate; 196% after an arena-only gate), and a sampled block is
+  credited to one region, so the shares add to the union's share.
+- An extra region past the primary pick is declined when its gate is
+  INCONCLUSIVE. ASYLUM'95's fifth region (255 ops, 32 exits, no register
+  promotion) was entered 3404 times at 0.3 iterations per entry and added
+  3213 handbacks; with it declined the four others add −2.
+- `--straight` is the trace-JIT form: every candidate is tried as a closing
+  loop first, and what does not close is walked greedily along the hotter
+  edge and installed as a region whose last transfer exits with `$gip`
+  published. A walk that revisits a block on its own path anchors there (that
+  block is a loop head — without this ADDY_II's trace left through the inner
+  back edge every pass, 98.8% share, −0.2%). Trying the loop pass over all
+  candidates before any trace pass matters too: ASYLUM'95's hottest block
+  does not close and its greedy trace is 328 ops at 1.06x, while the 9-op
+  loop its branch targets is 2.0x (+0.2% against +17–21%).
+- `--straight --once` is the pure micro-op arm: the same regions with the
+  back edge disabled, so a loop pays an entry and an exit per iteration.
+  That is "compile the hot blocks, keep the interpreter's control flow".
+- `region-census.js` gained an `n` column (regions installed) and reports
+  the combined share.
+
+**The four arms**, all `--dispatches=12m --reps=2 --jobs=2`, same profile
+budget so the picks are comparable, load 4–9 during the runs (so `speed` is
+±10% and `ceiling` is the load-free column). `n` = regions installed; `-`
+= no region; the two `no-samples` programs (DHADREN, COPPER) and DEMO5
+(spin loop) get nothing in any arm and are omitted.
+
+| program | 1 loop ceil / speed | all loops n / ceil / speed | loops+traces n / share / ceil / speed | traces, no back edge speed |
+|---|---:|---:|---:|---:|
+| COMPOVRS | +81 / **+197** | 1 / +79 / +199 | 1 / 100% / +80 / **+205** | +123 |
+| CONTACT | +77 / +189 | 1 / +76 / +187 | 1 / 100% / +76 / **+200** | +185 |
+| DTM2 | - | - | 1 / 100% / (gate n/a) / **+55** | +14 |
+| DREAM | +49 / +25 | 2 / +72 / +35 | 2 / 99% / +71 / +34 | +36 |
+| ASYLUM (1995) | +32 / +22 | 4 / +40 / +20 | 4 / 72% / +38 / +17 | +21 |
+| B-STEEL | - / +10 | 1 / - / +7 | 4 / 55% / +13 / **+21** | +22 |
+| BRW | +5 / −3 | 5 / +19 / +7 | 6 / 28% / +21 / +10 | +20 |
+| CORE-ADD | - | - | 1 / 2.5% / +2 / +11 | +12 |
+| ADDY_II | +38 / +1 | 2 / +58 / **+15** | 2 / 99% / +59 / +9 | +8 |
+| DRAGON | +25 / +15 | 2 / +25 / +4 | 6 / 87% / +37 / +8 | +16 |
+| CMA_SHRT | - / +1 | 1 / - / +3 | 1 / 100% / - / +10 | +3 |
+| ASYLUM (1994) | +4 / +1 | 1 / +4 / −2 | 3 / 20% / +8 / +5 | −5 |
+| RUNDEMO | +25 / +3 | 1 / +25 / +3 | 1 / 34% / +26 / −7 | −2 |
+| CONTAGIO | +2 / +9 | 1 / +2 / −2 | 1 / 2% / +2 / −1 | +2 |
+| CYCLE | +3 / −4 | 3 / +5 / −2 | 3 / 21% / +12 / −3 | −3 |
+| ACCIDENT | +3 / 0 | 5 / +7 / −2 | 8 / 27% / +13 / −5 | −2 |
+| DSTNFO | - | - | 2 / 25% / 0 (gate 1.00x) / −7 | −1 |
+| daretro | - | - | 1 / 0.3% / - / −8 | −4 |
+| programs measured | 14 | 14 | 18 | 18 |
+| mean speed, same 14 | +33.2 | +33.7 | **+35.9** | +30.2 |
+| mean ceiling, same 14 | +24.6 | +29.5 | **+32.5** | — |
+| mean speed, all 18 | — | — | +30.8 | +24.7 |
+
+Frame-identical (or `phase`, the known COMPOVRS/CONTACT phase difference) on
+every row of every arm.
+
+**Readings.**
+
+1. **Coverage is the lever, not the body.** Going from one loop to all
+   loops moves the mean ceiling from +24.6 to +29.5; adding traces moves it
+   to +32.5 and reaches four more programs. The per-program share tells the
+   story: DRAGON 65%→87%, BRW 7%→28%, B-STEEL 22%→55%, ACCIDENT 9%→27%,
+   ADDY_II 58%→99%, DREAM 68%→99%. Nothing about the compiled body changed
+   between the arms.
+2. **The back edge is what the region JIT buys over micro-ops.** The last
+   two columns are the same regions with and without it. Where a loop
+   iterates many times per entry the gap is the whole win: COMPOVRS +205
+   against +123, DTM2 +55 against +14, CMA_SHRT +10 against +3. Where the
+   loop runs a few iterations per entry (ASYLUM'95 at ~3.8, DREAM, B-STEEL)
+   the two arms read the same, because an entry and an exit per pass is what
+   the interpreter's dispatch already cost. So "micro-ops on hot blocks" is
+   worth about **+30** on the same 14 where loops are worth **+36**, and the
+   difference is concentrated in the four long-running loops.
+3. **Traces reach what loops cannot, cheaply.** DTM2 (loop through `ret`)
+   and CORE-ADD (loop through `call_far`) were `no-loop` in every earlier
+   census; as straight traces they measure +55 and +11 with `+0` handbacks.
+   B-STEEL, whose one loop bought nothing, gets four regions at 1.29x for
+   +21. The straight walk stops *before* a block that ends in an un-inlined
+   `ret` or a non-transfer, so a trace is never installed without an ip to
+   leave on.
+4. **The small ceilings are noise either way.** CYCLE, ACCIDENT, CONTAGIO,
+   RUNDEMO, DSTNFO, the 1994 ASYLUM: every arm's ceiling is under +13 and
+   every measurement is within the ±10% the load allows. RUNDEMO's 34% share
+   at 3.3–5.0x reads −7 to +3 across the arms — its region is 4 ops, and
+   the entry cost per pass is the same order as the body. Rank these by
+   ceiling and do not expect a run at load 5 to separate them.
+5. **What is still ours.** No nested regions: ADDY_II's outer 46-op loop and
+   its inner 6-op loop share bytes, so only one is installed per profile
+   (the outer in the loop arms at +15, both never). A region's ops column
+   sums the *picked* regions, declined ones included. And `+hb` counts
+   `$slice_exit` handbacks only — a `--once` region's per-iteration exit is
+   resolved through the block-cache lookup and is invisible there; the
+   `--trips` line's region-entry count is where it shows.
+
+Reproduce: `node tools/toyvm/region-census.js --dir=/tmp/demos
+--only=<bench-set-20 basenames> --dispatches=12m --reps=2 --jobs=2
+--args='--straight --regions=8'` (add `--once` to the args for the last
+column, drop `--straight` for the loops-only arm, drop `--args` for the
+single-loop arm).

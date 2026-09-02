@@ -269,6 +269,95 @@ function chainFrom(head, headByAddr, traceAt, maxOps, why, maxDepth = 3, maxVisi
   return r;
 }
 
+// A HOT TRACE THAT NEED NOT CLOSE. `--straight` walks from the candidate the
+// way a trace JIT does: one block at a time, following the HOTTER edge of
+// every terminator, and stops where it can go no further -- a block that is
+// not a head, an `int`, a `ret` with no inlined call, a revisit, or the op
+// budget. What it has by then is installed as a region whose last transfer
+// exits with $gip published, so the interpreter picks up at the edge the
+// walk did not follow, or at the block after the one it stopped on. If the
+// walk happens to arrive back at its own head it closes, and the result is
+// the same loop chainFrom would have built.
+//
+// This is the whole-program form of the micro-op tiers: what those measured
+// on one snapshot of one hot trace, this installs into a real run for every
+// hot trace `--regions=N` allows, so the two backends can be read on one
+// scale -- and `--once` on top of it is the pure straight-line arm, a region
+// that never takes its back edge and pays an entry per pass.
+function traceFrom(head, headByAddr, traceAt, maxOps, why, heat, maxDepth = 3, anchored = 0) {
+  const ops = [], nexts = [], spans = [], heads = [];
+  const seen = new Set();
+  let cur = head, retStack = [], stop = null, closed = false, headIp = null;
+  while (cur !== null) {
+    const key = `${cur}@${retStack.length}`;
+    // A revisit of a block on this very path is a loop whose head is that
+    // block, and a trace JIT anchors there: the walk from it follows the same
+    // hot edges and closes on itself. Without this ADDY_II's trace entered at
+    // 0xac ran its 51-op nest once per entry and left through the inner back
+    // edge every time -- 98.8% share, -0.2% measured.
+    if (seen.has(key) && cur !== head && !retStack.length && anchored < 2) {
+      why(`0x${head.toString(16)}: straight walk loops at 0x${cur.toString(16)}; anchoring there`);
+      return traceFrom(cur, headByAddr, traceAt, maxOps, why, heat, maxDepth, anchored + 1);
+    }
+    if (seen.has(key)) { stop = `revisits 0x${cur.toString(16)}`; break; }
+    const blk = headByAddr.get(cur);
+    if (!blk) { stop = `0x${cur.toString(16)} is not a block head`; break; }
+    const t = traceAt(blk);
+    const bad = t.ops.find(o => /^(int|into)/.test(o.name));
+    if (bad) { stop = `0x${cur.toString(16)} contains ${bad.name}`; break; }
+    let cut = t.ops.length;
+    for (let i = 0; i < t.ops.length - 1; i++) {
+      const fa = fallArena(t.ops[i]);
+      if (fa === null) continue;
+      if (fa !== blk.prog.arenaBase + (t.ops[i + 1].at << 2)) { cut = i + 1; break; }
+    }
+    const tops = t.ops.slice(0, cut);
+    const truncated = cut < t.ops.length;
+    const endWord = truncated ? t.ops[cut].at : t.nextWord;
+    if (ops.length + tops.length > maxOps) { stop = `over ${maxOps} ops`; break; }
+    const last = tops[tops.length - 1];
+    // Every block in a straight region must END IN A TRANSFER the builder can
+    // publish an ip from -- the region leaves through its last op's $gip, so
+    // a block that ends on a bad handler or a slice boundary cannot be last,
+    // and the walk stops BEFORE it.
+    const isCall = /^call_rel(32)?$/.test(last.name);
+    const isRet = /^ret(32)?$/.test(last.name);
+    const at = TAKEN_AT.get(last.fn);
+    if (!isCall && !isRet && ((!truncated && t.end !== 'jmp') || at === undefined)) {
+      stop = `0x${cur.toString(16)} ends ${t.end}, not a transfer`; break;
+    }
+    seen.add(key);
+    heads.push(blk);
+    if (headIp === null) headIp = blk.ip;
+    for (const op of tops) { ops.push(op); nexts.push(fallThroughIp(op)); }
+    spans.push([cur, cur + ((endWord - ((cur - blk.prog.arenaBase) >> 2)) << 2)]);
+    let next = null;
+    if (isCall) {
+      if (retStack.length >= maxDepth) { stop = `calls nested deeper than ${maxDepth}`; break; }
+      retStack = [...retStack, { ip: last.args[2], arena: last.args[3] }];
+      next = [last.args[0], last.args[1]];
+    } else if (isRet) {
+      if (!retStack.length) { stop = `${last.name} with no inlined call to return to`; break; }
+      retStack = retStack.slice();
+      const frame = retStack.pop();
+      next = [frame.arena, frame.ip];
+    } else {
+      const edges = [[last.args[at - 1], last.args[at]]];
+      const fa = fallArena(last), fi = fallThroughIp(last);
+      if (fa !== null && fi !== null && fa !== last.args[at - 1]) edges.push([fa, fi]);
+      // The hotter edge, by the profile; the taken edge on a tie, as chainFrom.
+      edges.sort((a, b) => heat(b[0]) - heat(a[0]));
+      next = edges[0];
+    }
+    nexts[nexts.length - 1] = next[1];
+    if (next[0] === head && !retStack.length) { closed = true; headIp = next[1]; break; }
+    cur = next[0];
+  }
+  if (!ops.length) { why(`0x${head.toString(16)}: ${stop}`); return null; }
+  if (!closed) why(`0x${head.toString(16)}: straight, ${ops.length} ops over ${heads.length} block(s), stops: ${stop}`);
+  return { ops, nexts, spans, heads, headIp, closed };
+}
+
 // `state` persists across calls so the picker can be asked for the NEXT region:
 // `tried` holds every candidate head already walked (a walk is deterministic,
 // so retrying one is only cost), and `taken` holds every block an installed
@@ -295,6 +384,8 @@ function pickRegion(rr, ranked, minOps, maxOps = 400, state = { tried: new Set()
   const why = (s) => { if (flag('why')) console.log(`  reject ${s}`); };
 
   const { tried, taken } = state;
+  const heatByAddr = new Map(ranked.map(x => [x.addr, x.samples]));
+  const heat = (arena) => heatByAddr.get(arena) || 0;
   for (const b of ranked) {
     if (taken.has(b.addr)) continue;
     const t = traceAt(b);
@@ -310,9 +401,16 @@ function pickRegion(rr, ranked, minOps, maxOps = 400, state = { tried: new Set()
     // NOT tried: the call sites that reach this block, and the blocks the walk
     // discovers a cycle on. Both were built and measured -- see the negative
     // result in docs/toyvm-trace-jit.md -- and both are removed.
-    for (const h of cands) {
-      if (tried.has(h) || taken.has(h)) continue;
-      tried.add(h);
+    // Under `--straight`, every candidate is tried as a LOOP before any is
+    // tried as a trace: ASYLUM'95's hottest block does not close, and the
+    // trace from it -- 328 ops at 1.06x -- was picked before the 9-op loop at
+    // 2.0x that its own branch targets, which is what the second pass finds.
+    const straight = flag('straight') || arg('straight') !== undefined;
+    const modes = arg('straight') === 'greedy' ? ['trace'] : straight ? ['loop', 'trace'] : ['loop'];
+    for (const mode of modes) for (const h of cands) {
+      const tkey = mode === 'loop' ? h : `t${h}`;
+      if (tried.has(tkey) || taken.has(h)) continue;
+      tried.add(tkey);
       const blk = headByAddr.get(h);
       if (!blk) { why(`0x${h.toString(16)}: not a block head`); continue; }
       // `--head=0xIP` pins the region to one guest ip. The pick is otherwise a
@@ -324,7 +422,14 @@ function pickRegion(rr, ranked, minOps, maxOps = 400, state = { tried: new Set()
       // `cands` is appended to during this loop -- a for..of over an array sees
       // pushes, and `tried` keeps it from cycling. Both extra roots are strictly
       // fallbacks, appended only after their own candidate has already failed.
-      const chain = chainFrom(h, headByAddr, traceAt, maxOps, why);
+      // `--straight`: a loop where one closes, a trace where none does. The
+      // greedy walk alone is `--straight=greedy`, and it is the worse JIT:
+      // from ASYLUM'95's hottest block it followed the hot edges into a
+      // 328-op trace at 1.06x over the bytes where the closing walk finds a
+      // 9-op loop at 2.0x -- +0.2% against +20% on the same program.
+      const chain = mode === 'loop'
+        ? chainFrom(h, headByAddr, traceAt, maxOps, why)
+        : traceFrom(h, headByAddr, traceAt, maxOps, why, heat);
       if (!chain) continue;
       if (chain.ops.length < minOps) {
         why(`0x${h.toString(16)}: ${chain.ops.length} ops < ${minOps}`);
@@ -426,7 +531,8 @@ function pickRegion(rr, ranked, minOps, maxOps = 400, state = { tried: new Set()
       for (const hb of chain.heads) taken.add(hb.addr);
       taken.add(b.addr);
       return { block: blk, cs: blk.cs, ops: chain.ops, nexts: chain.nexts,
-        blocks: chain.spans.length, heads: chain.heads, headIp: chain.headIp, samples };
+        blocks: chain.spans.length, heads: chain.heads, headIp: chain.headIp, samples,
+        closed: chain.closed !== false };
     }
   }
   return null;
@@ -772,7 +878,7 @@ function splitExit(body) {
   return { pre };
 }
 
-function buildRegion(rawOps, nexts, headIp, name) {
+function buildRegion(rawOps, nexts, headIp, name, closed = true) {
   prepareTables();
   // Before anything else, and never optional: the profiling run's arena
   // addresses are not addresses in the run that will execute this region.
@@ -855,6 +961,14 @@ function buildRegion(rawOps, nexts, headIp, name) {
     const jump = (branch && !flag('no-lower')) ? splitJump(t3.bodies3[i]) : null;
     if (jump) {
       const cont = isLast ? headIp : nexts[i];
+      // A straight region ends where its walk stopped, so its last jump is an
+      // exit like any other: publish the ip and fall out through the back-edge
+      // test, which cannot pass because the ip is not the head.
+      if (isLast && !closed && jump.ip !== headIp) {
+        parts.push(jump.pre);
+        parts.push(`(global.set $gip (i32.const ${jump.ip}))`);
+        continue;
+      }
       if (jump.ip !== cont) return { declined: `${op.name} goes to ${jump.ip}, not ${cont}` };
       parts.push(jump.pre);
       if (jump.ip === headIp) {
@@ -1120,7 +1234,8 @@ async function main() {
     }
     picks.push(p);
     console.log(`region at guest ip 0x${p.headIp.toString(16)}: `
-      + `${p.blocks} block(s), ${p.ops.length} ops, ${p.share.toFixed(1)}% of samples`);
+      + `${p.blocks} block(s), ${p.ops.length} ops, ${p.share.toFixed(1)}% of samples`
+      + (p.closed === false ? ' (straight)' : ''));
   }
   if (!picks.length) { console.log('no self-loop region found'); process.exit(2); }
   const pick = picks[0];
@@ -1137,7 +1252,7 @@ async function main() {
   // only when NO region survives, so the single-region contract is unchanged.
   const prepareRegion = async (pick, idx) => {
   const share = pick.share;
-  const region = buildRegion(pick.ops, pick.nexts, pick.headIp, `region_${idx}`);
+  const region = buildRegion(pick.ops, pick.nexts, pick.headIp, `region_${idx}`, pick.closed !== false);
   if (region.declined && !region.body) { console.log(`declined: ${region.declined}`); return { declined: 3 }; }
   console.log(`  ${region.exits} in-body exit(s), ${region.eaFolded} addresses folded, `
     + `${region.folded} register-file calls folded, `
