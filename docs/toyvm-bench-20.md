@@ -203,3 +203,102 @@ Reading it:
    without a payoff on this corpus.
 4. A `nocache` arm needs an agreement rule that tolerates a moving dispatch
    count, or the block cache stays unmeasurable.
+
+## 5. Re-measure of the two unresolved arms (2026-09-02)
+
+Same 20, `--dispatches=12m --reps=7 --cpu-time`, fusion kept as the control.
+Load 3.0 at start, **13.2 at end** (other agents), spread p50 26%.
+
+| arm removed | min-of-7 | paired | arm ahead (min / paired) |
+|---|---:|---:|---:|
+| fusion | **−8.6%** | −7.7% | 2/20 / 1/20 |
+| dead-flag elimination | −1.1% | −0.2% | 5/20 / 9/20 |
+| decoder in wasm | −0.3% | +0.1% | 6/20 / 6/20 |
+
+The section-2 "slightly negative" reading on dead flags and the wasm decoder
+was load: at 7 reps both are **zero** on this corpus, in both statistics, with
+the arm-ahead counts sitting at chance. The control sharpened the other way
+(−5.5% → −8.6%, 17/20 → 19/20 losing). Neither pass pays here and neither
+costs; they stay on the "complexity without a measured payoff" list.
+
+## 6. All three backends on one scale
+
+Every column below is a **whole-program percentage against the `tailcall`
+interpreter**. The interpreter arms and the region census measure it directly
+(CPU time). The micro-op tiers measure a hot-trace ratio, so they are converted
+with the same formula the region ceiling uses, `share × (1 − 1/tier-3 ratio)`,
+using `sweep-dos`'s own hot-trace share. Shell columns are `sweep-dos` wall
+minima (it has no `--cpu-time`); everything else is CPU.
+
+```
+program       ns    repl% nofuse% nodead% nowasm%  mshare% t03x  mceil%  jshare% gate  jceil%  +hb  jcpu%  verdict
+DHADREN.EXE   15.69  6.3   -5.2    -2.1    -1.0      -      -     -        -      -     -      -     -     no-samples
+DTM2.EXE       8.09  5.8  -21.6    -0.7    -0.3     51.2   2.04  26.1      -      -     -      -     -     no-loop
+ACCIDENT.EXE  12.33  6.5  -10.0    -3.7    -0.6      1.9   3.44   1.3     10.7    -     -      -    -5.3   identical
+B-STEEL.EXE   11.52 10.0   -3.9    -0.5    -0.2     15.0   -      -       22.2    -     -      -    14.4   identical
+RUNDEMO.EXE   10.23  2.6  -10.0     0.0    -0.5      1.7   1.79   0.7      0.0   3.79   0.0    0     8.5   identical
+CMA_SHRT.EXE  14.00 11.1   -2.4    -2.2     0.1    100.0   3.47  71.2      -      -     -      -     -     no-loop
+CONTAGIO.EXE  47.26  0.9   -0.1     2.3    -0.7     17.4   2.22   9.5      0.0   5.33   0.0  -32     1.7   identical
+CYCLE.EXE     13.11  7.2  -13.3    -2.3     2.4      2.7   3.72   1.9     12.7   1.73   5.4    0    -6.8   identical
+DEMO5.EXE      9.97  9.4   -3.9     0.3    -1.2    100.0   1.36  26.4      -      -     -      -     -     no-loop
+BRW.EXE       20.80 17.5   -3.1    -2.1    -2.4      6.8   5.61   5.6      1.4   3.04   0.9  -17    14.6   identical
+ADDY_II.EXE   17.12  9.4   -6.5    -0.1    -1.2      7.5   2.55   4.6     28.0   4.18  21.3    0     3.2   identical
+COMPOVRS.EXE  11.98  8.6   -6.7    -2.1    -0.2    100.0   3.49  71.4      0.0   5.21   0.0 -184    71.0   phase
+COPPER.EXE    28.89  9.3    0.6     1.0     1.4      -      -     -        -      -     -      -     -     no-samples
+CORE-ADD.EXE  13.86 11.1   -2.4    -2.7     0.4     26.3   1.91  12.5      -      -     -      -     -     no-loop
+CONTACT.EXE   14.14 14.9    0.3     1.7    -3.0     99.7   3.19  68.4      0.0   4.67   0.0 -241   117.5   phase
+DRAGON.EXE    13.61 13.9   -4.8    -3.1     0.0      2.2   8.79   2.0     10.0   8.33   8.8    0    -4.5   identical
+ASYLUM.EXE*   15.07  8.5   -3.8    -1.3    -1.5      5.4   4.68   4.3     45.5   1.92  21.8    0    22.0   identical
+DSTNFO.EXE    10.75  8.9  -17.1    -2.1     1.1     12.3   3.49   8.8      -      -     -      -     -     no-loop
+DREAM.EXE     16.10  8.8   -7.4    -0.3     1.6      3.2   5.00   2.5    100.0   2.39  58.1  -15    27.6   identical
+daretro.exe    9.80  8.4  -40.3    -0.8    -0.4     99.7   2.50  59.8      -      -     -      -     -     no-loop
+```
+
+`ns` = tailcall ns/dispatch. `repl` = `repl_tailcall` shell. `nofuse/nodead/
+nowasm` = arm without that pass (section 5). `mshare/t03x/mceil` = micro-op
+hot-trace share, tier-3 ratio, converted whole-program ceiling. `jshare/gate/
+jceil/+hb/jcpu` = region census share, gate ratio, ceiling, handback delta,
+measured CPU %. `*` the census's ASYLUM columns are `1995-a-asylum/`, matched by
+basename; the set's 1994 file is `no-loop`.
+
+Geomeans on that scale: `repl_tailcall` **+8.9%**; fusion **+8.6%** (the
+arm without it is −8.6%, median program −4.8%); dead flags 0; wasm decoder 0;
+micro-op ceiling over the 17 benchable **+19.7%** (median 8.8%: bimodal, see
+outliers); region JIT measured over the 12 census rows **+18%**, and **+7%**
+over the 10 `identical` ones (the two `phase` rows are the +71/+117 pair).
+
+### Outliers, with their numbers
+
+- **daretro.exe: −40.3% without fusion.** A 3-op hot loop at 99.7% share;
+  fusion is most of its interpreter speed. DTM2 −21.6%, DSTNFO −17.1%, CYCLE
+  −13.3% are the same effect on 1–6-op loops. Fusion's +8.6% geomean is
+  carried by these; the median program is −4.
+- **CONTAGIO.EXE: 47.26 ns/dispatch, 3.5x the corpus median (13.6).** Every
+  interpreter pass is ±2% on it and `repl_tailcall` is +0.9%, its only
+  sub-1% row. It takes 20,360 interrupts in 6M dispatches; the cost is
+  host-side, and no VM-side optimization reaches it. COPPER (28.89 ns) is the
+  same shape with no samples at all.
+- **COMPOVRS +71%, CONTACT +117.5%, at a reported 0.0% share.** The region
+  removes 184 and 241 handbacks and the micro-op sweep puts the same loop at
+  100% of samples with a 71%/68% ceiling. The census share is wrong for
+  both; they are the two biggest JIT wins in the set and the census cannot
+  see why. Both are `phase`, not `identical`, so a verdict at a second budget
+  is still owed.
+- **DREAM: region +27.6% under a +58.1% ceiling, share 100%** — while the
+  micro-op sampler puts its hot trace at 3.2%. Same sampler disagreement as
+  above, in the other direction.
+- **Five programs with a big micro-op ceiling and no region**: daretro 59.8%,
+  CMA_SHRT 71.2%, DEMO5 26.4%, DTM2 26.1%, CORE-ADD 12.5% are all `no-loop`.
+  That is 5 of the 7 `no-loop` rows, and it is the JIT's real coverage gap:
+  the hottest code is a loop the tier ladder can bench but `pickRegion`
+  cannot close.
+- **DRAGON: tier 3 is 8.79x on its hot trace and that is worth 2.0%**
+  whole-program (2.2% share). Highest ratio in the set, smallest payoff;
+  ratios without shares are not numbers.
+- **BRW: `repl_tailcall` +17.5%**, twice the geomean, on the longest hot
+  trace (43 ops).
+- **B-STEEL: region +14.4% with no gate ratio** — the gate returned
+  INCONCLUSIVE (internal branch), so its ceiling is unknown and the +14.4%
+  stands alone. ACCIDENT (−5.3%) is the same case.
+- **CMA_SHRT's section-2 row (+22–28% on every removed arm) did not recur**:
+  at 7 reps it is −2.4/−2.2/+0.1. Load artifact, confirmed.
