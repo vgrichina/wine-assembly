@@ -1567,38 +1567,6 @@
         }
       ]
     },
-    "GdiObjectAny": {
-      "file": "src/10d-gdi-region-path.wat",
-      "frozen": null,
-      "frozenNote": null,
-      "size": 48,
-      "fields": [
-        {
-          "name": "handle",
-          "type": "i32",
-          "offset": 0,
-          "size": 4,
-          "count": 1,
-          "stride": 4
-        },
-        {
-          "name": "type",
-          "type": "i32",
-          "offset": 4,
-          "size": 4,
-          "count": 1,
-          "stride": 4
-        },
-        {
-          "name": "reserved",
-          "type": "i32",
-          "offset": 8,
-          "size": 40,
-          "count": 10,
-          "stride": 4
-        }
-      ]
-    },
     "GdiPen": {
       "file": "src/10d-gdi-region-path.wat",
       "frozen": null,
@@ -1654,12 +1622,12 @@
           "stride": 4
         },
         {
-          "name": "reserved",
-          "type": "i32",
+          "name": "__rest",
+          "type": "u8",
           "offset": 24,
           "size": 24,
-          "count": 6,
-          "stride": 4
+          "count": 24,
+          "stride": 1
         }
       ]
     },
@@ -1726,76 +1694,12 @@
           "stride": 4
         },
         {
-          "name": "reserved",
-          "type": "i32",
+          "name": "__rest",
+          "type": "u8",
           "offset": 28,
           "size": 20,
-          "count": 5,
-          "stride": 4
-        }
-      ]
-    },
-    "GdiPenBrush": {
-      "file": "src/10d-gdi-region-path.wat",
-      "frozen": null,
-      "frozenNote": null,
-      "size": 48,
-      "fields": [
-        {
-          "name": "handle",
-          "type": "i32",
-          "offset": 0,
-          "size": 4,
-          "count": 1,
-          "stride": 4
-        },
-        {
-          "name": "type",
-          "type": "i32",
-          "offset": 4,
-          "size": 4,
-          "count": 1,
-          "stride": 4
-        },
-        {
-          "name": "style",
-          "type": "i32",
-          "offset": 8,
-          "size": 4,
-          "count": 1,
-          "stride": 4
-        },
-        {
-          "name": "reserved_12",
-          "type": "i32",
-          "offset": 12,
-          "size": 4,
-          "count": 1,
-          "stride": 4
-        },
-        {
-          "name": "color",
-          "type": "i32",
-          "offset": 16,
-          "size": 4,
-          "count": 1,
-          "stride": 4
-        },
-        {
-          "name": "flags",
-          "type": "i32",
-          "offset": 20,
-          "size": 4,
-          "count": 1,
-          "stride": 4
-        },
-        {
-          "name": "reserved",
-          "type": "i32",
-          "offset": 24,
-          "size": 24,
-          "count": 6,
-          "stride": 4
+          "count": 20,
+          "stride": 1
         }
       ]
     },
@@ -1990,12 +1894,12 @@
           "stride": 4
         },
         {
-          "name": "reserved",
-          "type": "i32",
+          "name": "__rest",
+          "type": "u8",
           "offset": 40,
           "size": 8,
-          "count": 2,
-          "stride": 4
+          "count": 8,
+          "stride": 1
         }
       ]
     },
@@ -2062,12 +1966,12 @@
           "stride": 4
         },
         {
-          "name": "reserved",
-          "type": "i32",
+          "name": "__rest",
+          "type": "u8",
           "offset": 28,
           "size": 20,
-          "count": 5,
-          "stride": 4
+          "count": 20,
+          "stride": 1
         }
       ]
     },
@@ -2134,12 +2038,44 @@
           "stride": 4
         },
         {
-          "name": "reserved",
-          "type": "i32",
+          "name": "__rest",
+          "type": "u8",
           "offset": 28,
           "size": 20,
-          "count": 5,
+          "count": 20,
+          "stride": 1
+        }
+      ]
+    },
+    "GdiObject": {
+      "file": "src/10d-gdi-region-path.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 48,
+      "fields": [
+        {
+          "name": "handle",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
           "stride": 4
+        },
+        {
+          "name": "type",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "__rest",
+          "type": "u8",
+          "offset": 8,
+          "size": 40,
+          "count": 40,
+          "stride": 1
         }
       ]
     },
@@ -2337,6 +2273,38 @@
           "name": "window_binding",
           "type": "i32",
           "offset": 92,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
+    "GdiPenBrush": {
+      "file": "src/10d-gdi-region-path.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 24,
+      "fields": [
+        {
+          "name": "style",
+          "type": "i32",
+          "offset": 8,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "color",
+          "type": "i32",
+          "offset": 16,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "flags",
+          "type": "i32",
+          "offset": 20,
           "size": 4,
           "count": 1,
           "stride": 4

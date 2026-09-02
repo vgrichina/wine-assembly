@@ -8,7 +8,7 @@
     (local $record i32)
     (local.set $record (call $gdi_object_record (local.get $handle)))
     (if (i32.and (i32.ne (local.get $record) (i32.const 0))
-          (i32.eq (load.field.memarg GdiObjectAny type (local.get $record)) (i32.const 5)))
+          (i32.eq (load.field.memarg GdiObject type (local.get $record)) (i32.const 5)))
       (then (return (local.get $record))))
     (i32.const 0))
 
@@ -352,7 +352,7 @@
           (then (return (i32.const 5))))
         (return (i32.const 4))))
     (local.set $p (call $gdi_object_record (local.get $handle)))
-    (if (local.get $p) (then (return (load.field.memarg GdiObjectAny type (local.get $p)))))
+    (if (local.get $p) (then (return (load.field.memarg GdiObject type (local.get $p)))))
     (i32.const 0))
 
   (func $gdi_stock_object_color (param $handle i32) (result i32)
@@ -406,7 +406,7 @@
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
     (if (i32.and (i32.ne (local.get $p) (i32.const 0))
-          (i32.eq (load.field.memarg GdiObjectAny type (local.get $p)) (i32.const 3)))
+          (i32.eq (load.field.memarg GdiObject type (local.get $p)) (i32.const 3)))
       (then (return (load.field.memarg GdiBitmap bits (local.get $p)))))
     (i32.const 0))
 
@@ -414,7 +414,7 @@
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
     (if (i32.and (i32.ne (local.get $p) (i32.const 0))
-          (i32.and (i32.eq (load.field.memarg GdiObjectAny type (local.get $p)) (i32.const 3))
+          (i32.and (i32.eq (load.field.memarg GdiObject type (local.get $p)) (i32.const 3))
             (i32.ne (i32.and (load.field.memarg GdiBitmap flags (local.get $p)) (i32.const 1)) (i32.const 0))))
       (then (return (load.field.memarg GdiBitmap bits (local.get $p)))))
     (i32.const 0))
@@ -423,7 +423,7 @@
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
     (if (i32.and (i32.ne (local.get $p) (i32.const 0))
-          (i32.eq (load.field.memarg GdiObjectAny type (local.get $p)) (i32.const 3)))
+          (i32.eq (load.field.memarg GdiObject type (local.get $p)) (i32.const 3)))
       (then (return (load.field.memarg GdiBitmap bpp (local.get $p)))))
     (i32.const 0))
 
@@ -461,7 +461,7 @@
     (local $record i32)
     (local.set $record (call $gdi_object_record (local.get $handle)))
     (if (result i32) (i32.and (i32.ne (local.get $record) (i32.const 0))
-          (i32.eq (load.field.memarg GdiObjectAny type (local.get $record)) (local.get $type)))
+          (i32.eq (load.field.memarg GdiObject type (local.get $record)) (local.get $type)))
       (then (local.get $record)) (else (i32.const 0))))
 
   (func $gdi_metafile_bits (param $handle i32) (param $type i32)
@@ -2573,7 +2573,7 @@
     (if (i32.eqz (local.get $p))
       (then (return (select (i32.const 1) (i32.const 0)
         (i32.ne (call $gdi_object_type (local.get $handle)) (i32.const 0))))))
-    (local.set $type (load.field.memarg GdiObjectAny type (local.get $p)))
+    (local.set $type (load.field.memarg GdiObject type (local.get $p)))
     (if (i32.eq (local.get $type) (i32.const 3))
       (then
         (local.set $bits (load.field.memarg GdiBitmap bits (local.get $p)))
@@ -2591,7 +2591,7 @@
       (then
         (local.set $bits (load.field.memarg GdiMetafile bits (local.get $p)))
         (local.set $flags (load.field.memarg GdiMetafile flags (local.get $p)))))
-    (if (i32.and (i32.eq (load.field.memarg GdiObjectAny type (local.get $p)) (i32.const 2))
+    (if (i32.and (i32.eq (load.field.memarg GdiObject type (local.get $p)) (i32.const 2))
           (i32.or (i32.eq (load.field.memarg GdiBrush style (local.get $p)) (i32.const 3))
             (i32.eq (load.field.memarg GdiBrush style (local.get $p)) (i32.const 6))))
       (then (local.set $owned_bitmap (load.field.memarg GdiBrush pattern_bitmap (local.get $p)))))

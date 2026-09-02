@@ -33,7 +33,7 @@
   ;; Two properties make it so:
   ;;
   ;;   (1) THERE IS NO SHARED PREFIX. GdiObject at least agreed on handle@0 and
-  ;;       type@4, which is what `GdiObjectAny` names. Here even +0 disagrees:
+  ;;       type@4, which is what `GdiObject` names. Here even +0 disagrees:
   ;;         Button/Static/Combo/Edit  +0 = text_buf_ptr, a GUEST POINTER
   ;;         Progress/TrackBar         +0 = min,          a signed integer
   ;;         ListBox                   +0 = items_buf_ptr, a GUEST POINTER

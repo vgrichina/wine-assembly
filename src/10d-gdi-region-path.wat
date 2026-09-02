@@ -2892,7 +2892,7 @@
       (local.get $hdc) (i32.const 4) (i32.const 0x30017)))
     (local.set $pen_record (call $gdi_object_record (local.get $pen)))
     (if (i32.or (i32.eqz (local.get $pen_record))
-          (i32.or (i32.ne (load.field.memarg GdiObjectAny type (local.get $pen_record)) (i32.const 1))
+          (i32.or (i32.ne (load.field.memarg GdiObject type (local.get $pen_record)) (i32.const 1))
             (i32.ne (i32.and (load.field.memarg GdiPen flags (local.get $pen_record)) (i32.const 1))
               (i32.const 0))))
       (then (return (i32.const 0))))
@@ -3786,77 +3786,81 @@
   ;; different +24 per type; it is the best single piece of evidence for all of
   ;; the above.
   ;;
-  ;; So the record is declared as SEVEN VARIANT LAYOUTS instead of one. Every
-  ;; variant is 48 bytes, so (size-of ...) still pins the table stride whichever
-  ;; one you reach for, and all of them agree on handle@0 / type@4. A field the
-  ;; variant does not own is named `reserved*` rather than left implicit, so an
-  ;; access to it is an unknown-field compile error instead of a plausible read.
+  ;; So the record is declared as ONE (layout-union ...) with six variants. That
+  ;; spelling is not a tidier way to write the seven separate layouts it
+  ;; replaces -- it moves three invariants from "a gate reads the source back
+  ;; and checks them" to "the compiler cannot express their violation":
   ;;
-  ;; Choosing a variant at a site is a TYPING decision the codemod cannot make:
-  ;; it comes from the type check already in scope (`i32.eq (load +4) N`, or a
+  ;;   * every variant carries handle@0 and type@4, because the (prefix ...) is
+  ;;     written ONCE and prepended to each variant at identical offsets;
+  ;;   * every variant is the same 48 bytes, because the compiler pads them all
+  ;;     to the widest, so (size-of ...) pins one table stride whichever variant
+  ;;     a site reaches for;
+  ;;   * a site holding the union reaches ONLY handle and type. Everything above
+  ;;     the prefix belongs to a variant, and naming it through the union is an
+  ;;     unknown-field compile error that says which variant owns it and what to
+  ;;     (cast ptr<...>) to get there.
+  ;;
+  ;; (tag type GdiType) names the discriminant, so the tag VALUES are declared
+  ;; here beside the variants instead of being copied into the gate by hand --
+  ;; and with --checked-casts a (cast ptr<GdiBitmap> ...) becomes a real
+  ;; load-tag-and-trap. See docs/watx-typed-pointers-design.md.
+  ;;
+  ;; What the compiler still cannot decide is WHICH variant a given site holds:
+  ;; that comes from the type check already in scope (`i32.eq (load +4) N`, or a
   ;; named predicate like $gdi_bitmap_record_valid, which is 10a:12's `+4 == 3`),
-  ;; or from the producer that made the handle. tools/gdi-variant-gate.js holds
-  ;; that site->variant attribution and machine-checks it (see §6.1/§6.2).
+  ;; or from the producer that made the handle. tools/union-gate.js holds that
+  ;; site->variant attribution and machine-checks it against the union table the
+  ;; compiler lowers from this declaration (see §6.1/§6.2).
 
-  ;; The shared prefix, and ONLY the shared prefix. A site that reads +0 or +4
-  ;; has not yet decided what kind of object this is -- it is usually the very
-  ;; read that decides ($gdi_object_type returns +4; $gdi_object_delete_full
-  ;; dispatches on it; every `+4 == N` guard in this family is one of these).
-  ;; Naming one of the seven at such a site would claim a type the code does not
-  ;; have yet, so those 24 sites spell this instead: handle and type are the two
-  ;; words every variant agrees on, and everything above them is `reserved`, so
-  ;; reading further through this view is a compile error rather than a guess.
-  ;; It is 48 bytes like the others, so (size-of ...) still pins the stride.
-  (layout GdiObjectAny
-    (field handle    i32)        ;; +0
-    (field type      i32)        ;; +4   1..7, the discriminant
-    (field reserved  i32 10))    ;; +8..+44 unknown until the type is known
+  ;; The discriminant at +4. Written by $gdi_object_alloc and tested by every
+  ;; `+4 == N` guard in this family.
+  (enum GdiType
+    (PEN     1)
+    (BRUSH   2)
+    (BITMAP  3)
+    (FONT    4)
+    (PALETTE 5)
+    (WMF     6)
+    (EMF     7))
+
+  ;; A site that reads +0 or +4 has not yet decided what kind of object this is
+  ;; -- it is usually the very read that decides ($gdi_object_type returns +4;
+  ;; $gdi_object_delete_full dispatches on it). Naming one of the six variants at
+  ;; such a site would claim a type the code does not have yet, so those 24 sites
+  ;; spell the union name itself: handle and type are the two words every variant
+  ;; agrees on, and reading further through GdiObject is a compile error.
+  (layout-union GdiObject
+    (tag type GdiType)
+    (prefix
+      (field handle  i32)        ;; +0
+      (field type    i32))       ;; +4   1..7, the discriminant
 
   ;; Pen (type 1). flags@20 is a rich bitfield, not a boolean: bit0 forces
   ;; PS_NULL (set at creation as `style == 5`, read 10d:2878 / 10f:1852),
   ;; 0x00000F00 is the end cap (10g:1745), 0x0000F000 the join (10d:2885), and
   ;; 0x00010000 marks a geometric pen (10d:2883, 10g:1695/1740/3312).
   ;; 0x000F0F00 is echoed straight into the LOGPEN style word at 10f:807.
-  (layout GdiPen
-    (field handle    i32)        ;; +0
-    (field type      i32)        ;; +4   == 1
-    (field style     i32)        ;; +8   PS_*
-    (field width     i32)        ;; +12  lopnWidth.x  (10e:390 $gdi_object_width)
-    (field color     i32)        ;; +16  masked 0x03FFFFFF — keeps the
+    (variant GdiPen (tag-value PEN)
+      (field style     i32)      ;; +8   PS_*
+      (field width     i32)      ;; +12  lopnWidth.x  (10e:390 $gdi_object_width)
+      (field color     i32)      ;; +16  masked 0x03FFFFFF — keeps the
                                  ;;      PALETTEINDEX/PALETTERGB qualifier byte
-    (field flags     i32)        ;; +20  see above
-    (field reserved  i32 6))     ;; +24..+44 unused by pens; ends at +48
+      (field flags     i32))     ;; +20  see above
+                                 ;; +24..+44 unused by pens; the compiler pads
 
   ;; Brush (type 2). Identical to a pen through +8, +16 and +20 — which is what
   ;; lets $gdi_object_write_pen_brush (10f:806/807) read style and flags BEFORE
   ;; it branches on the type. The two diverge at +12 only (width vs hatch), and
   ;; a brush alone owns +24.
-  (layout GdiBrush
-    (field handle          i32)  ;; +0
-    (field type            i32)  ;; +4   == 2
-    (field style           i32)  ;; +8   BS_*  (0 solid, 2 hatched, 3/6 pattern)
-    (field hatch           i32)  ;; +12  lbHatch  (10f:814, 10g:856)
-    (field color           i32)  ;; +16  masked 0x03FFFFFF, as for a pen
-    (field flags           i32)  ;; +20
-    (field pattern_bitmap  i32)  ;; +24  a HANDLE, live only when style is 3 or
+    (variant GdiBrush (tag-value BRUSH)
+      (field style           i32) ;; +8   BS_*  (0 solid, 2 hatched, 3/6 pattern)
+      (field hatch           i32) ;; +12  lbHatch  (10f:814, 10g:856)
+      (field color           i32) ;; +16  masked 0x03FFFFFF, as for a pen
+      (field flags           i32) ;; +20
+      (field pattern_bitmap  i32)) ;; +24  a HANDLE, live only when style is 3 or
                                  ;;      6; written 10a:906, read 10g:742/791,
                                  ;;      recursively deleted at 10e:2597
-    (field reserved        i32 5)) ;; +28..+44
-
-  ;; The pen-or-brush view. $gdi_object_write_pen_brush (10f:806/807),
-  ;; $gdi_object_style (10e:376) and $gdi_object_color (10e:370) genuinely serve
-  ;; both types through one load, so they get a layout that names ONLY the three
-  ;; fields pen and brush agree on. +12 is deliberately unnamed here: it is the
-  ;; one word the two disagree about, and a site that wants it must first say
-  ;; which type it has.
-  (layout GdiPenBrush
-    (field handle       i32)     ;; +0
-    (field type         i32)     ;; +4   1 or 2
-    (field style        i32)     ;; +8
-    (field reserved_12  i32)     ;; +12  pen width / brush hatch — pick a variant
-    (field color        i32)     ;; +16
-    (field flags        i32)     ;; +20
-    (field reserved     i32 6))  ;; +24..+44
 
   ;; Bitmap (type 3). flags@20 bits: 0 = the bits are a public DIB section
   ;; (10e:418, 10g:4042), 1 = top-down (10e:318 forwards it as (flags>>1)&1),
@@ -3869,19 +3873,22 @@
   ;; +40 is the record's OWN handle, not an opaque surface id: $gdi_bitmap_alloc
   ;; stores $handle there (10e:314) and the raster layer round-trips it back
   ;; into an object record through desc+68 (10g:5752 -> 10g:3690 etc).
-  (layout GdiBitmap
-    (field handle        i32)    ;; +0
-    (field type          i32)    ;; +4   == 3
-    (field width         i32)    ;; +8
-    (field height        i32)    ;; +12
-    (field bpp           i32)    ;; +16
-    (field flags         i32)    ;; +20  see above
-    (field bits          i32)    ;; +24  WASM address of the pixels
-    (field stride        i32)    ;; +28
-    (field palette       i32)    ;; +32  RGBQUAD table, or a mask triplet
-    (field palette_count i32)    ;; +36
-    (field self_handle   i32)    ;; +40  == handle; the desc+68 round trip
-    (field reserved      i32))   ;; +44
+    (variant GdiBitmap (tag-value BITMAP)
+      (field width         i32)  ;; +8
+      (field height        i32)  ;; +12
+      (field bpp           i32)  ;; +16
+      (field flags         i32)  ;; +20  see above
+      (field bits          i32)  ;; +24  WASM address of the pixels
+      (field stride        i32)  ;; +28
+      (field palette       i32)  ;; +32  RGBQUAD table, or a mask triplet
+      (field palette_count i32)  ;; +36
+      (field self_handle   i32)  ;; +40  == handle; the desc+68 round trip
+      ;; +44 is padding, but it is the WIDEST variant that sets the union's
+      ;; stride, and $GDI_OBJECT_STRIDE is 48. Named `reserved` rather than
+      ;; dropped so this variant ends at 48 and the whole union does: without
+      ;; it every variant would be 44 and the table stride would no longer
+      ;; match the global. The gate refuses any site that reads a `reserved*`.
+      (field reserved      i32)) ;; +44
 
   ;; Font (type 4). flags@20 bit0 means "a bitmap strike is bound at +24" —
   ;; a completely different meaning from the same bit on a bitmap. +28 is a
@@ -3891,46 +3898,59 @@
   ;; positional fields on purpose (10f:592-594, 10f:611-614); they alias the
   ;; bitmap's palette/palette_count, which is harmless because the types are
   ;; disjoint but is exactly why one shared layout cannot work.
-  (layout GdiFont
-    (field handle            i32) ;; +0
-    (field type              i32) ;; +4   == 4
-    (field height            i32) ;; +8   lfHeight
-    (field weight            i32) ;; +12  lfWeight
-    (field italic            i32) ;; +16  lfItalic & 1
-    (field flags             i32) ;; +20  bit0 = strike bound at +24
-    (field strike            i32) ;; +24  installed FNT strike, or 0
-    (field face              i32) ;; +28  GUEST pointer to the face name
-    (field width             i32) ;; +32  lfWidth
-    (field pitch_and_family  i32) ;; +36  lfPitchAndFamily, & 0xFF
-    (field reserved          i32 2)) ;; +40..+44
+    (variant GdiFont (tag-value FONT)
+      (field height            i32) ;; +8   lfHeight
+      (field weight            i32) ;; +12  lfWeight
+      (field italic            i32) ;; +16  lfItalic & 1
+      (field flags             i32) ;; +20  bit0 = strike bound at +24
+      (field strike            i32) ;; +24  installed FNT strike, or 0
+      (field face              i32) ;; +28  GUEST pointer to the face name
+      (field width             i32) ;; +32  lfWidth
+      (field pitch_and_family  i32)) ;; +36  lfPitchAndFamily, & 0xFF
+                                  ;; +40..+44 padded by the compiler
 
   ;; Palette (type 5). Storage at +24 is always WAT-owned, which is what
   ;; flags@20 bit2 records. capacity@12 and version@16 are written by
   ;; $gdi_palette_alloc (10e:77) and read by NOTHING in the tree — named, not
   ;; dropped, because the allocator's positional store still writes them.
   ;; count@8 is mutated after creation by $gdi_palette_resize (10e:172).
-  (layout GdiPalette
-    (field handle    i32)        ;; +0
-    (field type      i32)        ;; +4   == 5
-    (field count     i32)        ;; +8
-    (field capacity  i32)        ;; +12  write-only
-    (field version   i32)        ;; +16  write-only
-    (field flags     i32)        ;; +20  always 4 = owns the +24 block
-    (field storage   i32)        ;; +24  PALETTEENTRY storage, a WA
-    (field reserved  i32 5))     ;; +28..+44
+    (variant GdiPalette (tag-value PALETTE)
+      (field count     i32)      ;; +8
+      (field capacity  i32)      ;; +12  write-only
+      (field version   i32)      ;; +16  write-only
+      (field flags     i32)      ;; +20  always 4 = owns the +24 block
+      (field storage   i32))     ;; +24  PALETTEENTRY storage, a WA
+                                 ;; +28..+44 padded by the compiler
 
   ;; Metafile (types 6 = WMF and 7 = EMF share one shape). $gdi_metafile_create
   ;; allocates as (type, size, 0, 0, 4) at 10e:452, so +12 and +16 are written
   ;; zero and never read by anything — reserved, not fields.
-  (layout GdiMetafile
-    (field handle       i32)     ;; +0
-    (field type         i32)     ;; +4   6 or 7
-    (field size         i32)     ;; +8
-    (field reserved_12  i32)     ;; +12  written 0, never read
-    (field reserved_16  i32)     ;; +16  written 0, never read
-    (field flags        i32)     ;; +20  always 4 = owns the +24 block
-    (field bits         i32)     ;; +24  record bits, a WA
-    (field reserved     i32 5))  ;; +28..+44
+    (variant GdiMetafile (tag-value WMF EMF)
+      (field size         i32)   ;; +8
+      (field reserved_12  i32)   ;; +12  written 0, never read
+      (field reserved_16  i32)   ;; +16  written 0, never read
+      (field flags        i32)   ;; +20  always 4 = owns the +24 block
+      (field bits         i32))) ;; +24  record bits, a WA
+                                 ;; +28..+44 padded by the compiler
+
+  ;; The pen-or-brush projection. $gdi_object_write_pen_brush (10f:806/807),
+  ;; $gdi_object_style (10e:376) and $gdi_object_color (10e:370) genuinely serve
+  ;; both types through one load, so they name ONLY the three fields pen and
+  ;; brush agree on. +12 is deliberately absent: it is the one word the two
+  ;; disagree about (pen width vs brush hatch), and a site that wants it must
+  ;; first say which type it has.
+  ;;
+  ;; A (view ...) does not lay anything out -- it ADOPTS its targets' offsets,
+  ;; and the compiler refuses it if GdiPen and GdiBrush ever stop agreeing on
+  ;; one of these three. That is the whole invariant this declaration used to
+  ;; assert by repeating the offsets and hoping they stayed in step.
+  ;;
+  ;; handle and type are deliberately NOT projected here: a +0/+4 site has not
+  ;; decided a type, and must spell the union itself.
+  (view GdiPenBrush (of GdiPen GdiBrush)
+    (field style  i32)           ;; +8
+    (field color  i32)           ;; +16
+    (field flags  i32))          ;; +20
   ;; Two positive hints, not one: a blit resolves the source handle and the
   ;; destination handle alternately for every single pixel, and a single hint
   ;; thrashes between them so neither ever hits. The two $gdi_object_miss slots

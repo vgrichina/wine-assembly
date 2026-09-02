@@ -129,7 +129,7 @@
 //   of them (GdiPen/GdiBrush/GdiPenBrush/GdiBitmap/GdiFont/GdiPalette/
 //   GdiMetafile, plus GdiObjectAny for the handle/type prefix they all share),
 //   and WHICH one a site reads is a typing decision this tool must not make —
-//   see tools/gdi-variant-gate.js, which holds that attribution as data.
+//   see tools/union-gate.js, which holds that attribution as data.
 //
 //   So the union converts as one run PER VARIANT, each restricted to the sites
 //   that variant was attributed:
