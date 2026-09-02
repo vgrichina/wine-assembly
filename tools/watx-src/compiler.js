@@ -241,7 +241,12 @@ function prepareStreamingModule(source, vfs) {
 }
 
 // --- Full Compiler Pipeline ---
-function compile(source, vfs = new Map(), options = {}) {
+//
+// The pipeline is a generator so one implementation serves both contracts:
+// compile() drains it synchronously, while compileAsync() awaits only at the
+// explicit stage/function boundaries it yields. Individual parser/checker and
+// expression-emitter helpers stay synchronous and allocation-light.
+function* compileSteps(source, vfs = new Map(), options = {}) {
   const stages = [];
   let currentStage = 'PARSE';
   const production = options.mode === 'production';
@@ -278,6 +283,7 @@ function compile(source, vfs = new Map(), options = {}) {
       expanded = expandMacros(included);
       stages.push({ name: 'EXPAND', success: true });
     }
+    yield { stage: 'EXPAND' };
     
     // Stage 4: Check
     currentStage = 'CHECK';
@@ -301,18 +307,20 @@ function compile(source, vfs = new Map(), options = {}) {
     stages.push(collectWarnings
       ? { name: 'CHECK', success: true, warnings: checkResult.warnings }
       : { name: 'CHECK', success: true });
+    yield { stage: 'CHECK' };
     
     // Stage 5: Lower
     currentStage = 'LOWER';
     const lowered = lowerIR(expanded, checkResult, { layoutsOnly: !debugArtifacts });
     stages.push({ name: 'LOWER', success: true });
+    yield { stage: 'LOWER' };
     
     // Stage 6: Emit WASM Binary
     currentStage = 'EMIT';
     const emitOptions = streamingModule
       ? { ...options, loadFunctionBody: streamingModule.loadFunctionBody }
       : options;
-    const wasmResult = generateWasm(expanded, lowered, checkResult, emitOptions);
+    const wasmResult = yield* generateWasmSteps(expanded, lowered, checkResult, emitOptions);
     stages.push({ name: 'EMIT', success: true });
     
     const wasmText = debugArtifacts ? disassembleWasm(wasmResult) : undefined;
@@ -356,6 +364,58 @@ function compile(source, vfs = new Map(), options = {}) {
       stages,
       diagnostics: [{ type: 'error', msg: e.message, line: e.line || 0, col: e.col || 0 }],
     };
+  }
+}
+
+function compile(source, vfs = new Map(), options = {}) {
+  const steps = compileSteps(source, vfs, options);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+function defaultCompileYield() {
+  // scheduler.yield() is purpose-built for this in browsers that implement
+  // it. setImmediate() is the Node equivalent: unlike a resolved Promise it
+  // lets timers and I/O run before compilation resumes. setTimeout is the
+  // portable browser fallback.
+  if (typeof scheduler !== 'undefined' && typeof scheduler.yield === 'function') {
+    return scheduler.yield();
+  }
+  if (typeof setImmediate === 'function') {
+    return new Promise(resolve => setImmediate(resolve));
+  }
+  return new Promise(resolve => setTimeout(resolve, 0));
+}
+
+async function compileAsync(source, vfs = new Map(), options = {}) {
+  const steps = compileSteps(source, vfs, options);
+  const yieldControl = options.yieldControl || defaultCompileYield;
+  const interval = Math.max(0, options.yieldIntervalMs ?? 8);
+  const signal = options.signal || null;
+  const aborted = () => {
+    if (!signal || !signal.aborted) return;
+    const error = new Error('WATX compilation aborted');
+    error.name = 'AbortError';
+    throw error;
+  };
+
+  // An async API should never perform its first potentially expensive stage in
+  // the caller's current turn. This also gives an already-aborted signal a
+  // deterministic no-work path.
+  aborted();
+  await yieldControl({ stage: 'START', completed: 0, total: 0 });
+  let deadline = Date.now() + interval;
+
+  for (;;) {
+    aborted();
+    const step = steps.next();
+    if (step.done) return step.value;
+    if (interval === 0 || Date.now() >= deadline) {
+      await yieldControl(step.value || { stage: 'UNKNOWN' });
+      deadline = Date.now() + interval;
+    }
   }
 }
 

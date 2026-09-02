@@ -2,7 +2,7 @@
 
 const assert = require('assert');
 const path = require('path');
-const { compile, parseSource, sourceTextFromBytes, watxNodeFile, watxNodeLine } =
+const { compile, compileAsync, parseSource, sourceTextFromBytes, watxNodeFile, watxNodeLine } =
   require(path.join(__dirname, '..', 'tools', 'watx.js'));
 
 // ── The byte → text boundary ────────────────────────────────────────────────
@@ -227,4 +227,44 @@ assert.strictEqual(macroOk.success, true, macroOk.error);
 assert.strictEqual(
   new WebAssembly.Instance(new WebAssembly.Module(macroOk.wasmBinary), {}).exports.f(), 2);
 
-console.log('watx-compiler-production: PASS');
+async function checkCooperativeCompiler() {
+  const checkpoints = [];
+  let eventLoopTurns = 0;
+  const cooperative = await compileAsync(repeatedSymbolSource, new Map(), {
+    mode: 'production',
+    runtimeBuiltins: false,
+    // Force every compiler checkpoint to yield so this small fixture proves
+    // the scheduling contract without relying on machine-dependent timings.
+    yieldIntervalMs: 0,
+    yieldControl: checkpoint => new Promise(resolve => setImmediate(() => {
+      checkpoints.push(checkpoint);
+      eventLoopTurns++;
+      resolve();
+    })),
+  });
+  assert.strictEqual(cooperative.success, true, cooperative.error);
+  assert.deepStrictEqual(
+    Buffer.from(cooperative.wasmBinary), Buffer.from(repeatedSymbolStreaming.wasmBinary),
+    'cooperative and synchronous compilation must emit byte-identical modules');
+  assert.strictEqual(checkpoints[0].stage, 'START');
+  assert(checkpoints.some(p => p.stage === 'CHECK'));
+  assert(checkpoints.some(p => p.stage === 'LOWER'));
+  const emitted = checkpoints.filter(p => p.stage === 'EMIT');
+  assert.strictEqual(emitted.length, 129,
+    'the cooperative path must expose one scheduling boundary per emitted function');
+  assert.strictEqual(emitted[emitted.length - 1].completed, emitted[emitted.length - 1].total);
+  assert(eventLoopTurns >= 133, 'Node must regain event-loop turns throughout compilation');
+
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    compileAsync(source, new Map(), { signal: controller.signal }),
+    error => error && error.name === 'AbortError');
+}
+
+checkCooperativeCompiler().then(() => {
+  console.log('watx-compiler-production: PASS');
+}, error => {
+  console.error(error && error.stack || error);
+  process.exitCode = 1;
+});

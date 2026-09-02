@@ -453,7 +453,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '268';
+  static SOURCE_VERSION = '269';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -1911,6 +1911,13 @@ class WineAssembly {
           const built = await window.watxLauncher.compileDetailed({ tailCalls }, {
             version: WineAssembly.SOURCE_VERSION,
             noStore: debugFetch,
+            // Diagnostic/low-memory escape hatch: compile cooperatively on the
+            // page thread, yielding between compiler stages and function
+            // bodies. The default remains a disposable Worker because it can
+            // compute in parallel; both paths dispose their compiler realm
+            // before Wine allocates shared memory.
+            cooperative: typeof location !== 'undefined' &&
+              new URLSearchParams(location.search).has('watx-main-thread'),
           });
           WineAssembly._assertSourceBuildLayout(built.layout);
           return WebAssembly.compile(built.bytes);

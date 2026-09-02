@@ -17,6 +17,27 @@ Rules:
 - Every compiler change lands with a minimal regression in one of the
   `test/watx-compiler-*.test.js` suites.
 
+## 2026-09-02 — cooperative compilation without breaking the synchronous API
+
+Manifest digest: `f01eda98e2243b5bd64ade886fac9caa162a11455ad21e974b749c814bd8246b`
+
+`compiler.js`, `compiler-codegen.js`, `tools/watx.js`. The compiler now exposes
+`compileAsync()` for an in-process browser or Node caller. One generator-backed
+pipeline serves both APIs: the existing `compile()` drains every checkpoint
+synchronously, while `compileAsync()` returns control through
+`scheduler.yield()`, Node's `setImmediate()`, or `setTimeout(0)` after major
+stages and, during emission, between function bodies. Recursive expression
+emission remains synchronous; this avoids a Promise per WAT node while bounding
+the cooperative unit at one function. The async API also accepts a time budget,
+a custom yield callback for embedding/progress, and an `AbortSignal`.
+
+Regression: `test/watx-compiler-production.test.js` forces a yield at every
+checkpoint across 129 functions, observes Node event-loop turns, checks
+cancellation, and requires its validated module to be byte-identical to the
+synchronous production result. The real 11.72 MB closure additionally compiled
+through Worker and in-process paths with identical validated 1,009,322-byte
+output; the forced in-process run yielded 8,370 times.
+
 ## 2026-09-01 — intern the streaming body vocabulary, not its literals
 
 Manifest digest: `66bc73d2fafbcf3a01698f9a7f251c06c9fae243417f9ac3aa2315da5e48b1bc`

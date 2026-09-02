@@ -24,6 +24,9 @@
 // ═══════════════════════════════════════════════════════════════
 const path = require('path');
 const assert = require('assert');
+const crypto = require('crypto');
+const fs = require('fs');
+const vm = require('vm');
 
 const launcher = require(path.join(__dirname, '..', 'lib', 'watx-launcher.js'));
 
@@ -43,6 +46,31 @@ function check(label, cond, detail) {
 }
 
 async function main() {
+  console.log('== pure-JS SHA-256 fallback ==');
+  const hashFixtures = [
+    new Uint8Array(),
+    Buffer.from('abc', 'utf8'),
+    Buffer.from('WATX \ud83c\udf77 LAN fallback', 'utf8'),
+    Uint8Array.from({ length: 257 }, (_, i) => (i * 73) & 0xff),
+  ];
+  for (const bytes of hashFixtures) {
+    const expected = crypto.createHash('sha256').update(bytes).digest('hex');
+    check(`pure SHA-256 matches Node for ${bytes.byteLength} bytes`,
+      launcher.sha256PureHex(bytes) === expected);
+  }
+  const browserContext = {
+    window: {}, TextEncoder, TextDecoder, Uint8Array, Uint32Array, ArrayBuffer, DataView,
+    Map, Promise, Error, setTimeout,
+  };
+  vm.createContext(browserContext);
+  vm.runInContext(
+    fs.readFileSync(path.join(__dirname, '..', 'lib', 'watx-launcher.js'), 'utf8'),
+    browserContext,
+    { filename: 'lib/watx-launcher.js' });
+  check('browser sha256Hex falls back when crypto.subtle is absent',
+    await browserContext.window.watxLauncher.sha256Hex('abc') ===
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+
   console.log('== fetchSources (fetch-once snapshot) ==');
   const snapshot = await launcher.fetchSources();
   check('compiler bundle is the four vendored stages',
@@ -141,6 +169,22 @@ async function main() {
   check('both modes really compiled from the same snapshot',
     artifacts['tail-call'].sourceBytes === snapshot.bytes &&
     artifacts['compatibility'].sourceBytes === snapshot.bytes);
+
+  console.log('== cooperative in-process compiler: Node event loop ==');
+  let cooperativeHandle = null;
+  let progressTurns = 0;
+  const cooperative = await launcher.compileDetailed({ tailCalls: true }, {
+    snapshot, noMemo: true, cooperative: true, yieldIntervalMs: 0,
+    onProgress: () => { progressTurns++; },
+    onWorker: handle => { cooperativeHandle = handle; },
+  });
+  check('cooperative Node compile validates', cooperative.valid === true);
+  check('cooperative and Worker paths are byte-identical',
+    Buffer.from(cooperative.bytes).equals(Buffer.from(artifacts['tail-call'].bytes)));
+  check('cooperative compile yielded throughout emission', progressTurns > 100,
+    `${progressTurns} event-loop turns`);
+  check('cooperative compiler lifetime closes before returning',
+    cooperativeHandle && cooperativeHandle.hasExited() === true);
 
   console.log('== the two modes really differ ==');
   check('compatibility artifact is not byte-identical to the tail-call one',

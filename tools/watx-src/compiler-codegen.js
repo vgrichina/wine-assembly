@@ -1159,7 +1159,7 @@ function placeShakenAroundPins(placedSequence, pins, floor, memoryBytes, located
 }
 
 
-function generateWasm(forms, loweredForms, checkResult, options = {}) {
+function* generateWasmSteps(forms, loweredForms, checkResult, options = {}) {
   const V = watxValue;
   const T = watxType;
   // Preserve the historical WATX runtime by default. Compatibility/migration
@@ -6028,6 +6028,18 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       content.append(bodyBytes.buffer.subarray(0, bodyBytes.length));
       fd.body = retainedBody;
       if (loadedBody) loadedBody.release();
+      // A function body is the smallest useful cooperative boundary. Keeping
+      // compileExpr synchronous avoids thousands of Promises and preserves its
+      // simple recursive emitter, while the async pipeline can return control
+      // to either a browser or Node event loop between independently emitted
+      // functions. The synchronous generateWasm() wrapper below drains these
+      // checkpoints immediately and therefore keeps the historical API.
+      yield {
+        stage: 'EMIT',
+        completed: functionIndex + 1,
+        total: funcDecls.length,
+        functionName: fd.name,
+      };
     }
     
     appendSection(allBytes, 10, content);
@@ -6158,6 +6170,17 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     // one is worse than no shake at all.
     regions: regionLayoutReport,
   };
+}
+
+// Existing tools and build gates intentionally remain synchronous. The
+// cooperative compiler drives generateWasmSteps() itself; direct callers keep
+// seeing the exact return type and bytes they did before this API existed.
+function generateWasm(forms, loweredForms, checkResult, options = {}) {
+  const steps = generateWasmSteps(forms, loweredForms, checkResult, options);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
 }
 
 
