@@ -157,6 +157,34 @@ function analyzeTextBand(beforePath, afterPath) {
   return { changedPixels, diffSum, blueDominantBefore, blueDominantAfter };
 }
 
+function analyzePalette(file, menuDump) {
+  if (!fs.existsSync(file)) return null;
+  const match = /drop=(\d+),(\d+) (\d+)x(\d+) count=17/.exec(menuDump);
+  if (!match) return null;
+  const png = readPng(file);
+  const [, sx, sy, sw] = match.map(Number);
+  const expectedColorrefs = [
+    0x000000, 0x000080, 0x008000, 0x008080,
+    0x800000, 0x800080, 0x808000, 0x808080,
+    0xc0c0c0, 0x0000ff, 0x00ff00, 0x00ffff,
+    0xff0000, 0xff00ff, 0xffff00, 0xffffff,
+    0x000000,
+  ];
+  const actual = [];
+  let exact = 0;
+  for (let row = 0; row < expectedColorrefs.length; row++) {
+    const x = sx + Math.floor(sw / 2);
+    const y = sy + 2 + row * 20 + 10;
+    const i = (y * png.width + x) * 4;
+    const rgb = (png.data[i] << 16) | (png.data[i + 1] << 8) | png.data[i + 2];
+    actual.push(rgb.toString(16).padStart(6, '0'));
+    const colorref = expectedColorrefs[row];
+    const expectedRgb = ((colorref & 0xff) << 16) | (colorref & 0xff00) | ((colorref >>> 16) & 0xff);
+    if (rgb === expectedRgb) exact++;
+  }
+  return { exact, actual };
+}
+
 const typed = line('typed', 'dump-focus-state');
 const colorMenu = line('color', 'menu-dump');
 const hoverBlue = line('hover-blue', 'menu-dump');
@@ -166,9 +194,11 @@ const plainPngWritten = out.includes(`[input] png ${PLAIN_PNG} `);
 const popupPngWritten = out.includes(`[input] png ${POPUP_PNG} `);
 const bluePngWritten = out.includes(`[input] png-pixels ${BLUE_PNG} `);
 const visual = analyzeTextBand(PLAIN_PNG, BLUE_PNG);
+const palette = analyzePalette(POPUP_PNG, colorMenu);
 if (visual) {
   console.log(`visual text-band color: changed=${visual.changedPixels} diffSum=${visual.diffSum} blueDominantBefore=${visual.blueDominantBefore} blueDominantAfter=${visual.blueDominantAfter}`);
 }
+if (palette) console.log(`visual palette: exact=${palette.exact}/17 rows=${palette.actual.join(',')}`);
 
 const checks = [];
 function check(name, pass) { checks.push({ name, pass: !!pass }); }
@@ -178,11 +208,14 @@ check('typed text reached native RichEdit', /text="color"/.test(typed));
 check('color toolbar popup exposes 17 dynamic commands',
   /count=17/.test(colorMenu) &&
   /#0 id=32782/.test(colorMenu) &&
-  /#12 id=32794 flags=0x0 "#801a"/.test(colorMenu) &&
-  /#16 id=32798/.test(colorMenu));
+  /#12 id=32794 flags=0x8 ""/.test(colorMenu) &&
+  /#16 id=32798 flags=0x8 ""/.test(colorMenu) &&
+  !/"#80(?:0e|0f|1[0-9a-e])"/.test(colorMenu));
 check('mouse hover hit-tests Blue row', /hover=12/.test(hoverBlue));
 check('toolbar color popup screenshot written',
   popupPngWritten && fs.existsSync(POPUP_PNG) && fs.statSync(POPUP_PNG).size > 0);
+check('toolbar color popup paints palette swatches without color codes',
+  palette && palette.exact === 17);
 check('Blue menu row applies Win32 blue COLORREF',
   /effects=0x0/.test(afterBlue) &&
   /color=0xff0000/.test(afterBlue));

@@ -49,11 +49,11 @@ const args = [
   // sees a menu still on screen. Hovering it leaves both the popup and its
   // submenu up, which is what the subLabels assertion reads.
   //
-  // The popup drops *upward* from the right-click: opened at 150,205 it lands
-  // at 150,109, and "Rendering Options" is its third entry, so the hover point
-  // is 109 + 2 (top pad) + 2*20 (row height) + half a row = 161. Aiming at
-  // 205+ instead lands below the popup entirely and hover stays -1.
-  '--post-clicks=54,188;170,86;184,323;wait:2200;244,323;wait:2200;184,323;wait:2200;440,16;66,129;wait:4000;150,205,right;wait:1200;move:215,161',
+  // The worker records the popup anchor at guest y=176. "Rendering Options"
+  // is child index 2, so its hit-test centre is 176 + 2 (top pad) + 2*20
+  // (row height) + half a row = 228. Keep this in guest coordinates: the
+  // browser driver converts them through the presentation viewport.
+  '--post-clicks=54,188;170,86;184,323;wait:2200;244,323;wait:2200;184,323;wait:2200;440,16;66,129;wait:4000;150,205,right;wait:1200;move:215,228',
   '--post-click-wait-ms=1200',
   '--screenshot', SHOT,
 ];
