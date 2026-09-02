@@ -11717,14 +11717,33 @@ HookEx — no next hook in chain, return 0
   )
 
   ;; ExitWindowsDialog(hwndOwner) — SHELL32 ordinal 60, Task Manager's
-  ;; File > Shutdown Windows... OK sets the quit flag, which is as far as
-  ;; "shut down" goes when the emulator is the machine.
+  ;; File > Shutdown Windows... The dialog's OK hands the chosen option to
+  ;; $host_exit_windows (09c3-controls.wat) and this process quits.
   (func $handle_ExitWindowsDialog (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dlg i32)
     (local.set $dlg (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (call $create_shutdown_dialog (local.get $dlg) (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; ExitWindowsEx(uFlags, dwReserved) — the programmatic Shut Down. The
+  ;; flags word names what the machine does next: EWX_REBOOT (2) restarts,
+  ;; EWX_SHUTDOWN (1) / EWX_POWEROFF (8) power it off, and a bare EWX_LOGOFF
+  ;; (0) only ends the session. EWX_FORCE (4) changes how apps are asked, not
+  ;; what happens, so it is not consulted. The host owns the box; this
+  ;; process quits the way every process does when Windows goes down.
+  (func $handle_ExitWindowsEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $mode i32)
+    (local.set $mode (i32.const 3))                        ;; log off
+    (if (i32.and (local.get $arg0) (i32.const 0x9))        ;; EWX_SHUTDOWN | EWX_POWEROFF
+      (then (local.set $mode (i32.const 1))))
+    (if (i32.and (local.get $arg0) (i32.const 0x2))        ;; EWX_REBOOT
+      (then (local.set $mode (i32.const 2))))
+    (drop (call $host_exit_windows (local.get $mode)))
+    (global.set $quit_flag (i32.const 1))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; Return the modifiers that are physically down in the emulated desktop.

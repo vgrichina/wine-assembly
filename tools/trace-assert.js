@@ -3,7 +3,6 @@
 // at key code points to find where the invariant breaks.
 
 const fs = require('fs');
-const { parseResources } = require('../lib/resources');
 const { createHostImports } = require('../lib/host-imports');
 
 const EXE_PATH = 'test/binaries/entertainment-pack/ski32.exe';
@@ -12,13 +11,16 @@ const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
 async function main() {
   const wasmBytes = fs.readFileSync('build/wine-assembly.wasm');
   const exeBytes = fs.readFileSync(EXE_PATH);
-  const resourceJson = parseResources(exeBytes);
 
+  const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
+  let instance = null;
   let stopped = false;
   const base = createHostImports({
-    getMemory: () => instance.exports.memory.buffer,
+    getMemory: () => memory.buffer,
     renderer: null,
-    resourceJson,
+    // PE resources are parsed and exposed by WAT; the deleted JS resource
+    // parser is neither needed nor authoritative.
+    resourceJson: {},
     onExit: () => { stopped = true; },
   });
   const h = base.host;
@@ -55,15 +57,16 @@ async function main() {
   };
 
   const imports = { host: h };
-  const { instance } = await WebAssembly.instantiate(wasmBytes, imports);
-  const mem = new Uint8Array(instance.exports.memory.buffer);
+  h.memory = memory;
+  ({ instance } = await WebAssembly.instantiate(wasmBytes, imports));
+  const mem = new Uint8Array(memory.buffer);
   mem.set(exeBytes, instance.exports.get_staging());
   instance.exports.load_pe(exeBytes.length);
 
   const e = instance.exports;
   const imageBase = e.get_image_base();
   const g2w = addr => addr - imageBase + 0x12000;
-  const dv = new DataView(instance.exports.memory.buffer);
+  const dv = new DataView(memory.buffer);
   const r32 = addr => dv.getUint32(g2w(addr), true);
   const r16 = addr => dv.getInt16(g2w(addr), true);
 

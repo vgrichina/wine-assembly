@@ -37,7 +37,7 @@
   ;; The unrolled-rectangle fold, on its own switch so it can be A/B'd against
   ;; the per-pair fold it sits on top of without a rebuild.
   (global $rect_run_enabled (mut i32) (i32.const 1))
-  ;; Handler 423, the switch-ladder fold. Off switch is for A/B only -- the
+  ;; $th_case_chain's switch-ladder fold. Off switch is for A/B only -- the
   ;; fold is exact, not a heuristic, so there is no correctness reason to run
   ;; without it.
   (global $case_chain_enabled (mut i32) (i32.const 1))
@@ -47,7 +47,7 @@
   ;; Bounded so one descriptor cannot eat the decoder's 16KB emit headroom.
   (global $CASE_CHAIN_MAX i32 (i32.const 64))
 
-  ;; Handler 424, the run-length blit fold. Off switch for A/B; see
+  ;; $th_rle_run's run-length blit fold. Off switch for A/B; see
   ;; $try_emit_rle_run for what it matches and $th_rle_run for what it runs.
   (global $rle_run_enabled (mut i32) (i32.const 1))
   ;; Under four cases it is a switch, not a run-length ladder.
@@ -149,7 +149,7 @@
       (call $te_raw (local.get $tgt))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $l2))))
-  ;; ---- the run-length blit fold (handler 424) --------------------------
+  ;; ---- the run-length blit fold ($th_rle_run) --------------------------
   ;; One `cmp T8,imm8 / jz case` of the ladder at $pc: its length, or 0. Both
   ;; jz encodings, same grammar $case_chain_count counts.
   (func $rle_pair (param $pc i32) (result i32)
@@ -413,7 +413,7 @@
     (call $rle_copy_body (local.get $pc) (local.get $S) (local.get $C)
                          (local.get $T) (local.get $D) (local.get $head)))
 
-  ;; Fold the whole nest into handler 424. Called at a block start, because
+  ;; Fold the whole nest into $th_rle_run. Called at a block start, because
   ;; the head is one: `cmp C,imm / jle EXIT` is entered afresh once a token.
   (func $try_emit_rle_run (param $start_eip i32) (result i32)
     (local $pc i32) (local $b i32) (local $m i32) (local $S i32) (local $C i32)
@@ -2148,7 +2148,7 @@
     (global.set $sr_step (local.get $step))
     (local.get $nrows))
 
-  ;; Fold a fully unrolled sprite blit into handler 422. Called with the
+  ;; Fold a fully unrolled sprite blit into $th_rect_run. Called with the
   ;; first load already decoded, exactly like $try_emit_copy_sib, and tried
   ;; before it: when this declines, that one still folds the leading pair, so a
   ;; near-miss costs nothing but the scan.

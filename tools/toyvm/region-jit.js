@@ -931,7 +931,6 @@ function snapshotFor(rr, pick) {
 // --- running it -------------------------------------------------------------
 
 async function once(exe, o, extra) {
-  const t0 = performance.now();
   // `--entries` turns on run-dos's own handback census (which cs:ip the run
   // keeps leaving wasm at, and whether that address was in the jump table).
   // That census is the first thing to read when a region is slower than the
@@ -967,7 +966,19 @@ async function once(exe, o, extra) {
   // Everything the corpus equivalence check compares, read while the instance
   // is still alive: the frame, the pixel count, the interrupt tally and the
   // stopping cs:ip. Wall clock and arena footprint are allowed to move.
-  return { ms: performance.now() - t0, dispatched: r.dispatched, frame: r.frame,
+  // Both clocks are run-dos's own, bracketing only the guest SLICES: the
+  // region's wasm module is compiled up front in makeVm and the block
+  // compiles happen between slices, so neither arm is billed for compiling.
+  // The wall clock measures the box -- on a loaded machine the process waits
+  // for a core, and the same guest work has been measured at identical user
+  // CPU and three times the wall time -- so the `%` in main() is taken from
+  // CPU time, which is what the slices themselves cost. A process-wide
+  // `process.cpuUsage()` around the whole run was tried first and read DRAGON's
+  // zero-extra-handback region as 11% SLOWER: V8 compiles the region module on
+  // background threads, and at a 150ms guest run that compile is the same size
+  // as the work.
+  return { ms: r.guestSecs * 1000, cpuMs: r.guestCpuSecs * 1000,
+    dispatched: r.dispatched, frame: r.frame,
     pixels: r.pixels, ints: r.ints, handbacks: r.handbacks, smcBreaks: r.smcBreaks,
     smcSites: r.smcSites, cs: r.vm.exports.get_cs(), ip: r.vm.exports.get_gip(), r };
 }
@@ -1127,10 +1138,15 @@ async function main() {
   const gateAt = Number(arg('gate', 1));
   const gateIters = count(arg('gate-iters'), 4000);
   const branchy = pick.ops.slice(0, -1).some(isTransfer);
+  // Kept for the payoff line at the end: the gate's in-isolation body ratio is
+  // one of the three load-free inputs the expected whole-program win is
+  // composed from.
+  let gateRatio = null;
   if (!flag('no-gate')) {
     const g = await benchTiers(exe, snapshotFor(rr, pick), pick.ops,
       { iters: gateIters, reps: 2, log: () => {}, passes: passSpec() });
     const ratio = g.agree ? g.speedup.t03 : 0;
+    if (g.agree) gateRatio = ratio;
     console.log(`  gate (${gateIters} snapshot iterations): ${g.agree
       ? `tier 3 is ${ratio.toFixed(2)}x of the interpreter`
       : branchy ? 'INCONCLUSIVE -- the arms disagree, and the op list branches '
@@ -1354,7 +1370,7 @@ async function main() {
 
   // Interleaved, order rotated, minima -- the method every timing tool in this
   // directory uses, for the reason docs/loop-microbench-harness.md gives.
-  const base = [], jit = [];
+  const base = [], jit = [], baseCpu = [], jitCpu = [];
   let baseRun = null, jitRun = null;
   for (let i = 0; i < o.reps; i++) {
     const first = i % 2 === 0;
@@ -1362,9 +1378,16 @@ async function main() {
     const b = first ? await once(exe, o, install) : await once(exe, o, {});
     const [bs, jt] = first ? [a, b] : [b, a];
     base.push(bs.ms); jit.push(jt.ms);
+    baseCpu.push(bs.cpuMs); jitCpu.push(jt.cpuMs);
     baseRun = bs; jitRun = jt;
   }
   const min = (xs) => Math.min(...xs);
+  // At one rep the loop above never rotates: baseline first, region second,
+  // min of one. That is an order, not a measurement -- the 2026-08-31 census
+  // printed 93 of 93 regions negative at a median of -58% from exactly this,
+  // on a box at load 17-27 -- so one rep gets no percentage at all.
+  const rotated = o.reps >= 2;
+  const pct = (b, j) => `${((min(b) / min(j) - 1) * 100).toFixed(1)}%`;
   // The frame, the pixel count and the interrupt tally are the equivalence
   // test. The stopping cs:ip is NOT part of it: a run that ends because the
   // dispatch budget ran out ends wherever the budget happened to run out, and
@@ -1377,10 +1400,26 @@ async function main() {
   // handbacks is the number the wall clock usually turns out to be about: a
   // region that leaves wasm on every exit costs a JS round trip per iteration.
   const hb = (r) => `${String(r.handbacks).padStart(9)}`;
-  console.log(`\n              dispatched  handbacks     min ms`);
-  console.log(`  baseline    ${String(baseRun.dispatched).padStart(10)}  ${hb(baseRun)}  ${min(base).toFixed(1).padStart(9)}`);
-  console.log(`  region      ${String(jitRun.dispatched).padStart(10)}  ${hb(jitRun)}  ${min(jit).toFixed(1).padStart(9)}`
-    + `   ${((min(base) / min(jit) - 1) * 100).toFixed(1)}%`);
+  const ms = (xs) => min(xs).toFixed(1).padStart(9);
+  console.log(`\n              dispatched  handbacks    wall ms     cpu ms`);
+  console.log(`  baseline    ${String(baseRun.dispatched).padStart(10)}  ${hb(baseRun)}  ${ms(base)}  ${ms(baseCpu)}`);
+  console.log(`  region      ${String(jitRun.dispatched).padStart(10)}  ${hb(jitRun)}  ${ms(jit)}  ${ms(jitCpu)}`
+    + (rotated ? `   ${pct(baseCpu, jitCpu)} cpu  (${pct(base, jit)} wall)`
+      : '   n/a (1 rep: order not rotated, min of one -- pass --reps=2 or more)'));
+  // The load-free view of the same question. A region's whole-program win is
+  // capped by its share of samples, and inside that share the body runs at the
+  // gate's in-isolation ratio, so `share * (1 - 1/ratio)` is the ceiling on
+  // what the timing above can show; every handback the region adds is a JS
+  // round trip the interpreter did not pay, and is the usual reason the
+  // measured number lands under the ceiling. Neither input moves with box
+  // load, so this line is comparable across census runs where the `%` is not.
+  if (gateRatio !== null) {
+    const ceiling = (share / 100) * (1 - 1 / gateRatio) * 100;
+    const dhb = jitRun.handbacks - baseRun.handbacks;
+    console.log(`  expected    share ${share.toFixed(1)}% x (1 - 1/${gateRatio.toFixed(2)}x)`
+      + ` = ${ceiling >= 0 ? '+' : ''}${ceiling.toFixed(1)}% ceiling,`
+      + ` handbacks ${dhb >= 0 ? '+' : ''}${dhb} vs baseline`);
+  }
   console.log(`\n  frame ${same ? 'IDENTICAL' : '*** DIFFERS ***'}`
     + `  ints ${baseRun.ints}/${jitRun.ints}`
     // Self-modify breaks are the first thing to read on a frame that differs:
