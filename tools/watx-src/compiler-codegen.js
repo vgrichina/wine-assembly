@@ -268,7 +268,6 @@ function lowerIR(forms, checkResult, options = {}) {
       if (!rec) declError(`${label}: (of ${n}) names no (layout ...) or (layout-union ...) declaration (typo?).`, form);
       if (rec.isUnion) {
         for (const [k, v] of byName) if (v.unionOf === n) ofNames.push(k);
-        ofNames.push(n);
       } else ofNames.push(n);
     }
 
@@ -1321,6 +1320,18 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     return false;
   }
 
+  // The physical-local machinery already follows the active binding when one
+  // source name is reused with different types. Pointer claims must follow the
+  // same binding instead of the function-wide ptrTypes map's last declaration.
+  // `has`, not `get ||`, matters: an active untyped binding deliberately clears
+  // a pointer claim carried by an earlier binding of the same name.
+  function localPtrType(func, name) {
+    if (!func) return null;
+    if (func.activePtrTypes && func.activePtrTypes.has(name))
+      return func.activePtrTypes.get(name);
+    return func.ptrTypes ? (func.ptrTypes.get(name) || null) : null;
+  }
+
   // The static pointer type of an expression: a layout name, or null meaning
   // UNKNOWN. Unknown is BOTTOM, not i32 — it is compatible with everything, in
   // both directions, silently. That is what makes the feature opt-in across 61
@@ -1330,13 +1341,13 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
   function ptrTypeOf(expr, func) {
     if (!Array.isArray(expr)) {
       if (T(expr) !== 'symbol') return null;
-      return (func && func.ptrTypes) ? (func.ptrTypes.get(V(expr)) || null) : null;
+      return localPtrType(func, V(expr));
     }
     const hd = watxLayoutMemargHead(V(expr[1])).head;
     if (!hd) return null;
     if (hd === 'cast') return watxPtrLayoutName(V(expr[2])) || null;
     if (hd === 'local.get' || hd === 'local.tee')
-      return (func && func.ptrTypes) ? (func.ptrTypes.get(V(expr[2])) || null) : null;
+      return localPtrType(func, V(expr[2]));
     if (hd === 'let') {
       // (let $x ptr<L> INIT) claims L; (let $x INIT) inherits INIT's claim.
       const declared = watxPtrLayoutName(V(expr[3]));
@@ -3944,7 +3955,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const localIdx = numeric ?? func.activeLocal.get(name) ?? func.localMap.get(name);
       if (localIdx === undefined || localIdx >= func.params.length + func.locals.length) throw new Error(`Unknown local '${name}' in ${func.name}`);
       if (!expr[3]) throw new Error(`${head} for '${name}' is missing a value`);
-      ptrCheck(expr[3], func.ptrTypes && func.ptrTypes.get(name), func, `${head} ${name}`, expr);
+      ptrCheck(expr[3], localPtrType(func, name), func, `${head} ${name}`, expr);
       compileExpr(expr[3], func, depth, bytes);
       bytes.byte(head === 'local.tee' ? OP.local_tee : OP.local_set);
       bytes.uleb(localIdx);
@@ -3978,7 +3989,14 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         requireArity(2);
         initExpr = expr[3];
       }
-      ptrCheck(initExpr, func.ptrTypes && func.ptrTypes.get(name), func, `let ${name}`, expr);
+      const declaredPointee = declaredType ? watxPtrLayoutName(declaredType) : null;
+      // This let is a new binding, not an assignment to whichever same-named
+      // binding collectLocals visited last. An explicit ptr<L> supplies its own
+      // expectation; an untyped/i32 let deliberately has none.
+      ptrCheck(initExpr, declaredPointee, func, `let ${name}`, expr);
+      const boundPointee = declaredType === undefined
+        ? ptrTypeOf(initExpr, func)
+        : declaredPointee;
 
       if (name && func.localMap.has(name) && initExpr) {
         // Pick the physical slot matching THIS let's type. For a name declared
@@ -4002,6 +4020,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
         compileExpr(initExpr, func, depth, bytes);
         bytes.byte(OP.local_tee);
         bytes.uleb(localIdx);
+        func.activePtrTypes.set(name, boundPointee);
       } else {
         bytes.byte(OP.i32_const);
         bytes.sleb(0);
@@ -5620,6 +5639,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       localMap,
       localSlots,
       activeLocal: new Map(),
+      activePtrTypes: new Map(),
       ptrTypes,
       resultPtr,
       body: fd.body,

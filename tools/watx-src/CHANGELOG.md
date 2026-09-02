@@ -17,6 +17,34 @@ Rules:
 - Every compiler change lands with a minimal regression in one of the
   `test/watx-compiler-*.test.js` suites.
 
+## 2026-09-01 — views expand unions to variants; pointer claims follow active lets
+
+Manifest digest: `4bb4f93624faee26c4d4ceb13da53cae958f509627883db49c6b46199a989e11`
+
+`compiler-codegen.js`. Two LOW semantic tails from the review of the initial
+typed-pointer implementation are closed.
+
+**`(view V (of U) ...)` means every variant of union `U`, not the union's
+prefix-only layout as an extra target.** The lowering already expanded `U` to
+its variants, then also appended `U` itself. A body field could therefore agree
+across every variant and still be refused because it was absent from the
+prefix-only record. The lowered view now contains exactly the variants the
+syntax promises; both variant pointers widen to the resulting view.
+
+**A pointer claim follows the active let binding.** WATX already allocates and
+selects distinct physical slots when sibling lets reuse one source name with
+different types. Typed pointers initially kept a separate function-wide
+name-to-pointee map, so `$p : ptr<Foo>` followed later by `$p : ptr<Bar>` made
+the *first* binding get checked as Bar. Pointer lookup and assignment now
+consult an active-binding map in parallel with `activeLocal`; an untyped active
+binding can deliberately clear an older claim, and an inferred let preserves a
+known claim from its initializer.
+
+Regressions: `test/watx-compiler-typed-pointers.test.js` 67 → 71 checks: the
+previously omitted `store.field-elem` wrong-base plant, union-body view accepted,
+reused typed lets accepted, and the first binding proved to retain its own
+pointee. Validation-only: no emitted instruction or shipped Wasm byte changes.
+
 ## 2026-09-01 — union tags: i64 out, and a tag value must fit its field
 
 Manifest digest: `4b65dae7242af761e175ca09c450eba87df7027a0530f385e190acf093d1d538`

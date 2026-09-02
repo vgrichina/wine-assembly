@@ -103,6 +103,7 @@ for (const acc of [
   ['store.field',       '(store.field Bar x (local.get $p) (i32.const 1))'],
   ['load.elem',         '(load.elem Bar x (local.get $p) (i32.const 0))'],
   ['store.elem',        '(store.elem Bar x (local.get $p) (i32.const 0) (i32.const 1))'],
+  ['store.field-elem',  '(store.field-elem Bar x (local.get $p) (i32.const 0) (i32.const 1))'],
   ['load.field-elem',   '(load.field-elem Bar x (local.get $p) (i32.const 0))'],
   ['elem-addr',         '(elem-addr Bar x (local.get $p) (i32.const 0))'],
 ]) {
@@ -469,6 +470,39 @@ ckRefused('a view over nothing is refused',
    (view V (of) (field x i32))
    (func $f (result i32) (effects) (i32.const 0))`,
   ['(of) names no layout']);
+
+// `(of Union)` means every VARIANT of that union. The union name is a separate
+// prefix-only layout, so including it as one more target wrongly refused any
+// useful view of a body field even when every variant agreed on that field.
+ckAccepted('a view of a union projects a body field shared by every variant',
+  `(layout-union U
+     (prefix (field handle i32))
+     (variant UA (field common i32) (field a i32))
+     (variant UB (field common i32) (field b i32)))
+   (view Common (of U) (field common i32))
+   (func $read (param $p ptr<Common>) (result i32) (effects)
+     (load.field Common common (local.get $p)))
+   (func $read_a (param $p ptr<UA>) (result i32) (effects) (call $read (local.get $p)))
+   (func $read_b (param $p ptr<UB>) (result i32) (effects) (call $read (local.get $p)))`);
+
+// collectLocals intentionally allocates distinct physical slots when sibling
+// lets reuse one name with different types. Pointer claims have to follow the
+// same active slot; the first implementation kept one name->pointee map and
+// checked the first binding as the last binding's Bar type.
+ckAccepted('reused typed-let names follow the active binding',
+  `(func $f (param $a ptr<Foo>) (param $b ptr<Bar>) (result i32) (effects)
+     (drop (let $p ptr<Foo> (local.get $a)))
+     (drop (load.field Foo a (local.get $p)))
+     (drop (let $p ptr<Bar> (local.get $b)))
+     (load.field Bar x (local.get $p)))`);
+
+ckRefused('the first reused typed-let binding retains its own pointee',
+  `(func $f (param $a ptr<Foo>) (param $b ptr<Bar>) (result i32) (effects)
+     (drop (let $p ptr<Foo> (local.get $a)))
+     (drop (load.field Bar x (local.get $p)))
+     (drop (let $p ptr<Bar> (local.get $b)))
+     (i32.const 0))`,
+  ['ptr<Foo> where ptr<Bar> is required']);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
