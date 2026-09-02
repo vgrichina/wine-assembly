@@ -119,6 +119,14 @@
     (if (i32.eqz (local.get $hmenu)) (then (return (i32.const 0))))
     (if (call $dynamic_menu_state_w (local.get $hmenu))
       (then (return (i32.const 1))))
+    ;; Heap-range menu handles are exclusively MNUD records. If the magic is
+    ;; gone, the object was destroyed (or never was a menu); do not let its
+    ;; pointer-shaped high/low words fall through as an encoded resource
+    ;; submenu handle.
+    (if (i32.and
+          (i32.ge_u (local.get $hmenu) (global.get $heap_base))
+          (i32.lt_u (local.get $hmenu) (global.get $heap_ptr)))
+      (then (return (i32.const 0))))
     (if (i32.or
           (i32.eq (local.get $hmenu) (i32.const 0x00080001))
           (i32.eq (local.get $hmenu) (i32.const 0x00040003)))
@@ -165,10 +173,59 @@
       (i32.add (local.get $sw)
         (i32.add (i32.const 16) (i32.mul (local.get $count) (i32.const 16)))))
     (i32.store         (local.get $rec) (local.get $flags))
-    (i32.store offset=4  (local.get $rec) (local.get $id))
+    ;; For MF_POPUP, uIDNewItem is an HMENU rather than a command id. Keep it
+    ;; in the dedicated submenu word so GetSubMenu and replacement ownership
+    ;; see the same object InsertMenuItem already records there.
+    (i32.store offset=4  (local.get $rec)
+      (select (i32.const 0) (local.get $id)
+        (i32.ne (i32.and (local.get $flags) (i32.const 0x10)) (i32.const 0))))
     (i32.store offset=8  (local.get $rec) (local.get $itemData))
-    (i32.store offset=12 (local.get $rec) (i32.const 0))
+    (i32.store offset=12 (local.get $rec)
+      (select (local.get $id) (i32.const 0)
+        (i32.ne (i32.and (local.get $flags) (i32.const 0x10)) (i32.const 0))))
     (i32.store offset=4 (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
+    (i32.const 1))
+
+  ;; Replace one dynamic-menu item in place. ModifyMenu transfers ownership of
+  ;; a replacement popup to the parent and destroys the old popup it replaces.
+  ;; Return -1 for a non-dynamic handle so the public API can fail honestly
+  ;; instead of claiming it mutated a resource/host menu that is immutable in
+  ;; this compact representation.
+  (func $dynamic_menu_modify
+        (param $hmenu i32) (param $item i32) (param $flags i32)
+        (param $id_or_submenu i32) (param $itemData i32) (result i32)
+    (local $sw i32) (local $rec i32) (local $old_submenu i32)
+    (local $new_submenu i32) (local $by_position i32)
+    (local.set $sw (call $dynamic_menu_state_w (local.get $hmenu)))
+    (if (i32.eqz (local.get $sw)) (then (return (i32.const -1))))
+    (local.set $by_position
+      (i32.ne (i32.and (local.get $flags) (i32.const 0x400)) (i32.const 0)))
+    (local.set $rec (call $dynamic_menu_item_w
+      (local.get $hmenu) (local.get $item) (local.get $by_position)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (local.set $new_submenu
+      (select (local.get $id_or_submenu) (i32.const 0)
+        (i32.ne (i32.and (local.get $flags) (i32.const 0x10)) (i32.const 0))))
+    ;; A menu cannot own itself. Besides being invalid USER state, accepting it
+    ;; would make a later replacement free the record currently being edited.
+    (if (i32.eq (local.get $new_submenu) (local.get $hmenu))
+      (then (return (i32.const 0))))
+    (local.set $old_submenu (i32.load offset=12 (local.get $rec)))
+    (if (i32.and
+          (i32.ne (local.get $old_submenu) (i32.const 0))
+          (i32.ne (local.get $old_submenu) (local.get $new_submenu)))
+      (then
+        (if (i32.eqz (call $dynamic_menu_destroy (local.get $old_submenu)))
+          (then (drop (call $host_menu_destroy (local.get $old_submenu)))))))
+    ;; MF_BYPOSITION selects the lookup mode for this call; it is not retained
+    ;; item type/state.
+    (i32.store (local.get $rec)
+      (i32.and (local.get $flags) (i32.const -1025)))
+    (i32.store offset=4 (local.get $rec)
+      (select (i32.const 0) (local.get $id_or_submenu)
+        (i32.ne (local.get $new_submenu) (i32.const 0))))
+    (i32.store offset=8 (local.get $rec) (local.get $itemData))
+    (i32.store offset=12 (local.get $rec) (local.get $new_submenu))
     (i32.const 1))
 
   ;; Position of the item carrying command id $id, or -1. InsertMenu and
@@ -413,6 +470,10 @@
     (local $sw i32)
     (local.set $sw (call $dynamic_menu_state_w (local.get $hmenu)))
     (if (i32.eqz (local.get $sw)) (then (return (i32.const 0))))
+    ;; Retire the handle before returning its block to the heap. The allocator
+    ;; does not scrub payload bytes, so leaving "MNUD" behind made IsMenu and a
+    ;; second DestroyMenu accept a freed handle until that block was reused.
+    (i32.store (local.get $sw) (i32.const 0))
     (call $heap_free (local.get $hmenu))
     (i32.const 1))
 
@@ -2746,29 +2807,92 @@
     (if (i32.eq (local.get $src) (local.get $hmenu)) (then (return (i32.const -1))))
     (i32.sub (i32.shr_u (local.get $hmenu) (i32.const 16)) (i32.const 1)))
 
-  (func $menu_handle_item_count (export "menu_handle_item_count")
-        (param $hmenu i32) (result i32)
-    (local $hwnd i32) (local $top i32)
+  ;; Resolve the submenu activated by a zero-based item position. Dynamic
+  ;; menus retain the real child HMENU. Resource/attached menu bars use the
+  ;; established encoded dropdown handle, but only after proving the position
+  ;; exists and actually owns children; a command or out-of-range position is
+  ;; NULL on Win32, not a fabricated handle.
+  (func $menu_handle_submenu (param $hmenu i32) (param $pos i32) (result i32)
+    (local $dyn i32) (local $rec i32) (local $hwnd i32) (local $top i32)
+    (local.set $dyn (call $dynamic_menu_state_w (local.get $hmenu)))
+    (if (local.get $dyn)
+      (then
+        (if (i32.or
+              (i32.lt_s (local.get $pos) (i32.const 0))
+              (i32.ge_u (local.get $pos) (i32.load offset=4 (local.get $dyn))))
+          (then (return (i32.const 0))))
+        (local.set $rec (i32.add (local.get $dyn)
+          (i32.add (i32.const 16) (i32.mul (local.get $pos) (i32.const 16)))))
+        (if (i32.eqz (i32.and (i32.load (local.get $rec)) (i32.const 0x10)))
+          (then (return (i32.const 0))))
+        (return (i32.load offset=12 (local.get $rec)))))
     (local.set $hwnd (call $menu_hwnd_from_handle (local.get $hmenu)))
     (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $top (call $menu_handle_top_index (local.get $hwnd) (local.get $hmenu)))
+    ;; This compact handle encoding represents the menu bar and each direct
+    ;; dropdown. A direct bar item is the only case it can return truthfully.
+    (if (i32.ge_s (local.get $top) (i32.const 0)) (then (return (i32.const 0))))
+    (if (i32.or
+          (i32.lt_s (local.get $pos) (i32.const 0))
+          (i32.ge_u (local.get $pos) (call $menu_bar_count (local.get $hwnd))))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (call $menu_child_count (local.get $hwnd) (local.get $pos)))
+      (then (return (i32.const 0))))
+    (i32.or
+      (i32.and (local.get $hmenu) (i32.const 0xFFFF))
+      (i32.shl (i32.add (local.get $pos) (i32.const 1)) (i32.const 16))))
+
+  (func $menu_handle_item_count (export "menu_handle_item_count")
+        (param $hmenu i32) (result i32)
+    (local $hwnd i32) (local $top i32) (local $dyn i32)
+    (local.set $dyn (call $dynamic_menu_state_w (local.get $hmenu)))
+    (if (local.get $dyn)
+      (then (return (i32.load offset=4 (local.get $dyn)))))
+    (local.set $hwnd (call $menu_hwnd_from_handle (local.get $hmenu)))
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const -1))))
     (local.set $top (call $menu_handle_top_index (local.get $hwnd) (local.get $hmenu)))
     (if (i32.lt_s (local.get $top) (i32.const 0))
       (then (return (call $menu_bar_count (local.get $hwnd)))))
     (call $menu_child_count (local.get $hwnd) (local.get $top)))
 
-  ;; Command id at a position. A submenu or separator has none, and Windows
-  ;; answers 0 for both.
+  ;; Command id at a position. Windows returns -1 for a submenu or a NULL
+  ;; identifier, and also for an invalid menu/position.
   (func $menu_handle_item_id (export "menu_handle_item_id")
         (param $hmenu i32) (param $pos i32) (result i32)
-    (local $hwnd i32) (local $top i32)
+    (local $hwnd i32) (local $top i32) (local $dyn i32) (local $rec i32)
+    (local.set $dyn (call $dynamic_menu_state_w (local.get $hmenu)))
+    (if (local.get $dyn)
+      (then
+        (if (i32.or
+              (i32.lt_s (local.get $pos) (i32.const 0))
+              (i32.ge_u (local.get $pos) (i32.load offset=4 (local.get $dyn))))
+          (then (return (i32.const -1))))
+        (local.set $rec (i32.add (local.get $dyn)
+          (i32.add (i32.const 16) (i32.mul (local.get $pos) (i32.const 16)))))
+        (if (i32.or
+              (i32.ne (i32.and (i32.load (local.get $rec)) (i32.const 0x10)) (i32.const 0))
+              (i32.eqz (i32.load offset=4 (local.get $rec))))
+          (then (return (i32.const -1))))
+        (return (i32.load offset=4 (local.get $rec)))))
     (local.set $hwnd (call $menu_hwnd_from_handle (local.get $hmenu)))
-    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const -1))))
     (local.set $top (call $menu_handle_top_index (local.get $hwnd) (local.get $hmenu)))
     (if (i32.lt_s (local.get $top) (i32.const 0))
-      (then (return (call $menu_bar_id (local.get $hwnd) (local.get $pos)))))
+      (then
+        (if (i32.or
+              (i32.lt_s (local.get $pos) (i32.const 0))
+              (i32.ge_u (local.get $pos) (call $menu_bar_count (local.get $hwnd))))
+          (then (return (i32.const -1))))
+        (if (call $menu_child_count (local.get $hwnd) (local.get $pos))
+          (then (return (i32.const -1))))
+        (local.set $top (call $menu_bar_id (local.get $hwnd) (local.get $pos)))
+        (return (select (local.get $top) (i32.const -1)
+          (i32.ne (local.get $top) (i32.const 0))))))
     (if (i32.ge_u (local.get $pos) (call $menu_child_count (local.get $hwnd) (local.get $top)))
-      (then (return (i32.const 0))))
-    (call $menu_child_id (local.get $hwnd) (local.get $top) (local.get $pos)))
+      (then (return (i32.const -1))))
+    (local.set $top (call $menu_child_id (local.get $hwnd) (local.get $top) (local.get $pos)))
+    (return (select (local.get $top) (i32.const -1)
+      (i32.ne (local.get $top) (i32.const 0)))))
 
   ;; Our item flags are internal (bit 1 = disabled, bit 2 = checked); Windows
   ;; wants MF_GRAYED 1 / MF_DISABLED 2 / MF_CHECKED 8. Translate rather than
@@ -3504,12 +3628,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 88: GetSubMenu(hMenu, nPos) → HMENU
-  ;; Returns submenu handle at position nPos. Encode as hMenu | (pos << 16).
+  ;; 88: GetSubMenu(hMenu, nPos) → HMENU. A command, invalid position, or
+  ;; invalid menu returns NULL; dynamic popup items return their retained child.
   (func $handle_GetSubMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.or
-      (i32.and (local.get $arg0) (i32.const 0xFFFF))
-      (i32.shl (i32.add (local.get $arg1) (i32.const 1)) (i32.const 16))))
+    (global.set $eax (call $menu_handle_submenu (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 314: GetSystemMenu(hwnd, bRevert) — stdcall(2)
@@ -3616,9 +3738,8 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
 
-  ;; 620: GetMenuItemID — STUB: unimplemented
-  ;; GetMenuItemID(hMenu, nPos) — 0 for a separator or a submenu, which is
-  ;; what Windows answers and what MFC's update loop expects to skip on.
+  ;; 620: GetMenuItemID(hMenu, nPos). A NULL id, submenu, invalid menu, or
+  ;; invalid position returns -1, matching USER rather than inventing id zero.
   (func $handle_GetMenuItemID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $menu_handle_item_id (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args
@@ -3653,10 +3774,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
   )
 
-  ;; 650: DrawMenuBar — STUB: unimplemented
+  ;; 650: DrawMenuBar. Menu chrome is WAT-owned, so redraw it synchronously and
+  ;; tell the renderer that the non-client surface changed.
   (func $handle_DrawMenuBar (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; DrawMenuBar(hwnd) → BOOL. Redraws menu bar — host renderer handles menus, just return TRUE
-    (global.set $eax (i32.const 1))
+    (if (i32.eq (call $wnd_table_find (local.get $arg0)) (i32.const -1))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (call $defwndproc_do_ncpaint (local.get $arg0))
+        (call $host_invalidate_frame (local.get $arg0))
+        (global.set $eax (i32.const 1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
@@ -3765,9 +3891,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; ModifyMenuA(hMnu, uPosition, uFlags, uIDNewItem, lpNewItem) — return TRUE
+  ;; ModifyMenuA(hMnu, uPosition, uFlags, uIDNewItem, lpNewItem). Dynamic menus
+  ;; are replaced in place; immutable/unknown handles fail instead of silently
+  ;; preserving stale labels, ids, state, and submenu ownership.
   (func $handle_ModifyMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $dynamic_menu_modify
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4)))
+    (if (i32.eq (global.get $eax) (i32.const -1))
+      (then (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
@@ -3786,7 +3918,8 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 673: ModifyMenuW — STUB: unimplemented
+  ;; 673: ModifyMenuW — item metadata shares the A path. String rendering of
+  ;; dynamic W menus retains the existing compatibility representation.
   (func $handle_ModifyMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_ModifyMenuA
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))

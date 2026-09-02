@@ -123,8 +123,11 @@ const digest = crypto.createHash('sha256')
 // 2026-09-02: 500 -> 497. OpenClipboard/CloseClipboard now own an exclusive
 // USER transaction, and GetClipboardOwner reports ownership assigned by
 // EmptyClipboard instead of three fixed success/null answers.
-const EXPECTED_COUNT = 497;
-const EXPECTED_SHA256 = '1c75d0ae95fe75b4a07fe2171bf420995ca2c24830a375c0a8190a697f31b1d0';
+// 2026-09-02: 497 -> 494. GetSubMenu now resolves real popup ownership,
+// ModifyMenu mutates dynamic items, and DrawMenuBar validates and redraws the
+// target window's non-client menu chrome instead of fixed success/handles.
+const EXPECTED_COUNT = 494;
+const EXPECTED_SHA256 = '7d84249359d45790f6030c6a00e6340c7251ebb3d7d54a9259f879d18b8a0a44';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
