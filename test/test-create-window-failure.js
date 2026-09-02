@@ -79,6 +79,16 @@ const extraWat = String.raw`
       (local.get $hwnd) (i32.const 0x0081) (i32.const 0) (i32.const 0)
       (i32.const 0))
     (global.get $eax))
+
+  (func (export "test_native_nccreate")
+      (param $hwnd i32) (param $stack i32) (result i32)
+    (global.set $esp (local.get $stack))
+    (call $gs32 (global.get $esp) (i32.const 0))
+    (call $handle_CallWindowProcA
+      (global.get $WNDPROC_CTRL_NATIVE)
+      (local.get $hwnd) (i32.const 0x0081) (i32.const 0) (i32.const 0)
+      (i32.const 0))
+    (global.get $eax))
 `;
 
 (async () => {
@@ -210,6 +220,8 @@ const extraWat = String.raw`
 
   assert.strictEqual(e.test_sysclass_nccreate(accepted, stack) >>> 0, 1,
     'a subclass chained to a USER system class accepts WM_NCCREATE');
+  assert.strictEqual(e.test_native_nccreate(accepted, stack) >>> 0, 1,
+    'a subclass chained to a WAT-native control accepts WM_NCCREATE');
 
   console.log('PASS CreateWindowEx rejects failed WM_NCCREATE/WM_CREATE transactions');
 })().catch(error => {

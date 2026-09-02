@@ -580,6 +580,11 @@
         (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 2)))))
       (if (i32.and (local.get $flags) (i32.const 0x0008))
         (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 4)))))
+      ;; Private blob bit3 remembers MF_OWNERDRAW. Dynamic popups outlive the
+      ;; guest menu long enough to paint asynchronously, so the renderer can no
+      ;; longer ask the destroyed HMENU how this item should be represented.
+      (if (i32.and (local.get $flags) (i32.const 0x0100))
+        (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 8)))))
       (i32.store offset=16 (local.get $rec) (local.get $out_flags))
       (i32.store offset=20 (local.get $rec) (local.get $id))
       (i32.store offset=24 (local.get $rec) (i32.const 0))
@@ -613,14 +618,18 @@
               (local.set $label_off
                 (i32.add (local.get $label_off) (local.get $sc_chars))))))
         (else
-          ;; No string of its own (separator, bitmap, owner-draw): keep the id
-          ;; rendering, which separators ignore and owner-draw items overpaint.
+          ;; Owner-draw values are item data, never text. Keep their label empty
+          ;; so a missing draw specialization cannot leak internal command ids.
           (i32.store         (local.get $rec) (local.get $label_off))
-          (i32.store offset=4  (local.get $rec) (i32.const 5))
-          (call $write_hex_menu_label
-            (i32.add (local.get $blob_w) (local.get $label_off))
-            (local.get $id))
-          (local.set $label_off (i32.add (local.get $label_off) (i32.const 5)))))
+          (if (i32.and (local.get $flags) (i32.const 0x0100))
+            (then (i32.store offset=4 (local.get $rec) (i32.const 0)))
+            (else
+              ;; Retain the diagnostic fallback for non-owner-draw bitmap items.
+              (i32.store offset=4 (local.get $rec) (i32.const 5))
+              (call $write_hex_menu_label
+                (i32.add (local.get $blob_w) (local.get $label_off))
+                (local.get $id))
+              (local.set $label_off (i32.add (local.get $label_off) (i32.const 5)))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $items)))
     (local.get $blob_g))
@@ -1680,6 +1689,33 @@
             (i32.add (local.get $iy) (i32.const 7))))
     (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021))))
 
+  ;; WordPad's formatting toolbar supplies seventeen MF_OWNERDRAW entries with
+  ;; command ids 0x800e..0x801e and no strings. Its menu is destroyed as soon as
+  ;; asynchronous TrackPopupMenu returns, so reproduce the simple palette strip
+  ;; from the same COLORREF mapping used when a row is selected.
+  (func $menu_draw_wordpad_color_swatch
+        (param $hdc i32) (param $dx i32) (param $dw i32)
+        (param $iy i32) (param $id i32)
+    (local $brush i32)
+    ;; A black frame keeps white and silver visible against COLOR_MENU.
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (i32.add (local.get $dx) (i32.const 19))
+            (i32.add (local.get $iy) (i32.const 2))
+            (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 19)))
+            (i32.add (local.get $iy) (i32.const 18))
+            (i32.const 0x30014))) ;; BLACK_BRUSH
+    (local.set $brush
+      (call $host_gdi_create_solid_brush
+        (call $wordpad_colorref_for_index
+          (i32.sub (local.get $id) (i32.const 0x800e)))))
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (i32.add (local.get $dx) (i32.const 20))
+            (i32.add (local.get $iy) (i32.const 3))
+            (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 20)))
+            (i32.add (local.get $iy) (i32.const 17))
+            (local.get $brush)))
+    (drop (call $host_gdi_delete_object (local.get $brush))))
+
   ;; ============================================================
   ;; $menu_paint_dropdown — draw the dropdown for top-level item
   ;; $tidx at (dx, dy). Width fits its measured text, height=count*20+4.
@@ -1876,17 +1912,27 @@
                       (i32.add (local.get $dx) (i32.const 14))
                       (i32.add (local.get $iy) (i32.const 7))))
               (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))))
-          ;; Label
-          (local.set $label_wa (i32.add (local.get $blob) (i32.load (local.get $it))))
-          (local.set $label_len (i32.load offset=4 (local.get $it)))
-          ;; DT_LEFT|DT_VCENTER|DT_SINGLELINE = 0x24
-          (drop (call $host_gdi_draw_text (local.get $hdc)
-                  (local.get $label_wa) (local.get $label_len)
-                  (call $paint_rect (i32.add (local.get $dx) (i32.const 20))
-                                    (local.get $iy)
-                                    (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 20)))
-                                    (i32.add (local.get $iy) (i32.const 20)))
-                  (i32.const 0x24) (i32.const 0)))
+          (if (i32.and
+                (i32.ne (i32.and (local.get $flags) (i32.const 0x08)) (i32.const 0))
+                (i32.and
+                  (i32.ge_u (i32.load offset=20 (local.get $it)) (i32.const 0x800e))
+                  (i32.le_u (i32.load offset=20 (local.get $it)) (i32.const 0x801e))))
+            (then
+              (call $menu_draw_wordpad_color_swatch
+                (local.get $hdc) (local.get $dx) (local.get $dw) (local.get $iy)
+                (i32.load offset=20 (local.get $it))))
+            (else
+              ;; Label
+              (local.set $label_wa (i32.add (local.get $blob) (i32.load (local.get $it))))
+              (local.set $label_len (i32.load offset=4 (local.get $it)))
+              ;; DT_LEFT|DT_VCENTER|DT_SINGLELINE = 0x24
+              (drop (call $host_gdi_draw_text (local.get $hdc)
+                      (local.get $label_wa) (local.get $label_len)
+                      (call $paint_rect (i32.add (local.get $dx) (i32.const 20))
+                                        (local.get $iy)
+                                        (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 20)))
+                                        (i32.add (local.get $iy) (i32.const 20)))
+                      (i32.const 0x24) (i32.const 0)))))
           ;; Optional shortcut, right-aligned.
           (local.set $sc_len (i32.load offset=12 (local.get $it)))
           (if (local.get $sc_len)
