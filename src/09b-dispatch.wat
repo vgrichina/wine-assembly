@@ -1017,6 +1017,14 @@
           (then
             (call $di_enum_continue)
             (return)))
+        ;; DirectPlayLobby EnumAddress/EnumAddressTypes callbacks leave a
+        ;; reentrant DPLA/DPLT frame after popping four/three arguments.
+        (if (i32.or
+              (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x414C5044))
+              (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x544C5044)))
+          (then
+            (call $dpl_enum_continue)
+            (return)))
         ;; WH_KEYBOARD callbacks use this existing one-callback thunk with a
         ;; tiny typed context. KeyboardProc's stdcall return leaves KHK1 at
         ;; ESP; restore the USER caller and the successful Get/PeekMessage

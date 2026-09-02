@@ -7886,6 +7886,131 @@
       (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
+  ;; Reentrant Lobby address enumeration state. Both callback shapes return
+  ;; through CACA0011 and leave this typed frame at ESP:
+  ;;   +0 tag ('DPLA' chunks / 'DPLT' types), +4 caller return,
+  ;;   +8 callback, +12 context, +16 address/provider GUID,
+  ;;   +20 total size, +24 next byte/index, +28 flags,
+  ;;   +32 reserved, +36 scratch DPAID GUID (16 bytes), +52 reserved.
+  (global $DPL_ENUM_FRAME_SIZE i32 (i32.const 56))
+
+  (func $dpl_enum_finish (param $frame i32) (param $hr i32)
+    (global.set $eip (call $gl32 (i32.add (local.get $frame) (i32.const 4))))
+    (global.set $esp
+      (i32.add (local.get $frame) (global.get $DPL_ENUM_FRAME_SIZE)))
+    (global.set $eax (local.get $hr)))
+
+  (func $dpl_enum_continue
+    (local $frame i32) (local $tag i32) (local $offset i32)
+    (local $remaining i32) (local $record i32) (local $data_size i32)
+    (local.set $frame (global.get $esp))
+    (local.set $tag (call $gl32 (local.get $frame)))
+    (if (i32.eqz (global.get $eax))
+      (then (call $dpl_enum_finish (local.get $frame) (i32.const 0)) (return)))
+    (if (i32.eq (local.get $tag) (i32.const 0x414C5044)) ;; 'DPLA'
+      (then
+        (local.set $offset (call $gl32 (i32.add (local.get $frame) (i32.const 24))))
+        (if (i32.ge_u
+              (local.get $offset)
+              (call $gl32 (i32.add (local.get $frame) (i32.const 20))))
+          (then (call $dpl_enum_finish (local.get $frame) (i32.const 0)) (return)))
+        (local.set $remaining
+          (i32.sub
+            (call $gl32 (i32.add (local.get $frame) (i32.const 20)))
+            (local.get $offset)))
+        (if (i32.lt_u (local.get $remaining) (i32.const 20))
+          (then
+            (call $dpl_enum_finish
+              (local.get $frame) (i32.const 0x80070057))
+            (return)))
+        (local.set $record
+          (i32.add
+            (call $gl32 (i32.add (local.get $frame) (i32.const 16)))
+            (local.get $offset)))
+        (local.set $data_size
+          (call $gl32 (i32.add (local.get $record) (i32.const 16))))
+        (if (i32.gt_u
+              (local.get $data_size)
+              (i32.sub (local.get $remaining) (i32.const 20)))
+          (then
+            (call $dpl_enum_finish
+              (local.get $frame) (i32.const 0x80070057))
+            (return)))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 24))
+          (i32.add (local.get $offset)
+            (i32.add (i32.const 20) (local.get $data_size))))
+        ;; EnumAddressCallback(guid, size, data, context), right-to-left.
+        (global.set $esp (i32.sub (local.get $frame) (i32.const 20)))
+        (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
+        (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $record))
+        (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $data_size))
+        (call $gs32 (i32.add (global.get $esp) (i32.const 12))
+          (i32.add (local.get $record) (i32.const 20)))
+        (call $gs32 (i32.add (global.get $esp) (i32.const 16))
+          (call $gl32 (i32.add (local.get $frame) (i32.const 12))))
+        (global.set $eip (call $gl32 (i32.add (local.get $frame) (i32.const 8))))
+        (global.set $steps (i32.const 0))
+        (return)))
+    ;; The local TCP/IP provider has one required address type: DPAID_INet.
+    (if (i32.ge_u
+          (call $gl32 (i32.add (local.get $frame) (i32.const 24)))
+          (i32.const 1))
+      (then (call $dpl_enum_finish (local.get $frame) (i32.const 0)) (return)))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 24)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 36))
+      (i32.const 0xC4A54DA0))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 40))
+      (i32.const 0x11CFE0AF))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 44))
+      (i32.const 0xA0004E9C))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 48))
+      (i32.const 0x5E4205C9))
+    ;; EnumAddressTypesCallback(guid, context, flags), right-to-left.
+    (global.set $esp (i32.sub (local.get $frame) (i32.const 16)))
+    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 4))
+      (i32.add (local.get $frame) (i32.const 36)))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 8))
+      (call $gl32 (i32.add (local.get $frame) (i32.const 12))))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0))
+    (global.set $eip (call $gl32 (i32.add (local.get $frame) (i32.const 8))))
+    (global.set $steps (i32.const 0)))
+
+  (func $dpl_guid_is_tcpip (param $guid i32) (result i32)
+    (if (result i32) (i32.eqz (local.get $guid))
+      (then (i32.const 0))
+      (else
+        (i32.and
+          (i32.and
+            (i32.eq (call $gl32 (local.get $guid)) (i32.const 0x36E95EE0))
+            (i32.eq (call $gl32 (i32.add (local.get $guid) (i32.const 4)))
+              (i32.const 0x11CF8577)))
+          (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $guid) (i32.const 8)))
+              (i32.const 0x80000C96))
+            (i32.eq (call $gl32 (i32.add (local.get $guid) (i32.const 12)))
+              (i32.const 0x824E53C7)))))))
+
+  (func $dpl_enum_begin
+      (param $tag i32) (param $ret i32) (param $callback i32)
+      (param $context i32) (param $source i32) (param $size i32)
+      (param $flags i32)
+    (local $frame i32)
+    (local.set $frame
+      (i32.sub (global.get $esp) (global.get $DPL_ENUM_FRAME_SIZE)))
+    (call $zero_memory
+      (call $g2w (local.get $frame)) (global.get $DPL_ENUM_FRAME_SIZE))
+    (call $gs32 (local.get $frame) (local.get $tag))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 4)) (local.get $ret))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 8)) (local.get $callback))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 12)) (local.get $context))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 16)) (local.get $source))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 20)) (local.get $size))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 28)) (local.get $flags))
+    (global.set $esp (local.get $frame))
+    (global.set $eax (i32.const 1))
+    (call $dpl_enum_continue))
+
   (func $handle_IDirectPlayLobby2_Connect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $obj_guest i32)
     (if (local.get $arg2)
@@ -7907,9 +8032,33 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
 
   (func $handle_IDirectPlayLobby2_EnumAddress (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+    (local $ret i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    (if (i32.or
+          (i32.eqz (local.get $arg1))
+          (i32.or (i32.eqz (local.get $arg2)) (i32.lt_u (local.get $arg3) (i32.const 20))))
+      (then
+        (global.set $eax (i32.const 0x80070057))
+        (return)))
+    (call $dpl_enum_begin
+      (i32.const 0x414C5044) (local.get $ret) (local.get $arg1)
+      (local.get $arg4) (local.get $arg2) (local.get $arg3) (i32.const 0)))
   (func $handle_IDirectPlayLobby2_EnumAddressTypes (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+    (local $ret i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2)))
+          (i32.or
+            (i32.ne (local.get $arg4) (i32.const 0))
+            (i32.eqz (call $dpl_guid_is_tcpip (local.get $arg2)))))
+      (then
+        (global.set $eax (i32.const 0x80070057))
+        (return)))
+    (call $dpl_enum_begin
+      (i32.const 0x544C5044) (local.get $ret) (local.get $arg1)
+      (local.get $arg3) (local.get $arg2) (i32.const 0) (local.get $arg4)))
   (func $handle_IDirectPlayLobby2_EnumLocalApplications (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
