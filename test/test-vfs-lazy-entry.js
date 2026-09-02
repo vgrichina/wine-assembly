@@ -382,6 +382,39 @@ test('vfs.materialize pre-fills an async-only provider for those consumers',
     assert.strictEqual(vfs.files.get(NORM).data.length, SIZE);
   });
 
+test('vfs.materialize streams files larger than the ChunkCache LRU bound',
+  async () => {
+    const bigSize = bp.DEFAULT_CHUNK_SIZE * (bp.DEFAULT_MAX_CHUNKS + 1) + 137;
+    const requests = [];
+    const byteAt = i => (Math.imul(i, 131) ^ (i >>> 8) ^ 0x5a) & 0xff;
+    const provider = {
+      size: bigSize,
+      readRange(off, len) {
+        requests.push({ off, len });
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) bytes[i] = byteAt(off + i);
+        return Promise.resolve(bytes);
+      },
+    };
+    const vfs = new VirtualFS();
+    const guest = 'C:\\GAME\\LARGE.EXE';
+    const norm = 'c:\\game\\large.exe';
+    vfs.setProviderFile(guest, { provider });
+
+    const data = await vfs.materialize(guest);
+    assert.strictEqual(data.length, bigSize);
+    for (let i = 0; i < data.length; i++) {
+      if (data[i] !== byteAt(i)) assert.fail(`wrong byte at ${i}`);
+    }
+    assert(requests.length > 1, 'the whole file was requested as one cache-busting range');
+    assert(Math.max(...requests.map(r => r.len)) <= 4 * 1024 * 1024,
+      'materialization requests must stay bounded');
+    assert.strictEqual(vfs.files.get(norm)._provider, null,
+      'the completed file must become an ordinary eager entry');
+    assert.strictEqual(vfs.files.get(norm).data, data,
+      'ordinary consumers must receive the materialized bytes without another read');
+  });
+
 // ---- chunk cache unit checks --------------------------------------------
 
 test('ChunkCache.tryRead returns null on a miss, never a partial buffer', () => {
