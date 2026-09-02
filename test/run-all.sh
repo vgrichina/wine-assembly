@@ -350,6 +350,7 @@ UNIT=(
   test/test-end-dialog-lifecycle.js
   test/test-modal-common-dialog-worker.js
   test/test-sendmessagetimeout.js
+  test/test-directdraw-blt-clipping.js
   test/test-directdraw-cooperative-window.js
   test/test-directdraw-enum-attached.js
   test/test-directdraw-enum-surfaces.js
