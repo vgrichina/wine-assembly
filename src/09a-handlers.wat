@@ -6036,8 +6036,9 @@
     (if (i32.eqz (local.get $old_wh))
       (then (local.set $old_wh (call $host_get_window_client_size (local.get $arg0)))))
     (local.set $old_xy (call $window_xy_packed (local.get $arg0)))
-    ;; Pass uFlags to host so it can respect SWP_NOSIZE/SWP_NOMOVE independently
+    ;; Commit geometry and z-order independently, as the SWP flags require.
     (call $host_move_window (local.get $arg0) (local.get $x) (local.get $y) (local.get $cx) (local.get $cy) (local.get $uFlags))
+    (if (i32.eqz (i32.and (local.get $uFlags) (i32.const 0x0004))) (then (call $host_set_window_zorder (local.get $arg0) (local.get $arg1))))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $x) (local.get $y) (local.get $cx) (local.get $cy) (local.get $uFlags))
     (local.set $new_wh (call $ctrl_get_wh_packed (local.get $arg0)))
     (if (i32.eqz (local.get $new_wh))
@@ -6073,8 +6074,7 @@
       (call $wnd_client_screen_y (local.get $arg0))
       (i32.sub (call $client_rect_get_r (local.get $arg0)) (call $client_rect_get_l (local.get $arg0)))
       (i32.sub (call $client_rect_get_b (local.get $arg0)) (call $client_rect_get_t (local.get $arg0))))
-    ;; SetWindowPos can resize the same retained-DC controls as MoveWindow.
-    ;; Refresh only after NCCALCSIZE publishes the new client rectangle.
+    ;; SetWindowPos can resize retained-DC controls; refresh after NCCALCSIZE.
     (if (i32.ne (local.get $new_wh) (local.get $old_wh))
       (then (call $gdi_refresh_window_dc_system_clips)))
     ;; Repaint a moved WAT-native control immediately, but only if it is
