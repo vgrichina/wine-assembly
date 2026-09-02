@@ -323,7 +323,8 @@ brings the dashboard to the front before reading it.
   `(batch & 0x3F) === 0` vlan pattern) so the server's callbacks can fire
   mid-run, and sets `MAX_BATCHES` to unbounded until a `quit` command or
   signal — the schedule is now external, so a batch budget makes no sense.
-  `timeout -s KILL` on the *agent's own* commands remains the outer bound.
+  `--max-seconds` is the process bound, including time spent frozen and waiting
+  for stdin. Tests do not need an external `timeout -s KILL` wrapper.
 - `--input=` still works alongside it (scheduled preamble + live control) and
   auto-WM_CLOSE stays disabled exactly as it is for `--input`.
 - **`--control-stdin`** — the same command set over stdin, one command per
@@ -334,6 +335,11 @@ brings the dashboard to the front before reading it.
   run — `quit` (or `--max-seconds`) does. Not compatible with the
   interactive debug prompt, which owns stdin. An interactive agent is better
   served by HTTP, where each reply pairs with its own request.
+- **`--capture-launch=DIR`** — when a VFS-backed `ShellExecute` target appears,
+  snapshot the VFS before a bootstrap installer can delete its temporary child.
+  At exit, `DIR/launch.json` records the child executable, arguments, working
+  directory, and exported relative path. Launch that child in a second frozen
+  CLI process with the captured tree supplied through `--vfs-include=**/*`.
 
 Why a direct server and not "run.js polls the dev-server too": the headless
 case is the agent's bread and butter and must not require a second process.

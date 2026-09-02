@@ -508,6 +508,10 @@ const DUMP_BACKCANVAS = hasFlag('dump-backcanvas'); // --dump-backcanvas: save b
 const DUMP_VFS = hasFlag('dump-vfs');     // --dump-vfs: list all VFS files at end
 const SAVE_VFS = getArg('save-vfs', null); // --save-vfs=DIR: extract VFS files to directory
 const SAVE_VFS_SUFFIX = getArg('save-vfs-suffix', null); // --save-vfs-suffix=.gid: restrict extraction
+// --capture-launch=DIR: snapshot the VFS when ShellExecute names a VFS-backed
+// executable, before an installer bootstrap can delete its temporary child.
+// At exit DIR contains the snapshot plus launch.json for a second CLI stage.
+const CAPTURE_LAUNCH = getArg('capture-launch', null);
 // --overlay-dir=DIR: the writable C:\ overlay of docs/design-byo-media.md ⑤,
 // persisted to a host directory. Everything the guest writes is journalled and
 // replayed on the next run, so an installer can be run headlessly once and its
@@ -2894,6 +2898,42 @@ async function main() {
   h.shell_about = (dlgHwnd, ownerHwnd, appPtr) => {
     logs.push(`[ShellAbout] dlg=0x${dlgHwnd.toString(16)} owner=0x${ownerHwnd.toString(16)} "${readStr(appPtr)}"`);
     return 1;
+  };
+
+  let capturedLaunch = null;
+  const baseShellExecute = h.shell_execute;
+  h.shell_execute = (hwnd, opWa, fileWa, paramsWa, dirWa, nShow) => {
+    const file = fileWa ? readStr(fileWa) : '';
+    const params = paramsWa ? readStr(paramsWa) : '';
+    const directory = dirWa ? readStr(dirWa) : '';
+    const result = baseShellExecute(hwnd, opWa, fileWa, paramsWa, dirWa, nShow);
+    if (!CAPTURE_LAUNCH || !ctx.vfs || capturedLaunch) return result;
+
+    // Inno's loader passes its executable and /SL arguments together in
+    // lpFile, quoted exactly as a command line. Ordinary ShellExecute callers
+    // put the executable in lpFile and arguments in lpParameters.
+    let executable = file.trim();
+    let inlineArgs = '';
+    if (executable.startsWith('"')) {
+      const close = executable.indexOf('"', 1);
+      if (close > 1) {
+        inlineArgs = executable.slice(close + 1).trim();
+        executable = executable.slice(1, close);
+      }
+    }
+    const guestExe = ctx.vfs._normPath ? ctx.vfs._normPath(executable) : executable.toLowerCase();
+    if (!ctx.vfs.files.has(guestExe)) return result;
+    capturedLaunch = {
+      guestExe,
+      args: [inlineArgs, params.trim()].filter(Boolean).join(' '),
+      directory,
+      vfs: {
+        files: new Map(ctx.vfs.files),
+        dirs: new Set(ctx.vfs.dirs),
+      },
+    };
+    logs.push(`[capture-launch] snapshotted ${guestExe} (${capturedLaunch.vfs.files.size} files)`);
+    return result;
   };
 
   // --- Override set_dlg_item_text to log ---
@@ -9202,6 +9242,27 @@ if (VERBOSE) {
       skipPaths: ['c:\\app.exe'],
       log: line => console.log(line),
     });
+  }
+  if (CAPTURE_LAUNCH && capturedLaunch) {
+    const written = saveVfsToHost(capturedLaunch.vfs, CAPTURE_LAUNCH, {
+      log: line => console.log(line.replace(/^\[save-vfs\]/, '[capture-launch]')),
+    });
+    const executable = written.find(row =>
+      String(row.guestPath).toLowerCase() === capturedLaunch.guestExe.toLowerCase());
+    if (!executable) throw new Error(`captured launch executable disappeared: ${capturedLaunch.guestExe}`);
+    const metadata = {
+      schemaVersion: 1,
+      guestExe: capturedLaunch.guestExe,
+      exe: path.relative(CAPTURE_LAUNCH, executable.outputPath).split(path.sep).join('/'),
+      args: capturedLaunch.args,
+      directory: capturedLaunch.directory,
+      files: written.length,
+    };
+    fs.writeFileSync(path.join(CAPTURE_LAUNCH, 'launch.json'),
+      `${JSON.stringify(metadata, null, 2)}\n`);
+    console.log(`[capture-launch] wrote ${path.join(CAPTURE_LAUNCH, 'launch.json')}`);
+  } else if (CAPTURE_LAUNCH) {
+    console.log('[capture-launch] no VFS-backed executable was launched');
   }
 
   if (DUMP_SPEC) {
