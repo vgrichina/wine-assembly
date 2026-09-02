@@ -168,6 +168,13 @@ async function main() {
       }, TRACE_APIS);
     }
     await page.goto(`${base}/index.html${QUERY}`, { waitUntil: 'load', timeout: 60000 });
+    // Start with empty persisted state, then reload so startup gets a chance to
+    // recreate its one-shot defaults. Clearing after startup deletes seeded
+    // registry values (notably RCT's install Path) and creates failures that a
+    // real first-time visitor cannot reach. Keep this ordering aligned with
+    // tools/web-input-probe.js.
+    await page.evaluate(() => { try { localStorage.clear(); } catch (_) {} });
+    await page.reload({ waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction('typeof launchApp === "function"', { timeout: 60000 });
 
     console.log(`launching ${APP} ...`);
@@ -190,7 +197,6 @@ async function main() {
 
     await page.evaluate(app => {
       stopAllApps();
-      localStorage.clear();
       document.getElementById('app-select').value = app;
       return launchApp();
     }, APP);
