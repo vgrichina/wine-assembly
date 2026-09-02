@@ -325,10 +325,68 @@ function pickRegion(rr, ranked, minOps, maxOps = 400) {
         why(`0x${h.toString(16)}: ${chain.ops.length} ops < ${minOps}`);
         continue;
       }
-      // The region's share is every sample inside the arena extents of its
-      // blocks, not just the ones that landed on the head word.
-      const samples = ranked.filter(x => chain.spans.some(([a, e]) => x.addr >= a && x.addr < e))
-        .reduce((n, x) => n + x.samples, 0);
+      // The region's share is every sample inside the GUEST bytes it was
+      // compiled from, in its code segment -- not the arena extents of the
+      // blocks the walk happened to go through. A region is installed by guest
+      // ip and so absorbs every arena copy of that code, and the interpreter
+      // routinely holds more than one: COMPOVRS's loop is one straight line
+      // from 0x338 in the region, but the interpreter enters it at 0x338 AND
+      // at 0x353 (a jump target inside it), and 0x353 is its own block with
+      // its own arena words. The samples pile up in THAT block, the arena-span
+      // test never saw them, and the census reported the region at 0.0% share
+      // while it removed 184 handbacks and ran +71%. And a head test is not
+      // enough either: the profiler charges a sample to its block's HEAD, and
+      // the block holding COMPOVRS's samples is the one traced from 0x329 --
+      // an entry fifteen bytes above the loop head that runs straight through
+      // the loop body -- so its head is outside the region while nearly every
+      // word in it is inside. The test is therefore whether the sampled
+      // block's guest EXTENT overlaps the region's, which over-credits the few
+      // words of such a block that precede the head and is the right side to
+      // err on: those words are a run-in the region absorbs on entry. The
+      // arena test stays as a fallback for a block whose guest ips the trace
+      // cannot publish.
+      const glo = Math.min(...chain.heads.map(b => b.ip));
+      const ghi = Math.max(glo + 1, ...chain.nexts.filter(ip => ip !== null && ip !== undefined));
+      // Only a branch publishes a guest ip, so a block's extent is known
+      // through its branches alone: the fall-through ips give how far it
+      // reaches, and the TAKEN ips say where it goes. COMPOVRS's sampled
+      // block is fifteen bytes of run-in ending in `jmp 0x338` -- no
+      // fall-through anywhere, so its extent reads as one byte -- and the
+      // jump into the region is the whole of the evidence that it lives there.
+      const guestExtent = (x) => {
+        const t = traceAt(x);
+        let hi = x.bip + 1;
+        const targets = [];
+        for (let i = 0; i < t.ops.length; i++) {
+          const op = t.ops[i];
+          const at = TAKEN_AT.get(op.fn);
+          if (at !== undefined && op.args[at] !== undefined) targets.push(op.args[at]);
+          const ip = fallThroughIp(op);
+          if (ip !== null && ip !== undefined && ip > hi) hi = ip;
+          // Same cut as chainFrom: past a branch whose fall-through is not the
+          // next word, readTrace is reading some other block's code.
+          const fa = i < t.ops.length - 1 ? fallArena(op) : null;
+          if (fa !== null && fa !== x.prog.arenaBase + (t.ops[i + 1].at << 2)) break;
+        }
+        return [x.bip, hi, targets];
+      };
+      // Per region block, not one hull from `glo` to `ghi`: a chain's farthest
+      // fall-through can be a call's return point or an exit a long way off
+      // (B-STEEL's 13-op region hulled to 0x8c-0x5a1 and credited 96% of the
+      // program), and a hull that wide overlaps everything.
+      const ranges = chain.heads.map(b => guestExtent({ ...b, bip: b.ip }));
+      const inRegion = (ip) => ranges.some(([lo, hi]) => ip >= lo && ip < hi);
+      const samples = ranked.filter(x => {
+        if (chain.spans.some(([a, e]) => x.addr >= a && x.addr < e)) return true;
+        if (x.cs !== blk.cs) return false;
+        const [lo, hi, targets] = guestExtent(x);
+        return ranges.some(([rlo, rhi]) => lo < rhi && hi > rlo) || targets.some(inRegion);
+      }).reduce((n, x) => n + x.samples, 0);
+      why(`share: region guest ${blk.cs.toString(16)}:${glo.toString(16)}-${ghi.toString(16)}; `
+        + `top sampled blocks ${ranked.slice(0, 6).map(x => {
+          const [lo, hi] = guestExtent(x);
+          return `${x.cs.toString(16)}:${lo.toString(16)}-${hi.toString(16)} x${x.samples}`;
+        }).join(', ')}`);
       return { block: blk, cs: blk.cs, ops: chain.ops, nexts: chain.nexts,
         blocks: chain.spans.length, heads: chain.heads, headIp: chain.headIp, samples };
     }

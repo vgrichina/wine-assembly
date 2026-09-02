@@ -302,3 +302,83 @@ over the 10 `identical` ones (the two `phase` rows are the +71/+117 pair).
   stands alone. ACCIDENT (−5.3%) is the same case.
 - **CMA_SHRT's section-2 row (+22–28% on every removed arm) did not recur**:
   at 7 reps it is −2.4/−2.2/+0.1. Load artifact, confirmed.
+
+## 7. Iterating on the outliers (2026-09-02)
+
+### The 0.0% share was a profiler-attribution bug, now fixed
+
+`pickRegion` credited a region with the samples inside the *arena spans* of
+the blocks its walk went through. Two things break that. A region installs
+by guest ip and absorbs every arena copy of that code, while the interpreter
+holds several (COMPOVRS's loop is entered at 0x338 and at 0x353, and 0x353 is
+its own block). And the profiler charges each sample to its block's *head*:
+COMPOVRS's 142 samples all sit in a block traced from 0x329 — fifteen bytes of
+run-in ending in `jmp 0x338` — whose head is outside the region while nearly
+every word of it is inside. Under `--why` the pick now prints the region's
+guest range beside the top sampled blocks, which is how this was seen:
+
+```
+COMPOVRS   region guest 1100:338-353; top sampled blocks 1100:329-32a x142
+CONTACT    region guest 1d790:cf-ec;  top sampled blocks 1d790:cd-ce x148
+```
+
+The share is now counted per region block by **guest extent overlap or a
+branch target inside the region** — the only two things an arena block
+publishes about where it is. Three revisions were needed, each measured:
+
+| test | COMPOVRS | CONTACT | RUNDEMO | B-STEEL | ADDY_II |
+|---|---:|---:|---:|---:|---:|
+| arena spans (old) | 0.0% | 0.0% | 0.0% | 22.2% | 28.0% |
+| head ip in region hull | 0.0% | 0.0% | 0.0% | 22.2% | 28.0% |
+| extent overlaps hull | 0.0% | 0.0% | 32.5% | **96.5%** | 41.5% |
+| extent overlap **or branch target**, per block | **100%** | **100%** | 32.5% | 28.5% | 48.3% |
+
+The hull version over-credited B-STEEL to 96.5% because a chain's farthest
+fall-through can be a call's return point far away; per-block ranges fix it.
+CONTAGIO stays at 2.2% — its samples are in another segment — and it is the
+one region in the set that really is cold.
+
+Census over the 20 with the fix (`--dispatches=6m --reps=2`, load 3–4):
+
+| program | share | gate | ceiling | +hb | speed |
+|---|---:|---:|---:|---:|---:|
+| COMPOVRS | 100.0% | 3.16x | +68.3% | -184 | +125.4% |
+| CONTACT | 100.0% | 3.38x | +70.4% | -241 | +119% |
+| DREAM | 100.0% | 1.98x | +49.4% | -15 | +29.3% |
+| ASYLUM (1995) | 76.1% | 3.69x | +55.5% | +0 | +22.2% |
+| ADDY_II | 48.3% | 2.47x | +28.8% | +0 | +9.5% |
+| RUNDEMO | 32.5% | 4.16x | +24.6% | +0 | -14.5% |
+| B-STEEL | 28.5% | — | — | — | +0.1% |
+| CYCLE | 13.3% | 1.89x | +6.3% | +0 | -28.9% |
+| DRAGON | 12.9% | 4.06x | +9.7% | +0 | -7% |
+| BRW | 11.1% | 5.36x | +9% | -17 | +10% |
+| ACCIDENT | 10.7% | — | — | — | +0.9% |
+| CONTAGIO | 2.2% | 3.26x | +1.5% | -32 | +12.1% |
+
+Two readings. **The ceiling now ranks the JIT wins correctly**: the four
+largest ceilings are the four largest measurements. And **a measurement above
+its ceiling is the handback column**: COMPOVRS and CONTACT beat theirs by
+~50 points while removing 184 and 241 handbacks, so the formula, which prices
+the body only, is a floor whenever `+hb` is negative. The `speed` column at
+2 reps and 6M dispatches is still ±20% (RUNDEMO −14.5% and CYCLE −28.9% with
+zero extra handbacks are noise; CYCLE read −6.8% the night before), so the
+share fix moved the *ceiling* column, which is the one to rank by.
+
+### The five `no-loop` programs with big micro-op ceilings
+
+`--why` at 12M, deepest rejection per program:
+
+| program | micro ceiling | why no region | what that means |
+|---|---:|---|---|
+| daretro.exe | 59.8% | `1 ops < 4` | the hot loop is **one fused op**; it is what fusion's −40% is. Nothing for a region to fold |
+| DEMO5.EXE | 26.4% | `ends jmp_spin` | a spin-wait the spin pass already rewrote; the tier ladder benched a busy loop. **The 26% is a phantom** |
+| DTM2.EXE | 26.1% | `ret with no inlined call` ×3 | loop through `ret`; the `splitExit()` work item |
+| CORE-ADD.EXE | 12.5% | `ends call_far` ×6 | loop through a far call; Design B territory |
+| CMA_SHRT.EXE | 71.2% | (region at 12M, not at 6M) | installed: **+0.9%**, frame identical, +284 handbacks, gate INCONCLUSIVE (internal branch). The body exits every iteration; the 71% does not convert |
+
+So of the five, two are not gaps at all (daretro is fusion's win already
+taken, DEMO5 is a spin), one converts to nothing when built, and two are the
+known `ret`/`call_far` blockers. The micro-op ceiling column over-promises on
+exactly the loops a region cannot close, which is worth knowing before
+quoting its +19.7% geomean as JIT headroom: the realizable part is what
+`region-census` measures.

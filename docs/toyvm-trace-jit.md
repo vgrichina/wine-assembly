@@ -2105,7 +2105,12 @@ Two things for whoever picks this up next:
   this.** It is the same "no beneficiary" problem, already shipped. A
   minimum-share floor in `pickRegion` would drop them; it would also cut the
   headline region count by a quarter, which is why it wants to be a measured
-  decision rather than a constant somebody picks.
+  decision rather than a constant somebody picks. **2026-09-02: that share
+  was a profiler-attribution bug, not a property of the regions** — the two
+  biggest JIT wins in the twenty-program set (COMPOVRS +125%, CONTACT +119%)
+  were among the "0.0%" rows. Fixed in `pickRegion`; the mechanism and the
+  measured revisions are in `docs/toyvm-bench-20.md` §7. The 25-of-103 figure
+  has to be re-taken with `region-why.js` before any floor is discussed.
 - **`region-census.js`'s old `%` column was never a benchmark.** It ran
   `--reps=1`, and at one rep the interleave-and-rotate in `region-jit.js` never
   rotates: the baseline arm always runs first and the region arm always second,
