@@ -431,7 +431,37 @@ ckRefused('a non-integer tag is refused',
    (layout-union U (tag t E) (prefix (field h i32) (field t f64))
      (variant UA (tag-value A) (field x i32)))
    (func $f (result i32) (effects) (i32.const 0))`,
-  ['the tag field \'t\' is f64', 'must be one of u8/s8/u16/s16/i32/i64']);
+  ['the tag field \'t\' is f64', 'must be one of u8/s8/u16/s16/i32']);
+// i64 admits the same wasm-invalid emission as f64 did (i64.load into i32.ne),
+// so it is refused at the declaration, not left for the validator.
+ckRefused('an i64 tag is refused',
+  `(enum E (A 1))
+   (layout-union U (tag t E) (prefix (field h i32) (field t i64))
+     (variant UA (tag-value A) (field x i32)))
+   (func $f (result i32) (effects) (i32.const 0))`,
+  ['the tag field \'t\' is i64', 'must be one of u8/s8/u16/s16/i32']);
+
+// A tag value outside the tag width's range can never match a load of the tag:
+// the checked cast it feeds is false on every record and traps the very variant
+// it names. Refused at the declaration, via enum member and via bare literal.
+ckRefused('an enum value overflowing a narrow tag is refused',
+  `(enum E (A 1) (BIG 256))
+   (layout-union U (tag t E) (prefix (field h i32) (field t u8))
+     (variant UA (tag-value A) (field x i32))
+     (variant UBig (tag-value BIG) (field y i32)))
+   (func $f (result i32) (effects) (i32.const 0))`,
+  ['tag value 256 cannot fit the u8 tag field \'t\'', '(0..255)']);
+ckRefused('a negative literal tag value on an unsigned tag is refused',
+  `(enum E (A 1))
+   (layout-union U (tag t E) (prefix (field h i32) (field t u16))
+     (variant UA (tag-value -1) (field x i32)))
+   (func $f (result i32) (effects) (i32.const 0))`,
+  ['tag value -1 cannot fit the u16 tag field \'t\'', '(0..65535)']);
+ckAccepted('a tag value at the width boundary is fine',
+  `(enum E (A 255))
+   (layout-union U (tag t E) (prefix (field h i32) (field t u8))
+     (variant UA (tag-value A) (field x i32)))
+   (func $f (result i32) (effects) (i32.const 0))`);
 
 // A projection over no layouts checks nothing: every field agrees vacuously.
 ckRefused('a view over nothing is refused',

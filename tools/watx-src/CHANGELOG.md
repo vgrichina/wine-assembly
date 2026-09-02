@@ -17,6 +17,35 @@ Rules:
 - Every compiler change lands with a minimal regression in one of the
   `test/watx-compiler-*.test.js` suites.
 
+## 2026-09-01 — union tags: i64 out, and a tag value must fit its field
+
+Manifest digest: `4b65dae7242af761e175ca09c450eba87df7027a0530f385e190acf093d1d538`
+
+`compiler-codegen.js`. Two review findings on the tagged-union checked cast,
+one cause: the tag *declaration* admitted things the tag *comparison* cannot
+express. The comparison is a load of the tag field fed into `i32.const` /
+`i32.ne` — that is the whole mechanism.
+
+**i64 is no longer a legal tag type.** The f64 fix taught the declaration to
+demand an integer, but `i64` passed the regex while the emission stayed
+i32-only, so `(tag t E)` on an i64 field compiled and `--checked-casts` emitted
+an `i64.load` feeding an `i32.ne` — the same validator-rejected module the f64
+fix existed to prevent, through the door it left open. The sound set is
+u8/s8/u16/s16/i32; an i64 discriminant has no plausible use before the
+comparison grows one.
+
+**A tag value must fit the tag field's width.** A u8 tag loads zero-extended
+into 0..255, so a variant claiming `(tag-value 256)` — via an enum member or a
+bare literal, including a negative literal on an unsigned tag — builds a
+comparison that is false on every record that can exist: the checked cast then
+traps on exactly the variant it was meant to admit. Refused at the declaration
+with the field's range in the message.
+
+Regressions: `test/watx-compiler-typed-pointers.test.js` 63 → 67 checks (i64
+tag refused, enum overflow refused, negative literal on unsigned refused,
+boundary value 255 on u8 accepted). Validation-only: the shipped wasm is
+byte-identical.
+
 ## 2026-09-01 — typed pointers: the places a pointer is stored, tail-called or merely declared
 
 Manifest digest: `1e2c80ee8bce9994aea2a90cc2b34a48e0436e571219e7978cedfd1db81ac2a1`

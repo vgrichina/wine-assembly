@@ -138,12 +138,14 @@ function lowerIR(forms, checkResult, options = {}) {
     // A tag has to be something a load-and-compare can be emitted for. Without
     // this, `(tag t E)` on an f64 field compiled and --checked-casts emitted an
     // `f64.load` feeding an `i32.ne` — a module the validator rejects, from a
-    // flag whose whole purpose is to catch mistakes. Reported by review.
+    // flag whose whole purpose is to catch mistakes. Reported by review. i64 is
+    // out for the same reason: the check compares with i32.const/i32.ne, and an
+    // i64 discriminant has no plausible use before the comparison grows one.
     if (tagFieldName && prefixByName.has(tagFieldName)) {
       const tf = prefixByName.get(tagFieldName);
-      if (!/^([su](8|16)|i32|i64)$/.test(tf.type))
+      if (!/^([su](8|16)|i32)$/.test(tf.type))
         declError(`${label}: the tag field '${tagFieldName}' is ${tf.type}. A discriminant is ` +
-          `loaded and compared as an integer, so it must be one of u8/s8/u16/s16/i32/i64.`, form);
+          `loaded and compared as an i32, so it must be one of u8/s8/u16/s16/i32.`, form);
     }
     if (tagFieldName && !prefixByName.has(tagFieldName))
       declError(`${label}: the tag field '${tagFieldName}' is not one of the prefix fields ` +
@@ -199,7 +201,19 @@ function lowerIR(forms, checkResult, options = {}) {
           }
           tagValues.push(enumMembers.get(hit));
         }
+        // A tag value outside the tag field's own range can never match: the
+        // load zero- or sign-extends into the width's range, so a checked cast
+        // against the value is a comparison that is false on every record and
+        // the "check" silently traps on the variant it was meant to admit.
+        const tagRange = tagFieldName
+          ? { u8: [0, 255], s8: [-128, 127], u16: [0, 65535], s16: [-32768, 32767] }[
+              prefixByName.get(tagFieldName).type]
+          : null;
         for (const v of tagValues) {
+          if (tagRange && (v < tagRange[0] || v > tagRange[1]))
+            declError(`Variant '${b.vname}' of ${label}: tag value ${v} cannot fit the ` +
+              `${prefixByName.get(tagFieldName).type} tag field '${tagFieldName}' ` +
+              `(${tagRange[0]}..${tagRange[1]}) — a load of that field can never equal it.`, b.vf);
           if (claimedTagValues.has(v))
             declError(`${label}: tag value ${v} is claimed by both variant '${claimedTagValues.get(v)}' ` +
               `and variant '${b.vname}'. A discriminant selects exactly one variant.`, b.vf);
