@@ -372,5 +372,73 @@ ckRefused('a view naming a field a target lacks is refused',
    (func $f (result i32) (effects) (i32.const 0))`,
   ['has no such field', 'ALL of its targets agree on']);
 
+console.log('\n== 13. the holes review found in the first cut ==');
+// Every one of these compiled silently before. They are grouped because they
+// share a cause: the first implementation checked pointers where a pointer is
+// obviously produced or consumed, and missed the places where one is STORED,
+// TAIL-CALLED, or merely DECLARED.
+
+// A pointer field has a pointee, and storing the wrong record into one launders
+// it -- every later reader of that field trusts the declaration.
+for (const [form, args] of [
+  ['store.field',      'Node next (local.get $n) (local.get $w)'],
+  ['store.elem',       'Node next (local.get $n) (i32.const 0) (local.get $w)'],
+  ['store.field-elem', 'Node next (local.get $n) (i32.const 0) (local.get $w)'],
+]) {
+  ckRefused(`${form} refuses a wrong pointee in the stored VALUE`,
+    `(layout Other (field q i32))
+     (layout Node (field next ptr<Node>) (field pad i32))
+     (func $f (param $n ptr<Node>) (param $w ptr<Other>) (effects) (${form} ${args}))`,
+    [`${form} Node.next value`, 'ptr<Other> where ptr<Node> is required']);
+}
+ckAccepted('the right pointee still stores',
+  `(layout Node (field next ptr<Node>) (field pad i32))
+   (func $f (param $n ptr<Node>) (param $w ptr<Node>) (effects)
+     (store.field Node next (local.get $n) (local.get $w)))`);
+
+// A field's pointee has to name something. `ptr<Nope>` became a plain i32.
+ckRefused('a field pointing at an undeclared layout is refused',
+  `(layout Node (field next ptr<Nope>))
+   (func $f (result i32) (effects) (i32.const 0))`,
+  ['ptr<Nope> names no (layout ...)']);
+ckRefused('a malformed field pointer type is refused',
+  `(layout Node (field next ptr<))
+   (func $f (result i32) (effects) (i32.const 0))`,
+  ['is not a well-formed pointer type']);
+
+// A tail call passes arguments and produces this function's result, exactly as
+// call + return does, so it gets the same two checks.
+ckRefused('return_call checks its arguments',
+  `(layout A (field x i32)) (layout B (field x i32))
+   (func $g (param $p ptr<A>) (result i32) (effects) (load.field A x (local.get $p)))
+   (func $f (param $q ptr<B>) (result i32) (effects) (return_call $g (local.get $q)))`,
+  ['return_call $g arg 0', 'ptr<B> where ptr<A> is required']);
+ckRefused('return_call checks the result it becomes',
+  `(layout A (field x i32)) (layout B (field x i32))
+   (func $g (result ptr<A>) (effects) (i32.const 0))
+   (func $f (result ptr<B>) (effects) (return_call $g))`,
+  ['it returns ptr<A>', 'declared (result ptr<B>)']);
+ckAccepted('a matching tail call is fine',
+  `(layout A (field x i32))
+   (func $g (param $p ptr<A>) (result ptr<A>) (effects) (local.get $p))
+   (func $f (param $q ptr<A>) (result ptr<A>) (effects) (return_call $g (local.get $q)))`);
+
+// --checked-casts loads the tag and compares it as an integer, so a tag it
+// cannot load that way is refused at the DECLARATION rather than emitted as a
+// module the validator rejects.
+ckRefused('a non-integer tag is refused',
+  `(enum E (A 1))
+   (layout-union U (tag t E) (prefix (field h i32) (field t f64))
+     (variant UA (tag-value A) (field x i32)))
+   (func $f (result i32) (effects) (i32.const 0))`,
+  ['the tag field \'t\' is f64', 'must be one of u8/s8/u16/s16/i32/i64']);
+
+// A projection over no layouts checks nothing: every field agrees vacuously.
+ckRefused('a view over nothing is refused',
+  `(layout A (field x i32))
+   (view V (of) (field x i32))
+   (func $f (result i32) (effects) (i32.const 0))`,
+  ['(of) names no layout']);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

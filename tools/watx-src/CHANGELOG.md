@@ -17,6 +17,55 @@ Rules:
 - Every compiler change lands with a minimal regression in one of the
   `test/watx-compiler-*.test.js` suites.
 
+## 2026-09-01 — typed pointers: the places a pointer is stored, tail-called or merely declared
+
+Manifest digest: `1e2c80ee8bce9994aea2a90cc2b34a48e0436e571219e7978cedfd1db81ac2a1`
+
+`compiler-codegen.js`. Five holes in the tier-1/3 implementation of the entry
+below, all found by executable review probes against the shipped compiler rather
+than by reading it. They share one cause worth recording: the first cut checked
+pointers where a pointer is obviously PRODUCED or CONSUMED, and missed every
+place one is merely stored, tail-called, or declared.
+
+**A pointer field has a pointee, and only its base was checked.** `(store.field
+Node next p wrong)` verified that `p` was a `ptr<Node>` and said nothing about
+the value going in. That launders the wrong record into a field every later
+reader trusts by declaration — the wrong-layout bug, arriving through the one
+door the check did not cover. All three store forms (`store.field`,
+`store.elem`, `store.field-elem`) now check the stored value against the field's
+declared pointee.
+
+**`(field next ptr<Nope>)` compiled.** Params, locals, lets and results were
+resolved against the layout table; field types were not, so a pointee that names
+nothing — and the malformed `ptr<` — silently became a plain i32 field. It
+cannot be checked where the field is lowered, since the layout it names may be
+declared in any of the 61 files in any order, so it is deferred to the end of
+`lowerDeclarations` when every name is known.
+
+**`return_call` skipped both checks, in both lowerings.** A tail call passes
+arguments and *becomes* this function's result, exactly as `call` plus `return`
+does, and both of those were checked. Now its arguments are checked against the
+callee's params and its result against the caller's declared `(result ptr<...>)`.
+
+**A tag the compiler cannot load as an integer is refused at the declaration.**
+`(tag t E)` naming an `f64` prefix field compiled, and `--checked-casts` then
+emitted an `f64.load` feeding an `i32.ne`: a module the validator rejects, from
+a flag whose entire purpose is catching mistakes. The tag must be one of
+`u8`/`s8`/`u16`/`s16`/`i32`/`i64`.
+
+**`(view V (of) ...)` is refused.** A projection over no targets agreed with
+everything vacuously, which is the exact opposite of what a view is for.
+
+Also located: the pre-existing `Unknown layout` / `Unknown field` refusals were
+anchored to the layout or field ATOM, which is an interned primitive string with
+no source metadata, so both had always reported line 0. They now fall back to the
+enclosing form. And a union's `__rest` padding no longer appears in the
+unknown-field message — instead, naming a variant's field through the union
+reports which variant owns it and the cast that reaches it.
+
+13 new checks in `test/watx-compiler-typed-pointers.test.js` (63 total). Byte
+identity holds: none of this emits an instruction.
+
 ## 2026-09-01 — typed pointers, layout unions, views and `(cast ...)`
 
 Manifest digest: `645366f9c897b95193b40486a856b69b23a7367f270cb0f63f744eeb1adf0ba2`

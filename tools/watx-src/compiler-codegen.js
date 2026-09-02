@@ -50,6 +50,13 @@ function lowerIR(forms, checkResult, options = {}) {
     for (const fieldForm of fieldForms) {
       const fname = watxValue(watxAt(fieldForm, 1));
       const ftype = watxValue(watxAt(fieldForm, 2)) || 'i32';
+      // A pointer FIELD names a pointee, and that name has to exist. It cannot
+      // be resolved here -- the layout it names may be declared in any of the
+      // 61 files, in any order -- so the check is deferred to the end of
+      // lowerDeclarations, when every name is known. Without it `ptr<Nope>` and
+      // the malformed `ptr<` compiled and silently became a plain i32 field.
+      if (typeof ftype === 'string' && ftype.indexOf('ptr<') === 0)
+        ptrFieldChecks.push({ label: ownerLabel, fname, ftype, form: fieldForm });
       const elemSize = sizeOfType(ftype);
       let count = 1, stride = elemSize;
       if (watxAt(fieldForm, 3) !== undefined) {
@@ -128,6 +135,16 @@ function lowerIR(forms, checkResult, options = {}) {
     const prefixSize = prefixForms.length
       ? lowerFields(childForms(prefixForms[0], 'field', 1), `${label} prefix`, 0, prefixFields, prefixByName)
       : 0;
+    // A tag has to be something a load-and-compare can be emitted for. Without
+    // this, `(tag t E)` on an f64 field compiled and --checked-casts emitted an
+    // `f64.load` feeding an `i32.ne` — a module the validator rejects, from a
+    // flag whose whole purpose is to catch mistakes. Reported by review.
+    if (tagFieldName && prefixByName.has(tagFieldName)) {
+      const tf = prefixByName.get(tagFieldName);
+      if (!/^([su](8|16)|i32|i64)$/.test(tf.type))
+        declError(`${label}: the tag field '${tagFieldName}' is ${tf.type}. A discriminant is ` +
+          `loaded and compared as an integer, so it must be one of u8/s8/u16/s16/i32/i64.`, form);
+    }
     if (tagFieldName && !prefixByName.has(tagFieldName))
       declError(`${label}: the tag field '${tagFieldName}' is not one of the prefix fields ` +
         `[${prefixFields.map(f => f.name).join(', ')}]. A discriminant every variant must agree on ` +
@@ -224,6 +241,12 @@ function lowerIR(forms, checkResult, options = {}) {
     if (ofForms.length !== 1)
       declError(`${label}: a view needs exactly one (of Layout ...) clause naming what it projects.`, form);
     const ofNamesRaw = watxFormSlice(ofForms[0], 1).map(t => watxValue(t));
+    // `(of)` with nothing in it used to lower to a view of size 0 that agreed
+    // with everything vacuously — a projection over no layouts checks nothing,
+    // which is the opposite of what a view is for. Reported by review.
+    if (!ofNamesRaw.length)
+      declError(`${label}: (of) names no layout. A view projects the fields its targets AGREE ` +
+        `on, so it needs at least one target — over none, every field agrees vacuously.`, form);
     // (of SomeUnion) means every variant of it.
     const ofNames = [];
     for (const n of ofNamesRaw) {
@@ -291,6 +314,8 @@ function lowerIR(forms, checkResult, options = {}) {
   // Doing it in one source-order pass would make a declaration's legality depend
   // on where in the 61 files it happened to be written, which is exactly the
   // install-time dependence this repository treats as a bug.
+  const ptrFieldChecks = [];
+
   function lowerDeclarations(forms) {
     const out = [];
     const enums = new Map();
@@ -320,6 +345,16 @@ function lowerIR(forms, checkResult, options = {}) {
     for (const form of forms) {
       if (!Array.isArray(form) || watxValue(watxAt(form, 0)) !== 'view') continue;
       for (const r of lowerView(form, byName)) add(r, form);
+    }
+    // Every name exists now, so the deferred pointer-field pointees resolve.
+    for (const c of ptrFieldChecks) {
+      const pointee = c.ftype.charAt(c.ftype.length - 1) === '>' ? c.ftype.slice(4, -1) : null;
+      if (!pointee)
+        declError(`${c.label} field '${c.fname}': '${c.ftype}' is not a well-formed pointer ` +
+          `type — write ptr<LayoutName>.`, c.form);
+      if (!byName.has(pointee))
+        declError(`${c.label} field '${c.fname}': ptr<${pointee}> names no (layout ...), ` +
+          `(layout-union ...) variant or (view ...) declaration (typo?).`, c.form);
     }
     return out;
   }
@@ -4026,6 +4061,25 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       if (callIdx !== undefined) {
         const expected = expectedParamCount(V(expr[2]));
         if (expected !== undefined && (expr.length - 1) - 2 !== expected) throw new Error(`return_call ${V(expr[2])}: expected ${expected} args, got ${(expr.length - 1) - 2}`);
+        // A tail call passes arguments and produces this function's result just
+        // as `call` + `return` does, so it gets the same two checks. Reported by
+        // review of 1fe7824c: they were checked on `call` and on an explicit
+        // `(return ...)` and skipped here, in both the tail-call and the
+        // compat lowering.
+        const tailDecl = funcDeclByName.get(V(expr[2]));
+        for (let i = 2; i < (expr.length - 1); i++) {
+          if (tailDecl) {
+            const p = tailDecl.params[i - 2];
+            if (p) ptrCheck(expr[i + 1], watxPtrLayoutName(p.type) || null, func,
+                            `return_call ${V(expr[2])} arg ${i - 2}`, expr);
+          }
+        }
+        if (tailDecl && tailDecl.results && tailDecl.results.length === 1 && func.resultPtr) {
+          const got = watxPtrLayoutName(tailDecl.results[0]);
+          if (got && !ptrCompatible(got, func.resultPtr))
+            ptrError(`return_call ${V(expr[2])}: it returns ptr<${got}>, but ${func.name} is ` +
+              `declared (result ptr<${func.resultPtr}>). A tail call IS this function's result.`, expr);
+        }
         for (let i = 2; i < (expr.length - 1); i++) compileExpr(expr[i + 1], func, depth, bytes);
         bytes.byte(tailCalls ? OP.return_call : OP.call);
         bytes.uleb(callIdx);
@@ -4532,6 +4586,12 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const info = lookupLayout(layoutName, 'store.field', expr[2], expr);
       const field = lookupField(info, fieldName, 'store.field', expr[3], expr);
       ptrCheck(ptrExpr, layoutName, func, `${head} ${layoutName}.${fieldName}`, expr);
+      // A pointer FIELD has a pointee too, and storing the wrong record into
+      // one launders it: every later reader of that field trusts the
+      // declaration. Reported by review of 1fe7824c -- the base was checked and
+      // the VALUE was not, so `(store.field L p (ptr) wrong)` compiled.
+      ptrCheck(valExpr, watxPtrLayoutName(field.type) || null, func,
+               `${head} ${layoutName}.${fieldName} value`, expr);
       const offset = field.offset;
       const fieldType = field.type;
 
@@ -4600,6 +4660,12 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const info = lookupLayout(layoutName, 'store.elem', expr[2], expr);
       const field = lookupField(info, fieldName, 'store.elem', expr[3], expr);
       ptrCheck(baseExpr, layoutName, func, `${head} ${layoutName}.${fieldName}`, expr);
+      // A pointer FIELD has a pointee too, and storing the wrong record into
+      // one launders it: every later reader of that field trusts the
+      // declaration. Reported by review of 1fe7824c -- the base was checked and
+      // the VALUE was not, so `(store.field L p (ptr) wrong)` compiled.
+      ptrCheck(valExpr, watxPtrLayoutName(field.type) || null, func,
+               `${head} ${layoutName}.${fieldName} value`, expr);
       const fieldOffset = field.offset;
       const fieldType = field.type;
       const structSize = info.totalSize;
@@ -4675,6 +4741,12 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       const info = lookupLayout(layoutName, 'store.field-elem', expr[2], expr);
       const field = lookupField(info, fieldName, 'store.field-elem', expr[3], expr);
       ptrCheck(baseExpr, layoutName, func, `${head} ${layoutName}.${fieldName}`, expr);
+      // A pointer FIELD has a pointee too, and storing the wrong record into
+      // one launders it: every later reader of that field trusts the
+      // declaration. Reported by review of 1fe7824c -- the base was checked and
+      // the VALUE was not, so `(store.field L p (ptr) wrong)` compiled.
+      ptrCheck(valExpr, watxPtrLayoutName(field.type) || null, func,
+               `${head} ${layoutName}.${fieldName} value`, expr);
       const fieldOffset = field.offset;
       const fieldType = field.type;
       const stride = field.stride ?? sizeOfType(fieldType);
