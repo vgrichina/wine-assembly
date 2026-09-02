@@ -1250,33 +1250,507 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; DdeInitializeA(pidInst, callback, afCmd, ulRes). Provide the process-local
-  ;; DDE instance used by Wise to register its single-installer service.
+  ;; Win32 DDEML state.  DDE objects are scoped to the instance returned by
+  ;; DdeInitialize: passing a freed HSZ to another instance, using a dead
+  ;; conversation, or reading a freed HDDEDATA must fail rather than treating
+  ;; every non-zero integer as a handle.  The bounded repositories live in the
+  ;; guest heap so they remain visible to every helper without a fixed address.
+  ;;
+  ;; Instance (8 x 24): id, callback, flags, last error, service HSZ, filter.
+  ;; HSZ      (32 x 16): handle, owner id, refs, copied ANSI string.
+  ;; HCONV     (8 x 16): handle, owner id, service HSZ, topic HSZ.
+  ;; HDDEDATA (16 x 16): handle, owner id, copied bytes, byte count.
+  (global $DDE32_INSTANCE_MAX i32 (i32.const 8))
+  (global $DDE32_HSZ_MAX i32 (i32.const 32))
+  (global $DDE32_CONV_MAX i32 (i32.const 8))
+  (global $DDE32_DATA_MAX i32 (i32.const 16))
+  (global $dde32_instances (mut i32) (i32.const 0))
+  (global $dde32_hszs (mut i32) (i32.const 0))
+  (global $dde32_convs (mut i32) (i32.const 0))
+  (global $dde32_data (mut i32) (i32.const 0))
+  (global $dde32_next_inst (mut i32) (i32.const 1))
+  (global $dde32_next_hsz (mut i32) (i32.const 0xDD200000))
+  (global $dde32_next_conv (mut i32) (i32.const 0xDD000100))
+  (global $dde32_next_data (mut i32) (i32.const 0xDD100000))
+  (global $dde32_current_inst (mut i32) (i32.const 0))
+
+  (func $dde32_table_ensure (param $which i32) (result i32)
+    (local $ptr i32) (local $size i32)
+    (if (i32.eq (local.get $which) (i32.const 0))
+      (then
+        (if (i32.eqz (global.get $dde32_instances))
+          (then
+            (local.set $size (i32.mul (global.get $DDE32_INSTANCE_MAX) (i32.const 24)))
+            (global.set $dde32_instances (call $heap_alloc (local.get $size)))
+            (if (global.get $dde32_instances)
+              (then (call $zero_memory (call $g2w (global.get $dde32_instances)) (local.get $size))))))
+        (return (global.get $dde32_instances))))
+    (if (i32.eq (local.get $which) (i32.const 1))
+      (then
+        (if (i32.eqz (global.get $dde32_hszs))
+          (then
+            (local.set $size (i32.mul (global.get $DDE32_HSZ_MAX) (i32.const 16)))
+            (global.set $dde32_hszs (call $heap_alloc (local.get $size)))
+            (if (global.get $dde32_hszs)
+              (then (call $zero_memory (call $g2w (global.get $dde32_hszs)) (local.get $size))))))
+        (return (global.get $dde32_hszs))))
+    (if (i32.eq (local.get $which) (i32.const 2))
+      (then
+        (if (i32.eqz (global.get $dde32_convs))
+          (then
+            (local.set $size (i32.mul (global.get $DDE32_CONV_MAX) (i32.const 16)))
+            (global.set $dde32_convs (call $heap_alloc (local.get $size)))
+            (if (global.get $dde32_convs)
+              (then (call $zero_memory (call $g2w (global.get $dde32_convs)) (local.get $size))))))
+        (return (global.get $dde32_convs))))
+    (if (i32.eqz (global.get $dde32_data))
+      (then
+        (local.set $size (i32.mul (global.get $DDE32_DATA_MAX) (i32.const 16)))
+        (global.set $dde32_data (call $heap_alloc (local.get $size)))
+        (if (global.get $dde32_data)
+          (then (call $zero_memory (call $g2w (global.get $dde32_data)) (local.get $size))))))
+    (global.get $dde32_data))
+
+  (func $dde32_inst_find (param $id i32) (result i32)
+    (local $i i32) (local $entry i32)
+    (if (i32.eqz (local.get $id)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $dde32_instances)) (then (return (i32.const 0))))
+    (block $missing (loop $scan
+      (br_if $missing (i32.ge_u (local.get $i) (global.get $DDE32_INSTANCE_MAX)))
+      (local.set $entry
+        (i32.add (global.get $dde32_instances) (i32.mul (local.get $i) (i32.const 24))))
+      (if (i32.eq (call $gl32 (local.get $entry)) (local.get $id))
+        (then (return (local.get $entry))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $dde32_set_error (param $id i32) (param $error i32)
+    (local $entry i32)
+    (local.set $entry (call $dde32_inst_find (local.get $id)))
+    (if (local.get $entry)
+      (then (call $gs32 (i32.add (local.get $entry) (i32.const 12)) (local.get $error)))))
+
+  (func $dde32_hsz_find (param $handle i32) (param $owner i32) (result i32)
+    (local $i i32) (local $entry i32)
+    (if (i32.or (i32.eqz (local.get $handle)) (i32.eqz (local.get $owner)))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $dde32_hszs)) (then (return (i32.const 0))))
+    (block $missing (loop $scan
+      (br_if $missing (i32.ge_u (local.get $i) (global.get $DDE32_HSZ_MAX)))
+      (local.set $entry
+        (i32.add (global.get $dde32_hszs) (i32.mul (local.get $i) (i32.const 16))))
+      (if (i32.and
+            (i32.eq (call $gl32 (local.get $entry)) (local.get $handle))
+            (i32.eq (call $gl32 (i32.add (local.get $entry) (i32.const 4)))
+              (local.get $owner)))
+        (then (return (local.get $entry))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $dde32_hsz_release_entry (param $entry i32)
+    (local $refs i32) (local $string i32)
+    (if (i32.eqz (local.get $entry)) (then (return)))
+    (local.set $refs (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+    (if (i32.gt_u (local.get $refs) (i32.const 1))
+      (then
+        (call $gs32 (i32.add (local.get $entry) (i32.const 8))
+          (i32.sub (local.get $refs) (i32.const 1)))
+        (return)))
+    (local.set $string (call $gl32 (i32.add (local.get $entry) (i32.const 12))))
+    (if (local.get $string) (then (call $heap_free (local.get $string))))
+    (call $zero_memory (call $g2w (local.get $entry)) (i32.const 16)))
+
+  (func $dde32_conv_find (param $handle i32) (result i32)
+    (local $i i32) (local $entry i32)
+    (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $dde32_convs)) (then (return (i32.const 0))))
+    (block $missing (loop $scan
+      (br_if $missing (i32.ge_u (local.get $i) (global.get $DDE32_CONV_MAX)))
+      (local.set $entry
+        (i32.add (global.get $dde32_convs) (i32.mul (local.get $i) (i32.const 16))))
+      (if (i32.eq (call $gl32 (local.get $entry)) (local.get $handle))
+        (then (return (local.get $entry))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $dde32_conv_alloc (param $owner i32) (param $service i32)
+      (param $topic i32) (result i32)
+    (local $i i32) (local $entry i32) (local $handle i32)
+    (if (i32.eqz (call $dde32_table_ensure (i32.const 2)))
+      (then (return (i32.const 0))))
+    (block $full (loop $scan
+      (br_if $full (i32.ge_u (local.get $i) (global.get $DDE32_CONV_MAX)))
+      (local.set $entry
+        (i32.add (global.get $dde32_convs) (i32.mul (local.get $i) (i32.const 16))))
+      (if (i32.eqz (call $gl32 (local.get $entry)))
+        (then
+          (local.set $handle (global.get $dde32_next_conv))
+          (global.set $dde32_next_conv
+            (i32.add (global.get $dde32_next_conv) (i32.const 1)))
+          (call $gs32 (local.get $entry) (local.get $handle))
+          (call $gs32 (i32.add (local.get $entry) (i32.const 4)) (local.get $owner))
+          (call $gs32 (i32.add (local.get $entry) (i32.const 8)) (local.get $service))
+          (call $gs32 (i32.add (local.get $entry) (i32.const 12)) (local.get $topic))
+          (return (local.get $handle))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $dde32_data_find (param $handle i32) (result i32)
+    (local $i i32) (local $entry i32)
+    (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $dde32_data)) (then (return (i32.const 0))))
+    (block $missing (loop $scan
+      (br_if $missing (i32.ge_u (local.get $i) (global.get $DDE32_DATA_MAX)))
+      (local.set $entry
+        (i32.add (global.get $dde32_data) (i32.mul (local.get $i) (i32.const 16))))
+      (if (i32.eq (call $gl32 (local.get $entry)) (local.get $handle))
+        (then (return (local.get $entry))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Shared by future callback/request support and exported only by the focused
+  ;; regression harness.  It creates the exact copied object DdeGetData reads.
+  (func $dde32_data_create (param $owner i32) (param $source i32)
+      (param $size i32) (result i32)
+    (local $i i32) (local $entry i32) (local $copy i32) (local $handle i32)
+    (if (i32.eqz (call $dde32_inst_find (local.get $owner)))
+      (then (return (i32.const 0))))
+    (if (i32.and (i32.ne (local.get $size) (i32.const 0)) (i32.eqz (local.get $source)))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (call $dde32_table_ensure (i32.const 3)))
+      (then (return (i32.const 0))))
+    (if (local.get $size)
+      (then
+        (local.set $copy (call $heap_alloc (local.get $size)))
+        (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
+        (memory.copy (call $g2w (local.get $copy)) (call $g2w (local.get $source))
+          (local.get $size))))
+    (block $full (loop $scan
+      (br_if $full (i32.ge_u (local.get $i) (global.get $DDE32_DATA_MAX)))
+      (local.set $entry
+        (i32.add (global.get $dde32_data) (i32.mul (local.get $i) (i32.const 16))))
+      (if (i32.eqz (call $gl32 (local.get $entry)))
+        (then
+          (local.set $handle (global.get $dde32_next_data))
+          (global.set $dde32_next_data
+            (i32.add (global.get $dde32_next_data) (i32.const 1)))
+          (call $gs32 (local.get $entry) (local.get $handle))
+          (call $gs32 (i32.add (local.get $entry) (i32.const 4)) (local.get $owner))
+          (call $gs32 (i32.add (local.get $entry) (i32.const 8)) (local.get $copy))
+          (call $gs32 (i32.add (local.get $entry) (i32.const 12)) (local.get $size))
+          (return (local.get $handle))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (local.get $copy) (then (call $heap_free (local.get $copy))))
+    (i32.const 0))
+
+  (func $dde32_hsz_is_progman (param $handle i32) (param $owner i32) (result i32)
+    (local $entry i32) (local $string i32)
+    ;; A null HSZ is the documented wildcard and selects the one server this
+    ;; browser Win98 environment exposes: Program Manager.
+    (if (i32.eqz (local.get $handle)) (then (return (i32.const 1))))
+    (local.set $entry (call $dde32_hsz_find (local.get $handle) (local.get $owner)))
+    (if (i32.eqz (local.get $entry)) (then (return (i32.const 0))))
+    (local.set $string (call $gl32 (i32.add (local.get $entry) (i32.const 12))))
+    (i32.and
+      (i32.eq (call $guest_strlen (local.get $string)) (i32.const 7))
+      (i32.and
+        (i32.and
+          (i32.eq (call $tolower (call $gl8 (local.get $string))) (i32.const 0x70))
+          (i32.eq (call $tolower (call $gl8 (i32.add (local.get $string) (i32.const 1)))) (i32.const 0x72)))
+        (i32.and
+          (i32.and
+            (i32.eq (call $tolower (call $gl8 (i32.add (local.get $string) (i32.const 2)))) (i32.const 0x6F))
+            (i32.eq (call $tolower (call $gl8 (i32.add (local.get $string) (i32.const 3)))) (i32.const 0x67)))
+          (i32.and
+            (i32.and
+              (i32.eq (call $tolower (call $gl8 (i32.add (local.get $string) (i32.const 4)))) (i32.const 0x6D))
+              (i32.eq (call $tolower (call $gl8 (i32.add (local.get $string) (i32.const 5)))) (i32.const 0x61)))
+            (i32.eq (call $tolower (call $gl8 (i32.add (local.get $string) (i32.const 6)))) (i32.const 0x6E)))))))
+
+  ;; DdeInitializeA(pidInst, callback, afCmd, ulRes).  Allocate a real
+  ;; process-local instance, or update an existing instance when *pidInst is
+  ;; already non-zero as specified by DDEML.
   (func $handle_DdeInitializeA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.ne (local.get $arg0) (i32.const 0))
-      (then (call $gs32 (local.get $arg0) (i32.const 1))))
-    (global.set $eax (i32.const 0)) ;; DMLERR_NO_ERROR
+    (local $i i32) (local $entry i32) (local $id i32)
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
+          (i32.ne (local.get $arg3) (i32.const 0)))
+      (then
+        (global.set $eax (i32.const 0x4006)) ;; DMLERR_INVALIDPARAMETER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $id (call $gl32 (local.get $arg0)))
+    (if (local.get $id)
+      (then
+        (local.set $entry (call $dde32_inst_find (local.get $id)))
+        (if (i32.eqz (local.get $entry))
+          (then (global.set $eax (i32.const 0x4003)))
+          (else
+            (call $gs32 (i32.add (local.get $entry) (i32.const 4)) (local.get $arg1))
+            (call $gs32 (i32.add (local.get $entry) (i32.const 8)) (local.get $arg2))
+            (call $gs32 (i32.add (local.get $entry) (i32.const 12)) (i32.const 0))
+            (global.set $dde32_current_inst (local.get $id))
+            (global.set $eax (i32.const 0))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (if (i32.eqz (call $dde32_table_ensure (i32.const 0)))
+      (then
+        (global.set $eax (i32.const 0x4008)) ;; DMLERR_MEMORY_ERROR
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (block $full (loop $scan
+      (br_if $full (i32.ge_u (local.get $i) (global.get $DDE32_INSTANCE_MAX)))
+      (local.set $entry
+        (i32.add (global.get $dde32_instances) (i32.mul (local.get $i) (i32.const 24))))
+      (if (i32.eqz (call $gl32 (local.get $entry)))
+        (then
+          (local.set $id (global.get $dde32_next_inst))
+          (global.set $dde32_next_inst
+            (i32.add (global.get $dde32_next_inst) (i32.const 1)))
+          (call $gs32 (local.get $entry) (local.get $id))
+          (call $gs32 (i32.add (local.get $entry) (i32.const 4)) (local.get $arg1))
+          (call $gs32 (i32.add (local.get $entry) (i32.const 8)) (local.get $arg2))
+          (call $gs32 (i32.add (local.get $entry) (i32.const 12)) (i32.const 0))
+          (call $gs32 (i32.add (local.get $entry) (i32.const 16)) (i32.const 0))
+          (call $gs32 (i32.add (local.get $entry) (i32.const 20)) (i32.const 1))
+          (call $gs32 (local.get $arg0) (local.get $id))
+          (global.set $dde32_current_inst (local.get $id))
+          (global.set $eax (i32.const 0))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+          (return)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (global.set $eax (i32.const 0x4008))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; Process-local HSZ handles retain the guest string pointer. That is enough
-  ;; for Wise's single-instance service registration and later free call.
+  ;; HSZ values own a copied, case-insensitive atom-like string.  They do not
+  ;; alias the caller's temporary input buffer.
   (func $handle_DdeCreateStringHandleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (local.get $arg1))
+    (local $inst i32) (local $i i32) (local $entry i32) (local $free i32)
+    (local $len i32) (local $copy i32) (local $handle i32)
+    (local.set $inst (call $dde32_inst_find (local.get $arg0)))
+    (global.set $dde32_current_inst (local.get $arg0))
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $inst)) (i32.eqz (local.get $arg1)))
+          (i32.ne (local.get $arg2) (i32.const 1004))) ;; CP_WINANSI
+      (then
+        (call $dde32_set_error (local.get $arg0) (i32.const 0x4006))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $len (call $guest_strlen (local.get $arg1)))
+    (if (i32.gt_u (local.get $len) (i32.const 255))
+      (then
+        (call $dde32_set_error (local.get $arg0) (i32.const 0x4006))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (i32.eqz (call $dde32_table_ensure (i32.const 1)))
+      (then
+        (call $dde32_set_error (local.get $arg0) (i32.const 0x4008))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $DDE32_HSZ_MAX)))
+      (local.set $entry
+        (i32.add (global.get $dde32_hszs) (i32.mul (local.get $i) (i32.const 16))))
+      (if (i32.eqz (call $gl32 (local.get $entry)))
+        (then
+          (if (i32.eqz (local.get $free)) (then (local.set $free (local.get $entry)))))
+        (else
+          (if (i32.and
+                (i32.eq (call $gl32 (i32.add (local.get $entry) (i32.const 4)))
+                  (local.get $arg0))
+                (i32.eqz (call $guest_stricmp
+                  (call $gl32 (i32.add (local.get $entry) (i32.const 12)))
+                  (local.get $arg1))))
+            (then
+              (call $gs32 (i32.add (local.get $entry) (i32.const 8))
+                (i32.add
+                  (call $gl32 (i32.add (local.get $entry) (i32.const 8)))
+                  (i32.const 1)))
+              (call $dde32_set_error (local.get $arg0) (i32.const 0))
+              (global.set $eax (call $gl32 (local.get $entry)))
+              (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+              (return)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (local.get $free))
+      (then
+        (call $dde32_set_error (local.get $arg0) (i32.const 0x4007))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $copy (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (if (i32.eqz (local.get $copy))
+      (then
+        (call $dde32_set_error (local.get $arg0) (i32.const 0x4008))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $guest_strcpy (local.get $copy) (local.get $arg1))
+    (local.set $handle (global.get $dde32_next_hsz))
+    (global.set $dde32_next_hsz
+      (i32.add (global.get $dde32_next_hsz) (i32.const 1)))
+    (call $gs32 (local.get $free) (local.get $handle))
+    (call $gs32 (i32.add (local.get $free) (i32.const 4)) (local.get $arg0))
+    (call $gs32 (i32.add (local.get $free) (i32.const 8)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $free) (i32.const 12)) (local.get $copy))
+    (call $dde32_set_error (local.get $arg0) (i32.const 0))
+    (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   (func $handle_DdeNameService (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (local $inst i32) (local $hsz i32) (local $old i32)
+    (local.set $inst (call $dde32_inst_find (local.get $arg0)))
+    (global.set $dde32_current_inst (local.get $arg0))
+    (if (i32.or (i32.eqz (local.get $inst)) (i32.ne (local.get $arg2) (i32.const 0)))
+      (then
+        (call $dde32_set_error (local.get $arg0) (i32.const 0x4006))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $old (call $gl32 (i32.add (local.get $inst) (i32.const 16))))
+    (if (i32.eq (local.get $arg3) (i32.const 1)) ;; DNS_REGISTER
+      (then
+        (local.set $hsz (call $dde32_hsz_find (local.get $arg1) (local.get $arg0)))
+        (if (i32.or
+              (i32.eqz (local.get $hsz))
+              (i32.ne
+                (i32.and (call $gl32 (i32.add (local.get $inst) (i32.const 8)))
+                  (i32.const 0x10))
+                (i32.const 0))) ;; APPCMD_CLIENTONLY
+          (then
+            (call $dde32_set_error (local.get $arg0)
+              (select (i32.const 0x4004) (i32.const 0x4006)
+                (i32.ne
+                  (i32.and (call $gl32 (i32.add (local.get $inst) (i32.const 8)))
+                    (i32.const 0x10))
+                  (i32.const 0))))
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (if (i32.ne (local.get $old) (local.get $arg1))
+          (then
+            (if (local.get $old)
+              (then (call $dde32_hsz_release_entry
+                (call $dde32_hsz_find (local.get $old) (local.get $arg0)))))
+            (call $gs32 (i32.add (local.get $hsz) (i32.const 8))
+              (i32.add (call $gl32 (i32.add (local.get $hsz) (i32.const 8)))
+                (i32.const 1)))
+            (call $gs32 (i32.add (local.get $inst) (i32.const 16)) (local.get $arg1)))))
+      (else
+        (if (i32.eq (local.get $arg3) (i32.const 2)) ;; DNS_UNREGISTER
+          (then
+            (if (i32.and
+                  (i32.ne (local.get $arg1) (i32.const 0))
+                  (i32.eqz (call $dde32_hsz_find (local.get $arg1) (local.get $arg0))))
+              (then
+                (call $dde32_set_error (local.get $arg0) (i32.const 0x4006))
+                (global.set $eax (i32.const 0))
+                (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+                (return)))
+            (if (i32.and
+                  (i32.ne (local.get $old) (i32.const 0))
+                  (i32.or (i32.eqz (local.get $arg1)) (i32.eq (local.get $old) (local.get $arg1))))
+              (then
+                (call $dde32_hsz_release_entry
+                  (call $dde32_hsz_find (local.get $old) (local.get $arg0)))
+                (call $gs32 (i32.add (local.get $inst) (i32.const 16)) (i32.const 0)))))
+          (else
+            (if (i32.eq (local.get $arg3) (i32.const 4)) ;; DNS_FILTERON
+              (then (call $gs32 (i32.add (local.get $inst) (i32.const 20)) (i32.const 1)))
+              (else
+                (if (i32.eq (local.get $arg3) (i32.const 8)) ;; DNS_FILTEROFF
+                  (then (call $gs32 (i32.add (local.get $inst) (i32.const 20)) (i32.const 0)))
+                  (else
+                    (call $dde32_set_error (local.get $arg0) (i32.const 0x4006))
+                    (global.set $eax (i32.const 0))
+                    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+                    (return)))))))))
+    (call $dde32_set_error (local.get $arg0) (i32.const 0))
+    (global.set $eax (i32.const 1)) ;; Boolean success, not a data handle.
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   (func $handle_DdeFreeStringHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (local $entry i32)
+    (global.set $dde32_current_inst (local.get $arg0))
+    (local.set $entry (call $dde32_hsz_find (local.get $arg1) (local.get $arg0)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (call $dde32_set_error (local.get $arg0) (i32.const 0x4006))
+        (global.set $eax (i32.const 0)))
+      (else
+        (call $dde32_hsz_release_entry (local.get $entry))
+        (call $dde32_set_error (local.get $arg0) (i32.const 0))
+        (global.set $eax (i32.const 1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   (func $handle_DdeUninitialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $inst i32) (local $i i32) (local $entry i32) (local $ptr i32)
+    (local.set $inst (call $dde32_inst_find (local.get $arg0)))
+    (if (i32.eqz (local.get $inst))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; Terminate all conversations owned by the instance.
+    (if (global.get $dde32_convs)
+      (then
+        (local.set $i (i32.const 0))
+        (block $conv_done (loop $conv
+          (br_if $conv_done (i32.ge_u (local.get $i) (global.get $DDE32_CONV_MAX)))
+          (local.set $entry
+            (i32.add (global.get $dde32_convs) (i32.mul (local.get $i) (i32.const 16))))
+          (if (i32.eq (call $gl32 (i32.add (local.get $entry) (i32.const 4))) (local.get $arg0))
+            (then (call $zero_memory (call $g2w (local.get $entry)) (i32.const 16))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $conv)))))
+    ;; Free every copied data object owned by the instance.
+    (if (global.get $dde32_data)
+      (then
+        (local.set $i (i32.const 0))
+        (block $data_done (loop $data
+          (br_if $data_done (i32.ge_u (local.get $i) (global.get $DDE32_DATA_MAX)))
+          (local.set $entry
+            (i32.add (global.get $dde32_data) (i32.mul (local.get $i) (i32.const 16))))
+          (if (i32.eq (call $gl32 (i32.add (local.get $entry) (i32.const 4))) (local.get $arg0))
+            (then
+              (local.set $ptr (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+              (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
+              (call $zero_memory (call $g2w (local.get $entry)) (i32.const 16))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $data)))))
+    ;; DdeUninitialize owns all remaining HSZ references, including service
+    ;; registrations, so release the copied strings regardless of refcount.
+    (if (global.get $dde32_hszs)
+      (then
+        (local.set $i (i32.const 0))
+        (block $hsz_done (loop $hsz
+          (br_if $hsz_done (i32.ge_u (local.get $i) (global.get $DDE32_HSZ_MAX)))
+          (local.set $entry
+            (i32.add (global.get $dde32_hszs) (i32.mul (local.get $i) (i32.const 16))))
+          (if (i32.eq (call $gl32 (i32.add (local.get $entry) (i32.const 4))) (local.get $arg0))
+            (then
+              (local.set $ptr (call $gl32 (i32.add (local.get $entry) (i32.const 12))))
+              (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
+              (call $zero_memory (call $g2w (local.get $entry)) (i32.const 16))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $hsz)))))
+    (call $zero_memory (call $g2w (local.get $inst)) (i32.const 24))
+    (if (i32.eq (global.get $dde32_current_inst) (local.get $arg0))
+      (then (global.set $dde32_current_inst (i32.const 0))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -1287,44 +1761,147 @@
   ;; conversation and acknowledge its transactions. Explorer's real shell
   ;; integration remains independent of this compatibility contract.
   (func $handle_DdeConnect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax
-      (select (i32.const 0xDD000001) (i32.const 0)
-        (i32.and (i32.ne (local.get $arg1) (i32.const 0))
-                 (i32.ne (local.get $arg2) (i32.const 0)))))
+    (local $inst i32) (local $conv i32)
+    (local.set $inst (call $dde32_inst_find (local.get $arg0)))
+    (global.set $dde32_current_inst (local.get $arg0))
+    (if (i32.eqz (local.get $inst))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (if (i32.or
+          (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+            (i32.eqz (call $dde32_hsz_find (local.get $arg1) (local.get $arg0))))
+          (i32.and (i32.ne (local.get $arg2) (i32.const 0))
+            (i32.eqz (call $dde32_hsz_find (local.get $arg2) (local.get $arg0)))))
+      (then
+        (call $dde32_set_error (local.get $arg0) (i32.const 0x4006))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (if (i32.or
+          (i32.eqz (call $dde32_hsz_is_progman (local.get $arg1) (local.get $arg0)))
+          (i32.eqz (call $dde32_hsz_is_progman (local.get $arg2) (local.get $arg0))))
+      (then
+        (call $dde32_set_error (local.get $arg0) (i32.const 0x400A))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $conv
+      (call $dde32_conv_alloc (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (if (i32.eqz (local.get $conv))
+      (then (call $dde32_set_error (local.get $arg0) (i32.const 0x4008)))
+      (else (call $dde32_set_error (local.get $arg0) (i32.const 0))))
+    (global.set $eax (local.get $conv))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   (func $handle_DdeDisconnect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.ne (local.get $arg0) (i32.const 0)))
+    (local $conv i32) (local $owner i32)
+    (local.set $conv (call $dde32_conv_find (local.get $arg0)))
+    (if (local.get $conv)
+      (then
+        (local.set $owner (call $gl32 (i32.add (local.get $conv) (i32.const 4))))
+        (global.set $dde32_current_inst (local.get $owner))
+        (call $zero_memory (call $g2w (local.get $conv)) (i32.const 16))
+        (call $dde32_set_error (local.get $owner) (i32.const 0))
+        (global.set $eax (i32.const 1)))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   (func $handle_DdeClientTransaction (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $result_ptr i32)
+    (local $result_ptr i32) (local $type i32) (local $conv i32) (local $owner i32)
     ;; The dispatcher exposes five fast arguments; read the remaining three
     ;; stdcall arguments from their original stack positions.
+    (local.set $type (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $result_ptr (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    (local.set $conv (call $dde32_conv_find (local.get $arg2)))
     (if (local.get $result_ptr)
-      (then (call $gs32 (local.get $result_ptr) (i32.const 1))))
-    ;; A non-zero HDDEDATA denotes an acknowledged synchronous transaction.
-    (global.set $eax
-      (select (i32.const 0xDD000002) (i32.const 0)
-        (i32.ne (local.get $arg2) (i32.const 0))))
+      (then (call $gs32 (local.get $result_ptr) (i32.const 0))))
+    (if (i32.eqz (local.get $conv))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+        (return)))
+    (local.set $owner (call $gl32 (i32.add (local.get $conv) (i32.const 4))))
+    (global.set $dde32_current_inst (local.get $owner))
+    ;; The virtual Program Manager accepts synchronous XTYP_EXECUTE commands.
+    ;; They return a Boolean non-zero value; only data-returning transactions
+    ;; produce an HDDEDATA object that DdeGetData/DdeFreeDataHandle may consume.
+    (if (i32.and
+          (i32.eq (local.get $type) (i32.const 0x4050)) ;; XTYP_EXECUTE
+          (i32.and
+            (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+              (i32.ne (local.get $arg1) (i32.const 0)))
+            (i32.and (i32.eqz (local.get $arg3)) (i32.eqz (local.get $arg4)))))
+      (then
+        (if (local.get $result_ptr)
+          (then (call $gs32 (local.get $result_ptr) (i32.const 0x8000)))) ;; DDE_FACK
+        (call $dde32_set_error (local.get $owner) (i32.const 0))
+        (global.set $eax (i32.const 1)))
+      (else
+        (call $dde32_set_error (local.get $owner) (i32.const 0x4009))
+        (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
   )
 
   (func $handle_DdeGetLastError (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) ;; DMLERR_NO_ERROR
+    (local $inst i32)
+    (local.set $inst (call $dde32_inst_find (local.get $arg0)))
+    (if (i32.eqz (local.get $inst))
+      (then (global.set $eax (i32.const 0x4003))) ;; DMLERR_DLL_NOT_INITIALIZED
+      (else
+        (global.set $eax (call $gl32 (i32.add (local.get $inst) (i32.const 12))))
+        (call $gs32 (i32.add (local.get $inst) (i32.const 12)) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   (func $handle_DdeFreeDataHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (local $entry i32) (local $owner i32) (local $ptr i32)
+    (local.set $entry (call $dde32_data_find (local.get $arg0)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (call $dde32_set_error (global.get $dde32_current_inst) (i32.const 0x4006))
+        (global.set $eax (i32.const 0)))
+      (else
+        (local.set $owner (call $gl32 (i32.add (local.get $entry) (i32.const 4))))
+        (local.set $ptr (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+        (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
+        (call $zero_memory (call $g2w (local.get $entry)) (i32.const 16))
+        (call $dde32_set_error (local.get $owner) (i32.const 0))
+        (global.set $eax (i32.const 1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   (func $handle_DdeGetData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (local $entry i32) (local $owner i32) (local $ptr i32)
+    (local $size i32) (local $count i32)
+    (local.set $entry (call $dde32_data_find (local.get $arg0)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (call $dde32_set_error (global.get $dde32_current_inst) (i32.const 0x4006))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $owner (call $gl32 (i32.add (local.get $entry) (i32.const 4))))
+    (local.set $ptr (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $size (call $gl32 (i32.add (local.get $entry) (i32.const 12))))
+    (global.set $dde32_current_inst (local.get $owner))
+    (call $dde32_set_error (local.get $owner) (i32.const 0))
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (local.get $size)))
+      (else
+        (if (i32.lt_u (local.get $arg3) (local.get $size))
+          (then
+            (local.set $count (i32.sub (local.get $size) (local.get $arg3)))
+            (if (i32.gt_u (local.get $count) (local.get $arg2))
+              (then (local.set $count (local.get $arg2))))
+            (if (local.get $count)
+              (then (memory.copy (call $g2w (local.get $arg1))
+                (call $g2w (i32.add (local.get $ptr) (local.get $arg3)))
+                (local.get $count))))))
+        (global.set $eax (local.get $count))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 

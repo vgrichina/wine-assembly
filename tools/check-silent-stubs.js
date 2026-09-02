@@ -114,8 +114,11 @@ const digest = crypto.createHash('sha256')
 // 2026-09-02: 512 -> 511. EnumLocalApplications validates its required
 // callback and reserved flags, then truthfully enumerates the browser Win98
 // machine's empty set of registered lobby-aware applications.
-const EXPECTED_COUNT = 511;
-const EXPECTED_SHA256 = 'd9a4f1c2b93a7f8d6401d2d7a9b78e88950af74c3830a9b124e6ac2473577393';
+// 2026-09-02: 511 -> 502. Win32 DDEML now owns instance, copied HSZ,
+// registered-service, conversation and data-object state; invalid, stale and
+// cross-instance handles fail instead of fixed values succeeding silently.
+const EXPECTED_COUNT = 502;
+const EXPECTED_SHA256 = '5627cf796140096ce61c9a1275f37777667f2f73d07880fc5e98788843a82ed9';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
