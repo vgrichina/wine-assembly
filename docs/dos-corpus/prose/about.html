@@ -127,4 +127,20 @@
   only the one you press loads. Nothing here needs a server: the pages work
   from a <span class="m">file://</span> URL, which is why the bytes arrive as
   script tags and not as a fetch.</p>
+
+  <p>In the page the machine runs at the speed it was written for rather than
+  as fast as the tab can go. One guest second is one wall second at the
+  selected CPU &mdash; a 486 at ten million dispatches a second by default,
+  and every guest clock derives from that one number: the BIOS tick, the
+  timer interrupt at whatever rate the program reprogrammed the PIT to, the
+  70Hz retrace, the sample rate of a Sound Blaster transfer. <em>Unpaced</em>
+  keeps those clocks and simply never waits, which is what the headless sweep
+  does. Sound is the same samples the card would have pulled through its DMA
+  channel, plus the PC speaker, rendered on the main thread and handed to a
+  Web Audio node; the sound button mutes it and is remembered, and with sound
+  off the menu answerer takes the silent option the way the sweep did. The
+  OPL2 is still detection only &mdash; an AdLib tune is silent here for now.
+  Full screen is the Fullscreen API where a browser has one and a
+  viewport-sized dialog where it does not, which on a phone is the same
+  picture with our own bar hidden.</p>
 </section>

@@ -407,6 +407,15 @@ class DosSession {
       // that reprogrammed the PIT for music gets a slower clock than it asked
       // for, which costs it tempo and nothing else.
       irqEvery = 100e3, dispatchesPerTick = 550e3, tickScale = 1,
+      // One clock instead of two. The defaults above put the timer interrupt
+      // every 100k dispatches and the tick word every 550k, so a program's
+      // INT 8 runs 5.5x faster than its 0040:006C -- a compromise the sweep was
+      // photographed under. With `pitClock` the timer interrupt, the retrace
+      // and the keyboard all derive from dispatchesPerTick and the PIT's own
+      // channel-0 reload, which is what makes a paced run (live.js) run at the
+      // speed the program expects: a demo that reprogrammed the PIT for a
+      // 1kHz music player gets 1kHz of it.
+      pitClock = false,
       // How many handbacks at one address with nothing new on screen before the
       // run is called hung. 0 turns the detector off, which is what to reach for
       // when the question is whether a loop is stuck or merely long.
@@ -439,6 +448,7 @@ class DosSession {
     this.irqEvery = irqEvery;
     this.dispatchesPerTick = dispatchesPerTick;
     this.tickScale = tickScale;
+    this.pitClock = pitClock;
     this.stuckLimit = stuckLimit;
     this.stuckWork = stuckWork;
     this.stuckSince = 0;
@@ -523,11 +533,26 @@ class DosSession {
   // short block still has to be let out of its own handler, and this rung sits
   // ahead of the timer's, so a block worth fewer dispatches than the generic
   // interval must not be allowed to take every one of them.
-  sbInterval() {
-    const secs = this.machine.sbBlockSeconds ? this.machine.sbBlockSeconds() : 0;
-    if (!secs) return this.irqEvery;
-    const perSecond = this.dispatchesPerTick * 18.2 / (this.tickScale || 1);
-    return Math.max(this.irqEvery, secs * perSecond);
+  // Dispatches between timer interrupts. Under the two-clock defaults that is
+  // irqEvery; under pitClock it is what channel 0 of the PIT is counting --
+  // 65536 pulses of 1.19MHz per BIOS tick, so the reload divided by 65536 of
+  // dispatchesPerTick, floored so a driver that programmed a very fast timer
+  // still leaves the guest some instructions between interrupts.
+  timerInterval() {
+    if (!this.pitClock) return this.irqEvery;
+    const pit = this.machine.pit;
+    const reload = pit && pit.latch ? pit.latch[0] : 0x10000;
+    return Math.max(200, Math.round(this.dispatchesPerTick * reload / 65536));
+  }
+
+  // Dispatches per 18.2Hz tick as the frame and keyboard clocks count them.
+  tickUnit() {
+    return this.pitClock ? this.dispatchesPerTick : this.irqEvery;
+  }
+
+  // Guest seconds in `n` dispatches.
+  guestSeconds(n) {
+    return n / this.dispatchesPerTick * (this.tickScale || 1) * (65536 / 1193182);
   }
 
   // The guest is inside the stub segment: a vector sent it to a byte the
@@ -708,22 +733,30 @@ class DosSession {
     // of this did, and ACCIDENT.EXE ran 25,000 dispatches in 239 handbacks
     // before stopping. The quantum cannot drift because it does not remember
     // anything.
-    const budget = Math.min(this.slice, Math.max(1, Math.floor(this.irqEvery / 4)));
     // The VGA clock. Port 3DAh is answered inside the VM from where the
     // dispatch count sits in the current frame (emit.js, $vga_status), so hand
     // it the phase this slice starts at, and the period whenever the mode's
-    // frame rate changed. The period is quoted against the timer interval the
-    // same way the retrace IRQ's cadence always was: irqEvery is the 18.2Hz
-    // tick, so one 70Hz frame is irqEvery * 18.2 / 70 dispatches.
+    // frame rate changed. The period is quoted against the tick unit the same
+    // way the retrace IRQ's cadence always was: one 18.2Hz tick is tickUnit()
+    // dispatches, so one 70Hz frame is tickUnit() * 18.2 / 70 of them.
     if (vm.exports.set_vga_phase0) {
       const t = machine.vgaTiming ? machine.vgaTiming() : { hz: 70, lines: 449 };
       if (t.hz !== this.vgaHz) {
         this.vgaHz = t.hz;
-        this.vgaPeriod = Math.max(100, Math.round(this.irqEvery * 18.2 / t.hz));
+        this.vgaPeriod = Math.max(100, Math.round(this.tickUnit() * 18.2 / t.hz));
         vm.exports.set_vga_period(this.vgaPeriod, t.lines);
       }
       vm.exports.set_vga_phase0(this.dispatched % this.vgaPeriod);
     }
+    // The quantum: a quarter of the shortest interval anything here fires at.
+    // Under pitClock that is whichever of the timer and the frame is faster,
+    // and the timer can be very fast once a music player has programmed it.
+    const shortest = this.pitClock
+      ? Math.min(this.timerInterval(), this.vgaPeriod || Infinity) : this.irqEvery;
+    const budget = Math.min(this.slice, Math.max(1, Math.floor(shortest / 4)));
+    // So a port write inside the slice can say when it happened (audioNow).
+    machine.sliceStart = this.dispatched;
+    machine.sliceBudget = budget;
     vm.exports.run(entry, budget);
     // $left is -1 when the slice ran to exhaustion and holds the unspent budget
     // when a handler handed control back early. Billing the slice either way
@@ -813,6 +846,12 @@ class DosSession {
     // DIGILAB all died there. 550,000 dispatches to a 55ms tick is a 10-MIPS
     // machine, which is a fast 486 -- the part these were written for.
     machine.setClock(this.dispatched / this.dispatchesPerTick * this.tickScale);
+    // The sound card and the speaker move with the same clock: the samples a
+    // running transfer consumed over this slice, rendered if a host is
+    // listening. This is also what completes a block (see Machine.sbDue).
+    if (machine.audioAdvance) {
+      machine.audioAdvance(this.guestSeconds(budget - left), machine.sliceStart, budget - left);
+    }
     machine.mouse.dx += this.mouse[0];
     machine.mouse.dy += this.mouse[1];
 
@@ -848,8 +887,15 @@ class DosSession {
     // 100M dispatches on 539397 of them at 69 dispatches apiece and never got
     // back to its menu. A real card at 22kHz with a 4K block interrupts a few
     // times a second, which is far rarer than the timer, not more often.
+    //
+    // Since audio.js the block's end is an event the machine reports (sbDue:
+    // the last sample went through the DMA channel at the card's own rate),
+    // not an interval computed here. irqEvery stays as the floor between two
+    // of them, which is what stops a driver's very short auto-init block from
+    // taking every handback.
     const svec = (vm.get('flags') & 0x200)
-      && (machine.sbForced() || this.dispatched - this.lastSbIrq >= this.sbInterval())
+      && (machine.sbForced() || ((machine.sbDue ? machine.sbDue() : true)
+        && this.dispatched - this.lastSbIrq >= this.irqEvery))
       ? machine.sbIrq() : 0;
     const tvec = machine.timerVector();
     // A frame, not a tick: the vertical retrace comes round about 70 times a
@@ -865,7 +911,7 @@ class DosSession {
     if (svec) {
       this.lastSbIrq = this.dispatched;
       this.raise(svec);
-    } else if (tvec && this.dispatched - this.lastIrq >= this.irqEvery && (vm.get('flags') & 0x200)) {
+    } else if (tvec && this.dispatched - this.lastIrq >= this.timerInterval() && (vm.get('flags') & 0x200)) {
       this.lastIrq = this.dispatched;
       this.raise(tvec);
     } else if (rvec) {
@@ -878,7 +924,7 @@ class DosSession {
     // leaves the scancode where port 60h will find it; here we only deliver it,
     // and only between traces where cs:gip is a real instruction boundary.
     // Slower than the timer on purpose: this is a person typing.
-    } else if (this.dispatched - this.lastKbIrq >= this.irqEvery * 4
+    } else if (this.dispatched - this.lastKbIrq >= (this.pitClock ? this.tickUnit() / 4 : this.irqEvery * 4)
         && (vm.get('flags') & 0x200)) {
       const kvec = machine.keyboardIrq();
       if (kvec) { this.lastKbIrq = this.dispatched; this.raise(kvec); }

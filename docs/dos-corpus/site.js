@@ -110,9 +110,110 @@
     return b;
   }
 
-  playBtn.addEventListener('click', function () {
+  // --- the controls --------------------------------------------------------
+  // CPU speed, sound and full screen. The first two are remembered per
+  // browser, because a visitor who turned the sound off meant it for the next
+  // demo too.
+  var cpuSel = document.getElementById('lb-cpu');
+  var soundBtn = document.getElementById('lb-sound');
+  var fsBtn = document.getElementById('lb-fs');
+  var closeBtn = document.getElementById('lb-close');
+  var prefs = { cpu: '10', sound: true };
+  try {
+    var saved = JSON.parse(localStorage.getItem('toyvm-live') || '{}');
+    if (saved.cpu !== undefined) prefs.cpu = String(saved.cpu);
+    if (saved.sound !== undefined) prefs.sound = !!saved.sound;
+  } catch (e) { /* no storage: defaults */ }
+  cpuSel.value = prefs.cpu;
+  if (cpuSel.value !== prefs.cpu) { prefs.cpu = '10'; cpuSel.value = '10'; }
+  function savePrefs() {
+    try { localStorage.setItem('toyvm-live', JSON.stringify(prefs)); } catch (e) { /* fine */ }
+  }
+  function showSound() { soundBtn.setAttribute('aria-pressed', prefs.sound ? 'true' : 'false'); }
+  showSound();
+
+  // The audio context has to be born inside a click -- every browser refuses
+  // one made anywhere else -- so it is made here, once, and handed to each
+  // run. Resumed on every gesture that reaches these controls, which is what
+  // an iPhone wants before it will let a page make a sound.
+  var audioCtx = null;
+  function wakeAudio() {
+    var AC = self.AudioContext || self.webkitAudioContext;
+    if (!AC) return null;
+    if (!audioCtx) { try { audioCtx = new AC(); } catch (e) { return null; } }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+
+  soundBtn.addEventListener('click', function () {
+    prefs.sound = !prefs.sound;
+    savePrefs();
+    showSound();
+    if (prefs.sound) wakeAudio();
+    if (run) run.setSound(prefs.sound);
+  });
+
+  // A different machine is a different run: the guest clocks are set when the
+  // machine is built, so the demo starts over on the new one.
+  cpuSel.addEventListener('change', function () {
+    prefs.cpu = cpuSel.value;
+    savePrefs();
+    if (run) { stopLive(); startLive(); }
+  });
+
+  // Full screen. The Fullscreen API where there is one; the .fs class where
+  // there is not (iOS Safari), which is the same layout without the browser's
+  // help -- the modal already covers the page, so all that is left to hide is
+  // our own bar. Esc leaves both, since Esc closes the dialog.
+  function inFs() { return !!document.fullscreenElement || dlg.classList.contains('fs'); }
+  function leaveFs() {
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function () {});
+    dlg.classList.remove('fs', 'idle');
+    fsBtn.setAttribute('aria-pressed', 'false');
+    clearTimeout(idleTimer);
+  }
+  function enterFs() {
+    fsBtn.setAttribute('aria-pressed', 'true');
+    var req = dlg.requestFullscreen || dlg.webkitRequestFullscreen;
+    var p = null;
+    if (req) { try { p = req.call(dlg, { navigationUI: 'hide' }); } catch (e) { p = null; } }
+    if (!p || typeof p.then !== 'function') { dlg.classList.add('fs'); }
+    else { p.catch(function () { dlg.classList.add('fs'); }); }
+    restartIdle();
+    if (canvas && !canvas.hidden) canvas.focus();
+  }
+  fsBtn.addEventListener('click', function () { if (inFs()) leaveFs(); else enterFs(); });
+  closeBtn.addEventListener('click', function () { dlg.close(); });
+  document.addEventListener('fullscreenchange', function () {
+    if (!document.fullscreenElement) { dlg.classList.remove('idle'); fsBtn.setAttribute('aria-pressed', 'false'); }
+  });
+  // The bar hides itself in full screen after a moment without input.
+  var idleTimer = 0;
+  function restartIdle() {
+    dlg.classList.remove('idle');
+    clearTimeout(idleTimer);
+    if (inFs()) idleTimer = setTimeout(function () { dlg.classList.add('idle'); }, 2500);
+  }
+  dlg.addEventListener('pointermove', function () { if (inFs()) restartIdle(); });
+  dlg.addEventListener('close', function () { leaveFs(); });
+
+  // A tap on the screen: focus for the keyboard where there is one, and
+  // Enter for a program waiting on a key where there is not. In full screen a
+  // tap also brings the bar back.
+  canvas.addEventListener('pointerdown', function () {
+    canvas.focus();
+    if (inFs()) restartIdle();
+  });
+  canvas.addEventListener('touchend', function (e) {
+    if (!run) return;
+    e.preventDefault();
+    run.tap();
+  }, { passive: false });
+
+  function startLive() {
     if (!current || run) return;
     playBtn.disabled = true;
+    var ctx = prefs.sound ? wakeAudio() : null;
     say('loading the emulator...');
     loadVm().then(loadProgram).then(function () {
       var key = current.src.split('/').pop().replace(/\.js$/, '');
@@ -130,6 +231,7 @@
         ToyVM.mount(n, files[n]);
       });
       var LiveRun = ToyVM.require('tools/toyvm/live.js').LiveRun;
+      var mips = Number(prefs.cpu) || 0;
       run = new LiveRun({
         canvas: canvas,
         exe: current.exe,
@@ -141,10 +243,19 @@
         // the guest is blocked and nothing real is queued, so a visitor who
         // types still drives.
         autoKey: true,
+        // The machine's speed, and whether wall time paces it. "unpaced" keeps
+        // the 486's clocks and simply never waits.
+        mips: mips || 10,
+        paced: mips > 0,
+        // Sound, through the context made in the click. With it off the menu
+        // answerer takes the silent option, as the sweep did.
+        audioContext: ctx,
+        sound: prefs.sound,
+        soundPref: prefs.sound ? 'sb' : 'silent',
         onStatus: function (s) {
           if (s.state === 'running') say('running - click the screen, then type', true);
           else if (s.state === 'exited') say('the program exited');
-          else if (s.state === 'waiting') say('waiting for a key - click the screen and press one');
+          else if (s.state === 'waiting') say('waiting for a key - click or tap the screen and press one');
         },
       });
       // Reachable from the console, on purpose: liveRun.session.dispatched is
@@ -161,7 +272,8 @@
       playBtn.disabled = false;
       say(String((e && e.message) || e));
     });
-  });
+  }
+  playBtn.addEventListener('click', startLive);
 
   // Keys go to the guest only while the canvas has focus, so the dialog's own
   // Escape-to-close keeps working everywhere else on the page.

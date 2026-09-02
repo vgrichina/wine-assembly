@@ -99,10 +99,28 @@ class LiveRun {
       // fallback on an engine that would never choose it, which is the only way
       // that path gets run outside an old Safari.
       variant = null,
+      // How fast the emulated machine is, in millions of dispatches per guest
+      // second -- a dispatch is close to an instruction, so this is MIPS. 10
+      // is a fast 486, the part these demos were written for, and the number
+      // the headless clock already assumes (550k dispatches to a 55ms tick).
+      // Every guest clock derives from it: the tick word, the timer interrupt
+      // at the PIT's reload, the 70Hz retrace, the sample rate of a transfer.
+      mips = 10,
+      // Whether wall time paces the guest at that speed. Unpaced, the guest
+      // gets every millisecond of msPerFrame and a 7M-dispatch demo is over
+      // in a second; paced, one wall second is one guest second.
+      paced = true,
+      // Sound out. `audioContext` is the page's, created inside the click that
+      // pressed Run (browsers refuse one created anywhere else); without it
+      // the machine still consumes its samples and nothing is heard. `sound`
+      // is the mute: off keeps everything running and disconnects the output.
+      audioContext = null, sound = true,
+      // What the menu answerer picks on a sound menu -- see Machine.soundPref.
+      soundPref = 'sb',
     } = opts;
     Object.assign(this, {
       canvas, exe, files, cpu, args, msPerFrame, slice, onStatus, onFrame, autoKey,
-      variant,
+      variant, mips, paced, audioContext, sound, soundPref,
     });
     this.running = false;
     this.session = null;
@@ -110,7 +128,18 @@ class LiveRun {
     this.imageData = null;
     this.font = null;
     this.frames = 0;
+    // Pacing: dispatches owed to the guest by the wall clock, and when it was
+    // last consulted.
+    this.owed = 0;
+    this.lastTick = 0;
+    this.stalls = 0;              // frames the host could not keep pace
+    // Audio: the ring the machine renders into and the node that drains it.
+    this.ring = null;
+    this.node = null;
   }
+
+  // Dispatches per guest second.
+  get speed() { return this.mips * 1e6; }
 
   // The ROM text font, if the bundle carried one. Text-mode programs are drawn
   // with it; a graphics-mode one never asks.
@@ -146,6 +175,7 @@ class LiveRun {
     setCpuLevel(this.cpu);
     const machine = new Machine(new Uint8Array(0), {
       autoKey: this.autoKey,
+      soundPref: this.soundPref,
       fileRoot: '.',              // the mounted map IS the directory
       log: () => {},
     });
@@ -191,29 +221,104 @@ class LiveRun {
 
     this.vm = vm;
     this.machine = machine;
+    // One clock for everything, at the speed asked for. 65536 PIT pulses to a
+    // BIOS tick, 18.2 of those to a second.
+    const dispatchesPerTick = Math.round(this.speed * 65536 / 1193182);
     this.session = new DosSession(vm, machine, {
       slice: this.slice,
       cells: fb.conCells,
+      pitClock: true,
+      dispatchesPerTick,
+      irqEvery: dispatchesPerTick,
       // The hang detector is a sweep's tool: it decides a program is stuck so a
       // batch run can move on. Here the person watching is a better judge, and
       // a demo that idles on a "press a key" screen is exactly what it would
       // cut off.
       stuckLimit: 0,
     });
+    this.attachAudio();
     this.running = true;
+    this.owed = 0;
+    this.lastTick = performance.now();
     this.onStatus({ state: 'running' });
     this.tick();
     return this;
   }
 
+  // The machine renders into a ring at the context's rate and a script
+  // processor drains it on the audio thread's schedule. A ScriptProcessorNode
+  // rather than a worklet because a worklet is a module loaded by URL, and
+  // from a file:// page there is no URL to load it from -- the same reason the
+  // emulator arrives by <script> tag.
+  attachAudio() {
+    const ctx = this.audioContext;
+    if (!ctx || typeof ctx.createScriptProcessor !== 'function') return;
+    const rate = ctx.sampleRate;
+    const ring = new AudioRing(rate, 2);
+    this.ring = ring;
+    this.machine.audio.rate = rate;
+    this.machine.audio.sink = (buf, frames) => ring.write(buf, frames);
+    const node = ctx.createScriptProcessor(2048, 0, 2);
+    node.onaudioprocess = (e) => {
+      const out = e.outputBuffer;
+      ring.read(out.getChannelData(0), out.getChannelData(1), out.length);
+    };
+    this.node = node;
+    // A quarter second of lead so a frame the browser drops does not become
+    // a gap in the sound.
+    ring.prime(Math.round(rate / 4));
+    if (this.sound) node.connect(ctx.destination);
+  }
+
+  // Mute or unmute. The machine keeps rendering either way, so a demo's
+  // block-done interrupts do not depend on whether anyone is listening.
+  setSound(on) {
+    this.sound = !!on;
+    if (!this.node) return;
+    if (this.sound) this.node.connect(this.audioContext.destination);
+    else this.node.disconnect();
+  }
+
+  // Real time or flat out; takes effect at the next frame.
+  setPaced(paced) {
+    this.paced = !!paced;
+    this.owed = 0;
+    this.lastTick = performance.now();
+  }
+
   // One animation frame's worth: guest work up to the budget, then paint.
+  //
+  // Paced, the budget is dispatches, not milliseconds: the wall clock says how
+  // much guest time has passed since the last frame and the guest gets that
+  // many dispatches at its speed, whatever the host could manage. The ms
+  // deadline is still there as the ceiling -- a host too slow to keep up
+  // hands the thread back anyway, and the guest simply runs slow, which is
+  // what a demo on an underpowered machine always did. The debt is capped
+  // at a tenth of a second so a tab that was in the background does not come
+  // back with a burst of catch-up.
   tick() {
     if (!this.running) return;
     const s = this.session;
-    const deadline = performance.now() + this.msPerFrame;
+    const now = performance.now();
+    const deadline = now + this.msPerFrame;
+    let allow = Infinity;
+    if (this.paced) {
+      const elapsed = Math.min(Math.max(0, now - this.lastTick), 100);
+      this.lastTick = now;
+      this.owed = Math.min(this.owed + elapsed * this.speed / 1000, this.speed / 10);
+      allow = this.owed;
+    }
+    const start = s.dispatched;
     // The time check costs a call per slice, which is why the slice is not
     // tiny: at 200k dispatches it is well under a percent.
-    while (!s.done && performance.now() < deadline) s.step();
+    while (!s.done && s.dispatched - start < allow && performance.now() < deadline) s.step();
+    if (this.paced) {
+      const ran = s.dispatched - start;
+      // Overshoot is carried: a slice is up to a few tens of thousands of
+      // dispatches and the next frame owes that much less.
+      this.owed -= ran;
+      if (ran < allow && !s.done && performance.now() >= deadline) this.stalls++;
+    }
     this.paint();
     this.frames++;
     if (s.done) {
@@ -225,6 +330,14 @@ class LiveRun {
       return;
     }
     this.raf = requestAnimationFrame(() => this.tick());
+  }
+
+  // A tap on the screen from a device with no keyboard: Enter, but only when
+  // the program is waiting for a key, so a tap on a running demo is not a
+  // stray keystroke into it.
+  tap() {
+    if (!this.machine || !this.machine.blockedOnKey) return;
+    this.key({ key: 'Enter' });
   }
 
   // Draw whatever surface the program is currently on, nearest-neighbour, to
@@ -265,6 +378,8 @@ class LiveRun {
       this.machine.blockedOnKey = false;
       if (!this.running && !this.machine.exited) {
         this.running = true;
+        this.owed = 0;
+        this.lastTick = performance.now();
         this.onStatus({ state: 'running' });
         this.tick();
       }
@@ -275,7 +390,55 @@ class LiveRun {
     this.running = false;
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
+    if (this.node) { try { this.node.disconnect(); } catch { /* already */ } this.node = null; }
+    if (this.machine) this.machine.audio.sink = null;
     this.onStatus({ state: 'stopped' });
+  }
+}
+
+// Interleaved stereo frames between the machine (which writes a slice's worth
+// at a time, on the main thread) and the audio callback (which reads a fixed
+// block, on its own schedule). Underruns read as silence and are counted;
+// a writer that gets ahead of the capacity drops what does not fit, which
+// only happens unpaced.
+class AudioRing {
+  constructor(rate, seconds) {
+    this.frames = Math.round(rate * seconds);
+    this.buf = new Float32Array(this.frames * 2);
+    this.w = 0;                   // frames written, ever
+    this.r = 0;                   // frames read, ever
+    this.underruns = 0;
+    this.dropped = 0;
+  }
+
+  get available() { return this.w - this.r; }
+
+  prime(frames) { this.w += Math.min(frames, this.frames); }
+
+  write(src, frames) {
+    let n = frames;
+    if (this.available + n > this.frames) { this.dropped += n; return; }
+    let o = 0;
+    while (n > 0) {
+      const at = (this.w % this.frames) * 2;
+      const run = Math.min(n, this.frames - (this.w % this.frames));
+      this.buf.set(src.subarray(o, o + run * 2), at);
+      o += run * 2; n -= run; this.w += run;
+    }
+  }
+
+  read(left, right, frames) {
+    let i = 0;
+    const have = Math.min(frames, this.available);
+    while (i < have) {
+      const at = (this.r % this.frames) * 2;
+      left[i] = this.buf[at]; right[i] = this.buf[at + 1];
+      i++; this.r++;
+    }
+    if (i < frames) {
+      this.underruns++;
+      for (; i < frames; i++) { left[i] = 0; right[i] = 0; }
+    }
   }
 }
 

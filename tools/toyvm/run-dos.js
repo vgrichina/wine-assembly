@@ -223,6 +223,15 @@ async function runDos(o) {
     // forever on "Initializing ." with a card present. Being able to A/B that
     // in one command is the difference between knowing and guessing.
     sound = 'full', svga = 'none',
+    // Render what the card and the speaker play, at this many samples per
+    // second, and hand the chunks back (--audio= writes them as a WAV). 0
+    // consumes the samples by time and renders nothing.
+    audioRate = 0,
+    // Derive every guest clock from dispatchesPerTick and the PIT (see
+    // DosSession) rather than the sweep's two-clock defaults.
+    pitClock = false,
+    // 'silent' or 'sb': what the menu answerer picks on a sound menu.
+    soundPref = 'silent',
     // Keys typed once, in order, and keys that replace the auto-key rotation.
     // The rotation exists to get past sound menus and has no ESC in it, which
     // is the key half the text-mode viewers in this corpus are waiting for --
@@ -244,7 +253,7 @@ async function runDos(o) {
   if (regSpec) require('./emit').enableRegSpec(true);
 
   const machine = new Machine(new Uint8Array(0), {
-    log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound, svga,
+    log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound, svga, soundPref,
     keys, autoKeys, env, tempFiles,
     stopText,
     ioTrace: traceIo === null ? null : (line) => log(`  [io] ${line}`),
@@ -253,6 +262,12 @@ async function runDos(o) {
     // the filesystem it gets.
     fileRoot: path.dirname(path.resolve(exe)),
   });
+  // What the card and the speaker played, as rendered chunks, when asked.
+  const audioChunks = [];
+  if (audioRate > 0) {
+    machine.audio.rate = audioRate;
+    machine.audio.sink = (buf) => audioChunks.push(Float32Array.from(buf));
+  }
   const vm = await makeVm(variant, {
     portIn: (p, w) => machine.portIn(p, w),
     portOut: (p, v, w) => machine.portOut(p, v, w),
@@ -355,7 +370,7 @@ async function runDos(o) {
     slice, noCache, smcFlush, wasmDecode, fuse, deadFlags, crossFlags, traceBlocks, spinLoops,
     regSpec, regionAt, regionSucc, regionBytes, regionCodeBits,
     traceDeadFlags: traceDeadFlags ? ((s) => log(s)) : null,
-    mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
+    mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit, pitClock,
     stuckWork,
     // A watch reports through the census, so asking for one turns it on.
     smcCensus: smcCensus || watch.length > 0, watch,
@@ -569,6 +584,7 @@ async function runDos(o) {
   return {
     bestScore, bestContent, bestSurface, bestText, saidText,
     variant, exe, vm, machine, jtab,
+    audioChunks, audioRate,
     // Read before the caller can touch guest memory again. The census lives in
     // the same linear memory the guest runs in, so it is only meaningful while
     // this instance is alive.
@@ -783,6 +799,18 @@ async function main() {
     // --dump only ever shows the state at exit.
     watch: argAll('watch').map(parseWatch),
     sound: arg('sound', 'full'),
+    // `--audio=out.wav` renders what the Sound Blaster and the speaker played
+    // (`--audio-rate=`, default 22050) and writes it at exit. It is the
+    // headless twin of the page's sound: the same samples through the same
+    // DMA model, so "is there anything to hear" can be answered by a file.
+    audioRate: arg('audio') ? count(arg('audio-rate'), 22050) : 0,
+    // `--pit-clock` runs every guest clock off dispatchesPerTick and the PIT's
+    // reload, which is what the page does; the sweep's defaults keep the timer
+    // interrupt at irqEvery.
+    pitClock: flag('pit-clock'),
+    // `--sound-pref=sb` has the menu answerer take a Sound Blaster when a
+    // menu offers one, as the page does with sound on.
+    soundPref: arg('sound-pref', 'silent'),
     // `--svga=trident` gives the machine a TVGA8900 instead of a plain VGA:
     // the CRTC 0x1F read-back every detector of the era tests, the version
     // byte at sequencer 0x0E, and that register as a working bank selector.
@@ -831,6 +859,21 @@ async function main() {
   if (png) {
     if (r.surface.text) writeConsolePng(png, r.machine.con);
     else writePng(png, r.vm.mem, r.machine.palette, r.surface.geom);
+  }
+  const audioOut = arg('audio');
+  if (audioOut) {
+    const { wavBytes } = require('./audio');
+    let frames = 0, peak = 0;
+    for (const c of r.audioChunks) {
+      frames += c.length >> 1;
+      for (let i = 0; i < c.length; i++) { const a = Math.abs(c[i]); if (a > peak) peak = a; }
+    }
+    fs.writeFileSync(audioOut, wavBytes(r.audioChunks, r.audioRate));
+    const sb = r.machine.sb;
+    console.log(`audio: ${audioOut} ${(frames / r.audioRate).toFixed(2)}s at ${r.audioRate}Hz, `
+      + `peak ${peak.toFixed(3)}, sb ${sb.irqs} block irqs at ${sb.rate}Hz `
+      + `${sb.bits}-bit${sb.stereo ? ' stereo' : ''}, dma writes ${r.machine.audio.dma.writes}, `
+      + `speaker writes ${r.machine.audio.speakerWrites}`);
   }
 
   // `--save-files=DIR` -- copy out every file the guest created. Those live in
