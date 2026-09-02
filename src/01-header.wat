@@ -2358,10 +2358,15 @@
   ;; nothing here takes them together (rule 2), and because a window claim and a
   ;; class claim are each a few hundred instructions of pure table arithmetic.
   (global $LOCK_WND i32 (region.addr $LOCK_TABLE 0x00000180))
-  ;; Process-wide allocators that were mutable globals — i.e. a private copy per
-  ;; instance, handing out the same value twice. +0: the class atom counter. Two
-  ;; instances each starting at 0xC000 give two DIFFERENT classes the SAME atom,
-  ;; and CreateWindowA by atom then builds the wrong class's window.
+  ;; Process-wide cells that cannot be mutable globals because every guest
+  ;; thread is a separate WASM instance over this shared memory:
+  ;;   +0  class atom counter
+  ;;   +4  decoded-code invalidation generation
+  ;;   +8  process priority class (0 means the initial NORMAL class, 0x20)
+  ;; Two instances each starting a private atom counter at 0xC000 give two
+  ;; DIFFERENT classes the SAME atom, and CreateWindowA by atom then builds the
+  ;; wrong class's window. Priority has the same cross-instance requirement:
+  ;; a worker must observe the class selected by the UI thread.
   ;; In the gap between CS_TABLE and GDI_REGION_TABLE. It went at 0x07F0B400
   ;; first, which the memory map's comments show as free and which
   ;; $TT_SUBST_TABLE in 10c-truetype.wat actually owns — so every class

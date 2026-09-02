@@ -128,8 +128,10 @@ const digest = crypto.createHash('sha256')
 // target window's non-client menu chrome instead of fixed success/handles.
 // 2026-09-02: 494 -> 493. FindWindowA now searches the live top-level USER
 // tree by optional class atom/name and title instead of always returning NULL.
-const EXPECTED_COUNT = 493;
-const EXPECTED_SHA256 = 'b9fbdeb9da905e138ca9964bb65a0cc637660c1b41bd3e982959a87444743f71';
+// 2026-09-02: 493 -> 491. SetPriorityClass/GetPriorityClass now validate the
+// emulated process handle and retain one shared Win98 priority class.
+const EXPECTED_COUNT = 491;
+const EXPECTED_SHA256 = '5941406c5024f2add4ba0d3ee57b16ef119c6b836079126f2369b2c78e1b4074';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

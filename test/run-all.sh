@@ -84,6 +84,7 @@ UNIT=(
   test/test-codepage-dbcs.js
   test/test-atom-table.js
   test/test-find-window.js
+  test/test-process-priority-class.js
   test/test-menu-insert.js
   test/test-menu-modify-submenu.js
   test/test-menu-check-position.js

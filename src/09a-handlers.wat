@@ -10374,10 +10374,24 @@ nW — STUB: unimplemented
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; 937: SetPriorityClass(hProcess, dwPriorityClass) — no-op, return TRUE
+  ;; 937: SetPriorityClass(hProcess, dwPriorityClass). Publish the selected
+  ;; Win98 class process-wide; the browser scheduler remains cooperative, but
+  ;; callers must observe truthful state and failures instead of fixed success.
   (func $handle_SetPriorityClass (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (if (i32.eqz (call $current_process_handle_valid (local.get $arg0)))
+      (then
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (global.set $eax (i32.const 0))
+        (return)))
+    (if (i32.eqz (call $win98_process_priority_valid (local.get $arg1)))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0))
+        (return)))
+    (i32.atomic.store offset=8
+      (global.get $SHARED_COUNTERS) (local.get $arg1))
+    (global.set $eax (i32.const 1))
   )
 
   ;; SetProcessShutdownParameters(dwLevel, dwFlags) — record the process's
@@ -10400,10 +10414,47 @@ nW — STUB: unimplemented
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 1264: GetPriorityClass(hProcess) — return NORMAL_PRIORITY_CLASS (0x20)
+  ;; The browser hosts one Win32 process. Accept its contextual pseudo-handle
+  ;; and the durable handle OpenProcess issues for its stable PID; no other
+  ;; numeric value names a process object in this runtime.
+  (func $current_process_handle_valid (param $handle i32) (result i32)
+    (i32.or
+      (i32.eq (local.get $handle) (i32.const -1))
+      (i32.eq (local.get $handle)
+        (i32.or (i32.const 0x000e2000)
+          (i32.and (call $current_process_id) (i32.const 0x0fff))))))
+
+  ;; Windows 98 exposes the original four process classes. The later
+  ;; ABOVE_NORMAL/BELOW_NORMAL and background-mode values must not be accepted
+  ;; merely because a modern header assigns them constants.
+  (func $win98_process_priority_valid (param $class i32) (result i32)
+    (i32.or
+      (i32.or
+        (i32.eq (local.get $class) (i32.const 0x20))  ;; NORMAL_PRIORITY_CLASS
+        (i32.eq (local.get $class) (i32.const 0x40))) ;; IDLE_PRIORITY_CLASS
+      (i32.or
+        (i32.eq (local.get $class) (i32.const 0x80))  ;; HIGH_PRIORITY_CLASS
+        (i32.eq (local.get $class) (i32.const 0x100))))) ;; REALTIME_PRIORITY_CLASS
+
+  ;; A zero shared cell is the fresh-process default, NORMAL_PRIORITY_CLASS.
+  ;; Once SetPriorityClass runs it publishes the explicit class atomically so
+  ;; cooperative and real Worker instances see one process-wide value.
+  (func $process_priority_class_get (result i32)
+    (local $class i32)
+    (local.set $class
+      (i32.atomic.load offset=8 (global.get $SHARED_COUNTERS)))
+    (select (local.get $class) (i32.const 0x20)
+      (i32.ne (local.get $class) (i32.const 0))))
+
+  ;; 1264: GetPriorityClass(hProcess) — return the retained process class.
   (func $handle_GetPriorityClass (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x20))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (if (i32.eqz (call $current_process_handle_valid (local.get $arg0)))
+      (then
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (global.set $eax (i32.const 0))
+        (return)))
+    (global.set $eax (call $process_priority_class_get))
   )
 
   ;; 1265: GetThreadPriority(hThread) — return THREAD_PRIORITY_NORMAL (0)
