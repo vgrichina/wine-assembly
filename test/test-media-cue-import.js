@@ -206,13 +206,73 @@ async function main() {
   assert.strictEqual(ambiguousPlans.length, 1);
   assert.strictEqual(ambiguousPlans[0].kind, 'iso');
   assert.strictEqual(ambiguousPlans[0].unparsedTrailingBytes, SECTOR_BYTES);
-  assert.match(ambiguousPlans[0].warning, /may contain CD audio or padding/i);
+  assert.match(ambiguousPlans[0].warning, /could not be identified as CD audio/i);
   assert.deepStrictEqual(ambiguousPlans[0].exeCandidates.map(item => item.path),
     ['D:\\CIV2.EXE']);
   const ambiguousVfs = new VirtualFS();
   await ambiguousPlans[0].mount(ambiguousVfs);
   assert.deepStrictEqual(Array.from(await ambiguousVfs.materialize('D:\\CIV2.EXE')),
     [0x4d, 0x5a, 0x90, 0x00]);
+
+  function pcmSectors(count, startFrame = 0) {
+    const bytes = new Uint8Array(count * SECTOR_BYTES);
+    const view = new DataView(bytes.buffer);
+    for (let at = 0, frame = startFrame; at < bytes.length; at += 4, frame++) {
+      const sample = Math.round(Math.sin(frame / 24) * 12000);
+      view.setInt16(at, sample, true);
+      view.setInt16(at + 2, Math.round(sample * 0.8), true);
+    }
+    return bytes;
+  }
+
+  // Repeated Red Book-sized silence pregaps plus smooth PCM recover separate
+  // tracks. The final 150-sector silence is lead-out, not another track.
+  const gap = new Uint8Array(150 * SECTOR_BYTES);
+  const song1 = pcmSectors(800);
+  const song2 = pcmSectors(800, song1.length / 4);
+  const inferredTail = new Uint8Array(gap.length * 3 + song1.length + song2.length);
+  let tailAt = 0;
+  for (const part of [gap, song1, gap, song2, gap]) {
+    inferredTail.set(part, tailAt);
+    tailAt += part.length;
+  }
+  const rawWithTracks = new Uint8Array(standaloneRaw.length + inferredTail.length);
+  rawWithTracks.set(standaloneRaw);
+  rawWithTracks.set(inferredTail, standaloneRaw.length);
+  const inferredPlans = await mediaImport.analyzeFiles([
+    { name: 'two-songs.bin', size: rawWithTracks.length,
+      source: countingSource(rawWithTracks) },
+  ]);
+  const inferred = inferredPlans[0];
+  assert.strictEqual(inferred.inferredAudioLayout.confidence, 'high');
+  assert.deepStrictEqual(inferred.inferredAudioLayout.tracks, [
+    { index0Sector: 20, index1Sector: 170 },
+    { index0Sector: 970, index1Sector: 1120 },
+  ]);
+  assert.match(inferred.warning, /Recovered 2 likely audio tracks/);
+  const inferredVfs = new VirtualFS();
+  const inferredMounted = await inferred.mount(inferredVfs);
+  assert.strictEqual(inferredMounted.disc.audioTracks.length, 2);
+  assert.strictEqual(inferredMounted.disc.track(1).playableSectors, 20);
+  assert.strictEqual(inferredMounted.disc.track(2).index1Sector, 170);
+  assert.strictEqual(inferredMounted.disc.track(3).index1Sector, 1120);
+
+  // Smooth PCM with no convincing gaps still gets useful playback as one
+  // combined track, without pretending to know song boundaries.
+  const joinedTail = pcmSectors(800);
+  const rawWithJoinedAudio = new Uint8Array(standaloneRaw.length + joinedTail.length);
+  rawWithJoinedAudio.set(standaloneRaw);
+  rawWithJoinedAudio.set(joinedTail, standaloneRaw.length);
+  const joinedPlans = await mediaImport.analyzeFiles([
+    { name: 'joined-soundtrack.bin', size: rawWithJoinedAudio.length,
+      source: countingSource(rawWithJoinedAudio) },
+  ]);
+  assert.strictEqual(joinedPlans[0].inferredAudioLayout.confidence, 'combined');
+  assert.strictEqual(joinedPlans[0].inferredAudioLayout.tracks.length, 1);
+  assert.match(joinedPlans[0].warning, /joined as one audio track/);
+  const joinedVfs = new VirtualFS();
+  const joinedMounted = await joinedPlans[0].mount(joinedVfs);
+  assert.strictEqual(joinedMounted.disc.audioTracks.length, 1);
 
   await assert.rejects(() => mediaImport.analyzeFiles([
     { name: 'Civilization II.cue', size: cue.size, source: cue },

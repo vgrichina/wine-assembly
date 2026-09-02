@@ -9,6 +9,7 @@ const root = path.join(__dirname, '..');
 const debugIds = new Set(DEBUG_ONLY_APPS.map(([id]) => id));
 const localCandidateIds = new Set(LOCAL_CANDIDATE_APPS.map(([id]) => id));
 const expectedLocalCandidates = new Map([
+  ['cdplayer', 'binaries/win98-apps/cdplayer.exe'],
   ['jazz2_demo', 'test/binaries/candidates/jazz-jackrabbit-2-demo-installer/installed/jazz2.exe'],
   ['quake2_demo', 'test/binaries/candidates/quake-2-demo-installer/installed-extracted/Install/Data/quake2.exe'],
   ['quake2_demo_installer', 'test/binaries/candidates/quake-2-demo-installer/q2-314-demo-x86.exe'],

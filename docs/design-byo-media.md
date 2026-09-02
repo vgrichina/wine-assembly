@@ -292,10 +292,15 @@ remain valid.
 A standalone raw BIN gets a deliberately best-effort fallback. If its
 2352-byte Mode 1 sectors expose a valid ISO 9660 volume, that data volume is
 mounted at `D:\` and the insert dialog warns that a matching CUE is required
-for the correct track layout, pregaps, and CD audio. Bytes after the
-ISO-declared volume are left uninterpreted and reported as such: headerless
-CD-DA carries no trustworthy track numbers or boundaries, so the importer does
-not guess from byte statistics or fabricate a playable TOC.
+for authoritative track layout, pregaps, and exact CD-audio timing. The
+fallback scans sectors after the ISO volume: authentic Mode 1 headers extend
+the data track through mastered padding, while smooth signed 16-bit stereo PCM
+identifies a likely audio tail. Repeated 120–225-sector digital-silence runs
+with consistent lengths and plausible spacing become inferred track pregaps.
+If PCM is convincing but those boundaries are not, the complete tail is
+offered as one combined audio track. Ambiguous/random-looking tails remain
+unmounted. Every inferred result stays visibly labelled as best effort; a CUE
+always wins when supplied.
 
 The same multi-file selection rule covers offline installers: a setup `.exe`
 and numbered `.bin` files sharing its full basename are one import, stored

@@ -34,6 +34,14 @@ const BASE_URL = String(process.env.CANDIDATE_BASE_URL || '').trim();
 
 const ALL_CANDIDATES = [
   {
+    id: 'cdplayer',
+    label: 'CD Player',
+    titlePattern: 'CD Player',
+    allowDialogMain: true,
+    minColors: 4,
+    waitMs: 1000,
+  },
+  {
     id: 'far_manager_170',
     label: 'Far Manager 1.70',
     titlePattern: 'Far',
