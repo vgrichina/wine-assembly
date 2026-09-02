@@ -125,6 +125,13 @@ node tools/check-silent-stubs.js
 # app then looks merely slower. Gate it here, where whoever added the import is
 # already standing.
 node tools/gen-host-import-sigs.js --check
+# Browser scripts and Workers share modules but cache them independently. A
+# version drift is valid JavaScript and usually boots, leaving two generations
+# of an ABI in one process. Normalize page/Worker URLs, require cache keys on
+# shipped script/importScripts edges, and hold host.js's source-artifact key to
+# the version that fetched host.js itself. --self-test plants every failure
+# class, so broadening the scanner cannot quietly turn it into a no-op.
+node tools/check-browser-cache-versions.js --self-test
 # The committed browser bundle of the toy VM must be reproducible from source.
 # It inlines every tools/toyvm module verbatim, so a source edit that skips
 # regeneration ships old code to the page while every test stays green on the

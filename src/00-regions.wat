@@ -212,7 +212,7 @@
   (region.declare $RESERVED_PAGE_STRINGS (size 0x00000280) (align 0x00000080)
     (owner "01-header.wat:1005"))
   ;; The texts on the shutting-down / safe-to-turn-off screens.
-  (region.declare $POWER_SCREEN_STRINGS (size 0x00000080) (align 0x00000010)
+  (region.declare $POWER_SCREEN_STRINGS (size 0x000000C0) (align 0x00000010)
     (owner "09c3-controls.wat:1710"))
   (region.declare-fixed $GUEST_BASE (base 0x00012000) (size 0x03C00000) (align 0x00001000)
     (owner "03-registers.wat:79"))
@@ -359,7 +359,7 @@
   (region.declare $CURSOR_COLOR_DESC (size 0x00000050) (align 0x00000010)
     (owner "09a-handlers.wat:4964"))
   (region.declare $EDIT_LAYOUT_SCRATCH (size 0x00000C00) (align 0x00000100)
-    (owner "09c3-controls.wat:13928"))
+    (owner "09c3-controls.wat:13972"))
   (region.declare $VIRTUAL_MAP_STATE (size 0x00000010) (align 0x00000100)
     (owner "10-helpers.wat:440"))
   (region.declare $VIRTUAL_MAP_TABLE (size 0x00008000) (align 0x00000010)

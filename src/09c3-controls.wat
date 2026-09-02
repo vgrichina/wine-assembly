@@ -1715,6 +1715,10 @@
   ;; The wordmark is this machine's, not Microsoft's.
   (data (region.addr $POWER_SCREEN_STRINGS 0x55) "Wine-Assembly\00")
   (data (region.addr $POWER_SCREEN_STRINGS 0x63) "by berrry.app\00")
+  ;; The footer the safe-to-turn-off screen grows a moment later (kind 2).
+  (data (region.addr $POWER_SCREEN_STRINGS 0x71) "Thanks for running Wine-Assembly.\00")
+  (data (region.addr $POWER_SCREEN_STRINGS 0x93) "Restart\00")
+  (data (region.addr $POWER_SCREEN_STRINGS 0x9B) "berrry.app\00")
 
   ;; Text centred on $cx, top at $y, in the DC's current font and colour.
   (func $power_text_centred (param $hdc i32) (param $cx i32) (param $y i32)
@@ -1861,8 +1865,23 @@
     (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))
     (drop (call $host_gdi_delete_object (local.get $font))))
 
-  ;; LOGOS.SYS: two orange lines on black.
-  (func $power_paint_off (param $hdc i32)
+  ;; A 1px box in the current colour: the footer's two buttons.
+  (func $power_box (param $hdc i32) (param $left i32) (param $top i32)
+    (param $right i32) (param $bottom i32) (param $color i32)
+    (call $power_fill (local.get $hdc) (local.get $left) (local.get $top)
+      (local.get $right) (i32.add (local.get $top) (i32.const 1)) (local.get $color))
+    (call $power_fill (local.get $hdc) (local.get $left) (i32.sub (local.get $bottom) (i32.const 1))
+      (local.get $right) (local.get $bottom) (local.get $color))
+    (call $power_fill (local.get $hdc) (local.get $left) (local.get $top)
+      (i32.add (local.get $left) (i32.const 1)) (local.get $bottom) (local.get $color))
+    (call $power_fill (local.get $hdc) (i32.sub (local.get $right) (i32.const 1)) (local.get $top)
+      (local.get $right) (local.get $bottom) (local.get $color)))
+
+  ;; LOGOS.SYS: two orange lines on black. With $footer, the bottom of the
+  ;; picture also carries a thank-you line and two boxed choices in the same
+  ;; orange -- Restart at (40,352)-(152,376) and berrry.app at
+  ;; (168,352)-(280,376), which lib/shutdown.js hit-tests by those numbers.
+  (func $power_paint_off (param $hdc i32) (param $footer i32)
     (local $font i32) (local $old i32)
     (call $power_fill (local.get $hdc) (i32.const 0) (i32.const 0)
       (i32.const 320) (i32.const 400) (i32.const 0x00000000))
@@ -1875,9 +1894,34 @@
     (call $power_text_centred (local.get $hdc) (i32.const 160) (i32.const 202)
       (region.addr $POWER_SCREEN_STRINGS 0x46) (i32.const 14))
     (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))
-    (drop (call $host_gdi_delete_object (local.get $font))))
+    (drop (call $host_gdi_delete_object (local.get $font)))
+    (if (local.get $footer)
+      (then
+        ;; The thank-you, in a dimmer orange, plain face.
+        (local.set $font (call $power_font (i32.const 13) (i32.const 400)))
+        (local.set $old (call $host_gdi_select_object (local.get $hdc) (local.get $font)))
+        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00245E92)))
+        (call $power_text_centred (local.get $hdc) (i32.const 160) (i32.const 326)
+          (region.addr $POWER_SCREEN_STRINGS 0x71) (i32.const 33))
+        (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))
+        (drop (call $host_gdi_delete_object (local.get $font)))
+        ;; The two choices, boxed, bold, in the screen's own orange.
+        (local.set $font (call $power_font (i32.const 13) (i32.const 700)))
+        (local.set $old (call $host_gdi_select_object (local.get $hdc) (local.get $font)))
+        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x003A9CF4)))
+        (call $power_box (local.get $hdc) (i32.const 40) (i32.const 352)
+          (i32.const 152) (i32.const 376) (i32.const 0x003A9CF4))
+        (call $power_text_centred (local.get $hdc) (i32.const 96) (i32.const 357)
+          (region.addr $POWER_SCREEN_STRINGS 0x93) (i32.const 7))
+        (call $power_box (local.get $hdc) (i32.const 168) (i32.const 352)
+          (i32.const 280) (i32.const 376) (i32.const 0x003A9CF4))
+        (call $power_text_centred (local.get $hdc) (i32.const 224) (i32.const 357)
+          (region.addr $POWER_SCREEN_STRINGS 0x9B) (i32.const 10))
+        (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))
+        (drop (call $host_gdi_delete_object (local.get $font))))))
 
-  ;; Paint screen $kind (0 shutting down, 1 safe to turn off) and return the
+  ;; Paint screen $kind (0 shutting down, 1 safe to turn off, 2 the same with
+  ;; the what-now footer) and return the
   ;; linear address of its pixels: 320 columns of BGRX, 1280 bytes a row,
   ;; 400 rows top-down. 0 when the DIB could not be made. The bitmap is left
   ;; alive on purpose -- the host reads it and the machine goes down.
@@ -1903,7 +1947,7 @@
         (return (i32.const 0))))
     (local.set $old (call $host_gdi_select_object (local.get $hdc) (local.get $bmp)))
     (if (local.get $kind)
-      (then (call $power_paint_off (local.get $hdc)))
+      (then (call $power_paint_off (local.get $hdc) (i32.eq (local.get $kind) (i32.const 2))))
       (else (call $power_paint_wait (local.get $hdc))))
     (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))
     (drop (call $host_gdi_delete_dc (local.get $hdc)))

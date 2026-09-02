@@ -112,6 +112,24 @@ assert.strictEqual(forwardFullTree.success, true, forwardFullTree.error);
 assert.deepStrictEqual(Buffer.from(forwardStreaming.wasmBinary), Buffer.from(forwardFullTree.wasmBinary));
 assert.strictEqual(new WebAssembly.Instance(new WebAssembly.Module(forwardStreaming.wasmBinary)).exports.forward(), 42);
 
+// The streaming body parser retains its repeated symbol vocabulary while
+// recycling each function tree. Exercise enough bodies to cross that path and
+// keep its output pinned to the full-tree parser.
+const repeatedSymbolSource = Array.from({ length: 128 }, (_, i) =>
+  `(func $repeat_${i} (param $x i32) (result i32) (effects) ` +
+  `(i32.add (local.get $x) (i32.const 1)))`).join('\n') +
+  `\n(func $repeat_export (export "repeat") (result i32) (effects) ` +
+  `(call $repeat_127 (i32.const 41)))\n`;
+const repeatedSymbolStreaming = compile(
+  repeatedSymbolSource, new Map(), { mode: 'production', runtimeBuiltins: false });
+const repeatedSymbolFullTree = compile(
+  repeatedSymbolSource, new Map(), { mode: 'production', runtimeBuiltins: false, streaming: false });
+assert.strictEqual(repeatedSymbolStreaming.success, true, repeatedSymbolStreaming.error);
+assert.deepStrictEqual(
+  Buffer.from(repeatedSymbolStreaming.wasmBinary), Buffer.from(repeatedSymbolFullTree.wasmBinary));
+assert.strictEqual(
+  new WebAssembly.Instance(new WebAssembly.Module(repeatedSymbolStreaming.wasmBinary)).exports.repeat(), 42);
+
 // Merely defining a macro with an indirect-call signature must not change the
 // type section. Pass 1 follows only macros actually referenced by a function.
 const unusedMacroSource = `

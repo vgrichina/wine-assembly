@@ -4,9 +4,9 @@
 // The page half of shutdown (lib/shutdown.js): the Start menu's last item
 // opens the "Shut Down Windows" dialog, OK on its default option shows the
 // shutting-down screen, every guest is stopped underneath it, and the screen
-// ends on the orange "It's now safe to turn off your computer." -- where a
-// footer offers Restart (the power button: reloads the page) and a link to
-// berrry.app, and nothing else wakes it. Stand by is the
+// ends on the orange "It's now safe to turn off your computer." -- which a
+// moment later grows a painted footer offering Restart (the power button:
+// reloads the page) and berrry.app, and nothing else wakes it. Stand by is the
 // opposite contract and is checked too: a dark screen, nothing stopped, the
 // first key wakes it and never reaches the guest.
 //
@@ -213,35 +213,58 @@ async function main() {
     }));
     state.logo = await page.evaluate(logoStats);
     check(state.running === 0 && state.windows === 0, 'every guest was stopped on the way down');
-    check(!!state.logo && state.logo.painted && state.logo.kind === '1',
+    check(!!state.logo && state.logo.painted && (state.logo.kind === '1' || state.logo.kind === '2'),
       'the final screen is the emulator-painted safe-to-turn-off bitmap');
     if (state.logo) {
-      check(state.logo.colours === 2 && state.logo.orange > 300 && state.logo.black > state.logo.total * 0.9,
+      check(state.logo.colours <= 3 && state.logo.orange > 300 && state.logo.black > state.logo.total * 0.9,
         `orange text on black, nothing else (${state.logo.colours} colours, ${state.logo.orange} orange px)`);
     }
     await page.screenshot({ path: path.join(OUT, 'safe-to-turn-off.png') });
+    // A moment later the picture grows its footer: same GDI, same orange,
+    // two boxed choices. Painted, not HTML -- so it scales with the bitmap.
+    const plainOrange = state.logo ? state.logo.orange : 0;
+    await page.waitForFunction(() => {
+      const canvas = document.querySelector('#wine-power-screen canvas.logo');
+      return canvas && canvas.dataset.kind === '2' && canvas.dataset.painted === '1';
+    }, { timeout: 10000 });
+    state = await page.evaluate(logoStats);
+    check(!!state && state.colours === 3 && state.orange > plainOrange + 400,
+      `the footer is painted into the bitmap (${state && state.colours} colours, ${state && state.orange} orange px, was ${plainOrange})`);
+    await page.screenshot({ path: path.join(OUT, 'safe-to-turn-off-footer.png') });
 
     // The machine is off. A stray click or key must NOT restart it: only the
-    // footer's Restart button reloads the page, and its other action opens
-    // berrry.app in a new tab and leaves the screen alone.
+    // painted Restart box reloads the page, and the berrry.app box opens a
+    // new tab and leaves the screen alone.
     await page.mouse.click(VIEWPORT.width / 2, VIEWPORT.height / 2);
     await page.keyboard.press('Enter');
     await new Promise(r => setTimeout(r, 400));
-    state = await page.evaluate(() => ({
-      phase: window.wineShutdown.phase(),
-      footer: !!document.querySelector('#wine-power-screen .footer.on'),
-      restart: !!document.querySelector('#wine-power-screen .footer button.restart'),
-      visit: (a => a && { href: a.href, target: a.target, rel: a.rel })(document.querySelector('#wine-power-screen .footer a.visit')),
-    }));
+    state = await page.evaluate(() => ({ phase: window.wineShutdown.phase() }));
     check(state.phase === 'off', 'a click on the dead screen and a key press leave the machine off');
-    await page.waitForSelector('#wine-power-screen .footer.on', { timeout: 10000 });
-    check(state.restart && !!state.visit && state.visit.href === 'https://berrry.app/' &&
-      state.visit.target === '_blank' && /noopener/.test(state.visit.rel),
-      `the footer offers Restart and a berrry.app link in a new tab (${JSON.stringify(state.visit)})`);
-    await page.screenshot({ path: path.join(OUT, 'safe-to-turn-off-footer.png') });
+    // Where the boxes are on screen: bitmap pixels through the canvas scale.
+    const boxCentre = await page.evaluate(() => {
+      const canvas = document.querySelector('#wine-power-screen canvas.logo');
+      const rect = canvas.getBoundingClientRect();
+      const out = {};
+      for (const h of window.wineShutdown.footerHits()) {
+        out[h.name] = {
+          x: rect.left + (h.left + h.right) / 2 * rect.width / canvas.width,
+          y: rect.top + (h.top + h.bottom) / 2 * rect.height / canvas.height,
+        };
+      }
+      return out;
+    });
+    await page.evaluate(() => {
+      window.__opened = [];
+      window.open = (url, target, features) => { window.__opened.push([url, target, features]); return null; };
+    });
+    await page.mouse.click(boxCentre.visit.x, boxCentre.visit.y);
+    state = await page.evaluate(() => ({ phase: window.wineShutdown.phase(), opened: window.__opened }));
+    check(state.phase === 'off' && state.opened.length === 1 && state.opened[0][0] === 'https://berrry.app' &&
+      state.opened[0][1] === '_blank' && /noopener/.test(state.opened[0][2]),
+      `the berrry.app box opens the site in a new tab and leaves the screen (${JSON.stringify(state.opened)})`);
     // Restart is the power button: the page reloads to a fresh desktop.
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 60000 });
-    await page.click('#wine-power-screen .footer button.restart');
+    await page.mouse.click(boxCentre.restart.x, boxCentre.restart.y);
     await navigation;
     await page.waitForFunction(() => typeof launchApp === 'function' &&
       document.querySelector('.desktop-icon'), { timeout: 60000 });
@@ -268,7 +291,7 @@ async function main() {
     // screen must already be in hand, or it comes up black.
     await page.waitForFunction(() => window.wineShutdown.phase() === 'off', { timeout: 15000 });
     state = await page.evaluate(logoStats);
-    check(!!state && state.painted && state.kind === '1' && state.colours === 2 && state.orange > 300,
+    check(!!state && state.painted && (state.kind === '1' || state.kind === '2') && state.colours <= 3 && state.orange > 300,
       `and the safe-to-turn-off screen is painted too (${state && state.colours} colours, ${state && state.orange} orange px)`);
     await page.screenshot({ path: path.join(OUT, 'bare-safe-to-turn-off.png') });
     await page.evaluate(() => window.wineShutdown.wake());

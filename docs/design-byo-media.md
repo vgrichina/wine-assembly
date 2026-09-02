@@ -748,11 +748,11 @@ repository interface:
  remove(path)          -> Promise<void>
 ```
 
-`lib/overlay-store.js` ships two: `memoryStore()` (tests, and the private-
-browsing fallback where OPFS is unavailable) and `nodeDirStore(dir)` (the CLI
+`lib/overlay-store.js` ships three: `memoryStore()` (tests, and the private-
+browsing fallback where OPFS is unavailable), `nodeDirStore(dir)` (the CLI
 `--overlay-dir=DIR`, which is what lets an installer be tested headlessly end
-to end — run once to install, run again to prove the tree came back). The
-**OPFS store is phase ④'s to supply**: it is a third implementation of these
-four methods, wired as `attach(vfs, {store: opfsStore(importId)})`. There is
-deliberately no OPFS stub here — `assertStore()` throws naming the missing
-method, so a half-wired backend fails at attach rather than at eviction time.
+to end — run once to install, run again to prove the tree came back), and
+`opfsStore(importId)` for the browser. The OPFS store keeps one isolated
+journal per kept import, writes new blobs before publishing their index, and
+removes pre-index crash orphans when it next opens. It implements the same four
+methods and is wired as `attach(vfs, {store: opfsStore(importId)})`.
