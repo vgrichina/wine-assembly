@@ -147,5 +147,5 @@ CHANGELOG already names the new digest.
 
 ```seal
 manifest-sha256   645366f9c897b95193b40486a856b69b23a7367f270cb0f63f744eeb1adf0ba2
-changelog-sha256  c3e14e21f4202fc26f7805d185dfd85f6373d69e95b3db65c293e7ba8481873a
+changelog-sha256  f75d70135d33c30a0ec33ac1b68d9d1decff0d21c67ce4fdd75eb2ae02ff0d72
 ```
