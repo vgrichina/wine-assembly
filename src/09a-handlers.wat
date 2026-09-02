@@ -16429,12 +16429,13 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 680: UnregisterClassW — STUB: unimplemented
-  ;; UnregisterClassW(lpClassName, hInstance) — class records are keyed by a
-  ;; byte-string hash after conversion, so the A path already covers both.
+  ;; 680: UnregisterClassW(lpClassName, hInstance). Convert the UTF-16 class
+  ;; name before lookup; class atoms use the same low-word form as the A API.
   (func $handle_UnregisterClassW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_UnregisterClassA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (global.set $eax
+      (call $unregister_class_core
+        (local.get $arg0) (local.get $arg1) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; Show or hide every top-level popup directly owned by hwndOwner. OWNER_TABLE

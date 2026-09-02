@@ -335,7 +335,20 @@ BTW.EXE       [1] 210h &hellip; <b>[0] Just kidding! I don't even own a GUS!!!</
 <dialog id="lb">
   <div class="dlg-bar"><span id="lb-name"></span>
     <a class="r pouet" id="lb-pouet" target="_blank" rel="noopener noreferrer" hidden>pouet &#8599;</a>
-    <span class="r" id="lb-meta"></span></div>
+    <span class="r" id="lb-meta"></span>
+    <span class="r ctl" id="lb-ctl">
+      <label title="how fast the emulated machine is; changing it restarts the demo">cpu
+        <select id="lb-cpu">
+          <option value="5">386 &middot; 5 MIPS</option>
+          <option value="10" selected>486 &middot; 10 MIPS</option>
+          <option value="25">Pentium &middot; 25 MIPS</option>
+          <option value="0">unpaced &middot; flat out</option>
+        </select></label>
+      <button type="button" id="lb-sound" class="tog" aria-pressed="true"
+        title="sound on/off">sound</button>
+      <button type="button" id="lb-fs" class="tog" title="full screen (Esc leaves)">&#x26F6; full</button>
+      <button type="button" id="lb-close" class="tog" title="close">&#x2715;</button>
+    </span></div>
   <div class="dlg-stage">
     <img id="lb-img" alt="">
     <canvas id="lb-canvas" width="320" height="200" hidden tabindex="0"

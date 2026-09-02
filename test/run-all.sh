@@ -138,6 +138,7 @@ UNIT=(
   test/test-renderer-dialog-button-queue.js
   test/test-dialog-button-command-queue.js
   test/test-dialog-custom-class.js
+  test/test-unregister-class.js
   test/test-nc-flags-message-wake.js
   test/test-browser-step-scheduler.js
   test/test-browser-worker-run-slice.js
@@ -536,6 +537,7 @@ UNIT=(
   test/test-token-security.js
   test/test-toyvm-browser-bundle.js
   test/test-toyvm-live.js
+  test/test-toyvm-audio.js
   test/test-user-default-ui-language.js
   test/test-virtual-query-user-boundary.js
   test/test-wave-in-dev-caps.js

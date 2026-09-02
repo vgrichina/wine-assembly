@@ -24,6 +24,7 @@
 
 const fs = require('fs');
 const isa = require('./isa');
+const { Sound, PIT_HZ } = require('./audio');
 
 const VGA_BASE = 0xA0000;
 const STUB_SEG = 0xF000;      // vector v points at F000:(0x100+v), one refused byte
@@ -591,6 +592,11 @@ function newConsole(mem) {
 const SILENT_LABEL =
   /\b(no|without|none|neither|not?)\s*(sound|music|sfx|audio|card|soundcard)?\b|^\s*(none|silence|silent|quit|exit|no)\b|pc[- ]?speaker|internal speaker|beeper|no thanks|just kidding|don'?t\s+(even\s+)?(own|have)|no\s*gus/i;
 
+// The option that names the card this machine has, and the ones that name a
+// better card it does not.
+const SB_LABEL = /sound\s*blaster|\bblaster\b|\bsb\b/i;
+const SB_NOT_LABEL = /\bpro\b|\b16\b|awe|\bgus\b|ultra|compatible/i;
+
 // An option that leaves rather than chooses. It has to be told apart from
 // SILENT_LABEL, which matches "Quit back to DOS" on its first word alone.
 const QUIT_LABEL = /\b(quit|exit|abort|back\s+to\s+dos)\b/i;
@@ -843,7 +849,23 @@ class Machine {
       // The two numbers that say how long a block takes: samples in it, and
       // samples per second. See sbBlockSeconds.
       rate: 8000, len: 0,
+      // The transfer as audio.js consumes it: samples left in the block, the
+      // DMA channel and sample format, whether the block-done interrupt is
+      // owed, and the level the stream is currently at. See Sound.sbNext.
+      left: 0, chan: 1, bits: 8, signed: false, stereo: false, irqDue: false,
+      lastL: 0, lastR: 0,
     };
+    // The samples behind the card, and the speaker. Renders only when a host
+    // attaches a sink (the page, --audio=); see audio.js.
+    this.audio = new Sound(this);
+    this.port61 = 0;
+    // Where the slice being run started and how big it is, in dispatches, so
+    // a port write can say WHEN it happened within the slice (audioNow).
+    this.sliceStart = 0;
+    this.sliceBudget = 0;
+    // Which option the menu answerer picks on a sound menu: 'silent' is the
+    // sweep's choice, 'sb' takes a plain Sound Blaster when one is offered.
+    this.soundPref = opts.soundPref || 'silent';
     // The 8253, as three down-counters rather than a number that goes up.
     //
     // Channel 0 is the one that matters: it divides 1.193182 MHz by its latch,
@@ -1249,6 +1271,14 @@ class Machine {
         const label = (m[1] === '(' && m[3] === '' ? m[2] + m[4] : m[4]).trim();
         opts.push({ ch: m[2], label });
       }
+    }
+    // With a listener present, a plain Sound Blaster is the answer when one is
+    // on the menu: that is the card behind the ports. Not a Pro or a 16 -- the
+    // DSP answers 2.01 and a driver told to expect more refuses it -- and not
+    // when the option only says "sound card", which is usually a submenu.
+    if (this.soundPref === 'sb') {
+      const sb = opts.find(o => SB_LABEL.test(o.label) && !SB_NOT_LABEL.test(o.label));
+      if (sb) return key(sb.ch);
     }
     const silent = opts.find(o => SILENT_LABEL.test(o.label));
     if (silent) return key(silent.ch);
@@ -1907,8 +1937,10 @@ class Machine {
     if (v === 0x14 || v === 0x15 || v === 0x16 || v === 0x17 || v === 0x80
         || v === 0x1C || v === 0x1D || v === 0x2C || v === 0x90 || v === 0x91
         || (v >= 0xB0 && v <= 0xCF)) {
+      // The SB16 forms carry auto-init in bit 2 of the COMMAND (Bx/Cx + 4);
+      // the mode byte that follows says signed/stereo, not that.
       this.sb.autoInit = v === 0x1C || v === 0x1D || v === 0x2C || v === 0x90
-        || (v >= 0xB0 && v <= 0xCF && (args[0] & 4) !== 0);
+        || (v >= 0xB0 && v <= 0xCF && (v & 4) !== 0);
       this.sb.pending = true;
       // How long the block is, in samples. The 8-bit single-cycle commands
       // carry it themselves; the auto-init ones use whatever 48h last set; the
@@ -1924,6 +1956,17 @@ class Machine {
       // "failed to load MSE" for a card it had already identified twice.
       // Anything long enough to actually be audio keeps the cadence.
       this.sb.len = len + 1;                // the count is one less, as in DMA
+      // What audio.js pulls through the DMA channel from here on. The 8-bit
+      // commands are unsigned mono on channel 1; the SB16 forms carry a mode
+      // byte (bit 4 signed, bit 5 stereo) and the 16-bit ones use channel 5.
+      const sb16 = v >= 0xB0 && v <= 0xCF;
+      this.sb.bits = sb16 && v < 0xC0 ? 16 : 8;
+      this.sb.signed = sb16 ? (args[0] & 0x10) !== 0 : false;
+      this.sb.stereo = sb16 ? (args[0] & 0x20) !== 0 : false;
+      this.sb.chan = this.sb.bits === 16 ? this.audio.dma.recent16 : this.audio.dma.recent8;
+      this.sb.left = this.sb.len;
+      this.sb.irqDue = false;
+      this.audio.sbSide = 0;
       if (len <= SB_SHORT_BLOCK) { this.sb.forced = true; this.endSlice(); }
       return;
     }
@@ -1952,15 +1995,45 @@ class Machine {
   // here. Auto-init keeps going, single-cycle does not.
   sbIrq() {
     if (this.sound !== 'full') return 0;
-    if (!this.sb.forced && (!this.sb.pending || this.sb.paused)) return 0;
+    if (!this.sb.forced && !this.sb.irqDue) return 0;
     if (!this.hookedVector(SB_IRQ_VEC)) return 0;
     // A forced IRQ answers for itself and leaves any transfer alone: a driver
     // that probes in the middle of playback must not have its block completed
-    // out from under it.
+    // out from under it. A block's own interrupt is owed once the last sample
+    // of it went through the DMA channel (Sound.sbNext), and auto-init has
+    // already re-armed the next block by the time it is delivered.
     if (this.sb.forced) this.sb.forced = false;
-    else this.sb.pending = this.sb.autoInit;
+    else this.sb.irqDue = false;
     this.sb.irqs++;
     return SB_IRQ_VEC;
+  }
+
+  // Whether a block has finished and its interrupt is waiting to be delivered.
+  sbDue() {
+    return this.sb.irqDue;
+  }
+
+  // The dispatch count right now, inside the slice being run: where the slice
+  // started plus what the VM has spent of its budget. This is what lets a port
+  // write be placed at the right sample when the slice is rendered.
+  audioNow() {
+    const ex = this.vmExports;
+    if (!ex || !ex.get_steps) return this.sliceStart;
+    const left = ex.get_steps();
+    return this.sliceStart + Math.max(0, this.sliceBudget - Math.max(0, left));
+  }
+
+  // `dt` guest seconds went by over the slice that started at `sliceStart` and
+  // spent `spent` dispatches. Consumes the sample stream and, with a sink,
+  // renders it.
+  audioAdvance(dt, sliceStart, spent) {
+    this.audio.advance(dt, sliceStart, spent);
+  }
+
+  // A write that changes what the speaker does, stamped with when.
+  speakerChanged() {
+    this.audio.noteSpeaker(this.audioNow(), this.port61 & 1, (this.port61 >> 1) & 1,
+      this.pit.latch[2]);
   }
 
   // How long the block now in flight lasts, in guest seconds. A block-done
@@ -2156,6 +2229,16 @@ class Machine {
       if (this.kbQueue.length) this.kbScan = this.kbQueue.shift();
       return this.kbScan;
     }
+    // System control port B: the speaker gate and data bits a driver reads,
+    // modifies and writes back. Bit 4 is the refresh toggle, which flips so a
+    // loop timing itself against it moves.
+    if (port === 0x61) return (this.port61 & 0x0F) | ((this.clock.pit++ & 1) << 4);
+    // The DMA controllers, which a driver programs and reads back -- the
+    // current count is how it finds the playback position.
+    if ((port <= 0x0F) || (port >= 0x80 && port <= 0x8F) || (port >= 0xC0 && port <= 0xDF)) {
+      const v = this.audio.dma.read(port);
+      if (v >= 0) return v;
+    }
     // --- Sound Blaster, base 0x220 -----------------------------------------
     // Detection only, and deliberately so. About a dozen programs in this
     // corpus print a refusal instead of a demo -- "No (currently supported)
@@ -2225,6 +2308,17 @@ class Machine {
     if (port === 0x388 || port === 0x228) { this.adlibIndex = value; return; }
     if (port === 0x389 || port === 0x229) { this.adlibWrite(value); return; }
     if (port === 0x224 || port === 0x225) { return; }   // mixer index/data
+    // The speaker: bit 0 gates PIT channel 2 into it, bit 1 is its data line.
+    if (port === 0x61) {
+      const was = this.port61;
+      this.port61 = value;
+      if ((was ^ value) & 3) this.speakerChanged();
+      return;
+    }
+    // The DMA controllers (0x00-0x0F, 0xC0-0xDF) and their page registers.
+    if (port <= 0x0F || (port >= 0x80 && port <= 0x8F) || (port >= 0xC0 && port <= 0xDF)) {
+      if (this.audio.dma.write(port, value)) return;
+    }
     // The PIT. A demo reprogramming channel 0 is asking for a faster music
     // interrupt, and one reprogramming channel 2 is driving the speaker; both
     // change what a read of the counter means, so the latch has to be kept.
@@ -2243,6 +2337,10 @@ class Machine {
       else if (p.access[ch] === 2) p.latch[ch] = (value << 8) || 0x10000;
       else if (p.pending[ch] === 0) { p.latch[ch] = value; p.pending[ch] = 1; }
       else { p.latch[ch] = ((value << 8) | (p.latch[ch] & 0xFF)) || 0x10000; p.pending[ch] = 0; }
+      // Channel 2 is the speaker's pitch. A complete reload (or a one-byte
+      // one) changes the note; the low half of a two-byte reload does not
+      // yet.
+      if (ch === 2 && p.pending[ch] === 0 && (this.port61 & 2)) this.speakerChanged();
       return;
     }
     if (port === 0x3C8) { this.dacWriteIndex = value; this.dacSubIndex = 0; return; }
