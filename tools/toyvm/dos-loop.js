@@ -1046,6 +1046,10 @@ class DosSession {
       specOps: this.cache.specOps,
       arenaResets: this.cache.arenaResets, unimplemented: this.cache.unimplemented,
       regions: this.cache.regions, jtab: this.cache.jtab,
+      // The widened-REP census: [runs, bytes, declined by reason 0..6, declined bytes].
+      rep: this.vm.exports.get_rep_stat
+        ? [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => this.vm.exports.get_rep_stat(i) >>> 0)
+        : null,
     };
   }
 }

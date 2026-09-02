@@ -2480,10 +2480,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 77: TranslateMessage(lpMsg) — translates virtual-key messages to char messages
-  ;; We handle keyboard input in the renderer, so this is a no-op that returns success
+  ;; 77: TranslateMessage(lpMsg) — browser already queues WM_CHAR; preserve MSG and report only virtual-key messages.
   (func $handle_TranslateMessage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (local $msg i32)
+    (local.set $msg (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))) (global.set $eax (i32.or (i32.or (i32.eq (local.get $msg) (i32.const 0x0100)) (i32.eq (local.get $msg) (i32.const 0x0101))) (i32.or (i32.eq (local.get $msg) (i32.const 0x0104)) (i32.eq (local.get $msg) (i32.const 0x0105)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
