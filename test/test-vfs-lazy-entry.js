@@ -334,6 +334,33 @@ test('a provider whose fill rejects latches a read failure, not a park loop',
     assert(asked > 0, 'the provider should actually have been asked');
   });
 
+test('a short Range response faults instead of becoming zero-filled bytes',
+  async () => {
+    let asked = 0;
+    const short = {
+      size: SIZE,
+      readRange(off, len) {
+        asked++;
+        return Promise.resolve(BYTES.subarray(off, off + Math.max(0, len - 1)));
+      },
+    };
+    const vfs = new VirtualFS();
+    vfs.setProviderFile(GUEST, {
+      provider: new bp.ChunkCache(short, { readAhead: 0 }),
+    });
+    const h = vfs.createFile(GUEST, 0x80000000, 3);
+    let r = vfs.readFile(h, new Uint8Array(4096), 4096);
+    assert(r.pending, 'the first read should park on an empty cache');
+    assert.strictEqual(await vfs.fillPendingRead(r.pending), false,
+      'a short chunk must reject the pending fill');
+    r = vfs.readFile(h, new Uint8Array(4096), 4096);
+    assert(!r.ok && r.faulted, 'the retry must fail instead of returning padded bytes');
+    assert.strictEqual(r.error, 30, 'short provider data is ERROR_READ_FAULT');
+    assert.strictEqual(vfs.handles.get(h >>> 0).pos, 0,
+      'the failed read must not advance the file position');
+    assert.strictEqual(asked, 1, 'the bad chunk is not cached and retried as if complete');
+  });
+
 test('a fill that never satisfies the read gives up instead of spinning', () => {
   // Resolves, but hands back nothing — a provider lying about its size, or a
   // Range response the server truncated.
