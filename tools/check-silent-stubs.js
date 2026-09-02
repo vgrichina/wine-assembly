@@ -101,8 +101,12 @@ const digest = crypto.createHash('sha256')
 // 2026-09-02: 531 -> 529. Legacy SetWindowsHookA/W now installs the same
 // process-local keyboard/CBT callbacks as the Ex path, and UnhookWindowsHook
 // removes only a matching installed procedure instead of always succeeding.
-const EXPECTED_COUNT = 529;
-const EXPECTED_SHA256 = '8f4b644b4f652684da0cde5b04f959de4c780e1ae3deff3494340e1248bd23ae';
+// 2026-09-02: 529 -> 516. DirectPlay's bounded local session now retains
+// player/group identities, names, flags and memberships; its lifecycle and
+// four entity enumerators update or traverse that state instead of returning
+// success without work.
+const EXPECTED_COUNT = 516;
+const EXPECTED_SHA256 = '094232e3519ad2bf6ae71a27b0372e3346f754a6446d90632183d6cecca14f44';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
