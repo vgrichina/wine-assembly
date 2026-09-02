@@ -730,6 +730,55 @@ async function main() {
   check('LVM_DELETEALLITEMS clears count', e.listview_get_count(lv) === 0);
   check('LVM_DELETEALLITEMS clears selection', e.listview_get_selected_index(lv) === -1);
 
+  // ---- Inserting and deleting in the MIDDLE. Every column/item check above
+  // this point appends, or removes the last entry, and both of those move
+  // nothing: the column shift and the item-record shift would pass all of
+  // them with their bodies deleted outright. These are the checks that read
+  // the shifted run back, so a wrong direction or an off-by-one length shows
+  // up as reordered or duplicated text rather than as a silent pass.
+  check('LVM_DELETECOLUMN empties the column list', e.send_message(lv, LVM_DELETECOLUMN, 0, 0) === 1);
+  check('column list is empty before the shift checks', e.listview_get_column_count(lv) === 0);
+  insertColumn(0, 'C0', 40);
+  insertColumn(1, 'C1', 50);
+  insertColumn(2, 'C2', 60);
+  insertColumn(3, 'C3', 70);
+  check('LVM_INSERTCOLUMNA in the middle returns its index', insertColumn(1, 'MID', 55) === 1);
+  check('middle column insert grows the count', e.listview_get_column_count(lv) === 5);
+  const colsIns = [0, 1, 2, 3, 4].map(getColumn);
+  check('middle column insert keeps column text in order',
+    colsIns.map(c => c.text).join(',') === 'C0,MID,C1,C2,C3',
+    colsIns.map(c => c.text).join(','));
+  check('middle column insert keeps each width with its own column',
+    colsIns.map(c => c.width).join(',') === '40,55,50,60,70',
+    colsIns.map(c => c.width).join(','));
+
+  check('LVM_DELETECOLUMN in the middle succeeds', e.send_message(lv, LVM_DELETECOLUMN, 1, 0) === 1);
+  check('middle column delete shrinks the count', e.listview_get_column_count(lv) === 4);
+  const colsDel = [0, 1, 2, 3].map(getColumn);
+  check('middle column delete closes the hole in text order',
+    colsDel.map(c => c.text).join(',') === 'C0,C1,C2,C3',
+    colsDel.map(c => c.text).join(','));
+  check('middle column delete closes the hole in widths',
+    colsDel.map(c => c.width).join(',') === '40,50,60,70',
+    colsDel.map(c => c.width).join(','));
+
+  insertItem(0, 'R0');
+  insertItem(1, 'R1');
+  insertItem(2, 'R2');
+  setSubitem(0, 1, 'S0');
+  setSubitem(1, 1, 'S1');
+  setSubitem(2, 1, 'S2');
+  check('LVM_INSERTITEMA in the middle returns its index', insertItem(1, 'MIDROW') === 1);
+  setSubitem(1, 1, 'SMID');
+  check('middle item insert grows the count', e.listview_get_count(lv) === 4);
+  const rowText = [0, 1, 2, 3].map(i => getItemText(i, 0).text).join(',');
+  check('middle item insert keeps row text in order', rowText === 'R0,MIDROW,R1,R2', rowText);
+  // The whole 44-byte record moves, not just column 0, so the subitem text
+  // pointers have to land on the same rows their labels did.
+  const subText = [0, 1, 2, 3].map(i => getItemText(i, 1).text).join(',');
+  check('middle item insert carries subitem text with its row', subText === 'S0,SMID,S1,S2', subText);
+  check('LVM_DELETEALLITEMS clears the shift fixture', e.send_message(lv, LVM_DELETEALLITEMS, 0, 0) === 1);
+
   if (e.wnd_destroy_tree) e.wnd_destroy_tree(lv - 1);
   check('slot count returns to baseline after destroy', e.wnd_count_used() === baselineSlots);
 
