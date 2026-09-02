@@ -7162,9 +7162,9 @@
   )
 
   ;; 190: BringWindowToTop(hWnd) — 1 arg stdcall
-  ;; Sets window to top of Z-order. Single-window model: always succeeds.
+  ;; Raise the HWND among siblings, then activate its associated top-level window.
   (func $handle_BringWindowToTop (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (call $host_set_window_zorder (local.get $arg0) (i32.const 0)) (global.set $eax (call $host_activate_window (local.get $arg0))) ;; HWND_TOP then activate
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 

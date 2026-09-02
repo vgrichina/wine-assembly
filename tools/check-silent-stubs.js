@@ -140,8 +140,10 @@ const digest = crypto.createHash('sha256')
 // virtual-key messages from unrelated MSGs instead of always returning TRUE.
 // 2026-09-02: 482 -> 480. SetThreadLocale and GetThreadLocale now retain real
 // per-thread LCID state and carry it into newly created threads.
-const EXPECTED_COUNT = 480;
-const EXPECTED_SHA256 = '5ba7eb11b05df2dba2e8afc35e8748d2efc896d1030f92bdbd74438c90fff94c';
+// 2026-09-02: 480 -> 479. BringWindowToTop now changes sibling/top-level
+// z-order and activation state instead of reporting unconditional success.
+const EXPECTED_COUNT = 479;
+const EXPECTED_SHA256 = 'a4cb6913fc640866f8d270230860b17fcd5d386272fe45c2da697ca52c781a69';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
