@@ -1017,6 +1017,43 @@ also substitutes a `.memarg` load for the advertised seventh accessor and
 never plants `store.field-elem`. Add negative/positive plants for these cases;
 the present 52/52 result cannot detect any of the findings above.
 
+**By 19:05 Sep 1 (+9 commits, current HEAD `8a8d7594`).** Every concrete
+finding in the two preceding review ticks is now closed with an executable
+regression. `55b1a42b` gives `_environ` and `__initenv` distinct four-byte
+slots initialized to the same narrow vector and patches authentic
+`__p___winitenv` with the separately constructed UTF-16 vector; its mock runs
+the real Win98 `mov eax,&global; ret` accessor shape and distinguishes the
+wide/narrow bytes. `fd05008e` plants a live adjacent-line owner and proves the
+exact-line ratchet rejects what its former ±3 search accepted. `9631b8eb`
+replaces the HTTP control test's blocking child probes with async processes,
+races every probe against guest exit and shares one 60-second wall deadline.
+
+The typed-pointer findings closed in three layers. `b9b8e177` checks the value
+stored through all three field/element forms, validates pointer field targets,
+and applies pointer argument/result checks to direct `return_call` in native
+and compatibility lowering. It also rejects non-integral union tags and empty
+views. `23132e02` closes the narrower checked-cast hole left behind: i64 tags
+are rejected because emission compares i32, and signed/unsigned tag values are
+range-checked against their storage width. `4d1807a0` makes a union-backed view
+project the union's variants rather than its prefix-only record, follows the
+active lexical binding when a typed let name is reused, and adds the omitted
+wrong-base `store.field-elem` plant. The final focused suite is **71/71**; an
+exact detached build of `4d1807a0` exits 0 at **997,703 B**, and the installed-
+dependency differential run is 46/46.
+
+`6f57042c` also turns the GDI object family into one compiler-known
+`layout-union`, replacing its hand-maintained variant gate with the generic
+union gate, and `a9981f84` types the 159 per-class state helper parameters plus
+the 11 WAT-side state-pointer materializations in 09c3. That is useful second-
+net coverage, **not closure of the earlier source-wide ControlState finding**:
+the attribution gate still scans 09c3 only, while raw Button/ListView exports
+and 09a/10-helpers reads remain outside it. A future record compaction can still
+silently corrupt one of those cross-file sites. BYO-media Tier 1 likewise
+remains unreviewed. `8a8d7594` is test-only but closes a separate oracle hole:
+the ListView suite now inserts and deletes columns/items in the middle, so its
+three shift paths move real data rather than vacuously appending/removing the
+last entry; the landed suite is 160/160.
+
 ---
 
 # Pass 3 — 2026-08-30
