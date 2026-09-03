@@ -230,7 +230,7 @@
       (then (call $console_refresh))))
 
   (func $console_buffer_create (result i32)
-    (local $slot i32) (local $rec i32) (local $backing_ga i32)
+    (local $slot i32) (local $rec i32) (local $backing_ga i32) (local $backing_wa i32)
     (local $i i32) (local $handle i32) (local $active_rec i32)
     (local $win i32) (local $window_width i32) (local $window_height i32)
     (call $console_buffers_init)
@@ -252,12 +252,12 @@
       (i32.shl (global.get $CONSOLE_MAX_CELLS) (i32.const 2))))
     (if (i32.eqz (local.get $backing_ga))
       (then (return (i32.const 0xFFFFFFFF))))
-    (memory.fill (local.get $rec) (i32.const 0) (global.get $CONSOLE_BUFFER_STRIDE))
+    (local.set $backing_wa (call $g2w (local.get $backing_ga))) (memory.fill (local.get $rec) (i32.const 0) (global.get $CONSOLE_BUFFER_STRIDE))
     (i32.store (local.get $rec) (global.get $CONSOLE_BUFFER_MAGIC))
     (i32.store offset=4 (local.get $rec) (local.get $backing_ga))
-    (i32.store offset=8 (local.get $rec) (call $g2w (local.get $backing_ga)))
+    (i32.store offset=8 (local.get $rec) (local.get $backing_wa))
     (i32.store offset=12 (local.get $rec)
-      (i32.add (call $g2w (local.get $backing_ga))
+      (i32.add (local.get $backing_wa)
         (i32.shl (global.get $CONSOLE_MAX_CELLS) (i32.const 1))))
     ;; Win32 creates the new buffer at the active display-window dimensions,
     ;; not at the potentially larger backing-buffer dimensions. Its own

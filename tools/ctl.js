@@ -12,7 +12,7 @@
 //   node tools/ctl.js quit
 //   node tools/ctl.js sessions                    # list browser sessions on the hub
 //   node tools/ctl.js user-input on               # give the human back their mouse/keys
-//   node tools/ctl.js frozen on                   # stop the world (browser session)
+//   node tools/ctl.js frozen on                   # stop the world (browser or CLI session)
 //   node tools/ctl.js step 400                    # run 400 steps, repaint, stop again
 //   node tools/ctl.js record on                   # record the stepped session
 //   node tools/ctl.js record off                  # ...then tools/frozen-video.js
@@ -231,11 +231,6 @@ async function main() {
     if (mode !== 'on' && mode !== 'off') fail("user-input needs 'on' (user may play) or 'off' (agent only)", 2);
     commands = { action: 'user-input', mode };
   } else if (VERB === 'frozen' || VERB === 'step') {
-    // Frozen mode is a browser-page thing: the CLI VM is already stepped, by
-    // --input batch numbers and --max-batches.
-    if (target.kind === 'direct') {
-      fail(`${VERB} drives a browser session — a headless VM already runs on a batch schedule (test/run.js --input=BATCH:...)`, 2);
-    }
     if (VERB === 'frozen') {
       const mode = positional[1] || 'on';
       if (mode !== 'on' && mode !== 'off') fail("frozen needs 'on' (stop the world) or 'off' (run live)", 2);
@@ -252,9 +247,6 @@ async function main() {
     // Record the frozen session as realtime video: frames and guest PCM are
     // both stamped on the GUEST clock, so the agent's think-time between
     // steps is absent from the result. docs/design-frozen-recording.md.
-    if (target.kind === 'direct') {
-      fail('record drives a browser session — a headless VM has no composited screen to sample (use --png=)', 2);
-    }
     const mode = positional[1] || 'status';
     if (!['on', 'off', 'status'].includes(mode)) {
       fail("record needs 'on' (arm), 'off' (stop and print the session dir) or 'status'", 2);

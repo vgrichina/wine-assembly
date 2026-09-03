@@ -121,7 +121,7 @@
   ;; 151: CreateCompatibleBitmap(hdc, w, h) — allocate canonical pixels in
   ;; the WAT bitmap arena, then let JS create the derived Canvas presentation.
   (func $handle_CreateCompatibleBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $w i32) (local $h i32) (local $size64 i64) (local $bits_ga i32) (local $handle i32)
+    (local $w i32) (local $h i32) (local $size64 i64) (local $bits_ga i32) (local $handle i32) (local $bits_wa i32)
     (local.set $w (local.get $arg1))
     (local.set $h (local.get $arg2))
     ;; Preserve the emulator's established zero/negative dimension behavior.
@@ -142,12 +142,12 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
-    (local.set $handle (call $gdi_bitmap_alloc
+    (local.set $bits_wa (call $g2w (local.get $bits_ga))) (local.set $handle (call $gdi_bitmap_alloc
       (local.get $w) (local.get $h) (i32.const 32) (i32.const 6)
-      (call $g2w (local.get $bits_ga)) (i32.mul (local.get $w) (i32.const 4))
+      (local.get $bits_wa) (i32.mul (local.get $w) (i32.const 4))
       (i32.const 0) (i32.const 0)))
     (if (i32.eqz (local.get $handle))
-      (then (call $dib_free_wasm (call $g2w (local.get $bits_ga)))))
+      (then (call $dib_free_wasm (local.get $bits_wa))))
     (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -1720,7 +1720,7 @@
 
   ;; 315: CreateFontIndirectW — LOGFONTW at arg0
   (func $handle_CreateFontIndirectW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $lf i32) (local $face i32) (local $handle i32)
+    (local $lf i32) (local $face i32) (local $handle i32) (local $face_wa i32)
     (local.set $lf (call $g2w (local.get $arg0)))
     (local.set $face (call $heap_alloc (i32.const 64)))
     (if (i32.eqz (local.get $face))
@@ -1730,17 +1730,17 @@
         (return)))
     ;; LOGFONTW: lfHeight(+0), lfWeight(+16), lfItalic(+20), lfFaceName(+28 wchar[32])
     (drop (call $wide_to_ansi (i32.add (local.get $arg0) (i32.const 28)) (local.get $face) (i32.const 64)))
-    (local.set $handle (call $gdi_font_create
+    (local.set $face_wa (call $g2w (local.get $face))) (local.set $handle (call $gdi_font_create
       (i32.load (local.get $lf))                              ;; height
       (i32.load (i32.add (local.get $lf) (i32.const 16)))    ;; weight
       (i32.load8_u (i32.add (local.get $lf) (i32.const 20))) ;; italic
-      (call $g2w (local.get $face))                          ;; faceName WASM ptr
+      (local.get $face_wa)                                  ;; faceName WASM ptr
     ))
     (call $gdi_font_set_width (local.get $handle)
       (i32.load offset=4 (local.get $lf)))
     (call $gdi_font_set_pitch_and_family (local.get $handle)
       (i32.load8_u offset=27 (local.get $lf)))
-    (call $gdi_bitmap_font_bind (local.get $handle) (call $g2w (local.get $face)))
+    (call $gdi_bitmap_font_bind (local.get $handle) (local.get $face_wa))
     (if (local.get $face) (then (call $heap_free (local.get $face))))
     (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
@@ -3064,7 +3064,7 @@
 
   ;; 602: CreateFontW — convert the face name, then share the font-provider policy.
   (func $handle_CreateFontW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $face i32) (local $weight i32) (local $italic i32) (local $handle i32)
+    (local $face i32) (local $weight i32) (local $italic i32) (local $handle i32) (local $face_wa i32)
     ;; Fourteen arguments, so argument n is at esp+4n: fnWeight is the 5th,
     ;; fdwItalic the 6th, lpszFace the 14th. See $handle_CreateFontA.
     (local.set $weight (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
@@ -3078,14 +3078,14 @@
     (drop (call $wide_to_ansi
       (call $gl32 (i32.add (global.get $esp) (i32.const 56)))
       (local.get $face) (i32.const 64)))
-    (local.set $handle (call $gdi_font_create
+    (local.set $face_wa (call $g2w (local.get $face))) (local.set $handle (call $gdi_font_create
       (local.get $arg0) (local.get $weight) (local.get $italic)
-      (call $g2w (local.get $face))))
+      (local.get $face_wa)))
     (call $gdi_font_set_width (local.get $handle)
       (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
     (call $gdi_font_set_pitch_and_family (local.get $handle)
       (call $gl32 (i32.add (global.get $esp) (i32.const 52))))
-    (call $gdi_bitmap_font_bind (local.get $handle) (call $g2w (local.get $face)))
+    (call $gdi_bitmap_font_bind (local.get $handle) (local.get $face_wa))
     (if (local.get $face) (then (call $heap_free (local.get $face))))
     (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 60)))
