@@ -154,8 +154,10 @@ const digest = crypto.createHash('sha256')
 // bitmap-backed, resource-backed, and opaque system icon handles.
 // 2026-09-02: 471 -> 470. CopyImage now owns and resamples bitmap/icon/cursor
 // images, including RETURNORG/DELETEORG, monochrome, and DIB-section requests.
-const EXPECTED_COUNT = 470;
-const EXPECTED_SHA256 = 'e01291636025dac1378b71161069f2d383afd7333c7366c9dd893294ec911e2c';
+// 2026-09-03: 470 -> 469. SHFileOperationA now delegates copy, move, rename,
+// wildcard, multi-destination, and recursive delete work to the shared VFS.
+const EXPECTED_COUNT = 469;
+const EXPECTED_SHA256 = 'ce04ec582bff3138bd2440a536ee8b23d3bbee233d568bed518efaf1c4b41cd6';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

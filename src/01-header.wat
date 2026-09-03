@@ -728,6 +728,8 @@
   (import "host" "fs_remove_directory" (func $host_fs_remove_directory (param i32 i32) (result i32)))
   (import "host" "fs_move_file" (func $host_fs_move_file (param i32 i32 i32) (result i32)))
   (import "host" "fs_copy_file" (func $host_fs_copy_file (param i32 i32 i32 i32) (result i32)))
+  ;; fs_shell_file_operation(fromMultiSzWA, toMultiSzWA, op, flags) → shell result
+  (import "host" "fs_shell_file_operation" (func $host_fs_shell_file_operation (param i32 i32 i32 i32) (result i32)))
   (import "host" "fs_find_first_file" (func $host_fs_find_first_file (param i32 i32 i32) (result i32)))
   (import "host" "fs_find_next_file" (func $host_fs_find_next_file (param i32 i32 i32) (result i32)))
   (import "host" "fs_find_close" (func $host_fs_find_close (param i32) (result i32)))

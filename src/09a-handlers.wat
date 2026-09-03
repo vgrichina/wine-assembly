@@ -12764,9 +12764,30 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; SHFileOperationA(lpFileOp) — 1 arg, return 0 (success)
+  ;; SHFileOperationA(lpFileOp) — Win98 shell copy/move/delete/rename over the
+  ;; VFS. pFrom/pTo are double-NUL PCZZSTR lists; the host owns filesystem tree
+  ;; mutation while this boundary owns the documented in/out structure fields.
   (func $handle_SHFileOperationA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (local $file_op i32) (local $from i32) (local $to i32)
+    (local $from_wa i32) (local $to_wa i32)
+    (if (i32.eqz (local.get $arg0))
+      (then (global.set $eax (i32.const 0x7C))) ;; DE_INVALIDFILES
+      (else
+        (local.set $file_op (call $g2w (local.get $arg0)))
+        (local.set $from (i32.load offset=8 (local.get $file_op)))
+        (local.set $to (i32.load offset=12 (local.get $file_op)))
+        (i32.store offset=20 (local.get $file_op) (i32.const 0)) ;; not aborted
+        (i32.store offset=24 (local.get $file_op) (i32.const 0)) ;; no mappings
+        (if (i32.eqz (local.get $from))
+          (then (global.set $eax (i32.const 0x7C)))
+          (else
+            (local.set $from_wa (call $g2w (local.get $from)))
+            (if (local.get $to)
+              (then (local.set $to_wa (call $g2w (local.get $to)))))
+            (global.set $eax (call $host_fs_shell_file_operation
+              (local.get $from_wa) (local.get $to_wa)
+              (i32.load offset=4 (local.get $file_op))
+              (i32.load16_u offset=16 (local.get $file_op))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
