@@ -1783,9 +1783,9 @@
         (return)))
     ;; Copy 256 PALETTEENTRY entries (1024 bytes) to heap
     (local.set $entry (call $dx_from_this (local.get $obj)))
-    (local.set $pal_copy (call $heap_alloc (i32.const 1024)))
-    (call $memcpy (call $g2w (local.get $pal_copy)) (call $g2w (local.get $arg2)) (i32.const 1024))
-    (store.field DxObject misc1 (local.get $entry) (call $g2w (local.get $pal_copy))) ;; dib_ptr = palette data WASM addr
+    (local.set $pal_copy (call $heap_alloc (i32.const 1024))) (local.set $pal_wa (call $g2w (local.get $pal_copy)))
+    (call $memcpy (local.get $pal_wa) (call $g2w (local.get $arg2)) (i32.const 1024))
+    (store.field DxObject misc1 (local.get $entry) (local.get $pal_wa)) ;; dib_ptr = palette data WASM addr
     ;; *lplpDDPalette = obj
     (call $gs32 (local.get $arg3) (local.get $obj))
     (global.set $eax (i32.const 0))
@@ -2226,7 +2226,7 @@
   (func $d3d_enum_devices_dispatch
     (local $idx i32) (local $kind i32) (local $count i32)
     (local $guid i32) (local $desc i32) (local $name i32)
-    (local $hw i32) (local $hel i32) (local $wa i32) (local $is_hal i32)
+    (local $hw i32) (local $hel i32) (local $wa i32) (local $is_hal i32) (local $desc_wa i32) (local $name_wa i32)
     (local.set $idx (global.get $d3d_enum_dev_idx))
     ;; Device kinds: 0=Ramp, 1=RGB, 2=HAL.  D3D3 starts at RGB.
     (local.set $count
@@ -2246,6 +2246,7 @@
     (local.set $wa (call $g2w (local.get $guid)))
     (local.set $desc (call $heap_alloc (i32.const 32)))
     (local.set $name (call $heap_alloc (i32.const 16)))
+    (local.set $desc_wa (call $g2w (local.get $desc))) (local.set $name_wa (call $g2w (local.get $name)))
     (local.set $is_hal (i32.const 0))
     (if (i32.eq (local.get $kind) (i32.const 0))
       (then
@@ -2255,13 +2256,13 @@
         (i32.store (i32.add (local.get $wa) (i32.const 8))  (i32.const 0xAA001AA3))
         (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x5633B900))
         ;; "Ramp Emulation\0"
-        (i32.store (call $g2w (local.get $desc))                           (i32.const 0x706D6152))
-        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4)))   (i32.const 0x6D452061))
-        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 8)))   (i32.const 0x74616C75))
-        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 12)))  (i32.const 0x006E6F69))
+        (i32.store (local.get $desc_wa)                           (i32.const 0x706D6152))
+        (i32.store offset=4 (local.get $desc_wa)                  (i32.const 0x6D452061))
+        (i32.store offset=8 (local.get $desc_wa)                  (i32.const 0x74616C75))
+        (i32.store offset=12 (local.get $desc_wa)                 (i32.const 0x006E6F69))
         ;; "ramp\0"
-        (i32.store (call $g2w (local.get $name)) (i32.const 0x706D6172))
-        (i32.store8 (i32.add (call $g2w (local.get $name)) (i32.const 4)) (i32.const 0))))
+        (i32.store (local.get $name_wa) (i32.const 0x706D6172))
+        (i32.store8 offset=4 (local.get $name_wa) (i32.const 0))))
     (if (i32.eq (local.get $kind) (i32.const 1))
       (then
         ;; IID_IDirect3DRGBDevice {A4665C60-2673-11CF-A31A-00AA00B93356}
@@ -2270,12 +2271,12 @@
         (i32.store (i32.add (local.get $wa) (i32.const 8))  (i32.const 0xAA001AA3))
         (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x5633B900))
         ;; "RGB Emulation\0"
-        (i32.store (call $g2w (local.get $desc))                           (i32.const 0x20424752))
-        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4)))   (i32.const 0x6C756D45))
-        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 8)))   (i32.const 0x6F697461))
-        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 12)))  (i32.const 0x0000006E))
+        (i32.store (local.get $desc_wa)                           (i32.const 0x20424752))
+        (i32.store offset=4 (local.get $desc_wa)                  (i32.const 0x6C756D45))
+        (i32.store offset=8 (local.get $desc_wa)                  (i32.const 0x6F697461))
+        (i32.store offset=12 (local.get $desc_wa)                 (i32.const 0x0000006E))
         ;; "rgb\0"
-        (i32.store (call $g2w (local.get $name)) (i32.const 0x00626772))))
+        (i32.store (local.get $name_wa) (i32.const 0x00626772))))
     (if (i32.eq (local.get $kind) (i32.const 2))
       (then
         ;; IID_IDirect3DHALDevice {84E63DE0-46AA-11CF-816F-0000C020156E}
@@ -2284,12 +2285,12 @@
         (i32.store (i32.add (local.get $wa) (i32.const 8))  (i32.const 0x00006F81))
         (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x6E1520C0))
         ;; "Direct3D HAL\0"
-        (i32.store (call $g2w (local.get $desc))                           (i32.const 0x65726944))
-        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4)))   (i32.const 0x44337463))
-        (i32.store (i32.add (call $g2w (local.get $desc)) (i32.const 8))   (i32.const 0x4C414820))
-        (i32.store8 (i32.add (call $g2w (local.get $desc)) (i32.const 12)) (i32.const 0))
+        (i32.store (local.get $desc_wa)                           (i32.const 0x65726944))
+        (i32.store offset=4 (local.get $desc_wa)                  (i32.const 0x44337463))
+        (i32.store offset=8 (local.get $desc_wa)                  (i32.const 0x4C414820))
+        (i32.store8 offset=12 (local.get $desc_wa)                (i32.const 0))
         ;; "hal\0"
-        (i32.store (call $g2w (local.get $name)) (i32.const 0x0000006C61681))
+        (i32.store (local.get $name_wa) (i32.const 0x0000006C61681))
         (local.set $is_hal (i32.const 1))))
     ;; HW + HEL descs
     (local.set $hw  (call $heap_alloc (i32.const 252)))
@@ -2356,7 +2357,7 @@
     (call $d3d_enum_devices7_dispatch))
 
   (func $d3d_enum_devices7_dispatch
-    (local $idx i32) (local $desc i32) (local $name i32) (local $caps i32)
+    (local $idx i32) (local $desc i32) (local $name i32) (local $caps i32) (local $desc_wa i32) (local $name_wa i32)
     (local.set $idx (global.get $d3d_enum_dev_idx))
     ;; 0=HAL, 1=RGB software. D3D7 exposes no GUID in the callback.
     (if (i32.ge_u (local.get $idx) (i32.const 2))
@@ -2368,24 +2369,25 @@
         (return)))
     (local.set $desc (call $heap_alloc (i32.const 32)))
     (local.set $name (call $heap_alloc (i32.const 16)))
+    (local.set $desc_wa (call $g2w (local.get $desc))) (local.set $name_wa (call $g2w (local.get $name)))
     (if (i32.eq (local.get $idx) (i32.const 0))
       (then
         ;; "Direct3D HAL\0"
-        (i32.store (call $g2w (local.get $desc))                           (i32.const 0x65726944))
-        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4)))   (i32.const 0x44337463))
-        (i32.store (i32.add (call $g2w (local.get $desc)) (i32.const 8))   (i32.const 0x4C414820))
-        (i32.store8 (i32.add (call $g2w (local.get $desc)) (i32.const 12)) (i32.const 0))
+        (i32.store (local.get $desc_wa)                           (i32.const 0x65726944))
+        (i32.store offset=4 (local.get $desc_wa)                  (i32.const 0x44337463))
+        (i32.store offset=8 (local.get $desc_wa)                  (i32.const 0x4C414820))
+        (i32.store8 offset=12 (local.get $desc_wa)                (i32.const 0))
         ;; "hal\0"
-        (i32.store (call $g2w (local.get $name)) (i32.const 0x006C6168))))
+        (i32.store (local.get $name_wa) (i32.const 0x006C6168))))
     (if (i32.eq (local.get $idx) (i32.const 1))
       (then
         ;; "RGB Emulation\0"
-        (i32.store (call $g2w (local.get $desc))                           (i32.const 0x20424752))
-        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4)))   (i32.const 0x6C756D45))
-        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 8)))   (i32.const 0x6F697461))
-        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 12)))  (i32.const 0x0000006E))
+        (i32.store (local.get $desc_wa)                           (i32.const 0x20424752))
+        (i32.store offset=4 (local.get $desc_wa)                  (i32.const 0x6C756D45))
+        (i32.store offset=8 (local.get $desc_wa)                  (i32.const 0x6F697461))
+        (i32.store offset=12 (local.get $desc_wa)                 (i32.const 0x0000006E))
         ;; "rgb\0"
-        (i32.store (call $g2w (local.get $name)) (i32.const 0x00626772))))
+        (i32.store (local.get $name_wa) (i32.const 0x00626772))))
     (local.set $caps (call $heap_alloc (i32.const 236)))
     (call $d3dim_fill_device_desc7 (local.get $caps))
     (if (i32.eq (local.get $idx) (i32.const 0))
@@ -5055,7 +5057,7 @@
   ;; CreateSoundBuffer(this, lpDSBufferDesc, lplpDirectSoundBuffer, pUnkOuter)
   (func $handle_IDirectSound_CreateSoundBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $desc_wa i32) (local $flags i32) (local $buf_size i32)
-    (local $fmt_wa i32) (local $obj i32) (local $entry i32) (local $buf_guest i32)
+    (local $fmt_wa i32) (local $obj i32) (local $entry i32) (local $buf_guest i32) (local $buf_wa i32)
     (local.set $desc_wa (call $g2w (local.get $arg1)))
     ;; DSBUFFERDESC: +4 dwFlags, +8 dwBufferBytes, +12 dwReserved, +16 lpwfxFormat
     (local.set $flags (i32.load (i32.add (local.get $desc_wa) (i32.const 4))))
@@ -5076,9 +5078,9 @@
       (else
         ;; Secondary buffer — allocate guest memory for sound data
         (if (i32.gt_u (local.get $buf_size) (i32.const 0)) (then
-          (local.set $buf_guest (call $heap_alloc (local.get $buf_size)))
-          (call $zero_memory (call $g2w (local.get $buf_guest)) (local.get $buf_size))
-          (store.field DxObject misc1 (local.get $entry) (call $g2w (local.get $buf_guest)))))
+          (local.set $buf_guest (call $heap_alloc (local.get $buf_size))) (local.set $buf_wa (call $g2w (local.get $buf_guest)))
+          (call $zero_memory (local.get $buf_wa) (local.get $buf_size))
+          (store.field DxObject misc1 (local.get $entry) (local.get $buf_wa))))
         ;; Store buffer size in w/h fields
         (i32.store (i32.add (local.get $entry) (i32.const 12)) (local.get $buf_size))
         ;; Store format info from WAVEFORMATEX
@@ -5121,7 +5123,7 @@
   ;; DuplicateSoundBuffer(this, pOriginalBuffer, ppDuplicateBuffer)
   (func $handle_IDirectSound_DuplicateSoundBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $src_entry i32) (local $obj i32) (local $dst_entry i32)
-    (local $buf_size i32) (local $buf_guest i32)
+    (local $buf_size i32) (local $buf_guest i32) (local $buf_wa i32)
     ;; Look up source buffer entry
     (local.set $src_entry (call $dx_from_this (local.get $arg1)))
     ;; Create new DSBuffer COM object
@@ -5141,12 +5143,12 @@
     (store.field DxObject flags (local.get $dst_entry) (load.field DxObject flags (local.get $src_entry)))
     ;; Allocate new buffer and copy data
     (if (i32.gt_u (local.get $buf_size) (i32.const 0)) (then
-      (local.set $buf_guest (call $heap_alloc (local.get $buf_size)))
+      (local.set $buf_guest (call $heap_alloc (local.get $buf_size))) (local.set $buf_wa (call $g2w (local.get $buf_guest)))
       (memory.copy
-        (call $g2w (local.get $buf_guest))
+        (local.get $buf_wa)
         (load.field DxObject misc1 (local.get $src_entry))
         (local.get $buf_size))
-      (store.field DxObject misc1 (local.get $dst_entry) (call $g2w (local.get $buf_guest)))))
+      (store.field DxObject misc1 (local.get $dst_entry) (local.get $buf_wa))))
     ;; *ppDuplicateBuffer = obj
     (call $gs32 (local.get $arg2) (local.get $obj))
     (global.set $eax (i32.const 0))
@@ -8683,12 +8685,13 @@
       (then (store.field DxObject misc0 (local.get $entry) (local.get $image_id)))))
 
   (func $da_write_dispatch_variant (param $pVarResult i32) (result i32)
-    (local $obj_guest i32)
+    (local $obj_guest i32) (local $result_wa i32)
     (if (i32.eqz (local.get $pVarResult)) (then (return (i32.const 0))))
-    (call $zero_memory (call $g2w (local.get $pVarResult)) (i32.const 16))
+    (local.set $result_wa (call $g2w (local.get $pVarResult)))
+    (call $zero_memory (local.get $result_wa) (i32.const 16))
     (local.set $obj_guest (call $da_create_node))
     (if (i32.eqz (local.get $obj_guest)) (then (return (i32.const 0x8007000E)))) ;; E_OUTOFMEMORY
-    (i32.store16 (call $g2w (local.get $pVarResult)) (i32.const 9)) ;; VT_DISPATCH
+    (i32.store16 (local.get $result_wa) (i32.const 9)) ;; VT_DISPATCH
     (call $gs32 (i32.add (local.get $pVarResult) (i32.const 8)) (local.get $obj_guest))
     (i32.const 0))
 
