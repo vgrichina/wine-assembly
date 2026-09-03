@@ -183,28 +183,51 @@
   // there is not (iOS Safari), which is the same layout without the browser's
   // help -- the modal already covers the page, so all that is left to hide is
   // our own bar. Esc leaves both, since Esc closes the dialog.
-  function inFs() { return !!document.fullscreenElement || dlg.classList.contains('fs'); }
+  // The element the browser has in real full screen, prefixed or not.
+  function realFs() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+  function inFs() { return !!realFs() || dlg.classList.contains('fs'); }
   function leaveFs() {
-    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function () {});
+    if (realFs()) {
+      var exit = document.exitFullscreen || document.webkitExitFullscreen;
+      try { var p = exit.call(document); if (p && p.catch) p.catch(function () {}); } catch (e) { /* not in */ }
+    }
     dlg.classList.remove('fs', 'idle');
     fsBtn.setAttribute('aria-pressed', 'false');
     clearTimeout(idleTimer);
   }
+  // The .fs layout goes on first, whatever the browser does: on a desktop
+  // the Fullscreen API then takes the page over the whole display, and the
+  // layout is the same one either way; where the request is refused or the
+  // API is missing (iOS Safari has no element fullscreen at all) the layout
+  // alone is the full screen. The request is made on the BOX inside the
+  // dialog, not the dialog: Chrome refuses a <dialog> outright ("Dialog
+  // elements are invalid"), and a full-screen root paints the page over the
+  // modal (measured: the demo showed through the cards). Safari's prefixed
+  // request returns nothing rather than a promise, so success is read from
+  // the change event, not from the return value.
   function enterFs() {
     fsBtn.setAttribute('aria-pressed', 'true');
-    var req = dlg.requestFullscreen || dlg.webkitRequestFullscreen;
-    var p = null;
-    if (req) { try { p = req.call(dlg, { navigationUI: 'hide' }); } catch (e) { p = null; } }
-    if (!p || typeof p.then !== 'function') { dlg.classList.add('fs'); }
-    else { p.catch(function () { dlg.classList.add('fs'); }); }
+    dlg.classList.add('fs');
+    var box = document.getElementById('lb-box');
+    var req = box.requestFullscreen || box.webkitRequestFullscreen;
+    if (req) {
+      try {
+        var p = req.call(box, { navigationUI: 'hide' });
+        if (p && p.catch) p.catch(function () {});
+      } catch (e) { /* the layout is the full screen */ }
+    }
     restartIdle();
     if (canvas && !canvas.hidden) canvas.focus();
   }
   fsBtn.addEventListener('click', function () { if (inFs()) leaveFs(); else enterFs(); });
   closeBtn.addEventListener('click', function () { dlg.close(); });
-  document.addEventListener('fullscreenchange', function () {
-    if (!document.fullscreenElement) { dlg.classList.remove('idle'); fsBtn.setAttribute('aria-pressed', 'false'); }
-  });
+  // Leaving real full screen by Esc or the browser's own control: the
+  // layout goes with it.
+  function fsChanged() {
+    if (!realFs()) { dlg.classList.remove('fs', 'idle'); fsBtn.setAttribute('aria-pressed', 'false'); }
+  }
+  document.addEventListener('fullscreenchange', fsChanged);
+  document.addEventListener('webkitfullscreenchange', fsChanged);
   // The bar hides itself in full screen after a moment without input.
   var idleTimer = 0;
   function restartIdle() {
