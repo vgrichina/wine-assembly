@@ -161,8 +161,10 @@ const digest = crypto.createHash('sha256')
 // 2026-09-03: 468 -> 469. Video for Windows added DrawDibOpen/Close (+2), while
 // GetLastActivePopup left the quiet inventory by retaining and validating
 // per-owner activation history (-1). The inventory records both changes.
-const EXPECTED_COUNT = 469;
-const EXPECTED_SHA256 = '2cf5b63a583db00eaa08d3407a321203ecac34742b9982493c3f88929bff1272';
+// 2026-09-03: 469 -> 467. DrawDibOpen/Close now own, validate, invalidate and
+// free distinct opaque drawing contexts instead of returning constant success.
+const EXPECTED_COUNT = 467;
+const EXPECTED_SHA256 = '9a1c071d662a21d527f4734a1492095d8d5dbbac235abab8715462ba0215bc61';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

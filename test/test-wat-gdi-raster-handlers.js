@@ -9,8 +9,29 @@ const { bootRenderHarness } = require('./render-helper');
 // were spelled out as raw literals in every guest→wasm translation below.
 const RegionMap = require('../lib/region-map.generated.js');
 
+const drawDibLifetimeWat = String.raw`
+  (func (export "test_call_DrawDibOpen") (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DrawDibOpen
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_DrawDibClose") (param $hdd i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DrawDibClose
+      (local.get $hdd) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+`;
+
 (async () => {
-  const { exports: wat, memory, gdi } = await bootRenderHarness();
+  const { exports: wat, memory, gdi } = await bootRenderHarness({
+    extraWat: drawDibLifetimeWat,
+  });
   let bytes = new Uint8Array(memory.buffer);
   let passed = 0;
 
@@ -974,23 +995,52 @@ const RegionMap = require('../lib/region-map.generated.js');
 
   check('DrawDibDraw presents application-owned pixels through the GDI raster path', () => {
     const surface = makeDib(4, 4);
+    const hdd = wat.test_call_DrawDibOpen() >>> 0;
+    const otherHdd = wat.test_call_DrawDibOpen() >>> 0;
+    assert(hdd && otherHdd && hdd !== otherHdd,
+      'DrawDibOpen returns distinct live drawing contexts');
     const bmiGa = wat.guest_alloc(40) >>> 0;
     const bitsGa = wat.guest_alloc(16) >>> 0;
     const imageBase = wat.get_image_base() >>> 0;
     const bitsWa = RegionMap.GUEST_BASE + (bitsGa - imageBase);
     wat.guest_write32(bmiGa, 40);
     wat.guest_write32(bmiGa + 4, 2);
-    wat.guest_write32(bmiGa + 8, -2);
+    wat.guest_write32(bmiGa + 8, 2);
     wat.guest_write16(bmiGa + 12, 1);
     wat.guest_write16(bmiGa + 14, 24);
-    bytes.set([0, 0, 255, 0, 255, 0, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0], bitsWa);
+    // Positive-height DrawDib input is bottom-up: physical blue/white row,
+    // then physical red/green row.
+    bytes.set([255, 0, 0, 255, 255, 255, 0, 0, 0, 0, 255, 0, 255, 0, 0, 0], bitsWa);
     assert.strictEqual(wat.test_call_DrawDibDraw(
-      1, surface.hdc, 0, 0, 4, 4, bmiGa, bitsGa,
+      hdd, surface.hdc, 0, 0, 4, 4, bmiGa, bitsGa,
       0, 0, 2, 2, 0), 1);
     assert.strictEqual(packed(surface, 0, 0), 0xFF0000);
     assert.strictEqual(packed(surface, 3, 0), 0x00FF00);
     assert.strictEqual(packed(surface, 0, 3), 0x0000FF);
     assert.strictEqual(packed(surface, 3, 3), 0xFFFFFF);
+    assert.strictEqual(wat.test_call_DrawDibDraw(
+      1, surface.hdc, 0, 0, 4, 4, bmiGa, bitsGa,
+      0, 0, 2, 2, 0), 0, 'invented DrawDib handles are rejected');
+    wat.guest_write32(bmiGa + 8, -2);
+    assert.strictEqual(wat.test_call_DrawDibDraw(
+      hdd, surface.hdc, 0, 0, 4, 4, bmiGa, bitsGa,
+      0, 0, 2, 2, 0), 0, 'inverted DIBs are rejected by DrawDib');
+    wat.guest_write32(bmiGa + 8, 2);
+    assert.strictEqual(wat.test_call_DrawDibDraw(
+      hdd, surface.hdc, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0x0002), 0,
+    'DDF_UPDATE fails when no DrawDibBegin buffer exists');
+    assert.strictEqual(wat.test_call_DrawDibDraw(
+      otherHdd, surface.hdc, 0, 0, -1, -1, bmiGa, bitsGa,
+      0, 0, 2, 2, 0), 1,
+    '-1 destination dimensions use the bitmap dimensions');
+    assert.strictEqual(wat.test_call_DrawDibClose(hdd), 1);
+    assert.strictEqual(wat.test_call_DrawDibClose(hdd), 0,
+      'closing a released DrawDib DC fails');
+    assert.strictEqual(wat.test_call_DrawDibDraw(
+      hdd, surface.hdc, 0, 0, 4, 4, bmiGa, bitsGa,
+      0, 0, 2, 2, 0), 0, 'released DrawDib DC cannot draw');
+    assert.strictEqual(wat.test_call_DrawDibClose(otherHdd), 1);
   });
 
   check('StretchDIBits interprets bottom-up source rectangles from the lower left', () => {

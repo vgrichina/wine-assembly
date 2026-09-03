@@ -3464,43 +3464,140 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
-  ;; Video for Windows' DrawDib API is a thin DIB presentation layer.  Keep
-  ;; its context opaque and route DrawDibDraw through the same canonical
-  ;; StretchDIBits path as GDI, so dynamic MSVFW32 users render into either a
-  ;; window DC or a selected WAT bitmap with identical conversion semantics.
+  ;; Video for Windows' DrawDib API is a thin DIB presentation layer.  Its DC
+  ;; is nevertheless an owned object: callers can open several independent
+  ;; contexts, and DrawDibClose releases exactly the one it receives.  Keep a
+  ;; small opaque heap record rather than the old process-global constant.
+  (func $drawdib_dc_valid (param $hdd i32) (result i32)
+    (local $block i32) (local $block_wa i32) (local $size i32)
+    (local $end i32) (local $limit i32) (local $direct i32)
+    (if (i32.or (i32.eqz (local.get $hdd))
+                (i32.eqz (global.get $heap_base)))
+      (then (return (i32.const 0))))
+    (if (i32.lt_u (local.get $hdd)
+          (i32.add (global.get $heap_base) (i32.const 4)))
+      (then (return (i32.const 0))))
+    ;; Accept any live block in the process-wide low heap, including one
+    ;; opened by another interpreter instance.  Sparse allocations use their
+    ;; own bounded high arena.
+    (local.set $limit (call $heap_low_watermark))
+    (if (i32.lt_u (local.get $limit) (global.get $heap_ptr))
+      (then (local.set $limit (global.get $heap_ptr))))
+    (local.set $direct (i32.lt_u (local.get $hdd) (local.get $limit)))
+    (if (i32.eqz (local.get $direct))
+      (then
+        (if (i32.or
+              (i32.eqz (global.get $heap_sparse_ptr))
+              (i32.or
+                (i32.lt_u (local.get $hdd)
+                  (i32.add (global.get $virtual_alloc_top) (i32.const 4)))
+                (i32.ge_u (local.get $hdd) (global.get $heap_sparse_ptr))))
+          (then (return (i32.const 0))))
+        (local.set $limit (global.get $heap_sparse_ptr))))
+    (local.set $block (i32.sub (local.get $hdd) (i32.const 4)))
+    (local.set $block_wa (call $g2w (local.get $block)))
+    (local.set $size (i32.load (local.get $block_wa)))
+    (if (i32.or
+          (i32.lt_u (local.get $size) (i32.const 24))
+          (i32.ne (i32.and (local.get $size) (i32.const 7)) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $end (i32.add (local.get $block) (local.get $size)))
+    (if (i32.or (i32.lt_u (local.get $end) (local.get $block))
+                (i32.gt_u (local.get $end) (local.get $limit)))
+      (then (return (i32.const 0))))
+    (i32.eq
+      (i32.load offset=4 (local.get $block_wa))
+      (i32.const 0x42494444))) ;; "DDIB"
+
   (func $handle_DrawDibOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (local $hdd i32) (local $hdd_wa i32)
+    (local.set $hdd (call $heap_alloc (i32.const 20)))
+    (if (local.get $hdd)
+      (then
+        (local.set $hdd_wa (call $g2w (local.get $hdd)))
+        (call $zero_memory (local.get $hdd_wa) (i32.const 20))
+        (i32.store (local.get $hdd_wa) (i32.const 0x42494444)))) ;; "DDIB"
+    (global.set $eax (local.get $hdd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   (func $handle_DrawDibClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.ne (local.get $arg0) (i32.const 0)))
+    (if (call $drawdib_dc_valid (local.get $arg0))
+      (then
+        ;; Invalidate before returning the allocation to the free list so a
+        ;; nested or repeated close cannot observe a still-live context.
+        (i32.store (call $g2w (local.get $arg0)) (i32.const 0))
+        (call $heap_free (local.get $arg0))
+        (global.set $eax (i32.const 1)))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; DrawDibDraw(hdd, hdc, xDst, yDst, dxDst, dyDst, lpbi, lpBits,
   ;;             xSrc, ySrc, dxSrc, dySrc, wFlags) -> BOOL
   (func $handle_DrawDibDraw (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $drawn i32)
+    (local $drawn i32) (local $dy_dst i32)
+    (local $lpbi_g i32) (local $lpbi_wa i32) (local $bits_g i32) (local $bits_wa i32)
+    (local $x_src i32) (local $y_src i32) (local $dx_src i32) (local $dy_src i32)
+    (local $flags i32) (local $width i32) (local $height i32)
+    ;; Cache the stack-resident arguments and translate each guest pointer
+    ;; exactly once at this API boundary.
+    (local.set $dy_dst (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $lpbi_g (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (local.set $bits_g (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    (local.set $x_src (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
+    (local.set $y_src (call $gl32 (i32.add (global.get $esp) (i32.const 40))))
+    (local.set $dx_src (call $gl32 (i32.add (global.get $esp) (i32.const 44))))
+    (local.set $dy_src (call $gl32 (i32.add (global.get $esp) (i32.const 48))))
+    (local.set $flags (call $gl32 (i32.add (global.get $esp) (i32.const 52))))
     (if (i32.or
-          (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
-          (i32.or
-            (i32.eqz (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
-            (i32.eqz (call $gl32 (i32.add (global.get $esp) (i32.const 32))))))
+          (i32.eqz (call $drawdib_dc_valid (local.get $arg0)))
+          (i32.eqz (local.get $arg1)))
       (then
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 56)))
         (return)))
+    ;; DDF_UPDATE redraws an image buffered by DrawDibBegin.  This bridge does
+    ;; not expose DrawDibBegin/off-screen buffers, so there is no prior frame
+    ;; to recall and the documented result is failure.
+    (if (i32.and (local.get $flags) (i32.const 0x0002))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 56)))
+        (return)))
+    (if (i32.or (i32.eqz (local.get $lpbi_g)) (i32.eqz (local.get $bits_g)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 56)))
+        (return)))
+    (local.set $lpbi_wa (call $g2w (local.get $lpbi_g)))
+    (local.set $bits_wa (call $g2w (local.get $bits_g)))
+    (local.set $width (i32.load offset=4 (local.get $lpbi_wa)))
+    (local.set $height (i32.load offset=8 (local.get $lpbi_wa)))
+    ;; DrawDib accepts BITMAPINFOHEADER (not BITMAPCOREHEADER), and unlike GDI
+    ;; StretchDIBits it explicitly refuses top-down/inverted DIBs.
+    (if (i32.or
+          (i32.lt_u (i32.load (local.get $lpbi_wa)) (i32.const 40))
+          (i32.or (i32.le_s (local.get $width) (i32.const 0))
+                  (i32.le_s (local.get $height) (i32.const 0))))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 56)))
+        (return)))
+    (if (i32.eq (local.get $arg4) (i32.const -1))
+      (then (local.set $arg4 (local.get $width))))
+    (if (i32.eq (local.get $dy_dst) (i32.const -1))
+      (then (local.set $dy_dst (local.get $height))))
     (local.set $drawn (call $host_gdi_stretch_dib_bits
       (local.get $arg1)                                             ;; hdc
       (local.get $arg2)                                             ;; xDst
       (local.get $arg3)                                             ;; yDst
       (local.get $arg4)                                             ;; dxDst
-      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))       ;; dyDst
-      (call $gl32 (i32.add (global.get $esp) (i32.const 36)))       ;; xSrc
-      (call $gl32 (i32.add (global.get $esp) (i32.const 40)))       ;; ySrc
-      (call $gl32 (i32.add (global.get $esp) (i32.const 44)))       ;; dxSrc
-      (call $gl32 (i32.add (global.get $esp) (i32.const 48)))       ;; dySrc
-      (call $g2w (call $gl32 (i32.add (global.get $esp) (i32.const 32)))) ;; lpBits
-      (call $g2w (call $gl32 (i32.add (global.get $esp) (i32.const 28)))) ;; lpbi
+      (local.get $dy_dst)                                           ;; dyDst
+      (local.get $x_src)                                            ;; xSrc
+      (local.get $y_src)                                            ;; ySrc
+      (local.get $dx_src)                                           ;; dxSrc
+      (local.get $dy_src)                                           ;; dySrc
+      (local.get $bits_wa)                                          ;; lpBits
+      (local.get $lpbi_wa)                                          ;; lpbi
       (i32.const 0)                                                 ;; DIB_RGB_COLORS
       (i32.const 0x00CC0020)))                                      ;; SRCCOPY
     (global.set $eax (i32.ne (local.get $drawn) (i32.const 0)))

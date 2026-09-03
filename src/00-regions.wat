@@ -421,7 +421,7 @@
   (region.declare $CODE_PAGE_BITMAP (size 0x00002000) (align 0x00001000)
     (owner "04-cache.wat:21"))
   (region.declare $SYNC_TABLE (size 0x00002000) (align 0x00001000)
-    (owner "13-exports.wat:2799"))
+    (owner "13-exports.wat:2818"))
   (region.declare $D3DIM_VIEWPORT_LIGHT_HEAD (size 0x00004000) (align 0x00001000)
     (owner "09aa-handlers-d3dim.wat:21"))
   (region.declare $HIT_COUNT_BASE (size 0x00000100) (align 0x00001000)
