@@ -42,6 +42,12 @@ const extraWat = String.raw`
   (func (export "test_dialog_own_dc") (param $hwnd i32) (result i32)
     (call $wnd_get_own_dc (local.get $hwnd)))
 
+  (func (export "test_find_child") (param $parent i32) (param $id i32) (result i32)
+    (call $ctrl_find_by_id (local.get $parent) (local.get $id)))
+
+  (func (export "test_get_window_dc") (param $hwnd i32) (result i32)
+    (call $host_alloc_window_dc (local.get $hwnd) (i32.const 0)))
+
   (func (export "test_move_window") (param $hwnd i32)
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
@@ -86,7 +92,7 @@ const extraWat = String.raw`
   const wc = e.guest_alloc(40) >>> 0;
   bytes.fill(0, base + wc, base + wc + 40);
   view.setUint32(base + wc + 0, 0x20, true);          // CS_OWNDC
-  view.setUint32(base + wc + 4, 0x00401000, true);   // application wndproc
+  view.setUint32(base + wc + 4, 0xFFFF0001, true);   // harmless WAT-native wndproc
   view.setUint32(base + wc + 12, 30, true);          // DLGWINDOWEXTRA
   view.setUint32(base + wc + 24, 0x12345678, true);  // hCursor
   view.setUint32(base + wc + 28, 6, true);           // BLACK_BRUSH
@@ -122,6 +128,55 @@ const extraWat = String.raw`
     'DLGWINDOWEXTRA metadata is visible on the dialog');
   assert.strictEqual(e.test_dialog_own_dc(hwnd), -1,
     'dialog inherits CS_OWNDC before its first GetDC');
+
+  // The same class may name a control inside a DLGTEMPLATE. That path used
+  // to retain only its wndproc: the class brush/cursor/slot/CS_OWNDC were all
+  // dropped, which made CD Player's LED black-on-black and left stale title
+  // text behind. Build one classic DLGITEMTEMPLATE using the registered name.
+  const childTemplate = e.guest_alloc(160) >>> 0;
+  const childWa = base + childTemplate;
+  bytes.fill(0, childWa, childWa + 160);
+  view.setUint32(childWa + 0, 0x80000000, true); // WS_POPUP dialog
+  view.setUint16(childWa + 8, 1, true);          // cdit
+  view.setUint16(childWa + 14, 160, true);
+  view.setUint16(childWa + 16, 100, true);
+  // Empty menu/class/title consume six bytes, naturally aligning the item at +24.
+  p = childWa + 24;
+  view.setUint32(p + 0, 0x50000000, true);       // WS_CHILD | WS_VISIBLE
+  view.setUint16(p + 8, 4, true);
+  view.setUint16(p + 10, 4, true);
+  view.setUint16(p + 12, 80, true);
+  view.setUint16(p + 14, 20, true);
+  view.setUint16(p + 16, 77, true);
+  p += 18;
+  for (const ch of 'HalfLifeLauncher') {
+    view.setUint16(p, ch.charCodeAt(0), true);
+    p += 2;
+  }
+  view.setUint16(p, 0, true); p += 2;            // class terminator
+  view.setUint16(p, 0, true); p += 2;            // empty title
+  view.setUint16(p, 0, true);                     // no creation data
+
+  const childParent = 0x10040;
+  assert.strictEqual(e.test_load_dialog(childParent, childTemplate), 1,
+    'one-control custom dialog parses successfully');
+  const child = e.test_find_child(childParent, 77) >>> 0;
+  assert.ok(child, 'custom dialog child is registered by its control id');
+  assert.strictEqual(e.test_dialog_brush(child), 6,
+    'custom dialog child inherits the registered BLACK_BRUSH');
+  assert.strictEqual(e.test_dialog_cursor(child) >>> 0, 0x12345678,
+    'custom dialog child inherits the registered class cursor');
+  assert.ok(e.test_dialog_class_slot(child) >= 0,
+    'custom dialog child retains its registered class slot');
+  assert.strictEqual(e.test_dialog_own_dc(child), -1,
+    'custom dialog child inherits CS_OWNDC before WM_CREATE');
+  const childDc = e.test_get_window_dc(child);
+  assert.ok(childDc > 0,
+    'a live pre-host dialog child can acquire its WM_CREATE device context');
+  assert.strictEqual(e.test_dialog_own_dc(child), childDc,
+    'the early device context is retained as the class private DC');
+  assert.strictEqual(e.test_get_window_dc(child), childDc,
+    'later GetDC calls reuse the same CS_OWNDC state');
 
   // Resize helpers may seed COLOR_BTNFACE for the ordinary #32770 dialog
   // class, but must not synchronously cover an application-owned custom

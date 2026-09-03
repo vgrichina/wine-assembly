@@ -41,6 +41,24 @@ const extraWat = String.raw`
       (i32.const 0x53000000) (local.get $count) (local.get $records)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_device1_get_stats") (param $stats i32) (result i32)
+    (global.set $esp (i32.const 0x30000))
+    (call $handle_IDirect3DDevice_GetStats
+      (i32.const 0x53000000) (local.get $stats) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_device2_get_stats") (param $stats i32) (result i32)
+    (global.set $esp (i32.const 0x30000))
+    (call $handle_IDirect3DDevice2_GetStats
+      (i32.const 0x53000000) (local.get $stats) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_device3_get_stats") (param $stats i32) (result i32)
+    (global.set $esp (i32.const 0x30000))
+    (call $handle_IDirect3DDevice3_GetStats
+      (i32.const 0x53000000) (local.get $stats) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
 `;
 
 const f32bits = value => {
@@ -61,6 +79,24 @@ const bitsf32 = value => {
   const rect = 0x410100;
   const count = 0x410120;
   const record = 0x410140;
+  const stats = 0x410180;
+
+  for (const revision of [1, 2, 3]) {
+    const getStats = wat[`test_device${revision}_get_stats`];
+    for (let offset = 0; offset < 24; offset += 4) {
+      wat.guest_write32(stats + offset, offset === 0 ? 24 : 0xa5a5a5a5);
+    }
+    assert.strictEqual(getStats(stats) >>> 0, 0,
+      `Device${revision}::GetStats should succeed for a D3DSTATS buffer`);
+    assert.strictEqual(wat.guest_read32(stats) >>> 0, 24,
+      `Device${revision}::GetStats should preserve dwSize`);
+    for (let offset = 4; offset < 24; offset += 4) {
+      assert.strictEqual(wat.guest_read32(stats + offset) >>> 0, 0,
+        `Device${revision}::GetStats should initialize counter +${offset}`);
+    }
+    assert.strictEqual(getStats(0) >>> 0, 0x80070057,
+      `Device${revision}::GetStats should reject a null output`);
+  }
 
   wat.guest_write32(desc + 12, 256); // D3DEXECUTEBUFFERDESC.dwBufferSize
   assert.strictEqual(wat.test_pick_create(desc, out) >>> 0, 0);
@@ -114,7 +150,7 @@ const bitsf32 = value => {
   assert.strictEqual(wat.test_pick_get(count, 0) >>> 0, 0);
   assert.strictEqual(wat.guest_read32(count) >>> 0, 0, 'outside point should clear old records');
 
-  console.log('PASS  D3DIM execute-buffer Pick returns triangle offset and interpolated depth');
+  console.log('PASS  D3DIM GetStats initializes outputs and Pick returns triangle offset/depth');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

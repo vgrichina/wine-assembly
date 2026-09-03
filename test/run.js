@@ -23,6 +23,7 @@ const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOut
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
 const { APPS, resolveCopySuperops } = require('../lib/apps');
 const { CliVideoRecorder } = require('../lib/cli-recorder');
+const { renderTinySynthNotes } = require('../lib/tinysynth-offline');
 const { createBatchClock } = require('../lib/batch-clock');
 // Fixed memory-map addresses, from the map declared in src/00-regions.wat.
 const RegionMap = require('../lib/region-map.generated.js');
@@ -126,9 +127,17 @@ const CONTROL = hasFlag('control') || CONTROL_SPEC !== null;
 // the request. Not compatible with the interactive debug prompt (--break
 // without --watch-log), which owns stdin.
 const CONTROL_STDIN = hasFlag('control-stdin');
-const CLI_FROZEN_START = hasFlag('frozen'); // --frozen: wait for control-channel step commands before running guest batches
+// --frozen: with a live control channel, park before the first batch and run
+// only batches explicitly released by {action:"step", n}. This is the CLI
+// twin of browser frozen mode: agent think-time advances neither guest state
+// nor a --control recording.
+const CONTROL_FROZEN_START = hasFlag('frozen');
 const CONTROL_PORT = parseInt(CONTROL_SPEC || '8123', 10) || 8123;
 const CONTROL_HOST = getArg('control-host', '127.0.0.1'); // --control-host=0.0.0.0: explicit LAN opt-in (the channel carries eval)
+if (CONTROL_FROZEN_START && !(CONTROL || CONTROL_STDIN)) {
+  console.error('error: --frozen requires --control or --control-stdin');
+  process.exit(2);
+}
 // With --control the schedule is external, so a default batch budget makes no
 // sense: the run ends on a quit command, a stop action, or the outer timeout.
 // An explicit --max-batches still bounds it.
@@ -314,10 +323,10 @@ if (process.send) {
 }
 const TIME_SCALE = parseFloat(getArg('time-scale', '1')) || 1;  // --time-scale=10: guest clock runs 10x
 const REAL_TICKS = hasFlag('real-ticks'); // --real-ticks: GetTickCount from the wall clock, not the batch counter
-if (CLI_FROZEN_START && !(CONTROL || CONTROL_STDIN)) {
+if (CONTROL_FROZEN_START && !(CONTROL || CONTROL_STDIN)) {
   throw new Error('--frozen needs --control or --control-stdin');
 }
-if (CLI_FROZEN_START && REAL_TICKS) {
+if (CONTROL_FROZEN_START && REAL_TICKS) {
   throw new Error('--frozen is incompatible with --real-ticks; use the deterministic batch clock');
 }
 // --tick-ms-per-batch=N: how much guest time one batch is worth on the
@@ -1732,6 +1741,9 @@ async function main() {
     if (TRACE_INPUT) renderer.onInputTrace = (what) => console.log(`[input-route] ${what}`);
   }
   let videoRecorder = null;
+  let videoEvery = 1;
+  let videoStartBatch = VIDEO_START_BATCH;
+  const audioTapPumps = new Set();
   if (VIDEO_OUT) {
     if (!renderer) throw new Error('--video requires the CLI renderer (remove --no-renderer)');
     videoRecorder = new CliVideoRecorder(renderer.canvas, {
@@ -1926,6 +1938,9 @@ async function main() {
     _audioOutPath: AUDIO_OUT || null,
     _audioOutWav: AUDIO_OUT ? AUDIO_OUT.toLowerCase().endsWith('.wav') : false,
     sharedAudio: {},  // shared waveOut state across threads
+    audioTap: () => (videoRecorder && videoRecorder.active ? videoRecorder : null),
+    registerAudioTapPump: fn => { if (typeof fn === 'function') audioTapPumps.add(fn); },
+    renderMidiForTap: (smf, options) => renderTinySynthNotes(smf, options),
     g2w: (addr) => ctx.exports ? translateGuest(addr, ctx.exports.get_image_base(), ctx.getMemory()) : addr,
     readFile: (name) => {
       // Try to find file relative to exe directory
@@ -5003,26 +5018,6 @@ async function main() {
     }
   };
   const deadlineMs = MAX_SECONDS ? Date.now() + MAX_SECONDS * 1000 : 0;
-  let cliFrozen = CLI_FROZEN_START;
-  let cliFrozenSteps = 0;
-  let cliStepBudget = 0;
-  let cliStepWaiter = null;
-  let cliWake = null;
-  let cliWakeTimer = null;
-  const wakeCliLoop = () => {
-    if (!cliWake) return;
-    const wake = cliWake;
-    cliWake = null;
-    if (cliWakeTimer) clearTimeout(cliWakeTimer);
-    cliWakeTimer = null;
-    wake();
-  };
-  const waitForCliStep = () => new Promise(resolve => {
-    cliWake = resolve;
-    if (deadlineMs) {
-      cliWakeTimer = setTimeout(wakeCliLoop, Math.max(0, deadlineMs - Date.now()));
-    }
-  });
   // --control: live agent command channel (docs/design-agent-control.md).
   // Commands arrive over HTTP between batches. Input entries go through the
   // same parseInputEntries the --input schedule uses and drain through the
@@ -5031,6 +5026,50 @@ async function main() {
   // batches, so instance and renderer state are coherent.
   const liveOutstanding = new Map(); // last parsed ev of a live command -> resolve
   let liveLogsStart = 0;
+  let controlFrozen = CONTROL_FROZEN_START;
+  let controlRunCredits = 0;
+  let controlWake = null;
+  let controlWakeTimer = null;
+  let controlPreviousBatchRan = false;
+  let controlStepWaiter = null;
+  const wakeControlLoop = () => {
+    if (!controlWake) return;
+    const wake = controlWake;
+    controlWake = null;
+    if (controlWakeTimer) clearTimeout(controlWakeTimer);
+    controlWakeTimer = null;
+    wake();
+  };
+  const finishPreviousControlBatch = () => {
+    if (!controlPreviousBatchRan) return;
+    controlPreviousBatchRan = false;
+    if (controlFrozen && controlRunCredits > 0) controlRunCredits--;
+    if (controlStepWaiter && --controlStepWaiter.remaining <= 0) {
+      const waiter = controlStepWaiter;
+      controlStepWaiter = null;
+      waiter.resolve({
+        batch: tickState.batch | 0,
+        ran: waiter.total,
+        steps: waiter.total,
+        frozen: controlFrozen,
+      });
+    }
+  };
+  const waitForControlBatch = async () => {
+    while (controlFrozen && controlRunCredits <= 0 && !stopped) {
+      await new Promise(resolve => {
+        controlWake = resolve;
+        if (deadlineMs) {
+          controlWakeTimer = setTimeout(wakeControlLoop, Math.max(0, deadlineMs - Date.now()));
+        }
+      });
+      if (deadlineMs && Date.now() >= deadlineMs) {
+        stopped = true;
+        console.log(`[max-seconds] stopping after ${MAX_SECONDS}s at batch ${tickState.batch | 0}`);
+      }
+    }
+    if (!stopped) controlPreviousBatchRan = true;
+  };
   const settleLiveInput = () => {
     if (!liveOutstanding.size) return;
     // One shared slice for every command settled this batch: per-command log
@@ -5060,7 +5099,6 @@ async function main() {
     })) : [];
     return {
       batch: tickState.batch | 0,
-      frozen: cliFrozen,
       eip: '0x' + (we.get_eip() >>> 0).toString(16),
       quit: we.get_quit_flag ? !!we.get_quit_flag() : false,
       yieldReason: we.get_yield_reason ? we.get_yield_reason() | 0 : 0,
@@ -5068,23 +5106,30 @@ async function main() {
       mainHwnd: '0x' + ((we.get_main_hwnd ? we.get_main_hwnd() : 0) >>> 0).toString(16),
       screen: renderer && renderer.canvas
         ? { w: renderer.canvas.width | 0, h: renderer.canvas.height | 0 } : null,
+      frozen: {
+        frozen: controlFrozen,
+        tickMs: TICK_MS_PER_BATCH,
+        credits: controlRunCredits,
+        recording: !!videoRecorder,
+      },
       windows,
     };
   };
   const controlEval = (code) => {
     // Direct eval inside a non-strict function body: the params are in
     // scope, statements work, and the last expression's value comes back.
-    const fn = new Function('instance', 'exports', 'renderer', 'memory', 'g2w', 'tickState',
+    const fn = new Function('instance', 'exports', 'renderer', 'memory', 'g2w', 'tickState', 'ctx',
       'return eval(' + JSON.stringify(String(code)) + ')');
-    return controlSafeValue(fn(instance, instance.exports, renderer, memory, g2w, tickState));
+    return controlSafeValue(fn(instance, instance.exports, renderer, memory, g2w, tickState, ctx));
   };
   const controlPng = (filename) => {
     if (!renderer || !renderer.canvas) throw new Error('renderer is unavailable');
     if (!filename) throw new Error('png needs a path');
+    presentDxIfDirty(0);
     if (typeof renderer.repaint === 'function') renderer.repaint();
     const buf = canvasToPng(renderer.canvas);
     fs.writeFileSync(filename, buf);
-    return { batch: tickState.batch | 0, frozen: cliFrozen, path: filename, bytes: buf.length };
+    return { batch: tickState.batch | 0, frozen: controlFrozen, path: filename, bytes: buf.length };
   };
   const handleControlCommand = (cmdIn) => {
     const cmd = typeof cmdIn === 'string' ? { cmd: cmdIn } : (cmdIn || {});
@@ -5109,47 +5154,86 @@ async function main() {
       return {
         pong: true,
         batch: tickState.batch | 0,
-        frozen: cliFrozen,
+        frozen: controlFrozen,
         app: APP_ID || path.basename(EXE_PATH || ''),
       };
     }
     if (cmd.action === 'snapshot') return controlSnapshot();
     if (cmd.action === 'eval') return controlEval(cmd.code || '');
     if (cmd.action === 'png') return controlPng(String(cmd.path || ''));
+    if (cmd.action === 'quit') { stopped = true; wakeControlLoop(); return { quitting: true }; }
     if (cmd.action === 'frozen') {
-      const mode = String(cmd.mode || '').toLowerCase();
-      if (mode !== 'on' && mode !== 'off') throw new Error('frozen needs mode on or off');
-      if (mode === 'on' && REAL_TICKS) {
-        throw new Error('frozen is incompatible with --real-ticks; use the deterministic batch clock');
+      const mode = cmd.mode || 'on';
+      if (mode !== 'on' && mode !== 'off') throw new Error("frozen needs mode 'on' or 'off'");
+      controlFrozen = mode === 'on';
+      if (!controlFrozen) {
+        controlRunCredits = 0;
+        if (controlStepWaiter) {
+          const waiter = controlStepWaiter;
+          controlStepWaiter = null;
+          waiter.reject(new Error('frozen mode was disabled before the requested steps completed'));
+        }
+        wakeControlLoop();
       }
-      if (mode === 'off' && cliStepWaiter) throw new Error('cannot unfreeze while a step is pending');
-      cliFrozen = mode === 'on';
-      wakeCliLoop();
-      return { frozen: cliFrozen, batch: tickState.batch | 0 };
+      return { frozen: controlFrozen, batch: tickState.batch | 0, tickMs: TICK_MS_PER_BATCH };
     }
     if (cmd.action === 'step') {
-      if (!cliFrozen) throw new Error('step needs frozen mode');
-      if (cliStepWaiter) throw new Error('a step command is already pending');
-      const n = Number(cmd.n);
-      if (!Number.isSafeInteger(n) || n < 1 || n > 10000000) {
-        throw new Error('step n must be an integer in 1..10000000');
+      if (!controlFrozen) throw new Error('step requires frozen mode (launch with --frozen or send frozen on)');
+      if (controlStepWaiter) throw new Error('another step command is still running');
+      const n = cmd.n === undefined ? 1 : Number(cmd.n);
+      if (!Number.isInteger(n) || n < 1) throw new Error('step needs a positive integer n');
+      if (cmd.ms !== undefined && Number(cmd.ms) !== TICK_MS_PER_BATCH) {
+        throw new Error(`CLI tick size is fixed at launch (${TICK_MS_PER_BATCH}ms); use --tick-ms-per-batch=${Number(cmd.ms)}`);
       }
-      cliStepBudget = n;
-      wakeCliLoop();
-      return new Promise(resolve => {
-        cliStepWaiter = { requested: n, ran: 0, resolve };
+      controlRunCredits += n;
+      wakeControlLoop();
+      return new Promise((resolve, reject) => {
+        controlStepWaiter = { remaining: n, total: n, resolve, reject };
       });
     }
-    if (cmd.action === 'quit') {
-      stopped = true;
-      wakeCliLoop();
-      return { quitting: true, frozen: cliFrozen };
-    }
-    if (cliFrozen && native.startsWith('png:')) {
-      return controlPng(native.slice('png:'.length));
+    if (cmd.action === 'record') {
+      const mode = cmd.mode || 'status';
+      if (!['on', 'off', 'status'].includes(mode)) throw new Error("record needs mode 'on', 'off', or 'status'");
+      if (mode === 'status') {
+        return videoRecorder
+          ? { recording: true, ...videoRecorder.summary(), everyNSteps: videoEvery }
+          : { recording: false };
+      }
+      if (mode === 'off') {
+        if (!videoRecorder) return { recording: false };
+        const recorder = videoRecorder;
+        for (const pump of audioTapPumps) { try { pump(); } catch (_) {} }
+        videoRecorder = null;
+        return recorder.finish().then(summary => ({ recording: false, ...summary, everyNSteps: videoEvery }));
+      }
+      if (!controlFrozen) throw new Error('live CLI recording requires frozen mode so agent think-time is absent');
+      if (!renderer) throw new Error('CLI recording requires the renderer (remove --no-renderer)');
+      if (videoRecorder) throw new Error('a CLI recording is already active');
+      const every = cmd.everyNSteps === undefined ? 1 : Number(cmd.everyNSteps);
+      if (!Number.isInteger(every) || every < 1) throw new Error('record everyNSteps must be a positive integer');
+      const rawName = String(cmd.name || new Date().toISOString().replace(/[:.]/g, '-'));
+      const hasVideoExt = /\.(?:mp4|webm)$/i.test(rawName);
+      const safeName = rawName.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'recording';
+      const out = hasVideoExt ? path.resolve(rawName) : path.resolve('recordings', `${safeName}.mp4`);
+      videoEvery = every;
+      videoStartBatch = tickState.batch | 0;
+      const derivedFps = TICK_MS_PER_BATCH > 0 ? 1000 / (TICK_MS_PER_BATCH * every) : VIDEO_FPS;
+      videoRecorder = new CliVideoRecorder(renderer.canvas, {
+        path: out,
+        fps: derivedFps,
+        ffmpeg: FFMPEG_PATH,
+        startGuestMs: (tickState.batch | 0) * TICK_MS_PER_BATCH,
+      });
+      return { recording: true, ...videoRecorder.summary(), everyNSteps: videoEvery };
     }
     const entry = String(cmd.cmd || '');
-    if (!entry) throw new Error('need {cmd:"action:args"} or action: ping|snapshot|eval|png|frozen|step|quit');
+    if (!entry) throw new Error('need {cmd:"action:args"} or action: ping|snapshot|eval|png|frozen|step|record|quit');
+    // A frozen CLI is already at a coherent between-batches boundary. Capture
+    // there instead of queueing a png action that cannot execute until a
+    // later `step` (ctl.js checks that the file exists before it returns).
+    if (controlFrozen && entry.startsWith('png:')) {
+      return controlPng(entry.slice(4));
+    }
     if (/^wait-/.test(entry)) {
       throw new Error('wait-* entries are scheduled-only; poll snapshot or png instead');
     }
@@ -5160,16 +5244,8 @@ async function main() {
     if (last && last.action === undefined && !Number.isFinite(last.msg)) {
       throw new Error(`unknown input action ${JSON.stringify(entry.split(':')[0])}`);
     }
-    if (cliFrozen) {
-      const now = tickState.batch | 0;
-      for (const ev of evs) ev.batch = now;
-      let at = scheduledInput.findIndex(e => e.batch > now);
-      if (at < 0) at = scheduledInput.length;
-      scheduledInput.splice(at, 0, ...evs);
-      return { queued: evs.length, batch: now, frozen: true };
-    }
-    return new Promise((resolve) => {
-      liveOutstanding.set(last, resolve);
+    const enqueue = (resolve) => {
+      if (resolve) liveOutstanding.set(last, resolve);
       // After everything already due this batch, before everything scheduled
       // later: the schedule is the fixture, the stream is the driver.
       const now = tickState.batch | 0;
@@ -5177,7 +5253,14 @@ async function main() {
       let at = scheduledInput.findIndex(e => e.batch > now);
       if (at < 0) at = scheduledInput.length;
       scheduledInput.splice(at, 0, ...evs);
-    });
+    };
+    // In frozen mode an input is deliberately only queued; waiting for it to
+    // execute would deadlock the ordinary `ctl click; ctl step` agent loop.
+    if (controlFrozen) {
+      enqueue(null);
+      return { queued: true, batch: tickState.batch | 0 };
+    }
+    return new Promise((resolve) => enqueue(resolve));
   };
   const control = (CONTROL || CONTROL_STDIN) ? (() => {
     const server = CONTROL ? require('../lib/control-server').startControlServer({
@@ -5209,18 +5292,10 @@ async function main() {
   })() : null;
 
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
-    while (cliFrozen && cliStepBudget === 0 && !stopped &&
-           (!deadlineMs || Date.now() < deadlineMs)) {
-      await waitForCliStep();
-    }
-    if (stopped) break;
     if (deadlineMs && Date.now() >= deadlineMs) {
       console.log(`[max-seconds] stopping after ${MAX_SECONDS}s at batch ${batch}`);
       break;
     }
-    const cliSteppedBatch = cliFrozen;
-    if (cliSteppedBatch) cliStepBudget--;
-    batchesRun = batch + 1;
     // Timers cannot fire while the normal runner stays in its synchronous
     // batch loop. Poll wall time sparsely at the one safe seam and await the
     // journal before entering the next guest batch. Sixty-four Date checks per
@@ -5272,9 +5347,13 @@ async function main() {
     // the loop is synchronous end to end — the same mechanism that keeps
     // SIGTERM queued forever (see the timeout -s KILL note in CLAUDE.md).
     if (control) {
+      finishPreviousControlBatch();
       await new Promise(resolve => setImmediate(resolve));
       liveLogsStart = logs.length;
+      await waitForControlBatch();
+      if (stopped) break;
     }
+    batchesRun = batch + 1;
     let injectedInputThisBatch = false;
     // Inject scheduled input events at the right batch
     while (scheduledInput.length && scheduledInput[0].batch <= batch) {
@@ -8030,7 +8109,9 @@ async function main() {
         && (REPAINT_EVERY === 1 || batch % REPAINT_EVERY === 0)) {
       renderer.flushRepaint();
     }
-    if (videoRecorder && batch >= VIDEO_START_BATCH) {
+    if (videoRecorder && batch >= videoStartBatch
+        && ((batch - videoStartBatch) % videoEvery) === 0) {
+      for (const pump of audioTapPumps) { try { pump(); } catch (_) {} }
       presentDxIfDirty(0);   // a recorded frame is a capture, not a live view
       await videoRecorder.capture(renderer.canvas);
     }
@@ -8586,35 +8667,6 @@ if (VERBOSE) {
         }
       }
     }
-    if (cliSteppedBatch && cliStepWaiter) {
-      cliFrozenSteps++;
-      cliStepWaiter.ran++;
-      if (cliStepWaiter.ran >= cliStepWaiter.requested) {
-        const waiter = cliStepWaiter;
-        cliStepWaiter = null;
-        waiter.resolve({
-          frozen: true,
-          ran: waiter.ran,
-          steps: cliFrozenSteps,
-          ticks: batchesRun,
-          guestMs: ((tickState.batch + 1) * TICK_MS_PER_BATCH + tickState.pausedMs) | 0,
-          tickMs: TICK_MS_PER_BATCH,
-          eip: '0x' + (instance.exports.get_eip() >>> 0).toString(16),
-        });
-      }
-    }
-  }
-
-  if (cliStepWaiter) {
-    const waiter = cliStepWaiter;
-    cliStepWaiter = null;
-    waiter.resolve({
-      frozen: cliFrozen,
-      ran: waiter.ran,
-      steps: cliFrozenSteps,
-      stopped: true,
-      eip: '0x' + (instance.exports.get_eip() >>> 0).toString(16),
-    });
   }
   // The control server would otherwise hold the process open; unref lets a
   // reply resolved in the final batch still flush while the exit path prints.
@@ -8882,6 +8934,7 @@ if (VERBOSE) {
   }
 
   if (videoRecorder) {
+    for (const pump of audioTapPumps) { try { pump(); } catch (_) {} }
     const video = await videoRecorder.finish();
     console.log(`[video] wrote ${video.path}: ${video.frames} frames, ` +
       `${video.width}x${video.height} at ${video.fps}fps (${video.duration.toFixed(2)}s)`);

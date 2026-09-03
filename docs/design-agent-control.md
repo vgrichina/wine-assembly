@@ -417,7 +417,7 @@ node tools/ctl.js sessions                      # list live sessions (hub + defa
 node tools/ctl.js [-s ID] click 120,88
 node tools/ctl.js [-s ID] type "hello world"
 node tools/ctl.js [-s ID] key VK_RETURN         # keydown+keyup pair
-node tools/ctl.js [-s ID] frozen on             # stop the world (browser only)
+node tools/ctl.js [-s ID] frozen on             # stop the world (browser or CLI)
 node tools/ctl.js [-s ID] step 400 [16]         # 400 steps of guest work, then stop
 node tools/ctl.js [-s ID] png out.png
 node tools/ctl.js [-s ID] snapshot              # JSON to stdout
@@ -444,13 +444,15 @@ node tools/png-diff.js /tmp/f1.png /tmp/f2.png   # did anything happen?
 
 ## Timing, clocks, and what "now" means
 
-- **CLI:** a live command executes at the top of the next batch. Latency is
+- **CLI:** by default a live command executes at the top of the next batch. Latency is
   one batch of wall time — irrelevant for an agent loop. The headless clock
   interplay does **not** go away: an app pacing on `WM_TIMER` still needs
   `--tick-ms-per-batch` chosen for it, and an agent free-running batches
-  between its own commands advances guest time fast. That is usually what an
-  agent wants (no waiting through fades); when it isn't, phase-2
-  `pause`/`run N` is the answer, not a new clock mode.
+  between its own commands advances guest time fast. Launching with
+  `--control --frozen` (or sending `frozen on`) parks between commands;
+  `step N` releases exactly N batches and waits for all of them to finish.
+  Input commands only queue while frozen, making `click` then `step` the
+  atomic play loop. The CLI tick size is fixed at launch.
 - **Browser:** a command executes on receipt in the page's event loop, i.e.
   between run-loop steps — the same interleaving as real user input. A
   **frozen** session removes the race entirely: nothing runs between commands

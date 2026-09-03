@@ -81,7 +81,7 @@
   ;; +20 DIB (WASM addr), +24 vidmem bytes, +28 flags (1=primary, 4=offscreen).
   ;; Returns the COM object, or 0 when the heap or the object table is full.
   (func $d3d9_create_surface (param $w i32) (param $h i32) (param $bpp i32) (param $flags i32) (result i32)
-    (local $pitch i32) (local $size i32) (local $dib_guest i32)
+    (local $pitch i32) (local $size i32) (local $dib_guest i32) (local $dib_wa i32)
     (local $obj i32) (local $entry i32)
     (local.set $pitch (i32.and
       (i32.add (i32.mul (local.get $w) (i32.div_u (local.get $bpp) (i32.const 8))) (i32.const 3))
@@ -90,7 +90,7 @@
     (local.set $dib_guest (call $heap_alloc (local.get $size)))
     ;; g2w(0) is the base of the guest image; never zero a surface from there.
     (if (i32.eqz (local.get $dib_guest)) (then (return (i32.const 0))))
-    (call $zero_memory (call $g2w (local.get $dib_guest)) (local.get $size))
+    (local.set $dib_wa (call $g2w (local.get $dib_guest))) (call $zero_memory (local.get $dib_wa) (local.get $size))
     (local.set $obj (call $dx_create_com_obj (i32.const 2) (global.get $DX_VTBL_DDSURF2)))
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
     (local.set $entry (call $dx_from_this (local.get $obj)))
@@ -98,7 +98,7 @@
     (store.field DxObject height (local.get $entry) (local.get $h))
     (store.field DxObject bpp (local.get $entry) (local.get $bpp))
     (store.field DxObject pitch (local.get $entry) (local.get $pitch))
-    (store.field DxObject misc1 (local.get $entry) (call $g2w (local.get $dib_guest)))
+    (store.field DxObject misc1 (local.get $entry) (local.get $dib_wa))
     (store.field DxObject misc2 (local.get $entry) (local.get $size))
     (store.field DxObject flags (local.get $entry) (local.get $flags))
     (global.set $dx_vidmem_used (i32.add (global.get $dx_vidmem_used) (local.get $size)))

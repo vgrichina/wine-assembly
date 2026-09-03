@@ -103,6 +103,7 @@ const UNIONS = {
       '$host_gdi_get_object_h':      'GdiBitmap',  // 01-header:478 `+4 == 3`
       '$cursor_scale_bitmap':        'GdiBitmap',  // 09a:4551 $gdi_bitmap_record_valid
       '$cursor_plane_row':           'GdiBitmap',  // 09a:4824 $hbm is a cursor plane
+      '$copy_image_bitmap':          'GdiBitmap',  // 09a:18619 record_valid
       '$handle_CreateDIBSection':    'GdiBitmap',  // 09a4:2276 from create_dib_section
       '$gdi_bitmap_alloc':           'GdiBitmap',  // 10e:306 gdi_object_alloc(3,..)
       '$gdi_bitmap_storage':         'GdiBitmap',  // 10e:409 `+4 == 3`

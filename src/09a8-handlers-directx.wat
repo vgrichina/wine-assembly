@@ -1794,7 +1794,7 @@
   ;; CreateSurface(this, lpDDSD, lplpDDSurface, pUnkOuter)
   (func $handle_IDirectDraw_CreateSurface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ddsd_wa i32) (local $caps i32) (local $w i32) (local $h i32) (local $bpp i32)
-    (local $pitch i32) (local $dib_size i32) (local $dib_guest i32) (local $fmt i32)
+    (local $pitch i32) (local $dib_size i32) (local $dib_guest i32) (local $fmt i32) (local $dib_wa i32)
     (local $obj i32) (local $entry i32) (local $flags i32)
     (local $back_obj i32) (local $back_entry i32) (local $vidmem_bytes i32)
     (local.set $ddsd_wa (call $g2w (local.get $arg1)))
@@ -1882,7 +1882,7 @@
         (global.set $eax (i32.const 0x8876017C)) ;; DDERR_OUTOFVIDEOMEMORY
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
-    (call $zero_memory (call $g2w (local.get $dib_guest)) (local.get $dib_size))
+    (local.set $dib_wa (call $g2w (local.get $dib_guest))) (call $zero_memory (local.get $dib_wa) (local.get $dib_size))
     ;; Mipmap: the pyramid adds ~1/3 of level-0 bytes. DDSCAPS_MIPMAP=0x400000.
     ;; Only level 0 is allocated in RAM; extra pyramid bytes are accounted in
     ;; vidmem only so MCM's GetAvailableVidMem-delta footprint check matches.
@@ -1895,7 +1895,7 @@
     (local.set $obj (call $dx_create_com_obj (i32.const 2) (global.get $DX_VTBL_DDSURF2)))
     (if (i32.eqz (local.get $obj))
       (then
-        (call $dib_free_wasm (call $g2w (local.get $dib_guest)))
+        (call $dib_free_wasm (local.get $dib_wa))
         (global.set $eax (i32.const 0x80004005))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
@@ -1909,7 +1909,7 @@
     (store.field DxObject height (local.get $entry) (local.get $h))
     (store.field DxObject bpp (local.get $entry) (local.get $bpp))
     (store.field DxObject pitch (local.get $entry) (local.get $pitch))
-    (store.field DxObject misc1 (local.get $entry) (call $g2w (local.get $dib_guest)))
+    (store.field DxObject misc1 (local.get $entry) (local.get $dib_wa))
     (store.field DxObject misc2 (local.get $entry) (local.get $vidmem_bytes))
     (store.field DxObject flags (local.get $entry) (local.get $flags))
     (call $dx_surf_fmt_set (local.get $entry) (local.get $fmt))
@@ -1972,9 +1972,9 @@
               (global.set $eax (i32.const 0x8876017C)) ;; DDERR_OUTOFVIDEOMEMORY
               (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
               (return)))
-          (call $zero_memory (call $g2w (local.get $dib_guest)) (local.get $dib_size))
+          (local.set $dib_wa (call $g2w (local.get $dib_guest))) (call $zero_memory (local.get $dib_wa) (local.get $dib_size))
           (global.set $dx_vidmem_used (i32.add (global.get $dx_vidmem_used) (local.get $dib_size)))
-          (store.field DxObject misc1 (local.get $back_entry) (call $g2w (local.get $dib_guest)))
+          (store.field DxObject misc1 (local.get $back_entry) (local.get $dib_wa))
           (store.field DxObject misc2 (local.get $back_entry) (local.get $dib_size))
           (store.field DxObject flags (local.get $back_entry) (i32.const 2)) ;; flag=backbuf
           (call $dx_surf_fmt_set (local.get $back_entry) (local.get $fmt))
@@ -9108,7 +9108,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirect3DDevice3_GetStats (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_get_stats (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_AddViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -9566,23 +9566,23 @@
   ;; Copy back min(dwSize, 76) bytes from our buffer. If no SetLight ever ran,
   ;; our buffer stays zeroed except the caller-visible dwSize echo.
   (func $handle_IDirect3DLight_GetLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $buf i32) (local $dwSize i32)
+    (local $entry i32) (local $buf i32) (local $dwSize i32) (local $out_wa i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $buf (load.field DxObject misc0 (local.get $entry)))
-    (if (local.get $arg1) (then
-      (local.set $dwSize (call $gl32 (local.get $arg1)))
+    (if (local.get $arg1) (then (local.set $out_wa (call $g2w (local.get $arg1)))
+      (local.set $dwSize (i32.load (local.get $out_wa)))
       (if (i32.gt_u (local.get $dwSize) (i32.const 76)) (then (local.set $dwSize (i32.const 76))))
       (if (i32.lt_u (local.get $dwSize) (i32.const 4)) (then (local.set $dwSize (i32.const 76))))
       (if (local.get $buf)
         (then
           (call $memcpy
-            (call $g2w (local.get $arg1))
+            (local.get $out_wa)
             (call $g2w (local.get $buf))
             (local.get $dwSize)))
         (else
           ;; No stored light yet — zero the caller buffer then restore dwSize.
-          (call $zero_memory (call $g2w (local.get $arg1)) (local.get $dwSize))
-          (call $gs32 (local.get $arg1) (local.get $dwSize))))))
+          (call $zero_memory (local.get $out_wa) (local.get $dwSize))
+          (i32.store (local.get $out_wa) (local.get $dwSize))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 

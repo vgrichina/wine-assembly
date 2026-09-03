@@ -1428,13 +1428,21 @@
         (memory.fill (local.get $p) (i32.const 0) (global.get $GDI_WINDOW_SURFACE_STRIDE)))))
 
   (func $gdi_window_dc_bind (param $hdc i32) (param $hwnd i32) (param $whole i32) (result i32)
-    (local $dc i32)
+    (local $dc i32) (local $surface i32)
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 1)))
     (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
     (store.field.memarg GdiDcState window_binding (local.get $dc) (i32.or (i32.and (local.get $hwnd) (i32.const 0x7FFFFFFF))
         (select (i32.const 0x80000000) (i32.const 0)
           (i32.ne (local.get $whole) (i32.const 0)))))
-    (i32.ne (call $gdi_window_surface_ensure (local.get $hwnd)) (i32.const 0)))
+    (local.set $surface (call $gdi_window_surface_ensure (local.get $hwnd)))
+    (if (local.get $surface) (then (return (i32.const 1))))
+    ;; Dialog-template children receive WM_CREATE before $host_dialog_loaded
+    ;; publishes the top-level renderer window. They nevertheless have real
+    ;; HWNDs and may initialize a CS_OWNDC here; keep the DC record and its
+    ;; selected font/colours even though no pixel surface can be attached yet.
+    ;; A later GetDC/BeginPaint rebinds the same private DC once the host
+    ;; window exists. Unknown/dead HWNDs still fail as before.
+    (i32.ne (call $wnd_table_find (local.get $hwnd)) (i32.const -1)))
 
   ;; DirectDraw HDCs address native DX_OBJECTS pixel storage directly. The
   ;; host surface registered here is only a derived presentation cache.

@@ -210,6 +210,8 @@ function desktopAssetPaths() {
   const { APPS, DESKTOP_APPS, LOCAL_CANDIDATE_APPS, DEBUG_ONLY_APPS, appFileUrl } =
     require(path.join(ROOT, 'lib', 'apps.js'));
   const { DLL_PATHS } = require(path.join(ROOT, 'lib', 'dll-registry.js'));
+  const { win16StageableModules } = require(path.join(ROOT, 'lib', 'dll-loader.js'));
+  const { win16FileCandidates } = require(path.join(ROOT, 'lib', 'vfs-seed.js'));
   const out = new Set();
   const publishable = p => p.startsWith('binaries/') ||
     PUBLISHABLE_OUTSIDE_BINARIES.some(root => p.startsWith(root));
@@ -230,7 +232,40 @@ function desktopAssetPaths() {
     // A bare DLL name is resolved through the registry below, not here.
     for (const d of app.dlls || []) if (d.includes('/')) add(d);
     // `win16Modules` names NE modules the page fetches from the exe's own
-    // directory by candidate filename, not paths — those still do not ship.
+    // directory by candidate filename, not paths. Static imports are fetched
+    // the same way after the browser reads the NE module table. Resolve both
+    // sets here through the loader's own filename rules: otherwise a deploy
+    // can contain the EXE but omit the VBRUN/helper DLLs it needs to start.
+    const exe = app.exe && path.join(ROOT, app.exe);
+    if (exe && fs.existsSync(exe)) {
+      const bytes = fs.readFileSync(exe);
+      const mz = bytes.length >= 0x40 && bytes[0] === 0x4d && bytes[1] === 0x5a;
+      const ne = mz ? bytes.readUInt32LE(0x3c) : 0;
+      if (ne && ne + 2 <= bytes.length && bytes[ne] === 0x4e && bytes[ne + 1] === 0x45) {
+        const dir = path.posix.dirname(app.exe);
+        const entries = fs.readdirSync(path.join(ROOT, dir));
+        const actualName = new Map();
+        for (const entry of entries) {
+          const key = entry.toLowerCase();
+          if (!actualName.has(key)) actualName.set(key, entry);
+        }
+        const modules = [...new Set([
+          ...win16StageableModules(bytes),
+          ...(app.win16Modules || []),
+        ])];
+        for (const module of modules) {
+          for (const file of win16FileCandidates(module)) {
+            // On a case-insensitive checkout existsSync says that every case
+            // variant exists. Publish the directory entry's real spelling
+            // once, not six aliases of the same inode.
+            const entry = actualName.get(file.toLowerCase());
+            if (!entry) continue;
+            add(path.posix.join(dir, entry));
+            break;
+          }
+        }
+      }
+    }
     for (const f of app.files || []) add(appFileUrl(f));
   }
   // Any app can LoadLibrary any of these at runtime, so they all ship.
@@ -838,4 +873,9 @@ if (require.main === module) {
   deploy().catch(e => { console.error(e); process.exit(1); });
 }
 
-module.exports = { ASSET_PART_SIZE, SERVER_MAX_FILE_SIZE, encodeBinaryBytes };
+module.exports = {
+  ASSET_PART_SIZE,
+  SERVER_MAX_FILE_SIZE,
+  encodeBinaryBytes,
+  desktopAssetPaths,
+};

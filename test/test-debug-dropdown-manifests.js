@@ -3,11 +3,14 @@
 'use strict';
 
 const assert = require('assert');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const { APPS, resolveCopySuperops } = require(path.join(ROOT, 'lib', 'apps.js'));
+const {
+  APPS, LOCAL_CANDIDATE_APPS, resolveCopySuperops,
+} = require(path.join(ROOT, 'lib', 'apps.js'));
 const {
   buildCatalog,
   categorizeCatalog,
@@ -27,6 +30,21 @@ assert.strictEqual(new Set(dropdownIds).size, dropdownIds.length,
   'debug dropdown app IDs must be unique');
 for (const id of dropdownIds) assert(APPS[id], `debug dropdown app ${id} is not registered`);
 
+assert(dropdownIds.includes('heaven7'), 'web dropdown must list Heaven Seven');
+assert(LOCAL_CANDIDATE_APPS.some(([id]) => id === 'heaven7'),
+  'Heaven Seven must survive the localhost selector filter');
+assert.strictEqual(APPS.heaven7.exe,
+  'binaries/demoscene/heaven-seven/HEAVEN7W.EXE',
+  'Heaven Seven must launch the tested final Windows executable');
+assert.strictEqual(APPS.heaven7.dismissStartupDialog.command, 1,
+  'Heaven Seven must automatically press Run in its setup dialog');
+const heaven7Exe = path.join(ROOT, APPS.heaven7.exe.replace(/^binaries\//, 'test/binaries/'));
+assert.strictEqual(fs.statSync(heaven7Exe).size, 65536,
+  'Heaven Seven must retain its 64K executable size');
+assert.strictEqual(crypto.createHash('sha256').update(fs.readFileSync(heaven7Exe)).digest('hex'),
+  '3171d7bbe7faf70d5f3a6f6e24292e33a5007316156734a63b42cdf2f8805453',
+  'Heaven Seven executable must match the archived final Windows build');
+
 function option(value, label) {
   return { tagName: 'OPTION', value, textContent: label };
 }
@@ -45,6 +63,7 @@ const pickerCatalog = buildCatalog({
       option('quake2_demo', 'Quake II Demo'),
       option('quake2_demo_installer', 'Quake II Demo Installer'),
     ]),
+    group('Demoscene', [option('heaven7', 'Heaven Seven (64K intro)')]),
     group('Installers', [option('winamp291_inst', 'Winamp 2.91 Installer')]),
     group('Future Collection', [option('future', 'Future App')]),
   ],
@@ -52,7 +71,7 @@ const pickerCatalog = buildCatalog({
 assert.deepStrictEqual(pickerCatalog.entries.map(entry => entry.value),
   [
     'notepad', 'sol', 'sol16', 'winamp', 'pinball',
-    'quake2_demo', 'quake2_demo_installer', 'winamp291_inst', 'future',
+    'quake2_demo', 'quake2_demo_installer', 'heaven7', 'winamp291_inst', 'future',
   ],
   'picker catalog must preserve the native selector order and top-level options');
 const pickerCategories = categorizeCatalog(pickerCatalog);
@@ -62,8 +81,8 @@ assert(pickerCategories.some(category => category.label === 'Classic Games' && c
   'classic game groups and game entries from Other must share a cascade');
 assert(pickerCategories.some(category => category.label === '16-bit Games' && category.count === 1),
   '16-bit games must have their own shorter cascade');
-assert(pickerCategories.some(category => category.label === 'PC Games & Demos' && category.count === 1),
-  'local game candidates must appear outside the classic-game collection');
+assert(pickerCategories.some(category => category.label === 'PC Games & Demos' && category.count === 2),
+  'local game candidates and demoscene intros must appear outside the classic-game collection');
 assert(pickerCategories.some(category => category.label === 'Installers' && category.count === 2),
   'installers from both source groups must share one category');
 assert(pickerCategories.some(category =>

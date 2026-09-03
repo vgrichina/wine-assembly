@@ -148,10 +148,18 @@ const digest = crypto.createHash('sha256')
 // thread queue's active top-level and deliver real activation transitions.
 // 2026-09-02: 477 -> 476. UnregisterClassA/W now remove the matching owned
 // class only after its last window is gone instead of always returning TRUE.
-// 2026-09-02: 477 -> 476 after branch merge. WinExec now delegates relative
-// sibling executables to the host's VFS-backed process launcher.
-const EXPECTED_COUNT = 476;
-const EXPECTED_SHA256 = '230d88238b1b041da755ce7fc0478638711b0c9053d4d23f201bb64f43d9a56d';
+// 2026-09-02: 476 -> 473. Direct3D Device 1/2/3 GetStats now initializes all
+// five D3DSTATS counters and rejects a null output buffer.
+// 2026-09-02: 473 -> 472. ImageList_Destroy now validates and invalidates its
+// handle and releases both the image-list record and retained icon array.
+// 2026-09-02: 472 -> 471. CopyIcon now creates an independently owned copy of
+// bitmap-backed, resource-backed, and opaque system icon handles.
+// 2026-09-02: 471 -> 470. CopyImage now owns and resamples bitmap/icon/cursor
+// images, including RETURNORG/DELETEORG, monochrome, and DIB-section requests.
+// 2026-09-03: 470 -> 469. SHFileOperationA now delegates copy, move, rename,
+// wildcard, multi-destination, and recursive delete work to the shared VFS.
+const EXPECTED_COUNT = 468;
+const EXPECTED_SHA256 = '651eb12ccbb578f1230404bcbcf356c263312a2f660867b8591c9e40c7e26843';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

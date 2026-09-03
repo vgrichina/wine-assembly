@@ -715,6 +715,7 @@
   ;; is already spoken for as a BOOL at its other call sites.
   (import "host" "fs_write_file" (func $host_fs_write_file (param i32 i32 i32 i32) (result i32)))
   ;; fs_write_file(handle, bufGA, nToWrite, nWrittenGA) → BOOL
+  (import "host" "fs_flush_file_buffers" (func $host_fs_flush_file_buffers (param i32) (result i32)))
   (import "host" "fs_close_handle" (func $host_fs_close_handle (param i32) (result i32)))
   (import "host" "fs_set_file_pointer" (func $host_fs_set_file_pointer (param i32 i32 i32) (result i32)))
   (import "host" "fs_set_end_of_file" (func $host_fs_set_end_of_file (param i32) (result i32)))
@@ -728,6 +729,8 @@
   (import "host" "fs_remove_directory" (func $host_fs_remove_directory (param i32 i32) (result i32)))
   (import "host" "fs_move_file" (func $host_fs_move_file (param i32 i32 i32) (result i32)))
   (import "host" "fs_copy_file" (func $host_fs_copy_file (param i32 i32 i32 i32) (result i32)))
+  ;; fs_shell_file_operation(fromMultiSzWA, toMultiSzWA, op, flags) → shell result
+  (import "host" "fs_shell_file_operation" (func $host_fs_shell_file_operation (param i32 i32 i32 i32) (result i32)))
   (import "host" "fs_find_first_file" (func $host_fs_find_first_file (param i32 i32 i32) (result i32)))
   (import "host" "fs_find_next_file" (func $host_fs_find_next_file (param i32 i32 i32) (result i32)))
   (import "host" "fs_find_close" (func $host_fs_find_close (param i32) (result i32)))

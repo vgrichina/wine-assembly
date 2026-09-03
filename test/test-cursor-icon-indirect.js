@@ -27,6 +27,7 @@ function check(label, fn) {
 
 (async () => {
   const pushes = [];
+  const opaqueCursors = [];
   // The real host import, wired to a canvas that only has a style -- which is
   // all a cursor needs. Calling it from the recording stub keeps this test on
   // the shipping encoder rather than on a description of it.
@@ -46,7 +47,7 @@ function check(label, fn) {
         pushes.push({ hcur: hcur >>> 0, width, height, hotX, hotY, pixels: px,
           hadBits: !!bgraWa, bgraWa: bgraWa >>> 0 });
       },
-      set_cursor: () => {},
+      set_cursor: hcur => opaqueCursors.push(hcur >>> 0),
     },
     extraWat: `
     (func (export "test_call_CreateIconIndirect") (param $info i32) (result i32)
@@ -107,8 +108,63 @@ function check(label, fn) {
         (i32.const 0) (i32.const 0))
       (global.set $esp (local.get $saved_esp))
       (global.get $eax))
+    (func (export "test_call_CopyIcon") (param $icon i32) (result i32)
+      (local $saved_esp i32)
+      (local.set $saved_esp (global.get $esp))
+      (call $handle_CopyIcon
+        (local.get $icon) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0))
+      (global.set $esp (local.get $saved_esp))
+      (global.get $eax))
+    (func (export "test_call_CopyImage")
+          (param $image i32) (param $type i32) (param $cx i32)
+          (param $cy i32) (param $flags i32) (result i32)
+      (local $saved_esp i32)
+      (local.set $saved_esp (global.get $esp))
+      (call $handle_CopyImage
+        (local.get $image) (local.get $type) (local.get $cx) (local.get $cy)
+        (local.get $flags) (i32.const 0))
+      (global.set $esp (local.get $saved_esp))
+      (global.get $eax))
+    (func (export "test_call_DestroyCursor") (param $cursor i32) (result i32)
+      (local $saved_esp i32)
+      (local.set $saved_esp (global.get $esp))
+      (call $handle_DestroyCursor
+        (local.get $cursor) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0))
+      (global.set $esp (local.get $saved_esp))
+      (global.get $eax))
+    (func (export "test_call_LoadCursorA") (param $hinst i32) (param $resid i32) (result i32)
+      (local $saved_esp i32)
+      (local.set $saved_esp (global.get $esp))
+      (call $handle_LoadCursorA
+        (local.get $hinst) (local.get $resid) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0))
+      (global.set $esp (local.get $saved_esp))
+      (global.get $eax))
+    (func (export "test_bitmap_bpp") (param $bitmap i32) (result i32)
+      (call $gdi_bitmap_record_bpp (call $gdi_object_record (local.get $bitmap))))
+    (func (export "test_bitmap_flags") (param $bitmap i32) (result i32)
+      (local $record i32)
+      (local.set $record (call $gdi_object_record (local.get $bitmap)))
+      (if (result i32) (local.get $record)
+        (then (load.field.memarg GdiBitmap flags (local.get $record)))
+        (else (i32.const 0))))
+    (func (export "test_set_resource_root") (param $rva i32)
+      (global.set $rsrc_rva (local.get $rva)))
+    (func (export "test_intern_main_icon") (param $resid i32) (result i32)
+      (call $icon_intern (i32.const 0) (local.get $resid)))
+    (func (export "test_call_LoadIconA") (param $hinst i32) (param $resid i32) (result i32)
+      (local $saved_esp i32)
+      (local.set $saved_esp (global.get $esp))
+      (call $handle_LoadIconA
+        (local.get $hinst) (local.get $resid) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0))
+      (global.set $esp (local.get $saved_esp))
+      (global.get $eax))
   ` });
   const wat = harness.exports;
+  wat.test_set_resource_root(0);
   cssCanvas = { style: {} };
   cssHost = createHostImports({
     getMemory: () => harness.memory.buffer,
@@ -193,7 +249,76 @@ function check(label, fn) {
     writePlane(xorOffset + stride * height, andRows);
     const ptr = alloc(bytes.length);
     writeBytes(ptr, bytes);
-    return { ptr, size: bytes.length, width, height };
+    return { ptr, size: bytes.length, width, height, bytes };
+  };
+
+  // Install one minimal PE resource tree with RT_GROUP_ICON 77 and two RT_ICON
+  // images. Keeping the group in the mapped image makes this exercise the same
+  // resource walker CopyImage uses for a real loaded executable.
+  const installCopyImageResources = () => {
+    const rsrcRva = 0x16000;
+    const root = rsrcRva;
+    const groupRva = 0x17000;
+    const smallRva = 0x17100;
+    const largeRva = 0x17200;
+    for (let i = 0; i < 0x400; i++) wat.guest_write8(root + i, 0);
+    const dir = (off, count) => wat.guest_write16(root + off + 14, count);
+    const entry = (off, id, child, directory = true) => {
+      wat.guest_write32(root + off, id);
+      wat.guest_write32(root + off + 4, directory ? (0x80000000 | child) : child);
+    };
+    dir(0x000, 2);
+    entry(0x010, 3, 0x040);       // RT_ICON
+    entry(0x018, 14, 0x070);      // RT_GROUP_ICON
+    dir(0x040, 2);
+    entry(0x050, 1, 0x0a0);
+    entry(0x058, 2, 0x0c0);
+    dir(0x070, 1);
+    entry(0x080, 77, 0x0e0);
+    dir(0x0a0, 1);
+    entry(0x0b0, 0x0409, 0x120, false);
+    dir(0x0c0, 1);
+    entry(0x0d0, 0x0409, 0x130, false);
+    dir(0x0e0, 1);
+    entry(0x0f0, 0x0409, 0x140, false);
+
+    const black4 = Array(4).fill('0000');
+    const largeAnd = ART_AND.flatMap(row => {
+      const doubled = [...row].map(ch => ch + ch).join('');
+      return [doubled, doubled];
+    });
+    const largeXor = ART_XOR.flatMap(row => {
+      const doubled = [...row].map(ch => ch + ch).join('');
+      return [doubled, doubled];
+    });
+    const small = resourceImage({ isIcon: true, andRows: black4, xorRows: black4 });
+    const large = resourceImage({ isIcon: true, andRows: largeAnd, xorRows: largeXor });
+    const group = new Uint8Array(6 + 2 * 14);
+    const gdv = new DataView(group.buffer);
+    gdv.setUint16(0, 0, true);
+    gdv.setUint16(2, 1, true);
+    gdv.setUint16(4, 2, true);
+    const groupEntry = (off, width, height, size, id) => {
+      group[off] = width;
+      group[off + 1] = height;
+      gdv.setUint16(off + 4, 1, true);
+      gdv.setUint16(off + 6, 1, true);
+      gdv.setUint32(off + 8, size, true);
+      gdv.setUint16(off + 12, id, true);
+    };
+    groupEntry(6, 4, 4, small.size, 1);
+    groupEntry(20, 8, 8, large.size, 2);
+    writeBytes(groupRva, group);
+    writeBytes(smallRva, small.bytes);
+    writeBytes(largeRva, large.bytes);
+    const dataEntry = (off, rva, size) => {
+      wat.guest_write32(root + off, rva);
+      wat.guest_write32(root + off + 4, size);
+    };
+    dataEntry(0x120, smallRva, small.size);
+    dataEntry(0x130, largeRva, large.size);
+    dataEntry(0x140, groupRva, group.length);
+    wat.test_set_resource_root(rsrcRva);
   };
 
   // A 4x4 cursor that uses all four AND/XOR combinations exactly once per
@@ -288,6 +413,40 @@ function check(label, fn) {
     assert.strictEqual(wat.guest_read32(info + 4) >>> 0, 4, 'center x');
     assert.strictEqual(wat.guest_read32(info + 8) >>> 0, 4, 'center y');
     assert.ok(wat.guest_read32(info + 12) >>> 0, 'mask bitmap');
+  });
+
+  check('CopyImage stretches the loaded icon or reloads the nearest group entry', () => {
+    installCopyImageResources();
+    assert.ok(wat.rsrc_find_data_wa(14, 77) >>> 0, 'test RT_GROUP_ICON is not findable');
+    assert.ok(wat.rsrc_find_data_wa(3, 1) >>> 0, 'test RT_ICON is not findable');
+    const source = wat.test_intern_main_icon(77) >>> 0;
+    assert.ok(source, 'test module icon did not intern');
+    assert.strictEqual(wat.test_call_CopyImage(source, 1, 0, 0, 0x0004) >>> 0, source,
+      'LR_COPYRETURNORG missed the loaded first-entry dimensions');
+
+    const stretched = wat.test_call_CopyImage(source, 1, 7, 7, 0) >>> 0;
+    const reloaded = wat.test_call_CopyImage(source, 1, 7, 7, 0x4000) >>> 0;
+    assert.ok(stretched && reloaded, 'resource CopyImage returned NULL');
+    pushes.length = 0;
+    wat.test_call_SetCursor(stretched);
+    const stretchedPush = pushes[pushes.length - 1];
+    pushes.length = 0;
+    wat.test_call_SetCursor(reloaded);
+    const reloadedPush = pushes[pushes.length - 1];
+    assert.deepStrictEqual(
+      { width: stretchedPush.width, height: stretchedPush.height },
+      { width: 7, height: 7 });
+    assert.deepStrictEqual(
+      { width: reloadedPush.width, height: reloadedPush.height },
+      { width: 7, height: 7 });
+    const whitePixels = push => push.pixels.filter(
+      px => px[0] > 200 && px[1] > 200 && px[2] > 200 && px[3] > 200).length;
+    assert.strictEqual(whitePixels(stretchedPush), 0,
+      'ordinary CopyImage did not stretch the current first group image');
+    assert.ok(whitePixels(reloadedPush) > 0,
+      'LR_COPYFROMRESOURCE did not choose the closer 8x8 image');
+    wat.test_call_DestroyIcon(stretched);
+    wat.test_call_DestroyIcon(reloaded);
   });
 
   check('invalid resource versions and truncated DIBs fail instead of succeeding silently', () => {
@@ -480,6 +639,182 @@ function check(label, fn) {
     const again = wat.test_call_CreateIconIndirect(
       iconInfo({ xHot: 2, yHot: 2, mask: crossMask() })) >>> 0;
     assert.strictEqual(again, handleA, 'the freed slot was not reused');
+  });
+
+  check('CopyImage creates and resamples an independent bitmap', () => {
+    const bits = alloc(16);
+    for (let i = 0; i < 4; i++) wat.guest_write32(bits + i * 4, 0x00112233);
+    const source = wat.test_call_CreateBitmap(2, 2, 1, 32, bits) >>> 0;
+    const copy = wat.test_call_CopyImage(source, 0, 4, 3, 0) >>> 0;
+    assert.ok(copy, 'bitmap CopyImage returned NULL');
+    assert.notStrictEqual(copy, source, 'bitmap CopyImage returned the source');
+    assert.strictEqual(wat.test_gdi_object_width(copy), 4, 'scaled bitmap width');
+    assert.strictEqual(wat.test_gdi_object_height(copy), 3, 'scaled bitmap height');
+    assert.strictEqual(wat.test_bitmap_bpp(copy), 32, 'bitmap depth changed');
+    assert.strictEqual(wat.test_gdi_object_type(source), 3, 'copy consumed its source');
+    const storage = wat.test_gdi_bitmap_storage(copy) >>> 0;
+    const dv = new DataView(harness.memory.buffer);
+    const first = dv.getUint32(storage, true) & 0x00ffffff;
+    assert.notStrictEqual(first, 0, 'scaled bitmap lost its pixels');
+    for (let i = 1; i < 12; i++) {
+      assert.strictEqual(dv.getUint32(storage + i * 4, true) & 0x00ffffff, first,
+        `scaled bitmap pixel ${i}`);
+    }
+    wat.test_call_DeleteObject(source);
+    wat.test_call_DeleteObject(copy);
+  });
+
+  check('CopyImage honors RETURNORG and deletes only after a successful copy', () => {
+    const bits = alloc(16);
+    for (let i = 0; i < 4; i++) wat.guest_write32(bits + i * 4, 0x00554433);
+    const source = wat.test_call_CreateBitmap(2, 2, 1, 32, bits) >>> 0;
+    const same = wat.test_call_CopyImage(source, 0, 0, 0, 0x000c) >>> 0;
+    assert.strictEqual(same, source, 'LR_COPYRETURNORG did not preserve identity');
+    assert.strictEqual(wat.test_gdi_object_type(source), 3,
+      'LR_COPYDELETEORG was not ignored on RETURNORG');
+    const copy = wat.test_call_CopyImage(source, 0, 3, 3, 0x0008) >>> 0;
+    assert.ok(copy && copy !== source, 'LR_COPYDELETEORG made no new bitmap');
+    assert.strictEqual(wat.test_gdi_object_type(source), 0,
+      'LR_COPYDELETEORG left the source bitmap live');
+    assert.strictEqual(wat.test_gdi_object_type(copy), 3, 'new bitmap was also deleted');
+    wat.test_call_DeleteObject(copy);
+  });
+
+  check('CopyImage creates requested monochrome and DIB-section bitmaps', () => {
+    const bits = alloc(16);
+    wat.guest_write32(bits + 0, 0x00000000);
+    wat.guest_write32(bits + 4, 0x00ffffff);
+    wat.guest_write32(bits + 8, 0x00ffffff);
+    wat.guest_write32(bits + 12, 0x00000000);
+    const source = wat.test_call_CreateBitmap(2, 2, 1, 32, bits) >>> 0;
+    const mono = wat.test_call_CopyImage(source, 0, 0, 0, 0x0001) >>> 0;
+    const dib = wat.test_call_CopyImage(source, 0, 0, 0, 0x2000) >>> 0;
+    assert.ok(mono && dib, 'format-selecting CopyImage returned NULL');
+    assert.strictEqual(wat.test_bitmap_bpp(mono), 1, 'LR_MONOCHROME kept color depth');
+    assert.strictEqual(wat.test_bitmap_flags(mono) & 1, 0, 'monochrome copy became a DIB');
+    assert.strictEqual(wat.test_bitmap_bpp(dib), 32, 'DIB copy changed color depth');
+    assert.strictEqual(wat.test_bitmap_flags(dib) & 1, 1,
+      'LR_CREATEDIBSECTION did not create a DIB section');
+    wat.test_call_DeleteObject(source);
+    wat.test_call_DeleteObject(mono);
+    wat.test_call_DeleteObject(dib);
+  });
+
+  check('CopyImage scales built icons and keeps the copy alive independently', () => {
+    const source = wat.test_call_CreateIconIndirect(
+      iconInfo({ fIcon: 1, xHot: 2, yHot: 2, mask: crossMask() })) >>> 0;
+    const copy = wat.test_call_CopyImage(source, 1, 8, 6, 0) >>> 0;
+    assert.ok(copy && copy !== source, 'scaled icon copy was not independent');
+    const info = alloc(20);
+    assert.strictEqual(wat.test_call_GetIconInfo(copy, info) >>> 0, 1);
+    assert.strictEqual(wat.guest_read32(info + 0) >>> 0, 1, 'copy changed icon type');
+    assert.strictEqual(wat.guest_read32(info + 4) >>> 0, 4, 'icon hotspot x');
+    assert.strictEqual(wat.guest_read32(info + 8) >>> 0, 3, 'icon hotspot y');
+    const mask = wat.guest_read32(info + 12) >>> 0;
+    assert.strictEqual(wat.test_gdi_object_width(mask), 8, 'icon mask width');
+    assert.strictEqual(wat.test_gdi_object_height(mask), 12, 'stacked icon mask height');
+    assert.strictEqual(wat.test_call_CopyImage(source, 2, 8, 6, 0) >>> 0, 0,
+      'IMAGE_CURSOR accepted an icon');
+    assert.strictEqual(wat.test_call_DestroyIcon(source) >>> 0, 1);
+    assert.strictEqual(wat.test_call_GetIconInfo(copy, info) >>> 0, 1,
+      'destroying the source destroyed its CopyImage result');
+    assert.strictEqual(wat.test_call_DestroyIcon(copy) >>> 0, 1);
+  });
+
+  check('CopyImage scales cursor hotspots and COPYDELETEORG lifetime', () => {
+    const source = wat.test_call_CreateIconIndirect(
+      iconInfo({ xHot: 1, yHot: 2, mask: crossMask() })) >>> 0;
+    const returned = wat.test_call_CopyImage(source, 2, 0, 0, 0x000c) >>> 0;
+    assert.strictEqual(returned, source, 'cursor LR_COPYRETURNORG changed identity');
+    const copy = wat.test_call_CopyImage(source, 2, 8, 8, 0x0008) >>> 0;
+    assert.ok(copy && copy !== source, 'scaled cursor copy failed');
+    const info = alloc(20);
+    wat.test_call_GetIconInfo(source, info);
+    assert.strictEqual(wat.guest_read32(info + 12) >>> 0, 0,
+      'LR_COPYDELETEORG left the cursor source bitmaps live');
+    pushes.length = 0;
+    wat.test_call_SetCursor(copy);
+    assert.deepStrictEqual(
+      { width: pushes[0].width, height: pushes[0].height,
+        hotX: pushes[0].hotX, hotY: pushes[0].hotY },
+      { width: 8, height: 8, hotX: 2, hotY: 4 });
+    assert.strictEqual(wat.test_call_DestroyCursor(copy) >>> 0, 1);
+    assert.strictEqual(wat.test_call_DestroyCursor(copy) >>> 0, 0,
+      'destroyed cursor copy stayed valid');
+  });
+
+  check('LR_MONOCHROME turns a color icon into owned AND/XOR planes', () => {
+    const andBits = alloc(8);
+    const xorBits = alloc(64);
+    for (let i = 0; i < 16; i++) {
+      wat.guest_write32(xorBits + i * 4, (i & 1) ? 0x00ffffff : 0x00000000);
+    }
+    const source = wat.test_call_CreateIcon(4, 4, 1, 32, andBits, xorBits) >>> 0;
+    const copy = wat.test_call_CopyImage(source, 1, 4, 4, 0x0001) >>> 0;
+    assert.ok(copy, 'color-to-monochrome icon copy returned NULL');
+    const info = alloc(20);
+    assert.strictEqual(wat.test_call_GetIconInfo(copy, info) >>> 0, 1);
+    const mask = wat.guest_read32(info + 12) >>> 0;
+    assert.ok(mask, 'monochrome icon has no mask');
+    assert.strictEqual(wat.guest_read32(info + 16) >>> 0, 0,
+      'monochrome icon retained a color bitmap');
+    assert.strictEqual(wat.test_bitmap_bpp(mask), 1, 'monochrome mask is not 1bpp');
+    assert.strictEqual(wat.test_gdi_object_height(mask), 8, 'AND/XOR planes are not stacked');
+    wat.test_call_DestroyIcon(source);
+    wat.test_call_DestroyIcon(copy);
+  });
+
+  check('opaque LoadCursor copies remain drawable and privately destroyable', () => {
+    const source = wat.test_call_LoadCursorA(0, 32512) >>> 0;
+    const copy = wat.test_call_CopyImage(source, 2, 0, 0, 0) >>> 0;
+    assert.ok(copy && copy !== source, 'shared cursor was returned instead of copied');
+    opaqueCursors.length = 0;
+    wat.test_call_SetCursor(copy);
+    assert.deepStrictEqual(opaqueCursors, [source], 'private cursor wrapper was not unwrapped');
+    assert.strictEqual(wat.test_call_DestroyCursor(copy) >>> 0, 1);
+    assert.strictEqual(wat.test_call_DestroyCursor(copy) >>> 0, 0);
+    assert.strictEqual(wat.test_call_CopyImage(source, 2, 16, 16, 0) >>> 0, 0,
+      'opaque cursor claimed unsupported resized pixels');
+  });
+
+  check('CopyImage rejects NULL handles and unknown image types', () => {
+    assert.strictEqual(wat.test_call_CopyImage(0, 0, 0, 0, 0) >>> 0, 0);
+    assert.strictEqual(wat.test_call_CopyImage(0x1234, 3, 0, 0, 0) >>> 0, 0);
+  });
+
+  check('CopyIcon owns independent bitmap planes and lifetime', () => {
+    const source = wat.test_call_CreateIconIndirect(
+      iconInfo({ fIcon: 1, xHot: 2, yHot: 2, mask: crossMask() })) >>> 0;
+    const copy = wat.test_call_CopyIcon(source) >>> 0;
+    assert.ok(copy, 'CopyIcon returned NULL for a built icon');
+    assert.notStrictEqual(copy, source, 'CopyIcon returned the source handle');
+    assert.strictEqual(wat.test_call_DestroyIcon(source) >>> 0, 1);
+    const info = alloc(20);
+    assert.strictEqual(wat.test_call_GetIconInfo(copy, info) >>> 0, 1);
+    assert.ok(wat.guest_read32(info + 12) >>> 0,
+      'destroying the source also destroyed the copy mask');
+    assert.strictEqual(wat.test_call_DestroyIcon(copy) >>> 0, 1);
+    assert.strictEqual(wat.test_call_DestroyIcon(copy) >>> 0, 0,
+      'a copied icon stayed valid after destruction');
+  });
+
+  check('CopyIcon wraps shared resource and opaque system icons privately', () => {
+    const resource = wat.test_call_LoadIconA(0x400000, 1) >>> 0;
+    const resourceCopy = wat.test_call_CopyIcon(resource) >>> 0;
+    assert.ok(resourceCopy && resourceCopy !== resource,
+      'resource CopyIcon did not return a distinct handle');
+    assert.strictEqual(wat.test_call_DestroyIcon(resourceCopy) >>> 0, 1);
+    assert.strictEqual(wat.test_call_DestroyIcon(resourceCopy) >>> 0, 0);
+    assert.ok(wat.test_call_CopyIcon(resource) >>> 0,
+      'destroying a resource copy invalidated the shared source');
+
+    const system = wat.test_call_LoadIconA(0, 32512) >>> 0;
+    const systemCopy = wat.test_call_CopyIcon(system) >>> 0;
+    assert.ok(systemCopy && systemCopy !== system,
+      'opaque system CopyIcon did not return a private handle');
+    assert.strictEqual(wat.test_call_DestroyIcon(systemCopy) >>> 0, 1);
+    assert.strictEqual(wat.test_call_CopyIcon(0) >>> 0, 0,
+      'CopyIcon accepted NULL');
   });
 
   console.log(`\n${passed} checks passed`);

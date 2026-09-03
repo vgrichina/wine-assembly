@@ -41,6 +41,14 @@ const PATCH_MISSES = 20000;
 // instruction stream. One block: the point is to cover the code the guest is
 // about to run without exempting a data table that merely lives downwind.
 const PATCH_AHEAD = 256;
+// How many self-modify breaks a paragraph takes before the JIT gives up on
+// it and compiles it fresh at every entry (CodeCache.noteSmc). A packed
+// program writes each paragraph once, a multi-stage one a few times; a mixer
+// patching its immediates passes this within its first few interrupts.
+const VOLATILE_AFTER = 8;
+// ...and how many uncached compiles in a row may find the bytes unchanged
+// before the paragraph goes back to the cache (CodeCache.volatileEntry).
+const VOLATILE_STALE = 256;
 const { compileProgram } = require('./compile');
 const { STUB_SEG, STUB_OFF, STUB_BYTE } = require('./dos');
 
@@ -55,7 +63,28 @@ class CodeCache {
                     wasmDecode = true, fuse = true, deadFlags = true, crossFlags = true,
                     traceBlocks = true, spinLoops = true, regSpec = false,
                     traceDeadFlags = null, regionAt = null, regionSucc = null,
-                    regionBytes = null, regionCodeBits = true } = {}) {
+                    regionBytes = null, regionCodeBits = true,
+                    volatileCode = true } = {}) {
+    // Code the guest rewrites too often to cache. See noteSmc: a paragraph
+    // that keeps taking self-modify breaks is marked volatile, cached compiles
+    // stop at its edges, and a block inside it is compiled fresh into the
+    // arena's scratch headroom every time the host enters it -- the JIT is
+    // switched off for exactly those bytes. `--no-volatile` is the A/B
+    // partner and restores the drop-and-retrace on every store.
+    this.volatileCode = volatileCode;
+    this.volPara = new Uint8Array(isa.GUEST_RAM_SIZE >> 4);   // 1 = volatile
+    this.volHits = new Uint8Array(isa.GUEST_RAM_SIZE >> 4);   // breaks so far
+    this.volList = [];               // the volatile paragraphs, sorted
+    // run head paragraph -> { hash of the run's bytes at the last uncached
+    // compile, entries in a row that found them unchanged }
+    this.volState = new Map();
+    // volatile paragraph -> the cached programs holding an `end` stub into it
+    this.stubProgs = new Map();
+    this.volatileCompiles = 0;
+    this.volatilePure = 0;       // ...of which ran with their code bits down
+    this.volatileLinks = 0;      // exits resolved straight into cached blocks
+    this.promotions = 0;
+    this.demotions = 0;
     // Watchpoints, as [lo, hi] linear byte ranges. They ride the CODE_BITMAP
     // rather than adding a range test to $wr8, because $wr8 is on the hot path
     // of every single store the guest makes and a watch that is off must cost
@@ -75,6 +104,9 @@ class CodeCache {
     // program rather than cached from it, so a flush does not clear them.
     this.benign = new Set();
     this.patchMisses = new Map();
+    // Store site -> the [lo, hi] linear range its block last dirtied as a
+    // kind-2 break. What benignPatch judges that site's kind-1 breaks by.
+    this.siteRange = new Map();
     this.vm = vm;
     // The wasm decoder, if this build has one. `--no-wasm-decode` turns it off
     // for an A/B; what it decodes is byte-identical to what the JS decoder
@@ -125,6 +157,11 @@ class CodeCache {
     this.deadFlagsDropped = 0;
     this.noCache = noCache;
     this.regions = new Map();          // cs -> [prog]
+    // cs -> (guest ip -> the first prog in that list holding a block at it).
+    // entryFor and the volatile exit linker used to walk the whole list per
+    // lookup, and on CYCLE's mixer -- 66k scratch compiles, each linking its
+    // exits -- that walk was half of entryFor's own time.
+    this.blockIndex = new Map();
     this.arenaNext = isa.THREAD_BASE;
     this.arenaEnd = isa.THREAD_BASE + isa.THREAD_SIZE - 4096;
     this.compiles = 0;
@@ -148,7 +185,9 @@ class CodeCache {
   // be worth walking.
   flush() {
     this.regions.clear();
+    this.blockIndex.clear();
     this.byPara.clear();
+    this.stubProgs.clear();
     this.vm.set('rtop', 0);
     this.jtab.fill(0);
     this.codeBits.fill(0);
@@ -201,12 +240,22 @@ class CodeCache {
     // gap and is not one. flush() has always cleared this; the narrow path
     // that replaced it for most stores did not.
     this.vm.set('rtop', 0);
+    this.dropProgs(doomed);
+  }
+
+  // Take a set of compiled programs out of every structure that can reach
+  // them. Idempotent: a program already gone is skipped at each step, which
+  // is what lets demote() name programs that an earlier store may have
+  // dropped since they were recorded.
+  dropProgs(doomed) {
     for (const prog of doomed) {
       const list = this.regions.get(prog.key);
       if (list) {
         const at = list.indexOf(prog);
         if (at >= 0) list.splice(at, 1);
       }
+      const idx = this.blockIndex.get(prog.key);
+      if (idx) for (const [bip] of prog.blocks) if (idx.get(bip) === prog) idx.delete(bip);
       // The indirect-jump cache is direct-mapped and holds arena addresses, so
       // any slot still naming one of this program's blocks has to go -- the key
       // check in $jlook cannot tell a stale address from a live one.
@@ -266,8 +315,205 @@ class CodeCache {
   invalidate(cs, ip, codeBase = (cs << 4)) {
     let hit = false;
     for (const r of (this.regions.get(codeBase) || [])) hit = r.blocks.delete(ip >>> 0) || hit;
+    const idx = this.blockIndex.get(codeBase);
+    if (idx) idx.delete(ip >>> 0);
     this.jtab[isa.jhash(cs, ip >>> 0) * 4 + 2] = 0;
     return hit;
+  }
+
+  // Volatile code: switching the JIT off where the guest keeps rewriting it.
+  //
+  // A self-modify break drops every region compiled over the written
+  // paragraphs and the next entry re-traces them. That is the right answer
+  // for a program that unpacks itself once, and the wrong one for a mixer
+  // that patches its own immediates on every sample: CYCLE.EXE's GoldPlay
+  // player keeps each channel's sample position IN the displacement of the
+  // `mov bl, es:[imm]` that reads it and advances it with `adc [imm], step`
+  // -- four stores into its own code per timer interrupt, 11,000 interrupts
+  // a guest second. Measured at 60M dispatches: 66,023 breaks from that one
+  // block, 68,641 traces, 28MB of arena through 37 recycles, 442,438
+  // handbacks at 136 dispatches apiece, and 24% of the wall clock in wasm --
+  // against 159 traces and 76% with the sound off. The page could not keep
+  // that up at 10 MIPS.
+  //
+  // So a paragraph that takes VOLATILE_AFTER breaks is promoted: cached
+  // compiles stop at its edges (compile.js `cut`), and a block inside it is
+  // compiled into the arena's scratch headroom on every host entry and never
+  // cached, so the store that rewrites it has nothing to invalidate. Its code
+  // bits are still set, and that is deliberate: a store into it still ends
+  // the block with $smc=2, which is what keeps a loop that patches its OWN
+  // next iteration correct -- the host re-enters at the loop head and the
+  // fresh compile reads the new bytes. Only the cache walk and the re-trace
+  // of everything around it are gone.
+  //
+  // Promotion is by paragraph, the granularity the invalidation already uses,
+  // and it is learned about the program rather than cached from it: a flush
+  // or an arena recycle does not clear it. What does clear it is the ratio
+  // test in volatileEntry -- a paragraph entered far more often than it is
+  // written is paying a compile per entry for nothing, so it goes back to
+  // being cached, and VOLATILE_AFTER more breaks promote it again.
+  isVolatile(lin) {
+    return this.volList.length > 0 && this.volPara[lin >>> 4] === 1;
+  }
+
+  // A self-modify break landed on [lo, hi]. Count it against every paragraph
+  // written and promote the ones that have had enough. Returns whether any
+  // code is volatile at all -- the caller clears the shadow return stack
+  // then, because it may hold the arena address of a scratch block that this
+  // store just made stale (a `ret` into it would run the old immediates).
+  // An uncached compile follows straight-line code out of the volatile run,
+  // so the store need not have landed in volatile bytes for that to be so.
+  noteSmc(lo, hi) {
+    const from = lo >>> 4, to = hi >>> 4;
+    if (to - from <= 512) {   // wider is a program moving its image; see invalidateRange
+      for (let p = from; p <= to; p++) {
+        if (this.volPara[p] === 1) continue;
+        if (!this.volatileCode || this.volHits[p] === 255) continue;
+        if (++this.volHits[p] >= VOLATILE_AFTER) this.promote(p);
+      }
+    }
+    return this.volList.length > 0;
+  }
+
+  promote(p) {
+    this.volPara[p] = 1;
+    this.volList.push(p);
+    this.volList.sort((a, b) => a - b);
+    this.promotions++;
+  }
+
+  // Volatile paragraphs come in runs, and a run is one piece of code: the
+  // bytes that decide a demotion are hashed per run, keyed on its first
+  // paragraph, or a prologue paragraph dragged in ahead of the patched bytes
+  // would be entered every time and written never, and would demote on its
+  // own every few dozen interrupts.
+  runHead(p) {
+    while (p > 0 && this.volPara[p - 1] === 1) p--;
+    return p;
+  }
+
+  demote(head) {
+    const doomed = new Set();
+    for (let p = head; this.volPara[p] === 1; p++) {
+      this.volPara[p] = 0;
+      this.volHits[p] = 0;
+      this.volList.splice(this.volList.indexOf(p), 1);
+      // Cached programs holding an `end` stub at an ip in this paragraph --
+      // the cut a straight line took at the edge. Now that entryFor will
+      // look those ips up in the cache again, such a stub would hand back
+      // to itself forever, so the programs compiled against the old
+      // boundary go. Just those: the first version flushed the whole cache
+      // here, and 919 demotions cost CYCLE 18MB of re-tracing.
+      for (const prog of (this.stubProgs.get(p) || [])) doomed.add(prog);
+      this.stubProgs.delete(p);
+    }
+    this.volState.delete(head);
+    this.demotions++;
+    if (doomed.size) { this.vm.set('rtop', 0); this.dropProgs(doomed); }
+  }
+
+  // The guest ips, in this segment, of the 16-byte windows on both sides of
+  // every volatile run: the block heads compile.js marks so the wasm decoder
+  // stops at the boundary. Empty when nothing is volatile, which is every
+  // ordinary run, so this costs those runs one length test.
+  volatileHeadsFor(codeBase, mask) {
+    if (!this.volList.length) return null;
+    const ips = [];
+    const list = this.volList;
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      const runStart = i === 0 || list[i - 1] !== p - 1;
+      const runEnd = i === list.length - 1 || list[i + 1] !== p + 1;
+      if (runStart) for (let l = p << 4; l < (p << 4) + 16; l++) ips.push(((l & mask) - codeBase) >>> 0);
+      if (runEnd) for (let l = (p + 1) << 4; l < ((p + 1) << 4) + 16; l++) ips.push(((l & mask) - codeBase) >>> 0);
+    }
+    return ips;
+  }
+
+  // Compile the volatile block at cs:ip into the scratch headroom, uncached.
+  volatileEntry(cs, ip, codeBase, mask, d32) {
+    const vm = this.vm;
+    const head = this.runHead(((codeBase + ip) & mask) >>> 4);
+    // Has the code changed since it was last compiled? The stores themselves
+    // are invisible here by design (no code bits), so the bytes are hashed
+    // instead -- a run is a few paragraphs, and the decode that follows reads
+    // every one of them anyway. A run entered VOLATILE_STALE times in a row
+    // with nothing changed is being compiled for nothing: the JIT was switched
+    // off here for a program that patched it a few times and moved on, so it
+    // goes back to the cache. VOLATILE_AFTER more breaks bring it back.
+    let hash = 0x811c9dc5;
+    for (let p = head, l = head << 4; this.volPara[p] === 1; p++, l += 16) {
+      for (let i = 0; i < 16; i++) hash = Math.imul(hash ^ vm.mem[l + i], 0x01000193);
+    }
+    const st = this.volState.get(head);
+    if (st && st.hash === hash) {
+      if (++st.stale > VOLATILE_STALE) {
+        this.demote(head);
+        return this.entryFor(cs, ip, codeBase, mask, d32);
+      }
+    } else if (st) { st.hash = hash; st.stale = 0; } else this.volState.set(head, { hash, stale: 0 });
+    const key = d32 ? `${codeBase}d` : codeBase;
+    const prog = compileProgram((lin) => vm.mem[lin], cs, ip, {
+      arenaBase: this.arenaEnd,
+      maxWords: 1000,
+      codeBase, mask, d32, benign: this.benign, wasmDecoder: this.wasmDecoder,
+      fuse: this.fuse, deadFlags: this.deadFlags, crossFlags: this.crossFlags,
+      traceBlocks: this.traceBlocks, spinLoops: this.spinLoops,
+      regSpec: this.regSpec,
+      volatile: (gip) => this.volPara[((codeBase + gip) & mask) >>> 4] === 1,
+      volatileOnly: true,
+    });
+    // Every exit that lands on a block the cache already holds goes straight
+    // there instead of handing back. Safe because this compile runs once,
+    // now: a cached block can only be dropped from the host, and a store that
+    // will drop one sets $smc, which every transfer checks before it is taken
+    // (emit.js CONT). So the link is either followed before anything changed
+    // or not followed at all.
+    if (!this.noCache) {
+      for (const f of prog.fixups) {
+        if (prog.words[f.wordIndex] !== 0) continue;
+        const a = this.lookup(key, f.ip >>> 0);
+        if (a !== undefined) { prog.words[f.wordIndex] = a; this.volatileLinks++; }
+      }
+    }
+    new Int32Array(vm.mem.buffer, prog.arenaBase, prog.words.length).set(prog.words);
+    // Nothing goes into regions, byPara or the jump table: this arena is
+    // overwritten by the next uncached compile, and an address into it that
+    // outlived that would resume in whatever came after. The shadow return
+    // stack is the last place such an address can hide, so it is emptied.
+    //
+    // The code bits go up only when an instruction here could run twice
+    // before the host compiles this again -- a loop, or a `call` whose `ret`
+    // comes back through the shadow stack. Then a store into these bytes
+    // must still end the block. A straight line that never comes back has
+    // nothing to protect: its stores land behind the program counter, the
+    // next entry reads the new bytes, and the interrupt handler CYCLE runs
+    // 11,000 times a second finishes without a single break.
+    if (prog.calls || prog.cyclic) {
+      for (const [from, to] of prog.covered) {
+        for (let b = from; b < to; b++) this.codeBits[b >> 3] |= 1 << (b & 7);
+      }
+    } else {
+      // ...and bits an earlier, non-pure compile of the same bytes left up
+      // come down, or the store would still break. Only in volatile
+      // paragraphs no cached program covers: a dragged-in prologue paragraph
+      // may still be held by the cached block that was cut there, and that
+      // block needs its bits for as long as it stands.
+      for (const [from, to] of prog.covered) {
+        // Paragraph by paragraph: one volPara/byPara test per 16 bytes.
+        for (let p = from >>> 4; p <= (to - 1) >>> 4; p++) {
+          if (this.volPara[p] !== 1 || this.byPara.has(p)) continue;
+          const lo = Math.max(from, p << 4), hi = Math.min(to, (p + 1) << 4);
+          for (let b = lo; b < hi; b++) this.codeBits[b >> 3] &= ~(1 << (b & 7));
+        }
+      }
+      this.armWatch();
+      this.volatilePure++;
+    }
+    vm.set('rtop', 0);
+    this.compiles++;
+    this.volatileCompiles++;
+    return prog.entryAddr;
   }
 
   // Regions are keyed by the code segment's LINEAR base, not by the selector.
@@ -283,11 +529,15 @@ class CodeCache {
     // extender's code segment and the real-mode segment 0 underneath it are
     // the same bytes at the same address and decode to different programs.
     const key = d32 ? `${codeBase}d` : codeBase;
+    // Before the cache lookup, not after: a cached program can hold an `end`
+    // stub at a volatile ip (the cut a straight line took at the boundary),
+    // and finding that first would hand back to this same entry forever.
+    if (this.volList.length && this.volPara[((codeBase + ip) & mask) >>> 4] === 1) {
+      return this.volatileEntry(cs, ip, codeBase, mask, d32);
+    }
     if (!this.noCache) {
-      for (const r of (this.regions.get(key) || [])) {
-        const a = r.blocks.get(ip >>> 0);
-        if (a !== undefined) return a;
-      }
+      const a = this.lookup(key, ip >>> 0);
+      if (a !== undefined) return a;
     }
     // Recycling the arena invalidates every arena address the guest-visible
     // caches hold, so both are emptied here -- a stale entry would resume in
@@ -308,7 +558,9 @@ class CodeCache {
     // was coming anyway and buys the guarantee that a compile is worth caching.
     if (this.arenaEnd - this.arenaNext < isa.THREAD_SIZE >> 2) {
       this.regions.clear();
+      this.blockIndex.clear();
       this.byPara.clear();
+      this.stubProgs.clear();
       this.arenaNext = isa.THREAD_BASE;
       this.arenaResets++;
       vm.set('rtop', 0);
@@ -332,7 +584,26 @@ class CodeCache {
       regionBytes: this.regionBytes,
       regionCodeBits: this.regionCodeBits,
       regionBase: vm.regionBase,
+      volatile: this.volList.length
+        ? (gip) => this.volPara[((codeBase + gip) & mask) >>> 4] === 1 : null,
+      volatileHeads: this.volatileHeadsFor(codeBase, mask),
     });
+    // Blocks whose straight line fell into volatile bytes are that code's
+    // prologue: promote their paragraphs too, so the next entry there is one
+    // uncached compile of the whole line instead of a cached stub, a handback
+    // at the boundary and the compile. This program keeps its stub (its bits
+    // and byPara entry still stand); entryFor checks volatility before the
+    // cache, so the stub is only ever reached through an in-program edge.
+    for (const c of prog.volatileCuts || []) {
+      const p = ((codeBase + c.head) & mask) >>> 4;
+      if (this.volPara[p] !== 1) this.promote(p);
+      // ...and remember which program holds a stub into which volatile
+      // paragraph, so a demotion can drop exactly those.
+      const q = ((codeBase + c.at) & mask) >>> 4;
+      let list = this.stubProgs.get(q);
+      if (!list) this.stubProgs.set(q, list = []);
+      list.push(prog);
+    }
     this.deadFlagsDropped += prog.deadFlags || 0;
     this.tracedBlocks += prog.tracedBlocks || 0;
     this.spinBlocks += prog.spinBlocks || 0;
@@ -385,7 +656,25 @@ class CodeCache {
     }
     if (!this.regions.has(key)) this.regions.set(key, []);
     this.regions.get(key).push(prog);
+    let idx = this.blockIndex.get(key);
+    if (!idx) this.blockIndex.set(key, idx = new Map());
+    for (const [bip] of prog.blocks) {
+      // First live program wins, as the list walk it replaces did.
+      const have = idx.get(bip);
+      if (have === undefined || !have.blocks.has(bip)) idx.set(bip, prog);
+    }
     return prog.entryAddr;
+  }
+
+  // The arena address of a cached block at `ip` in the segment keyed `key`,
+  // or undefined. Goes through blockIndex; a block that `invalidate` deleted
+  // from its program reads as a miss (and is recompiled) rather than being
+  // hunted for in another program of the same list.
+  lookup(key, ip) {
+    const idx = this.blockIndex.get(key);
+    if (!idx) return undefined;
+    const prog = idx.get(ip);
+    return prog === undefined ? undefined : prog.blocks.get(ip);
   }
 }
 
@@ -402,6 +691,9 @@ class DosSession {
       slice = 2e6, noCache = false, smcFlush = false, mouse = [0, 0],
       wasmDecode = true, fuse = true, deadFlags = true, crossFlags = true,
       traceBlocks = true, spinLoops = true, regSpec = false, traceDeadFlags = null,
+      // Stop caching code the guest keeps rewriting (CodeCache.noteSmc).
+      // `--no-volatile` is the A/B partner.
+      volatileCode = true,
       // One timer interrupt per this many dispatches. 100k is about 10ms of a
       // real 486, so it lands near the 18.2Hz the BIOS programs -- and a demo
       // that reprogrammed the PIT for music gets a slower clock than it asked
@@ -459,7 +751,7 @@ class DosSession {
         traceBlocks, spinLoops, regSpec, traceDeadFlags,
         regionAt: opts.regionAt || null, regionSucc: opts.regionSucc || null,
         regionBytes: opts.regionBytes || null,
-        regionCodeBits: opts.regionCodeBits !== false });
+        regionCodeBits: opts.regionCodeBits !== false, volatileCode });
 
     this.dispatched = 0;
     this.handbacks = 0;
@@ -819,14 +1111,25 @@ class DosSession {
       const kind = vm.raw('smc');
       vm.set('smc', 0);
       const lo = vm.exports.get_smclo() >>> 0, hi = vm.exports.get_smchi() >>> 0;
-      if (kind === 2) this.cache.invalidateRange(lo, hi);
-      else this.benignPatch(vm.get('cs'), vm.get('gip'), vm.exports.get_csb(), lo, hi);
+      if (kind === 2) {
+        // A store into volatile code has nothing cached to drop, but the
+        // shadow return stack may still point into the scratch block it
+        // just rewrote; see CodeCache.noteSmc.
+        if (this.cache.noteSmc(lo, hi)) vm.set('rtop', 0);
+        this.cache.invalidateRange(lo, hi);
+        this.cache.siteRange.set(((vm.exports.get_csb() + vm.get('gip')) & 0xFFFFF) >>> 0, [lo, hi]);
+      } else this.benignPatch(vm.get('cs'), vm.get('gip'), vm.exports.get_csb(), lo, hi);
       this.smcBreaks++;
       if (this.smcSites) {
         const hex = (n) => n.toString(16);
         const key = kind === 2
           ? `${hex(vm.get('cs'))}:${hex(vm.get('gip'))} wrote ${hex(lo)}-${hex(hi)}`
-          : `${hex(vm.get('cs'))}:${hex(vm.get('gip'))} patched its own next block`;
+          // A kind-1 break carries no range of its own: what benignPatch
+          // judged it against is the site's last kind-2 range, if it ever
+          // had one, and that is worth seeing when a site refuses to retire.
+          : `${hex(vm.get('cs'))}:${hex(vm.get('gip'))} patched its own next block`
+            + ((r) => (r ? ` (judged against its ${hex(r[0])}-${hex(r[1])})` : ''))(
+              this.cache.siteRange.get(((vm.exports.get_csb() + vm.get('gip')) & 0xFFFFF) >>> 0));
         this.smcSites.set(key, (this.smcSites.get(key) || 0) + 1);
       }
     }
@@ -1040,8 +1343,22 @@ class DosSession {
     // straight into it. Retiring that site leaves the INT carrying whatever
     // byte the previous call left, which is how BLIQ.EXE's subfiles ended up
     // executing INT 0 and printing "Runtime error 200".
+    //
+    // ...judged against the range THIS SITE's stores last dirtied, when it
+    // last broke as kind 2. A kind-1 break records no range of its own --
+    // $wr8 writes $smclo/$smchi only when it finds a code bit -- so the
+    // globals hold whatever the last kind-2 store anywhere left there. That
+    // used to be what this test read, and it worked for the Turbo Pascal
+    // case by accident: Intr() alternates kind 2 (the INT was compiled, the
+    // store dropped it) with kind 1 (not yet recompiled), so the stale range
+    // was usually its own. It failed the moment another site's range sat
+    // ahead of a program counter: CYCLE's mixer ends with a store through CS
+    // into a variable at offset 0, and a range some other store left 0xcb
+    // bytes ahead of it kept the site from ever retiring -- 66,010 handbacks
+    // in 60M dispatches, one per interrupt.
     const pc = ((csb + ip) & 0xFFFFF) >>> 0;
-    if (hi >= pc && lo < pc + PATCH_AHEAD) return;
+    const own = this.cache.siteRange.get(pc);
+    if (own && own[1] >= pc && own[0] < pc + PATCH_AHEAD) return;
     // No invalidate here, and the reason is the flag itself. $smc is 1 only
     // when $wr8 declined to make it 2, and $wr8 makes it 2 for any store
     // landing in a paragraph some compiled region decoded -- every width, since
@@ -1092,6 +1409,12 @@ class DosSession {
       specOps: this.cache.specOps,
       arenaResets: this.cache.arenaResets, unimplemented: this.cache.unimplemented,
       regions: this.cache.regions, jtab: this.cache.jtab,
+      // Volatile code: [paragraphs volatile now, uncached compiles, promotions,
+      // demotions, compiles that ran with their code bits down, exits linked
+      // straight into cached blocks].
+      volatile: [this.cache.volList.length, this.cache.volatileCompiles,
+        this.cache.promotions, this.cache.demotions,
+        this.cache.volatilePure, this.cache.volatileLinks],
       // The widened-REP census: [runs, bytes, declined by reason 0..6, declined bytes].
       rep: this.vm.exports.get_rep_stat
         ? [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => this.vm.exports.get_rep_stat(i) >>> 0)

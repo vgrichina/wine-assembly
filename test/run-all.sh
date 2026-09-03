@@ -75,6 +75,7 @@ UNIT=(
   test/test-vfs-adopt.js
   test/test-save-bundle.js
   test/test-flush-view-of-file.js
+  test/test-shfileoperation.js
   test/test-heap-free-block-validation.js
   test/test-vfs-host-files.js
   test/test-storage-registry.js
@@ -112,6 +113,7 @@ UNIT=(
   test/test-ver-find-file.js
   test/test-static-dx-version.js
   test/test-midi-mci.js
+  test/test-tinysynth-offline.js
   test/test-mci-get-device-id.js
   test/test-cd-audio-mci.js
   test/test-thread-manager.js
@@ -148,6 +150,7 @@ UNIT=(
   test/test-console-input.js
   test/test-browser-mm-timer.js
   test/test-asset-parts.js
+  test/test-deploy-win16-assets.js
   test/test-runtime-log-toggle.js
   test/test-diablo-runtime-apis.js
   test/test-starcraft-dll-policy.js
@@ -541,6 +544,7 @@ UNIT=(
   test/test-toyvm-browser-bundle.js
   test/test-toyvm-live.js
   test/test-toyvm-audio.js
+  test/test-toyvm-volatile.js
   test/test-user-default-ui-language.js
   test/test-virtual-query-user-boundary.js
   test/test-wave-in-dev-caps.js
@@ -635,6 +639,7 @@ E2E=(
   test/test-web-agent-frozen.js
   test/test-web-shutdown.js
   test/test-web-frozen-recording.js
+  test/test-cli-frozen-recording.js
   test/test-web-record-audio.js
   test/test-web-audio-session.js
   test/test-web-ios-lab.js

@@ -162,6 +162,7 @@ async function runDos(o) {
     noCache = false, smcFlush = false, wasmDecode = true, fuse = true,
     lazyFlags = true, fuseCond = true, deadFlags = true, crossFlags = true,
     traceBlocks = true, spinLoops = true, regSpec = false, traceDeadFlags = false,
+    volatileCode = true,
     // JIT loop regions: `regions` are the extra handler bodies to build the
     // module with, `regionAt` maps guest ip -> the index the compiler should
     // install there. Both come from tools/toyvm/region-jit.js; a plain run
@@ -368,7 +369,7 @@ async function runDos(o) {
 
   const session = new DosSession(vm, machine, {
     slice, noCache, smcFlush, wasmDecode, fuse, deadFlags, crossFlags, traceBlocks, spinLoops,
-    regSpec, regionAt, regionSucc, regionBytes, regionCodeBits,
+    regSpec, regionAt, regionSucc, regionBytes, regionCodeBits, volatileCode,
     traceDeadFlags: traceDeadFlags ? ((s) => log(s)) : null,
     mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit, pitClock,
     stuckWork,
@@ -576,7 +577,7 @@ async function runDos(o) {
   const {
     dispatched, handbacks, ints, irqs, smcBreaks, traps, icebps, stuckAt, blockedOn32, badSelector,
     compiles, compiledWords, arenaResets, unimplemented, regions, jtab, smcSites, retiredPatches,
-    deadFlagsDropped, tracedBlocks, spinBlocks, specOps, rep,
+    deadFlagsDropped, tracedBlocks, spinBlocks, specOps, rep, volatile,
   } = session.stats();
 
   if (bestPng) keepBest();
@@ -595,7 +596,7 @@ async function runDos(o) {
     guestSecs: Number(guestNs) / 1e9,
     guestCpuSecs: guestCpuUs / 1e6,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets, deadFlagsDropped,
-    tracedBlocks, spinBlocks, specOps, rep,
+    tracedBlocks, spinBlocks, specOps, rep, volatile,
     smcBreaks, traps, icebps, smcSites, retiredPatches,
     stuckAt, blockedOn32, badSelector, ranOutOfTime,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
@@ -779,6 +780,12 @@ async function main() {
     // two arms retire the same steps and reach the same frame, and differ only
     // in the dispatch count it took to get there.
     spinLoops: !flag('no-spin'),
+    // Stop caching code the guest keeps rewriting, and compile it fresh at
+    // every entry instead (dos-loop.js CodeCache.noteSmc). `--no-volatile`
+    // is the A/B partner: same guest, same breaks, and the arms differ in
+    // what each break costs -- a drop-and-retrace of everything around the
+    // store against one uncached compile of the block it is in.
+    volatileCode: !flag('no-volatile'),
     repFast: !flag('no-rep-fast'),
     // Swap each register access on a runtime index for the twin that has the
     // register as a literal. OPT-IN: the two arms dispatch the same handlers in
@@ -956,6 +963,15 @@ async function main() {
     // thrash: a program storing data into a paragraph a region happens to have
     // decoded, one bitmap bit away from its code.
     + (r.smcBreaks ? `\n  ${r.smcBreaks} self-modify breaks` : '')
+    // Where the JIT switched itself off: paragraphs the guest rewrote often
+    // enough to stop caching, and how many uncached compiles those cost. A
+    // demotion is a paragraph that turned out to be entered far more than it
+    // was written and went back to the cache.
+    + (r.volatile && r.volatile[2]
+      ? ` (${r.volatile[0]} volatile paragraph(s): ${r.volatile[1]} uncached compiles,`
+        + ` ${r.volatile[4]} without code bits, ${r.volatile[5]} exits linked,`
+        + ` ${r.volatile[2]} promoted, ${r.volatile[3]} demoted)`
+      : '')
     // The widened REP MOVS/STOS: runs that became one memory.copy/fill, the
     // bytes they moved, and every run that fell back to the byte loop, by the
     // guard that sent it there. A big `vga` count is a planar-mode program

@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 228,
+  "count": 230,
   "sigs": {
     "log": {
       "params": [
@@ -1206,6 +1206,14 @@
         "i32"
       ]
     },
+    "fs_flush_file_buffers": {
+      "params": [
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
     "fs_close_handle": {
       "params": [
         "i32"
@@ -1309,6 +1317,17 @@
       ]
     },
     "fs_copy_file": {
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "fs_shell_file_operation": {
       "params": [
         "i32",
         "i32",

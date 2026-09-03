@@ -319,6 +319,35 @@ async function main() {
     });
     assert.deepStrictEqual(beforePlay, { tracks: 3, audioTracks: 3 });
 
+    // CD Player uses two application-registered dialog child classes. Its
+    // CS_OWNDC LED selects the olive text colour once during WM_CREATE, before
+    // the top-level renderer surface exists. The title class relies on its
+    // registered BTNFACE brush to erase the longer no-disc prompt. Exercise
+    // both pixels here: merely seeing the MCI device would miss the black LED
+    // and the old "compact disc" text showing through the shorter title.
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const playerPixels = await page.evaluate(() => {
+      const main = Object.values(sharedRenderer.windows)
+        .find(win => !win.isChild && win.title === 'CD Player');
+      const ctx = document.getElementById('screen').getContext('2d');
+      const count = (x, y, w, h, predicate) => {
+        const rgba = ctx.getImageData(Math.round(main.x + x), Math.round(main.y + y), w, h).data;
+        let total = 0;
+        for (let i = 0; i < rgba.length; i += 4) {
+          if (predicate(rgba[i], rgba[i + 1], rgba[i + 2])) total++;
+        }
+        return total;
+      };
+      return {
+        ledInk: count(28, 62, 112, 18, (r, g, b) => r >= 80 && g >= 80 && b < 48),
+        staleTitleInk: count(110, 129, 150, 12, (r, g, b) => r < 48 && g < 48 && b < 48),
+      };
+    });
+    assert(playerPixels.ledInk > 20,
+      `CD Player LED should retain its WM_CREATE text colour: ${JSON.stringify(playerPixels)}`);
+    assert.strictEqual(playerPixels.staleTitleInk, 0,
+      `short disc title should fully erase the no-disc prompt: ${JSON.stringify(playerPixels)}`);
+
     const playPoint = await page.evaluate(() => {
       const main = Object.values(sharedRenderer.windows)
         .find(win => !win.isChild && win.title === 'CD Player');
