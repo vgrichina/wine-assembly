@@ -873,7 +873,8 @@ async function main() {
     console.log(`audio: ${audioOut} ${(frames / r.audioRate).toFixed(2)}s at ${r.audioRate}Hz, `
       + `peak ${peak.toFixed(3)}, sb ${sb.irqs} block irqs at ${sb.rate}Hz `
       + `${sb.bits}-bit${sb.stereo ? ' stereo' : ''}, dma writes ${r.machine.audio.dma.writes}, `
-      + `speaker writes ${r.machine.audio.speakerWrites}`);
+      + `speaker writes ${r.machine.audio.speakerWrites}, `
+      + `opl2 writes ${r.machine.audio.opl.writes} (${r.machine.audio.opl.keyOns} key-ons)`);
   }
 
   // `--save-files=DIR` -- copy out every file the guest created. Those live in
@@ -1080,7 +1081,8 @@ async function main() {
   if (m.sb.detects || m.sb.commands || m.adlibIndex !== undefined) {
     console.log(`  sb ${m.sb.detects} reset(s), ${m.sb.commands} DSP command(s)`
       + `, ${m.sb.irqs} irq(s), speaker ${m.sb.speaker ? 'on' : 'off'}`
-      + (m.adlibIndex !== undefined ? `; opl2 touched` : ''));
+      + (m.adlibIndex !== undefined
+        ? `; opl2 ${m.audio.opl.writes} register write(s), ${m.audio.opl.keyOns} key-on(s)` : ''));
   }
   if (m.xmsBlocks.size || m.xmsMoved || m.emsHandles.size || m.emsMaps) {
     console.log(`  xms ${m.xmsBlocks.size} block(s), ${(m.xmsMoved / 1024).toFixed(0)}KB moved; `

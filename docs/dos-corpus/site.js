@@ -53,6 +53,22 @@
   var canvas = document.getElementById('lb-canvas');
   var current = null, run = null, loading = null;
   var fetched = {};
+  var runState = '', statusTimer = null;
+
+  // " - sound: 48000Hz running, 312 pulls, sb 40 irqs, fm 120 notes" or
+  // what is wrong with it. Nothing when sound is off.
+  function soundLine() {
+    if (!run || !prefs.sound) return prefs.sound ? '' : ' - sound off';
+    var a = run.audioStats();
+    if (!a) return ' - sound: no audio context';
+    var src = [];
+    if (a.sb) src.push('sb ' + a.sb + ' irqs');
+    if (a.opl) src.push('fm ' + a.opl + ' notes');
+    if (a.speaker) src.push('speaker ' + a.speaker + ' writes');
+    return ' - sound: ' + a.rate + 'Hz ' + a.state + ', ' + a.pulls + ' pulls'
+      + (a.underruns ? ', ' + a.underruns + ' gaps' : '')
+      + (src.length ? ', ' + src.join(', ') : ', nothing played yet');
+  }
 
   function showLive(what) {
     stopLive();
@@ -72,6 +88,8 @@
   // one control: the picture is either the frame we took or the one running.
   function stopLive() {
     if (run) { run.stop(); run = null; self.liveRun = null; }
+    if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+    runState = '';
     canvas.hidden = true;
     img.hidden = false;
     if (current) { playBtn.hidden = false; playBtn.disabled = false; }
@@ -118,11 +136,13 @@
   var soundBtn = document.getElementById('lb-sound');
   var fsBtn = document.getElementById('lb-fs');
   var closeBtn = document.getElementById('lb-close');
-  var prefs = { cpu: '10', sound: true };
+  var autoBtn = document.getElementById('lb-auto');
+  var prefs = { cpu: '10', sound: true, auto: true };
   try {
     var saved = JSON.parse(localStorage.getItem('toyvm-live') || '{}');
     if (saved.cpu !== undefined) prefs.cpu = String(saved.cpu);
     if (saved.sound !== undefined) prefs.sound = !!saved.sound;
+    if (saved.auto !== undefined) prefs.auto = !!saved.auto;
   } catch (e) { /* no storage: defaults */ }
   cpuSel.value = prefs.cpu;
   if (cpuSel.value !== prefs.cpu) { prefs.cpu = '10'; cpuSel.value = '10'; }
@@ -130,7 +150,19 @@
     try { localStorage.setItem('toyvm-live', JSON.stringify(prefs)); } catch (e) { /* fine */ }
   }
   function showSound() { soundBtn.setAttribute('aria-pressed', prefs.sound ? 'true' : 'false'); }
+  function showAuto() { autoBtn.setAttribute('aria-pressed', prefs.auto ? 'true' : 'false'); }
   showSound();
+  showAuto();
+
+  // The menu answerer, on or off, live: the machine reads the flag at every
+  // blocking read, so turning it off leaves the next menu to the visitor's
+  // keyboard and turning it on answers a menu that is already waiting.
+  autoBtn.addEventListener('click', function () {
+    prefs.auto = !prefs.auto;
+    savePrefs();
+    showAuto();
+    if (run) run.machine.autoKey = prefs.auto;
+  });
 
   // The audio context has to be born inside a click -- every browser refuses
   // one made anywhere else -- so it is made here, once, and handed to each
@@ -165,28 +197,51 @@
   // there is not (iOS Safari), which is the same layout without the browser's
   // help -- the modal already covers the page, so all that is left to hide is
   // our own bar. Esc leaves both, since Esc closes the dialog.
-  function inFs() { return !!document.fullscreenElement || dlg.classList.contains('fs'); }
+  // The element the browser has in real full screen, prefixed or not.
+  function realFs() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+  function inFs() { return !!realFs() || dlg.classList.contains('fs'); }
   function leaveFs() {
-    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function () {});
+    if (realFs()) {
+      var exit = document.exitFullscreen || document.webkitExitFullscreen;
+      try { var p = exit.call(document); if (p && p.catch) p.catch(function () {}); } catch (e) { /* not in */ }
+    }
     dlg.classList.remove('fs', 'idle');
     fsBtn.setAttribute('aria-pressed', 'false');
     clearTimeout(idleTimer);
   }
+  // The .fs layout goes on first, whatever the browser does: on a desktop
+  // the Fullscreen API then takes the page over the whole display, and the
+  // layout is the same one either way; where the request is refused or the
+  // API is missing (iOS Safari has no element fullscreen at all) the layout
+  // alone is the full screen. The request is made on the BOX inside the
+  // dialog, not the dialog: Chrome refuses a <dialog> outright ("Dialog
+  // elements are invalid"), and a full-screen root paints the page over the
+  // modal (measured: the demo showed through the cards). Safari's prefixed
+  // request returns nothing rather than a promise, so success is read from
+  // the change event, not from the return value.
   function enterFs() {
     fsBtn.setAttribute('aria-pressed', 'true');
-    var req = dlg.requestFullscreen || dlg.webkitRequestFullscreen;
-    var p = null;
-    if (req) { try { p = req.call(dlg, { navigationUI: 'hide' }); } catch (e) { p = null; } }
-    if (!p || typeof p.then !== 'function') { dlg.classList.add('fs'); }
-    else { p.catch(function () { dlg.classList.add('fs'); }); }
+    dlg.classList.add('fs');
+    var box = document.getElementById('lb-box');
+    var req = box.requestFullscreen || box.webkitRequestFullscreen;
+    if (req) {
+      try {
+        var p = req.call(box, { navigationUI: 'hide' });
+        if (p && p.catch) p.catch(function () {});
+      } catch (e) { /* the layout is the full screen */ }
+    }
     restartIdle();
     if (canvas && !canvas.hidden) canvas.focus();
   }
   fsBtn.addEventListener('click', function () { if (inFs()) leaveFs(); else enterFs(); });
   closeBtn.addEventListener('click', function () { dlg.close(); });
-  document.addEventListener('fullscreenchange', function () {
-    if (!document.fullscreenElement) { dlg.classList.remove('idle'); fsBtn.setAttribute('aria-pressed', 'false'); }
-  });
+  // Leaving real full screen by Esc or the browser's own control: the
+  // layout goes with it.
+  function fsChanged() {
+    if (!realFs()) { dlg.classList.remove('fs', 'idle'); fsBtn.setAttribute('aria-pressed', 'false'); }
+  }
+  document.addEventListener('fullscreenchange', fsChanged);
+  document.addEventListener('webkitfullscreenchange', fsChanged);
   // The bar hides itself in full screen after a moment without input.
   var idleTimer = 0;
   function restartIdle() {
@@ -241,8 +296,9 @@
         // is a screenshot taken WITH it, so without it the page promises a
         // picture and then sits on "waiting for a key". It only answers when
         // the guest is blocked and nothing real is queued, so a visitor who
-        // types still drives.
-        autoKey: true,
+        // types still drives -- and the "auto menus" button turns it off for
+        // a visitor who wants the menus themselves.
+        autoKey: prefs.auto,
         // The machine's speed, and whether wall time paces it. "unpaced" keeps
         // the 486's clocks and simply never waits.
         mips: mips || 10,
@@ -253,11 +309,21 @@
         sound: prefs.sound,
         soundPref: prefs.sound ? 'sb' : 'silent',
         onStatus: function (s) {
-          if (s.state === 'running') say('running - click the screen, then type', true);
+          runState = s.state;
+          if (s.state === 'running') say('running - click the screen, then type' + soundLine(), true);
           else if (s.state === 'exited') say('the program exited');
           else if (s.state === 'waiting') say('waiting for a key - click or tap the screen and press one');
         },
       });
+      // The sound path, in the status line, refreshed once a second while the
+      // program runs: which sources have played and whether the browser is
+      // actually pulling buffers. A count of pulls that stays at zero is a
+      // context that never started -- that is what "silent" looks like from
+      // inside, and it is a different fix from a demo that never touched the
+      // card.
+      statusTimer = setInterval(function () {
+        if (run && runState === 'running') say('running - click the screen, then type' + soundLine(), true);
+      }, 1000);
       // Reachable from the console, on purpose: liveRun.session.dispatched is
       // the only way to tell a demo that is drawing nothing yet from one that
       // is not running at all, and both look like a black rectangle.

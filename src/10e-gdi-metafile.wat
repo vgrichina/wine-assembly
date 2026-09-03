@@ -213,7 +213,7 @@
   ;; canonical hot DC record, so no separate raster mirror remains.
   (func $gdi_dc_meta_entry (param $hdc i32) (param $create i32) (result i32)
     (local $i i32) (local $p i32) (local $empty i32)
-    (local $meta_g i32)
+    (local $meta_g i32) (local $meta_wa i32)
     (if (i32.eqz (local.get $hdc)) (then (return (i32.const 0))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_DC_SAVE_COUNT)))
@@ -234,13 +234,13 @@
       (then (return (i32.const 0))))
     (local.set $meta_g (call $heap_alloc (i32.const 44)))
     (if (i32.eqz (local.get $meta_g)) (then (return (i32.const 0))))
-    (memory.fill (call $g2w (local.get $meta_g)) (i32.const 0) (i32.const 44))
-    (i32.store offset=8 (call $g2w (local.get $meta_g)) (i32.const 1))
-    (i32.store offset=12 (call $g2w (local.get $meta_g)) (i32.const 1))
-    (i32.store offset=28 (call $g2w (local.get $meta_g)) (i32.const 1))
+    (local.set $meta_wa (call $g2w (local.get $meta_g))) (memory.fill (local.get $meta_wa) (i32.const 0) (i32.const 44))
+    (i32.store offset=8 (local.get $meta_wa) (i32.const 1))
+    (i32.store offset=12 (local.get $meta_wa) (i32.const 1))
+    (i32.store offset=28 (local.get $meta_wa) (i32.const 1))
     (i32.store (local.get $empty) (local.get $hdc))
     (i32.store offset=4 (local.get $empty) (local.get $meta_g))
-    (call $g2w (local.get $meta_g)))
+    (local.get $meta_wa))
 
   (func $gdi_dc_selected_palette (param $hdc i32) (result i32)
     (local $meta i32) (local $palette i32)

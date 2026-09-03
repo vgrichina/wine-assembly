@@ -596,6 +596,8 @@ const SILENT_LABEL =
 // better card it does not.
 const SB_LABEL = /sound\s*blaster|\bblaster\b|\bsb\b/i;
 const SB_NOT_LABEL = /\bpro\b|\b16\b|awe|\bgus\b|ultra|compatible/i;
+// The FM chip, when a menu offers nothing that plays samples.
+const ADLIB_LABEL = /ad\s*-?\s*lib|\bopl[23]?\b|\bfm\b/i;
 
 // An option that leaves rather than chooses. It has to be told apart from
 // SILENT_LABEL, which matches "Quit back to DOS" on its first word alone.
@@ -1279,6 +1281,8 @@ class Machine {
     if (this.soundPref === 'sb') {
       const sb = opts.find(o => SB_LABEL.test(o.label) && !SB_NOT_LABEL.test(o.label));
       if (sb) return key(sb.ch);
+      const fm = opts.find(o => ADLIB_LABEL.test(o.label));
+      if (fm) return key(fm.ch);
     }
     const silent = opts.find(o => SILENT_LABEL.test(o.label));
     if (silent) return key(silent.ch);
@@ -2094,13 +2098,13 @@ class Machine {
   // means. The timer is not modelled -- it reads as expired the moment it is
   // started, which is what the test is waiting for anyway.
   adlibStatus() {
-    return this.adlibTimer ? 0xC0 : 0x00;
+    return this.audio.opl.status();
   }
 
+  // A register write into the chip in audio.js, stamped with when it landed
+  // so the note starts at its own sample when the slice is rendered.
   adlibWrite(v) {
-    // Register 4 is the timer control: bit 7 resets the flags, bits 0/1 start
-    // timers 1 and 2.
-    if (this.adlibIndex === 4) this.adlibTimer = (v & 0x80) ? 0 : (v & 3 ? 1 : 0);
+    this.audio.noteOpl(this.audioNow(), this.adlibIndex, v);
   }
 
   // The CRTC's vertical-retrace interrupt: IRQ2, vector 0x0A. Polling 0x3DA for
@@ -2303,8 +2307,8 @@ class Machine {
       return;
     }
     if (port === 0x22C) { this.sbCommand(value); return; }
-    // The FM chip: 0x388 selects a register, 0x389 writes it. There is no
-    // synthesis behind this -- only the timer bits the presence test reads.
+    // The FM chip: 0x388 selects a register, 0x389 writes it; the synthesis
+    // is tools/toyvm/opl.js, reached through the mixer in audio.js.
     if (port === 0x388 || port === 0x228) { this.adlibIndex = value; return; }
     if (port === 0x389 || port === 0x229) { this.adlibWrite(value); return; }
     if (port === 0x224 || port === 0x225) { return; }   // mixer index/data

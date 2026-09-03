@@ -202,6 +202,13 @@ dialog:fullscreen, dialog.fs {
   width: 100vw; max-width: 100vw; height: 100vh; height: 100dvh; max-height: 100dvh;
   border: 0; margin: 0; padding: 0; background: #000; display: flex; flex-direction: column;
 }
+/* The box inside the dialog is what the Fullscreen API is asked for: Chrome
+   refuses a <dialog> itself, and a full-screen root paints over the modal.
+   Sized to fill either way, so the layout below does not care which. */
+dialog.fs .dlg-box, .dlg-box:fullscreen {
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+  width: 100%; height: 100%; background: #000; position: relative;
+}
 dialog:fullscreen .dlg-stage, dialog.fs .dlg-stage {
   flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0;
 }
@@ -216,7 +223,12 @@ dialog:fullscreen .dlg-bar, dialog.fs .dlg-bar {
 }
 dialog:fullscreen.idle .dlg-bar, dialog.fs.idle .dlg-bar { opacity: 0; pointer-events: none; }
 dialog:fullscreen #lb-close, dialog.fs #lb-close { display: inline-block; }
-dialog:fullscreen .run-note, dialog.fs .run-note { padding-bottom: max(7px, env(safe-area-inset-bottom)); }
+/* The status line hides with the bar: in full screen the picture is the
+   whole point, and both come back on a pointer move or a tap. */
+dialog:fullscreen .run-note, dialog.fs .run-note {
+  padding-bottom: max(7px, env(safe-area-inset-bottom)); transition: opacity .3s;
+}
+dialog:fullscreen.idle .run-note, dialog.fs.idle .run-note { opacity: 0; }
 @media (max-width: 640px) {
   /* Two rows: the name and the link, then the controls edge to edge. */
   .dlg-bar { flex-wrap: wrap; gap: 8px 12px; padding: 8px 10px; }

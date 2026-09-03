@@ -2903,7 +2903,7 @@
   ;; form the tables can be searched with. `stop_at_dot` is for module names,
   ;; where the extension is not part of the name.
   (func $win16_cstr_to_pstr (param $src i32) (param $dst i32) (param $stop_at_dot i32)
-    (local $n i32) (local $c i32)
+    (local $n i32) (local $c i32) (local $dst_wa i32) (local.set $dst_wa (call $g2w (local.get $dst)))
     ;; A module name is the base name: LoadLibrary is routinely given a path,
     ;; and Visual Basic hands it the full one for its custom controls. Skip to
     ;; after the last separator before copying, or "C:\FIELD100" is what gets
@@ -2928,11 +2928,11 @@
       (if (i32.and (i32.ge_u (local.get $c) (i32.const 0x61))
                    (i32.le_u (local.get $c) (i32.const 0x7A)))
         (then (local.set $c (i32.sub (local.get $c) (i32.const 0x20)))))
-      (i32.store8 (i32.add (i32.add (call $g2w (local.get $dst)) (i32.const 1)) (local.get $n))
+      (i32.store8 (i32.add (i32.add (local.get $dst_wa) (i32.const 1)) (local.get $n))
                   (local.get $c))
       (local.set $n (i32.add (local.get $n) (i32.const 1)))
       (br $copy)))
-    (i32.store8 (call $g2w (local.get $dst)) (local.get $n)))
+    (i32.store8 (local.get $dst_wa) (local.get $n)))
 
   ;; Is this module one the emulator implements itself, rather than a real NE
   ;; the host has to stage? Ids 1..8 are the system libraries; DDEML is written
@@ -3986,22 +3986,22 @@
   ;; execute from. The dialog itself is the same one.
   (func $win16_MessageBox
     (local $hwnd i32) (local $text i32) (local $caption i32) (local $type i32)
-    (local $dlg i32)
+    (local $dlg i32) (local $text_wa i32) (local $caption_wa i32)
     (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 5))))
     (local.set $text (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
     (local.set $caption (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
     (if (i32.eqz (call $win16_arg16 (i32.const 2))) (then (local.set $caption (i32.const 0))))
-    (local.set $type (call $win16_arg16 (i32.const 0)))
+    (local.set $type (call $win16_arg16 (i32.const 0))) (local.set $text_wa (call $g2w (local.get $text))) (local.set $caption_wa (call $g2w (local.get $caption)))
     (global.set $win16_modal_ret (call $win16_take_return (i32.const 12)))
     (drop (call $host_message_box (local.get $hwnd)
-      (call $g2w (local.get $text)) (call $g2w (local.get $caption)) (local.get $type)))
+      (local.get $text_wa) (local.get $caption_wa) (local.get $type)))
     (local.set $dlg (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (call $create_msgbox_dialog (local.get $dlg) (local.get $hwnd)
-      (select (call $g2w (local.get $caption)) (i32.const 0) (local.get $caption))
-      (call $g2w (local.get $text)) (local.get $type))
+      (select (local.get $caption_wa) (i32.const 0) (local.get $caption))
+      (local.get $text_wa) (local.get $type))
     (global.set $modal_dlg_hwnd (local.get $dlg))
     (global.set $modal_result (i32.const 0))
     (i32.atomic.store (global.get $SHARED_MODAL_DLG_HWND) (local.get $dlg))
@@ -7291,7 +7291,7 @@
   ;; USER.37 SetWindowText(hWnd, lpString).
   (func $win16_SetWindowText
     (local $hwnd16 i32) (local $hwnd i32) (local $s i32) (local $far_s i32)
-    (local $proc i32) (local $ret i32) (local $class i32)
+    (local $proc i32) (local $ret i32) (local $class i32) (local $s_wa i32)
     (local.set $hwnd16 (call $win16_arg16 (i32.const 2)))
     (local.set $hwnd (call $win16_h32 (local.get $hwnd16)))
     (local.set $far_s (call $win16_arg32 (i32.const 0)))
@@ -7305,10 +7305,10 @@
     ;; arrived. Store USER/host text now, then enter the far proc with the
     ;; original packed pointer so its RETF lands directly at the API caller.
     (if (call $win16_is_far_proc (local.get $proc))
-      (then
-        (call $title_table_set (local.get $hwnd) (call $g2w (local.get $s))
+      (then (local.set $s_wa (call $g2w (local.get $s)))
+        (call $title_table_set (local.get $hwnd) (local.get $s_wa)
           (call $guest_strlen (local.get $s)))
-        (call $host_set_window_text (local.get $hwnd) (call $g2w (local.get $s)))
+        (call $host_set_window_text (local.get $hwnd) (local.get $s_wa))
         ;; Thunder controls retain their VB far wndproc while their visible
         ;; text belongs to renderer-facing native shadow state. VB creates the
         ;; child with an empty caption and calls SetWindowText afterwards, so

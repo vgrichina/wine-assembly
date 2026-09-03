@@ -15,16 +15,17 @@
 
   ;; ImageList_Create(cx, cy, flags, cInitial, cGrow) — 5 args, returns HIMAGELIST handle
   (func $handle_ImageList_Create (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32)
+    (local $buf i32) (local $buf_wa i32)
     ;; ImageList struct:
     ;; +0 cx, +4 cy, +8 bk color, +12 count, +16 bitmap strip, +20 mask color,
     ;; +24 icon-handle array, +28 icon-array capacity.
     (local.set $buf (call $heap_alloc (i32.const 32)))
-    (call $zero_memory (call $g2w (local.get $buf)) (i32.const 32))
-    (i32.store (call $g2w (local.get $buf)) (local.get $arg0))           ;; cx
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 4))) (local.get $arg1))  ;; cy
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (i32.const -1))     ;; CLR_NONE
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (i32.const 0))     ;; count=0
+    (local.set $buf_wa (call $g2w (local.get $buf)))
+    (call $zero_memory (local.get $buf_wa) (i32.const 32))
+    (i32.store (local.get $buf_wa) (local.get $arg0))           ;; cx
+    (i32.store offset=4 (local.get $buf_wa) (local.get $arg1))  ;; cy
+    (i32.store offset=8 (local.get $buf_wa) (i32.const -1))     ;; CLR_NONE
+    (i32.store offset=12 (local.get $buf_wa) (i32.const 0))     ;; count=0
     (global.set $eax (local.get $buf))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
@@ -38,7 +39,8 @@
 
   ;; ImageList_LoadImageA(hi, lpbmp, cx, cGrow, crMask, uType, uFlags) — 7 args
   (func $handle_ImageList_LoadImageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32) (local $cx i32) (local $bmp i32) (local $bmp_w i32) (local $count i32)
+    (local $buf i32) (local $buf_wa i32) (local $cx i32)
+    (local $bmp i32) (local $bmp_w i32) (local $count i32)
     ;; LoadImage returns an image-list wrapper around a bitmap strip when host
     ;; resource loading can resolve the bitmap. If not, still return a valid
     ;; empty image list so callers can proceed.
@@ -55,20 +57,22 @@
             (if (i32.eqz (local.get $count))
               (then (local.set $count (i32.const 1))))))))
     (local.set $buf (call $heap_alloc (i32.const 32)))
-    (call $zero_memory (call $g2w (local.get $buf)) (i32.const 32))
-    (i32.store (call $g2w (local.get $buf)) (local.get $cx))           ;; cx
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 4))) (local.get $cx))  ;; cy=cx
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (i32.const -1))   ;; CLR_NONE
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (local.get $count))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 16))) (local.get $bmp))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 20))) (local.get $arg4))
+    (local.set $buf_wa (call $g2w (local.get $buf)))
+    (call $zero_memory (local.get $buf_wa) (i32.const 32))
+    (i32.store (local.get $buf_wa) (local.get $cx))           ;; cx
+    (i32.store offset=4 (local.get $buf_wa) (local.get $cx))  ;; cy=cx
+    (i32.store offset=8 (local.get $buf_wa) (i32.const -1))   ;; CLR_NONE
+    (i32.store offset=12 (local.get $buf_wa) (local.get $count))
+    (i32.store offset=16 (local.get $buf_wa) (local.get $bmp))
+    (i32.store offset=20 (local.get $buf_wa) (local.get $arg4))
     (global.set $eax (local.get $buf))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; stdcall, 7 args
   )
 
   ;; ImageList_LoadImageW — same as A, 7 args
   (func $handle_ImageList_LoadImageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32) (local $cx i32) (local $bmp i32) (local $bmp_w i32) (local $count i32)
+    (local $buf i32) (local $buf_wa i32) (local $cx i32)
+    (local $bmp i32) (local $bmp_w i32) (local $count i32)
     (local.set $cx (local.get $arg2))
     (if (i32.le_s (local.get $cx) (i32.const 0))
       (then (local.set $cx (i32.const 16))))
@@ -82,13 +86,14 @@
             (if (i32.eqz (local.get $count))
               (then (local.set $count (i32.const 1))))))))
     (local.set $buf (call $heap_alloc (i32.const 32)))
-    (call $zero_memory (call $g2w (local.get $buf)) (i32.const 32))
-    (i32.store (call $g2w (local.get $buf)) (local.get $cx))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 4))) (local.get $cx))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (i32.const -1))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (local.get $count))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 16))) (local.get $bmp))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 20))) (local.get $arg4))
+    (local.set $buf_wa (call $g2w (local.get $buf)))
+    (call $zero_memory (local.get $buf_wa) (i32.const 32))
+    (i32.store (local.get $buf_wa) (local.get $cx))
+    (i32.store offset=4 (local.get $buf_wa) (local.get $cx))
+    (i32.store offset=8 (local.get $buf_wa) (i32.const -1))
+    (i32.store offset=12 (local.get $buf_wa) (local.get $count))
+    (i32.store offset=16 (local.get $buf_wa) (local.get $bmp))
+    (i32.store offset=20 (local.get $buf_wa) (local.get $arg4))
     (global.set $eax (local.get $buf))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
@@ -126,7 +131,8 @@
   ;; append when i == -1. Returns the resulting image index, or -1 on error.
   (func $handle_ImageList_ReplaceIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sw i32) (local $count i32) (local $index i32)
-    (local $icons i32) (local $capacity i32) (local $new_icons i32) (local $new_capacity i32)
+    (local $icons i32) (local $icons_wa i32) (local $capacity i32)
+    (local $new_icons i32) (local $new_icons_wa i32) (local $new_capacity i32)
     (global.set $eax (i32.const -1))
     (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg2)))
       (then
@@ -143,6 +149,8 @@
             (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
             (return)))))
     (local.set $icons (i32.load offset=24 (local.get $sw)))
+    (if (local.get $icons)
+      (then (local.set $icons_wa (call $g2w (local.get $icons)))))
     (local.set $capacity (i32.load offset=28 (local.get $sw)))
     (if (i32.ge_u (local.get $index) (local.get $capacity))
       (then
@@ -157,18 +165,20 @@
           (then
             (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
             (return)))
-        (call $zero_memory (call $g2w (local.get $new_icons))
+        (local.set $new_icons_wa (call $g2w (local.get $new_icons)))
+        (call $zero_memory (local.get $new_icons_wa)
           (i32.shl (local.get $new_capacity) (i32.const 2)))
         (if (local.get $icons)
           (then
-            (call $memcpy (call $g2w (local.get $new_icons)) (call $g2w (local.get $icons))
+            (call $memcpy (local.get $new_icons_wa) (local.get $icons_wa)
               (i32.shl (local.get $capacity) (i32.const 2)))))
         (local.set $icons (local.get $new_icons))
+        (local.set $icons_wa (local.get $new_icons_wa))
         (local.set $capacity (local.get $new_capacity))
         (i32.store offset=24 (local.get $sw) (local.get $icons))
         (i32.store offset=28 (local.get $sw) (local.get $capacity))))
-    (i32.store (call $g2w (i32.add (local.get $icons)
-      (i32.shl (local.get $index) (i32.const 2)))) (local.get $arg2))
+    (i32.store (i32.add (local.get $icons_wa)
+      (i32.shl (local.get $index) (i32.const 2))) (local.get $arg2))
     (if (i32.eq (local.get $index) (local.get $count))
       (then (i32.store offset=12 (local.get $sw) (i32.add (local.get $count) (i32.const 1)))))
     (global.set $eax (local.get $index))

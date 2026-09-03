@@ -162,6 +162,41 @@ function testSpeaker() {
   console.log(`  speaker: 1kHz square wave (${n} crossings in 50ms), silent when gated off`);
 }
 
+// --- OPL2 ----------------------------------------------------------------------
+// The presence test a driver runs, then one note the way the AdLib manual
+// plays it: a carrier at full level with an instant attack, keyed on channel
+// 0 at F-number 0x157 block 4, which is middle C (260 Hz), then keyed off with
+// the fastest release.
+function testOpl() {
+  const m = machine();
+  const opl = (reg, v) => { m.portOut(0x388, reg, 8); m.portOut(0x389, v, 8); };
+  // Presence: reset timers, read 0; start timer 1, read the flags; reset, 0.
+  opl(0x04, 0x60); opl(0x04, 0x80);
+  assert.strictEqual(m.portIn(0x388, 8) & 0xE0, 0x00, 'status after reset');
+  opl(0x02, 0xFF); opl(0x04, 0x21);
+  assert.strictEqual(m.portIn(0x388, 8) & 0xE0, 0xC0, 'timer 1 flag after start');
+  opl(0x04, 0x60); opl(0x04, 0x80);
+  assert.strictEqual(m.portIn(0x388, 8) & 0xE0, 0x00, 'status after second reset');
+
+  const out = collect(m, 44100);
+  opl(0x20, 0x21); opl(0x23, 0x21);          // mult 1, sustaining, both operators
+  opl(0x40, 0x3F); opl(0x43, 0x00);          // modulator silent, carrier at full level
+  opl(0x60, 0xF0); opl(0x63, 0xF0);          // instant attack, no decay
+  opl(0x80, 0x0F); opl(0x83, 0x0F);          // sustain at top, fastest release
+  opl(0xA0, 0x57); opl(0xB0, 0x20 | (4 << 2) | 0x01);   // key on, block 4, fnum 0x157
+  for (let i = 0; i < 10; i++) m.audioAdvance(0.01, i * 1000, 1000);
+  const n = crossings(out);
+  assert.ok(n >= 48 && n <= 56, `260Hz for 100ms should cross zero ~52 times, got ${n}`);
+  assert.ok(peak(out) > 0.08, `carrier at full level too quiet: ${peak(out)}`);
+  opl(0xB0, (4 << 2) | 0x01);                // key off
+  const before = out.length;
+  for (let i = 0; i < 10; i++) m.audioAdvance(0.01, 10000 + i * 1000, 1000);
+  const tail = out.slice(before + 2);
+  assert.ok(peak(tail) < 0.01, `released but still sounding: ${peak(tail)}`);
+  assert.strictEqual(m.audio.opl.keyOns, 2, 'one channel keyed = two operators');
+  console.log(`  opl2: presence test answered, middle C (${n} crossings in 100ms), silent after release`);
+}
+
 // --- pacing --------------------------------------------------------------------
 // A wall clock that moves half a millisecond per look, so a frame's deadline
 // is reachable and the paced budget is a known number of dispatches.
@@ -212,6 +247,7 @@ async function main() {
   testSb16();
   testProbeWithoutDma();
   testSpeaker();
+  testOpl();
   await testPacing();
   console.log('PASS test-toyvm-audio');
 }
