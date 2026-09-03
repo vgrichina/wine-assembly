@@ -55,6 +55,7 @@ finish one, add what you learned.
 | Heroes of Might and Magic II (demo) | [heroes2-demo.md](heroes2-demo.md) |
 | Liquid War 5.6.2 | [liquid-war.md](liquid-war.md) |
 | Little Fighter 2 v1.9 | [little-fighter-2.md](little-fighter-2.md) |
+| Pocket Tanks shareware | [pocket-tanks.md](pocket-tanks.md) |
 | The Elder Scrolls: Arena (GOG) | [elder-scrolls-arena-gog.md](elder-scrolls-arena-gog.md) |
 | Ultima IV: Quest of the Avatar (GOG) | [ultima4-gog.md](ultima4-gog.md) |
 | Quake II (demo) | [quake2-demo.md](quake2-demo.md) |

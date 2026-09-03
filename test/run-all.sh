@@ -616,6 +616,7 @@ E2E=(
   test/test-cave-story-candidate.js
   test/test-generally-candidate.js
   test/test-little-fighter-2-candidate.js
+  test/test-pocket-tanks-candidate.js
   test/test-diablo2-demo-installer.js
   test/test-diablo2-demo-installed.js
   test/test-diablo2-demo-gameplay.js

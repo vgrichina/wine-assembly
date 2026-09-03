@@ -957,6 +957,23 @@ permits redistribution. Keep both the installer and prepared game payload
 local/gitignored; freeware status permits this compatibility target under the
 candidate policy but does not clear it for public deployment.
 
+### Pocket Tanks v1.6 shareware
+
+The official [Pocket Tanks page](https://classic.blitwise.com/pockettanks.html)
+offers the shareware edition, and its direct
+[`ptanks.exe` download](https://classic.blitwise.com/ptanks.exe) is pinned as
+`pocket-tanks-installer`. The package has SHA-1
+`1f10dd5830eecf117bc10daf7e85d29f364dbdc2` and SHA-256
+`a3d7da899ab2d3cdd33c6b10747478628175c5a5e0c215eb43a629e6cf98c982`.
+
+Wine-Assembly runs the unchanged bootstrap and the Inno Setup child it creates,
+then launches the installed game into Target Practice. See
+[`docs/re-notes/pocket-tanks.md`](docs/re-notes/pocket-tanks.md) for the exact
+guest-only installer route and frozen gameplay gate. Keep the installer and
+installed payload local/gitignored unless its package terms are separately
+confirmed to authorize public bundling; the official shareware label does not
+make the game open source.
+
 Recommended order:
 
 1. [Jazz Jackrabbit 2 Demo v1.23s](https://archive.org/details/JazzJackrabbit2Demo)
