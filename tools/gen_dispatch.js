@@ -86,6 +86,7 @@ const gpuApis = new Map([
   // Their GLdouble arguments consume two physical stack dwords each.
   ['gluPerspective', 8],
   ['gluLookAt', 18],
+  ['gluBuild2DMipmaps', 7],
 ]);
 const gpuApiOrder = [...gpuApis.keys()];
 

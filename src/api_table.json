@@ -26793,5 +26793,12 @@
     "nargs": 9,
     "convention": "stdcall",
     "hash": 2949704463
+  },
+  {
+    "id": 3213,
+    "name": "gluBuild2DMipmaps",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 3219974270
   }
 ]
