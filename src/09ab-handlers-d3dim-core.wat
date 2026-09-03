@@ -308,10 +308,12 @@
       (if (i32.eq (local.get $iid0) (i32.const 0xF5049E79)) (then (local.set $vtbl (global.get $DX_VTBL_D3DDEV7))))))
     (if (i32.eq (local.get $family) (i32.const 3)) (then
       ;; Viewport family — IIDs less critical, accept anything that resembles a Viewport
-      (local.set $obj_wa (call $g2w (local.get $this)))
+      (if (i32.eqz (local.get $obj_wa))
+        (then (local.set $obj_wa (call $g2w (local.get $this)))))
       (local.set $vtbl (i32.load (local.get $obj_wa)))))
     (if (i32.eq (local.get $family) (i32.const 4)) (then
-      (local.set $obj_wa (call $g2w (local.get $this)))
+      (if (i32.eqz (local.get $obj_wa))
+        (then (local.set $obj_wa (call $g2w (local.get $this)))))
       (local.set $vtbl (i32.load (local.get $obj_wa)))))
     (if (i32.eq (local.get $family) (i32.const 5)) (then
       ;; Texture family — recognize Texture IIDs and DDSurface IIDs
@@ -331,7 +333,8 @@
         (local.set $obj_wa (call $g2w (local.get $this)))
         (local.set $vtbl (i32.load (local.get $obj_wa)))))))
     (if (i32.eq (local.get $family) (i32.const 6)) (then
-      (local.set $obj_wa (call $g2w (local.get $this)))
+      (if (i32.eqz (local.get $obj_wa))
+        (then (local.set $obj_wa (call $g2w (local.get $this)))))
       (local.set $vtbl (i32.load (local.get $obj_wa)))))
     ;; Miss → fail.
     (if (i32.eqz (local.get $vtbl)) (then

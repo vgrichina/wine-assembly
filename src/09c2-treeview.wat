@@ -293,7 +293,7 @@
     (local $image_rec i32)
     (local $hParent i32) (local $state i32) (local $mask i32)
     (local $parent_slot i32) (local $sib i32) (local $guard i32)
-    (local $text_g i32) (local $text_w i32) (local $text_len i32) (local $text_copy_g i32)
+    (local $text_g i32) (local $text_w i32) (local $text_len i32) (local $text_copy_g i32) (local $text_copy_w i32)
     (local $notify_g i32) (local $notify_w i32) (local $notify_parent i32)
     ;; Allocate slot
     (local.set $slot (call $tv_alloc_slot))
@@ -368,10 +368,11 @@
             (local.set $text_w (call $g2w (local.get $text_g)))
             (local.set $text_len (call $strlen (local.get $text_w)))
             (local.set $text_copy_g (call $heap_alloc (i32.add (local.get $text_len) (i32.const 1))))
-            (call $memcpy (call $g2w (local.get $text_copy_g))
+            (local.set $text_copy_w (call $g2w (local.get $text_copy_g)))
+            (call $memcpy (local.get $text_copy_w)
                           (local.get $text_w)
                           (local.get $text_len))
-            (i32.store8 (i32.add (call $g2w (local.get $text_copy_g)) (local.get $text_len))
+            (i32.store8 (i32.add (local.get $text_copy_w) (local.get $text_len))
                         (i32.const 0))
             (i32.store offset=28 (local.get $base) (local.get $text_copy_g))))
         ;; LPSTR_TEXTCALLBACKA: ask the parent for TVIF_TEXT immediately and
@@ -424,10 +425,11 @@
                               (call $heap_alloc (i32.add (local.get $text_len) (i32.const 1))))
                             (if (local.get $text_copy_g)
                               (then
-                                (call $memcpy (call $g2w (local.get $text_copy_g))
+                                (local.set $text_copy_w (call $g2w (local.get $text_copy_g)))
+                                (call $memcpy (local.get $text_copy_w)
                                   (local.get $text_w) (local.get $text_len))
                                 (i32.store8
-                                  (i32.add (call $g2w (local.get $text_copy_g)) (local.get $text_len))
+                                  (i32.add (local.get $text_copy_w) (local.get $text_len))
                                   (i32.const 0))
                                 (i32.store offset=28 (local.get $base) (local.get $text_copy_g))))))))
                     ;; Free the notify block unconditionally — the copy above
