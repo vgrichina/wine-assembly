@@ -112,6 +112,7 @@ UNIT=(
   test/test-ver-find-file.js
   test/test-static-dx-version.js
   test/test-midi-mci.js
+  test/test-tinysynth-offline.js
   test/test-mci-get-device-id.js
   test/test-cd-audio-mci.js
   test/test-thread-manager.js

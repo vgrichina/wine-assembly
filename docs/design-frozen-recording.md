@@ -118,11 +118,11 @@ the mixer mutes the guest set through `mixerSetControlDetails`; pan is the
 equal-power law a `StereoPannerNode` applies, so a hard-panned effect stays
 hard-panned in the recording.
 
-**MIDI is out of scope.** The MIDI bus does not submit PCM at all — it is
-synthesized in the browser by the tiny synth (or by a `MIDI_OUT` device), so
-there is nothing at a submit seam to tap. A recording of a MIDI-scored game
-gets its wave effects and no music. Capturing it would mean rendering the SMF
-offline on the guest clock, which is a separate piece of work.
+**MIDI needs a separate path.** The MIDI bus does not submit PCM at all — it is
+synthesized in the browser by TinySynth, so there is nothing at a submit seam
+to tap. Browser frozen capture still has that limitation. The direct CLI now
+solves it by rendering MCI's parsed SMF notes with `lib/tinysynth-offline.js`
+onto the same guest clock before the final audio mix.
 
 ## The sink — `tools/dev-server.js`, `/api/record/*`
 
@@ -192,6 +192,25 @@ program changes, channel volume/pan, percussion, envelopes, and ambience remain
 deterministic on the same guest clock. A silent audio track is still written when the guest produces no sound,
 so every finalized CLI recording has a stable video+audio stream contract.
 
+`tools/compare-tinysynth-offline.js` is the quality/performance oracle. It
+renders the same MIDI segment twice: once through the production TinySynth
+AudioNode graph in a browser `OfflineAudioContext`, and once through the CLI
+renderer. For the first 20 seconds of `PINBALL.MID` at 44100 Hz, the CLI output
+is within 0.73 dB RMS level, 0.70 dB brightness, and 1.79 dB stereo side/mid of
+the browser output; their 20 ms loudness envelopes correlate at 0.72. Raw
+sample correlation is intentionally not a target because TinySynth creates
+its noise and convolution impulse with `Math.random()`.
+
+The full 14139-note, 527.87-second score is the performance fixture. At the
+CLI's 16000 Hz recording rate it rendered in 4.22 seconds (125.1x realtime),
+versus 18.64 seconds (28.3x) before timbre compilation, envelope recurrences,
+and oscillator tables — 4.42x faster on the same machine. Reproduce either
+measurement without opening a browser:
+
+```sh
+node tools/compare-tinysynth-offline.js --seconds=9999 --rate=16000 --offline-only
+```
+
 ## The assembler — `tools/frozen-video.js`
 
 ```
@@ -224,10 +243,10 @@ same reason.
 
 ## Limits
 
-* **MIDI is not captured** (above).
-* Audio the *host* generates rather than the guest — the tiny synth, an
-  imported media file played through `<audio>` — is not at a PCM submit seam
-  and is not recorded.
+* Browser-side MIDI and audio an imported media file plays through `<audio>`
+  are not at a PCM submit seam and are not captured by the browser frozen
+  recorder. Direct CLI MCI sequences are the exception: they use the offline
+  TinySynth companion described above.
 * Non-frozen tiles keep `lib/recorder.js`; nothing here changes them.
 * Frames dropped under sink backpressure are counted in `record status` and
   reported by `record off`. A recording that reports drops is still coherent —
