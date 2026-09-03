@@ -2593,6 +2593,8 @@
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0023))
         (then (global.set $createwnd_setfocus_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0024))
+        (then (global.set $createwnd_move_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0031))
         (then (global.set $createwnd_size_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0026))
         (then (global.set $child_cbt_ret_thunk (local.get $guest))))

@@ -116,6 +116,7 @@ UNIT=(
   test/test-cd-audio-mci.js
   test/test-thread-manager.js
   test/test-worker-metadata-refresh.js
+  test/test-thread-thunk-sync.js
   test/test-io-wait-threads.js
   test/test-mm-timer-callback.js
   test/test-run-budget-completes-resume.js
