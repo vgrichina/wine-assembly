@@ -111,6 +111,16 @@ function makeShell(opts = {}) {
   assert.match(hostSource,
     /if \(shell\.launchVfsExe && shell\.launchVfsExe\(file, self, dir, params\)\)/,
     'browser host offers relative and absolute executable names to the caller VFS');
+  assert.strictEqual(
+    (shellSource.match(/queuePendingLaunch\(key, SINGLE_APP\(\)\);/g) || []).length,
+    2,
+    'registered and inherited-VFS handoffs use the dormant process queue');
+  assert.strictEqual(
+    (shellSource.match(/if \(launchInFlight \|\| \(SINGLE_APP\(\) && runningApps\.length\)\)/g) || []).length,
+    2,
+    'all modes serialize boot while only single-app mode serializes process lifetime');
+  assert.match(shellSource, /finally \{\s*launchInFlight = false;\s*dispatchPendingLaunch\(\);/,
+    'ending the current boot wakes a child that was queued during synchronous startup');
   console.log('ok: vfs child launch keeps args before PE startup');
 }
 
@@ -123,15 +133,21 @@ function makeShell(opts = {}) {
     'a registered exe is accepted');
 }
 {
-  const { shell } = makeShell({ singleApp: true });
-  shell.runningApps.push({ name: 'write' });
+  const { shell, launched } = makeShell({ singleApp: true });
+  const parent = {};
+  shell.runningApps.push({ name: 'write', wine: parent });
   const t0 = Date.now();
   assert.strictEqual(shell.launchExe('wordpad.exe'), true,
     'single-app mode accepts the launch instead of declining it');
   assert.ok(Date.now() - t0 < 50, 'and returns immediately — the host import is synchronous');
-  // Drain the deferral timer so the test process can exit.
-  shell.runningApps.length = 0;
+  assert.deepStrictEqual(launched, [], 'the child remains dormant while its parent is alive');
+  global.window = {};
+  global.document = { getElementById: () => null };
+  shell.unregisterRunningApp(parent);
+  delete global.window;
+  delete global.document;
   setTimeout(() => {
+    assert.deepStrictEqual(launched, ['wordpad'], 'parent exit wakes exactly one queued child');
     console.log('ok: single-app launch deferred, not declined');
     console.log('PASS test-shell-execute-launch');
   }, 250);
