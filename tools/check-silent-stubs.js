@@ -165,8 +165,11 @@ const digest = crypto.createHash('sha256')
 // free distinct opaque drawing contexts instead of returning constant success.
 // 2026-09-03: 467 -> 466. GetLogicalDrives now queries the browser VFS's live
 // assignment mask instead of reporting a fixed C:/D: constant.
-const EXPECTED_COUNT = 466;
-const EXPECTED_SHA256 = '183abee8bb842b219a70e848b01d3c54764dc2ff35d31f81179dfaa557b605fe';
+// 2026-09-03: 466 -> 463. SetFileApisToOEM/ANSI now propagate their process
+// code-page choice to Kernel32 filenames, and AreFileApisANSI reads it back
+// from the same process-shared VFS state across guest thread instances.
+const EXPECTED_COUNT = 463;
+const EXPECTED_SHA256 = 'f3598142d7d1970c7329585d3faf86d0ba76326f5e0a94fa9ab297b6643a86c0';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

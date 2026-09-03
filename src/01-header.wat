@@ -742,8 +742,8 @@
   (import "host" "fs_get_current_directory" (func $host_fs_get_current_directory (param i32 i32 i32) (result i32)))
   (import "host" "fs_set_current_directory" (func $host_fs_set_current_directory (param i32 i32) (result i32)))
   (import "host" "fs_get_full_path_name" (func $host_fs_get_full_path_name (param i32 i32 i32 i32 i32) (result i32)))
-  ;; Mounted-media identity and the current drive-letter assignment mask live
-  ;; on the host VFS and answer the Win32 drive/volume enumeration APIs.
+  ;; Host VFS owns file-API code page, drive assignments, and mounted identity.
+  (import "host" "fs_file_api_ansi" (func $host_fs_file_api_ansi (param i32) (result i32)))
   (import "host" "fs_logical_drive_mask" (func $host_fs_logical_drive_mask (result i32)))
   (import "host" "fs_drive_type" (func $host_fs_drive_type (param i32 i32) (result i32)))
   ;; fs_drive_type(rootWA, isWide) → DRIVE_* value, or 0 when no mount claims

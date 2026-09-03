@@ -17233,15 +17233,15 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   ;; the OEM mode so names received from the console and names passed to the
   ;; ANSI file APIs stay in the same byte domain.
   (func $handle_SetFileApisToOEM (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $file_apis_ansi (i32.const 0))
+    (global.set $file_apis_ansi (i32.const 0)) (drop (call $host_fs_file_api_ansi (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   (func $handle_SetFileApisToANSI (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $file_apis_ansi (i32.const 1))
+    (global.set $file_apis_ansi (i32.const 1)) (drop (call $host_fs_file_api_ansi (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   (func $handle_AreFileApisANSI (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (global.get $file_apis_ansi))
+    (global.set $eax (call $host_fs_file_api_ansi (i32.const -1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   ;; 697: ??1type_info@@UAE@XZ — soft-stub — STUB: unimplemented
