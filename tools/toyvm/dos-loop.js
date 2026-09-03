@@ -1043,8 +1043,12 @@ class DosSession {
     // The quantum: a quarter of the shortest interval anything here fires at.
     // Under pitClock that is whichever of the timer and the frame is faster,
     // and the timer can be very fast once a music player has programmed it.
-    const shortest = this.pitClock
-      ? Math.min(this.timerInterval(), this.vgaPeriod || Infinity) : this.irqEvery;
+    // The Ultrasound's timer is a third clock, and the fastest: DOPE runs
+    // it at 320us. Its period in dispatches, floored like the PIT's.
+    const gp = machine.gusPeriod ? machine.gusPeriod() : 0;
+    const gusInterval = gp ? Math.max(200, Math.round(gp / this.guestSeconds(1))) : Infinity;
+    const shortest = Math.min(gusInterval, this.pitClock
+      ? Math.min(this.timerInterval(), this.vgaPeriod || Infinity) : this.irqEvery);
     const budget = Math.min(this.slice, Math.max(1, Math.floor(shortest / 4)));
     // So a port write inside the slice can say when it happened (audioNow).
     machine.sliceStart = this.dispatched;
@@ -1200,6 +1204,11 @@ class DosSession {
       && (machine.sbForced() || ((machine.sbDue ? machine.sbDue() : true)
         && this.dispatched - this.lastSbIrq >= this.irqEvery))
       ? machine.sbIrq() : 0;
+    // The Ultrasound: an event the card reports (a timer, a voice reaching
+    // its end, a DMA upload done), not a cadence. Its timer is the beat of
+    // every GUS module player here, so it is not rate-limited the way the
+    // Sound Blaster's block is; the slice above is already cut to it.
+    const gvec = (vm.get('flags') & 0x200) && machine.gusIrq ? machine.gusIrq() : 0;
     const tvec = machine.timerVector();
     // A frame, not a tick: the vertical retrace comes round about 70 times a
     // second against the timer's 18.2, so it is the fastest thing here. Asked
@@ -1211,7 +1220,9 @@ class DosSession {
     // should get its first interrupt at the next edge, not at once.
     const rvec = this.retraceEdge && (vm.get('flags') & 0x200) ? machine.retraceIrq() : 0;
     if (this.retraceEdge && !machine.retraceIrq()) this.retraceEdge = false;
-    if (svec) {
+    if (gvec) {
+      this.raise(gvec);
+    } else if (svec) {
       this.lastSbIrq = this.dispatched;
       this.raise(svec);
     } else if (tvec && this.dispatched - this.lastIrq >= this.timerInterval() && (vm.get('flags') & 0x200)) {

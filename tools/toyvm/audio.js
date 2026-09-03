@@ -260,8 +260,9 @@ class Sound {
   // `dt` guest seconds passed over `spent` dispatches starting at `sliceStart`.
   advance(dt, sliceStart, spent) {
     if (!(dt > 0)) { this.events.length = 0; return; }
-    const sb = this.m.sb;
+    const sb = this.m.sb, gus = this.m.gus;
     if (!this.rate || !this.sink) {
+      if (gus) gus.advance(dt, false);
       if (sb.pending && !sb.paused) {
         this.sbAcc += dt * sb.rate;
         const n = Math.floor(this.sbAcc);
@@ -286,6 +287,7 @@ class Sound {
     if (oplEvents.length > 1) oplEvents.sort((a, b) => a.at - b.at);
     let oe = 0;
     const spk = this.spk;
+    if (gus) gus.advance(dt, true);
     const step = sb.rate / this.rate;
     const perSample = spent / n;
     const HP = 1 - 1 / (this.rate * HP_SECONDS);
@@ -321,7 +323,10 @@ class Sound {
       }
       // The FM chip, mono.
       const fm = opl.next() * OPL_LEVEL;
-      const l = x + fm + sb.lastL * SB_LEVEL, r = x + fm + sb.lastR * SB_LEVEL;
+      // The Ultrasound's 32 voices, already summed and panned.
+      const g = gus ? gus.mix(this.rate) : null;
+      const l = x + fm + sb.lastL * SB_LEVEL + (g ? g[0] : 0);
+      const r = x + fm + sb.lastR * SB_LEVEL + (g ? g[1] : 0);
       const yl = l - this.hpx[0] + HP * this.hpy[0];
       const yr = r - this.hpx[1] + HP * this.hpy[1];
       this.hpx[0] = l; this.hpy[0] = yl; this.hpx[1] = r; this.hpy[1] = yr;

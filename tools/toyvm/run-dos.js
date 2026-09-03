@@ -1106,6 +1106,15 @@ async function main() {
       + (m.adlibIndex !== undefined
         ? `; opl2 ${m.audio.opl.writes} register write(s), ${m.audio.opl.keyOns} key-on(s)` : ''));
   }
+  // The Ultrasound, when a program touched its registers: how much it
+  // uploaded, how many voices it started and how many interrupts it took.
+  if (m.gus && (m.gus.stats.writes || m.gus.stats.pokes)) {
+    const g = m.gus.stats;
+    console.log(`  gus at ${m.gus.base.toString(16)}h: ${g.resets} reset(s), ${g.writes} register write(s), `
+      + `${g.pokes} poke(s), ${g.dmaBytes} DMA byte(s), ${g.starts} voice start(s), `
+      + `${g.irqs} irq(s) on IRQ ${m.gus.irqLine()}, ${m.gus.activeVoices} voices at ${Math.round(m.gus.rate)}Hz`
+      + `${m.gus.active() ? ', playing' : ''}`);
+  }
   if (m.xmsBlocks.size || m.xmsMoved || m.emsHandles.size || m.emsMaps) {
     console.log(`  xms ${m.xmsBlocks.size} block(s), ${(m.xmsMoved / 1024).toFixed(0)}KB moved; `
       + `ems ${m.emsHandles.size} handle(s), ${m.emsMaps} page maps`);

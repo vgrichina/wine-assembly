@@ -109,7 +109,10 @@ class Opl {
   }
 
   // The status register: bit 7 = any timer flag, 6 = timer 1, 5 = timer 2.
-  status() { return this.timerStarted ? 0xC0 : 0x00; }
+  status() {
+    const t = this.timerStarted;
+    return t ? 0x80 | ((t & 1) ? 0x40 : 0) | ((t & 2) ? 0x20 : 0) : 0x00;
+  }
 
   active() {
     for (const op of this.ops) if (op.state !== OFF) return true;
@@ -121,7 +124,9 @@ class Opl {
     reg &= 0xFF; v &= 0xFF;
     this.regs[reg] = v;
     if (reg === 0x01) { this.waveSel = (v >> 5) & 1; return; }
-    if (reg === 0x04) { this.timerStarted = (v & 0x80) ? 0 : (v & 3 ? 1 : 0); return; }
+    // Which timers are started, so the status names the one that expired
+    // (a timer here expires the moment it starts). Bit 7 resets the flags.
+    if (reg === 0x04) { this.timerStarted = (v & 0x80) ? 0 : (v & 3); return; }
     if (reg === 0xBD) {
       this.tremDeep = (v >> 7) & 1; this.vibDeep = (v >> 6) & 1;
       const rhythm = (v >> 5) & 1;

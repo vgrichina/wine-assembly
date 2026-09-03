@@ -25,6 +25,7 @@
 const fs = require('fs');
 const isa = require('./isa');
 const { Sound, PIT_HZ } = require('./audio');
+const { Gus } = require('./gus');
 
 const VGA_BASE = 0xA0000;
 const STUB_SEG = 0xF000;      // vector v points at F000:(0x100+v), one refused byte
@@ -914,6 +915,16 @@ class Machine {
     // The samples behind the card, and the speaker. Renders only when a host
     // attaches a sink (the page, --audio=); see audio.js.
     this.audio = new Sound(this);
+    // The Gravis Ultrasound (gus.js), at the base ULTRASND= names when the
+    // caller set one (shot-sweep.js does for the programs that ask for it)
+    // and at the factory 0x220 otherwise, which is where DOPE, CYBOMAN2 and
+    // CMA_SHRT look with no variable set. It shares 0x220 with the Sound
+    // Blaster the way the ports allow: the DSP owns its read and write
+    // ports, the GF1 its status, latch and register ports, and the AdLib
+    // timer pair at 0x2X8/0x2X9 reaches both chips.
+    const ultra = this.extraEnv.map(String).find((e) => /^ULTRASND=/i.test(e));
+    const gusBase = ultra ? parseInt(ultra.split('=')[1], 16) : 0x220;
+    this.gus = new Gus({ base: gusBase >= 0x210 && gusBase <= 0x260 ? gusBase : 0x220, machine: this });
     this.port61 = 0;
     // Where the slice being run started and how big it is, in dispatches, so
     // a port write can say WHEN it happened within the slice (audioNow).
@@ -2291,6 +2302,34 @@ class Machine {
     return this.sb.mixer[i];
   }
 
+  // The Ultrasound's interrupt, as a vector to raise or 0. The line is the
+  // one the program latched through 0x2XB, turned into a vector by where
+  // the PICs were told to put it (pic.base). A real-mode program must have
+  // hooked that vector, as for the Sound Blaster; a protected-mode one has
+  // its handler behind an IDT gate the VM's raise_irq resolves itself.
+  gusIrq() {
+    if (this.sound === 'none' || !this.gus.takeIrq()) return 0;
+    const line = this.gus.irqLine();
+    const vec = line < 8 ? this.pic.base[0] + line : this.pic.base[1] + line - 8;
+    const ex = this.vmExports;
+    const pmode = ex && ex.get_cr0 && (ex.get_cr0() & 1);
+    return (pmode || this.hookedVector(vec)) ? vec : 0;
+  }
+
+  // Seconds between interrupts of the fastest GF1 timer that is running with
+  // its interrupt enabled, or 0: the loop cuts its slices to a quarter of it.
+  gusPeriod() {
+    if (this.sound === 'none' || !this.gus.irqEnabled()) return 0;
+    let p = 0;
+    for (let i = 0; i < 2; i++) {
+      const t = this.gus.timers[i];
+      if (!t.running || !(this.gus.timerCtl & (0x04 << i))) continue;
+      const period = (256 - this.gus.timerCount[i]) * t.unit;
+      if (!p || period < p) p = period;
+    }
+    return p;
+  }
+
   // Whether a block has finished and its interrupt is waiting to be delivered.
   sbDue() {
     return this.sb.irqDue;
@@ -2538,6 +2577,14 @@ class Machine {
     if (port === 0x21 || port === 0xA1) return this.pic.imr[port >> 7];
     if (port === 0x20 || port === 0xA0) return 0;
     if (this.sound !== 'none') {
+      // The GF1's ports first: it answers only the offsets that are its own
+      // (-1 for the rest), and its timer status is folded into the AdLib
+      // status read below rather than answered here.
+      const goff = port - this.gus.base;
+      if (goff >= 0 && goff <= 0x107 && goff !== 0x008) {
+        const r = this.gus.in(goff, w);
+        if (r >= 0) return r;
+      }
       if (port === 0x22A) return this.sb.out.length ? this.sb.out.shift() : 0;
       if (port === 0x22E) { this.sb.irqLatched &= ~1; return this.sb.out.length ? 0xFF : 0x7F; }
       if (port === 0x22F) { this.sb.irqLatched &= ~2; return 0xFF; }
@@ -2551,8 +2598,12 @@ class Machine {
     // (left/right pairs); CMA_SHRT reads its status at 0x220 and writes its
     // registers through 0x220/0x221 and never touches 0x388.
     if (port === 0x388 || port === 0x389 || port === 0x228 || port === 0x229
-        || (this.sound !== 'none' && port >= 0x220 && port <= 0x223)) {
-      return this.sound === 'none' ? 0xFF : this.adlibStatus();
+        || (this.sound !== 'none' && port >= 0x220 && port <= 0x223)
+        || (this.sound !== 'none' && port === this.gus.base + 0x008)) {
+      if (this.sound === 'none') return 0xFF;
+      // The GF1's AdLib-compatible timer flags live at its 0x2X8; when that
+      // is 0x228 the OPL's own flags read there too.
+      return this.adlibStatus() | (port === this.gus.base + 0x008 ? this.gus.adlibStatus() : 0);
     }
     if (port >= 0x40 && port <= 0x42) {
       this.clock.pit++;
@@ -2580,6 +2631,10 @@ class Machine {
   portOut_(port, value, w) {
     // portOut_, not portOut: the word has already been traced, and tracing the
     // two halves as well would treble every 16-bit line for no new fact.
+    // Except the GF1's 16-bit data port: `out dx,ax` there is one register
+    // write, and split into bytes its high half would land on the 8-bit
+    // data port next door.
+    if (w === 16 && this.sound !== 'none' && port === this.gus.base + 0x104) { this.gus.out(0x104, value, 16); return; }
     if (w === 16) { this.portOut_(port, value & 0xFF, 8); this.portOut_(port + 1, (value >> 8) & 0xFF, 8); return; }
     value &= 0xFF;
     // --- 8259 PICs ----------------------------------------------------------
@@ -2601,6 +2656,16 @@ class Machine {
       if (next === 4 && !(this.pic.icw1[i] & 0x01)) next = 0;
       this.pic.icw[i] = next > 4 ? 0 : next;
       return;
+    }
+    // --- Gravis Ultrasound ---------------------------------------------------
+    // The GF1 takes what is its own. Three offsets are shared with the chips
+    // at 0x220 and fall through after the GF1 has seen them: 0x2X0 is its
+    // mix control and the SB Pro's first FM index port, 0x2X8/0x2X9 are the
+    // AdLib timer pair on both cards.
+    if (this.sound !== 'none') {
+      const goff = port - this.gus.base;
+      if (goff >= 0 && goff <= 0x107 && this.gus.out(goff, value, 8)
+          && goff !== 0x000 && goff !== 0x008 && goff !== 0x009) return;
     }
     // --- Sound Blaster, base 0x220 -----------------------------------------
     // Reset: 1 then 0, and the card answers 0xAA on the read port. Everything

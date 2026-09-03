@@ -331,6 +331,73 @@ async function testPacing() {
     + `${flat.dispatched} unpaced`);
 }
 
+// --- the Gravis Ultrasound -----------------------------------------------------
+// The GF1 the way a module player drives it: a sample poked into DRAM a byte
+// at a time, one voice looping over it, and the card's own timer as the
+// player's beat -- DOPE, CYBOMAN2 and CATWALK all do exactly this and
+// nothing else (none of them uses DMA).
+function testGus() {
+  const m = machine();
+  const B = m.gus.base;
+  assert.strictEqual(B, 0x220, 'factory base without ULTRASND');
+  const reg8 = (r, v) => { m.portOut(B + 0x103, r, 8); m.portOut(B + 0x105, v, 8); };
+  const reg16 = (r, v) => { m.portOut(B + 0x103, r, 8); m.portOut(B + 0x104, v, 16); };
+  const poke = (a, v) => { reg16(0x43, a & 0xFFFF); reg8(0x44, a >> 16); m.portOut(B + 0x107, v, 8); };
+  // Reset, IRQ latch (7), DAC and interrupts on, 14 voices (44100Hz).
+  reg8(0x4C, 0); reg8(0x4C, 1);
+  m.portOut(B + 0x000, 0x40 | 0x08, 8); m.portOut(B + 0x00B, 0x04, 8); m.portOut(B + 0x000, 0x09, 8);
+  assert.strictEqual(m.gus.irqLine(), 7, 'IRQ latch');
+  reg8(0x0E, 0xC0 | 13);
+  reg8(0x4C, 7);
+  // A 64-byte sawtooth at DRAM 0x100, read back through the peek port.
+  for (let i = 0; i < 64; i++) poke(0x100 + i, (i * 4 - 128) & 0xFF);
+  reg16(0x43, 0x110); reg8(0x44, 0);
+  assert.strictEqual(m.portIn(B + 0x107, 8), (16 * 4 - 128) & 0xFF, 'DRAM peek');
+  // Voice 0: loop 0x100..0x140 at one DRAM byte per output sample, full volume.
+  m.portOut(B + 0x102, 0, 8);
+  reg16(0x02, 0x100 >> 7); reg16(0x03, (0x100 & 0x7F) << 9);
+  reg16(0x04, 0x140 >> 7); reg16(0x05, (0x140 & 0x7F) << 9);
+  reg16(0x0A, 0x100 >> 7); reg16(0x0B, (0x100 & 0x7F) << 9);
+  reg16(0x01, 1 << 10);
+  reg16(0x09, 0xFFF0); reg8(0x0C, 7);
+  reg8(0x00, 0x08);
+  assert.strictEqual(m.gus.stats.starts, 1, 'the voice did not start');
+  const out = collect(m, 44100);
+  for (let i = 0; i < 10; i++) m.audioAdvance(0.01, i * 1000, 1000);
+  assert.ok(peak(out) > 0.05, `the sawtooth is inaudible (peak ${peak(out)})`);
+  // 64 bytes per period at 44100Hz is 689Hz: ~69 periods in 0.1s, two
+  // crossings each.
+  const c = crossings(out);
+  assert.ok(c > 120 && c < 160, `the loop runs at the wrong pitch (${c} crossings)`);
+  // The current-position registers move with it.
+  m.portOut(B + 0x103, 0x8A, 8);
+  const hi = m.portIn(B + 0x104, 16);
+  assert.ok(hi === 0x100 >> 7 || hi === 0x140 >> 7, `current address high ${hi}`);
+  // Timer 2 at 320us x 4 = 1.28ms, through the AdLib-compatible pair: the
+  // interrupt comes on the latched line once the period passes, the status
+  // names it, and taking it does not repeat it until the next period.
+  reg8(0x47, 256 - 4); reg8(0x45, 0x08);
+  m.portOut(B + 0x008, 0x04, 8); m.portOut(B + 0x009, 0x02, 8);
+  assert.strictEqual(m.gusIrq(), 0, 'an interrupt before the period passed');
+  assert.ok(Math.abs(m.gusPeriod() - 0.00128) < 1e-6, `timer period ${m.gusPeriod()}`);
+  m.audioAdvance(0.002, 10000, 1000);
+  assert.strictEqual(m.gusIrq(), 0x0F, 'timer 2 did not interrupt on IRQ 7');
+  assert.strictEqual(m.portIn(B + 0x006, 8) & 0x08, 0x08, 'IRQ status without timer 2');
+  assert.strictEqual(m.portIn(B + 0x008, 8) & 0xA0, 0xA0, 'AdLib status without timer 2');
+  assert.strictEqual(m.gusIrq(), 0, 'the same expiry interrupted twice');
+  m.audioAdvance(0.002, 11000, 1000);
+  assert.strictEqual(m.gusIrq(), 0x0F, 'the timer did not keep running');
+  // At 0x240 from the environment, with the card's own registers in place.
+  const at240 = new Machine(new Uint8Array(0), { log: () => {}, env: ['ULTRASND=240,1,1,11,7'] });
+  at240.setMemory(new Uint8Array(1 << 20), null);
+  assert.strictEqual(at240.gus.base, 0x240, 'ULTRASND= base');
+  at240.portOut(0x343, 0x4C, 8); at240.portOut(0x345, 1, 8);
+  assert.strictEqual(at240.gus.reset & 1, 1, 'register write at 0x345 did not land');
+  at240.portOut(0x223, 0x4C, 8); at240.portOut(0x225, 0, 8);
+  assert.strictEqual(at240.gus.reset & 1, 1, 'a write to 0x225 reached the card at 0x240');
+  console.log('  gus: DRAM pokes read back, a looping voice renders at pitch, timer 2 interrupts on the latch');
+}
+
 async function main() {
   testSb8();
   testSb16();
@@ -341,6 +408,7 @@ async function main() {
   testShortBlockWaitsForDma();
   testPic();
   testSb16Mixer();
+  testGus();
   await testPacing();
   console.log('PASS test-toyvm-audio');
 }
