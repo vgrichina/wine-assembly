@@ -5135,7 +5135,8 @@
   ;; DRAWITEMSTRUCT (48 bytes):
   ;;   +0x00 CtlType=ODT_BUTTON(4)   +0x04 CtlID
   ;;   +0x08 itemID=0                +0x0C itemAction=ODA_DRAWENTIRE(1)
-  ;;   +0x10 itemState (ODS_SELECTED 0x01 | ODS_FOCUS 0x10 | ODS_DEFAULT 0x20)
+  ;;   +0x10 itemState (ODS_SELECTED 0x01 | ODS_DISABLED 0x04 |
+  ;;                    ODS_FOCUS 0x10 | ODS_DEFAULT 0x20)
   ;;   +0x14 hwndItem                +0x18 hDC
   ;;   +0x1C..+0x2B RECT rcItem      +0x2C itemData=0
   ;; The shared WEP About DLLs use a 260x65 owner-draw button as a monochrome
@@ -5155,9 +5156,15 @@
     (local.set $state_bits
       (i32.or
         (i32.or
-          (select (i32.const 0x0001) (i32.const 0) (i32.and (local.get $flags) (i32.const 0x01)))
-          (select (i32.const 0x0010) (i32.const 0) (i32.and (local.get $flags) (i32.const 0x08))))
-        (select (i32.const 0x0020) (i32.const 0) (i32.and (local.get $flags) (i32.const 0x04)))))
+          (i32.or
+            (select (i32.const 0x0001) (i32.const 0)
+              (i32.and (local.get $flags) (i32.const 0x01)))
+            (select (i32.const 4) (i32.const 0)
+              (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 134217728))))
+          (select (i32.const 0x0010) (i32.const 0)
+            (i32.and (local.get $flags) (i32.const 0x08))))
+        (select (i32.const 0x0020) (i32.const 0)
+          (i32.and (local.get $flags) (i32.const 0x04)))))
     (local.set $dis (call $heap_alloc (i32.const 48)))
     (local.set $disw (call $g2w (local.get $dis)))
     (i32.store           (local.get $disw) (i32.const 4))
@@ -5931,8 +5938,17 @@
             (i32.store offset=8  (local.get $edge_flags) (i32.const 0)) ;; itemID
             (i32.store offset=12 (local.get $edge_flags) (i32.const 1)) ;; itemAction = ODA_DRAWENTIRE
             (i32.store offset=16 (local.get $edge_flags)
-              (select (i32.const 1) (i32.const 0)
-                      (i32.and (local.get $flags) (i32.const 0x01))))   ;; itemState
+              (i32.or
+                (i32.or
+                  (select (i32.const 0x0001) (i32.const 0)
+                    (i32.and (local.get $flags) (i32.const 0x01)))
+                  (select (i32.const 4) (i32.const 0)
+                    (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 134217728))))
+                (i32.or
+                  (select (i32.const 0x0010) (i32.const 0)
+                    (i32.and (local.get $flags) (i32.const 0x08)))
+                  (select (i32.const 0x0020) (i32.const 0)
+                    (i32.and (local.get $flags) (i32.const 0x04)))))) ;; itemState
             (i32.store offset=20 (local.get $edge_flags) (local.get $hwnd)) ;; hwndItem
             (i32.store offset=24 (local.get $edge_flags)
               (i32.add (local.get $hwnd) (i32.const 0x40000)))          ;; hDC

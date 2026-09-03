@@ -505,7 +505,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '275';
+  static SOURCE_VERSION = '276';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -2981,7 +2981,9 @@ class WineAssembly {
   _isAudioHot() {
     const shared = this._sharedAudio || (this.hostCtx && this.hostCtx.sharedAudio);
     if (!shared) return false;
-    const hotUntil = Number(shared.waveOutHotUntilMs) || 0;
+    const hotUntil = Math.max(
+      Number(shared.waveOutHotUntilMs) || 0,
+      Number(shared.cdAudioHotUntilMs) || 0);
     return hotUntil > this._audioSchedulerNow();
   }
 

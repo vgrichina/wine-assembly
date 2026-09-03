@@ -196,7 +196,11 @@ assert.strictEqual(
   assert.strictEqual(wine._maybePauseForHidden(), false,
     'a hidden tab playing audio keeps running');
 
-  wine._sharedAudio = { waveOutHotUntilMs: 0 };
+  wine._sharedAudio = { waveOutHotUntilMs: 0, cdAudioHotUntilMs: nowMs + 5000 };
+  assert.strictEqual(wine._maybePauseForHidden(), false,
+    'a hidden tab playing an MCI audio CD keeps running');
+
+  wine._sharedAudio = { waveOutHotUntilMs: 0, cdAudioHotUntilMs: 0 };
   const tickState = wine._guestTickState(null);
   tickState.wallStartMs = nowMs - 4000;
   assert.strictEqual(wine._maybePauseForHidden(), true, 'a hidden silent tab pauses');

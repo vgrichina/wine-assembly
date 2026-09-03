@@ -200,6 +200,8 @@ dv.setUint32(play + 4, tmsf(2), true);
 dv.setUint32(play + 8, tmsf(3), true);
 assert.strictEqual(imports.mci_command(id, 0x0806, 0x0D, play), 0);
 assert.strictEqual(dev.state, 'playing');
+assert(ctx.sharedAudio.cdAudioHotUntilMs > 0,
+  'active CD-DA publishes an audio-hot lease for the browser idle watcher');
 assert.deepStrictEqual(loaded, ['music 02.bin'], 'play should fetch only the requested audio track');
 
 setImmediate(() => {
@@ -224,6 +226,8 @@ setImmediate(() => {
   dv.setUint32(status + 8, 4, true); // MCI_STATUS_MODE
   imports.mci_command(id, 0x0814, 0x100, status);
   assert.strictEqual(dv.getUint32(status + 4, true), 525);
+  assert.strictEqual(ctx.sharedAudio.cdAudioHotUntilMs, 0,
+    'natural CD completion releases the audio-hot lease');
   assert.deepStrictEqual(posted, [[0x1234, 0x03B9, 1, id]], 'MCI_NOTIFY should post successful completion');
 
   assert.strictEqual(imports.mci_command(id, 0x0804, 0, 0), 0);

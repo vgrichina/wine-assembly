@@ -281,7 +281,9 @@ async function main() {
       'CD Player should begin in its no-disc polling state');
 
     const playerBinding = await page.evaluate(async () => {
-      const sectors = 1125;
+      // Ten seconds per track leaves enough room for the accelerated idle
+      // watcher check below without CD Player naturally advancing first.
+      const sectors = 2250;
       const bytes = new Uint8Array(sectors * 2352);
       const view = new DataView(bytes.buffer);
       for (let off = 0, frame = 0; off < bytes.length; off += 4, frame++) {
@@ -293,9 +295,9 @@ async function main() {
         '  TRACK 01 AUDIO\n' +
         '    INDEX 01 00:00:00\n' +
         '  TRACK 02 AUDIO\n' +
-        '    INDEX 01 00:05:00\n' +
+        '    INDEX 01 00:10:00\n' +
         '  TRACK 03 AUDIO\n' +
-        '    INDEX 01 00:10:00\n';
+        '    INDEX 01 00:20:00\n';
       await window.wineMedia.importFiles([
         new File([cueText], 'music.cue'),
         new File([bytes], 'music.bin'),
@@ -365,6 +367,9 @@ async function main() {
       `final resize should keep the status bar below the Track selector: ${JSON.stringify(playerPixels)}`);
 
     const playPoint = await page.evaluate(() => {
+      // Compress the host's ten-second idle policy so this browser test catches
+      // CD-DA being mistaken for silence without adding ten seconds to the run.
+      WineAssembly.AUDIO_IDLE_SUSPEND_MS = 250;
       const main = Object.values(sharedRenderer.windows)
         .find(win => !win.isChild && win.title === 'CD Player');
       const canvas = document.getElementById('screen');
@@ -380,6 +385,15 @@ async function main() {
       const dev = [...wine._helpCtx._mci.devices.values()][0];
       return dev.state === 'playing' && dev.cdSources.length > 0;
     }, { timeout: 30000 });
+    const disabledPlayGlyph = await page.evaluate(() => {
+      const main = Object.values(sharedRenderer.windows)
+        .find(win => !win.isChild && win.title === 'CD Player');
+      const ctx = document.getElementById('screen').getContext('2d');
+      return Array.from(ctx.getImageData(
+        Math.round(main.x + 192), Math.round(main.y + 58), 1, 1).data.slice(0, 3));
+    });
+    assert.deepStrictEqual(disabledPlayGlyph, [128, 128, 128],
+      `disabled Play button should use its inactive owner-draw glyph: ${disabledPlayGlyph}`);
     const playing = await page.evaluate(() => {
       const wine = runningApps.find(item => item.name === 'cdplayer').wine;
       const dev = [...wine._helpCtx._mci.devices.values()][0];
@@ -412,6 +426,22 @@ async function main() {
     assert(laterPlayback.audioTime > playing.audioTime + 0.25,
       `CD audio clock should advance beyond ${playing.audioTime}, got ${laterPlayback.audioTime}`);
 
+    // Two idle-watch ticks used to suspend active CD playback because only
+    // waveOut buffers counted as hot. A click resumed Safari, making the fault
+    // look intermittent. The MCI lease must keep both clocks running here.
+    await new Promise(resolve => setTimeout(resolve, 4500));
+    const afterIdleWatch = await page.evaluate(() => {
+      const wine = runningApps.find(item => item.name === 'cdplayer').wine;
+      const dev = [...wine._helpCtx._mci.devices.values()][0];
+      return { state: dev.state, position: dev.cdPositionSector,
+        audioState: wine._helpCtx._audioCtx && wine._helpCtx._audioCtx.state,
+        audioTime: wine._helpCtx._audioCtx && wine._helpCtx._audioCtx.currentTime };
+    });
+    assert.strictEqual(afterIdleWatch.state, 'playing');
+    assert.strictEqual(afterIdleWatch.audioState, 'running');
+    assert(afterIdleWatch.audioTime > laterPlayback.audioTime + 3,
+      `CD audio should survive the idle watcher: ${JSON.stringify(afterIdleWatch)}`);
+
     const transportPoint = await page.evaluate(() => {
       const main = Object.values(sharedRenderer.windows)
         .find(win => !win.isChild && win.title === 'CD Player');
@@ -436,8 +466,8 @@ async function main() {
       };
     });
     assert.strictEqual(nextState.state, 'playing');
-    assert.strictEqual(nextState.start, 375);
-    assert(nextState.position >= 375 && nextState.position < 750,
+    assert.strictEqual(nextState.start, 750);
+    assert(nextState.position >= 750 && nextState.position < 1500,
       `next-track position should be in track 2, got ${nextState.position}`);
     assert.strictEqual(nextState.sources, 2);
     const afterNext = await page.evaluate(() => {
@@ -446,7 +476,7 @@ async function main() {
       const track = dev.disc.tracks.find(item => item.discStartSector === dev.cdStartSector);
       return { start: dev.cdStartSector, track: track && track.number };
     });
-    assert.deepStrictEqual(afterNext, { start: 375, track: 2 },
+    assert.deepStrictEqual(afterNext, { start: 750, track: 2 },
       'CD Player next-track button should restart playback at track 2');
 
     await page.mouse.click(transportPoint.previous.x, transportPoint.previous.y);
