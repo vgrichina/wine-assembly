@@ -33,7 +33,12 @@ function check(label, fn) {
 }
 
 (async () => {
-  const harness = await bootRenderHarness();
+  const harness = await bootRenderHarness({
+    extraWat: `
+    (func (export "test_dc_exists") (param $hdc i32) (result i32)
+      (i32.ne (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0))
+        (i32.const 0)))
+  ` });
   const wat = harness.exports;
   const bytes = () => new Uint8Array(harness.memory.buffer);
 
@@ -79,16 +84,18 @@ function check(label, fn) {
   });
 
   check('popup width grows to keep long labels and shortcuts in separate columns', () => {
-    const menuHdc = 0x40000; // hwnd 0's pseudo window DC
-    wat.test_call_SelectObject(menuHdc, 0x3001D); // SYSTEM_FIXED_FONT
-    const selectedFontBefore = wat.test_gdi_bitmap_font_selected(menuHdc) >>> 0;
+    const syntheticWindowDc = 0x40000; // old hwnd 0 + client-DC tag shortcut
+    assert.strictEqual(wat.test_dc_exists(syntheticWindowDc), 0,
+      'test started with an invented window DC');
     const width = wat.menu_dropdown_width(0, 0) | 0;
     assert(width > 180, `long popup stayed at the legacy 180px width (${width})`);
-    assert.strictEqual(wat.test_gdi_bitmap_font_selected(menuHdc) >>> 0, selectedFontBefore,
-      'a width query must restore the font that was selected in the caller DC');
+    assert.strictEqual(wat.test_dc_exists(syntheticWindowDc), 0,
+      'a width query created state for an invented application window DC');
     assert.strictEqual(wat.menu_hittest_dropdown(0, 0, 40, 40,
       40 + width - 3, 43), 0,
     'the widened painted area must also belong to the first menu item');
+    assert.strictEqual(wat.test_dc_exists(syntheticWindowDc), 0,
+      'hit testing created state for an invented application window DC');
   });
 
   check('an item shows the string it was appended with', () => {

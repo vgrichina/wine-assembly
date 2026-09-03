@@ -985,7 +985,7 @@
     (if (i32.ge_s (local.get $click_y) (i32.add (local.get $bar_y) (i32.const 18)))
       (then (return (i32.const -1))))
     (local.set $count (i32.load (local.get $blob)))
-    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    (local.set $hdc (call $gdi_menu_overlay_ensure))
     (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
 
     (local.set $cur_x (i32.add (local.get $bar_x) (i32.const 4)))
@@ -1015,7 +1015,7 @@
     (local $blob i32) (local $hdc i32)
     (local.set $blob (call $menu_blob_w (local.get $hwnd)))
     (if (i32.eqz (local.get $blob)) (then (return (i32.const 0))))
-    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    (local.set $hdc (call $gdi_menu_overlay_ensure))
     (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
     (call $bar_item_x (local.get $blob) (local.get $hdc) (local.get $idx)))
 
@@ -1140,7 +1140,7 @@
     (if (i32.eqz (local.get $blob)) (then (return (i32.const 0))))
     (local.set $hdr (call $child_hdr_w (local.get $blob) (local.get $tidx)))
     (if (i32.eqz (local.get $hdr)) (then (return (i32.const 0))))
-    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    (local.set $hdc (call $gdi_menu_overlay_ensure))
     (call $menu_header_width (local.get $blob) (local.get $hdr) (local.get $hdc)))
 
   (func $menu_submenu_width (export "menu_submenu_width")
@@ -1151,7 +1151,7 @@
     (local.set $hdr (call $child_sub_hdr_w
                       (local.get $blob) (local.get $tidx) (local.get $cidx)))
     (if (i32.eqz (local.get $hdr)) (then (return (i32.const 0))))
-    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    (local.set $hdc (call $gdi_menu_overlay_ensure))
     (call $menu_header_width (local.get $blob) (local.get $hdr) (local.get $hdc)))
 
   (func $submenu_item_w (param $blob_w i32) (param $tidx i32)
@@ -2057,7 +2057,7 @@
     (if (i32.eqz (local.get $hdr)) (then (return (i32.const -1))))
     (local.set $count (i32.load (local.get $hdr)))
     (local.set $dh (i32.add (i32.mul (local.get $count) (i32.const 20)) (i32.const 4)))
-    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    (local.set $hdc (call $gdi_menu_overlay_ensure))
     (local.set $dw
       (call $menu_header_width (local.get $blob) (local.get $hdr) (local.get $hdc)))
     ;; Outside box?
@@ -2096,7 +2096,7 @@
     (if (i32.eqz (local.get $hdr)) (then (return (i32.const -1))))
     (local.set $count (i32.load (local.get $hdr)))
     (local.set $dh (i32.add (i32.mul (local.get $count) (i32.const 20)) (i32.const 4)))
-    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    (local.set $hdc (call $gdi_menu_overlay_ensure))
     (local.set $dw
       (call $menu_header_width (local.get $blob) (local.get $hdr) (local.get $hdc)))
     ;; The box's own 2px border counts as inside. It used not to, and the left
