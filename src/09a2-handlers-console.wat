@@ -8,6 +8,46 @@
   (global $CONSOLE_TITLE_STORAGE i32 (region.addr $CONSOLE_INPUT 0x00000A00))
   (data (region.addr $CONSOLE_INPUT 0xA00) "Console\00")
 
+  ;; Process standard-handle table. The three raw HANDLE values occupy +C00,
+  ;; +C04, and +C08; +C0C has one explicit-value bit per slot. Keep this away
+  ;; from +24, which is the process-shared console modifier/toggle-key state.
+  ;; A separate bitmask is required because NULL and INVALID_HANDLE_VALUE are
+  ;; both legitimate values for SetStdHandle to place in the process table.
+  (func $console_std_handle_index (param $which i32) (result i32)
+    (if (i32.or
+          (i32.lt_u (local.get $which) (i32.const 0xFFFFFFF4))
+          (i32.gt_u (local.get $which) (i32.const 0xFFFFFFF6)))
+      (then (return (i32.const -1))))
+    (i32.sub (i32.const 0xFFFFFFF6) (local.get $which)))
+
+  (func $console_std_handle_get (param $which i32) (result i32)
+    (local $index i32) (local $mask i32)
+    (local.set $index (call $console_std_handle_index (local.get $which)))
+    (if (i32.lt_s (local.get $index) (i32.const 0))
+      (then (return (i32.const -1))))
+    (local.set $mask (i32.shl (i32.const 1) (local.get $index)))
+    (if (i32.and
+          (i32.atomic.load (region.addr $CONSOLE_INPUT 0xC0C))
+          (local.get $mask))
+      (then
+        (return (i32.atomic.load
+          (i32.add (region.addr $CONSOLE_INPUT 0xC00)
+            (i32.shl (local.get $index) (i32.const 2)))))))
+    (i32.add (local.get $index) (i32.const 1)))
+
+  (func $console_std_handle_set (param $which i32) (param $handle i32) (result i32)
+    (local $index i32)
+    (local.set $index (call $console_std_handle_index (local.get $which)))
+    (if (i32.lt_s (local.get $index) (i32.const 0))
+      (then (return (i32.const 0))))
+    (i32.atomic.store
+      (i32.add (region.addr $CONSOLE_INPUT 0xC00)
+        (i32.shl (local.get $index) (i32.const 2)))
+      (local.get $handle))
+    (drop (i32.atomic.rmw.or (region.addr $CONSOLE_INPUT 0xC0C)
+      (i32.shl (i32.const 1) (local.get $index))))
+    (i32.const 1))
+
   (func $console_title_ensure
     ;; load_pe clears mutable high-memory tables after WebAssembly data
     ;; initialization. Restore the default title on first console use.

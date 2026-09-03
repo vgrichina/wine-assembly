@@ -3493,27 +3493,12 @@
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; 49: GetStdHandle(nStdHandle) — return fake handles for stdin/stdout/stderr
+  ;; 49: GetStdHandle(nStdHandle) — read the process standard-handle table.
   (func $handle_GetStdHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $stored i32)
     ;; STD_INPUT_HANDLE=-10 → 1, STD_OUTPUT_HANDLE=-11 → 2, STD_ERROR_HANDLE=-12 → 3
-    ;; GUI apps don't use these but CRT init checks them
-    (global.set $eax
-      (if (result i32) (i32.eq (local.get $arg0) (i32.const 0xFFFFFFF6)) ;; -10
-        (then (i32.const 1))
-        (else (if (result i32) (i32.eq (local.get $arg0) (i32.const 0xFFFFFFF5)) ;; -11
-          (then
-            (local.set $stored (i32.load
-              (i32.add (global.get $CONSOLE_INPUT) (i32.const 24))))
-            (select (i32.sub (local.get $stored) (i32.const 1)) (i32.const 2)
-              (i32.ne (local.get $stored) (i32.const 0))))
-          (else (if (result i32) (i32.eq (local.get $arg0) (i32.const 0xFFFFFFF4)) ;; -12
-            (then
-              (local.set $stored (i32.load
-                (i32.add (global.get $CONSOLE_INPUT) (i32.const 28))))
-              (select (i32.sub (local.get $stored) (i32.const 1)) (i32.const 3)
-                (i32.ne (local.get $stored) (i32.const 0))))
-            (else (i32.const 0xFFFFFFFF))))))))  ;; INVALID_HANDLE_VALUE
+    (global.set $eax (call $console_std_handle_get (local.get $arg0)))
+    (if (i32.eq (global.get $eax) (i32.const -1))
+      (then (global.set $last_error (i32.const 6)))) ;; ERROR_INVALID_HANDLE
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -10302,18 +10287,14 @@ nW — STUB: unimplemented
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; 336: SetStdHandle(nStdHandle, hHandle) — accept process-local console
-  ;; redirection. The virtual console routes its streams independently, so no
-  ;; host handle table mutation is needed; SDL/MSVCRT uses this to detach the
-  ;; inherited standard handles when DOSBox starts with -noconsole.
+  ;; 336: SetStdHandle(nStdHandle, hHandle) — replace the corresponding raw
+  ;; value in the process standard-handle table. Windows deliberately does not
+  ;; validate hHandle here; the later read/write operation validates it.
   (func $handle_SetStdHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.eq (local.get $arg0) (i32.const 0xFFFFFFF5)) ;; STD_OUTPUT_HANDLE
-      (then (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 24))
-        (i32.add (local.get $arg1) (i32.const 1)))))
-    (if (i32.eq (local.get $arg0) (i32.const 0xFFFFFFF4)) ;; STD_ERROR_HANDLE
-      (then (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 28))
-        (i32.add (local.get $arg1) (i32.const 1)))))
-    (global.set $eax (i32.const 1))
+    (global.set $eax
+      (call $console_std_handle_set (local.get $arg0) (local.get $arg1)))
+    (if (i32.eqz (global.get $eax))
+      (then (global.set $last_error (i32.const 6)))) ;; ERROR_INVALID_HANDLE
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
