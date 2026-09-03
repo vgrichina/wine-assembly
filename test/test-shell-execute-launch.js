@@ -124,7 +124,39 @@ function makeShell(opts = {}) {
   console.log('ok: vfs child launch keeps args before PE startup');
 }
 
-// 4. A resolvable exe is accepted (returns true) in both modes, and in
+// 4. An installer that exits without launching its game leaves a lightweight
+//    filesystem snapshot behind for a later desktop/Start-menu launch.
+{
+  const { shell, launched } = makeShell();
+  const installedPath = 'c:\\games\\icytower1.3\\icytower13.exe';
+  const installerVfs = {
+    files: new Map([[installedPath, { data: new Uint8Array([77, 90]), attrs: 0x20 }]]),
+    dirs: new Set(['c:\\games', 'c:\\games\\icytower1.3']),
+    readOnlyDrives: new Set(),
+    cwd: 'c:\\games\\icytower1.3\\',
+    _normPath: p => String(p).toLowerCase(),
+    _resolvePath(p) {
+      const value = /^[a-z]:/i.test(p) ? p : this.cwd + p;
+      return this._normPath(value).replace(/\\+/g, '\\');
+    },
+  };
+  const installer = { _helpCtx: { vfs: installerVfs } };
+  shell.runningApps.push({ name: 'icy_tower_installer', wine: installer });
+  global.window = {};
+  global.document = { getElementById: () => null };
+  shell.unregisterRunningApp(installer);
+  delete global.window;
+  delete global.document;
+  installer._helpCtx = null;
+
+  assert.strictEqual(shell.launchVfsExe(installedPath, installer, '', ''), true,
+    'an installed exe remains launchable after its installer process exits');
+  assert.deepStrictEqual(launched, ['vfs:' + installedPath],
+    'the exited installer snapshot starts the requested installed executable');
+  console.log('ok: exited installer VFS remains launchable');
+}
+
+// 5. A resolvable exe is accepted (returns true) in both modes, and in
 //    single-app mode with a guest still running it defers rather than
 //    declining — write.exe is still in runningApps when it calls us.
 {
