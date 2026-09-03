@@ -148,8 +148,10 @@ const digest = crypto.createHash('sha256')
 // class only after its last window is gone instead of always returning TRUE.
 // 2026-09-02: 476 -> 473. Direct3D Device 1/2/3 GetStats now initializes all
 // five D3DSTATS counters and rejects a null output buffer.
-const EXPECTED_COUNT = 473;
-const EXPECTED_SHA256 = '30a081729248d67887deaabaa98f7b0efe390891a31c51680159324399447708';
+// 2026-09-02: 473 -> 472. ImageList_Destroy now validates and invalidates its
+// handle and releases both the image-list record and retained icon array.
+const EXPECTED_COUNT = 472;
+const EXPECTED_SHA256 = '450b182736cf303606411ba5135bbfaa0f97d7c57bd93dcd7bebd65f0a99d332';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

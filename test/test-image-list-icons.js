@@ -20,6 +20,8 @@ const extraWat = String.raw`
     (call $update_thunk_end)
     (i32.add (i32.sub (local.get $addr) (global.get $GUEST_BASE))
              (global.get $image_base)))
+  (func (export "test_free_list_head") (result i32)
+    (global.get $free_list))
 `;
 
 const u32 = value => [value, value >>> 8, value >>> 16, value >>> 24].map(v => v & 0xff);
@@ -69,6 +71,7 @@ async function main() {
   };
 
   const create = makeCaller('ImageList_Create');
+  const destroy = makeCaller('ImageList_Destroy');
   const replace = makeCaller('ImageList_ReplaceIcon');
   const get = makeCaller('ImageList_GetIcon');
   const imageList = create([16, 16, 1, 0, 4]);
@@ -91,7 +94,17 @@ async function main() {
   assert.strictEqual(get([imageList, 9, 0]), 0,
     'an out-of-range lookup fails');
 
-  console.log('PASS image-list icon append, replacement, and lookup semantics');
+  const iconArray = e.guest_read32(imageList + 24) >>> 0;
+  assert(iconArray, 'icon append should allocate an icon-handle array');
+  assert.strictEqual(destroy([0]), 0, 'destroying a null image list fails');
+  assert.strictEqual(destroy([imageList]), 1, 'destroying a live image list succeeds');
+  assert.strictEqual(e.test_free_list_head() >>> 0, imageList - 4,
+    'destroy should return the image-list block to the heap');
+  assert.strictEqual(e.guest_read32(imageList) >>> 0, iconArray - 4,
+    'destroy should return the icon-handle array behind the image-list block');
+  assert.strictEqual(destroy([imageList]), 0, 'destroying the same image list twice fails');
+
+  console.log('PASS image-list icon append, lookup, replacement, and destruction semantics');
 }
 
 main().catch(error => {

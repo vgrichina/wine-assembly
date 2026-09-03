@@ -18,22 +18,36 @@
     (local $buf i32) (local $buf_wa i32)
     ;; ImageList struct:
     ;; +0 cx, +4 cy, +8 bk color, +12 count, +16 bitmap strip, +20 mask color,
-    ;; +24 icon-handle array, +28 icon-array capacity.
-    (local.set $buf (call $heap_alloc (i32.const 32)))
+    ;; +24 icon-handle array, +28 icon-array capacity, +32 validity tag.
+    (local.set $buf (call $heap_alloc (i32.const 36)))
     (local.set $buf_wa (call $g2w (local.get $buf)))
-    (call $zero_memory (local.get $buf_wa) (i32.const 32))
+    (call $zero_memory (local.get $buf_wa) (i32.const 36))
     (i32.store (local.get $buf_wa) (local.get $arg0))           ;; cx
     (i32.store offset=4 (local.get $buf_wa) (local.get $arg1))  ;; cy
     (i32.store offset=8 (local.get $buf_wa) (i32.const -1))     ;; CLR_NONE
     (i32.store offset=12 (local.get $buf_wa) (i32.const 0))     ;; count=0
+    (i32.store offset=32 (local.get $buf_wa) (i32.const 0x4c4d4948)) ;; "HIML"
     (global.set $eax (local.get $buf))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
 
   ;; ImageList_Destroy(himl) — 1 arg, returns BOOL
   (func $handle_ImageList_Destroy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Free not implemented yet, just return TRUE
-    (global.set $eax (i32.const 1))
+    (local $sw i32) (local $icons i32)
+    (global.set $eax (i32.const 0))
+    (if (local.get $arg0)
+      (then
+        (local.set $sw (call $g2w (local.get $arg0)))
+        (if (i32.eq (i32.load offset=32 (local.get $sw)) (i32.const 0x4c4d4948))
+          (then
+            ;; Invalidate before returning either block to the allocator so a
+            ;; duplicate destroy cannot link the same block into the free list.
+            (i32.store offset=32 (local.get $sw) (i32.const 0))
+            (local.set $icons (i32.load offset=24 (local.get $sw)))
+            (i32.store offset=24 (local.get $sw) (i32.const 0))
+            (if (local.get $icons) (then (call $heap_free (local.get $icons))))
+            (call $heap_free (local.get $arg0))
+            (global.set $eax (i32.const 1))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -56,15 +70,16 @@
             (local.set $count (i32.div_u (local.get $bmp_w) (local.get $cx)))
             (if (i32.eqz (local.get $count))
               (then (local.set $count (i32.const 1))))))))
-    (local.set $buf (call $heap_alloc (i32.const 32)))
+    (local.set $buf (call $heap_alloc (i32.const 36)))
     (local.set $buf_wa (call $g2w (local.get $buf)))
-    (call $zero_memory (local.get $buf_wa) (i32.const 32))
+    (call $zero_memory (local.get $buf_wa) (i32.const 36))
     (i32.store (local.get $buf_wa) (local.get $cx))           ;; cx
     (i32.store offset=4 (local.get $buf_wa) (local.get $cx))  ;; cy=cx
     (i32.store offset=8 (local.get $buf_wa) (i32.const -1))   ;; CLR_NONE
     (i32.store offset=12 (local.get $buf_wa) (local.get $count))
     (i32.store offset=16 (local.get $buf_wa) (local.get $bmp))
     (i32.store offset=20 (local.get $buf_wa) (local.get $arg4))
+    (i32.store offset=32 (local.get $buf_wa) (i32.const 0x4c4d4948))
     (global.set $eax (local.get $buf))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; stdcall, 7 args
   )
@@ -85,15 +100,16 @@
             (local.set $count (i32.div_u (local.get $bmp_w) (local.get $cx)))
             (if (i32.eqz (local.get $count))
               (then (local.set $count (i32.const 1))))))))
-    (local.set $buf (call $heap_alloc (i32.const 32)))
+    (local.set $buf (call $heap_alloc (i32.const 36)))
     (local.set $buf_wa (call $g2w (local.get $buf)))
-    (call $zero_memory (local.get $buf_wa) (i32.const 32))
+    (call $zero_memory (local.get $buf_wa) (i32.const 36))
     (i32.store (local.get $buf_wa) (local.get $cx))
     (i32.store offset=4 (local.get $buf_wa) (local.get $cx))
     (i32.store offset=8 (local.get $buf_wa) (i32.const -1))
     (i32.store offset=12 (local.get $buf_wa) (local.get $count))
     (i32.store offset=16 (local.get $buf_wa) (local.get $bmp))
     (i32.store offset=20 (local.get $buf_wa) (local.get $arg4))
+    (i32.store offset=32 (local.get $buf_wa) (i32.const 0x4c4d4948))
     (global.set $eax (local.get $buf))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
