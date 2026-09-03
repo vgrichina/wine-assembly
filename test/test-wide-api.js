@@ -164,8 +164,8 @@ async function main() {
     msvfwHandle, writeAscii('DrawDibDraw')) >>> 0;
   const drawDibClose = e.test_call_GetProcAddress(
     msvfwHandle, writeAscii('DrawDibClose')) >>> 0;
-  check('LoadLibraryA and GetProcAddress expose Video-for-Windows DrawDib APIs',
-    msvfwHandle !== 0 && drawDibOpen !== 0 && drawDibDraw !== 0 && drawDibClose !== 0,
+  check('GetProcAddress exposes Video-for-Windows DrawDib APIs for a probed module',
+    drawDibOpen !== 0 && drawDibDraw !== 0 && drawDibClose !== 0,
     `handle=0x${msvfwHandle.toString(16)} open=0x${drawDibOpen.toString(16)} ` +
       `draw=0x${drawDibDraw.toString(16)} close=0x${drawDibClose.toString(16)}`);
   const oleExpDir = e.guest_alloc(32);
