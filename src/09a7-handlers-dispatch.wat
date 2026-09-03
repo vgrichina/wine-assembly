@@ -63,7 +63,7 @@
   ;; decide what to do next.
   (func $load_image_bitmap_file (param $path_wa i32) (result i32)
     (local $handle i32) (local $size i32) (local $buf_ga i32) (local $buf_wa i32)
-    (local $read_ga i32) (local $off i32) (local $hdr i32) (local $bmp i32)
+    (local $read_ga i32) (local $read_wa i32) (local $off i32) (local $hdr i32) (local $bmp i32)
     (local.set $handle (call $host_fs_create_file
       (local.get $path_wa) (i32.const 0x80000000)
       (i32.const 3) (i32.const 0x80) (i32.const 0)))
@@ -83,11 +83,11 @@
         (if (local.get $buf_ga) (then (call $heap_free (local.get $buf_ga))))
         (if (local.get $read_ga) (then (call $heap_free (local.get $read_ga))))
         (return (i32.const 0))))
-    (i32.store (call $g2w (local.get $read_ga)) (i32.const 0))
+    (local.set $read_wa (call $g2w (local.get $read_ga))) (i32.store (local.get $read_wa) (i32.const 0))
     (drop (call $host_fs_read_file
       (local.get $handle) (local.get $buf_ga) (local.get $size) (local.get $read_ga)))
     (drop (call $host_fs_close_handle (local.get $handle)))
-    (local.set $size (i32.load (call $g2w (local.get $read_ga))))
+    (local.set $size (i32.load (local.get $read_wa)))
     (call $heap_free (local.get $read_ga))
     (local.set $buf_wa (call $g2w (local.get $buf_ga)))
     ;; 0x4D42 = 'BM'
@@ -3167,7 +3167,7 @@
   ;; mciSendStringW(cmd, retbuf, retlen, hCallback) — use the same host MCI
   ;; parser as A, converting its command and optional result at the boundary.
   (func $handle_mciSendStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cmd_g i32) (local $ret_g i32) (local $cmd_len i32) (local $err i32)
+    (local $cmd_g i32) (local $ret_g i32) (local $ret_wa i32) (local $cmd_len i32) (local $err i32)
     (if (local.get $arg0)
       (then
         (local.set $cmd_len (call $guest_wcslen (local.get $arg0)))
@@ -3178,13 +3178,13 @@
                  (i32.ne (local.get $arg2) (i32.const 0)))
       (then
         (local.set $ret_g (call $heap_alloc (local.get $arg2)))
-        (call $zero_memory (call $g2w (local.get $ret_g)) (local.get $arg2))))
+        (local.set $ret_wa (call $g2w (local.get $ret_g))) (call $zero_memory (local.get $ret_wa) (local.get $arg2))))
     (local.set $err
       (call $host_mci_string
         (if (result i32) (local.get $cmd_g)
           (then (call $g2w (local.get $cmd_g))) (else (i32.const 0)))
         (if (result i32) (local.get $ret_g)
-          (then (call $g2w (local.get $ret_g))) (else (i32.const 0)))
+          (then (local.get $ret_wa)) (else (i32.const 0)))
         (local.get $arg2)))
     (if (local.get $ret_g)
       (then

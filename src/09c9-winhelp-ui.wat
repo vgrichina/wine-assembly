@@ -1147,7 +1147,7 @@
         (br $scan)))
       (return (i32.const 1)))
     (if (local.get $temporary_ga)
-      (then (call $dib_free_wasm (call $g2w (local.get $temporary_ga)))))
+      (then (call $dib_free_wasm (local.get $temporary_wa))))
     (i32.const 0))
 
   (func $help_typed_view_release
@@ -1954,13 +1954,13 @@
   ;; loader needs and the arguments the routine reads live inside the image
   ;; as bare runs of bytes with no terminator of their own.
   (func $help_dup_cstring (param $wa i32) (param $len i32) (result i32)
-    (local $ga i32)
+    (local $ga i32) (local $ga_wa i32)
     (local.set $ga (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
-    (if (i32.eqz (local.get $ga)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $ga)) (then (return (i32.const 0)))) (local.set $ga_wa (call $g2w (local.get $ga)))
     (if (local.get $len)
-      (then (memory.copy (call $g2w (local.get $ga))
+      (then (memory.copy (local.get $ga_wa)
         (local.get $wa) (local.get $len))))
-    (i32.store8 (i32.add (call $g2w (local.get $ga)) (local.get $len)) (i32.const 0))
+    (i32.store8 (i32.add (local.get $ga_wa) (local.get $len)) (i32.const 0))
     (local.get $ga))
 
   ;; Load the DLL a registered routine names and resolve its entry point.
@@ -1969,7 +1969,7 @@
   ;; wrong. Returns the guest entry address, or 0.
   (func $help_routine_resolve (param $record i32) (result i32)
     (local $dll_ga i32) (local $fn_ga i32) (local $dll_index i32)
-    (local $handle i32) (local $size i32) (local $bytes_ga i32) (local $read_ga i32)
+    (local $handle i32) (local $size i32) (local $bytes_ga i32) (local $read_ga i32) (local $read_wa i32)
     (local $entry i32) (local $load_addr i32)
     ;; A help DLL is x86 code: it needs a loaded process to run inside, with a
     ;; guest stack and an image base. Without one there is nothing to call
@@ -2010,13 +2010,13 @@
             (if (local.get $read_ga) (then (call $heap_free (local.get $read_ga))))
             (call $heap_free (local.get $dll_ga))
             (return (i32.const 0))))
-        (i32.store (call $g2w (local.get $read_ga)) (i32.const 0))
+        (local.set $read_wa (call $g2w (local.get $read_ga))) (i32.store (local.get $read_wa) (i32.const 0))
         (local.set $entry (call $host_fs_read_file
           (local.get $handle) (local.get $bytes_ga) (local.get $size)
           (local.get $read_ga)))
         (drop (call $host_fs_close_handle (local.get $handle)))
         (if (i32.or (i32.eqz (local.get $entry))
-              (i32.ne (i32.load (call $g2w (local.get $read_ga))) (local.get $size)))
+              (i32.ne (i32.load (local.get $read_wa)) (local.get $size)))
           (then
             (call $heap_free (local.get $read_ga))
             (call $heap_free (local.get $bytes_ga))
@@ -2055,7 +2055,7 @@
     (result i32)
     (local $record i32) (local $entry i32) (local $fmt i32) (local $fmt_len i32)
     (local $i i32) (local $ch i32) (local $count i32) (local $slot i32)
-    (local $args i32) (local $owned i32) (local $ok i32)
+    (local $args i32) (local $args_wa i32) (local $owned i32) (local $ok i32)
     (local $old_eip i32) (local $old_esp i32) (local $old_eax i32)
     (local $old_ecx i32) (local $old_edx i32) (local $old_ebx i32)
     (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
@@ -2094,7 +2094,7 @@
       (then
         (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
         (return (i32.const 0))))
-    (memory.fill (call $g2w (local.get $args)) (i32.const 0)
+    (local.set $args_wa (call $g2w (local.get $args))) (memory.fill (local.get $args_wa) (i32.const 0)
       (i32.mul (global.get $HELP_MAX_ROUTINE_ARGS) (i32.const 8)))
     (local.set $ok (i32.const 1))
     (block $args_done (loop $arg
@@ -2106,7 +2106,7 @@
         (then
           (local.set $ok (i32.const 0))
           (br $args_done)))
-      (local.set $slot (i32.add (call $g2w (local.get $args))
+      (local.set $slot (i32.add (local.get $args_wa)
         (i32.mul (local.get $count) (i32.const 8))))
       (if (i32.eq (local.get $ch) (i32.const 0x53))                                                 ;; 'S'
         (then
@@ -2171,7 +2171,7 @@
           (local.set $i (i32.sub (local.get $i) (i32.const 1)))
           (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
           (call $gs32 (global.get $esp)
-            (i32.load (i32.add (call $g2w (local.get $args))
+            (i32.load (i32.add (local.get $args_wa)
               (i32.mul (local.get $i) (i32.const 8)))))
           (br $push)))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -2205,7 +2205,7 @@
     (local.set $i (i32.const 0))
     (block $freed (loop $free
       (br_if $freed (i32.ge_u (local.get $i) (global.get $HELP_MAX_ROUTINE_ARGS)))
-      (local.set $owned (i32.load offset=4 (i32.add (call $g2w (local.get $args))
+      (local.set $owned (i32.load offset=4 (i32.add (local.get $args_wa)
         (i32.mul (local.get $i) (i32.const 8)))))
       (if (local.get $owned) (then (call $heap_free (local.get $owned))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
