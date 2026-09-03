@@ -127,6 +127,30 @@ bridgeView.setFloat32(stack + 8, -2, true);
 bridge.call(CALL_INDEX.glPolygonOffset, stack, 0);
 assert.deepStrictEqual(backend.polygonOffsets, [[-1, -2]],
   'GoldSrc polygon offset reaches the WebGL backend with both float arguments');
+
+const matrixFrontend = new FixedFunctionGL(new FakeBackend());
+matrixFrontend.matrixMode = GL.PROJECTION;
+bridge.contexts.set(1, {
+  frontend: matrixFrontend,
+  backend: { present() {} },
+  layer: { writeSeq: 0 },
+});
+for (const [index, value] of [60, 4 / 3, 1, 101].entries()) {
+  bridgeView.setFloat64(stack + 4 + index * 8, value, true);
+}
+bridge.call(CALL_INDEX.gluPerspective, stack, 0);
+const projection = matrixFrontend._matrix();
+assert(Math.abs(projection[0] - 1.299038) < 1e-5 &&
+  Math.abs(projection[5] - 1.732051) < 1e-5 &&
+  Math.abs(projection[10] + 1.02) < 1e-5,
+  'gluPerspective applies the documented GLdouble projection matrix');
+
+matrixFrontend.matrixMode = GL.MODELVIEW;
+const lookAtValues = [0, 0, 5, 0, 0, 0, 0, 1, 0];
+lookAtValues.forEach((value, index) => bridgeView.setFloat64(stack + 4 + index * 8, value, true));
+bridge.call(CALL_INDEX.gluLookAt, stack, 0);
+assert.deepStrictEqual(Array.from(matrixFrontend._matrix().slice(12, 16)), [0, 0, -5, 1],
+  'gluLookAt applies orientation and eye translation in OpenGL column-major order');
 gl.setEnabled(GL.POLYGON_OFFSET_FILL, true);
 assert.deepStrictEqual(backend.capabilities.at(-1), [GL.POLYGON_OFFSET_FILL, true],
   'polygon-offset fill follows desktop GL enable state');

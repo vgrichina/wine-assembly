@@ -26779,5 +26779,19 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 3211,
+    "name": "gluPerspective",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3561404337
+  },
+  {
+    "id": 3212,
+    "name": "gluLookAt",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 2949704463
   }
 ]
