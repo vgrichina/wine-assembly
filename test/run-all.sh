@@ -622,6 +622,7 @@ E2E=(
   test/test-little-fighter-2-candidate.js
   test/test-pocket-tanks-candidate.js
   test/test-icy-tower-candidate.js
+  test/test-total-annihilation-candidate.js
   test/test-diablo2-demo-installer.js
   test/test-diablo2-demo-installed.js
   test/test-diablo2-demo-gameplay.js

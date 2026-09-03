@@ -1196,6 +1196,18 @@ unchanged web manifest creates and shows the 640x480 "Total Annihilation"
 window and remains live through 1,200 execution batches (874 API calls), past
 the former batch-665 failure.
 
+On 2026-09-03 the same installer-produced payload was driven beyond startup
+with the frozen stdin CLI. It rendered the title menu, accepted **Single
+Player** -> **New Campaign** -> **Arm**, displayed mission `10001ARME`, and
+entered the live battlefield with units, terrain, minimap, and metal/energy
+HUD. `test/test-total-annihilation-candidate.js` now preserves that route and
+requires a Right-arrow battlefield scroll to change more than 5,000 pixels.
+The same test reruns the native self-extractor first and verifies that its
+fresh EXE and HPI match the pinned hashes. This supersedes the earlier
+window-only status. The embedded EULA permits no-fee copying/distribution only
+with its notice and other stated conditions, so preserve the original package
+rather than publishing extracted runtime files.
+
 ### 2026-08-22 Caesar III demo
 
 The sixth compatibility target is the [Caesar III Demo Archive.org item](https://archive.org/details/CaesarIiiDemo),
