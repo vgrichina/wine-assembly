@@ -23,6 +23,7 @@ const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOut
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
 const { APPS, resolveCopySuperops } = require('../lib/apps');
 const { CliVideoRecorder } = require('../lib/cli-recorder');
+const { renderTinySynthNotes } = require('../lib/tinysynth-offline');
 const { createBatchClock } = require('../lib/batch-clock');
 // Fixed memory-map addresses, from the map declared in src/00-regions.wat.
 const RegionMap = require('../lib/region-map.generated.js');
@@ -1929,6 +1930,7 @@ async function main() {
     sharedAudio: {},  // shared waveOut state across threads
     audioTap: () => (videoRecorder && videoRecorder.active ? videoRecorder : null),
     registerAudioTapPump: fn => { if (typeof fn === 'function') audioTapPumps.add(fn); },
+    renderMidiForTap: (smf, options) => renderTinySynthNotes(smf, options),
     g2w: (addr) => ctx.exports ? translateGuest(addr, ctx.exports.get_image_base(), ctx.getMemory()) : addr,
     readFile: (name) => {
       // Try to find file relative to exe directory

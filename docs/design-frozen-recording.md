@@ -186,7 +186,10 @@ an explicit path. Its frame rate is derived from `--tick-ms-per-batch` and
 The same guest-clock PCM tap used by browser frozen recording collects waveOut
 and DirectSound voices (including voices submitted by guest worker threads),
 mixes them on the recording timeline, and muxes stereo AAC into MP4 or Opus into
-WebM. A silent audio track is still written when the guest produces no sound,
+WebM. MCI MIDI bypasses those PCM APIs, so the direct CLI renders its parsed
+sequence offline with the bundled WebAudioTinySynth quality-1 GM timbre tables;
+program changes, channel volume/pan, percussion, envelopes, and ambience remain
+deterministic on the same guest clock. A silent audio track is still written when the guest produces no sound,
 so every finalized CLI recording has a stable video+audio stream contract.
 
 ## The assembler — `tools/frozen-video.js`
