@@ -168,8 +168,12 @@ const digest = crypto.createHash('sha256')
 // 2026-09-03: 466 -> 463. SetFileApisToOEM/ANSI now propagate their process
 // code-page choice to Kernel32 filenames, and AreFileApisANSI reads it back
 // from the same process-shared VFS state across guest thread instances.
-const EXPECTED_COUNT = 462;
-const EXPECTED_SHA256 = '4b63f4d06abd1f10264c7ea757ecd1d47502222a76d2aef605348580e3a2b559';
+// 2026-09-03: 463 -> 462. DisableThreadLibraryCalls now validates loaded DLLs
+// and suppresses their future thread attach/detach notifications.
+// 2026-09-03: 462 -> 461. WinExec now delegates the real command line and
+// nCmdShow to the browser child-launch path and returns its success/error code.
+const EXPECTED_COUNT = 461;
+const EXPECTED_SHA256 = '5cfac830da9a5f4b819396b339d1c83db62f8cff34c9279aae433e05265f49ae';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

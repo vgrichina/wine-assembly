@@ -13709,13 +13709,13 @@ HookEx — no next hook in chain, return 0
   )
 
   ;; WinExec(lpCmdLine, uCmdShow) — legacy launcher. Pinball's Options →
-  ;; Select Table uses this for table executables and only checks for >31.
-  ;; The bundled build has a single in-process table, so report success.
+  ;; Select Table and Win9x installers expect a real child-launch attempt.
+  ;; Mark this call so the browser host applies WinExec parsing/error rules.
   (func $handle_WinExec (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (drop (local.get $arg0))
-    (drop (local.get $arg1))
-    (drop (local.get $name_ptr))
-    (global.set $eax (i32.const 33))
+    (global.set $eax (call $host_shell_execute
+      (i32.const 0) (local.get $name_ptr)
+      (if (result i32) (local.get $arg0) (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
+      (i32.const 0) (i32.const 0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
