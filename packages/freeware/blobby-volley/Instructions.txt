@@ -1,0 +1,78 @@
+1. The Game
+
+  Blobby Volley is an arcade game in which you take out a volleyball match with extraterrestrian jelly babies (!)
+
+System requirements:
+
+  PC with Windows 95 or higher, Pentium / 200 MHz or higher, a minimum of 16 MB Ram, a fast graphics card, 1 MB hard disk space. To be able to play in a LAN, you must have TCP/IP protocol installed. (this is normally the case)
+
+
+2. The Rules of the Game
+
+  In this game, the normal volleyball rules are taken into application. One player has the service and gets one point everytimes the opponent makes a mistake. If the player having the service makes a mistake, he loses his service to his opponent, and so the latter can get points. 
+  A mistake is when the ball touches the ground of the court or touching the ball four times.
+  The game ends, when at least one of the players has 15 or more points and the difference between the players' scores is 2 or more. The player who has more points, wins the match.
+  The only real differeneces to the real world volleyball are that there is only one player per "team" who can touch the ball more than once and that the player having the service is allowed to touch the ball more than once.
+
+
+3. The Main Menu
+
+Start Game		starts the game
+Network Match		opens the network settings menu
+Statistics		shows the statistics screen
+Settings		opens the settings menu
+Deutsch			switches the language to German
+Quit			exits the program
+
+
+3.1 Start Game
+
+  Clicking this menu option starts a new single or multiplayer game on the same computer. The settings applied here have to be set in the settings menu. You can end a game by pressing ESC (followed by a J or Y).
+
+
+3.2 Network Match
+
+  Here you can setup a match in a local network. On the following screen, you have to chose between HOST A GAME and JOIN A GAME. To create a game, click on HOST A GAME, to search for and join an existing game, click on JOIN A GAME.
+
+  Annotation: You are also able to play through the internet, but in practice, this will normally be too slow. In this case, the guest player will not be able to control his blobby properly.
+
+
+3.2.1 Host Settings Menu
+
+  Here you can set the name of the game. This appears on the guest's session list. At the point CONTROL, you can set, if you want to play with the mouse or with the keyboard. The host always gets the keys and color you specified for player one in the settings menu.
+  START HOSTING starts the game. The program waits for a guest to log in. 
+
+
+3.2.2 Client Settings
+
+   Just between HOST-IP, you can specify the IP-Adress where you want to look for games. This is only neccesary for non-lokal networks. If you put an empty string here, then the game searches in the subnet in which your computer resides.
+  The point CONTROL lets you choose between keyboard and mouse control. The client always gets the keys and color you specified for player two in the settings menu.
+  FIND SESSION makes the computer search (and possibly find) sessions. You then are presented a list from which you can pick the game you want to join.
+
+
+3.3 The Statistics
+
+  The statistics screen presents you some information about players which allow to compare the abilities of two players. Here you can see the number of games played (GMS), the number of games won (WON) and the score of every player. The score is calculated from the points difference in all matches. The winner gets the differences in addition to his previous score, the loser loses this difference from his score. But nobody can have a negative score.
+  You can sort the table by a specified item (name,score,...) by clicking on the corresponding column header.
+
+
+3.4 The Settings Menu
+
+  Player 1 is the left player (always host) and player two is the right one (or client, when playing a LAN game).
+  You can change the players' color by clicking on little blobby. Behind NAME you can specify the players' names. These names are the names with which you are registered in the statistics. Clicking CONTROL, you can switch the controlling device you want to use. Here is also the place where you can say that a player should be controlled by the computer (3 different difficulties)
+  You can specify another keyboard layout.
+
+
+4. Changing the Background Image
+
+  If you don't like the background image, you can paint your own one. This image has to have a resoultion of 800x600 pixels and has to be a BMP-file called "bvbg.bmp". This file must be located in the Blobby Volley folder.
+  Hint: The side-bar of the volleyball net is not painted by the program. It must be present in the image at the proper position. It is 16 pixels wide and 323 pixels high and located in the middle of the picture. 
+
+
+5. Juristics
+
+  Blobby Volley is freeware. The copyright is owned by the authors Daniel Skoraszewsky and Silvio Mummert. The archive "blobby.zip" is only allowed to be copied in unmodified state. Especially selfmade background images can only be given away separately.
+
+We wish you a lot of fun playing Blobby Volley
+Daniel Skoraszewsky and Silvio Mummert
+

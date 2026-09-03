@@ -26,7 +26,7 @@ const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
-const EXE = path.join(__dirname, 'binaries', 'candidates', 'blobby-volley', 'volley.exe');
+const EXE = path.join(ROOT, 'packages', 'freeware', 'blobby-volley', 'volley.exe');
 
 if (!fs.existsSync(EXE)) {
   console.log('SKIP  volley.exe not found at', EXE);

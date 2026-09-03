@@ -61,8 +61,10 @@
     "quake2_demo_installer"
   ],
   "runtime": [
+    "blobby_volley",
     "civ2_mge",
     "civ2_win16",
+    "dxball",
     "far_manager_170",
     "winrar_310"
   ]
