@@ -205,11 +205,13 @@
   ;; Write a sockaddr_in for accept/getpeername style out-parameters.
   (func $vsock_write_sockaddr (param $addr_ga i32) (param $len_ga i32)
                               (param $ip i32) (param $port i32)
-    (local $wa i32) (local $cap i32) (local $i i32)
+    (local $wa i32) (local $len_wa i32) (local $cap i32) (local $i i32)
     (if (i32.eqz (local.get $addr_ga)) (then (return)))
     (local.set $cap (i32.const 16))
     (if (local.get $len_ga)
-      (then (local.set $cap (i32.load (call $g2w (local.get $len_ga))))))
+      (then
+        (local.set $len_wa (call $g2w (local.get $len_ga)))
+        (local.set $cap (i32.load (local.get $len_wa)))))
     (if (i32.lt_s (local.get $cap) (i32.const 16)) (then (return)))
     (local.set $wa (call $g2w (local.get $addr_ga)))
     (i32.store16 (local.get $wa) (i32.const 2))
@@ -220,7 +222,7 @@
     ;; sin_zero[8]
     (memory.fill (i32.add (local.get $wa) (i32.const 8)) (i32.const 0) (i32.const 8))
     (if (local.get $len_ga)
-      (then (i32.store (call $g2w (local.get $len_ga)) (i32.const 16)))))
+      (then (i32.store (local.get $len_wa) (i32.const 16)))))
 
   ;; Is any live record already bound to this ip/port pair?
   (func $vsock_port_taken (param $ip i32) (param $port i32) (result i32)
@@ -1736,11 +1738,13 @@
   ;; the Win32 computer name are one string on a Win98 box, and an app that
   ;; asks both must not be told two different things.
   (func $vsock_is_own_name (param $ga i32) (result i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $ga)))
     (i32.and
       (i32.eq
-        (i32.or (i32.load16_u (call $g2w (local.get $ga))) (i32.const 0x2020))
+        (i32.or (i32.load16_u (local.get $wa)) (i32.const 0x2020))
         (i32.const 0x6370))                                ;; "pc"
-      (i32.eqz (i32.load8_u offset=2 (call $g2w (local.get $ga))))))
+      (i32.eqz (i32.load8_u offset=2 (local.get $wa)))))
 
   ;; gethostname(name, namelen) — the local machine's name.
   ;;
@@ -1831,26 +1835,27 @@
   ;; lowercase-dword idiom used elsewhere; the trailing NUL becomes 0x20 under
   ;; the same OR, which is why the constants carry it.
   (func $vsock_service_port (param $name i32) (result i32)
-    (local $d0 i32)
-    (local.set $d0 (i32.or (i32.load (call $g2w (local.get $name))) (i32.const 0x20202020)))
+    (local $d0 i32) (local $name_wa i32)
+    (local.set $name_wa (call $g2w (local.get $name)))
+    (local.set $d0 (i32.or (i32.load (local.get $name_wa)) (i32.const 0x20202020)))
     (if (i32.eq (local.get $d0) (i32.const 0x20707466)) (then (return (i32.const 21))))   ;; ftp
     (if (i32.and (i32.eq (local.get $d0) (i32.const 0x6e6c6574))
           (i32.and
-            (i32.eq (i32.or (i32.load16_u offset=4 (call $g2w (local.get $name)))
+            (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name_wa))
                             (i32.const 0x2020)) (i32.const 0x7465))
-            (i32.eqz (i32.load8_u offset=6 (call $g2w (local.get $name))))))
+            (i32.eqz (i32.load8_u offset=6 (local.get $name_wa)))))
       (then (return (i32.const 23))))                                                     ;; telnet
     (if (i32.and (i32.eq (local.get $d0) (i32.const 0x706d7473))
-                 (i32.eqz (i32.load8_u offset=4 (call $g2w (local.get $name)))))
+                 (i32.eqz (i32.load8_u offset=4 (local.get $name_wa))))
       (then (return (i32.const 25))))                                                     ;; smtp
     (if (i32.and (i32.eq (local.get $d0) (i32.const 0x70747468))
-                 (i32.eqz (i32.load8_u offset=4 (call $g2w (local.get $name)))))
+                 (i32.eqz (i32.load8_u offset=4 (local.get $name_wa))))
       (then (return (i32.const 80))))                                                     ;; http
     (if (i32.and (i32.eq (local.get $d0) (i32.const 0x33706f70))
-                 (i32.eqz (i32.load8_u offset=4 (call $g2w (local.get $name)))))
+                 (i32.eqz (i32.load8_u offset=4 (local.get $name_wa))))
       (then (return (i32.const 110))))                                                    ;; pop3
     (if (i32.and (i32.eq (local.get $d0) (i32.const 0x70746e6e))
-                 (i32.eqz (i32.load8_u offset=4 (call $g2w (local.get $name)))))
+                 (i32.eqz (i32.load8_u offset=4 (local.get $name_wa))))
       (then (return (i32.const 119))))                                                    ;; nntp
     (i32.const 0))
 
