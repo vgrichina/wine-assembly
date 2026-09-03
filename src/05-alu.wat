@@ -3331,8 +3331,8 @@
 
     (local.set $row_base (i32.load offset=0x3c (local.get $this_wa)))
     (local.set $row (i32.shl (local.get $row) (i32.const 2)))
-    (local.set $row_head
-      (i32.load (call $g2w (i32.add (local.get $row_base) (local.get $row)))))
+    (local.set $arr_wa (call $g2w (i32.add (local.get $row_base) (local.get $row))))
+    (local.set $row_head (i32.load (local.get $arr_wa)))
     (global.set $eax (local.get $row_base))
     (global.set $ecx (local.get $min_x))
     (global.set $edx (local.get $max_x))
@@ -3418,7 +3418,6 @@
           (i32.load offset=20 (local.get $esp_wa)))
         (i32.store offset=0x0c (local.get $node_wa) (local.get $x1))
 
-        (local.set $arr_wa (call $g2w (i32.add (local.get $row_base) (local.get $row))))
         (i32.store (local.get $arr_wa) (local.get $node))
 
         (local.set $t7 (i32.load offset=0x40 (local.get $this_wa)))

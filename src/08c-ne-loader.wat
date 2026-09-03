@@ -1191,7 +1191,7 @@
     (local $base i32) (local $ne_off i32) (local $seg_tab i32) (local $seg_count i32)
     (local $shift i32) (local $i i32) (local $e i32) (local $index i32)
     (local $file_pos i32) (local $len i32) (local $flags i32) (local $alloc i32)
-    (local $seg_index_base i32) (local $rec i32)
+    (local $seg_index_base i32) (local $rec i32) (local $seg_base i32) (local $seg_wa i32)
     (local $stage i32) (local $meta i32) (local $ne_delta i32)
     (local $nonres_off i32) (local $nonres_len i32)
 
@@ -1225,8 +1225,9 @@
         (then (local.set $len (i32.const 0x10000))))
       (if (i32.eqz (local.get $alloc)) (then (local.set $alloc (i32.const 0x10000))))
       (local.set $index (call $win16_alloc_segment))
+      (local.set $seg_base (call $win16_seg_base (local.get $index)))
       (call $win16_seg_set (local.get $index)
-        (call $win16_seg_base (local.get $index)) (local.get $alloc)
+        (local.get $seg_base) (local.get $alloc)
         (local.get $flags) (i32.add (local.get $i) (i32.const 1)))
       ;; Clear the slot first, exactly as the task's own segments are cleared.
       ;; A segment's allocation is usually larger than what the file holds and
@@ -1236,10 +1237,10 @@
       ;; copies into the task's DGROUP, so the list of a custom control's
       ;; properties had no terminator and Visual Basic walked it off the end
       ;; into a far pointer whose selector named no segment.
-      (call $zero_memory (call $g2w (call $win16_seg_base (local.get $index)))
-        (i32.const 0x10000))
+      (local.set $seg_wa (call $g2w (local.get $seg_base)))
+      (call $zero_memory (local.get $seg_wa) (i32.const 0x10000))
       (if (local.get $file_pos)
-        (then (call $memcpy (call $g2w (call $win16_seg_base (local.get $index)))
+        (then (call $memcpy (local.get $seg_wa)
                 (i32.add (local.get $base) (local.get $file_pos)) (local.get $len))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $place)))

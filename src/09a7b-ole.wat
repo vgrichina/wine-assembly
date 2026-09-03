@@ -9434,7 +9434,7 @@
       (param $root i32) (param $formatetc i32) (param $medium i32)
       (param $take i32) (param $retired_out i32) (result i32)
     (local $staged i32) (local $staged_wa i32) (local $medium_wa i32) (local $entry i32) (local $connection_out i32) (local $hr i32)
-    (local $retired i32) (local $retired_entries i32)
+    (local $retired i32) (local $retired_entries i32) (local $entry_medium_wa i32)
     (if (local.get $retired_out) (then (call $gs32 (local.get $retired_out) (i32.const 0))))
     (if (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $medium)))
       (then (return (i32.const 0x80004003))))
@@ -9465,6 +9465,8 @@
             (return (local.get $hr))))
         (local.set $entry (call $ole_cache_find_connection
           (local.get $root) (call $gl32 (local.get $connection_out))))))
+    (local.set $entry_medium_wa
+      (call $g2w (i32.add (local.get $entry) (i32.const 28))))
     (if (call $gl32 (i32.add (local.get $entry) (i32.const 28)))
       (then
         (if (call $ole_medium_has_guest_release (i32.add (local.get $entry) (i32.const 28)))
@@ -9490,12 +9492,11 @@
             (local.set $retired_entries
               (call $gl32 (i32.add (local.get $retired) (i32.const 12))))
             (memory.copy (i32.add (call $g2w (local.get $retired_entries)) (i32.const 20))
-              (call $g2w (i32.add (local.get $entry) (i32.const 28))) (i32.const 12))
-            (call $zero_memory
-              (call $g2w (i32.add (local.get $entry) (i32.const 28))) (i32.const 12))
+              (local.get $entry_medium_wa) (i32.const 12))
+            (call $zero_memory (local.get $entry_medium_wa) (i32.const 12))
             (call $gs32 (local.get $retired_out) (local.get $retired)))
           (else (call $ole_release_medium (i32.add (local.get $entry) (i32.const 28)))))))
-    (memory.copy (call $g2w (i32.add (local.get $entry) (i32.const 28))) (local.get $staged_wa) (i32.const 12))
+    (memory.copy (local.get $entry_medium_wa) (local.get $staged_wa) (i32.const 12))
     (if (local.get $take) (then (call $zero_memory (local.get $medium_wa) (i32.const 12))))
     (call $heap_free (local.get $connection_out)) (call $heap_free (local.get $staged))
     (call $gs32 (i32.add (local.get $root) (i32.const 48)) (i32.const 1))
