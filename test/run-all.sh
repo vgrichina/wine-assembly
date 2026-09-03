@@ -149,6 +149,7 @@ UNIT=(
   test/test-console-input.js
   test/test-browser-mm-timer.js
   test/test-asset-parts.js
+  test/test-deploy-win16-assets.js
   test/test-runtime-log-toggle.js
   test/test-diablo-runtime-apis.js
   test/test-starcraft-dll-policy.js
