@@ -178,8 +178,10 @@ const digest = crypto.createHash('sha256')
 // window, buffers, input queue, aliases, and attachment state.
 // 2026-09-03: 459 -> 458. SetConsoleCtrlHandler now owns a process handler
 // chain and delivers processed Ctrl+C/Ctrl+Break events through guest callbacks.
-const EXPECTED_COUNT = 458;
-const EXPECTED_SHA256 = 'b7e6d0282de7f40381a5ada8a4699cdfd88f5d84661d62030b5a8d96368330c3';
+// 2026-09-03: 458 -> 457. EnableScrollBar now retains per-window arrow state,
+// paints disabled arrows, and suppresses their input instead of always TRUE.
+const EXPECTED_COUNT = 457;
+const EXPECTED_SHA256 = '43eca9681649e680fe116c3816338a4ae248879ec6e82ef0ab20e4bb4aab562c';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

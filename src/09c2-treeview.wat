@@ -1149,9 +1149,11 @@
                 (i32.gt_s (local.get $w) (i32.const 16))
                 (i32.ge_s (local.get $x) (i32.sub (local.get $w) (i32.const 16)))))
           (then
-            (local.set $hit (call $scrollbar_hit_part
-              (local.get $h) (local.get $y)
-              (call $tv_view_row) (i32.const 0) (local.get $max)))
+            (local.set $hit (call $scroll_arrow_filter_hit
+              (local.get $hwnd) (i32.const 1)
+              (call $scrollbar_hit_part
+                (local.get $h) (local.get $y)
+                (call $tv_view_row) (i32.const 0) (local.get $max))))
             (if (local.get $hit)
               (then
                 (global.set $sb_pressed_hwnd (local.get $hwnd))
@@ -1500,7 +1502,8 @@
           (i32.const 16) (local.get $h)
           (local.get $first_row) (local.get $max_scroll)
           (select (global.get $sb_pressed_part) (i32.const 0)
-                  (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
+                  (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd)))
+          (call $scroll_arrow_mask (local.get $hwnd) (i32.const 1)))))
   )
 
   ;; TreeView control wndproc — handles WM_PAINT and TreeView messages

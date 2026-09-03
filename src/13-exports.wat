@@ -5000,6 +5000,10 @@
     (local.set $aux (call $scroll_aux_bar_addr (local.get $slot)
       (i32.ne (local.get $bar) (i32.const 0))))
     (i32.load (local.get $aux)))
+  (func $standard_scroll_arrows (export "standard_scroll_arrows")
+      (param $hwnd i32) (param $bar i32) (result i32)
+    (call $scroll_arrow_mask
+      (local.get $hwnd) (i32.ne (local.get $bar) (i32.const 0))))
 
   (func (export "dc_apply_client_clip") (param $hdc i32) (param $hwnd i32)
     (call $dc_apply_client_clip (local.get $hdc) (local.get $hwnd)))
@@ -5117,6 +5121,11 @@
       (param $hwnd i32) (param $bar i32) (param $show i32) (result i32)
     (call $show_scroll_bar_core
       (local.get $hwnd) (local.get $bar) (local.get $show)))
+
+  (func (export "test_enable_scroll_bar")
+      (param $hwnd i32) (param $bar i32) (param $arrows i32) (result i32)
+    (call $enable_scroll_bar_core
+      (local.get $hwnd) (local.get $bar) (local.get $arrows)))
 
   ;; ButtonState text reader (parallel to get_edit_text).
   (func (export "button_get_text")

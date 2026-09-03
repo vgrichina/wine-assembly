@@ -403,6 +403,7 @@ UNIT=(
   test/test-dx-present-window-placement.js
   test/test-dx-vtable-worker-sync.js
   test/test-disabled-dialog-controls.js
+  test/test-enable-scrollbar.js
   test/test-enable-window.js
   test/test-duplicate-handle.js
   test/test-ext-text-out-wide.js

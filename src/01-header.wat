@@ -1451,6 +1451,7 @@
   ;; 0x07F20300   64B    TLS_NEXT_INDEX_SHARED (process TLS index cursor/cache line)
   ;; 0x07F20400  280B    DI_MOUSE_INPUT_STATE (dx/dy + 64 events + overflow X/Y)
   ;; 0x07F21000    4KB   SCROLL_AUX_TABLE (256 entries × 16 bytes)
+  ;; allocator-owned 256B SCROLL_ARROW_TABLE (one packed ESB_* byte per window)
   ;; 0x07F22000   16KB   TV_TABLE (512 entries × 32 bytes)
   ;; 0x07F26000    4KB   TV_IMAGE_TABLE (512 entries × {image, selected image})
   ;; 0x07F27000    2KB   TV_OWNER_TABLE (owning hwnd per TV_TABLE item)
@@ -2217,6 +2218,12 @@
   ;;   +12  v_track   SB_VERT nTrackPos
   (global $SCROLL_AUX_TABLE i32 (region.addr $SCROLL_AUX_TABLE 0))
   (global $SCROLL_AUX_TABLE_SIZE i32 (region.size $SCROLL_AUX_TABLE))
+  ;; SCROLL_ARROW_TABLE — persistent EnableScrollBar/SBM_ENABLE_ARROWS state.
+  ;; Per-window byte: bits 0..1 = horizontal ESB_* mask, bits 2..3 = vertical.
+  ;; ESB_ENABLE_BOTH=0, ESB_DISABLE_LTUP=1, ESB_DISABLE_RTDN=2,
+  ;; ESB_DISABLE_BOTH=3, so each direction fits directly in two bits.
+  (global $SCROLL_ARROW_TABLE i32 (region.addr $SCROLL_ARROW_TABLE 0))
+  (global $SCROLL_ARROW_TABLE_SIZE i32 (region.size $SCROLL_ARROW_TABLE))
   ;; VSOCK_TABLE — virtual LAN socket records (docs/virtual-lan-party.md).
   ;; 64 entries × 128 bytes, occupying the last 8KB below the sparse
   ;; VirtualAlloc backing pool. Layout is documented in 09d-winsock.wat.

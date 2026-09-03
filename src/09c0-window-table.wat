@@ -1689,6 +1689,58 @@
     (i32.add (call $scroll_aux_addr (local.get $slot))
              (select (i32.const 8) (i32.const 0) (local.get $vert))))
 
+  ;; EnableScrollBar state is packed into one byte per window. $vert selects
+  ;; the high or low two-bit ESB_* field; the stored values intentionally use
+  ;; the public constants so testing one arrow is just testing bit 0 or bit 1.
+  (func $scroll_arrow_mask_slot (param $slot i32) (param $vert i32) (result i32)
+    (i32.and
+      (i32.shr_u
+        (i32.load8_u (i32.add (global.get $SCROLL_ARROW_TABLE) (local.get $slot)))
+        (select (i32.const 2) (i32.const 0) (local.get $vert)))
+      (i32.const 3)))
+
+  (func $scroll_arrow_mask (param $hwnd i32) (param $vert i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0))
+      (then (return (i32.const 0))))
+    (call $scroll_arrow_mask_slot (local.get $slot) (local.get $vert)))
+
+  ;; Store one ESB_* field without disturbing the perpendicular bar. Returns
+  ;; TRUE only when the state changed, matching EnableScrollBar's contract.
+  (func $scroll_arrow_set_slot (param $slot i32) (param $vert i32)
+      (param $arrows i32) (result i32)
+    (local $addr i32) (local $old_byte i32) (local $shift i32)
+    (local $field_mask i32) (local $new_byte i32)
+    (local.set $addr (i32.add (global.get $SCROLL_ARROW_TABLE) (local.get $slot)))
+    (local.set $old_byte (i32.load8_u (local.get $addr)))
+    (local.set $shift (select (i32.const 2) (i32.const 0) (local.get $vert)))
+    (local.set $field_mask (i32.shl (i32.const 3) (local.get $shift)))
+    (local.set $new_byte
+      (i32.or
+        (i32.and (local.get $old_byte) (i32.xor (local.get $field_mask) (i32.const -1)))
+        (i32.shl (i32.and (local.get $arrows) (i32.const 3)) (local.get $shift))))
+    (if (i32.eq (local.get $new_byte) (local.get $old_byte))
+      (then (return (i32.const 0))))
+    (i32.store8 (local.get $addr) (local.get $new_byte))
+    (i32.const 1))
+
+  ;; Turn a geometric scrollbar hit into no hit when EnableScrollBar disabled
+  ;; that arrow. Track/page/thumb input remains available, as on USER32.
+  (func $scroll_arrow_filter_hit (param $hwnd i32) (param $vert i32)
+      (param $part i32) (result i32)
+    (local $mask i32)
+    (local.set $mask (call $scroll_arrow_mask (local.get $hwnd) (local.get $vert)))
+    (if (i32.and
+          (i32.eq (local.get $part) (i32.const 1))
+          (i32.ne (i32.and (local.get $mask) (i32.const 1)) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (if (i32.and
+          (i32.eq (local.get $part) (i32.const 2))
+          (i32.ne (i32.and (local.get $mask) (i32.const 2)) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.get $part))
+
   ;; Publish a control-owned vertical viewport through the standard Win32
   ;; scrollbar APIs. Common controls keep their row state privately, but
   ;; GetScrollPos/GetScrollRange/GetScrollInfo still read these shared tables.
@@ -1713,4 +1765,5 @@
   ;; hwnd does not inherit the previous window's scroll range.
   (func $scroll_reset_slot (param $slot i32)
     (call $zero_memory (call $scroll_record_addr (local.get $slot)) (i32.const 24))
-    (call $zero_memory (call $scroll_aux_addr (local.get $slot)) (i32.const 16)))
+    (call $zero_memory (call $scroll_aux_addr (local.get $slot)) (i32.const 16))
+    (i32.store8 (i32.add (global.get $SCROLL_ARROW_TABLE) (local.get $slot)) (i32.const 0)))

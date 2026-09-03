@@ -8986,9 +8986,11 @@
               (i32.and (i32.gt_s (local.get $w) (i32.const 16))
                        (i32.ge_s (local.get $x) (i32.sub (local.get $w) (i32.const 16)))))
           (then
-            (local.set $hit (call $scrollbar_hit_part
-              (local.get $h) (local.get $y)
-              (call $lv_top_index (local.get $sw)) (i32.const 0) (local.get $max)))
+            (local.set $hit (call $scroll_arrow_filter_hit
+              (local.get $hwnd) (i32.const 1)
+              (call $scrollbar_hit_part
+                (local.get $h) (local.get $y)
+                (call $lv_top_index (local.get $sw)) (i32.const 0) (local.get $max))))
             (if (local.get $hit)
               (then
                 (global.set $sb_pressed_hwnd (local.get $hwnd))
@@ -9350,7 +9352,8 @@
             (call $paint_vscrollbar_rect (local.get $hdc)
               (i32.sub (local.get $w) (i32.const 16)) (i32.const 0)
               (i32.const 16) (local.get $h)
-              (local.get $top) (local.get $max) (local.get $pressed_part))))
+              (local.get $top) (local.get $max) (local.get $pressed_part)
+              (call $scroll_arrow_mask (local.get $hwnd) (i32.const 1)))))
         (if (i32.and (call $ctrl_get_ex_style (local.get $hwnd)) (i32.const 0x200))
           (then
             (drop (call $host_gdi_draw_edge (local.get $hdc)
@@ -11761,6 +11764,21 @@
                 (local.set $max (i32.sub (local.get $count) (local.get $visible)))
                 (if (i32.lt_s (local.get $max) (i32.const 0))
                   (then (local.set $max (i32.const 0))))
+                ;; A disabled arrow still owns its rectangle; consume the
+                ;; click without turning it into a page hit or a row select.
+                (if (i32.and
+                      (i32.lt_s (local.get $row_y) (i32.const 16))
+                      (i32.ne (i32.and
+                        (call $scroll_arrow_mask (local.get $hwnd) (i32.const 1))
+                        (i32.const 1)) (i32.const 0)))
+                  (then (return (i32.const 0))))
+                (if (i32.and
+                      (i32.ge_s (local.get $row_y)
+                        (i32.sub (local.get $h) (i32.const 16)))
+                      (i32.ne (i32.and
+                        (call $scroll_arrow_mask (local.get $hwnd) (i32.const 1))
+                        (i32.const 2)) (i32.const 0)))
+                  (then (return (i32.const 0))))
                 (if (i32.lt_s (local.get $row_y) (i32.const 16))
                   (then ;; up arrow
                     (if (i32.gt_s (local.get $top) (i32.const 0))
@@ -12360,7 +12378,8 @@
               (local.get $w) (i32.const 0) (i32.const 16) (local.get $h)
               (call $lb_top_index (local.get $sw)) (local.get $max)
               (select (global.get $sb_pressed_part) (i32.const 0)
-                      (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
+                      (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd)))
+              (call $scroll_arrow_mask (local.get $hwnd) (i32.const 1)))))
         (return (i32.const 0))))
 
     ;; Default
@@ -15110,12 +15129,14 @@
 	                (local.set $max_hscroll (call $edit_max_hscroll
 	                  (local.get $state_w) (local.get $hdc) (local.get $line_buf_w)))
 	                (local.set $lo (load.field.memarg EditState scroll_x (local.get $state_w)))
-	                (local.set $b (call $sb_page_hit_part
-	                  (local.get $line_buf_w) (local.get $w) (local.get $lo)
-	                  (i32.const 0)
-	                  (i32.sub (i32.add (local.get $max_hscroll) (local.get $line_buf_w))
-	                           (i32.const 1))
-	                  (local.get $line_buf_w)))
+	                (local.set $b (call $scroll_arrow_filter_hit
+	                  (local.get $hwnd) (i32.const 0)
+	                  (call $sb_page_hit_part
+	                    (local.get $line_buf_w) (local.get $w) (local.get $lo)
+	                    (i32.const 0)
+	                    (i32.sub (i32.add (local.get $max_hscroll) (local.get $line_buf_w))
+	                             (i32.const 1))
+	                    (local.get $line_buf_w))))
 	                ;; One arrow click is one average character wide; a page is
 	                ;; the visible width, matching what USER does with a
 	                ;; proportional font.
@@ -15169,10 +15190,12 @@
 	                (local.set $total_lines (i32.and (local.get $a) (i32.const 0xFFFF)))
 	                (local.set $visible_lines (i32.shr_u (local.get $a) (i32.const 16)))
 	                (local.set $lo (load.field.memarg EditState scroll_top (local.get $state_w)))
-	                (local.set $b (call $sb_page_hit_part
-	                  (local.get $line_y) (local.get $h) (local.get $lo)
-	                  (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
-	                  (local.get $visible_lines)))
+	                (local.set $b (call $scroll_arrow_filter_hit
+	                  (local.get $hwnd) (i32.const 1)
+	                  (call $sb_page_hit_part
+	                    (local.get $line_y) (local.get $h) (local.get $lo)
+	                    (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
+	                    (local.get $visible_lines))))
 	                (if (i32.eq (local.get $b) (i32.const 1))
 	                  (then (drop (call $edit_scroll_to (local.get $hwnd) (local.get $state_w)
 	                    (i32.sub (local.get $lo) (i32.const 1))
@@ -15560,7 +15583,8 @@
                   (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
                   (local.get $visible_lines)
                   (select (global.get $sb_pressed_part) (i32.const 0)
-                          (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
+                          (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd)))
+                  (call $scroll_arrow_mask (local.get $hwnd) (i32.const 1)))))
             ;; Refresh non-client chrome after the edit reaches its final
             ;; size. Notepad does not send another WM_NCPAINT after sizing its
             ;; child, and client clipping intentionally excludes these strips.
@@ -15711,7 +15735,8 @@
               (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
               (local.get $visible_lines)
               (select (global.get $sb_pressed_part) (i32.const 0)
-                      (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
+                      (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd)))
+              (call $scroll_arrow_mask (local.get $hwnd) (i32.const 1)))))
         ;; 6) Optional horizontal scrollbar strip. Scrolling state is in
         ;; pixels, since an unwrapped line is measured, not counted. Same
         ;; predicate the prologue reserved the band with, so the strip is
@@ -15735,7 +15760,8 @@
               (i32.sub (i32.add (local.get $max_hscroll) (local.get $w)) (i32.const 1))
               (local.get $w)
               (select (global.get $sb_pressed_part) (i32.const 0)
-                      (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))
+                      (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd)))
+              (call $scroll_arrow_mask (local.get $hwnd) (i32.const 0)))
             ;; The dead square where the two strips meet is scrollbar-grey,
             ;; not white: it belongs to neither track.
             (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
@@ -16910,9 +16936,16 @@
   ;; dir: 0=up, 1=down, 2=left, 3=right
   ;; (bit0 = apex-trailing, bit1 = horizontal axis)
   ;; pressed: 0 = raised, 1 = sunken + glyph shifted 1px down/right
+  ;; disabled: draw Win98's embossed white/gray glyph and never sink the edge
   (func $draw_sb_arrow (param $hdc i32) (param $bx i32) (param $by i32)
-                       (param $bw i32) (param $bh i32) (param $dir i32) (param $pressed i32)
+                       (param $bw i32) (param $bh i32) (param $dir i32)
+                       (param $pressed i32) (param $disabled i32)
     (local $cx i32) (local $cy i32) (local $i i32) (local $u i32) (local $half i32)
+    (local $active_pressed i32) (local $glyph_brush i32)
+    (local.set $active_pressed
+      (i32.and (local.get $pressed) (i32.eqz (local.get $disabled))))
+    (local.set $glyph_brush
+      (select (i32.const 0x30012) (i32.const 0x30014) (local.get $disabled)))
     ;; Background fill + 3D edge (raised normally, sunken when pressed).
     (drop (call $host_gdi_fill_rect (local.get $hdc)
             (local.get $bx) (local.get $by)
@@ -16923,11 +16956,11 @@
             (local.get $bx) (local.get $by)
             (i32.add (local.get $bx) (local.get $bw))
             (i32.add (local.get $by) (local.get $bh))
-            (select (i32.const 0x0A) (i32.const 0x05) (local.get $pressed)) ;; BDR_SUNKEN : BDR_RAISED
+            (select (i32.const 0x0A) (i32.const 0x05) (local.get $active_pressed)) ;; BDR_SUNKEN : BDR_RAISED
             (i32.const 0x0F))) ;; BF_RECT
     ;; Glyph center (shift 1px down/right when pressed for the classic Win98 look).
-    (local.set $cx (i32.add (i32.add (local.get $bx) (i32.div_s (local.get $bw) (i32.const 2))) (local.get $pressed)))
-    (local.set $cy (i32.add (i32.add (local.get $by) (i32.div_s (local.get $bh) (i32.const 2))) (local.get $pressed)))
+    (local.set $cx (i32.add (i32.add (local.get $bx) (i32.div_s (local.get $bw) (i32.const 2))) (local.get $active_pressed)))
+    (local.set $cy (i32.add (i32.add (local.get $by) (i32.div_s (local.get $bh) (i32.const 2))) (local.get $active_pressed)))
     ;; 4 1-thick scanlines forming a triangle (1,3,5,7 wide).
     (local.set $i (i32.const 0))
     (block $end (loop $next
@@ -16939,19 +16972,35 @@
         (else (local.set $half (local.get $i))))
       (if (i32.and (local.get $dir) (i32.const 2))
         (then ;; horizontal: u→x, half→y
+          (if (local.get $disabled)
+            (then
+              (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (i32.add (local.get $cx) (local.get $u)) (i32.const 1))
+                (i32.add (i32.sub (local.get $cy) (local.get $half)) (i32.const 1))
+                (i32.add (i32.add (local.get $cx) (local.get $u)) (i32.const 2))
+                (i32.add (i32.add (local.get $cy) (local.get $half)) (i32.const 2))
+                (i32.const 0x30010))))) ;; WHITE_BRUSH highlight
           (drop (call $host_gdi_fill_rect (local.get $hdc)
                   (i32.add (local.get $cx) (local.get $u))
                   (i32.sub (local.get $cy) (local.get $half))
                   (i32.add (i32.add (local.get $cx) (local.get $u)) (i32.const 1))
                   (i32.add (i32.add (local.get $cy) (local.get $half)) (i32.const 1))
-                  (i32.const 0x30014)))) ;; BLACK_BRUSH
+                  (local.get $glyph_brush))))
         (else ;; vertical: u→y, half→x
+          (if (local.get $disabled)
+            (then
+              (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (i32.sub (local.get $cx) (local.get $half)) (i32.const 1))
+                (i32.add (i32.add (local.get $cy) (local.get $u)) (i32.const 1))
+                (i32.add (i32.add (local.get $cx) (local.get $half)) (i32.const 2))
+                (i32.add (i32.add (local.get $cy) (local.get $u)) (i32.const 2))
+                (i32.const 0x30010))))) ;; WHITE_BRUSH highlight
           (drop (call $host_gdi_fill_rect (local.get $hdc)
                   (i32.sub (local.get $cx) (local.get $half))
                   (i32.add (local.get $cy) (local.get $u))
                   (i32.add (i32.add (local.get $cx) (local.get $half)) (i32.const 1))
                   (i32.add (i32.add (local.get $cy) (local.get $u)) (i32.const 1))
-                  (i32.const 0x30014)))))
+                  (local.get $glyph_brush)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $next))))
 
@@ -16980,6 +17029,7 @@
         (param $hdc i32) (param $bx i32) (param $by i32)
         (param $bw i32) (param $bh i32)
         (param $pos i32) (param $range i32) (param $pressed i32)
+        (param $disabled i32)
     (local $arrow i32) (local $track_y i32) (local $track_h i32)
     (local $thumb_size i32) (local $thumb_pos i32)
     ;; Track background + sunken edge.
@@ -16996,12 +17046,14 @@
           (local.get $bx) (local.get $by)
           (local.get $bw) (local.get $arrow)
           (i32.const 0) ;; up
-          (i32.eq (local.get $pressed) (i32.const 1)))
+          (i32.eq (local.get $pressed) (i32.const 1))
+          (i32.and (local.get $disabled) (i32.const 1)))
         (call $draw_sb_arrow (local.get $hdc)
           (local.get $bx) (i32.sub (i32.add (local.get $by) (local.get $bh)) (local.get $arrow))
           (local.get $bw) (local.get $arrow)
           (i32.const 1) ;; down
-          (i32.eq (local.get $pressed) (i32.const 2)))))
+          (i32.eq (local.get $pressed) (i32.const 2))
+          (i32.and (local.get $disabled) (i32.const 2)))))
     ;; Thumb. Skip when range is empty (nothing to scroll).
     (if (i32.gt_s (local.get $range) (i32.const 0))
       (then
@@ -17244,8 +17296,11 @@
     (local $hit i32) (local $new_top i32)
     (if (i32.lt_s (local.get $visible) (i32.const 1))
       (then (local.set $visible (i32.const 1))))
-    (local.set $hit (call $scrollbar_hit_part
-      (local.get $h) (local.get $row_y) (local.get $top) (i32.const 0) (local.get $max)))
+    (local.set $hit (call $scroll_arrow_filter_hit
+      (local.get $hwnd) (i32.const 1)
+      (call $scrollbar_hit_part
+        (local.get $h) (local.get $row_y)
+        (local.get $top) (i32.const 0) (local.get $max))))
     (if (i32.eq (local.get $hit) (i32.const 3))
       (then
         (local.set $new_top (i32.sub (local.get $top) (local.get $visible)))
@@ -17294,6 +17349,26 @@
     (local $mx i32) (local $my i32) (local $part i32) (local $parent i32)
     (local $sb_msg i32) (local $sb_code i32)
     (local $is_pressed i32) (local $coord i32) (local $new_pos i32)
+    (local $disabled i32) (local $changed i32)
+
+    ;; SBM_ENABLE_ARROWS (0x00E4): the message form reports success for every
+    ;; valid ESB_* request, while EnableScrollBar itself reports only a state
+    ;; transition. Both write the same per-window state.
+    (if (i32.eq (local.get $msg) (i32.const 0x00E4))
+      (then
+        (if (i32.gt_u (local.get $wParam) (i32.const 3))
+          (then (return (i32.const 0))))
+        (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+        (if (i32.lt_s (local.get $slot) (i32.const 0))
+          (then (return (i32.const 0))))
+        (local.set $style (call $wnd_get_style (local.get $hwnd)))
+        (local.set $is_vert
+          (i32.ne (i32.and (local.get $style) (i32.const 1)) (i32.const 0)))
+        (local.set $changed (call $scroll_arrow_set_slot
+          (local.get $slot) (local.get $is_vert) (local.get $wParam)))
+        (if (local.get $changed)
+          (then (call $invalidate_hwnd (local.get $hwnd))))
+        (return (i32.const 1))))
 
     ;; --- Mouse input: arrows, page regions, and thumb drag ---
     ;; WM_LBUTTONDOWN
@@ -17319,9 +17394,11 @@
             (local.set $pos (i32.load (local.get $base)))
             (local.set $smin (i32.load offset=4 (local.get $base)))
             (local.set $smax (i32.load offset=8 (local.get $base)))))
-        (local.set $part (call $scrollbar_hit_part
-          (local.get $long_dim) (local.get $coord)
-          (local.get $pos) (local.get $smin) (local.get $smax)))
+        (local.set $part (call $scroll_arrow_filter_hit
+          (local.get $hwnd) (local.get $is_vert)
+          (call $scrollbar_hit_part
+            (local.get $long_dim) (local.get $coord)
+            (local.get $pos) (local.get $smin) (local.get $smax))))
         (if (local.get $part)
           (then
             (global.set $sb_pressed_hwnd (local.get $hwnd))
@@ -17431,6 +17508,8 @@
         (local.set $style (call $wnd_get_style (local.get $hwnd)))
         ;; SBS_VERT = 0x01
         (local.set $is_vert (i32.and (local.get $style) (i32.const 1)))
+        (local.set $disabled (call $scroll_arrow_mask
+          (local.get $hwnd) (local.get $is_vert)))
 
         ;; Arrow button size: 16px (Win98 SM_CXVSCROLL). Skip arrows if the
         ;; scrollbar's long axis is too short to fit two arrows + any thumb.
@@ -17459,13 +17538,15 @@
                   (i32.const 0) (i32.const 0) (local.get $w) (local.get $arrow)
                   (i32.const 0) ;; up
                   (i32.and (local.get $is_pressed)
-                           (i32.eq (global.get $sb_pressed_part) (i32.const 1))))
+                           (i32.eq (global.get $sb_pressed_part) (i32.const 1)))
+                  (i32.and (local.get $disabled) (i32.const 1)))
                 (call $draw_sb_arrow (local.get $hdc)
                   (i32.const 0) (i32.sub (local.get $h) (local.get $arrow))
                   (local.get $w) (local.get $arrow)
                   (i32.const 1) ;; down
                   (i32.and (local.get $is_pressed)
-                           (i32.eq (global.get $sb_pressed_part) (i32.const 2)))))
+                           (i32.eq (global.get $sb_pressed_part) (i32.const 2)))
+                  (i32.and (local.get $disabled) (i32.const 2))))
               (else
                 (call $draw_sb_arrow (local.get $hdc)
                   (i32.const 0) (i32.const 0) (local.get $arrow) (local.get $h)
@@ -17473,7 +17554,8 @@
                   (i32.and (local.get $is_pressed)
                            (i32.or
                              (i32.eq (global.get $sb_pressed_part) (i32.const 1))
-                             (i32.eq (global.get $sb_pressed_part) (i32.const 3)))))
+                             (i32.eq (global.get $sb_pressed_part) (i32.const 3))))
+                  (i32.and (local.get $disabled) (i32.const 1)))
                 (call $draw_sb_arrow (local.get $hdc)
                   (i32.sub (local.get $w) (local.get $arrow)) (i32.const 0)
                   (local.get $arrow) (local.get $h)
@@ -17481,7 +17563,8 @@
                   (i32.and (local.get $is_pressed)
                            (i32.or
                              (i32.eq (global.get $sb_pressed_part) (i32.const 2))
-                             (i32.eq (global.get $sb_pressed_part) (i32.const 4)))))))))
+                             (i32.eq (global.get $sb_pressed_part) (i32.const 4))))
+                  (i32.and (local.get $disabled) (i32.const 2)))))))
 
         ;; Read scroll state
         (local.set $slot (call $wnd_table_find (local.get $hwnd)))

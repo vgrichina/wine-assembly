@@ -12271,11 +12271,77 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-: EnableScrollBar(hWnd, wSBflags, wArrows) — we have no scroll bars,
-  ;; so enabling/disabling is a no-op. Return TRUE so apps don't think the
-  ;; call failed.
+  ;; Enable or disable one/both arrows on a standard bar or SCROLLBAR control.
+  ;; ESB_* values are a two-bit disable mask (low/up=1, right/down=2). USER32
+  ;; returns FALSE when the requested state was already present, so retaining
+  ;; this separately from SCROLLINFO is observable even before the next paint.
+  (func $enable_scroll_bar_core (param $hwnd i32) (param $bar i32)
+      (param $arrows i32) (result i32)
+    (local $slot i32) (local $vert i32) (local $changed i32)
+    (local $class i32) (local $style i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0))
+      (then
+        (global.set $last_error (i32.const 1400)) ;; ERROR_INVALID_WINDOW_HANDLE
+        (return (i32.const 0))))
+    (if (i32.gt_u (local.get $arrows) (i32.const 3))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (return (i32.const 0))))
+
+    ;; SB_CTL addresses a SCROLLBAR control and follows its SBS_VERT bit.
+    (if (i32.eq (local.get $bar) (i32.const 2))
+      (then
+        (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
+        (if (i32.ne (local.get $class) (i32.const 7))
+          (then
+            (global.set $last_error (i32.const 87))
+            (return (i32.const 0))))
+        (local.set $style (call $wnd_get_style (local.get $hwnd)))
+        (local.set $vert (i32.ne (i32.and (local.get $style) (i32.const 1)) (i32.const 0)))
+        (local.set $changed (call $scroll_arrow_set_slot
+          (local.get $slot) (local.get $vert) (local.get $arrows))))
+      (else
+        ;; SB_HORZ=0, SB_VERT=1, SB_BOTH=3. SB_BOTH reports a change if
+        ;; either standard bar changed.
+        (if (i32.eq (local.get $bar) (i32.const 0))
+          (then
+            (local.set $changed (call $scroll_arrow_set_slot
+              (local.get $slot) (i32.const 0) (local.get $arrows))))
+          (else
+            (if (i32.eq (local.get $bar) (i32.const 1))
+              (then
+                (local.set $changed (call $scroll_arrow_set_slot
+                  (local.get $slot) (i32.const 1) (local.get $arrows))))
+              (else
+                (if (i32.eq (local.get $bar) (i32.const 3))
+                  (then
+                    (local.set $changed (call $scroll_arrow_set_slot
+                      (local.get $slot) (i32.const 0) (local.get $arrows)))
+                    (local.set $changed (i32.or (local.get $changed)
+                      (call $scroll_arrow_set_slot
+                        (local.get $slot) (i32.const 1) (local.get $arrows)))))
+                  (else
+                    (global.set $last_error (i32.const 87))
+                    (return (i32.const 0))))))))))
+
+    (if (local.get $changed)
+      (then
+        ;; Child/common controls repaint their client-owned strips; standard
+        ;; bars repaint in the non-client pass. Scheduling both is harmless
+        ;; for a plain window and keeps ListView/TreeView/ListBox coherent.
+        (call $invalidate_hwnd (local.get $hwnd))
+        (if (i32.ne (local.get $bar) (i32.const 2))
+          (then
+            (if (call $wnd_is_effectively_visible (local.get $hwnd))
+              (then
+                (call $defwndproc_do_ncpaint (local.get $hwnd))
+                (call $nc_flags_set (local.get $hwnd) (i32.const 1))))))))
+    (local.get $changed))
+
   (func $handle_EnableScrollBar (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $enable_scroll_bar_core
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) ;; 3 args stdcall
   )
 
@@ -15724,15 +15790,24 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (local $slot i32) (local $base i32) (local $aux i32) (local $lpsi i32) (local $fMask i32)
     (local $smin i32) (local $smax i32) (local $page i32) (local $pos i32) (local $max_pos i32)
     (local $style i32) (local $new_style i32) (local $bar_bit i32)
+    (local $is_ctl i32) (local $vert i32) (local $scrollable i32) (local $arrows_changed i32)
     (local.set $slot (call $wnd_table_find (local.get $arg0)))
     (local.set $lpsi (call $g2w (local.get $arg2)))
     (local.set $fMask (i32.load offset=4 (local.get $lpsi)))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
+        (local.set $is_ctl (i32.eq (local.get $arg1) (i32.const 2)))
+        (local.set $vert
+          (if (result i32) (local.get $is_ctl)
+            (then
+              (i32.ne
+                (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 1))
+                (i32.const 0)))
+            (else (i32.eq (local.get $arg1) (i32.const 1)))))
         (local.set $base (call $scroll_bar_addr (local.get $slot)
-          (i32.ne (local.get $arg1) (i32.const 0))))
+          (local.get $vert)))
         (local.set $aux (call $scroll_aux_bar_addr (local.get $slot)
-          (i32.ne (local.get $arg1) (i32.const 0))))
+          (local.get $vert)))
         ;; SIF_RANGE = 0x01
         (if (i32.and (local.get $fMask) (i32.const 1))
           (then
@@ -15773,24 +15848,40 @@ GetTopWindow(hWnd) — 1 arg stdcall
         (if (i32.gt_s (local.get $pos) (local.get $max_pos))
           (then (local.set $pos (local.get $max_pos))))
         (i32.store (local.get $base) (local.get $pos))
-        ;; SetScrollInfo controls standard scrollbar visibility. A page that
-        ;; covers the inclusive range hides the bar; otherwise USER adds the
-        ;; corresponding non-client style and recalculates the client area.
+        ;; A page that covers the inclusive range makes the bar unnecessary.
+        ;; SIF_DISABLENOSCROLL (0x08) keeps it present and disables both
+        ;; arrows; when it becomes useful again the same flag re-enables them.
+        ;; A SCROLLBAR control owns its visibility, so only its arrow state is
+        ;; changed here — SB_CTL must never synthesize WS_VSCROLL on the child.
+        (local.set $scrollable
+          (i32.and
+            (i32.gt_s (local.get $smax) (local.get $smin))
+            (i32.or
+              (i32.eqz (local.get $page))
+              (i32.lt_u (local.get $page)
+                (i32.add (i32.sub (local.get $smax) (local.get $smin)) (i32.const 1))))))
+        (if (i32.and (local.get $fMask) (i32.const 8))
+          (then
+            (local.set $arrows_changed (call $scroll_arrow_set_slot
+              (local.get $slot) (local.get $vert)
+              (select (i32.const 0) (i32.const 3) (local.get $scrollable))))))
         (local.set $style (call $wnd_get_style (local.get $arg0)))
-        (local.set $bar_bit
-          (select (i32.const 0x00200000) (i32.const 0x00100000)
-                  (i32.ne (local.get $arg1) (i32.const 0))))
         (local.set $new_style (local.get $style))
+        (if (i32.eqz (local.get $is_ctl))
+          (then
+            (local.set $bar_bit
+              (select (i32.const 0x00200000) (i32.const 0x00100000) (local.get $vert)))
+            (if (local.get $scrollable)
+              (then (local.set $new_style (i32.or (local.get $style) (local.get $bar_bit))))
+              (else
+                (if (i32.and (local.get $fMask) (i32.const 8))
+                  (then (local.set $new_style (i32.or (local.get $style) (local.get $bar_bit))))
+                  (else (local.set $new_style
+                    (i32.and (local.get $style)
+                      (i32.xor (local.get $bar_bit) (i32.const -1))))))))))
         (if (i32.and
-              (i32.gt_s (local.get $smax) (local.get $smin))
-              (i32.or
-                (i32.eqz (local.get $page))
-                (i32.lt_u (local.get $page)
-                  (i32.add (i32.sub (local.get $smax) (local.get $smin)) (i32.const 1)))))
-          (then (local.set $new_style (i32.or (local.get $style) (local.get $bar_bit))))
-          (else (local.set $new_style
-            (i32.and (local.get $style) (i32.xor (local.get $bar_bit) (i32.const -1))))))
-        (if (i32.ne (local.get $new_style) (local.get $style))
+              (i32.eqz (local.get $is_ctl))
+              (i32.ne (local.get $new_style) (local.get $style)))
           (then
             (drop (call $wnd_set_style (local.get $arg0) (local.get $new_style)))
             (call $defwndproc_do_nccalcsize (local.get $arg0))
@@ -15802,15 +15893,18 @@ GetTopWindow(hWnd) — 1 arg stdcall
               (i32.sub (call $client_rect_get_b (local.get $arg0)) (call $client_rect_get_t (local.get $arg0))))))
         (if (i32.or
               (i32.ne (local.get $arg3) (i32.const 0))
-              (i32.ne (local.get $new_style) (local.get $style)))
+              (i32.or
+                (local.get $arrows_changed)
+                (i32.ne (local.get $new_style) (local.get $style))))
           (then
-            (call $defwndproc_do_ncpaint (local.get $arg0))
-            ;; ...and leave the non-client area marked dirty. Children share
-            ;; their parent's back-canvas, so the client paint the app performs
-            ;; right after this call can cover the bar we just drew; the pump's
-            ;; NC drain puts it back. USER gets this for free from the window's
-            ;; non-client update region.
-            (call $nc_flags_set (local.get $arg0) (i32.const 1))))
+            (if (local.get $is_ctl)
+              (then (call $invalidate_hwnd (local.get $arg0)))
+              (else
+                (call $defwndproc_do_ncpaint (local.get $arg0))
+                ;; Leave the non-client area dirty. Children share their
+                ;; parent's back-canvas, so a client paint immediately after
+                ;; this call can cover the bar until the pump restores it.
+                (call $nc_flags_set (local.get $arg0) (i32.const 1))))))
         (global.set $eax (i32.load (local.get $base))))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
