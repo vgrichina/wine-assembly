@@ -120,7 +120,10 @@ button.open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2p
    in it is squashed, so the picture is stretched to 4:3 the way the CRT did. */
 figure img { display: block; width: 100%; aspect-ratio: 4 / 3; image-rendering: pixelated; }
 figcaption { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-top: 7px; font-family: var(--mono); font-size: 11px; }
-.fn { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fn { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
+a.fn:hover, a.fn:focus-visible { color: var(--cyan); text-decoration: underline; }
+#lb-name { color: inherit; text-decoration: none; }
+#lb-name:hover, #lb-name:focus-visible { color: var(--cyan); text-decoration: underline; }
 .fp { color: var(--faint); white-space: nowrap; }
 .fp b { color: var(--ink); font-weight: 600; }
 /* The reading list. */

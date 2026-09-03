@@ -99,6 +99,59 @@ async function main() {
     assert.strictEqual(snd.count, `${snd.audible} of ${snd.total}`, `count reads "${snd.count}"`);
     assert.strictEqual(snd.back, snd.total, '"any sound" did not bring every tile back');
 
+    // Every tile has a #fragment of its own: unique ids, a caption anchor to
+    // it, the URL takes it when the tile opens and drops it on close, and
+    // loading the page with one opens that tile. A shared link that lands on
+    // the top of the grid is the failure this checks for.
+    const frag = await page.evaluate(() => {
+      const figs = [...document.querySelectorAll('#grid figure')];
+      const ids = figs.map((f) => f.id);
+      const unique = new Set(ids).size === ids.length && ids.every(Boolean);
+      const anchored = figs.every((f) => {
+        const a = f.querySelector('a.fn');
+        return a && a.getAttribute('href') === `#${f.id}`;
+      });
+      const pick = figs[3];
+      pick.querySelector('button.open').click();
+      const dlg = document.getElementById('lb');
+      const opened = { open: dlg.open, hash: location.hash, name: document.getElementById('lb-name').textContent,
+        link: document.getElementById('lb-name').getAttribute('href') };
+      dlg.close();
+      // The close event, which drops the hash, is delivered after this task.
+      return new Promise((ok) => setTimeout(() => ok({
+        unique, anchored, id: pick.id, name: pick.querySelector('.fn').textContent, opened,
+        closed: { open: dlg.open, hash: location.hash },
+      }), 50));
+    });
+    assert.ok(frag.unique, 'tile ids are missing or not unique');
+    assert.ok(frag.anchored, 'a caption does not link to its own tile');
+    assert.ok(frag.opened.open, 'the tile did not open');
+    assert.strictEqual(frag.opened.hash, `#${frag.id}`, `opening a tile set the hash to "${frag.opened.hash}"`);
+    assert.strictEqual(frag.opened.link, `#${frag.id}`, 'the dialog name does not link to the tile');
+    assert.strictEqual(frag.opened.name, frag.name);
+    assert.strictEqual(frag.closed.hash, '', `closing left the hash "${frag.closed.hash}"`);
+    // Arrive by link: a fresh load with the fragment opens that tile.
+    await page.goto(`http://127.0.0.1:${port}/demos.html#${frag.id}`, { waitUntil: 'load' });
+    const arrived = await page.evaluate(() => ({
+      open: document.getElementById('lb').open,
+      name: document.getElementById('lb-name').textContent,
+    }));
+    assert.ok(arrived.open, `loading demos.html#${frag.id} did not open the tile`);
+    assert.strictEqual(arrived.name, frag.name, `the link opened "${arrived.name}"`);
+    // And a hash change within the page (the caption anchor) switches tiles.
+    const switched = await page.evaluate(() => {
+      const other = document.querySelectorAll('#grid figure')[5];
+      location.hash = `#${other.id}`;
+      return new Promise((ok) => setTimeout(() => ok({
+        open: document.getElementById('lb').open,
+        name: document.getElementById('lb-name').textContent,
+        want: other.querySelector('.fn').textContent,
+      }), 50));
+    });
+    assert.ok(switched.open && switched.name === switched.want,
+      `a hash change opened "${switched.name}", wanted "${switched.want}"`);
+    await page.evaluate(() => document.getElementById('lb').close());
+
     // A mode 13h tile by preference. Any live tile proves the emulator runs in
     // the page, but the assertions below are about a picture with colours in
     // it, and how quickly a demo gets to one differs enormously: BOB.COM --

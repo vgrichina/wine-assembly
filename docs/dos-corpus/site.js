@@ -11,14 +11,26 @@
   var meta = document.getElementById('lb-meta');
   var screen = document.getElementById('lb-screen');
   var pouet = document.getElementById('lb-pouet');
-  document.addEventListener('click', function (e) {
-    var btn = e.target.closest ? e.target.closest('button.open') : null;
-    if (!btn) return;
-    var fig = btn.closest('figure');
+  // Every tile has a #fragment: opening one writes it to the URL (replace,
+  // not push, so Back leaves the page rather than stepping through tiles),
+  // closing clears it, and arriving with one -- a shared link, or the
+  // caption's own anchor -- opens that tile. fromHash says the URL is
+  // already right and must not be rewritten.
+  var openId = null;
+  function setHash(id) {
+    if (!history.replaceState) return;
+    var url = location.pathname + location.search + (id ? '#' + id : '');
+    if (location.hash !== (id ? '#' + id : '')) history.replaceState(null, '', url);
+  }
+  function openFigure(fig, fromHash) {
+    var btn = fig.querySelector('button.open');
     var src = btn.querySelector('img');
     img.src = src.getAttribute('src');
     img.alt = src.getAttribute('alt') || '';
     name.textContent = fig.querySelector('.fn').textContent;
+    name.href = '#' + fig.id;
+    openId = fig.id;
+    if (!fromHash) setHash(fig.id);
     var bits = [fig.dataset.geom, fig.dataset.what];
     if (fig.dataset.stuck) bits.push('stuck at ' + fig.dataset.stuck);
     if (fig.dataset.soundLine) bits.push(fig.dataset.soundLine);
@@ -36,10 +48,31 @@
       args: fig.dataset.liveArgs || '',
       env: fig.dataset.liveEnv || '', card: fig.dataset.liveSound || 'full',
     } : null);
-    dlg.showModal();
+    if (!dlg.open) dlg.showModal();
+  }
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('button.open') : null;
+    if (!btn) return;
+    openFigure(btn.closest('figure'), false);
   });
+  // The caption anchor and the dialog's own name link are plain #links, so
+  // the URL changes first and the tile opens from the hash. A hash that names
+  // no tile (or nothing) is left alone.
+  function openFromHash() {
+    var id = decodeURIComponent(location.hash.replace(/^#/, ''));
+    if (!id || id === openId) return;
+    var fig = document.getElementById(id);
+    if (!fig || fig.tagName !== 'FIGURE') return;
+    // Not close-and-reopen: the dialog's close event is delivered later and
+    // would clear the hash this tile was just opened from. showLive stops a
+    // running program before the new tile takes the stage.
+    openFigure(fig, true);
+    fig.scrollIntoView({ block: 'center' });
+  }
+  window.addEventListener('hashchange', openFromHash);
   dlg.addEventListener('click', function (e) { if (e.target === dlg) dlg.close(); });
-  dlg.addEventListener('close', function () { stopLive(); });
+  dlg.addEventListener('close', function () { stopLive(); openId = null; setHash(''); });
+  if (location.hash) openFromHash();
 
   // --- the live half -------------------------------------------------------
   // Every demo ships with the site as bytes, and its tile gets a Run button:
