@@ -162,6 +162,8 @@ try {
   host.voice_set_volume_db(voice, -3000);
   host.voice_set_pan(voice, 10000);
   host.voice_play_ring(voice, ptr, 4, 0, 1);
+  assert.strictEqual(host.voice_is_playing(voice), 1,
+    'a headless looping ring must remain guest-visible as playing');
   guestMs = 1;
   for (const pump of pumps) pump();
 
@@ -171,6 +173,14 @@ try {
     'hard-right DirectSound pan must survive without a StereoPannerNode');
   assert(Math.abs(captured[0].gainR - Math.pow(10, -3000 / 2000)) < 1e-9,
     'DirectSound attenuation must survive without a GainNode');
+
+  const oneShot = host.voice_open(22050, 1, 8);
+  host.voice_play_ring(oneShot, ptr, 4, 0, 0);
+  assert.strictEqual(host.voice_is_playing(oneShot), 1,
+    'a fresh headless one-shot should initially be guest-visible as playing');
+  guestMs += 1;
+  assert.strictEqual(host.voice_is_playing(oneShot), 0,
+    'a headless one-shot should retire from the guest audio clock');
 } finally {
   globalThis.AudioContext = oldAudioContext;
 }

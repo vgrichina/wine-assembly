@@ -112,6 +112,11 @@ the cursor swept on every event that changes the ring:
 
 That last row is what makes a held music loop record as music. A looping buffer
 the guest never touches again would otherwise emit nothing until `Stop`.
+Headless snapshot voices also retain an explicit playing bit. Looping voices
+stay playing until `Stop`; one-shots retire from the guest clock. Using the
+presence of a Web Audio `currentSrc` here made every CLI voice look stopped, so
+RCT cleared `DSBSTATUS_PLAYING` and never sent the Unlock refills that replace
+its 1.2-second streaming music ring.
 
 Per-chunk gain is the voice's canonical `gainValue`, the WAVE bus, the master
 bus and the mixer mutes the guest set through `mixerSetControlDetails`; pan uses
