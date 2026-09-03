@@ -150,8 +150,10 @@ const digest = crypto.createHash('sha256')
 // five D3DSTATS counters and rejects a null output buffer.
 // 2026-09-02: 473 -> 472. ImageList_Destroy now validates and invalidates its
 // handle and releases both the image-list record and retained icon array.
-const EXPECTED_COUNT = 472;
-const EXPECTED_SHA256 = '450b182736cf303606411ba5135bbfaa0f97d7c57bd93dcd7bebd65f0a99d332';
+// 2026-09-02: 472 -> 471. CopyIcon now creates an independently owned copy of
+// bitmap-backed, resource-backed, and opaque system icon handles.
+const EXPECTED_COUNT = 471;
+const EXPECTED_SHA256 = 'ecc29c29a044f36aab9072ad0133abe004ee1db16db07acb19548b2976a3dc11';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

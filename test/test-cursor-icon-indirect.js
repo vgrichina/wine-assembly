@@ -107,6 +107,22 @@ function check(label, fn) {
         (i32.const 0) (i32.const 0))
       (global.set $esp (local.get $saved_esp))
       (global.get $eax))
+    (func (export "test_call_CopyIcon") (param $icon i32) (result i32)
+      (local $saved_esp i32)
+      (local.set $saved_esp (global.get $esp))
+      (call $handle_CopyIcon
+        (local.get $icon) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0))
+      (global.set $esp (local.get $saved_esp))
+      (global.get $eax))
+    (func (export "test_call_LoadIconA") (param $hinst i32) (param $resid i32) (result i32)
+      (local $saved_esp i32)
+      (local.set $saved_esp (global.get $esp))
+      (call $handle_LoadIconA
+        (local.get $hinst) (local.get $resid) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0))
+      (global.set $esp (local.get $saved_esp))
+      (global.get $eax))
   ` });
   const wat = harness.exports;
   cssCanvas = { style: {} };
@@ -480,6 +496,41 @@ function check(label, fn) {
     const again = wat.test_call_CreateIconIndirect(
       iconInfo({ xHot: 2, yHot: 2, mask: crossMask() })) >>> 0;
     assert.strictEqual(again, handleA, 'the freed slot was not reused');
+  });
+
+  check('CopyIcon owns independent bitmap planes and lifetime', () => {
+    const source = wat.test_call_CreateIconIndirect(
+      iconInfo({ fIcon: 1, xHot: 2, yHot: 2, mask: crossMask() })) >>> 0;
+    const copy = wat.test_call_CopyIcon(source) >>> 0;
+    assert.ok(copy, 'CopyIcon returned NULL for a built icon');
+    assert.notStrictEqual(copy, source, 'CopyIcon returned the source handle');
+    assert.strictEqual(wat.test_call_DestroyIcon(source) >>> 0, 1);
+    const info = alloc(20);
+    assert.strictEqual(wat.test_call_GetIconInfo(copy, info) >>> 0, 1);
+    assert.ok(wat.guest_read32(info + 12) >>> 0,
+      'destroying the source also destroyed the copy mask');
+    assert.strictEqual(wat.test_call_DestroyIcon(copy) >>> 0, 1);
+    assert.strictEqual(wat.test_call_DestroyIcon(copy) >>> 0, 0,
+      'a copied icon stayed valid after destruction');
+  });
+
+  check('CopyIcon wraps shared resource and opaque system icons privately', () => {
+    const resource = wat.test_call_LoadIconA(0x400000, 1) >>> 0;
+    const resourceCopy = wat.test_call_CopyIcon(resource) >>> 0;
+    assert.ok(resourceCopy && resourceCopy !== resource,
+      'resource CopyIcon did not return a distinct handle');
+    assert.strictEqual(wat.test_call_DestroyIcon(resourceCopy) >>> 0, 1);
+    assert.strictEqual(wat.test_call_DestroyIcon(resourceCopy) >>> 0, 0);
+    assert.ok(wat.test_call_CopyIcon(resource) >>> 0,
+      'destroying a resource copy invalidated the shared source');
+
+    const system = wat.test_call_LoadIconA(0, 32512) >>> 0;
+    const systemCopy = wat.test_call_CopyIcon(system) >>> 0;
+    assert.ok(systemCopy && systemCopy !== system,
+      'opaque system CopyIcon did not return a private handle');
+    assert.strictEqual(wat.test_call_DestroyIcon(systemCopy) >>> 0, 1);
+    assert.strictEqual(wat.test_call_CopyIcon(0) >>> 0, 0,
+      'CopyIcon accepted NULL');
   });
 
   console.log(`\n${passed} checks passed`);

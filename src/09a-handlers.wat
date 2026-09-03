@@ -5090,6 +5090,7 @@
   ;; bitmap as its "resource", and drawing one blits that bitmap — see
   ;; $icon_draw_handle. Visual Basic's controls build their pictures this way.
   (global $ICON_FROM_BITMAP i32 (i32.const 0x1C0B17))
+  (global $ICON_FROM_OPAQUE i32 (i32.const 0x0FACED))
   ;; A Win16 NE module id, stored in ICON_TABLE's hInstance word. The low 24
   ;; bits are the $win16_res_module selector (task=1, DLL=0x10000|id).
   (global $ICON_FROM_WIN16 i32 (i32.const 0x16000000))
@@ -5147,12 +5148,17 @@
         (local.set $ok (call $gdi_dc_alloc))
         (if (i32.eqz (local.get $ok)) (then (return (i32.const 0))))
         (drop (call $host_gdi_select_object (local.get $ok)
-                (i32.load offset=4 (local.get $p))))
+                (i32.and (i32.load offset=4 (local.get $p))
+                  (i32.const 0x7FFFFFFF))))
         (drop (call $host_gdi_bitblt (local.get $hdc) (local.get $x) (local.get $y)
                 (local.get $cx) (local.get $cy) (local.get $ok)
                 (i32.const 0) (i32.const 0) (i32.const 0x00CC0020)))
         (drop (call $gdi_dc_delete (local.get $ok)))
         (return (i32.const 1))))
+    ;; Opaque system/named handles had no drawable pixels before being copied;
+    ;; their independent copy remains intentionally opaque too.
+    (if (i32.eq (i32.load (local.get $p)) (global.get $ICON_FROM_OPAQUE))
+      (then (return (i32.const 0))))
     ;; NE icon resources live in a flat table rather than the PE resource
     ;; tree. Restore the module captured by Win16 LoadIcon while decoding.
     (if (i32.eq
@@ -5162,7 +5168,8 @@
         (global.set $win16_res_module_id
           (i32.and (i32.load (local.get $p)) (i32.const 0x00FFFFFF)))
         (local.set $ok (call $gdi_icon_draw_resource_at
-          (local.get $hdc) (i32.load offset=4 (local.get $p))
+          (local.get $hdc) (i32.and (i32.load offset=4 (local.get $p))
+            (i32.const 0x7FFFFFFF))
           (local.get $cx) (local.get $cy) (i32.const 1)
           (local.get $x) (local.get $y) (local.get $di_flags)))
         (global.set $win16_res_module_id (i32.const 0))
@@ -5171,7 +5178,8 @@
     ;; the one running now.
     (call $push_rsrc_ctx (i32.load (local.get $p)))
     (local.set $ok (call $gdi_icon_draw_resource_at
-      (local.get $hdc) (i32.load offset=4 (local.get $p))
+      (local.get $hdc) (i32.and (i32.load offset=4 (local.get $p))
+        (i32.const 0x7FFFFFFF))
       (local.get $cx) (local.get $cy) (i32.const 1)
       (local.get $x) (local.get $y) (local.get $di_flags)))
     (call $pop_rsrc_ctx)
@@ -10893,11 +10901,10 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
   )
 
-  ;; 388: DestroyIcon(hIcon) — 1 arg stdcall, return TRUE. A resource icon has
-  ;; nothing behind it to free; one built from bitmaps owns its copies.
+  ;; 388: DestroyIcon(hIcon) — release built and copied icons. Loaded shared
+  ;; resources remain live; an invalidated private handle fails.
   (func $handle_DestroyIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (drop (call $cursor_destroy (local.get $arg0)))
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $icon_destroy_handle (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -17451,9 +17458,9 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 942: CopyIcon(hIcon) — 1 arg stdcall, return same handle (no real copy needed)
+  ;; 942: CopyIcon(hIcon) — return an independently owned icon handle.
   (func $handle_CopyIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (local.get $arg0))
+    (global.set $eax (call $icon_copy_handle (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -18445,3 +18452,119 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
         (call $update_thunk_end)))
     (i32.const 1))
+
+  ;; CopyIcon creates a private handle even when the source came from a shared
+  ;; module resource. ICON_TABLE's high resource-id bit marks those private
+  ;; slots; real Win9x resource ids are 16-bit integers. Built icons/cursors
+  ;; instead clone their owned bitmap planes into an independent CURSOR_TABLE
+  ;; record. Opaque system handles get a private wrapper so identity/lifetime
+  ;; are still correct even though this renderer has no pixels for them.
+  (func $icon_table_record (param $handle i32) (result i32)
+    (local $slot i32) (local $record i32)
+    (if (i32.ne (i32.and (local.get $handle) (i32.const 0xFFFF0000))
+                (global.get $ICON_HANDLE_TAG))
+      (then (return (i32.const 0))))
+    (local.set $slot (i32.and (local.get $handle) (i32.const 0xFFFF)))
+    (if (i32.ge_u (local.get $slot) (global.get $MAX_ICONS))
+      (then (return (i32.const 0))))
+    (local.set $record (i32.add (global.get $ICON_TABLE)
+      (i32.mul (local.get $slot) (i32.const 8))))
+    (if (i32.eqz (i32.load offset=4 (local.get $record)))
+      (then (return (i32.const 0))))
+    (local.get $record))
+
+  (func $icon_copy_handle (param $handle i32) (result i32)
+    (local $record i32) (local $mask i32) (local $color i32)
+    (local $hinst i32) (local $resid i32) (local $slot_record i32)
+    (local $i i32) (local $free i32) (local $copy i32)
+    (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
+    (local.set $record (call $cursor_record (local.get $handle)))
+    (if (local.get $record)
+      (then
+        (local.set $mask
+          (call $gdi_bitmap_clone_owned (i32.load offset=12 (local.get $record))))
+        (if (i32.eqz (local.get $mask)) (then (return (i32.const 0))))
+        (if (i32.load offset=16 (local.get $record))
+          (then
+            (local.set $color (call $gdi_bitmap_clone_owned
+              (i32.load offset=16 (local.get $record))))
+            (if (i32.eqz (local.get $color))
+              (then
+                (drop (call $gdi_object_delete_full (local.get $mask)))
+                (return (i32.const 0))))))
+        (local.set $copy (call $cursor_intern
+          (i32.load (local.get $record))
+          (i32.load offset=4 (local.get $record))
+          (i32.load offset=8 (local.get $record))
+          (local.get $mask) (local.get $color)))
+        (if (i32.eqz (local.get $copy))
+          (then
+            (drop (call $gdi_object_delete_full (local.get $mask)))
+            (if (local.get $color)
+              (then (drop (call $gdi_object_delete_full (local.get $color)))))))
+        (return (local.get $copy))))
+    (local.set $record (call $icon_table_record (local.get $handle)))
+    (if (local.get $record)
+      (then
+        (local.set $hinst (i32.load (local.get $record)))
+        (local.set $resid (i32.and (i32.load offset=4 (local.get $record))
+          (i32.const 0x7FFFFFFF))))
+      (else
+        ;; Do not resurrect a stale handle from either private table.
+        (if (i32.or
+              (i32.eq (i32.and (local.get $handle) (i32.const 0xFFFF0000))
+                (global.get $ICON_HANDLE_TAG))
+              (i32.eq (i32.and (local.get $handle) (i32.const 0xFFFF0000))
+                (global.get $CURSOR_HANDLE_TAG)))
+          (then (return (i32.const 0))))
+        (local.set $hinst (global.get $ICON_FROM_OPAQUE))
+        (local.set $resid (local.get $handle))))
+    (if (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
+      (then
+        (local.set $resid (call $gdi_bitmap_clone_owned (local.get $resid)))
+        (if (i32.eqz (local.get $resid)) (then (return (i32.const 0))))))
+    (local.set $free (i32.const -1))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_ICONS)))
+      (local.set $slot_record (i32.add (global.get $ICON_TABLE)
+        (i32.mul (local.get $i) (i32.const 8))))
+      (if (i32.eqz (i32.load offset=4 (local.get $slot_record)))
+        (then (local.set $free (local.get $i)) (br $done)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.lt_s (local.get $free) (i32.const 0))
+      (then
+        (if (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
+          (then (drop (call $gdi_object_delete_full (local.get $resid)))))
+        (return (i32.const 0))))
+    (local.set $slot_record (i32.add (global.get $ICON_TABLE)
+      (i32.mul (local.get $free) (i32.const 8))))
+    (i32.store (local.get $slot_record) (local.get $hinst))
+    (i32.store offset=4 (local.get $slot_record)
+      (i32.or (local.get $resid) (i32.const 0x80000000)))
+    (i32.or (global.get $ICON_HANDLE_TAG) (local.get $free)))
+
+  (func $icon_destroy_handle (param $handle i32) (result i32)
+    (local $record i32) (local $resid i32)
+    (if (i32.eq
+          (i32.and (local.get $handle) (i32.const 0xFFFF0000))
+          (global.get $CURSOR_HANDLE_TAG))
+      (then (return (call $cursor_destroy (local.get $handle)))))
+    (if (i32.eq
+          (i32.and (local.get $handle) (i32.const 0xFFFF0000))
+          (global.get $ICON_HANDLE_TAG))
+      (then
+        (local.set $record (call $icon_table_record (local.get $handle)))
+        (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
+        (local.set $resid (i32.load offset=4 (local.get $record)))
+        ;; A loaded icon is shared and remains valid; a copied slot is private.
+        (if (i32.and (local.get $resid) (i32.const 0x80000000))
+          (then
+            (if (i32.eq (i32.load (local.get $record))
+                        (global.get $ICON_FROM_BITMAP))
+              (then (drop (call $gdi_object_delete_full
+                (i32.and (local.get $resid) (i32.const 0x7FFFFFFF))))))
+            (memory.fill (local.get $record) (i32.const 0) (i32.const 8))))
+        (return (i32.const 1))))
+    ;; Preserve the historical no-op success for shared opaque handles.
+    (i32.ne (local.get $handle) (i32.const 0)))
