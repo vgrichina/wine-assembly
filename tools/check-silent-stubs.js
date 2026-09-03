@@ -152,8 +152,10 @@ const digest = crypto.createHash('sha256')
 // handle and releases both the image-list record and retained icon array.
 // 2026-09-02: 472 -> 471. CopyIcon now creates an independently owned copy of
 // bitmap-backed, resource-backed, and opaque system icon handles.
-const EXPECTED_COUNT = 471;
-const EXPECTED_SHA256 = 'ecc29c29a044f36aab9072ad0133abe004ee1db16db07acb19548b2976a3dc11';
+// 2026-09-02: 471 -> 470. CopyImage now owns and resamples bitmap/icon/cursor
+// images, including RETURNORG/DELETEORG, monochrome, and DIB-section requests.
+const EXPECTED_COUNT = 470;
+const EXPECTED_SHA256 = 'e01291636025dac1378b71161069f2d383afd7333c7366c9dd893294ec911e2c';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

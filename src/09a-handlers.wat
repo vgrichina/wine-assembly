@@ -4985,7 +4985,7 @@
     ;; A cursor the guest built from bitmaps carries its own pixels; anything
     ;; else is an IDC_* or a PE resource the host resolves from the handle.
     (if (i32.eqz (call $cursor_push (local.get $hcur)))
-      (then (call $host_set_cursor (local.get $hcur))))
+      (then (call $host_set_cursor (call $icon_opaque_cursor_source (local.get $hcur)))))
     (local.get $prev))
 
   ;; 106: SetCursor(hCursor) — 1 arg stdcall, returns previous HCURSOR.
@@ -16386,15 +16386,15 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 677: DestroyCursor — STUB: unimplemented
-  ;; DestroyCursor(hCursor). LoadCursor hands back an encoded handle with no
-  ;; allocation behind it, so there is nothing to release; a cursor built by
-  ;; CreateCursor/CreateIconIndirect owns its bitmaps and releases them here.
-  ;; A NULL handle is still an error, which is the one part of the contract a
-  ;; caller can actually observe.
+  ;; 677: DestroyCursor — release built cursors and private CopyImage wrappers.
+  ;; Shared LoadCursor handles remain valid, matching USER's shared-resource
+  ;; ownership, while a stale copied handle fails instead of succeeding again.
+  ;; Encoded IDC/resource handles have no allocation behind them. CURSOR_TABLE
+  ;; records own their bitmap planes, and the private ICON_TABLE marker owns
+  ;; only its wrapper slot. The shared helper distinguishes all three forms,
+  ;; keeping DestroyCursor and DestroyIcon lifetime behavior consistent.
   (func $handle_DestroyCursor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (drop (call $cursor_destroy (local.get $arg0)))
-    (global.set $eax (i32.ne (local.get $arg0) (i32.const 0)))
+    (global.set $eax (call $icon_destroy_handle (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -17803,9 +17803,9 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
       (then (call $gs32 (i32.load offset=44 (local.get $wa_esp)) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 52))))
 
-;; 946: CopyImage(hImage, uType, cx, cy, flags) — 5 args stdcall, return same handle
+;; 946: CopyImage(hImage, uType, cx, cy, flags) — create an owned sized image.
   (func $handle_CopyImage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (local.get $arg0))
+    (global.set $eax (call $copy_image_handle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
@@ -18475,8 +18475,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
 
   (func $icon_copy_handle (param $handle i32) (result i32)
     (local $record i32) (local $mask i32) (local $color i32)
-    (local $hinst i32) (local $resid i32) (local $slot_record i32)
-    (local $i i32) (local $free i32) (local $copy i32)
+    (local $hinst i32) (local $resid i32) (local $copy i32)
     (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
     (local.set $record (call $cursor_record (local.get $handle)))
     (if (local.get $record)
@@ -18523,26 +18522,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
       (then
         (local.set $resid (call $gdi_bitmap_clone_owned (local.get $resid)))
         (if (i32.eqz (local.get $resid)) (then (return (i32.const 0))))))
-    (local.set $free (i32.const -1))
-    (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_ICONS)))
-      (local.set $slot_record (i32.add (global.get $ICON_TABLE)
-        (i32.mul (local.get $i) (i32.const 8))))
-      (if (i32.eqz (i32.load offset=4 (local.get $slot_record)))
-        (then (local.set $free (local.get $i)) (br $done)))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $scan)))
-    (if (i32.lt_s (local.get $free) (i32.const 0))
-      (then
-        (if (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
-          (then (drop (call $gdi_object_delete_full (local.get $resid)))))
-        (return (i32.const 0))))
-    (local.set $slot_record (i32.add (global.get $ICON_TABLE)
-      (i32.mul (local.get $free) (i32.const 8))))
-    (i32.store (local.get $slot_record) (local.get $hinst))
-    (i32.store offset=4 (local.get $slot_record)
-      (i32.or (local.get $resid) (i32.const 0x80000000)))
-    (i32.or (global.get $ICON_HANDLE_TAG) (local.get $free)))
+    (call $icon_private_slot (local.get $hinst) (local.get $resid)))
 
   (func $icon_destroy_handle (param $handle i32) (result i32)
     (local $record i32) (local $resid i32)
@@ -18568,3 +18548,494 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         (return (i32.const 1))))
     ;; Preserve the historical no-op success for shared opaque handles.
     (i32.ne (local.get $handle) (i32.const 0)))
+
+  ;; Allocate a private ICON_TABLE slot. The resource-id high bit is ownership,
+  ;; never part of a Win9x integer resource id or one of this runtime's compact
+  ;; GDI/opaque handles. Bitmap wrappers transfer their cloned bitmap to the
+  ;; slot; failure releases it here so callers have one ownership rule.
+  (func $icon_private_slot (param $hinst i32) (param $resid i32) (result i32)
+    (local $i i32) (local $record i32)
+    (block $found (loop $scan
+      (br_if $found (i32.ge_u (local.get $i) (global.get $MAX_ICONS)))
+      (local.set $record (i32.add (global.get $ICON_TABLE)
+        (i32.mul (local.get $i) (i32.const 8))))
+      (if (i32.eqz (i32.load offset=4 (local.get $record)))
+        (then
+          (i32.store (local.get $record) (local.get $hinst))
+          (i32.store offset=4 (local.get $record)
+            (i32.or (local.get $resid) (i32.const 0x80000000)))
+          (return (i32.or (global.get $ICON_HANDLE_TAG) (local.get $i)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
+      (then (drop (call $gdi_object_delete_full (local.get $resid)))))
+    (i32.const 0))
+
+  ;; CopyImage's private wrapper for a shared LoadCursor handle must remain
+  ;; visually identical when SetCursor reaches the browser. Unwrap only the
+  ;; cursor marker; an ordinary copied icon is not a cursor by accident.
+  (func $icon_opaque_cursor_source (param $handle i32) (result i32)
+    (local $record i32)
+    (local.set $record (call $icon_table_record (local.get $handle)))
+    (if (i32.and (i32.ne (local.get $record) (i32.const 0))
+          (i32.eq (i32.load (local.get $record))
+            (i32.add (global.get $ICON_FROM_OPAQUE) (i32.const 1))))
+      (then (return (i32.and (i32.load offset=4 (local.get $record))
+        (i32.const 0x7FFFFFFF)))))
+    (local.get $handle))
+
+  ;; Allocate and resample a bitmap into a new DDB, or a DIB section when
+  ;; LR_CREATEDIBSECTION requests one. This is the common IMAGE_BITMAP copy
+  ;; path: the source is never consumed here, so LR_COPYDELETEORG can delete it
+  ;; only after the new object and its pixels exist.
+  (func $copy_image_bitmap (param $handle i32) (param $want_w i32)
+        (param $want_h i32) (param $flags i32) (result i32)
+    (local $record i32) (local $src_w i32) (local $src_h i32)
+    (local $src_bpp i32) (local $dst_bpp i32) (local $src_flags i32)
+    (local $stride i32) (local $copy i32) (local $src i32) (local $dst i32)
+    (local $row_bits i64) (local $stride64 i64) (local $size64 i64)
+    (local.set $record (call $gdi_object_record (local.get $handle)))
+    (if (i32.eqz (call $gdi_bitmap_record_valid (local.get $record)))
+      (then (return (i32.const 0))))
+    (local.set $src_w (load.field.memarg GdiBitmap width (local.get $record)))
+    (local.set $src_h (load.field.memarg GdiBitmap height (local.get $record)))
+    (local.set $src_bpp (load.field.memarg GdiBitmap bpp (local.get $record)))
+    (local.set $src_flags (load.field.memarg GdiBitmap flags (local.get $record)))
+    (if (i32.eqz (local.get $want_w)) (then (local.set $want_w (local.get $src_w))))
+    (if (i32.eqz (local.get $want_h)) (then (local.set $want_h (local.get $src_h))))
+    (if (i32.or (i32.le_s (local.get $want_w) (i32.const 0))
+          (i32.le_s (local.get $want_h) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $dst_bpp (select (i32.const 1) (local.get $src_bpp)
+      (i32.ne (i32.and (local.get $flags) (i32.const 0x0001)) (i32.const 0))))
+    ;; LR_COPYRETURNORG is about whether the existing object already satisfies
+    ;; the requested dimensions/depth. LR_COPYDELETEORG is explicitly ignored
+    ;; on this branch by USER.
+    (if (i32.and
+          (i32.ne (i32.and (local.get $flags) (i32.const 0x0004)) (i32.const 0))
+          (i32.and
+            (i32.and (i32.eq (local.get $want_w) (local.get $src_w))
+              (i32.eq (local.get $want_h) (local.get $src_h)))
+            (i32.and (i32.eq (local.get $dst_bpp) (local.get $src_bpp))
+              (i32.or
+                (i32.eqz (i32.and (local.get $flags) (i32.const 0x2000)))
+                (i32.ne (i32.and (local.get $src_flags) (i32.const 1))
+                  (i32.const 0))))))
+      (then (return (local.get $handle))))
+    (local.set $row_bits (i64.mul (i64.extend_i32_u (local.get $want_w))
+      (i64.extend_i32_u (local.get $dst_bpp))))
+    (local.set $stride64 (i64.shl
+      (i64.shr_u (i64.add (local.get $row_bits) (i64.const 31)) (i64.const 5))
+      (i64.const 2)))
+    (local.set $size64 (i64.mul (local.get $stride64)
+      (i64.extend_i32_u (local.get $want_h))))
+    (if (i32.or (i64.eqz (local.get $size64))
+          (i64.gt_u (local.get $size64)
+            (i64.extend_i32_u (global.get $DIB_BACKING_BASE_SIZE))))
+      (then (return (i32.const 0))))
+    (local.set $stride (i32.wrap_i64 (local.get $stride64)))
+    (memory.fill (global.get $GDI_BITMAP_PLAN) (i32.const 0) (i32.const 48))
+    (i32.store (global.get $GDI_BITMAP_PLAN) (local.get $want_w))
+    (i32.store offset=4 (global.get $GDI_BITMAP_PLAN) (local.get $want_h))
+    (i32.store offset=8 (global.get $GDI_BITMAP_PLAN) (local.get $dst_bpp))
+    (i32.store offset=12 (global.get $GDI_BITMAP_PLAN)
+      (i32.and (local.get $src_flags) (i32.const 2)))
+    (i32.store offset=16 (global.get $GDI_BITMAP_PLAN) (local.get $stride))
+    (if (i32.eq (local.get $dst_bpp) (local.get $src_bpp))
+      (then
+        (i32.store offset=20 (global.get $GDI_BITMAP_PLAN)
+          (load.field.memarg GdiBitmap palette (local.get $record)))
+        (i32.store offset=24 (global.get $GDI_BITMAP_PLAN)
+          (load.field.memarg GdiBitmap palette_count (local.get $record)))))
+    (i32.store offset=32 (global.get $GDI_BITMAP_PLAN) (i32.wrap_i64 (local.get $size64)))
+    (local.set $copy (call $gdi_bitmap_create_owned (global.get $GDI_BITMAP_PLAN)
+      (i32.const 0) (i32.const 0)
+      (i32.and (i32.eq (local.get $dst_bpp) (local.get $src_bpp))
+        (i32.ne (load.field.memarg GdiBitmap palette_count (local.get $record))
+          (i32.const 0)))
+      (select (i32.const 1) (i32.const 0)
+        (i32.ne (i32.and (local.get $flags) (i32.const 0x2000)) (i32.const 0)))
+      (select (i32.const 3) (i32.const 0)
+        (i32.ne (i32.and (local.get $src_flags) (i32.const 0x10)) (i32.const 0)))
+      (i32.const 0)))
+    (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
+    (local.set $src (global.get $GDI_BLIT_SRC_DESC))
+    (local.set $dst (global.get $GDI_BLIT_DST_DESC))
+    (if (i32.or
+          (i32.eqz (call $gdi_raster_desc_from_bitmap (local.get $handle) (local.get $src)))
+          (i32.eqz (call $gdi_raster_desc_from_bitmap (local.get $copy) (local.get $dst))))
+      (then
+        (drop (call $gdi_object_delete_full (local.get $copy)))
+        (return (i32.const 0))))
+    (if (i32.eqz (call $gdi_raster_stretch_blt
+          (i32.const 0) (i32.const 0) (local.get $dst)
+          (i32.const 0) (i32.const 0) (local.get $want_w) (local.get $want_h)
+          (local.get $src) (i32.const 0) (i32.const 0)
+          (local.get $src_w) (local.get $src_h)
+          (i32.const 0) (i32.const 0x00CC0020)))
+      (then
+        (drop (call $gdi_object_delete_full (local.get $copy)))
+        (return (i32.const 0))))
+    (if (i32.and (local.get $flags) (i32.const 0x0008))
+      (then (drop (call $gdi_object_delete_full (local.get $handle)))))
+    (local.get $copy))
+
+  ;; Convert a color icon/cursor to the two stacked 1-bpp AND/XOR planes USER
+  ;; exposes for a monochrome image. Nearest-neighbour source selection matches
+  ;; the ordinary CopyImage stretch; a luminance split chooses black/white for
+  ;; opaque color pixels while the original AND mask retains transparency.
+  (func $copy_image_monochrome_planes (param $record i32) (param $want_w i32)
+        (param $want_h i32) (result i32)
+    (local $src_w i32) (local $src_h i32) (local $stride i32)
+    (local $mask_handle i32) (local $color_handle i32) (local $copy i32)
+    (local $mask i32) (local $color i32) (local $dst i32)
+    (local $x i32) (local $y i32) (local $sx i32) (local $sy i32)
+    (local $and_bit i32) (local $xor_bit i32) (local $rgb i32) (local $luma i32)
+    (local.set $src_w (call $cursor_width (local.get $record)))
+    (local.set $src_h (call $cursor_height (local.get $record)))
+    (local.set $mask_handle (i32.load offset=12 (local.get $record)))
+    (local.set $color_handle (i32.load offset=16 (local.get $record)))
+    (local.set $stride (i32.shl
+      (i32.shr_u (i32.add (local.get $want_w) (i32.const 31)) (i32.const 5))
+      (i32.const 2)))
+    (memory.fill (global.get $GDI_BITMAP_PLAN) (i32.const 0) (i32.const 48))
+    (i32.store (global.get $GDI_BITMAP_PLAN) (local.get $want_w))
+    (i32.store offset=4 (global.get $GDI_BITMAP_PLAN)
+      (i32.shl (local.get $want_h) (i32.const 1)))
+    (i32.store offset=8 (global.get $GDI_BITMAP_PLAN) (i32.const 1))
+    (i32.store offset=12 (global.get $GDI_BITMAP_PLAN) (i32.const 2)) ;; top-down
+    (i32.store offset=16 (global.get $GDI_BITMAP_PLAN) (local.get $stride))
+    (i32.store offset=32 (global.get $GDI_BITMAP_PLAN)
+      (i32.mul (local.get $stride) (i32.shl (local.get $want_h) (i32.const 1))))
+    (local.set $copy (call $gdi_bitmap_create_owned (global.get $GDI_BITMAP_PLAN)
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
+    (local.set $mask (global.get $CURSOR_MASK_DESC))
+    (local.set $color (global.get $CURSOR_COLOR_DESC))
+    (local.set $dst (global.get $GDI_BLIT_DST_DESC))
+    (if (i32.or
+          (i32.eqz (call $gdi_raster_desc_from_bitmap
+            (local.get $mask_handle) (local.get $mask)))
+          (i32.or
+            (i32.eqz (call $gdi_raster_desc_from_bitmap (local.get $copy) (local.get $dst)))
+            (i32.and (i32.ne (local.get $color_handle) (i32.const 0))
+              (i32.eqz (call $gdi_raster_desc_from_bitmap
+                (local.get $color_handle) (local.get $color))))))
+      (then
+        (drop (call $gdi_object_delete_full (local.get $copy)))
+        (return (i32.const 0))))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_u (local.get $y) (local.get $want_h)))
+      (local.set $sy (i32.div_u (i32.mul (local.get $y) (local.get $src_h))
+        (local.get $want_h)))
+      (local.set $x (i32.const 0))
+      (block $cols_done (loop $cols
+        (br_if $cols_done (i32.ge_u (local.get $x) (local.get $want_w)))
+        (local.set $sx (i32.div_u (i32.mul (local.get $x) (local.get $src_w))
+          (local.get $want_w)))
+        (local.set $and_bit (call $gdi_raster_read_index (local.get $mask)
+          (local.get $sx) (call $cursor_plane_row (local.get $mask_handle)
+            (local.get $mask) (local.get $sy))))
+        (if (i32.lt_s (local.get $and_bit) (i32.const 0))
+          (then (local.set $and_bit (i32.const 1))))
+        (local.set $xor_bit (i32.const 0))
+        (if (local.get $color_handle)
+          (then
+            (if (i32.eqz (local.get $and_bit))
+              (then
+                (local.set $rgb (call $gdi_raster_read (local.get $color)
+                  (local.get $sx) (call $cursor_plane_row (local.get $color_handle)
+                    (local.get $color) (local.get $sy))))
+                (if (i32.ge_s (local.get $rgb) (i32.const 0))
+                  (then
+                    (local.set $luma (i32.add
+                      (i32.mul (i32.and (i32.shr_u (local.get $rgb) (i32.const 16))
+                        (i32.const 255)) (i32.const 30))
+                      (i32.add
+                        (i32.mul (i32.and (i32.shr_u (local.get $rgb) (i32.const 8))
+                          (i32.const 255)) (i32.const 59))
+                        (i32.mul (i32.and (local.get $rgb) (i32.const 255))
+                          (i32.const 11)))))
+                    (local.set $xor_bit
+                      (i32.ge_u (local.get $luma) (i32.const 12800))))))))
+          (else
+            (local.set $xor_bit (call $gdi_raster_read_index (local.get $mask)
+              (local.get $sx) (call $cursor_plane_row (local.get $mask_handle)
+                (local.get $mask) (i32.add (local.get $sy) (local.get $src_h)))))
+            (if (i32.lt_s (local.get $xor_bit) (i32.const 0))
+              (then (local.set $xor_bit (i32.const 0))))))
+        (drop (call $gdi_raster_write_index (local.get $dst)
+          (local.get $x) (local.get $y) (local.get $and_bit)))
+        (drop (call $gdi_raster_write_index (local.get $dst)
+          (local.get $x) (i32.add (local.get $y) (local.get $want_h))
+          (local.get $xor_bit)))
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br $cols)))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $rows)))
+    (local.get $copy))
+
+  ;; Materialize an ICON_TABLE module resource into CURSOR_TABLE bitmap planes.
+  ;; LoadIcon's current image is the first RT_GROUP_ICON entry. Ordinary
+  ;; CopyImage stretches that image; LR_COPYFROMRESOURCE instead starts from
+  ;; the entry whose native dimensions are closest to the requested size.
+  (func $copy_image_resource_icon (param $handle i32) (param $record i32)
+        (param $want_w i32) (param $want_h i32) (param $flags i32) (result i32)
+    (local $hinst i32) (local $resid i32) (local $group i32) (local $group_size i32)
+    (local $count i32) (local $entry i32) (local $selected i32) (local $i i32)
+    (local $entry_w i32) (local $entry_h i32) (local $current_w i32)
+    (local $current_h i32) (local $current_bpp i32) (local $score i32)
+    (local $best_score i32) (local $image i32) (local $image_size i32)
+    (local $image_id i32) (local $copy i32) (local $mono i32)
+    (local.set $hinst (i32.load (local.get $record)))
+    (local.set $resid (i32.and (i32.load offset=4 (local.get $record))
+      (i32.const 0x7FFFFFFF)))
+    (if (i32.or
+          (i32.or (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
+            (i32.eq (local.get $hinst) (global.get $ICON_FROM_OPAQUE)))
+          (i32.or
+            (i32.eq (local.get $hinst)
+              (i32.add (global.get $ICON_FROM_OPAQUE) (i32.const 1)))
+            (i32.eq (i32.and (local.get $hinst) (i32.const 0xFF000000))
+              (global.get $ICON_FROM_WIN16))))
+      (then (return (i32.const 0))))
+    (call $push_rsrc_ctx (local.get $hinst))
+    (block $done
+      (local.set $group (call $rsrc_find_data_wa (i32.const 14) (local.get $resid)))
+      (local.set $group_size (global.get $rsrc_last_size))
+      (br_if $done (i32.or (i32.eqz (local.get $group))
+        (i32.lt_u (local.get $group_size) (i32.const 20))))
+      (local.set $count (i32.load16_u offset=4 (local.get $group)))
+      (br_if $done (i32.or (i32.eqz (local.get $count))
+        (i32.gt_u (local.get $count) (i32.const 256))))
+      (br_if $done (i32.gt_u
+        (i32.add (i32.const 6) (i32.mul (local.get $count) (i32.const 14)))
+        (local.get $group_size)))
+      (local.set $entry (i32.add (local.get $group) (i32.const 6)))
+      (local.set $selected (local.get $entry))
+      (local.set $current_w (i32.load8_u (local.get $entry)))
+      (local.set $current_h (i32.load8_u offset=1 (local.get $entry)))
+      (local.set $current_bpp (i32.load16_u offset=6 (local.get $entry)))
+      (if (i32.eqz (local.get $current_w)) (then (local.set $current_w (i32.const 256))))
+      (if (i32.eqz (local.get $current_h)) (then (local.set $current_h (i32.const 256))))
+      (if (i32.eqz (local.get $want_w))
+        (then (local.set $want_w (select (i32.const 32) (local.get $current_w)
+          (i32.ne (i32.and (local.get $flags) (i32.const 0x0040)) (i32.const 0))))))
+      (if (i32.eqz (local.get $want_h))
+        (then (local.set $want_h (select (i32.const 32) (local.get $current_h)
+          (i32.ne (i32.and (local.get $flags) (i32.const 0x0040)) (i32.const 0))))))
+      (br_if $done (i32.or
+        (i32.or (i32.le_s (local.get $want_w) (i32.const 0))
+          (i32.gt_s (local.get $want_w) (i32.const 256)))
+        (i32.or (i32.le_s (local.get $want_h) (i32.const 0))
+          (i32.gt_s (local.get $want_h) (i32.const 256)))))
+      (if (i32.and
+            (i32.ne (i32.and (local.get $flags) (i32.const 0x0004)) (i32.const 0))
+            (i32.and
+              (i32.and (i32.eq (local.get $want_w) (local.get $current_w))
+                (i32.eq (local.get $want_h) (local.get $current_h)))
+              (i32.or (i32.eqz (i32.and (local.get $flags) (i32.const 0x0001)))
+                (i32.le_u (local.get $current_bpp) (i32.const 1)))))
+        (then
+          (local.set $copy (local.get $handle))
+          (br $done)))
+      (if (i32.and (local.get $flags) (i32.const 0x4000))
+        (then
+          (local.set $best_score (i32.const 0x7FFFFFFF))
+          (local.set $i (i32.const 0))
+          (block $entries_done (loop $entries
+            (br_if $entries_done (i32.ge_u (local.get $i) (local.get $count)))
+            (local.set $entry (i32.add (i32.add (local.get $group) (i32.const 6))
+              (i32.mul (local.get $i) (i32.const 14))))
+            (local.set $entry_w (i32.load8_u (local.get $entry)))
+            (local.set $entry_h (i32.load8_u offset=1 (local.get $entry)))
+            (if (i32.eqz (local.get $entry_w)) (then (local.set $entry_w (i32.const 256))))
+            (if (i32.eqz (local.get $entry_h)) (then (local.set $entry_h (i32.const 256))))
+            (local.set $score (i32.add
+              (select (i32.sub (local.get $entry_w) (local.get $want_w))
+                (i32.sub (local.get $want_w) (local.get $entry_w))
+                (i32.gt_u (local.get $entry_w) (local.get $want_w)))
+              (select (i32.sub (local.get $entry_h) (local.get $want_h))
+                (i32.sub (local.get $want_h) (local.get $entry_h))
+                (i32.gt_u (local.get $entry_h) (local.get $want_h)))))
+            (if (i32.lt_u (local.get $score) (local.get $best_score))
+              (then
+                (local.set $best_score (local.get $score))
+                (local.set $selected (local.get $entry))))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $entries)))))
+      (local.set $image_id (i32.load16_u offset=12 (local.get $selected)))
+      (local.set $image (call $rsrc_find_data_wa (i32.const 3) (local.get $image_id)))
+      (local.set $image_size (global.get $rsrc_last_size))
+      (br_if $done (i32.or (i32.eqz (local.get $image))
+        (i32.lt_u (local.get $image_size) (i32.const 12))))
+      (local.set $copy (call $cursor_create_from_resource
+        (call $w2g (local.get $image)) (local.get $image_size) (i32.const 1)
+        (i32.const 0x00030000) (local.get $want_w) (local.get $want_h)
+        (i32.const 0))))
+    (call $pop_rsrc_ctx)
+    (if (i32.and
+          (i32.and (i32.ne (local.get $copy) (i32.const 0))
+            (i32.ne (local.get $copy) (local.get $handle)))
+          (i32.ne (i32.and (local.get $flags) (i32.const 0x0001)) (i32.const 0)))
+      (then
+        ;; The resource decoder preserves native color. Convert that private
+        ;; intermediate through the same plane path, consuming it on success.
+        (local.set $mono (call $copy_image_icon_cursor (local.get $copy)
+          (i32.const 1) (local.get $want_w) (local.get $want_h)
+          (i32.const 0x0009)))
+        (if (local.get $mono)
+          (then (local.set $copy (local.get $mono)))
+          (else
+            (drop (call $icon_destroy_handle (local.get $copy)))
+            (local.set $copy (i32.const 0))))))
+    (local.get $copy))
+
+  (func $copy_image_icon_cursor (param $handle i32) (param $type i32)
+        (param $want_w i32) (param $want_h i32) (param $flags i32) (result i32)
+    (local $record i32) (local $table_record i32) (local $src_w i32) (local $src_h i32)
+    (local $mask i32) (local $color i32) (local $copy i32)
+    (local $is_icon i32) (local $xhot i32) (local $yhot i32)
+    (local.set $is_icon (i32.eq (local.get $type) (i32.const 1)))
+    (local.set $record (call $cursor_record (local.get $handle)))
+    (if (local.get $record)
+      (then
+        (if (i32.ne (i32.ne (i32.load (local.get $record)) (i32.const 0))
+              (local.get $is_icon))
+          (then (return (i32.const 0))))
+        (local.set $src_w (call $cursor_width (local.get $record)))
+        (local.set $src_h (call $cursor_height (local.get $record)))
+        (if (i32.eqz (local.get $want_w))
+          (then (local.set $want_w (select (i32.const 32) (local.get $src_w)
+            (i32.ne (i32.and (local.get $flags) (i32.const 0x0040)) (i32.const 0))))))
+        (if (i32.eqz (local.get $want_h))
+          (then (local.set $want_h (select (i32.const 32) (local.get $src_h)
+            (i32.ne (i32.and (local.get $flags) (i32.const 0x0040)) (i32.const 0))))))
+        (if (i32.or (i32.le_s (local.get $want_w) (i32.const 0))
+              (i32.or (i32.gt_s (local.get $want_w) (i32.const 256))
+                (i32.or (i32.le_s (local.get $want_h) (i32.const 0))
+                  (i32.gt_s (local.get $want_h) (i32.const 256)))))
+          (then (return (i32.const 0))))
+        (if (i32.and
+              (i32.ne (i32.and (local.get $flags) (i32.const 0x0004)) (i32.const 0))
+              (i32.and
+                (i32.and (i32.eq (local.get $want_w) (local.get $src_w))
+                  (i32.eq (local.get $want_h) (local.get $src_h)))
+                (i32.or (i32.eqz (i32.and (local.get $flags) (i32.const 0x0001)))
+                  (i32.eqz (i32.load offset=16 (local.get $record))))))
+          (then (return (local.get $handle))))
+        (if (i32.and (i32.and (local.get $flags) (i32.const 0x0001))
+              (i32.ne (i32.load offset=16 (local.get $record)) (i32.const 0)))
+          (then
+            (local.set $mask (call $copy_image_monochrome_planes
+              (local.get $record) (local.get $want_w) (local.get $want_h))))
+          (else
+            (if (i32.load offset=16 (local.get $record))
+              (then
+                (local.set $color (call $gdi_bitmap_clone_owned
+                  (i32.load offset=16 (local.get $record))))
+                (if (local.get $color)
+                  (then (local.set $color (call $cursor_scale_bitmap
+                    (local.get $color) (local.get $want_w) (local.get $want_h)))))))
+            (if (i32.or (i32.eqz (i32.load offset=16 (local.get $record)))
+                  (local.get $color))
+              (then
+                (local.set $mask (call $gdi_bitmap_clone_owned
+                  (i32.load offset=12 (local.get $record))))
+                (if (local.get $mask)
+                  (then (local.set $mask (call $cursor_scale_bitmap
+                    (local.get $mask) (local.get $want_w)
+                    (select (i32.shl (local.get $want_h) (i32.const 1))
+                      (local.get $want_h) (i32.eqz (local.get $color)))))))))))
+        (if (i32.eqz (local.get $mask))
+          (then
+            (if (local.get $color)
+              (then (drop (call $gdi_object_delete_full (local.get $color)))))
+            (return (i32.const 0))))
+        (if (local.get $is_icon)
+          (then
+            (local.set $xhot (i32.shr_u (local.get $want_w) (i32.const 1)))
+            (local.set $yhot (i32.shr_u (local.get $want_h) (i32.const 1))))
+          (else
+            (local.set $xhot (i32.wrap_i64 (i64.div_u
+              (i64.mul (i64.extend_i32_u (i32.load offset=4 (local.get $record)))
+                (i64.extend_i32_u (local.get $want_w)))
+              (i64.extend_i32_u (local.get $src_w)))))
+            (local.set $yhot (i32.wrap_i64 (i64.div_u
+              (i64.mul (i64.extend_i32_u (i32.load offset=8 (local.get $record)))
+                (i64.extend_i32_u (local.get $want_h)))
+              (i64.extend_i32_u (local.get $src_h)))))))
+        (local.set $copy (call $cursor_intern (local.get $is_icon)
+          (local.get $xhot) (local.get $yhot) (local.get $mask) (local.get $color)))
+        (if (i32.eqz (local.get $copy))
+          (then
+            (drop (call $gdi_object_delete_full (local.get $mask)))
+            (if (local.get $color)
+              (then (drop (call $gdi_object_delete_full (local.get $color)))))
+            (return (i32.const 0))))
+        (if (i32.and (local.get $flags) (i32.const 0x0008))
+          (then (drop (call $icon_destroy_handle (local.get $handle)))))
+        (return (local.get $copy))))
+    ;; LoadIcon/LoadCursor sources are shared opaque/resource handles in this
+    ;; runtime. Their Win98 default extent is 32x32. Never claim a differently
+    ;; sized or monochrome result without pixels to back it; exact copies still
+    ;; get independent ownership and cursor wrappers unwrap on presentation.
+    (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
+    (local.set $table_record (call $icon_table_record (local.get $handle)))
+    (if (local.get $table_record)
+      (then
+        (if (i32.eq (local.get $is_icon)
+              (i32.eq (i32.load (local.get $table_record))
+                (i32.add (global.get $ICON_FROM_OPAQUE) (i32.const 1))))
+          (then (return (i32.const 0))))
+        (if (local.get $is_icon)
+          (then
+            (local.set $copy (call $copy_image_resource_icon
+              (local.get $handle) (local.get $table_record)
+              (local.get $want_w) (local.get $want_h) (local.get $flags)))
+            (if (local.get $copy)
+              (then
+                (if (i32.and (i32.ne (local.get $copy) (local.get $handle))
+                      (i32.ne (i32.and (local.get $flags) (i32.const 0x0008))
+                        (i32.const 0)))
+                  (then (drop (call $icon_destroy_handle (local.get $handle)))))
+                (return (local.get $copy)))))))
+      (else
+        (if (i32.or
+              (i32.eq (i32.and (local.get $handle) (i32.const 0xFFFF0000))
+                (global.get $ICON_HANDLE_TAG))
+              (i32.eq (i32.and (local.get $handle) (i32.const 0xFFFF0000))
+                (global.get $CURSOR_HANDLE_TAG)))
+          (then (return (i32.const 0))))))
+    (if (i32.eqz (local.get $want_w)) (then (local.set $want_w (i32.const 32))))
+    (if (i32.eqz (local.get $want_h)) (then (local.set $want_h (i32.const 32))))
+    (if (i32.or
+          (i32.ne (i32.and (local.get $flags) (i32.const 0x0001)) (i32.const 0))
+          (i32.or (i32.ne (local.get $want_w) (i32.const 32))
+            (i32.ne (local.get $want_h) (i32.const 32))))
+      (then (return (i32.const 0))))
+    (if (i32.and (local.get $flags) (i32.const 0x0004))
+      (then (return (local.get $handle))))
+    (if (local.get $is_icon)
+      (then (local.set $copy (call $icon_copy_handle (local.get $handle))))
+      (else
+        (local.set $copy (call $icon_private_slot
+          (i32.add (global.get $ICON_FROM_OPAQUE) (i32.const 1))
+          (call $icon_opaque_cursor_source (local.get $handle))))))
+    (if (i32.and (i32.ne (local.get $copy) (i32.const 0))
+          (i32.ne (i32.and (local.get $flags) (i32.const 0x0008)) (i32.const 0)))
+      (then (drop (call $icon_destroy_handle (local.get $handle)))))
+    (local.get $copy))
+
+  (func $copy_image_handle (param $handle i32) (param $type i32)
+        (param $want_w i32) (param $want_h i32) (param $flags i32) (result i32)
+    (if (i32.eq (local.get $type) (i32.const 0))
+      (then (return (call $copy_image_bitmap (local.get $handle)
+        (local.get $want_w) (local.get $want_h) (local.get $flags)))))
+    (if (i32.or (i32.eq (local.get $type) (i32.const 1))
+          (i32.eq (local.get $type) (i32.const 2)))
+      (then (return (call $copy_image_icon_cursor (local.get $handle)
+        (local.get $type) (local.get $want_w) (local.get $want_h)
+        (local.get $flags)))))
+    (i32.const 0))

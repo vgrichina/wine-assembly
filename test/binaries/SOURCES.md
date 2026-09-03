@@ -404,3 +404,22 @@ curl -sL -o /tmp/modules_0.zip https://opengameart.org/sites/default/files/modul
 unzip -o -d /tmp/modules /tmp/modules_0.zip
 cp /tmp/modules/devhell1.xm binaries/devhell1.xm
 ```
+
+## Demoscene
+
+**Heaven Seven (final Windows build)** — Exceed's winning 64K intro from
+Mekka & Symposium 2000. The web launcher uses `HEAVEN7W.EXE`; the archive also
+contains a DOS build and the original release notes.
+
+- Source: `https://archive.scene.org/pub/parties/2000/mekkasymposium00/in64/h7-final.zip`
+- Archive size: 172,380 bytes
+- Archive SHA-256: `c3904ff7172d767ca68f08d4f562dc523e025c7cbdb957f85dc95138ae054b10`
+- `HEAVEN7W.EXE` size: 65,536 bytes
+- `HEAVEN7W.EXE` SHA-256: `3171d7bbe7faf70d5f3a6f6e24292e33a5007316156734a63b42cdf2f8805453`
+- Destination: `demoscene/heaven-seven/HEAVEN7W.EXE`
+
+```bash
+curl -fL -o /tmp/h7-final.zip \
+  https://archive.scene.org/pub/parties/2000/mekkasymposium00/in64/h7-final.zip
+unzip -j /tmp/h7-final.zip HEAVEN7W.EXE -d binaries/demoscene/heaven-seven
+```
