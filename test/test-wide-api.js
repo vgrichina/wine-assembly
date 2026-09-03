@@ -9,8 +9,27 @@ const { compileSrcWasm } = require('./compile-src');
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
 
+const dynamicModuleTestExports = String.raw`
+  (func (export "test_call_LoadLibraryA") (param $name i32) (result i32)
+    (local $sp i32)
+    (local.set $sp (global.get $esp))
+    (call $handle_LoadLibraryA (local.get $name)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $sp))
+    (global.get $eax))
+  (func (export "test_call_GetProcAddress")
+        (param $module i32) (param $name i32) (result i32)
+    (local $sp i32)
+    (local.set $sp (global.get $esp))
+    (call $handle_GetProcAddress (local.get $module) (local.get $name)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $sp))
+    (global.get $eax))
+`;
+
 async function main() {
-  const wasmBytes = compileSrcWasm();
+  const wasmBytes = compileSrcWasm((file, source) =>
+    file === '13-exports.wat' ? `${source}\n${dynamicModuleTestExports}\n` : source);
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const ctx = { getMemory: () => memory.buffer, renderer: null, resourceJson: {} };
   const base = createHostImports(ctx);
@@ -122,6 +141,22 @@ async function main() {
     (e.test_call_GetModuleHandleA(writeAscii('USER32.DLL')) >>> 0) === STATIC_SYS_DLL_HANDLE_BASE + 1);
   check('GetModuleHandleA recognizes statically dispatched COMCTL32',
     (e.test_call_GetModuleHandleA(writeAscii('comctl32.dll')) >>> 0) === STATIC_SYS_DLL_HANDLE_BASE + 2);
+  const dsound = writeAscii('C:\\WINDOWS\\SYSTEM\\DSOUND.DLL');
+  const dsoundHandle = e.test_call_LoadLibraryA(dsound) >>> 0;
+  check('LoadLibraryA preserves statically dispatched DSOUND identity',
+    dsoundHandle === STATIC_SYS_DLL_HANDLE_BASE + 5,
+    `handle=0x${dsoundHandle.toString(16)}`);
+  const directSoundCreate = e.test_call_GetProcAddress(dsoundHandle, 1) >>> 0;
+  const directSoundCreateWa = wa(directSoundCreate);
+  const directSoundCreateId = require('../src/api_table.json')
+    .find(entry => entry.name === 'DirectSoundCreate').id;
+  check('GetProcAddress resolves DSOUND ordinal 1 from its pseudo-handle',
+    directSoundCreate !== 0 &&
+      dv.getUint32(directSoundCreateWa, true) === 0x80000001 &&
+      dv.getUint32(directSoundCreateWa + 4, true) === directSoundCreateId,
+    `thunk=0x${directSoundCreate.toString(16)}`);
+  check('GetProcAddress leaves unsupported DSOUND ordinals unresolved',
+    e.test_call_GetProcAddress(dsoundHandle, 3) === 0);
   const oleExpDir = e.guest_alloc(32);
   const oleDllName = writeAscii('OLE32.DLL');
   const oleLoadAddr = oleExpDir - 0x1800;
