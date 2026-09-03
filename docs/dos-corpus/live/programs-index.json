@@ -187,7 +187,8 @@
   "/tmp/demos/1994-a-amana/AMANAMAN.EXE": {
     "src": "programs/1994-a-amana.js",
     "exe": "amanaman.exe",
-    "args": ""
+    "args": "",
+    "env": "ULTRASND=240,1,1,11,7"
   },
   "/tmp/demos/1994-a-anarchy_/ANARCHY.EXE": {
     "src": "programs/1994-a-anarchy.js",
@@ -747,7 +748,8 @@
   "/tmp/demos/1995-b-bc_dtm2/DTM2.EXE": {
     "src": "programs/1995-b-bc-dtm2.js",
     "exe": "dtm2.exe",
-    "args": ""
+    "args": "",
+    "sound": "none"
   },
   "/tmp/demos/1995-b-beta/BETA.EXE": {
     "src": "programs/1995-b-beta.js",
@@ -757,7 +759,8 @@
   "/tmp/demos/1995-b-biolan/BIOLAN.EXE": {
     "src": "programs/1995-b-biolan.js",
     "exe": "biolan.exe",
-    "args": ""
+    "args": "",
+    "sound": "none"
   },
   "/tmp/demos/1995-b-bit/bit.exe": {
     "src": "programs/1995-b-bit.js",
@@ -992,6 +995,7 @@
   "/tmp/demos/1995-c-cytopyge/CYTOPYGE.EXE": {
     "src": "programs/1995-c-cytopyge.js",
     "exe": "cytopyge.exe",
-    "args": ""
+    "args": "",
+    "sound": "none"
   }
 }

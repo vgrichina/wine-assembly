@@ -108,13 +108,20 @@ function main() {
   // two tiles apart. The value names the script, the file to start inside it,
   // and the command tail the sweep found it wanted -- AMBIENT.EXE renders only
   // with `/no_snd`, and a page that dropped that would show a screenshot the
-  // Run button cannot reproduce.
+  // Run button cannot reproduce. The same goes for the sweep's other two
+  // per-program decisions: the ULTRASND variable it offered a program that
+  // asked for a Gravis card (AMANAMAN.EXE quits without it), and the machine
+  // with no sound card at all for the few that draw only on one (DTM2.EXE,
+  // BIOLAN.EXE, CYTOPYGE.EXE). The sweep records "gus"; the page needs the
+  // variable itself, and it is the same string the sweep's retry set.
   const index = {};
   for (const r of rows) {
     index[r.exe] = {
       src: `programs/${slugOf(path.basename(path.dirname(r.exe)))}.js`,
       exe: path.basename(r.exe).toLowerCase(),
       args: r.args || '',
+      ...(r.env ? { env: r.env === 'gus' ? 'ULTRASND=240,1,1,11,7' : String(r.env) } : {}),
+      ...(r.sound && r.sound !== 'full' ? { sound: r.sound } : {}),
     };
   }
   fs.writeFileSync(path.join(out, 'programs-index.json'), `${JSON.stringify(index, null, 2)}\n`);

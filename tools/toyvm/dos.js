@@ -540,6 +540,35 @@ function fileKey(name) {
   return base ? base.toLowerCase() : null;
 }
 
+// A DOS filespec as the 11-character NAME.EXT template FindFirst keeps in the
+// DTA: each field padded with spaces, `*` filling the rest of its field with
+// `?`, upper case. "elysium.mod" -> "ELYSIUM MOD", "*.mod" -> "????????MOD".
+// Null for a name no DOS directory could hold.
+function dosPattern(spec) {
+  const [name = '', ext = ''] = String(spec).toUpperCase().split('.', 2);
+  const field = (s, n) => {
+    let out = '';
+    for (const c of s) {
+      if (c === '*') { out = out.padEnd(n, '?'); break; }
+      if (out.length < n) out += c;
+    }
+    return out.padEnd(n, ' ');
+  };
+  if (!name && !ext) return null;
+  return field(name, 8) + field(ext, 3);
+}
+
+// Whether a directory entry fits the template: `?` takes any character,
+// padding included, which is how "FILE????.TXT" finds FILE.TXT on DOS too.
+function dosMatch(pattern, entry) {
+  const t = dosPattern(entry);
+  if (!t) return false;
+  for (let i = 0; i < 11; i++) {
+    if (pattern[i] !== '?' && pattern[i] !== t[i]) return false;
+  }
+  return true;
+}
+
 function newConsole(mem) {
   const cells = CON_COLS * CON_ROWS;
   for (let i = 0; i < cells; i++) { mem[VRAM_TEXT + i * 2] = 0x20; mem[VRAM_TEXT + i * 2 + 1] = 0x07; }
@@ -751,6 +780,7 @@ class Machine {
     this.autoKeys = opts.autoKeys && opts.autoKeys.length ? opts.autoKeys : AUTO_KEYS;
     this.autoKeyAt = 0;
     this.autoKeyScreen = null;   // the screen the last menu answer was read off
+    this.autoKeyAnswered = null; // its text lines: what the next menu did not draw
     this.autoKeyQueue = [];      // the rest of a multi-character typed answer
     this.autoKeyRead = 0;        // keys chosen by reading, not by rotating
     // The keyboard as hardware: scancodes waiting to be delivered as IRQ1, and
@@ -1048,6 +1078,62 @@ class Machine {
     return hit ? `${this.fileRoot}/${hit}` : null;
   }
 
+  // Where the DTA is: wherever AH=1Ah last put it, else the PSP's own at +80h,
+  // which is where DOS starts every program's.
+  dtaAddr() {
+    return this.dta || ((this.curPsp << 4) + 0x80);
+  }
+
+  // Everything a directory search can find: the files beside the executable
+  // and the ones this run created, by name and size. The browser's fs shim
+  // has no statSync, so a size comes from reading the file when it must.
+  dirEntries() {
+    if (this.dirCache === undefined) {
+      try { this.dirCache = this.fileRoot ? fs.readdirSync(this.fileRoot) : []; } catch { this.dirCache = []; }
+    }
+    const out = [];
+    const seen = new Set();
+    for (const [key, rec] of this.tempFiles) { out.push({ name: key.toUpperCase(), size: rec.len }); seen.add(key); }
+    for (const f of this.dirCache) {
+      if (seen.has(f.toLowerCase())) continue;
+      let size = 0;
+      try { size = fs.statSync(`${this.fileRoot}/${f}`).size; } catch {
+        try { size = fs.readFileSync(`${this.fileRoot}/${f}`).length; } catch { continue; }
+      }
+      out.push({ name: f.toUpperCase(), size });
+    }
+    return out;
+  }
+
+  // One step of a FindFirst/FindNext search whose template and position are
+  // in the DTA's reserved bytes: fills the entry, advances the position, and
+  // fails with `errNoMore` (2 "file not found" from FindFirst, 18 "no more
+  // files" from FindNext) when nothing further fits.
+  findNext(r, errNoMore) {
+    const dta = this.dtaAddr();
+    let pattern = '';
+    for (let i = 0; i < 11; i++) pattern += String.fromCharCode(this.mem[dta + 1 + i] || 0x20);
+    const entries = this.dirEntries();
+    let at = this.mem[dta + 0x0D] | (this.mem[dta + 0x0E] << 8);
+    for (; at < entries.length; at++) {
+      const e = entries[at];
+      if (!dosMatch(pattern, e.name)) continue;
+      this.mem[dta + 0x0D] = (at + 1) & 0xFF; this.mem[dta + 0x0E] = ((at + 1) >> 8) & 0xFF;
+      this.mem[dta + 0x15] = 0x20;                    // archive: a plain file
+      this.mem[dta + 0x16] = 0; this.mem[dta + 0x17] = 0;               // 00:00
+      this.mem[dta + 0x18] = 0x21; this.mem[dta + 0x19] = 0x1E;         // 1995-01-01
+      for (let i = 0; i < 4; i++) this.mem[dta + 0x1A + i] = (e.size >>> (8 * i)) & 0xFF;
+      const name = e.name.slice(0, 12);
+      for (let i = 0; i < 13; i++) this.mem[dta + 0x1E + i] = i < name.length ? name.charCodeAt(i) : 0;
+      r.set('ax', 0);
+      r.setResultCf(false);
+      return true;
+    }
+    this.mem[dta + 0x0D] = at & 0xFF; this.mem[dta + 0x0E] = (at >> 8) & 0xFF;
+    r.setResultCf(true); r.set('ax', errNoMore);
+    return true;
+  }
+
   openFile(name) {
     // Character devices are opened by name, not found on disk. EMMXXXX0 is the
     // one that matters here: the *other* way to detect expanded memory, older
@@ -1247,33 +1333,19 @@ class Machine {
 
     // "[1] a GUS or no Sound card at all" and "p. No sound" are the same shape:
     // a single-character selector, then the label it selects.
-    const opts = [];
-    for (const line of lines) {
-      // A selector starts a line, follows a run of spaces, or follows a slash
-      // or comma -- CYCLE.EXE lays its whole menu out on one line as
-      // "(G)ravis / (O)thers / (N)one", and requiring two spaces missed every
-      // option after the first.
-      //
-      // The line start absorbs its indent: do.exe writes its sound menu to
-      // B800 as " [1] - None", one space in, which is neither the start of the
-      // line nor a run of two spaces, so nothing on that menu was an option at
-      // all and the reader fell through to the rotation.
-      //
-      // The separator after the selector is whatever the author felt like:
-      // CYBOMAN2.EXE writes "        0> NoSound" and COLORS.EXE "0 - Silence",
-      // and with only ]).: accepted neither menu had a single option on it, so
-      // both fell through to the rotation and sat on the prompt forever. A bare
-      // "-" cannot fire on running text, because the selector still has to be
-      // one character preceded by a line start, two spaces, or a slash/comma.
-      const re = /(?:^\s*|\s{2,}|[/,]\s*)([[(]?)([0-9A-Za-z])[\]).:>-](\s*)([^[(]{2,40})/g;
-      for (let m; (m = re.exec(line));) {
-        // "(N)one" puts the selector INSIDE the word, so the label as captured
-        // is "one" and reads as neither a yes nor a no. Put the letter back
-        // when nothing separates it from the rest.
-        const label = (m[1] === '(' && m[3] === '' ? m[2] + m[4] : m[4]).trim();
-        opts.push({ ch: m[2], label });
-      }
-    }
+    // Only text this menu drew counts as one of its options. CYCLE.EXE prints
+    // its "Select a SoundDevice" list over the previous menu without clearing
+    // the screen, so row 3 read "3. Soundblasteris Ultra Sound / (O)thers
+    // ( Sb,LPT,... )": the plain Sound Blaster was rejected for the "Ultra"
+    // left over from the line above it, and the "(O)" from the menu already
+    // answered was pressed again. A character that is the same as it was
+    // when the last menu was answered is scrollback, so it is blanked before
+    // the options are read -- and when that leaves no options at all (the
+    // program redrew the same menu after refusing a key) the whole screen is
+    // read as before.
+    const fresh = this.freshLines(lines);
+    const opts = this.menuOptions(fresh);
+    if (!opts.length && fresh !== lines) opts.push(...this.menuOptions(lines));
     // With a listener present, a plain Sound Blaster is the answer when one is
     // on the menu: that is the card behind the ports. Not a Pro or a 16 -- the
     // DSP answers 2.01 and a driver told to expect more refuses it -- and not
@@ -1283,6 +1355,30 @@ class Machine {
       if (sb) return key(sb.ch);
       const fm = opts.find(o => ADLIB_LABEL.test(o.label));
       if (fm) return key(fm.ch);
+      // The card's own settings when the menu asks for them one at a time
+      // (CYCLE.EXE: "Select Soundblaster port", then IRQ): port 220h, IRQ 7,
+      // DMA 1 are what BLASTER= would say, and the first option offered is
+      // 210h on IRQ 5, which nothing here answers.
+      const asks = fresh.filter(l => /port|address|base|irq|interrupt|dma/i.test(l)).pop() || '';
+      const setting = /port|address|base/i.test(asks) ? /\b220h?\b/i
+        : /irq|interrupt/i.test(asks) ? /\b(irq\s*)?7\b/i
+          : /dma/i.test(asks) ? /\b(dma\s*)?1\b/i : null;
+      if (setting) {
+        const own = opts.find(o => setting.test(o.label));
+        if (own) return key(own.ch);
+      }
+      // A list of replay rates ("5. 20000 Hz (some 286)"): the one nearest
+      // the mixer's own rate from below, since the first offered is the
+      // 4000 Hz meant for "real slow computers".
+      const rates = opts.map(o => ({ o, hz: (/(\d{4,5})\s*hz/i.exec(o.label) || [])[1] | 0 }))
+        .filter(r => r.hz);
+      if (rates.length >= 2 && rates.length === opts.length) {
+        const want = this.audio.rate || 22050;
+        const fit = rates.filter(r => r.hz <= want);
+        const best = (fit.length ? fit : rates).reduce((a, b) =>
+          (Math.abs(b.hz - want) < Math.abs(a.hz - want) ? b : a));
+        return key(best.o.ch);
+      }
     }
     const silent = opts.find(o => SILENT_LABEL.test(o.label));
     if (silent) return key(silent.ch);
@@ -1317,6 +1413,80 @@ class Machine {
     // than a key that is not on the menu at all.
     if (opts.length >= 2) return key(opts[0].ch);
     return null;
+  }
+
+  // The screen with the tail of every row that still reads as it did when the
+  // last menu was answered blanked out, or the same array when nothing was
+  // answered yet. Only the TAIL: an overwrite leaves the old line's end
+  // showing past the new one, but a menu drawn over another menu shares its
+  // "    1. " selectors column for column, and blanking every unchanged
+  // character took the selectors off CYCLE.EXE's IRQ list and left "IRQ 5"
+  // with nothing to press.
+  //
+  // The page scrolls as a program prints its next menu, so the old text is
+  // some rows further up than it was: line the two screens up at the shift
+  // that leaves the most rows identical before comparing.
+  freshLines(lines) {
+    const was = this.autoKeyAnswered;
+    if (!was) return lines;
+    let shift = 0, best = -1;
+    for (let k = 0; k < was.length; k++) {
+      let n = 0;
+      for (let i = 0; i + k < was.length && i < lines.length; i++) {
+        if (lines[i] && lines[i] === was[i + k]) n++;
+      }
+      if (n > best) { best = n; shift = k; }
+    }
+    return lines.map((line, row) => {
+      const old = was[row + shift] || '';
+      let x = Math.max(line.length, old.length);
+      while (x > 0 && (line[x - 1] || ' ') === (old[x - 1] || ' ')) x--;
+      return /\S/.test(line.slice(x)) ? line.slice(0, x) : line;
+    });
+  }
+
+  // The single-character selectors on a screen and the label each one selects.
+  menuOptions(lines) {
+    const opts = [];
+    for (const line of lines) {
+      // A selector starts a line, follows a run of spaces, or follows a slash
+      // or comma -- CYCLE.EXE lays its whole menu out on one line as
+      // "(G)ravis / (O)thers / (N)one", and requiring two spaces missed every
+      // option after the first.
+      //
+      // The line start absorbs its indent: do.exe writes its sound menu to
+      // B800 as " [1] - None", one space in, which is neither the start of the
+      // line nor a run of two spaces, so nothing on that menu was an option at
+      // all and the reader fell through to the rotation.
+      //
+      // The separator after the selector is whatever the author felt like:
+      // CYBOMAN2.EXE writes "        0> NoSound" and COLORS.EXE "0 - Silence",
+      // and with only ]).: accepted neither menu had a single option on it, so
+      // both fell through to the rotation and sat on the prompt forever. A bare
+      // "-" cannot fire on running text, because the selector still has to be
+      // one character preceded by a line start, two spaces, or a slash/comma.
+      // A label may carry one parenthesised tail -- CYCLE.EXE's "(O)thers
+      // ( Sb,LPT,... )" is the Sound Blaster option, and cut at the "(" it
+      // read as "Others", which is nothing. The tail has to hold more than
+      // one character, or "(G)ravis ... / (O)thers" hands the next option's
+      // selector to the previous option's label. A label
+      // stops at a slash for the same reason: greedy across "Sound / (O)"
+      // it ate the separator the next option needed and that option vanished.
+      const re = /(?:^\s*|\s{2,}|[/,]\s*)([[(]?)([0-9A-Za-z])[\]).:>-](\s*)([^[(/]{2,40}(?:\(\s*[^)]{2,40}\))?)/g;
+      for (let m; (m = re.exec(line));) {
+        // "(N)one" puts the selector INSIDE the word, so the label as captured
+        // is "one" and reads as neither a yes nor a no. Put the letter back
+        // when nothing separates it from the rest.
+        const label = (m[1] === '(' && m[3] === '' ? m[2] + m[4] : m[4]).trim();
+        opts.push({ ch: m[2], label });
+      }
+      // BRW.EXE's "Choose IRQ: 1=2, 2=3, 3=5, 4=7, 5=11, 6=15" and "Choose
+      // I/O port: 1=210h, 2=220h etc..": selector, equals, value, comma. Two
+      // pairs at least, so an equation in running text is not a menu.
+      const pairs = [...line.matchAll(/(?:^|[\s,])([0-9A-Za-z])=([^,\s]+)/g)];
+      if (pairs.length >= 2) for (const p of pairs) opts.push({ ch: p[1], label: p[2] });
+    }
+    return opts;
   }
 
   // The keystrokes that walk an arrow-key menu from its highlight marker down
@@ -1474,12 +1644,14 @@ class Machine {
     // A typed answer is more than one keystroke, so it queues; the program
     // reads it one INT 16h at a time exactly as it would from a real typist.
     if (this.autoKeyQueue.length) return this.autoKeyQueue.shift();
-    const shown = this.screenText().join('\n');
+    const text = this.screenText();
+    const shown = text.join('\n');
     if (shown !== this.autoKeyScreen) {
       this.autoKeyScreen = shown;
       const k = this.menuKey();
       const say = (ks) => this.log(`autokey read "${ks.map(x =>
         String.fromCharCode(x.al)).join('')}" off the screen`);
+      if (k) this.autoKeyAnswered = text;
       if (Array.isArray(k)) {
         this.autoKeyRead++;
         say(k);
@@ -1537,11 +1709,13 @@ class Machine {
     // gate that compares text alone sees the demo ignore every key after the
     // first and stops -- and the walk that needs several keys never finishes.
     const hl = this.screenHighlight();
-    const shown = `${this.screenText().join('\n')}\n@${hl ? `${hl.row},${hl.from}` : ''}`;
+    const text = this.screenText();
+    const shown = `${text.join('\n')}\n@${hl ? `${hl.row},${hl.from}` : ''}`;
     if (shown === this.autoKeyScreen) return;
     this.autoKeyScreen = shown;
     const k = this.menuKey();
     if (!k) return;
+    this.autoKeyAnswered = text;
     const ks = Array.isArray(k) ? k : [k];
     this.autoKeyRead++;
     // Scan codes as well as characters: an arrow key has no character at all,
@@ -3500,7 +3674,18 @@ class Machine {
         // of memory and is expected to shrink itself (AH=4Ah) before it EXECs.
         // Placing the child above the parent's claim instead left CATWALK's
         // player with 60KB and it failed its first AH=48h.
-        const pspSeg = this.imageTop;
+        //
+        // ...but above every block the parent has ALLOCATED since. A parent
+        // that shrank and then took a block with AH=48h owns that block, and
+        // DOS loads the child past it: DADEMO3.EXE shrinks to 160KB, takes 2KB
+        // at 2811:0 for its resident player, and EXECs race.exe -- loaded at
+        // 2810:0 it overwrote the player's instrument table, and the player
+        // divided by a C2 speed of zero on the first note. A parent still
+        // holding everything up to the ceiling is left as before: that is the
+        // never-shrunk stub, and its allocation top says nothing about where
+        // the child can go.
+        const pspSeg = this.allocTop < DEFAULT_ALLOC_TOP
+          ? Math.max(this.imageTop, this.allocTop) : this.imageTop;
         if (pspSeg + 0x1000 > DEFAULT_ALLOC_TOP) { r.setResultCf(true); r.set('ax', 8); return true; }
         const info = loadExe(this.mem, img, { loadSeg: pspSeg + 0x10, pspSeg });
 
@@ -3725,7 +3910,15 @@ class Machine {
         if ((al & 0xFF) === 0x00) r.set('ax', this.allocStrategy || 0);
         else if ((al & 0xFF) === 0x01) this.allocStrategy = r.get('bx') & 0xFFFF;
         else if ((al & 0xFF) === 0x02) r.set('ax', (r.get('ax') & 0xFF00) | 0);
-        else if ((al & 0xFF) === 0x03) { /* no UMBs to link */ }
+        else if ((al & 0xFF) === 0x03) {
+          // Link the upper memory blocks into the chain. There are none -- no
+          // EMM386, no DOS=UMB -- and DOS without any says so with error 1,
+          // not with success. ShellVT.EXE (RUNDEMO.EXE's resident MOD player)
+          // asked, was told yes, took the biggest block it could get and put
+          // its resident half at A01A:0 -- the VGA window -- from where the
+          // child it then ran jumped into data. Refused, it stays low.
+          if ((r.get('bx') & 0xFFFF) !== 0) { r.setResultCf(true); r.set('ax', 1); return true; }
+        }
         else return false;
         r.setResultCf(false);
         return true;
@@ -3947,7 +4140,13 @@ class Machine {
           this.memTrim();
           // Shrinking is also what makes room for a child: a loader stub that
           // gives back everything above itself expects EXEC to load there.
-          this.imageTop = Math.min(this.imageTop, seg + want);
+          // And a child goes above the block as RESIZED, whichever way that
+          // went against the image's minimum: ShellVT.EXE (RUNDEMO.EXE's
+          // resident MOD player) sizes itself to 283KB for its heap, then
+          // EXECs the demo -- and with only a shrink honoured here the demo
+          // was loaded at 184F:0, inside that heap, over the player's
+          // buffers, and the player jumped into data.
+          this.imageTop = seg + want;
         }
         r.setResultCf(false);
         return true;
@@ -3969,6 +4168,27 @@ class Machine {
         return true;
       }
       case 0x1A: this.dta = this.lin(r, 'ds', r.get('dx')); return true;
+      case 0x2F:                                // get DTA -> ES:BX
+        r.set('es', (this.dtaAddr() >> 4) & 0xFFFF); r.set('bx', this.dtaAddr() & 0xF);
+        return true;
+      // FindFirst / FindNext over the directory the program was started in.
+      // ShellVT.EXE, the MOD-player shell RUNDEMO.EXE hands the demo to when
+      // a Sound Blaster is chosen, locates `elysium.mod` this way -- and with
+      // nothing here it opened "C:\" plus an empty name, printed "Error en el
+      // fichero" 24 times and never ran mainpart.exe. The search state lives
+      // in the DTA's reserved bytes exactly as DOS keeps it, so a program that
+      // moves the DTA between calls, or nests two searches, still works.
+      case 0x4E: {
+        const spec = this.guestPath(r);
+        const pat = dosPattern(fileKey(spec) || '');
+        if (!pat) { r.setResultCf(true); r.set('ax', 2); return true; }
+        const dta = this.dtaAddr();
+        for (let i = 0; i < 11; i++) this.mem[dta + 1 + i] = pat.charCodeAt(i);
+        this.mem[dta + 0x0C] = r.get('cx') & 0xFF;
+        this.mem[dta + 0x0D] = 0; this.mem[dta + 0x0E] = 0;
+        return this.findNext(r, 2);
+      }
+      case 0x4F: return this.findNext(r, 0x12);
       case 0x2C: {                              // get time
         const t = this.ticks * 55;
         r.set('cx', (Math.floor(t / 3600000) << 8) | (Math.floor(t / 60000) % 60));
