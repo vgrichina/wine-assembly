@@ -537,6 +537,7 @@ UNIT=(
   test/test-toyvm-browser-bundle.js
   test/test-toyvm-live.js
   test/test-toyvm-audio.js
+  test/test-toyvm-volatile.js
   test/test-user-default-ui-language.js
   test/test-virtual-query-user-boundary.js
   test/test-wave-in-dev-caps.js
@@ -624,6 +625,7 @@ E2E=(
   test/test-web-agent-remote.js
   test/test-web-agent-frozen.js
   test/test-web-frozen-recording.js
+  test/test-cli-frozen-recording.js
   test/test-web-record-audio.js
   test/test-web-audio-session.js
   test/test-web-ios-lab.js
