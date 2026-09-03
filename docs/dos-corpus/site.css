@@ -223,7 +223,12 @@ dialog:fullscreen .dlg-bar, dialog.fs .dlg-bar {
 }
 dialog:fullscreen.idle .dlg-bar, dialog.fs.idle .dlg-bar { opacity: 0; pointer-events: none; }
 dialog:fullscreen #lb-close, dialog.fs #lb-close { display: inline-block; }
-dialog:fullscreen .run-note, dialog.fs .run-note { padding-bottom: max(7px, env(safe-area-inset-bottom)); }
+/* The status line hides with the bar: in full screen the picture is the
+   whole point, and both come back on a pointer move or a tap. */
+dialog:fullscreen .run-note, dialog.fs .run-note {
+  padding-bottom: max(7px, env(safe-area-inset-bottom)); transition: opacity .3s;
+}
+dialog:fullscreen.idle .run-note, dialog.fs.idle .run-note { opacity: 0; }
 @media (max-width: 640px) {
   /* Two rows: the name and the link, then the controls edge to edge. */
   .dlg-bar { flex-wrap: wrap; gap: 8px 12px; padding: 8px 10px; }
