@@ -18,12 +18,27 @@
 const isa = require('./isa');
 const { decodeOne, H } = require('./decode');
 const { ARITY, FUSE, TRACE, SPIN, PSPIN, SPEC, applyExtract, NOFLAG, FLAG_EFFECTS,
-  prepareTables } = require('./emit');
+  prepareTables, HANDLERS } = require('./emit');
+
+// Per-handler facts the compile loop asks for on every program. HANDLERS
+// grows in prepareTables (flagless twins, register specializations), so these
+// are built on the first compile after it, not at require time. A `require`
+// plus a findIndex or a regex per op was 20% of a scratch compile's own time
+// on CYCLE's mixer, which recompiles 66k times a minute.
+let IN8 = -1;
+let CALL_OP = null;   // Uint8Array over handler index: 1 for a call
+function handlerFacts() {
+  if (CALL_OP !== null && CALL_OP.length === HANDLERS.length) return;
+  IN8 = HANDLERS.findIndex(x => x.name === 'in_8');
+  CALL_OP = new Uint8Array(HANDLERS.length);
+  for (let i = 0; i < HANDLERS.length; i++) if (/call/.test(HANDLERS[i].name)) CALL_OP[i] = 1;
+}
 
 function compileProgram(readByte, cs, entryIp, opts = {}) {
   // ARITY, NOFLAG and FLAG_EFFECTS are filled on first use rather than at
   // require time (emit.js says why), and they are held here by reference.
   prepareTables();
+  handlerFacts();
   const arenaBase = opts.arenaBase === undefined ? isa.THREAD_BASE : opts.arenaBase;
   const maxWords = opts.maxWords || (isa.THREAD_SIZE >> 2) - 16;
   // Where this code segment actually starts, and how far the address bus goes.
@@ -277,6 +292,43 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // decoding does.
   const heads = wd ? new Uint8Array(wd.mem.buffer, isa.DEC_HEADS, isa.DEC_HEADS_SIZE) : null;
   const markHead = (ip) => { if (heads) heads[(ip & 0xFFFF) >> 3] |= 1 << (ip & 7); };
+  // Volatile code: guest ips the host has learned are rewritten too often to
+  // be worth caching (dos-loop.js CodeCache.noteSmc). A cached compile must
+  // never decode them -- the compiled copy would be stale before it ran, and
+  // dropping and re-tracing it on every store is the thrash this exists to
+  // end. `cutBlock(ip)` refuses a block head: the edge that queued it stays
+  // unresolved and hands back. `cutLine(ip)` ends straight-line code with
+  // `end` where it crosses into volatile bytes.
+  //
+  // The uncached compile the host makes FOR volatile code (volatileOnly) is
+  // the mirror image for block heads -- a branch target outside the volatile
+  // run is left to the cache -- but straight-line code is followed wherever
+  // it goes, to the first branch. CYCLE.EXE's mixer is one straight line
+  // from its volatile immediates through four paragraphs to the `jz` that
+  // ends the interrupt handler; cut at the paragraph edge, that handler cost
+  // three host entries per interrupt instead of one, and the run took MORE
+  // handbacks than the thrash it replaced.
+  //
+  // The wasm decoder cannot ask; it decodes a run and stops only at a block
+  // head. So for a cached compile the host also names the 16 bytes on either
+  // side of every volatile run in this segment, and those are marked as heads
+  // for the length of the compile: the first instruction that starts inside
+  // such a window stops the run, and the JS check decides what to do with it.
+  // 16 because an instruction that begins before the boundary ends at most 15
+  // bytes past it, so the first instruction on the far side starts inside the
+  // window.
+  const vol = opts.volatile || null;
+  const volOnly = !!opts.volatileOnly;
+  const cutBlock = (ip) => vol !== null && vol(ip) !== volOnly;
+  const cutLine = (ip) => vol !== null && !volOnly && vol(ip);
+  const volHeads = (vol && !volOnly && heads && opts.volatileHeads) || [];
+  for (const ip of volHeads) markHead(ip);
+  // The heads of the blocks whose straight line ran into volatile bytes. The
+  // host promotes those too: a block that falls into volatile code is the
+  // volatile code's own prologue, and cut at the boundary it costs an extra
+  // host entry every time (CYCLE's interrupt handler is entered at 26d5 and
+  // its patched immediates start at 26e0).
+  const volatileCuts = [];
   // Made once per compile, not once per block. CONTAGIO compiles 87,000 times
   // in one run and a fresh view per block would be the allocation this whole
   // change exists to avoid paying elsewhere. The VM's memory is a fixed
@@ -313,6 +365,10 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   while (pending.length) {
     const blockIp = pending.pop();
     if (blocks.has(blockIp)) continue;
+    // On the wrong side of a volatile boundary: not ours to decode. The edge
+    // that queued it stays unresolved, so it hands back, and the host's
+    // entryFor sends it to the right kind of compile.
+    if (blockIp !== entry && cutBlock(blockIp)) continue;
     const blockStart = words.length;
     // Emission order, for the flag-liveness pass at the end. Blocks are laid
     // out back to back, so block b spans [starts[b], starts[b+1]).
@@ -403,6 +459,9 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     }
 
     let cur = blockIp;
+    // The head of the block being emitted right now: blockIp until
+    // extendThrough opens a new one inline behind a traced conditional.
+    let curHead = blockIp;
     // Whether anything in this block stored to memory. A block that writes and
     // then branches BACKWARD is a copy, a fill or -- the case this exists for
     // -- a decryptor, and what follows it is very often the bytes it just
@@ -432,6 +491,12 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
         fixups.push({ wordIndex: words.length - 2, ip: cur });
         break;
       }
+
+      // Straight-line code crossing a volatile boundary: end the block here
+      // and hand back, so the host compiles the far side the way it wants it.
+      // Checked before the wasm decoder is offered the run, because wasm skips
+      // the head test for the first instruction it is given.
+      if (cutLine(cur)) { words.push(H.end, cur); volatileCuts.push({ head: curHead, at: cur }); break; }
 
       // Hand the rest of the block to wasm. It stops at the first opcode it does
       // not implement, so the worst case is that it decodes nothing and this
@@ -496,7 +561,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
             // words, so it does not care which decoder produced them.
             const nx = extendThrough(blockStart, wrote || bulkWrote);
             if (nx < 0) break;
-            justOpened = nx; cur = nx; continue;
+            justOpened = nx; cur = nx; curHead = nx; continue;
           }
           if (opts.oneInsn) { words.push(H.end, cur); break; }
           // Anything else -- an unimplemented opcode, a full arena, a block head
@@ -546,7 +611,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       if (d.endsBlock) {
         const nx = extendThrough(blockStart, wrote || bulkWrote);
         if (nx < 0) break;
-        justOpened = nx; cur = nx; continue;
+        justOpened = nx; cur = nx; curHead = nx; continue;
       }
       // opts.oneInsn is the trap flag's compiler: with TF set the CPU owes the
       // guest an INT 1 after EVERY instruction, so the block has to be exactly
@@ -611,7 +676,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // twin's operands are the `in`'s port word, the fused handler's own index
   // (skipped), and the pair's operands where they were.
   if (spinLoops && portSpin) {
-    const in8 = require('./emit').HANDLERS.findIndex(x => x.name === 'in_8');
+    const in8 = IN8;
     for (let b = 0; b < blockStarts.length; b++) {
       const start = blockStarts[b];
       const end = b + 1 < blockStarts.length ? blockStarts[b + 1] : words.length;
@@ -733,6 +798,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // set, rather than the whole 8KB, because the next compile is usually a few
   // blocks and the wipe would dominate it.
   if (heads) for (const ip of blocks.keys()) heads[(ip & 0xFFFF) >> 3] = 0;
+  if (heads) for (const ip of volHeads) heads[(ip & 0xFFFF) >> 3] = 0;
 
   // Resolve. A target that never got compiled keeps its 0, which the branch
   // handlers read as "stop and hand back", so an unreachable-in-practice edge
@@ -743,8 +809,47 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     else unresolved++;
   }
 
+  // For an uncached compile of volatile code (dos-loop.js volatileEntry):
+  // can any instruction here run twice without the host compiling it again?
+  // It can if the block graph has a cycle, or if a `call` leaves and a `ret`
+  // comes back through the shadow return stack. If neither, every store the
+  // code makes into its own bytes lands behind the program counter for good,
+  // and the host can leave its code bits down -- the store then ends nothing
+  // and costs nothing, which is the whole point of not caching it.
+  let calls = 0, cyclic = false;
+  if (volOnly) {
+    const nb = blockStarts.length;
+    const ends = blockStarts.map((s, b) => (b + 1 < nb ? blockStarts[b + 1] : words.length));
+    const ipIndex = new Map();
+    for (let b = 0; b < nb; b++) ipIndex.set(blockIps[b], b);
+    const succ = blockStarts.map(() => []);
+    for (let b = 0; b < nb; b++) {
+      const at = opsOf(blockStarts[b], ends[b]);
+      // Op boundaries unknown: assume the worst of it.
+      if (!at) { calls++; continue; }
+      for (const p of at) calls += CALL_OP[words[p]];
+      if (fallEdge.has(b) && b + 1 < nb) succ[b].push(b + 1);
+    }
+    const owner = new Int32Array(words.length).fill(-1);
+    for (let b = 0; b < nb; b++) for (let i = blockStarts[b]; i < ends[b]; i++) owner[i] = b;
+    for (const f of fixups) {
+      const t = ipIndex.get(f.ip);
+      if (t !== undefined && owner[f.wordIndex] >= 0) succ[owner[f.wordIndex]].push(t);
+    }
+    const color = new Uint8Array(nb);   // 0 unseen, 1 on the stack, 2 done
+    const visit = (b) => {
+      if (color[b] === 1) return true;
+      if (color[b] === 2) return false;
+      color[b] = 1;
+      for (const s of succ[b]) if (visit(s)) return true;
+      color[b] = 2;
+      return false;
+    };
+    for (let b = 0; b < nb && !cyclic; b++) cyclic = visit(b);
+  }
+
   return {
-    words, blocks, fixups, unresolved, covered, wordIp,
+    words, blocks, fixups, unresolved, covered, wordIp, volatileCuts, calls, cyclic,
     unimplemented: [...unimplemented],
     entryAddr: blocks.get(entry),
     deadFlags: deadFlagCount,
