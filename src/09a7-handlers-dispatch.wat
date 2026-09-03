@@ -3110,7 +3110,7 @@
   ;; same DS_OK == DD_OK == 0 return, so this reuses the CACA0007
   ;; $ddenum_ret_thunk continuation rather than adding a second identical one.
   (func $handle_DirectSoundEnumerateA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $desc i32) (local $module i32) (local $ret_addr i32)
+    (local $desc i32) (local $desc_wa i32) (local $module i32) (local $ret_addr i32)
     ;; No callback means the app only wanted the HRESULT.
     (if (i32.eqz (local.get $arg0))
       (then
@@ -3122,14 +3122,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
     ;; "Primary Sound Driver\0" and an empty module name (the default device
     ;; has no driver DLL of its own).
-    (local.set $desc (call $heap_alloc (i32.const 24)))
+    (local.set $desc (call $heap_alloc (i32.const 24))) (local.set $desc_wa (call $g2w (local.get $desc)))
     (local.set $module (call $heap_alloc (i32.const 4)))
-    (i32.store (call $g2w (local.get $desc)) (i32.const 0x6d697250))                          ;; "Prim"
-    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4))) (i32.const 0x20797261))  ;; "ary "
-    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 8))) (i32.const 0x6e756f53))  ;; "Soun"
-    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 12))) (i32.const 0x72442064)) ;; "d Dr"
-    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 16))) (i32.const 0x72657669)) ;; "iver"
-    (i32.store8 (call $g2w (i32.add (local.get $desc) (i32.const 20))) (i32.const 0))
+    (i32.store (local.get $desc_wa) (i32.const 0x6d697250))                          ;; "Prim"
+    (i32.store offset=4 (local.get $desc_wa) (i32.const 0x20797261))  ;; "ary "
+    (i32.store offset=8 (local.get $desc_wa) (i32.const 0x6e756f53))  ;; "Soun"
+    (i32.store offset=12 (local.get $desc_wa) (i32.const 0x72442064)) ;; "d Dr"
+    (i32.store offset=16 (local.get $desc_wa) (i32.const 0x72657669)) ;; "iver"
+    (i32.store8 offset=20 (local.get $desc_wa) (i32.const 0))
     (i32.store8 (call $g2w (local.get $module)) (i32.const 0))
     ;; Caller's return address first — the CACA0007 continuation pops it after
     ;; the callback returns.

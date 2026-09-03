@@ -26800,5 +26800,12 @@
     "nargs": 7,
     "convention": "stdcall",
     "hash": 3219974270
+  },
+  {
+    "id": 3214,
+    "name": "gluOrtho2D",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 886341543
   }
 ]

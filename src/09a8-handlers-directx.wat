@@ -1140,25 +1140,25 @@
   ;; Calls the callback once for the primary display driver, then returns DD_OK.
   ;; Callback: BOOL WINAPI cb(GUID *lpGUID, LPSTR lpDesc, LPSTR lpName, LPVOID lpCtx)
   (func $handle_DirectDrawEnumerateA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $desc i32) (local $name i32) (local $ret_addr i32)
+    (local $desc i32) (local $desc_wa i32) (local $name i32) (local $name_wa i32) (local $ret_addr i32)
     ;; Save the original return address (on stack before our args)
     (local.set $ret_addr (call $gl32 (global.get $esp)))
     ;; Clean up stdcall args: 2 args + ret
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
     ;; Allocate strings for description and driver name
-    (local.set $desc (call $heap_alloc (i32.const 32)))
-    (local.set $name (call $heap_alloc (i32.const 16)))
+    (local.set $desc (call $heap_alloc (i32.const 32))) (local.set $desc_wa (call $g2w (local.get $desc)))
+    (local.set $name (call $heap_alloc (i32.const 16))) (local.set $name_wa (call $g2w (local.get $name)))
     ;; Write "Primary Display Driver\0"
-    (i32.store (call $g2w (local.get $desc)) (i32.const 0x6d697250))  ;; "Prim"
-    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4))) (i32.const 0x20797261)) ;; "ary "
-    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 8))) (i32.const 0x70736944)) ;; "Disp"
-    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 12))) (i32.const 0x2079616c)) ;; "lay "
-    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 16))) (i32.const 0x76697244)) ;; "Driv"
-    (i32.store16 (call $g2w (i32.add (local.get $desc) (i32.const 20))) (i32.const 0x7265)) ;; "er"
-    (i32.store8 (call $g2w (i32.add (local.get $desc) (i32.const 22))) (i32.const 0))
+    (i32.store (local.get $desc_wa) (i32.const 0x6d697250))  ;; "Prim"
+    (i32.store offset=4 (local.get $desc_wa) (i32.const 0x20797261)) ;; "ary "
+    (i32.store offset=8 (local.get $desc_wa) (i32.const 0x70736944)) ;; "Disp"
+    (i32.store offset=12 (local.get $desc_wa) (i32.const 0x2079616c)) ;; "lay "
+    (i32.store offset=16 (local.get $desc_wa) (i32.const 0x76697244)) ;; "Driv"
+    (i32.store16 offset=20 (local.get $desc_wa) (i32.const 0x7265)) ;; "er"
+    (i32.store8 offset=22 (local.get $desc_wa) (i32.const 0))
     ;; Write "display\0"
-    (i32.store (call $g2w (local.get $name)) (i32.const 0x70736964))  ;; "disp"
-    (i32.store (call $g2w (i32.add (local.get $name) (i32.const 4))) (i32.const 0x0079616c)) ;; "lay\0"
+    (i32.store (local.get $name_wa) (i32.const 0x70736964))  ;; "disp"
+    (i32.store offset=4 (local.get $name_wa) (i32.const 0x0079616c)) ;; "lay\0"
     ;; Save original return address first (highest on stack, popped by CACA0007 after callback ret)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $ret_addr))
@@ -1181,24 +1181,24 @@
   ;; DirectDrawEnumerateExA(lpCallback, lpContext, dwFlags) → HRESULT
   ;; Callback: BOOL WINAPI cb(GUID *lpGUID, LPSTR lpDesc, LPSTR lpName, LPVOID lpCtx, HMONITOR hm)
   (func $handle_DirectDrawEnumerateExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $desc i32) (local $name i32) (local $ret_addr i32)
+    (local $desc i32) (local $desc_wa i32) (local $name i32) (local $name_wa i32) (local $ret_addr i32)
     (local.set $ret_addr (call $gl32 (global.get $esp)))
     ;; Clean up stdcall args: 3 args + ret
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
     ;; Allocate strings for description and driver name
-    (local.set $desc (call $heap_alloc (i32.const 32)))
-    (local.set $name (call $heap_alloc (i32.const 16)))
+    (local.set $desc (call $heap_alloc (i32.const 32))) (local.set $desc_wa (call $g2w (local.get $desc)))
+    (local.set $name (call $heap_alloc (i32.const 16))) (local.set $name_wa (call $g2w (local.get $name)))
     ;; Write "Primary Display Driver\0"
-    (i32.store (call $g2w (local.get $desc)) (i32.const 0x6d697250))
-    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4))) (i32.const 0x20797261))
-    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 8))) (i32.const 0x70736944))
-    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 12))) (i32.const 0x2079616c))
-    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 16))) (i32.const 0x76697244))
-    (i32.store16 (call $g2w (i32.add (local.get $desc) (i32.const 20))) (i32.const 0x7265))
-    (i32.store8 (call $g2w (i32.add (local.get $desc) (i32.const 22))) (i32.const 0))
+    (i32.store (local.get $desc_wa) (i32.const 0x6d697250))
+    (i32.store offset=4 (local.get $desc_wa) (i32.const 0x20797261))
+    (i32.store offset=8 (local.get $desc_wa) (i32.const 0x70736944))
+    (i32.store offset=12 (local.get $desc_wa) (i32.const 0x2079616c))
+    (i32.store offset=16 (local.get $desc_wa) (i32.const 0x76697244))
+    (i32.store16 offset=20 (local.get $desc_wa) (i32.const 0x7265))
+    (i32.store8 offset=22 (local.get $desc_wa) (i32.const 0))
     ;; Write "display\0"
-    (i32.store (call $g2w (local.get $name)) (i32.const 0x70736964))
-    (i32.store (call $g2w (i32.add (local.get $name) (i32.const 4))) (i32.const 0x0079616c))
+    (i32.store (local.get $name_wa) (i32.const 0x70736964))
+    (i32.store offset=4 (local.get $name_wa) (i32.const 0x0079616c))
     ;; Save original return address first (highest on stack, popped by CACA0007 after callback ret)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $ret_addr))
@@ -7624,7 +7624,7 @@
       (local.get $ret_addr) (local.get $arg2) (local.get $arg3) (local.get $type)
       (i32.const 0) (local.get $arg4) (i32.const 0)))
   (func $handle_IDirectPlay3_EnumSessions (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32) (local $flags i32) (local $desc i32) (local $name i32) (local $timeout i32)
+    (local $ret_addr i32) (local $flags i32) (local $desc i32) (local $name i32) (local $name_wa i32) (local $timeout i32)
     (local.set $ret_addr (call $gl32 (global.get $esp)))
     (local.set $flags (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
@@ -7632,11 +7632,11 @@
       (then
         (global.set $eax (i32.const 0))
         (return)))
-    (local.set $name (call $heap_alloc (i32.const 16)))
-    (i32.store (call $g2w (local.get $name)) (i32.const 0x61636F4C))
-    (i32.store (call $g2w (i32.add (local.get $name) (i32.const 4))) (i32.const 0x6553206C))
-    (i32.store (call $g2w (i32.add (local.get $name) (i32.const 8))) (i32.const 0x6F697373))
-    (i32.store16 (call $g2w (i32.add (local.get $name) (i32.const 12))) (i32.const 0x006E))
+    (local.set $name (call $heap_alloc (i32.const 16))) (local.set $name_wa (call $g2w (local.get $name)))
+    (i32.store (local.get $name_wa) (i32.const 0x61636F4C))
+    (i32.store offset=4 (local.get $name_wa) (i32.const 0x6553206C))
+    (i32.store offset=8 (local.get $name_wa) (i32.const 0x6F697373))
+    (i32.store16 offset=12 (local.get $name_wa) (i32.const 0x006E))
     (local.set $desc (call $heap_alloc (i32.const 80)))
     (call $zero_memory (call $g2w (local.get $desc)) (i32.const 80))
     (call $gs32 (local.get $desc) (i32.const 80))
@@ -7773,7 +7773,7 @@
         (call $dp_set_membership (local.get $arg2) (local.get $arg1) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IDirectPlay3_EnumConnections (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32) (local $guid i32) (local $conn i32) (local $dpname i32) (local $label i32)
+    (local $ret_addr i32) (local $guid i32) (local $guid_wa i32) (local $conn i32) (local $dpname i32) (local $dpname_wa i32) (local $label i32) (local $label_wa i32)
     (local.set $ret_addr (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
     (if (i32.eqz (local.get $arg2))
@@ -7781,25 +7781,25 @@
         (global.set $eax (i32.const 0))
         (return)))
     ;; DPSPGUID_TCPIP {36E95EE0-8577-11cf-960C-0080C7534E82}.
-    (local.set $guid (call $heap_alloc (i32.const 16)))
-    (i32.store (call $g2w (local.get $guid)) (i32.const 0x36E95EE0))
-    (i32.store16 (call $g2w (i32.add (local.get $guid) (i32.const 4))) (i32.const 0x8577))
-    (i32.store16 (call $g2w (i32.add (local.get $guid) (i32.const 6))) (i32.const 0x11CF))
-    (i32.store (call $g2w (i32.add (local.get $guid) (i32.const 8))) (i32.const 0x80000C96))
-    (i32.store (call $g2w (i32.add (local.get $guid) (i32.const 12))) (i32.const 0x824E53C7))
+    (local.set $guid (call $heap_alloc (i32.const 16))) (local.set $guid_wa (call $g2w (local.get $guid)))
+    (i32.store (local.get $guid_wa) (i32.const 0x36E95EE0))
+    (i32.store16 offset=4 (local.get $guid_wa) (i32.const 0x8577))
+    (i32.store16 offset=6 (local.get $guid_wa) (i32.const 0x11CF))
+    (i32.store offset=8 (local.get $guid_wa) (i32.const 0x80000C96))
+    (i32.store offset=12 (local.get $guid_wa) (i32.const 0x824E53C7))
     ;; Dummy connection data; InitializeConnection is local/no-op.
     (local.set $conn (call $heap_alloc (i32.const 4)))
     (i32.store (call $g2w (local.get $conn)) (i32.const 0))
     ;; DPNAME with short/long ANSI strings both set to "TCP/IP".
-    (local.set $label (call $heap_alloc (i32.const 8)))
-    (i32.store (call $g2w (local.get $label)) (i32.const 0x2F504354))
-    (i32.store16 (call $g2w (i32.add (local.get $label) (i32.const 4))) (i32.const 0x5049))
-    (i32.store8 (call $g2w (i32.add (local.get $label) (i32.const 6))) (i32.const 0))
-    (local.set $dpname (call $heap_alloc (i32.const 16)))
-    (i32.store (call $g2w (local.get $dpname)) (i32.const 16))
-    (i32.store (call $g2w (i32.add (local.get $dpname) (i32.const 4))) (i32.const 0))
-    (i32.store (call $g2w (i32.add (local.get $dpname) (i32.const 8))) (local.get $label))
-    (i32.store (call $g2w (i32.add (local.get $dpname) (i32.const 12))) (local.get $label))
+    (local.set $label (call $heap_alloc (i32.const 8))) (local.set $label_wa (call $g2w (local.get $label)))
+    (i32.store (local.get $label_wa) (i32.const 0x2F504354))
+    (i32.store16 offset=4 (local.get $label_wa) (i32.const 0x5049))
+    (i32.store8 offset=6 (local.get $label_wa) (i32.const 0))
+    (local.set $dpname (call $heap_alloc (i32.const 16))) (local.set $dpname_wa (call $g2w (local.get $dpname)))
+    (i32.store (local.get $dpname_wa) (i32.const 16))
+    (i32.store offset=4 (local.get $dpname_wa) (i32.const 0))
+    (i32.store offset=8 (local.get $dpname_wa) (local.get $label))
+    (i32.store offset=12 (local.get $dpname_wa) (local.get $label))
     ;; Push saved caller return, then callback args right-to-left:
     ;; context, flags, name, connection size, connection, provider GUID.
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -8504,22 +8504,22 @@
   ;; that calls back with NULL guid and returns DD_OK without trampolining, since most callers
   ;; just care about the enumeration completing.
   (func $handle_IDirectDrawFactory_DirectDrawEnumerate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $desc i32) (local $name i32) (local $ret_addr i32)
+    (local $desc i32) (local $desc_wa i32) (local $name i32) (local $name_wa i32) (local $ret_addr i32)
     (local.set $ret_addr (call $gl32 (global.get $esp)))
     ;; Pop this + 2 args + ret
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
     ;; Build description/name strings
-    (local.set $desc (call $heap_alloc (i32.const 32)))
-    (local.set $name (call $heap_alloc (i32.const 16)))
-    (i32.store   (call $g2w (local.get $desc))                          (i32.const 0x6d697250))
-    (i32.store   (call $g2w (i32.add (local.get $desc) (i32.const 4)))  (i32.const 0x20797261))
-    (i32.store   (call $g2w (i32.add (local.get $desc) (i32.const 8)))  (i32.const 0x70736944))
-    (i32.store   (call $g2w (i32.add (local.get $desc) (i32.const 12))) (i32.const 0x2079616c))
-    (i32.store   (call $g2w (i32.add (local.get $desc) (i32.const 16))) (i32.const 0x76697244))
-    (i32.store16 (call $g2w (i32.add (local.get $desc) (i32.const 20))) (i32.const 0x7265))
-    (i32.store8  (call $g2w (i32.add (local.get $desc) (i32.const 22))) (i32.const 0))
-    (i32.store   (call $g2w (local.get $name))                          (i32.const 0x70736964))
-    (i32.store   (call $g2w (i32.add (local.get $name) (i32.const 4)))  (i32.const 0x0079616c))
+    (local.set $desc (call $heap_alloc (i32.const 32))) (local.set $desc_wa (call $g2w (local.get $desc)))
+    (local.set $name (call $heap_alloc (i32.const 16))) (local.set $name_wa (call $g2w (local.get $name)))
+    (i32.store   (local.get $desc_wa)           (i32.const 0x6d697250))
+    (i32.store   offset=4  (local.get $desc_wa) (i32.const 0x20797261))
+    (i32.store   offset=8  (local.get $desc_wa) (i32.const 0x70736944))
+    (i32.store   offset=12 (local.get $desc_wa) (i32.const 0x2079616c))
+    (i32.store   offset=16 (local.get $desc_wa) (i32.const 0x76697244))
+    (i32.store16 offset=20 (local.get $desc_wa) (i32.const 0x7265))
+    (i32.store8  offset=22 (local.get $desc_wa) (i32.const 0))
+    (i32.store   (local.get $name_wa)           (i32.const 0x70736964))
+    (i32.store   offset=4 (local.get $name_wa)  (i32.const 0x0079616c))
     ;; Save original return address so the existing $ddenum_ret_thunk path returns to caller
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $ret_addr))
