@@ -17,6 +17,7 @@ class FakeBackend {
     this.parameters = [];
     this.depthRanges = [];
     this.polygonOffsets = [];
+    this.mipmapTextures = [];
     this.capabilities = [];
     this.uniformCalls = 0;
   }
@@ -34,6 +35,7 @@ class FakeBackend {
   }
   uploadTexture2D(_texture, image) { this.uploads.push(image); }
   updateTexture2D(_texture, image) { this.uploads.push(image); }
+  generateMipmaps(texture) { this.mipmapTextures.push(texture); }
   deleteTexture() {}
   destroy() {}
   setCapability(capability, enabled) { this.capabilities.push([capability, enabled]); }
@@ -112,7 +114,7 @@ const stack = 0x100;
 let guestPresents = 0;
 const bridge = new OpenGLHostBridge({
   getMemory: () => bridgeMemory,
-  exports: {},
+  exports: { guest_to_wasm: pointer => pointer },
   onPresent: () => { guestPresents++; },
 });
 bridge.current = 1;
@@ -127,6 +129,52 @@ bridgeView.setFloat32(stack + 8, -2, true);
 bridge.call(CALL_INDEX.glPolygonOffset, stack, 0);
 assert.deepStrictEqual(backend.polygonOffsets, [[-1, -2]],
   'GoldSrc polygon offset reaches the WebGL backend with both float arguments');
+
+const matrixFrontend = new FixedFunctionGL(new FakeBackend());
+matrixFrontend.matrixMode = GL.PROJECTION;
+bridge.contexts.set(1, {
+  frontend: matrixFrontend,
+  backend: { present() {} },
+  layer: { writeSeq: 0 },
+});
+for (const [index, value] of [60, 4 / 3, 1, 101].entries()) {
+  bridgeView.setFloat64(stack + 4 + index * 8, value, true);
+}
+bridge.call(CALL_INDEX.gluPerspective, stack, 0);
+const projection = matrixFrontend._matrix();
+assert(Math.abs(projection[0] - 1.299038) < 1e-5 &&
+  Math.abs(projection[5] - 1.732051) < 1e-5 &&
+  Math.abs(projection[10] + 1.02) < 1e-5,
+  'gluPerspective applies the documented GLdouble projection matrix');
+
+matrixFrontend.matrixMode = GL.MODELVIEW;
+const lookAtValues = [0, 0, 5, 0, 0, 0, 0, 1, 0];
+lookAtValues.forEach((value, index) => bridgeView.setFloat64(stack + 4 + index * 8, value, true));
+bridge.call(CALL_INDEX.gluLookAt, stack, 0);
+assert.deepStrictEqual(Array.from(matrixFrontend._matrix().slice(12, 16)), [0, 0, -5, 1],
+  'gluLookAt applies orientation and eye translation in OpenGL column-major order');
+bridgeView.setUint32(stack + 4, GL.TEXTURE_2D, true);
+bridgeView.setInt32(stack + 8, 3, true);
+bridgeView.setInt32(stack + 12, 2, true);
+bridgeView.setInt32(stack + 16, 2, true);
+bridgeView.setUint32(stack + 20, GL.RGB, true);
+bridgeView.setUint32(stack + 24, GL.UNSIGNED_BYTE, true);
+bridgeView.setUint32(stack + 28, 0x200, true);
+new Uint8Array(bridgeMemory, 0x200, 12).fill(0x7f);
+assert.strictEqual(bridge.call(CALL_INDEX.gluBuild2DMipmaps, stack, 0), 0,
+  'gluBuild2DMipmaps returns GLU_NO_ERROR');
+assert.strictEqual(matrixFrontend.backend.uploads.at(-1).level, 0,
+  'gluBuild2DMipmaps uploads the source image as level zero');
+assert.strictEqual(matrixFrontend.backend.mipmapTextures.length, 1,
+  'gluBuild2DMipmaps asks the GPU backend to derive the mip chain');
+matrixFrontend.matrixMode = GL.PROJECTION;
+matrixFrontend._replaceMatrix(require('../lib/gl-compat').identity());
+[0, 640, 0, 480].forEach((value, index) =>
+  bridgeView.setFloat64(stack + 4 + index * 8, value, true));
+bridge.call(CALL_INDEX.gluOrtho2D, stack, 0);
+assert(Math.abs(matrixFrontend._matrix()[0] - 2 / 640) < 1e-8 &&
+  Math.abs(matrixFrontend._matrix()[5] - 2 / 480) < 1e-8,
+  'gluOrtho2D applies the two-dimensional GLU orthographic projection');
 gl.setEnabled(GL.POLYGON_OFFSET_FILL, true);
 assert.deepStrictEqual(backend.capabilities.at(-1), [GL.POLYGON_OFFSET_FILL, true],
   'polygon-offset fill follows desktop GL enable state');

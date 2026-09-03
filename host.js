@@ -25,6 +25,58 @@ function claimAudioSession() {
 }
 if (typeof window !== 'undefined') window.claimAudioSession = claimAudioSession;
 
+// ShellExecute receives lpFile and lpParameters separately, while WinExec's
+// one string starts with the executable token. Keep the latter's whitespace
+// rules scoped to WinExec so an unquoted ShellExecute path containing spaces
+// retains the compatibility behavior existing applications depend on.
+function parseShellLaunchCommand(rawFile, explicitParams, operation) {
+  const source = String(rawFile || '');
+  const isWinExec = /^winexec$/i.test(String(operation || ''));
+  const s = source.trim();
+  let file = source;
+  let parsedParams = '';
+
+  if (isWinExec) {
+    if (s.startsWith('"')) {
+      const close = s.indexOf('"', 1);
+      if (close >= 0) {
+        file = s.slice(1, close);
+        parsedParams = s.slice(close + 1).trimStart();
+      } else {
+        file = '';
+      }
+    } else {
+      const token = /^(\S+)(?:\s+([\s\S]*))?$/.exec(s);
+      file = token ? token[1] : '';
+      parsedParams = token && token[2] || '';
+    }
+  } else {
+    const quoted = /^"([^"]+)"(?:\s+(.*))?$/.exec(s);
+    if (quoted) {
+      file = quoted[1];
+      parsedParams = quoted[2] || '';
+    } else {
+      const absolute = /^([a-z]:\\\S+)(?:\s+(.*))?$/i.exec(s);
+      if (absolute) {
+        file = absolute[1];
+        parsedParams = absolute[2] || '';
+      }
+    }
+  }
+
+  return {
+    file,
+    params: explicitParams || parsedParams,
+    isWinExec,
+  };
+}
+
+function resolveShellLaunchPath(file, vfs, isWinExec) {
+  if (!isWinExec || /^[a-z]:\\/i.test(file) || !vfs ||
+      typeof vfs._resolvePath !== 'function') return file;
+  return vfs._resolvePath(file);
+}
+
 // ---------------------------------------------------------------------------
 // Frozen (agent-stepped) mode — docs/design-agent-control.md
 // ---------------------------------------------------------------------------
@@ -453,7 +505,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '274';
+  static SOURCE_VERSION = '275';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -1323,17 +1375,11 @@ class WineAssembly {
     // (open http links in a tab, otherwise report success).
     h.shell_execute = (hwnd, opWa, fileWa, paramsWa, dirWa, nShow) => {
       const rawFile = fileWa ? self.readString(fileWa) : '';
-      let params = paramsWa ? self.readString(paramsWa) : '';
-      const parsedCommand = (() => {
-        const s = rawFile.trim();
-        const quoted = /^"([^"]+)"(?:\s+(.*))?$/.exec(s);
-        if (quoted) return { file: quoted[1], params: quoted[2] || '' };
-        const bare = /^([a-z]:\\\S+)(?:\s+(.*))?$/i.exec(s);
-        return bare ? { file: bare[1], params: bare[2] || '' } : { file: rawFile, params: '' };
-      })();
-      const file = parsedCommand.file;
-      if (!params && parsedCommand.params) params = parsedCommand.params;
       const op = opWa ? self.readString(opWa) : 'open';
+      const parsedCommand = parseShellLaunchCommand(
+        rawFile, paramsWa ? self.readString(paramsWa) : '', op);
+      const file = parsedCommand.file;
+      const params = parsedCommand.params;
       const dir = dirWa ? self.readString(dirWa) : '';
       console.log(`[ShellExecute] hwnd=0x${hwnd.toString(16)} op="${op}" file="${file}" params="${params}"`);
       const shell = window.wineShell;
@@ -1342,9 +1388,13 @@ class WineAssembly {
         // filesystem (a CD launcher handing off to the game its installer
         // just wrote); that beats the registered-app basename heuristic,
         // which could resolve "diablo.exe" to a different registered build.
-        const absolute = /^[a-z]:\\/i.test(file);
-        if (shell.launchVfsExe && shell.launchVfsExe(file, self, dir, params)) {
-          self.logToUI(`[ShellExecute] launching ${file} from the caller's filesystem`);
+        const vfs = self._helpCtx && self._helpCtx.vfs;
+        const launchFile = resolveShellLaunchPath(file, vfs, parsedCommand.isWinExec);
+        const absolute = /^[a-z]:\\/i.test(launchFile);
+        const launchDir = parsedCommand.isWinExec && vfs &&
+          typeof vfs.getCurrentDirectory === 'function' ? vfs.getCurrentDirectory() : dir;
+        if (absolute && shell.launchVfsExe && shell.launchVfsExe(launchFile, self, launchDir, params)) {
+          self.logToUI(`[ShellExecute] launching ${launchFile} from the caller's filesystem`);
           return 33;
         }
         if (/\.exe$/i.test(file) && shell.launchExe(file)) {
@@ -1354,10 +1404,10 @@ class WineAssembly {
         // A path that resolved nowhere is a failure the guest can react to
         // (SE_ERR_FNF). Bare names keep the lenient success return — several
         // apps fire ShellExecute at helpers they can live without.
-        if (absolute) return 2;
+        if (absolute || parsedCommand.isWinExec) return 2;
       }
       if (/^https?:/i.test(file)) window.open(file, '_blank');
-      return 33;
+      return parsedCommand.isWinExec ? 2 : 33;
     };
     // The guest asked for the machine to go down (Shut Down Windows dialog,
     // ExitWindowsEx). This is called from inside a guest batch, and the
@@ -4103,4 +4153,8 @@ class WineAssembly {
     // is at instruction zero until an agent steps it.
     if (self._frozen) self._scheduleStep(step, 0); else step();
   }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { parseShellLaunchCommand, resolveShellLaunchPath };
 }

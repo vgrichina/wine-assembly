@@ -1076,18 +1076,18 @@
   (func $handle_MessageBoxA_core (param $owner i32) (param $text i32)
                                  (param $caption i32) (param $type i32)
                                  (param $stack_advance i32)
-    (local $dlg i32) (local $cap_wa i32)
-    (call $modal_capture_nonvolatile)
+    (local $dlg i32) (local $cap_wa i32) (local $text_wa i32)
+    (local.set $cap_wa (call $g2w (local.get $caption))) (local.set $text_wa (call $g2w (local.get $text))) (call $modal_capture_nonvolatile)
     ;; Log via existing host hook so traces still show the text.
     (drop (call $host_message_box (local.get $owner)
-      (call $g2w (local.get $text)) (call $g2w (local.get $caption)) (local.get $type)))
+      (local.get $text_wa) (local.get $cap_wa) (local.get $type)))
     (local.set $dlg (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (local.set $cap_wa
-      (select (call $g2w (local.get $caption)) (i32.const 0) (local.get $caption)))
+      (select (local.get $cap_wa) (i32.const 0) (local.get $caption)))
     (call $create_msgbox_dialog
       (local.get $dlg) (local.get $owner)
-      (local.get $cap_wa) (call $g2w (local.get $text))
+      (local.get $cap_wa) (local.get $text_wa)
       (local.get $type))
     (call $modal_begin (local.get $dlg) (local.get $stack_advance)))
 

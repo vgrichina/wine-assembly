@@ -170,8 +170,12 @@ const digest = crypto.createHash('sha256')
 // 2026-09-03: 466 -> 463. SetFileApisToOEM/ANSI now propagate their process
 // code-page choice to Kernel32 filenames, and AreFileApisANSI reads it back
 // from the same process-shared VFS state across guest thread instances.
+// 2026-09-03: 463 -> 462. DisableThreadLibraryCalls now validates loaded DLLs
+// and suppresses their future thread attach/detach notifications.
 // 2026-09-03: WSAIsBlocking's truthful no-nested-hook result replaced the
 // former WinExec constant success after WinExec gained real process launch.
+// Main's stronger WinExec parsing/return-code behavior preserves that merged
+// inventory: WinExec was already non-silent on the gameplay branch.
 const EXPECTED_COUNT = 462;
 const EXPECTED_SHA256 = '1561f567b895980c10504996589e6059145eb55d43d382db34618fa1fd6b0332';
 

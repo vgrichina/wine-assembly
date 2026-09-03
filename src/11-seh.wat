@@ -207,19 +207,19 @@
             (local.set $filter_result (i32.const 0)) (local.set $filter_wa (call $g2w (local.get $filter)))
             (if (i32.and
                   (i32.eq (i32.load8_u (local.get $filter_wa)) (i32.const 0xB8))
-                  (i32.eq (i32.load (call $g2w (i32.add (local.get $filter) (i32.const 1)))) (i32.const 1)))
+                  (i32.eq (i32.load offset=1 (local.get $filter_wa)) (i32.const 1)))
               (then (local.set $filter_result (i32.const 1))))
             ;; Also check: XOR EAX,EAX; INC EAX; RET (33 C0 40 C3) — returns 1
             (if (i32.and
                   (i32.eq (i32.load16_u (local.get $filter_wa)) (i32.const 0xC033))
-                  (i32.eq (i32.load8_u (call $g2w (i32.add (local.get $filter) (i32.const 2)))) (i32.const 0x40)))
+                  (i32.eq (i32.load8_u offset=2 (local.get $filter_wa)) (i32.const 0x40)))
               (then (local.set $filter_result (i32.const 1))))
             ;; Also check: MOV EAX, 1; RET with C3 at offset 5
             (if (i32.and
                   (i32.eq (local.get $filter_result) (i32.const 1))
                   (i32.or
-                    (i32.eq (i32.load8_u (call $g2w (i32.add (local.get $filter) (i32.const 5)))) (i32.const 0xC3))
-                    (i32.eq (i32.load8_u (call $g2w (i32.add (local.get $filter) (i32.const 3)))) (i32.const 0xC3))))
+                    (i32.eq (i32.load8_u offset=5 (local.get $filter_wa)) (i32.const 0xC3))
+                    (i32.eq (i32.load8_u offset=3 (local.get $filter_wa)) (i32.const 0xC3))))
               (then
                 ;; Filter returns EXCEPTION_EXECUTE_HANDLER (1).
                 ;; Unwind: set FS:[0] = seh_rec->next

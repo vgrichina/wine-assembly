@@ -82,6 +82,12 @@ const gpuApis = new Map([
   ['glColor4ub', 4],
   ['glPolygonOffset', 2],
   ['glColor3ubv', 1],
+  // GLU matrix helpers are appended after the stable GL/WGL/GPU range.
+  // Their GLdouble arguments consume two physical stack dwords each.
+  ['gluPerspective', 8],
+  ['gluLookAt', 18],
+  ['gluBuild2DMipmaps', 7],
+  ['gluOrtho2D', 8],
 ]);
 const gpuApiOrder = [...gpuApis.keys()];
 

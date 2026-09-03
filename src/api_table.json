@@ -26996,5 +26996,33 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 3242,
+    "name": "gluPerspective",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3561404337
+  },
+  {
+    "id": 3243,
+    "name": "gluLookAt",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 2949704463
+  },
+  {
+    "id": 3244,
+    "name": "gluBuild2DMipmaps",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 3219974270
+  },
+  {
+    "id": 3245,
+    "name": "gluOrtho2D",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 886341543
   }
 ]

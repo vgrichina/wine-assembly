@@ -433,14 +433,15 @@
 
   ;; ImageList_SetBkColor(himl, clrBk) — 2 args, returns old bk color
   (func $handle_ImageList_SetBkColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $old i32)
+    (local $old i32) (local $bk_wa i32)
     (if (i32.eqz (local.get $arg0))
       (then
         (global.set $eax (i32.const -1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
-    (local.set $old (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
-    (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 8))) (local.get $arg1))
+    (local.set $bk_wa (call $g2w (i32.add (local.get $arg0) (i32.const 8))))
+    (local.set $old (i32.load (local.get $bk_wa)))
+    (i32.store (local.get $bk_wa) (local.get $arg1))
     (global.set $eax (local.get $old))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
@@ -520,15 +521,15 @@
 
   ;; DSA_Create(cbItem, cItemGrow) — 2 args, returns HDSA
   (func $handle_DSA_Create (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dsa i32)
+    (local $dsa i32) (local $dsa_wa i32)
     (local $cap i32)
     (local.set $cap (select (local.get $arg1) (i32.const 8) (i32.gt_u (local.get $arg1) (i32.const 0))))
-    (local.set $dsa (call $heap_alloc (i32.const 16)))
-    (i32.store (call $g2w (local.get $dsa)) (local.get $arg0))           ;; item_size
-    (i32.store (call $g2w (i32.add (local.get $dsa) (i32.const 4))) (i32.const 0))  ;; count
-    (i32.store (call $g2w (i32.add (local.get $dsa) (i32.const 8))) (local.get $cap))  ;; capacity
+    (local.set $dsa (call $heap_alloc (i32.const 16))) (local.set $dsa_wa (call $g2w (local.get $dsa)))
+    (i32.store (local.get $dsa_wa) (local.get $arg0))           ;; item_size
+    (i32.store offset=4 (local.get $dsa_wa) (i32.const 0))  ;; count
+    (i32.store offset=8 (local.get $dsa_wa) (local.get $cap))  ;; capacity
     ;; Allocate data buffer: capacity * item_size
-    (i32.store (call $g2w (i32.add (local.get $dsa) (i32.const 12)))
+    (i32.store offset=12 (local.get $dsa_wa)
       (call $heap_alloc (i32.mul (local.get $cap) (local.get $arg0))))
     (global.set $eax (local.get $dsa))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
@@ -543,12 +544,13 @@
 
   ;; DSA_GetItem(hdsa, index, pitem) — 3 args, returns BOOL
   (func $handle_DSA_GetItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $item_size i32)
+    (local $item_size i32) (local $dsa_wa i32)
     (local $data_ptr i32)
     (local $count i32)
-    (local.set $item_size (i32.load (call $g2w (local.get $arg0))))
-    (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
-    (local.set $data_ptr (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 12)))))
+    (local.set $dsa_wa (call $g2w (local.get $arg0)))
+    (local.set $item_size (i32.load (local.get $dsa_wa)))
+    (local.set $count (i32.load offset=4 (local.get $dsa_wa)))
+    (local.set $data_ptr (i32.load offset=12 (local.get $dsa_wa)))
     (if (i32.lt_u (local.get $arg1) (local.get $count))
       (then
         ;; Copy item_size bytes from data[index*item_size] to pitem
@@ -563,12 +565,13 @@
 
   ;; DSA_GetItemPtr(hdsa, index) — 2 args, returns pointer to item
   (func $handle_DSA_GetItemPtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $item_size i32)
+    (local $item_size i32) (local $dsa_wa i32)
     (local $data_ptr i32)
     (local $count i32)
-    (local.set $item_size (i32.load (call $g2w (local.get $arg0))))
-    (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
-    (local.set $data_ptr (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 12)))))
+    (local.set $dsa_wa (call $g2w (local.get $arg0)))
+    (local.set $item_size (i32.load (local.get $dsa_wa)))
+    (local.set $count (i32.load offset=4 (local.get $dsa_wa)))
+    (local.set $data_ptr (i32.load offset=12 (local.get $dsa_wa)))
     (if (i32.lt_u (local.get $arg1) (local.get $count))
       (then
         (global.set $eax (i32.add (local.get $data_ptr) (i32.mul (local.get $arg1) (local.get $item_size)))))
@@ -584,17 +587,18 @@
   ;; the one already there, and has to grow the buffer instead of running off
   ;; the end of it once the initial capacity fills.
   (func $handle_DSA_InsertItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $item_size i32)
+    (local $item_size i32) (local $dsa_wa i32) (local $data_wa i32)
     (local $count i32)
     (local $cap i32)
     (local $data_ptr i32)
     (local $idx i32)
     (local $new_cap i32)
-    (local $new_data i32)
-    (local.set $item_size (i32.load (call $g2w (local.get $arg0))))
-    (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
-    (local.set $cap (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
-    (local.set $data_ptr (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 12)))))
+    (local $new_data i32) (local $new_data_wa i32)
+    (local.set $dsa_wa (call $g2w (local.get $arg0)))
+    (local.set $item_size (i32.load (local.get $dsa_wa)))
+    (local.set $count (i32.load offset=4 (local.get $dsa_wa)))
+    (local.set $cap (i32.load offset=8 (local.get $dsa_wa)))
+    (local.set $data_ptr (i32.load offset=12 (local.get $dsa_wa))) (local.set $data_wa (call $g2w (local.get $data_ptr)))
     ;; Clamp index: if index > count or DA_LAST (0x7FFFFFFF), append
     (local.set $idx (select (local.get $count) (local.get $arg1)
       (i32.gt_u (local.get $arg1) (local.get $count))))
@@ -604,31 +608,31 @@
         (local.set $new_cap (i32.shl (local.get $cap) (i32.const 1)))
         (if (i32.lt_u (local.get $new_cap) (i32.const 8))
           (then (local.set $new_cap (i32.const 8))))
-        (local.set $new_data (call $heap_alloc (i32.mul (local.get $new_cap) (local.get $item_size))))
+        (local.set $new_data (call $heap_alloc (i32.mul (local.get $new_cap) (local.get $item_size)))) (local.set $new_data_wa (call $g2w (local.get $new_data)))
         (if (local.get $count)
           (then
-            (memory.copy (call $g2w (local.get $new_data)) (call $g2w (local.get $data_ptr))
+            (memory.copy (local.get $new_data_wa) (local.get $data_wa)
               (i32.mul (local.get $count) (local.get $item_size)))))
         (if (local.get $data_ptr) (then (call $heap_free (local.get $data_ptr))))
-        (local.set $data_ptr (local.get $new_data))
-        (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 8))) (local.get $new_cap))
-        (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 12))) (local.get $new_data))))
+        (local.set $data_ptr (local.get $new_data)) (local.set $data_wa (local.get $new_data_wa))
+        (i32.store offset=8 (local.get $dsa_wa) (local.get $new_cap))
+        (i32.store offset=12 (local.get $dsa_wa) (local.get $new_data))))
     ;; Shift [idx, count) up one slot. memory.copy is defined to behave like
     ;; memmove, so the overlap here is safe.
     (if (i32.gt_u (local.get $count) (local.get $idx))
       (then
         (memory.copy
-          (call $g2w (i32.add (local.get $data_ptr)
-            (i32.mul (i32.add (local.get $idx) (i32.const 1)) (local.get $item_size))))
-          (call $g2w (i32.add (local.get $data_ptr) (i32.mul (local.get $idx) (local.get $item_size))))
+          (i32.add (local.get $data_wa)
+            (i32.mul (i32.add (local.get $idx) (i32.const 1)) (local.get $item_size)))
+          (i32.add (local.get $data_wa) (i32.mul (local.get $idx) (local.get $item_size)))
           (i32.mul (i32.sub (local.get $count) (local.get $idx)) (local.get $item_size)))))
     ;; Copy item data to data[idx * item_size]
     (memory.copy
-      (call $g2w (i32.add (local.get $data_ptr) (i32.mul (local.get $idx) (local.get $item_size))))
+      (i32.add (local.get $data_wa) (i32.mul (local.get $idx) (local.get $item_size)))
       (call $g2w (local.get $arg2))
       (local.get $item_size))
     ;; Increment count
-    (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 4)))
+    (i32.store offset=4 (local.get $dsa_wa)
       (i32.add (local.get $count) (i32.const 1)))
     (global.set $eax (local.get $idx))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
@@ -640,24 +644,25 @@
   ;; neighbour — which is how Task Manager's End Task came to act on the row
   ;; above the one the user had selected.
   (func $handle_DSA_DeleteItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $item_size i32)
+    (local $item_size i32) (local $dsa_wa i32) (local $data_wa i32)
     (local $count i32)
     (local $data_ptr i32)
-    (local.set $item_size (i32.load (call $g2w (local.get $arg0))))
-    (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
-    (local.set $data_ptr (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 12)))))
+    (local.set $dsa_wa (call $g2w (local.get $arg0)))
+    (local.set $item_size (i32.load (local.get $dsa_wa)))
+    (local.set $count (i32.load offset=4 (local.get $dsa_wa)))
+    (local.set $data_ptr (i32.load offset=12 (local.get $dsa_wa))) (local.set $data_wa (call $g2w (local.get $data_ptr)))
     (if (i32.lt_u (local.get $arg1) (local.get $count))
       (then
         ;; Shift (index, count) down over the removed slot.
         (if (i32.gt_u (i32.sub (local.get $count) (i32.const 1)) (local.get $arg1))
           (then
             (memory.copy
-              (call $g2w (i32.add (local.get $data_ptr) (i32.mul (local.get $arg1) (local.get $item_size))))
-              (call $g2w (i32.add (local.get $data_ptr)
-                (i32.mul (i32.add (local.get $arg1) (i32.const 1)) (local.get $item_size))))
+              (i32.add (local.get $data_wa) (i32.mul (local.get $arg1) (local.get $item_size)))
+              (i32.add (local.get $data_wa)
+                (i32.mul (i32.add (local.get $arg1) (i32.const 1)) (local.get $item_size)))
               (i32.mul (i32.sub (i32.sub (local.get $count) (i32.const 1)) (local.get $arg1))
                 (local.get $item_size)))))
-        (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 4)))
+        (i32.store offset=4 (local.get $dsa_wa)
           (i32.sub (local.get $count) (i32.const 1)))
         (global.set $eax (i32.const 1)))
       (else
@@ -672,13 +677,13 @@
 
   ;; DPA_Create(cItemGrow) — 1 arg, returns HDPA
   (func $handle_DPA_Create (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dpa i32)
+    (local $dpa i32) (local $dpa_wa i32)
     (local $cap i32)
     (local.set $cap (select (local.get $arg0) (i32.const 8) (i32.gt_u (local.get $arg0) (i32.const 0))))
-    (local.set $dpa (call $heap_alloc (i32.const 12)))
-    (i32.store (call $g2w (local.get $dpa)) (i32.const 0))           ;; count
-    (i32.store (call $g2w (i32.add (local.get $dpa) (i32.const 4))) (local.get $cap))  ;; capacity
-    (i32.store (call $g2w (i32.add (local.get $dpa) (i32.const 8)))
+    (local.set $dpa (call $heap_alloc (i32.const 12))) (local.set $dpa_wa (call $g2w (local.get $dpa)))
+    (i32.store (local.get $dpa_wa) (i32.const 0))           ;; count
+    (i32.store offset=4 (local.get $dpa_wa) (local.get $cap))  ;; capacity
+    (i32.store offset=8 (local.get $dpa_wa)
       (call $heap_alloc (i32.shl (local.get $cap) (i32.const 2))))   ;; ptrs array
     (global.set $eax (local.get $dpa))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
@@ -692,10 +697,11 @@
 
   ;; DPA_GetPtr(hdpa, index) — 2 args, returns pointer at index
   (func $handle_DPA_GetPtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $count i32)
+    (local $count i32) (local $dpa_wa i32)
     (local $ptrs i32)
-    (local.set $count (i32.load (call $g2w (local.get $arg0))))
-    (local.set $ptrs (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
+    (local.set $dpa_wa (call $g2w (local.get $arg0)))
+    (local.set $count (i32.load (local.get $dpa_wa)))
+    (local.set $ptrs (i32.load offset=8 (local.get $dpa_wa)))
     (if (i32.lt_u (local.get $arg1) (local.get $count))
       (then
         (global.set $eax (i32.load (call $g2w (i32.add (local.get $ptrs) (i32.shl (local.get $arg1) (i32.const 2)))))))
