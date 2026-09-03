@@ -283,7 +283,7 @@
       (then (return (i32.load (local.get $wa)))))
     (i32.or
       (i32.or
-        (i32.load8_u (call $g2w (local.get $ga)))
+        (i32.load8_u (local.get $wa))
         (i32.shl
           (i32.load8_u (call $g2w (i32.add (local.get $ga) (i32.const 1))))
           (i32.const 8)))
