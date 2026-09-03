@@ -9,7 +9,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const {
-  APPS, LOCAL_CANDIDATE_APPS, resolveCopySuperops,
+  APPS, DESKTOP_APPS, LOCAL_CANDIDATE_APPS, resolveCopySuperops,
 } = require(path.join(ROOT, 'lib', 'apps.js'));
 const {
   buildCatalog,
@@ -21,8 +21,10 @@ const select = html.match(/<select id="app-select">([\s\S]*?)<\/select>/);
 assert(select, 'index.html has no #app-select');
 assert(html.includes('id="app-picker"') && html.includes('class="app-picker-popup"'),
   'debug toolbar must expose the searchable app-picker shell');
-assert(html.includes('lib/debug-app-picker.js?v=1'),
+assert(html.includes('lib/debug-app-picker.js?v=2'),
   'debug app picker must be loaded with an explicit browser cache token');
+assert(html.includes('lib/browser-shell.js?v=32'),
+  'browser shell must be cache-busted for packed-demo slice selection');
 const dropdownIds = [...select[1].matchAll(/<option value="([^"]+)"/g)]
   .map(match => match[1]);
 
@@ -31,8 +33,8 @@ assert.strictEqual(new Set(dropdownIds).size, dropdownIds.length,
 for (const id of dropdownIds) assert(APPS[id], `debug dropdown app ${id} is not registered`);
 
 assert(dropdownIds.includes('heaven7'), 'web dropdown must list Heaven Seven');
-assert(LOCAL_CANDIDATE_APPS.some(([id]) => id === 'heaven7'),
-  'Heaven Seven must survive the localhost selector filter');
+assert(DESKTOP_APPS.some(([id]) => id === 'heaven7'),
+  'Heaven Seven must be available in the hosted app picker');
 assert.strictEqual(APPS.heaven7.exe,
   'binaries/demoscene/heaven-seven/HEAVEN7W.EXE',
   'Heaven Seven must launch the tested final Windows executable');
@@ -45,8 +47,8 @@ assert.strictEqual(crypto.createHash('sha256').update(fs.readFileSync(heaven7Exe
   '3171d7bbe7faf70d5f3a6f6e24292e33a5007316156734a63b42cdf2f8805453',
   'Heaven Seven executable must match the archived final Windows build');
 assert(dropdownIds.includes('cashcow'), 'web dropdown must list Cashcow');
-assert(LOCAL_CANDIDATE_APPS.some(([id]) => id === 'cashcow'),
-  'Cashcow must survive the localhost selector filter');
+assert(DESKTOP_APPS.some(([id]) => id === 'cashcow'),
+  'Cashcow must be available in the hosted app picker');
 assert.strictEqual(APPS.cashcow.exe,
   'binaries/demoscene/cashcow/CASHCOW.EXE',
   'Cashcow must launch the tested Windows executable');
@@ -58,6 +60,22 @@ assert.strictEqual(fs.statSync(cashcowExe).size, 81899,
 assert.strictEqual(crypto.createHash('sha256').update(fs.readFileSync(cashcowExe)).digest('hex'),
   '4c77dabf9bce091b16df267bfc230f0d9b063da1b23b77148348b20d4c151ea2',
   'Cashcow executable must match the archived Aardbei group build');
+assert(dropdownIds.includes('bakkslide7'), 'web dropdown must list Bakkslide 7');
+assert(DESKTOP_APPS.some(([id]) => id === 'bakkslide7'),
+  'Bakkslide 7 must be available in the hosted app picker');
+assert.strictEqual(APPS.bakkslide7.exe,
+  'binaries/demoscene/bakkslide7/BAKKSLIDE7.EXE',
+  'Bakkslide 7 must launch the tested Win32 port');
+assert.strictEqual(APPS.bakkslide7.dismissStartupDialog.command, 1002,
+  'Bakkslide 7 must automatically press Start in its setup dialog');
+assert.strictEqual(APPS.bakkslide7.windowlessGraceMs, 30000,
+  'Bakkslide 7 must survive its packed setup-to-demo window transition');
+const bakkslideExe = path.join(ROOT, APPS.bakkslide7.exe.replace(/^binaries\//, 'test/binaries/'));
+assert.strictEqual(fs.statSync(bakkslideExe).size, 95744,
+  'Bakkslide 7 must retain the tested executable size');
+assert.strictEqual(crypto.createHash('sha256').update(fs.readFileSync(bakkslideExe)).digest('hex'),
+  '4b7303a5e94728d5f1ad8cb6e6d5dddfb105eb33a14bec556a6d1a4758ebf4b9',
+  'Bakkslide 7 executable must match the archived Win32 port');
 
 function option(value, label) {
   return { tagName: 'OPTION', value, textContent: label };
@@ -80,6 +98,7 @@ const pickerCatalog = buildCatalog({
     group('Demoscene', [
       option('heaven7', 'Heaven Seven (64K intro)'),
       option('cashcow', 'Cashcow (64K intro)'),
+      option('bakkslide7', 'Bakkslide 7 (64K intro, Win32 port)'),
     ]),
     group('Installers', [option('winamp291_inst', 'Winamp 2.91 Installer')]),
     group('Future Collection', [option('future', 'Future App')]),
@@ -88,7 +107,7 @@ const pickerCatalog = buildCatalog({
 assert.deepStrictEqual(pickerCatalog.entries.map(entry => entry.value),
   [
     'notepad', 'sol', 'sol16', 'winamp', 'pinball',
-    'quake2_demo', 'quake2_demo_installer', 'heaven7', 'cashcow', 'winamp291_inst', 'future',
+    'quake2_demo', 'quake2_demo_installer', 'heaven7', 'cashcow', 'bakkslide7', 'winamp291_inst', 'future',
   ],
   'picker catalog must preserve the native selector order and top-level options');
 const pickerCategories = categorizeCatalog(pickerCatalog);
@@ -98,8 +117,10 @@ assert(pickerCategories.some(category => category.label === 'Classic Games' && c
   'classic game groups and game entries from Other must share a cascade');
 assert(pickerCategories.some(category => category.label === '16-bit Games' && category.count === 1),
   '16-bit games must have their own shorter cascade');
-assert(pickerCategories.some(category => category.label === 'PC Games & Demos' && category.count === 3),
-  'local game candidates and demoscene intros must appear outside the classic-game collection');
+assert(pickerCategories.some(category => category.label === 'PC Games' && category.count === 1),
+  'local game candidates must appear outside the classic-game collection');
+assert(pickerCategories.some(category => category.label === 'Demoscene' && category.count === 3),
+  'demoscene intros must have their own app-picker category');
 assert(pickerCategories.some(category => category.label === 'Installers' && category.count === 2),
   'installers from both source groups must share one category');
 assert(pickerCategories.some(category =>

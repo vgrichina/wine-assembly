@@ -441,3 +441,22 @@ curl -fL -o /tmp/aardbei_cashcow.zip \
 unzip -j /tmp/aardbei_cashcow.zip cashcow.exe -d binaries/demoscene/cashcow
 mv binaries/demoscene/cashcow/cashcow.exe binaries/demoscene/cashcow/CASHCOW.EXE
 ```
+
+**Bakkslide 7 (Win32 port)** — Hellcore & Omnicolour's 2003 Windows port of
+their first-place Takeover 1999 64K intro. Its setup dialog exposes fullscreen,
+4:3-window, wide-window, and MMX-transfer choices; the launcher starts its
+default presentation automatically.
+
+- Source: `https://archive.scene.org/pub/parties/1999/takeover99/in64/bakkslide7_win32.zip`
+- Archive size: 95,227 bytes
+- Archive SHA-256: `9b1d861588d1be3a20c5243d8cf19c10d7225e31a12dca373ae8d8f43b6ffe48`
+- `bakkslide7_win32.exe` size: 95,744 bytes
+- `bakkslide7_win32.exe` SHA-256: `4b7303a5e94728d5f1ad8cb6e6d5dddfb105eb33a14bec556a6d1a4758ebf4b9`
+- Destination: `demoscene/bakkslide7/BAKKSLIDE7.EXE`
+
+```bash
+curl -fL -o /tmp/bakkslide7-win32.zip \
+  https://archive.scene.org/pub/parties/1999/takeover99/in64/bakkslide7_win32.zip
+unzip -j /tmp/bakkslide7-win32.zip bakkslide7_win32.exe -d binaries/demoscene/bakkslide7
+mv binaries/demoscene/bakkslide7/bakkslide7_win32.exe binaries/demoscene/bakkslide7/BAKKSLIDE7.EXE
+```
