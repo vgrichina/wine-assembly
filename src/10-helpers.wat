@@ -4524,10 +4524,19 @@
     (local $slot i32) (local $my_slot i32) (local $my_z i32) (local $sib i32)
     (local $xy i32) (local $wh i32) (local $sx i32) (local $sy i32) (local $sw i32) (local $sh i32)
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
-    (if (i32.eqz (i32.and (local.get $style) (i32.const 0x04000000))) ;; WS_CLIPSIBLINGS
-      (then (return)))
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
     (if (i32.eqz (local.get $parent)) (then (return)))
+    ;; USER's dialog manager preserves the visible region of an earlier
+    ;; (higher) template item even when the resource did not spell out
+    ;; WS_CLIPSIBLINGS. Outside a dialog, retain the explicit-style contract.
+    ;; Without this, repainting CD Player's later CS_OWNDC LED covers the left
+    ;; half of its earlier overlapping owner-draw Play button every second.
+    (if (i32.eqz (i32.and (local.get $style) (i32.const 0x04000000))) ;; WS_CLIPSIBLINGS
+      (then
+        (if (i32.and
+              (i32.ne (call $wnd_table_get (local.get $parent)) (global.get $WNDPROC_DIALOG))
+              (i32.eqz (call $wnd_class_is_dialog (local.get $parent))))
+          (then (return)))))
     (local.set $my_slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.lt_s (local.get $my_slot) (i32.const 0)) (then (return)))
     (local.set $my_z (call $wnd_z_get (local.get $hwnd)))
@@ -5312,6 +5321,13 @@
           (local.get $custom_wndproc)))
       (drop (call $wnd_set_style (local.get $ctrl_hwnd) (local.get $ctrl_style)))
       (call $wnd_set_parent (local.get $ctrl_hwnd) (local.get $dlg_hwnd))
+      ;; The dialog manager keeps resource order as front-to-back tab/z
+      ;; order: the first item is above later overlapping items. A normal
+      ;; CreateWindow call inserts each new child at HWND_TOP, so explicitly
+      ;; append template children at HWND_BOTTOM instead. CD Player depends on
+      ;; this for its wide owner-draw Play button, which overlaps the LED
+      ;; control declared eight items later in the resource.
+      (call $wnd_z_set_after (local.get $ctrl_hwnd) (i32.const 1)) ;; HWND_BOTTOM
       ;; A named control in a dialog template is still a real window of its
       ;; registered class. CreateWindowExA resolves these per-window class
       ;; properties before WM_CREATE; the template path must do the same.

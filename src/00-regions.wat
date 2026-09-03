@@ -141,7 +141,7 @@
   (region.declare $MENU_DATA_TABLE (size 0x00000400) (align 0x00000010)
     (owner "09c0-window-table.wat:154"))
   (region.declare $WND_DLG_RECORDS (size 0x00002000) (align 0x00000010)
-    (owner "10-helpers.wat:4963"))
+    (owner "10-helpers.wat:4966"))
   ;; Four dwords of cross-instance waveOut identity in the 16-byte hole
   ;; between WND_DLG_RECORDS and SCROLL_TABLE. Declared rather than spelled
   ;; (region.end $WND_DLG_RECORDS): it is its own object, and an adjacency is
