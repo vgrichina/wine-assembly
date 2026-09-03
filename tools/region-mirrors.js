@@ -78,9 +78,9 @@ const SYMBOLIC = /^(\s*\(global\s+(\$[A-Za-z0-9_]+)\s+(?:i32|\(mut\s+i32\))\s+)\
 const ALIASES = [
   ['THREAD_BASE', 'THREAD_CACHE_BASE', 0],
   // Not the region's end: $THREAD_CACHE_BASE also holds the per-thread
-  // partitions above 0x400000, and $THREAD_END is where the MAIN thread's
-  // 4MB cache stops.
-  ['THREAD_END', 'THREAD_CACHE_BASE', 0x400000],
+  // partitions above 0x3C0000, and $THREAD_END is where the MAIN thread's
+  // 3.75MB cache stops.
+  ['THREAD_END', 'THREAD_CACHE_BASE', 0x3C0000],
   ['thread_alloc', 'THREAD_CACHE_BASE', 0],
   ['PAGE_DIR', 'PAGE_DIR_BASE', 0],
   ['PAGE_INDEX', 'PAGE_INDEX_ARENA', 0],

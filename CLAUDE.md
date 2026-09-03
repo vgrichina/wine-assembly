@@ -270,7 +270,7 @@ Plus one span, `$DIRECT_WINDOW` `0x0`–`0x08000000`: a transparent named limit,
 
 The PE loads at its preferred `image_base` (typically `0x400000`). `g2w(guest) = guest - image_base + GUEST_BASE` is now the **direct-window case only** — when that result falls outside `$DIRECT_WINDOW`, `$g2w` tries the DIB range (guest `0x50000000`, backed by DIB_BACKING_BASE) and then a record-walked affine virtual-mapping table backed by VIRTUAL_BACKING_BASE; a miss returns the NULL sentinel at `0xF0`.
 
-Two things that used to be in this list and are gone: **CACHE_INDEX no longer exists as a region at all**, and the threaded-code cache is `$THREAD_CACHE_BASE`, 32 MB, carved into per-thread `0x400000` partitions — `$THREAD_BASE` survives only as a per-thread cursor global, so its old "4MB" was the partition size, never the region's.
+Two things that used to be in this list and are gone: **CACHE_INDEX no longer exists as a region at all**, and the threaded-code cache is `$THREAD_CACHE_BASE`, 30 MB, carved into eight per-thread `0x3C0000` partitions — `$THREAD_BASE` survives only as a per-thread cursor global, so the cache size is a partition limit, never a separate region.
 
 See [docs/memory-map.md](docs/memory-map.md) for the full annotated layout, comparison with Windows 98 kernel/user memory model, and analysis of what's emulator-private vs guest-accessible; [docs/watx-region-safety-design.md](docs/watx-region-safety-design.md) for why the map is allocated rather than hand-placed.
 

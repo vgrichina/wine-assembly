@@ -1493,10 +1493,10 @@
   ;; 0x03D12000  ...     Guest heap grows upward; VirtualAlloc reserves grow downward from thread cache
   ;; 0x03E12000  256KB   Former IAT thunk zone, now free for guest heap
   ;; 0x04A00000   6MB    WIN16_APP_DLL_STAGING (one reusable app-module image)
-  ;; 0x05000000 32MB     Thread cache (8 slots × 4MB decoded-thread arenas)
+  ;; allocator-owned 30MB Thread cache (8 slots × 3.75MB decoded-thread arenas)
   ;; 0x07012000  1MB     Main guest stack (ESP starts at top 0x07112000)
   ;; 0x07112000 256KB    IAT thunk zone
-  ;; 0x07152000 256KB    Block cache indexes (8 slots × 4096 entries × 8 bytes)
+  ;; 0x07152000 256KB    Former block-cache index gap (page indexes replaced it)
   ;; 0x07192000  8MB     PE staging area (supports PEs up to 8MB)
   ;; 0x07992000  512B    DLL table (16 DLLs × 32 bytes)
   ;; 0x07992200  128B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
@@ -1522,9 +1522,9 @@
   (global $THUNK_END    i32 (i32.const 0x07152000))
   (global $THREAD_CACHE_BASE i32 (region.addr $THREAD_CACHE_BASE 0))
   (global $THREAD_CACHE_BASE_SIZE i32 (region.size $THREAD_CACHE_BASE))
-  ;; 0x07152000..0x07192000 (256KB) used to be CACHE_INDEX_BASE, the per-thread
-  ;; direct-mapped hash index of the block cache. Pages replaced it outright
-  ;; (docs/page-compile-design.md sections 4 and 4.1) and the region is free.
+  (global $THREAD_CACHE_STRIDE i32 (i32.const 0x003C0000))
+  ;; 0x07152000..0x07192000 held the direct-mapped block-cache index; pages
+  ;; replaced it outright (docs/page-compile-design.md §§4/4.1), leaving it free.
   ;; Page compilation (docs/page-compile-design.md). Both regions live in the
   ;; free span 0x04100000..0x05000000 that tools/wat-memory-map.js reports
   ;; between HANDLER_PAIR_HIST_COUNTS and THREAD_CACHE_BASE.
@@ -1593,10 +1593,10 @@
   (global $thunk_guest_base (mut i32) (i32.const 0))
   (global $thunk_guest_end  (mut i32) (i32.const 0))
   (global $THREAD_BASE  (mut i32) (region.addr $THREAD_CACHE_BASE 0x00000000))
-  ;; THREAD_END = THREAD_BASE + 0x400000. Per-thread partition limit; overflow
+  ;; THREAD_END = THREAD_BASE + THREAD_CACHE_STRIDE. Per-thread partition limit; overflow
   ;; checks use this so main (tid=0) doesn't trample T1's thread cache region.
   ;; Updated in $init_thread per tid.
-  (global $THREAD_END   (mut i32) (region.addr $THREAD_CACHE_BASE 0x00400000))
+  (global $THREAD_END   (mut i32) (region.addr $THREAD_CACHE_BASE 0x003C0000))
   ;; Per-thread page-compilation state. Worker threads are separate WASM
   ;; instances over the same memory, so every one of these is per-instance and
   ;; must be re-armed in $init_thread -- see the per-instance-globals rule that

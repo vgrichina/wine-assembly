@@ -2699,8 +2699,8 @@
       (param $main_rsrc_rva i32)
     (local $pe_off i32)
     (global.set $THREAD_BASE (i32.add (region.addr $THREAD_CACHE_BASE 0)
-      (i32.mul (local.get $tid) (i32.const 0x400000))))
-    (global.set $THREAD_END  (i32.add (global.get $THREAD_BASE) (i32.const 0x400000)))
+      (i32.mul (local.get $tid) (global.get $THREAD_CACHE_STRIDE))))
+    (global.set $THREAD_END  (i32.add (global.get $THREAD_BASE) (global.get $THREAD_CACHE_STRIDE)))
     (global.set $thread_alloc (global.get $THREAD_BASE))
     ;; Page-compilation state is per-instance for the same reason THREAD_BASE
     ;; is: a worker is a separate instance over the same memory, and chunk
