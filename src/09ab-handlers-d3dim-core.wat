@@ -887,7 +887,7 @@
     (local.get $dst_g))
 
   (func $d3dim_create_vb (param $lpDesc i32) (param $ppVB i32) (param $vtbl i32)
-    (local $obj i32) (local $entry i32) (local $desc_g i32) (local $data_g i32)
+    (local $obj i32) (local $entry i32) (local $desc_g i32) (local $data_g i32) (local $desc_wa i32)
     (local $desc_size i32) (local $fvf i32) (local $count i32) (local $size i32)
     (if (i32.eqz (local.get $ppVB)) (then (global.set $eax (i32.const 0x80004003)) (return)))
     (local.set $obj (call $dx_create_com_obj (i32.const 22) (local.get $vtbl)))
@@ -901,9 +901,9 @@
       (local.set $count (call $gl32 (i32.add (local.get $lpDesc) (i32.const 12))))
       (local.set $desc_g (call $heap_alloc (i32.const 32)))
       (if (local.get $desc_g) (then
-        (call $zero_memory (call $g2w (local.get $desc_g)) (i32.const 32))
-        (call $memcpy (call $g2w (local.get $desc_g)) (call $g2w (local.get $lpDesc)) (local.get $desc_size))
-        (call $gs32 (local.get $desc_g) (local.get $desc_size))
+        (local.set $desc_wa (call $g2w (local.get $desc_g))) (call $zero_memory (local.get $desc_wa) (i32.const 32))
+        (call $memcpy (local.get $desc_wa) (call $g2w (local.get $lpDesc)) (local.get $desc_size))
+        (i32.store (local.get $desc_wa) (local.get $desc_size))
         (i32.store (i32.add (local.get $entry) (i32.const 16)) (local.get $desc_g))))))
     (local.set $size (i32.mul (call $d3dim_fvf_stride (local.get $fvf)) (local.get $count)))
     (if (i32.eqz (local.get $size)) (then (local.set $size (i32.const 4096))))
@@ -1139,7 +1139,7 @@
   ;; Material objects keep a private D3DMATERIAL copy at entry+8, with the
   ;; stored byte count at entry+12. Legacy material handles are DX slot ids.
   (func $d3dim_material_set (param $this i32) (param $lpMat i32)
-    (local $entry i32) (local $dst i32) (local $sz i32)
+    (local $entry i32) (local $dst i32) (local $sz i32) (local $dst_wa i32)
     (if (i32.eqz (local.get $lpMat)) (then (global.set $eax (i32.const 0)) (return)))
     (local.set $entry (call $dx_from_this (local.get $this)))
     (if (i32.eqz (local.get $entry)) (then (global.set $eax (i32.const 0)) (return)))
@@ -1151,8 +1151,8 @@
     (if (i32.eqz (local.get $dst)) (then
       (local.set $dst (call $heap_alloc (i32.const 80)))
       (store.field DxObject misc0 (local.get $entry) (local.get $dst))))
-    (call $zero_memory (call $g2w (local.get $dst)) (i32.const 80))
-    (call $memcpy (call $g2w (local.get $dst)) (call $g2w (local.get $lpMat)) (local.get $sz))
+    (local.set $dst_wa (call $g2w (local.get $dst))) (call $zero_memory (local.get $dst_wa) (i32.const 80))
+    (call $memcpy (local.get $dst_wa) (call $g2w (local.get $lpMat)) (local.get $sz))
     (i32.store (i32.add (local.get $entry) (i32.const 12)) (local.get $sz))
     (global.set $eax (i32.const 0)))
 
