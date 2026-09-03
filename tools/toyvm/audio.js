@@ -210,6 +210,15 @@ class Sound {
   // at its own sample.
   noteOpl(at, reg, v) {
     if (!this.rate || !this.sink) { this.opl.write(reg, v); return; }
+    // The timer registers land now, not when the slice is rendered: they make
+    // no sound, and the status port is read back in the same instruction
+    // stream that wrote them. The AdLib presence test starts timer 1 and
+    // spins on the status port for its flag; with the write queued until the
+    // render, the flag never came inside the spin, and BLUE.COM, brainbug,
+    // daretro and DFUSE each concluded there was no FM chip -- but only when
+    // audio was being rendered, so the CLI without --audio disagreed with the
+    // page.
+    if (reg === 0x02 || reg === 0x03 || reg === 0x04) { this.opl.write(reg, v); return; }
     this.oplEvents.push({ at, reg, v });
   }
 
