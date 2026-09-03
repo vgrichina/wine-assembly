@@ -44,6 +44,20 @@ assert.strictEqual(fs.statSync(heaven7Exe).size, 65536,
 assert.strictEqual(crypto.createHash('sha256').update(fs.readFileSync(heaven7Exe)).digest('hex'),
   '3171d7bbe7faf70d5f3a6f6e24292e33a5007316156734a63b42cdf2f8805453',
   'Heaven Seven executable must match the archived final Windows build');
+assert(dropdownIds.includes('cashcow'), 'web dropdown must list Cashcow');
+assert(LOCAL_CANDIDATE_APPS.some(([id]) => id === 'cashcow'),
+  'Cashcow must survive the localhost selector filter');
+assert.strictEqual(APPS.cashcow.exe,
+  'binaries/demoscene/cashcow/CASHCOW.EXE',
+  'Cashcow must launch the tested Windows executable');
+assert.strictEqual(APPS.cashcow.args, 'w',
+  'Cashcow must use its documented windowed-mode switch');
+const cashcowExe = path.join(ROOT, APPS.cashcow.exe.replace(/^binaries\//, 'test/binaries/'));
+assert.strictEqual(fs.statSync(cashcowExe).size, 81899,
+  'Cashcow must retain the tested executable size');
+assert.strictEqual(crypto.createHash('sha256').update(fs.readFileSync(cashcowExe)).digest('hex'),
+  '4c77dabf9bce091b16df267bfc230f0d9b063da1b23b77148348b20d4c151ea2',
+  'Cashcow executable must match the archived Aardbei group build');
 
 function option(value, label) {
   return { tagName: 'OPTION', value, textContent: label };
@@ -63,7 +77,10 @@ const pickerCatalog = buildCatalog({
       option('quake2_demo', 'Quake II Demo'),
       option('quake2_demo_installer', 'Quake II Demo Installer'),
     ]),
-    group('Demoscene', [option('heaven7', 'Heaven Seven (64K intro)')]),
+    group('Demoscene', [
+      option('heaven7', 'Heaven Seven (64K intro)'),
+      option('cashcow', 'Cashcow (64K intro)'),
+    ]),
     group('Installers', [option('winamp291_inst', 'Winamp 2.91 Installer')]),
     group('Future Collection', [option('future', 'Future App')]),
   ],
@@ -71,7 +88,7 @@ const pickerCatalog = buildCatalog({
 assert.deepStrictEqual(pickerCatalog.entries.map(entry => entry.value),
   [
     'notepad', 'sol', 'sol16', 'winamp', 'pinball',
-    'quake2_demo', 'quake2_demo_installer', 'heaven7', 'winamp291_inst', 'future',
+    'quake2_demo', 'quake2_demo_installer', 'heaven7', 'cashcow', 'winamp291_inst', 'future',
   ],
   'picker catalog must preserve the native selector order and top-level options');
 const pickerCategories = categorizeCatalog(pickerCatalog);
@@ -81,7 +98,7 @@ assert(pickerCategories.some(category => category.label === 'Classic Games' && c
   'classic game groups and game entries from Other must share a cascade');
 assert(pickerCategories.some(category => category.label === '16-bit Games' && category.count === 1),
   '16-bit games must have their own shorter cascade');
-assert(pickerCategories.some(category => category.label === 'PC Games & Demos' && category.count === 2),
+assert(pickerCategories.some(category => category.label === 'PC Games & Demos' && category.count === 3),
   'local game candidates and demoscene intros must appear outside the classic-game collection');
 assert(pickerCategories.some(category => category.label === 'Installers' && category.count === 2),
   'installers from both source groups must share one category');

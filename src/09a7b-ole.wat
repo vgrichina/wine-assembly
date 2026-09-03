@@ -2586,7 +2586,7 @@
     (select (local.get $root) (local.get $obj) (i32.ne (local.get $root) (i32.const 0))))
 
   (func $ole_resize_buffer (param $obj i32) (param $new_size i32) (result i32)
-    (local $data i32) (local $old_size i32) (local $capacity i32) (local $new_data i32) (local $new_capacity i32)
+    (local $data i32) (local $old_size i32) (local $capacity i32) (local $new_data i32) (local $new_data_wa i32) (local $new_capacity i32)
     (local.set $obj (call $ole_stream_root (local.get $obj)))
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0x80004003))))
     (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
@@ -2616,12 +2616,12 @@
       (br $grow)))
     (local.set $new_data (call $heap_alloc (local.get $new_capacity)))
     (if (i32.eqz (local.get $new_data)) (then (return (i32.const 0x8007000E))))
-    (call $zero_memory (call $g2w (local.get $new_data)) (local.get $new_capacity))
+    (local.set $new_data_wa (call $g2w (local.get $new_data))) (call $zero_memory (local.get $new_data_wa) (local.get $new_capacity))
     (if (i32.and
           (i32.ne (local.get $data) (i32.const 0))
           (i32.ne (call $gl32 (i32.add (local.get $obj) (i32.const 16))) (i32.const 0)))
       (then (memory.copy
-        (call $g2w (local.get $new_data))
+        (local.get $new_data_wa)
         (call $g2w (local.get $data))
         (call $gl32 (i32.add (local.get $obj) (i32.const 16))))))
     (if (i32.and
@@ -4083,9 +4083,9 @@
   (func $ole_cfb_deserialize (param $lockbytes i32) (param $out i32) (result i32)
     (local $data i32) (local $size i32) (local $base_wa i32) (local $total i32)
     (local $fat_count i32) (local $dir_first i32) (local $dir_sectors i32)
-    (local $dir i32) (local $dir_count i32) (local $root_wa i32)
+    (local $dir i32) (local $dir_wa i32) (local $dir_count i32) (local $root_wa i32)
     (local $mini_fat_first i32) (local $mini_fat_sectors i32) (local $mini_fat i32)
-    (local $mini_stream_size i32) (local $mini_stream i32) (local $visited i32)
+    (local $mini_stream_size i32) (local $mini_stream i32) (local $visited i32) (local $visited_wa i32)
     (local $storage i32) (local $hr i32)
     (if (local.get $out) (then (call $gs32 (local.get $out) (i32.const 0))))
     (if (i32.or (i32.eqz (local.get $lockbytes)) (i32.eqz (local.get $out)))
@@ -4123,12 +4123,12 @@
     (if (i32.le_s (local.get $dir_sectors) (i32.const 0)) (then (return (i32.const 0x800300FB))))
     (local.set $dir (call $heap_alloc (i32.shl (local.get $dir_sectors) (i32.const 9))))
     (if (i32.eqz (local.get $dir)) (then (return (i32.const 0x8007000E))))
-    (local.set $hr (call $ole_cfb_copy_regular
+    (local.set $dir_wa (call $g2w (local.get $dir))) (local.set $hr (call $ole_cfb_copy_regular
       (local.get $base_wa) (local.get $total) (local.get $fat_count) (local.get $dir_first)
-      (call $g2w (local.get $dir)) (i32.shl (local.get $dir_sectors) (i32.const 9))))
+      (local.get $dir_wa) (i32.shl (local.get $dir_sectors) (i32.const 9))))
     (if (local.get $hr) (then (call $heap_free (local.get $dir)) (return (local.get $hr))))
     (local.set $dir_count (i32.shl (local.get $dir_sectors) (i32.const 2)))
-    (local.set $root_wa (call $g2w (local.get $dir)))
+    (local.set $root_wa (local.get $dir_wa))
     (if (i32.or
           (i32.ne (i32.load8_u offset=66 (local.get $root_wa)) (i32.const 5))
           (i32.or
@@ -4182,8 +4182,8 @@
         (if (local.get $mini_stream) (then (call $heap_free (local.get $mini_stream))))
         (if (local.get $mini_fat) (then (call $heap_free (local.get $mini_fat))))
         (call $heap_free (local.get $dir)) (return (i32.const 0x8007000E))))
-    (call $zero_memory (call $g2w (local.get $visited)) (local.get $dir_count))
-    (i32.store8 (call $g2w (local.get $visited)) (i32.const 1))
+    (local.set $visited_wa (call $g2w (local.get $visited))) (call $zero_memory (local.get $visited_wa) (local.get $dir_count))
+    (i32.store8 (local.get $visited_wa) (i32.const 1))
     (local.set $storage (call $ole_create_storage (i32.const 0)))
     (if (i32.eqz (local.get $storage))
       (then (local.set $hr (i32.const 0x8007000E)))
@@ -4193,7 +4193,7 @@
         (call $gs32 (i32.add (local.get $storage) (i32.const 56)) (i32.load offset=96 (local.get $root_wa)))
         (local.set $hr (call $ole_cfb_load_tree
           (local.get $dir) (local.get $dir_count) (local.get $storage)
-          (i32.load offset=76 (local.get $root_wa)) (call $g2w (local.get $visited))
+          (i32.load offset=76 (local.get $root_wa)) (local.get $visited_wa)
           (local.get $base_wa) (local.get $total) (local.get $fat_count)
           (call $g2w (local.get $mini_fat)) (i32.shl (local.get $mini_fat_sectors) (i32.const 7))
           (call $g2w (local.get $mini_stream)) (local.get $mini_stream_size)))))
@@ -5644,9 +5644,9 @@
   (func $ole_data_set_entry_with_retired
       (param $obj i32) (param $formatetc i32) (param $medium i32)
       (param $take i32) (param $retired_out i32) (result i32)
-    (local $entries i32) (local $count i32) (local $capacity i32) (local $entry i32)
-    (local $new_entries i32) (local $new_capacity i32) (local $hr i32)
-    (local $staged i32) (local $retired i32) (local $retired_entries i32)
+    (local $entries i32) (local $count i32) (local $capacity i32) (local $entry i32) (local $entry_wa i32)
+    (local $new_entries i32) (local $new_entries_wa i32) (local $new_capacity i32) (local $hr i32)
+    (local $staged i32) (local $staged_wa i32) (local $medium_wa i32) (local $retired i32) (local $retired_entries i32)
     (if (local.get $retired_out) (then (call $gs32 (local.get $retired_out) (i32.const 0))))
     (if (i32.or (i32.eqz (local.get $obj))
           (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $medium))))
@@ -5655,17 +5655,17 @@
           (call $gl32 (i32.add (local.get $formatetc) (i32.const 16)))
           (call $gl32 (local.get $medium))))
       (then (return (i32.const 0x80040069))))
-    (local.set $entry (call $ole_data_find_entry (local.get $obj) (local.get $formatetc)))
+    (local.set $entry (call $ole_data_find_entry (local.get $obj) (local.get $formatetc))) (if (local.get $entry) (then (local.set $entry_wa (call $g2w (local.get $entry)))))
     (local.set $staged (call $heap_alloc (i32.const 32)))
     (if (i32.eqz (local.get $staged)) (then (return (i32.const 0x8007000E))))
-    (call $zero_memory (call $g2w (local.get $staged)) (i32.const 32))
+    (local.set $staged_wa (call $g2w (local.get $staged))) (call $zero_memory (local.get $staged_wa) (i32.const 32))
     (local.set $hr (call $ole_format_copy (local.get $staged) (local.get $formatetc)))
     (if (local.get $hr) (then (call $heap_free (local.get $staged)) (return (local.get $hr))))
     ;; One owned entry carries one concrete STGMEDIUM. Enumeration and later
     ;; queries must not advertise alternate media that this entry cannot return.
     (call $gs32 (i32.add (local.get $staged) (i32.const 16)) (call $gl32 (local.get $medium)))
     (if (local.get $take)
-      (then (memory.copy (i32.add (call $g2w (local.get $staged)) (i32.const 20)) (call $g2w (local.get $medium)) (i32.const 12)))
+      (then (local.set $medium_wa (call $g2w (local.get $medium))) (memory.copy (i32.add (local.get $staged_wa) (i32.const 20)) (local.get $medium_wa) (i32.const 12)))
       (else
         (local.set $hr (call $ole_copy_medium (i32.add (local.get $staged) (i32.const 20)) (local.get $medium)))
         (if (local.get $hr)
@@ -5687,16 +5687,16 @@
                 (call $ole_format_free (local.get $staged))
                 (call $heap_free (local.get $staged))
                 (return (i32.const 0x8007000E))))
-            (call $zero_memory (call $g2w (local.get $new_entries)) (i32.shl (local.get $new_capacity) (i32.const 5)))
+            (local.set $new_entries_wa (call $g2w (local.get $new_entries))) (call $zero_memory (local.get $new_entries_wa) (i32.shl (local.get $new_capacity) (i32.const 5)))
             (if (local.get $count)
-              (then (memory.copy (call $g2w (local.get $new_entries)) (call $g2w (local.get $entries))
+              (then (memory.copy (local.get $new_entries_wa) (call $g2w (local.get $entries))
                 (i32.shl (local.get $count) (i32.const 5)))))
             (if (local.get $entries) (then (call $heap_free (local.get $entries))))
             (local.set $entries (local.get $new_entries))
             (local.set $capacity (local.get $new_capacity))
             (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $entries))
             (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (local.get $capacity))))
-        (local.set $entry (i32.add (local.get $entries) (i32.shl (local.get $count) (i32.const 5))))
+        (local.set $entry (i32.add (local.get $entries) (i32.shl (local.get $count) (i32.const 5)))) (local.set $entry_wa (call $g2w (local.get $entry)))
         (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (i32.add (local.get $count) (i32.const 1))))
       (else
         (if (call $ole_medium_has_guest_release (i32.add (local.get $entry) (i32.const 20)))
@@ -5721,14 +5721,14 @@
                 (return (i32.const 0x8007000E))))
             (local.set $retired_entries (call $gl32 (i32.add (local.get $retired) (i32.const 12))))
             (memory.copy (call $g2w (local.get $retired_entries))
-              (call $g2w (local.get $entry)) (i32.const 32))
+              (local.get $entry_wa) (i32.const 32))
             (call $gs32 (local.get $retired_out) (local.get $retired)))
           (else
             (call $ole_release_medium (i32.add (local.get $entry) (i32.const 20)))
             (call $ole_format_free (local.get $entry))))))
-    (memory.copy (call $g2w (local.get $entry)) (call $g2w (local.get $staged)) (i32.const 32))
+    (memory.copy (local.get $entry_wa) (local.get $staged_wa) (i32.const 32))
     (call $heap_free (local.get $staged))
-    (if (local.get $take) (then (call $zero_memory (call $g2w (local.get $medium)) (i32.const 12))))
+    (if (local.get $take) (then (call $zero_memory (local.get $medium_wa) (i32.const 12))))
     (i32.const 0))
 
   (func $ole_data_set_entry
@@ -5838,10 +5838,10 @@
     (local $format i32) (local $is_text i32) (local $unicode i32) (local $ansi i32)
     (local $temp_format i32) (local $temp_medium i32) (local $staged i32)
     (local $old_entries i32) (local $old_count i32) (local $staged_entries i32) (local $staged_count i32)
-    (local $new_entries i32) (local $new_count i32) (local $new_capacity i32)
+    (local $new_entries i32) (local $new_entries_wa i32) (local $new_count i32) (local $new_capacity i32)
     (local $entry i32) (local $dst i32) (local $i i32) (local $out i32)
     (local $matched_count i32) (local $retired_count i32) (local $retired_index i32)
-    (local $retired i32) (local $retired_entries i32) (local $input_guest i32) (local $hr i32)
+    (local $retired i32) (local $retired_entries i32) (local $input_guest i32) (local $medium_wa i32) (local $hr i32)
     (if (local.get $retired_out) (then (call $gs32 (local.get $retired_out) (i32.const 0))))
     (if (i32.or (i32.eqz (local.get $obj))
           (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $medium))))
@@ -5963,7 +5963,7 @@
     (local.set $new_entries (call $heap_alloc (i32.shl (local.get $new_capacity) (i32.const 5))))
     (if (i32.eqz (local.get $new_entries))
       (then (drop (call $ole_obj_release (local.get $staged))) (return (i32.const 0x8007000E))))
-    (call $zero_memory (call $g2w (local.get $new_entries))
+    (local.set $new_entries_wa (call $g2w (local.get $new_entries))) (call $zero_memory (local.get $new_entries_wa)
       (i32.shl (local.get $new_capacity) (i32.const 5)))
     (if (local.get $retired_count)
       (then
@@ -6000,15 +6000,15 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $move)))
     (memory.copy
-      (i32.add (call $g2w (local.get $new_entries)) (i32.shl (local.get $out) (i32.const 5)))
+      (i32.add (local.get $new_entries_wa) (i32.shl (local.get $out) (i32.const 5)))
       (call $g2w (local.get $staged_entries)) (i32.shl (local.get $staged_count) (i32.const 5)))
     (if (local.get $input_guest)
       (then
         (local.set $dst (i32.add (local.get $retired_entries)
           (i32.shl (local.get $retired_index) (i32.const 5))))
-        (memory.copy (i32.add (call $g2w (local.get $dst)) (i32.const 20))
-          (call $g2w (local.get $medium)) (i32.const 12))
-        (call $zero_memory (call $g2w (local.get $medium)) (i32.const 12))))
+        (local.set $medium_wa (call $g2w (local.get $medium))) (memory.copy (i32.add (call $g2w (local.get $dst)) (i32.const 20))
+          (local.get $medium_wa) (i32.const 12))
+        (call $zero_memory (local.get $medium_wa) (i32.const 12))))
 
     (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $new_entries))
     (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (local.get $new_count))
@@ -7718,7 +7718,7 @@
 
   (func $ole_static_advise_reserve (param $root i32) (result i32)
     (local $entries i32) (local $count i32) (local $capacity i32)
-    (local $new_capacity i32) (local $new_entries i32)
+    (local $new_capacity i32) (local $new_entries i32) (local $new_entries_wa i32)
     (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 148))))
     (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 152))))
     (local.set $capacity (call $gl32 (i32.add (local.get $root) (i32.const 156))))
@@ -7728,10 +7728,10 @@
           (i32.ne (local.get $capacity) (i32.const 0))))
         (local.set $new_entries (call $heap_alloc (i32.mul (local.get $new_capacity) (i32.const 12))))
         (if (i32.eqz (local.get $new_entries)) (then (return (i32.const 0x8007000E))))
-        (call $zero_memory (call $g2w (local.get $new_entries))
+        (local.set $new_entries_wa (call $g2w (local.get $new_entries))) (call $zero_memory (local.get $new_entries_wa)
           (i32.mul (local.get $new_capacity) (i32.const 12)))
         (if (local.get $count)
-          (then (memory.copy (call $g2w (local.get $new_entries)) (call $g2w (local.get $entries))
+          (then (memory.copy (local.get $new_entries_wa) (call $g2w (local.get $entries))
             (i32.mul (local.get $count) (i32.const 12)))))
         (if (local.get $entries) (then (call $heap_free (local.get $entries))))
         (call $gs32 (i32.add (local.get $root) (i32.const 148)) (local.get $new_entries))
@@ -9219,7 +9219,7 @@
   ;; property, not out of any structure, so the slot has to carry it.
   (func $cd_modal_writeback (param $result i32)
     (local $root i32) (local $ofn i32) (local $name i32) (local $tmp i32)
-    (local $full i32) (local $dir i32) (local $dlen i32) (local $slot i32)
+    (local $full i32) (local $full_wa i32) (local $dir i32) (local $dlen i32) (local $slot i32)
     (local.set $root (global.get $cd_dlg_root))
     (local.set $ofn (global.get $cd_dlg_ofn))
     (if (i32.eqz (local.get $root)) (then (return)))
@@ -9231,7 +9231,7 @@
         (local.set $full (call $heap_alloc (i32.const 520)))
         (if (local.get $full)
           (then
-            (call $zero_memory (call $g2w (local.get $full)) (i32.const 520))
+            (local.set $full_wa (call $g2w (local.get $full))) (call $zero_memory (local.get $full_wa) (i32.const 520))
             ;; The edit holds a bare name; VB expects the full path.
             (local.set $dir (global.get $opendlg_current_dir))
             (if (i32.and
@@ -9240,7 +9240,7 @@
                           (i32.const 58)))  ;; ':' => already absolute
               (then
                 (local.set $dlen (call $guest_strlen (local.get $dir)))
-                (memory.copy (call $g2w (local.get $full)) (call $g2w (local.get $dir))
+                (memory.copy (local.get $full_wa) (call $g2w (local.get $dir))
                   (local.get $dlen))
                 (if (i32.ne (call $gl8 (i32.add (local.get $dir)
                       (i32.sub (local.get $dlen) (i32.const 1)))) (i32.const 92))
@@ -9388,7 +9388,7 @@
 
   (func $ole_cache_add (param $root i32) (param $formatetc i32) (param $advf i32) (param $out i32) (result i32)
     (local $entries i32) (local $count i32) (local $capacity i32) (local $entry i32)
-    (local $new_entries i32) (local $new_capacity i32) (local $connection i32) (local $hr i32)
+    (local $new_entries i32) (local $new_entries_wa i32) (local $new_capacity i32) (local $connection i32) (local $hr i32)
     (if (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $out)))
       (then (return (i32.const 0x80004003))))
     (call $gs32 (local.get $out) (i32.const 0))
@@ -9404,9 +9404,9 @@
           (i32.ne (local.get $capacity) (i32.const 0))))
         (local.set $new_entries (call $heap_alloc (i32.mul (local.get $new_capacity) (i32.const 40))))
         (if (i32.eqz (local.get $new_entries)) (then (return (i32.const 0x8007000E))))
-        (call $zero_memory (call $g2w (local.get $new_entries)) (i32.mul (local.get $new_capacity) (i32.const 40)))
+        (local.set $new_entries_wa (call $g2w (local.get $new_entries))) (call $zero_memory (local.get $new_entries_wa) (i32.mul (local.get $new_capacity) (i32.const 40)))
         (if (local.get $count)
-          (then (memory.copy (call $g2w (local.get $new_entries)) (call $g2w (local.get $entries))
+          (then (memory.copy (local.get $new_entries_wa) (call $g2w (local.get $entries))
             (i32.mul (local.get $count) (i32.const 40)))))
         (if (local.get $entries) (then (call $heap_free (local.get $entries))))
         (local.set $entries (local.get $new_entries))
@@ -9429,7 +9429,7 @@
   (func $ole_cache_set_data_with_retired
       (param $root i32) (param $formatetc i32) (param $medium i32)
       (param $take i32) (param $retired_out i32) (result i32)
-    (local $staged i32) (local $entry i32) (local $connection_out i32) (local $hr i32)
+    (local $staged i32) (local $staged_wa i32) (local $medium_wa i32) (local $entry i32) (local $connection_out i32) (local $hr i32)
     (local $retired i32) (local $retired_entries i32)
     (if (local.get $retired_out) (then (call $gs32 (local.get $retired_out) (i32.const 0))))
     (if (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $medium)))
@@ -9443,9 +9443,9 @@
         (if (local.get $staged) (then (call $heap_free (local.get $staged))))
         (if (local.get $connection_out) (then (call $heap_free (local.get $connection_out))))
         (return (i32.const 0x8007000E))))
-    (call $zero_memory (call $g2w (local.get $staged)) (i32.const 12))
+    (local.set $staged_wa (call $g2w (local.get $staged))) (call $zero_memory (local.get $staged_wa) (i32.const 12))
     (if (local.get $take)
-      (then (memory.copy (call $g2w (local.get $staged)) (call $g2w (local.get $medium)) (i32.const 12)))
+      (then (local.set $medium_wa (call $g2w (local.get $medium))) (memory.copy (local.get $staged_wa) (local.get $medium_wa) (i32.const 12)))
       (else
         (local.set $hr (call $ole_copy_medium (local.get $staged) (local.get $medium)))
         (if (local.get $hr)
@@ -9491,8 +9491,8 @@
               (call $g2w (i32.add (local.get $entry) (i32.const 28))) (i32.const 12))
             (call $gs32 (local.get $retired_out) (local.get $retired)))
           (else (call $ole_release_medium (i32.add (local.get $entry) (i32.const 28)))))))
-    (memory.copy (call $g2w (i32.add (local.get $entry) (i32.const 28))) (call $g2w (local.get $staged)) (i32.const 12))
-    (if (local.get $take) (then (call $zero_memory (call $g2w (local.get $medium)) (i32.const 12))))
+    (memory.copy (call $g2w (i32.add (local.get $entry) (i32.const 28))) (local.get $staged_wa) (i32.const 12))
+    (if (local.get $take) (then (call $zero_memory (local.get $medium_wa) (i32.const 12))))
     (call $heap_free (local.get $connection_out)) (call $heap_free (local.get $staged))
     (call $gs32 (i32.add (local.get $root) (i32.const 48)) (i32.const 1))
     (call $ole_cache_sync_render_slot (local.get $root))
@@ -9509,7 +9509,7 @@
   (func $ole_cache_uncache_with_retired
       (param $root i32) (param $connection i32) (param $retired_out i32) (result i32)
     (local $entries i32) (local $count i32) (local $i i32) (local $entry i32)
-    (local $retired i32) (local $retired_entries i32)
+    (local $retired i32) (local $retired_entries i32) (local $retired_entries_wa i32) (local $entry_wa i32)
     (if (local.get $retired_out) (then (call $gs32 (local.get $retired_out) (i32.const 0))))
     (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 100))))
     (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 104))))
@@ -9530,9 +9530,9 @@
                 (then (return (i32.const 0x8007000E))))
               (local.set $retired_entries
                 (call $gl32 (i32.add (local.get $retired) (i32.const 12))))
-              (memory.copy (call $g2w (local.get $retired_entries))
+              (local.set $retired_entries_wa (call $g2w (local.get $retired_entries))) (memory.copy (local.get $retired_entries_wa)
                 (call $g2w (i32.add (local.get $entry) (i32.const 8))) (i32.const 20))
-              (memory.copy (i32.add (call $g2w (local.get $retired_entries)) (i32.const 20))
+              (memory.copy (i32.add (local.get $retired_entries_wa) (i32.const 20))
                 (call $g2w (i32.add (local.get $entry) (i32.const 28))) (i32.const 12))
               (call $gs32 (local.get $retired_out) (local.get $retired)))
             (else
@@ -9540,8 +9540,8 @@
               (if (call $gl32 (i32.add (local.get $entry) (i32.const 28)))
                 (then (call $ole_release_medium (i32.add (local.get $entry) (i32.const 28)))))))
           (if (i32.lt_u (i32.add (local.get $i) (i32.const 1)) (local.get $count))
-            (then (memory.copy (call $g2w (local.get $entry))
-              (i32.add (call $g2w (local.get $entry)) (i32.const 40))
+            (then (local.set $entry_wa (call $g2w (local.get $entry))) (memory.copy (local.get $entry_wa)
+              (i32.add (local.get $entry_wa) (i32.const 40))
               (i32.mul (i32.sub (local.get $count) (i32.add (local.get $i) (i32.const 1))) (i32.const 40)))))
           (local.set $count (i32.sub (local.get $count) (i32.const 1)))
           (call $zero_memory (i32.add (call $g2w (local.get $entries)) (i32.mul (local.get $count) (i32.const 40))) (i32.const 40))
@@ -9633,7 +9633,7 @@
   )
 
   (func $ole_clone_cache_enum (param $source i32) (result i32)
-    (local $obj i32) (local $source_data i32) (local $data i32) (local $count i32)
+    (local $obj i32) (local $source_data i32) (local $data i32) (local $data_wa i32) (local $count i32)
     (local $i i32) (local $hr i32) (local $kind i32) (local $sink i32)
     (local.set $kind (call $gl32 (i32.add (local.get $source) (i32.const 8))))
     (local.set $count (call $gl32 (i32.add (local.get $source) (i32.const 16))))
@@ -9650,7 +9650,7 @@
       (then
         (local.set $data (call $heap_alloc (i32.mul (local.get $count) (i32.const 32))))
         (if (i32.eqz (local.get $data)) (then (drop (call $ole_obj_release (local.get $obj))) (return (i32.const 0))))
-        (call $zero_memory (call $g2w (local.get $data)) (i32.mul (local.get $count) (i32.const 32)))
+        (local.set $data_wa (call $g2w (local.get $data))) (call $zero_memory (local.get $data_wa) (i32.mul (local.get $count) (i32.const 32)))
         (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $data))
         (local.set $source_data (call $gl32 (i32.add (local.get $source) (i32.const 12))))
         (block $done (loop $copy
@@ -9662,7 +9662,7 @@
             (then (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (local.get $i))
               (drop (call $ole_obj_release (local.get $obj))) (return (i32.const 0))))
           (memory.copy
-            (i32.add (call $g2w (local.get $data)) (i32.add (i32.mul (local.get $i) (i32.const 32)) (i32.const 20)))
+            (i32.add (local.get $data_wa) (i32.add (i32.mul (local.get $i) (i32.const 32)) (i32.const 20)))
             (i32.add (call $g2w (local.get $source_data)) (i32.add (i32.mul (local.get $i) (i32.const 32)) (i32.const 20)))
             (i32.const 12))
           (if (i32.eq (local.get $kind) (i32.const 10))
@@ -9682,7 +9682,7 @@
   (func $ole_static_stage_from_data
       (param $root i32) (param $data_object i32) (param $out i32) (result i32)
     (local $staged i32) (local $entries i32) (local $count i32) (local $i i32)
-    (local $entry i32) (local $source_medium i32) (local $temp_medium i32)
+    (local $entry i32) (local $source_medium i32) (local $temp_medium i32) (local $temp_medium_wa i32)
     (local $iface i32) (local $hr i32)
     (if (i32.eqz (local.get $out)) (then (return (i32.const 0x80004003))))
     (call $gs32 (local.get $out) (i32.const 0))
@@ -9695,7 +9695,7 @@
     (local.set $temp_medium (call $heap_alloc (i32.const 12)))
     (if (i32.eqz (local.get $temp_medium))
       (then (drop (call $ole_obj_release (local.get $staged))) (return (i32.const 0x8007000E))))
-    (call $zero_memory (call $g2w (local.get $temp_medium)) (i32.const 12))
+    (local.set $temp_medium_wa (call $g2w (local.get $temp_medium))) (call $zero_memory (local.get $temp_medium_wa) (i32.const 12))
     (local.set $entries (call $gl32 (i32.add (local.get $data_object) (i32.const 12))))
     (local.set $count (call $gl32 (i32.add (local.get $data_object) (i32.const 16))))
     (block $copied (loop $copy
@@ -9707,7 +9707,7 @@
             (i32.ne (local.get $iface) (i32.const 0))
             (i32.eqz (call $ole_interface_is_local (local.get $iface))))
         (then
-          (call $zero_memory (call $g2w (local.get $temp_medium)) (i32.const 12))
+          (call $zero_memory (local.get $temp_medium_wa) (i32.const 12))
           (call $gs32 (local.get $temp_medium) (call $gl32 (local.get $source_medium)))
           (call $gs32 (i32.add (local.get $temp_medium) (i32.const 4)) (local.get $iface))
           (local.set $hr (call $ole_cache_set_data_with_retired
@@ -9788,7 +9788,7 @@
   (func $ole_static_stage_clipboard_data
       (param $root i32) (param $out i32) (result i32)
     (local $obj i32) (local $entries i32) (local $count i32) (local $i i32)
-    (local $entry i32) (local $source_medium i32) (local $temp_medium i32)
+    (local $entry i32) (local $source_medium i32) (local $temp_medium i32) (local $temp_medium_wa i32)
     (local $iface i32) (local $hr i32)
     (if (i32.eqz (local.get $out)) (then (return (i32.const 0x80004003))))
     (call $gs32 (local.get $out) (i32.const 0))
@@ -9798,7 +9798,7 @@
     (local.set $temp_medium (call $heap_alloc (i32.const 12)))
     (if (i32.eqz (local.get $temp_medium))
       (then (drop (call $ole_obj_release (local.get $obj))) (return (i32.const 0x8007000E))))
-    (call $zero_memory (call $g2w (local.get $temp_medium)) (i32.const 12))
+    (local.set $temp_medium_wa (call $g2w (local.get $temp_medium))) (call $zero_memory (local.get $temp_medium_wa) (i32.const 12))
     (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 100))))
     (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 104))))
     (block $copied (loop $copy
@@ -9812,7 +9812,7 @@
                 (i32.ne (local.get $iface) (i32.const 0))
                 (i32.eqz (call $ole_interface_is_local (local.get $iface))))
             (then
-              (call $zero_memory (call $g2w (local.get $temp_medium)) (i32.const 12))
+              (call $zero_memory (local.get $temp_medium_wa) (i32.const 12))
               (call $gs32 (local.get $temp_medium) (call $gl32 (local.get $source_medium)))
               (call $gs32 (i32.add (local.get $temp_medium) (i32.const 4)) (local.get $iface))
               (local.set $hr (call $ole_data_set_entry_with_retired

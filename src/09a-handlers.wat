@@ -4599,11 +4599,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
-  ;; 98: GetLastActivePopup(hWnd) — 1 arg stdcall
-  ;; Returns the last active popup owned by hWnd. We don't track popups,
-  ;; so return hWnd itself (correct when no popup is active, per Win32 docs).
+  ;; 98: GetLastActivePopup(hWnd) — 1 arg stdcall. USER remembers the last
+  ;; active direct owned popup; child/owned windows and empty groups return hWnd.
+  ;; The per-owner state and validation are keyed by live window-table slots.
   (func $handle_GetLastActivePopup (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (local.get $arg0))
+    (global.set $eax (call $wnd_get_last_active_popup (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
@@ -6373,7 +6373,7 @@
     (call $wnd_set_parent (local.get $hwnd) (i32.const 0))
     (call $wnd_set_owner (local.get $hwnd) (local.get $arg2))
     (drop (call $wnd_set_style (local.get $hwnd)
-      (i32.or (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))))
+      (i32.or (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000)))) (call $wnd_note_active_popup (local.get $hwnd))
     ;; Tell the renderer the dialog has been loaded; JS reads geom /
     ;; style / controls from the dlg_* / ctrl_* exports.
     (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
@@ -11460,7 +11460,7 @@ HookEx — no next hook in chain, return 0
     (if (i32.eq (local.get $previous) (local.get $target))
       (then (return (local.get $previous))))
 
-    (global.set $active_hwnd (local.get $target))
+    (global.set $active_hwnd (local.get $target)) (call $wnd_note_active_popup (local.get $target))
     (if (local.get $previous)
       (then
         (drop (call $wnd_send_message
@@ -13323,49 +13323,68 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
 
-  ;; 484: GetLogicalDrives() — return bitmask of drives (bits 2/3 = C:/D:)
+  ;; 484: GetLogicalDrives() — one bit per currently assigned drive letter.
   (func $handle_GetLogicalDrives (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x0C))  ;; fixed C: plus CD-ROM D:
+    (global.set $eax (call $host_fs_logical_drive_mask))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; GetLogicalDriveStringsA(nBufferLength, lpBuffer) — return "C:\\\0D:\\\0\0".
-  ;; A Win98 installation normally exposes its fixed system disk and CD-ROM;
-  ;; the CLI/reference harness mounts immutable fixture sets on D:.
+  ;; GetLogicalDriveStringsA/W returns each assigned root plus one final NUL.
+  ;; The required size includes that final NUL; a successful return excludes it.
+  (func $logical_drive_strings
+        (param $length i32) (param $buffer_g i32) (param $wide i32) (result i32)
+    (local $mask i32) (local $letter i32) (local $count i32)
+    (local $required i32) (local $buf i32) (local $out i32) (local $stride i32)
+    (local.set $mask (call $host_fs_logical_drive_mask))
+    (local.set $letter (i32.const 0))
+    (block $count_done (loop $count_loop
+      (br_if $count_done (i32.ge_u (local.get $letter) (i32.const 26)))
+      (if (i32.and (local.get $mask) (i32.shl (i32.const 1) (local.get $letter)))
+        (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))
+      (local.set $letter (i32.add (local.get $letter) (i32.const 1)))
+      (br $count_loop)))
+    (local.set $required (i32.add (i32.mul (local.get $count) (i32.const 4)) (i32.const 1)))
+    (if (i32.lt_u (local.get $length) (local.get $required))
+      (then (return (local.get $required))))
+    (if (i32.eqz (local.get $buffer_g))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (return (i32.const 0))))
+    (local.set $buf (call $g2w (local.get $buffer_g)))
+    (local.set $stride (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (local.set $letter (i32.const 0))
+    (block $write_done (loop $write_loop
+      (br_if $write_done (i32.ge_u (local.get $letter) (i32.const 26)))
+      (if (i32.and (local.get $mask) (i32.shl (i32.const 1) (local.get $letter)))
+        (then
+          (if (local.get $wide)
+            (then
+              (i32.store16 (i32.add (local.get $buf) (local.get $out))
+                (i32.add (i32.const 0x41) (local.get $letter)))
+              (i32.store16 (i32.add (local.get $buf) (i32.add (local.get $out) (i32.const 2))) (i32.const 0x3A))
+              (i32.store16 (i32.add (local.get $buf) (i32.add (local.get $out) (i32.const 4))) (i32.const 0x5C))
+              (i32.store16 (i32.add (local.get $buf) (i32.add (local.get $out) (i32.const 6))) (i32.const 0)))
+            (else
+              (i32.store8 (i32.add (local.get $buf) (local.get $out))
+                (i32.add (i32.const 0x41) (local.get $letter)))
+              (i32.store8 (i32.add (local.get $buf) (i32.add (local.get $out) (i32.const 1))) (i32.const 0x3A))
+              (i32.store8 (i32.add (local.get $buf) (i32.add (local.get $out) (i32.const 2))) (i32.const 0x5C))
+              (i32.store8 (i32.add (local.get $buf) (i32.add (local.get $out) (i32.const 3))) (i32.const 0))))
+          (local.set $out (i32.add (local.get $out) (i32.mul (i32.const 4) (local.get $stride))))))
+      (local.set $letter (i32.add (local.get $letter) (i32.const 1)))
+      (br $write_loop)))
+    (if (local.get $wide)
+      (then (i32.store16 (i32.add (local.get $buf) (local.get $out)) (i32.const 0)))
+      (else (i32.store8 (i32.add (local.get $buf) (local.get $out)) (i32.const 0))))
+    (i32.sub (local.get $required) (i32.const 1)))
+
   (func $handle_GetLogicalDriveStringsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32)
-    (if (i32.lt_u (local.get $arg0) (i32.const 9))
-      (then (global.set $eax (i32.const 9)))
-      (else
-        (local.set $buf (call $g2w (local.get $arg1)))
-        (i32.store8 (local.get $buf) (i32.const 0x43))              ;; 'C'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 0x3A))  ;; ':'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 2)) (i32.const 0x5C))  ;; '\\'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 3)) (i32.const 0))
-        (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x44))  ;; 'D'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 5)) (i32.const 0x3A))  ;; ':'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 6)) (i32.const 0x5C))  ;; '\\'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 7)) (i32.const 0))
-        (i32.store8 (i32.add (local.get $buf) (i32.const 8)) (i32.const 0))
-        (global.set $eax (i32.const 8))))
+    (global.set $eax (call $logical_drive_strings (local.get $arg0) (local.get $arg1) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; GetLogicalDriveStringsW(nBufferLength, lpBuffer) — UTF-16 multistring
-  ;; counterpart exposing the same fixed C: and CD-ROM D: roots.
   (func $handle_GetLogicalDriveStringsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32)
-    (if (i32.lt_u (local.get $arg0) (i32.const 9))
-      (then (global.set $eax (i32.const 9)))
-      (else
-        (local.set $buf (call $g2w (local.get $arg1)))
-        ;; UTF-16LE "C:\\0D:\\0\0".
-        (i32.store (local.get $buf) (i32.const 0x003a0043))
-        (i32.store offset=4 (local.get $buf) (i32.const 0x0000005c))
-        (i32.store offset=8 (local.get $buf) (i32.const 0x003a0044))
-        (i32.store offset=12 (local.get $buf) (i32.const 0x0000005c))
-        (i32.store16 offset=16 (local.get $buf) (i32.const 0))
-        (global.set $eax (i32.const 8))))
+    (global.set $eax (call $logical_drive_strings (local.get $arg0) (local.get $arg1) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -17236,15 +17255,15 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   ;; the OEM mode so names received from the console and names passed to the
   ;; ANSI file APIs stay in the same byte domain.
   (func $handle_SetFileApisToOEM (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $file_apis_ansi (i32.const 0))
+    (global.set $file_apis_ansi (i32.const 0)) (drop (call $host_fs_file_api_ansi (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   (func $handle_SetFileApisToANSI (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $file_apis_ansi (i32.const 1))
+    (global.set $file_apis_ansi (i32.const 1)) (drop (call $host_fs_file_api_ansi (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   (func $handle_AreFileApisANSI (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (global.get $file_apis_ansi))
+    (global.set $eax (call $host_fs_file_api_ansi (i32.const -1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   ;; 697: ??1type_info@@UAE@XZ — soft-stub — STUB: unimplemented
@@ -19082,3 +19101,62 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         (local.get $type) (local.get $want_w) (local.get $want_h)
         (local.get $flags)))))
     (i32.const 0))
+
+  ;; USER stores the last-active relation on the owner, not the popup. Entries
+  ;; are indexed by the owner's live WND_RECORDS slot. A stale entry is harmless:
+  ;; the getter validates both the remembered HWND and its direct owner before
+  ;; returning it, so slot reuse falls back to the new owner itself.
+  (func $wnd_last_active_popup_addr_for_slot (param $slot i32) (result i32)
+    (i32.add (global.get $LAST_ACTIVE_POPUP_TABLE)
+      (i32.mul (local.get $slot) (i32.const 4))))
+
+  (func $wnd_last_active_popup_get (param $owner i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (call $wnd_table_find (local.get $owner)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0))
+      (then (return (i32.const 0))))
+    (i32.load (call $wnd_last_active_popup_addr_for_slot (local.get $slot))))
+
+  (func $wnd_last_active_popup_set (param $owner i32) (param $popup i32)
+    (local $slot i32)
+    (local.set $slot (call $wnd_table_find (local.get $owner)))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (i32.store (call $wnd_last_active_popup_addr_for_slot (local.get $slot))
+          (local.get $popup)))))
+
+  ;; GetLastActivePopup only walks an owner window's direct popup group. The
+  ;; supplied HWND itself is the documented result for child windows, windows
+  ;; that are themselves owned, empty groups, and stale remembered popups.
+  (func $wnd_get_last_active_popup (param $hwnd i32) (result i32)
+    (local $popup i32)
+    (if (i32.or
+          (i32.lt_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
+          (i32.or
+            (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd))
+                             (i32.const 0x40000000)) (i32.const 0))
+            (i32.ne (call $wnd_get_owner (local.get $hwnd)) (i32.const 0))))
+      (then (return (local.get $hwnd))))
+    (local.set $popup (call $wnd_last_active_popup_get (local.get $hwnd)))
+    (if (i32.and
+          (i32.ne (local.get $popup) (local.get $hwnd))
+          (i32.and
+            (i32.ge_s (call $wnd_table_find (local.get $popup)) (i32.const 0))
+            (i32.eq (call $wnd_get_owner (local.get $popup)) (local.get $hwnd))))
+      (then (return (local.get $popup))))
+    (local.get $hwnd))
+
+  ;; Record activation against the direct owner group. Activating the owner
+  ;; itself makes the owner the last-active member; activating an owned popup
+  ;; publishes that popup on its owner. Child windows never enter this table.
+  (func $wnd_note_active_popup (param $hwnd i32)
+    (local $owner i32)
+    (if (i32.lt_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
+      (then (return)))
+    (if (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd))
+                         (i32.const 0x40000000)) (i32.const 0))
+      (then (return)))
+    (local.set $owner (call $wnd_get_owner (local.get $hwnd)))
+    (if (local.get $owner)
+      (then (call $wnd_last_active_popup_set (local.get $owner) (local.get $hwnd)))
+      (else (call $wnd_last_active_popup_set (local.get $hwnd) (local.get $hwnd)))))

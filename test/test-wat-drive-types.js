@@ -59,6 +59,33 @@ async function main() {
     0x44, 0, 0x3a, 0, 0x5c, 0, 0, 0,
     0, 0,
   ], 'wide drive strings are double-NUL-terminated');
+
+  // Mounted media can use letters beyond the built-in Win98 C:/D: pair.
+  // Both enumeration APIs must observe the same live VFS assignment set.
+  ctx.vfs.driveTypes = new Map([['e', 5], ['z', 4], ['not-a-letter', 3]]);
+  assert.strictEqual(exports.test_call_GetLogicalDrives() >>> 0, 0x0200001c,
+    'mounted E: and Z: are added to the current assignment mask');
+  assert.strictEqual(exports.test_call_GetLogicalDriveStringsA(0, 0), 17,
+    'four roots plus the final terminator require seventeen characters');
+  bytes.fill(0xcc, wasmPtr, wasmPtr + 40);
+  assert.strictEqual(exports.test_call_GetLogicalDriveStringsA(16, guestPtr), 17,
+    'a short buffer reports the required size including the final terminator');
+  assert(bytes.subarray(wasmPtr, wasmPtr + 17).every(value => value === 0xcc),
+    'a short buffer is not partially overwritten');
+  assert.strictEqual(exports.test_call_GetLogicalDriveStringsA(17, guestPtr), 16);
+  assert.deepStrictEqual(Array.from(bytes.subarray(wasmPtr, wasmPtr + 17)), [
+    0x43, 0x3a, 0x5c, 0, 0x44, 0x3a, 0x5c, 0,
+    0x45, 0x3a, 0x5c, 0, 0x5a, 0x3a, 0x5c, 0, 0,
+  ], 'ANSI drive roots are sorted by letter and double-NUL-terminated');
+  bytes.fill(0xcc, wasmPtr, wasmPtr + 40);
+  assert.strictEqual(exports.test_call_GetLogicalDriveStringsW(17, guestPtr), 16);
+  assert.deepStrictEqual(Array.from(bytes.subarray(wasmPtr, wasmPtr + 34)), [
+    0x43, 0, 0x3a, 0, 0x5c, 0, 0, 0,
+    0x44, 0, 0x3a, 0, 0x5c, 0, 0, 0,
+    0x45, 0, 0x3a, 0, 0x5c, 0, 0, 0,
+    0x5a, 0, 0x3a, 0, 0x5c, 0, 0, 0, 0, 0,
+  ], 'wide drive roots reflect the same live assignment set');
+  ctx.vfs.driveTypes.clear();
   assert.strictEqual(exports.test_call_GetDriveTypeA(0), 3, 'NULL means current fixed drive');
   writeAnsi('C:\\');
   assert.strictEqual(exports.test_call_GetDriveTypeA(guestPtr), 3, 'C: is DRIVE_FIXED');

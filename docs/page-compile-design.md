@@ -129,7 +129,7 @@ Today blocks land in the arena in whatever order they were first executed, so
 adjacent x86 instructions end up in unrelated places:
 
 ```
-  x86 page 0x40f000                 threaded arena (4MB/thread)
+  x86 page 0x40f000                 threaded arena (3.75MB/thread)
   ┌────────────────────┐            ┌──────────────────────────┐
   │ 0x40f727 cmp/jz  ──┼──┐         │ ..blk 0x40f7a8..         │
   │ 0x40f72f cmp/jz    │  │         │ ..blk 0x40f725..         │
@@ -426,7 +426,7 @@ first.
 | `PAGE_DIR_BASE` | `0x04900000` | 128 KB | per-thread stride 16 KB; 1024 entries of 16 bytes |
 
 Leaves ~7 MB of the span unclaimed. Chunks are allocated out of the existing
-per-thread threaded-code arena (`THREAD_CACHE_BASE`, 4 MB per thread), so this
+per-thread threaded-code arena (`THREAD_CACHE_BASE`, 3.75 MB per thread), so this
 change adds no new code storage — it changes the *order* code is written in, not
 the amount.
 
@@ -447,7 +447,7 @@ in-build toggle would only force every path to exist in two versions forever.
 ```
 
 This also catches what a flag never could: pass 1/pass 2's effect on arena
-occupancy. If page compilation bloats the 4 MB arena into extra full cache
+occupancy. If page compilation bloats the 3.75 MB arena into extra full cache
 wipes — which `04-cache.wat` documents as catastrophic — only the frozen
 baseline shows it. So arena and decode counters are reported alongside wall
 clock, not as an afterthought.
@@ -994,7 +994,7 @@ and handed to its owner. See `docs/re-notes/diablo-shareware.md`.
 
 The original allocator reserved the full 16KB threaded-code capacity for every
 compiled guest page. Diablo II made the cost visible: its main thread repeatedly
-exhausted the 4MB code arena and reset the entire page directory, throwing away
+exhausted the per-thread code arena and reset the entire page directory, throwing away
 useful decoded code along with the sparse pages that caused the pressure.
 
 Instrumentation on the fixed-size allocator sampled 795 Diablo II pages through

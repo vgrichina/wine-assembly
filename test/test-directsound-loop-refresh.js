@@ -136,3 +136,51 @@ try {
 } finally {
   globalThis.AudioContext = oldAudioContext;
 }
+
+// A frozen CLI has no AudioContext, but DirectSound volume/pan remain part of
+// the voice. RCT updates its short looping ride samples to roughly 3% gain;
+// dropping that state made the recorder replay the 1.2-second ring at full
+// volume and mask the actual fairground music.
+try {
+  globalThis.AudioContext = undefined;
+  const memory = new ArrayBuffer(64 * 1024);
+  const pcm = new Uint8Array(memory);
+  const ptr = 0x1200;
+  pcm.set([0, 64, 128, 255], ptr);
+  let guestMs = 0;
+  const captured = [];
+  const pumps = [];
+  const tap = { active: true, pcm: chunk => captured.push(chunk) };
+  const ctx = {
+    getMemory: () => memory,
+    audioClockMs: () => guestMs,
+    audioTap: () => tap,
+    registerAudioTapPump: pump => pumps.push(pump),
+  };
+  const { host } = createHostImports(ctx);
+  const voice = host.voice_open(22050, 1, 8);
+  host.voice_set_volume_db(voice, -3000);
+  host.voice_set_pan(voice, 10000);
+  host.voice_play_ring(voice, ptr, 4, 0, 1);
+  assert.strictEqual(host.voice_is_playing(voice), 1,
+    'a headless looping ring must remain guest-visible as playing');
+  guestMs = 1;
+  for (const pump of pumps) pump();
+
+  assert.strictEqual(captured.length, 1,
+    'the headless tap should emit the swept DirectSound ring');
+  assert(Math.abs(captured[0].gainL) < 1e-9,
+    'hard-right DirectSound pan must survive without a StereoPannerNode');
+  assert(Math.abs(captured[0].gainR - Math.pow(10, -3000 / 2000)) < 1e-9,
+    'DirectSound attenuation must survive without a GainNode');
+
+  const oneShot = host.voice_open(22050, 1, 8);
+  host.voice_play_ring(oneShot, ptr, 4, 0, 0);
+  assert.strictEqual(host.voice_is_playing(oneShot), 1,
+    'a fresh headless one-shot should initially be guest-visible as playing');
+  guestMs += 1;
+  assert.strictEqual(host.voice_is_playing(oneShot), 0,
+    'a headless one-shot should retire from the guest audio clock');
+} finally {
+  globalThis.AudioContext = oldAudioContext;
+}

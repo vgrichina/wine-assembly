@@ -112,11 +112,19 @@ the cursor swept on every event that changes the ring:
 
 That last row is what makes a held music loop record as music. A looping buffer
 the guest never touches again would otherwise emit nothing until `Stop`.
+Headless snapshot voices also retain an explicit playing bit. Looping voices
+stay playing until `Stop`; one-shots retire from the guest clock. Using the
+presence of a Web Audio `currentSrc` here made every CLI voice look stopped, so
+RCT cleared `DSBSTATUS_PLAYING` and never sent the Unlock refills that replace
+its 1.2-second streaming music ring.
 
-Per-chunk gain is the voice's own `GainNode`, the WAVE bus, the master bus and
-the mixer mutes the guest set through `mixerSetControlDetails`; pan is the
-equal-power law a `StereoPannerNode` applies, so a hard-panned effect stays
-hard-panned in the recording.
+Per-chunk gain is the voice's canonical `gainValue`, the WAVE bus, the master
+bus and the mixer mutes the guest set through `mixerSetControlDetails`; pan uses
+the canonical `panValue` with the equal-power law a `StereoPannerNode` applies.
+Those two values exist even when the CLI has no `AudioContext`; browser
+GainNode/StereoPannerNode parameters merely mirror them. This matters for RCT,
+which attenuates its 1.2-second ride loops to roughly 3%: treating the absent
+browser node as full gain makes that ring drown the music and sound stuck.
 
 **MIDI needs a separate path.** The MIDI bus does not submit PCM at all — it is
 synthesized in the browser by TinySynth, so there is nothing at a submit seam

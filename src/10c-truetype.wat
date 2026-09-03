@@ -2959,16 +2959,16 @@
 
   ;; Returns the WASM address of the face table, allocating it on first use.
   (func $tt_faces_ensure (result i32)
-    (local $guest i32) (local $bytes i32)
+    (local $guest i32) (local $wasm i32) (local $bytes i32)
     (if (global.get $tt_faces)
       (then (return (call $g2w (global.get $tt_faces)))))
     (local.set $bytes
       (i32.mul (global.get $TT_MAX_FACES) (global.get $TT_FACE_STRIDE)))
     (local.set $guest (call $heap_alloc (local.get $bytes)))
     (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
-    (memory.fill (call $g2w (local.get $guest)) (i32.const 0) (local.get $bytes))
+    (local.set $wasm (call $g2w (local.get $guest))) (memory.fill (local.get $wasm) (i32.const 0) (local.get $bytes))
     (global.set $tt_faces (local.get $guest))
-    (call $g2w (local.get $guest)))
+    (local.get $wasm))
 
   (func $tt_face_record (param $face i32) (result i32)
     (local $table i32)
@@ -3002,7 +3002,7 @@
   (func $tt_face_open (param $path_guest i32) (result i32)
     (local $path i32) (local $hash i32) (local $table i32) (local $record i32)
     (local $index i32) (local $free i32) (local $handle i32) (local $size i32)
-    (local $data_guest i32) (local $data i32) (local $read i32)
+    (local $data_guest i32) (local $data i32) (local $read i32) (local $read_wa i32)
     (if (i32.eqz (local.get $path_guest)) (then (return (i32.const -1))))
     (local.set $path (call $g2w (local.get $path_guest)))
     (local.set $hash (call $tt_path_hash (local.get $path)))
@@ -3050,7 +3050,7 @@
         (drop (call $host_fs_close_handle (local.get $handle)))
         (call $heap_free (local.get $data_guest))
         (return (i32.const -1))))
-    (i32.store (call $g2w (local.get $read)) (i32.const 0))
+    (local.set $read_wa (call $g2w (local.get $read))) (i32.store (local.get $read_wa) (i32.const 0))
     (if (i32.eqz (call $host_fs_read_file (local.get $handle)
           (local.get $data_guest) (local.get $size) (local.get $read)))
       (then
@@ -3059,7 +3059,7 @@
         (call $heap_free (local.get $read))
         (return (i32.const -1))))
     (drop (call $host_fs_close_handle (local.get $handle)))
-    (if (i32.ne (i32.load (call $g2w (local.get $read))) (local.get $size))
+    (if (i32.ne (i32.load (local.get $read_wa)) (local.get $size))
       (then
         (call $heap_free (local.get $data_guest))
         (call $heap_free (local.get $read))
@@ -3100,16 +3100,16 @@
   ;;   +20 left, +22 top   signed, in pixels, relative to the pen origin
 
   (func $tt_cache_ensure (result i32)
-    (local $guest i32) (local $bytes i32)
+    (local $guest i32) (local $wasm i32) (local $bytes i32)
     (if (global.get $tt_cache)
       (then (return (call $g2w (global.get $tt_cache)))))
     (local.set $bytes
       (i32.mul (global.get $TT_CACHE_SLOTS) (global.get $TT_CACHE_STRIDE)))
     (local.set $guest (call $heap_alloc (local.get $bytes)))
     (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
-    (memory.fill (call $g2w (local.get $guest)) (i32.const 0) (local.get $bytes))
+    (local.set $wasm (call $g2w (local.get $guest))) (memory.fill (local.get $wasm) (i32.const 0) (local.get $bytes))
     (global.set $tt_cache (local.get $guest))
-    (call $g2w (local.get $guest)))
+    (local.get $wasm))
 
   ;; Free every cached bitmap and start over. A rehashing eviction policy
   ;; would be better under memory pressure; this one is correct, and the cache
@@ -3739,16 +3739,16 @@
   (global $tt_reg (mut i32) (i32.const 0))
 
   (func $tt_reg_ensure (result i32)
-    (local $guest i32) (local $bytes i32)
+    (local $guest i32) (local $wasm i32) (local $bytes i32)
     (if (global.get $tt_reg)
       (then (return (call $g2w (global.get $tt_reg)))))
     (local.set $bytes
       (i32.mul (global.get $TT_REG_MAX) (global.get $TT_REG_STRIDE)))
     (local.set $guest (call $heap_alloc (local.get $bytes)))
     (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
-    (memory.fill (call $g2w (local.get $guest)) (i32.const 0) (local.get $bytes))
+    (local.set $wasm (call $g2w (local.get $guest))) (memory.fill (local.get $wasm) (i32.const 0) (local.get $bytes))
     (global.set $tt_reg (local.get $guest))
-    (call $g2w (local.get $guest)))
+    (local.get $wasm))
 
   (func $tt_reg_record (param $table i32) (param $index i32) (result i32)
     (i32.add (local.get $table)

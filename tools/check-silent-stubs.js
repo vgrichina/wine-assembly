@@ -158,8 +158,22 @@ const digest = crypto.createHash('sha256')
 // images, including RETURNORG/DELETEORG, monochrome, and DIB-section requests.
 // 2026-09-03: 470 -> 469. SHFileOperationA now delegates copy, move, rename,
 // wildcard, multi-destination, and recursive delete work to the shared VFS.
-const EXPECTED_COUNT = 468;
-const EXPECTED_SHA256 = '651eb12ccbb578f1230404bcbcf356c263312a2f660867b8591c9e40c7e26843';
+// 2026-09-03: 469 -> 468. FlushFileBuffers now validates a live writable VFS
+// file handle and reports access/handle errors instead of unconditional TRUE.
+// 2026-09-03: 468 -> 469. Video for Windows added DrawDibOpen/Close (+2), while
+// GetLastActivePopup left the quiet inventory by retaining and validating
+// per-owner activation history (-1). The inventory records both changes.
+// 2026-09-03: 469 -> 467. DrawDibOpen/Close now own, validate, invalidate and
+// free distinct opaque drawing contexts instead of returning constant success.
+// 2026-09-03: 467 -> 466. GetLogicalDrives now queries the browser VFS's live
+// assignment mask instead of reporting a fixed C:/D: constant.
+// 2026-09-03: 466 -> 463. SetFileApisToOEM/ANSI now propagate their process
+// code-page choice to Kernel32 filenames, and AreFileApisANSI reads it back
+// from the same process-shared VFS state across guest thread instances.
+// 2026-09-03: WSAIsBlocking's truthful no-nested-hook result replaced the
+// former WinExec constant success after WinExec gained real process launch.
+const EXPECTED_COUNT = 462;
+const EXPECTED_SHA256 = '1561f567b895980c10504996589e6059145eb55d43d382db34618fa1fd6b0332';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

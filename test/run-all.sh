@@ -75,6 +75,7 @@ UNIT=(
   test/test-vfs-adopt.js
   test/test-save-bundle.js
   test/test-flush-view-of-file.js
+  test/test-flush-file-buffers.js
   test/test-shfileoperation.js
   test/test-heap-free-block-validation.js
   test/test-vfs-host-files.js
@@ -156,6 +157,7 @@ UNIT=(
   test/test-starcraft-dll-policy.js
   test/test-debug-game-apps.js
   test/test-dllmain-load-context.js
+  test/test-disable-thread-library-calls.js
   test/test-lzcopy.js
   test/test-dos-game-corpus.js
   test/test-debug-thread-state.js
@@ -278,6 +280,7 @@ UNIT=(
   test/test-host-window-related.js
   test/test-bring-window-to-top.js
   test/test-active-window.js
+  test/test-get-last-active-popup.js
   test/test-process-id.js
   test/test-render-color-dlg.js
   test/test-render-find-dlg.js
@@ -532,6 +535,7 @@ UNIT=(
   test/test-find-close-change-notification.js
   test/test-sh-get-folder-path-w.js
   test/test-shell-malloc.js
+  test/test-shell-pidl.js
   test/test-shell-execute-ex-w.js
   test/test-showwindow-dialog-promotion.js
   test/test-winmine-name-dialog-frame.js

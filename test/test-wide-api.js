@@ -157,6 +157,17 @@ async function main() {
     `thunk=0x${directSoundCreate.toString(16)}`);
   check('GetProcAddress leaves unsupported DSOUND ordinals unresolved',
     e.test_call_GetProcAddress(dsoundHandle, 3) === 0);
+  const msvfwHandle = e.test_call_LoadLibraryA(writeAscii('MSVFW32.DLL')) >>> 0;
+  const drawDibOpen = e.test_call_GetProcAddress(
+    msvfwHandle, writeAscii('DrawDibOpen')) >>> 0;
+  const drawDibDraw = e.test_call_GetProcAddress(
+    msvfwHandle, writeAscii('DrawDibDraw')) >>> 0;
+  const drawDibClose = e.test_call_GetProcAddress(
+    msvfwHandle, writeAscii('DrawDibClose')) >>> 0;
+  check('GetProcAddress exposes Video-for-Windows DrawDib APIs for a probed module',
+    drawDibOpen !== 0 && drawDibDraw !== 0 && drawDibClose !== 0,
+    `handle=0x${msvfwHandle.toString(16)} open=0x${drawDibOpen.toString(16)} ` +
+      `draw=0x${drawDibDraw.toString(16)} close=0x${drawDibClose.toString(16)}`);
   const oleExpDir = e.guest_alloc(32);
   const oleDllName = writeAscii('OLE32.DLL');
   const oleLoadAddr = oleExpDir - 0x1800;

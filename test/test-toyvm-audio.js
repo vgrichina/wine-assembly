@@ -197,6 +197,95 @@ function testOpl() {
   console.log(`  opl2: presence test answered, middle C (${n} crossings in 100ms), silent after release`);
 }
 
+// --- the OPL timer test while audio is being rendered ------------------------
+// With a sink attached, register writes are queued to land at their sample;
+// the timer-control registers must not wait in that queue. BLUE.COM and
+// brainbug.exe spun on the status read forever, but only when sound was on.
+function testOplTimerRendered() {
+  const m = machine();
+  collect(m, 44100);
+  const opl = (reg, v) => { m.portOut(0x388, reg, 8); m.portOut(0x389, v, 8); };
+  opl(0x04, 0x60); opl(0x04, 0x80);
+  assert.strictEqual(m.portIn(0x388, 8) & 0xE0, 0x00, 'status after reset, rendering');
+  opl(0x02, 0xFF); opl(0x04, 0x21);
+  assert.strictEqual(m.portIn(0x388, 8) & 0xE0, 0xC0, 'timer 1 flag after start, rendering');
+  // The same chip behind the SB Pro's FM ports, and behind an ISA card's
+  // 10-bit decode: 0xF389 is 0x389 to the bus (CONTAGIO.EXE reads it there).
+  assert.strictEqual(m.portIn(0x228, 8) & 0xE0, 0xC0, 'status at 0x228');
+  assert.strictEqual(m.portIn(0xF388, 8) & 0xE0, 0xC0, 'status at the alias 0xF388');
+  m.portOut(0xF388, 0x04, 8); m.portOut(0xF389, 0x80, 8);
+  assert.strictEqual(m.portIn(0x388, 8) & 0xE0, 0x00, 'reset through the alias');
+  console.log('  opl2: timer flags answer while rendering, at 0x228 and through the ISA alias');
+}
+
+// --- a short block waits for a DMA channel ----------------------------------
+// A driver hunting for its DMA channel masks every channel, starts a tiny
+// transfer and unmasks the candidates one at a time: the IRQ names the one
+// that moved. ACT1.EXE does exactly this, and a transfer that completed on a
+// masked channel told it the first candidate was right.
+function testShortBlockWaitsForDma() {
+  const m = machine();
+  m.portOut(0x0A, 4, 8); m.portOut(0x0A, 5, 8); m.portOut(0x0A, 7, 8);   // mask 0, 1, 3
+  dsp(m, 0x40, 256 - Math.round(1e6 / 8000));
+  dsp(m, 0x14, 9, 0);                                     // 10 samples
+  assert.strictEqual(m.sbIrq(), 0, 'a short block completed with every channel masked');
+  m.portOut(0x0A, 1, 8);                                  // unmask channel 1
+  assert.strictEqual(m.sbIrq(), 0x0F, 'unmasking a channel did not complete the short block');
+  assert.strictEqual(m.sb.chan, 1, `the block was credited to channel ${m.sb.chan}`);
+  assert.strictEqual(m.sbIrq(), 0, 'the short block interrupted twice');
+  // A block after a pause is a new block: ENDPART.EXE paused (D0) at the end
+  // of one sample and started the next with 14, and the pause stuck.
+  dsp(m, 0xD0);
+  assert.ok(m.sb.paused);
+  dsp(m, 0x14, 0xFF, 0x03);
+  assert.ok(!m.sb.paused && m.sb.pending, 'a new transfer left the DSP paused');
+  console.log('  short block: waits for an open DMA channel, names it; a new block clears a pause');
+}
+
+// --- the 8259s read back ------------------------------------------------------
+function testPic() {
+  const m = machine();
+  assert.strictEqual(m.portIn(0x21, 8), 0xB8, 'boot mask, master');
+  assert.strictEqual(m.portIn(0xA1, 8), 0x8F, 'boot mask, slave');
+  m.portOut(0x21, m.portIn(0x21, 8) & ~0x20, 8);          // unmask IRQ5 the way a driver does
+  assert.strictEqual(m.portIn(0x21, 8), 0x98, 'mask did not read back');
+  // A remap: ICW1 with ICW4, base 0x50, cascade on IRQ2, then a fresh mask.
+  m.portOut(0x20, 0x11, 8); m.portOut(0x21, 0x50, 8); m.portOut(0x21, 0x04, 8); m.portOut(0x21, 0x01, 8);
+  m.portOut(0x21, 0xFA, 8);
+  assert.strictEqual(m.pic.base[0], 0x50, 'ICW2 not recorded');
+  assert.strictEqual(m.portIn(0x21, 8), 0xFA, 'the mask after an init sequence');
+  // Single mode, no ICW4: only ICW2 follows.
+  m.portOut(0xA0, 0x12, 8); m.portOut(0xA1, 0x28, 8); m.portOut(0xA1, 0x0F, 8);
+  assert.strictEqual(m.pic.base[1], 0x28);
+  assert.strictEqual(m.portIn(0xA1, 8), 0x0F);
+  m.portOut(0x20, 0x20, 8);                               // EOI changes nothing
+  assert.strictEqual(m.portIn(0x21, 8), 0xFA);
+  console.log('  8259: masks read back, init sequences are not masks');
+}
+
+// --- an SB16 answers for its wiring ------------------------------------------
+function testSb16Mixer() {
+  const m = machine();
+  dsp(m, 0xE1);
+  assert.deepStrictEqual([m.portIn(0x22A, 8), m.portIn(0x22A, 8)], [4, 5], 'DSP version');
+  const mixer = (i) => { m.portOut(0x224, i, 8); return m.portIn(0x225, 8); };
+  assert.strictEqual(mixer(0x80), 0x04, 'IRQ 7');
+  assert.strictEqual(mixer(0x81), 0x22, 'DMA 1 and 5');
+  m.portOut(0x224, 0x22, 8); m.portOut(0x225, 0xEE, 8);
+  assert.strictEqual(mixer(0x22), 0xEE, 'master volume did not read back');
+  assert.strictEqual(mixer(0x82), 0, 'an interrupt outstanding before any');
+  dsp(m, 0xF2);
+  assert.strictEqual(m.sbIrq(), 0x0F);
+  assert.strictEqual(mixer(0x82), 1, 'the forced IRQ is an 8-bit one');
+  m.portIn(0x22E, 8);
+  assert.strictEqual(mixer(0x82), 0, 'reading the ack port did not clear it');
+  const old = new Machine(new Uint8Array(0), { log: () => {}, dspVersion: [2, 1] });
+  old.setMemory(new Uint8Array(1 << 20), null);
+  dsp(old, 0xE1);
+  assert.deepStrictEqual([old.portIn(0x22A, 8), old.portIn(0x22A, 8)], [2, 1], 'dspVersion option');
+  console.log('  sb16: version 4.05, mixer says IRQ7 / DMA 1+5, interrupt status follows the ack');
+}
+
 // --- pacing --------------------------------------------------------------------
 // A wall clock that moves half a millisecond per look, so a frame's deadline
 // is reachable and the paced budget is a known number of dispatches.
@@ -248,6 +337,10 @@ async function main() {
   testProbeWithoutDma();
   testSpeaker();
   testOpl();
+  testOplTimerRendered();
+  testShortBlockWaitsForDma();
+  testPic();
+  testSb16Mixer();
   await testPacing();
   console.log('PASS test-toyvm-audio');
 }

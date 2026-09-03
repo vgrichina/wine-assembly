@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { PNG } = require('pngjs');
-const { compileWatSnapshot } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 const { APPS, DESKTOP_APPS, LOCAL_CANDIDATE_APPS } = require('../lib/apps');
 
 const ROOT = path.join(__dirname, '..');
@@ -98,8 +98,8 @@ function colorCountInRect(png, rgb, left, top, right, bottom) {
   const framePath = path.join(temp, 'far-manager.png');
   const parentFramePath = path.join(temp, 'far-manager-parent.png');
   try {
-    const wasm = await compileWatSnapshot(file =>
-      fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
+    const wasm = compileSrcWasm();
+    await WebAssembly.compile(wasm);
     fs.writeFileSync(wasmPath, wasm);
 
     const result = spawnSync('node', [

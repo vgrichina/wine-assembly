@@ -48,6 +48,9 @@ const extraWat = String.raw`
   (func (export "test_get_window_dc") (param $hwnd i32) (result i32)
     (call $host_alloc_window_dc (local.get $hwnd) (i32.const 0)))
 
+  (func (export "test_above_sibling") (param $hwnd i32) (param $sibling i32) (result i32)
+    (call $wnd_z_is_above_sibling (local.get $hwnd) (local.get $sibling)))
+
   (func (export "test_move_window") (param $hwnd i32)
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
@@ -137,7 +140,7 @@ const extraWat = String.raw`
   const childWa = base + childTemplate;
   bytes.fill(0, childWa, childWa + 160);
   view.setUint32(childWa + 0, 0x80000000, true); // WS_POPUP dialog
-  view.setUint16(childWa + 8, 1, true);          // cdit
+  view.setUint16(childWa + 8, 2, true);          // cdit
   view.setUint16(childWa + 14, 160, true);
   view.setUint16(childWa + 16, 100, true);
   // Empty menu/class/title consume six bytes, naturally aligning the item at +24.
@@ -155,13 +158,30 @@ const extraWat = String.raw`
   }
   view.setUint16(p, 0, true); p += 2;            // class terminator
   view.setUint16(p, 0, true); p += 2;            // empty title
+  view.setUint16(p, 0, true); p += 2;            // no creation data
+  // A later overlapping Static is lower in the dialog's front-to-back item
+  // order. This is the relationship CD Player uses for Play over its LED.
+  view.setUint32(p + 0, 0x50000000, true);
+  view.setUint16(p + 8, 40, true);
+  view.setUint16(p + 10, 4, true);
+  view.setUint16(p + 12, 80, true);
+  view.setUint16(p + 14, 20, true);
+  view.setUint16(p + 16, 78, true);
+  p += 18;
+  view.setUint16(p, 0xFFFF, true); p += 2;
+  view.setUint16(p, 0x0082, true); p += 2;        // Static ordinal
+  view.setUint16(p, 0, true); p += 2;            // empty title
   view.setUint16(p, 0, true);                     // no creation data
 
   const childParent = 0x10040;
-  assert.strictEqual(e.test_load_dialog(childParent, childTemplate), 1,
-    'one-control custom dialog parses successfully');
+  assert.strictEqual(e.test_load_dialog(childParent, childTemplate), 2,
+    'two-control custom dialog parses successfully');
   const child = e.test_find_child(childParent, 77) >>> 0;
+  const lowerSibling = e.test_find_child(childParent, 78) >>> 0;
   assert.ok(child, 'custom dialog child is registered by its control id');
+  assert.ok(lowerSibling, 'later dialog child is registered by its control id');
+  assert.strictEqual(e.test_above_sibling(lowerSibling, child), 1,
+    'earlier dialog resource item remains above later overlapping siblings');
   assert.strictEqual(e.test_dialog_brush(child), 6,
     'custom dialog child inherits the registered BLACK_BRUSH');
   assert.strictEqual(e.test_dialog_cursor(child) >>> 0, 0x12345678,

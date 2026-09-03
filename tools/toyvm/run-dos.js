@@ -233,6 +233,8 @@ async function runDos(o) {
     pitClock = false,
     // 'silent' or 'sb': what the menu answerer picks on a sound menu.
     soundPref = 'silent',
+    // [major, minor] the DSP answers to command E1, or null for the SB16 default.
+    dspVersion = null,
     // Keys typed once, in order, and keys that replace the auto-key rotation.
     // The rotation exists to get past sound menus and has no ESC in it, which
     // is the key half the text-mode viewers in this corpus are waiting for --
@@ -255,7 +257,7 @@ async function runDos(o) {
 
   const machine = new Machine(new Uint8Array(0), {
     log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound, svga, soundPref,
-    keys, autoKeys, env, tempFiles,
+    dspVersion, keys, autoKeys, env, tempFiles,
     stopText,
     ioTrace: traceIo === null ? null : (line) => log(`  [io] ${line}`),
     ioPorts: traceIo && traceIo.length ? new Set(traceIo) : null,
@@ -818,6 +820,10 @@ async function main() {
     // `--sound-pref=sb` has the menu answerer take a Sound Blaster when a
     // menu offers one, as the page does with sound on.
     soundPref: arg('sound-pref', 'silent'),
+    // `--dsp-version=2.1` answers DSP command E1 with a plain SB 2.0's number
+    // (3.1 for an SB Pro) instead of the SB16's 4.5 the card gives by default:
+    // the A/B for a program that changes its mind on the version.
+    dspVersion: arg('dsp-version', '') ? String(arg('dsp-version')).split('.').map(Number) : null,
     // `--svga=trident` gives the machine a TVGA8900 instead of a plain VGA:
     // the CRTC 0x1F read-back every detector of the era tests, the version
     // byte at sequencer 0x0E, and that register as a working bank selector.

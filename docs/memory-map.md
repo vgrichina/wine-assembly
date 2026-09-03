@@ -29,8 +29,8 @@ current major regions; the memory-map comment and sized globals in
 0x07112000 ├────────────────────────┤
            │  Main stack (1MB)      │  Guest ESP starts at 0x07112000
 0x07012000 ├────────────────────────┤
-           │  Thread cache (32MB)   │  8 x 4MB decoded-thread arenas
-0x05000000 ├────────────────────────┤
+           │  Thread cache (30MB)   │  8 x 3.75MB decoded-thread arenas
+           ├────────────────────────┤  Allocator-owned base; query region-layout.js
            │  Heap (1MB initial)    │  Reusing HeapAlloc/malloc arena
 0x03D12000 ├────────────────────────┤
            │  Guest address space   │  PE sections and large image data

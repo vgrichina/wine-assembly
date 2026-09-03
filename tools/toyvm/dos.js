@@ -81,6 +81,19 @@ const SB_ARGS = {
   0xE4: 1,
 };
 const SB_IRQ_VEC = 0x0F;      // IRQ 7, which is what BLASTER= announces
+
+// An ISA card decodes ten address lines, so port 0xF389 reaches the same
+// chip as 0x389. CONTAGIO and COUNTDWN run their AdLib test through `in
+// al,dx` with a DX whose high byte was never cleared, and on a real machine
+// that works; here the unknown port read 0xFF and both decided there was
+// no FM chip. Only the sound card's ports alias -- nothing else in this
+// machine is on the ISA bus in a way a program has relied on.
+function isaAlias(port) {
+  if (port <= 0x3FF) return port;
+  const a = port & 0x3FF;
+  if ((a >= 0x220 && a <= 0x22F) || a === 0x388 || a === 0x389 || a === 0x330 || a === 0x331) return a;
+  return port;
+}
 // A transfer of at most this many samples is a probe, not audio: even at the
 // slowest rate a real card retires it in well under a millisecond. See sbRun.
 const SB_SHORT_BLOCK = 64;
@@ -535,6 +548,12 @@ const VRAM_TEXT = 0xB8000;
 // The name a created file is remembered under. Same rules hostPath applies to
 // a lookup -- base name, no drive, no directory, case-folded -- so a program
 // that creates C:\TEMP\X.DAT and opens x.dat finds it.
+// A filename the way DOS matches it: case-folded, 0xFF/NBSP blanks dropped,
+// no trailing dot. See hostPath.
+function dosNameKey(name) {
+  return String(name).toLowerCase().replace(/[ÿ ]/g, '').replace(/\.+$/, '');
+}
+
 function fileKey(name) {
   const base = String(name || '').replace(/^[A-Za-z]:/, '').split(/[\\/]/).filter(Boolean).pop();
   return base ? base.toLowerCase() : null;
@@ -876,7 +895,7 @@ class Machine {
     // The Sound Blaster, as far as a detection routine can tell. See portIn.
     this.sb = {
       out: [], cmd: 0, args: [], expect: 0, speaker: 0, block: 0,
-      pending: false, autoInit: false, paused: false, forced: false,
+      pending: false, autoInit: false, paused: false, forced: false, shortWait: false,
       detects: 0, commands: 0, irqs: 0,
       // The two numbers that say how long a block takes: samples in it, and
       // samples per second. See sbBlockSeconds.
@@ -886,6 +905,11 @@ class Machine {
       // owed, and the level the stream is currently at. See Sound.sbNext.
       left: 0, chan: 1, bits: 8, signed: false, stereo: false, irqDue: false,
       lastL: 0, lastR: 0,
+      // The SB16 mixer's register file (index at 0x224, data at 0x225) and
+      // the interrupt-status bits register 0x82 reports: bit 0 an 8-bit
+      // block's IRQ, bit 1 a 16-bit one, each held until its ack port
+      // (0x22E / 0x22F) is read.
+      mixer: new Uint8Array(256), mixerIndex: 0, irqLatched: 0,
     };
     // The samples behind the card, and the speaker. Renders only when a host
     // attaches a sink (the page, --audio=); see audio.js.
@@ -898,6 +922,24 @@ class Machine {
     // Which option the menu answerer picks on a sound menu: 'silent' is the
     // sweep's choice, 'sb' takes a plain Sound Blaster when one is offered.
     this.soundPref = opts.soundPref || 'silent';
+    // What DSP command E1 answers, as [major, minor]. 4.05 is an SB16, which
+    // is what the card behind these ports can do: 8- and 16-bit blocks on
+    // both DMA controllers (sbRun), the 0x41/0x42 sample-rate commands, and
+    // the mixer's IRQ/DMA registers (sbMixerRead). It answered 2.01 -- a
+    // plain SB 2.0 -- until 2026-09-03, and CONTAGIO.EXE, which wants an
+    // SB16, stopped right after reading it; the 199-program sweep with 4.05
+    // gained that one and lost nothing. --dsp-version=2.1 is the A/B.
+    this.dspVersion = opts.dspVersion || [4, 5];
+    // The two 8259s, as far as a guest reading them back can tell: each mask
+    // register (OCW1), the vector base each ICW2 set, and where in the
+    // ICW1..ICW4 init sequence the next data-port write lands. Nothing here
+    // gates delivery -- a masked IRQ is still raised -- but a program doing
+    // IN/AND/OUT on the mask register got 0xFF back before and so could
+    // never see its own writes: ACT1.EXE's IRQ hunt read the mask, cleared
+    // one bit, wrote it and read 0xFF again. Boot values are what a BIOS
+    // leaves: IRQ 0,1,2,6 open on the master, the cascade's 8 and 13 on the
+    // slave.
+    this.pic = { imr: [0xB8, 0x8F], base: [0x08, 0x70], icw: [0, 0], icw1: [0, 0] };
     // The 8253, as three down-counters rather than a number that goes up.
     //
     // Channel 0 is the one that matters: it divides 1.193182 MHz by its latch,
@@ -1074,7 +1116,13 @@ class Machine {
     if (this.dirCache === undefined) {
       try { this.dirCache = fs.readdirSync(this.fileRoot); } catch { this.dirCache = []; }
     }
-    const hit = this.dirCache.find(f => f.toLowerCase() === base.toLowerCase());
+    const hit = this.dirCache.find(f => f.toLowerCase() === base.toLowerCase())
+      // Then as DOS would compare them. 0xFF is a blank in code page 437 and
+      // a legal filename byte, which is how alpha.exe's music file got the
+      // name "CRiSiS.ÿ": the extension was made to look like nothing. The
+      // unpacker that put the corpus on disk dropped it, leaving "crisis.",
+      // and DOS itself treats a trailing dot as no extension at all.
+      || this.dirCache.find(f => dosNameKey(f) === dosNameKey(base));
     return hit ? `${this.fileRoot}/${hit}` : null;
   }
 
@@ -2076,7 +2124,7 @@ class Machine {
   }
 
   sbRun(v, args) {
-    if (v === 0xE1) { this.sb.out.push(2, 1); return; }
+    if (v === 0xE1) { this.sb.out.push(this.dspVersion[0], this.dspVersion[1]); return; }
     if (v === 0xE3) {
       for (const c of 'COPYRIGHT (C) CREATIVE TECHNOLOGY LTD, 1992.') this.sb.out.push(c.charCodeAt(0));
       this.sb.out.push(0);
@@ -2145,7 +2193,23 @@ class Machine {
       this.sb.left = this.sb.len;
       this.sb.irqDue = false;
       this.audio.sbSide = 0;
-      if (len <= SB_SHORT_BLOCK) { this.sb.forced = true; this.endSlice(); }
+      // A new transfer is not the paused one. D0h stops the transfer in
+      // flight; the command that follows starts another, and the card plays
+      // it. ENDPART.EXE pauses before every block it queues (D0, 40, 14) and
+      // with the pause carried over, audio.js never pulled a sample of any of
+      // them: 55 DSP commands, one interrupt, 25 seconds of digital silence
+      // over a buffer that held the music.
+      this.sb.paused = false;
+      // A tiny block completes as soon as the DMA controller lets it through,
+      // and not before: ACT1.EXE finds its DMA channel by kicking off an
+      // 11-byte transfer with every channel masked, then unmasking candidates
+      // one at a time to see which one makes the interrupt come. Fired at the
+      // command, the interrupt arrived before any channel was open and the
+      // hunt never found one. So it waits on the mask -- see sbDmaWritten.
+      if (len <= SB_SHORT_BLOCK) {
+        if (this.sbChannelOpen(this.sb.chan)) { this.sb.forced = true; this.endSlice(); }
+        else this.sb.shortWait = true;
+      }
       return;
     }
     // F2h forces an 8-bit IRQ (F3h the 16-bit one) with no transfer behind it.
@@ -2167,6 +2231,31 @@ class Machine {
     if (v === 0xDA || v === 0xD9) { this.sb.autoInit = false; this.sb.pending = false; }
   }
 
+  // Whether the 8237 would let a transfer on channel `c` proceed: unmasked.
+  // Not "programmed": a channel that was never given an address still
+  // transfers from whatever its registers hold, and a detection routine that
+  // only unmasks is counting on exactly that.
+  sbChannelOpen(c) {
+    return !(this.audio.dma.masked & (1 << c));
+  }
+
+  // The DMA controller was written. A short block waiting for its channel
+  // (sbRun) completes the moment an 8-bit channel opens, on that channel:
+  // the card's DREQ goes wherever the jumper says, and the program has just
+  // told us where it believes that is.
+  sbDmaWritten() {
+    if (!this.sb.shortWait || !this.sb.pending) return;
+    const dma = this.audio.dma;
+    let c = -1;
+    if (this.sbChannelOpen(dma.recent8)) c = dma.recent8;
+    else for (let i = 0; i < 4; i++) if (this.sbChannelOpen(i)) { c = i; break; }
+    if (c < 0) return;
+    this.sb.chan = c;
+    this.sb.shortWait = false;
+    this.sb.forced = true;
+    this.endSlice();
+  }
+
   // The vector for the Sound Blaster's IRQ, if a block is finished and the
   // program has a handler on it. IRQ 7 is what BLASTER announces; a driver that
   // hooked several and is waiting to see which one fires learns the answer
@@ -2180,10 +2269,26 @@ class Machine {
     // out from under it. A block's own interrupt is owed once the last sample
     // of it went through the DMA channel (Sound.sbNext), and auto-init has
     // already re-armed the next block by the time it is delivered.
-    if (this.sb.forced) this.sb.forced = false;
-    else this.sb.irqDue = false;
+    if (this.sb.forced) { this.sb.forced = false; this.sb.irqLatched |= 1; }
+    else { this.sb.irqDue = false; this.sb.irqLatched |= this.sb.bits === 16 ? 2 : 1; }
     this.sb.irqs++;
     return SB_IRQ_VEC;
+  }
+
+  // What a read of the mixer data port answers. 0x80 says which IRQ the card
+  // is jumpered to (bit 0 = IRQ2, 1 = IRQ5, 2 = IRQ7, 3 = IRQ10) and 0x81
+  // which DMA channels (bit n = channel n): the card here interrupts on IRQ7
+  // (SB_IRQ_VEC) and takes channel 1 for 8-bit and 5 for 16-bit blocks,
+  // which is what BLASTER= announces. A program that reads these got 0xFF
+  // before, and CONTAGIO.EXE, COUNTDWN.EXE and AQUAPHOB.EXE all read them
+  // right after an SB16's version reply and stopped there. 0x82 is which
+  // block interrupt is outstanding, for an ISR to pick its ack port by.
+  sbMixerRead() {
+    const i = this.sb.mixerIndex;
+    if (i === 0x80) return 0x04;
+    if (i === 0x81) return 0x22;
+    if (i === 0x82) return this.sb.irqLatched;
+    return this.sb.mixer[i];
   }
 
   // Whether a block has finished and its interrupt is waiting to be delivered.
@@ -2342,6 +2447,7 @@ class Machine {
   // half worth filtering: a demo waiting for retrace reads 0x3DA hundreds of
   // thousands of times and buries everything else.
   portIn(port, w) {
+    port = isaAlias(port);
     const v = this.portIn_(port, w);
     if (this.ioTrace && (!this.ioPorts || this.ioPorts.has(port))) {
       this.ioTrace(`in  ${port.toString(16).padStart(3, '0')}`
@@ -2427,15 +2533,25 @@ class Machine {
     //
     // 0x22A is the read port, 0x22E its status (bit 7 = a byte is waiting),
     // 0x22C the write port (bit 7 = busy, always clear here).
+    // The 8259 mask registers read back what was written; the command ports
+    // (IRR/ISR) read as nothing pending.
+    if (port === 0x21 || port === 0xA1) return this.pic.imr[port >> 7];
+    if (port === 0x20 || port === 0xA0) return 0;
     if (this.sound !== 'none') {
       if (port === 0x22A) return this.sb.out.length ? this.sb.out.shift() : 0;
-      if (port === 0x22E) return this.sb.out.length ? 0xFF : 0x7F;
+      if (port === 0x22E) { this.sb.irqLatched &= ~1; return this.sb.out.length ? 0xFF : 0x7F; }
+      if (port === 0x22F) { this.sb.irqLatched &= ~2; return 0xFF; }
+      if (port === 0x225) return this.sbMixerRead();
       if (port === 0x22C) return 0x7F;
     }
     // The FM chip's status register. `IN AL,388h` twice and reading back 0
     // after resetting timers 1 and 2 is the whole OPL2 presence test, and a
     // card that is not there reads 0xFF. Bits 7/6 mirror the timer flags.
-    if (port === 0x388 || port === 0x389 || port === 0x228 || port === 0x229) {
+    // 0x220-0x223 are the same chip through a Sound Blaster Pro's FM ports
+    // (left/right pairs); CMA_SHRT reads its status at 0x220 and writes its
+    // registers through 0x220/0x221 and never touches 0x388.
+    if (port === 0x388 || port === 0x389 || port === 0x228 || port === 0x229
+        || (this.sound !== 'none' && port >= 0x220 && port <= 0x223)) {
       return this.sound === 'none' ? 0xFF : this.adlibStatus();
     }
     if (port >= 0x40 && port <= 0x42) {
@@ -2453,6 +2569,7 @@ class Machine {
   }
 
   portOut(port, value, w) {
+    port = isaAlias(port);
     if (this.ioTrace && (!this.ioPorts || this.ioPorts.has(port))) {
       this.ioTrace(`out ${port.toString(16).padStart(3, '0')}`
         + `${w === 16 ? 'w' : ' '} <- ${(value & (w === 16 ? 0xFFFF : 0xFF)).toString(16)}`);
@@ -2465,6 +2582,26 @@ class Machine {
     // two halves as well would treble every 16-bit line for no new fact.
     if (w === 16) { this.portOut_(port, value & 0xFF, 8); this.portOut_(port + 1, (value >> 8) & 0xFF, 8); return; }
     value &= 0xFF;
+    // --- 8259 PICs ----------------------------------------------------------
+    // ICW1 (bit 4 of a command-port write) opens an init sequence, during
+    // which the next data-port writes are ICW2 (vector base), ICW3 unless
+    // single mode, and ICW4 if ICW1 asked for one; outside of it a data-port
+    // write is the mask register. EOI and the other OCW2/OCW3 commands are
+    // dropped: nothing here has an in-service register to clear.
+    if (port === 0x20 || port === 0xA0) {
+      if (value & 0x10) { const i = port >> 7; this.pic.icw1[i] = value; this.pic.icw[i] = 2; }
+      return;
+    }
+    if (port === 0x21 || port === 0xA1) {
+      const i = port >> 7, step = this.pic.icw[i];
+      if (step === 0) { this.pic.imr[i] = value; return; }
+      if (step === 2) this.pic.base[i] = value & 0xF8;
+      let next = step + 1;
+      if (next === 3 && (this.pic.icw1[i] & 0x02)) next = 4;
+      if (next === 4 && !(this.pic.icw1[i] & 0x01)) next = 0;
+      this.pic.icw[i] = next > 4 ? 0 : next;
+      return;
+    }
     // --- Sound Blaster, base 0x220 -----------------------------------------
     // Reset: 1 then 0, and the card answers 0xAA on the read port. Everything
     // else is accepted and dropped, except the two commands a detection
@@ -2475,6 +2612,7 @@ class Machine {
       else if (this.sb.resetting) {
         this.sb.resetting = false;
         this.sb.out.length = 0;
+        this.sb.shortWait = false;
         this.sb.out.push(0xAA);
         this.sb.detects++;
       }
@@ -2483,9 +2621,17 @@ class Machine {
     if (port === 0x22C) { this.sbCommand(value); return; }
     // The FM chip: 0x388 selects a register, 0x389 writes it; the synthesis
     // is tools/toyvm/opl.js, reached through the mixer in audio.js.
-    if (port === 0x388 || port === 0x228) { this.adlibIndex = value; return; }
-    if (port === 0x389 || port === 0x229) { this.adlibWrite(value); return; }
-    if (port === 0x224 || port === 0x225) { return; }   // mixer index/data
+    if (port === 0x388 || port === 0x228 || port === 0x220 || port === 0x222) { this.adlibIndex = value; return; }
+    if (port === 0x389 || port === 0x229 || port === 0x221 || port === 0x223) { this.adlibWrite(value); return; }
+    // The mixer. Every register reads back what was written, except the
+    // three an SB16 driver reads to learn the card's wiring: see sbMixerRead.
+    if (port === 0x224) { this.sb.mixerIndex = value; return; }
+    if (port === 0x225) {
+      const i = this.sb.mixerIndex;
+      if (i === 0x00) this.sb.mixer.fill(0);                       // mixer reset
+      else if (i !== 0x80 && i !== 0x81 && i !== 0x82) this.sb.mixer[i] = value;
+      return;
+    }
     // The speaker: bit 0 gates PIT channel 2 into it, bit 1 is its data line.
     if (port === 0x61) {
       const was = this.port61;
@@ -2495,7 +2641,7 @@ class Machine {
     }
     // The DMA controllers (0x00-0x0F, 0xC0-0xDF) and their page registers.
     if (port <= 0x0F || (port >= 0x80 && port <= 0x8F) || (port >= 0xC0 && port <= 0xDF)) {
-      if (this.audio.dma.write(port, value)) return;
+      if (this.audio.dma.write(port, value)) { this.sbDmaWritten(); return; }
     }
     // The PIT. A demo reprogramming channel 0 is asking for a faster music
     // interrupt, and one reprogramming channel 2 is driving the speaker; both

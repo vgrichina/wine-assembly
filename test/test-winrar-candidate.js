@@ -14,7 +14,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { PNG } = require('pngjs');
-const { compileWatSnapshot } = require('../lib/compile-wat');
+const { compileSrcWasm } = require('./compile-src');
 const { APPS, DESKTOP_APPS, LOCAL_CANDIDATE_APPS } = require('../lib/apps');
 
 const ROOT = path.join(__dirname, '..');
@@ -140,8 +140,8 @@ function saturatedCountInRect(png, left, top, right, bottom) {
   const mainFramePath = path.join(temp, 'winrar-main-after-settings.png');
   const commandsFramePath = path.join(temp, 'winrar-commands.png');
   try {
-    const wasm = await compileWatSnapshot(file =>
-      fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
+    const wasm = compileSrcWasm();
+    await WebAssembly.compile(wasm);
     fs.writeFileSync(wasmPath, wasm);
 
     const result = spawnSync('node', [

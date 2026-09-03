@@ -6,7 +6,7 @@
     (local $section_off i32) (local $i i32) (local $vaddr i32) (local $vsize i32)
     (local $raw_off i32) (local $raw_size i32) (local $import_rva i32)
     (local $tls_rva i32) (local $tls_dir i32) (local $tls_start i32) (local $tls_end i32)
-    (local $tls_index_addr i32) (local $tls_index i32) (local $tls_data i32)
+    (local $tls_index_addr i32) (local $tls_index i32) (local $tls_data i32) (local $tls_data_wa i32)
     (local $tls_raw_size i32) (local $tls_zero_size i32)
     (local $src i32) (local $dst i32) (local $characteristics i32)
     (local $mapped_size i32) (local $copy_size i32) (local $initialized_size i32)
@@ -171,12 +171,12 @@
                   (call $heap_alloc (i32.add (local.get $tls_raw_size) (local.get $tls_zero_size))))
                 (if (local.get $tls_data)
                   (then
-                    (call $memcpy
-                      (call $g2w (local.get $tls_data))
+                    (local.set $tls_data_wa (call $g2w (local.get $tls_data))) (call $memcpy
+                      (local.get $tls_data_wa)
                       (call $g2w (local.get $tls_start))
                       (local.get $tls_raw_size))
                     (call $zero_memory
-                      (i32.add (call $g2w (local.get $tls_data)) (local.get $tls_raw_size))
+                      (i32.add (local.get $tls_data_wa) (local.get $tls_raw_size))
                       (local.get $tls_zero_size))
                     (call $gs32
                       (i32.add (global.get $tls_slots) (i32.shl (local.get $tls_index) (i32.const 2)))

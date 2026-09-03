@@ -431,7 +431,7 @@
   ;; Walk D3DINSTRUCTION stream and emit a trace event per opcode.
   ;; D3DINSTRUCTION: {u8 bOpcode; u8 bSize; u16 wCount;} = 4 bytes, then wCount*bSize operand bytes.
   (func $handle_IDirect3DDevice_Execute (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $eb_entry i32) (local $buf i32) (local $instr_off i32) (local $instr_len i32)
+    (local $eb_entry i32) (local $buf i32) (local $buf_wa i32) (local $instr_off i32) (local $instr_len i32)
     (local $wa i32) (local $end i32) (local $op i32) (local $sz i32) (local $cnt i32) (local $step i32)
     (local $branch i32) (local $handled i32)
     (local $state i32) (local $vp_entry i32) (local $sw i32)
@@ -482,7 +482,7 @@
       (call $host_dx_trace (i32.const 8) (local.get $buf) (local.get $instr_off)
         (local.get $instr_len) (i32.const 0))
       (if (i32.and (i32.ne (local.get $buf) (i32.const 0)) (i32.ne (local.get $instr_len) (i32.const 0))) (then
-        (local.set $wa (call $g2w (i32.add (local.get $buf) (local.get $instr_off))))
+        (local.set $buf_wa (call $g2w (local.get $buf))) (local.set $wa (call $g2w (i32.add (local.get $buf) (local.get $instr_off))))
         (local.set $end (i32.add (local.get $wa) (local.get $instr_len)))
         (block $done (loop $lp
           (br_if $done (i32.ge_u (i32.add (local.get $wa) (i32.const 4)) (local.get $end)))
@@ -492,7 +492,7 @@
           (local.set $handled (i32.const 0))
           ;; kind=7 → Execute instruction trace
           (call $host_dx_trace (i32.const 7) (local.get $op) (local.get $sz) (local.get $cnt)
-            (i32.sub (local.get $wa) (call $g2w (local.get $buf))))
+            (i32.sub (local.get $wa) (local.get $buf_wa)))
           ;; D3DOP_EXIT (11)
           (br_if $done (i32.eq (local.get $op) (i32.const 11)))
           ;; ── Opcode dispatch ──────────────────────────────────────
@@ -565,7 +565,7 @@
           (if (i32.eqz (local.get $handled))
             (then
               (call $host_dx_trace (i32.const 9) (local.get $op) (local.get $sz)
-                (local.get $cnt) (i32.sub (local.get $wa) (call $g2w (local.get $buf))))
+                (local.get $cnt) (i32.sub (local.get $wa) (local.get $buf_wa)))
               (call $crash_unimplemented (global.get $D3DIM_UNIMPL_EXEC_OP))))
           (local.set $step (i32.add (i32.const 4) (i32.mul (local.get $sz) (local.get $cnt))))
           ;; Guard against zero/huge step to avoid infinite loops.

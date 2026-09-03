@@ -122,7 +122,7 @@
   (func $raise_exception (param $code i32)
     (local $seh_rec i32) (local $handler i32) (local $frame_ebp i32)
     (local $trylevel i32) (local $scopetable i32) (local $entry i32)
-    (local $filter i32) (local $except_body i32)
+    (local $filter i32) (local $filter_wa i32) (local $except_body i32)
     (local $filter_result i32) (local $first_byte i32)
     ;; Read SEH chain head from FS:[0]
     (local.set $seh_rec (call $gl32 (global.get $fs_base)))
@@ -204,14 +204,14 @@
             ;; Common pattern: B8 01 00 00 00 C3 (MOV EAX, 1; RET)
             ;; or C2 04 00 variant. Also check for E9/EB jump stubs.
             ;; Read first bytes of filter function.
-            (local.set $filter_result (i32.const 0))
+            (local.set $filter_result (i32.const 0)) (local.set $filter_wa (call $g2w (local.get $filter)))
             (if (i32.and
-                  (i32.eq (i32.load8_u (call $g2w (local.get $filter))) (i32.const 0xB8))
+                  (i32.eq (i32.load8_u (local.get $filter_wa)) (i32.const 0xB8))
                   (i32.eq (i32.load (call $g2w (i32.add (local.get $filter) (i32.const 1)))) (i32.const 1)))
               (then (local.set $filter_result (i32.const 1))))
             ;; Also check: XOR EAX,EAX; INC EAX; RET (33 C0 40 C3) — returns 1
             (if (i32.and
-                  (i32.eq (i32.load16_u (call $g2w (local.get $filter))) (i32.const 0xC033))
+                  (i32.eq (i32.load16_u (local.get $filter_wa)) (i32.const 0xC033))
                   (i32.eq (i32.load8_u (call $g2w (i32.add (local.get $filter) (i32.const 2)))) (i32.const 0x40)))
               (then (local.set $filter_result (i32.const 1))))
             ;; Also check: MOV EAX, 1; RET with C3 at offset 5

@@ -208,10 +208,10 @@ The name is misleading: `lib/thread-manager.js` does not create OS threads.
 - `thread-manager.js:41` — the sync table (events, semaphores) is already an
   `Int32Array` over that memory driven by `Atomics.store/notify/wait`.
   **The synchronisation primitives are already atomic.**
-- `13-exports.wat:1914 init_thread` — per-thread decoded-code cache
-  (`THREAD_BASE = 0x05000000 + tid*4MB`) and per-thread cache index
-  (`CACHE_INDEX = 0x07152000 + tid*0x8000`). **The hottest mutable emulator
-  structure is already partitioned per thread.**
+- `13-exports.wat init_thread` — per-thread decoded-code cache
+  (`THREAD_BASE = THREAD_CACHE_BASE + tid*0x3C0000`) plus per-thread page
+  directory and page-index partitions. **The hottest mutable emulator structure
+  is already partitioned per thread.**
 
 That is most of the hard part of a threaded design, built for reasons that had
 nothing to do with threads. What is missing is not the memory model — it is
