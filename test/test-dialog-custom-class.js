@@ -160,7 +160,7 @@ const extraWat = String.raw`
   view.setUint16(p, 0, true); p += 2;            // empty title
   view.setUint16(p, 0, true); p += 2;            // no creation data
   // A later overlapping Static is lower in the dialog's front-to-back item
-  // order. This is the relationship CD Player uses for Play over its LED.
+  // order. Keep the general resource-order contract explicit.
   view.setUint32(p + 0, 0x50000000, true);
   view.setUint16(p + 8, 40, true);
   view.setUint16(p + 10, 4, true);

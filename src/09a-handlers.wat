@@ -6775,16 +6775,54 @@
             (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
             (return)))))
-    (local.set $old_wh (call $ctrl_get_wh_packed (local.get $arg0)))
-    (if (i32.eqz (local.get $old_wh))
-      (then (local.set $old_wh (call $host_get_window_client_size (local.get $arg0)))))
+    ;; Child controls own their geometry in CONTROL_GEOM. Top-level frames do
+    ;; not: their renderer window can still be at the resource-template size
+    ;; while the compatibility record and client rectangle already contain
+    ;; the requested final dimensions. Read the live outer window rectangle,
+    ;; which is also the coordinate space of SetWindowPos cx/cy. Reading the
+    ;; stale compatibility record made a real frame resize look
+    ;; like a no-op, added SWP_NOSIZE to WM_WINDOWPOSCHANGED, and suppressed
+    ;; the derived WM_SIZE that common controls use for bottom anchoring.
+    (if (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x40000000))
+      (then (local.set $old_wh (call $ctrl_get_wh_packed (local.get $arg0))))
+      (else
+        (call $host_get_window_rect (local.get $arg0) (global.get $WINDOW_RECT_SCRATCH))
+        (local.set $old_wh
+          (i32.or
+            (i32.and
+              (i32.sub
+                (i32.load offset=8 (global.get $WINDOW_RECT_SCRATCH))
+                (i32.load (global.get $WINDOW_RECT_SCRATCH)))
+              (i32.const 0xFFFF))
+            (i32.shl
+              (i32.and
+                (i32.sub
+                  (i32.load offset=12 (global.get $WINDOW_RECT_SCRATCH))
+                  (i32.load offset=4 (global.get $WINDOW_RECT_SCRATCH)))
+                (i32.const 0xFFFF))
+              (i32.const 16))))))
     (local.set $old_xy (call $window_xy_packed (local.get $arg0)))
     ;; Pass uFlags to host so it can respect SWP_NOSIZE/SWP_NOMOVE independently
     (call $host_move_window (local.get $arg0) (local.get $x) (local.get $y) (local.get $cx) (local.get $cy) (local.get $uFlags))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $x) (local.get $y) (local.get $cx) (local.get $cy) (local.get $uFlags))
-    (local.set $new_wh (call $ctrl_get_wh_packed (local.get $arg0)))
-    (if (i32.eqz (local.get $new_wh))
-      (then (local.set $new_wh (call $host_get_window_client_size (local.get $arg0)))))
+    (if (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x40000000))
+      (then (local.set $new_wh (call $ctrl_get_wh_packed (local.get $arg0))))
+      (else
+        (call $host_get_window_rect (local.get $arg0) (global.get $WINDOW_RECT_SCRATCH))
+        (local.set $new_wh
+          (i32.or
+            (i32.and
+              (i32.sub
+                (i32.load offset=8 (global.get $WINDOW_RECT_SCRATCH))
+                (i32.load (global.get $WINDOW_RECT_SCRATCH)))
+              (i32.const 0xFFFF))
+            (i32.shl
+              (i32.and
+                (i32.sub
+                  (i32.load offset=12 (global.get $WINDOW_RECT_SCRATCH))
+                  (i32.load offset=4 (global.get $WINDOW_RECT_SCRATCH)))
+                (i32.const 0xFFFF))
+              (i32.const 16))))))
     (local.set $new_xy (call $window_xy_packed (local.get $arg0)))
     ;; Make the changed WINDOWPOS describe what USER actually changed, so its
     ;; default procedure does not derive geometry messages for a no-op half.

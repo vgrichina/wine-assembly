@@ -341,20 +341,28 @@ async function main() {
       return {
         ledInk: count(28, 62, 112, 18, (r, g, b) => r >= 80 && g >= 80 && b < 48),
         staleTitleInk: count(110, 129, 150, 12, (r, g, b) => r < 48 && g < 48 && b < 48),
-        // Resource item 1000 is an 81px-wide owner-draw button beginning at
-        // x=102. It intentionally overlaps the later LED child; this point is
-        // on the button face but used to be black when dialog z-order was
-        // reversed and the LED covered its left half.
-        playOverlap: Array.from(ctx.getImageData(
-          Math.round(main.x + 120), Math.round(main.y + 60), 1, 1).data.slice(0, 3)),
+        // CD Player enumerates dialog controls into an ID-indexed handle array
+        // before resizing them. Dropdown implementation windows must stay out
+        // of that child walk: otherwise their synthetic ID 1000 replaces the
+        // Play HWND and leaves the button over the LED.
+        ledRightEdge: Array.from(ctx.getImageData(
+          Math.round(main.x + 145), Math.round(main.y + 60), 1, 1).data.slice(0, 3)),
+        playFace: Array.from(ctx.getImageData(
+          Math.round(main.x + 175), Math.round(main.y + 60), 1, 1).data.slice(0, 3)),
+        trackInterior: Array.from(ctx.getImageData(
+          Math.round(main.x + 100), Math.round(main.y + 170), 1, 1).data.slice(0, 3)),
       };
     });
     assert(playerPixels.ledInk > 20,
       `CD Player LED should retain its WM_CREATE text colour: ${JSON.stringify(playerPixels)}`);
     assert.strictEqual(playerPixels.staleTitleInk, 0,
       `short disc title should fully erase the no-disc prompt: ${JSON.stringify(playerPixels)}`);
-    assert.deepStrictEqual(playerPixels.playOverlap, [192, 192, 192],
-      `wide Play button should remain above the overlapping LED: ${JSON.stringify(playerPixels)}`);
+    assert.deepStrictEqual(playerPixels.ledRightEdge, [0, 0, 0],
+      `Play button should no longer cover the LED's right edge: ${JSON.stringify(playerPixels)}`);
+    assert.deepStrictEqual(playerPixels.playFace, [192, 192, 192],
+      `relayout should leave the Play button beside the LED: ${JSON.stringify(playerPixels)}`);
+    assert.deepStrictEqual(playerPixels.trackInterior, [255, 255, 255],
+      `final resize should keep the status bar below the Track selector: ${JSON.stringify(playerPixels)}`);
 
     const playPoint = await page.evaluate(() => {
       const main = Object.values(sharedRenderer.windows)
@@ -362,7 +370,7 @@ async function main() {
       const canvas = document.getElementById('screen');
       const rect = canvas.getBoundingClientRect();
       return {
-        x: rect.left + (main.x + 145) * rect.width / canvas.width,
+        x: rect.left + (main.x + 195) * rect.width / canvas.width,
         y: rect.top + (main.y + 58) * rect.height / canvas.height,
       };
     });

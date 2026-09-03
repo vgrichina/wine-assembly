@@ -12479,7 +12479,12 @@
       (local.get $w) (local.get $h)
       (i32.const 4))             ;; kind = 4 (isPopup)
     (call $wnd_table_set (local.get $popup) (global.get $WNDPROC_CTRL_NATIVE))
-    (call $wnd_set_parent (local.get $popup) (local.get $combo))
+    ;; A dropdown list is a popup owned by the combo, not its child. Keeping
+    ;; it in the child tree makes EnumChildWindows(dialog, ...) recurse into
+    ;; USER's implementation detail. CD Player enumerates its dialog controls
+    ;; into an ID-indexed array; the synthetic list ID then aliases button
+    ;; 1000 and replaces the Play HWND after it was found correctly.
+    (call $wnd_set_owner (local.get $popup) (local.get $combo))
     ;; WS_POPUP — explicitly hidden until open_dropdown shows it.
     (drop (call $wnd_set_style (local.get $popup) (i32.const 0x80000000)))
     (local.set $slot (call $wnd_table_find (local.get $popup)))
@@ -12809,13 +12814,20 @@
                 (i32.const 0x50000080)  ;; WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL
                 (i32.load offset=36 (local.get $cs_w)))))) ;; pass initial title
         ;; Dropdown variants (2/3): pre-allocate a WS_POPUP shell sized to the
-        ;; listbox area. Hidden until $combobox_open_dropdown shows it. The
-        ;; listbox is still parented to the combo until then.
+        ;; listbox area. Hidden until $combobox_open_dropdown shows it. Put the
+        ;; listbox under that popup immediately so it never appears among the
+        ;; dialog's EnumChildWindows descendants before the first drop.
         (if (i32.and (i32.ne (local.get $variant) (i32.const 1))
                      (i32.eqz (local.get $prev_popup)))
           (then
             (call $cb_set_popup_hwnd (local.get $state_w)
-              (call $combo_create_popup (local.get $hwnd) (local.get $w) (local.get $h)))))
+              (call $combo_create_popup (local.get $hwnd) (local.get $w) (local.get $h)))
+            (call $wnd_set_parent
+              (local.get $lb) (call $cb_popup_hwnd (local.get $state_w)))
+            (call $host_set_parent
+              (local.get $lb) (call $cb_popup_hwnd (local.get $state_w)))
+            (call $ctrl_geom_set (call $wnd_table_find (local.get $lb))
+              (i32.const 0) (i32.const 0) (local.get $w) (local.get $h))))
         ;; MFC toolbar-hosted combo boxes are often created at (0,0) and then
         ;; left for common-control layout to position. Keep additional direct
         ;; COMBOBOX children of the same ToolbarWindow32 from covering the

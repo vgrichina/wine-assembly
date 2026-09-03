@@ -128,6 +128,13 @@ async function main() {
 
   const lb = e.combobox_get_lb_hwnd(cb);
   check('inner listbox hwnd exposed', lb !== 0, 'lb=0x' + lb.toString(16));
+  const popup = e.combobox_get_popup_hwnd(cb);
+  check('dropdown shell is an owned popup, not a child',
+    popup !== 0 && e.wnd_get_parent(popup) === 0 && e.wnd_get_owner(popup) === cb,
+    `popup=0x${popup.toString(16)} parent=0x${e.wnd_get_parent(popup).toString(16)} owner=0x${e.wnd_get_owner(popup).toString(16)}`);
+  check('inner listbox belongs to the popup from creation',
+    e.wnd_get_parent(lb) === popup,
+    `list parent=0x${e.wnd_get_parent(lb).toString(16)} popup=0x${popup.toString(16)}`);
 
   // ---------------- Item storage (forwarded to listbox) ----------------
   const items = ['Up', 'Down', 'Left', 'Right', 'Fire'];
