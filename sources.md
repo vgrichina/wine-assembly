@@ -974,6 +974,24 @@ installed payload local/gitignored unless its package terms are separately
 confirmed to authorize public bundling; the official shareware label does not
 make the game open source.
 
+### Icy Tower v1.3.1 freeware
+
+The exact 2,647,172-byte installer from the
+[Icy Tower Archive item](https://archive.org/details/Icy_Tower) is pinned as
+`icy-tower`, with archive SHA-1
+`21aa4fb949c5f0718a59f922df6ad644a80e6715` and installer SHA-256
+`e8a6ddc8a11d49b1e68484f725afc9204d9d15e0bf6cf90f0b14f0d1c9d24302`.
+The unchanged bootstrap and its generated Inno child now complete inside
+Wine-Assembly, and the installed game reaches moving tower gameplay. See
+[`docs/re-notes/icy-tower.md`](docs/re-notes/icy-tower.md).
+
+The installed readme calls Icy Tower freeware and expressly encourages copying
+the game in its original form, provided Free Lunch Design receives credit and a
+site link. It separately forbids inclusion in commercial compilations or
+packages without the author's permission. Preserve the original package and
+those conditions for any public distribution; the extracted local browser
+payload remains gitignored.
+
 Recommended order:
 
 1. [Jazz Jackrabbit 2 Demo v1.23s](https://archive.org/details/JazzJackrabbit2Demo)
