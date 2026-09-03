@@ -924,7 +924,12 @@ class Machine {
     // timer pair at 0x2X8/0x2X9 reaches both chips.
     const ultra = this.extraEnv.map(String).find((e) => /^ULTRASND=/i.test(e));
     const gusBase = ultra ? parseInt(ultra.split('=')[1], 16) : 0x220;
-    this.gus = new Gus({ base: gusBase >= 0x210 && gusBase <= 0x260 ? gusBase : 0x220, machine: this });
+    // `gus: false` parks the card at a base no port can reach, which is how
+    // a program that plays through either card is rendered on the SB alone.
+    this.gus = new Gus({
+      base: opts.gus === false ? -0x10000 : (gusBase >= 0x210 && gusBase <= 0x260 ? gusBase : 0x220),
+      machine: this,
+    });
     this.port61 = 0;
     // Where the slice being run started and how big it is, in dispatches, so
     // a port write can say WHEN it happened within the slice (audioNow).

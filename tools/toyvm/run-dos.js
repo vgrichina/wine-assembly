@@ -233,6 +233,11 @@ async function runDos(o) {
     pitClock = false,
     // 'silent' or 'sb': what the menu answerer picks on a sound menu.
     soundPref = 'silent',
+    // false takes the Gravis Ultrasound out of the machine, so a program that
+    // plays the same tune through either card can be rendered both ways: the
+    // Sound Blaster arm is the reference the GF1's pitch and tempo are
+    // checked against.
+    gus = true,
     // [major, minor] the DSP answers to command E1, or null for the SB16 default.
     dspVersion = null,
     // Keys typed once, in order, and keys that replace the auto-key rotation.
@@ -256,10 +261,13 @@ async function runDos(o) {
   if (regSpec) require('./emit').enableRegSpec(true);
 
   const machine = new Machine(new Uint8Array(0), {
-    log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound, svga, soundPref,
+    log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound, svga, soundPref, gus,
     dspVersion, keys, autoKeys, env, tempFiles,
     stopText,
-    ioTrace: traceIo === null ? null : (line) => log(`  [io] ${line}`),
+    // Stamped with the dispatch count so a port write can be lined up with
+    // the rendered audio (--pit-clock runs 10.0M dispatches per guest second
+    // at the default dispatchesPerTick).
+    ioTrace: traceIo === null ? null : (line) => log(`  [io] @${(machine.audioNow() / 1e6).toFixed(4)}M ${line}`),
     ioPorts: traceIo && traceIo.length ? new Set(traceIo) : null,
     // A DOS program's data sits next to it, and that directory is the whole of
     // the filesystem it gets.
@@ -820,6 +828,8 @@ async function main() {
     // `--sound-pref=sb` has the menu answerer take a Sound Blaster when a
     // menu offers one, as the page does with sound on.
     soundPref: arg('sound-pref', 'silent'),
+    // `--no-gus` leaves the Ultrasound out, for the SB-arm reference render.
+    gus: !flag('no-gus'),
     // `--dsp-version=2.1` answers DSP command E1 with a plain SB 2.0's number
     // (3.1 for an SB Pro) instead of the SB16's 4.5 the card gives by default:
     // the A/B for a program that changes its mind on the version.

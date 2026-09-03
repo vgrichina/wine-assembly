@@ -308,6 +308,7 @@ class LiveRun {
       underruns: this.ring.underruns, rendered: this.machine.audio.rendered,
       sb: this.machine.sb.irqs, opl: this.machine.audio.opl.keyOns,
       speaker: this.machine.audio.speakerWrites,
+      gus: this.machine.gus ? this.machine.gus.stats.starts : 0,
     };
   }
 
