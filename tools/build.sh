@@ -92,9 +92,10 @@ node tools/check-wat-js-constants.js
 # A test that is not named in a run-all tier never executes. Keep suite
 # membership complete as a cheap build gate, before spending time compiling.
 bash tools/check-test-manifest.sh
-# api_ids are array positions baked into the compiled hash table, the generated
-# br_table, and 09b-dispatch.wat's fast paths. A mid-array insert renumbers them
-# all; these two gates catch that before it becomes a runtime mystery.
+# api_ids are array positions baked into the compiled hash table and generated
+# dispatch/COM thunks. Hand-written fast paths use generated named IDs, while a
+# mid-array insert still renumbers the broader ABI; these gates catch both
+# forms of drift before they become a runtime mystery.
 node tools/check-api-table.js
 node tools/gen_dispatch.js --check
 node tools/check-hash-table.js > /dev/null || { node tools/check-hash-table.js; exit 1; }

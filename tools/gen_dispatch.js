@@ -30,6 +30,29 @@ const N = apiTable.length;
 const out = [];
 const PAGE_SIZE = 256;
 
+// Hand-written fast paths and the COM-vtable bootstrap still need a few IDs,
+// but their source must never bake in api_table.json's current array indexes.
+// Emit the names beside the generated dispatcher so an append/reorder repair
+// updates every consumer through the existing `gen_dispatch.js --check` gate.
+const namedApiIds = [
+  ['MsgWaitForMultipleObjects', 'API_ID_MsgWaitForMultipleObjects'],
+  ['PeekMessageA', 'API_ID_PeekMessageA'],
+  ['PeekMessageW', 'API_ID_PeekMessageW'],
+  ['IDirectDraw_QueryInterface', 'API_ID_IDirectDraw_BASE'],
+];
+
+out.push('  ;; Named API ids consumed by hand-written dispatch fast paths.');
+out.push('  ;; Generated from api_table.json; never replace these with array indexes.');
+for (const [name, symbol] of namedApiIds) {
+  const matches = apiTable.filter(api => api.name === name);
+  if (matches.length !== 1) {
+    fatal(`named API id ${name} must match exactly one api_table.json entry (found ${matches.length})`);
+    continue;
+  }
+  out.push(`  (global $${symbol} i32 (i32.const ${matches[0].id}))`);
+}
+out.push('');
+
 // OpenGL/WGL exports share one ABI bridge. `words` counts physical 32-bit
 // stack words (GLdouble consumes two), while api_table nargs remains the
 // source-level argument count used by tracing.
