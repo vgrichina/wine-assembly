@@ -387,6 +387,7 @@ UNIT=(
   test/test-d3dim-browser-assets.js
   test/test-d3dim-flip3dtl-render.js
   test/test-d3dim-indexed-texture.js
+  test/test-d3dim-worker-parity.js
   test/test-d3ddevice2-texture-format-desc.js
   test/test-d3dim-line-primitives.js
   test/test-d3dim-pick-records.js

@@ -1069,7 +1069,7 @@
     (local $vtbl_guest i32) (local $vtbl_wa i32)
     ;; IDirectDraw is always the first generated interface. Resetting here
     ;; makes repeated main-instance initialization deterministic.
-    (if (i32.eq (local.get $base_api_id) (i32.const 978))
+    (if (i32.eq (local.get $base_api_id) (global.get $API_ID_IDirectDraw_BASE))
       (then (call $dx_vtable_registry_reset)))
     ;; Allocate vtable from heap (count * 4 bytes)
     (local.set $vtbl_guest (call $heap_alloc (i32.mul (local.get $count) (i32.const 4))))

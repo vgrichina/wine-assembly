@@ -33,6 +33,7 @@
     showLive(fig.dataset.live ? {
       name: fig.dataset.live, src: fig.dataset.liveSrc, exe: fig.dataset.liveExe,
       args: fig.dataset.liveArgs || '',
+      env: fig.dataset.liveEnv || '', card: fig.dataset.liveSound || 'full',
     } : null);
     dlg.showModal();
   });
@@ -292,6 +293,11 @@
         exe: current.exe,
         args: current.args,
         files: files,
+        // What the sweep found this program needed: a ULTRASND= variable for
+        // one that asks for a Gravis card, or no sound card for one that
+        // only draws without one. The tile is a screenshot taken that way.
+        env: current.env ? current.env.split(';') : [],
+        card: current.card,
         // The same menu answerer the sweep ran with. The tile above this canvas
         // is a screenshot taken WITH it, so without it the page promises a
         // picture and then sits on "waiting for a key". It only answers when
@@ -307,7 +313,7 @@
         // answerer takes the silent option, as the sweep did.
         audioContext: ctx,
         sound: prefs.sound,
-        soundPref: prefs.sound ? 'sb' : 'silent',
+        soundPref: prefs.sound && current.card !== 'none' ? 'sb' : 'silent',
         onStatus: function (s) {
           runState = s.state;
           if (s.state === 'running') say('running - click the screen, then type' + soundLine(), true);

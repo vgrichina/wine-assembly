@@ -117,10 +117,16 @@ class LiveRun {
       audioContext = null, sound = true,
       // What the menu answerer picks on a sound menu -- see Machine.soundPref.
       soundPref = 'sb',
+      // Extra environment lines ("ULTRASND=240,1,1,11,7") and which card the
+      // machine has ('full' or 'none'): the sweep's per-program findings,
+      // carried on the tile. `sound` above is the page's mute; `card` is the
+      // machine's hardware, and a program that only draws without a card
+      // gets none whatever the mute says.
+      env = [], card = 'full',
     } = opts;
     Object.assign(this, {
       canvas, exe, files, cpu, args, msPerFrame, slice, onStatus, onFrame, autoKey,
-      variant, mips, paced, audioContext, sound, soundPref,
+      variant, mips, paced, audioContext, sound, soundPref, env, card,
     });
     this.running = false;
     this.session = null;
@@ -176,6 +182,8 @@ class LiveRun {
     const machine = new Machine(new Uint8Array(0), {
       autoKey: this.autoKey,
       soundPref: this.soundPref,
+      env: this.env,
+      sound: this.card,
       fileRoot: '.',              // the mounted map IS the directory
       log: () => {},
     });
