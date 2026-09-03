@@ -167,6 +167,14 @@ assert.strictEqual(matrixFrontend.backend.uploads.at(-1).level, 0,
   'gluBuild2DMipmaps uploads the source image as level zero');
 assert.strictEqual(matrixFrontend.backend.mipmapTextures.length, 1,
   'gluBuild2DMipmaps asks the GPU backend to derive the mip chain');
+matrixFrontend.matrixMode = GL.PROJECTION;
+matrixFrontend._replaceMatrix(require('../lib/gl-compat').identity());
+[0, 640, 0, 480].forEach((value, index) =>
+  bridgeView.setFloat64(stack + 4 + index * 8, value, true));
+bridge.call(CALL_INDEX.gluOrtho2D, stack, 0);
+assert(Math.abs(matrixFrontend._matrix()[0] - 2 / 640) < 1e-8 &&
+  Math.abs(matrixFrontend._matrix()[5] - 2 / 480) < 1e-8,
+  'gluOrtho2D applies the two-dimensional GLU orthographic projection');
 gl.setEnabled(GL.POLYGON_OFFSET_FILL, true);
 assert.deepStrictEqual(backend.capabilities.at(-1), [GL.POLYGON_OFFSET_FILL, true],
   'polygon-offset fill follows desktop GL enable state');

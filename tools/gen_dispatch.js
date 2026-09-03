@@ -87,6 +87,7 @@ const gpuApis = new Map([
   ['gluPerspective', 8],
   ['gluLookAt', 18],
   ['gluBuild2DMipmaps', 7],
+  ['gluOrtho2D', 8],
 ]);
 const gpuApiOrder = [...gpuApis.keys()];
 

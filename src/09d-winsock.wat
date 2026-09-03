@@ -1773,7 +1773,7 @@
   ;; the in_addr at +32, and the name copy at +40.
   (func $handle_gethostbyname (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
                               (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ip i32) (local $base i32) (local $i i32) (local $ch i32)
+    (local $ip i32) (local $base i32) (local $base_wa i32) (local $i i32) (local $ch i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
     (local.set $ip (call $vsock_parse_ipv4 (local.get $arg0)))
     ;; Our own name resolves to our room address. Without this the
@@ -1796,27 +1796,28 @@
         (call $vsock_set_error (i32.const 11001))
         (global.set $eax (i32.const 0))
         (return)))
+    (local.set $base_wa (call $g2w (local.get $base)))
     ;; Copy the queried name so h_name stays valid after the call.
     (local.set $i (i32.const 0))
     (block $nd (loop $nc
       (br_if $nd (i32.ge_u (local.get $i) (i32.const 63)))
       (local.set $ch (i32.load8_u (call $g2w (i32.add (local.get $arg0) (local.get $i)))))
-      (i32.store8 (call $g2w (i32.add (local.get $base) (i32.add (i32.const 40) (local.get $i))))
+      (i32.store8 (i32.add (local.get $base_wa) (i32.add (i32.const 40) (local.get $i)))
         (local.get $ch))
       (br_if $nd (i32.eqz (local.get $ch)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $nc)))
-    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 32)))
+    (i32.store offset=32 (local.get $base_wa)
       (call $bswap32 (local.get $ip)))
-    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 16)))
+    (i32.store offset=16 (local.get $base_wa)
       (i32.add (local.get $base) (i32.const 32)))
-    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 20))) (i32.const 0))
-    (i32.store (call $g2w (local.get $base))
+    (i32.store offset=20 (local.get $base_wa) (i32.const 0))
+    (i32.store (local.get $base_wa)
       (i32.add (local.get $base) (i32.const 40)))          ;; h_name
-    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 4))) (i32.const 0)) ;; h_aliases
-    (i32.store16 (call $g2w (i32.add (local.get $base) (i32.const 8))) (i32.const 2)) ;; AF_INET
-    (i32.store16 (call $g2w (i32.add (local.get $base) (i32.const 10))) (i32.const 4))
-    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 12)))
+    (i32.store offset=4 (local.get $base_wa) (i32.const 0)) ;; h_aliases
+    (i32.store16 offset=8 (local.get $base_wa) (i32.const 2)) ;; AF_INET
+    (i32.store16 offset=10 (local.get $base_wa) (i32.const 4))
+    (i32.store offset=12 (local.get $base_wa)
       (i32.add (local.get $base) (i32.const 16)))          ;; h_addr_list
     (global.set $eax (local.get $base)))
 
@@ -1867,7 +1868,7 @@
   ;; port 31457, so the value here is answering at all rather than trapping.
   (func $handle_getservbyname (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
                               (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $port i32) (local $base i32)
+    (local $port i32) (local $base i32) (local $base_wa i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
     (if (i32.eqz (local.get $arg0))
       (then
@@ -1888,24 +1889,25 @@
         (call $vsock_set_error (i32.const 11004))
         (global.set $eax (i32.const 0))
         (return)))
+    (local.set $base_wa (call $g2w (local.get $base)))
     ;; Keep our own copies: the caller's buffers may be stack temporaries.
     (call $vsock_copy_cstr (i32.add (local.get $base) (i32.const 16))
       (local.get $arg0) (i32.const 31))
     (if (local.get $arg1)
       (then (call $vsock_copy_cstr (i32.add (local.get $base) (i32.const 48))
               (local.get $arg1) (i32.const 31)))
-      (else (i32.store8 (call $g2w (i32.add (local.get $base) (i32.const 48)))
+      (else (i32.store8 offset=48 (local.get $base_wa)
               (i32.const 0))))
-    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 88))) (i32.const 0))
-    (i32.store (call $g2w (local.get $base))
+    (i32.store offset=88 (local.get $base_wa) (i32.const 0))
+    (i32.store (local.get $base_wa)
       (i32.add (local.get $base) (i32.const 16)))          ;; s_name
-    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 4)))
+    (i32.store offset=4 (local.get $base_wa)
       (i32.add (local.get $base) (i32.const 88)))          ;; s_aliases → {NULL}
     ;; s_port is network byte order, unlike everything around it.
-    (i32.store16 (call $g2w (i32.add (local.get $base) (i32.const 8)))
+    (i32.store16 offset=8 (local.get $base_wa)
       (i32.or (i32.shl (i32.and (local.get $port) (i32.const 0xFF)) (i32.const 8))
               (i32.shr_u (local.get $port) (i32.const 8))))
-    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 12)))
+    (i32.store offset=12 (local.get $base_wa)
       (i32.add (local.get $base) (i32.const 48)))          ;; s_proto
     (global.set $eax (local.get $base)))
 
@@ -1991,7 +1993,7 @@
   ;; here could ask for; anything else is genuinely unknown.
   (func $handle_getprotobyname (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
                                (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $d0 i32) (local $proto i32) (local $base i32) (local $n i32)
+    (local $d0 i32) (local $proto i32) (local $base i32) (local $base_wa i32) (local $n i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
     (if (i32.eqz (local.get $arg0))
       (then
@@ -2025,15 +2027,16 @@
         (call $vsock_set_error (i32.const 11004))
         (global.set $eax (i32.const 0))
         (return)))
+    (local.set $base_wa (call $g2w (local.get $base)))
     (call $vsock_copy_cstr (i32.add (local.get $base) (i32.const 16))
       (local.get $arg0) (i32.const 31))
-    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 56))) (i32.const 0))
-    (i32.store (call $g2w (local.get $base))
+    (i32.store offset=56 (local.get $base_wa) (i32.const 0))
+    (i32.store (local.get $base_wa)
       (i32.add (local.get $base) (i32.const 16)))          ;; p_name
-    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 4)))
+    (i32.store offset=4 (local.get $base_wa)
       (i32.add (local.get $base) (i32.const 56)))          ;; p_aliases → {NULL}
     ;; p_proto is a plain int, in host order — unlike servent's s_port.
-    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 8))) (local.get $proto))
+    (i32.store offset=8 (local.get $base_wa) (local.get $proto))
     (global.set $eax (local.get $base)))
 
   ;; WSAStartup(wVersionRequested, lpWSAData)

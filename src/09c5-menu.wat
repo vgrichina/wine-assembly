@@ -714,7 +714,7 @@
     (i32.store (local.get $neww) (i32.const 0))
     (i32.store offset=4 (local.get $neww) (local.get $len))
     (call $memcpy
-      (call $g2w (i32.add (local.get $newg) (i32.const 8)))
+      (i32.add (local.get $neww) (i32.const 8))
       (local.get $src_wa) (local.get $len))
     (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 8)))
     ;; Host-built menus are serialized only after SetMenu has returned to the
@@ -740,7 +740,7 @@
     (i32.store (local.get $neww) (local.get $source))
     (i32.store offset=4 (local.get $neww) (local.get $len))
     (call $memcpy
-      (call $g2w (i32.add (local.get $newg) (i32.const 8)))
+      (i32.add (local.get $neww) (i32.const 8))
       (local.get $src_wa) (local.get $len))
     (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 8)))
     (call $defwndproc_do_nccalcsize (local.get $hwnd)))
@@ -2694,7 +2694,7 @@
     (i32.store (local.get $neww) (local.get $source_id))
     (i32.store offset=4 (local.get $neww) (local.get $total))
     (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 8)))
-    (global.set $ml_blob_w (call $g2w (i32.add (local.get $newg) (i32.const 8))))
+    (global.set $ml_blob_w (i32.add (local.get $neww) (i32.const 8)))
     ;; bar_count header
     (i32.store (global.get $ml_blob_w) (global.get $ml_bar_count))
     ;; cursors: $ml_struct_cur runs forward through bar items + child

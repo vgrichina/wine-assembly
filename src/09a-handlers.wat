@@ -12551,13 +12551,13 @@ HookEx — no next hook in chain, return 0
   (func $handle_CommandLineToArgvW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; CommandLineToArgvW(lpCmdLine, pNumArgs) — parse wide string command line
     ;; Allocate: argv array (1 pointer) + wide string "app\0" (8 bytes)
-    (local $buf i32)
-    (local.set $buf (call $heap_alloc (i32.const 32)))
+    (local $buf i32) (local $buf_wa i32)
+    (local.set $buf (call $heap_alloc (i32.const 32))) (local.set $buf_wa (call $g2w (local.get $buf)))
     ;; argv[0] = pointer to wide string at buf+8
-    (i32.store (call $g2w (local.get $buf)) (i32.add (local.get $buf) (i32.const 8)))
+    (i32.store (local.get $buf_wa) (i32.add (local.get $buf) (i32.const 8)))
     ;; Write L"app\0" at buf+8 (wide: 'a'=0x0061, 'p'=0x0070, 'p'=0x0070, '\0'=0)
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (i32.const 0x00700061))   ;; "ap"
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (i32.const 0x00000070))  ;; "p\0"
+    (i32.store offset=8 (local.get $buf_wa) (i32.const 0x00700061))   ;; "ap"
+    (i32.store offset=12 (local.get $buf_wa) (i32.const 0x00000070))  ;; "p\0"
     ;; *pNumArgs = 1
     (i32.store (call $g2w (local.get $arg1)) (i32.const 1))
     (global.set $eax (local.get $buf))  ;; return pointer to argv array
