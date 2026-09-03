@@ -642,6 +642,7 @@ E2E=(
   test/test-wordpad-web.js
   test/test-wordpad-thread-startup.js
   test/test-cli-worker-threads.js
+  test/test-cli-frozen-recording.js
   test/test-wordpad-copy-clipboard.js
   test/test-wordpad-paste-refcount.js
   test/test-wordpad-font-combo.js
