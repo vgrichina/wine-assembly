@@ -258,7 +258,7 @@
       (then (global.set $sbh_eip_b (local.get $eip)))))
 
   (func $fast_msvc_sbh_scan (result i32)
-    (local $wa i32) (local $scan i32) (local $page i32)
+    (local $wa i32) (local $scan i32) (local $scan_wa i32) (local $page i32)
     (local $first i32) (local $mode i32) (local $match i32)
     (local.set $wa (call $g2w (global.get $eip)))
     (local.set $mode (call $sbh_match_mode (local.get $wa)))
@@ -286,10 +286,10 @@
           (global.set $eip (i32.add (global.get $eip) (i32.const 0x2E)))
           (return (i32.const 1))))
 
-      (local.set $first (i32.load (call $g2w (local.get $scan))))
+      (local.set $scan_wa (call $g2w (local.get $scan))) (local.set $first (i32.load (local.get $scan_wa)))
       (if (i32.and
             (i32.ge_s (local.get $first) (global.get $ebx))
-            (i32.gt_u (i32.load offset=4 (call $g2w (local.get $scan))) (global.get $ebx)))
+            (i32.gt_u (i32.load offset=4 (local.get $scan_wa)) (global.get $ebx)))
         (then
           (global.set $eax (local.get $first))
           (if (i32.eq (local.get $mode) (i32.const 1))
@@ -908,7 +908,7 @@
   ;; Returns new guest pointer (or 0 on failure). Copies old data, frees old block.
   ;; flags: bit 6 = LMEM_ZEROINIT/GMEM_ZEROINIT
   (func $heap_realloc (param $old_ptr i32) (param $new_size i32) (param $flags i32) (result i32)
-    (local $new_ptr i32) (local $old_block_size i32) (local $old_data_size i32) (local $copy_size i32)
+    (local $new_ptr i32) (local $new_wa i32) (local $old_block_size i32) (local $old_data_size i32) (local $copy_size i32)
     ;; If old_ptr is NULL, just allocate
     (if (i32.eqz (local.get $old_ptr))
       (then
@@ -925,16 +925,16 @@
       (then (return (local.get $old_ptr))))
     ;; Allocate new block
     (local.set $new_ptr (call $heap_alloc (local.get $new_size)))
-    (if (i32.eqz (local.get $new_ptr)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $new_ptr)) (then (return (i32.const 0)))) (local.set $new_wa (call $g2w (local.get $new_ptr)))
     ;; Copy old data
     (local.set $copy_size (local.get $old_data_size))
     (if (i32.gt_u (local.get $copy_size) (local.get $new_size))
       (then (local.set $copy_size (local.get $new_size))))
-    (call $memcpy (call $g2w (local.get $new_ptr)) (call $g2w (local.get $old_ptr)) (local.get $copy_size))
+    (call $memcpy (local.get $new_wa) (call $g2w (local.get $old_ptr)) (local.get $copy_size))
     ;; Zero new portion if ZEROINIT flag set
     (if (i32.and (local.get $flags) (i32.const 0x40))
       (then (call $zero_memory
-        (i32.add (call $g2w (local.get $new_ptr)) (local.get $copy_size))
+        (i32.add (local.get $new_wa) (local.get $copy_size))
         (i32.sub (local.get $new_size) (local.get $copy_size)))))
     ;; Free old block
     (call $heap_free (local.get $old_ptr))
@@ -2881,7 +2881,7 @@
   ;; clears the slot.
   (func $title_table_set (param $hwnd i32) (param $wa_ptr i32) (param $len i32)
     (local $idx i32) (local $rec i32) (local $old_ptr i32)
-    (local $buf i32) (local $i i32)
+    (local $buf i32) (local $buf_wa i32) (local $i i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
     (local.set $rec (i32.add (global.get $TITLE_TABLE) (i32.mul (local.get $idx) (i32.const 8))))
@@ -2896,10 +2896,10 @@
     (if (i32.gt_u (local.get $len) (i32.const 255))
       (then (local.set $len (i32.const 255))))
     (local.set $buf (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
-    (if (i32.eqz (local.get $buf)) (then (return)))
+    (if (i32.eqz (local.get $buf)) (then (return))) (local.set $buf_wa (call $g2w (local.get $buf)))
     ;; $buf is a guest pointer; convert to WASM for memory.copy.
-    (memory.copy (call $g2w (local.get $buf)) (local.get $wa_ptr) (local.get $len))
-    (i32.store8 (i32.add (call $g2w (local.get $buf)) (local.get $len)) (i32.const 0))
+    (memory.copy (local.get $buf_wa) (local.get $wa_ptr) (local.get $len))
+    (i32.store8 (i32.add (local.get $buf_wa) (local.get $len)) (i32.const 0))
     (i32.store         (local.get $rec) (local.get $buf))
     (i32.store offset=4 (local.get $rec) (local.get $len)))
 
@@ -4917,7 +4917,7 @@
   (global $dlg_text_ptr (mut i32) (i32.const 0))
   (global $dlg_text_wa  (mut i32) (i32.const 0))
   (func $dlg_read_text (param $wa i32)
-    (local $ch i32) (local $len i32) (local $start i32) (local $buf i32) (local $j i32)
+    (local $ch i32) (local $len i32) (local $start i32) (local $buf i32) (local $buf_wa i32) (local $j i32)
     (local.set $ch (i32.load16_u (local.get $wa)))
     ;; null → skip 2 bytes, return 0
     (if (i32.eqz (local.get $ch))
@@ -4942,16 +4942,16 @@
     (local.set $wa (i32.add (local.get $wa) (i32.const 2))) ;; skip null
     (global.set $dlg_text_wa (local.get $wa))
     ;; Allocate guest buffer and convert to ASCII
-    (local.set $buf (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (local.set $buf (call $heap_alloc (i32.add (local.get $len) (i32.const 1)))) (local.set $buf_wa (call $g2w (local.get $buf)))
     (local.set $j (i32.const 0))
     (block $c_done (loop $c_loop
       (br_if $c_done (i32.ge_u (local.get $j) (local.get $len)))
-      (i32.store8 (call $g2w (i32.add (local.get $buf) (local.get $j)))
+      (i32.store8 (i32.add (local.get $buf_wa) (local.get $j))
         (i32.and (i32.load16_u (i32.add (local.get $start)
           (i32.mul (local.get $j) (i32.const 2)))) (i32.const 0xFF)))
       (local.set $j (i32.add (local.get $j) (i32.const 1)))
       (br $c_loop)))
-    (i32.store8 (call $g2w (i32.add (local.get $buf) (local.get $len))) (i32.const 0))
+    (i32.store8 (i32.add (local.get $buf_wa) (local.get $len)) (i32.const 0))
     (global.set $dlg_text_ptr (local.get $buf)))
 
   ;; ---- WND_DLG_RECORDS accessors ----
@@ -5033,14 +5033,14 @@
     (local $data_entry i32) (local $rva i32) (local $wa i32) (local $p i32)
     (local $style i32) (local $ex_style i32) (local $ctrl_count i32)
     (local $dlg_x i32) (local $dlg_y i32) (local $dlg_cx i32) (local $dlg_cy i32)
-    (local $title_ptr i32) (local $menu_key i32) (local $dialog_class_ptr i32)
+    (local $title_ptr i32) (local $title_wa i32) (local $menu_key i32) (local $dialog_class_ptr i32)
     (local $dlg_slot i32) (local $dlg_rec i32) (local $dlg_key i32)
     (local $i i32) (local $ctrl_hwnd i32) (local $ctrl_slot i32) (local $ctrl_rec i32)
     (local $cx i32) (local $cy i32) (local $cw i32) (local $ch i32)
     (local $is_ex i32) (local $ctrl_style i32) (local $ctrl_ex i32) (local $ctrl_id i32)
-    (local $class_val i32) (local $class_enum i32) (local $class_ptr i32)
+    (local $class_val i32) (local $class_enum i32) (local $class_ptr i32) (local $class_wa i32)
     (local $custom_wndproc i32) (local $native_tab i32)
-    (local $text_ptr i32) (local $text_ord i32) (local $cs i32)
+    (local $text_ptr i32) (local $text_wa i32) (local $text_ord i32) (local $cs i32) (local $cs_wa i32)
     (local $base_x i32) (local $base_y i32)
     ;; Win16 USER uses the classic 8x16 SYSTEM_FONT dialog base. Win32
     ;; dialogs in this runtime use the measured 8pt MS Sans Serif 6x13 base.
@@ -5133,9 +5133,10 @@
     ;; Also publish the title so $defwndproc_do_ncpaint can draw it in the
     ;; caption bar. $title_ptr is a guest heap pointer from $dlg_read_text.
     (if (local.get $title_ptr)
-      (then (call $title_table_set (local.get $dlg_hwnd)
-              (call $g2w (local.get $title_ptr))
-              (call $strlen (call $g2w (local.get $title_ptr))))))
+      (then
+        (local.set $title_wa (call $g2w (local.get $title_ptr)))
+        (call $title_table_set (local.get $dlg_hwnd)
+          (local.get $title_wa) (call $strlen (local.get $title_wa)))))
     ;; Stash header in WND_DLG_RECORDS[slot]
     (i32.store         (local.get $dlg_rec) (local.get $dlg_key))
     (i32.store offset=4  (local.get $dlg_rec) (local.get $style))
@@ -5178,6 +5179,7 @@
           (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000))))))
     ;; Allocate one CREATESTRUCT on the heap, reused for every control
     (local.set $cs (call $heap_alloc (i32.const 48)))
+    (local.set $cs_wa (call $g2w (local.get $cs)))
     ;; Iterate DLGITEMTEMPLATE entries
     (local.set $i (i32.const 0))
     (block $done (loop $ctrl_loop
@@ -5267,6 +5269,7 @@
           ;; native-control sentinel suppresses their real WM_CREATE/WM_PAINT.
           (call $dlg_read_text (local.get $p))
           (local.set $class_ptr (global.get $dlg_text_ptr))
+          (local.set $class_wa (call $g2w (local.get $class_ptr)))
           (local.set $p (global.get $dlg_text_wa))
           ;; Dialog-template common controls bypass CreateWindowExA. Preserve
           ;; the registered COMCTL32 SysTabControl32 proc, but mark the HWND so
@@ -5275,10 +5278,10 @@
                 (i32.ge_u (local.get $class_ptr) (i32.const 0x10000))
                 (i32.and
                   (i32.eq
-                    (i32.or (i32.load (call $g2w (local.get $class_ptr))) (i32.const 0x20202020))
+                    (i32.or (i32.load (local.get $class_wa)) (i32.const 0x20202020))
                     (i32.const 0x74737973)) ;; "syst"
                   (i32.eq
-                    (i32.or (i32.load offset=4 (call $g2w (local.get $class_ptr))) (i32.const 0x20202020))
+                    (i32.or (i32.load offset=4 (local.get $class_wa)) (i32.const 0x20202020))
                     (i32.const 0x6f636261)))) ;; "abco"
             (then (local.set $native_tab (i32.const 1))))
           (if (i32.and
@@ -5351,32 +5354,32 @@
       ;; cs+16 (cy) to size its dropped listbox, and pinball's Player Controls
       ;; supplied raw DLU ch=22 (≈38 px) so the listbox dropped area was only
       ;; ~17 px tall, clipping to ~2 visible items.
-      (i32.store         (call $g2w (local.get $cs)) (i32.const 0))
-      (i32.store offset=4  (call $g2w (local.get $cs)) (i32.const 0))
-      (i32.store offset=8  (call $g2w (local.get $cs)) (local.get $ctrl_id))
-      (i32.store offset=12 (call $g2w (local.get $cs)) (local.get $dlg_hwnd))
-      (i32.store offset=16 (call $g2w (local.get $cs)) (i32.div_u (i32.add (i32.mul (local.get $ch) (local.get $base_y)) (i32.const 4)) (i32.const 8)))
-      (i32.store offset=20 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cw) (local.get $base_x)) (i32.const 4)))
-      (i32.store offset=24 (call $g2w (local.get $cs)) (i32.div_u (i32.add (i32.mul (local.get $cy) (local.get $base_y)) (i32.const 4)) (i32.const 8)))
-      (i32.store offset=28 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cx) (local.get $base_x)) (i32.const 4)))
-      (i32.store offset=32 (call $g2w (local.get $cs)) (local.get $ctrl_style))
-      (i32.store offset=36 (call $g2w (local.get $cs))
+      (i32.store         (local.get $cs_wa) (i32.const 0))
+      (i32.store offset=4  (local.get $cs_wa) (i32.const 0))
+      (i32.store offset=8  (local.get $cs_wa) (local.get $ctrl_id))
+      (i32.store offset=12 (local.get $cs_wa) (local.get $dlg_hwnd))
+      (i32.store offset=16 (local.get $cs_wa) (i32.div_u (i32.add (i32.mul (local.get $ch) (local.get $base_y)) (i32.const 4)) (i32.const 8)))
+      (i32.store offset=20 (local.get $cs_wa) (i32.div_u (i32.mul (local.get $cw) (local.get $base_x)) (i32.const 4)))
+      (i32.store offset=24 (local.get $cs_wa) (i32.div_u (i32.add (i32.mul (local.get $cy) (local.get $base_y)) (i32.const 4)) (i32.const 8)))
+      (i32.store offset=28 (local.get $cs_wa) (i32.div_u (i32.mul (local.get $cx) (local.get $base_x)) (i32.const 4)))
+      (i32.store offset=32 (local.get $cs_wa) (local.get $ctrl_style))
+      (i32.store offset=36 (local.get $cs_wa)
         (select
           (local.get $text_ord)
           (local.get $text_ptr)
           (i32.and
             (i32.eq (local.get $class_enum) (i32.const 3))
             (i32.ne (local.get $text_ord) (i32.const 0)))))
-      (i32.store offset=40 (call $g2w (local.get $cs)) (local.get $class_ptr))
-      (i32.store offset=44 (call $g2w (local.get $cs)) (i32.const 0))
+      (i32.store offset=40 (local.get $cs_wa) (local.get $class_ptr))
+      (i32.store offset=44 (local.get $cs_wa) (i32.const 0))
       ;; USER owns the initial window text independently of any class-specific
       ;; state. Registered custom controls commonly query it during WM_PAINT;
       ;; native controls continue to keep their own state copy as well.
       (if (local.get $text_ptr)
         (then
+          (local.set $text_wa (call $g2w (local.get $text_ptr)))
           (call $title_table_set (local.get $ctrl_hwnd)
-            (call $g2w (local.get $text_ptr))
-            (call $strlen (call $g2w (local.get $text_ptr))))))
+            (local.get $text_wa) (call $strlen (local.get $text_wa)))))
       (drop (call $wnd_send_message (local.get $ctrl_hwnd) (i32.const 0x0001) (i32.const 0) (local.get $cs)))
       ;; Control wndproc has copied text into its own state struct;
       ;; free the template-side copy to avoid leaking per dialog open.
