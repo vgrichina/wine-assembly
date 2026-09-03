@@ -1433,6 +1433,24 @@ async function main() {
     }
 
     const after = await snapshot(app);
+    let desktopLayout = null;
+    if (app.id === 'cdplayer') {
+      desktopLayout = await evalExpr(`(() => {
+        const windows = Object.values((sharedRenderer && sharedRenderer.windows) || {});
+        const main = windows.find(win => win && !win.isChild && win.title === 'CD Player');
+        const status = windows.find(win => win && win.isChild &&
+          String(win.className || '').toLowerCase() === 'msctls_statusbar32');
+        const wrap = document.getElementById('screen-wrap');
+        return {
+          singleApp: document.body.classList.contains('single-app'),
+          exclusive: document.body.classList.contains('exclusive-fullscreen'),
+          wrapBackground: getComputedStyle(wrap).backgroundColor,
+          clientHeight: main && main.clientRect ? main.clientRect.h | 0 : -1,
+          statusY: status ? status.y | 0 : -1,
+          statusHeight: status ? status.h | 0 : -1,
+        };
+      })()`);
+    }
     await saveCanvasSnapshot(app, 'after');
     const diff = await diffSince(before, app);
     const keyDiff = keyBaseline ? await diffSince(keyBaseline, app) : null;
@@ -1447,6 +1465,7 @@ async function main() {
       keyDiffs,
       stageMetrics,
       actions,
+      desktopLayout,
       status: after.status,
       log: after.log.slice(-1000),
       console: consoleText.slice(-1000),
@@ -1456,6 +1475,17 @@ async function main() {
     assert.strictEqual(after.runningApps, 1, `${app.label}: should be the only running app: ${summary}`);
     assert(after.main && new RegExp(app.titlePattern, 'i').test(after.main.title || ''),
       `${app.label}: expected main window title ${app.titlePattern}: ${summary}`);
+    if (desktopLayout) {
+      assert.strictEqual(desktopLayout.singleApp, false,
+        `${app.label}: the ordinary desktop must not enter single-app presentation: ${summary}`);
+      assert.strictEqual(desktopLayout.exclusive, false,
+        `${app.label}: a windowed utility must not enter exclusive fullscreen: ${summary}`);
+      assert.strictEqual(desktopLayout.wrapBackground, 'rgb(0, 128, 128)',
+        `${app.label}: unused ordinary-desktop space must remain Win98 teal: ${summary}`);
+      assert.strictEqual(desktopLayout.statusY + desktopLayout.statusHeight,
+        desktopLayout.clientHeight,
+        `${app.label}: status bar should dock below the Track control: ${summary}`);
+    }
     if (app.minCanvasHeight) {
       assert(after.canvas && after.canvas.height >= app.minCanvasHeight,
         `${app.label}: browser canvas should be at least ${app.minCanvasHeight}px tall: ${summary}`);

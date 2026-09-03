@@ -17488,3 +17488,47 @@
                       (local.get $h))))))))
         (return (i32.const 0))))
     (i32.const 0))
+
+  ;; A registered outer window procedure can consume WM_WINDOWPOSCHANGED even
+  ;; though its CCS_BOTTOM status bar still relies on the derived WM_SIZE. Run
+  ;; this after the normal window-position transaction: a status bar that was
+  ;; already docked proves the application handled layout and costs nothing;
+  ;; only a lower-half bar with a still-stale bottom edge receives the missing
+  ;; parent notification (top-aligned common controls remain untouched).
+  (func $statusbar_native_finish_parent_size (param $parent i32)
+    (local $slot i32) (local $hwnd i32) (local $xy i32) (local $size i32)
+    (local $parent_w i32) (local $parent_h i32)
+    (local.set $parent_w
+      (i32.sub (call $client_rect_get_r (local.get $parent))
+               (call $client_rect_get_l (local.get $parent))))
+    (local.set $parent_h
+      (i32.sub (call $client_rect_get_b (local.get $parent))
+               (call $client_rect_get_t (local.get $parent))))
+    (local.set $slot (i32.const 0))
+    (block $native_status_done (loop $native_status_scan
+      (br_if $native_status_done
+        (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)))
+      (local.set $hwnd
+        (load.field WndRecord hwnd (call $wnd_record_addr (local.get $slot))))
+      (if (i32.and (i32.ne (local.get $hwnd) (i32.const 0))
+            (i32.and (i32.eq (call $wnd_get_parent (local.get $hwnd)) (local.get $parent))
+                     (call $statusbar_native_is (local.get $hwnd))))
+        (then
+          (local.set $xy (call $ctrl_get_xy_packed (local.get $hwnd)))
+          (local.set $size (call $ctrl_get_wh_packed (local.get $hwnd)))
+          (if (i32.and
+                (i32.gt_u (i32.shr_u (local.get $xy) (i32.const 16))
+                          (i32.shr_u (local.get $parent_h) (i32.const 1)))
+                (i32.ne
+                  (i32.add (i32.shr_u (local.get $xy) (i32.const 16))
+                           (i32.shr_u (local.get $size) (i32.const 16)))
+                  (local.get $parent_h)))
+            (then
+              (drop (call $wnd_send_message
+                (local.get $parent) (i32.const 0x0005) (i32.const 0)
+                (i32.or (i32.and (local.get $parent_w) (i32.const 0xFFFF))
+                  (i32.shl (i32.and (local.get $parent_h) (i32.const 0xFFFF))
+                           (i32.const 16)))))
+              (return)))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $native_status_scan))))

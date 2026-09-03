@@ -281,7 +281,7 @@ async function main() {
       'CD Player should begin in its no-disc polling state');
 
     const playerBinding = await page.evaluate(async () => {
-      const sectors = 75;
+      const sectors = 1125;
       const bytes = new Uint8Array(sectors * 2352);
       const view = new DataView(bytes.buffer);
       for (let off = 0, frame = 0; off < bytes.length; off += 4, frame++) {
@@ -291,7 +291,11 @@ async function main() {
       }
       const cueText = 'FILE "music.bin" BINARY\n' +
         '  TRACK 01 AUDIO\n' +
-        '    INDEX 01 00:00:00\n';
+        '    INDEX 01 00:00:00\n' +
+        '  TRACK 02 AUDIO\n' +
+        '    INDEX 01 00:05:00\n' +
+        '  TRACK 03 AUDIO\n' +
+        '    INDEX 01 00:10:00\n';
       await window.wineMedia.importFiles([
         new File([cueText], 'music.cue'),
         new File([bytes], 'music.bin'),
@@ -313,7 +317,7 @@ async function main() {
       const dev = [...wine._helpCtx._mci.devices.values()][0];
       return { tracks: dev.disc.tracks.length, audioTracks: dev.disc.audioTracks.length };
     });
-    assert.deepStrictEqual(beforePlay, { tracks: 1, audioTracks: 1 });
+    assert.deepStrictEqual(beforePlay, { tracks: 3, audioTracks: 3 });
 
     const playPoint = await page.evaluate(() => {
       const main = Object.values(sharedRenderer.windows)
@@ -343,20 +347,79 @@ async function main() {
         rate: buffer.sampleRate,
         audibleSample: Math.abs(buffer.getChannelData(0)[100]),
         audioContext: wine._helpCtx._audioCtx && wine._helpCtx._audioCtx.state,
+        audioTime: wine._helpCtx._audioCtx && wine._helpCtx._audioCtx.currentTime,
       };
     });
     await new Promise(resolve => setTimeout(resolve, 500));
-    const laterPosition = await page.evaluate(() => {
+    const laterPlayback = await page.evaluate(() => {
       const wine = runningApps.find(item => item.name === 'cdplayer').wine;
-      return [...wine._helpCtx._mci.devices.values()][0].cdPositionSector;
+      const dev = [...wine._helpCtx._mci.devices.values()][0];
+      return {
+        position: dev.cdPositionSector,
+        audioTime: wine._helpCtx._audioCtx && wine._helpCtx._audioCtx.currentTime,
+      };
     });
     assert.strictEqual(playing.state, 'playing');
     assert.strictEqual(playing.channels, 2);
     assert.strictEqual(playing.rate, 44100);
     assert(playing.audibleSample > 0.01, 'CD Player should decode non-silent PCM');
     assert.strictEqual(playing.audioContext, 'running');
-    assert(laterPosition > playing.start,
-      `CD playback position should advance beyond ${playing.start}, got ${laterPosition}`);
+    assert(laterPlayback.audioTime > playing.audioTime + 0.25,
+      `CD audio clock should advance beyond ${playing.audioTime}, got ${laterPlayback.audioTime}`);
+
+    const transportPoint = await page.evaluate(() => {
+      const main = Object.values(sharedRenderer.windows)
+        .find(win => !win.isChild && win.title === 'CD Player');
+      const canvas = document.getElementById('screen');
+      const rect = canvas.getBoundingClientRect();
+      const point = (guestX, guestY) => ({
+        x: rect.left + (main.x + guestX) * rect.width / canvas.width,
+        y: rect.top + (main.y + guestY) * rect.height / canvas.height,
+      });
+      return { previous: point(170, 84), next: point(245, 84) };
+    });
+    await page.mouse.click(transportPoint.next.x, transportPoint.next.y);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    const nextState = await page.evaluate(() => {
+      const wine = runningApps.find(item => item.name === 'cdplayer').wine;
+      const dev = [...wine._helpCtx._mci.devices.values()][0];
+      return {
+        state: dev.state,
+        start: dev.cdStartSector,
+        position: dev.cdPositionSector,
+        sources: dev.cdSources.length,
+      };
+    });
+    assert.strictEqual(nextState.state, 'playing');
+    assert.strictEqual(nextState.start, 375);
+    assert(nextState.position >= 375 && nextState.position < 750,
+      `next-track position should be in track 2, got ${nextState.position}`);
+    assert.strictEqual(nextState.sources, 2);
+    const afterNext = await page.evaluate(() => {
+      const wine = runningApps.find(item => item.name === 'cdplayer').wine;
+      const dev = [...wine._helpCtx._mci.devices.values()][0];
+      const track = dev.disc.tracks.find(item => item.discStartSector === dev.cdStartSector);
+      return { start: dev.cdStartSector, track: track && track.number };
+    });
+    assert.deepStrictEqual(afterNext, { start: 375, track: 2 },
+      'CD Player next-track button should restart playback at track 2');
+
+    await page.mouse.click(transportPoint.previous.x, transportPoint.previous.y);
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await page.mouse.click(transportPoint.previous.x, transportPoint.previous.y);
+    await page.waitForFunction(() => {
+      const wine = runningApps.find(item => item.name === 'cdplayer').wine;
+      const dev = [...wine._helpCtx._mci.devices.values()][0];
+      return dev.state === 'playing' && dev.cdStartSector === 0 && dev.cdSources.length > 0;
+    }, { timeout: 30000 });
+    const afterPrevious = await page.evaluate(() => {
+      const wine = runningApps.find(item => item.name === 'cdplayer').wine;
+      const dev = [...wine._helpCtx._mci.devices.values()][0];
+      const track = dev.disc.tracks.find(item => item.discStartSector === dev.cdStartSector);
+      return { start: dev.cdStartSector, track: track && track.number };
+    });
+    assert.deepStrictEqual(afterPrevious, { start: 0, track: 1 },
+      'CD Player previous-track button should restart playback at track 1');
 
     await page.evaluate(() => stopAllApps());
     await page.waitForFunction(() => runningApps.length === 0, { timeout: 30000 });
