@@ -126,8 +126,17 @@ const CONTROL = hasFlag('control') || CONTROL_SPEC !== null;
 // the request. Not compatible with the interactive debug prompt (--break
 // without --watch-log), which owns stdin.
 const CONTROL_STDIN = hasFlag('control-stdin');
+// --frozen: with a live control channel, park before the first batch and run
+// only batches explicitly released by {action:"step", n}. This is the CLI
+// twin of browser frozen mode: agent think-time advances neither guest state
+// nor a --control recording.
+const CONTROL_FROZEN_START = hasFlag('frozen');
 const CONTROL_PORT = parseInt(CONTROL_SPEC || '8123', 10) || 8123;
 const CONTROL_HOST = getArg('control-host', '127.0.0.1'); // --control-host=0.0.0.0: explicit LAN opt-in (the channel carries eval)
+if (CONTROL_FROZEN_START && !(CONTROL || CONTROL_STDIN)) {
+  console.error('error: --frozen requires --control or --control-stdin');
+  process.exit(2);
+}
 // With --control the schedule is external, so a default batch budget makes no
 // sense: the run ends on a quit command, a stop action, or the outer timeout.
 // An explicit --max-batches still bounds it.
@@ -1721,6 +1730,9 @@ async function main() {
     if (TRACE_INPUT) renderer.onInputTrace = (what) => console.log(`[input-route] ${what}`);
   }
   let videoRecorder = null;
+  let videoEvery = 1;
+  let videoStartBatch = VIDEO_START_BATCH;
+  const audioTapPumps = new Set();
   if (VIDEO_OUT) {
     if (!renderer) throw new Error('--video requires the CLI renderer (remove --no-renderer)');
     videoRecorder = new CliVideoRecorder(renderer.canvas, {
@@ -1915,6 +1927,8 @@ async function main() {
     _audioOutPath: AUDIO_OUT || null,
     _audioOutWav: AUDIO_OUT ? AUDIO_OUT.toLowerCase().endsWith('.wav') : false,
     sharedAudio: {},  // shared waveOut state across threads
+    audioTap: () => (videoRecorder && videoRecorder.active ? videoRecorder : null),
+    registerAudioTapPump: fn => { if (typeof fn === 'function') audioTapPumps.add(fn); },
     g2w: (addr) => ctx.exports ? translateGuest(addr, ctx.exports.get_image_base(), ctx.getMemory()) : addr,
     readFile: (name) => {
       // Try to find file relative to exe directory
@@ -4964,6 +4978,37 @@ async function main() {
   // batches, so instance and renderer state are coherent.
   const liveOutstanding = new Map(); // last parsed ev of a live command -> resolve
   let liveLogsStart = 0;
+  let controlFrozen = CONTROL_FROZEN_START;
+  let controlRunCredits = 0;
+  let controlWake = null;
+  let controlPreviousBatchRan = false;
+  let controlStepWaiter = null;
+  const wakeControlLoop = () => {
+    if (!controlWake) return;
+    const wake = controlWake;
+    controlWake = null;
+    wake();
+  };
+  const finishPreviousControlBatch = () => {
+    if (!controlPreviousBatchRan) return;
+    controlPreviousBatchRan = false;
+    if (controlFrozen && controlRunCredits > 0) controlRunCredits--;
+    if (controlStepWaiter && --controlStepWaiter.remaining <= 0) {
+      const waiter = controlStepWaiter;
+      controlStepWaiter = null;
+      waiter.resolve({
+        batch: tickState.batch | 0,
+        steps: waiter.total,
+        frozen: controlFrozen,
+      });
+    }
+  };
+  const waitForControlBatch = async () => {
+    while (controlFrozen && controlRunCredits <= 0 && !stopped) {
+      await new Promise(resolve => { controlWake = resolve; });
+    }
+    if (!stopped) controlPreviousBatchRan = true;
+  };
   const settleLiveInput = () => {
     if (!liveOutstanding.size) return;
     // One shared slice for every command settled this batch: per-command log
@@ -5000,15 +5045,21 @@ async function main() {
       mainHwnd: '0x' + ((we.get_main_hwnd ? we.get_main_hwnd() : 0) >>> 0).toString(16),
       screen: renderer && renderer.canvas
         ? { w: renderer.canvas.width | 0, h: renderer.canvas.height | 0 } : null,
+      frozen: {
+        frozen: controlFrozen,
+        tickMs: TICK_MS_PER_BATCH,
+        credits: controlRunCredits,
+        recording: !!videoRecorder,
+      },
       windows,
     };
   };
   const controlEval = (code) => {
     // Direct eval inside a non-strict function body: the params are in
     // scope, statements work, and the last expression's value comes back.
-    const fn = new Function('instance', 'exports', 'renderer', 'memory', 'g2w', 'tickState',
+    const fn = new Function('instance', 'exports', 'renderer', 'memory', 'g2w', 'tickState', 'ctx',
       'return eval(' + JSON.stringify(String(code)) + ')');
-    return controlSafeValue(fn(instance, instance.exports, renderer, memory, g2w, tickState));
+    return controlSafeValue(fn(instance, instance.exports, renderer, memory, g2w, tickState, ctx));
   };
   const handleControlCommand = (cmdIn) => {
     const cmd = typeof cmdIn === 'string' ? { cmd: cmdIn } : (cmdIn || {});
@@ -5022,9 +5073,86 @@ async function main() {
     }
     if (cmd.action === 'snapshot') return controlSnapshot();
     if (cmd.action === 'eval') return controlEval(cmd.code || '');
-    if (cmd.action === 'quit') { stopped = true; return { quitting: true }; }
+    if (cmd.action === 'quit') { stopped = true; wakeControlLoop(); return { quitting: true }; }
+    if (cmd.action === 'frozen') {
+      const mode = cmd.mode || 'on';
+      if (mode !== 'on' && mode !== 'off') throw new Error("frozen needs mode 'on' or 'off'");
+      controlFrozen = mode === 'on';
+      if (!controlFrozen) {
+        controlRunCredits = 0;
+        if (controlStepWaiter) {
+          const waiter = controlStepWaiter;
+          controlStepWaiter = null;
+          waiter.reject(new Error('frozen mode was disabled before the requested steps completed'));
+        }
+        wakeControlLoop();
+      }
+      return { frozen: controlFrozen, batch: tickState.batch | 0, tickMs: TICK_MS_PER_BATCH };
+    }
+    if (cmd.action === 'step') {
+      if (!controlFrozen) throw new Error('step requires frozen mode (launch with --frozen or send frozen on)');
+      if (controlStepWaiter) throw new Error('another step command is still running');
+      const n = cmd.n === undefined ? 1 : Number(cmd.n);
+      if (!Number.isInteger(n) || n < 1) throw new Error('step needs a positive integer n');
+      if (cmd.ms !== undefined && Number(cmd.ms) !== TICK_MS_PER_BATCH) {
+        throw new Error(`CLI tick size is fixed at launch (${TICK_MS_PER_BATCH}ms); use --tick-ms-per-batch=${Number(cmd.ms)}`);
+      }
+      controlRunCredits += n;
+      wakeControlLoop();
+      return new Promise((resolve, reject) => {
+        controlStepWaiter = { remaining: n, total: n, resolve, reject };
+      });
+    }
+    if (cmd.action === 'record') {
+      const mode = cmd.mode || 'status';
+      if (!['on', 'off', 'status'].includes(mode)) throw new Error("record needs mode 'on', 'off', or 'status'");
+      if (mode === 'status') {
+        return videoRecorder
+          ? { recording: true, ...videoRecorder.summary(), everyNSteps: videoEvery }
+          : { recording: false };
+      }
+      if (mode === 'off') {
+        if (!videoRecorder) return { recording: false };
+        const recorder = videoRecorder;
+        for (const pump of audioTapPumps) { try { pump(); } catch (_) {} }
+        videoRecorder = null;
+        return recorder.finish().then(summary => ({ recording: false, ...summary, everyNSteps: videoEvery }));
+      }
+      if (!controlFrozen) throw new Error('live CLI recording requires frozen mode so agent think-time is absent');
+      if (!renderer) throw new Error('CLI recording requires the renderer (remove --no-renderer)');
+      if (videoRecorder) throw new Error('a CLI recording is already active');
+      const every = cmd.everyNSteps === undefined ? 1 : Number(cmd.everyNSteps);
+      if (!Number.isInteger(every) || every < 1) throw new Error('record everyNSteps must be a positive integer');
+      const rawName = String(cmd.name || new Date().toISOString().replace(/[:.]/g, '-'));
+      const hasVideoExt = /\.(?:mp4|webm)$/i.test(rawName);
+      const safeName = rawName.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'recording';
+      const out = hasVideoExt ? path.resolve(rawName) : path.resolve('recordings', `${safeName}.mp4`);
+      videoEvery = every;
+      videoStartBatch = tickState.batch | 0;
+      const derivedFps = TICK_MS_PER_BATCH > 0 ? 1000 / (TICK_MS_PER_BATCH * every) : VIDEO_FPS;
+      videoRecorder = new CliVideoRecorder(renderer.canvas, {
+        path: out,
+        fps: derivedFps,
+        ffmpeg: FFMPEG_PATH,
+        startGuestMs: (tickState.batch | 0) * TICK_MS_PER_BATCH,
+      });
+      return { recording: true, ...videoRecorder.summary(), everyNSteps: videoEvery };
+    }
     const entry = String(cmd.cmd || '');
-    if (!entry) throw new Error('need {cmd:"action:args"} or action: ping|snapshot|eval|quit');
+    if (!entry) throw new Error('need {cmd:"action:args"} or action: ping|snapshot|eval|frozen|step|record|quit');
+    // A frozen CLI is already at a coherent between-batches boundary. Capture
+    // there instead of queueing a png action that cannot execute until a
+    // later `step` (ctl.js checks that the file exists before it returns).
+    if (controlFrozen && entry.startsWith('png:')) {
+      if (!renderer || !renderer.canvas) throw new Error('png requires the CLI renderer');
+      const out = entry.slice(4);
+      if (!out) throw new Error('png needs an output path');
+      presentDxIfDirty(0);
+      if (typeof renderer.repaint === 'function') renderer.repaint();
+      const buf = canvasToPng(renderer.canvas);
+      fs.writeFileSync(out, buf);
+      return { batch: tickState.batch | 0, logs: [`[input] png ${out} (${buf.length} bytes) at frozen boundary`] };
+    }
     if (/^wait-/.test(entry)) {
       throw new Error('wait-* entries are scheduled-only; poll snapshot or png instead');
     }
@@ -5035,8 +5163,8 @@ async function main() {
     if (last && last.action === undefined && !Number.isFinite(last.msg)) {
       throw new Error(`unknown input action ${JSON.stringify(entry.split(':')[0])}`);
     }
-    return new Promise((resolve) => {
-      liveOutstanding.set(last, resolve);
+    const enqueue = (resolve) => {
+      if (resolve) liveOutstanding.set(last, resolve);
       // After everything already due this batch, before everything scheduled
       // later: the schedule is the fixture, the stream is the driver.
       const now = tickState.batch | 0;
@@ -5044,7 +5172,14 @@ async function main() {
       let at = scheduledInput.findIndex(e => e.batch > now);
       if (at < 0) at = scheduledInput.length;
       scheduledInput.splice(at, 0, ...evs);
-    });
+    };
+    // In frozen mode an input is deliberately only queued; waiting for it to
+    // execute would deadlock the ordinary `ctl click; ctl step` agent loop.
+    if (controlFrozen) {
+      enqueue(null);
+      return { queued: true, batch: tickState.batch | 0 };
+    }
+    return new Promise((resolve) => enqueue(resolve));
   };
   const control = (CONTROL || CONTROL_STDIN) ? (() => {
     const server = CONTROL ? require('../lib/control-server').startControlServer({
@@ -5132,8 +5267,11 @@ async function main() {
     // the loop is synchronous end to end — the same mechanism that keeps
     // SIGTERM queued forever (see the timeout -s KILL note in CLAUDE.md).
     if (control) {
+      finishPreviousControlBatch();
       await new Promise(resolve => setImmediate(resolve));
       liveLogsStart = logs.length;
+      await waitForControlBatch();
+      if (stopped) break;
     }
     let injectedInputThisBatch = false;
     // Inject scheduled input events at the right batch
@@ -7890,7 +8028,9 @@ async function main() {
         && (REPAINT_EVERY === 1 || batch % REPAINT_EVERY === 0)) {
       renderer.flushRepaint();
     }
-    if (videoRecorder && batch >= VIDEO_START_BATCH) {
+    if (videoRecorder && batch >= videoStartBatch
+        && ((batch - videoStartBatch) % videoEvery) === 0) {
+      for (const pump of audioTapPumps) { try { pump(); } catch (_) {} }
       presentDxIfDirty(0);   // a recorded frame is a capture, not a live view
       await videoRecorder.capture(renderer.canvas);
     }
@@ -8714,6 +8854,7 @@ if (VERBOSE) {
   }
 
   if (videoRecorder) {
+    for (const pump of audioTapPumps) { try { pump(); } catch (_) {} }
     const video = await videoRecorder.finish();
     console.log(`[video] wrote ${video.path}: ${video.frames} frames, ` +
       `${video.width}x${video.height} at ${video.fps}fps (${video.duration.toFixed(2)}s)`);

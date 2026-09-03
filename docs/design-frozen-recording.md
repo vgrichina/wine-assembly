@@ -166,6 +166,29 @@ node tools/frozen-video.js recordings/<session> --out=clip.mp4
 wall clock and `lib/recorder.js` is the right tool there. `GET /api/agent`
 documents all of this as plain text, so a handoff need only carry the link.
 
+### Headless CLI recording
+
+The direct CLI control channel supports the same play shape without a browser:
+
+```sh
+node test/run.js --app=rct --control --frozen --tick-ms-per-batch=16 \
+  --batch-size=200000 --quiet-api --quiet-blocks
+node tools/ctl.js record on rct-run --every=2
+node tools/ctl.js step 1000
+# click / step / inspect for as long as needed
+node tools/ctl.js record off
+```
+
+The CLI renderer streams RGBA frames directly to ffmpeg; a bare recording name
+writes `recordings/NAME.mp4`, while a name ending in `.mp4` or `.webm` is used as
+an explicit path. Its frame rate is derived from `--tick-ms-per-batch` and
+`--every`, so wall-clock pauses between `step` commands never enter the video.
+The same guest-clock PCM tap used by browser frozen recording collects waveOut
+and DirectSound voices (including voices submitted by guest worker threads),
+mixes them on the recording timeline, and muxes stereo AAC into MP4 or Opus into
+WebM. A silent audio track is still written when the guest produces no sound,
+so every finalized CLI recording has a stable video+audio stream contract.
+
 ## The assembler — `tools/frozen-video.js`
 
 ```
