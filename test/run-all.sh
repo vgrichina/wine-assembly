@@ -530,6 +530,7 @@ UNIT=(
   test/test-find-close-change-notification.js
   test/test-sh-get-folder-path-w.js
   test/test-shell-malloc.js
+  test/test-shell-pidl.js
   test/test-shell-execute-ex-w.js
   test/test-showwindow-dialog-promotion.js
   test/test-winmine-name-dialog-frame.js

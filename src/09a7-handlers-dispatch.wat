@@ -906,16 +906,146 @@
       (i32.const 2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
+  ;; Filesystem PIDLs are opaque to applications, but they still obey the
+  ;; documented ITEMIDLIST byte contract: one SHITEMID whose cb includes the
+  ;; two-byte header, followed by a zero-cb terminator.  Shell namespace
+  ;; providers own the bytes in abID; use a private "WAFP" tag plus the ANSI
+  ;; filesystem path so SHGetPathFromIDListA can distinguish our filesystem
+  ;; items from non-filesystem/foreign PIDLs without guessing a path.
+  (func $shell_filesystem_pidl_from_path (param $path i32) (result i32)
+    (local $path_wa i32) (local $len i32) (local $cb i32)
+    (local $pidl i32) (local $pidl_wa i32)
+    (if (i32.eqz (local.get $path)) (then (return (i32.const 0))))
+    (local.set $path_wa (call $g2w (local.get $path)))
+    (local.set $len (call $strlen (local.get $path_wa)))
+    ;; SHGetPathFromIDListA's output contract is MAX_PATH.  Refuse an empty or
+    ;; oversized filesystem identity rather than create a PIDL it cannot decode.
+    (if (i32.or (i32.eqz (local.get $len))
+                (i32.ge_u (local.get $len) (i32.const 260)))
+      (then (return (i32.const 0))))
+    ;; cb = USHORT header + four-byte provider tag + path including NUL.
+    (local.set $cb (i32.add (local.get $len) (i32.const 7)))
+    (local.set $pidl (call $heap_alloc (i32.add (local.get $cb) (i32.const 2))))
+    (if (i32.eqz (local.get $pidl)) (then (return (i32.const 0))))
+    (local.set $pidl_wa (call $g2w (local.get $pidl)))
+    (i32.store16 (local.get $pidl_wa) (local.get $cb))
+    (i32.store offset=2 align=1 (local.get $pidl_wa) (i32.const 0x50464157)) ;; WAFP
+    (call $memcpy
+      (i32.add (local.get $pidl_wa) (i32.const 6))
+      (local.get $path_wa)
+      (i32.add (local.get $len) (i32.const 1)))
+    (i32.store16 (i32.add (local.get $pidl_wa) (local.get $cb)) (i32.const 0))
+    (local.get $pidl))
 
+  ;; Desktop, My Computer and Network Neighborhood are namespace roots rather
+  ;; than filesystem directories.  Give them valid opaque PIDLs too, but a
+  ;; different provider tag: SHGetPathFromIDListA must reject these identities.
+  (func $shell_virtual_pidl_from_csidl (param $csidl i32) (result i32)
+    (local $pidl i32) (local $pidl_wa i32)
+    (local.set $pidl (call $heap_alloc (i32.const 12)))
+    (if (i32.eqz (local.get $pidl)) (then (return (i32.const 0))))
+    (local.set $pidl_wa (call $g2w (local.get $pidl)))
+    (i32.store16 (local.get $pidl_wa) (i32.const 10))
+    (i32.store offset=2 align=1 (local.get $pidl_wa) (i32.const 0x50564157)) ;; WAVP
+    (i32.store offset=6 align=1 (local.get $pidl_wa) (local.get $csidl))
+    (i32.store16 offset=10 (local.get $pidl_wa) (i32.const 0))
+    (local.get $pidl))
 
+  (func $shell_filesystem_pidl_copy_path
+    (param $pidl i32) (param $path i32) (result i32)
+    (local $pidl_wa i32) (local $path_wa i32) (local $cb i32)
+    (local $capacity i32) (local $len i32) (local $ch i32)
+    (if (i32.or (i32.eqz (local.get $pidl)) (i32.eqz (local.get $path)))
+      (then (return (i32.const 0))))
+    (local.set $pidl_wa (call $g2w (local.get $pidl)))
+    (local.set $path_wa (call $g2w (local.get $path)))
+    (i32.store8 (local.get $path_wa) (i32.const 0))
+    (local.set $cb (i32.load16_u (local.get $pidl_wa)))
+    ;; Minimum useful item is cb + tag + one path byte + NUL; cap at the
+    ;; largest single item our MAX_PATH representation can produce.
+    (if (i32.or (i32.lt_u (local.get $cb) (i32.const 8))
+                (i32.gt_u (local.get $cb) (i32.const 266)))
+      (then (return (i32.const 0))))
+    (if (i32.ne (i32.load offset=2 align=1 (local.get $pidl_wa))
+                (i32.const 0x50464157))
+      (then (return (i32.const 0))))
+    ;; An ITEMIDLIST ends with a zero-sized SHITEMID after the final item.
+    (if (i32.ne (i32.load16_u (i32.add (local.get $pidl_wa) (local.get $cb)))
+                (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $capacity (i32.sub (local.get $cb) (i32.const 6)))
+    (local.set $len (i32.const 0))
+    (block $terminated
+      (loop $scan
+        (br_if $terminated (i32.ge_u (local.get $len) (local.get $capacity)))
+        (local.set $ch
+          (i32.load8_u
+            (i32.add (i32.add (local.get $pidl_wa) (i32.const 6))
+                     (local.get $len))))
+        (if (i32.eqz (local.get $ch))
+          (then
+            (if (i32.eqz (local.get $len)) (then (return (i32.const 0))))
+            (call $memcpy (local.get $path_wa)
+              (i32.add (local.get $pidl_wa) (i32.const 6))
+              (i32.add (local.get $len) (i32.const 1)))
+            (return (i32.const 1))))
+        (local.set $len (i32.add (local.get $len) (i32.const 1)))
+        (br $scan)))
+    (i32.const 0))
 
-  ;; 758: SHGetSpecialFolderLocation(hwndOwner, nFolder, ppidl) — return E_FAIL
+  ;; 758: SHGetSpecialFolderLocation(hwndOwner, nFolder, ppidl)
   (func $handle_SHGetSpecialFolderLocation (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Allocate a fake PIDL and store in *ppidl so caller doesn't crash on NULL
-    (local $pidl i32)
-    (local.set $pidl (call $heap_alloc (i32.const 16)))
-    (call $zero_memory (call $g2w (local.get $pidl)) (i32.const 16))
-    (i32.store (call $g2w (local.get $arg2)) (local.get $pidl))
+    (local $saved_esp i32) (local $path i32) (local $pidl i32) (local $folder i32)
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (local.set $folder (i32.and (local.get $arg1) (i32.const 0x00ff)))
+    ;; WinRAR asks for all three while building its "Look in" namespace:
+    ;; CSIDL_DESKTOP (0), CSIDL_DRIVES (0x11), CSIDL_NETWORK (0x12).
+    (if (i32.or
+          (i32.eqz (local.get $folder))
+          (i32.or (i32.eq (local.get $folder) (i32.const 0x11))
+                  (i32.eq (local.get $folder) (i32.const 0x12))))
+      (then
+        (local.set $pidl (call $shell_virtual_pidl_from_csidl (local.get $folder)))
+        (if (i32.eqz (local.get $pidl))
+          (then (global.set $eax (i32.const 0x8007000E))) ;; E_OUTOFMEMORY
+          (else
+            (call $gs32 (local.get $arg2) (local.get $pidl))
+            (global.set $eax (i32.const 0)))) ;; S_OK
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $path (call $heap_alloc (i32.const 260)))
+    (if (i32.eqz (local.get $path))
+      (then
+        (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Share the established CSIDL mapping instead of maintaining a second,
+    ;; inevitably divergent special-folder table.  Restore the outer stdcall
+    ;; frame after invoking the ANSI path handler directly.
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SHGetSpecialFolderPathA
+      (local.get $arg0) (local.get $path) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (local.get $name_ptr))
+    (global.set $esp (local.get $saved_esp))
+    (if (i32.eqz (global.get $eax))
+      (then
+        (call $heap_free (local.get $path))
+        (global.set $eax (i32.const 0x80070002)) ;; HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $pidl (call $shell_filesystem_pidl_from_path (local.get $path)))
+    (call $heap_free (local.get $path))
+    (if (i32.eqz (local.get $pidl))
+      (then
+        (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $gs32 (local.get $arg2) (local.get $pidl))
     (global.set $eax (i32.const 0))  ;; S_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
@@ -1148,15 +1278,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
   )
 
-  ;; 768: SHGetPathFromIDListA(pidl, pszPath) — write "C:\WINDOWS" and return TRUE
+  ;; 768: SHGetPathFromIDListA(pidl, pszPath)
   (func $handle_SHGetPathFromIDListA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg1)))
-    (i32.store (local.get $wa) (i32.const 0x575C3A43))          ;; "C:\W"
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x4F444E49))  ;; "INDO"
-    (i32.store16 (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x5357))    ;; "WS"
-    (i32.store8 (i32.add (local.get $wa) (i32.const 10)) (i32.const 0))
-    (global.set $eax (i32.const 1))
+    (global.set $eax
+      (call $shell_filesystem_pidl_copy_path (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
