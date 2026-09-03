@@ -21,6 +21,7 @@
     name.textContent = fig.querySelector('.fn').textContent;
     var bits = [fig.dataset.geom, fig.dataset.what];
     if (fig.dataset.stuck) bits.push('stuck at ' + fig.dataset.stuck);
+    if (fig.dataset.soundLine) bits.push(fig.dataset.soundLine);
     meta.textContent = bits.filter(Boolean).join('  -  ');
     if (fig.dataset.prod) {
       pouet.href = 'https://www.pouet.net/search.php?type=prod&what='
@@ -366,12 +367,16 @@
   var grid = document.getElementById('grid');
   var count = document.getElementById('filter-count');
   var q = document.getElementById('filter-q');
-  var kindSel = 'all';
+  // Two independent groups: what the tile shows (kind) and whether the run
+  // made a sound. A tile has to pass both, so "graphics" + "sound" is the
+  // list of demos that draw and play.
+  var kindSel = 'all', soundSel = 'any';
   function apply() {
     var text = (q.value || '').trim().toLowerCase();
     var shown = 0;
     Array.prototype.forEach.call(grid.querySelectorAll('figure'), function (f) {
       var ok = (kindSel === 'all' || f.dataset.kind === kindSel)
+        && (soundSel === 'any' || (f.dataset.sound || 'silent') === soundSel)
         && (!text || (f.querySelector('.fn').textContent + ' ' + (f.dataset.prod || '')
           + ' ' + (f.dataset.year || '') + ' ' + (f.dataset.screen || '')).toLowerCase().indexOf(text) >= 0);
       f.hidden = !ok;
@@ -380,10 +385,11 @@
     count.textContent = shown + ' of ' + grid.querySelectorAll('figure').length;
   }
   bar.addEventListener('click', function (e) {
-    var b = e.target.closest ? e.target.closest('button[data-kind]') : null;
+    var b = e.target.closest ? e.target.closest('button[data-kind], button[data-sound]') : null;
     if (!b) return;
-    kindSel = b.dataset.kind;
-    Array.prototype.forEach.call(bar.querySelectorAll('button[data-kind]'), function (x) {
+    var group = b.dataset.kind !== undefined ? 'kind' : 'sound';
+    if (group === 'kind') kindSel = b.dataset.kind; else soundSel = b.dataset.sound;
+    Array.prototype.forEach.call(bar.querySelectorAll('button[data-' + group + ']'), function (x) {
       x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
     });
     apply();

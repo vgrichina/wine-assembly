@@ -74,6 +74,31 @@ async function main() {
     const live = await page.$$('figure[data-live]');
     assert.ok(live.length > 0, 'no tile offers a live run');
 
+    // The sound filter: every tile carries the sweep's sound census, the bar
+    // has a group for it, and pressing "sound" leaves exactly the tiles whose
+    // run made a sound -- with the count beside the bar saying so. At least
+    // one tile in the corpus plays (DHADREN keys the OPL2 within a second),
+    // or the census was not taken.
+    const snd = await page.evaluate(() => {
+      const figs = [...document.querySelectorAll('#grid figure')];
+      const states = new Set(figs.map((f) => f.dataset.sound));
+      const audible = figs.filter((f) => f.dataset.sound === 'sound').length;
+      document.querySelector('#filter button[data-sound="sound"]').click();
+      const shown = figs.filter((f) => !f.hidden);
+      const only = shown.every((f) => f.dataset.sound === 'sound');
+      const count = document.getElementById('filter-count').textContent;
+      document.querySelector('#filter button[data-sound="any"]').click();
+      const back = figs.filter((f) => !f.hidden).length;
+      return { total: figs.length, states: [...states], audible, shown: shown.length, only, count, back };
+    });
+    assert.ok(snd.states.every((s) => ['sound', 'quiet', 'silent'].includes(s)),
+      `a tile without a sound census: ${snd.states.join(',')}`);
+    assert.ok(snd.audible > 0, 'no tile in the corpus made a sound');
+    assert.strictEqual(snd.shown, snd.audible, 'the sound filter did not leave the audible tiles');
+    assert.ok(snd.only, 'the sound filter left a tile that made no sound');
+    assert.strictEqual(snd.count, `${snd.audible} of ${snd.total}`, `count reads "${snd.count}"`);
+    assert.strictEqual(snd.back, snd.total, '"any sound" did not bring every tile back');
+
     // A mode 13h tile by preference. Any live tile proves the emulator runs in
     // the page, but the assertions below are about a picture with colours in
     // it, and how quickly a demo gets to one differs enormously: BOB.COM --

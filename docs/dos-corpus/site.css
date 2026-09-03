@@ -94,6 +94,15 @@ figure .mx {
   letter-spacing: .08em; text-transform: uppercase; border: 1px solid var(--cyan);
   color: var(--cyan); padding: 1px 4px; background: rgba(8,7,13,.75);
 }
+/* A tile that made a sound says so, and through which chip: the note is the
+   sound census of the run the screenshot came from, not a promise about the
+   Run button. */
+figure .snd {
+  position: absolute; bottom: 34px; right: 12px; font-family: var(--mono); font-size: 9px;
+  letter-spacing: .08em; text-transform: uppercase; border: 1px solid var(--accent);
+  color: var(--accent); padding: 1px 4px; background: rgba(8,7,13,.75);
+}
+.bar .sep { width: 1px; height: 18px; background: var(--rule); margin: 0 4px; }
 /* A runnable tile has to say so on the tile. The Run button lives inside the
    lightbox, so without this the only way to find out which screenshots will
    actually start is to open them one at a time. */

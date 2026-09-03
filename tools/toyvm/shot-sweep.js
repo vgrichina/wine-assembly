@@ -81,6 +81,34 @@ function shotName(exe, dir, used) {
   return base.replace(/[^A-Za-z0-9._-]/g, '_');
 }
 
+// The sound census of one run: the loudest sample of the rendered mix, when
+// it first rose above silence, and which chips the program drove. 0.01 is the
+// threshold the sound sweeps have used: a filter settling after a DC step
+// stays under it, a played sample does not.
+function soundCensus(r) {
+  const rate = r.audioRate || 0;
+  let peak = 0, first = -1, at = 0;
+  for (const c of r.audioChunks || []) {
+    for (let i = 0; i < c.length; i += 2, at++) {
+      const v = Math.abs(c[i]);
+      if (v > peak) peak = v;
+      if (first < 0 && v > 0.01) first = at;
+    }
+  }
+  const m = r.machine, a = m.audio, gus = m.gus ? m.gus.stats : null;
+  const src = [];
+  if (m.sb.irqs || m.sb.commands) src.push('sb');
+  if (a.opl.keyOns) src.push('fm');
+  if (gus && gus.starts) src.push('gus');
+  if (a.speakerWrites) src.push('speaker');
+  return {
+    peak: Math.round(peak * 1000) / 1000,
+    first: first < 0 || !rate ? null : Math.round(first / rate * 100) / 100,
+    seconds: rate ? Math.round(at / rate * 100) / 100 : 0,
+    sources: src,
+  };
+}
+
 // --- child: one program, one run --------------------------------------------
 async function runOne(exe, png, o) {
   const { runDos, runDosWithPre } = require('./run-dos');
@@ -94,8 +122,17 @@ async function runOne(exe, png, o) {
     ...(o.pre ? { pre: o.pre, preKeys: [] } : {}),
     ...(o.sound ? { sound: o.sound } : {}),
     ...(o.env ? { env: String(o.env).split(';').filter(Boolean) } : {}),
+    // Rendered, not just consumed: the sound census below is the mix the
+    // page's Run button would play, measured, so the demos page can say which
+    // tiles have sound without anyone listening to 199 of them. The menu
+    // answerer takes the Sound Blaster when a menu offers one, as the page
+    // does with sound on -- a census taken with "no sound" answered would
+    // count every menu-driven demo as quiet.
+    audioRate: 22050,
+    soundPref: o.sound === 'none' ? 'silent' : 'sb',
   });
   const text = r.bestSurface.text;
+  const audio = soundCensus(r);
   return {
     name: path.basename(exe), exe, png, surface: text ? 'console' : 'vga',
     mode: r.video.mode, width: r.video.width, height: r.video.height,
@@ -118,7 +155,12 @@ async function runOne(exe, png, o) {
     // can observe.
     sound: o.sound || null,
     soundProbed: !!(r.machine.sb.detects || r.machine.sb.commands
-      || r.machine.adlibIndex !== undefined),
+      || r.machine.adlibIndex !== undefined || (r.machine.gus && r.machine.gus.stats.writes)),
+    // What came out of the speakers over the run, and from which chip. `peak`
+    // is the loudest sample of the rendered mix; `first` is the second it
+    // arrived in. A row from the no-card retry is silent by construction and
+    // says so with `sound: 'none'` above.
+    audio,
     // Not a failure. The picture is real and the program simply had more to do
     // than the budget allowed, which is worth telling apart from a run that
     // finished with nothing on screen.
