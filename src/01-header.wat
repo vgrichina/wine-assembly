@@ -715,6 +715,7 @@
   ;; is already spoken for as a BOOL at its other call sites.
   (import "host" "fs_write_file" (func $host_fs_write_file (param i32 i32 i32 i32) (result i32)))
   ;; fs_write_file(handle, bufGA, nToWrite, nWrittenGA) → BOOL
+  (import "host" "fs_flush_file_buffers" (func $host_fs_flush_file_buffers (param i32) (result i32)))
   (import "host" "fs_close_handle" (func $host_fs_close_handle (param i32) (result i32)))
   (import "host" "fs_set_file_pointer" (func $host_fs_set_file_pointer (param i32 i32 i32) (result i32)))
   (import "host" "fs_set_end_of_file" (func $host_fs_set_end_of_file (param i32) (result i32)))
@@ -774,7 +775,6 @@
   ;; fs_flush_view(addrInsideView, bytes | 0 for the rest of the view) → BOOL
   (import "host" "fs_filetime_to_systemtime" (func $host_fs_filetime_to_systemtime (param i32 i32) (result i32)))
   ;; fs_filetime_to_systemtime(ftWasmAddr, stWasmAddr) → BOOL
-
   ;; DLL file check (for dynamic LoadLibrary)
   (import "host" "has_dll_file" (func $host_has_dll_file (param i32) (result i32)))
   ;; has_dll_file(nameWA) → 1 if DLL file exists in VFS/host, 0 if not

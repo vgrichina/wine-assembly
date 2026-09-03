@@ -10287,12 +10287,12 @@ nW — STUB: unimplemented
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 337: FlushFileBuffers — return 1 — STUB: unimplemented
+  ;; 337: FlushFileBuffers — VFS writes are synchronous; validate the writable handle.
   (func $handle_FlushFileBuffers (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; FlushFileBuffers(hFile) — 1 arg, return TRUE (no-op for virtual FS)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
+    (local $error i32)
+    (local.set $error (call $host_fs_flush_file_buffers (local.get $arg0)))
+    (if (local.get $error) (then (global.set $last_error (local.get $error))))
+    (global.set $eax (i32.eqz (local.get $error))) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 338: IsValidCodePage(CodePage)
   (func $handle_IsValidCodePage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

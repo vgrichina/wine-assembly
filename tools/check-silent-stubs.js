@@ -156,8 +156,10 @@ const digest = crypto.createHash('sha256')
 // images, including RETURNORG/DELETEORG, monochrome, and DIB-section requests.
 // 2026-09-03: 470 -> 469. SHFileOperationA now delegates copy, move, rename,
 // wildcard, multi-destination, and recursive delete work to the shared VFS.
-const EXPECTED_COUNT = 469;
-const EXPECTED_SHA256 = 'ce04ec582bff3138bd2440a536ee8b23d3bbee233d568bed518efaf1c4b41cd6';
+// 2026-09-03: 469 -> 468. FlushFileBuffers now validates a live writable VFS
+// file handle and reports access/handle errors instead of unconditional TRUE.
+const EXPECTED_COUNT = 468;
+const EXPECTED_SHA256 = '5fa72989413e4b2bc9ac6ce7f32747a21c5a139ac10ce7cdf87de02624852c69';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

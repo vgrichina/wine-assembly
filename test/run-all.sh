@@ -75,6 +75,7 @@ UNIT=(
   test/test-vfs-adopt.js
   test/test-save-bundle.js
   test/test-flush-view-of-file.js
+  test/test-flush-file-buffers.js
   test/test-shfileoperation.js
   test/test-heap-free-block-validation.js
   test/test-vfs-host-files.js
