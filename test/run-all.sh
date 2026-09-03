@@ -278,6 +278,7 @@ UNIT=(
   test/test-host-window-related.js
   test/test-bring-window-to-top.js
   test/test-active-window.js
+  test/test-get-last-active-popup.js
   test/test-process-id.js
   test/test-render-color-dlg.js
   test/test-render-find-dlg.js

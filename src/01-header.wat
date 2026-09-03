@@ -3854,3 +3854,8 @@
   ;; something the guest has to ask for, never something inferred from the
   ;; shape of a window.
   (global $display_fullscreen (mut i32) (i32.const 0))
+
+  ;; USER remembers the most recently active member of each owner window's
+  ;; popup group. This table is process-shared like the HWND/owner records.
+  (global $LAST_ACTIVE_POPUP_TABLE i32 (region.addr $LAST_ACTIVE_POPUP_TABLE 0))
+  (global $LAST_ACTIVE_POPUP_TABLE_SIZE i32 (region.size $LAST_ACTIVE_POPUP_TABLE))

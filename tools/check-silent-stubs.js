@@ -158,8 +158,11 @@ const digest = crypto.createHash('sha256')
 // wildcard, multi-destination, and recursive delete work to the shared VFS.
 // 2026-09-03: 469 -> 468. FlushFileBuffers now validates a live writable VFS
 // file handle and reports access/handle errors instead of unconditional TRUE.
-const EXPECTED_COUNT = 468;
-const EXPECTED_SHA256 = '5fa72989413e4b2bc9ac6ce7f32747a21c5a139ac10ce7cdf87de02624852c69';
+// 2026-09-03: 468 -> 469. Video for Windows added DrawDibOpen/Close (+2), while
+// GetLastActivePopup left the quiet inventory by retaining and validating
+// per-owner activation history (-1). The inventory records both changes.
+const EXPECTED_COUNT = 469;
+const EXPECTED_SHA256 = '2cf5b63a583db00eaa08d3407a321203ecac34742b9982493c3f88929bff1272';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

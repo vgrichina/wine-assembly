@@ -216,6 +216,11 @@
     (owner "09c3-controls.wat:1710"))
   (region.declare-fixed $GUEST_BASE (base 0x00012000) (size 0x03C00000) (align 0x00001000)
     (owner "03-registers.wat:79"))
+  ;; Per-owner USER activation history fits in the remaining aligned table gap
+  ;; before the fixed guest mirror. Keep the address allocator-owned rather
+  ;; than pinning another raw address.
+  (region.declare $LAST_ACTIVE_POPUP_TABLE (size 0x00000400) (align 0x00000100)
+    (owner "09a-handlers.wat:19069"))
   ;; WIDENED 0x100000 -> 0x3EE000 (wave 3). The low heap never fitted in 1MB:
   ;; $heap_low_reserve hands out 1MB chunks and stopped only when the next
   ;; chunk would reach $PAGE_INDEX_ARENA, which the hand-placed map happened to
