@@ -176,8 +176,10 @@ const digest = crypto.createHash('sha256')
 // region into the caller's HRGN and returns its actual region complexity.
 // 2026-09-03: 460 -> 459. FreeConsole now tears down the process console
 // window, buffers, input queue, aliases, and attachment state.
-const EXPECTED_COUNT = 459;
-const EXPECTED_SHA256 = '74a370bc2d5e3ea9994cc8510a83be1604287242ca4ea8c3fcc99fc9ee0e86d7';
+// 2026-09-03: 459 -> 458. SetConsoleCtrlHandler now owns a process handler
+// chain and delivers processed Ctrl+C/Ctrl+Break events through guest callbacks.
+const EXPECTED_COUNT = 458;
+const EXPECTED_SHA256 = 'b7e6d0282de7f40381a5ada8a4699cdfd88f5d84661d62030b5a8d96368330c3';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

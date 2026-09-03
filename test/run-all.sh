@@ -149,6 +149,7 @@ UNIT=(
   test/test-guest-rpc-nested-wait.js
   test/test-worker-api-batching.js
   test/test-console-input.js
+  test/test-console-lifecycle-ctrl.js
   test/test-browser-mm-timer.js
   test/test-asset-parts.js
   test/test-deploy-win16-assets.js

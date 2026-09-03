@@ -1037,6 +1037,13 @@
           (then
             (call $dpl_enum_continue)
             (return)))
+        ;; Console HandlerRoutine callbacks leave their CCTL chain frame after
+        ;; stdcall RET 4. Resume the prior handler or the interrupted console
+        ;; API according to the handler's BOOL result.
+        (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x4C544343))
+          (then
+            (call $console_ctrl_continue)
+            (return)))
         ;; WH_KEYBOARD callbacks use this existing one-callback thunk with a
         ;; tiny typed context. KeyboardProc's stdcall return leaves KHK1 at
         ;; ESP; restore the USER caller and the successful Get/PeekMessage

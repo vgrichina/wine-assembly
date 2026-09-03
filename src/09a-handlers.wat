@@ -13130,7 +13130,8 @@ HookEx — no next hook in chain, return 0
 
   ;; 473: SetConsoleCtrlHandler(HandlerRoutine, Add) → BOOL
   (func $handle_SetConsoleCtrlHandler (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax
+      (call $console_ctrl_handler_set (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 474: SetEnvironmentVariableW(lpName, lpValue) → BOOL
@@ -13860,6 +13861,7 @@ HookEx — no next hook in chain, return 0
   (func $handle_ReadConsoleInputA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $n i32)
     (call $console_input_poll_host)
+    (if (global.get $console_ctrl_dispatching) (then (return)))
     (if (i32.eqz (call $console_input_count))
       (then
         (call $console_input_block)
@@ -13875,6 +13877,7 @@ HookEx — no next hook in chain, return 0
   ;; Non-destructive: copies without dropping, and never blocks.
   (func $handle_PeekConsoleInputA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $console_input_poll_host)
+    (if (global.get $console_ctrl_dispatching) (then (return)))
     (if (local.get $arg3)
       (then (i32.store (call $g2w (local.get $arg3))
         (call $console_read_input (local.get $arg1) (local.get $arg2) (i32.const 0))))
@@ -13885,6 +13888,7 @@ HookEx — no next hook in chain, return 0
   ;; 512: GetNumberOfConsoleInputEvents(hConsole, lpNumberOfEvents) → BOOL
   (func $handle_GetNumberOfConsoleInputEvents (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $console_input_poll_host)
+    (if (global.get $console_ctrl_dispatching) (then (return)))
     (i32.store (call $g2w (local.get $arg1)) (call $console_input_count))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))

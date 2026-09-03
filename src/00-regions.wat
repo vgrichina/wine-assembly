@@ -194,7 +194,7 @@
   (region.declare $USER_DIALOG_STRINGS (size 0x00000270) (align 0x00001000)
     (owner "01-header.wat:1143"))
   (region.declare $DX_VERSION_INFO (size 0x0000005C) (align 0x00000010)
-    (owner "09a-handlers.wat:18181"))
+    (owner "09a-handlers.wat:18185"))
   ;; Storage for every string the compiler interns from a `"text"` literal.
   ;; Named by `(string.pool $WATX_STRING_POOL)` in 01-header.wat; without that
   ;; declaration the pool is placed above the last data segment, which in this
@@ -220,7 +220,7 @@
   ;; before the fixed guest mirror. Keep the address allocator-owned rather
   ;; than pinning another raw address.
   (region.declare $LAST_ACTIVE_POPUP_TABLE (size 0x00000400) (align 0x00000100)
-    (owner "09a-handlers.wat:19129"))
+    (owner "09a-handlers.wat:19133"))
   ;; WIDENED 0x100000 -> 0x3EE000 (wave 3). The low heap never fitted in 1MB:
   ;; $heap_low_reserve hands out 1MB chunks and stopped only when the next
   ;; chunk would reach $PAGE_INDEX_ARENA, which the hand-placed map happened to
@@ -300,12 +300,12 @@
     (owner "01-header.wat:3399"))
   (region.declare $CONSOLE_TEXT (size 0x00003000) (align 0x00001000)
     (stride 0x2 (count $CONSOLE_MAX_CELLS))
-    (owner "09a2-handlers-console.wat:290"))
+    (owner "09a2-handlers-console.wat:449"))
   (region.declare $CONSOLE_ATTR (size 0x00003000) (align 0x00001000)
     (stride 0x2 (count $CONSOLE_MAX_CELLS))
-    (owner "09a2-handlers-console.wat:291"))
+    (owner "09a2-handlers-console.wat:450"))
   (region.declare $CONSOLE_INPUT (size 0x00001000) (align 0x00001000)
-    (owner "09a2-handlers-console.wat:897"))
+    (owner "09a2-handlers-console.wat:1056"))
   (region.declare $DIB_PAGE_USED (size 0x00004000) (align 0x00001000)
     (owner "10-helpers.wat:152"))
   (region.declare $DIB_PAGE_RUNS (size 0x00008000) (align 0x00001000)
@@ -485,9 +485,9 @@
     (stride 0x4 (count $DX_MAX))
     (owner "09a8-handlers-directx.wat:688"))
   (region.declare $CP1252_TO_CP437 (size 0x00000100) (align 0x00001000)
-    (owner "09a-handlers.wat:17171"))
+    (owner "09a-handlers.wat:17175"))
   (region.declare $CP437_TO_CP1252 (size 0x00000100) (align 0x00000100)
-    (owner "09a-handlers.wat:17172"))
+    (owner "09a-handlers.wat:17176"))
   (region.declare $BRANCH_CMP_JCC_HIST (size 0x00001000) (align 0x00001000)
     (owner "04-cache.wat:1074"))
   (region.declare $BRANCH_TEST_JCC_HIST (size 0x00001000) (align 0x00001000)

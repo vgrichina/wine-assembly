@@ -7,6 +7,9 @@
   ;; system-string area. This 128-byte run ends before the DIB page allocator.
   (global $CONSOLE_TITLE_STORAGE i32 (region.addr $CONSOLE_INPUT 0x00000A00))
   (data (region.addr $CONSOLE_INPUT 0xA00) "Console\00")
+  ;; Per-instance callback-in-flight flag. The handler list and pending signal
+  ;; are process-shared below; execution registers and the guest stack are not.
+  (global $console_ctrl_dispatching (mut i32) (i32.const 0))
 
   ;; Process standard-handle table. The three raw HANDLE values occupy +C00,
   ;; +C04, and +C08; +C0C has one explicit-value bit per slot. Keep this away
@@ -78,11 +81,167 @@
   (func $console_is_attached (result i32)
     (i32.eq (call $console_attachment_state) (i32.const 1)))
 
+  ;; Process console-control state in the free tail of CONSOLE_INPUT:
+  ;;   +C14 pending event+1, +C18 ignore-Ctrl+C attribute, +C1C handler count,
+  ;;   +C20 32 LIFO HandlerRoutine pointers, +CA0 table lock,
+  ;;   +CA8 suppressed virtual key until its key-up edge.
+  (func $console_ctrl_reset
+    (call $lock_acquire (region.addr $CONSOLE_INPUT 0xCA0))
+    (memory.fill (region.addr $CONSOLE_INPUT 0xC14) (i32.const 0)
+      (i32.const 0x8C))
+    (call $lock_release (region.addr $CONSOLE_INPUT 0xCA0))
+    (i32.atomic.store (region.addr $CONSOLE_INPUT 0xCA8) (i32.const 0))
+    (global.set $console_ctrl_dispatching (i32.const 0)))
+
+  ;; Add/remove a non-NULL HandlerRoutine. Registrations are ordered and may
+  ;; repeat; removing walks backward so it removes the most recent match.
+  (func $console_ctrl_handler_set (param $handler i32) (param $add i32) (result i32)
+    (local $count i32) (local $i i32) (local $j i32)
+    (if (i32.eqz (local.get $handler))
+      (then
+        (i32.atomic.store (region.addr $CONSOLE_INPUT 0xC18)
+          (i32.ne (local.get $add) (i32.const 0)))
+        (return (i32.const 1))))
+    (call $lock_acquire (region.addr $CONSOLE_INPUT 0xCA0))
+    (local.set $count (i32.load (region.addr $CONSOLE_INPUT 0xC1C)))
+    (if (local.get $add)
+      (then
+        (if (i32.ge_u (local.get $count) (i32.const 32))
+          (then
+            (call $lock_release (region.addr $CONSOLE_INPUT 0xCA0))
+            (global.set $last_error (i32.const 8)) ;; ERROR_NOT_ENOUGH_MEMORY
+            (return (i32.const 0))))
+        (i32.store
+          (i32.add (region.addr $CONSOLE_INPUT 0xC20)
+            (i32.shl (local.get $count) (i32.const 2)))
+          (local.get $handler))
+        (i32.store (region.addr $CONSOLE_INPUT 0xC1C)
+          (i32.add (local.get $count) (i32.const 1)))
+        (call $lock_release (region.addr $CONSOLE_INPUT 0xCA0))
+        (return (i32.const 1))))
+    (local.set $i (local.get $count))
+    (block $missing (loop $find
+      (br_if $missing (i32.eqz (local.get $i)))
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (if (i32.eq
+            (i32.load (i32.add (region.addr $CONSOLE_INPUT 0xC20)
+              (i32.shl (local.get $i) (i32.const 2))))
+            (local.get $handler))
+        (then
+          (local.set $j (local.get $i))
+          (block $shifted (loop $shift
+            (br_if $shifted
+              (i32.ge_u (i32.add (local.get $j) (i32.const 1)) (local.get $count)))
+            (i32.store
+              (i32.add (region.addr $CONSOLE_INPUT 0xC20)
+                (i32.shl (local.get $j) (i32.const 2)))
+              (i32.load (i32.add (region.addr $CONSOLE_INPUT 0xC24)
+                (i32.shl (local.get $j) (i32.const 2)))))
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br $shift)))
+          (i32.store
+            (i32.add (region.addr $CONSOLE_INPUT 0xC20)
+              (i32.shl (i32.sub (local.get $count) (i32.const 1)) (i32.const 2)))
+            (i32.const 0))
+          (i32.store (region.addr $CONSOLE_INPUT 0xC1C)
+            (i32.sub (local.get $count) (i32.const 1)))
+          (call $lock_release (region.addr $CONSOLE_INPUT 0xCA0))
+          (return (i32.const 1))))
+      (br $find)))
+    (call $lock_release (region.addr $CONSOLE_INPUT 0xCA0))
+    (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+    (i32.const 0))
+
+  ;; Queue CTRL_C_EVENT(0) or CTRL_BREAK_EVENT(1). The NULL handler attribute
+  ;; ignores Ctrl+C only; Ctrl+Break always follows the handler chain.
+  (func $console_ctrl_queue (param $event i32) (result i32)
+    (if (i32.eqz (call $console_is_attached))
+      (then (return (i32.const 0))))
+    (if (i32.and
+          (i32.eqz (local.get $event))
+          (i32.atomic.load (region.addr $CONSOLE_INPUT 0xC18)))
+      (then (return (i32.const 1))))
+    (drop (i32.atomic.rmw.cmpxchg (region.addr $CONSOLE_INPUT 0xC14)
+      (i32.const 0) (i32.add (local.get $event) (i32.const 1))))
+    (i32.const 1))
+
+  (func $console_ctrl_default_exit
+    (global.set $console_ctrl_dispatching (i32.const 0))
+    (call $host_exit (i32.const 0))
+    (global.set $eip (i32.const 0))
+    (global.set $steps (i32.const 0)))
+
+  ;; Enter the most recently registered handler at a safe console-API boundary.
+  ;; The original API frame remains intact and is retried after a handler claims
+  ;; the event. CACA0011's CCTL continuation owns the four-word context.
+  (func $console_ctrl_maybe_begin (result i32)
+    (local $pending i32) (local $count i32) (local $handler i32)
+    (if (i32.or
+          (global.get $console_ctrl_dispatching)
+          (i32.eqz (global.get $current_thunk_eip)))
+      (then (return (i32.const 0))))
+    (local.set $pending
+      (i32.atomic.rmw.xchg (region.addr $CONSOLE_INPUT 0xC14) (i32.const 0)))
+    (if (i32.eqz (local.get $pending)) (then (return (i32.const 0))))
+    (local.set $count (i32.atomic.load (region.addr $CONSOLE_INPUT 0xC1C)))
+    (if (i32.eqz (local.get $count))
+      (then (call $console_ctrl_default_exit) (return (i32.const 1))))
+    (local.set $handler (i32.atomic.load
+      (i32.add (region.addr $CONSOLE_INPUT 0xC20)
+        (i32.shl (i32.sub (local.get $count) (i32.const 1)) (i32.const 2)))))
+    (global.set $console_ctrl_dispatching (i32.const 1))
+    ;; Context, deepest first: next index, event, resume thunk, "CCTL".
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.sub (local.get $count) (i32.const 2)))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.sub (local.get $pending) (i32.const 1)))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $current_thunk_eip))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0x4C544343)) ;; "CCTL"
+    ;; HandlerRoutine(DWORD dwCtrlType), stdcall.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.sub (local.get $pending) (i32.const 1)))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
+    (global.set $eip (local.get $handler))
+    (global.set $handler_set_eip (i32.const 1))
+    (global.set $steps (i32.const 0))
+    (i32.const 1))
+
+  ;; Resume after HandlerRoutine's RET 4 has exposed the CCTL context at ESP.
+  (func $console_ctrl_continue
+    (local $next i32) (local $event i32) (local $handler i32)
+    (if (global.get $eax)
+      (then
+        (global.set $eip (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (global.set $console_ctrl_dispatching (i32.const 0))
+        (return)))
+    (local.set $next (call $gl32 (i32.add (global.get $esp) (i32.const 12))))
+    (local.set $event (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
+    (if (i32.lt_s (local.get $next) (i32.const 0))
+      (then (call $console_ctrl_default_exit) (return)))
+    (local.set $handler (i32.atomic.load
+      (i32.add (region.addr $CONSOLE_INPUT 0xC20)
+        (i32.shl (local.get $next) (i32.const 2)))))
+    (if (i32.eqz (local.get $handler))
+      (then (call $console_ctrl_default_exit) (return)))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 12))
+      (i32.sub (local.get $next) (i32.const 1)))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $event))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
+    (global.set $eip (local.get $handler))
+    (global.set $steps (i32.const 0)))
+
   ;; Clear console-owned objects without touching redirected standard-handle
   ;; values at +C00 or attachment state at +C10. AllocConsole chooses whether
   ;; to replace redirected values; FreeConsole merely detaches them.
   (func $console_state_clear
     (local $slot i32) (local $rec i32) (local $wake i32)
+    (call $console_ctrl_reset)
     (local.set $slot (i32.const 1))
     (block $done (loop $buffers
       (br_if $done (i32.ge_u (local.get $slot) (global.get $CONSOLE_BUFFER_COUNT)))
@@ -1008,7 +1167,15 @@
   ;; matching down record instead of inventing a second KEY_EVENT. If input was
   ;; injected as a bare WM_CHAR, fall back to a synthetic down event.
   (func $console_input_attach_char (param $ch i32) (param $vk i32)
-    (local $i i32) (local $slot i32)
+    (local $i i32) (local $slot i32) (local $suppressed i32)
+    (local.set $suppressed
+      (i32.atomic.load (region.addr $CONSOLE_INPUT 0xCA8)))
+    (if (i32.and
+          (i32.ne (local.get $suppressed) (i32.const 0))
+          (i32.or
+            (i32.eq (local.get $ch) (i32.const 3))
+            (i32.eq (local.get $vk) (local.get $suppressed))))
+      (then (return)))
     (local.set $i (call $console_input_count))
     (block $fallback
       (loop $scan
@@ -1094,6 +1261,7 @@
 
   (func $console_input_push_host_key
       (param $msg i32) (param $vk i32) (param $lparam i32) (result i32)
+    (local $control i32) (local $down i32) (local $suppressed i32)
     (if (i32.eqz
           (i32.or
             (i32.or (i32.eq (local.get $msg) (i32.const 0x0100))
@@ -1101,10 +1269,45 @@
             (i32.or (i32.eq (local.get $msg) (i32.const 0x0104))
                     (i32.eq (local.get $msg) (i32.const 0x0105)))))
       (then (return (i32.const 0))))
+    (local.set $control (call $console_input_key_control_state
+      (local.get $msg) (local.get $vk) (local.get $lparam)))
+    (local.set $down
+      (i32.or
+        (i32.eq (local.get $msg) (i32.const 0x0100))
+        (i32.eq (local.get $msg) (i32.const 0x0104))))
+    (local.set $suppressed
+      (i32.atomic.load (region.addr $CONSOLE_INPUT 0xCA8)))
+    (if (i32.and
+          (i32.ne (local.get $suppressed) (i32.const 0))
+          (i32.eq (local.get $vk) (local.get $suppressed)))
+      (then
+        (if (i32.eqz (local.get $down))
+          (then (i32.atomic.store
+            (region.addr $CONSOLE_INPUT 0xCA8) (i32.const 0))))
+        (return (i32.const 1))))
+    ;; ENABLE_PROCESSED_INPUT turns Ctrl+C into CTRL_C_EVENT instead of a
+    ;; KEY_EVENT. VK_CANCEL is the translated Ctrl+Break chord and always
+    ;; generates CTRL_BREAK_EVENT.
+    (if (i32.and
+          (local.get $down)
+          (i32.or
+            (i32.and
+              (i32.and
+                (i32.eq (local.get $vk) (i32.const 0x43))
+                (i32.ne (i32.and (local.get $control) (i32.const 0x0C))
+                        (i32.const 0)))
+              (i32.ne (i32.and (call $console_input_mode) (i32.const 1))
+                      (i32.const 0)))
+            (i32.eq (local.get $vk) (i32.const 0x03))))
+      (then
+        (i32.atomic.store (region.addr $CONSOLE_INPUT 0xCA8) (local.get $vk))
+        (drop (call $console_ctrl_queue
+          (select (i32.const 1) (i32.const 0)
+            (i32.eq (local.get $vk) (i32.const 0x03)))))
+        (return (i32.const 1))))
     (call $console_input_push_key
       (i32.const 0) (local.get $vk) (local.get $lparam)
-      (call $console_input_key_control_state
-        (local.get $msg) (local.get $vk) (local.get $lparam)))
+      (local.get $control))
     (i32.const 1))
 
   ;; Translate USER mouse state into the button bits used by
@@ -1280,6 +1483,7 @@
     (local $packed i32) (local $msg i32) (local $wparam i32)
     (local $hwnd i32) (local $target i32)
     (if (i32.eqz (call $console_is_attached)) (then (return)))
+    (if (call $console_ctrl_maybe_begin) (then (return)))
     (call $console_ensure_window)
     ;; PM_NOREMOVE may already own the cached event.
     (if (global.get $pending_input_packed) (then (return)))
@@ -1310,7 +1514,8 @@
           (call $console_vk_for_char (local.get $wparam)))
         (return)))
     (drop (call $console_input_push_host_key
-      (local.get $msg) (local.get $wparam) (global.get $pending_input_lparam))))
+      (local.get $msg) (local.get $wparam) (global.get $pending_input_lparam)))
+    (drop (call $console_ctrl_maybe_begin)))
 
   ;; Park the calling thread on its import thunk without consuming the stdcall
   ;; frame — the $cs_block pattern, which is the only one that survives the
@@ -1333,6 +1538,8 @@
                       (param $wide i32) (result i32)
     (local $avail i32) (local $i i32) (local $out i32) (local $ch i32) (local $dst i32)
     (call $console_input_poll_host)
+    (if (global.get $console_ctrl_dispatching)
+      (then (return (i32.const 1))))
     (if (i32.and (call $console_input_mode) (i32.const 2))
       (then (local.set $avail (call $console_input_line_len)))
       (else (local.set $avail (call $console_input_count))))
@@ -1576,6 +1783,7 @@
   (func $handle_ReadConsoleInputW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $n i32)
     (call $console_input_poll_host)
+    (if (global.get $console_ctrl_dispatching) (then (return)))
     (if (i32.eqz (call $console_input_count))
       (then
         (call $console_input_block)
@@ -1914,6 +2122,11 @@
   ;; Best-effort virtual key for an echoed character. Only ReadConsoleInput
   ;; callers see this field, and WM_CHAR has already discarded the real one.
   (func $console_vk_for_char (param $ch i32) (result i32)
+    ;; Ctrl+A..Ctrl+Z arrive as ASCII control characters 1..26 but belong to
+    ;; the preceding alphabetic virtual-key record.
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 1))
+                 (i32.le_u (local.get $ch) (i32.const 26)))
+      (then (return (i32.add (local.get $ch) (i32.const 0x40)))))
     (if (i32.and (i32.ge_u (local.get $ch) (i32.const 97))
                  (i32.le_u (local.get $ch) (i32.const 122)))
       (then (return (i32.sub (local.get $ch) (i32.const 32)))))
