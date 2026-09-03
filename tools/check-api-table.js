@@ -3,9 +3,11 @@
 //
 // gen_api_table.js renumbers every entry from its index on each run, so a
 // mid-array insert silently rewrites thousands of ids — and every id is baked
-// into the compiled hash table, the generated dispatch br_table, and the
-// hardcoded fast paths in 09b-dispatch.wat. The append-only rule was previously
-// documented only in a memory note; this makes it a build failure.
+// into the compiled hash table, generated dispatch br_table/COM thunks, and
+// persisted/imported thunk identities. Hand-written fast paths consume named
+// IDs emitted by gen_dispatch.js, but the broader append-only ABI still holds.
+// The rule was previously documented only in a memory note; this makes it a
+// build failure.
 //
 // During a merge the rule can only hold against ONE parent: if both branches
 // appended, the resolution has to renumber somebody's tail. So when MERGE_HEAD

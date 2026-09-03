@@ -51,6 +51,17 @@
     (call $host_destroy_window (local.get $hwnd))
     (call $wnd_table_remove (local.get $hwnd)))
 
+  ;; Restore the x86 nonvolatile registers after a Win32 handler. The hot
+  ;; message-pump fast paths and the generated dispatcher share this exact ABI
+  ;; epilogue; keeping one helper prevents their preservation rules drifting.
+  (func $restore_win32_nonvolatile
+      (param $saved_ebx i32) (param $saved_esi i32)
+      (param $saved_edi i32) (param $saved_ebp i32)
+    (global.set $ebx (local.get $saved_ebx))
+    (global.set $esi (local.get $saved_esi))
+    (global.set $edi (local.get $saved_edi))
+    (global.set $ebp (local.get $saved_ebp)))
+
   (func $win32_dispatch (param $thunk_idx i32)
     (local $api_id i32) (local $name_rva i32) (local $name_ptr i32)
     (local $arg0 i32) (local $arg1 i32) (local $arg2 i32) (local $arg3 i32)
@@ -1132,32 +1143,30 @@
 
     ;; Hot message pumps exercise PeekMessage often enough that a direct path
     ;; avoids large br_table edge cases and keeps idle loops from corrupting ESP.
-    (if (i32.eq (local.get $api_id) (i32.const 490))
+    (if (i32.eq (local.get $api_id) (global.get $API_ID_PeekMessageA))
       (then
         (call $handle_PeekMessageA
           (local.get $arg0) (local.get $arg1) (local.get $arg2)
           (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
-        (global.set $ebx (local.get $saved_ebx))
-        (global.set $esi (local.get $saved_esi))
-        (global.set $edi (local.get $saved_edi))
-        (global.set $ebp (local.get $saved_ebp))
+        (call $restore_win32_nonvolatile
+          (local.get $saved_ebx) (local.get $saved_esi)
+          (local.get $saved_edi) (local.get $saved_ebp))
         (call $host_log_api_exit)
         (return)))
-    (if (i32.eq (local.get $api_id) (i32.const 491))
+    (if (i32.eq (local.get $api_id) (global.get $API_ID_PeekMessageW))
       (then
         (call $handle_PeekMessageW
           (local.get $arg0) (local.get $arg1) (local.get $arg2)
           (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
-        (global.set $ebx (local.get $saved_ebx))
-        (global.set $esi (local.get $saved_esi))
-        (global.set $edi (local.get $saved_edi))
-        (global.set $ebp (local.get $saved_ebp))
+        (call $restore_win32_nonvolatile
+          (local.get $saved_ebx) (local.get $saved_esi)
+          (local.get $saved_edi) (local.get $saved_ebp))
         (call $host_log_api_exit)
         (return)))
     ;; Keep the message-aware wait out of the generated page dispatch. Its
     ;; private-pump semantics require a completed stdcall frame before the
     ;; slice yields, just like the hot PeekMessage paths above.
-    (if (i32.eq (local.get $api_id) (i32.const 470))
+    (if (i32.eq (local.get $api_id) (global.get $API_ID_MsgWaitForMultipleObjects))
       (then
         (local.set $arg4 (i32.const 0xFFFF))
         (if (local.get $arg0)
@@ -1183,10 +1192,9 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (global.set $yield_flag (i32.const 1))
         (global.set $steps (i32.const 0))
-        (global.set $ebx (local.get $saved_ebx))
-        (global.set $esi (local.get $saved_esi))
-        (global.set $edi (local.get $saved_edi))
-        (global.set $ebp (local.get $saved_ebp))
+        (call $restore_win32_nonvolatile
+          (local.get $saved_ebx) (local.get $saved_esi)
+          (local.get $saved_edi) (local.get $saved_ebp))
         (call $host_log_api_exit)
         ;; This direct handler deliberately completes its own stdcall frame,
         ;; so resume at the return address instead of relying on thunk auto-pop.
@@ -1196,10 +1204,9 @@
     ;; Delegate to generated br_table
     (call $dispatch_api_table (local.get $api_id) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
 
-    (global.set $ebx (local.get $saved_ebx))
-    (global.set $esi (local.get $saved_esi))
-    (global.set $edi (local.get $saved_edi))
-    (global.set $ebp (local.get $saved_ebp))
+    (call $restore_win32_nonvolatile
+      (local.get $saved_ebx) (local.get $saved_esi)
+      (local.get $saved_edi) (local.get $saved_ebp))
 
     ;; Post-handler ESP hook for --esp-delta audit
     (call $host_log_api_exit)
