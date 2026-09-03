@@ -805,6 +805,18 @@
     (call $wnd_region_set (local.get $hwnd) (local.get $val)))
   (func (export "wnd_region_get_export") (param $hwnd i32) (result i32)
     (call $wnd_region_get (local.get $hwnd)))
+  (func (export "test_call_SetWindowRgn") (param i32 i32 i32) (result i32)
+    (local $saved_esp i32) (local.set $saved_esp (global.get $esp))
+    (call $handle_SetWindowRgn
+      (local.get 0) (local.get 1) (local.get 2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp)) (global.get $eax))
+  (func (export "test_call_GetWindowRgn") (param i32 i32) (result i32)
+    (local $saved_esp i32) (local.set $saved_esp (global.get $esp))
+    (call $handle_GetWindowRgn
+      (local.get 0) (local.get 1)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp)) (global.get $eax))
 
   ;; Cross-instance locking probes (docs/design-real-threads.md §3.1b). Two
   ;; guest threads are two WASM instances over one memory, so the tables they

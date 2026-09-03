@@ -172,8 +172,10 @@ const digest = crypto.createHash('sha256')
 // and suppresses their future thread attach/detach notifications.
 // 2026-09-03: 462 -> 461. WinExec now delegates the real command line and
 // nCmdShow to the browser child-launch path and returns its success/error code.
-const EXPECTED_COUNT = 461;
-const EXPECTED_SHA256 = '5cfac830da9a5f4b819396b339d1c83db62f8cff34c9279aae433e05265f49ae';
+// 2026-09-03: 461 -> 460. GetWindowRgn now copies the window's retained USER
+// region into the caller's HRGN and returns its actual region complexity.
+const EXPECTED_COUNT = 460;
+const EXPECTED_SHA256 = 'ad10a8da2ea40b57ae53b6224a0626cd9dfed292b2704c923f05583c866fb1c9';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

@@ -33,6 +33,55 @@
       (then (i32.load offset=24 (local.get $record)))
       (else (local.get $hrgn))))
 
+  ;; Once SetWindowRgn succeeds, USER owns the supplied HRGN until that
+  ;; window's region is replaced, cleared, or the window is destroyed. Keep
+  ;; that association on the canonical region record instead of maintaining a
+  ;; second handle table. Bits 16..24 of the generation word encode window
+  ;; slot + 1; the low byte remains the handle generation and bit 8 remains
+  ;; the lazy JS-mirror flag.
+  (global $GDI_RGN_WINDOW_OWNER_MASK i32 (i32.const 0x01FF0000))
+
+  (func $gdi_rgn_window_owner_set (param $hrgn i32) (param $slot i32) (result i32)
+    (local $record i32) (local $owner i32)
+    (local.set $record (call $gdi_rgn_record (local.get $hrgn)))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS))
+      (then
+        (if (i32.ne (local.get $slot) (i32.const -1))
+          (then (return (i32.const 0))))))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (local.set $owner
+          (i32.shl (i32.add (local.get $slot) (i32.const 1)) (i32.const 16)))))
+    (i32.store offset=4 (local.get $record)
+      (i32.or
+        (i32.and (i32.load offset=4 (local.get $record))
+          (i32.xor (global.get $GDI_RGN_WINDOW_OWNER_MASK) (i32.const -1)))
+        (local.get $owner)))
+    (i32.const 1))
+
+  (func $gdi_rgn_window_owned_handle (param $slot i32) (result i32)
+    (local $i i32) (local $record i32) (local $owner i32)
+    (if (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS))
+      (then (return (i32.const 0))))
+    (local.set $owner
+      (i32.shl (i32.add (local.get $slot) (i32.const 1)) (i32.const 16)))
+    (block $missing (loop $scan
+      (br_if $missing (i32.ge_u (local.get $i) (i32.const 255)))
+      (local.set $record
+        (i32.add (global.get $GDI_REGION_TABLE)
+          (i32.mul (local.get $i) (i32.const 32))))
+      (if (i32.and
+            (i32.ne (i32.load (local.get $record)) (i32.const 0))
+            (i32.eq
+              (i32.and (i32.load offset=4 (local.get $record))
+                (global.get $GDI_RGN_WINDOW_OWNER_MASK))
+              (local.get $owner)))
+        (then (return (i32.load offset=24 (local.get $record)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   (func $gdi_rgn_bands (param $record i32) (result i32)
     (i32.add (global.get $GDI_REGION_BANDS)
       (i32.mul
@@ -50,7 +99,8 @@
   ;; has actually asked JS to hold this region, and only then do mutations
   ;; propagate. Bit 8 of the record's generation word carries that state; every
   ;; reader of the generation masks it to 0xFF (see $gdi_rgn_record), so the
-  ;; high bits are ours, and a freshly allocated record has them clear.
+  ;; high bits are internal metadata, and a freshly allocated record has them
+  ;; clear. Bits 16..24 carry SetWindowRgn ownership as described above.
   (global $GDI_RGN_MIRRORED i32 (i32.const 0x100))
 
   (func $gdi_rgn_mirror_live (param $record i32) (result i32)

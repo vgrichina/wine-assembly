@@ -2965,7 +2965,7 @@
   ;; persistent bit so later MoveWindow/SetWindowPos NCCALCSIZE does not
   ;; overwrite their whole-surface client rect with standard caption offsets.
   (func $wnd_region_reset_slot (param $slot i32)
-    (local $addr i32) (local $mask i32)
+    (local $addr i32) (local $mask i32) (local $hrgn i32)
     (if (i32.or
           (i32.lt_s (local.get $slot) (i32.const 0))
           (i32.ge_s (local.get $slot) (global.get $MAX_WINDOWS)))
@@ -2979,12 +2979,31 @@
     (i32.store8 (local.get $addr)
       (i32.and
         (i32.load8_u (local.get $addr))
-        (i32.xor (local.get $mask) (i32.const -1)))))
+        (i32.xor (local.get $mask) (i32.const -1))))
+    ;; USER owns a successfully installed region. Releasing the window slot
+    ;; therefore releases the canonical HRGN and its lazy JS presentation.
+    (local.set $hrgn (call $gdi_rgn_window_owned_handle (local.get $slot)))
+    (if (local.get $hrgn)
+      (then (drop (call $gdi_rgn_delete (local.get $hrgn))))))
 
   (func $wnd_region_set (param $hwnd i32) (param $val i32)
-    (local $idx i32) (local $addr i32) (local $mask i32)
+    (local $idx i32) (local $addr i32) (local $mask i32) (local $old i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
+    (if (i32.and
+          (i32.ne (local.get $val) (i32.const 0))
+          (i32.eqz (call $gdi_rgn_record (local.get $val))))
+      (then (return)))
+    (local.set $old (call $gdi_rgn_window_owned_handle (local.get $idx)))
+    (if (i32.and
+          (i32.ne (local.get $val) (i32.const 0))
+          (i32.eq (local.get $old) (local.get $val)))
+      (then (return)))
+    (if (local.get $old)
+      (then (drop (call $gdi_rgn_delete (local.get $old)))))
+    (if (local.get $val)
+      (then
+        (drop (call $gdi_rgn_window_owner_set (local.get $val) (local.get $idx)))))
     (local.set $addr
       (i32.add (global.get $WINDOW_REGION_BITS)
                (i32.shr_u (local.get $idx) (i32.const 3))))
@@ -3013,6 +3032,13 @@
         (i32.load8_u (local.get $addr))
         (i32.and (local.get $idx) (i32.const 7)))
       (i32.const 1)))
+
+  (func $wnd_region_handle_get (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (return (i32.const 0))))
+    (call $gdi_rgn_window_owned_handle (local.get $idx)))
 
   ;; WAT-owned absolute HWND geometry. JS owns only top-level canvas placement;
   ;; child HWND origins/parent walks stay here so GDI target offsets, clipping,

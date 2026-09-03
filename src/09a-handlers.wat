@@ -17375,6 +17375,18 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   ;; 921: SetWindowRgn(hwnd, hRgn, bRedraw) — 3 args stdcall
   (func $handle_SetWindowRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $rect i32) (local $w i32) (local $h i32)
+    (if (i32.eq (call $wnd_table_find (local.get $arg0)) (i32.const -1))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (i32.and
+          (i32.ne (local.get $arg1) (i32.const 0))
+          (i32.eqz (call $gdi_rgn_record (local.get $arg1))))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     ;; This is the only consumer of the JS-side region mirror, so it is the
     ;; place that pays for it. Regions do not push their bands across on
     ;; creation any more (see $gdi_rgn_sync_mirror in 10-helpers.wat); prime
@@ -17387,7 +17399,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
       (then
         (call $wnd_region_set
           (local.get $arg0)
-          (i32.ne (local.get $arg1) (i32.const 0)))
+          (local.get $arg1))
         ;; Regioned skin windows draw and route input over the whole shaped
         ;; surface. Keep WAT client-origin exports aligned with that surface.
         (if (local.get $arg1)
@@ -17413,9 +17425,19 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 922: GetWindowRgn(hwnd, hRgn) — 2 args stdcall, return ERROR (0)
+  ;; 922: GetWindowRgn(hwnd, hRgn) — 2 args stdcall. Copy the installed
+  ;; window-relative shape into the caller's existing region and return its
+  ;; NULLREGION/SIMPLEREGION/COMPLEXREGION classification.
   (func $handle_GetWindowRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (local $source i32)
+    (local.set $source (call $wnd_region_handle_get (local.get $arg0)))
+    (if (i32.and
+          (i32.ne (local.get $source) (i32.const 0))
+          (i32.ne (call $gdi_rgn_record (local.get $arg1)) (i32.const 0)))
+      (then
+        (global.set $eax (call $gdi_rgn_combine
+          (local.get $arg1) (local.get $source) (i32.const 0) (i32.const 5))))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 

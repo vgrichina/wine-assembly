@@ -141,7 +141,7 @@
   (region.declare $MENU_DATA_TABLE (size 0x00000400) (align 0x00000010)
     (owner "09c0-window-table.wat:154"))
   (region.declare $WND_DLG_RECORDS (size 0x00002000) (align 0x00000010)
-    (owner "10-helpers.wat:4966"))
+    (owner "10-helpers.wat:4998"))
   ;; Four dwords of cross-instance waveOut identity in the 16-byte hole
   ;; between WND_DLG_RECORDS and SCROLL_TABLE. Declared rather than spelled
   ;; (region.end $WND_DLG_RECORDS): it is its own object, and an adjacency is
@@ -161,7 +161,7 @@
   (region.declare $SHOW_STATE_TABLE (size 0x00000100) (align 0x00000010)
     (owner "09c4-defwndproc.wat:1090"))
   (region.declare $WINDOW_REGION_BITS (size 0x00000020) (align 0x00000010)
-    (owner "10-helpers.wat:2989"))
+    (owner "10-helpers.wat:3008"))
   (region.declare $NATIVE_STATUS_BITS (size 0x00000020) (align 0x00000010)
     (owner "09c3-controls.wat:800"))
   (region.declare $NATIVE_TAB_BITS (size 0x00000020) (align 0x00000010)
@@ -194,7 +194,7 @@
   (region.declare $USER_DIALOG_STRINGS (size 0x00000270) (align 0x00001000)
     (owner "01-header.wat:1143"))
   (region.declare $DX_VERSION_INFO (size 0x0000005C) (align 0x00000010)
-    (owner "09a-handlers.wat:18140"))
+    (owner "09a-handlers.wat:18138"))
   ;; Storage for every string the compiler interns from a `"text"` literal.
   ;; Named by `(string.pool $WATX_STRING_POOL)` in 01-header.wat; without that
   ;; declaration the pool is placed above the last data segment, which in this
@@ -220,7 +220,7 @@
   ;; before the fixed guest mirror. Keep the address allocator-owned rather
   ;; than pinning another raw address.
   (region.declare $LAST_ACTIVE_POPUP_TABLE (size 0x00000400) (align 0x00000100)
-    (owner "09a-handlers.wat:19088"))
+    (owner "09a-handlers.wat:19110"))
   ;; WIDENED 0x100000 -> 0x3EE000 (wave 3). The low heap never fitted in 1MB:
   ;; $heap_low_reserve hands out 1MB chunks and stopped only when the next
   ;; chunk would reach $PAGE_INDEX_ARENA, which the hand-placed map happened to
@@ -311,12 +311,12 @@
   (region.declare $DIB_PAGE_RUNS (size 0x00008000) (align 0x00001000)
     (owner "10-helpers.wat:161"))
   (region.declare $GDI_REGION_BANDS (size 0x000D0000) (align 0x00001000)
-    (owner "10d-gdi-region-path.wat:37"))
+    (owner "10d-gdi-region-path.wat:86"))
   (region.declare $GDI_REGION_WORK (size 0x00003400) (align 0x00001000)
-    (owner "10d-gdi-region-path.wat:279"))
+    (owner "10d-gdi-region-path.wat:329"))
   (region.declare $GDI_DC_CLIP_TABLE (size 0x00000800) (align 0x00001000)
     (stride 0x8 (count $GDI_DC_CLIP_COUNT))
-    (owner "10d-gdi-region-path.wat:742"))
+    (owner "10d-gdi-region-path.wat:792"))
   (region.declare $GDI_DC_SAVE_TABLE (size 0x00000800) (align 0x00000100)
     (stride 0x8 (count $GDI_DC_SAVE_COUNT))
     (owner "10e-gdi-metafile.wat:220"))
@@ -335,7 +335,7 @@
   (region.declare $GDI_PALETTE_RESOLVE (size 0x00000400) (align 0x00000010)
     (owner "01-header.wat:1930"))
   (region.declare $GDI_OBJECT_GEN (size 0x00000004) (align 0x00000010)
-    (owner "10d-gdi-region-path.wat:3982"))
+    (owner "10d-gdi-region-path.wat:4032"))
   (region.declare $GDI_WINDOW_SURFACE_HWM (size 0x00000004)
     (owner "10f-gdi-dc.wat:1248"))
   (region.declare $GDI_DC_STATE_TABLE (size 0x00006000) (align 0x00000100)
@@ -343,7 +343,7 @@
     (owner "10f-gdi-dc.wat:56"))
   (region.declare $GDI_OBJECT_TABLE (size 0x00003000) (align 0x00000100)
     (stride $GDI_OBJECT_STRIDE (count $GDI_OBJECT_COUNT))
-    (owner "10d-gdi-region-path.wat:3994"))
+    (owner "10d-gdi-region-path.wat:4044"))
   (region.declare $GDI_WINDOW_SURFACE_TABLE (size 0x00002000) (align 0x00000100)
     (stride $GDI_WINDOW_SURFACE_STRIDE (count $GDI_WINDOW_SURFACE_COUNT))
     (owner "10f-gdi-dc.wat:1249"))
@@ -392,7 +392,7 @@
     (owner "01-header.wat:1591"))
   (region.declare $GDI_DC_SYSTEM_CLIP_TABLE (size 0x00000800) (align 0x00001000)
     (stride 0x8 (count $GDI_DC_SYSTEM_CLIP_COUNT))
-    (owner "10d-gdi-region-path.wat:838"))
+    (owner "10d-gdi-region-path.wat:888"))
   (region.declare $HEAP_SHARED (size 0x00000040) (align 0x00000100)
     (owner "10-helpers.wat:531"))
   (region.declare $LOCK_TABLE (size 0x00000200) (align 0x00000010)
@@ -403,7 +403,7 @@
   (region.declare $SHARED_COUNTERS (size 0x00000010) (align 0x00000010)
     (owner "01-header.wat:2384"))
   (region.declare $GDI_TABLE_MARKS (size 0x00000010) (align 0x00000010)
-    (owner "10d-gdi-region-path.wat:715"))
+    (owner "10d-gdi-region-path.wat:765"))
   (region.declare $TV_SLOT_MARK (size 0x00000004) (align 0x00000010)
     (owner "09c2-treeview.wat:47"))
   (region.declare $TV_HANDLE_SEQ (size 0x00000004)
@@ -416,16 +416,16 @@
     (stride 0x10 (count $TV_VIEW_COUNT))
     (owner "09c2-treeview.wat:75"))
   (region.declare $GDI_REGION_TABLE (size 0x00002000) (align 0x00001000)
-    (owner "10d-gdi-region-path.wat:171"))
+    (owner "10d-gdi-region-path.wat:221"))
   (region.declare $GDI_DC_PATH_TABLE (size 0x00001000) (align 0x00001000)
     (stride $GDI_DC_PATH_STRIDE (count $GDI_DC_PATH_COUNT))
-    (owner "10d-gdi-region-path.wat:990"))
+    (owner "10d-gdi-region-path.wat:1040"))
   (region.declare $HANDLER_HIST_COUNTS (size 0x00001000) (align 0x00001000)
     (owner "04-cache.wat:946"))
   (region.declare $CODE_PAGE_BITMAP (size 0x00002000) (align 0x00001000)
     (owner "04-cache.wat:21"))
   (region.declare $SYNC_TABLE (size 0x00002000) (align 0x00001000)
-    (owner "13-exports.wat:2818"))
+    (owner "13-exports.wat:2830"))
   (region.declare $D3DIM_VIEWPORT_LIGHT_HEAD (size 0x00004000) (align 0x00001000)
     (owner "09aa-handlers-d3dim.wat:21"))
   (region.declare $HIT_COUNT_BASE (size 0x00000100) (align 0x00001000)
