@@ -95,6 +95,15 @@ assert.strictEqual(polygonOffsetCommand.capture.stackBytes, 12,
 assert.strictEqual(polygonOffsetStack.getFloat32(polygonOffsetCommand.capture.stackOffset + 4, true), -1.25);
 assert.strictEqual(polygonOffsetStack.getFloat32(polygonOffsetCommand.capture.stackOffset + 8, true), 2.5);
 
+assert.deepStrictEqual(Stream.ARG_WORDS.slice(-4), [8, 18, 7, 8],
+  'GLU calls capture every physical stack word, including paired GLdouble words');
+const mipPixels = 0x700;
+[0x1907, 0x1907, 2, 2, 0x1907, 0x1401, mipPixels].forEach((value, i) =>
+  dv.setUint32(stack + 4 + i * 4, value, true));
+assert.deepStrictEqual(Stream.pointerSpec(61, dv, stack), {
+  arg: 6, pointer: mipPixels, length: 12, borrow: true,
+}, 'gluBuild2DMipmaps snapshots its RGB client pixels before returning to the guest');
+
 // Small generic client pointers are copied into the stream because engines
 // commonly reuse scratch storage between calls.
 const matrix = 0x500;

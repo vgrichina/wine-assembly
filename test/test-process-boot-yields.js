@@ -27,6 +27,9 @@ function syntheticLargePe() {
   bytes.writeUInt32LE(0x1000, section + 12);
   bytes.writeUInt32LE(0x100, section + 16);
   bytes.writeUInt32LE(0x200, section + 20);
+  // Packer-style combined CODE/IDATA/UDATA flags. UDATA does not make the
+  // section BSS when PointerToRawData and SizeOfRawData describe real bytes.
+  bytes.writeUInt32LE(0xe00000e0, section + 36);
   for (let i = 0x200; i < bytes.length; i++) bytes[i] = i & 0xff;
   return bytes;
 }
@@ -61,7 +64,7 @@ function fakeGuest(name, { nameGetter }) {
     load_pe: size => {
       assert.strictEqual(size, 0x240);
       assert.deepStrictEqual([...peMem.subarray(0x3040, 0x3080)], [...peBytes.subarray(0x240, 0x280)],
-        'section bytes beyond staging must exist before WAT processes imports/resources');
+        'mixed UDATA section bytes beyond staging must exist before WAT processes imports/resources');
       return 0x401000;
     },
   };

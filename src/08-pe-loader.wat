@@ -70,20 +70,15 @@
       (local.set $raw_off (i32.load (i32.add (local.get $section_off) (i32.const 20))))
       (local.set $characteristics (i32.load (i32.add (local.get $section_off) (i32.const 36))))
       ;; Watcom PE images use VirtualSize=0 and put the committed extent in
-      ;; SizeOfRawData, including for IMAGE_SCN_CNT_UNINITIALIZED_DATA sections
-      ;; whose PointerToRawData is zero. Map the larger declared span, but never
-      ;; copy file bytes into an uninitialized section.
+      ;; SizeOfRawData. A zero PointerToRawData is BSS, regardless of flags.
+      ;; Packers also emit combined CODE/IDATA/UDATA characteristics on a single
+      ;; section with real raw bytes; the UDATA bit does not discard those bytes.
       (local.set $mapped_size
         (if (result i32) (i32.gt_u (local.get $vsize) (local.get $raw_size))
           (then (local.get $vsize))
           (else (local.get $raw_size))))
       (local.set $copy_size
-        (if (result i32)
-            (i32.or
-              (i32.ne
-                (i32.and (local.get $characteristics) (i32.const 0x80))
-                (i32.const 0))
-              (i32.eqz (local.get $raw_off)))
+        (if (result i32) (i32.eqz (local.get $raw_off))
           (then (i32.const 0))
           (else (local.get $raw_size))))
       (local.set $initialized_size (local.get $copy_size))

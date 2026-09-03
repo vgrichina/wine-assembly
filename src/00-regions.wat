@@ -245,7 +245,7 @@
     (stride $THREAD_CACHE_STRIDE (count 8))
     (owner "01-header.wat:1523"))
   (region.declare-derived $GUEST_STACK (base (g2w 0x07400000)) (size 0x00100000) (align 0x00001000)
-    (owner "08-pe-loader.wat:124"))
+    (owner "08-pe-loader.wat:119"))
   (region.declare-derived $THUNK_BASE (base (g2w 0x07500000)) (size 0x00040000) (align 0x00001000)
     (owner "08-pe-loader.wat:28"))
   (region.declare $PE_STAGING (size 0x00800000) (align 0x00001000)
