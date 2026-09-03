@@ -1445,7 +1445,10 @@ async function main() {
           singleApp: document.body.classList.contains('single-app'),
           exclusive: document.body.classList.contains('exclusive-fullscreen'),
           wrapBackground: getComputedStyle(wrap).backgroundColor,
+          mainWidth: main ? main.w | 0 : -1,
+          mainHeight: main ? main.h | 0 : -1,
           clientHeight: main && main.clientRect ? main.clientRect.h | 0 : -1,
+          statusWidth: status ? status.w | 0 : -1,
           statusY: status ? status.y | 0 : -1,
           statusHeight: status ? status.h | 0 : -1,
         };
@@ -1482,9 +1485,17 @@ async function main() {
         `${app.label}: a windowed utility must not enter exclusive fullscreen: ${summary}`);
       assert.strictEqual(desktopLayout.wrapBackground, 'rgb(0, 128, 128)',
         `${app.label}: unused ordinary-desktop space must remain Win98 teal: ${summary}`);
-      assert.strictEqual(desktopLayout.statusY + desktopLayout.statusHeight,
-        desktopLayout.clientHeight,
-        `${app.label}: status bar should dock below the Track control: ${summary}`);
+      assert.deepStrictEqual(desktopLayout, {
+        singleApp: false,
+        exclusive: false,
+        wrapBackground: 'rgb(0, 128, 128)',
+        mainWidth: 290,
+        mainHeight: 208,
+        clientHeight: 163,
+        statusWidth: 284,
+        statusY: 123,
+        statusHeight: 20,
+      }, `${app.label}: window and status geometry should match the v86 reference: ${summary}`);
     }
     if (app.minCanvasHeight) {
       assert(after.canvas && after.canvas.height >= app.minCanvasHeight,

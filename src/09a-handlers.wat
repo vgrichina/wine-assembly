@@ -6015,7 +6015,7 @@
       (local.get $windowpos) (local.get $arg0) (local.get $insert_after)
       (local.get $x) (local.get $y) (local.get $cx) (local.get $cy)
       (local.get $flags))
-    (call $windowpos_message_end (local.get $windowpos) (local.get $arg0)) (call $statusbar_native_finish_parent_size (local.get $arg0))
+    (call $windowpos_message_end (local.get $windowpos) (local.get $arg0))
     (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $arg0)))
     (if (i32.and
           (i32.and
@@ -6822,7 +6822,7 @@
       (local.get $windowpos) (local.get $arg0) (local.get $insert_after)
       (local.get $x) (local.get $y) (local.get $cx) (local.get $cy)
       (local.get $uFlags))
-    (call $windowpos_message_end (local.get $windowpos) (local.get $arg0)) (call $statusbar_native_finish_parent_size (local.get $arg0))
+    (call $windowpos_message_end (local.get $windowpos) (local.get $arg0))
     ;; Repaint a moved WAT-native control immediately, but only if it is
     ;; actually on screen. Its own WS_VISIBLE bit is not enough: a control
     ;; inside a hidden dialog page keeps that bit set, and painting it writes
