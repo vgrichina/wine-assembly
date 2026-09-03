@@ -714,7 +714,7 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan_dll)))
     ;; Not a loaded DLL — create thunk as before (Win32 API). Win32 stubs are
-    ;; keyed by name only, so an ordinal here stays unresolved.
+    (if (call $resolve_static_module_ordinal (local.get $arg0) (local.get $arg1)) (then (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     (br_if $gpa (i32.lt_u (local.get $arg1) (i32.const 0x10000)))
     ;; Allocate hint(2) + name in guest heap
     (local.set $tmp (call $guest_strlen (local.get $arg1)))
@@ -1241,8 +1241,8 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
-    ;; Not found — return EXE base (system DLL stub) so GetProcAddress can create thunks
-    (global.set $eax (global.get $image_base))
+    (local.set $tmp (call $guest_name_is_static_system_dll (local.get $arg0)))
+    (global.set $eax (select (i32.add (global.get $STATIC_SYS_DLL_HANDLE_BASE) (i32.sub (local.get $tmp) (i32.const 1))) (global.get $image_base) (i32.ne (local.get $tmp) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -18417,3 +18417,31 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (if (local.get $dest_path) (then (call $heap_free (local.get $dest_path))))
     (global.set $eax (local.get $retval))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36))))
+
+  ;; Resolve an ordinal requested from a pseudo handle returned for a
+  ;; statically dispatched system DLL. Returns one when the handle/ordinal
+  ;; pair was consumed, including an unsupported ordinal whose Win32 result is
+  ;; NULL. Heaven Seven uses this path for DSOUND.#1 (DirectSoundCreate).
+  (func $resolve_static_module_ordinal (param $module i32) (param $ordinal i32) (result i32)
+    (local $idx i32) (local $dll_name_wa i32) (local $api_id i32) (local $thunk_wa i32)
+    (if (i32.ge_u (local.get $ordinal) (i32.const 0x10000))
+      (then (return (i32.const 0))))
+    (local.set $idx (call $static_sys_dll_from_handle (local.get $module)))
+    (if (i32.eqz (local.get $idx)) (then (return (i32.const 0))))
+    (local.set $dll_name_wa (call $static_sys_dll_name_at
+      (i32.sub (local.get $idx) (i32.const 1))))
+    (local.set $api_id (call $resolve_import_ordinal
+      (call $w2g (local.get $dll_name_wa)) (local.get $dll_name_wa) (local.get $ordinal)))
+    (if (i32.ne (local.get $api_id) (i32.const -1))
+      (then
+        (local.set $thunk_wa (i32.add (global.get $THUNK_BASE)
+          (i32.mul (global.get $num_thunks) (i32.const 8))))
+        (i32.store (local.get $thunk_wa)
+          (i32.or (i32.const 0x80000000) (local.get $ordinal)))
+        (i32.store offset=4 (local.get $thunk_wa) (local.get $api_id))
+        (global.set $eax (i32.add
+          (i32.sub (local.get $thunk_wa) (global.get $GUEST_BASE))
+          (global.get $image_base)))
+        (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+        (call $update_thunk_end)))
+    (i32.const 1))
