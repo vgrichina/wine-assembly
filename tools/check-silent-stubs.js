@@ -174,8 +174,10 @@ const digest = crypto.createHash('sha256')
 // nCmdShow to the browser child-launch path and returns its success/error code.
 // 2026-09-03: 461 -> 460. GetWindowRgn now copies the window's retained USER
 // region into the caller's HRGN and returns its actual region complexity.
-const EXPECTED_COUNT = 460;
-const EXPECTED_SHA256 = 'ad10a8da2ea40b57ae53b6224a0626cd9dfed292b2704c923f05583c866fb1c9';
+// 2026-09-03: 460 -> 459. FreeConsole now tears down the process console
+// window, buffers, input queue, aliases, and attachment state.
+const EXPECTED_COUNT = 459;
+const EXPECTED_SHA256 = '74a370bc2d5e3ea9994cc8510a83be1604287242ca4ea8c3fcc99fc9ee0e86d7';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

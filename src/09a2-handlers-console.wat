@@ -33,6 +33,8 @@
         (return (i32.atomic.load
           (i32.add (region.addr $CONSOLE_INPUT 0xC00)
             (i32.shl (local.get $index) (i32.const 2)))))))
+    (if (i32.eqz (call $console_is_attached))
+      (then (return (i32.const 0))))
     (i32.add (local.get $index) (i32.const 1)))
 
   (func $console_std_handle_set (param $which i32) (param $handle i32) (result i32)
@@ -48,6 +50,99 @@
       (i32.shl (i32.const 1) (local.get $index))))
     (i32.const 1))
 
+  ;; +C10 is process-shared attachment state: 0 unknown, 1 attached, 2
+  ;; detached. On first use, derive it from IMAGE_OPTIONAL_HEADER.Subsystem.
+  ;; A harness/Win16 task without a mapped PE retains the historical attached
+  ;; default; a browser-loaded PE gets the Windows GUI (2) vs CUI (3) split.
+  (func $console_attachment_state (result i32)
+    (local $state i32) (local $pe i32) (local $initial i32)
+    (local.set $state (i32.atomic.load (region.addr $CONSOLE_INPUT 0xC10)))
+    (if (local.get $state) (then (return (local.get $state))))
+    (local.set $initial (i32.const 1))
+    (if (i32.and
+          (i32.ne (global.get $image_base) (i32.const 0))
+          (i32.eq (call $gl16 (global.get $image_base)) (i32.const 0x5A4D)))
+      (then
+        (local.set $pe (i32.add (global.get $image_base)
+          (call $gl32 (i32.add (global.get $image_base) (i32.const 0x3C)))))
+        (if (i32.eq (call $gl32 (local.get $pe)) (i32.const 0x00004550))
+          (then
+            (local.set $initial
+              (select (i32.const 1) (i32.const 2)
+                (i32.eq (call $gl16 (i32.add (local.get $pe) (i32.const 0x5C)))
+                        (i32.const 3))))))))
+    (drop (i32.atomic.rmw.cmpxchg (region.addr $CONSOLE_INPUT 0xC10)
+      (i32.const 0) (local.get $initial)))
+    (i32.atomic.load (region.addr $CONSOLE_INPUT 0xC10)))
+
+  (func $console_is_attached (result i32)
+    (i32.eq (call $console_attachment_state) (i32.const 1)))
+
+  ;; Clear console-owned objects without touching redirected standard-handle
+  ;; values at +C00 or attachment state at +C10. AllocConsole chooses whether
+  ;; to replace redirected values; FreeConsole merely detaches them.
+  (func $console_state_clear
+    (local $slot i32) (local $rec i32) (local $wake i32)
+    (local.set $slot (i32.const 1))
+    (block $done (loop $buffers
+      (br_if $done (i32.ge_u (local.get $slot) (global.get $CONSOLE_BUFFER_COUNT)))
+      (local.set $rec (i32.add (global.get $CONSOLE_BUFFER_TABLE)
+        (i32.mul (local.get $slot) (global.get $CONSOLE_BUFFER_STRIDE))))
+      (if (i32.and
+            (i32.eq (i32.load (local.get $rec)) (global.get $CONSOLE_BUFFER_MAGIC))
+            (i32.ne (i32.load offset=4 (local.get $rec)) (i32.const 0)))
+        (then (call $heap_free (i32.load offset=4 (local.get $rec)))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $buffers)))
+    (local.set $wake (i32.load (region.addr $CONSOLE_INPUT 8)))
+    (if (local.get $wake) (then (call $host_reset_event (local.get $wake))))
+    (memory.fill (region.addr $CONSOLE_INPUT 0) (i32.const 0) (i32.const 32))
+    (if (local.get $wake)
+      (then (i32.store (region.addr $CONSOLE_INPUT 8) (local.get $wake))))
+    (memory.fill (region.addr $CONSOLE_INPUT 32) (i32.const 0)
+      (i32.mul (global.get $CONSOLE_INPUT_MAX) (i32.const 20)))
+    (memory.fill (global.get $CONSOLE_BUFFER_TABLE) (i32.const 0) (i32.const 448))
+    (memory.fill (global.get $CONSOLE_HANDLE_TABLE) (i32.const 0) (i32.const 256))
+    (memory.fill (global.get $CONSOLE_TITLE_STORAGE) (i32.const 0)
+      (global.get $CONSOLE_TITLE_MAX))
+    (global.set $console_width (i32.const 80))
+    (global.set $console_height (i32.const 25))
+    (global.set $console_cursor_x (i32.const 0))
+    (global.set $console_cursor_y (i32.const 0))
+    (global.set $console_attr (i32.const 7))
+    (global.set $console_mode (i32.const 3))
+    (global.set $console_cells_ready (i32.const 0))
+    (global.set $console_cursor_visible (i32.const 1))
+    (global.set $console_cursor_size (i32.const 25))
+    (global.set $console_handle (i32.const 0x00030001))
+    (global.set $console_loaded_handle (i32.const 0x00030001))
+    (global.set $console_text_base (global.get $CONSOLE_TEXT))
+    (global.set $console_attr_base (global.get $CONSOLE_ATTR)))
+
+  (func $console_attach_new (result i32)
+    (if (call $console_is_attached) (then (return (i32.const 0))))
+    (i32.atomic.store (region.addr $CONSOLE_INPUT 0xC10) (i32.const 1))
+    ;; AllocConsole creates fresh CONIN$/CONOUT$ standard handles.
+    (i32.atomic.store (region.addr $CONSOLE_INPUT 0xC0C) (i32.const 0))
+    (call $console_state_clear)
+    (call $console_buffers_init)
+    (drop (call $console_buffer_load (i32.const 0x00030001)))
+    (call $console_clear_cells)
+    (call $console_ensure_window)
+    (i32.const 1))
+
+  (func $console_detach
+    (local $hwnd i32)
+    ;; FreeConsole succeeds even when already detached, but console-owned
+    ;; state is reset on every detach operation.
+    (drop (call $console_attachment_state))
+    (i32.atomic.store (region.addr $CONSOLE_INPUT 0xC10) (i32.const 2))
+    (local.set $hwnd (call $console_shared_hwnd))
+    (call $console_shared_hwnd_set (i32.const 0))
+    (global.set $console_hwnd (i32.const 0))
+    (if (local.get $hwnd) (then (call $wnd_destroy_recursive (local.get $hwnd))))
+    (call $console_state_clear))
+
   (func $console_title_ensure
     ;; load_pe clears mutable high-memory tables after WebAssembly data
     ;; initialization. Restore the default title on first console use.
@@ -61,10 +156,16 @@
   ;; The complete token is stored in the slot: a closed generation therefore
   ;; stays invalid even after that slot is reused.
   (func $console_handle_resolve (param $handle i32) (result i32)
-    (local $slot i32) (local $rec i32)
+    (local $slot i32) (local $rec i32) (local $canonical i32)
     (if (i32.ne (i32.and (local.get $handle) (i32.const 0xFFFF0000))
                 (global.get $CONSOLE_HANDLE_TAG))
-      (then (return (local.get $handle))))
+      (then
+        (if (i32.and
+              (i32.and (i32.ge_u (local.get $handle) (i32.const 1))
+                       (i32.le_u (local.get $handle) (i32.const 3)))
+              (i32.eqz (call $console_is_attached)))
+          (then (return (i32.const 0))))
+        (return (local.get $handle))))
     (local.set $slot (i32.and (local.get $handle) (i32.const 31)))
     (if (i32.ge_u (local.get $slot) (global.get $CONSOLE_HANDLE_COUNT))
       (then (return (i32.const 0))))
@@ -72,7 +173,10 @@
       (i32.mul (local.get $slot) (global.get $CONSOLE_HANDLE_STRIDE))))
     (if (i32.ne (i32.atomic.load (local.get $rec)) (local.get $handle))
       (then (return (i32.const 0))))
-    (i32.atomic.load offset=4 (local.get $rec)))
+    (local.set $canonical (i32.atomic.load offset=4 (local.get $rec)))
+    (if (i32.eqz (call $console_is_attached))
+      (then (return (i32.const 0))))
+    (local.get $canonical))
 
   (func $console_handle_duplicate (param $handle i32) (result i32)
     (local $canonical i32) (local $slot i32) (local $rec i32)
@@ -200,6 +304,7 @@
   (func $console_buffer_record (param $handle i32) (result i32)
     (local $slot i32) (local $rec i32)
     (local.set $handle (call $console_handle_resolve (local.get $handle)))
+    (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
     (call $console_buffers_init)
     (if (i32.or (i32.eq (local.get $handle) (i32.const 2))
           (i32.or (i32.eq (local.get $handle) (i32.const 3))
@@ -385,14 +490,12 @@
 
   ;; --- Console API handlers ---
 
-  ;; AllocConsole() → BOOL
-  ;; Attach a console to a GUI process. Wine-Assembly's console is process-local
-  ;; already, so attachment means ensuring its cell store and native window
-  ;; exist. Repeated calls are harmless and report success.
+  ;; AllocConsole() → BOOL. A process may own only one console; allocating a
+  ;; second one fails until FreeConsole detaches the first.
   (func $handle_AllocConsole (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $console_ensure_window)
-    (call $console_buffer_save_loaded)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $console_attach_new))
+    (if (i32.eqz (global.get $eax))
+      (then (global.set $last_error (i32.const 5)))) ;; ERROR_ACCESS_DENIED
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   ;; SetConsoleScreenBufferSize(hConsole, dwSize) → BOOL
@@ -1176,6 +1279,7 @@
   (func $console_input_poll_host
     (local $packed i32) (local $msg i32) (local $wparam i32)
     (local $hwnd i32) (local $target i32)
+    (if (i32.eqz (call $console_is_attached)) (then (return)))
     (call $console_ensure_window)
     ;; PM_NOREMOVE may already own the cached event.
     (if (global.get $pending_input_packed) (then (return)))
@@ -1886,6 +1990,7 @@
 
   (func $console_ensure_window
     (local $hwnd i32)
+    (if (i32.eqz (call $console_is_attached)) (then (return)))
     (call $console_title_ensure)
     (if (global.get $console_hwnd) (then (return)))
     ;; Another thread may already have created it — WND_RECORDS is shared, so
@@ -1963,6 +2068,7 @@
   ;; Called after anything changes the screen buffer.
   (func $console_refresh
     (call $console_ensure_window)
+    (if (i32.eqz (global.get $console_hwnd)) (then (return)))
     (call $console_resize_window)
     (drop (call $console_wndproc (global.get $console_hwnd) (i32.const 0x000F)
       (i32.const 0) (i32.const 0))))

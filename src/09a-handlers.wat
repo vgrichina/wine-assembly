@@ -10298,10 +10298,10 @@ nW — STUB: unimplemented
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; FreeConsole() — GUI processes may detach from their inherited console.
-  ;; The virtual console has no external process attachment to tear down, but
-  ;; reporting success gives callers the same observable lifecycle result.
+  ;; FreeConsole() — detach console handles/window/state. Windows reports
+  ;; success even when the process was already detached.
   (func $handle_FreeConsole (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $console_detach)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
