@@ -1195,6 +1195,7 @@
   (data (region.addr $USER_DIALOG_STRINGS 0x208) "Pages\00")
   (data (region.addr $USER_DIALOG_STRINGS 0x20E) "1\00")
   (data (region.addr $USER_DIALOG_STRINGS 0x210) "9999\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x215) "Back\00Next\00")
   (data (region.addr $USER_DIALOG_STRINGS 0x220) "WINSPOOL\00")
   (data (region.addr $USER_DIALOG_STRINGS 0x229) "Web Printer\00")
   ;; ChooseColor labels from the classic partial color-dialog template.
@@ -3267,6 +3268,16 @@
   (global $modal_saved_ebp (mut i32) (i32.const 0))
   (global $modal_restore_pending (mut i32) (i32.const 0))
   (global $modal_loop_thunk (mut i32) (i32.const 0)) ;; CACA0006 thunk addr
+  ;; COMCTL32 PropertySheetA uses the common modal pump but owns a real
+  ;; guest DLGPROC page inside a WAT-native wizard frame.
+  (global $propsheet_header (mut i32) (i32.const 0))
+  (global $propsheet_pages (mut i32) (i32.const 0))
+  (global $propsheet_page_count (mut i32) (i32.const 0))
+  (global $propsheet_page_index (mut i32) (i32.const 0))
+  (global $propsheet_page_hwnd (mut i32) (i32.const 0))
+  (global $propsheet_frame_hwnd (mut i32) (i32.const 0))
+  (global $propsheet_finish_page (mut i32) (i32.const 0))
+  (global $propsheet_finish_nmhdr (mut i32) (i32.const 0))
   (global $ddenum_ret_thunk (mut i32) (i32.const 0)) ;; CACA0007 DDEnumerate callback return
   ;; D3D EnumDevices multi-device iteration state (CACA000B)
   (global $d3d_enum_dev_thunk (mut i32) (i32.const 0))

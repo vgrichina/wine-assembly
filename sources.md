@@ -1038,9 +1038,11 @@ downloaded into ignored `test/binaries/candidates/` directories and exercised
 through their original installers before using any extracted game files.
 
 - Jazz Jackrabbit 2 uses the pinned `J2swc123.exe`. Its InstallShield wizard
-  reaches the DirectX 5 choice and accepts **No, continue without DirectX 5**,
-  then enters a long synchronous extraction batch; a 330-second bounded run did
-  not return, so completion is not yet proven.
+  now renders all five original property-sheet pages, accepts **No, continue
+  without DirectX 5**, and starts the unchanged package's extraction dialog.
+  It creates `C:\\Games\\Jazz2Sw\\License.doc` and reads that member's compressed
+  bytes from the installer. The bundled inflate loop still occupies one
+  unbounded interpreter slice, so full installer completion is not yet proven.
 - Worms 2 was ultimately installed from Team17's smaller October demo archive,
   `Worms2Demo10Oct.zip` (7,299,379 bytes; SHA-256
   `c65d36cef69437f066a3d50d8ff26d43d228a0595d7bcc106d541375e1d3cfd8`).

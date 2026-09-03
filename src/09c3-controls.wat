@@ -1491,6 +1491,9 @@
     ;; the rest of OLE.
     (if (i32.eq (local.get $class) (i32.const 30))
       (then (return (call $insertobj_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 31 = COMCTL32 PropertySheetA wizard frame.
+    (if (i32.eq (local.get $class) (i32.const 31))
+      (then (return (call $propsheet_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -16696,6 +16699,219 @@
       (else
         (if (local.get $shared_hwnd)
           (then (i32.atomic.store (global.get $SHARED_MODAL_DONE) (i32.const 1)))))))
+
+  ;; ---- COMCTL32 property-sheet wizard ----
+  ;; This implements the classic PROPSHEETHEADERA + inline PROPSHEETPAGEA
+  ;; form used by Win9x installers. The page itself remains application code:
+  ;; its resource template is loaded normally and its DLGPROC receives the
+  ;; standard initialization and PSN_* notifications.
+  (func $propsheet_notify (param $page i32) (param $code i32) (result i32)
+    (local $nm_g i32) (local $nm_w i32) (local $ret i32)
+    (if (i32.eqz (local.get $page)) (then (return (i32.const 0))))
+    (local.set $nm_g (call $heap_alloc (i32.const 12)))
+    (if (i32.eqz (local.get $nm_g)) (then (return (i32.const 0))))
+    (local.set $nm_w (call $g2w (local.get $nm_g)))
+    (i32.store (local.get $nm_w) (global.get $propsheet_frame_hwnd))
+    (i32.store offset=4 (local.get $nm_w) (i32.const 0))
+    (i32.store offset=8 (local.get $nm_w) (local.get $code))
+    (drop (call $dialog_extra_set (local.get $page) (i32.const 0) (i32.const 0)))
+    (local.set $ret (call $wnd_send_message
+      (local.get $page) (i32.const 0x004E) (i32.const 0) (local.get $nm_g)))
+    (call $heap_free (local.get $nm_g))
+    (local.get $ret))
+
+  (func $propsheet_destroy_page
+    (local $page i32)
+    (local.set $page (global.get $propsheet_page_hwnd))
+    (if (local.get $page)
+      (then
+        (call $wnd_destroy_tree (local.get $page))
+        (call $host_destroy_window (local.get $page))
+        (global.set $propsheet_page_hwnd (i32.const 0)))))
+
+  ;; PSN_WIZFINISH is allowed to perform the complete install before it
+  ;; returns. Enter that DLGPROC through the modal continuation so the CLI and
+  ;; browser regain control between bounded batches while it copies files.
+  (func $propsheet_begin_finish (param $page i32)
+    (local $nm_g i32) (local $nm_w i32) (local $proc i32)
+    (if (i32.or (i32.eqz (local.get $page))
+                (global.get $propsheet_finish_page))
+      (then (return)))
+    (local.set $proc (call $dialog_proc_get (local.get $page)))
+    (if (i32.eqz (local.get $proc)) (then (return)))
+    (local.set $nm_g (call $heap_alloc (i32.const 12)))
+    (if (i32.eqz (local.get $nm_g)) (then (return)))
+    (local.set $nm_w (call $g2w (local.get $nm_g)))
+    (i32.store (local.get $nm_w) (global.get $propsheet_frame_hwnd))
+    (i32.store offset=4 (local.get $nm_w) (i32.const 0))
+    (i32.store offset=8 (local.get $nm_w) (i32.const -208)) ;; PSN_WIZFINISH
+    (drop (call $dialog_extra_set (local.get $page) (i32.const 0) (i32.const 0)))
+    (global.set $propsheet_finish_page (local.get $page))
+    (global.set $propsheet_finish_nmhdr (local.get $nm_g))
+    ;; DLGPROC(hwnd, WM_NOTIFY, 0, nmhdr), stdcall return through CACA0006.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
+    (call $gs32 (global.get $esp) (global.get $modal_loop_thunk))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $page))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x004E))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $nm_g))
+    (global.set $eip (local.get $proc))
+    (global.set $steps (i32.const 0)))
+
+  (func $propsheet_show_page (param $index i32) (result i32)
+    (local $psp_g i32) (local $psp_w i32) (local $size i32)
+    (local $page i32) (local $hinst i32) (local $template i32) (local $proc i32)
+    (if (i32.ge_u (local.get $index) (global.get $propsheet_page_count))
+      (then (return (i32.const 0))))
+    (local.set $psp_g (global.get $propsheet_pages))
+    (local.set $size (i32.load (call $g2w (local.get $psp_g))))
+    (if (i32.lt_u (local.get $size) (i32.const 28))
+      (then (return (i32.const 0))))
+    (local.set $psp_g (i32.add (local.get $psp_g) (i32.mul (local.get $index) (local.get $size))))
+    (local.set $psp_w (call $g2w (local.get $psp_g)))
+    (local.set $hinst (i32.load offset=8 (local.get $psp_w)))
+    (local.set $template (i32.load offset=12 (local.get $psp_w)))
+    (local.set $proc (i32.load offset=24 (local.get $psp_w)))
+    (if (i32.or (i32.eqz (local.get $template)) (i32.eqz (local.get $proc)))
+      (then (return (i32.const 0))))
+    (local.set $page (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $wnd_table_set (local.get $page) (global.get $WNDPROC_DIALOG))
+    (drop (call $dialog_proc_set (local.get $page) (local.get $proc)))
+    (call $wnd_set_parent (local.get $page) (global.get $propsheet_frame_hwnd))
+    (call $push_rsrc_ctx (local.get $hinst))
+    ;; Zero controls is valid: installers commonly use an empty page template
+    ;; and create all controls from WM_INITDIALOG.
+    (drop (call $dlg_load (local.get $page) (local.get $template)))
+    (call $pop_rsrc_ctx)
+    ;; COMCTL strips WS_DISABLED from a page template and owns visibility.
+    (drop (call $wnd_set_style (local.get $page)
+      (i32.or
+        (i32.and (call $wnd_get_style (local.get $page)) (i32.const 0xF7FFFFFF))
+        (i32.const 0x50000000))))
+    (call $ctrl_geom_set (call $wnd_table_find (local.get $page))
+      (i32.const 10) (i32.const 10) (i32.const 420) (i32.const 228))
+    (call $host_dialog_loaded (local.get $page) (global.get $propsheet_frame_hwnd))
+    (call $host_set_parent (local.get $page) (global.get $propsheet_frame_hwnd))
+    (call $host_move_window (local.get $page)
+      (i32.const 10) (i32.const 10) (i32.const 420) (i32.const 228) (i32.const 1))
+    (call $host_show_window (local.get $page) (i32.const 5))
+    (global.set $propsheet_page_index (local.get $index))
+    (global.set $propsheet_page_hwnd (local.get $page))
+    (global.set $dlg_hwnd (local.get $page))
+    (drop (call $wnd_send_message
+      (local.get $page) (i32.const 0x0110) (i32.const 0) (local.get $psp_g)))
+    (drop (call $propsheet_notify (local.get $page) (i32.const -200))) ;; PSN_SETACTIVE
+    (call $dlg_seed_focus (local.get $page))
+    (call $dlg_fill_bkgnd (local.get $page))
+    (call $paint_flag_set_inv (local.get $page))
+    (local.get $page))
+
+  (func $propsheet_change_page (param $delta i32)
+    (local $old i32) (local $next i32) (local $notify i32) (local $ret i32)
+    (local.set $old (global.get $propsheet_page_hwnd))
+    (if (i32.eqz (local.get $old)) (then (return)))
+    (local.set $notify (select (i32.const -207) (i32.const -206) (i32.gt_s (local.get $delta) (i32.const 0))))
+    (local.set $ret (call $propsheet_notify (local.get $old) (local.get $notify)))
+    ;; A non-zero DWL_MSGRESULT vetoes the transition or names a page. The
+    ;; common installer path returns zero for the adjacent page.
+    (if (local.get $ret) (then (return)))
+    (local.set $next (i32.add (global.get $propsheet_page_index) (local.get $delta)))
+    (if (i32.lt_s (local.get $next) (i32.const 0)) (then (return)))
+    (if (i32.ge_u (local.get $next) (global.get $propsheet_page_count))
+      (then
+        (call $propsheet_begin_finish (local.get $old))
+        (return)))
+    (drop (call $propsheet_notify (local.get $old) (i32.const -201))) ;; PSN_KILLACTIVE
+    (call $propsheet_destroy_page)
+    (drop (call $propsheet_show_page (local.get $next))))
+
+  (func $propsheet_wndproc
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $cmd i32)
+    ;; PSM_SETWIZBUTTONS. Page code commonly posts this during PSN_SETACTIVE;
+    ;; navigation state is also derived from the current page below.
+    (if (i32.eq (local.get $msg) (i32.const 0x0470))
+      (then (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0111))
+      (then
+        (local.set $cmd (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+        (if (i32.or (i32.eq (local.get $cmd) (i32.const 1))
+                    (i32.eq (local.get $cmd) (i32.const 0x3024)))
+          (then (call $propsheet_change_page (i32.const 1)) (return (i32.const 0))))
+        (if (i32.eq (local.get $cmd) (i32.const 0x3023))
+          (then (call $propsheet_change_page (i32.const -1)) (return (i32.const 0))))
+        (if (i32.eq (local.get $cmd) (i32.const 2))
+          (then
+            ;; Page-level PSN_QUERYCANCEL may open a nested modal prompt. The
+            ;; common modal pump is intentionally single-level, so return the
+            ;; documented PropertySheetA cancel result without replacing its
+            ;; saved frame with an inner MessageBox frame.
+            (call $modal_done (i32.const 0))
+            (return (i32.const 0))))))
+    (if (i32.and (i32.eq (local.get $msg) (i32.const 0x0112))
+                 (i32.eq (local.get $wParam) (i32.const 0xF060)))
+      (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
+    (i32.const 0))
+
+  (func $create_property_sheet (param $header_g i32) (result i32)
+    (local $header_w i32) (local $flags i32) (local $owner i32)
+    (local $caption_g i32) (local $caption_w i32) (local $dlg i32)
+    (local $start i32)
+    (local.set $header_w (call $g2w (local.get $header_g)))
+    (if (i32.lt_u (i32.load (local.get $header_w)) (i32.const 36))
+      (then (return (i32.const 0))))
+    (local.set $flags (i32.load offset=4 (local.get $header_w)))
+    ;; PSH_PROPSHEETPAGE is required here; HPROPSHEETPAGE arrays are retained
+    ;; for CreatePropertySheetPageA compatibility but are not yet expanded.
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x00000008)))
+      (then (return (i32.const 0))))
+    (global.set $propsheet_header (local.get $header_g))
+    (global.set $propsheet_page_count (i32.load offset=24 (local.get $header_w)))
+    (global.set $propsheet_pages (i32.load offset=32 (local.get $header_w)))
+    (if (i32.or (i32.eqz (global.get $propsheet_page_count))
+                (i32.eqz (global.get $propsheet_pages)))
+      (then (return (i32.const 0))))
+    (local.set $owner (i32.load offset=8 (local.get $header_w)))
+    (local.set $caption_g (i32.load offset=20 (local.get $header_w)))
+    (local.set $caption_w (select (call $g2w (local.get $caption_g)) (i32.const 0) (local.get $caption_g)))
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $host_register_dialog_frame
+      (local.get $dlg) (local.get $owner) (local.get $caption_w)
+      (i32.const 440) (i32.const 310) (i32.const 1))
+    (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $wnd_set_owner (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
+    (call $ctrl_table_set (call $wnd_table_find (local.get $dlg)) (i32.const 31) (i32.const 0))
+    (if (local.get $caption_w)
+      (then (call $title_table_set (local.get $dlg) (local.get $caption_w) (call $strlen (local.get $caption_w)))))
+    (call $defwndproc_do_nccalcsize (local.get $dlg))
+    (call $nc_flags_set (local.get $dlg) (i32.const 3))
+    (call $dlg_fill_bkgnd (local.get $dlg))
+    (global.set $propsheet_frame_hwnd (local.get $dlg))
+    (global.set $propsheet_page_hwnd (i32.const 0))
+    ;; Standard Win98 wizard navigation controls.
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x3023)
+      (i32.const 188) (i32.const 250) (i32.const 74) (i32.const 24) (i32.const 0x50010000)
+      (call $wat_str_to_heap (region.addr $USER_DIALOG_STRINGS 0x215) (i32.const 4))))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x3024)
+      (i32.const 266) (i32.const 250) (i32.const 74) (i32.const 24) (i32.const 0x50010001)
+      (call $wat_str_to_heap (region.addr $USER_DIALOG_STRINGS 0x21A) (i32.const 4))))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
+      (i32.const 350) (i32.const 250) (i32.const 74) (i32.const 24) (i32.const 0x50010000)
+      (call $wat_str_to_heap (region.addr $USER_DIALOG_STRINGS 0x3) (i32.const 6))))
+    (local.set $start (i32.load offset=28 (local.get $header_w)))
+    (if (i32.ge_u (local.get $start) (global.get $propsheet_page_count))
+      (then (local.set $start (i32.const 0))))
+    (if (i32.eqz (call $propsheet_show_page (local.get $start)))
+      (then
+        (call $wnd_destroy_tree (local.get $dlg))
+        (call $host_destroy_window (local.get $dlg))
+        (global.set $propsheet_frame_hwnd (i32.const 0))
+        (return (i32.const 0))))
+    (global.set $main_hwnd (local.get $dlg))
+    (local.get $dlg))
 
   ;; Allocate a new control hwnd, register it as WNDPROC_CTRL_NATIVE,
   ;; populate CONTROL_TABLE with class+id, set parent, then deliver

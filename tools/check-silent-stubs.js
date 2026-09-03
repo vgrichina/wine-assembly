@@ -176,8 +176,8 @@ const digest = crypto.createHash('sha256')
 // former WinExec constant success after WinExec gained real process launch.
 // Main's stronger WinExec parsing/return-code behavior preserves that merged
 // inventory: WinExec was already non-silent on the gameplay branch.
-const EXPECTED_COUNT = 462;
-const EXPECTED_SHA256 = '1561f567b895980c10504996589e6059145eb55d43d382db34618fa1fd6b0332';
+const EXPECTED_COUNT = 461;
+const EXPECTED_SHA256 = '0ab10bae0e5c6c06147cafbaefe5c6198576cc95258ec96af5d1c0a2581ec1a9';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

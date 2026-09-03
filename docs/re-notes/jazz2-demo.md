@@ -1,5 +1,29 @@
 # Jazz Jackrabbit 2 Shareware 1.23s
 
+## Original installer
+
+The source fixture is the unchanged 20,069,847-byte `J2swc123.exe`; installed
+files remain local test material and are not a replacement distribution. The
+emulated COMCTL32 `PropertySheetA` now builds the installer wizard from its
+inline `PROPSHEETPAGEA` records and real dialog resources. Current validation
+walks Welcome, DirectX Setup, Destination, Jazz Jackrabbit 2 Links, and Finish
+Installation, selecting **No, continue without installing DirectX 5**.
+
+Finish opens the original `Extracting Jazz Jackrabbit 2 Shareware` dialog,
+creates `C:\\Games\\Jazz2Sw\\License.doc`, and reads its compressed member from
+the installer. `PSN_WIZFINISH` returns through the modal continuation rather
+than forcing the entire install through the property sheet's synchronous
+notification helper. A remaining interpreter preemption issue in the bundled
+inflate loop prevents the CLI wall-clock guard from stopping between batches,
+so a clean full extraction and installer-produced gameplay launch remain open.
+The visually inspected wizard capture is
+`/private/tmp/jazz2-installer-welcome.png`.
+
+Property-sheet Cancel currently returns the documented zero result directly.
+Jazz's page procedure normally opens a confirmation MessageBox from
+`PSN_QUERYCANCEL`; delivering that notification requires nested modal state,
+while the current common-dialog pump deliberately stores one modal frame.
+
 ## Package and launch
 
 The localhost-only dropdown mounts the installed payload from

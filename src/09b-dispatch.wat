@@ -934,6 +934,20 @@
         ;; pump out and let execution fall through to the post-MessageBox
         ;; instruction (LocalFree/ExitProcess) on the very next batch.
         (global.set $handler_set_eip (i32.const 1))
+        ;; A wizard page may do the complete installation from PSN_WIZFINISH.
+        ;; It returns here through the ordinary modal thunk so that work ran in
+        ;; bounded top-level batches instead of inside $wnd_send_message's
+        ;; nested 64M-block callback loop.
+        (if (global.get $propsheet_finish_page)
+          (then
+            (local.set $arg4
+              (call $dialog_extra_get
+                (global.get $propsheet_finish_page) (i32.const 0)))
+            (global.set $propsheet_finish_page (i32.const 0))
+            (call $heap_free (global.get $propsheet_finish_nmhdr))
+            (global.set $propsheet_finish_nmhdr (i32.const 0))
+            (if (i32.eqz (local.get $arg4))
+              (then (call $modal_done (i32.const 1))))))
         (if (call $modal_pump_step (global.get $modal_loop_thunk)) (then (return)))
         ;; Modal complete — splice the API call back together.
         (global.set $eax (global.get $modal_result))
