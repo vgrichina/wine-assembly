@@ -163,8 +163,10 @@ const digest = crypto.createHash('sha256')
 // per-owner activation history (-1). The inventory records both changes.
 // 2026-09-03: 469 -> 467. DrawDibOpen/Close now own, validate, invalidate and
 // free distinct opaque drawing contexts instead of returning constant success.
-const EXPECTED_COUNT = 467;
-const EXPECTED_SHA256 = '9a1c071d662a21d527f4734a1492095d8d5dbbac235abab8715462ba0215bc61';
+// 2026-09-03: 467 -> 466. GetLogicalDrives now queries the browser VFS's live
+// assignment mask instead of reporting a fixed C:/D: constant.
+const EXPECTED_COUNT = 466;
+const EXPECTED_SHA256 = '183abee8bb842b219a70e848b01d3c54764dc2ff35d31f81179dfaa557b605fe';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

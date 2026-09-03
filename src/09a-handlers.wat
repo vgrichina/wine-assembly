@@ -13303,49 +13303,68 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
 
-  ;; 484: GetLogicalDrives() — return bitmask of drives (bits 2/3 = C:/D:)
+  ;; 484: GetLogicalDrives() — one bit per currently assigned drive letter.
   (func $handle_GetLogicalDrives (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x0C))  ;; fixed C: plus CD-ROM D:
+    (global.set $eax (call $host_fs_logical_drive_mask))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; GetLogicalDriveStringsA(nBufferLength, lpBuffer) — return "C:\\\0D:\\\0\0".
-  ;; A Win98 installation normally exposes its fixed system disk and CD-ROM;
-  ;; the CLI/reference harness mounts immutable fixture sets on D:.
+  ;; GetLogicalDriveStringsA/W returns each assigned root plus one final NUL.
+  ;; The required size includes that final NUL; a successful return excludes it.
+  (func $logical_drive_strings
+        (param $length i32) (param $buffer_g i32) (param $wide i32) (result i32)
+    (local $mask i32) (local $letter i32) (local $count i32)
+    (local $required i32) (local $buf i32) (local $out i32) (local $stride i32)
+    (local.set $mask (call $host_fs_logical_drive_mask))
+    (local.set $letter (i32.const 0))
+    (block $count_done (loop $count_loop
+      (br_if $count_done (i32.ge_u (local.get $letter) (i32.const 26)))
+      (if (i32.and (local.get $mask) (i32.shl (i32.const 1) (local.get $letter)))
+        (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))
+      (local.set $letter (i32.add (local.get $letter) (i32.const 1)))
+      (br $count_loop)))
+    (local.set $required (i32.add (i32.mul (local.get $count) (i32.const 4)) (i32.const 1)))
+    (if (i32.lt_u (local.get $length) (local.get $required))
+      (then (return (local.get $required))))
+    (if (i32.eqz (local.get $buffer_g))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (return (i32.const 0))))
+    (local.set $buf (call $g2w (local.get $buffer_g)))
+    (local.set $stride (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (local.set $letter (i32.const 0))
+    (block $write_done (loop $write_loop
+      (br_if $write_done (i32.ge_u (local.get $letter) (i32.const 26)))
+      (if (i32.and (local.get $mask) (i32.shl (i32.const 1) (local.get $letter)))
+        (then
+          (if (local.get $wide)
+            (then
+              (i32.store16 (i32.add (local.get $buf) (local.get $out))
+                (i32.add (i32.const 0x41) (local.get $letter)))
+              (i32.store16 (i32.add (local.get $buf) (i32.add (local.get $out) (i32.const 2))) (i32.const 0x3A))
+              (i32.store16 (i32.add (local.get $buf) (i32.add (local.get $out) (i32.const 4))) (i32.const 0x5C))
+              (i32.store16 (i32.add (local.get $buf) (i32.add (local.get $out) (i32.const 6))) (i32.const 0)))
+            (else
+              (i32.store8 (i32.add (local.get $buf) (local.get $out))
+                (i32.add (i32.const 0x41) (local.get $letter)))
+              (i32.store8 (i32.add (local.get $buf) (i32.add (local.get $out) (i32.const 1))) (i32.const 0x3A))
+              (i32.store8 (i32.add (local.get $buf) (i32.add (local.get $out) (i32.const 2))) (i32.const 0x5C))
+              (i32.store8 (i32.add (local.get $buf) (i32.add (local.get $out) (i32.const 3))) (i32.const 0))))
+          (local.set $out (i32.add (local.get $out) (i32.mul (i32.const 4) (local.get $stride))))))
+      (local.set $letter (i32.add (local.get $letter) (i32.const 1)))
+      (br $write_loop)))
+    (if (local.get $wide)
+      (then (i32.store16 (i32.add (local.get $buf) (local.get $out)) (i32.const 0)))
+      (else (i32.store8 (i32.add (local.get $buf) (local.get $out)) (i32.const 0))))
+    (i32.sub (local.get $required) (i32.const 1)))
+
   (func $handle_GetLogicalDriveStringsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32)
-    (if (i32.lt_u (local.get $arg0) (i32.const 9))
-      (then (global.set $eax (i32.const 9)))
-      (else
-        (local.set $buf (call $g2w (local.get $arg1)))
-        (i32.store8 (local.get $buf) (i32.const 0x43))              ;; 'C'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 0x3A))  ;; ':'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 2)) (i32.const 0x5C))  ;; '\\'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 3)) (i32.const 0))
-        (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x44))  ;; 'D'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 5)) (i32.const 0x3A))  ;; ':'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 6)) (i32.const 0x5C))  ;; '\\'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 7)) (i32.const 0))
-        (i32.store8 (i32.add (local.get $buf) (i32.const 8)) (i32.const 0))
-        (global.set $eax (i32.const 8))))
+    (global.set $eax (call $logical_drive_strings (local.get $arg0) (local.get $arg1) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; GetLogicalDriveStringsW(nBufferLength, lpBuffer) — UTF-16 multistring
-  ;; counterpart exposing the same fixed C: and CD-ROM D: roots.
   (func $handle_GetLogicalDriveStringsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32)
-    (if (i32.lt_u (local.get $arg0) (i32.const 9))
-      (then (global.set $eax (i32.const 9)))
-      (else
-        (local.set $buf (call $g2w (local.get $arg1)))
-        ;; UTF-16LE "C:\\0D:\\0\0".
-        (i32.store (local.get $buf) (i32.const 0x003a0043))
-        (i32.store offset=4 (local.get $buf) (i32.const 0x0000005c))
-        (i32.store offset=8 (local.get $buf) (i32.const 0x003a0044))
-        (i32.store offset=12 (local.get $buf) (i32.const 0x0000005c))
-        (i32.store16 offset=16 (local.get $buf) (i32.const 0))
-        (global.set $eax (i32.const 8))))
+    (global.set $eax (call $logical_drive_strings (local.get $arg0) (local.get $arg1) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
