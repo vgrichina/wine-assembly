@@ -423,3 +423,21 @@ curl -fL -o /tmp/h7-final.zip \
   https://archive.scene.org/pub/parties/2000/mekkasymposium00/in64/h7-final.zip
 unzip -j /tmp/h7-final.zip HEAVEN7W.EXE -d binaries/demoscene/heaven-seven
 ```
+
+**Cashcow** — Aardbei's Windows 64K intro, placed fourth at DreamHack 1999.
+The launcher passes the release's documented `w` switch for windowed 512x384
+output. The group archive also contains its original notes and batch files.
+
+- Source: `https://archive.scene.org/pub/demos/groups/aardbei/aardbei_cashcow.zip`
+- Archive size: 83,365 bytes
+- Archive SHA-256: `696e90198573d13050548760ebcbe0c808e6d55be2ffabd50d525785bc432246`
+- `cashcow.exe` size: 81,899 bytes
+- `cashcow.exe` SHA-256: `4c77dabf9bce091b16df267bfc230f0d9b063da1b23b77148348b20d4c151ea2`
+- Destination: `demoscene/cashcow/CASHCOW.EXE`
+
+```bash
+curl -fL -o /tmp/aardbei_cashcow.zip \
+  https://archive.scene.org/pub/demos/groups/aardbei/aardbei_cashcow.zip
+unzip -j /tmp/aardbei_cashcow.zip cashcow.exe -d binaries/demoscene/cashcow
+mv binaries/demoscene/cashcow/cashcow.exe binaries/demoscene/cashcow/CASHCOW.EXE
+```
