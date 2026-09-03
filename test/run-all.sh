@@ -156,6 +156,7 @@ UNIT=(
   test/test-starcraft-dll-policy.js
   test/test-debug-game-apps.js
   test/test-dllmain-load-context.js
+  test/test-disable-thread-library-calls.js
   test/test-lzcopy.js
   test/test-dos-game-corpus.js
   test/test-debug-thread-state.js

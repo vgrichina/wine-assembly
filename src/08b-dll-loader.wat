@@ -20,7 +20,7 @@
     (local $preferred_base i32) (local $delta i32)
     (local $import_rva i32) (local $export_rva i32) (local $export_size i32)
     (local $reloc_rva i32) (local $reloc_size i32)
-    (local $entry_rva i32) (local $characteristics i32)
+    (local $entry_rva i32) (local $tls_rva i32) (local $characteristics i32)
     (local $dll_idx i32) (local $tbl_ptr i32)
     (local $src i32) (local $dst i32)
     (local $rsrc_rva_d i32) (local $rsrc_size_d i32) (local $rsrc_ptr i32)
@@ -52,6 +52,10 @@
     (local.set $import_rva (i32.load (i32.add (local.get $pe_off) (i32.const 128))))
     (local.set $reloc_rva (i32.load (i32.add (local.get $pe_off) (i32.const 160))))
     (local.set $reloc_size (i32.load (i32.add (local.get $pe_off) (i32.const 164))))
+    ;; IMAGE_DIRECTORY_ENTRY_TLS (9). A DLL with static TLS cannot suppress
+    ;; thread notifications because its runtime needs them to initialize each
+    ;; thread's static TLS block.
+    (local.set $tls_rva (i32.load (i32.add (local.get $pe_off) (i32.const 192))))
     ;; Resource data directory = entry #2 (offset 136 in optional header)
     (local.set $rsrc_rva_d  (i32.load (i32.add (local.get $pe_off) (i32.const 136))))
     (local.set $rsrc_size_d (i32.load (i32.add (local.get $pe_off) (i32.const 140))))
@@ -97,6 +101,9 @@
     (local.set $rsrc_ptr (i32.add (global.get $DLL_RSRC_TABLE) (i32.mul (local.get $dll_idx) (i32.const 8))))
     (i32.store (local.get $rsrc_ptr)                         (local.get $rsrc_rva_d))
     (i32.store (i32.add (local.get $rsrc_ptr) (i32.const 4)) (local.get $rsrc_size_d))
+    (i32.store
+      (i32.add (global.get $DLL_FLAGS_TABLE) (i32.shl (local.get $dll_idx) (i32.const 2)))
+      (i32.ne (local.get $tls_rva) (i32.const 0)))
 
     ;; Parse export directory
     (if (i32.ne (local.get $export_rva) (i32.const 0))
@@ -123,6 +130,50 @@
     (if (result i32) (i32.ne (local.get $entry_rva) (i32.const 0))
       (then (i32.add (local.get $load_addr) (local.get $entry_rva)))
       (else (i32.const 0))))
+
+  ;; Resolve a live dynamic-library module handle to its DLL_TABLE slot.
+  ;; The executable image is deliberately absent: DisableThreadLibraryCalls
+  ;; accepts a DLL module, not GetModuleHandle(NULL)'s executable handle.
+  (func $dll_index_from_module (param $module i32) (result i32)
+    (local $i i32)
+    (block $missing (loop $scan
+      (br_if $missing (i32.ge_u (local.get $i) (global.get $dll_count)))
+      (if (i32.eq (i32.load (i32.add (global.get $DLL_TABLE)
+            (i32.mul (local.get $i) (i32.const 32)))) (local.get $module))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  ;; Return 1 only when this loaded DLL still wants DLL_THREAD_ATTACH/DETACH.
+  ;; Exported because both cooperative and real browser Worker creation must
+  ;; consult the same process-shared loader state immediately before calling
+  ;; DllMain; caching this decision in JS would race a later disable call.
+  (func $dll_thread_notifications_enabled (export "dll_thread_notifications_enabled")
+      (param $module i32) (result i32)
+    (local $index i32)
+    (local.set $index (call $dll_index_from_module (local.get $module)))
+    (if (result i32) (i32.lt_s (local.get $index) (i32.const 0))
+      (then (i32.const 0))
+      (else (i32.eqz (i32.and
+        (i32.load (i32.add (global.get $DLL_FLAGS_TABLE)
+          (i32.shl (local.get $index) (i32.const 2))))
+        (i32.const 2))))))
+
+  ;; Mark a DLL as notification-free. Return 0 for an invalid module or a DLL
+  ;; whose PE advertises static TLS, exactly the two documented failure classes.
+  (func $dll_disable_thread_notifications (param $module i32) (result i32)
+    (local $index i32) (local $flags_ptr i32) (local $flags i32)
+    (local.set $index (call $dll_index_from_module (local.get $module)))
+    (if (i32.lt_s (local.get $index) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $flags_ptr (i32.add (global.get $DLL_FLAGS_TABLE)
+      (i32.shl (local.get $index) (i32.const 2))))
+    (local.set $flags (i32.load (local.get $flags_ptr)))
+    (if (i32.and (local.get $flags) (i32.const 1))
+      (then (return (i32.const 0))))
+    (i32.store (local.get $flags_ptr) (i32.or (local.get $flags) (i32.const 2)))
+    (i32.const 1))
 
   ;; Process base relocations: apply delta to all HIGHLOW fixups
   (func $process_relocations (param $load_addr i32) (param $reloc_rva i32) (param $reloc_size i32) (param $delta i32)

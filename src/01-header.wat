@@ -1576,6 +1576,7 @@
   (global $DLL_TABLE_SIZE i32 (region.size $DLL_TABLE))
   (global $DLL_RSRC_TABLE_SIZE i32 (region.size $DLL_RSRC_TABLE))
   (global $DLL_PATH_TABLE_SIZE i32 (region.size $DLL_PATH_TABLE))
+  (global $DLL_FLAGS_TABLE_SIZE i32 (region.size $DLL_FLAGS_TABLE))
   ;; Fixed bases declared in later WAT parts still publish their extents here,
   ;; so the memory-map gate can prove that they neither overlap nor run past
   ;; the memory. The two string-storage roots intentionally own several named
@@ -2737,6 +2738,9 @@
   ;; Full path used to load each module, as a guest string pointer. Keeping it
   ;; parallel avoids changing the long-established 32-byte DLL table ABI.
   (global $DLL_PATH_TABLE i32 (region.addr $DLL_PATH_TABLE 0))
+  ;; Parallel per-DLL loader flags: bit 0 = static TLS directory present,
+  ;; bit 1 = DLL_THREAD_ATTACH/DETACH notifications disabled.
+  (global $DLL_FLAGS_TABLE i32 (region.addr $DLL_FLAGS_TABLE 0))
   ;; Active resource-lookup context. base=0 means "use main EXE ($image_base / $rsrc_rva)".
   ;; When a Load*/FindResource* handler is called with a DLL hInstance, these are pushed
   ;; to that DLL's load_addr + rsrc_rva for the duration of the lookup, then cleared.

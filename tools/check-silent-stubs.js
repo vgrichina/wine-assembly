@@ -168,8 +168,8 @@ const digest = crypto.createHash('sha256')
 // 2026-09-03: 466 -> 463. SetFileApisToOEM/ANSI now propagate their process
 // code-page choice to Kernel32 filenames, and AreFileApisANSI reads it back
 // from the same process-shared VFS state across guest thread instances.
-const EXPECTED_COUNT = 463;
-const EXPECTED_SHA256 = 'f3598142d7d1970c7329585d3faf86d0ba76326f5e0a94fa9ab297b6643a86c0';
+const EXPECTED_COUNT = 462;
+const EXPECTED_SHA256 = '4b63f4d06abd1f10264c7ea757ecd1d47502222a76d2aef605348580e3a2b559';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

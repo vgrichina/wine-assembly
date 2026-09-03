@@ -2246,9 +2246,13 @@
     (call $handle_MapVirtualKeyA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
-  ;; 786: DisableThreadLibraryCalls(hModule) — no-op, return TRUE
+  ;; 786: DisableThreadLibraryCalls(hModule) — suppress this loaded DLL's
+  ;; DLL_THREAD_ATTACH/DETACH notifications. Static-TLS and invalid modules
+  ;; fail with ERROR_INVALID_PARAMETER rather than reporting fake success.
   (func $handle_DisableThreadLibraryCalls (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $dll_disable_thread_notifications (local.get $arg0)))
+    (if (i32.eqz (global.get $eax))
+      (then (global.set $last_error (i32.const 87)))) ;; ERROR_INVALID_PARAMETER
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
