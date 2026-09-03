@@ -5312,6 +5312,26 @@
           (local.get $custom_wndproc)))
       (drop (call $wnd_set_style (local.get $ctrl_hwnd) (local.get $ctrl_style)))
       (call $wnd_set_parent (local.get $ctrl_hwnd) (local.get $dlg_hwnd))
+      ;; A named control in a dialog template is still a real window of its
+      ;; registered class. CreateWindowExA resolves these per-window class
+      ;; properties before WM_CREATE; the template path must do the same.
+      ;; CD Player's SJE_LEDClass is CS_OWNDC and selects its font/text colour
+      ;; once from WM_CREATE. Losing that private DC makes every later time
+      ;; display draw with the default black text on its black background.
+      ;; SJE_TextClass likewise relies on its class brush to erase an older,
+      ;; longer title before repainting a shorter one.
+      (if (i32.and
+            (i32.ne (local.get $custom_wndproc) (i32.const 0))
+            (i32.ge_u (local.get $class_ptr) (i32.const 0x10000)))
+        (then
+          (call $wnd_set_class_bg_brush_from_name
+            (local.get $ctrl_hwnd) (local.get $class_ptr))
+          (call $wnd_set_class_cursor_from_name
+            (local.get $ctrl_hwnd) (local.get $class_ptr))
+          (call $wnd_set_class_slot_from_name
+            (local.get $ctrl_hwnd) (local.get $class_ptr))
+          (call $wnd_set_own_dc_from_name
+            (local.get $ctrl_hwnd) (local.get $class_ptr))))
       (local.set $ctrl_slot (call $wnd_table_find (local.get $ctrl_hwnd)))
       (if (i32.ge_s (local.get $ctrl_slot) (i32.const 0))
         (then
