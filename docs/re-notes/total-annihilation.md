@@ -42,10 +42,12 @@ test safety bound; the automated path contains no inspection delays.
 
 ## Distribution
 
-This is a publisher demo, not freeware. The EULA embedded in the original
-installer expressly permits using, copying, and distributing the program only
-when every copy includes the notice, no fee is charged for the copy or its
-distribution, the stated reverse-engineering restriction is observed except
-where law prevents it, and the recipient accepts its as-is/no-warranty and
-no-liability terms. Preserve the complete original package and notice; do not
-publish the extracted runtime as a substitute package.
+This is a publisher-provided playable demo, which is enough for inclusion as a
+compatibility target. The Sources catalog links to its original distribution;
+Wine-Assembly runs that installer and does not republish either the installer
+or the extracted runtime files.
+
+For provenance, the embedded EULA permits no-fee copying and distribution when
+each copy includes its notice and the other stated conditions are observed.
+Those conditions would matter if the project later distributed a copy, but
+they are not a blocker for the current source-link and installer-run model.

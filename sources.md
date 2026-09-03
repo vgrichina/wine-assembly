@@ -933,10 +933,11 @@ first-person dungeon frame,
 ## Further shareware/demo/freeware game candidates
 
 Research on 2026-08-22 narrowed the next browser targets to distributions that
-were released as demos or shareware. Archive.org availability is evidence that
-the historical package can be obtained and inspected, not by itself permission
-to redistribute it with this repository; keep external downloads and verify
-the original package terms before bundling any commercial demo.
+were released as demos or shareware. Entries in this file identify and link to
+the original distributions; Wine-Assembly can download and run those packages
+without republishing them. A playable demo is therefore a valid target even
+when its terms do not grant redistribution, unless those terms explicitly
+prohibit the project's method of obtaining or running it.
 
 ### Little Fighter 2 v1.9 freeware
 
@@ -1205,8 +1206,10 @@ requires a Right-arrow battlefield scroll to change more than 5,000 pixels.
 The same test reruns the native self-extractor first and verifies that its
 fresh EXE and HPI match the pinned hashes. This supersedes the earlier
 window-only status. The embedded EULA permits no-fee copying/distribution only
-with its notice and other stated conditions, so preserve the original package
-rather than publishing extracted runtime files.
+with its notice and other stated conditions. That clause is not an inclusion
+blocker: the Sources entry links to the original distribution, and the emulator
+runs its installer rather than distributing either the installer or extracted
+runtime files.
 
 ### 2026-08-22 Caesar III demo
 
