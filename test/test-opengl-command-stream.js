@@ -127,6 +127,9 @@ const packedEncoder = new Stream.Encoder({
     return 0;
   }),
 });
+const packedColorStorage = packedEncoder._state().color;
+const packedTexCoordStorage = packedEncoder._state().texCoord;
+const packedVertexStorage = packedEncoder.immediateVertices;
 const setFloatArgs = values => values.forEach((value, i) => dv.setFloat32(stack + 4 + i * 4, value, true));
 dv.setUint32(stack + 4, 0x1D00, true); // GL_FLAT stays encoder-local.
 packedEncoder.call(19, stack, 0);
@@ -157,6 +160,12 @@ for (const [index, vertexValues] of [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]]
 }
 packedEncoder.call(22, stack, 0);
 packedEncoder.call(11, stack, 0);
+assert.strictEqual(packedEncoder._state().color, packedColorStorage,
+  'immediate color calls update one context-owned vector instead of allocating per call');
+assert.strictEqual(packedEncoder._state().texCoord, packedTexCoordStorage,
+  'texture-coordinate calls update one context-owned vector instead of allocating per call');
+assert.strictEqual(packedEncoder.immediateVertices, packedVertexStorage,
+  'ordinary immediate spans reuse the encoder vertex buffer across glBegin/glEnd');
 assert.deepStrictEqual(packedCalls.map(call => call.opcode), [Stream.PACKED_DRAW_OPCODE, 11],
   'immediate calls collapse into one internal draw command');
 assert.strictEqual(packedCalls[0].mode, 0x0004, 'triangle fan is normalized to independent triangles');

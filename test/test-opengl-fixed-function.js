@@ -44,6 +44,9 @@ class FakeBackend {
 const backend = new FakeBackend();
 const gl = new FixedFunctionGL(backend);
 const triangle = new Float32Array(3 * 9);
+for (const stack of Object.values(gl.matrices)) {
+  stack.slice = () => { throw new Error('matrix-stack slice allocated'); };
+}
 gl.enqueuePacked(GL.TRIANGLES, triangle);
 gl.flushPendingDraw();
 assert.strictEqual(backend.draws.length, 1);
