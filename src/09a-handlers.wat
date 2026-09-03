@@ -643,7 +643,7 @@
 
   ;; 4: GetProcAddress
   (func $handle_GetProcAddress (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $v i32) (local $i i32) (local $dll_base i32) (local $resolved i32)
+    (local $tmp i32) (local $v i32) (local $i i32) (local $dll_base i32) (local $resolved i32) (local $v_wa i32)
     (local $tbl i32) (local $export i32) (local $dll_name i32)
     (local $api_id i32) (local $thunk_wa i32) (local $name_wa i32)
     (if (i32.ge_u (local.get $arg1) (i32.const 0x10000))
@@ -718,14 +718,14 @@
     (br_if $gpa (i32.lt_u (local.get $arg1) (i32.const 0x10000)))
     ;; Allocate hint(2) + name in guest heap
     (local.set $tmp (call $guest_strlen (local.get $arg1)))
-    (local.set $v (call $heap_alloc (i32.add (local.get $tmp) (i32.const 3)))) ;; 2 hint + name + NUL
+    (local.set $v (call $heap_alloc (i32.add (local.get $tmp) (i32.const 3)))) (local.set $v_wa (call $g2w (local.get $v))) ;; 2 hint + name + NUL
     ;; Write hint = 0
-    (i32.store16 (call $g2w (local.get $v)) (i32.const 0))
+    (i32.store16 (local.get $v_wa) (i32.const 0))
     ;; Copy name string
-    (call $memcpy (i32.add (call $g2w (local.get $v)) (i32.const 2))
+    (call $memcpy (i32.add (local.get $v_wa) (i32.const 2))
     (local.get $name_wa) (i32.add (local.get $tmp) (i32.const 1)))
     ;; Look up api_id — if unknown (0xFFFF), return NULL instead of creating broken thunk
-    (local.set $i (call $lookup_api_id (i32.add (call $g2w (local.get $v)) (i32.const 2))))
+    (local.set $i (call $lookup_api_id (i32.add (local.get $v_wa) (i32.const 2))))
     (if (i32.eq (local.get $i) (i32.const 0xFFFF))
       (then (br $gpa))) ;; return 0 — function not found
     ;; Create thunk: store RVA and api_id at THUNK_BASE + num_thunks*8.
@@ -740,7 +740,7 @@
     ;; into a sparse high mapping.  Translate here so dynamic imports such as
     ;; Half-Life's DirectSoundCreate keep a valid name pointer at dispatch.
     (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
-    (i32.sub (call $g2w (local.get $v)) (global.get $GUEST_BASE)))
+    (i32.sub (local.get $v_wa) (global.get $GUEST_BASE)))
     ;; Store api_id
     (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
     (local.get $i))
@@ -2032,7 +2032,7 @@
   )
 
   (func $handle_AllocateAndInitializeSid (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $sid i32) (local $out i32)
+    (local $sid i32) (local $out i32) (local $sid_wa i32)
     (local.set $out (call $gl32 (i32.add (global.get $esp) (i32.const 44))))
     (if (i32.and
           (i32.and
@@ -2043,12 +2043,12 @@
         (local.set $sid (call $heap_alloc (i32.const 40)))
         (if (local.get $sid)
           (then
-            (memory.fill (call $g2w (local.get $sid)) (i32.const 0) (i32.const 40))
+            (local.set $sid_wa (call $g2w (local.get $sid))) (memory.fill (local.get $sid_wa) (i32.const 0) (i32.const 40))
             (call $gs8 (local.get $sid) (i32.const 1))
             (call $gs8 (i32.add (local.get $sid) (i32.const 1)) (local.get $arg1))
             (if (local.get $arg0)
               (then (call $memcpy
-                (i32.add (call $g2w (local.get $sid)) (i32.const 2))
+                (i32.add (local.get $sid_wa) (i32.const 2))
                 (call $g2w (local.get $arg0)) (i32.const 6))))
             (call $gs32 (i32.add (local.get $sid) (i32.const 8)) (local.get $arg2))
             (call $gs32 (i32.add (local.get $sid) (i32.const 12)) (local.get $arg3))
@@ -3688,17 +3688,17 @@
   ;; filter is still stored and still round-trips through the setter, so nothing
   ;; here has to be undone when that trampoline exists.
   (func $handle_UnhandledExceptionFilter (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $rec i32)
+    (local $rec i32) (local $rec_wa i32)
     ;; arg0 is EXCEPTION_POINTERS*. A null pointer, or a null ExceptionRecord
     ;; inside it, is legal input -- report what is known and skip the rest
     ;; rather than dereferencing it.
     (if (local.get $arg0)
       (then (local.set $rec (i32.load (call $g2w (local.get $arg0))))))
     (if (local.get $rec)
-      (then (call $host_unhandled_exception
-              (i32.load (call $g2w (local.get $rec)))                  ;; ExceptionCode
-              (i32.load offset=4 (call $g2w (local.get $rec)))         ;; ExceptionFlags
-              (i32.load offset=12 (call $g2w (local.get $rec)))        ;; ExceptionAddress
+      (then (local.set $rec_wa (call $g2w (local.get $rec))) (call $host_unhandled_exception
+              (i32.load (local.get $rec_wa))                  ;; ExceptionCode
+              (i32.load offset=4 (local.get $rec_wa))         ;; ExceptionFlags
+              (i32.load offset=12 (local.get $rec_wa))        ;; ExceptionAddress
               (global.get $unhandled_exception_filter)))
       (else (call $host_unhandled_exception
               (i32.const 0) (i32.const 0) (i32.const 0)
@@ -3985,14 +3985,14 @@
   ;; RegisterClipboardFormat, so intern through the same table $clipfmt_intern
   ;; owns. Both spellings land here; the W one only narrows on the way in.
   (func $register_window_message (param $name_g i32) (result i32)
-    (local $id i32)
-    (local.set $id (call $clipfmt_intern (local.get $name_g)))
+    (local $id i32) (local $name_wa i32)
+    (local.set $id (call $clipfmt_intern (local.get $name_g))) (local.set $name_wa (call $g2w (local.get $name_g)))
     ;; FNV-1a("commdlg_FindReplace") = 0x1A9C8FD4. Common-dialog clients
     ;; register FINDMSGSTRING and later compare a delivered message against the
     ;; value they got, so the find/replace dialog has to send that same one.
     (if (i32.and
           (i32.ne (local.get $id) (i32.const 0))
-          (i32.eq (call $hash_api_name (call $g2w (local.get $name_g)))
+          (i32.eq (call $hash_api_name (local.get $name_wa))
                   (i32.const 0x1A9C8FD4)))
       (then (global.set $findreplace_message (local.get $id))))
     ;; FNV-1a("SHELLHOOK") = 0x684BA376. RegisterShellHook has no message-id
@@ -4000,7 +4000,7 @@
     ;; available instead of trying to reconstruct it from a counter later.
     (if (i32.and
           (i32.ne (local.get $id) (i32.const 0))
-          (i32.eq (call $hash_api_name (call $g2w (local.get $name_g)))
+          (i32.eq (call $hash_api_name (local.get $name_wa))
                   (i32.const 0x684BA376)))
       (then (global.set $shell_hook_message (local.get $id))))
     (local.get $id))
@@ -4417,7 +4417,7 @@
   ;; live and both spellings of GetWindowText have to look in all of them, so
   ;; the search lives here and GetWindowTextW widens what it finds.
   (func $window_text_ansi (param $hwnd i32) (param $buf i32) (param $max i32) (result i32)
-    (local $src i32) (local $len i32) (local $copy_len i32)
+    (local $src i32) (local $len i32) (local $copy_len i32) (local $buf_wa i32)
     ;; Child controls own their text in their WAT-side wndproc state. Route
     ;; the read through WM_GETTEXT so edit/button/static text stays consistent
     ;; with GetDlgItemTextA and SetWindowTextA.
@@ -4438,8 +4438,8 @@
         (local.set $copy_len (local.get $len))
         (if (i32.ge_u (local.get $copy_len) (local.get $max))
           (then (local.set $copy_len (i32.sub (local.get $max) (i32.const 1)))))
-        (call $memcpy (call $g2w (local.get $buf)) (local.get $src) (local.get $copy_len))
-        (i32.store8 (i32.add (call $g2w (local.get $buf)) (local.get $copy_len)) (i32.const 0))
+        (local.set $buf_wa (call $g2w (local.get $buf))) (call $memcpy (local.get $buf_wa) (local.get $src) (local.get $copy_len))
+        (i32.store8 (i32.add (local.get $buf_wa) (local.get $copy_len)) (i32.const 0))
         (return (local.get $copy_len))))
     (call $host_get_window_text
       (local.get $hwnd) (call $g2w (local.get $buf)) (local.get $max)))
@@ -4494,7 +4494,7 @@
 
   (func $copy_control_class_name
     (param $hwnd i32) (param $buf i32) (param $max i32) (result i32)
-    (local $src i32) (local $len i32)
+    (local $src i32) (local $len i32) (local $buf_wa i32)
     (local.set $src (call $wnd_registered_class_name (local.get $hwnd)))
     (if (i32.eqz (local.get $src))
       (then (local.set $src (call $control_class_name_ptr (local.get $hwnd)))))
@@ -4503,8 +4503,8 @@
     (local.set $len (call $strlen (local.get $src)))
     (if (i32.ge_u (local.get $len) (local.get $max))
       (then (local.set $len (i32.sub (local.get $max) (i32.const 1)))))
-    (call $memcpy (call $g2w (local.get $buf)) (local.get $src) (local.get $len))
-    (i32.store8 (i32.add (call $g2w (local.get $buf)) (local.get $len)) (i32.const 0))
+    (local.set $buf_wa (call $g2w (local.get $buf))) (call $memcpy (local.get $buf_wa) (local.get $src) (local.get $len))
+    (i32.store8 (i32.add (local.get $buf_wa) (local.get $len)) (i32.const 0))
     (local.get $len))
 
   ;; GetClassNameA(hwnd, lpClassName, nMaxCount) → chars copied
@@ -12141,13 +12141,13 @@ HookEx — no next hook in chain, return 0
   ;; one of these).
   (func $reg_query_value (param $hkey i32) (param $subkey_g i32)
                          (param $data_g i32) (param $cb_g i32) (param $wide i32) (result i32)
-    (local $sub i32) (local $res i32)
-    (local.set $sub (local.get $hkey))
+    (local $sub i32) (local $res i32) (local $subkey_wa i32)
+    (local.set $sub (local.get $hkey)) (local.set $subkey_wa (call $g2w (local.get $subkey_g)))
     (if (i32.and (i32.ne (local.get $subkey_g) (i32.const 0))
-                 (i32.ne (i32.load8_u (call $g2w (local.get $subkey_g))) (i32.const 0)))
+                 (i32.ne (i32.load8_u (local.get $subkey_wa)) (i32.const 0)))
       (then
         (local.set $sub (call $host_reg_open_key
-          (local.get $hkey) (call $g2w (local.get $subkey_g)) (local.get $wide)))
+          (local.get $hkey) (local.get $subkey_wa) (local.get $wide)))
         (if (i32.eqz (local.get $sub))
           (then (return (i32.const 2))))))  ;; ERROR_FILE_NOT_FOUND
     (local.set $res (call $host_reg_query_value
@@ -14523,33 +14523,33 @@ HookEx — no next hook in chain, return 0
                             (param $name_size i32) (param $serial i32)
                             (param $max_comp i32) (param $wide i32) (result i32)
     (local $wa_esp i32) (local $fs_flags i32) (local $fs_name i32)
-    (local $mounted_serial i32)
+    (local $mounted_serial i32) (local $root_wa i32) (local $name_wa i32) (local $fs_wa i32)
     (local.set $wa_esp (call $g2w (global.get $esp)))
     (local.set $fs_flags (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    (local.set $fs_name (i32.load (i32.add (local.get $wa_esp) (i32.const 28))))
+    (local.set $fs_name (i32.load (i32.add (local.get $wa_esp) (i32.const 28)))) (if (local.get $root) (then (local.set $root_wa (call $g2w (local.get $root)))))
     ;; A mounted volume's label — the string an era CD check compares against.
     ;; Nothing mounted at this letter has a label, so the volume has none: an
     ;; empty string, in the caller's encoding.
     (if (local.get $name_buf)
-      (then
+      (then (local.set $name_wa (call $g2w (local.get $name_buf)))
         (if (i32.eqz (call $host_fs_volume_label
               (if (result i32) (local.get $root)
-                (then (call $g2w (local.get $root)))
+                (then (local.get $root_wa))
                 (else (i32.const 0)))
               (local.get $wide)
-              (call $g2w (local.get $name_buf))
+              (local.get $name_wa)
               (local.get $name_size)))
           (then
             (if (local.get $wide)
-              (then (i32.store16 (call $g2w (local.get $name_buf)) (i32.const 0)))
-              (else (i32.store8 (call $g2w (local.get $name_buf)) (i32.const 0))))))))
+              (then (i32.store16 (local.get $name_wa) (i32.const 0)))
+              (else (i32.store8 (local.get $name_wa) (i32.const 0))))))))
     ;; A mounted volume's own serial when one is mounted here; the emulator's
     ;; fixed C: serial otherwise.
     (if (local.get $serial)
       (then
         (local.set $mounted_serial (call $host_fs_volume_serial
           (if (result i32) (local.get $root)
-            (then (call $g2w (local.get $root)))
+            (then (local.get $root_wa))
             (else (i32.const 0)))
           (local.get $wide)))
         (call $gs32 (local.get $serial)
@@ -14564,33 +14564,33 @@ HookEx — no next hook in chain, return 0
     ;; four bytes of this string into the constant it compares, so a mounted
     ;; CD-ROM must say "CDFS" the way Win98 does, not "FAT".
     (if (local.get $fs_name)
-      (then
+      (then (local.set $fs_wa (call $g2w (local.get $fs_name)))
         (if (i32.eq (call $host_fs_drive_type
               (if (result i32) (local.get $root)
-                (then (call $g2w (local.get $root)))
+                (then (local.get $root_wa))
                 (else (i32.const 0)))
               (local.get $wide))
               (i32.const 5)) ;; DRIVE_CDROM
           (then
             (if (local.get $wide)
               (then
-                (i32.store16 (call $g2w (local.get $fs_name)) (i32.const 0x43))          ;; 'C'
-                (i32.store16 offset=2 (call $g2w (local.get $fs_name)) (i32.const 0x44)) ;; 'D'
-                (i32.store16 offset=4 (call $g2w (local.get $fs_name)) (i32.const 0x46)) ;; 'F'
-                (i32.store16 offset=6 (call $g2w (local.get $fs_name)) (i32.const 0x53)) ;; 'S'
-                (i32.store16 offset=8 (call $g2w (local.get $fs_name)) (i32.const 0)))
+                (i32.store16 (local.get $fs_wa) (i32.const 0x43))          ;; 'C'
+                (i32.store16 offset=2 (local.get $fs_wa) (i32.const 0x44)) ;; 'D'
+                (i32.store16 offset=4 (local.get $fs_wa) (i32.const 0x46)) ;; 'F'
+                (i32.store16 offset=6 (local.get $fs_wa) (i32.const 0x53)) ;; 'S'
+                (i32.store16 offset=8 (local.get $fs_wa) (i32.const 0)))
               (else
-                (i32.store (call $g2w (local.get $fs_name)) (i32.const 0x53464443))     ;; "CDFS"
-                (i32.store8 offset=4 (call $g2w (local.get $fs_name)) (i32.const 0)))))
+                (i32.store (local.get $fs_wa) (i32.const 0x53464443))     ;; "CDFS"
+                (i32.store8 offset=4 (local.get $fs_wa) (i32.const 0)))))
           (else
             (if (local.get $wide)
               (then
-                (i32.store16 (call $g2w (local.get $fs_name)) (i32.const 0x46))          ;; 'F'
-                (i32.store16 offset=2 (call $g2w (local.get $fs_name)) (i32.const 0x41)) ;; 'A'
-                (i32.store16 offset=4 (call $g2w (local.get $fs_name)) (i32.const 0x54)) ;; 'T'
-                (i32.store16 offset=6 (call $g2w (local.get $fs_name)) (i32.const 0)))
+                (i32.store16 (local.get $fs_wa) (i32.const 0x46))          ;; 'F'
+                (i32.store16 offset=2 (local.get $fs_wa) (i32.const 0x41)) ;; 'A'
+                (i32.store16 offset=4 (local.get $fs_wa) (i32.const 0x54)) ;; 'T'
+                (i32.store16 offset=6 (local.get $fs_wa) (i32.const 0)))
               (else
-                (i32.store (call $g2w (local.get $fs_name)) (i32.const 0x00544146)))))))) ;; "FAT"
+                (i32.store (local.get $fs_wa) (i32.const 0x00544146)))))))) ;; "FAT"
     (i32.const 1))
 
   (func $handle_GetVolumeInformationA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -15179,11 +15179,11 @@ SetColorAdjustment — validate and copy complete per-DC state.
     (global.set $last_error (local.get $error)))
 
   (func $hdwp_resize (param $record i32) (param $capacity i32) (result i32)
-    (local $old i32) (local $fresh i32) (local $count i32)
+    (local $old i32) (local $fresh i32) (local $count i32) (local $fresh_wa i32)
     (local.set $fresh
       (call $heap_alloc (i32.mul (local.get $capacity) (i32.const 32))))
     (if (i32.eqz (local.get $fresh)) (then (return (i32.const 0))))
-    (call $zero_memory (call $g2w (local.get $fresh))
+    (local.set $fresh_wa (call $g2w (local.get $fresh))) (call $zero_memory (local.get $fresh_wa)
       (i32.mul (local.get $capacity) (i32.const 32)))
     (local.set $old (call $gl32 (i32.add (local.get $record) (i32.const 4))))
     (local.set $count (call $gl32 (i32.add (local.get $record) (i32.const 8))))
@@ -15191,7 +15191,7 @@ SetColorAdjustment — validate and copy complete per-DC state.
       (then
         (if (local.get $count)
           (then
-            (memory.copy (call $g2w (local.get $fresh)) (call $g2w (local.get $old))
+            (memory.copy (local.get $fresh_wa) (call $g2w (local.get $old))
               (i32.mul (local.get $count) (i32.const 32)))))
         (call $heap_free (local.get $old))))
     (call $gs32 (i32.add (local.get $record) (i32.const 4)) (local.get $fresh))
@@ -17460,7 +17460,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   ;; 953: PrintDlgA(lppd) — default printer data plus interactive form
   (func $handle_PrintDlgA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dlg i32) (local $owner i32) (local $flags i32)
-    (local $devmode i32) (local $devnames i32)
+    (local $devmode i32) (local $devnames i32) (local $devnames_wa i32)
     (call $modal_capture_nonvolatile)
     (local.set $flags (call $gl32 (i32.add (local.get $arg0) (i32.const 20))))
     ;; Stable DEVMODEA/DEVNAMES handles. Global handles are direct guest heap
@@ -17476,13 +17476,13 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (call $gs16 (i32.add (local.get $devmode) (i32.const 54)) (i32.const 1))   ;; copies
     (call $gs16 (i32.add (local.get $devmode) (i32.const 58)) (i32.const 300)) ;; print quality
     (local.set $devnames (call $heap_alloc (i32.const 32)))
-    (memory.fill (call $g2w (local.get $devnames)) (i32.const 0) (i32.const 32))
+    (local.set $devnames_wa (call $g2w (local.get $devnames))) (memory.fill (local.get $devnames_wa) (i32.const 0) (i32.const 32))
     (call $gs16 (local.get $devnames) (i32.const 8))
     (call $gs16 (i32.add (local.get $devnames) (i32.const 2)) (i32.const 16))
     (call $gs16 (i32.add (local.get $devnames) (i32.const 4)) (i32.const 28))
     (call $gs16 (i32.add (local.get $devnames) (i32.const 6)) (i32.const 0))
-    (call $memcpy (i32.add (call $g2w (local.get $devnames)) (i32.const 8)) (region.addr $USER_DIALOG_STRINGS 0x220) (i32.const 8)) ;; WINSPOOL
-    (call $memcpy (i32.add (call $g2w (local.get $devnames)) (i32.const 16)) (region.addr $USER_DIALOG_STRINGS 0x229) (i32.const 12)) ;; Web Printer
+    (call $memcpy (i32.add (local.get $devnames_wa) (i32.const 8)) (region.addr $USER_DIALOG_STRINGS 0x220) (i32.const 8)) ;; WINSPOOL
+    (call $memcpy (i32.add (local.get $devnames_wa) (i32.const 16)) (region.addr $USER_DIALOG_STRINGS 0x229) (i32.const 12)) ;; Web Printer
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (local.get $devmode))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (local.get $devnames))
     (global.set $printer_hdc (call $gdi_printer_dc_alloc))
@@ -18391,7 +18391,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   ;; can occur; a successful replacement returns zero.
   (func $handle_VerInstallFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp_file i32) (local $tmp_len_ptr i32)
-    (local $src_path i32) (local $dest_path i32) (local $retval i32)
+    (local $src_path i32) (local $dest_path i32) (local $retval i32) (local $src_wa i32) (local $dest_wa i32)
     (local.set $tmp_file (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     (local.set $tmp_len_ptr (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
     ;; No temporary file is left behind on the direct-install path.
@@ -18402,16 +18402,16 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (if (i32.or (i32.eqz (local.get $src_path))
                 (i32.eqz (local.get $dest_path)))
       (then (local.set $retval (i32.const 0x8000))) ;; VIF_OUTOFMEMORY
-      (else
+      (else (local.set $src_wa (call $g2w (local.get $src_path))) (local.set $dest_wa (call $g2w (local.get $dest_path)))
         (if (i32.eq
               (call $host_fs_get_file_attributes
-                (call $g2w (local.get $src_path)) (i32.const 0))
+                (local.get $src_wa) (i32.const 0))
               (i32.const -1))
           (then (local.set $retval (i32.const 0x10000))) ;; VIF_CANNOTREADSRC
           (else
             (if (i32.eqz (call $host_fs_move_file
-                  (call $g2w (local.get $src_path))
-                  (call $g2w (local.get $dest_path)) (i32.const 0)))
+                  (local.get $src_wa)
+                  (local.get $dest_wa) (i32.const 0)))
               (then (local.set $retval (i32.const 0x800)))))))) ;; VIF_CANNOTCREATE
     (if (local.get $src_path) (then (call $heap_free (local.get $src_path))))
     (if (local.get $dest_path) (then (call $heap_free (local.get $dest_path))))
