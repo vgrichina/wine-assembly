@@ -972,6 +972,27 @@ const RegionMap = require('../lib/region-map.generated.js');
     assert.strictEqual(canvasRgb(surface, 3, 3), 0xFFFFFF);
   });
 
+  check('DrawDibDraw presents application-owned pixels through the GDI raster path', () => {
+    const surface = makeDib(4, 4);
+    const bmiGa = wat.guest_alloc(40) >>> 0;
+    const bitsGa = wat.guest_alloc(16) >>> 0;
+    const imageBase = wat.get_image_base() >>> 0;
+    const bitsWa = RegionMap.GUEST_BASE + (bitsGa - imageBase);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 4, 2);
+    wat.guest_write32(bmiGa + 8, -2);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 24);
+    bytes.set([0, 0, 255, 0, 255, 0, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0], bitsWa);
+    assert.strictEqual(wat.test_call_DrawDibDraw(
+      1, surface.hdc, 0, 0, 4, 4, bmiGa, bitsGa,
+      0, 0, 2, 2, 0), 1);
+    assert.strictEqual(packed(surface, 0, 0), 0xFF0000);
+    assert.strictEqual(packed(surface, 3, 0), 0x00FF00);
+    assert.strictEqual(packed(surface, 0, 3), 0x0000FF);
+    assert.strictEqual(packed(surface, 3, 3), 0xFFFFFF);
+  });
+
   check('StretchDIBits interprets bottom-up source rectangles from the lower left', () => {
     const surface = makeDib(2, 4);
     const bmiGa = wat.guest_alloc(40) >>> 0;

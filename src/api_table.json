@@ -26694,5 +26694,90 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 3208,
+    "name": "DrawDibOpen",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 535977962,
+    "args": [],
+    "ret": "HDRAWDIB"
+  },
+  {
+    "id": 3209,
+    "name": "DrawDibClose",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2680372286,
+    "args": [
+      {
+        "name": "hdd",
+        "type": "HDRAWDIB"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 3210,
+    "name": "DrawDibDraw",
+    "nargs": 13,
+    "convention": "stdcall",
+    "hash": 939389100,
+    "args": [
+      {
+        "name": "hdd",
+        "type": "HDRAWDIB"
+      },
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "xDst",
+        "type": "INT"
+      },
+      {
+        "name": "yDst",
+        "type": "INT"
+      },
+      {
+        "name": "dxDst",
+        "type": "INT"
+      },
+      {
+        "name": "dyDst",
+        "type": "INT"
+      },
+      {
+        "name": "lpbi",
+        "type": "BITMAPINFOHEADER*"
+      },
+      {
+        "name": "lpBits",
+        "type": "void*"
+      },
+      {
+        "name": "xSrc",
+        "type": "INT"
+      },
+      {
+        "name": "ySrc",
+        "type": "INT"
+      },
+      {
+        "name": "dxSrc",
+        "type": "INT"
+      },
+      {
+        "name": "dySrc",
+        "type": "INT"
+      },
+      {
+        "name": "wFlags",
+        "type": "UINT"
+      }
+    ],
+    "ret": "BOOL"
   }
 ]

@@ -3463,3 +3463,45 @@
   (func $handle_GdipSetImageAttributesColorMatrix (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+
+  ;; Video for Windows' DrawDib API is a thin DIB presentation layer.  Keep
+  ;; its context opaque and route DrawDibDraw through the same canonical
+  ;; StretchDIBits path as GDI, so dynamic MSVFW32 users render into either a
+  ;; window DC or a selected WAT bitmap with identical conversion semantics.
+  (func $handle_DrawDibOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
+  (func $handle_DrawDibClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.ne (local.get $arg0) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; DrawDibDraw(hdd, hdc, xDst, yDst, dxDst, dyDst, lpbi, lpBits,
+  ;;             xSrc, ySrc, dxSrc, dySrc, wFlags) -> BOOL
+  (func $handle_DrawDibDraw (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $drawn i32)
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
+          (i32.or
+            (i32.eqz (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+            (i32.eqz (call $gl32 (i32.add (global.get $esp) (i32.const 32))))))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 56)))
+        (return)))
+    (local.set $drawn (call $host_gdi_stretch_dib_bits
+      (local.get $arg1)                                             ;; hdc
+      (local.get $arg2)                                             ;; xDst
+      (local.get $arg3)                                             ;; yDst
+      (local.get $arg4)                                             ;; dxDst
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))       ;; dyDst
+      (call $gl32 (i32.add (global.get $esp) (i32.const 36)))       ;; xSrc
+      (call $gl32 (i32.add (global.get $esp) (i32.const 40)))       ;; ySrc
+      (call $gl32 (i32.add (global.get $esp) (i32.const 44)))       ;; dxSrc
+      (call $gl32 (i32.add (global.get $esp) (i32.const 48)))       ;; dySrc
+      (call $g2w (call $gl32 (i32.add (global.get $esp) (i32.const 32)))) ;; lpBits
+      (call $g2w (call $gl32 (i32.add (global.get $esp) (i32.const 28)))) ;; lpbi
+      (i32.const 0)                                                 ;; DIB_RGB_COLORS
+      (i32.const 0x00CC0020)))                                      ;; SRCCOPY
+    (global.set $eax (i32.ne (local.get $drawn) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 56))))
