@@ -146,8 +146,10 @@ const digest = crypto.createHash('sha256')
 // thread queue's active top-level and deliver real activation transitions.
 // 2026-09-02: 477 -> 476. UnregisterClassA/W now remove the matching owned
 // class only after its last window is gone instead of always returning TRUE.
-const EXPECTED_COUNT = 476;
-const EXPECTED_SHA256 = 'ad5ac0f385a8836e1074e225fd2c93201b07a3053aa577339562951b2f1602fd';
+// 2026-09-02: 476 -> 473. Direct3D Device 1/2/3 GetStats now initializes all
+// five D3DSTATS counters and rejects a null output buffer.
+const EXPECTED_COUNT = 473;
+const EXPECTED_SHA256 = '30a081729248d67887deaabaa98f7b0efe390891a31c51680159324399447708';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

@@ -9050,7 +9050,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirect3DDevice3_GetStats (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_get_stats (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_AddViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

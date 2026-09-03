@@ -130,6 +130,20 @@
   (global $d3dim_stateblock_record_dev (mut i32) (i32.const 0))
   (global $d3dim_dbg_vproj_count (mut i32) (i32.const 0))
 
+  ;; D3DSTATS is dwSize followed by five counters.  The software renderer does
+  ;; not retain the legacy hardware statistics, so publish a deterministic
+  ;; empty sample while preserving the caller-supplied structure size.
+  (func $d3dim_get_stats (param $stats_guest i32) (result i32)
+    (local $stats i32)
+    (if (i32.eqz (local.get $stats_guest))
+      (then (return (i32.const 0x80070057)))) ;; DDERR_INVALIDPARAMS
+    (local.set $stats (call $g2w (local.get $stats_guest)))
+    (memory.fill
+      (i32.add (local.get $stats) (i32.const 4))
+      (i32.const 0)
+      (i32.const 20))
+    (i32.const 0))
+
   (func $d3dim_stateblock_entry (param $handle i32) (result i32)
     (if (i32.or
           (i32.eqz (local.get $handle))
