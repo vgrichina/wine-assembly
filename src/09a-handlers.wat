@@ -651,6 +651,21 @@
     (block $gpa
     ;; Default return value: NULL (function not found)
     (global.set $eax (i32.const 0))
+    ;; `_acmdln` is an exported data cell, not a callable CRT function. Old
+    ;; MSVC runtimes resolve it dynamically and abort startup if it is absent.
+    ;; Our static-system-DLL handles are intentionally aliases, so the export
+    ;; name is the useful discriminator here.
+    (if (i32.and
+          (i32.and
+            (i32.ne (local.get $name_wa) (i32.const 0))
+            (i32.eq (i32.load (local.get $name_wa)) (i32.const 0x6d63615f))) ;; _acm
+          (i32.eq (i32.load offset=4 (local.get $name_wa)) (i32.const 0x006e6c64))) ;; dln\0
+      (then
+        (if (i32.eqz (global.get $fake_cmdline_addr))
+          (then (call $store_fake_cmdline)))
+        (global.set $eax (i32.add (global.get $fake_cmdline_addr) (i32.const 504)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     ;; Check if hModule matches a loaded DLL — if so, resolve from its export table.
     ;; lpProcName may be a MAKEINTRESOURCE ordinal (< 0x10000) rather than a
     ;; string pointer; a real DLL's export table can answer either form, so the
@@ -3148,6 +3163,12 @@
   (func $handle_VirtualUnlock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $virtual_lock_range_valid (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; MSVC 6 applications commonly resolve this during startup even when no
+  ;; structured exception is raised. Publish the cdecl thunk, but fail loudly
+  ;; if a guest actually asks us to unwind an _except_handler3 frame.
+  (func $handle__except_handler3 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr)))
 
   ;; 40: GetACP — process ANSI code page
   (func $handle_GetACP (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

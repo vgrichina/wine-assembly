@@ -846,6 +846,21 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  ;; _CIfmod is the corresponding MSVC x87-stack remainder helper:
+  ;; ST(1)=dividend, ST(0)=divisor, with one result left in ST(0).
+  (func $handle__CIfmod (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $divisor f64) (local $dividend f64)
+    (local.set $divisor (call $fpu_pop))
+    (local.set $dividend (call $fpu_pop))
+    (call $fpu_push
+      (f64.sub
+        (local.get $dividend)
+        (f64.mul
+          (f64.trunc (f64.div (local.get $dividend) (local.get $divisor)))
+          (local.get $divisor))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   ;; 759: _ftol — cdecl MSVC helper, ST(0) -> signed i64 in EDX:EAX.
   ;;
   ;; Win98 MSVCRT saves the caller's control word, temporarily selects truncate

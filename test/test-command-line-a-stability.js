@@ -22,6 +22,12 @@ const extraWat = String.raw`
       (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_get_proc_address") (param $name i32) (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_GetProcAddress
+      (i32.const 0x00400000) (local.get $name) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
 `;
 
 const checkCommandLine = async (extraText, expectedArgv, expectedRaw) => {
@@ -66,6 +72,10 @@ const checkCommandLine = async (extraText, expectedArgv, expectedRaw) => {
   const acmdlnCell = e.test_p_acmdln() >>> 0;
   assert.strictEqual(e.guest_read32(acmdlnCell) >>> 0, first,
     '__p__acmdln points at the same full command line');
+  const acmdlnName = 0x00600100;
+  memory.set(Buffer.from('_acmdln\0', 'ascii'), guestBase + acmdlnName);
+  assert.strictEqual(e.test_get_proc_address(acmdlnName) >>> 0, acmdlnCell,
+    'GetProcAddress returns the exported _acmdln data cell, not a call thunk');
   assert.strictEqual(readCString(first), expectedRaw,
     'GetCommandLineA preserves the raw command line');
 };
