@@ -12914,10 +12914,23 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; SHBrowseForFolderA(lpbi) — 1 arg, return NULL (user cancelled)
+  ;; SHBrowseForFolderA(lpbi) — classic Win98 filesystem/namespace picker.
+  ;; The selected HTREEITEM crosses the shared modal boundary; the owner-side
+  ;; finish path converts it to a task-allocator PIDL and fills pszDisplayName.
   (func $handle_SHBrowseForFolderA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (local $dlg i32) (local $owner i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (call $modal_capture_nonvolatile)
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (local.set $owner (call $gl32 (local.get $arg0))) ;; BROWSEINFO.hwndOwner
+    (call $create_browse_dialog
+      (local.get $dlg) (local.get $owner) (local.get $arg0))
+    (call $modal_begin (local.get $dlg) (i32.const 8))
   )
 
   ;; SHGetMalloc(ppMalloc) — the shell allocator is the task's OLE allocator.
