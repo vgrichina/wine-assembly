@@ -490,6 +490,7 @@ UNIT=(
   # self-contained Node/WASM checks; local-payload and browser-driver tests are
   # listed in E2E below.
   test/test-baldurs-gate-compat-patches.js
+  test/test-caesar3-name-entry.js
   test/test-batch-clock.js
   test/test-browser-critical-section-yield.js
   test/test-browser-cooperative-load-library.js

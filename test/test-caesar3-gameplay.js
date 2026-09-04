@@ -1,82 +1,29 @@
 #!/usr/bin/env node
-// Caesar III all the way into a running city, not just to a title screen.
-//
-// Everything interesting about this app — the 800x600x16 DirectDraw frame it
-// software-renders itself, the cursor scaling, the sidebar UI — only happens
-// once a mission is actually loaded, so a test that stops at the main menu
-// measures none of it. This drives the real sequence: title -> main menu ->
-// "Start new game" -> the name prompt -> the assignment briefing -> the city.
-//
-// Two things make that scriptable at all:
-//   * The clicks must be a mousedown, a gap of batches, then a mouseup. The
-//     game samples the button state once per frame out of its wndproc, so a
-//     `click` (down and up in the same batch) is drained by a single
-//     PeekMessage pass and the game never sees a pressed button.
-//   * The host screen is set to 800x600 so cursor positions need no scaling;
-//     the game builds its client rect from SM_CXSCREEN/SM_CYSCREEN.
+// Caesar III all the way into a running city, including a real governor name.
 
-const fs = require('fs');
-const path = require('path');
-const { execSync } = require('child_process');
+'use strict';
+
 const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawn } = require('child_process');
 const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
-const RUN = path.join(__dirname, 'run.js');
 const EXE = path.join(ROOT, 'test/binaries/candidates/caesar-3-demo/installed/c3.exe');
-const OUT = path.join(ROOT, 'build/caesar3-gameplay.png');
-
-// `node test/test-caesar3-gameplay.js some.png` skips the run and just reports
-// the region statistics for an existing capture — that is how the thresholds
-// below were separated from the main menu and the briefing screens.
 const ANALYZE_ONLY = process.argv[2];
 
-if (!ANALYZE_ONLY && !fs.existsSync(EXE)) { console.log('SKIP  Caesar III demo missing'); process.exit(0); }
-
-// batch -> what the player does. The gaps are generous because each screen
-// loads its own .555 graphics before it will accept the next click.
-const INPUT = [
-  '700:mousemove:400:300', '760:mousedown:400:300', '800:mouseup:400:300',      // dismiss the title
-  '1000:mousemove:400:172', '1040:mousedown:400:172', '1080:mouseup:400:172',   // "Start new game"
-  '1500:mousemove:548:320', '1540:mousedown:548:320', '1580:mouseup:548:320',   // name prompt "Continue"
-  '2600:mousemove:613:502', '2640:mousedown:613:502', '2680:mouseup:613:502',   // briefing "To the city"
-].join(',');
-
-const cmd = ANALYZE_ONLY ? null : `node "${RUN}" --app=caesar3_demo --screen=800x600 --batch-size=50000`
-  + ` --max-batches=3400 --repaint-every=50 --input='${INPUT}' --png="${OUT}"`;
-if (cmd) {
-  console.log('$', cmd);
-  try {
-    // Measures 9s -- the slowest of the gameplay drives, and still nowhere near
-    // the 900s that used to sit here. A cap this far above the real cost cannot
-    // tell a hang from a slow box, which is the only thing a cap is for.
-    // maxBuffer, because the default is 1MB and this drive prints just over
-    // it: 3400 batches of unfiltered [API] lines came to 1054671 bytes, so the
-    // run was being killed at batch 3380 every time and reported as a hang.
-    // The cap is on the log, not on the emulator, so it must not be able to
-    // decide the test.
-    execSync(cmd, { encoding: 'utf-8', timeout: 60000, cwd: ROOT,
-      maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
-  } catch (e) {
-    const out = (e.stdout || '').toString() + (e.stderr || '').toString();
-    console.error(out.split('\n').slice(-40).join('\n'));
-    throw new Error('the Caesar III run did not finish');
-  }
-  assert.ok(fs.existsSync(OUT), 'the run wrote no PNG');
-}
-
-const png = PNG.sync.read(fs.readFileSync(ANALYZE_ONLY || OUT));
-assert.strictEqual(png.width, 800, 'the presented frame must be the 800x600 display mode');
-assert.strictEqual(png.height, 600);
-
-// Region statistics, over the frame the game presented. `green` is terrain,
-// `dark` is the stone chrome the city view puts along the top.
-function stats(x0, y0, x1, y1) {
-  let green = 0, dark = 0, total = 0;
+function stats(png, x0, y0, x1, y1) {
+  let green = 0;
+  let dark = 0;
+  let total = 0;
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
       const i = (y * png.width + x) * 4;
-      const r = png.data[i], g = png.data[i + 1], b = png.data[i + 2];
+      const r = png.data[i];
+      const g = png.data[i + 1];
+      const b = png.data[i + 2];
       if (g > r + 8 && g > b + 8) green++;
       if (r < 90 && g < 90 && b < 90) dark++;
       total++;
@@ -85,26 +32,157 @@ function stats(x0, y0, x1, y1) {
   return { green: green / total, dark: dark / total };
 }
 
-const map = stats(0, 30, 590, 590);
-const sidebar = stats(610, 60, 790, 470);
-const topBar = stats(0, 2, 800, 16);
-console.log(`map green ${(map.green * 100).toFixed(1)}%  `
-  + `sidebar green ${(sidebar.green * 100).toFixed(1)}%  `
-  + `top bar dark ${(topBar.dark * 100).toFixed(1)}%`);
+function verifyCity(filename) {
+  const png = PNG.sync.read(fs.readFileSync(filename));
+  assert.strictEqual(png.width, 800, 'Caesar III must present its 800x600 mode');
+  assert.strictEqual(png.height, 600);
+  const map = stats(png, 0, 30, 590, 590);
+  const sidebar = stats(png, 610, 60, 790, 470);
+  const topBar = stats(png, 0, 2, 800, 16);
+  console.log(`map green ${(map.green * 100).toFixed(1)}%  ` +
+    `sidebar green ${(sidebar.green * 100).toFixed(1)}%  ` +
+    `top bar dark ${(topBar.dark * 100).toFixed(1)}%`);
+  assert(map.green > 0.35,
+    `the city map should be mostly green terrain, saw ${(map.green * 100).toFixed(1)}%`);
+  assert(sidebar.green < 0.20,
+    `the stone control panel should not be terrain, saw ${(sidebar.green * 100).toFixed(1)}% green`);
+  assert(map.green - sidebar.green > 0.3,
+    'the city map and control panel should be visually distinct');
+}
 
-// The terrain the mission starts on is grass and woodland: overwhelmingly
-// green. Measured on the screens this run passes through, the map area is
-// 57% green in the city and at most 10% anywhere else — the main menu is a
-// photographed cityscape behind a slab of grey buttons (10.2%), the briefing
-// is a beige panel (2.2%), the title is black (5.2%).
-assert.ok(map.green > 0.35,
-  `the city map area should be mostly green terrain, saw ${(map.green * 100).toFixed(1)}%`);
-// The right-hand control panel is carved stone, so it is the one part of the
-// city view that is NOT terrain. The gap between the two regions is what says
-// "the city is up" rather than "some other green screen is up".
-assert.ok(sidebar.green < 0.20,
-  `the control panel should not be terrain, saw ${(sidebar.green * 100).toFixed(1)}% green`);
-assert.ok(map.green - sidebar.green > 0.3,
-  'the map and the control panel should not look like the same picture');
+async function main() {
+  if (ANALYZE_ONLY) {
+    verifyCity(ANALYZE_ONLY);
+    console.log('PASS  Caesar III capture is a playable city view');
+    return;
+  }
+  if (!fs.existsSync(EXE)) {
+    console.log('SKIP  Caesar III installer-produced demo payload is missing');
+    return;
+  }
 
-console.log('PASS  Caesar III reaches a playable city view');
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-caesar3-gameplay-'));
+  const namePath = process.env.CAESAR3_NAME_SCREENSHOT || path.join(temp, 'name.png');
+  const cityPath = process.env.CAESAR3_SCREENSHOT || path.join(temp, 'city.png');
+  const args = [
+    'test/run.js', '--app=caesar3_demo', '--screen=800x600', '--batch-size=50000',
+    '--control-stdin', '--frozen', '--max-seconds=90', '--max-batches=1000000',
+    '--quiet-api', '--quiet-blocks', '--no-close', '--repaint-every=1000000',
+  ];
+  if (fs.existsSync(path.join(ROOT, 'build/wine-assembly.wasm'))) args.push('--no-build');
+  const child = spawn(process.execPath, args, { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
+
+  let output = '';
+  let lineBuffer = '';
+  let serial = 0;
+  const pending = new Map();
+  const exited = new Promise(resolve => child.on('exit', resolve));
+
+  child.stdout.on('data', data => {
+    output += data;
+    lineBuffer += data;
+    const lines = lineBuffer.split(/\r?\n/);
+    lineBuffer = lines.pop() || '';
+    for (const line of lines) {
+      const match = line.match(/^\[ctl\] (.*)$/);
+      if (!match) continue;
+      let reply;
+      try { reply = JSON.parse(match[1]); } catch (_) { continue; }
+      const waiter = pending.get(reply.id);
+      if (!waiter) continue;
+      pending.delete(reply.id);
+      reply.ok ? waiter.resolve(reply.value) : waiter.reject(new Error(reply.error));
+    }
+  });
+  child.stderr.on('data', data => { output += data; });
+  child.on('exit', code => {
+    for (const [id, waiter] of pending) {
+      waiter.reject(new Error(`run.js exited before replying to ${id} (exit ${code})`));
+    }
+    pending.clear();
+  });
+
+  function send(command) {
+    const id = `c3-${++serial}`;
+    const payload = typeof command === 'string' ? { id, cmd: command } : { id, ...command };
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      child.stdin.write(`${JSON.stringify(payload)}\n`, error => {
+        if (!error) return;
+        pending.delete(id);
+        reject(error);
+      });
+    });
+  }
+
+  const step = n => send({ action: 'step', n });
+  async function pressAt(x, y, moveGap = 40, holdGap = 40) {
+    await send(`mousemove:${x}:${y}`);
+    await step(moveGap);
+    await send(`mousedown:${x}:${y}`);
+    await step(holdGap);
+    await send(`mouseup:${x}:${y}`);
+  }
+  async function typeText(text) {
+    for (const ch of text) {
+      const vk = ch.toUpperCase().charCodeAt(0);
+      await send(`keydown:${vk}`);
+      await send(`keypress:${ch.charCodeAt(0)}`);
+      await send(`keyup:${vk}`);
+      await step(10);
+    }
+  }
+  const readGovernorName = () => send({
+    action: 'eval',
+    code: `(() => { const m=new Uint8Array(memory.buffer), p=g2w(0x57eb3c); let s=''; for(let i=0;i<32&&m[p+i];i++)s+=String.fromCharCode(m[p+i]); return s; })()`,
+  });
+
+  try {
+    await send({ action: 'ping' });
+    await step(700);
+    await pressAt(400, 300, 60, 40); // dismiss title; now batch 800
+    await step(200);
+    await pressAt(400, 172);         // Start new game; now batch 1080
+    await step(370);
+
+    assert.strictEqual(await readGovernorName(), '',
+      'new-career name buffer must not retain the default governor text');
+    await typeText('Codex');         // now batch 1500
+    assert.strictEqual(await readGovernorName(), 'Codex',
+      'typing a short name must not retain a suffix from the default text');
+    await send(`png:${namePath}`);
+
+    await pressAt(548, 320);         // Continue; now batch 1580
+    await step(1020);
+    await pressAt(613, 502);         // To the city; now batch 2680
+    await step(720);
+    await send(`png:${cityPath}`);
+
+    verifyCity(cityPath);
+    assert(output.includes('patched Caesar III new-career name buffer starts empty'),
+      `Caesar III compatibility patch was not reported\n${output.slice(-5000)}`);
+    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(output),
+      `Caesar III hit a compatibility failure\n${output.slice(-5000)}`);
+
+    await send({ action: 'quit' });
+    child.stdin.end();
+    const code = await exited;
+    assert.strictEqual(code, 0, `Caesar III CLI exited ${code}\n${output.slice(-5000)}`);
+    console.log(`PASS  Caesar III typed-name screenshot: ${namePath}`);
+    console.log(`PASS  Caesar III playable-city screenshot: ${cityPath}`);
+  } catch (error) {
+    if (child.exitCode === null) {
+      try { await send({ action: 'quit' }); } catch (_) {}
+      child.stdin.end();
+      await exited;
+    }
+    throw error;
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+main().catch(error => {
+  console.error(`FAIL Caesar III gameplay: ${error.stack || error.message}`);
+  process.exit(1);
+});
