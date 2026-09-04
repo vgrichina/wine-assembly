@@ -190,8 +190,18 @@
                 (drop (call $dialog_default_proc
                   (global.get $main_hwnd) (i32.const 0x0006) (i32.const 1)
                   (global.get $main_hwnd)))
+                (global.set $focus_hwnd (global.get $main_hwnd))
                 (drop (call $dialog_default_proc
                   (global.get $main_hwnd) (i32.const 0x0007) (i32.const 0) (i32.const 0)))
+                (local.set $arg1 (call $paint_scratch_take))
+                (call $host_get_window_rect (global.get $main_hwnd) (local.get $arg1))
+                (drop (call $dialog_default_proc
+                  (global.get $main_hwnd) (i32.const 0x0003) (i32.const 0)
+                  (i32.or
+                    (i32.and (load.field PaintRect left (local.get $arg1))
+                      (i32.const 0xFFFF))
+                    (i32.shl (load.field.memarg PaintRect top (local.get $arg1))
+                      (i32.const 16)))))
                 (local.set $arg1 (global.get $pending_wm_size))
                 (if (local.get $arg1)
                   (then
@@ -212,7 +222,8 @@
                 (call $gs32 (global.get $esp) (i32.const 0x001C))           ;; WM_ACTIVATEAPP
                 (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
                 (call $gs32 (global.get $esp) (global.get $main_hwnd))      ;; hwnd
-                ;; Push CACA0022 as WndProc return — chains to ACTIVATE→SETFOCUS→SIZE→0001.
+                ;; Push CACA0022 as WndProc return; chains through activation,
+                ;; focus, move, size, then CACA0001.
                 (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
                 (call $gs32 (global.get $esp) (global.get $createwnd_activate_thunk))
                 (global.set $eip (local.get $arg0))
@@ -243,8 +254,8 @@
     ;; Triggered by $handle_ShowWindow on the first non-hide call for main_hwnd.
     ;; Each thunk: wndproc returned → push next message → call wndproc again.
     ;; Stack invariant: saved_ret and saved_hwnd sit at bottom throughout.
-    ;; Chain: ShowWindow → CACA0022 (WM_ACTIVATE) → CACA0023 (WM_SETFOCUS)
-    ;;      → CACA0001 (done, pop saved_ret+hwnd)
+    ;; Chain: ShowWindow -> WM_ACTIVATE -> WM_SETFOCUS -> WM_MOVE -> WM_SIZE
+    ;;      -> CACA0001 (done, pop saved_ret+hwnd)
 
     ;; CACA0022: WM_ACTIVATEAPP returned → send WM_ACTIVATE synchronously
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0022))
@@ -269,6 +280,8 @@
     ;; CACA0023: WM_ACTIVATE returned → send WM_SETFOCUS synchronously
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0023))
       (then
+        ;; GetFocus already names the receiving window inside WM_SETFOCUS.
+        (global.set $focus_hwnd (global.get $main_hwnd))
         ;; Push WndProc args: hwnd, WM_SETFOCUS(0x0007), 0, 0
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (i32.const 0))                  ;; lParam = 0
@@ -279,7 +292,7 @@
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (global.get $main_hwnd))        ;; hwnd
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (global.get $createwnd_size_thunk))
+        (call $gs32 (global.get $esp) (global.get $createwnd_move_thunk))
         (global.set $eip (call $wnd_table_get (global.get $main_hwnd)))
         (if (i32.eqz (global.get $eip))
           (then (global.set $eip (global.get $wndproc_addr))))
@@ -292,10 +305,36 @@
         (global.set $steps (i32.const 0))
         (return)))
 
-    ;; CACA0024: WM_SETFOCUS returned → send WM_SIZE synchronously
-    ;; Restores Win32 invariant: ShowWindow's SetWindowPos delivers WM_SIZE
-    ;; before any message loop / PostMessage'd command runs.
+    ;; CACA0024: WM_SETFOCUS returned -> send WM_MOVE synchronously.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0024))
+      (then
+        (local.set $arg0 (call $paint_scratch_take))
+        (call $host_get_window_rect (global.get $main_hwnd) (local.get $arg0))
+        ;; Push WndProc args: hwnd, WM_MOVE, 0, lParam=x|(y<<16).
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp)
+          (i32.or
+            (i32.and (load.field PaintRect left (local.get $arg0))
+              (i32.const 0xFFFF))
+            (i32.shl (load.field.memarg PaintRect top (local.get $arg0))
+              (i32.const 16))))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const 0))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const 0x0003))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (global.get $main_hwnd))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (global.get $createwnd_size_thunk))
+        (global.set $eip (call $wnd_table_get (global.get $main_hwnd)))
+        (if (i32.eqz (global.get $eip))
+          (then (global.set $eip (global.get $wndproc_addr))))
+        (global.set $steps (i32.const 0))
+        (return)))
+
+    ;; CACA0031: WM_MOVE returned -> send WM_SIZE synchronously. ShowWindow's
+    ;; SetWindowPos sequence must finish before posted commands can run.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0031))
       (then
         ;; Restored startup uses the create-time pending size. Some Win98 apps
         ;; make fragile first-show decisions from that exact value. Maximized
@@ -895,6 +934,20 @@
         ;; pump out and let execution fall through to the post-MessageBox
         ;; instruction (LocalFree/ExitProcess) on the very next batch.
         (global.set $handler_set_eip (i32.const 1))
+        ;; A wizard page may do the complete installation from PSN_WIZFINISH.
+        ;; It returns here through the ordinary modal thunk so that work ran in
+        ;; bounded top-level batches instead of inside $wnd_send_message's
+        ;; nested 64M-block callback loop.
+        (if (global.get $propsheet_finish_page)
+          (then
+            (local.set $arg4
+              (call $dialog_extra_get
+                (global.get $propsheet_finish_page) (i32.const 0)))
+            (global.set $propsheet_finish_page (i32.const 0))
+            (call $heap_free (global.get $propsheet_finish_nmhdr))
+            (global.set $propsheet_finish_nmhdr (i32.const 0))
+            (if (i32.eqz (local.get $arg4))
+              (then (call $modal_done (i32.const 1))))))
         (if (call $modal_pump_step (global.get $modal_loop_thunk)) (then (return)))
         ;; Modal complete — splice the API call back together.
         (global.set $eax (global.get $modal_result))

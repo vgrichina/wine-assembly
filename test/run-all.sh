@@ -122,6 +122,7 @@ UNIT=(
   test/test-cd-audio-mci.js
   test/test-thread-manager.js
   test/test-worker-metadata-refresh.js
+  test/test-thread-thunk-sync.js
   test/test-io-wait-threads.js
   test/test-mm-timer-callback.js
   test/test-run-budget-completes-resume.js
@@ -347,6 +348,7 @@ UNIT=(
   test/test-vk-key-scan.js
   test/test-wait-for-input-idle.js
   test/test-win16-winexec.js
+  test/test-winexec-vfs-launch.js
   test/test-win32-dde-progman.js
   test/test-win98-scm-probe.js
   test/test-x86-16bit-upper-half.js
@@ -375,6 +377,7 @@ UNIT=(
   test/test-end-dialog-lifecycle.js
   test/test-modal-common-dialog-worker.js
   test/test-sendmessagetimeout.js
+  test/test-directdraw-blt-clipping.js
   test/test-directdraw-cooperative-window.js
   test/test-directdraw-enum-attached.js
   test/test-directdraw-enum-surfaces.js
@@ -445,6 +448,7 @@ UNIT=(
   test/test-richedit-version-compat.js
   test/test-rtf-stylesheet.js
   test/test-shell-desktop-fallback.js
+  test/test-shell-link-com.js
   test/test-solitaire-web.js
   test/test-sparse-width-boundary.js
   test/test-string-ops-sparse-boundary.js
@@ -631,6 +635,13 @@ E2E=(
   test/test-quake2-menu-keys-web.js
   test/test-quake2-input-web.js
   test/test-jazz2-demo-web.js
+  test/test-jazz2-gameplay-candidate.js
+  test/test-cave-story-candidate.js
+  test/test-generally-candidate.js
+  test/test-little-fighter-2-candidate.js
+  test/test-pocket-tanks-candidate.js
+  test/test-icy-tower-candidate.js
+  test/test-total-annihilation-candidate.js
   test/test-diablo2-demo-installer.js
   test/test-diablo2-demo-installed.js
   test/test-diablo2-demo-gameplay.js
@@ -646,6 +657,7 @@ E2E=(
   test/test-web-touch-cursor.js
   test/test-web-agent-remote.js
   test/test-web-agent-frozen.js
+  test/test-web-shutdown.js
   test/test-web-frozen-recording.js
   test/test-cli-frozen-recording.js
   test/test-web-record-audio.js
@@ -693,6 +705,8 @@ E2E=(
   test/test-about-cancel.js
   test/test-control-cli.js
   test/test-control-stdin-cli.js
+  test/test-control-stdin-frozen-cli.js
+  test/test-cli-capture-launch.js
   test/test-calc-about.js
   test/test-calc-drag-close.js
   test/test-calc-helper-window.js

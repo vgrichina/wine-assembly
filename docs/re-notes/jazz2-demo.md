@@ -1,5 +1,39 @@
 # Jazz Jackrabbit 2 Shareware 1.23s
 
+## Original installer
+
+The source fixture is the unchanged 20,069,847-byte `J2swc123.exe`; installed
+files remain local test material and are not a replacement distribution. The
+emulated COMCTL32 `PropertySheetA` now builds the installer wizard from its
+inline `PROPSHEETPAGEA` records and real dialog resources. Current validation
+walks Welcome, DirectX Setup, Destination, Jazz Jackrabbit 2 Links, and Finish
+Installation, selecting **No, continue without installing DirectX 5**.
+
+Finish opens the original `Extracting Jazz Jackrabbit 2 Shareware` dialog,
+creates `C:\\Games\\Jazz2Sw\\License.doc`, and reads its compressed member from
+the installer. `PSN_WIZFINISH` returns through the modal continuation rather
+than forcing the entire install through the property sheet's synchronous
+notification helper. The original installer now completes through its own
+`Installation Complete` dialog, exits with code 0, and writes all 53 payload
+files and shortcuts. The saved completion capture is
+`/private/tmp/jazz2-install-complete.png`; its VFS is
+`/private/tmp/jazz2-installed-vfs/`.
+
+The completed run used the CLI's frozen stdio controller and internal
+`--max-seconds=180` guard. It remained parked while waiting for commands, then
+finished extraction after an explicit `step 40000`; no external timeout or
+archive bypass was involved. A subsequent gameplay gate launches
+`C:\\Games\\Jazz2Sw\\jazz2.exe` directly from that saved installer output by
+setting `JAZZ2_INSTALLED=/private/tmp/jazz2-installed-vfs/games/jazz2sw`. It
+reached animated Darn Ratz gameplay in 31 seconds; two accepted frames had
+181/180 sampled colors and 129,164 changed pixels. The visually inspected,
+unobstructed gameplay capture is `/private/tmp/jazz2-installer-gameplay.png`.
+
+Property-sheet Cancel currently returns the documented zero result directly.
+Jazz's page procedure normally opens a confirmation MessageBox from
+`PSN_QUERYCANCEL`; delivering that notification requires nested modal state,
+while the current common-dialog pump deliberately stores one modal frame.
+
 ## Package and launch
 
 The localhost-only dropdown mounts the installed payload from

@@ -8,6 +8,7 @@ const { bootRenderHarness } = require('./render-helper');
 const sizes = new Map();
 const positions = new Map();
 const moveFlags = [];
+const zOrders = [];
 const pack = (w, h) => ((w & 0xffff) | ((h & 0xffff) << 16)) >>> 0;
 
 const extraWat = String.raw`
@@ -34,6 +35,8 @@ const extraWat = String.raw`
       (local.get $w) (i32.const 0))
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
+  (func (export "test_get_parent") (param $hwnd i32) (result i32)
+    (call $wnd_get_parent (local.get $hwnd)))
 `;
 
 (async () => {
@@ -53,6 +56,9 @@ const extraWat = String.raw`
         sizes.set(hwnd, pack(nextW, nextH));
         if (!(flags & 0x0002)) positions.set(hwnd, pack(_x, _y));
         moveFlags.push(flags >>> 0);
+      },
+      set_window_zorder(hwnd, insertAfter) {
+        zOrders.push([hwnd >>> 0, insertAfter | 0]);
       },
       get_window_rect(hwnd, out) {
         const xy = positions.get(hwnd >>> 0) || 0;
@@ -102,9 +108,21 @@ const extraWat = String.raw`
 
   e.test_call_SetWindowPos(first, 99, 99, 150, 60, 0x17); // NOMOVE|NOSIZE
   assert.strictEqual(e.get_post_queue_count(), 0,
-    'SWP_NOMOVE|SWP_NOSIZE leaves no queued geometry messages');
+    'SWP_NOMOVE|SWP_NOSIZE suppress derived WM_MOVE/WM_SIZE');
+  assert.deepStrictEqual(zOrders, [],
+    'SWP_NOZORDER suppresses the host z-order update');
 
-  console.log('PASS MoveWindow/SetWindowPos preserve geometry messages and repaint flags');
+  const top = e.test_get_parent(first) >>> 0;
+  sizes.set(top, pack(40, 20));
+  e.test_call_SetWindowPos(top, 99, 99, 150, 60, 0x03); // NOMOVE|NOSIZE
+  assert.deepStrictEqual(zOrders, [[top, 0]],
+    'top-level SetWindowPos without SWP_NOZORDER moves the window to HWND_TOP');
+
+  e.test_call_SetWindowPos(first, 0, 0, 20, 10, 0x03);
+  assert.deepStrictEqual(zOrders, [[top, 0]],
+    'child z-order stays in the retained sibling model, not the host global list');
+
+  console.log('PASS MoveWindow/SetWindowPos preserve geometry, repaint, and z-order flags');
 })().catch(err => {
   console.error(err && err.stack || err);
   process.exit(1);

@@ -1199,6 +1199,7 @@
   (data (region.addr $USER_DIALOG_STRINGS 0x208) "Pages\00")
   (data (region.addr $USER_DIALOG_STRINGS 0x20E) "1\00")
   (data (region.addr $USER_DIALOG_STRINGS 0x210) "9999\00")
+  (data (region.addr $USER_DIALOG_STRINGS 0x215) "Back\00Next\00")
   (data (region.addr $USER_DIALOG_STRINGS 0x220) "WINSPOOL\00")
   (data (region.addr $USER_DIALOG_STRINGS 0x229) "Web Printer\00")
   ;; ChooseColor labels from the classic partial color-dialog template.
@@ -2670,7 +2671,8 @@
   ;; Synchronous activation chain (first ShowWindow): ACTIVATEAPP → ACTIVATE → SETFOCUS → done
   (global $createwnd_activate_thunk (mut i32) (i32.const 0))   ;; CACA0022: WM_ACTIVATE
   (global $createwnd_setfocus_thunk (mut i32) (i32.const 0))   ;; CACA0023: WM_SETFOCUS
-  (global $createwnd_size_thunk     (mut i32) (i32.const 0))   ;; CACA0024: WM_SIZE
+  (global $createwnd_move_thunk     (mut i32) (i32.const 0))   ;; CACA0024: WM_MOVE
+  (global $createwnd_size_thunk     (mut i32) (i32.const 0))   ;; CACA0031: WM_SIZE
   (global $createwnd_saved_hwnd (mut i32) (i32.const 0))
   (global $createwnd_saved_ret  (mut i32) (i32.const 0))
   (global $show_window_activated (mut i32) (i32.const 0))      ;; first-ShowWindow gate
@@ -3293,6 +3295,16 @@
   (global $modal_saved_ebp (mut i32) (i32.const 0))
   (global $modal_restore_pending (mut i32) (i32.const 0))
   (global $modal_loop_thunk (mut i32) (i32.const 0)) ;; CACA0006 thunk addr
+  ;; COMCTL32 PropertySheetA uses the common modal pump but owns a real
+  ;; guest DLGPROC page inside a WAT-native wizard frame.
+  (global $propsheet_header (mut i32) (i32.const 0))
+  (global $propsheet_pages (mut i32) (i32.const 0))
+  (global $propsheet_page_count (mut i32) (i32.const 0))
+  (global $propsheet_page_index (mut i32) (i32.const 0))
+  (global $propsheet_page_hwnd (mut i32) (i32.const 0))
+  (global $propsheet_frame_hwnd (mut i32) (i32.const 0))
+  (global $propsheet_finish_page (mut i32) (i32.const 0))
+  (global $propsheet_finish_nmhdr (mut i32) (i32.const 0))
   (global $ddenum_ret_thunk (mut i32) (i32.const 0)) ;; CACA0007 DDEnumerate callback return
   ;; D3D EnumDevices multi-device iteration state (CACA000B)
   (global $d3d_enum_dev_thunk (mut i32) (i32.const 0))

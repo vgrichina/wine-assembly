@@ -933,19 +933,77 @@ first-person dungeon frame,
 ## Further shareware/demo/freeware game candidates
 
 Research on 2026-08-22 narrowed the next browser targets to distributions that
-were released as demos or shareware. Archive.org availability is evidence that
-the historical package can be obtained and inspected, not by itself permission
-to redistribute it with this repository; keep external downloads and verify
-the original package terms before bundling any commercial demo.
+were released as demos or shareware. Entries in this file identify and link to
+the original distributions; Wine-Assembly can download and run those packages
+without republishing them. A playable demo is therefore a valid target even
+when its terms do not grant redistribution, unless those terms explicitly
+prohibit the project's method of obtaining or running it.
+
+### Little Fighter 2 v1.9 freeware
+
+The exact 12,669,116-byte `lf2_v19.exe` archived at
+[Archive.org](https://archive.org/details/lf2_v19) is pinned as
+`little-fighter-2-installer` with SHA-1
+`708c6be6dc4a195c1011fde480157862c60fbdee`. The unchanged Win32 installer now
+completes under Wine-Assembly and its installed game reaches interactive
+three-fighter VS combat. See
+[`docs/re-notes/little-fighter-2.md`](docs/re-notes/little-fighter-2.md) for the
+installer route, hashes, DirectDraw fix, and frozen gameplay gate.
+
+The [official LF2 introduction](https://www.lf2.net/en/intro.html) describes
+the game as freeware, and the [official FAQ](https://www.lf2.net/faq_en.html)
+confirms that the authors intended it to be free to play. The package readme
+still says **All rights reserved**, and no inspected official page expressly
+permits redistribution. Keep both the installer and prepared game payload
+local/gitignored; freeware status permits this compatibility target under the
+candidate policy but does not clear it for public deployment.
+
+### Pocket Tanks v1.6 shareware
+
+The official [Pocket Tanks page](https://classic.blitwise.com/pockettanks.html)
+offers the shareware edition, and its direct
+[`ptanks.exe` download](https://classic.blitwise.com/ptanks.exe) is pinned as
+`pocket-tanks-installer`. The package has SHA-1
+`1f10dd5830eecf117bc10daf7e85d29f364dbdc2` and SHA-256
+`a3d7da899ab2d3cdd33c6b10747478628175c5a5e0c215eb43a629e6cf98c982`.
+
+Wine-Assembly runs the unchanged bootstrap and the Inno Setup child it creates,
+then launches the installed game into Target Practice. See
+[`docs/re-notes/pocket-tanks.md`](docs/re-notes/pocket-tanks.md) for the exact
+guest-only installer route and frozen gameplay gate. Keep the installer and
+installed payload local/gitignored unless its package terms are separately
+confirmed to authorize public bundling; the official shareware label does not
+make the game open source.
+
+### Icy Tower v1.3.1 freeware
+
+The exact 2,647,172-byte installer from the
+[Icy Tower Archive item](https://archive.org/details/Icy_Tower) is pinned as
+`icy-tower`, with archive SHA-1
+`21aa4fb949c5f0718a59f922df6ad644a80e6715` and installer SHA-256
+`e8a6ddc8a11d49b1e68484f725afc9204d9d15e0bf6cf90f0b14f0d1c9d24302`.
+The unchanged bootstrap and its generated Inno child now complete inside
+Wine-Assembly, and the installed game reaches moving tower gameplay. See
+[`docs/re-notes/icy-tower.md`](docs/re-notes/icy-tower.md).
+
+The installed readme calls Icy Tower freeware and expressly encourages copying
+the game in its original form, provided Free Lunch Design receives credit and a
+site link. It separately forbids inclusion in commercial compilations or
+packages without the author's permission. Preserve the original package and
+those conditions for any public distribution; the extracted local browser
+payload remains gitignored.
 
 Recommended order:
 
 1. [Jazz Jackrabbit 2 Demo v1.23s](https://archive.org/details/JazzJackrabbit2Demo)
-   remains the best next target. The Archive item identifies it as a 1998
+   is now a completed target. The Archive item identifies it as a 1998
    Windows action-game demo, provides a 19.2 MB Windows executable, and says it
    contains three single-player levels including a boss plus multiplayer maps.
    The exact `J2swc123.exe` package and SHA-1 are already pinned in
-   `test/candidate-corpus/manifest.json`, so acquisition is reproducible.
+   `test/candidate-corpus/manifest.json`, so acquisition is reproducible. Its
+   unchanged installer now completes and the installer-produced game reaches
+   animated Darn Ratz gameplay; see
+   [`docs/re-notes/jazz2-demo.md`](docs/re-notes/jazz2-demo.md).
 2. [RollerCoaster Tycoon Demo](https://archive.org/details/RollercoasterTycoonDemo)
    is a 1999 Windows demo delivered as the single 18.7 MB `RCTYCOON.EXE`.
    Archive.org describes a roughly 25-minute playable session with saving,
@@ -983,9 +1041,11 @@ downloaded into ignored `test/binaries/candidates/` directories and exercised
 through their original installers before using any extracted game files.
 
 - Jazz Jackrabbit 2 uses the pinned `J2swc123.exe`. Its InstallShield wizard
-  reaches the DirectX 5 choice and accepts **No, continue without DirectX 5**,
-  then enters a long synchronous extraction batch; a 330-second bounded run did
-  not return, so completion is not yet proven.
+  now renders all five original property-sheet pages, accepts **No, continue
+  without DirectX 5**, and completes the unchanged package's extraction dialog.
+  It exits normally through its own completion message and writes all 53 files
+  and shortcuts under `C:\\Games\\Jazz2Sw`. Launching the installer-produced
+  `jazz2.exe` reaches distinct animated Darn Ratz gameplay frames.
 - Worms 2 was ultimately installed from Team17's smaller October demo archive,
   `Worms2Demo10Oct.zip` (7,299,379 bytes; SHA-256
   `c65d36cef69437f066a3d50d8ff26d43d228a0595d7bcc106d541375e1d3cfd8`).
@@ -1141,6 +1201,20 @@ byte argument with the correct stdcall frame. With that API present, the
 unchanged web manifest creates and shows the 640x480 "Total Annihilation"
 window and remains live through 1,200 execution batches (874 API calls), past
 the former batch-665 failure.
+
+On 2026-09-03 the same installer-produced payload was driven beyond startup
+with the frozen stdin CLI. It rendered the title menu, accepted **Single
+Player** -> **New Campaign** -> **Arm**, displayed mission `10001ARME`, and
+entered the live battlefield with units, terrain, minimap, and metal/energy
+HUD. `test/test-total-annihilation-candidate.js` now preserves that route and
+requires a Right-arrow battlefield scroll to change more than 5,000 pixels.
+The same test reruns the native self-extractor first and verifies that its
+fresh EXE and HPI match the pinned hashes. This supersedes the earlier
+window-only status. The embedded EULA permits no-fee copying/distribution only
+with its notice and other stated conditions. That clause is not an inclusion
+blocker: the Sources entry links to the original distribution, and the emulator
+runs its installer rather than distributing either the installer or extracted
+runtime files.
 
 ### 2026-08-22 Caesar III demo
 

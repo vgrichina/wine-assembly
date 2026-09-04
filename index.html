@@ -2435,6 +2435,26 @@ Resource-aware Win98 emulator
         });
         grid.appendChild(el);
       }
+      // A small first-class desktop link for provenance and complete original
+      // package downloads. It is intentionally not an emulator app or toolbar
+      // option: opening it must not allocate a second 512MB guest instance.
+      const sources = document.createElement('div');
+      sources.className = 'desktop-icon';
+      sources.dataset.app = 'sources';
+      sources.innerHTML = '<div class="icon-img">📦</div><div class="icon-label">Sources</div>';
+      let sourcesLastClick = 0;
+      sources.addEventListener('click', () => {
+        for (const e of grid.querySelectorAll('.desktop-icon.selected')) e.classList.remove('selected');
+        sources.classList.add('selected');
+        const now = Date.now();
+        if (SINGLE_APP_MODE || now - sourcesLastClick < 500) {
+          window.open('sources.html', 'wine-assembly-sources');
+          sourcesLastClick = 0;
+        } else {
+          sourcesLastClick = now;
+        }
+      });
+      grid.appendChild(sources);
     }
     // The desktop watermark. Two lines, the way Windows put its build number
     // in the corner: what this is, and exactly which build of it.

@@ -27157,5 +27157,215 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3011228251
+  },
+  {
+    "id": 3265,
+    "name": "IShellLinkA_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1279216465
+  },
+  {
+    "id": 3266,
+    "name": "IShellLinkA_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 691437042
+  },
+  {
+    "id": 3267,
+    "name": "IShellLinkA_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 693636271
+  },
+  {
+    "id": 3268,
+    "name": "IShellLinkA_GetPath",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1907084897
+  },
+  {
+    "id": 3269,
+    "name": "IShellLinkA_GetIDList",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2709255959
+  },
+  {
+    "id": 3270,
+    "name": "IShellLinkA_SetIDList",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1704098027
+  },
+  {
+    "id": 3271,
+    "name": "IShellLinkA_GetDescription",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3984711892
+  },
+  {
+    "id": 3272,
+    "name": "IShellLinkA_SetDescription",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1615314720
+  },
+  {
+    "id": 3273,
+    "name": "IShellLinkA_GetWorkingDirectory",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1581722476
+  },
+  {
+    "id": 3274,
+    "name": "IShellLinkA_SetWorkingDirectory",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1757626328
+  },
+  {
+    "id": 3275,
+    "name": "IShellLinkA_GetArguments",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3448823594
+  },
+  {
+    "id": 3276,
+    "name": "IShellLinkA_SetArguments",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1928908670
+  },
+  {
+    "id": 3277,
+    "name": "IShellLinkA_GetHotkey",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1578119836
+  },
+  {
+    "id": 3278,
+    "name": "IShellLinkA_SetHotkey",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1962700464
+  },
+  {
+    "id": 3279,
+    "name": "IShellLinkA_GetShowCmd",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2100805797
+  },
+  {
+    "id": 3280,
+    "name": "IShellLinkA_SetShowCmd",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 861248969
+  },
+  {
+    "id": 3281,
+    "name": "IShellLinkA_GetIconLocation",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2967303048
+  },
+  {
+    "id": 3282,
+    "name": "IShellLinkA_SetIconLocation",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 623105084
+  },
+  {
+    "id": 3283,
+    "name": "IShellLinkA_SetRelativePath",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2158352029
+  },
+  {
+    "id": 3284,
+    "name": "IShellLinkA_Resolve",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4228366870
+  },
+  {
+    "id": 3285,
+    "name": "IShellLinkA_SetPath",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1778896565
+  },
+  {
+    "id": 3286,
+    "name": "IPersistFile_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1003396992
+  },
+  {
+    "id": 3287,
+    "name": "IPersistFile_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2180938627
+  },
+  {
+    "id": 3288,
+    "name": "IPersistFile_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4134539396
+  },
+  {
+    "id": 3289,
+    "name": "IPersistFile_GetClassID",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2615530270
+  },
+  {
+    "id": 3290,
+    "name": "IPersistFile_IsDirty",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3467220689
+  },
+  {
+    "id": 3291,
+    "name": "IPersistFile_Load",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 945607047
+  },
+  {
+    "id": 3292,
+    "name": "IPersistFile_Save",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1439700602
+  },
+  {
+    "id": 3293,
+    "name": "IPersistFile_SaveCompleted",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1029165295
+  },
+  {
+    "id": 3294,
+    "name": "IPersistFile_GetCurFile",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2246307167
   }
 ]

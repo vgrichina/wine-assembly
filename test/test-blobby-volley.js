@@ -24,7 +24,7 @@ const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
-const EXE = path.join(__dirname, 'binaries', 'candidates', 'blobby-volley', 'volley.exe');
+const EXE = path.join(ROOT, 'packages', 'freeware', 'blobby-volley', 'volley.exe');
 const OUT = path.join(ROOT, 'scratch', 'blobby-volley');
 const MENU_PNG = path.join(OUT, 'menu.png');
 const GAME_PNG = path.join(OUT, 'match.png');

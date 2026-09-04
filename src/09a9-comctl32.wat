@@ -424,11 +424,25 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; PropertySheetA(lppsph) — 1 arg, returns int (>0 if user clicked OK)
+  ;; PropertySheetA(lppsph) — 1 arg, returns int (>0 if user clicked OK).
+  ;; The frame and guest-backed pages are built by the USER control layer;
+  ;; park this synchronous API on the same modal pump as the common dialogs.
   (func $handle_PropertySheetA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Return 0 (user cancelled / no change)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (local $dlg i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (call $modal_capture_nonvolatile)
+    (local.set $dlg (call $create_property_sheet (local.get $arg0)))
+    (if (i32.eqz (local.get $dlg))
+      (then
+        (global.set $modal_restore_pending (i32.const 0))
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (call $modal_begin (local.get $dlg) (i32.const 8))
   )
 
   ;; ImageList_SetBkColor(himl, clrBk) — 2 args, returns old bk color

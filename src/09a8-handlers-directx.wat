@@ -3529,6 +3529,7 @@
     (local $dst_dib i32) (local $src_dib i32)
     (local $dst_w i32) (local $dst_h i32) (local $dst_pitch i32)
     (local $src_w i32) (local $src_h i32) (local $src_pitch i32)
+    (local $src_full_w i32) (local $src_full_h i32) (local $clip i32)
     (local $dx i32) (local $dy i32) (local $dw i32) (local $dh i32)
     (local $sx i32) (local $sy i32) (local $sw i32) (local $sh i32)
     (local $bpp i32) (local $bps i32) (local $row i32)
@@ -3702,6 +3703,8 @@
     (local.set $src_entry (call $dx_from_this (local.get $arg2)))
     (local.set $src_dib (load.field DxObject misc1 (local.get $src_entry)))
     (local.set $src_pitch (load.field DxObject pitch (local.get $src_entry)))
+    (local.set $src_full_w (load.field DxObject width (local.get $src_entry)))
+    (local.set $src_full_h (load.field DxObject height (local.get $src_entry)))
     (local.set $ckey (load.field DxObject misc2 (local.get $src_entry)))
     (local.set $src_keyed
       (i32.and
@@ -3748,6 +3751,61 @@
     (if (i32.and (i32.eq (local.get $dw) (local.get $sw))
                  (i32.eq (local.get $dh) (local.get $sh)))
       (then
+        ;; Blt is clipped by the destination's clipper. We do not model
+        ;; arbitrary clip regions yet, but the surface bounds are mandatory:
+        ;; LF2 copies its 794x548 logical frame to a 640x480 primary at 23,43.
+        ;; Keep source and destination origins paired while trimming so the
+        ;; equal-size fast path cannot wrap an over-wide row into later rows.
+        (if (i32.lt_s (local.get $dx) (i32.const 0))
+          (then
+            (local.set $clip (i32.sub (i32.const 0) (local.get $dx)))
+            (local.set $dx (i32.const 0))
+            (local.set $sx (i32.add (local.get $sx) (local.get $clip)))
+            (local.set $dw (i32.sub (local.get $dw) (local.get $clip)))
+            (local.set $sw (local.get $dw))))
+        (if (i32.lt_s (local.get $dy) (i32.const 0))
+          (then
+            (local.set $clip (i32.sub (i32.const 0) (local.get $dy)))
+            (local.set $dy (i32.const 0))
+            (local.set $sy (i32.add (local.get $sy) (local.get $clip)))
+            (local.set $dh (i32.sub (local.get $dh) (local.get $clip)))
+            (local.set $sh (local.get $dh))))
+        (if (i32.lt_s (local.get $sx) (i32.const 0))
+          (then
+            (local.set $clip (i32.sub (i32.const 0) (local.get $sx)))
+            (local.set $sx (i32.const 0))
+            (local.set $dx (i32.add (local.get $dx) (local.get $clip)))
+            (local.set $dw (i32.sub (local.get $dw) (local.get $clip)))
+            (local.set $sw (local.get $dw))))
+        (if (i32.lt_s (local.get $sy) (i32.const 0))
+          (then
+            (local.set $clip (i32.sub (i32.const 0) (local.get $sy)))
+            (local.set $sy (i32.const 0))
+            (local.set $dy (i32.add (local.get $dy) (local.get $clip)))
+            (local.set $dh (i32.sub (local.get $dh) (local.get $clip)))
+            (local.set $sh (local.get $dh))))
+        (if (i32.or
+              (i32.or (i32.le_s (local.get $dw) (i32.const 0))
+                      (i32.le_s (local.get $dh) (i32.const 0)))
+              (i32.or
+                (i32.or (i32.ge_u (local.get $dx) (local.get $dst_w))
+                        (i32.ge_u (local.get $dy) (local.get $dst_h)))
+                (i32.or (i32.ge_u (local.get $sx) (local.get $src_full_w))
+                        (i32.ge_u (local.get $sy) (local.get $src_full_h)))))
+          (then
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+            (return)))
+        (if (i32.gt_u (local.get $dw) (i32.sub (local.get $dst_w) (local.get $dx)))
+          (then (local.set $dw (i32.sub (local.get $dst_w) (local.get $dx)))))
+        (if (i32.gt_u (local.get $dw) (i32.sub (local.get $src_full_w) (local.get $sx)))
+          (then (local.set $dw (i32.sub (local.get $src_full_w) (local.get $sx)))))
+        (if (i32.gt_u (local.get $dh) (i32.sub (local.get $dst_h) (local.get $dy)))
+          (then (local.set $dh (i32.sub (local.get $dst_h) (local.get $dy)))))
+        (if (i32.gt_u (local.get $dh) (i32.sub (local.get $src_full_h) (local.get $sy)))
+          (then (local.set $dh (i32.sub (local.get $src_full_h) (local.get $sy)))))
+        (local.set $sw (local.get $dw))
+        (local.set $sh (local.get $dh))
         (if (local.get $src_keyed)
           (then
             (local.set $row (i32.const 0))

@@ -2101,10 +2101,16 @@
   ;; carry WS_VISIBLE. Hidden dialog pages keep child WS_VISIBLE bits, but
   ;; USER's visible-region walk still suppresses their paint and hit testing.
   (func $wnd_is_effectively_visible (param $hwnd i32) (result i32)
-    (local $cur i32) (local $style i32)
+    (local $cur i32) (local $style i32) (local $depth i32)
     (local.set $cur (local.get $hwnd))
     (block $done (loop $walk
       (if (i32.eqz (local.get $cur)) (then (return (i32.const 1))))
+      ;; A corrupt or transiently inconsistent parent graph must not pin the
+      ;; main thread inside message retrieval. A valid tree cannot be deeper
+      ;; than the window table.
+      (if (i32.ge_u (local.get $depth) (global.get $MAX_WINDOWS))
+        (then (return (i32.const 0))))
+      (local.set $depth (i32.add (local.get $depth) (i32.const 1)))
       (local.set $style (call $wnd_get_style (local.get $cur)))
       (if (i32.eqz (i32.and (local.get $style) (i32.const 0x10000000)))
         (then (return (i32.const 0))))
@@ -2116,10 +2122,13 @@
   ;; will not let a child's pixels become durable under a later parent erase;
   ;; defer WAT-native control paints until the ancestor erase has drained.
   (func $wnd_has_pending_ancestor_erase (param $hwnd i32) (result i32)
-    (local $cur i32)
+    (local $cur i32) (local $depth i32)
     (local.set $cur (call $wnd_get_parent (local.get $hwnd)))
     (block $done (loop $walk
       (if (i32.eqz (local.get $cur)) (then (return (i32.const 0))))
+      (if (i32.ge_u (local.get $depth) (global.get $MAX_WINDOWS))
+        (then (return (i32.const 0))))
+      (local.set $depth (i32.add (local.get $depth) (i32.const 1)))
       (if (i32.and (call $nc_flags_test (local.get $cur)) (i32.const 2))
         (then (return (i32.const 1))))
       (local.set $cur (call $wnd_get_parent (local.get $cur)))
@@ -2132,10 +2141,13 @@
   ;; consumes every dirty ancestor; the parent-selection path then propagates
   ;; its update region back down to the child before the next native drain.
   (func $wnd_has_pending_ancestor_paint (param $hwnd i32) (result i32)
-    (local $cur i32) (local $slot i32)
+    (local $cur i32) (local $slot i32) (local $depth i32)
     (local.set $cur (call $wnd_get_parent (local.get $hwnd)))
     (block $done (loop $walk
       (if (i32.eqz (local.get $cur)) (then (return (i32.const 0))))
+      (if (i32.ge_u (local.get $depth) (global.get $MAX_WINDOWS))
+        (then (return (i32.const 0))))
+      (local.set $depth (i32.add (local.get $depth) (i32.const 1)))
       (if (i32.and
             (i32.eq (local.get $cur) (global.get $main_hwnd))
             (i32.ne (global.get $paint_pending) (i32.const 0)))

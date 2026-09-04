@@ -57,6 +57,21 @@ const extraWat = String.raw`
 
   (func (export "test_order_first_pending") (result i32)
     (call $paint_flag_first))
+
+  (func (export "test_cycle_parent") (result i32)
+    (local $a i32) (local $b i32)
+    (local.set $a (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (local.set $b (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $wnd_table_set (local.get $a) (i32.const 0x00401000))
+    (call $wnd_table_set (local.get $b) (i32.const 0x00401000))
+    (drop (call $wnd_set_style (local.get $a) (i32.const 0x10000000)))
+    (drop (call $wnd_set_style (local.get $b) (i32.const 0x10000000)))
+    (call $wnd_set_parent (local.get $a) (local.get $b))
+    ;; This second edge would close a -> b -> a. It must be rejected.
+    (call $wnd_set_parent (local.get $b) (local.get $a))
+    (call $wnd_get_parent (local.get $b)))
 `;
 
 (async () => {
@@ -78,7 +93,10 @@ const extraWat = String.raw`
   assert.strictEqual(e.test_order_first_pending() >>> 0, 0,
     'parent and child paint state should be fully consumed');
 
-  console.log('PASS  dirty ancestors paint before WAT-native child controls');
+  assert.strictEqual(e.test_cycle_parent(), 0,
+    'window parenting rejects an edge that would create a cycle');
+
+  console.log('PASS  parent-first paint order and bounded ancestor traversal');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

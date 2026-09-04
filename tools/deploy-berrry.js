@@ -202,6 +202,8 @@ const NOT_REDISTRIBUTABLE = new Set([
 // it." Same footing as the RCT shareware already live.
 const PUBLISHABLE_OUTSIDE_BINARIES = [
   'test/binaries/candidates/heroes-2-demo/files/',
+  'packages/freeware/dxball/',
+  'packages/freeware/blobby-volley/',
 ];
 
 function desktopAssetPaths() {

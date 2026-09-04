@@ -6875,8 +6875,9 @@
                 (i32.const 0xFFFF))
               (i32.const 16))))))
     (local.set $old_xy (call $window_xy_packed (local.get $arg0)))
-    ;; Pass uFlags to host so it can respect SWP_NOSIZE/SWP_NOMOVE independently
+    ;; Commit geometry and z-order independently, as the SWP flags require.
     (call $host_move_window (local.get $arg0) (local.get $x) (local.get $y) (local.get $cx) (local.get $cy) (local.get $uFlags))
+    (if (i32.and (i32.eqz (i32.and (local.get $uFlags) (i32.const 0x0004))) (i32.eqz (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x40000000)))) (then (call $host_set_window_zorder (local.get $arg0) (local.get $arg1))))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $x) (local.get $y) (local.get $cx) (local.get $cy) (local.get $uFlags))
     (if (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x40000000))
       (then (local.set $new_wh (call $ctrl_get_wh_packed (local.get $arg0))))
@@ -6933,8 +6934,7 @@
       (call $wnd_client_screen_y (local.get $arg0))
       (i32.sub (call $client_rect_get_r (local.get $arg0)) (call $client_rect_get_l (local.get $arg0)))
       (i32.sub (call $client_rect_get_b (local.get $arg0)) (call $client_rect_get_t (local.get $arg0))))
-    ;; SetWindowPos can resize the same retained-DC controls as MoveWindow.
-    ;; Refresh only after NCCALCSIZE publishes the new client rectangle.
+    ;; SetWindowPos can resize retained-DC controls; refresh after NCCALCSIZE.
     (if (i32.ne (local.get $new_wh) (local.get $old_wh))
       (then (call $gdi_refresh_window_dc_system_clips)))
     (call $windowpos_message_update
@@ -7423,6 +7423,26 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
     (local.set $dst (call $g2w (local.get $arg4)))
+
+    ;; CSIDL_DESKTOPDIRECTORY(0x10): the current user's physical desktop.
+    ;; Inno Setup requests this for its {userdesktop} shortcut target.
+    (if (i32.eq (local.get $folder) (i32.const 0x10))
+      (then
+        ;; UTF-16LE "C:\\WINDOWS\\Desktop\0".
+        (i32.store (local.get $dst) (i32.const 0x003a0043))
+        (i32.store offset=4 (local.get $dst) (i32.const 0x0057005c))
+        (i32.store offset=8 (local.get $dst) (i32.const 0x004e0049))
+        (i32.store offset=12 (local.get $dst) (i32.const 0x004f0044))
+        (i32.store offset=16 (local.get $dst) (i32.const 0x00530057))
+        (i32.store offset=20 (local.get $dst) (i32.const 0x0044005c))
+        (i32.store offset=24 (local.get $dst) (i32.const 0x00730065))
+        (i32.store offset=28 (local.get $dst) (i32.const 0x0074006b))
+        (i32.store offset=32 (local.get $dst) (i32.const 0x0070006f))
+        (i32.store16 offset=36 (local.get $dst) (i32.const 0))
+        (call $sh_folder_maybe_create (local.get $arg1) (local.get $dst))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
 
     ;; CSIDL_PROGRAMS(0x02): the Win2k shfolder used by Unicode Inno Setup
     ;; reads the all-users Common Programs value on this compatibility path.

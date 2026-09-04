@@ -288,6 +288,7 @@
   ;; $last_run_halt comment in 01-header.wat for the codes).
   (func (export "get_last_run_blocks") (result i32) (global.get $last_run_blocks))
   (func (export "get_last_run_halt")   (result i32) (global.get $last_run_halt))
+  (func (export "get_block_budget")    (result i32) (global.get $block_budget))
 
   ;; Hook for test/test-shift-equivalence.js, which checks the unified
   ;; $do_shift against an independent model of the x86 semantics over every
@@ -2624,6 +2625,8 @@
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0023))
         (then (global.set $createwnd_setfocus_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0024))
+        (then (global.set $createwnd_move_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0031))
         (then (global.set $createwnd_size_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0026))
         (then (global.set $child_cbt_ret_thunk (local.get $guest))))
@@ -4207,6 +4210,12 @@
   (func (export "test_call_WSAGetLastError") (result i32)
     (local $sp i32) (local.set $sp (global.get $esp))
     (call $handle_WSAGetLastError
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $sp))
+    (global.get $eax))
+  (func (export "test_call_WSAIsBlocking") (result i32)
+    (local $sp i32) (local.set $sp (global.get $esp))
+    (call $handle_WSAIsBlocking
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $sp))
     (global.get $eax))

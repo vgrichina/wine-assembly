@@ -31,6 +31,7 @@ const rendererJs = fs.readFileSync(path.join(ROOT, 'lib', 'renderer.js'), 'utf8'
 const rendererInputJs = fs.readFileSync(path.join(ROOT, 'lib', 'renderer-input.js'), 'utf8');
 const recorderJs = fs.readFileSync(path.join(ROOT, 'lib', 'recorder.js'), 'utf8');
 const deployJs = fs.readFileSync(path.join(ROOT, 'tools', 'deploy-berrry.js'), 'utf8');
+const sourcesHtml = fs.readFileSync(path.join(ROOT, 'sources.html'), 'utf8');
 const sourcesMd = fs.readFileSync(path.join(ROOT, 'test', 'binaries', 'SOURCES.md'), 'utf8');
 const exportsWat = fs.readFileSync(path.join(ROOT, 'src', '13-exports.wat'), 'utf8');
 const windowHandlersWat = fs.readFileSync(path.join(ROOT, 'src', '09a5-handlers-window.wat'), 'utf8');
@@ -125,23 +126,36 @@ assert(/menu_prepare_overlay/.test(rendererJs) && /menu_paint_dropdown/.test(ren
 assert(!/menu_hittest_bar|\.menu_open\(/.test(rendererInputJs), 'renderer input should not fall back to JS-driven menu hit-test/open logic');
 assert(webApp.includes('id="midi-select"'), 'debug toolbar should expose a MIDI selector');
 assert(webApp.includes('<option value="dxball">DX-Ball 1.09</option>'),
-  'debug app selector should expose the local DX-Ball candidate');
-assert(/dxball:\s*\{[^}]*exe:\s*dxballCandidateRoot \+ 'dxball\.exe'[^}]*files:\s*dxballCandidateFiles[^}]*requiredFiles:\s*true/s.test(webApp),
-  'DX-Ball debug launch should require its prepared installed payload');
-assert(!/\[\s*'dxball'\s*,\s*'DX-Ball'/.test(webApp),
-  'normal desktop whitelist should not promote the local DX-Ball payload');
-assert(!deployJs.includes('test/binaries/candidates/dxball'),
-  'public deploy should exclude the local DX-Ball payload');
+  'app selector includes DX-Ball');
+assert(/dxball:\s*\{[^}]*exe:\s*dxballRoot \+ 'dxball\.exe'[^}]*files:\s*dxballFiles[^}]*requiredFiles:\s*true/s.test(webApp),
+  'DX-Ball public launch requires its complete game payload');
+assert(/\[\s*'dxball'\s*,\s*'DX-Ball'/.test(webApp),
+  'normal desktop promotes DX-Ball');
+assert(deployJs.includes("'packages/freeware/dxball/'"),
+  'public deploy includes the reviewed DX-Ball payload');
 assert(webApp.includes('<option value="blobby_volley">Blobby Volley</option>'),
-  'debug app selector should expose the local Blobby Volley candidate');
-assert(/const blobbyCandidateFiles = \[\s*'graph\.pak', 'sound\.pak', 'text\.pak',\s*\]/s.test(webApp),
-  'Blobby Volley debug launch should preload its three runtime PAK files');
-assert(/blobby_volley:\s*\{[^}]*exe:\s*blobbyCandidateRoot \+ 'volley\.exe'[^}]*files:\s*blobbyCandidateFiles[^}]*requiredFiles:\s*true/s.test(webApp),
-  'Blobby Volley debug launch should require its local runtime payload');
-assert(!/\[\s*'blobby_volley'\s*,\s*'Blobby Volley'/.test(webApp),
-  'normal desktop whitelist should not promote the local Blobby Volley payload');
-assert(!deployJs.includes('test/binaries/candidates/blobby-volley'),
-  'public deploy should exclude the local Blobby Volley payload');
+  'app selector includes Blobby Volley');
+assert(/const blobbyFiles = \[\s*'graph\.pak', 'sound\.pak', 'text\.pak', 'Instructions\.txt',\s*\]/s.test(webApp),
+  'Blobby Volley public launch preloads its PAKs and author notice');
+assert(/blobby_volley:\s*\{[^}]*exe:\s*blobbyRoot \+ 'volley\.exe'[^}]*files:\s*blobbyFiles[^}]*requiredFiles:\s*true/s.test(webApp),
+  'Blobby Volley public launch requires its complete runtime payload');
+assert(/\[\s*'blobby_volley'\s*,\s*'Blobby Volley'/.test(webApp),
+  'normal desktop promotes Blobby Volley');
+assert(deployJs.includes("'packages/freeware/blobby-volley/'"),
+  'public deploy includes the reviewed Blobby Volley payload');
+assert(webApp.includes("window.open('sources.html', 'wine-assembly-sources')"),
+  'desktop includes the Sources miniapp link');
+for (const link of [
+  'https://archive.org/download/DX-Ball_game/dxball.zip',
+  'https://archive.org/details/DX-Ball_game',
+  'https://archive.org/download/volley/volley.zip',
+  'https://archive.org/details/volley',
+]) {
+  assert(sourcesHtml.includes(link), `Sources miniapp links ${link}`);
+}
+assert(sourcesHtml.includes('37e3d984366cdd683c3ad509d4df298521ab303b') &&
+  sourcesHtml.includes('8d22d8918960dec5cda1abc3b5e97eb83aca982d'),
+  'Sources miniapp pins both original archive hashes');
 assert(webApp.includes('<option value="diablo_demo">Diablo (pre-release demo)</option>'),
   'debug app selector should expose the local Diablo demo candidate');
 assert(/DEBUG_ONLY_APPS\s*=\s*\[[\s\S]*\[\s*'diablo_demo'\s*,\s*'Diablo Demo'/s.test(webApp),
@@ -400,7 +414,7 @@ console.log('PASS  deploy filters include .mid/.wav/.inf/DAT and Pinball asset d
 console.log('PASS  Pinball sound uses bundled assets instead of a run-loop EIP hack');
 console.log('PASS  deploy uses multipart for binary uploads');
 console.log('PASS  debug mode exposes direct MIDI playback');
-console.log('PASS  debug-only selector exposes local DX-Ball without deploying it');
+console.log('PASS  desktop publishes DX-Ball and Blobby Volley with source links');
 console.log('PASS  Start menu exposes screen recording');
 console.log('PASS  web host loads TinySynth MIDI backend');
 console.log('PASS  default desktop whitelist includes Pinball');

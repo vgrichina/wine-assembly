@@ -79,7 +79,12 @@ function makeShell(opts = {}) {
     files,
     dirs: new Set(['c:\\windows\\temp\\is-test.tmp']),
     readOnlyDrives: new Set(),
+    cwd: 'c:\\windows\\temp\\is-test.tmp\\',
     _normPath: p => String(p).toLowerCase(),
+    _resolvePath(p) {
+      const value = /^[a-z]:/i.test(p) ? p : this.cwd + p;
+      return this._normPath(value).replace(/\\+/g, '\\');
+    },
     adoptFrom(other) {
       for (const [p, entry] of other.files) this.files.set(p, entry);
       for (const dir of other.dirs) this.dirs.add(dir);
@@ -93,14 +98,65 @@ function makeShell(opts = {}) {
   assert.strictEqual(child.args, '/SL4 $10001 "C:\\ptanks.exe" 2743738 52736',
     'dynamic child command line is preserved');
 
+  assert.strictEqual(shell.launchVfsExe('child.tmp', { _helpCtx: { vfs } }, '', ''), true,
+    'relative child exe resolves against the caller working directory');
+  assert.ok(apps['vfs:c:\\windows\\temp\\is-test.tmp\\child.tmp'],
+    'relative launch registers the normalized absolute VFS executable');
+
   const shellSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'browser-shell.js'), 'utf8');
   assert.match(shellSource,
     /wine\.loadExe\(app\.exe,\s*\{[\s\S]*?\bargs:\s*app\.args,[\s\S]*?\}\)/,
     'browser launch must pass app.args into loadExe before PE startup');
+  const hostSource = fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8');
+  assert.match(hostSource,
+    /if \(shell\.launchVfsExe && shell\.launchVfsExe\(file, self, dir, params\)\)/,
+    'browser host offers relative and absolute executable names to the caller VFS');
+  assert.strictEqual(
+    (shellSource.match(/queuePendingLaunch\(key, SINGLE_APP\(\)\);/g) || []).length,
+    2,
+    'registered and inherited-VFS handoffs use the dormant process queue');
+  assert.strictEqual(
+    (shellSource.match(/if \(launchInFlight \|\| \(SINGLE_APP\(\) && runningApps\.length\)\)/g) || []).length,
+    2,
+    'all modes serialize boot while only single-app mode serializes process lifetime');
+  assert.match(shellSource, /finally \{\s*launchInFlight = false;\s*dispatchPendingLaunch\(\);/,
+    'ending the current boot wakes a child that was queued during synchronous startup');
   console.log('ok: vfs child launch keeps args before PE startup');
 }
 
-// 4. A resolvable exe is accepted (returns true) in both modes, and in
+// 4. An installer that exits without launching its game leaves a lightweight
+//    filesystem snapshot behind for a later desktop/Start-menu launch.
+{
+  const { shell, launched } = makeShell();
+  const installedPath = 'c:\\games\\icytower1.3\\icytower13.exe';
+  const installerVfs = {
+    files: new Map([[installedPath, { data: new Uint8Array([77, 90]), attrs: 0x20 }]]),
+    dirs: new Set(['c:\\games', 'c:\\games\\icytower1.3']),
+    readOnlyDrives: new Set(),
+    cwd: 'c:\\games\\icytower1.3\\',
+    _normPath: p => String(p).toLowerCase(),
+    _resolvePath(p) {
+      const value = /^[a-z]:/i.test(p) ? p : this.cwd + p;
+      return this._normPath(value).replace(/\\+/g, '\\');
+    },
+  };
+  const installer = { _helpCtx: { vfs: installerVfs } };
+  shell.runningApps.push({ name: 'icy_tower_installer', wine: installer });
+  global.window = {};
+  global.document = { getElementById: () => null };
+  shell.unregisterRunningApp(installer);
+  delete global.window;
+  delete global.document;
+  installer._helpCtx = null;
+
+  assert.strictEqual(shell.launchVfsExe(installedPath, installer, '', ''), true,
+    'an installed exe remains launchable after its installer process exits');
+  assert.deepStrictEqual(launched, ['vfs:' + installedPath],
+    'the exited installer snapshot starts the requested installed executable');
+  console.log('ok: exited installer VFS remains launchable');
+}
+
+// 5. A resolvable exe is accepted (returns true) in both modes, and in
 //    single-app mode with a guest still running it defers rather than
 //    declining — write.exe is still in runningApps when it calls us.
 {
@@ -109,15 +165,21 @@ function makeShell(opts = {}) {
     'a registered exe is accepted');
 }
 {
-  const { shell } = makeShell({ singleApp: true });
-  shell.runningApps.push({ name: 'write' });
+  const { shell, launched } = makeShell({ singleApp: true });
+  const parent = {};
+  shell.runningApps.push({ name: 'write', wine: parent });
   const t0 = Date.now();
   assert.strictEqual(shell.launchExe('wordpad.exe'), true,
     'single-app mode accepts the launch instead of declining it');
   assert.ok(Date.now() - t0 < 50, 'and returns immediately — the host import is synchronous');
-  // Drain the deferral timer so the test process can exit.
-  shell.runningApps.length = 0;
+  assert.deepStrictEqual(launched, [], 'the child remains dormant while its parent is alive');
+  global.window = {};
+  global.document = { getElementById: () => null };
+  shell.unregisterRunningApp(parent);
+  delete global.window;
+  delete global.document;
   setTimeout(() => {
+    assert.deepStrictEqual(launched, ['wordpad'], 'parent exit wakes exactly one queued child');
     console.log('ok: single-app launch deferred, not declined');
     console.log('PASS test-shell-execute-launch');
   }, 250);

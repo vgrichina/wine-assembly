@@ -182,6 +182,10 @@ async function main() {
 
   wat.test_vsock_reset();
 
+  check('WSAIsBlocking reports no nested blocking hook', () => {
+    assert.strictEqual(wat.test_call_WSAIsBlocking() | 0, 0);
+  });
+
   check('htons/ntohs swap 16-bit values', () => {
     assert.strictEqual(wat.test_call_htons(8035) | 0, 0x631f);  // 0x1f63 swapped
     assert.strictEqual(wat.test_call_ntohs(0x6331) | 0, 0x3163);

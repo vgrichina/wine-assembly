@@ -209,6 +209,7 @@ const ESP_DELTA = hasFlag('esp-delta');   // --esp-delta: log ESP before/after e
 const TRACE_ESP = getArg('trace-esp', null); // --trace-esp=LO-HI: per-block (eip, esp) + Δ from prev block (hex; HI optional)
 const TRACE_EIP_RANGE = getArg('trace-eip-range', null); // --trace-eip-range=LO-HI: log every block-entry EIP inside [LO,HI] (module+0xVA OK)
 const TRACE_EIP_DETAIL = hasFlag('trace-eip-detail'); // --trace-eip-detail: include regs/flags/memory with --trace-eip-range
+const TRACE_EIP_STREAM = hasFlag('trace-eip-stream'); // --trace-eip-stream: write EIP lines immediately instead of buffering to the next batch boundary
 const TRACE_EIP_DUMP = getArg('trace-eip-dump', null); // --trace-eip-dump=0xADDR:LEN[,..]: compact dump on each detailed EIP hit
 // --trace-loopmatch[=0xEIP]: at decode time, dump the emitted op sequence of
 // every self-loop block (or just the one at 0xEIP). Prints the block's entry,
@@ -323,6 +324,12 @@ if (process.send) {
 }
 const TIME_SCALE = parseFloat(getArg('time-scale', '1')) || 1;  // --time-scale=10: guest clock runs 10x
 const REAL_TICKS = hasFlag('real-ticks'); // --real-ticks: GetTickCount from the wall clock, not the batch counter
+if (CONTROL_FROZEN_START && !(CONTROL || CONTROL_STDIN)) {
+  throw new Error('--frozen needs --control or --control-stdin');
+}
+if (CONTROL_FROZEN_START && REAL_TICKS) {
+  throw new Error('--frozen is incompatible with --real-ticks; use the deterministic batch clock');
+}
 // --tick-ms-per-batch=N: how much guest time one batch is worth on the
 // batch-driven clock (default 200). Neither default clock suits a game whose
 // engine steps on a WM_TIMER: at 200ms/batch Chip's Challenge burns its whole
@@ -511,6 +518,10 @@ const DUMP_BACKCANVAS = hasFlag('dump-backcanvas'); // --dump-backcanvas: save b
 const DUMP_VFS = hasFlag('dump-vfs');     // --dump-vfs: list all VFS files at end
 const SAVE_VFS = getArg('save-vfs', null); // --save-vfs=DIR: extract VFS files to directory
 const SAVE_VFS_SUFFIX = getArg('save-vfs-suffix', null); // --save-vfs-suffix=.gid: restrict extraction
+// --capture-launch=DIR: snapshot the VFS when ShellExecute names a VFS-backed
+// executable, before an installer bootstrap can delete its temporary child.
+// At exit DIR contains the snapshot plus launch.json for a second CLI stage.
+const CAPTURE_LAUNCH = getArg('capture-launch', null);
 // --overlay-dir=DIR: the writable C:\ overlay of docs/design-byo-media.md ⑤,
 // persisted to a host directory. Everything the guest writes is journalled and
 // replayed on the next run, so an installer can be run headlessly once and its
@@ -2847,6 +2858,8 @@ async function main() {
       if (TRACE_EIP_DETAIL && instance && instance.exports) {
         line += ` ${regs()}`;
         const e = instance.exports;
+        if (e.get_sync_msg_depth) line += ` syncDepth=${e.get_sync_msg_depth() | 0}`;
+        if (e.get_block_budget) line += ` blockBudget=${e.get_block_budget() | 0}`;
         if (e.get_flag_res && e.get_flag_op && e.get_flag_a && e.get_flag_b && e.get_flag_sign_shift) {
           line += ` flags{op=${e.get_flag_op()} a=${hex(e.get_flag_a())} b=${hex(e.get_flag_b())} res=${hex(e.get_flag_res())} sh=${e.get_flag_sign_shift()}}`;
         }
@@ -2861,7 +2874,7 @@ async function main() {
           }
         }
       }
-      logs.push(line);
+      TRACE_EIP_STREAM ? console.log(line) : logs.push(line);
     };
   }
 
@@ -2916,6 +2929,42 @@ async function main() {
   h.shell_about = (dlgHwnd, ownerHwnd, appPtr) => {
     logs.push(`[ShellAbout] dlg=0x${dlgHwnd.toString(16)} owner=0x${ownerHwnd.toString(16)} "${readStr(appPtr)}"`);
     return 1;
+  };
+
+  let capturedLaunch = null;
+  const baseShellExecute = h.shell_execute;
+  h.shell_execute = (hwnd, opWa, fileWa, paramsWa, dirWa, nShow) => {
+    const file = fileWa ? readStr(fileWa) : '';
+    const params = paramsWa ? readStr(paramsWa) : '';
+    const directory = dirWa ? readStr(dirWa) : '';
+    const result = baseShellExecute(hwnd, opWa, fileWa, paramsWa, dirWa, nShow);
+    if (!CAPTURE_LAUNCH || !ctx.vfs || capturedLaunch) return result;
+
+    // Inno's loader passes its executable and /SL arguments together in
+    // lpFile, quoted exactly as a command line. Ordinary ShellExecute callers
+    // put the executable in lpFile and arguments in lpParameters.
+    let executable = file.trim();
+    let inlineArgs = '';
+    if (executable.startsWith('"')) {
+      const close = executable.indexOf('"', 1);
+      if (close > 1) {
+        inlineArgs = executable.slice(close + 1).trim();
+        executable = executable.slice(1, close);
+      }
+    }
+    const guestExe = ctx.vfs._normPath ? ctx.vfs._normPath(executable) : executable.toLowerCase();
+    if (!ctx.vfs.files.has(guestExe)) return result;
+    capturedLaunch = {
+      guestExe,
+      args: [inlineArgs, params.trim()].filter(Boolean).join(' '),
+      directory,
+      vfs: {
+        files: new Map(ctx.vfs.files),
+        dirs: new Set(ctx.vfs.dirs),
+      },
+    };
+    logs.push(`[capture-launch] snapshotted ${guestExe} (${capturedLaunch.vfs.files.size} files)`);
+    return result;
   };
 
   // --- Override set_dlg_item_text to log ---
@@ -5010,12 +5059,15 @@ async function main() {
   let controlFrozen = CONTROL_FROZEN_START;
   let controlRunCredits = 0;
   let controlWake = null;
+  let controlWakeTimer = null;
   let controlPreviousBatchRan = false;
   let controlStepWaiter = null;
   const wakeControlLoop = () => {
     if (!controlWake) return;
     const wake = controlWake;
     controlWake = null;
+    if (controlWakeTimer) clearTimeout(controlWakeTimer);
+    controlWakeTimer = null;
     wake();
   };
   const finishPreviousControlBatch = () => {
@@ -5027,6 +5079,7 @@ async function main() {
       controlStepWaiter = null;
       waiter.resolve({
         batch: tickState.batch | 0,
+        ran: waiter.total,
         steps: waiter.total,
         frozen: controlFrozen,
       });
@@ -5034,7 +5087,16 @@ async function main() {
   };
   const waitForControlBatch = async () => {
     while (controlFrozen && controlRunCredits <= 0 && !stopped) {
-      await new Promise(resolve => { controlWake = resolve; });
+      await new Promise(resolve => {
+        controlWake = resolve;
+        if (deadlineMs) {
+          controlWakeTimer = setTimeout(wakeControlLoop, Math.max(0, deadlineMs - Date.now()));
+        }
+      });
+      if (deadlineMs && Date.now() >= deadlineMs) {
+        stopped = true;
+        console.log(`[max-seconds] stopping after ${MAX_SECONDS}s at batch ${tickState.batch | 0}`);
+      }
     }
     if (!stopped) controlPreviousBatchRan = true;
   };
@@ -5090,18 +5152,45 @@ async function main() {
       'return eval(' + JSON.stringify(String(code)) + ')');
     return controlSafeValue(fn(instance, instance.exports, renderer, memory, g2w, tickState, ctx));
   };
+  const controlPng = (filename) => {
+    if (!renderer || !renderer.canvas) throw new Error('renderer is unavailable');
+    if (!filename) throw new Error('png needs a path');
+    presentDxIfDirty(0);
+    if (typeof renderer.repaint === 'function') renderer.repaint();
+    const buf = canvasToPng(renderer.canvas);
+    fs.writeFileSync(filename, buf);
+    return { batch: tickState.batch | 0, frozen: controlFrozen, path: filename, bytes: buf.length };
+  };
   const handleControlCommand = (cmdIn) => {
     const cmd = typeof cmdIn === 'string' ? { cmd: cmdIn } : (cmdIn || {});
+    const native = String(cmd.cmd || '').trim();
+    let match;
+    if (!cmd.action && /^(pause|resume)$/.test(native)) {
+      cmd.action = 'frozen';
+      cmd.mode = native === 'pause' ? 'on' : 'off';
+    } else if (!cmd.action && (match = native.match(/^(?:step|run)\s+(\d+)$/))) {
+      cmd.action = 'step';
+      cmd.n = Number(match[1]);
+    } else if (!cmd.action && (match = native.match(/^frozen\s+(on|off)$/))) {
+      cmd.action = 'frozen';
+      cmd.mode = match[1];
+    }
     // Stdin ergonomics: a bare native name on a line ("snapshot") reads as
     // the native action, not as an input entry that would fail to parse.
-    if (!cmd.action && /^(ping|snapshot|quit)$/.test(String(cmd.cmd || ''))) {
-      cmd.action = String(cmd.cmd);
+    if (!cmd.action && /^(ping|snapshot|quit)$/.test(native)) {
+      cmd.action = native;
     }
     if (cmd.action === 'ping') {
-      return { pong: true, batch: tickState.batch | 0, app: APP_ID || path.basename(EXE_PATH || '') };
+      return {
+        pong: true,
+        batch: tickState.batch | 0,
+        frozen: controlFrozen,
+        app: APP_ID || path.basename(EXE_PATH || ''),
+      };
     }
     if (cmd.action === 'snapshot') return controlSnapshot();
     if (cmd.action === 'eval') return controlEval(cmd.code || '');
+    if (cmd.action === 'png') return controlPng(String(cmd.path || ''));
     if (cmd.action === 'quit') { stopped = true; wakeControlLoop(); return { quitting: true }; }
     if (cmd.action === 'frozen') {
       const mode = cmd.mode || 'on';
@@ -5168,19 +5257,12 @@ async function main() {
       return { recording: true, ...videoRecorder.summary(), everyNSteps: videoEvery };
     }
     const entry = String(cmd.cmd || '');
-    if (!entry) throw new Error('need {cmd:"action:args"} or action: ping|snapshot|eval|frozen|step|record|quit');
+    if (!entry) throw new Error('need {cmd:"action:args"} or action: ping|snapshot|eval|png|frozen|step|record|quit');
     // A frozen CLI is already at a coherent between-batches boundary. Capture
     // there instead of queueing a png action that cannot execute until a
     // later `step` (ctl.js checks that the file exists before it returns).
     if (controlFrozen && entry.startsWith('png:')) {
-      if (!renderer || !renderer.canvas) throw new Error('png requires the CLI renderer');
-      const out = entry.slice(4);
-      if (!out) throw new Error('png needs an output path');
-      presentDxIfDirty(0);
-      if (typeof renderer.repaint === 'function') renderer.repaint();
-      const buf = canvasToPng(renderer.canvas);
-      fs.writeFileSync(out, buf);
-      return { batch: tickState.batch | 0, logs: [`[input] png ${out} (${buf.length} bytes) at frozen boundary`] };
+      return controlPng(entry.slice(4));
     }
     if (/^wait-/.test(entry)) {
       throw new Error('wait-* entries are scheduled-only; poll snapshot or png instead');
@@ -5244,7 +5326,6 @@ async function main() {
       console.log(`[max-seconds] stopping after ${MAX_SECONDS}s at batch ${batch}`);
       break;
     }
-    batchesRun = batch + 1;
     // Timers cannot fire while the normal runner stays in its synchronous
     // batch loop. Poll wall time sparsely at the one safe seam and await the
     // journal before entering the next guest batch. Sixty-four Date checks per
@@ -5302,6 +5383,7 @@ async function main() {
       await waitForControlBatch();
       if (stopped) break;
     }
+    batchesRun = batch + 1;
     let injectedInputThisBatch = false;
     // Inject scheduled input events at the right batch
     while (scheduledInput.length && scheduledInput[0].batch <= batch) {
@@ -8616,7 +8698,6 @@ if (VERBOSE) {
       }
     }
   }
-
   // The control server would otherwise hold the process open; unref lets a
   // reply resolved in the final batch still flush while the exit path prints.
   if (control) control.close();
@@ -9251,6 +9332,27 @@ if (VERBOSE) {
       skipPaths: ['c:\\app.exe'],
       log: line => console.log(line),
     });
+  }
+  if (CAPTURE_LAUNCH && capturedLaunch) {
+    const written = saveVfsToHost(capturedLaunch.vfs, CAPTURE_LAUNCH, {
+      log: line => console.log(line.replace(/^\[save-vfs\]/, '[capture-launch]')),
+    });
+    const executable = written.find(row =>
+      String(row.guestPath).toLowerCase() === capturedLaunch.guestExe.toLowerCase());
+    if (!executable) throw new Error(`captured launch executable disappeared: ${capturedLaunch.guestExe}`);
+    const metadata = {
+      schemaVersion: 1,
+      guestExe: capturedLaunch.guestExe,
+      exe: path.relative(CAPTURE_LAUNCH, executable.outputPath).split(path.sep).join('/'),
+      args: capturedLaunch.args,
+      directory: capturedLaunch.directory,
+      files: written.length,
+    };
+    fs.writeFileSync(path.join(CAPTURE_LAUNCH, 'launch.json'),
+      `${JSON.stringify(metadata, null, 2)}\n`);
+    console.log(`[capture-launch] wrote ${path.join(CAPTURE_LAUNCH, 'launch.json')}`);
+  } else if (CAPTURE_LAUNCH) {
+    console.log('[capture-launch] no VFS-backed executable was launched');
   }
 
   if (DUMP_SPEC) {

@@ -16,6 +16,10 @@ const wasm = {
     post_message_q(hwnd, msg, wParam, lParam) {
       posted.push({ hwnd, msg, wParam, lParam });
     },
+    wnd_window_screen_x() { throw new Error('get_window_rect re-entered WAT'); },
+    wnd_window_screen_y() { throw new Error('get_window_rect re-entered WAT'); },
+    wnd_screen_w() { throw new Error('get_window_rect re-entered WAT'); },
+    wnd_screen_h() { throw new Error('get_window_rect re-entered WAT'); },
   },
 };
 const renderer = {
@@ -40,7 +44,7 @@ const renderer = {
     this.keyboardOwner = win;
   },
   windows: {
-    100: { hwnd: 100, title: 'Tasks', className: 'MSTaskSwWClass', style: 0x10c00000, visible: true, enabled: true, isChild: false, zOrder: 10, processId: 4321, wasm },
+    100: { hwnd: 100, title: 'Tasks', className: 'MSTaskSwWClass', style: 0x10c00000, x: 10, y: 20, w: 300, h: 200, clientRect: { x: 13, y: 43, w: 294, h: 174 }, visible: true, enabled: true, isChild: false, zOrder: 10, processId: 4321, wasm },
     200: { hwnd: 200, style: 0x10c00000, visible: true, enabled: true, isChild: false, zOrder: 20, wasm },
     300: { hwnd: 300, style: 0x10c00000, visible: true, enabled: true, isChild: false, zOrder: 30, wasm },
     110: { hwnd: 110, style: 0x50000000, visible: true, enabled: true, isChild: true, parentHwnd: 100, zOrder: 11, wasm },
@@ -48,6 +52,7 @@ const renderer = {
     400: { hwnd: 400, style: 0x90000000, visible: true, enabled: true, isChild: false, ownerHwnd: 100, zOrder: 40, wasm },
     410: { hwnd: 410, style: 0x90000000, visible: false, enabled: true, isChild: false, ownerHwnd: 100, zOrder: 50, wasm },
     420: { hwnd: 420, style: 0x90000000, visible: true, enabled: false, isChild: false, ownerHwnd: 100, zOrder: 60, wasm },
+    510: { hwnd: 510, x: 5, y: 7, w: 40, h: 30, parentHwnd: 100, isChild: true, zOrder: 1, wasm },
   },
 };
 
@@ -80,6 +85,15 @@ assert.strictEqual(host.get_window_info(100, 0), 0x10c00000, 'get_window_info st
 assert.strictEqual(host.get_window_info(410, 1), 0, 'get_window_info visible');
 assert.strictEqual(host.get_window_info(420, 2), 0, 'get_window_info enabled');
 assert.strictEqual(host.get_window_info(100, 3), 4321, 'get_window_info process owner');
+
+host.get_window_rect(510, 128);
+const childRect = new DataView(memory, 128, 16);
+assert.deepStrictEqual(Array.from({ length: 4 }, (_, i) => childRect.getInt32(i * 4, true)),
+  [18, 50, 58, 80], 'GetWindowRect resolves child coordinates without re-entering WAT');
+
+host.set_parent(100, 510);
+assert.strictEqual(renderer.windows[100].parentHwnd, undefined,
+  'renderer parenting rejects an edge that would create a cycle');
 
 assert.strictEqual(host.get_window_text_length(100), 5, 'foreign renderer title length');
 assert.strictEqual(host.get_window_text(100, 32, 16), 5, 'foreign renderer title copy');
