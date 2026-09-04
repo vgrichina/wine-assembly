@@ -996,11 +996,14 @@ payload remains gitignored.
 Recommended order:
 
 1. [Jazz Jackrabbit 2 Demo v1.23s](https://archive.org/details/JazzJackrabbit2Demo)
-   remains the best next target. The Archive item identifies it as a 1998
+   is now a completed target. The Archive item identifies it as a 1998
    Windows action-game demo, provides a 19.2 MB Windows executable, and says it
    contains three single-player levels including a boss plus multiplayer maps.
    The exact `J2swc123.exe` package and SHA-1 are already pinned in
-   `test/candidate-corpus/manifest.json`, so acquisition is reproducible.
+   `test/candidate-corpus/manifest.json`, so acquisition is reproducible. Its
+   unchanged installer now completes and the installer-produced game reaches
+   animated Darn Ratz gameplay; see
+   [`docs/re-notes/jazz2-demo.md`](docs/re-notes/jazz2-demo.md).
 2. [RollerCoaster Tycoon Demo](https://archive.org/details/RollercoasterTycoonDemo)
    is a 1999 Windows demo delivered as the single 18.7 MB `RCTYCOON.EXE`.
    Archive.org describes a roughly 25-minute playable session with saving,
@@ -1039,10 +1042,10 @@ through their original installers before using any extracted game files.
 
 - Jazz Jackrabbit 2 uses the pinned `J2swc123.exe`. Its InstallShield wizard
   now renders all five original property-sheet pages, accepts **No, continue
-  without DirectX 5**, and starts the unchanged package's extraction dialog.
-  It creates `C:\\Games\\Jazz2Sw\\License.doc` and reads that member's compressed
-  bytes from the installer. The bundled inflate loop still occupies one
-  unbounded interpreter slice, so full installer completion is not yet proven.
+  without DirectX 5**, and completes the unchanged package's extraction dialog.
+  It exits normally through its own completion message and writes all 53 files
+  and shortcuts under `C:\\Games\\Jazz2Sw`. Launching the installer-produced
+  `jazz2.exe` reaches distinct animated Darn Ratz gameplay frames.
 - Worms 2 was ultimately installed from Team17's smaller October demo archive,
   `Worms2Demo10Oct.zip` (7,299,379 bytes; SHA-256
   `c65d36cef69437f066a3d50d8ff26d43d228a0595d7bcc106d541375e1d3cfd8`).
