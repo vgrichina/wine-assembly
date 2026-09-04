@@ -621,6 +621,7 @@ E2E=(
   test/test-tapi-line-init.js
   test/test-caesar3-fullscreen-metrics.js
   test/test-caesar3-gameplay.js
+  test/test-captain-claw-gameplay.js
   test/test-abedemo-gameplay.js
   test/test-baldurs-gate-demos.js
   test/test-diablo-shareware-art.js
