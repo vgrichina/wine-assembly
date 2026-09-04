@@ -9,6 +9,8 @@
 // the kind of bug that surfaces thousands of instructions later.
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const { mountLoadedDllFiles, stageAndLoadPe, readGuestCString,
   handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
 
@@ -54,6 +56,14 @@ function fakeGuest(name, { nameGetter }) {
 }
 
 (async () => {
+  const pageSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const hostSource = fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8');
+  assert.match(pageSource, /lib\/process-boot\.js\?v=4/,
+    'the browser must not reuse the loader that parsed oversized NE files as PE');
+  assert.match(pageSource, /host\.js\?v=278/);
+  assert.match(hostSource, /static SOURCE_VERSION = '278'/,
+    'the rebuilt Win16 dialog runtime needs a new browser artifact key');
+
   const peBytes = syntheticLargePe();
   const peMemory = new ArrayBuffer(0x5000);
   const peMem = new Uint8Array(peMemory);
@@ -73,6 +83,28 @@ function fakeGuest(name, { nameGetter }) {
   assert.deepStrictEqual([...peMem.subarray(0x100, 0x140)], [...peBytes.subarray(0, 0x40)],
     'the bounded staging prefix is still copied normally');
   console.log('PASS  oversized PE section tails are prehydrated before WAT loading');
+
+  const neBytes = Buffer.alloc(0x300, 0xa5);
+  neBytes.writeUInt16LE(0x5a4d, 0);
+  neBytes.writeUInt32LE(0x80, 0x3c);
+  neBytes.writeUInt16LE(0x454e, 0x80);
+  const neMemory = new ArrayBuffer(0x1000);
+  const neMem = new Uint8Array(neMemory);
+  const neLog = [];
+  const stagedNe = stageAndLoadPe({
+    get_staging: () => 0x100,
+    get_staging_size: () => 0x240,
+    load_pe: size => {
+      assert.strictEqual(size, 0x240);
+      assert.deepStrictEqual([...neMem.subarray(0x100, 0x340)], [...neBytes.subarray(0, 0x240)]);
+      assert.strictEqual(neMem[0x340], 0, 'the appended self-extractor archive must not overflow staging');
+      return 0x87000123;
+    },
+  }, neMemory, neBytes, message => neLog.push(message));
+  assert.strictEqual(stagedNe.entry, 0x87000123);
+  assert(neLog.some(message => message.includes('appended self-extractor data stays in the VFS')),
+    'an oversized NE should take the Win16 overlay path instead of the PE parser');
+  console.log('PASS  oversized NE self-extractor stages safely without PE parsing');
 
   const dllVfs = { files: new Map() };
   const stockShell = Uint8Array.of(0x4d, 0x5a, 0x90, 0);

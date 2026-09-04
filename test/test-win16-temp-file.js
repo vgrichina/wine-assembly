@@ -148,6 +148,12 @@ const extraWat = String.raw`
   assert.match(dialogSource,
     /func \$win16_DialogBoxIndirect[\s\S]*?win16_gseg_field[\s\S]*?win16_dlg_to32[\s\S]*?win16_dlg_run/,
     'DialogBoxIndirect should validate, convert, and run its HGLOBAL template');
+  assert.match(dialogSource,
+    /func \$win16_DialogBoxIndirect \(param \$modeless i32\)[\s\S]*?win16_dlg_modeless_pending[\s\S]*?win16_dlg_run/,
+    'CreateDialogIndirect should share template conversion but return through the modeless continuation');
+  assert.match(apiSource,
+    /ordinal\) \(i32\.const 219\)[\s\S]{0,120}win16_DialogBoxIndirect \(i32\.const 1\)/,
+    'USER.219 CreateDialogIndirect should select the modeless indirect-dialog path');
   const { exports: e, hostCtx } = await bootRenderHarness({ extraWat, fonts: 'none' });
   const result = e.test_win16_temp_file(0x63, 0x1234) >>> 0;
   assert.strictEqual(result & 0xFFFF, 0x1234,

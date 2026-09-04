@@ -291,7 +291,7 @@
   ;; the Win16 template in a global block. Global handles are selectors in this
   ;; runtime, so offset zero is both GlobalLock's result and the byte stream the
   ;; converter needs. WISE's installer builds its language chooser this way.
-  (func $win16_DialogBoxIndirect
+  (func $win16_DialogBoxIndirect (param $modeless i32)
     (local $proc i32) (local $parent i32) (local $handle i32)
     (local $index i32) (local $flags i32) (local $len i32) (local $template i32)
     (local.set $proc
@@ -321,6 +321,8 @@
         (global.set $eax (i32.const -1))
         (call $win16_api_return (i32.const 10))
         (return)))
+    (if (local.get $modeless)
+      (then (global.set $win16_dlg_modeless_pending (global.get $next_hwnd))))
     (call $win16_dlg_run (local.get $template) (local.get $parent) (local.get $proc)
       (i32.const 0) (call $win16_take_return (i32.const 10))))
 
