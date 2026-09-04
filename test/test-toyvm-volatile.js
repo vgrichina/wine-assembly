@@ -22,39 +22,44 @@ const { execFileSync } = require('child_process');
 
 const ITER = 3000;
 
-// A .COM: ITER times, patch the imm8 of `add bx,imm8` with the loop counter's
-// low byte and run it; then print BX as four hex digits and exit.
+// A .COM: ITER times, patch the OPCODE at 0113 to `inc bx` (43) or `dec bx`
+// (4B) from bit 3 of the loop counter and run it; then print BX as four hex
+// digits and exit. The patched byte has to be an opcode, not an operand: a
+// store into an immediate or a displacement is now repaired in the cached
+// program (CodeCache.repairOperands, test-toyvm-operand-patch.js) and never
+// reaches the volatile path this test is about.
 function program() {
   const b = [];
   const w = (...x) => b.push(...x);
   w(0xB9, ITER & 0xFF, ITER >> 8);   // 0100 mov cx,ITER
   w(0x31, 0xDB);                     // 0103 xor bx,bx
-  w(0x31, 0xC0);                     // 0105 xor ax,ax
-  w(0x40);                           // 0107 inc ax
-  w(0x2E, 0xA2, 0x10, 0x01);         // 0108 mov cs:[0110],al
-  w(0x90, 0x90);                     // 010C nop nop
-  w(0x83, 0xC3, 0x00);               // 010E add bx,imm8   (imm at 0110)
-  w(0xE2, 0xF4);                     // 0111 loop 0107
-  w(0xB9, 0x04, 0x00);               // 0113 mov cx,4
-  w(0xC1, 0xC3, 0x04);               // 0116 rol bx,4
-  w(0x88, 0xD8);                     // 0119 mov al,bl
-  w(0x24, 0x0F);                     // 011B and al,0Fh
-  w(0x04, 0x30);                     // 011D add al,'0'
-  w(0x3C, 0x39);                     // 011F cmp al,'9'
-  w(0x76, 0x02);                     // 0121 jbe 0125
-  w(0x04, 0x07);                     // 0123 add al,7
-  w(0x88, 0xC2);                     // 0125 mov dl,al
-  w(0xB4, 0x02);                     // 0127 mov ah,2
-  w(0xCD, 0x21);                     // 0129 int 21h
-  w(0xE2, 0xE9);                     // 012B loop 0116
-  w(0xB8, 0x00, 0x4C);               // 012D mov ax,4C00h
-  w(0xCD, 0x21);                     // 0130 int 21h
+  w(0x88, 0xC8);                     // 0105 mov al,cl
+  w(0x24, 0x08);                     // 0107 and al,8
+  w(0x04, 0x43);                     // 0109 add al,43h      (43 = inc bx, 4B = dec bx)
+  w(0x2E, 0xA2, 0x13, 0x01);         // 010B mov cs:[0113],al
+  w(0x90, 0x90, 0x90, 0x90);         // 010F nop x4
+  w(0x43);                           // 0113 inc bx         (patched)
+  w(0xE2, 0xEF);                     // 0114 loop 0105
+  w(0xB9, 0x04, 0x00);               // 0116 mov cx,4
+  w(0xC1, 0xC3, 0x04);               // 0119 rol bx,4
+  w(0x88, 0xD8);                     // 011C mov al,bl
+  w(0x24, 0x0F);                     // 011E and al,0Fh
+  w(0x04, 0x30);                     // 0120 add al,'0'
+  w(0x3C, 0x39);                     // 0122 cmp al,'9'
+  w(0x76, 0x02);                     // 0124 jbe 0128
+  w(0x04, 0x07);                     // 0126 add al,7
+  w(0x88, 0xC2);                     // 0128 mov dl,al
+  w(0xB4, 0x02);                     // 012A mov ah,2
+  w(0xCD, 0x21);                     // 012C int 21h
+  w(0xE2, 0xE9);                     // 012E loop 0119
+  w(0xB8, 0x00, 0x4C);               // 0130 mov ax,4C00h
+  w(0xCD, 0x21);                     // 0133 int 21h
   return Buffer.from(b);
 }
 
 function expected() {
   let bx = 0;
-  for (let i = 1; i <= ITER; i++) bx = (bx + ((i & 0xFF) << 24 >> 24)) & 0xFFFF;   // imm8 is sign-extended
+  for (let i = 1; i <= ITER; i++) bx = (bx + ((i & 8) ? -1 : 1)) & 0xFFFF;
   return bx.toString(16).toUpperCase().padStart(4, '0');
 }
 
@@ -86,12 +91,16 @@ assert.ok(+report[1] >= 1, 'no paragraph was promoted');
 // The store still cuts the block it sits in, because the byte it patches is
 // the next instruction's immediate (see benignPatch: that cut is never
 // retired), so both arms hand back once per iteration. What the mechanism
-// removes is the retrace: without it every iteration drops the region and
-// traces a new copy of the loop into the arena, and the arena grows by ITER
-// programs; with it the paragraph is compiled into scratch space that is
-// reused, and the arena stays at the size of the code that is not volatile.
-assert.ok(arenaKb(base) >= 100, `expected the --no-volatile arm to fill the arena, got ${arenaKb(base)}KB`);
+// removes is the retrace: without it every rewrite (one iteration in eight)
+// drops the region and traces a new copy of the loop into the arena, and the
+// arena grows by ITER/8 programs; with it the paragraph is compiled into
+// scratch space that is reused, and the arena stays at the size of the code
+// that is not volatile.
+assert.ok(arenaKb(base) >= 64, `expected the --no-volatile arm to fill the arena, got ${arenaKb(base)}KB`);
 assert.ok(arenaKb(vol) <= 16, `volatile arm still grew the arena: ${arenaKb(vol)}KB`);
-assert.ok(+report[3] >= ITER - 50, `expected ~${ITER} scratch compiles without code bits, got ${report[3]}`);
+// The opcode only changes every 8 iterations, and a store that leaves the
+// byte as it was is repaired in place rather than counted, so the paragraph
+// is promoted after 8 real rewrites = 64 iterations.
+assert.ok(+report[3] >= ITER - 100, `expected ~${ITER} scratch compiles without code bits, got ${report[3]}`);
 console.log(`PASS test-toyvm-volatile: ${screen(vol)} from both arms; arena ${arenaKb(base)}KB -> ${arenaKb(vol)}KB, `
   + `${report[1]} paragraph(s) promoted, ${report[2]} scratch compiles`);

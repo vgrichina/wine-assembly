@@ -50,7 +50,25 @@ const VOLATILE_AFTER = 8;
 // before the paragraph goes back to the cache (CodeCache.volatileEntry).
 const VOLATILE_STALE = 256;
 const { compileProgram } = require('./compile');
+const { decodeOne } = require('./decode');
+const { ARITY, NOFLAG, FUSE, TRACE, SPIN, PSPIN } = require('./emit');
 const { STUB_SEG, STUB_OFF, STUB_BYTE } = require('./dos');
+
+// Is `h`, the op word a compiled program holds, what the compiler makes of
+// the decoded handler `x`? The passes after decoding swap an op for a twin
+// that reads the same operand words: the flagless copy (dead flags), the
+// traced branch (no fall-through arena operand), the spin-collapsed branch.
+// Each of those can also be flagless. repairOperands needs the question
+// answered without re-running the passes.
+function twinOf(h, x) {
+  if (h === x) return true;
+  for (const m of [NOFLAG, TRACE, SPIN, PSPIN]) {
+    const t = m.get(x);
+    if (t === undefined) continue;
+    if (t === h || NOFLAG.get(t) === h) return true;
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // The compiled-code arena.
@@ -85,6 +103,10 @@ class CodeCache {
     this.volatileLinks = 0;      // exits resolved straight into cached blocks
     this.promotions = 0;
     this.demotions = 0;
+    // Self-modify breaks answered by rewriting an operand word in the arena
+    // instead of dropping the program (repairOperands).
+    this.patched = 0;
+    this.repairWhy = new Map();   // decline reason -> count, for --smc-census
     // Watchpoints, as [lo, hi] linear byte ranges. They ride the CODE_BITMAP
     // rather than adding a range test to $wr8, because $wr8 is on the hot path
     // of every single store the guest makes and a watch that is off must cost
@@ -216,6 +238,127 @@ class CodeCache {
   // Wide ranges still flush: past a few hundred paragraphs the walk costs more
   // than the recompile it saves, and a store that wide is a program moving its
   // whole image anyway.
+  // A store landed on [lo, hi] and some cached program decoded those bytes.
+  // Before that program is dropped: was anything but an operand written?
+  //
+  // Code that patches its own immediates is the common shape of self-modifying
+  // code in this corpus, and it is not a program rewriting itself so much as a
+  // program keeping a variable inside an instruction. CYCLE.EXE's mixer walks
+  // a sample with `adc word [disp], 0` into the displacement of the `mov bl,
+  // [bx+disp]` two instructions up, every timer interrupt; CYBOMAN2.EXE's
+  // polygon filler stores the slope of each edge into the imm32 of the `add
+  // esi, imm32` / `adc edi, imm32` pair in its scanline loop, once per span.
+  // Dropping and re-tracing the program for each of those cost more than the
+  // instruction it patched -- CYBOMAN2 spent 530ms of every guest second in
+  // 42,000 compiles, CYCLE 17,700 per second through its whole run -- and the
+  // volatile-paragraph fallback (noteSmc) only trades the re-trace for an
+  // uncached compile per entry.
+  //
+  // So the instruction is decoded again from the bytes as they are now, and
+  // if it is the same instruction with different operand values -- same
+  // handler (or its flagless twin), same arity, every non-operand word equal,
+  // and every written byte inside one of the operands the decoder claimed
+  // (decode.js `operands`) -- the operand words are rewritten in the arena
+  // and the program stands. Anything else, and the store falls through to
+  // the drop it always got: a changed opcode, a changed ModRM, a written
+  // branch displacement, a fused pair (its arity is the sum), a byte in an
+  // instruction the decoder now refuses. Every program that covers the range
+  // has to pass, or none is patched.
+  //
+  // The break itself still happens -- $wr8 cannot know what it hit -- so what
+  // this saves is the compile, not the handback.
+  repairOperands(lo, hi) {
+    this.repairRange = `${lo.toString(16)}-${hi.toString(16)}`;
+    // A slice's stores into code, as one range. Past this it is a program
+    // moving its image, and invalidateRange's own width test takes it.
+    if (hi - lo > 512) return this.decline('range too wide');
+    const progs = new Set();
+    for (let p = lo >>> 4; p <= hi >>> 4; p++) {
+      for (const prog of (this.byPara.get(p) || [])) progs.add(prog);
+    }
+    if (!progs.size) return this.decline('no cached program covers the range');
+    const patches = [];
+    for (const prog of progs) if (!this.repairProg(prog, lo, hi, patches)) return false;
+    const arena = new Int32Array(this.vm.mem.buffer);
+    for (const [prog, q, v] of patches) {
+      prog.words[q] = v;
+      arena[(prog.arenaBase >> 2) + q] = v;
+    }
+    this.patched++;
+    return true;
+  }
+
+  repairProg(prog, lo, hi, patches) {
+    const mem = this.vm.mem;
+    const rd = (l) => mem[l];
+    const { codeBase, mask, d32, cs, words } = prog;
+    const reached = new Uint8Array(hi - lo + 1);
+    for (const [q, ip] of prog.wordIp) {
+      const lin = (codeBase + ip) & mask;
+      // An instruction is at most 15 bytes, so nothing starting further below
+      // the store than that can reach it.
+      if (lin > hi || lin + 15 < lo) continue;
+      const d = decodeOne(rd, cs, ip, codeBase, mask, d32, this.benign);
+      if (!d) return this.decline('decoder refused the instruction');
+      if (lin + d.length <= lo) continue;
+      const w = d.words;
+      // The decoded words are whole ops laid out by arity, and the first of
+      // them must be the op the arena holds at q: itself, one of its twins
+      // (flagless, traced, spin-collapsed), or the op it was FUSED into with
+      // the branch that follows it -- the fused body reads the same operand
+      // words at the same offsets, and only the branch's opcode word is gone.
+      // A refused byte or a cut the decode no longer makes fails here.
+      const h = words[q];
+      if (h === undefined) return this.decline('word past the program');
+      let i = 0;
+      while (i < w.length) i += 1 + ARITY[w[i]];
+      if (i !== w.length) return this.decline('decoded words are not whole ops');
+      let span = d.length;
+      if (!twinOf(h, w[0])) {
+        const d2 = w.length === 1 + ARITY[w[0]] && decodeOne(rd, cs, d.nextIp, codeBase, mask, d32, this.benign);
+        const f = d2 ? FUSE.get(w[0] * 65536 + d2.words[0]) : undefined;
+        if (f === undefined || !twinOf(h, f)) return this.decline('handler differs');
+        // Only the first half's operand words are checked and patched; the
+        // branch's are arena addresses. So the store must not reach the
+        // branch: its bytes have no op of their own in wordIp any more.
+        if (hi >= lin + d.length) return this.decline('store reaches the fused branch');
+      } else if (ARITY[h] !== ARITY[w[0]]) return this.decline('arity differs');
+      const ops = d.operands;
+      for (let k = 1; k < w.length; k++) {
+        if (ops.some((o) => o.word === k)) continue;
+        if (words[q + k] !== w[k]) return this.decline('a non-operand word differs');
+      }
+      // The range is the union of every store the slice made into code, so
+      // it can hold bytes nothing wrote -- the opcode between two patched
+      // immediates (CYBOMAN2 stores both slopes in one slice). Which bytes
+      // changed is not knowable here and does not matter: the op decoded
+      // from the bytes as they are now IS the arena's op with these operand
+      // values, so writing them makes the arena what a fresh compile would
+      // be, whatever the store touched.
+      for (let b = Math.max(lo, lin); b <= Math.min(hi, lin + span - 1); b++) reached[b - lo] = 1;
+      for (const o of ops) patches.push([prog, q + o.word, w[o.word]]);
+    }
+    // ...as long as every byte in the range this program decoded went
+    // through that comparison. One none reached -- a trailing refused byte,
+    // the second half of a fused pair, a wrap this walk does not model -- was
+    // baked into something this walk cannot see, so it is not a repair.
+    for (const [from, to] of prog.covered) {
+      for (let b = Math.max(lo, from); b <= Math.min(hi, to - 1); b++) {
+        if (!reached[b - lo]) return this.decline('a decoded byte no op reaches was written');
+      }
+    }
+    return true;
+  }
+
+  // Keyed by reason AND the written range, capped: a storm is one range, and
+  // the range is what names the instruction to look at.
+  decline(why) {
+    const key = this.repairWhy.size < 64 || this.repairWhy.has(`${why} at ${this.repairRange}`)
+      ? `${why} at ${this.repairRange}` : why;
+    this.repairWhy.set(key, (this.repairWhy.get(key) || 0) + 1);
+    return false;
+  }
+
   invalidateRange(lo, hi) {
     const from = lo >>> 4, to = hi >>> 4;
     if (this.smcFlush || to - from > 512) { this.flush(); return; }
@@ -441,17 +584,34 @@ class CodeCache {
     // with nothing changed is being compiled for nothing: the JIT was switched
     // off here for a program that patched it a few times and moved on, so it
     // goes back to the cache. VOLATILE_AFTER more breaks bring it back.
+    //
+    // Only the bytes an earlier compile of this run DECODED go into the hash.
+    // A paragraph that holds code also holds that code's variables more often
+    // than not -- CYCLE.EXE's mixer keeps its sample counter and its output
+    // word beside the interrupt handler, and writes both every interrupt --
+    // and hashing those bytes made the run look rewritten at every entry, so
+    // it was compiled 17,700 times a second for the rest of the run and never
+    // once demoted. A byte no compile has read yet cannot have been baked into
+    // anything, so its changing is not a reason to keep compiling.
+    let st = this.volState.get(head);
+    const base = head << 4;
     let hash = 0x811c9dc5;
-    for (let p = head, l = head << 4; this.volPara[p] === 1; p++, l += 16) {
-      for (let i = 0; i < 16; i++) hash = Math.imul(hash ^ vm.mem[l + i], 0x01000193);
+    for (let p = head, l = base; this.volPara[p] === 1; p++, l += 16) {
+      for (let i = 0; i < 16; i++) {
+        if (st && l + i - base < st.decoded.length && !st.decoded[l + i - base]) continue;
+        hash = Math.imul(hash ^ vm.mem[l + i], 0x01000193);
+      }
     }
-    const st = this.volState.get(head);
     if (st && st.hash === hash) {
       if (++st.stale > VOLATILE_STALE) {
         this.demote(head);
         return this.entryFor(cs, ip, codeBase, mask, d32);
       }
-    } else if (st) { st.hash = hash; st.stale = 0; } else this.volState.set(head, { hash, stale: 0 });
+    } else if (st) { st.hash = hash; st.stale = 0; } else {
+      let n = 0;
+      for (let p = head; this.volPara[p] === 1; p++) n += 16;
+      this.volState.set(head, st = { hash, stale: 0, decoded: new Uint8Array(n) });
+    }
     const key = d32 ? `${codeBase}d` : codeBase;
     const prog = compileProgram((lin) => vm.mem[lin], cs, ip, {
       arenaBase: this.arenaEnd,
@@ -463,6 +623,11 @@ class CodeCache {
       volatile: (gip) => this.volPara[((codeBase + gip) & mask) >>> 4] === 1,
       volatileOnly: true,
     });
+    // What this compile read is what the next entry's hash covers.
+    for (const [from, to] of prog.covered) {
+      const hi = Math.min(to, base + st.decoded.length);
+      for (let b = Math.max(from, base); b < hi; b++) st.decoded[b - base] = 1;
+    }
     // Every exit that lands on a block the cache already holds goes straight
     // there instead of handing back. Safe because this compile runs once,
     // now: a cached block can only be dropped from the host, and a store that
@@ -626,6 +791,11 @@ class CodeCache {
     // there costs one extra region drop, not a storm.
     prog.key = key;
     prog.cs = cs;
+    // What the decode was asked with, so repairOperands can decode one of
+    // this program's instructions again the same way.
+    prog.codeBase = codeBase;
+    prog.mask = mask;
+    prog.d32 = d32;
     // A Set, because covered ranges can overlap each other within one program.
     // A paragraph listed twice would be removed once and leave a byPara entry
     // pointing at a dropped program, and its code bit would never come down.
@@ -1124,11 +1294,20 @@ class DosSession {
       vm.set('smc', 0);
       const lo = vm.exports.get_smclo() >>> 0, hi = vm.exports.get_smchi() >>> 0;
       if (kind === 2) {
-        // A store into volatile code has nothing cached to drop, but the
-        // shadow return stack may still point into the scratch block it
-        // just rewrote; see CodeCache.noteSmc.
-        if (this.cache.noteSmc(lo, hi)) vm.set('rtop', 0);
-        this.cache.invalidateRange(lo, hi);
+        // An operand rewritten in place leaves every cached program standing
+        // and counts for nothing towards volatility; see repairOperands. The
+        // shadow return stack is still emptied when anything is volatile: a
+        // scratch block is never in byPara, so its copy of the operand is
+        // stale, and a `ret` into it would run the old value.
+        if (this.cache.repairOperands(lo, hi)) {
+          if (this.cache.volList.length) vm.set('rtop', 0);
+        } else {
+          // A store into volatile code has nothing cached to drop, but the
+          // shadow return stack may still point into the scratch block it
+          // just rewrote; see CodeCache.noteSmc.
+          if (this.cache.noteSmc(lo, hi)) vm.set('rtop', 0);
+          this.cache.invalidateRange(lo, hi);
+        }
         this.cache.siteRange.set(((vm.exports.get_csb() + vm.get('gip')) & 0xFFFFF) >>> 0, [lo, hi]);
       } else this.benignPatch(vm.get('cs'), vm.get('gip'), vm.exports.get_csb(), lo, hi);
       this.smcBreaks++;
@@ -1416,8 +1595,9 @@ class DosSession {
   stats() {
     return {
       dispatched: this.dispatched, handbacks: this.handbacks, ints: this.ints,
-      irqs: this.irqs, smcBreaks: this.smcBreaks, stuckAt: this.stuckAt,
+      irqs: this.irqs, smcBreaks: this.smcBreaks, smcPatched: this.cache.patched, stuckAt: this.stuckAt,
       smcSites: this.smcSites, retiredPatches: this.cache.benign.size,
+      repairWhy: this.cache.repairWhy,
       traps: this.traps, icebps: this.icebps,
       blockedOn32: this.blockedOn32 === undefined ? null : this.blockedOn32,
       badSelector: this.badSelector === undefined ? null : this.badSelector,

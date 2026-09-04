@@ -585,7 +585,7 @@ async function runDos(o) {
     }
   }
   const {
-    dispatched, handbacks, ints, irqs, smcBreaks, traps, icebps, stuckAt, blockedOn32, badSelector,
+    dispatched, handbacks, ints, irqs, smcBreaks, smcPatched, repairWhy, traps, icebps, stuckAt, blockedOn32, badSelector,
     compiles, compiledWords, arenaResets, unimplemented, regions, jtab, smcSites, retiredPatches,
     deadFlagsDropped, tracedBlocks, spinBlocks, specOps, rep, volatile,
   } = session.stats();
@@ -607,7 +607,7 @@ async function runDos(o) {
     guestCpuSecs: guestCpuUs / 1e6,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets, deadFlagsDropped,
     tracedBlocks, spinBlocks, specOps, rep, volatile,
-    smcBreaks, traps, icebps, smcSites, retiredPatches,
+    smcBreaks, smcPatched, repairWhy, traps, icebps, smcSites, retiredPatches,
     stuckAt, blockedOn32, badSelector, ranOutOfTime,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
     // A program that never put the adapter in a graphics mode has no frame to
@@ -978,7 +978,11 @@ async function main() {
     // Thousands, against a compile count that keeps climbing, is recompile
     // thrash: a program storing data into a paragraph a region happens to have
     // decoded, one bitmap bit away from its code.
-    + (r.smcBreaks ? `\n  ${r.smcBreaks} self-modify breaks` : '')
+    // ...of which this many rewrote an immediate or a displacement in the
+    // arena and kept the program (CodeCache.repairOperands). The rest dropped
+    // regions, or found nothing compiled (the kind-1 census lines).
+    + (r.smcBreaks ? `\n  ${r.smcBreaks} self-modify breaks`
+        + (r.smcPatched ? `, ${r.smcPatched} break(s) repaired in place` : '') : '')
     // Where the JIT switched itself off: paragraphs the guest rewrote often
     // enough to stop caching, and how many uncached compiles those cost. A
     // demotion is a paragraph that turned out to be entered far more than it
@@ -1002,6 +1006,12 @@ async function main() {
     // being wrong and withdrawn. Nonzero means this run took the benignPatch
     // path at all; zero means the decoder behaved exactly as it always did.
     + (r.retiredPatches ? ` (${r.retiredPatches} CS-store site(s) retired)` : '')
+    // Why the in-place repair declined, when it did. A storm here against a
+    // single reason names the next shape repairOperands should learn.
+    + (r.smcSites && r.repairWhy && r.repairWhy.size
+      ? '\n    repair declined: ' + [...r.repairWhy].sort((a, b) => b[1] - a[1])
+          .map(([k, n]) => `${k} x${n}`).join(', ')
+      : '')
     // --smc-census turns that one number into the sites behind it. A storm is
     // almost always one line with nearly the whole count against it.
     // A watch is a question about one address, so its hits are never allowed to

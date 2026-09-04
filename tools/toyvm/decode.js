@@ -235,6 +235,7 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
   // descriptor tables, so refusing it stopped fourteen demos one instruction
   // into protected mode.
   const words = [];
+  const operands = [];   // { word, at, size, kind } -- see noteImm below
   // Arena addresses are not known until every block is laid out, so branch
   // handlers get a 0 placeholder and a fixup naming the guest IP it stands for.
   // tools/toyvm/compile.js resolves them; the gate leaves them 0, which the
@@ -262,10 +263,12 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
       scale = sib >> 6; index = (sib >> 3) & 7; base = sib & 7;
     }
     let noBase = false, disp = 0;
-    if (rm === 5 && mod === 0) { noBase = true; disp = imm32(); }
-    else if (base === 5 && mod === 0 && rm === 4) { noBase = true; disp = imm32(); }
-    else if (mod === 1) { disp = at(n); n++; if (disp & 0x80) disp -= 0x100; }
-    else if (mod === 2) disp = imm32();
+    const dispAt = n;
+    let dispKind = null;
+    if (rm === 5 && mod === 0) { noBase = true; disp = imm32(); dispKind = 'i32'; }
+    else if (base === 5 && mod === 0 && rm === 4) { noBase = true; disp = imm32(); dispKind = 'i32'; }
+    else if (mod === 1) { disp = at(n); n++; if (disp & 0x80) disp -= 0x100; dispKind = 's8w32'; }
+    else if (mod === 2) { disp = imm32(); dispKind = 'i32'; }
     // ESP and EBP as a BASE are stack-relative; an index of EBP is not, which
     // is why this reads `base` and not the ModRM rm field.
     const stack = !noBase && (base === 4 || base === 5);
@@ -273,6 +276,7 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
       isReg: false, reg, kind: isa.EA.A32, disp: disp | 0,
       seg: segOverride === null ? (stack ? 2 : 3) : segOverride,
       a32: { base, index, scale, noBase, noIndex: index === 4 },
+      dispAt, dispKind,
     };
   }
 
@@ -282,17 +286,22 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
     if (mod === 3) return { isReg: true, reg, rm };
     if (asize === 32) return modrm32(m, mod, reg, rm);
     let kind = rm, disp = 0;
+    const dispAt = n;
+    let dispKind = null;
     if (mod === 0 && rm === 6) {
       kind = isa.EA.DISP;
       disp = at(n) | (at(n + 1) << 8); n += 2;
+      dispKind = 'u16';
     } else if (mod === 1) {
       disp = at(n); n++;
       if (disp & 0x80) disp -= 0x100;          // disp8 is signed
+      dispKind = 's8w16';
     } else if (mod === 2) {
       disp = at(n) | (at(n + 1) << 8); n += 2;
+      dispKind = 'u16';
     }
     const seg = segOverride === null ? isa.EA_DEFAULT_SEG[kind] : segOverride;
-    return { isReg: false, reg, kind, disp: disp & 0xFFFF, seg };
+    return { isReg: false, reg, kind, disp: disp & 0xFFFF, seg, dispAt, dispKind };
   }
 
   // Bits 0-3 EA form, 4-6 segment (six of them once FS/GS exist), 8-10 the
@@ -305,11 +314,36 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
       | ((m.a32.scale & 3) << A.SCALE_SHIFT)
       | (m.a32.noBase ? A.NO_BASE : 0)
       | (m.a32.noIndex ? A.NO_INDEX : 0) : 0);
-  const imm8 = () => { const v = at(n); n++; return v; };
-  const imm16 = () => { const v = at(n) | (at(n + 1) << 8); n += 2; return v; };
+  // Where the last immediate was read from, so the emitters below can say
+  // which instruction bytes an operand word was made of (see `operands`).
+  let immAt = -1, immSize = 0;
+  const imm8 = () => { immAt = n; immSize = 1; const v = at(n); n++; return v; };
+  const imm16 = () => { immAt = n; immSize = 2; const v = at(n) | (at(n + 1) << 8); n += 2; return v; };
   const imm32 = () => {
+    immAt = n; immSize = 4;
     const v = at(n) | (at(n + 1) << 8) | (at(n + 2) << 16) | (at(n + 3) << 24);
     n += 4; return v | 0;
+  };
+  // Operand provenance: which word of this instruction was read straight off
+  // which of its bytes, and through which widening. The host uses it when a
+  // store lands on compiled code: a store that changed nothing but an
+  // immediate or a displacement is patched into the arena word in place
+  // instead of dropping and recompiling the block (dos-loop.js
+  // repairOperands). Only the shapes listed here are claimed; a store into
+  // any other byte of an instruction still invalidates. `at` is the offset
+  // from the instruction's first byte, `word` the index into `words`.
+  //
+  // The kind is derived from the immediate's width against the operand's:
+  // equal widths are read verbatim, a one-byte immediate on a wider operand
+  // is the sign-extended 83/6B/6A form. Anything else is not claimed.
+  const noteImm = (word, w) => {
+    let kind = null;
+    if (immSize * 8 === w) kind = immSize === 1 ? 'u8' : immSize === 2 ? 'u16' : 'i32';
+    else if (immSize === 1) kind = w === 32 ? 's8w32' : 's8w16';
+    if (kind) operands.push({ word, at: immAt, size: immSize, kind });
+  };
+  const noteDisp = (word, m) => {
+    if (m.dispKind) operands.push({ word, at: m.dispAt, size: OPERAND_SIZE[m.dispKind], kind: m.dispKind });
   };
   const sx8to16 = (v) => (v & 0x80 ? v - 0x100 : v) & 0xFFFF;
   // The immediate that follows the operand size: two bytes normally, four
@@ -332,12 +366,18 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
         dstIsRm ? (m.rm & 7) | ((m.reg & 7) << 4) : (m.reg & 7) | ((m.rm & 7) << 4));
     } else {
       if (dstIsRm) writesMem = true;
+      noteDisp(words.length + 2, m);
       words.push(H[`${name}_${dstIsRm ? 'mr' : 'rm'}${w}`], packEa(m), m.disp);
     }
   }
   function emitRmI(name, w, m, imm) {
-    if (m.isReg) words.push(H[`${name}_ri${w}`], m.rm & 7, imm);
-    else { writesMem = true; words.push(H[`${name}_mi${w}`], packEa(m), m.disp, imm); }
+    if (m.isReg) { noteImm(words.length + 2, w); words.push(H[`${name}_ri${w}`], m.rm & 7, imm); }
+    else {
+      writesMem = true;
+      noteDisp(words.length + 2, m);
+      noteImm(words.length + 3, w);
+      words.push(H[`${name}_mi${w}`], packEa(m), m.disp, imm);
+    }
   }
 
   // --- ALU group: 8*code + form, forms 0..5 ---------------------------------
@@ -348,9 +388,11 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
       const w = (form & 1) ? opsize : 8;
       emitRmR(name, w, modrm(), form < 2);
     } else if (form === 4) {
-      words.push(H[`${name}_ri8`], 0, imm8());          // AL
+      const imm = imm8(); noteImm(words.length + 2, 8);
+      words.push(H[`${name}_ri8`], 0, imm);          // AL
     } else {
-      words.push(H[`${name}_ri${opsize}`], 0, immW());  // AX / EAX
+      const imm = immW(); noteImm(words.length + 2, opsize);
+      words.push(H[`${name}_ri${opsize}`], 0, imm);  // AX / EAX
     }
   } else switch (op) {
     // --- ALU with immediate, group 80/81/83 ---------------------------------
@@ -411,8 +453,13 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
         if (op === 0x69 || op === 0x6B) {
           const m = modrm();
           const imm = op === 0x69 ? immW() : sx8toW(imm8());
-          if (m.isReg) words.push(H[`imul3_rr${opsize}`], (m.rm & 7) | ((m.reg & 7) << 4), imm);
-          else words.push(H[`imul3_rm${opsize}`], packEa(m), m.disp, imm);
+          if (m.isReg) {
+            noteImm(words.length + 2, opsize);
+            words.push(H[`imul3_rr${opsize}`], (m.rm & 7) | ((m.reg & 7) << 4), imm);
+          } else {
+            noteDisp(words.length + 2, m); noteImm(words.length + 3, opsize);
+            words.push(H[`imul3_rm${opsize}`], packEa(m), m.disp, imm);
+          }
           break;
         }
         if (op === 0x62) {
@@ -467,8 +514,8 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
     // --- TEST ---------------------------------------------------------------
     case 0x84: emitRmR('test', 8, modrm(), true); break;
     case 0x85: emitRmR('test', opsize, modrm(), true); break;
-    case 0xA8: words.push(H.test_ri8, 0, imm8()); break;
-    case 0xA9: words.push(H[`test_ri${opsize}`], 0, immW()); break;
+    case 0xA8: { const imm = imm8(); noteImm(words.length + 2, 8); words.push(H.test_ri8, 0, imm); break; }
+    case 0xA9: { const imm = immW(); noteImm(words.length + 2, opsize); words.push(H[`test_ri${opsize}`], 0, imm); break; }
 
     // --- LEA, XCHG, segment moves ------------------------------------------
     case 0x8D: { const m = modrm(); if (m.isReg) return null;
@@ -521,7 +568,11 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
         endsBlock = true;
         break;
       }
-      words.push(H[`push_i${opsize}`], op === 0x68 ? immW() : sx8toW(imm8()));
+      {
+        const imm = op === 0x68 ? immW() : sx8toW(imm8());
+        noteImm(words.length + 1, opsize);
+        words.push(H[`push_i${opsize}`], imm);
+      }
       break;
     }
 
@@ -631,6 +682,7 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
       // wide. $lin still folds the segment base under it.
       const off = asize === 32 ? imm32() : imm16();
       const seg = segOverride === null ? 3 : segOverride;
+      noteImm(words.length + 1, asize);
       words.push(H[op < 0xA2 ? `mov_acc_moffs${w}` : `mov_moffs_acc${w}`], off, seg);
       break;
     }
@@ -1014,8 +1066,8 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
     default:
       // MOV r8, imm8 (B0-B7) and MOV r16, imm16 (B8-BF) encode the register in
       // the opcode itself; so do INC (40-47) and DEC (48-4F).
-      if (op >= 0xB0 && op <= 0xB7) words.push(H.mov_ri8, op & 7, imm8());
-      else if (op >= 0xB8 && op <= 0xBF) words.push(H[`mov_ri${opsize}`], op & 7, immW());
+      if (op >= 0xB0 && op <= 0xB7) { const imm = imm8(); noteImm(words.length + 2, 8); words.push(H.mov_ri8, op & 7, imm); }
+      else if (op >= 0xB8 && op <= 0xBF) { const imm = immW(); noteImm(words.length + 2, opsize); words.push(H[`mov_ri${opsize}`], op & 7, imm); }
       else if (op >= 0x40 && op <= 0x47) words.push(H[`inc_r${opsize}`], op & 7);
       else if (op >= 0x48 && op <= 0x4F) words.push(H[`dec_r${opsize}`], op & 7);
       // PUSH SP pushes the already-decremented value on an 8088; the 32-bit
@@ -1081,7 +1133,24 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
     endsBlock = true;
   }
 
-  return { words, nextIp: wip(start + n), length: n, fixups, endsBlock, writesMem, bulkWrite };
+  return { words, nextIp: wip(start + n), length: n, fixups, endsBlock, writesMem, bulkWrite, operands };
+}
+
+// How many instruction bytes each operand kind is read from, and the word
+// those bytes make. The kinds are the decoder's own widenings above: the
+// three verbatim widths, and the one-byte immediate sign-extended to a 16- or
+// 32-bit operand (group 83, IMUL 6B, PUSH 6A, and every disp8).
+const OPERAND_SIZE = { u8: 1, u16: 2, i32: 4, s8w16: 1, s8w32: 1 };
+function readOperand(rd, lin, kind) {
+  const b0 = rd(lin);
+  switch (kind) {
+    case 'u8': return b0;
+    case 'u16': return b0 | (rd(lin + 1) << 8);
+    case 'i32': return (b0 | (rd(lin + 1) << 8) | (rd(lin + 2) << 16) | (rd(lin + 3) << 24)) | 0;
+    case 's8w16': return (b0 & 0x80 ? b0 - 0x100 : b0) & 0xFFFF;
+    case 's8w32': return (b0 & 0x80 ? b0 - 0x100 : b0) | 0;
+    default: throw new Error(`unknown operand kind ${kind}`);
+  }
 }
 
 // The MOV encodings that store to memory. Deliberately not every writing
@@ -1095,4 +1164,4 @@ function isSelfPatch(op, modrm) {
   return false;
 }
 
-module.exports = { decodeOne, H, setCpuLevel };
+module.exports = { decodeOne, H, setCpuLevel, readOperand, OPERAND_SIZE };
