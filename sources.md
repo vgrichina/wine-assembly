@@ -1221,3 +1221,14 @@ Player**, and remained in animated gameplay for a 15-second sample. The canvas
 changed in 16 of 17 one-second probes with no runtime error or browser long
 task; the inspected browser capture is
 `/private/tmp/claw-browser-gameplay.png`.
+
+### 2026-09-04 Captain Claw frozen gameplay regression
+
+The installer-produced runtime files above still match their recorded SHA-256
+values. A dedicated low-load headless regression now runs the registered app in
+one frozen stdio-controlled CLI process with its internal wall-clock guard. It
+selects **Single Player**, reaches **Demo Level #1 - La Roca**, holds the real
+DirectInput right-arrow state, and verifies that Claw and the level camera move.
+Fresh manually inspected captures are `/private/tmp/claw-before.png` and
+`/private/tmp/claw-after.png`; see `docs/re-notes/captain-claw-demo.md` for the
+repeatable command and visual acceptance criteria.
