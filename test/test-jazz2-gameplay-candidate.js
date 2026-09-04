@@ -15,8 +15,8 @@ const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
-const INSTALLED = path.join(__dirname, 'binaries', 'candidates',
-  'jazz-jackrabbit-2-demo-installer', 'installed');
+const INSTALLED = process.env.JAZZ2_INSTALLED || path.join(__dirname, 'binaries',
+  'candidates', 'jazz-jackrabbit-2-demo-installer', 'installed');
 const EXE = path.join(INSTALLED, 'jazz2.exe');
 
 function assert(condition, message) {
@@ -62,9 +62,12 @@ async function main() {
   const frameAPath = path.join(temp, 'gameplay-a.png');
   const frameBProbePath = path.join(temp, 'gameplay-b-probe.png');
   const frameBPath = process.env.JAZZ2_SCREENSHOT || path.join(temp, 'gameplay-b.png');
+  const launchArgs = process.env.JAZZ2_INSTALLED
+    ? [`--exe=${EXE}`, '--args=Share1.j2l -nonetwork', '--vfs-include=*']
+    : ['--app=jazz2_demo'];
   const child = spawn('node', [
     RUN,
-    '--app=jazz2_demo',
+    ...launchArgs,
     '--screen=800x600',
     '--batch-size=100000',
     '--control-stdin',
@@ -119,10 +122,10 @@ async function main() {
     });
   }
 
-  async function pulseEscape() {
-    await send('keydown:27');
+  async function pulseKey(vk) {
+    await send(`keydown:${vk}`);
     await sleep(120);
-    await send('keyup:27');
+    await send(`keyup:${vk}`);
   }
 
   try {
@@ -134,17 +137,27 @@ async function main() {
     }
 
     let gameplay = null;
+    let startedNewGame = false;
     const gameplayDeadline = Date.now() + 165000;
     while (Date.now() < gameplayDeadline) {
       await send(`png:${probePath}`);
       const stats = imageStats(probePath);
       const bytes = fs.statSync(probePath).size;
-      if (stats.width === 800 && stats.height === 600 && bytes > 300000 &&
+      const namedLevel = /Jazz Jackrabbit 2 Shareware - (?:Darn Ratz|Retro Rabbit|Frog Stomp)/.test(output);
+      if (namedLevel && !startedNewGame) {
+        startedNewGame = true;
+        // Dismiss the menu over the running attraction; more Enter presses can
+        // cycle back into it and yield a textured but obstructed false pass.
+        await pulseKey(13);
+        await sleep(500);
+        continue;
+      }
+      if (namedLevel && stats.width === 800 && stats.height === 600 && bytes > 300000 &&
           stats.nonBlack > 300000 && stats.colors > 120) {
         gameplay = stats;
         break;
       }
-      await pulseEscape();
+      await pulseKey(bytes > 300000 ? 13 : 27);
       await sleep(1200);
     }
     assert(gameplay, `Jazz 2 did not reach textured gameplay\n${output.slice(-8000)}`);
@@ -169,8 +182,6 @@ async function main() {
       }
     }
     assert(b, 'Jazz 2 did not produce a second distinct textured gameplay frame');
-    assert(/Jazz Jackrabbit 2 Shareware - (?:Darn Ratz|Retro Rabbit|Frog Stomp)/.test(output),
-      `Jazz 2 never named a playable shareware level\n${output.slice(-8000)}`);
     assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(output),
       `Jazz 2 hit a compatibility failure\n${output.slice(-8000)}`);
 

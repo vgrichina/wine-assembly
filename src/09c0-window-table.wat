@@ -648,7 +648,19 @@
 
   ;; Set parent hwnd for a window
   (func $wnd_set_parent (param $hwnd i32) (param $parent i32)
-    (local $idx i32)
+    (local $idx i32) (local $cur i32) (local $depth i32)
+    ;; A cycle makes coordinate conversion recurse WAT -> host -> WAT forever.
+    ;; Reject both a direct self-parent and a parent already below this window.
+    (local.set $cur (local.get $parent))
+    (block $valid (loop $walk
+      (br_if $valid (i32.eqz (local.get $cur)))
+      (if (i32.or
+            (i32.eq (local.get $cur) (local.get $hwnd))
+            (i32.ge_u (local.get $depth) (global.get $MAX_WINDOWS)))
+        (then (return)))
+      (local.set $cur (call $wnd_get_parent (local.get $cur)))
+      (local.set $depth (i32.add (local.get $depth) (i32.const 1)))
+      (br $walk)))
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.ne (local.get $idx) (i32.const -1))
       (then

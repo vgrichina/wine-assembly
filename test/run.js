@@ -209,6 +209,7 @@ const ESP_DELTA = hasFlag('esp-delta');   // --esp-delta: log ESP before/after e
 const TRACE_ESP = getArg('trace-esp', null); // --trace-esp=LO-HI: per-block (eip, esp) + Δ from prev block (hex; HI optional)
 const TRACE_EIP_RANGE = getArg('trace-eip-range', null); // --trace-eip-range=LO-HI: log every block-entry EIP inside [LO,HI] (module+0xVA OK)
 const TRACE_EIP_DETAIL = hasFlag('trace-eip-detail'); // --trace-eip-detail: include regs/flags/memory with --trace-eip-range
+const TRACE_EIP_STREAM = hasFlag('trace-eip-stream'); // --trace-eip-stream: write EIP lines immediately instead of buffering to the next batch boundary
 const TRACE_EIP_DUMP = getArg('trace-eip-dump', null); // --trace-eip-dump=0xADDR:LEN[,..]: compact dump on each detailed EIP hit
 // --trace-loopmatch[=0xEIP]: at decode time, dump the emitted op sequence of
 // every self-loop block (or just the one at 0xEIP). Prints the block's entry,
@@ -2844,6 +2845,8 @@ async function main() {
       if (TRACE_EIP_DETAIL && instance && instance.exports) {
         line += ` ${regs()}`;
         const e = instance.exports;
+        if (e.get_sync_msg_depth) line += ` syncDepth=${e.get_sync_msg_depth() | 0}`;
+        if (e.get_block_budget) line += ` blockBudget=${e.get_block_budget() | 0}`;
         if (e.get_flag_res && e.get_flag_op && e.get_flag_a && e.get_flag_b && e.get_flag_sign_shift) {
           line += ` flags{op=${e.get_flag_op()} a=${hex(e.get_flag_a())} b=${hex(e.get_flag_b())} res=${hex(e.get_flag_res())} sh=${e.get_flag_sign_shift()}}`;
         }
@@ -2858,7 +2861,7 @@ async function main() {
           }
         }
       }
-      logs.push(line);
+      TRACE_EIP_STREAM ? console.log(line) : logs.push(line);
     };
   }
 

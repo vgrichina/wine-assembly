@@ -288,6 +288,7 @@
   ;; $last_run_halt comment in 01-header.wat for the codes).
   (func (export "get_last_run_blocks") (result i32) (global.get $last_run_blocks))
   (func (export "get_last_run_halt")   (result i32) (global.get $last_run_halt))
+  (func (export "get_block_budget")    (result i32) (global.get $block_budget))
 
   ;; Hook for test/test-shift-equivalence.js, which checks the unified
   ;; $do_shift against an independent model of the x86 semantics over every
