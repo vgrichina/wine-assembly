@@ -99,6 +99,7 @@ UNIT=(
   test/test-menu-modify-submenu.js
   test/test-menu-check-position.js
   test/test-image-list-icons.js
+  test/test-shgetfileinfo.js
   test/test-insert-menu-item-host-bar.js
   test/test-menu-popup-text.js
   test/test-dynamic-menu-bar.js
