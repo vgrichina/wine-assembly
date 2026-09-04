@@ -35,6 +35,7 @@ const args = process.argv.slice(2);
 const files = args.filter((a) => !a.startsWith('--'));
 const arg = (k, d) => { const a = args.find((x) => x.startsWith(`--${k}=`)); return a ? a.slice(k.length + 3) : d; };
 const json = args.includes('--json');
+const flag = (k) => args.includes(`--${k}`);
 
 function readWav(file) {
   const b = fs.readFileSync(file);
@@ -238,7 +239,7 @@ function timeAlign(a, b) {
     }
   }
   // The similarity at exactly 1.0 and the best offset there, for contrast.
-  let at1 = -1;
+  let at1 = -1, at1Off = 0;
   for (let off = -offsets; off <= offsets; off++) {
     let s = 0, n = 0;
     for (let i = a0; i < a.chroma.length; i += 2) {
@@ -246,9 +247,9 @@ function timeAlign(a, b) {
       if (j < 0 || j >= b.chroma.length) continue;
       s += cos(a.chroma[i], b.chroma[j]); n++;
     }
-    if (n >= 20) at1 = Math.max(at1, s / n);
+    if (n >= 20 && s / n > at1) { at1 = s / n; at1Off = off * a.hopS; }
   }
-  return { ...best, simAt1: at1 };
+  return { ...best, simAt1: at1, simAt1Offset: at1Off };
 }
 
 // The pitch offset between two long-term spectra: the lag, in cents, at
@@ -331,4 +332,43 @@ if (results.length === 2) {
       : t.sim - t.simAt1 < 0.05 ? 'tempo not distinguishable from 1.00 (aligner margin under 0.05; trust the beat line)'
         : 'DIFFERENT TEMPO'}`);
   console.log(`  beat autocorrelation ${(a.beat * 1000).toFixed(1)}ms vs ${(b.beat * 1000).toFixed(1)}ms (a coarser check: it can pick different multiples)`);
+  // --align-trace: the same chroma comparison, second by second, at the
+  // tempo 1.00 and its best offset. One number per second says WHEN two
+  // renders stop agreeing, which the whole-run figures above cannot: a
+  // render that matches for eight seconds and then plays a different
+  // pattern scores a middling similarity overall and nothing else. The
+  // `drift` column is the offset (in seconds, within +-1.5s) at which that
+  // second of `a` matches `b` best -- a steady drift is a tempo, a jump is a
+  // sequencing difference, and a low similarity at every offset is
+  // different notes altogether. CATWALK against DOSBox-X (2026-09-03) is
+  // what this was written for.
+  if (flag('align-trace')) {
+    const cos = (x, y) => {
+      let d = 0, nx = 0, ny = 0;
+      for (let i = 0; i < 12; i++) { d += x[i] * y[i]; nx += x[i] * x[i]; ny += y[i] * y[i]; }
+      return nx && ny ? d / Math.sqrt(nx * ny) : 0;
+    };
+    const a0 = Math.max(0, Math.round((a.first || 0) / a.hopS)), b0 = Math.max(0, Math.round((b.first || 0) / b.hopS));
+    const perSec = Math.round(1 / a.hopS), span = Math.round(1.5 / a.hopS);
+    const base = Math.round(t.simAt1Offset / a.hopS);
+    console.log(`  per second (offset ${t.simAt1Offset > 0 ? '+' : ''}${t.simAt1Offset.toFixed(2)}s): similarity at that offset, then the best local offset and its similarity`);
+    for (let s = 0; (a0 + s * perSec) < a.chroma.length; s++) {
+      let here = 0, n = 0, best = { off: 0, sim: -1 };
+      for (let off = -span; off <= span; off++) {
+        let acc = 0, m = 0;
+        for (let i = a0 + s * perSec; i < a0 + (s + 1) * perSec && i < a.chroma.length; i++) {
+          const j = b0 + (i - a0) + base + off;
+          if (j < 0 || j >= b.chroma.length) continue;
+          acc += cos(a.chroma[i], b.chroma[j]); m++;
+        }
+        if (!m) continue;
+        if (off === 0) { here = acc / m; n = m; }
+        if (acc / m > best.sim) best = { off, sim: acc / m };
+      }
+      if (!n) break;
+      const drift = best.off * a.hopS;
+      console.log(`    ${String(s).padStart(3)}s  sim ${here.toFixed(2)}   drift ${drift > 0 ? '+' : ''}${drift.toFixed(2)}s sim ${best.sim.toFixed(2)}`
+        + (here < 0.8 ? '   <- differs' : ''));
+    }
+  }
 }

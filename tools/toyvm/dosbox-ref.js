@@ -38,6 +38,8 @@ function arg(name, fallback) {
   return hit === undefined ? fallback : hit.slice(name.length + 3);
 }
 
+function flag(name) { return process.argv.slice(2).includes(`--${name}`); }
+
 const BINARIES = [
   process.env.DOSBOX_X,
   '/Applications/dosbox-x.app/Contents/MacOS/dosbox-x',
@@ -66,7 +68,7 @@ async function main() {
   const exe = arg('exe');
   const out = arg('out');
   if (!exe || !out) {
-    console.error('usage: dosbox-ref.js --exe=PATH --out=ref.wav [--keys="1 4 2"] [--seconds=45] [--wait=4] [--pace=1.5] [--cycles=30000] [--sbtype=sb16] [--rate=44100]');
+    console.error('usage: dosbox-ref.js --exe=PATH --out=ref.wav [--keys="1 4 2"] [--seconds=45] [--wait=4] [--pace=1.5] [--cycles=30000] [--sbtype=sb16] [--gus] [--rate=44100]');
     process.exit(2);
   }
   const bin = findBinary();
@@ -84,6 +86,10 @@ async function main() {
     '[cpu]', 'core=normal', `cycles=fixed ${arg('cycles', '30000')}`,
     '[mixer]', `rate=${arg('rate', '44100')}`, 'nosound=true',
     '[sblaster]', `sbtype=${arg('sbtype', 'sb16')}`, 'sbbase=220', 'irq=7', 'dma=1',
+    // --gus puts a Gravis Ultrasound at 220h/IRQ 11/DMA 1 -- the same
+    // machine `run-dos.js --env=ULTRASND=220,1,1,11,7` describes -- and
+    // DOSBox-X exports the matching ULTRASND= itself.
+    ...(flag('gus') ? ['[gus]', 'gus=true', 'gusbase=220', 'gusirq=11', 'gusdma=1', 'gustype=classic'] : []),
     '[autoexec]', `mount c "${dir}"`, 'c:',
     ...(keys ? [`AUTOTYPE -w ${arg('wait', '4')} -p ${arg('pace', '1.5')} ${keys}`] : []),
     `DX-CAPTURE /A /-V ${name}`,

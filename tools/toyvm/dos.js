@@ -3744,10 +3744,48 @@ class Machine {
         const keep = ah === 0x31 ? this.curPsp + (r.get('dx') & 0xFFFF) : 0;
         if (this.execStack.length) {
           const parent = this.execStack.pop();
+          const leaving = this.curPsp;
           this.lastExitCode = code; this.lastExitType = ah === 0x31 ? 3 : 0;
           this.transfer = parent;
-          this.allocTop = Math.max(parent.allocTop, keep);
-          this.imageTop = Math.max(parent.imageTop, keep);
+          // The first paragraph past what the child leaves resident. This,
+          // not the parent's frontier, is what the next EXEC loads above: a
+          // parent that never shrank its block has a frontier at the ceiling.
+          let top = keep;
+          if (keep) {
+            // AH=31h keeps DX paragraphs of the PSP block -- and every block
+            // the resident program took with AH=48h and never gave back. Those
+            // sit above `keep`, because the child was loaded at the parent's
+            // frontier, and they are the whole reason CATWALK.PLY goes
+            // resident: 0x3c0 paragraphs of S3M patterns at a21 and 64KB of
+            // samples at de2, both past its 0x635-paragraph image. With the
+            // frontier dropped to `keep` alone, EXEC put CATWALK.TMP at psp
+            // a20 and its unpacker wrote over the patterns; the player then
+            // read a speed of 0xAB out of unpacked code and advanced one row
+            // every 3.4 seconds (measured 2026-09-03 against DOSBox-X). The
+            // frontier goes above the highest held block and the gaps between
+            // them are free holes, which is what the MCB chain would say.
+            const held = [...this.memBlocks].filter(([s]) => s - 1 >= keep).sort((a, b) => a[0] - b[0]);
+            for (const [s, n] of held) top = Math.max(top, s + n);
+            this.allocTop = Math.max(parent.allocTop, top);
+            let cursor = keep;
+            for (const [s, n] of held) {
+              if (s - 1 > cursor) this.memRelease(cursor, s - 1 - cursor);
+              cursor = Math.max(cursor, s + n);
+            }
+          } else {
+            // AH=4Ch: the blocks the child owns go back, by MCB owner, the
+            // way the terminate-vector path below does it. Left in the map
+            // they would count as held on a later resident exit and hoist
+            // the frontier over memory nobody holds.
+            this.allocTop = parent.allocTop;
+            for (const s of [...this.memBlocks.keys()]) {
+              if (this.mcbOwner(s) !== leaving) continue;
+              const size = this.memBlocks.get(s);
+              this.memBlocks.delete(s);
+              if (size !== undefined) this.memReleaseBlock(s, size);
+            }
+          }
+          this.imageTop = Math.max(parent.imageTop, top);
           this.memTrim();
           this.curPsp = parent.psp;
           this.log(`child exited ${code}${keep ? `, resident to ${keep.toString(16)}` : ''};`
