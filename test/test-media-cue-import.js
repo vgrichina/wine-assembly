@@ -43,7 +43,7 @@ function directoryRecord(bytes, off, lba, size, flags, nameBytes) {
 }
 
 function makeIso(withAutorun = false) {
-  const sectors = withAutorun ? 23 : 20;
+  const sectors = withAutorun ? 24 : 20;
   const bytes = new Uint8Array(sectors * ISO_SECTOR);
   const pvd = 16 * ISO_SECTOR;
   bytes[pvd] = 1;
@@ -72,11 +72,15 @@ function makeIso(withAutorun = false) {
     dir += directoryRecord(bytes, dir, 21, 4, 0,
       Array.from(Buffer.from('SETUP_DE.EXE;1', 'ascii')));
     const inf = Buffer.from('[autorun]\r\nopen=setup.exe\r\n', 'ascii');
-    directoryRecord(bytes, dir, 22, inf.length, 0,
+    dir += directoryRecord(bytes, dir, 22, inf.length, 0,
       Array.from(Buffer.from('AUTORUN.INF;1', 'ascii')));
+    const ini = Buffer.from('[Startup]\r\nSourcePath=D:\\\r\n', 'ascii');
+    dir += directoryRecord(bytes, dir, 23, ini.length, 0,
+      Array.from(Buffer.from('SETUP.INI;1', 'ascii')));
     bytes.set([0x4d, 0x5a, 0x90, 0x00], 20 * ISO_SECTOR);
     bytes.set([0x4d, 0x5a, 0x90, 0x00], 21 * ISO_SECTOR);
     bytes.set(inf, 22 * ISO_SECTOR);
+    bytes.set(ini, 23 * ISO_SECTOR);
   }
   return bytes;
 }
@@ -158,6 +162,12 @@ async function main() {
   assert.strictEqual(vfs.volumeLabels.get('d'), 'CIV2_TEST');
   assert(vfs.cdAudioDrives.get('d'), 'the data mount must also expose the CUE TOC');
   assert.strictEqual(audio.reads, 0, 'mounting must leave CD audio lazy');
+  assert.strictEqual(vfs.files.get('d:\\setup.ini')._provider, null,
+    'mounting must make INI bytes resident for synchronous profile APIs');
+  assert.match(Buffer.from(vfs.files.get('d:\\setup.ini').data).toString('ascii'),
+    /SourcePath=D:\\/);
+  assert(vfs.files.get('d:\\setup_de.exe')._provider,
+    'unrelated files must remain lazy');
   assert.deepStrictEqual(Array.from(await vfs.materialize('D:\\CIV2.EXE')),
     [0x4d, 0x5a, 0x90, 0x00]);
 

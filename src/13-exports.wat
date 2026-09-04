@@ -3644,6 +3644,18 @@
   ;; Allocate guest heap memory (returns guest address)
   (func (export "guest_alloc") (param $size i32) (result i32)
     (call $heap_alloc (local.get $size)))
+  ;; Reserve and commit a page-aligned sparse guest range for file mappings.
+  ;; Unlike HeapAlloc, this can hold a large view without crossing the fixed
+  ;; low-memory stack/thunk arenas on its way upward.
+  (func (export "guest_map_alloc") (param $requested i32) (result i32)
+    (local $size i32) (local $guest i32)
+    (local.set $size
+      (i32.and (i32.add (local.get $requested) (i32.const 0xFFF))
+        (i32.const 0xFFFFF000)))
+    (if (i32.eqz (local.get $size)) (then (return (i32.const 0))))
+    (local.set $guest (call $virtual_reserve_down (local.get $size)))
+    (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
+    (call $virtual_map_commit (local.get $guest) (local.get $size)))
   (func (export "guest_free") (param $g i32)
     (call $heap_free (local.get $g)))
 

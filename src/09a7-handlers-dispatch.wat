@@ -2150,9 +2150,9 @@
 
   ;; 778: MapViewOfFile(hMapping, dwAccess, dwOffsetHi, dwOffsetLo, dwSize) — 5 args
   (func $handle_MapViewOfFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_fs_map_view_of_file
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; 5 args
+    (call $handle_map_view_complete (call $host_fs_map_view_of_file
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4))
+      (i32.const 24))
   )
 
   ;; MapViewOfFileEx has the same mapping semantics plus a sixth preferred
@@ -2163,12 +2163,12 @@
   (func $handle_MapViewOfFileEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $base i32)
     (local.set $base (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
-    (global.set $eax
+    (call $handle_map_view_complete
       (if (result i32) (local.get $base)
         (then (i32.const 0))
         (else (call $host_fs_map_view_of_file
-          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; 6 args
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4))))
+      (i32.const 28))
   )
 
   ;; 779: UnmapViewOfFile(lpBaseAddress) — 1 arg
@@ -3587,3 +3587,17 @@
           (else (select (local.get $gdi) (local.get $user)
                         (i32.lt_u (local.get $gdi) (local.get $user))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; Complete a mapping immediately, or park an async provider-backed view
+  ;; with its original stdcall frame intact and retry it after the host fill.
+  (func $handle_map_view_complete (param $result i32) (param $unpop i32)
+    (local $pending i32)
+    (global.set $eax (local.get $result))
+    (global.set $esp (i32.add (global.get $esp) (local.get $unpop)))
+    (if (i32.eqz (local.get $result))
+      (then
+        (local.set $pending (call $host_fs_read_pending))
+        (if (i32.eq (local.get $pending) (i32.const 1))
+          (then (call $io_block (local.get $unpop)))
+          (else (if (local.get $pending)
+            (then (global.set $last_error (i32.const 30)))))))))

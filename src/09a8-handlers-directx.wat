@@ -9599,11 +9599,11 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; ICOpen(fccType, fccHandler, wMode, ...) — 4 args
+  ;; ICOpen(fccType, fccHandler, wMode) — 3 args
   ;; Returns NULL: no codec handle
   (func $handle_ICOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; ICClose(hic) — 1 arg
   (func $handle_ICClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

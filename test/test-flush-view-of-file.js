@@ -77,8 +77,50 @@ function makeCtx() {
   assert.strictEqual(imports.fs_flush_view(anonBase, 0), 1,
     'flushing a pagefile-backed view succeeds');
 
+  // --- async provider-backed read-only mapping ----------------------------
+  // A browser File cannot answer synchronously. MapViewOfFile must park on
+  // the existing IO_WAIT path, stream into the guest allocation, then return
+  // that completed view when the exact API call retries.
+  const lazyCtx = makeCtx();
+  const lazyImports = createFilesystemImports(lazyCtx);
+  const lazyBytes = Uint8Array.from({ length: 700000 }, (_, i) => (i * 37) & 0xff);
+  let rangeReads = 0;
+  lazyCtx.vfs.setProviderFile('d:\\game\\data.res', {
+    provider: {
+      size: lazyBytes.length,
+      readRange(offset, length) {
+        rangeReads++;
+        return Promise.resolve(lazyBytes.slice(offset, offset + length));
+      },
+    },
+    attrs: 0x01,
+  });
+  const lazyFile = lazyCtx.vfs.createFile('d:\\game\\data.res', 0x80000000, 3);
+  const lazyMap = lazyImports.fs_create_file_mapping(lazyFile, 2, 0, 0, 0);
+  assert.strictEqual(lazyImports.fs_map_view_of_file(lazyMap, 4, 0, 0, 0), 0,
+    'the first mapping attempt parks instead of touching async-only entry.data');
+  assert.strictEqual(lazyImports.fs_read_pending(), 1,
+    'the ordinary IO_WAIT status channel reports the pending mapping');
+  const pendingMap = lazyCtx.vfs.pendingRead;
+  assert(pendingMap && /data\.res$/.test(pendingMap.path));
+  await lazyCtx.vfs.fillPendingRead(pendingMap);
+  lazyCtx.vfs.pendingRead = null;
+  const lazyBase = lazyImports.fs_map_view_of_file(lazyMap, 4, 0, 0, 0);
+  assert(lazyBase, 'retry returns the view filled while the guest was parked');
+  assert(rangeReads > 0, 'the parked fill reads the asynchronous provider');
+  assert.deepStrictEqual(
+    Array.from(lazyCtx.bytes().subarray(lazyCtx.g2w(lazyBase + 12345),
+      lazyCtx.g2w(lazyBase + 12361))),
+    Array.from(lazyBytes.subarray(12345, 12361)),
+    'the provider bytes land at the corresponding guest mapping offset');
+  assert(lazyCtx.vfs.files.get('d:\\game\\data.res')._provider,
+    'read-only mapping does not retain a duplicate eager JavaScript copy');
+  assert.strictEqual(lazyImports.fs_unmap_view(lazyBase), 1,
+    'unmapping a read-only provider view needs no synchronous writeback');
+
   // --- the WAT handler ------------------------------------------------------
   const seen = [];
+  let mapAttempts = 0;
   const { exports: wat } = await bootRenderHarness({
     extraWat: String.raw`
       (func (export "test_flush_view_of_file") (param $base i32) (param $bytes i32) (result i64)
@@ -89,9 +131,19 @@ function makeCtx() {
         (i64.or
           (i64.extend_i32_u (global.get $eax))
           (i64.shl (i64.extend_i32_u (global.get $esp)) (i64.const 32))))
+      (func (export "test_map_view_of_file") (result i64)
+        (global.set $esp (i32.const 0x00300000))
+        (call $handle_MapViewOfFile
+          (i32.const 0xfb000001) (i32.const 4) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (i64.or
+          (i64.extend_i32_u (global.get $eax))
+          (i64.shl (i64.extend_i32_u (global.get $esp)) (i64.const 32))))
     `,
     extraHostOverrides: {
       fs_flush_view: (...args) => { seen.push(args); return 1; },
+      fs_map_view_of_file: () => (++mapAttempts === 1 ? 0 : 0x00420000),
+      fs_read_pending: () => (mapAttempts === 1 ? 1 : 0),
     },
   });
 
@@ -101,6 +153,19 @@ function makeCtx() {
     'FlushViewOfFile pops its return address and two stdcall arguments');
   assert.deepStrictEqual(seen, [[0x00420000, 0x1000]],
     'both arguments reach the host untouched');
+
+  const parked = wat.test_map_view_of_file();
+  assert.strictEqual(Number(parked & 0xffffffffn), 0);
+  assert.strictEqual(Number(parked >> 32n), 0x00300000,
+    'a pending mapping restores its complete stdcall frame');
+  assert.strictEqual(wat.get_yield_reason(), 12,
+    'a pending mapping uses the existing lazy-VFS IO_WAIT reason');
+  wat.clear_yield();
+  const retried = wat.test_map_view_of_file();
+  assert.strictEqual(Number(retried & 0xffffffffn), 0x00420000,
+    'the retried mapping returns the host-completed guest address');
+  assert.strictEqual(Number(retried >> 32n), 0x00300018,
+    'the successful retry pops five arguments and its return address once');
 
   console.log('PASS  FlushViewOfFile writes a live view back at the right offset');
 })().catch(err => {
