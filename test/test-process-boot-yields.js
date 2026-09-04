@@ -60,8 +60,8 @@ function fakeGuest(name, { nameGetter }) {
   const hostSource = fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8');
   assert.match(pageSource, /lib\/process-boot\.js\?v=4/,
     'the browser must not reuse the loader that parsed oversized NE files as PE');
-  assert.match(pageSource, /host\.js\?v=282/);
-  assert.match(hostSource, /static SOURCE_VERSION = '282'/,
+  assert.match(pageSource, /host\.js\?v=283/);
+  assert.match(hostSource, /static SOURCE_VERSION = '283'/,
     'the rebuilt Win16 dialog runtime needs a new browser artifact key');
 
   const peBytes = syntheticLargePe();

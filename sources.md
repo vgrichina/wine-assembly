@@ -4,6 +4,40 @@ Verified 2026-08-20. These are possible future compatibility targets for
 Wine-Assembly, with an emphasis on official demos and shareware that can be
 tested without distributing a full retail game.
 
+## Windows 98 games A-D archive
+
+Verified 2026-09-04. The local compatibility fixtures for **Curse of Monkey
+Island**, **Atomic Bomberman**, **Broken Sword**, **Dungeon Keeper**, and
+**Darkstone** came from the Internet Archive item
+[*Win98 Games A-D.7z*](https://archive.org/details/win-98-games-a-d.-7z).
+Its Archive.org-generated
+[`torrent`](https://archive.org/download/win-98-games-a-d.-7z/win-98-games-a-d.-7z_archive.torrent)
+has BitTorrent v1 info hash `3ade118219510c517927fb43a50618776ca4fef7`.
+The selected payload is `Win98_Games-A-D.7z`, 7,169,873,753 bytes, with SHA-1
+`c53417bcc617790d9671ec385c49ee6f018846c9` and MD5
+`7610b389f075be9f4ea8b521157e87d2` as recorded in that torrent.
+
+Only those five demo trees were unpacked into the local, ignored
+`test/binaries/win98-games-a-d/` corpus. Their launch executable SHA-256 values
+are:
+
+- Curse of Monkey Island `COMI.EXE`:
+  `b55524231edacc7d184c22c762d25193d616adc55d0141785fb21b8890d352b9`
+- Atomic Bomberman `_BOMB.EXE`:
+  `0ff14a352d6626660ceb66ea0e6743cd33c457e754cfd5705120bacae0530638`
+- Broken Sword `WINSWORD.EXE`:
+  `8ca6e3f0c56e1f289f79e2d52ca8cd98466c5b5c2817b3d05b7f7d80425c4177`
+- Dungeon Keeper `KEEPER95.EXE`:
+  `470bc45a428ac0e180b2bd34bfbc35c09a5606390fe2e92525de0c98ad4cd8fc`
+- Darkstone `DarkstoneDemo.exe`:
+  `b43db5e1b835eb1e93688a1f3f1d9c814517be6fc8110c7fb6e024d467ee721b`
+
+The archive and extracted binaries remain local-only. Browser runs using the
+generated companion manifests reached interactive gameplay in both cooperative
+and Threads modes: Guybrush movement, an Atomic Bomberman arena with movement
+and bomb placement, Broken Sword's playable café scene, Dungeon Keeper's live
+dungeon level, and Darkstone's controllable town view.
+
 ## Baldur's Gate demos and commercial preview
 
 Verified 2026-08-29. Three different Windows promotional builds are preserved
