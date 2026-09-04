@@ -11,6 +11,7 @@ class FakeBackend {
       TEXTURE_MIN_FILTER: 0x2801, TEXTURE_MAG_FILTER: 0x2800,
       TEXTURE_WRAP_S: 0x2802, TEXTURE_WRAP_T: 0x2803,
       NEAREST_MIPMAP_LINEAR: 0x2702, LINEAR: 0x2601, REPEAT: 0x2901,
+      RGB: 0x1907, RGBA: 0x1908, ALPHA: 0x1906, LUMINANCE: 0x1909,
       TRIANGLES: 4,
     };
     this.draws = []; this.uniforms = new Map(); this.uploads = [];
@@ -21,7 +22,9 @@ class FakeBackend {
     this.capabilities = [];
     this.uniformCalls = 0;
   }
-  createProgram() { return { attributes: { aPosition: 0, aColor: 1, aTexCoord: 2 }, uniforms: {} }; }
+  createProgram() { return { attributes: {
+    aPosition: 0, aColor: 1, aTexCoord: 2, aNormal: 3,
+  }, uniforms: {} }; }
   createBuffer() { return {}; }
   updateBuffer(_buffer, _target, data) { this.vertices = Array.from(data); }
   useProgram() {}
@@ -45,7 +48,7 @@ class FakeBackend {
 
 const backend = new FakeBackend();
 const gl = new FixedFunctionGL(backend);
-const triangle = new Float32Array(3 * 9);
+const triangle = new Float32Array(3 * 12);
 for (const stack of Object.values(gl.matrices)) {
   stack.slice = () => { throw new Error('matrix-stack slice allocated'); };
 }
@@ -68,8 +71,14 @@ gl.bindTexture(7);
 gl.texImage(0, 4, 2, 2, 0, GL.RGBA, GL.UNSIGNED_BYTE,
   new Uint8Array(16));
 assert.strictEqual(backend.uploads.length, 1);
-assert.strictEqual(backend.uploads[0].alignment, 1,
-  'guest texture rows use deterministic byte alignment');
+assert.strictEqual(backend.uploads[0].alignment, 4,
+  'guest texture rows begin with the desktop OpenGL default alignment');
+gl.texImage(0, 4, 1, 1, 0, GL.BGRA, GL.UNSIGNED_BYTE,
+  new Uint8Array([0x11, 0x22, 0x33, 0x44]));
+assert.strictEqual(backend.uploads.at(-1).format, GL.RGBA,
+  'desktop BGRA textures use the WebGL-compatible RGBA format');
+assert.deepStrictEqual(Array.from(backend.uploads.at(-1).pixels), [0x33, 0x22, 0x11, 0x44],
+  'desktop BGRA texture bytes are converted to RGBA without changing alpha');
 
 gl.bindTexture(0);
 gl.texParameter(GL.TEXTURE_MIN_FILTER, GL.LINEAR);
@@ -86,7 +95,7 @@ assert.strictEqual(mergedBackend.draws.length, 0, 'compatible packed draws remai
 merged.flushPendingDraw();
 assert.strictEqual(mergedBackend.draws.length, 1, 'adjacent compatible draws merge into one WebGL draw');
 assert.strictEqual(mergedBackend.draws[0].count, 6, 'merged draw contains both triangles');
-assert.strictEqual(mergedBackend.vertices.length, 6 * 9, 'merged interleaved upload is contiguous');
+assert.strictEqual(mergedBackend.vertices.length, 6 * 12, 'merged interleaved upload is contiguous');
 const initialUniformCalls = mergedBackend.uniformCalls;
 merged.enqueuePacked(GL.TRIANGLES, triangle);
 merged.flushPendingDraw();

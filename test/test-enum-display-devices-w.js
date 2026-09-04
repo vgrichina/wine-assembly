@@ -107,6 +107,41 @@ function utf16z(view, offset, maxChars) {
   assert.strictEqual(Number(result & 0xffffffffn), 0, 'undersized DEVMODEA is rejected');
   assert.strictEqual(bytes[wasmBuf + 124], 0xa5, 'rejected DEVMODEA payload is untouched');
 
+  bytes.fill(0xa5, wasmBuf, wasmBuf + 0x348);
+  view.setUint16(wasmBuf + 36, 0, true);
+  result = e.test_enum_display_settings_a(0, buf, 0);
+  assert.strictEqual(Number(result & 0xffffffffn), 1,
+    'Win9x-compatible ANSI enumeration accepts a zero-initialized DEVMODE');
+  assert.strictEqual(view.getUint16(wasmBuf + 36, true), 0,
+    'zero ANSI dmSize remains the legacy-contract marker');
+  assert.strictEqual(view.getUint32(wasmBuf + 108, true), 640);
+  assert.strictEqual(view.getUint32(wasmBuf + 112, true), 480);
+  assert.strictEqual(view.getUint32(wasmBuf + 104, true), 8,
+    'legacy callers enumerate the same first mode as sized callers');
+  assert.strictEqual(bytes[wasmBuf + 124], 0xa5,
+    'legacy ANSI output does not clear beyond its last display field');
+  bytes.fill(0, wasmBuf, wasmBuf + 0x348);
+  result = e.test_enum_display_settings_a(1, buf, 0);
+  assert.strictEqual(Number(result & 0xffffffffn), 1,
+    'legacy zero-size callers can continue through the complete mode list');
+
+  bytes.fill(0xa5, wasmBuf, wasmBuf + 0x348);
+  result = e.test_enum_display_settings_a(0, buf, 0x6e5b);
+  assert.strictEqual(Number(result & 0xffffffffn), 1,
+    'a nonsensical stack-garbage dmSize uses the same bounded legacy contract');
+  assert.strictEqual(bytes[wasmBuf + 124], 0xa5,
+    'garbage dmSize cannot authorize clearing adjacent caller stack data');
+
+  bytes.fill(0xa5, wasmBuf, wasmBuf + 0x348);
+  view.setUint16(wasmBuf + 68, 0, true);
+  result = e.test_enum_display_settings_w(0, buf, 0);
+  assert.strictEqual(Number(result & 0xffffffffn), 1,
+    'Win9x-compatible Unicode enumeration accepts a zero-initialized DEVMODE');
+  assert.strictEqual(view.getUint16(wasmBuf + 68, true), 0,
+    'zero Unicode dmSize remains the legacy-contract marker');
+  assert.strictEqual(bytes[wasmBuf + 156], 0xa5,
+    'legacy Unicode output does not clear beyond its last display field');
+
   // iModeNum >= 0 now walks the shared mode table (see
   // test-display-mode-enumeration.js); what ends the enumeration is running
   // off the end of it, not the second index.

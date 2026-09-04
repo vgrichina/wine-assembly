@@ -15,13 +15,13 @@ const executed = [];
 const coloredVertices = count => {
   const vertices = [];
   for (let i = 0; i < count; i++) {
-    vertices.push(i, 0, 0, i + 1, 0, 0, 1, 0, 0);
+    vertices.push(i, 0, 0, i + 1, 0, 0, 1, 0, 0, 0, 0, 1);
   }
   return vertices;
 };
 const redChannels = geometry => Array.from(
-  { length: geometry.vertices.length / 9 },
-  (_unused, i) => geometry.vertices[i * 9 + 3]);
+  { length: geometry.vertices.length / Stream.VERTEX_FLOATS },
+  (_unused, i) => geometry.vertices[i * Stream.VERTEX_FLOATS + 3]);
 const expectFlatColors = (mode, count, expected, label) => {
   const geometry = Stream.normalizeImmediate(mode, coloredVertices(count), 0x1D00);
   assert.deepStrictEqual(redChannels(geometry), expected, label);
@@ -95,8 +95,10 @@ assert.strictEqual(polygonOffsetCommand.capture.stackBytes, 12,
 assert.strictEqual(polygonOffsetStack.getFloat32(polygonOffsetCommand.capture.stackOffset + 4, true), -1.25);
 assert.strictEqual(polygonOffsetStack.getFloat32(polygonOffsetCommand.capture.stackOffset + 8, true), 2.5);
 
-assert.deepStrictEqual(Stream.ARG_WORDS.slice(-4), [8, 18, 7, 8],
+assert.deepStrictEqual(Stream.ARG_WORDS.slice(59, 63), [8, 18, 7, 8],
   'GLU calls capture every physical stack word, including paired GLdouble words');
+assert.deepStrictEqual(Stream.ARG_WORDS.slice(63, 65), [3, 1],
+  'scalar and pointer normal calls retain their distinct ABI widths');
 const mipPixels = 0x700;
 [0x1907, 0x1907, 2, 2, 0x1907, 0x1401, mipPixels].forEach((value, i) =>
   dv.setUint32(stack + 4 + i * 4, value, true));
@@ -138,6 +140,7 @@ const packedEncoder = new Stream.Encoder({
 });
 const packedColorStorage = packedEncoder._state().color;
 const packedTexCoordStorage = packedEncoder._state().texCoord;
+const packedNormalStorage = packedEncoder._state().normal;
 const packedVertexStorage = packedEncoder.immediateVertices;
 const setFloatArgs = values => values.forEach((value, i) => dv.setFloat32(stack + 4 + i * 4, value, true));
 dv.setUint32(stack + 4, 0x1D00, true); // GL_FLAT stays encoder-local.
@@ -156,6 +159,15 @@ dv.setUint32(stack + 4, sparseColor, true);
 packedEncoder.call(58, stack, 0);
 setFloatArgs([0.125, 0.875]);
 packedEncoder.call(28, stack, 0);
+setFloatArgs([0.25, -0.5, 0.75]);
+packedEncoder.call(63, stack, 0);
+assert.deepStrictEqual(packedEncoder._state().normal, [0.25, -0.5, 0.75],
+  'glNormal3f updates immediate-mode normal state locally');
+[0.5, 0.25, -1].forEach((value, i) => dv.setFloat32(vertexBacking + i * 4, value, true));
+dv.setUint32(stack + 4, sparseVertex, true);
+packedEncoder.call(64, stack, 0);
+assert.deepStrictEqual(packedEncoder._state().normal, [0.5, 0.25, -1],
+  'glNormal3fv translates sparse guest pointers before reading the vector');
 for (const [index, vertexValues] of [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]].entries()) {
   if (index === 0) {
     vertexValues.forEach((value, i) => dv.setFloat32(vertexBacking + i * 4, value, true));
@@ -173,18 +185,22 @@ assert.strictEqual(packedEncoder._state().color, packedColorStorage,
   'immediate color calls update one context-owned vector instead of allocating per call');
 assert.strictEqual(packedEncoder._state().texCoord, packedTexCoordStorage,
   'texture-coordinate calls update one context-owned vector instead of allocating per call');
+assert.strictEqual(packedEncoder._state().normal, packedNormalStorage,
+  'normal calls update one context-owned vector instead of allocating per call');
 assert.strictEqual(packedEncoder.immediateVertices, packedVertexStorage,
   'ordinary immediate spans reuse the encoder vertex buffer across glBegin/glEnd');
 assert.deepStrictEqual(packedCalls.map(call => call.opcode), [Stream.PACKED_DRAW_OPCODE, 11],
   'immediate calls collapse into one internal draw command');
 assert.strictEqual(packedCalls[0].mode, 0x0004, 'triangle fan is normalized to independent triangles');
-assert.strictEqual(packedCalls[0].capture.pointerLength, 6 * 9 * 4,
+assert.strictEqual(packedCalls[0].capture.pointerLength, 6 * Stream.VERTEX_FLOATS * 4,
   'four fan vertices compile to two interleaved triangles');
 const packedVertices = new Float32Array(packedCalls[0].capture.buffer,
   packedCalls[0].capture.pointerOffset, packedCalls[0].capture.pointerLength / 4);
 assert.deepStrictEqual(Array.from(packedVertices.slice(3, 9)),
   Array.from(new Float32Array([0x20 / 255, 0x80 / 255, 0xFE / 255, 1, 0.125, 0.875])),
   'sparse vector color and vertex pointers reach packed geometry through guest_to_wasm');
+assert.deepStrictEqual(Array.from(packedVertices.slice(9, 12)), [0.5, 0.25, -1],
+  'the current normal is copied into every submitted immediate vertex');
 const packedCommandCount = packedEncoder.commands;
 packedEncoder.call(31, stack, 0);
 packedEncoder.call(22, stack, 0);

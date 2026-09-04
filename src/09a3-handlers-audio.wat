@@ -1250,7 +1250,23 @@
   ;; dmFields bits: PELSWIDTH=0x80000, PELSHEIGHT=0x100000, BITSPERPEL=0x40000, DISPLAYFREQUENCY=0x400000.
   (func $handle_EnumDisplaySettingsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $buf i32) (local $screen i32) (local $size i32)
-    (local $w i32) (local $h i32) (local $bpp i32) (local $raw i32)
+    (local $legacy i32) (local $w i32) (local $h i32) (local $bpp i32) (local $raw i32)
+    (if (i32.eqz (local.get $arg2))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $buf (call $g2w (local.get $arg2)))
+    (local.set $size (i32.load16_u offset=36 (local.get $buf)))
+    ;; Win9x accepts a zero-initialized DEVMODE. Compact intros including PTCT
+    ;; depend on that leniency while still walking the complete mode list.
+    ;; An unset stack structure can contain a return address in dmSize rather
+    ;; than literal zero.  No Win32 DEVMODEA layout exceeds 220 bytes, so treat
+    ;; larger values as the same undeclared legacy buffer instead of clearing
+    ;; through adjacent stack locals.
+    (local.set $legacy
+      (i32.or (i32.eqz (local.get $size))
+              (i32.gt_u (local.get $size) (i32.const 220))))
+    (if (local.get $legacy)
+      (then (local.set $size (i32.const 156))))
     (if (i32.eq (local.get $arg1) (i32.const -1))
       (then
         (local.set $screen (call $host_get_screen_size))
@@ -1267,20 +1283,24 @@
         (local.set $w (call $enum_mode_res_w (i32.div_u (local.get $raw) (i32.const 3))))
         (local.set $h (call $enum_mode_res_h (i32.div_u (local.get $raw) (i32.const 3))))
         (local.set $bpp (call $enum_mode_raw_bpp (local.get $raw)))))
-    (if (i32.eqz (local.get $arg2))
-      (then (global.set $eax (i32.const 0))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (local.set $buf (call $g2w (local.get $arg2)))
-    (local.set $size (i32.load16_u offset=36 (local.get $buf)))
     ;; Windows accepts the 124-byte Win95 DEVMODEA as well as today's
     ;; 156-byte layout. All display fields we return fit in that old prefix.
     (if (i32.lt_u (local.get $size) (i32.const 124))
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (memory.fill (local.get $buf) (i32.const 0)
-      (select (local.get $size) (i32.const 156)
-        (i32.lt_u (local.get $size) (i32.const 156))))
-    (i32.store16 offset=36 (local.get $buf) (local.get $size))
+    ;; A zero-size legacy buffer has no declared extent.  Populate only the
+    ;; display fields below; clearing a guessed 156 bytes can overwrite the
+    ;; caller's stack immediately past its shorter Win95-era structure.
+    (if (i32.eqz (local.get $legacy))
+      (then
+        (memory.fill (local.get $buf) (i32.const 0)
+          (select (local.get $size) (i32.const 156)
+            (i32.lt_u (local.get $size) (i32.const 156))))))
+    ;; Keep zero as the caller's compatibility marker across an enumeration
+    ;; loop; promoting it in the output would turn the second call into the
+    ;; modern multi-row contract and overflow old intros' one-entry storage.
+    (i32.store16 offset=36 (local.get $buf)
+      (select (i32.const 0) (local.get $size) (local.get $legacy)))
     (i32.store offset=40 (local.get $buf) (i32.const 0x5C0000))  ;; dmFields
     (i32.store offset=104 (local.get $buf) (local.get $bpp))     ;; dmBitsPerPel
     (i32.store offset=108 (local.get $buf) (local.get $w))       ;; dmPelsWidth
@@ -1295,7 +1315,17 @@
   ;; moves DEVMODEW's display fields 32 bytes.
   (func $handle_EnumDisplaySettingsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $buf i32) (local $screen i32) (local $size i32)
-    (local $w i32) (local $h i32) (local $bpp i32) (local $raw i32)
+    (local $legacy i32) (local $w i32) (local $h i32) (local $bpp i32) (local $raw i32)
+    (if (i32.eqz (local.get $arg2))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $buf (call $g2w (local.get $arg2)))
+    (local.set $size (i32.load16_u offset=68 (local.get $buf)))
+    (local.set $legacy
+      (i32.or (i32.eqz (local.get $size))
+              (i32.gt_u (local.get $size) (i32.const 220))))
+    (if (local.get $legacy)
+      (then (local.set $size (i32.const 220))))
     (if (i32.eq (local.get $arg1) (i32.const -1))
       (then
         (local.set $screen (call $host_get_screen_size))
@@ -1310,20 +1340,18 @@
         (local.set $w (call $enum_mode_res_w (i32.div_u (local.get $raw) (i32.const 3))))
         (local.set $h (call $enum_mode_res_h (i32.div_u (local.get $raw) (i32.const 3))))
         (local.set $bpp (call $enum_mode_raw_bpp (local.get $raw)))))
-    (if (i32.eqz (local.get $arg2))
-      (then (global.set $eax (i32.const 0))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (local.set $buf (call $g2w (local.get $arg2)))
-    (local.set $size (i32.load16_u offset=68 (local.get $buf)))
     ;; The Win95 DEVMODEW prefix is 156 bytes; later versions grew to 188
     ;; and 220 bytes. The current-mode fields exist in every one of them.
     (if (i32.lt_u (local.get $size) (i32.const 156))
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (memory.fill (local.get $buf) (i32.const 0)
-      (select (local.get $size) (i32.const 220)
-        (i32.lt_u (local.get $size) (i32.const 220))))
-    (i32.store16 offset=68 (local.get $buf) (local.get $size))
+    (if (i32.eqz (local.get $legacy))
+      (then
+        (memory.fill (local.get $buf) (i32.const 0)
+          (select (local.get $size) (i32.const 220)
+            (i32.lt_u (local.get $size) (i32.const 220))))))
+    (i32.store16 offset=68 (local.get $buf)
+      (select (i32.const 0) (local.get $size) (local.get $legacy)))
     (i32.store offset=72 (local.get $buf) (i32.const 0x5C0000)) ;; dmFields
     (i32.store offset=136 (local.get $buf) (local.get $bpp))    ;; dmBitsPerPel
     (i32.store offset=140 (local.get $buf) (local.get $w))      ;; dmPelsWidth

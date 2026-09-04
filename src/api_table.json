@@ -26989,5 +26989,166 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3414784612
+  },
+  {
+    "id": 3241,
+    "name": "glNormal3f",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1880926772
+  },
+  {
+    "id": 3242,
+    "name": "glNormal3fv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3206546918
+  },
+  {
+    "id": 3243,
+    "name": "glIsEnabled",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 515043615
+  },
+  {
+    "id": 3244,
+    "name": "glColorMaterial",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3593057964
+  },
+  {
+    "id": 3245,
+    "name": "glLightfv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2950186574
+  },
+  {
+    "id": 3246,
+    "name": "glMaterialfv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1798013163
+  },
+  {
+    "id": 3247,
+    "name": "glLightModelfv",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 606707063
+  },
+  {
+    "id": 3248,
+    "name": "glLightModeli",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2273963714
+  },
+  {
+    "id": 3249,
+    "name": "glMaterialf",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2814999103
+  },
+  {
+    "id": 3250,
+    "name": "glLightf",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3894888780
+  },
+  {
+    "id": 3251,
+    "name": "glPixelStorei",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 400995622
+  },
+  {
+    "id": 3252,
+    "name": "glGenTextures",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2714785196
+  },
+  {
+    "id": 3253,
+    "name": "glHint",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 547338203
+  },
+  {
+    "id": 3254,
+    "name": "glPushAttrib",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2259658562
+  },
+  {
+    "id": 3255,
+    "name": "glPopAttrib",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2553749601
+  },
+  {
+    "id": 3256,
+    "name": "glFogfv",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2276125570
+  },
+  {
+    "id": 3257,
+    "name": "glFogf",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4165148608
+  },
+  {
+    "id": 3258,
+    "name": "glFogi",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 121845597
+  },
+  {
+    "id": 3259,
+    "name": "glFrontFace",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1028692560
+  },
+  {
+    "id": 3260,
+    "name": "glTexEnvi",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2086086741
+  },
+  {
+    "id": 3261,
+    "name": "glTexGeni",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2313307354
+  },
+  {
+    "id": 3262,
+    "name": "glTexGenf",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2095198307
+  },
+  {
+    "id": 3263,
+    "name": "glTexGenfv",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2903617807
   }
 ]

@@ -4734,6 +4734,22 @@
       (local.get $hwnd) (local.get $msg) (local.get $lParam))
     (local.get $ret))
 
+  ;; Browser startup automation occasionally needs the semantics of a real
+  ;; BUTTON click, not merely its parent WM_COMMAND notification. In
+  ;; particular, automatic radio buttons update their checked state before
+  ;; notifying the dialog procedure. Keep control lookup and input dispatch
+  ;; inside USER so the host does not duplicate either table's layout.
+  (func (export "click_dialog_control")
+    (param $parent i32) (param $ctrl_id i32) (result i32)
+    (local $child i32)
+    (local.set $child (call $ctrl_find_by_id (local.get $parent) (local.get $ctrl_id)))
+    (if (i32.eqz (local.get $child)) (then (return (i32.const 0))))
+    (drop (call $wnd_send_message
+      (local.get $child) (i32.const 0x0201) (i32.const 0) (i32.const 0)))
+    (drop (call $wnd_send_message
+      (local.get $child) (i32.const 0x0202) (i32.const 0) (i32.const 0)))
+    (i32.const 1))
+
   (func (export "richedit_formatrange_next") (param $fr i32) (result i32)
     (call $richedit_formatrange_next (local.get $fr)))
 

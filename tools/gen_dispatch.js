@@ -89,6 +89,32 @@ const gpuApis = new Map([
   ['gluLookAt', 18],
   ['gluBuild2DMipmaps', 7],
   ['gluOrtho2D', 8],
+  // Win98-era intros use immediate-mode normals even when lighting is toggled
+  // only for a subset of their geometry. Keep these appended so every older
+  // command-stream opcode stays stable.
+  ['glNormal3f', 3],
+  ['glNormal3fv', 1],
+  ['glIsEnabled', 1],
+  ['glColorMaterial', 2],
+  ['glLightfv', 3],
+  ['glMaterialfv', 3],
+  ['glLightModelfv', 2],
+  ['glLightModeli', 2],
+  ['glMaterialf', 3],
+  ['glLightf', 3],
+  ['glPixelStorei', 2],
+  ['glGenTextures', 2],
+  ['glHint', 2],
+  ['glPushAttrib', 1],
+  ['glPopAttrib', 0],
+  ['glFogfv', 2],
+  ['glFogf', 2],
+  ['glFogi', 2],
+  ['glFrontFace', 1],
+  ['glTexEnvi', 3],
+  ['glTexGeni', 3],
+  ['glTexGenf', 3],
+  ['glTexGenfv', 3],
 ]);
 const gpuApiOrder = [...gpuApis.keys()];
 

@@ -468,7 +468,7 @@ mv binaries/demoscene/cashcow/cashcow.exe binaries/demoscene/cashcow/CASHCOW.EXE
 **Bakkslide 7 (Win32 port)** — Hellcore & Omnicolour's 2003 Windows port of
 their first-place Takeover 1999 64K intro. Its setup dialog exposes fullscreen,
 4:3-window, wide-window, and MMX-transfer choices; the launcher starts its
-default presentation automatically.
+working 4:3-window MMX-transfer path automatically.
 
 - Source: `https://archive.scene.org/pub/parties/1999/takeover99/in64/bakkslide7_win32.zip`
 - Archive size: 95,227 bytes
@@ -482,4 +482,21 @@ curl -fL -o /tmp/bakkslide7-win32.zip \
   https://archive.scene.org/pub/parties/1999/takeover99/in64/bakkslide7_win32.zip
 unzip -j /tmp/bakkslide7-win32.zip bakkslide7_win32.exe -d binaries/demoscene/bakkslide7
 mv binaries/demoscene/bakkslide7/bakkslide7_win32.exe binaries/demoscene/bakkslide7/BAKKSLIDE7.EXE
+```
+
+**Please the Cookie Thing (PTCT)** — Aardbei's OpenGL 64K intro from Mekka &
+Symposium 2000. The launcher accepts the intro's default resolution chooser
+and runs its Win9x-era fixed-function OpenGL path.
+
+- Source: `https://archive.scene.org/pub/demos/groups/aardbei/aardbei_ptct.zip`
+- Archive size: 74,381 bytes
+- Archive SHA-256: `da7e6749087d134784339227f622a0f0ba9750fbc436a68c83235d96e7176602`
+- `PTCT.exe` size: 74,752 bytes
+- `PTCT.exe` SHA-256: `89028685eb2968dcc9a9dd6b7941e4fad47a70e505820dc1be350a0d30526cc4`
+- Destination: `demoscene/ptct/PTCT.exe`
+
+```bash
+curl -fL -o /tmp/aardbei_ptct.zip \
+  https://archive.scene.org/pub/demos/groups/aardbei/aardbei_ptct.zip
+unzip -j /tmp/aardbei_ptct.zip PTCT.exe -d binaries/demoscene/ptct
 ```

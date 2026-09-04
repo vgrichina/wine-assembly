@@ -17,13 +17,15 @@ const {
   searchCatalog,
 } = require(path.join(ROOT, 'lib', 'debug-app-picker.js'));
 const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+const browserShell = fs.readFileSync(path.join(ROOT, 'lib', 'browser-shell.js'), 'utf8');
+const guestExports = fs.readFileSync(path.join(ROOT, 'src', '13-exports.wat'), 'utf8');
 const select = html.match(/<select id="app-select">([\s\S]*?)<\/select>/);
 assert(select, 'index.html has no #app-select');
 assert(html.includes('id="app-picker"') && html.includes('class="app-picker-popup"'),
   'debug toolbar must expose the searchable app-picker shell');
 assert(html.includes('lib/debug-app-picker.js?v=2'),
   'debug app picker must be loaded with an explicit browser cache token');
-assert(html.includes('lib/browser-shell.js?v=32'),
+assert(html.includes('lib/browser-shell.js?v=34'),
   'browser shell must be cache-busted for packed-demo slice selection');
 const dropdownIds = [...select[1].matchAll(/<option value="([^"]+)"/g)]
   .map(match => match[1]);
@@ -66,8 +68,13 @@ assert(DESKTOP_APPS.some(([id]) => id === 'bakkslide7'),
 assert.strictEqual(APPS.bakkslide7.exe,
   'binaries/demoscene/bakkslide7/BAKKSLIDE7.EXE',
   'Bakkslide 7 must launch the tested Win32 port');
-assert.strictEqual(APPS.bakkslide7.dismissStartupDialog.command, 1002,
-  'Bakkslide 7 must automatically press Start in its setup dialog');
+assert.deepStrictEqual(APPS.bakkslide7.dismissStartupDialogs,
+  [{ control: 1001 }, { command: 1002 }],
+  'Bakkslide 7 must select its working 4:3-window path before pressing Start');
+assert(browserShell.includes("wine.callGuest(\n              'click_dialog_control'"),
+  'browser startup automation must click a requested real dialog control');
+assert(guestExports.includes('(func (export "click_dialog_control")'),
+  'the guest must export real dialog-control clicking for startup automation');
 assert.strictEqual(APPS.bakkslide7.windowlessGraceMs, 30000,
   'Bakkslide 7 must survive its packed setup-to-demo window transition');
 const bakkslideExe = path.join(ROOT, APPS.bakkslide7.exe.replace(/^binaries\//, 'test/binaries/'));
@@ -76,6 +83,21 @@ assert.strictEqual(fs.statSync(bakkslideExe).size, 95744,
 assert.strictEqual(crypto.createHash('sha256').update(fs.readFileSync(bakkslideExe)).digest('hex'),
   '4b7303a5e94728d5f1ad8cb6e6d5dddfb105eb33a14bec556a6d1a4758ebf4b9',
   'Bakkslide 7 executable must match the archived Win32 port');
+assert(dropdownIds.includes('ptct'), 'web dropdown must list Please the Cookie Thing');
+assert(DESKTOP_APPS.some(([id]) => id === 'ptct'),
+  'Please the Cookie Thing must be available in the hosted app picker');
+assert.strictEqual(APPS.ptct.exe, 'binaries/demoscene/ptct/PTCT.exe',
+  'Please the Cookie Thing must launch the tested OpenGL executable');
+assert.strictEqual(APPS.ptct.dismissStartupDialog.command, 1,
+  'Please the Cookie Thing must automatically accept its resolution chooser');
+assert.strictEqual(APPS.ptct.windowlessGraceMs, 30000,
+  'Please the Cookie Thing must survive its setup-to-OpenGL transition');
+const ptctExe = path.join(ROOT, APPS.ptct.exe.replace(/^binaries\//, 'test/binaries/'));
+assert.strictEqual(fs.statSync(ptctExe).size, 74752,
+  'Please the Cookie Thing must retain the tested executable size');
+assert.strictEqual(crypto.createHash('sha256').update(fs.readFileSync(ptctExe)).digest('hex'),
+  '89028685eb2968dcc9a9dd6b7941e4fad47a70e505820dc1be350a0d30526cc4',
+  'Please the Cookie Thing executable must match the archived Aardbei build');
 
 function option(value, label) {
   return { tagName: 'OPTION', value, textContent: label };
@@ -99,6 +121,7 @@ const pickerCatalog = buildCatalog({
       option('heaven7', 'Heaven Seven (64K intro)'),
       option('cashcow', 'Cashcow (64K intro)'),
       option('bakkslide7', 'Bakkslide 7 (64K intro, Win32 port)'),
+      option('ptct', 'Please the Cookie Thing (64K intro, OpenGL)'),
     ]),
     group('Installers', [option('winamp291_inst', 'Winamp 2.91 Installer')]),
     group('Future Collection', [option('future', 'Future App')]),
@@ -107,7 +130,7 @@ const pickerCatalog = buildCatalog({
 assert.deepStrictEqual(pickerCatalog.entries.map(entry => entry.value),
   [
     'notepad', 'sol', 'sol16', 'winamp', 'pinball',
-    'quake2_demo', 'quake2_demo_installer', 'heaven7', 'cashcow', 'bakkslide7', 'winamp291_inst', 'future',
+    'quake2_demo', 'quake2_demo_installer', 'heaven7', 'cashcow', 'bakkslide7', 'ptct', 'winamp291_inst', 'future',
   ],
   'picker catalog must preserve the native selector order and top-level options');
 const pickerCategories = categorizeCatalog(pickerCatalog);
@@ -119,7 +142,7 @@ assert(pickerCategories.some(category => category.label === '16-bit Games' && ca
   '16-bit games must have their own shorter cascade');
 assert(pickerCategories.some(category => category.label === 'PC Games' && category.count === 1),
   'local game candidates must appear outside the classic-game collection');
-assert(pickerCategories.some(category => category.label === 'Demoscene' && category.count === 3),
+assert(pickerCategories.some(category => category.label === 'Demoscene' && category.count === 4),
   'demoscene intros must have their own app-picker category');
 assert(pickerCategories.some(category => category.label === 'Installers' && category.count === 2),
   'installers from both source groups must share one category');
