@@ -60,6 +60,7 @@ UNIT=(
   test/test-win16-exec.js
   test/test-win16-civ2-apis.js
   test/test-win16-temp-file.js
+  test/test-win16-lazy-file-read.js
   test/test-fs-prefix.js
   test/test-create-directory-last-error.js
   test/test-unhandled-exception-filter.js
