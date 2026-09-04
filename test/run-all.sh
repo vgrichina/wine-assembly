@@ -543,6 +543,7 @@ UNIT=(
   test/test-shell-malloc.js
   test/test-shell-pidl.js
   test/test-shbrowseforfolder.js
+  test/test-shell-notify-icon.js
   test/test-shell-execute-ex-w.js
   test/test-showwindow-dialog-promotion.js
   test/test-winmine-name-dialog-frame.js

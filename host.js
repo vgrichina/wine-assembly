@@ -505,7 +505,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '278';
+  static SOURCE_VERSION = '279';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -2132,7 +2132,7 @@ class WineAssembly {
       return;
     }
     try {
-      const res = await fetch('lib/host-import-sigs.generated.json?v=8');
+      const res = await fetch('lib/host-import-sigs.generated.json?v=9');
       if (!res.ok) throw new Error(`sigs HTTP ${res.status}`);
       const sigs = (await res.json()).sigs;
       const self = this;
@@ -2854,6 +2854,9 @@ class WineAssembly {
     // the deadline armed would run this a second time.
     this._lastWindowStopAt = 0;
     if (this.renderer) {
+      if (this.instance && this.renderer.removeNotifyIcons) {
+        this.renderer.removeNotifyIcons(this.instance);
+      }
       if (this._rendererInputPendingPublisher && this.renderer._inputPendingPublishers) {
         this.renderer._inputPendingPublishers.delete(this._rendererInputPendingPublisher);
         this._rendererInputPendingPublisher = null;

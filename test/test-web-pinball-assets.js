@@ -303,15 +303,15 @@ assert(/lib\/renderer-input\.js\?v=\d+/.test(webApp), 'web host should cache-bus
 assert(/lib\/browser-input\.js\?v=\d+/.test(webApp), 'web host should cache-bust explicit Quake relative-mouse capture');
 assert(/lib\/renderer\.js\?v=\d+/.test(webApp), 'web host should cache-bust renderer after nested Worker modal publication');
 assert(webApp.includes('lib/pe.js?v=1'), 'web host should load the shared PE section reader');
-assert(webApp.includes('lib/process-boot.js?v=3'), 'web host should cache-bust timed DllMain resume plumbing');
+assert(webApp.includes('lib/process-boot.js?v=4'), 'web host should cache-bust timed DllMain resume plumbing');
 assert(webApp.includes('lib/host-window.js?v=8'), 'web host should cache-bust window activation behavior');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(webApp.includes('lib/storage.js?v=170'), 'web host should cache-bust storage after renderer-aware registry delivery');
 assert(webApp.includes('lib/filesystem.js?v=173'), 'web host should cache-bust persisted Win32 file timestamps');
 assert(webApp.includes('lib/gdi-surface.js?v=2'), 'web host should load the canonical GDI surface module');
-assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=213'),
+assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=214'),
   'web host should load the GDI surface module before host imports');
-assert(webApp.includes('lib/host-imports.js?v=213'), 'web host should cache-bust the current host imports');
+assert(webApp.includes('lib/host-imports.js?v=214'), 'web host should cache-bust the current host imports');
 assert(/lib\/touch-cursor\.js\?v=\d+/.test(webApp), 'web host should cache-bust custom touch cursor rendering');
 assert(webApp.includes('lib/thread-manager.js?v=188'), 'web host should cache-bust DLL thread-notification routing');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');

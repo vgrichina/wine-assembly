@@ -139,6 +139,10 @@
   (import "host" "file_download"
     (func $host_file_download (param i32)))
   (import "host" "shell_execute" (func $host_shell_execute (param i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; notify_icon(action, hwnd, id, flags, callback_msg, hicon, tip_wa, tip_cap)
+  ;; mirrors the Win98 notification-area repository in the browser shell.
+  (import "host" "notify_icon"
+    (func $host_notify_icon (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; exit_windows(mode) — the machine, not the process. The Shut Down Windows
   ;; dialog (09c3-controls.wat) and ExitWindowsEx both end here, with the
   ;; guest's own quit already decided; what the host does with the box is

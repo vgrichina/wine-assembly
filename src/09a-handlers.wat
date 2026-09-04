@@ -12908,9 +12908,39 @@ HookEx — no next hook in chain, return 0
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
-  ;; Shell_NotifyIconA(dwMessage, lpData) — tray icon, return TRUE, 2 args
+  ;; Shell_NotifyIconA(dwMessage, lpData) — Win98 notification-area icon.
+  ;; The v4 shell identifies an icon by (hWnd,uID) and consumes the original
+  ;; 64-byte ANSI tooltip. Newer balloon/GUID/version fields are intentionally
+  ;; outside the Win98 contract; accepting a larger cbSize is harmless because
+  ;; only the common prefix is read.
   (func $handle_Shell_NotifyIconA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (local $nid i32) (local $cb i32)
+    (if (i32.or (i32.eqz (local.get $arg1))
+                (i32.gt_u (local.get $arg0) (i32.const 2)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $nid (call $g2w (local.get $arg1)))
+    (local.set $cb (i32.load (local.get $nid)))
+    ;; Win95/98 NOTIFYICONDATAA is 88 bytes, including its 64-byte ANSI
+    ;; tooltip. cbSize names the structure version the caller supplied, not
+    ;; merely the fields a particular NIM_* operation happens to consume.
+    (if (i32.or (i32.lt_u (local.get $cb) (i32.const 88))
+                (i32.eqz (call $wnd_table_get (i32.load offset=4 (local.get $nid)))))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (global.set $eax (call $host_notify_icon
+      (local.get $arg0)
+      (i32.load offset=4 (local.get $nid))
+      (i32.load offset=8 (local.get $nid))
+      (i32.load offset=12 (local.get $nid))
+      (i32.load offset=16 (local.get $nid))
+      (i32.load offset=20 (local.get $nid))
+      (i32.add (local.get $nid) (i32.const 24))
+      (i32.const 64)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 

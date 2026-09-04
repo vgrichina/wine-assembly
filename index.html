@@ -472,6 +472,18 @@
       text-align: left;
     }
     #task-buttons .task-btn.active { border-style: inset; font-weight: bold; }
+    #notify-icons { display: flex; align-items: center; gap: 1px; padding: 0 3px; }
+    #notify-icons:empty { display: none; }
+    #notify-icons .notify-icon {
+      width: 20px; height: 20px; padding: 1px; border: 0; background: transparent;
+      display: grid; place-items: center; cursor: default;
+    }
+    #notify-icons .notify-icon:focus { outline: 1px dotted #000; }
+    .notify-icon-glyph {
+      width: 14px; height: 14px; box-sizing: border-box; display: block;
+      border: 1px solid #000; background: linear-gradient(135deg, #fff 0 48%, #000080 49% 100%);
+      box-shadow: inset -2px -2px 0 #808080;
+    }
     #clock-area {
       margin-left: auto;
       border: 1px inset #808080;
@@ -1331,7 +1343,7 @@ Resource-aware Win98 emulator
   <div id="taskbar">
     <button class="start-btn" id="start-btn" onclick="toggleStartMenu(event)"><span class="win-flag"><span style="background:#FF0000"></span><span style="background:#00FF00"></span><span style="background:#0000FF"></span><span style="background:#FFFF00"></span></span>Start</button>
     <div id="task-buttons"></div>
-    <div id="clock-area"><span id="clock"></span></div>
+    <div id="clock-area"><div id="notify-icons" role="status" aria-label="Notification area"></div><span id="clock"></span></div>
   </div>
   <div id="start-menu">
     <div class="banner">Wine&nbsp;Assembly</div>
@@ -1405,7 +1417,7 @@ Resource-aware Win98 emulator
   <script src="lib/resources-icon.js?v=171"></script>
   <script src="lib/renderer-input.js?v=201"></script>
   <script src="lib/presentation-filter.js?v=6"></script>
-  <script src="lib/renderer.js?v=195"></script>
+  <script src="lib/renderer.js?v=196"></script>
   <script src="lib/dll-registry.js?v=2"></script>
   <script src="lib/apps.js?v=19"></script>
   <script src="lib/debug-app-picker.js?v=2"></script>
@@ -1461,7 +1473,7 @@ Resource-aware Win98 emulator
   <script src="lib/vfs-seed.js?v=2"></script>
   <script src="lib/debug-midi.js?v=2"></script>
   <script src="lib/debug-thread-state.js?v=7"></script>
-  <script src="lib/host-imports.js?v=213"></script>
+  <script src="lib/host-imports.js?v=214"></script>
   <script src="lib/compile-wat.js?v=169"></script>
   <script src="lib/watx-launcher.js?v=3"></script>
   <script src="lib/thread-manager.js?v=188"></script>
@@ -1470,7 +1482,7 @@ Resource-aware Win98 emulator
   <script src="lib/vlan-lobby.js?v=1"></script>
   <script src="lib/guest-rpc.js?v=8"></script>
   <script src="lib/guest-thread-host.js?v=10"></script>
-  <script src="host.js?v=278"></script>
+  <script src="host.js?v=279"></script>
   <script src="lib/recorder.js?v=172"></script>
   <script src="lib/perf-hud.js?v=3"></script>
   <script>

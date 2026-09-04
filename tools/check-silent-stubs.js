@@ -192,8 +192,10 @@ const digest = crypto.createHash('sha256')
 // handles and releases only live tables instead of always returning success.
 // 2026-09-03: 448 -> 447. SHBrowseForFolderA now runs a classic modal shell
 // tree and returns the selected PIDL instead of silently reporting Cancel.
-const EXPECTED_COUNT = 447;
-const EXPECTED_SHA256 = '81c5e4eebbc99fefd306d9f028408ac985d6c4d5deab97f0b940b2f2a615d917';
+// 2026-09-03: 447 -> 446. Shell_NotifyIconA now owns browser notification-
+// area add/modify/delete state and delivers Win98 mouse callback messages.
+const EXPECTED_COUNT = 446;
+const EXPECTED_SHA256 = 'cab161065674731d7dd4320110834a7b47d65fa42a2b19e79312d158a484d765';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
