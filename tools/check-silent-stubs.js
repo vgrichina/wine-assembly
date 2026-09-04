@@ -188,8 +188,10 @@ const digest = crypto.createHash('sha256')
 // 2026-09-03: 452 -> 450. GetStockObject validates the Win98 selector set;
 // GetNearestColor now rejects invalid DCs instead of silently succeeding.
 // 2026-09-03: 450 -> 449. GetTextCharset now reports selected font state.
-const EXPECTED_COUNT = 449;
-const EXPECTED_SHA256 = '64d6a2a4560d61f6ff1c671e409145d28d4a60ec928f1490376691db414e0bfe';
+// 2026-09-03: 449 -> 448. DestroyAcceleratorTable now validates repository
+// handles and releases only live tables instead of always returning success.
+const EXPECTED_COUNT = 448;
+const EXPECTED_SHA256 = 'd613ddd7b53786fec52e8b21910dc60a45cb60010260ea743a9e728a558aaf54';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
