@@ -99,9 +99,9 @@
   ;; raw (data (i32.const ...)) segments in no region at all; each is sized to
   ;; exactly the bytes its segment emits, so growing one is a compile error.
   (region.declare $WIN16_FONT_FACES (size 0x00000030) (align 0x00000100)
-    (owner "09e-win16-api.wat:9232"))
+    (owner "09e-win16-api.wat:9294"))
   (region.declare $WIN16_MMSYSTEM_NAMES (size 0x0000005D) (align 0x00000010)
-    (owner "09e-win16-api.wat:10011"))
+    (owner "09e-win16-api.wat:10073"))
   (region.declare $DIALOG_STATE_TABLE (size 0x00001000) (align 0x00001000)
     (owner "09c0-window-table.wat:550"))
   (region.declare $WINDOW_UNICODE_TABLE (size 0x00000100) (align 0x00001000)
@@ -278,7 +278,7 @@
   (region.declare $WND_HINSTANCE_TABLE (size 0x00000400) (align 0x00000100)
     (owner "09c0-window-table.wat:164"))
   (region.declare $WIN16_BUILTIN_NAMES (size 0x00000200) (align 0x00001000)
-    (owner "09e-win16-api.wat:10021"))
+    (owner "09e-win16-api.wat:10075"))
   (region.declare $WND_THREAD_TABLE (size 0x00000400) (align 0x00000100)
     (owner "09c0-window-table.wat:41"))
   (region.declare $THREAD_MSG_QUEUES (size 0x00002080) (align 0x00000100)

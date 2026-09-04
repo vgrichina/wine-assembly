@@ -522,6 +522,39 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 12)))
 
+  ;; KERNEL.97 GetTempFileName(bDriveLetter, lpPrefix, uUnique, lpBuffer).
+  ;; The Win16 entry takes a drive letter instead of the directory accepted by
+  ;; Win32. Build the conventional Windows temp directory in the caller's
+  ;; MAX_PATH output buffer, then let the shared filesystem implementation
+  ;; replace it with the generated filename. Reading the directory before
+  ;; writing the result makes that intentional alias safe.
+  (func $win16_GetTempFileName
+    (local $drive i32) (local $prefix i32) (local $unique i32) (local $buf i32)
+    (local $buf_wa i32)
+    (local.set $drive (i32.and (call $win16_arg16 (i32.const 5)) (i32.const 0xFF)))
+    (local.set $prefix (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
+    (local.set $unique (call $win16_arg16 (i32.const 2)))
+    (local.set $buf (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $buf_wa (call $g2w (local.get $buf)))
+    ;; A zero/invalid drive requests the current drive, which is C: here.
+    (if (i32.or (i32.lt_u (local.get $drive) (i32.const 0x41))
+                (i32.gt_u (local.get $drive) (i32.const 0x7A)))
+      (then (local.set $drive (i32.const 0x43))))
+    (if (i32.and (i32.ge_u (local.get $drive) (i32.const 0x61))
+                 (i32.le_u (local.get $drive) (i32.const 0x7A)))
+      (then (local.set $drive (i32.sub (local.get $drive) (i32.const 0x20)))))
+    (i64.store (local.get $buf_wa) (i64.const 0x4F444E49575C3A43)) ;; C:\WINDOW
+    (i64.store offset=8 (local.get $buf_wa) (i64.const 0x00504D45545C5357)) ;; S\TEMP\0
+    (i32.store8 (local.get $buf_wa) (local.get $drive))
+    (call $win16_call32_begin (i32.const 4))
+    (call $handle_GetTempFileNameA (local.get $buf) (local.get $prefix)
+      (local.get $unique) (local.get $buf) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 12)))
+
   ;; KERNEL.88 lstrcpy / KERNEL.89 lstrcat(lpString1, lpString2) -> lpString1,
   ;; and KERNEL.90 lstrlen(lpString).
   ;;
@@ -1622,6 +1655,33 @@
       (then
         (call $dos_set_ax (i32.const 3))
         (call $dos_cf (i32.const 0))
+        (return)))
+
+    ;; 39h make directory, DS:DX = path. WISE installers use DOS3Call for the
+    ;; extraction directory even though their file I/O goes through KERNEL.
+    (if (i32.eq (local.get $ah) (i32.const 0x39))
+      (then
+        (call $win16_call32_begin (i32.const 2))
+        (call $handle_CreateDirectoryA (call $dos_ptr) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (if (global.get $eax)
+          (then (call $dos_set_ax (i32.const 0)) (call $dos_cf (i32.const 0)))
+          (else (call $dos_set_ax (i32.const 3)) (call $dos_cf (i32.const 1))))
+        (return)))
+
+    ;; 56h rename, DS:DX = old path and ES:DI = new path.
+    (if (i32.eq (local.get $ah) (i32.const 0x56))
+      (then
+        (local.set $tmp (call $win16_far_to_guest (global.get $sreg_es)
+          (i32.and (global.get $edi) (i32.const 0xFFFF))))
+        (call $win16_call32_begin (i32.const 3))
+        (call $handle_MoveFileExA (call $dos_ptr) (local.get $tmp) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (if (global.get $eax)
+          (then (call $dos_set_ax (i32.const 0)) (call $dos_cf (i32.const 0)))
+          (else (call $dos_set_ax (i32.const 2)) (call $dos_cf (i32.const 1))))
         (return)))
 
     ;; 3Bh change current directory. The browser VFS is a flat C: root; keep
@@ -2887,6 +2947,8 @@
       (then (call $win16_LoadLibrary) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 96))
       (then (call $win16_FreeLibrary) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 97))
+      (then (call $win16_GetTempFileName) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 3))
       (then (call $win16_GetVersion) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 30))
