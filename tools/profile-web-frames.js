@@ -179,10 +179,9 @@ async function main() {
 
     console.log(`launching ${APP} ...`);
     // initDesktop() removes every <option> not in its desktop app set, so an
-    // app can be fully wired in `apps` and still be unreachable from the UI
-    // (blobby_volley and dxball are both in that state). Profiling should not
-    // depend on that cosmetic list -- re-add the option when it is missing,
-    // and say so, because it means a human cannot launch it either.
+    // app can be fully wired in `apps` and still be unreachable from the UI.
+    // Profiling should not depend on that cosmetic list -- re-add the option
+    // when it is missing, and say so, because a human cannot launch it either.
     const injected = await page.evaluate(app => {
       const sel = document.getElementById('app-select');
       if (typeof apps === 'undefined' || !apps[app]) throw new Error(`index.html has no app named ${app}`);
