@@ -50,7 +50,7 @@ const { splitArgs, prepareLaunch, runnerArgsFor } = require('../tools/run-media'
     const runSource = fs.readFileSync(path.join(__dirname, 'run.js'), 'utf8');
     const mediaHarnessSource = fs.readFileSync(path.join(__dirname, '..', 'tools', 'run-media.js'), 'utf8');
     const pageSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-    assert.match(pageSource, /lib\/media-import\.js\?v=8/,
+    assert.match(pageSource, /lib\/media-import\.js\?v=9/,
       'the browser must not reuse the importer from before CUE AUTORUN selection');
     assert.match(runSource, /analyzeMediaPaths\(MEDIA_MOUNTS/,
       'the headless runner should mount the original media with the shared importer');
