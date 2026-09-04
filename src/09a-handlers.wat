@@ -5750,19 +5750,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 111: LoadAcceleratorsA(hInstance, lpTableName)
-  ;; Look up RT_ACCELERATOR=9 via $rsrc_find_data_wa; on hit, cache the
-  ;; WASM addr + entry count so TranslateAcceleratorA can walk the table.
-  ;; arg1 = lpTableName (MAKEINTRESOURCE int or guest string ptr).
+  ;; 111: LoadAcceleratorsA(hInstance, lpTableName). Each distinct resource
+  ;; receives a real repository handle; a miss returns NULL rather than the old
+  ;; unconditional fixed handle.
   (func $handle_LoadAcceleratorsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $data i32)
     (call $push_rsrc_ctx (local.get $arg0))
     (local.set $data (call $rsrc_find_data_wa (i32.const 9) (local.get $arg1)))
     (call $pop_rsrc_ctx)
-    (global.set $haccel_data (local.get $data))
-    (global.set $haccel_count (i32.div_u (global.get $rsrc_last_size) (i32.const 8)))
-    (global.set $haccel (i32.const 0x60001))
-    (global.set $eax (i32.const 0x60001))
+    (global.set $eax (call $accel_table_load
+      (local.get $data) (i32.div_u (global.get $rsrc_last_size) (i32.const 8))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
@@ -16106,18 +16103,17 @@ GetTopWindow(hWnd) — 1 arg stdcall
       (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
-  ;; 638: LoadAcceleratorsW — same as A (resource name may be int or UTF-16 string;
-  ;; $rsrc_find_data_wa via $find_resource handles int IDs and ASCII, wide names fall
-  ;; through as miss — freecell/solitaire use ASCII-compatible names).
+  ;; 638: LoadAcceleratorsW. Integer identifiers share the A path; named
+  ;; resources select the UTF-16 resource-directory comparator.
   (func $handle_LoadAcceleratorsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $data i32)
     (call $push_rsrc_ctx (local.get $arg0))
+    (global.set $rsrc_name_char_stride (i32.const 2))
     (local.set $data (call $rsrc_find_data_wa (i32.const 9) (local.get $arg1)))
+    (global.set $rsrc_name_char_stride (i32.const 1))
     (call $pop_rsrc_ctx)
-    (global.set $haccel_data (local.get $data))
-    (global.set $haccel_count (i32.div_u (global.get $rsrc_last_size) (i32.const 8)))
-    (global.set $haccel (i32.const 0x60001))
-    (global.set $eax (i32.const 0x60001))
+    (global.set $eax (call $accel_table_load
+      (local.get $data) (i32.div_u (global.get $rsrc_last_size) (i32.const 8))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -16732,9 +16728,12 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $eax (call $show_owned_popups_core (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-84: CopyAcceleratorTableW — STUB: unimplemented
+  ;; CopyAcceleratorTableW(hAccel, lpAccelDst, cAccelEntries). ACCEL contains no
+  ;; text, so A/W have the same six-byte public representation.
   (func $handle_CopyAcceleratorTableW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax
+      (call $accel_table_copy (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 685: InSendMessage — TRUE if current message was sent by another thread via

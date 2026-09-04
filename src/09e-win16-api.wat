@@ -6953,12 +6953,12 @@
   ;; 32-bit walker about a layout no PE ever has.
   (global $win16_accel_buf (mut i32) (i32.const 0))
 
-  (func $win16_accel_widen (param $src i32) (param $size i32)
+  (func $win16_accel_widen (param $src i32) (param $size i32) (result i32)
     (local $n i32) (local $off i32)
     (local $fv i32) (local $dst i32) (local $d i32) (local $i i32)
     (if (i32.or (i32.eqz (local.get $src))
                 (i32.lt_u (local.get $size) (i32.const 5)))
-      (then (return)))
+      (then (return (i32.const 0))))
     ;; Count by walking to the 0x80 entry rather than dividing: the resource is
     ;; padded out to its alignment, and those trailing zero bytes would read as
     ;; extra entries.
@@ -6970,12 +6970,13 @@
       (local.set $off (i32.add (local.get $off) (i32.const 5)))
       (br_if $counted (i32.and (local.get $fv) (i32.const 0x80)))
       (br $count)))
-    (if (i32.eqz (local.get $n)) (then (return)))
+    (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
     (if (global.get $win16_accel_buf)
       (then (call $heap_free (global.get $win16_accel_buf))))
     (global.set $win16_accel_buf
       (call $heap_alloc (i32.mul (local.get $n) (i32.const 8))))
-    (if (i32.eqz (global.get $win16_accel_buf)) (then (return)))
+    (if (i32.eqz (global.get $win16_accel_buf))
+      (then (return (i32.const 0))))
     (local.set $dst (call $g2w (global.get $win16_accel_buf)))
     (block $done (loop $widen
       (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
@@ -6992,8 +6993,7 @@
       (i32.store16 offset=6 (local.get $d) (i32.const 0))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $widen)))
-    (global.set $haccel_data (local.get $dst))
-    (global.set $haccel_count (local.get $n)))
+    (local.get $n))
 
   ;; USER.177 LoadAccelerators(hInstance, lpTableName).
   ;;
@@ -7002,13 +7002,22 @@
   ;; had not found was indistinguishable from one it had -- which is how this
   ;; looked like a matching bug for as long as it did.
   (func $win16_LoadAccelerators
-    (local $data i32)
+    (local $data i32) (local $count i32) (local $handle i32)
     (local.set $data (call $win16_res_lookup (i32.const 9) (i32.const 0)))
     (global.set $eax (i32.const 0))
     (if (local.get $data)
       (then
-        (call $win16_accel_widen (local.get $data) (global.get $win16_res_len))
-        (global.set $eax (call $win16_h16 (i32.const 0x60001)))))
+        (local.set $count
+          (call $win16_accel_widen (local.get $data) (global.get $win16_res_len)))
+        (local.set $handle (call $accel_table_adopt_owned
+          (global.get $win16_accel_buf) (local.get $count)))
+        (if (local.get $handle)
+          (then
+            ;; The repository now owns the widened heap block. Its record and
+            ;; the Win16 handle table are shared even when the message pump is
+            ;; resumed by another Wasm instance; mutable globals are not.
+            (global.set $win16_accel_buf (i32.const 0))
+            (global.set $eax (call $win16_h16 (local.get $handle)))))))
     (call $win16_api_return (i32.const 6)))
 
   ;; USER.178 TranslateAccelerator(hWnd, hAccTable, lpMsg).

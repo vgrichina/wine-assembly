@@ -328,6 +328,7 @@ UNIT=(
   test/test-openfile-create.js
   test/test-paint-desktop.js
   test/test-presentation-filter.js
+  test/test-accelerator-tables.js
   test/test-register-hotkey.js
   test/test-reg-set-value-wat.js
   test/test-retina-scale2x-web.js

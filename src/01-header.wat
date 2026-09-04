@@ -3160,9 +3160,13 @@
   (global $ole_rot_next_cookie (mut i32) (i32.const 1))
   (global $ole_rot_mutating (mut i32) (i32.const 0))
   (global $last_error   (mut i32) (i32.const 0))    ;; GetLastError value
-  (global $haccel       (mut i32) (i32.const 0))    ;; Accelerator table handle
-  (global $haccel_data  (mut i32) (i32.const 0))    ;; WASM addr of accel table bytes (0 if none)
-  (global $haccel_count (mut i32) (i32.const 0))    ;; Number of ACCEL entries (8 bytes each)
+  ;; Process-visible accelerator repository. 0x60001 is already an opaque
+  ;; compatibility icon, so accelerator handles start at the next value.
+  (global $ACCEL_TABLES i32 (region.addr $ACCEL_TABLES 0))
+  (global $ACCEL_TABLES_SIZE i32 (region.size $ACCEL_TABLES))
+  (global $ACCEL_TABLE_COUNT i32 (i32.const 64))
+  (global $ACCEL_TABLE_STRIDE i32 (i32.const 16))
+  (global $ACCEL_TABLE_HANDLE_BASE i32 (i32.const 0x00600002))
   (global $dlg_hwnd     (mut i32) (i32.const 0))    ;; Dialog window handle (most recent, modal or modeless)
   ;; DialogBoxParamA-only hwnd for the modal message pump in 09b-dispatch.wat.
   ;; Unlike $dlg_hwnd, this is NOT clobbered by nested CreateDialogParamA

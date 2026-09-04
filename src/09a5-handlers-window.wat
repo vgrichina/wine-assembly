@@ -2375,113 +2375,335 @@
     (global.set $steps (i32.const 0))
   )
 
-  ;; 76: TranslateAcceleratorA(hwnd, hAccel, lpMsg)
-  ;; CreateAcceleratorTableA(lpaccl, cEntries) → HACCEL
-  ;;
-  ;; The caller's ACCEL array has a 6-byte stride (BYTE fVirt, WORD key,
-  ;; WORD cmd), while $haccel_data — which TranslateAcceleratorA walks — holds
-  ;; the 8-byte RT_ACCELERATOR resource layout. Field offsets agree, so this
-  ;; is the same widening copy the Win16 loader does.
+  ;; Accelerator repository record (16 bytes):
+  ;;   +0 data guest pointer (zero means free)
+  ;;   +4 entry count (canonical entries use the 8-byte resource layout)
+  ;;   +8 flags (bit 0 = data allocated by CreateAcceleratorTable)
+  ;;  +12 LoadAccelerators reference count
+  ;; The table is in shared linear memory, unlike mutable WAT globals, so a
+  ;; HACCEL created on one guest thread remains valid on another.
+  (func $accel_table_record_locked (param $handle i32) (result i32)
+    (local $index i32) (local $record i32)
+    (if (i32.or
+          (i32.lt_u (local.get $handle) (global.get $ACCEL_TABLE_HANDLE_BASE))
+          (i32.ge_u (local.get $handle)
+            (i32.add (global.get $ACCEL_TABLE_HANDLE_BASE)
+              (global.get $ACCEL_TABLE_COUNT))))
+      (then (return (i32.const 0))))
+    (local.set $index
+      (i32.sub (local.get $handle) (global.get $ACCEL_TABLE_HANDLE_BASE)))
+    (local.set $record (i32.add (global.get $ACCEL_TABLES)
+      (i32.mul (local.get $index) (global.get $ACCEL_TABLE_STRIDE))))
+    (if (i32.eqz (i32.load (local.get $record)))
+      (then (return (i32.const 0))))
+    (local.get $record))
+
+  (func $accel_table_alloc_locked
+    (param $data_guest i32) (param $count i32) (param $flags i32) (result i32)
+    (local $index i32) (local $record i32)
+    (block $full (loop $scan
+      (br_if $full (i32.ge_u (local.get $index) (global.get $ACCEL_TABLE_COUNT)))
+      (local.set $record (i32.add (global.get $ACCEL_TABLES)
+        (i32.mul (local.get $index) (global.get $ACCEL_TABLE_STRIDE))))
+      (if (i32.eqz (i32.load (local.get $record)))
+        (then
+          ;; Publish the data pointer last. Readers also take LOCK_WND, but this
+          ;; ordering keeps a debugger or future lock-free census from seeing a
+          ;; live handle with half of its metadata absent.
+          (i32.store offset=4 (local.get $record) (local.get $count))
+          (i32.store offset=8 (local.get $record) (local.get $flags))
+          (i32.store offset=12 (local.get $record) (i32.const 1))
+          (i32.store (local.get $record) (local.get $data_guest))
+          (return (i32.add (global.get $ACCEL_TABLE_HANDLE_BASE)
+            (local.get $index)))))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Adopt a heap-backed canonical table assembled by another compatibility
+  ;; layer. Ownership transfers only when a repository slot is available.
+  (func $accel_table_adopt_owned
+    (param $data_guest i32) (param $count i32) (result i32)
+    (local $handle i32)
+    (if (i32.or
+          (i32.eqz (local.get $data_guest))
+          (i32.or (i32.le_s (local.get $count) (i32.const 0))
+                  (i32.gt_s (local.get $count) (i32.const 32767))))
+      (then (return (i32.const 0))))
+    (call $lock_wnd_acquire)
+    (local.set $handle (call $accel_table_alloc_locked
+      (local.get $data_guest) (local.get $count) (i32.const 1)))
+    (call $lock_wnd_release)
+    (local.get $handle))
+
+  ;; Register one PE RT_ACCELERATOR payload. Repeated loads of the same
+  ;; resource return the same handle and increase the count Destroy observes.
+  (func $accel_table_load (param $data_wa i32) (param $count i32) (result i32)
+    (local $data_guest i32) (local $index i32) (local $record i32)
+    (local $handle i32)
+    (if (i32.or
+          (i32.eqz (local.get $data_wa))
+          (i32.or (i32.le_s (local.get $count) (i32.const 0))
+                  (i32.gt_s (local.get $count) (i32.const 32767))))
+      (then (return (i32.const 0))))
+    (local.set $data_guest (call $w2g (local.get $data_wa)))
+    (call $lock_wnd_acquire)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $index) (global.get $ACCEL_TABLE_COUNT)))
+      (local.set $record (i32.add (global.get $ACCEL_TABLES)
+        (i32.mul (local.get $index) (global.get $ACCEL_TABLE_STRIDE))))
+      (if (i32.and
+            (i32.eq (i32.load (local.get $record)) (local.get $data_guest))
+            (i32.eqz (i32.and (i32.load offset=8 (local.get $record)) (i32.const 1))))
+        (then
+          (i32.store offset=12 (local.get $record)
+            (i32.add (i32.load offset=12 (local.get $record)) (i32.const 1)))
+          (local.set $handle (i32.add (global.get $ACCEL_TABLE_HANDLE_BASE)
+            (local.get $index)))
+          (br $done)))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (local.get $handle))
+      (then (local.set $handle (call $accel_table_alloc_locked
+        (local.get $data_guest) (local.get $count) (i32.const 0)))))
+    (call $lock_wnd_release)
+    (local.get $handle))
+
+  ;; CreateAcceleratorTable's six-byte ACCEL input is widened into the same
+  ;; eight-byte layout used by PE resources, while retaining the guest pointer
+  ;; so DestroyAcceleratorTable can return it to the heap.
+  (func $accel_table_create (param $source_guest i32) (param $count i32) (result i32)
+    (local $source_wa i32) (local $data_guest i32) (local $data_wa i32)
+    (local $index i32) (local $source i32) (local $dest i32) (local $handle i32)
+    (if (i32.or
+          (i32.eqz (local.get $source_guest))
+          (i32.or (i32.lt_s (local.get $count) (i32.const 1))
+                  (i32.gt_s (local.get $count) (i32.const 32767))))
+      (then (return (i32.const 0))))
+    (local.set $data_guest
+      (call $heap_alloc (i32.mul (local.get $count) (i32.const 8))))
+    (if (i32.eqz (local.get $data_guest)) (then (return (i32.const 0))))
+    (local.set $source_wa (call $g2w (local.get $source_guest)))
+    (local.set $data_wa (call $g2w (local.get $data_guest)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $index) (local.get $count)))
+      (local.set $source (i32.add (local.get $source_wa)
+        (i32.mul (local.get $index) (i32.const 6))))
+      (local.set $dest (i32.add (local.get $data_wa)
+        (i32.shl (local.get $index) (i32.const 3))))
+      (i32.store16 (local.get $dest) (i32.load8_u (local.get $source)))
+      (i32.store16 offset=2 (local.get $dest)
+        (i32.load16_u offset=2 (local.get $source)))
+      (i32.store16 offset=4 (local.get $dest)
+        (i32.load16_u offset=4 (local.get $source)))
+      (i32.store16 offset=6 (local.get $dest) (i32.const 0))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $copy)))
+    (call $lock_wnd_acquire)
+    (local.set $handle (call $accel_table_alloc_locked
+      (local.get $data_guest) (local.get $count) (i32.const 1)))
+    (call $lock_wnd_release)
+    (if (i32.eqz (local.get $handle))
+      (then (call $heap_free (local.get $data_guest))))
+    (local.get $handle))
+
+  (func $accel_table_destroy (param $handle i32) (result i32)
+    (local $record i32) (local $data_to_free i32) (local $refs i32)
+    (local $result i32)
+    (call $lock_wnd_acquire)
+    (local.set $record (call $accel_table_record_locked (local.get $handle)))
+    (if (local.get $record)
+      (then
+        (local.set $refs (i32.load offset=12 (local.get $record)))
+        (if (i32.and
+              (i32.eqz (i32.and (i32.load offset=8 (local.get $record)) (i32.const 1)))
+              (i32.gt_u (local.get $refs) (i32.const 1)))
+          (then
+            (i32.store offset=12 (local.get $record)
+              (i32.sub (local.get $refs) (i32.const 1))))
+          (else
+            (if (i32.and (i32.load offset=8 (local.get $record)) (i32.const 1))
+              (then (local.set $data_to_free (i32.load (local.get $record)))))
+            (i32.store (local.get $record) (i32.const 0))
+            (i32.store offset=4 (local.get $record) (i32.const 0))
+            (i32.store offset=8 (local.get $record) (i32.const 0))
+            (i32.store offset=12 (local.get $record) (i32.const 0))
+            (local.set $result (i32.const 1))))))
+    (call $lock_wnd_release)
+    (if (local.get $data_to_free)
+      (then (call $heap_free (local.get $data_to_free))))
+    (local.get $result))
+
+  ;; Copy/query the six-byte public ACCEL representation. The repository keeps
+  ;; an eight-byte form only because resource tables use that stride.
+  (func $accel_table_copy
+    (param $handle i32) (param $dest_guest i32) (param $capacity i32) (result i32)
+    (local $record i32) (local $data i32) (local $count i32) (local $copy_count i32)
+    (local $dest i32) (local $index i32) (local $source i32) (local $out i32)
+    (call $lock_wnd_acquire)
+    (local.set $record (call $accel_table_record_locked (local.get $handle)))
+    (if (local.get $record)
+      (then
+        (local.set $data (call $g2w (i32.load (local.get $record))))
+        (local.set $count (i32.load offset=4 (local.get $record)))))
+    (if (i32.eqz (local.get $data))
+      (then
+        (call $lock_wnd_release)
+        (return (i32.const 0))))
+    (if (i32.eqz (local.get $dest_guest))
+      (then
+        (call $lock_wnd_release)
+        (return (local.get $count))))
+    (if (i32.le_s (local.get $capacity) (i32.const 0))
+      (then
+        (call $lock_wnd_release)
+        (return (i32.const 0))))
+    (local.set $copy_count (select (local.get $capacity) (local.get $count)
+      (i32.lt_u (local.get $capacity) (local.get $count))))
+    (local.set $dest (call $g2w (local.get $dest_guest)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $index) (local.get $copy_count)))
+      (local.set $source (i32.add (local.get $data)
+        (i32.shl (local.get $index) (i32.const 3))))
+      (local.set $out (i32.add (local.get $dest)
+        (i32.mul (local.get $index) (i32.const 6))))
+      (i32.store8 (local.get $out) (i32.load8_u (local.get $source)))
+      (i32.store8 offset=1 (local.get $out) (i32.const 0))
+      (i32.store16 offset=2 (local.get $out)
+        (i32.load16_u offset=2 (local.get $source)))
+      (i32.store16 offset=4 (local.get $out)
+        (i32.load16_u offset=4 (local.get $source)))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $copy)))
+    (call $lock_wnd_release)
+    (local.get $copy_count))
+
+  ;; Return bit 16 as a match marker and the command in the low word. Keeping
+  ;; matching separate from delivery makes it impossible to hold LOCK_WND
+  ;; across a host import or a re-entrant window procedure.
+  (func $accel_table_match
+    (param $handle i32) (param $vkey i32)
+    (param $shift i32) (param $ctrl i32) (param $alt i32) (result i32)
+    (local $record i32) (local $data i32) (local $count i32) (local $index i32)
+    (local $entry i32) (local $flags i32) (local $key i32) (local $cmd i32)
+    (local $mapped i32) (local $match_key i32) (local $need_shift i32)
+    (local $result i32)
+    (call $lock_wnd_acquire)
+    (local.set $record (call $accel_table_record_locked (local.get $handle)))
+    (if (local.get $record)
+      (then
+        (local.set $data (call $g2w (i32.load (local.get $record))))
+        (local.set $count (i32.load offset=4 (local.get $record)))))
+    (if (local.get $data)
+      (then
+        (block $done (loop $scan
+          (br_if $done (i32.ge_u (local.get $index) (local.get $count)))
+          (local.set $entry (i32.add (local.get $data)
+            (i32.shl (local.get $index) (i32.const 3))))
+          (local.set $flags (i32.load8_u (local.get $entry)))
+          (local.set $key (i32.load16_u offset=2 (local.get $entry)))
+          (local.set $cmd (i32.load16_u offset=4 (local.get $entry)))
+          (local.set $match_key (local.get $key))
+          (local.set $need_shift
+            (i32.ne (i32.and (local.get $flags) (i32.const 0x04)) (i32.const 0)))
+          (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x01)))
+            (then
+              ;; A control character 1..26 names Ctrl+A..Ctrl+Z. Otherwise use
+              ;; the same Win98 en-US character mapping as VkKeyScanA.
+              (if (i32.and
+                    (i32.and (i32.ge_u (local.get $key) (i32.const 1))
+                             (i32.le_u (local.get $key) (i32.const 26)))
+                    (i32.ne (i32.and (local.get $flags) (i32.const 0x08)) (i32.const 0)))
+                (then (local.set $mapped (i32.add (local.get $key) (i32.const 0x40))))
+                (else (local.set $mapped
+                  (call $vk_key_scan (i32.and (local.get $key) (i32.const 0xFF))))))
+              (local.set $match_key (i32.and (local.get $mapped) (i32.const 0xFF)))
+              (local.set $need_shift (i32.or (local.get $need_shift)
+                (i32.ne (i32.and (local.get $mapped) (i32.const 0x0100)) (i32.const 0))))))
+          (if (i32.and
+                (i32.and
+                  (i32.ne (local.get $mapped) (i32.const 0xFFFF))
+                  (i32.eq (local.get $match_key)
+                    (i32.and (local.get $vkey) (i32.const 0xFFFF))))
+                (i32.and
+                  (i32.eq (local.get $need_shift) (i32.ne (local.get $shift) (i32.const 0)))
+                  (i32.and
+                    (i32.eq
+                      (i32.ne (i32.and (local.get $flags) (i32.const 0x08)) (i32.const 0))
+                      (i32.ne (local.get $ctrl) (i32.const 0)))
+                    (i32.eq
+                      (i32.ne (i32.and (local.get $flags) (i32.const 0x10)) (i32.const 0))
+                      (i32.ne (local.get $alt) (i32.const 0))))))
+            (then
+              (local.set $result
+                (i32.or (i32.const 0x00010000) (local.get $cmd)))
+              (br $done)))
+          (local.set $mapped (i32.const 0))
+          (local.set $index (i32.add (local.get $index) (i32.const 1)))
+          (br $scan)))))
+    (call $lock_wnd_release)
+    (local.get $result))
+
+  ;; CreateAcceleratorTableA(lpaccl, cEntries) → unique HACCEL.
   (func $handle_CreateAcceleratorTableA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $src i32) (local $dst i32) (local $i i32) (local $s i32) (local $d i32)
-    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-        (return)))
-    (local.set $dst (call $heap_alloc (i32.mul (local.get $arg1) (i32.const 8))))
-    (if (i32.eqz (local.get $dst))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-        (return)))
-    (local.set $src (call $g2w (local.get $arg0)))
-    (local.set $dst (call $g2w (local.get $dst)))
-    (block $done (loop $widen
-      (br_if $done (i32.ge_u (local.get $i) (local.get $arg1)))
-      (local.set $s (i32.add (local.get $src) (i32.mul (local.get $i) (i32.const 6))))
-      (local.set $d (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 3))))
-      (i32.store16 (local.get $d) (i32.load8_u (local.get $s)))
-      (i32.store16 offset=2 (local.get $d) (i32.load16_u offset=2 (local.get $s)))
-      (i32.store16 offset=4 (local.get $d) (i32.load16_u offset=4 (local.get $s)))
-      (i32.store16 offset=6 (local.get $d) (i32.const 0))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $widen)))
-    (global.set $haccel_data (local.get $dst))
-    (global.set $haccel_count (local.get $arg1))
-    (global.set $haccel (i32.const 0x60001))
-    (global.set $eax (i32.const 0x60001))
+    (global.set $eax (call $accel_table_create (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; DestroyAcceleratorTable(hAccel) → BOOL. Only one table is live at a time,
-  ;; so this drops it; TranslateAcceleratorA then matches nothing.
   (func $handle_DestroyAcceleratorTable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $haccel_data (i32.const 0))
-    (global.set $haccel_count (i32.const 0))
-    (global.set $haccel (i32.const 0))
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $accel_table_destroy (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; If lpMsg is WM_KEYDOWN/WM_SYSKEYDOWN and its VK matches an accel entry,
-  ;; queue WM_COMMAND(cmd, 0) to hwnd via post_queue and return 1 (msg consumed).
+  ;; Match WM_KEYDOWN/WM_SYSKEYDOWN and synchronously deliver the command.
+  ;; Accelerator-originated commands carry notification code 1 in HIWORD.
   (func $handle_TranslateAcceleratorA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $msg_wa i32) (local $umsg i32) (local $wparam i32)
-    (local $tbl i32) (local $n i32) (local $i i32) (local $e i32)
-    (local $fv i32) (local $key i32) (local $cmd i32) (local $slot i32)
+    (local $msg_wa i32) (local $message i32) (local $match i32) (local $cmd i32)
+    (local $command_message i32)
     (local $shift i32) (local $ctrl i32) (local $alt i32)
     (global.set $eax (i32.const 0))
-    (if (i32.eqz (global.get $haccel_data))
+    (if (i32.eqz (local.get $arg2))
       (then (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (local.set $msg_wa (call $g2w (local.get $arg2)))
-    (local.set $umsg (i32.load offset=4 (local.get $msg_wa)))
-    ;; WM_KEYDOWN=0x100, WM_SYSKEYDOWN=0x104
-    (if (i32.and (i32.ne (local.get $umsg) (i32.const 0x100))
-                 (i32.ne (local.get $umsg) (i32.const 0x104)))
+    (local.set $message (i32.load offset=4 (local.get $msg_wa)))
+    (if (i32.and (i32.ne (local.get $message) (i32.const 0x0100))
+                 (i32.ne (local.get $message) (i32.const 0x0104)))
       (then (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (local.set $wparam (i32.load offset=8 (local.get $msg_wa)))
-    (local.set $shift (i32.and (call $host_get_key_down_state (i32.const 0x10)) (i32.const 0x8000)))
-    (local.set $ctrl  (i32.and (call $host_get_key_down_state (i32.const 0x11)) (i32.const 0x8000)))
-    (local.set $alt   (i32.and (call $host_get_key_down_state (i32.const 0x12)) (i32.const 0x8000)))
-    (local.set $tbl (global.get $haccel_data))
-    (local.set $n (global.get $haccel_count))
-    (block $done (loop $walk
-      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-      (local.set $e (i32.add (local.get $tbl) (i32.shl (local.get $i) (i32.const 3))))
-      (local.set $fv  (i32.load8_u  (local.get $e)))
-      (local.set $key (i32.load16_u offset=2 (local.get $e)))
-      (local.set $cmd (i32.load16_u offset=4 (local.get $e)))
-      ;; Match requirements: FVIRTKEY(0x01), key == wParam, and exact
-      ;; FSHIFT/FCONTROL/FALT modifier state. FNOINVERT(0x02) and FLAST(0x80)
-      ;; do not affect matching here.
-      (if (i32.and
-            (i32.and
-              (i32.eq (i32.and (local.get $fv) (i32.const 0x01)) (i32.const 0x01))
-              (i32.eq (local.get $key) (local.get $wparam)))
-            (i32.and
-              (i32.eq (i32.ne (i32.and (local.get $fv) (i32.const 0x04)) (i32.const 0))
-                      (i32.ne (local.get $shift) (i32.const 0)))
-              (i32.and
-                (i32.eq (i32.ne (i32.and (local.get $fv) (i32.const 0x08)) (i32.const 0))
-                        (i32.ne (local.get $ctrl) (i32.const 0)))
-                (i32.eq (i32.ne (i32.and (local.get $fv) (i32.const 0x10)) (i32.const 0))
-                        (i32.ne (local.get $alt) (i32.const 0))))))
-        (then
-          ;; Queue WM_COMMAND(cmd, 0) to arg0 via post_queue (same layout as PostMessageA).
-          (if (i32.lt_u (global.get $post_queue_count) (i32.const 64))
-            (then
-              (local.set $slot (i32.add (i32.const 0x400)
-                (i32.mul (global.get $post_queue_count) (i32.const 16))))
-              (i32.store          (local.get $slot) (local.get $arg0))
-              (i32.store offset=4 (local.get $slot) (i32.const 0x111))
-              (i32.store offset=8 (local.get $slot) (local.get $cmd))
-              (i32.store offset=12 (local.get $slot) (i32.const 0))
-              (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1)))))
-          (global.set $eax (i32.const 1))
-          (br $done)))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $walk)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
+    (local.set $shift
+      (i32.and (call $host_get_key_down_state (i32.const 0x10)) (i32.const 0x8000)))
+    (local.set $ctrl
+      (i32.and (call $host_get_key_down_state (i32.const 0x11)) (i32.const 0x8000)))
+    (local.set $alt
+      (i32.and (call $host_get_key_down_state (i32.const 0x12)) (i32.const 0x8000)))
+    (local.set $match (call $accel_table_match
+      (local.get $arg1) (i32.load offset=8 (local.get $msg_wa))
+      (local.get $shift) (local.get $ctrl) (local.get $alt)))
+    (if (local.get $match)
+      (then
+        (local.set $cmd (i32.and (local.get $match) (i32.const 0xFFFF)))
+        (local.set $command_message
+          (select (i32.const 0x0112) (i32.const 0x0111)
+            (i32.eq (i32.and (local.get $cmd) (i32.const 0xF000))
+                    (i32.const 0xF000))))
+        ;; The 32-bit path is truly synchronous. A Win16 FAR procedure needs
+        ;; the Pascal-frame message pump bridge, so preserve its established
+        ;; queued handoff rather than entering it with a 32-bit stdcall frame.
+        (if (i32.or (global.get $code16) (global.get $win16_in_call32))
+          (then
+            (drop (call $post_queue_push
+              (local.get $arg0)
+              (local.get $command_message)
+              ;; Win16 WM_COMMAND has the command in its one WORD wParam.
+              (local.get $cmd)
+              (i32.const 0))))
+          (else
+            (drop (call $wnd_send_message
+              (local.get $arg0)
+              (local.get $command_message)
+              (select (local.get $cmd)
+                      (i32.or (i32.const 0x00010000) (local.get $cmd))
+                      (i32.eq (local.get $command_message) (i32.const 0x0112)))
+              (i32.const 0)))))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 77: TranslateMessage(lpMsg) — browser already queues WM_CHAR; preserve MSG and report only virtual-key messages.
   (func $handle_TranslateMessage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
