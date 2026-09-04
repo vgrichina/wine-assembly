@@ -752,6 +752,44 @@ async function main() {
 
   runCode([
     0x0f, 0x10, 0x05, ...le32(sseA),       // movups xmm0,[sseA]
+    0x0f, 0x10, 0x0d, ...le32(sseB),       // movups xmm1,[sseB]
+    0x0f, 0xc6, 0xc1, 0x1b,                // shufps xmm0,xmm1,0x1b
+    0x0f, 0x11, 0x05, ...le32(sseOut),     // movups [sseOut],xmm0
+  ]);
+  testBytes('SHUFPS register form selects lanes from both original operands',
+    bytesAt(sseOut, 16), [
+      ...sseBytesA.slice(12, 16), ...sseBytesA.slice(8, 12),
+      ...sseBytesB.slice(4, 8), ...sseBytesB.slice(0, 4),
+    ]);
+
+  runCode([
+    0x0f, 0x10, 0x05, ...le32(sseA),       // movups xmm0,[sseA]
+    0x0f, 0xc6, 0x05, ...le32(sseB), 0xaa, // shufps xmm0,[sseB],0xaa
+    0x0f, 0x11, 0x05, ...le32(sseOut),     // movups [sseOut],xmm0
+  ]);
+  testBytes('SHUFPS memory form consumes imm8 after the effective address',
+    bytesAt(sseOut, 16), [
+      ...sseBytesA.slice(8, 12), ...sseBytesA.slice(8, 12),
+      ...sseBytesB.slice(8, 12), ...sseBytesB.slice(8, 12),
+    ]);
+
+  [1, -2, 3.5, 4].forEach((v, i) => dv.setFloat32(g2w(sseA + i * 4), v, true));
+  [2, 3, -4, 0.5].forEach((v, i) => dv.setFloat32(g2w(sseB + i * 4), v, true));
+  runCode([
+    0x0f, 0x10, 0x05, ...le32(sseA),       // movups xmm0,[sseA]
+    0x0f, 0x10, 0x0d, ...le32(sseB),       // movups xmm1,[sseB]
+    0x0f, 0x58, 0xc1,                      // addps xmm0,xmm1
+    0x0f, 0x59, 0x05, ...le32(sseB),       // mulps xmm0,[sseB]
+    0x0f, 0x11, 0x05, ...le32(sseOut),     // movups [sseOut],xmm0
+  ]);
+  [6, 3, 2, 2.25].forEach((expected, i) =>
+    testFloat(`ADDPS register + MULPS memory lane ${i}`,
+      dv.getFloat32(g2w(sseOut + i * 4), true), expected));
+  setBytes(sseA, sseBytesA);
+  setBytes(sseB, sseBytesB);
+
+  runCode([
+    0x0f, 0x10, 0x05, ...le32(sseA),       // movups xmm0,[sseA]
     0x0f, 0x16, 0x05, ...le32(sseB),       // movhps xmm0,qword [sseB]
     0x0f, 0x17, 0x05, ...le32(sseOut),     // movhps qword [sseOut],xmm0
     0x0f, 0x11, 0x05, ...le32(sseOut + 16), // movups [sseOut+16],xmm0
