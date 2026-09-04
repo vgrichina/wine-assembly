@@ -7581,21 +7581,113 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 196: DragAcceptFiles(hwnd, fAccept) — no-op (no drag-drop support)
+  ;; 196: DragAcceptFiles(hwnd, fAccept). Win9x records this as the
+  ;; WS_EX_ACCEPTFILES bit on the destination window; the browser shell reads
+  ;; the same WAT-owned style through $drop_target_at before constructing an
+  ;; HDROP and posting WM_DROPFILES.
   (func $handle_DragAcceptFiles (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ex i32)
+    (local.set $ex (call $ctrl_get_ex_style (local.get $arg0)))
+    (if (local.get $arg1)
+      (then (local.set $ex (i32.or (local.get $ex) (i32.const 0x10))))
+      (else (local.set $ex (i32.and (local.get $ex) (i32.const -17)))))
+    (call $ctrl_set_ex_style (local.get $arg0) (local.get $ex))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 197: DragQueryFileA(hDrop, iFile, lpszFile, cch) — no drag-drop, return 0 files
+  ;; Query one path in the DROPFILES payload. The format describes the source
+  ;; encoding independently of whether the caller selected DragQueryFileA or
+  ;; DragQueryFileW, so this helper converts in either direction. Return value
+  ;; excludes the terminator, and iFile=-1 asks for the number of paths.
+  (func $drop_read_char (param $src i32) (param $wide i32) (result i32)
+    (if (result i32) (local.get $wide)
+      (then (call $gl16 (local.get $src)))
+      (else (call $gl8 (local.get $src)))))
+
+  (func $drop_query_file (param $hdrop i32) (param $index i32)
+        (param $dst i32) (param $cch i32) (param $dst_wide i32) (result i32)
+    (local $src i32) (local $source_wide i32) (local $source_step i32)
+    (local $file i32) (local $length i32) (local $copied i32) (local $ch i32)
+    (if (i32.eqz (local.get $hdrop)) (then (return (i32.const 0))))
+    (local.set $src (i32.add (local.get $hdrop) (call $gl32 (local.get $hdrop))))
+    (local.set $source_wide
+      (i32.ne (call $gl32 (i32.add (local.get $hdrop) (i32.const 16))) (i32.const 0)))
+    (local.set $source_step
+      (select (i32.const 2) (i32.const 1) (local.get $source_wide)))
+
+    ;; Locate the requested string, or count every string for index=-1.
+    (block $located (loop $files
+      (local.set $ch (call $drop_read_char
+        (local.get $src) (local.get $source_wide)))
+      (if (i32.eqz (local.get $ch))
+        (then
+          (if (i32.eq (local.get $index) (i32.const -1))
+            (then (return (local.get $file))))
+          (return (i32.const 0))))
+      (if (i32.eq (local.get $file) (local.get $index))
+        (then (br $located)))
+      (block $name_done (loop $skip_name
+        (local.set $ch (call $drop_read_char
+          (local.get $src) (local.get $source_wide)))
+        (local.set $src (i32.add (local.get $src) (local.get $source_step)))
+        (br_if $name_done (i32.eqz (local.get $ch)))
+        (br $skip_name)))
+      (local.set $file (i32.add (local.get $file) (i32.const 1)))
+      (br $files)))
+
+    ;; Measure in source characters. Our browser-created paths are 7-bit ANSI,
+    ;; but accepting either DROPFILES spelling also keeps app-created HDROPs
+    ;; coherent with the documented structure.
+    (block $length_done (loop $measure
+      (local.set $ch (call $drop_read_char
+        (i32.add (local.get $src)
+          (i32.mul (local.get $length) (local.get $source_step)))
+        (local.get $source_wide)))
+      (br_if $length_done (i32.eqz (local.get $ch)))
+      (local.set $length (i32.add (local.get $length) (i32.const 1)))
+      (br $measure)))
+    (if (i32.eqz (local.get $dst)) (then (return (local.get $length))))
+    (if (i32.eqz (local.get $cch)) (then (return (i32.const 0))))
+
+    (local.set $copied
+      (select (local.get $length) (i32.sub (local.get $cch) (i32.const 1))
+        (i32.lt_u (local.get $length) (local.get $cch))))
+    (local.set $file (i32.const 0))
+    (block $copy_done (loop $copy
+      (br_if $copy_done (i32.ge_u (local.get $file) (local.get $copied)))
+      (local.set $ch (call $drop_read_char
+        (i32.add (local.get $src)
+          (i32.mul (local.get $file) (local.get $source_step)))
+        (local.get $source_wide)))
+      (if (local.get $dst_wide)
+        (then (call $gs16
+          (i32.add (local.get $dst) (i32.mul (local.get $file) (i32.const 2)))
+          (local.get $ch)))
+        (else (call $gs8 (i32.add (local.get $dst) (local.get $file))
+          (select (local.get $ch) (i32.const 63)
+            (i32.le_u (local.get $ch) (i32.const 255))))))
+      (local.set $file (i32.add (local.get $file) (i32.const 1)))
+      (br $copy)))
+    (if (local.get $dst_wide)
+      (then (call $gs16
+        (i32.add (local.get $dst) (i32.mul (local.get $copied) (i32.const 2)))
+        (i32.const 0)))
+      (else (call $gs8 (i32.add (local.get $dst) (local.get $copied)) (i32.const 0))))
+    (local.get $copied))
+
+  ;; 197: DragQueryFileA(hDrop, iFile, lpszFile, cch)
   (func $handle_DragQueryFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; If iFile=0xFFFFFFFF, return count of files (0)
-    ;; Otherwise return 0 (no file at that index)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $drop_query_file
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
+      (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
 
-  ;; 198: DragFinish(hDrop) — free drop handle, no-op for us
+  ;; 198: DragFinish(hDrop) — release the heap block supplied with
+  ;; WM_DROPFILES. It is legal to pass the handle to several DragQueryFile
+  ;; calls before this one final release.
   (func $handle_DragFinish (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0) (then (call $heap_free (local.get $arg0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
@@ -12800,10 +12892,12 @@ HookEx — no next hook in chain, return 0
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
-  ;; DragQueryFileW — same as A, return 0 files, 4 args
+  ;; DragQueryFileW — same HDROP, Unicode destination.
   (func $handle_DragQueryFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_DragQueryFileA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (global.set $eax (call $drop_query_file
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
+      (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; SHGetFileInfo's display name: the final component of the path, copied into

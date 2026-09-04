@@ -4958,6 +4958,22 @@
     (call $wnd_mouse_msg_origin_y (local.get $hwnd)))
   (func (export "wnd_child_from_point_deep") (param $parent i32) (param $sx i32) (param $sy i32) (result i32)
     (call $wnd_child_from_point_deep (local.get $parent) (local.get $sx) (local.get $sy)))
+  ;; Browser Shell file-drop bridge. Start at the deepest child under the
+  ;; pointer and walk toward the supplied top-level until the first window
+  ;; registered by DragAcceptFiles (WS_EX_ACCEPTFILES) is found.
+  (func (export "drop_target_at") (param $top i32) (param $sx i32) (param $sy i32) (result i32)
+    (local $hwnd i32)
+    (local.set $hwnd (call $wnd_child_from_point_deep
+      (local.get $top) (local.get $sx) (local.get $sy)))
+    (if (i32.eqz (local.get $hwnd)) (then (local.set $hwnd (local.get $top))))
+    (block $none (loop $parents
+      (br_if $none (i32.eqz (local.get $hwnd)))
+      (if (i32.and (call $ctrl_get_ex_style (local.get $hwnd)) (i32.const 0x10))
+        (then (return (local.get $hwnd))))
+      (br_if $none (i32.eq (local.get $hwnd) (local.get $top)))
+      (local.set $hwnd (call $wnd_get_parent (local.get $hwnd)))
+      (br $parents)))
+    (i32.const 0))
   (func (export "dialog_route_mouse_screen")
     (param $parent i32) (param $msg i32) (param $wParam i32) (param $sx i32) (param $sy i32) (result i32)
     (call $dialog_route_mouse_screen
