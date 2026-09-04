@@ -17045,6 +17045,34 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; GetClipCursor(lpRect) returns the current screen-coordinate confinement.
+  ;; With no explicit ClipCursor rectangle, Windows reports the full virtual
+  ;; screen rather than failing; fullscreen games use that successful query
+  ;; while switching from a menu cursor to their playfield cursor.
+  (func $handle_GetClipCursor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $rc i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $rc (call $g2w (local.get $arg0)))
+    (store.field Rect left (local.get $rc)
+      (select (global.get $clip_cursor_l) (i32.const 0)
+        (global.get $clip_cursor_active)))
+    (store.field Rect top (local.get $rc)
+      (select (global.get $clip_cursor_t) (i32.const 0)
+        (global.get $clip_cursor_active)))
+    (store.field Rect right (local.get $rc)
+      (select (global.get $clip_cursor_r) (call $screen_metric_w)
+        (global.get $clip_cursor_active)))
+    (store.field Rect bottom (local.get $rc)
+      (select (global.get $clip_cursor_b) (call $screen_metric_h)
+        (global.get $clip_cursor_active)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; 693: EnumChildWindows — STUB: unimplemented
   ;; EnumChildWindows(hwndParent, lpEnumFunc, lParam)
   ;;

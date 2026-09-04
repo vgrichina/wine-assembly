@@ -27150,5 +27150,12 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2903617807
+  },
+  {
+    "id": 3264,
+    "name": "GetClipCursor",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3011228251
   }
 ]

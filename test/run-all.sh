@@ -295,6 +295,7 @@ UNIT=(
   test/test-renderer-letterbox-input.js
   test/test-relative-mouse-input.js
   test/test-relative-mouse-clip-edge.js
+  test/test-clip-cursor-query.js
   test/test-browser-relative-mouse-lock-gate.js
   test/test-browser-relative-mouse-latch.js
   test/test-renderer-dialog-caption-drag.js
