@@ -897,6 +897,7 @@ E2E=(
   test/test-lure-scummvm.js
   test/test-mw3-gameplay.js
   test/test-shadow-warrior-dosbox.js
+  test/test-total-annihilation-gameplay.js
   test/test-ultima4-dosbox.js
   # Two emulator processes: one installs with --overlay-dir, one proves the
   # installed tree came back. Byte-exact, ~30s.
