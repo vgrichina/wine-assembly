@@ -524,6 +524,8 @@ UNIT=(
   test/test-is-debugger-present.js
   test/test-load-library-ex-w.js
   test/test-local-proprietary-demo-dropdown.js
+  test/test-am-multimedia-stream.js
+  test/test-win98-games-a-d.js
   test/test-mcm-manifest-paths.js
   test/test-mem-utils-hidden-shared-buffer.js
   test/test-midi-out-long-msg.js

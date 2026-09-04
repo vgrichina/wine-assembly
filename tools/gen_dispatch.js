@@ -39,6 +39,7 @@ const namedApiIds = [
   ['PeekMessageA', 'API_ID_PeekMessageA'],
   ['PeekMessageW', 'API_ID_PeekMessageW'],
   ['IDirectDraw_QueryInterface', 'API_ID_IDirectDraw_BASE'],
+  ['IAMMultiMediaStream_QueryInterface', 'API_ID_IAMMultiMediaStream_BASE'],
 ];
 
 out.push('  ;; Named API ids consumed by hand-written dispatch fast paths.');

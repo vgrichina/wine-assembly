@@ -1,6 +1,29 @@
 # Test Binary Sources
 
-All test binaries sourced from publicly archived Microsoft software on archive.org.
+Test binary provenance is recorded below; most fixtures come from publicly
+archived software on archive.org.
+
+## Windows 98 Demo/Shareware Games A-D
+
+**`win98-games-a-d/`** — complete A-through-D collection of Windows game
+demos and shareware, including both already-installed game trees and standalone
+installer executables.
+
+Source: `https://archive.org/details/win-98-games-a-d.-7z`
+File: `Win98_Games-A-D.7z`
+
+The archive downloaded on 2026-09-03 was 7,169,873,753 bytes. Its MD5
+`7610b389f075be9f4ea8b521157e87d2` and SHA-1
+`c53417bcc617790d9671ec385c49ee6f018846c9` match the Internet Archive
+metadata. It expands to 9,469 files in 425 directories (7,780,521,509 bytes),
+with 71 top-level game entries.
+
+Extraction:
+
+```bash
+mkdir -p test/binaries/win98-games-a-d
+7z x -o'test/binaries/win98-games-a-d' downloads/Win98_Games-A-D.7z
+```
 
 ## Entertainment Pack
 

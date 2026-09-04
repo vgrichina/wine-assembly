@@ -182,6 +182,19 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
+  ;; LoadCursorFromFileA(lpFileName). File-backed cursor pixels are not yet
+  ;; decoded, but the existing opaque custom-cursor handle preserves the
+  ;; application's non-system cursor selection without aborting.
+  (func $handle_LoadCursorFromFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0)
+      (then
+        (global.set $eax (i32.const 0x67F00))
+        (global.set $last_error (i32.const 0)))
+      (else
+        (global.set $eax (i32.const 0))
+        (global.set $last_error (i32.const 87))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   ;; Invoke the current LineDDA point callback, or finish the original API.
   (func $line_dda_abs (param $value i32) (result i32)
     (select (i32.sub (i32.const 0) (local.get $value)) (local.get $value)
@@ -1404,6 +1417,101 @@
       (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
+  ;; IAMMultiMediaStream is the legacy DirectX Media/DirectShow container.
+  ;; Darkstone's demo payload has no movie files, but treats failure to create
+  ;; this optional-video object as fatal before its D3D game startup. Expose a
+  ;; no-media implementation: object lifecycle and control calls succeed,
+  ;; while queries for an actual stream or filter report no interface.
+  (func $amstream_finish (param $hr i32) (param $stack_bytes i32)
+    (global.set $eax (local.get $hr))
+    (global.set $esp (i32.add (global.get $esp) (local.get $stack_bytes))))
+
+  (func $handle_IAMMultiMediaStream_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IDirectMusic_QueryInterface
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  (func $handle_IAMMultiMediaStream_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IDirectMusic_AddRef
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  (func $handle_IAMMultiMediaStream_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IDirectMusic_Release
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  (func $handle_IAMMultiMediaStream_GetInformation (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IAMMultiMediaStream_GetMediaStream (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
+    (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE: no media payload
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IAMMultiMediaStream_EnumMediaStreams (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
+    (global.set $eax (i32.const 0x00000001)) ;; S_FALSE: no streams
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IAMMultiMediaStream_GetState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IAMMultiMediaStream_SetState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $amstream_finish (i32.const 0) (i32.const 12)))
+
+  (func $handle_IAMMultiMediaStream_GetTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then
+      (call $gs32 (local.get $arg1) (i32.const 0))
+      (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IAMMultiMediaStream_GetDuration (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IAMMultiMediaStream_GetTime
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  (func $handle_IAMMultiMediaStream_Seek (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $amstream_finish (i32.const 0) (i32.const 12)))
+
+  (func $handle_IAMMultiMediaStream_GetEndOfStreamEventHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IAMMultiMediaStream_Initialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $amstream_finish (i32.const 0) (i32.const 20)))
+
+  (func $handle_IAMMultiMediaStream_GetFilterGraph (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (i32.const 0x80004002))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IAMMultiMediaStream_GetFilter (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IAMMultiMediaStream_GetFilterGraph
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  (func $handle_IAMMultiMediaStream_AddMediaStream (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  (func $handle_IAMMultiMediaStream_OpenFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $amstream_finish (i32.const 0x80004005) (i32.const 16))) ;; no decoder
+
+  (func $handle_IAMMultiMediaStream_OpenMoniker (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $amstream_finish (i32.const 0x80004005) (i32.const 20)))
+
+  (func $handle_IAMMultiMediaStream_Render (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $amstream_finish (i32.const 0) (i32.const 12)))
+
   ;; IDirectDrawGammaControl is a view onto an existing surface slot. GTA2
   ;; snapshots the current ramp and installs its own during video startup.
   (func $handle_IDirectDrawGammaControl_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1503,6 +1611,22 @@
       (then
         (local.set $obj_guest (call $dx_create_com_obj
           (i32.const 35) (call $init_com_vtable (i32.const 3076) (i32.const 3))))
+        (if (i32.eqz (local.get $obj_guest))
+          (then
+            (call $gs32 (local.get $arg4) (i32.const 0))
+            (global.set $eax (i32.const 0x80004005))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)))
+        (call $gs32 (local.get $arg4) (local.get $obj_guest))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    ;; CLSID_AMMultiMediaStream {49C47CE5-9BA4-11D0-8212-00C04FC32C45}.
+    (if (i32.eq (local.get $clsid_d1) (i32.const 0x49C47CE5))
+      (then
+        (local.set $obj_guest (call $dx_create_com_obj
+          (i32.const 36) (call $init_com_vtable
+            (global.get $API_ID_IAMMultiMediaStream_BASE) (i32.const 19))))
         (if (i32.eqz (local.get $obj_guest))
           (then
             (call $gs32 (local.get $arg4) (i32.const 0))

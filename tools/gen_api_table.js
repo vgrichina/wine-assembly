@@ -1377,6 +1377,28 @@ const extra = [
   // SHLWAPI — Cave Story resolves this dynamically during startup.
   { name: 'PathRemoveFileSpecA', nargs: 1 },
   { name: 'PathRemoveFileSpecW', nargs: 1 },
+  // DirectShow AMMultiMediaStream. Darkstone uses this legacy DirectX Media
+  // object for optional full-motion-video playback during startup.
+  { name: 'IAMMultiMediaStream_QueryInterface', nargs: 3 },
+  { name: 'IAMMultiMediaStream_AddRef', nargs: 1 },
+  { name: 'IAMMultiMediaStream_Release', nargs: 1 },
+  { name: 'IAMMultiMediaStream_GetInformation', nargs: 3 },
+  { name: 'IAMMultiMediaStream_GetMediaStream', nargs: 3 },
+  { name: 'IAMMultiMediaStream_EnumMediaStreams', nargs: 3 },
+  { name: 'IAMMultiMediaStream_GetState', nargs: 2 },
+  { name: 'IAMMultiMediaStream_SetState', nargs: 2 },
+  { name: 'IAMMultiMediaStream_GetTime', nargs: 2 },
+  { name: 'IAMMultiMediaStream_GetDuration', nargs: 2 },
+  { name: 'IAMMultiMediaStream_Seek', nargs: 2 },
+  { name: 'IAMMultiMediaStream_GetEndOfStreamEventHandle', nargs: 2 },
+  { name: 'IAMMultiMediaStream_Initialize', nargs: 4 },
+  { name: 'IAMMultiMediaStream_GetFilterGraph', nargs: 2 },
+  { name: 'IAMMultiMediaStream_GetFilter', nargs: 2 },
+  { name: 'IAMMultiMediaStream_AddMediaStream', nargs: 5 },
+  { name: 'IAMMultiMediaStream_OpenFile', nargs: 3 },
+  { name: 'IAMMultiMediaStream_OpenMoniker', nargs: 4 },
+  { name: 'IAMMultiMediaStream_Render', nargs: 2 },
+  { name: 'LoadCursorFromFileA', nargs: 1 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {
