@@ -116,6 +116,7 @@ UNIT=(
   test/test-oem-to-char-buff.js
   test/test-ver-find-file.js
   test/test-static-dx-version.js
+  test/test-icopen-stack.js
   test/test-midi-mci.js
   test/test-tinysynth-offline.js
   test/test-mci-get-device-id.js

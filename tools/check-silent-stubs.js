@@ -195,7 +195,7 @@ const digest = crypto.createHash('sha256')
 // 2026-09-03: 447 -> 446. Shell_NotifyIconA now owns browser notification-
 // area add/modify/delete state and delivers Win98 mouse callback messages.
 const EXPECTED_COUNT = 443;
-const EXPECTED_SHA256 = '4e63c1c8aae1efd880ba6be0f042497d691c6f2573d68a55b5a24bc43b6f99cd';
+const EXPECTED_SHA256 = 'f8186f15367d75dcd54bd2aab0df20487560f7b584f9cab91fa54218854e4544';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
