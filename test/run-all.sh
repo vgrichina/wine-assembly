@@ -65,6 +65,7 @@ UNIT=(
   test/test-unhandled-exception-filter.js
   test/test-cxx-throw-report.js
   test/test-dynamic-module-filename.js
+  test/test-freelibrary-reload.js
   test/test-bignum-mul.js
   test/test-mat4.js
   test/test-vfs.js

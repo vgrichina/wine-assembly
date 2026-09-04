@@ -1216,6 +1216,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
+  ;; A successful LoadLibrary of the handle most recently passed to
+  ;; FreeLibrary starts a new lifetime for that module. The loader keeps PE
+  ;; images mapped, so the handle is deliberately reused; without clearing
+  ;; this sentinel the next legitimate unload is mistaken for a repeated free.
+  (func $freelib_mark_loaded (param $module i32)
+    (if (i32.eq (local.get $module) (global.get $freelib_last_handle))
+      (then (global.set $freelib_last_handle (i32.const 0)))))
+
   ;; 12: LoadLibraryA
   (func $handle_LoadLibraryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $src i32) (local $dst i32) (local $ch i32) (local $name_wa i32)
@@ -1223,6 +1231,7 @@
     (if (i32.ge_s (local.get $tmp) (i32.const 0))
       (then
         (global.set $eax (i32.load (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $tmp) (i32.const 32)))))
+        (call $freelib_mark_loaded (global.get $eax))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     ;; LoadLibrary of the running program is a handle request, not a load:
@@ -1234,6 +1243,7 @@
     (if (call $dll_name_match (local.get $arg0) (global.get $exe_name_wa))
       (then
         (global.set $eax (global.get $image_base))
+        (call $freelib_mark_loaded (global.get $eax))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     ;; Not already loaded — check if DLL file exists in VFS
@@ -1258,6 +1268,7 @@
         (return)))
     (local.set $tmp (call $guest_name_is_static_system_dll (local.get $arg0)))
     (global.set $eax (select (i32.add (global.get $STATIC_SYS_DLL_HANDLE_BASE) (i32.sub (local.get $tmp) (i32.const 1))) (global.get $image_base) (i32.ne (local.get $tmp) (i32.const 0))))
+    (call $freelib_mark_loaded (global.get $eax))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -3850,7 +3861,8 @@
   (func $handle_FreeLibrary (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; FreeLibrary returns TRUE on success (first call), FALSE if already freed
     ;; This handles the NSIS pattern: while(FreeLibrary(h)) {}
-    (if (i32.eq (local.get $arg0) (global.get $freelib_last_handle))
+    (if (i32.or (i32.eqz (local.get $arg0))
+                (i32.eq (local.get $arg0) (global.get $freelib_last_handle)))
       (then
         ;; Same handle freed again — already unloaded, return FALSE
         (global.set $eax (i32.const 0)))

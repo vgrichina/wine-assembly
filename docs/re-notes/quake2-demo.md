@@ -77,6 +77,14 @@ create the `Quake 2` window, and render `demo1` in the software renderer at
 fails with the game's own `FreeLibrary failed for game library` message; that
 is an incomplete ad-hoc mount, not an emulator failure.
 
+There was a distinct lifecycle failure after dying in `demo1`: loading the
+autosave could reuse the resident `gamex86.dll` HMODULE, but `FreeLibrary`'s
+old consecutive-call sentinel was never reset by that successful reload. The
+next normal map teardown therefore returned FALSE and Quake raised the same
+message. A successful `LoadLibrary` now starts a fresh lifetime for that exact
+handle, while two consecutive frees still return TRUE then FALSE for the NSIS
+unload-loop compatibility case.
+
 ## Browser black-screen report
 
 The browser must be tested separately from the CLI because DirectDraw pixels
