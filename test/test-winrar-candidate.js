@@ -208,9 +208,9 @@ function saturatedCountInRect(png, left, top, right, bottom) {
         `26:mousedown:170:76,27:mouseup:170:76,` + // Paths
         `28:mousedown:120:76,29:mouseup:120:76,` + // Compression
         `32:png:${rapidPagesFramePath},40:dlg-click:2,` +
-        `45:dump-windows:settings-closed,46:main-resize:800:600,55:png:${mainFramePath},` +
-        `60:mousedown:95:51,61:mouseup:95:51,` +
-        `70:png:${commandsFramePath},80:mousedown:500:400,81:mouseup:500:400`,
+        `45:dump-windows:settings-closed,46:png:${mainFramePath},` +
+        `50:mousedown:95:51,51:mouseup:95:51,` +
+        `60:png:${commandsFramePath},70:mousedown:500:400,71:mouseup:500:400`,
       `--png=${installedFramePath}`,
     ], {
       cwd: ROOT,
@@ -268,16 +268,14 @@ function saturatedCountInRect(png, left, top, right, bottom) {
     const toolbarColor = saturatedCountInRect(mainPng, 35, 65, 411, 120);
     assert(toolbarColor > 1000,
       `WinRAR toolbar was still blank after Settings closed (${toolbarColor} colored pixels)`);
-    // Resize after the property sheet closes so the current corpus profile's
-    // tall rebar still leaves enough list rows visible. WinRAR binds
-    // SHGFI_SYSICONINDEX as LVSIL_SMALL; its first six rows are files and row
-    // seven is the Formats directory. The old fake
+    // WinRAR binds SHGFI_SYSICONINDEX as LVSIL_SMALL. Its first six visible
+    // rows are files and row seven is the Formats directory: the old fake
     // HIMAGELIST=1 drew dark placeholders, while an incorrectly ordered strip
     // paints every file as a yellow folder.
     const fileFolderYellow = colorCountInRect(mainPng, [240, 192, 64],
-      28, 368, 45, 465);
+      28, 170, 45, 266);
     const directoryYellow = colorCountInRect(mainPng, [240, 192, 64],
-      28, 465, 45, 480);
+      28, 266, 45, 282);
     assert(fileFolderYellow < 5 && directoryYellow > 60,
       `WinRAR shell icons are misclassified (${fileFolderYellow} file-folder pixels, ${directoryYellow} directory pixels)`);
     assert(fs.existsSync(commandsFramePath),
@@ -339,7 +337,7 @@ function saturatedCountInRect(png, left, top, right, bottom) {
     const installedGray = colorCount(installedPng, [192, 192, 192]);
     const installedWhite = colorCount(installedPng, [255, 255, 255]);
     const installedBlue = colorCount(installedPng, [0, 0, 128]);
-    assert(installedTeal > 10000 && installedGray > 35000 &&
+    assert(installedTeal > 150000 && installedGray > 35000 &&
       installedWhite > 35000 && installedBlue > 3000,
     `installed WinRAR file manager is not visibly rendered (${installedTeal} teal, ${installedGray} gray, ${installedWhite} white, ${installedBlue} blue)`);
 
