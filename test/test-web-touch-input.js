@@ -11,7 +11,8 @@ const path = require('path');
 // lib/browser-input.js. Read both: the CSS that disables touch gestures is
 // still page markup, the listeners are not.
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8') +
-  fs.readFileSync(path.join(__dirname, '..', 'lib', 'browser-input.js'), 'utf8');
+  fs.readFileSync(path.join(__dirname, '..', 'lib', 'browser-input.js'), 'utf8') +
+  fs.readFileSync(path.join(__dirname, '..', 'lib', 'browser-shell.js'), 'utf8');
 
 assert(html.includes('touch-action: none'), 'canvas should disable browser touch gestures');
 assert(html.includes('-webkit-user-select: none'), 'canvas should disable iOS text selection');
@@ -25,6 +26,8 @@ assert(html.includes("window.addEventListener('touchcancel', windowTouchCancel, 
 assert(html.includes('renderer.handleMouseDown(cx, cy, 0)'), 'touchstart should map to left-button mouse down');
 assert(html.includes('renderer.handleMouseMove(x, y)'), 'touchmove should map to mouse move');
 assert(html.includes('renderer.handleMouseUp(p.x, p.y, 0)'), 'touchend/cancel should release left-button mouse up');
+assert(html.includes("mobileTouch: app.mobileTouch || 'auto'"),
+  'the launcher should carry each app mobile-touch override into its running record');
 assert(html.includes('forwardEmptyDesktopClick(t.clientX, t.clientY, cx, cy)'), 'touch should launch desktop icons when tapping empty canvas overlay');
 assert(html.includes("cv.addEventListener('touchstart'"), 'pre-launch canvas overlay should forward mobile taps to icons');
 assert(html.includes('e.preventDefault();'), 'touch handlers should prevent browser scroll/zoom defaults');
@@ -93,16 +96,18 @@ try {
   const browserInput = require('../lib/browser-input');
   const releases = [];
   const relativeMoves = [];
+  let touchWantsRelative = true;
+  const runningApps = [];
   const renderer = {
     windows: {}, _mouseX: 400, _mouseY: 250,
-    wantsRelativeMouse: () => true,
+    wantsRelativeMouse: () => touchWantsRelative,
     _unmapExclusiveInputPoint: () => ({ x: 320, y: 200 }),
     handleMouseDown() {},
     handleMouseUp: (x, y, button) => releases.push({ x, y, button }),
     handleMouseMove() {}, handleMenuHover() {},
     handleRelativeMouseMove: (x, y) => relativeMoves.push({ x, y }),
   };
-  browserInput.wireCanvasInput(canvas, renderer, { runningApps: [], debugMode: true });
+  browserInput.wireCanvasInput(canvas, renderer, { runningApps, debugMode: true });
   const event = {
     clientX: 320, clientY: 240, button: 0, ctrlKey: false, shiftKey: false,
     preventDefault() {}, stopPropagation() {},
@@ -148,6 +153,7 @@ try {
   // with a button held down for the length of the gesture.
   const touchStart = canvasListeners.get('touchstart');
   assert(touchStart, 'the canvas should take touchstart');
+  touchWantsRelative = false;
   const modes = [];
   global.window.TouchControls = {
     installed: true,
@@ -192,6 +198,60 @@ try {
   touchStart(tev([finger(4, 100, 100)], [finger(4, 100, 100)]));
   assert.strictEqual(downs.length, 1,
     'once the pinch is over the canvas takes single touches as clicks again');
+  (listeners.get('touchend') || []).at(-1)(tev([], [finger(4, 100, 100)]));
+
+  // A relative-mouse guest turns the phone surface into a trackpad. A drag
+  // sends deltas without holding button 0 (mouse-look must not also fire),
+  // while a stationary tap clicks at the guest cursor rather than where the
+  // finger happened to land.
+  runningApps.push({ name: 'mw3_demo', mobileTouch: 'auto', wine: { running: true } });
+  renderer._exclusiveTransform = { hwnd: 1 };
+  touchWantsRelative = true;
+  relativeMoves.length = 0;
+  downs.length = 0;
+  releases.length = 0;
+  const drag0 = finger(5, 100, 100);
+  touchStart(tev([drag0], [drag0]));
+  assert.strictEqual(downs.length, 0,
+    'trackpad touchstart must not hold Fire while the finger looks around');
+  (listeners.get('touchmove') || []).at(-1)(tev([finger(5, 130, 85)]));
+  assert.deepStrictEqual(relativeMoves, [{ x: 30, y: -15 }],
+    'trackpad touchmove should forward backing-canvas relative deltas');
+  (listeners.get('touchend') || []).at(-1)(tev([], [finger(5, 130, 85)]));
+  assert.strictEqual(downs.length, 0, 'a trackpad drag must not turn into a click');
+  assert.strictEqual(releases.length, 0, 'a trackpad drag must not emit a stray release');
+
+  touchWantsRelative = false; // the session latch remains armed by the first gesture
+  const tap = finger(6, 300, 300);
+  touchStart(tev([tap], [tap]));
+  (listeners.get('touchend') || []).at(-1)(tev([], [tap]));
+  assert.deepStrictEqual(downs, [[320, 200, 0]],
+    'a trackpad tap clicks at the guest virtual cursor, not the finger');
+  assert.deepStrictEqual(releases, [{ x: 320, y: 200, button: 0 }],
+    'a trackpad tap completes its click at the same virtual cursor point');
+
+  // Tap again and hold: the standard trackpad drag gesture. The guest button
+  // stays down while relative motion continues, then releases at the same
+  // virtual cursor, which makes precision mode usable for sliders and paint.
+  const dragTap = finger(7, 300, 300);
+  touchStart(tev([dragTap], [dragTap]));
+  assert.deepStrictEqual(downs.at(-1), [320, 200, 0],
+    'a prompt second trackpad touch begins a held click at the guest cursor');
+  (listeners.get('touchmove') || []).at(-1)(tev([finger(7, 312, 304)]));
+  assert.deepStrictEqual(relativeMoves.at(-1), { x: 12, y: 4 },
+    'held trackpad drag should continue delivering relative motion');
+  (listeners.get('touchend') || []).at(-1)(tev([], [finger(7, 312, 304)]));
+  assert.deepStrictEqual(releases.at(-1), { x: 320, y: 200, button: 0 },
+    'held trackpad drag releases the guest button exactly once');
+
+  // Config remains authoritative for games whose live cursor behavior is a
+  // false positive or false negative.
+  runningApps[0].mobileTouch = 'direct';
+  const direct = finger(8, 50, 60);
+  touchStart(tev([direct], [direct]));
+  assert.deepStrictEqual(downs.at(-1), [50, 60, 0],
+    'mobileTouch=direct overrides a latched relative-mouse heuristic');
+  (listeners.get('touchend') || []).at(-1)(tev([], [direct]));
   delete global.window.TouchControls;
 
   // --- the manual keyboard -------------------------------------------------

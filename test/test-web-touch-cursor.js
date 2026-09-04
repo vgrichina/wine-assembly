@@ -233,6 +233,74 @@ async function main() {
     assert.strictEqual(tracked.pointerEvents, 'none', 'the cursor sprite must never take input');
     assert(tracked.hitsCanvas, 'a tap under the cursor sprite must reach the guest');
 
+    // The real DOM bridge's relative-touch mode: the capture listener in this
+    // file first moves the sprite to the finger, then browser-input must put
+    // it back on the guest cursor after forwarding the delta. A drag is
+    // motion only; a tap clicks where that cursor is.
+    const trackpad = await page.evaluate(async () => {
+      const canvas = document.getElementById('screen');
+      const running = runningApps[runningApps.length - 1];
+      running.mobileTouch = 'trackpad';
+      const moves = [];
+      const downs = [];
+      const ups = [];
+      const saved = {
+        relative: sharedRenderer.handleRelativeMouseMove,
+        down: sharedRenderer.handleMouseDown,
+        up: sharedRenderer.handleMouseUp,
+        unmap: sharedRenderer._unmapExclusiveInputPoint,
+        mouseX: sharedRenderer._mouseX,
+        mouseY: sharedRenderer._mouseY,
+      };
+      sharedRenderer._mouseX = 222;
+      sharedRenderer._mouseY = 111;
+      sharedRenderer._unmapExclusiveInputPoint = () => ({ x: 222, y: 111 });
+      sharedRenderer.handleRelativeMouseMove = (x, y) => moves.push([x, y]);
+      sharedRenderer.handleMouseDown = (x, y, b) => downs.push([x, y, b]);
+      sharedRenderer.handleMouseUp = (x, y, b) => ups.push([x, y, b]);
+
+      const at = (type, id, x, y) => {
+        const touch = new Touch({ identifier: id, target: canvas, clientX: x, clientY: y });
+        canvas.dispatchEvent(new TouchEvent(type, {
+          bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [touch],
+          changedTouches: [touch],
+        }));
+      };
+      at('touchstart', 21, 100, 100);
+      at('touchmove', 21, 130, 85);
+      at('touchend', 21, 130, 85);
+      at('touchstart', 22, 300, 300);
+      at('touchend', 22, 300, 300);
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      const screen = canvas.getBoundingClientRect();
+      const expectedX = screen.left + 222 * screen.width / canvas.width;
+      const expectedY = screen.top + 111 * screen.height / canvas.height;
+      const cursor = document.getElementById('touch-cursor').getBoundingClientRect();
+      const cursorX = cursor.left + TouchCursor._hotX;
+      const cursorY = cursor.top + TouchCursor._hotY;
+      Object.assign(sharedRenderer, {
+        handleRelativeMouseMove: saved.relative,
+        handleMouseDown: saved.down,
+        handleMouseUp: saved.up,
+        _unmapExclusiveInputPoint: saved.unmap,
+        _mouseX: saved.mouseX,
+        _mouseY: saved.mouseY,
+      });
+      running.mobileTouch = 'auto';
+      return { moves, downs, ups, expectedX, expectedY, cursorX, cursorY };
+    });
+    assert(trackpad.moves.length === 1 && trackpad.moves[0][0] > 0 && trackpad.moves[0][1] < 0,
+      `trackpad drag did not produce the expected relative delta: ${JSON.stringify(trackpad.moves)}`);
+    assert.deepStrictEqual(trackpad.downs, [[222, 111, 0]],
+      'trackpad drag must not press Fire; the stationary tap clicks the virtual cursor once');
+    assert.deepStrictEqual(trackpad.ups, [[222, 111, 0]],
+      'trackpad tap must release at the same virtual cursor point');
+    assert(Math.abs(trackpad.cursorX - trackpad.expectedX) <= 2 &&
+        Math.abs(trackpad.cursorY - trackpad.expectedY) <= 2,
+      `trackpad cursor followed the finger instead of the guest: ` +
+      `${trackpad.cursorX},${trackpad.cursorY} vs ${trackpad.expectedX},${trackpad.expectedY}`);
+
     // With a touch-control overlay up, the sprite stops being sticky. A dpad
     // game is played with the pad -- there is no pointer in it to describe --
     // and an arrow left sitting on the board after the one tap that reached a
