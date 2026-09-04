@@ -4632,7 +4632,7 @@
   (func (export "get_focus_hwnd")       (result i32) (global.get $focus_hwnd))
   (func (export "get_capture_hwnd")     (result i32) (global.get $capture_hwnd))
   (func (export "release_capture")
-    (global.set $capture_hwnd (i32.const 0)))
+    (drop (call $capture_replace (i32.const 0))))
   (func (export "clip_cursor_active")   (result i32) (global.get $clip_cursor_active))
   (func (export "clip_cursor_left")     (result i32) (global.get $clip_cursor_l))
   (func (export "clip_cursor_top")      (result i32) (global.get $clip_cursor_t))

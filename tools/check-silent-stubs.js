@@ -182,8 +182,10 @@ const digest = crypto.createHash('sha256')
 // paints disabled arrows, and suppresses their input instead of always TRUE.
 // 2026-09-03: 457 -> 456. OpenIcon now sends WM_QUERYOPEN and restores the
 // guest and browser window state instead of returning unconditional success.
-const EXPECTED_COUNT = 456;
-const EXPECTED_SHA256 = '9068f82d1ff130b91dc19d75264450c8f4adafbc4a653c28dccf43ca5628029b';
+// 2026-09-03: 456 -> 453. SetCapture/GetCapture/ReleaseCapture now validate
+// thread ownership and deliver synchronous WM_CAPTURECHANGED transitions.
+const EXPECTED_COUNT = 453;
+const EXPECTED_SHA256 = '5e569bcc04c04af9007613fab421709ef414cdafae6ebe91d48e53c6a9c5d791';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

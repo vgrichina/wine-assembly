@@ -526,6 +526,7 @@ UNIT=(
   test/test-mcm-manifest-paths.js
   test/test-mem-utils-hidden-shared-buffer.js
   test/test-midi-out-long-msg.js
+  test/test-mouse-capture.js
   test/test-msvcrt-ftol-native.js
   test/test-msi-query-product-state.js
   test/test-open-icon.js

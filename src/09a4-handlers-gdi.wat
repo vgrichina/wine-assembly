@@ -910,18 +910,67 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 184: SetCapture — STUB: unimplemented
+  ;; Return the live process capture owner, clearing an HWND that died without
+  ;; going through the ordinary window teardown path.
+  (func $capture_live (result i32)
+    (local $hwnd i32)
+    (local.set $hwnd (global.get $capture_hwnd))
+    (if (i32.and
+          (i32.ne (local.get $hwnd) (i32.const 0))
+          (i32.lt_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0)))
+      (then
+        (global.set $capture_hwnd (i32.const 0))
+        (return (i32.const 0))))
+    (local.get $hwnd))
+
+  ;; GetCapture and ReleaseCapture are thread-queue APIs: another guest thread
+  ;; may own the one process-wide capture without making it visible here.
+  (func $capture_current_thread (result i32)
+    (local $hwnd i32)
+    (local.set $hwnd (call $capture_live))
+    (if (i32.and
+          (i32.ne (local.get $hwnd) (i32.const 0))
+          (i32.eq (call $wnd_get_thread (local.get $hwnd))
+                  (global.get $current_thread_id)))
+      (then (return (local.get $hwnd))))
+    (i32.const 0))
+
+  ;; Publish the new owner before notifying the old one, so its wndproc sees
+  ;; the transfer if it calls GetCapture from WM_CAPTURECHANGED. USER sends the
+  ;; notification synchronously even when ReleaseCapture itself caused it.
+  (func $capture_replace (param $next i32) (result i32)
+    (local $previous i32)
+    (local.set $previous (call $capture_live))
+    (if (i32.eq (local.get $previous) (local.get $next))
+      (then (return (local.get $previous))))
+    (global.set $capture_hwnd (local.get $next))
+    (if (i32.ne (local.get $previous) (i32.const 0))
+      (then
+        (drop (call $wnd_send_message
+          (local.get $previous) (i32.const 0x0215) ;; WM_CAPTURECHANGED
+          (i32.const 0) (local.get $next)))))
+    (local.get $previous))
+
+  ;; 184: SetCapture(hwnd) — previous capture owner, or NULL.
   (func $handle_SetCapture (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; SetCapture(hwnd) → previous capture hwnd. 1 arg stdcall
-    (global.set $eax (global.get $capture_hwnd))
-    (global.set $capture_hwnd (local.get $arg0))
+    ;; The target must belong to the caller's thread. A bad or foreign HWND
+    ;; cannot steal the capture that browser input is currently routing.
+    (if (i32.or
+          (i32.lt_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
+          (i32.ne (call $wnd_get_thread (local.get $arg0))
+                  (global.get $current_thread_id)))
+      (then (global.set $eax (i32.const 0)))
+      (else (global.set $eax (call $capture_replace (local.get $arg0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 185: ReleaseCapture() → BOOL. 0 args stdcall
+  ;; 185: ReleaseCapture() — only the owning thread can release capture.
   (func $handle_ReleaseCapture (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $capture_hwnd (i32.const 0))
-    (global.set $eax (i32.const 1))
+    (if (i32.eqz (call $capture_current_thread))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (drop (call $capture_replace (i32.const 0)))
+        (global.set $eax (i32.const 1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 

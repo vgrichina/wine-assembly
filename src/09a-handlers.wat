@@ -11228,10 +11228,9 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 397: GetCapture — STUB: unimplemented
+  ;; 397: GetCapture — capture window associated with the current thread.
   (func $handle_GetCapture (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; GetCapture() — 0 args, returns hwnd that has mouse capture (or NULL)
-    (global.set $eax (global.get $capture_hwnd))
+    (global.set $eax (call $capture_current_thread))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; 0 args
   )
 
