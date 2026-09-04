@@ -15,6 +15,15 @@ const extraWat = String.raw`
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
 
+  (func (export "test_accel_create_w") (param $source i32) (param $count i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateAcceleratorTableW
+      (local.get $source) (local.get $count) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
   (func (export "test_accel_destroy") (param $handle i32) (result i32)
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
@@ -29,6 +38,16 @@ const extraWat = String.raw`
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
     (call $handle_CopyAcceleratorTableW
+      (local.get $handle) (local.get $dest) (local.get $capacity)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_accel_copy_a")
+      (param $handle i32) (param $dest i32) (param $capacity i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CopyAcceleratorTableA
       (local.get $handle) (local.get $dest) (local.get $capacity)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $saved_esp))
@@ -117,6 +136,10 @@ function readAccel(wat, base, index) {
   const second = wat.test_accel_create(secondSource, 1) >>> 0;
   assert(second && second !== first, 'multiple accelerator tables coexist');
 
+  const wide = wat.test_accel_create_w(secondSource, 1) >>> 0;
+  assert(wide && wide !== first && wide !== second,
+    'CreateAcceleratorTableW reaches the shared repository with a distinct handle');
+
   assert.strictEqual(wat.test_accel_copy(first, 0, 0), 4,
     'a null CopyAcceleratorTable destination queries the original count');
   const copied = wat.guest_alloc(24) >>> 0;
@@ -127,6 +150,10 @@ function readAccel(wat, base, index) {
     { flags: 0x09, padding: 0, key: 0x42, command: 0x1234 });
   assert.deepStrictEqual(readAccel(wat, copied, 1),
     { flags: 0x00, padding: 0, key: 0x71, command: 0x2222 });
+  assert.strictEqual(wat.test_accel_copy_a(wide, copied, 1), 1,
+    'CopyAcceleratorTableA shares the bounded copy contract');
+  assert.deepStrictEqual(readAccel(wat, copied, 0),
+    { flags: 0x01, padding: 0, key: 0x71, command: 0x7777 });
   assert.strictEqual(wat.guest_read8(copied + 12), 0xaa,
     'CopyAcceleratorTable does not write a third entry past capacity');
   assert.strictEqual(wat.test_accel_copy(first, copied, -1), 0,
@@ -193,6 +220,7 @@ function readAccel(wat, base, index) {
   assert.strictEqual(wat.test_accel_copy(second, 0, 0), 1,
     'destroying one table does not disturb another');
   assert.strictEqual(wat.test_accel_destroy(second), 1);
+  assert.strictEqual(wat.test_accel_destroy(wide), 1);
 
   console.log('test-accelerator-tables: ok');
 })().catch(error => {

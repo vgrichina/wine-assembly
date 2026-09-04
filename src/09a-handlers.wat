@@ -19373,3 +19373,11 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (if (local.get $owner)
       (then (call $wnd_last_active_popup_set (local.get $owner) (local.get $hwnd)))
       (else (call $wnd_last_active_popup_set (local.get $hwnd) (local.get $hwnd)))))
+
+  ;; ACCEL contains no encoded text. Keep the ANSI export as a thin alias of
+  ;; the already-bounded Unicode implementation instead of growing a second
+  ;; copy/query path that can drift.
+  (func $handle_CopyAcceleratorTableA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_CopyAcceleratorTableW
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))

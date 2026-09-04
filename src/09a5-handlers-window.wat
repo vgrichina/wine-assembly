@@ -3411,3 +3411,10 @@
   (func $handle_DrawAnimatedRects (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  ;; ACCEL contains only byte/word scalar fields, so the Unicode entry point
+  ;; has exactly the same public representation and ownership rules as ANSI.
+  (func $handle_CreateAcceleratorTableW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_CreateAcceleratorTableA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))

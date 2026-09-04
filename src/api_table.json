@@ -26975,5 +26975,19 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3948529904
+  },
+  {
+    "id": 3239,
+    "name": "CreateAcceleratorTableW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2010733797
+  },
+  {
+    "id": 3240,
+    "name": "CopyAcceleratorTableA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3414784612
   }
 ]
