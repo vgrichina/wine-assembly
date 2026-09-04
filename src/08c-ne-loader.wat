@@ -1465,6 +1465,40 @@
             (i32.const 16))
             (local.get $off)))
 
+  ;; The loader entry described by the NE header, plus the two values Windows
+  ;; supplies in registers when it calls that entry.  This is deliberately
+  ;; separate from the exported-entry table above: LibEntry is not an export,
+  ;; and its CS:IP and automatic data/heap sizes live directly in the header.
+  (func $win16_dll_init_entry (param $module_id i32) (result i32)
+    (local $rec i32) (local $ne_off i32) (local $seg i32)
+    (local.set $rec (call $win16_dll_rec (local.get $module_id)))
+    (local.set $ne_off (i32.load (local.get $rec)))
+    (if (i32.eqz (local.get $ne_off)) (then (return (i32.const 0))))
+    (local.set $seg (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x16))))
+    (if (i32.eqz (local.get $seg)) (then (return (i32.const 0))))
+    (i32.or
+      (i32.shl (call $win16_index_to_sel
+        (i32.add (i32.load offset=4 (local.get $rec)) (local.get $seg)))
+        (i32.const 16))
+      (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x14)))))
+
+  (func $win16_dll_data_sel (param $module_id i32) (result i32)
+    (local $rec i32) (local $ne_off i32) (local $seg i32)
+    (local.set $rec (call $win16_dll_rec (local.get $module_id)))
+    (local.set $ne_off (i32.load (local.get $rec)))
+    (if (i32.eqz (local.get $ne_off)) (then (return (i32.const 0))))
+    (local.set $seg (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x0E))))
+    (if (i32.eqz (local.get $seg)) (then (return (i32.const 0))))
+    (call $win16_index_to_sel
+      (i32.add (i32.load offset=4 (local.get $rec)) (local.get $seg))))
+
+  (func $win16_dll_heap_size (param $module_id i32) (result i32)
+    (local $ne_off i32)
+    (local.set $ne_off (i32.load (call $win16_dll_rec (local.get $module_id))))
+    (if (result i32) (local.get $ne_off)
+      (then (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x10))))
+      (else (i32.const 0))))
+
   ;; ---- Inspection exports (used by test/test-ne-loader.js) ----
   (func (export "win16_seg_count") (result i32) (global.get $win16_seg_count))
   (func (export "win16_entry_cs") (result i32) (global.get $win16_entry_cs))

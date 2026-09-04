@@ -42,14 +42,15 @@ function directoryRecord(bytes, off, lba, size, flags, nameBytes) {
   return length;
 }
 
-function makeIso() {
-  const bytes = new Uint8Array(20 * ISO_SECTOR);
+function makeIso(withAutorun = false) {
+  const sectors = withAutorun ? 23 : 20;
+  const bytes = new Uint8Array(sectors * ISO_SECTOR);
   const pvd = 16 * ISO_SECTOR;
   bytes[pvd] = 1;
   ascii(bytes, pvd + 1, 'CD001');
   bytes[pvd + 6] = 1;
   ascii(bytes, pvd + 40, 'CIV2_TEST', 32);
-  both32(bytes, pvd + 80, 20);
+  both32(bytes, pvd + 80, sectors);
   both16(bytes, pvd + 128, ISO_SECTOR);
   directoryRecord(bytes, pvd + 156, 18, ISO_SECTOR, 2, [0]);
   ascii(bytes, pvd + 813, '1996022912000000');
@@ -62,9 +63,21 @@ function makeIso() {
   let dir = 18 * ISO_SECTOR;
   dir += directoryRecord(bytes, dir, 18, ISO_SECTOR, 2, [0]);
   dir += directoryRecord(bytes, dir, 18, ISO_SECTOR, 2, [1]);
-  directoryRecord(bytes, dir, 19, 4, 0,
+  dir += directoryRecord(bytes, dir, 19, 4, 0,
     Array.from(Buffer.from('CIV2.EXE;1', 'ascii')));
   bytes.set([0x4d, 0x5a, 0x90, 0x00], 19 * ISO_SECTOR);
+  if (withAutorun) {
+    dir += directoryRecord(bytes, dir, 20, 4, 0,
+      Array.from(Buffer.from('SETUP.EXE;1', 'ascii')));
+    dir += directoryRecord(bytes, dir, 21, 4, 0,
+      Array.from(Buffer.from('SETUP_DE.EXE;1', 'ascii')));
+    const inf = Buffer.from('[autorun]\r\nopen=setup.exe\r\n', 'ascii');
+    directoryRecord(bytes, dir, 22, inf.length, 0,
+      Array.from(Buffer.from('AUTORUN.INF;1', 'ascii')));
+    bytes.set([0x4d, 0x5a, 0x90, 0x00], 20 * ISO_SECTOR);
+    bytes.set([0x4d, 0x5a, 0x90, 0x00], 21 * ISO_SECTOR);
+    bytes.set(inf, 22 * ISO_SECTOR);
+  }
   return bytes;
 }
 
@@ -103,7 +116,7 @@ async function main() {
     `FILE "track02.bin" BINARY\n` +
     `  TRACK 02 AUDIO\n    INDEX 01 00:00:00\n`;
   const cueBytes = new TextEncoder().encode(cueText);
-  const data = countingSource(rawMode1(makeIso()));
+  const data = countingSource(rawMode1(makeIso(true)));
   const audio = countingSource(new Uint8Array(SECTOR_BYTES));
   const cue = countingSource(cueBytes);
   const selected = [
@@ -118,7 +131,10 @@ async function main() {
   assert.strictEqual(plan.kind, 'cue');
   assert.match(plan.label, /Mixed-mode CD image/);
   assert.strictEqual(plan.volumeLabel, 'CIV2_TEST');
-  assert.deepStrictEqual(plan.exeCandidates.map(item => item.path), ['D:\\CIV2.EXE']);
+  assert.deepStrictEqual(plan.exeCandidates.map(item => item.path),
+    ['D:\\SETUP.EXE', 'D:\\CIV2.EXE', 'D:\\SETUP_DE.EXE']);
+  assert.strictEqual(plan.exeCandidates[0].autorun, true,
+    'a mixed-mode disc must honor AUTORUN.INF before generic candidate ranking');
   assert.strictEqual(plan.storageFiles.length, 3, 'keeping must retain CUE plus both BINs');
   assert.strictEqual(audio.reads, 0, 'analysis must not read an audio track');
   assert.strictEqual(mediaImport.rankCandidates([
@@ -127,6 +143,13 @@ async function main() {
     { path: 'D:\\Civ2\\civ2.exe', name: 'civ2.exe' },
   ], 'Civ2:MGE v1.0')[0].path, 'D:\\Civ2\\civ2.exe',
   'the MGE disc should offer the game before its autorun/uninstall helpers');
+  assert.deepStrictEqual(mediaImport.rankCandidates([
+    { path: 'D:\\setup_de.exe', name: 'setup_de.exe' },
+    { path: 'D:\\setup.exe', name: 'setup.exe' },
+    { path: 'D:\\setup_fr.exe', name: 'setup_fr.exe' },
+  ], 'Speed Demons').map(item => item.path),
+  ['D:\\setup.exe', 'D:\\setup_de.exe', 'D:\\setup_fr.exe'],
+  'the unsuffixed installer sorts before localized variants even without autorun metadata');
 
   const vfs = new VirtualFS();
   const mounted = await plan.mount(vfs);

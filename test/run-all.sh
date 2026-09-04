@@ -73,6 +73,7 @@ UNIT=(
   test/test-media-sniff.js
   test/test-media-cue-import.js
   test/test-media-autorun-inf.js
+  test/test-media-cli.js
   test/test-vfs-adopt.js
   test/test-save-bundle.js
   test/test-flush-view-of-file.js

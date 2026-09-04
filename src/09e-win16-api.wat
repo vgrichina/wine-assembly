@@ -1826,13 +1826,26 @@
 
   (func $win16_LocalInit
     (local $start i32) (local $end i32) (local $sel i32) (local $base i32)
-    (local $i i32) (local $p i32) (local $slot i32)
+    (local $limit i32) (local $i i32) (local $p i32) (local $slot i32)
     (local.set $end (call $win16_arg16 (i32.const 0)))
     (local.set $start (call $win16_arg16 (i32.const 1)))
     (local.set $sel (call $win16_arg16 (i32.const 2)))
     ;; A zero segment means the caller's own, which is what DS holds.
     (if (i32.eqz (local.get $sel)) (then (local.set $sel (global.get $sreg_ds))))
     (local.set $base (call $win16_seg_base (call $win16_sel_to_index (local.get $sel))))
+    ;; pStart==0 is the loader form used by LIBENTRY.ASM. In Win16 it means
+    ;; "put a heap of pEnd bytes at the end of the segment", not "use offsets
+    ;; zero through pEnd". Treating it literally erased the DLL's initialized
+    ;; globals before LibMain ran; WISE's three-item table count became an
+    ;; unbounded walk through its caller's stack.
+    (if (i32.eqz (local.get $start))
+      (then
+        (local.set $limit
+          (call $win16_seg_limit (call $win16_sel_to_index (local.get $sel))))
+        (if (i32.gt_u (local.get $end) (local.get $limit))
+          (then (local.set $end (local.get $limit))))
+        (local.set $start (i32.sub (local.get $limit) (local.get $end)))
+        (local.set $end (local.get $limit))))
     (if (i32.or (i32.ge_u (local.get $start) (local.get $end))
                 (i32.eqz (local.get $base)))
       (then
@@ -2996,6 +3009,81 @@
       (br $copy)))
     (i32.store8 (local.get $dst_wa) (local.get $n)))
 
+  ;; CTL3D and CTL3DV2 are cosmetic Windows 3.1 helper DLLs. Installers often
+  ;; load either spelling opportunistically, but redistributing Microsoft's DLL
+  ;; is neither necessary nor desirable: the four calls WISE uses can be
+  ;; answered by the native controls this emulator already paints. Match the
+  ;; exact dynamic-module name so no unrelated missing DLL becomes successful.
+  (func $win16_module_is_ctl3d (param $id i32) (result i32)
+    (local $slot i32) (local $n i32)
+    (if (i32.or (i32.lt_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
+                (i32.ge_u (local.get $id)
+                  (i32.add (global.get $WIN16_DYNAMIC_BASE)
+                           (global.get $WIN16_DYNAMIC_MODULES))))
+      (then (return (i32.const 0))))
+    (local.set $slot (call $win16_dynamic_module_slot
+      (i32.sub (local.get $id) (global.get $WIN16_DYNAMIC_BASE))))
+    (local.set $n (i32.load8_u (local.get $slot)))
+    (if (i32.and
+          (i32.eq (i32.load offset=1 (local.get $slot)) (i32.const 0x334C5443))
+          (i32.or
+            (i32.and (i32.eq (local.get $n) (i32.const 5))
+                     (i32.eq (i32.load8_u offset=5 (local.get $slot)) (i32.const 0x44)))
+            (i32.and
+              (i32.and (i32.eq (local.get $n) (i32.const 7))
+                       (i32.eq (i32.load16_u offset=5 (local.get $slot)) (i32.const 0x5644)))
+              (i32.eq (i32.load8_u offset=7 (local.get $slot)) (i32.const 0x32)))))
+      (then (return (i32.const 1))))
+    (i32.const 0))
+
+  ;; Private ordinals for the CTL3D entry points WISE obtains by name. These
+  ;; need only be stable inside this task: no static import table observes the
+  ;; numbers, and GetProcAddress builds the matching thunk below.
+  (func $win16_ctl3d_ordinal (param $name i32) (result i32)
+    (local $n i32)
+    (local.set $n (i32.load8_u (local.get $name)))
+    ;; CTL3DREGISTER
+    (if (i32.and
+          (i32.and (i32.eq (local.get $n) (i32.const 13))
+                   (i64.eq (i64.load offset=1 (local.get $name))
+                           (i64.const 0x47455244334C5443)))
+          (i32.and
+            (i32.eq (i32.load offset=9 (local.get $name)) (i32.const 0x45545349))
+            (i32.eq (i32.load8_u offset=13 (local.get $name)) (i32.const 0x52))))
+      (then (return (i32.const 1))))
+    ;; CTL3DUNREGISTER
+    (if (i32.and
+          (i32.and (i32.eq (local.get $n) (i32.const 15))
+                   (i64.eq (i64.load offset=1 (local.get $name))
+                           (i64.const 0x524E5544334C5443)))
+          (i32.and
+            (i32.eq (i32.load offset=9 (local.get $name)) (i32.const 0x53494745))
+            (i32.and
+              (i32.eq (i32.load16_u offset=13 (local.get $name)) (i32.const 0x4554))
+              (i32.eq (i32.load8_u offset=15 (local.get $name)) (i32.const 0x52)))))
+      (then (return (i32.const 2))))
+    ;; CTL3DAUTOSUBCLASS
+    (if (i32.and
+          (i32.and (i32.eq (local.get $n) (i32.const 17))
+                   (i64.eq (i64.load offset=1 (local.get $name))
+                           (i64.const 0x54554144334C5443)))
+          (i32.and
+            (i64.eq (i64.load offset=9 (local.get $name))
+                    (i64.const 0x53414C434255534F))
+            (i32.eq (i32.load8_u offset=17 (local.get $name)) (i32.const 0x53))))
+      (then (return (i32.const 3))))
+    ;; CTL3DDLGFRAMEPAINT
+    (if (i32.and
+          (i32.and (i32.eq (local.get $n) (i32.const 18))
+                   (i64.eq (i64.load offset=1 (local.get $name))
+                           (i64.const 0x474C4444334C5443)))
+          (i32.and
+            (i64.eq (i64.load offset=9 (local.get $name))
+                    (i64.const 0x494150454D415246))
+            (i32.eq (i32.load16_u offset=17 (local.get $name)) (i32.const 0x544E))))
+      (then (return (i32.const 4))))
+    (i32.const 0))
+
   ;; Is this module one the emulator implements itself, rather than a real NE
   ;; the host has to stage? Ids 1..8 are the system libraries; DDEML is written
   ;; out here too but had to take an id past them because the low ones were
@@ -3004,7 +3092,8 @@
     (i32.or (i32.le_u (local.get $id) (global.get $WIN16_SYSTEM_MODULES))
             (i32.or (i32.eq (local.get $id) (i32.const 10))
             (i32.or (i32.eq (local.get $id) (i32.const 11))
-                    (i32.eq (local.get $id) (i32.const 12))))))
+            (i32.or (i32.eq (local.get $id) (i32.const 12))
+                    (call $win16_module_is_ctl3d (local.get $id)))))))
 
   ;; Scratch for the Pascal string above, at the unused bottom of the 32-bit
   ;; task's stack region, which a 16-bit task never touches.
@@ -3018,8 +3107,39 @@
   ;; loaded from the bytes the host staged for its module id; a task that asks
   ;; for a library nothing staged gets 2, which is what Windows returns for a
   ;; file it cannot find, and which every caller already tests for.
+  (global $WIN16_DLL_INIT_CONT i32 (i32.const 0xFF98))
+
+  ;; Resume a LoadLibrary whose freshly loaded NE DLL has returned from its
+  ;; LibEntry. The continuation record is handle, module id, caller DS, and the
+  ;; original far return. LibEntry is register-called and RETFs no arguments,
+  ;; so that record is untouched when control reaches this thunk slot.
+  (func $win16_dll_init_resume
+    (local $handle i32) (local $id i32) (local $ds i32)
+    (local $ip i32) (local $sel i32)
+    (local.set $handle (call $gl16 (global.get $esp)))
+    (local.set $id     (call $gl16 (i32.add (global.get $esp) (i32.const 2))))
+    (local.set $ds     (call $gl16 (i32.add (global.get $esp) (i32.const 4))))
+    (local.set $ip     (call $gl16 (i32.add (global.get $esp) (i32.const 6))))
+    (local.set $sel    (call $gl16 (i32.add (global.get $esp) (i32.const 8))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 10)))
+    (call $win16_set_sreg (i32.const 3) (local.get $ds))
+    ;; LibEntry/LibMain returns nonzero on success. A rejected dynamic module
+    ;; must release its name slot just like a staging or NE-load failure.
+    (if (i32.eqz (i32.and (global.get $eax) (i32.const 0xFFFF)))
+      (then
+        (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
+          (then (call $win16_dll_unload (local.get $id))
+                (call $win16_dynamic_module_release (local.get $id))))
+        (local.set $handle (i32.const 2))))
+    (global.set $eax (local.get $handle))
+    (global.set $edx (i32.const 0))
+    (call $win16_set_sreg (i32.const 1) (local.get $sel))
+    (global.set $eip (i32.add (global.get $seg_base_cs) (local.get $ip)))
+    (global.set $steps (i32.const 0)))
+
   (func $win16_LoadLibrary
-    (local $name i32) (local $id i32)
+    (local $name i32) (local $id i32) (local $fresh i32)
+    (local $handle i32) (local $init i32) (local $ret i32) (local $data_sel i32)
     (local.set $name (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
     (call $win16_cstr_to_pstr (local.get $name) (call $win16_name_scratch) (i32.const 1))
@@ -3055,9 +3175,42 @@
                 (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
                   (then (call $win16_dynamic_module_release (local.get $id))))
                 (call $win16_local_identity (i32.const 4) (i32.const 2))
-                (return)))))))
-    (call $win16_local_identity (i32.const 4)
-      (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id)))))
+                (return)))
+            (local.set $fresh (i32.const 1))))))
+    (local.set $handle
+      (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id))))
+    ;; Windows calls a newly loaded NE DLL's LibEntry before LoadLibrary
+    ;; returns. It is entered through the header CS:IP with DS set to the
+    ;; library data segment, DI=hInstance, CX=heap size and ES:SI=NULL. The
+    ;; caller's API frame becomes a continuation so LibEntry may call ordinary
+    ;; Win16 APIs and return asynchronously through its normal RETF.
+    (if (local.get $fresh)
+      (then
+        (local.set $init (call $win16_dll_init_entry (local.get $id)))
+        (if (local.get $init)
+          (then
+            (local.set $ret (call $win16_take_return (i32.const 4)))
+            (call $win16_push16 (i32.shr_u (local.get $ret) (i32.const 16)))
+            (call $win16_push16 (local.get $ret))
+            (call $win16_push16 (global.get $sreg_ds))
+            (call $win16_push16 (local.get $id))
+            (call $win16_push16 (local.get $handle))
+            (call $win16_push16 (global.get $WIN16_THUNK_SEL))
+            (call $win16_push16 (global.get $WIN16_DLL_INIT_CONT))
+            (local.set $data_sel (call $win16_dll_data_sel (local.get $id)))
+            (call $win16_set_sreg (i32.const 3) (local.get $data_sel))
+            (call $win16_set_sreg (i32.const 0) (i32.const 0))
+            (global.set $esi (i32.and (global.get $esi) (i32.const 0xFFFF0000)))
+            (global.set $edi (i32.or (i32.and (global.get $edi) (i32.const 0xFFFF0000))
+                                     (local.get $handle)))
+            (global.set $ecx (i32.or (i32.and (global.get $ecx) (i32.const 0xFFFF0000))
+              (call $win16_dll_heap_size (local.get $id))))
+            (call $win16_set_sreg (i32.const 1) (i32.shr_u (local.get $init) (i32.const 16)))
+            (global.set $eip (i32.add (global.get $seg_base_cs)
+                                      (i32.and (local.get $init) (i32.const 0xFFFF))))
+            (global.set $steps (i32.const 0))
+            (return)))))
+    (call $win16_local_identity (i32.const 4) (local.get $handle)))
 
   ;; KERNEL.96 FreeLibrary(hLibModule).
   ;;
@@ -3210,6 +3363,21 @@
               (then (local.set $target
                 (i32.or (i32.shl (global.get $WIN16_THUNK_SEL) (i32.const 16))
                         (global.get $WIN16_NDDE_GETWINDOW)))))))
+        ;; WISE resolves the optional CTL3D helpers by name. Give each known
+        ;; name an internal ordinal so its FARPROC uses the ordinary thunk and
+        ;; dispatch path; an unknown export still correctly returns NULL.
+        (if (i32.and (call $win16_module_is_ctl3d (local.get $id)) (local.get $sel))
+          (then
+            (call $win16_cstr_to_pstr
+              (call $win16_far_to_guest (local.get $sel) (local.get $off))
+              (call $win16_name_scratch) (i32.const 0))
+            (local.set $ord (call $win16_ctl3d_ordinal
+              (call $g2w (call $win16_name_scratch))))
+            (if (local.get $ord)
+              (then (local.set $target
+                (i32.or (i32.shl (global.get $WIN16_THUNK_SEL) (i32.const 16))
+                        (call $win16_thunk_for (local.get $id) (local.get $ord)
+                                               (i32.const 0))))))))
         (if (call $win16_dll_loaded (local.get $id))
           (then
             (if (local.get $sel)
@@ -4459,6 +4627,8 @@
     ;; Dialogs — see 09e2.
     (if (i32.eq (local.get $ordinal) (i32.const 87))
       (then (call $win16_DialogBox (i32.const 0) (i32.const 0)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 218))
+      (then (call $win16_DialogBoxIndirect) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 239))
       (then (call $win16_DialogBox (i32.const 1) (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 241))
@@ -8097,6 +8267,18 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 4)))
 
+  ;; GDI.7 SetStretchBltMode(hDC, nStretchMode) — word in, word out.
+  (func $win16_SetStretchBltMode
+    (local $hdc i32) (local $mode i32)
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 1))))
+    (local.set $mode (call $win16_arg16 (i32.const 0)))
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_SetStretchBltMode (local.get $hdc) (local.get $mode)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 4)))
+
   ;; GDI.85 GetROP2(hDC) -> word. The mode SetROP2 last stored; JigSawed reads
   ;; it back before it draws its About box so it can put it where it found it.
   (func $win16_GetROP2
@@ -9545,6 +9727,8 @@
       (then (call $win16_SetMapMode) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 6))
       (then (call $win16_SetPolyFillMode) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 7))
+      (then (call $win16_SetStretchBltMode) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 81))
       (then (call $win16_GetMapMode) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 128))
@@ -10060,12 +10244,59 @@
         (call $host_log_i32 (local.get $ret_lin))
         (call $host_log_i32 (local.get $name)))))
 
-  ;; SHELL, of which the games use exactly one entry — by ordinal here,
-  ;; by name in $win16_builtin_by_name. Both spellings occur in the corpus:
-  ;; Solitaire and Minesweeper import SHELL.22, FreeCell imports the name.
+  ;; SHELL.20 ShellExecute(hwnd, operation, file, parameters, directory,
+  ;; show). The shared host path performs browser chain-launches from the VFS;
+  ;; only the four Win16 far strings need flattening to WASM addresses here.
+  (func $win16_ShellExecute
+    (local $hwnd i32) (local $op i32) (local $file i32)
+    (local $params i32) (local $dir i32) (local $show i32)
+    (local.set $show (call $win16_arg16 (i32.const 0)))
+    (if (call $win16_arg16 (i32.const 2))
+      (then (local.set $dir (call $g2w (call $win16_far_to_guest
+        (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1)))))))
+    (if (call $win16_arg16 (i32.const 4))
+      (then (local.set $params (call $g2w (call $win16_far_to_guest
+        (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3)))))))
+    (if (call $win16_arg16 (i32.const 6))
+      (then (local.set $file (call $g2w (call $win16_far_to_guest
+        (call $win16_arg16 (i32.const 6)) (call $win16_arg16 (i32.const 5)))))))
+    (if (call $win16_arg16 (i32.const 8))
+      (then (local.set $op (call $g2w (call $win16_far_to_guest
+        (call $win16_arg16 (i32.const 8)) (call $win16_arg16 (i32.const 7)))))))
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 9))))
+    (global.set $eax (call $host_shell_execute (local.get $hwnd) (local.get $op)
+      (local.get $file) (local.get $params) (local.get $dir) (local.get $show)))
+    (global.set $edx (i32.const 0))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 20)))
+
+  ;; SHELL.22 is ShellAbout, by ordinal here and by name in
+  ;; $win16_builtin_by_name. Both spellings occur in the corpus: Solitaire and
+  ;; Minesweeper import the ordinal, while FreeCell imports the name.
   (func $win16_shell (param $ordinal i32) (result i32)
+    (if (i32.eq (local.get $ordinal) (i32.const 20))
+      (then (call $win16_ShellExecute) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 22))
       (then (call $win16_ShellAbout) (return (i32.const 1))))
+    (i32.const 0))
+
+  ;; CTL3D only subclasses standard controls to give them the Windows 3.1
+  ;; three-dimensional look. The native Win16 controls already have that look,
+  ;; so registration/subclassing succeeds without installing another wndproc.
+  ;; DlgFramePaint returns FALSE to leave the dialog's normal painting intact.
+  (func $win16_ctl3d (param $ordinal i32) (result i32)
+    (if (i32.eq (local.get $ordinal) (i32.const 1))
+      (then (call $win16_local_identity (i32.const 2) (i32.const 1))
+            (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 2))
+      (then (call $win16_local_identity (i32.const 2) (i32.const 1))
+            (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 3))
+      (then (call $win16_local_identity (i32.const 2) (i32.const 1))
+            (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 4))
+      (then (call $win16_local_identity (i32.const 10) (i32.const 0))
+            (return (i32.const 1))))
     (i32.const 0))
 
   ;; A by-name import of a module this emulator implements. Returns 1 when the
@@ -10197,6 +10428,9 @@
       (then (call $win16_dda_step) (return)))
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_ENUMFONT_CB))
       (then (call $win16_ef_step) (return)))
+    ;; A freshly loaded NE DLL has completed its standard LibEntry startup.
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_DLL_INIT_CONT))
+      (then (call $win16_dll_init_resume) (return)))
     ;; An NDDEAPI entry point the task took the address of and called.
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_NDDE_GETWINDOW))
       (then (call $win16_NDdeGetWindow) (return)))
@@ -10376,6 +10610,9 @@
               (then (call $win16_trace_ret) (return)))))
     (if (i32.eq (local.get $module) (i32.const 8))
       (then (if (call $win16_commdlg (local.get $ordinal))
+              (then (call $win16_trace_ret) (return)))))
+    (if (call $win16_module_is_ctl3d (local.get $module))
+      (then (if (call $win16_ctl3d (local.get $ordinal))
               (then (call $win16_trace_ret) (return)))))
     (if (call $win16_toolhelp (local.get $module) (local.get $ordinal))
       (then (call $win16_trace_ret) (return)))

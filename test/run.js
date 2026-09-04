@@ -15,7 +15,7 @@ const {
   processSharedCtx, adoptThreadPrimitives, makeWorkerApiLogger,
   createInheritedWasmGlobals, recordInheritedWasmGlobal,
 } = require('../lib/worker-imports');
-const { seedExeImage, win16FileCandidates } = require('../lib/vfs-seed');
+const { seedExeImage, win16FileCandidates, residentWin16Module } = require('../lib/vfs-seed');
 const { expandIncludePatterns } = require('../lib/vfs-host-files');
 const { saveVfsToHost } = require('../lib/vfs-export');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
@@ -616,6 +616,13 @@ const ISO_LAUNCH = (() => {
 const CUE_MOUNTS = args.filter(value => value.startsWith('--cue='))
   .map(value => value.slice('--cue='.length)).filter(Boolean);
 const CUE_DRIVE = getArg('cue-drive', null);
+// Browser-equivalent imported-media mount. tools/run-media.js analyzes the
+// selection, materializes only the chosen executable for the loader, then
+// forwards these exact source paths so this process mounts the original media
+// lazily into the guest VFS through lib/media-import.js.
+const MEDIA_MOUNTS = args.filter(value => value.startsWith('--media-mount='))
+  .map(value => value.slice('--media-mount='.length)).filter(Boolean);
+const MEDIA_EXE = getArg('media-exe', null);
 // --dll-seed=PATH[,PATH]: preload one more DLL as if the app registry had
 // listed it in `dlls:`. LoadLibraryA resolves a guest path against modules
 // that are already loaded and never opens the VFS itself, so a plugin the app
@@ -1952,21 +1959,27 @@ async function main() {
     win16StageModule: (name, id) => {
       if (!ctx.exports || !ctx.exports.win16_dll_staging) return false;
       const dir = path.dirname(EXE_PATH);
+      let bytes = null;
       for (const f of win16FileCandidates(name)) {
         const p = path.join(dir, f);
         if (!fs.existsSync(p)) continue;
-        const bytes = fs.readFileSync(p);
-        const room = ctx.exports.win16_app_dll_staging_size
-          ? ctx.exports.win16_app_dll_staging_size()
-          : 0x00100000;
-        if (bytes.length > room) return false;
-        const base = ctx.exports.win16_dll_staging(id);
-        const memory = new Uint8Array(ctx.getMemory());
-        memory.fill(0, base, base + room);
-        memory.set(bytes, base);
-        return true;
+        bytes = fs.readFileSync(p);
+        break;
       }
-      return false;
+      if (!bytes) {
+        const resident = residentWin16Module(ctx.vfs, name);
+        if (resident) bytes = resident.bytes;
+      }
+      if (!bytes) return false;
+      const room = ctx.exports.win16_app_dll_staging_size
+        ? ctx.exports.win16_app_dll_staging_size()
+        : 0x00100000;
+      if (bytes.length > room) return false;
+      const base = ctx.exports.win16_dll_staging(id);
+      const memory = new Uint8Array(ctx.getMemory());
+      memory.fill(0, base, base + room);
+      memory.set(bytes, base);
+      return true;
     },
   };
   const base = createHostImports(ctx);
@@ -4135,6 +4148,20 @@ async function main() {
           `tracks=${result.firstTrack}-${result.lastTrack} (${result.audioTracks.length} audio, lazy)`);
         drive = String.fromCharCode(drive.charCodeAt(0) + 1);
       }
+    }
+
+    if (MEDIA_MOUNTS.length) {
+      const { analyzeMediaPaths } = require('../lib/media-cli');
+      const media = await analyzeMediaPaths(MEDIA_MOUNTS, { exePath: MEDIA_EXE });
+      const result = await media.plan.mount(ctx.vfs);
+      const guestExe = media.candidate.path;
+      const slash = guestExe.lastIndexOf('\\');
+      const guestDir = slash >= 2 ? guestExe.slice(0, slash) : guestExe.slice(0, 3);
+      ctx.vfs.setCurrentDirectory(guestDir);
+      console.log(`[media] mounted ${media.plan.name} -> ${result.root} ` +
+        `label="${media.plan.volumeLabel || ''}" (${media.plan.entryCount} entries)`);
+      console.log(`[media] launching ${guestExe} from ${guestDir}` +
+        `${media.candidate.autorun ? ' (AUTORUN.INF)' : ''}`);
     }
 
     // The writable C:\ overlay (docs/design-byo-media.md ⑤). Attached after

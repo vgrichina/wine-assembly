@@ -286,11 +286,43 @@
       (call $win16_take_return (select (i32.const 16) (i32.const 12)
         (local.get $with_param)))))
 
-  ;; USER.218 DialogBoxIndirect is deliberately not here. Its template arrives
-  ;; as an HGLOBAL rather than a resource id, and the only importer of it —
-  ;; Hearts — has never reached the call, so there is nothing to check a guess
-  ;; about the handle's shape against. It keeps its fail-fast stub until
-  ;; something runs into it and can say what it passed.
+  ;; USER.218 DialogBoxIndirect(hInstance, hDialogTemplate, hWndParent,
+  ;; lpDialogFunc). Unlike DialogBox, the caller has already loaded or built
+  ;; the Win16 template in a global block. Global handles are selectors in this
+  ;; runtime, so offset zero is both GlobalLock's result and the byte stream the
+  ;; converter needs. WISE's installer builds its language chooser this way.
+  (func $win16_DialogBoxIndirect
+    (local $proc i32) (local $parent i32) (local $handle i32)
+    (local $index i32) (local $flags i32) (local $len i32) (local $template i32)
+    (local.set $proc
+      (i32.or (call $win16_arg16 (i32.const 0))
+        (i32.shl (call $win16_arg16 (i32.const 1)) (i32.const 16))))
+    (local.set $parent (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    (local.set $handle (call $win16_arg16 (i32.const 3)))
+    (local.set $index (call $win16_sel_to_index (local.get $handle)))
+    (if (i32.and (i32.ne (local.get $index) (i32.const 0))
+                 (i32.lt_u (local.get $index) (global.get $WIN16_SEG_MAX)))
+      (then
+        (local.set $flags (call $win16_gseg_field (local.get $index) (i32.const 8)))
+        (if (i32.and
+              (i32.ne (i32.and (local.get $flags) (global.get $WIN16_SEG_GLOBAL))
+                      (i32.const 0))
+              (i32.eqz (i32.and (local.get $flags) (global.get $WIN16_SEG_GFREE))))
+          (then
+            (local.set $len (call $win16_gseg_field (local.get $index) (i32.const 12)))
+            (if (local.get $len)
+              (then
+                (local.set $template (call $win16_dlg_to32
+                  (call $g2w (call $win16_far_to_guest
+                    (local.get $handle) (i32.const 0)))
+                  (local.get $len)))))))))
+    (if (i32.eqz (local.get $template))
+      (then
+        (global.set $eax (i32.const -1))
+        (call $win16_api_return (i32.const 10))
+        (return)))
+    (call $win16_dlg_run (local.get $template) (local.get $parent) (local.get $proc)
+      (i32.const 0) (call $win16_take_return (i32.const 10))))
 
   ;; USER.88 EndDialog(hDlg, nResult). The dialog procedure calls it and then
   ;; returns; the pump acts on it at that return, which is where Windows ends

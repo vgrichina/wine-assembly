@@ -2,6 +2,8 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
@@ -73,9 +75,79 @@ const extraWat = String.raw`
     (global.set $eax (i32.const 0x5600))
     (call $win16_dos_int21)
     (global.get $eax))
+
+  (func (export "test_win16_ctl3d_module") (param $v2 i32) (result i32)
+    (local $name i32) (local $module i32)
+    (call $win16_dynamic_modules_reset)
+    (local.set $name (call $g2w (i32.const 0x00110600)))
+    (i32.store8 (local.get $name) (select (i32.const 7) (i32.const 5) (local.get $v2)))
+    (i32.store offset=1 (local.get $name) (i32.const 0x334C5443)) ;; CTL3
+    (i32.store16 offset=5 (local.get $name) (i32.const 0x5644))  ;; DV
+    (i32.store8 offset=7 (local.get $name) (i32.const 0x32))     ;; 2
+    (local.set $module (call $win16_dynamic_module_id (local.get $name)))
+    (i32.or (local.get $module)
+      (i32.shl (call $win16_module_emulated (local.get $module)) (i32.const 16))))
+
+  (func (export "test_win16_ctl3d_ordinal") (param $which i32) (result i32)
+    (local $name i32)
+    (local.set $name (call $g2w (i32.const 0x00110640)))
+    (if (i32.eq (local.get $which) (i32.const 1))
+      (then
+        (i32.store8 (local.get $name) (i32.const 13))
+        (i64.store offset=1 (local.get $name) (i64.const 0x47455244334C5443))
+        (i32.store offset=9 (local.get $name) (i32.const 0x45545349))
+        (i32.store8 offset=13 (local.get $name) (i32.const 0x52))))
+    (if (i32.eq (local.get $which) (i32.const 2))
+      (then
+        (i32.store8 (local.get $name) (i32.const 15))
+        (i64.store offset=1 (local.get $name) (i64.const 0x524E5544334C5443))
+        (i32.store offset=9 (local.get $name) (i32.const 0x53494745))
+        (i32.store16 offset=13 (local.get $name) (i32.const 0x4554))
+        (i32.store8 offset=15 (local.get $name) (i32.const 0x52))))
+    (if (i32.eq (local.get $which) (i32.const 3))
+      (then
+        (i32.store8 (local.get $name) (i32.const 17))
+        (i64.store offset=1 (local.get $name) (i64.const 0x54554144334C5443))
+        (i64.store offset=9 (local.get $name) (i64.const 0x53414C434255534F))
+        (i32.store8 offset=17 (local.get $name) (i32.const 0x53))))
+    (if (i32.eq (local.get $which) (i32.const 4))
+      (then
+        (i32.store8 (local.get $name) (i32.const 18))
+        (i64.store offset=1 (local.get $name) (i64.const 0x474C4444334C5443))
+        (i64.store offset=9 (local.get $name) (i64.const 0x494150454D415246))
+        (i32.store16 offset=17 (local.get $name) (i32.const 0x544E))))
+    (call $win16_ctl3d_ordinal (local.get $name)))
+
+  (func (export "test_win16_ctl3d_call") (param $ordinal i32) (result i32)
+    (call $win16_seg_set (i32.const 1) (i32.const 0x00100000)
+      (i32.const 0x10000) (i32.const 0) (i32.const 1))
+    (call $win16_seg_set (i32.const 2) (i32.const 0x00110000)
+      (i32.const 0x10000) (i32.const 1) (i32.const 2))
+    (global.set $code16 (i32.const 1))
+    (global.set $sreg_cs (call $win16_index_to_sel (i32.const 1)))
+    (global.set $seg_base_cs (i32.const 0x00100000))
+    (global.set $sreg_ss (call $win16_index_to_sel (i32.const 2)))
+    (global.set $seg_base_ss (i32.const 0x00110000))
+    (global.set $esp (i32.const 0x00110100))
+    (call $gs16 (i32.const 0x00110100) (i32.const 0x0010))
+    (call $gs16 (i32.const 0x00110102) (call $win16_index_to_sel (i32.const 1)))
+    (drop (call $win16_ctl3d (local.get $ordinal)))
+    (i32.or (i32.and (global.get $eax) (i32.const 0xFFFF))
+      (i32.shl (i32.sub (global.get $esp) (i32.const 0x00110000)) (i32.const 16))))
 `;
 
 (async () => {
+  const apiSource = fs.readFileSync(path.join(__dirname, '..', 'src', '09e-win16-api.wat'), 'utf8');
+  const dialogSource = fs.readFileSync(path.join(__dirname, '..', 'src', '09e2-win16-dialog.wat'), 'utf8');
+  assert.match(apiSource,
+    /i32\.eq \(local\.get \$ordinal\) \(i32\.const 7\)[\s\S]{0,120}win16_SetStretchBltMode/,
+    'Win16 GDI.7 should dispatch through the shared stretch-mode state');
+  assert.match(apiSource,
+    /i32\.eq \(local\.get \$ordinal\) \(i32\.const 20\)[\s\S]{0,100}win16_ShellExecute/,
+    'Win16 SHELL.20 should reach the shared VFS-aware ShellExecute host path');
+  assert.match(dialogSource,
+    /func \$win16_DialogBoxIndirect[\s\S]*?win16_gseg_field[\s\S]*?win16_dlg_to32[\s\S]*?win16_dlg_run/,
+    'DialogBoxIndirect should validate, convert, and run its HGLOBAL template');
   const { exports: e, hostCtx } = await bootRenderHarness({ extraWat, fonts: 'none' });
   const result = e.test_win16_temp_file(0x63, 0x1234) >>> 0;
   assert.strictEqual(result & 0xFFFF, 0x1234,
@@ -95,5 +167,15 @@ const extraWat = String.raw`
     'DOS3Call AH=56 should report successful file rename in AX');
   assert.ok(!hostCtx.vfs.files.has('c:\\old.tmp') && hostCtx.vfs.files.has('c:\\new.tmp'),
     'DOS3Call AH=56 should move the file to the ES:DI path');
+  assert.strictEqual(e.test_win16_ctl3d_module(0), 0x0001000D,
+    'CTL3D should receive a dynamic pseudo-module handle and be emulated');
+  assert.strictEqual(e.test_win16_ctl3d_module(1), 0x0001000D,
+    'CTL3DV2 should use the same narrowly matched emulation path');
+  assert.deepStrictEqual([1, 2, 3, 4].map(n => e.test_win16_ctl3d_ordinal(n)), [1, 2, 3, 4],
+    'all CTL3D exports requested by WISE should resolve by name');
+  assert.strictEqual(e.test_win16_ctl3d_call(1) >>> 0, 0x01060001,
+    'Ctl3dRegister should return TRUE and pop its HINSTANCE argument');
+  assert.strictEqual(e.test_win16_ctl3d_call(4) >>> 0, 0x010E0000,
+    'Ctl3dDlgFramePaint should return FALSE and pop its 10-byte frame');
   console.log('test-win16-temp-file: PASS');
 })().catch(error => { console.error(error); process.exit(1); });

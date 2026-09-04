@@ -7,7 +7,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { seedExeImage, win16FileCandidates } = require('../lib/vfs-seed');
+const { seedExeImage, win16FileCandidates, residentWin16Module } = require('../lib/vfs-seed');
 
 let failures = 0;
 function check(name, fn) {
@@ -90,6 +90,33 @@ check('a Win16 module name is tried as every suffix under every case', () => {
   assert.ok(!win16FileCandidates('SCRNSAVE').some(c => /\.IW$/i.test(c)));
 });
 
+check('a runtime-created Win16 temporary module is found by its stripped stem', () => {
+  const vfs = fakeVfs();
+  const ne = new Uint8Array(0x82);
+  ne[0] = 0x4d; ne[1] = 0x5a;
+  ne[0x3c] = 0x80;
+  ne[0x80] = 0x4e; ne[0x81] = 0x45;
+  vfs.files.set('c:\\windows\\~glc0000.tmp', { data: ne, attrs: 0x80 });
+  const found = residentWin16Module(vfs, '~GLC0000');
+  assert.strictEqual(found.path, 'c:\\windows\\~glc0000.tmp');
+  assert.strictEqual(found.bytes, ne, 'staging reuses the resident guest-written bytes');
+});
+
+check('runtime module lookup rejects lazy and non-NE entries', () => {
+  const vfs = fakeVfs();
+  vfs.files.set('d:\\lazy.dll', {
+    _provider: {},
+    data: new Uint8Array([0x4d, 0x5a]),
+  });
+  vfs.files.set('c:\\windows\\plain.tmp', {
+    data: new Uint8Array([0x4d, 0x5a]),
+  });
+  assert.strictEqual(residentWin16Module(vfs, 'lazy'), null,
+    'a synchronous host import must not pull a lazy mounted file');
+  assert.strictEqual(residentWin16Module(vfs, 'plain'), null,
+    'an arbitrary resident file must not be staged as executable code');
+});
+
 // Both hosts must be calling this, not carrying their own copy — that is the
 // entire point of the module, and a re-inlined literal would be invisible.
 check('neither host still spells the candidates itself', () => {
@@ -100,6 +127,9 @@ check('neither host still spells the candidates itself', () => {
     assert.ok(/win16FileCandidates/.test(src) && /seedExeImage/.test(src),
       `${f} does not use lib/vfs-seed.js`);
   }
+  const browserHost = fs.readFileSync(path.join(ROOT, 'host.js'), 'utf8');
+  assert.ok(/VfsSeed\.residentWin16Module/.test(browserHost),
+    'host.js does not stage runtime-created modules from the guest VFS');
 });
 
 check('the page loads the module before host.js needs it', () => {

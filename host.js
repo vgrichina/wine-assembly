@@ -505,7 +505,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '276';
+  static SOURCE_VERSION = '277';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -2320,7 +2320,12 @@ class WineAssembly {
   // Answer a 16-bit LoadLibrary for a module nothing imported, out of what
   // _loadWin16Dlls fetched. False is a LoadLibrary failure, not an error.
   _stageWin16Module(name, id) {
-    const bytes = this._win16Modules && this._win16Modules.get(String(name).toUpperCase());
+    let bytes = this._win16Modules && this._win16Modules.get(String(name).toUpperCase());
+    if (!bytes && typeof VfsSeed !== 'undefined' && VfsSeed.residentWin16Module) {
+      const vfs = this._helpCtx && this._helpCtx.vfs;
+      const resident = VfsSeed.residentWin16Module(vfs, name);
+      if (resident) bytes = resident.bytes;
+    }
     const exports = this.instance && this.instance.exports;
     if (!bytes || !exports || !exports.win16_dll_staging) return false;
     const room = exports.win16_app_dll_staging_size
