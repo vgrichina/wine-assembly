@@ -4867,6 +4867,13 @@
           (if (i32.and (i32.ge_u (local.get $op) (i32.const 0xC8)) (i32.le_u (local.get $op) (i32.const 0xCF)))
             (then (call $te (i32.const 115) (i32.sub (local.get $op) (i32.const 0xC8))) (br $decode)))
 
+          ;; 0x0F 0x18 /0-/3: PREFETCHNTA/T0/T1/T2. These are explicitly
+          ;; non-faulting cache hints, so the guest-visible operation is a NOP.
+          ;; decode_modrm still has to consume any SIB and displacement bytes;
+          ;; otherwise the following byte is decoded as a new instruction.
+          (if (i32.eq (local.get $op) (i32.const 0x18))
+            (then (call $decode_modrm) (call $te (i32.const 0) (i32.const 0)) (br $decode)))
+
           ;; 0x0F 0x1F: multi-byte NOP (NOP r/m32)
           (if (i32.eq (local.get $op) (i32.const 0x1F))
             (then (call $decode_modrm) (call $te (i32.const 0) (i32.const 0)) (br $decode)))

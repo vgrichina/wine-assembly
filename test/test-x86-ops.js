@@ -119,6 +119,14 @@ async function main() {
   runCode([0x31, 0xC0]); // xor eax, eax
   test('xor eax, eax', e.get_eax(), 0);
 
+  // PREFETCH instructions are non-faulting hints. The decoder must accept
+  // them as NOPs while still consuming the complete ModRM/SIB/displacement.
+  runCode([
+    0x0F, 0x18, 0x84, 0x8D, ...le32(0x12345678), // prefetchnta [ebp+ecx*4+disp32]
+    0xB8, ...le32(0x51A7C0DE),                    // mov eax, sentinel
+  ]);
+  test('prefetchnta consumes its full effective-address encoding', e.get_eax(), 0x51A7C0DE);
+
   // MOVZX/MOVSX preserve EFLAGS. MFC relies on this exact sequence in its
   // WM_COMMAND routing: TEST button-id; MOVZX notification-code; JZ.
   runCode([
