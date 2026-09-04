@@ -13,6 +13,14 @@ const { mountBundledFonts } = require('./render-helper');
 const RegionMap = require('../lib/region-map.generated.js');
 
 const gdiQueryTestExports = String.raw`
+  (func (export "test_call_CreateFontIndirectA") (param $logfont i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateFontIndirectA
+      (local.get $logfont) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
   (func (export "test_call_GetStockObject") (param $index i32) (result i32)
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
@@ -35,6 +43,23 @@ const gdiQueryTestExports = String.raw`
     (local.set $saved_esp (global.get $esp))
     (call $handle_GetNearestColor
       (local.get $hdc) (local.get $color) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetTextCharset") (param $hdc i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetTextCharset
+      (local.get $hdc) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetTextCharsetInfo")
+        (param $hdc i32) (param $signature i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetTextCharsetInfo
+      (local.get $hdc) (local.get $signature) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
@@ -158,6 +183,66 @@ async function main() {
     'the true-color browser display preserves representable COLORREF values');
   assert.strictEqual(wat.test_call_GetNearestColor(0x7FFFFFFF, 0x00123456), -1,
     'GetNearestColor must return CLR_INVALID for an invalid HDC');
+  assert.strictEqual(wat.test_call_GetTextCharset(hdcA), 0,
+    'the stock system font reports ANSI_CHARSET');
+  assert.strictEqual(wat.test_call_GetTextCharset(0x7FFFFFFF), 1,
+    'an invalid HDC reports DEFAULT_CHARSET');
+
+  const oemLogfont = wat.guest_alloc(60) >>> 0;
+  for (let offset = 0; offset < 60; offset += 4) wat.guest_write32(oemLogfont + offset, 0);
+  wat.guest_write32(oemLogfont, -12);
+  wat.guest_write8(oemLogfont + 23, 255); // OEM_CHARSET
+  'Terminal'.split('').forEach((ch, index) =>
+    wat.guest_write8(oemLogfont + 28 + index, ch.charCodeAt(0)));
+  const oemFont = wat.test_call_CreateFontIndirectA(oemLogfont) >>> 0;
+  assert(oemFont, 'CreateFontIndirectA should create the requested OEM font');
+  const previousFont = wat.test_call_SelectObject(hdcA, oemFont) >>> 0;
+  assert.strictEqual(wat.test_call_GetTextCharset(hdcA), 255,
+    'GetTextCharset must report the selected Terminal OEM strike');
+  const fontSignature = wat.guest_alloc(24) >>> 0;
+  for (let offset = 0; offset < 24; offset += 4) wat.guest_write32(fontSignature + offset, -1);
+  assert.strictEqual(wat.test_call_GetTextCharsetInfo(hdcA, fontSignature), 255,
+    'GetTextCharsetInfo must return the same selected-font charset');
+  for (let offset = 0; offset < 24; offset += 4) {
+    assert.strictEqual(wat.guest_read32(fontSignature + offset), 0,
+      'a bitmap font has an empty FONTSIGNATURE');
+  }
+  const textMetrics = wat.guest_alloc(56) >>> 0;
+  assert.strictEqual(wat.test_call_GetTextMetricsA(hdcA, textMetrics), 1);
+  assert.strictEqual(wat.guest_read8(textMetrics + 52), 255,
+    'TEXTMETRICA.tmCharSet must agree with GetTextCharset');
+  const serializedFont = wat.guest_alloc(60) >>> 0;
+  assert.strictEqual(wat.test_call_GetObjectA(oemFont, 60, serializedFont), 60);
+  assert.strictEqual(wat.guest_read8(serializedFont + 23), 255,
+    'GetObjectA must preserve the requested LOGFONT lfCharSet');
+  assert.strictEqual(wat.test_call_SelectObject(hdcA, previousFont), oemFont);
+  assert.strictEqual(wat.test_gdi_object_delete(oemFont), 1);
+
+  wat.guest_write8(oemLogfont + 23, 1); // DEFAULT_CHARSET
+  const defaultCharsetFont = wat.test_call_CreateFontIndirectA(oemLogfont) >>> 0;
+  assert(defaultCharsetFont, 'CreateFontIndirectA should accept DEFAULT_CHARSET');
+  assert.strictEqual(wat.test_call_SelectObject(hdcA, defaultCharsetFont), previousFont);
+  assert.strictEqual(wat.test_call_GetTextCharset(hdcA), 255,
+    'a bound Terminal strike reports its realized OEM charset, not DEFAULT_CHARSET');
+  assert.strictEqual(wat.test_call_GetObjectA(defaultCharsetFont, 60, serializedFont), 60);
+  assert.strictEqual(wat.guest_read8(serializedFont + 23), 1,
+    'GetObjectA keeps the original DEFAULT_CHARSET request');
+  assert.strictEqual(wat.test_call_SelectObject(hdcA, previousFont), defaultCharsetFont);
+  assert.strictEqual(wat.test_gdi_object_delete(defaultCharsetFont), 1);
+
+  for (let index = 0; index < 32; index++) wat.guest_write8(oemLogfont + 28 + index, 0);
+  'Missing Face'.split('').forEach((ch, index) =>
+    wat.guest_write8(oemLogfont + 28 + index, ch.charCodeAt(0)));
+  const mappedDefaultFont = wat.test_call_CreateFontIndirectA(oemLogfont) >>> 0;
+  assert(mappedDefaultFont, 'the Win98 mapper should create a fallback font');
+  assert.strictEqual(wat.test_call_SelectObject(hdcA, mappedDefaultFont), previousFont);
+  assert.strictEqual(wat.test_call_GetTextCharset(hdcA), 0,
+    'DEFAULT_CHARSET realizes as ANSI for the Western scalable fallback');
+  assert.strictEqual(wat.test_call_GetObjectA(mappedDefaultFont, 60, serializedFont), 60);
+  assert.strictEqual(wat.guest_read8(serializedFont + 23), 1,
+    'the mapped font still serializes the original DEFAULT_CHARSET request');
+  assert.strictEqual(wat.test_call_SelectObject(hdcA, previousFont), mappedDefaultFont);
+  assert.strictEqual(wat.test_gdi_object_delete(mappedDefaultFont), 1);
   assert.strictEqual(wat.test_gdi_dc_get_field(hdcA, 4, 0x30017), 0x30017);
   assert.strictEqual(wat.test_call_SelectObject(hdcA, pen), 0x30017);
   assert.strictEqual(wat.test_call_SelectObject(hdcA, 0x30018), pen);

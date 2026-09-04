@@ -2038,6 +2038,8 @@
       (call $gl32 (i32.add (local.get $obj) (i32.const 24)))
       (i32.ne (call $gl32 (i32.add (local.get $obj) (i32.const 32))) (i32.const 0))
       (local.get $face_w)))
+    (call $gdi_font_set_charset (local.get $hfont)
+      (call $gl32 (i32.add (local.get $obj) (i32.const 28))))
     (call $heap_free (local.get $face))
     (call $gs32 (i32.add (local.get $obj) (i32.const 44)) (local.get $hfont))
     (local.get $hfont))

@@ -3942,10 +3942,11 @@
 
   ;; Font (type 4). flags@20 bit0 means "a bitmap strike is bound at +24" —
   ;; a completely different meaning from the same bit on a bitmap. +28 is a
-  ;; GUEST pointer (heap_free'd at 10e:2600), unlike every other +24/+28 in
+  ;; GUEST pointer (heap_free'd by $gdi_object_delete_full), unlike every other +24/+28 in
   ;; this union, which are WASM addresses.
-  ;; width@32 and pitch_and_family@36 were kept out of the allocator's four
-  ;; positional fields on purpose (10f:592-594, 10f:611-614); they alias the
+  ;; width@32, pitch_and_family@36 and charset@40 were kept out of the allocator's four
+  ;; positional fields on purpose; the dedicated setters fill them after
+  ;; $gdi_font_create. They alias the
   ;; bitmap's palette/palette_count, which is harmless because the types are
   ;; disjoint but is exactly why one shared layout cannot work.
     (variant GdiFont (tag-value FONT)
@@ -3956,8 +3957,9 @@
       (field strike            i32) ;; +24  installed FNT strike, or 0
       (field face              i32) ;; +28  GUEST pointer to the face name
       (field width             i32) ;; +32  lfWidth
-      (field pitch_and_family  i32)) ;; +36  lfPitchAndFamily, & 0xFF
-                                  ;; +40..+44 padded by the compiler
+      (field pitch_and_family  i32) ;; +36  lfPitchAndFamily, & 0xFF
+      (field charset           i32)) ;; +40  requested lfCharSet, & 0xFF
+                                  ;; +44 padded by the compiler
 
   ;; Palette (type 5). Storage at +24 is always WAT-owned, which is what
   ;; flags@20 bit2 records. capacity@12 and version@16 are written by

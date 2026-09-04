@@ -521,6 +521,8 @@
     (i32.store8 (i32.add (local.get $w) (i32.const 46)) (i32.const 31))              ;; tmDefaultChar
     (i32.store8 (i32.add (local.get $w) (i32.const 47)) (i32.const 32))              ;; tmBreakChar = ' '
     (i32.store8 (i32.add (local.get $w) (i32.const 51)) (i32.const 0x26))            ;; tmPitchAndFamily
+    (i32.store8 (i32.add (local.get $w) (i32.const 52))
+      (call $gdi_dc_text_charset (local.get $arg0)))                                 ;; tmCharSet
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -560,17 +562,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 166: GetTextCharset(hdc) — return ANSI_CHARSET (0)
+  ;; 166: GetTextCharset(hdc) — charset of the selected realized font.
   (func $handle_GetTextCharset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $gdi_dc_text_charset (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; GetTextCharsetInfo(hdc, lpSig, flags) — ANSI charset with no Unicode ranges.
+  ;; GetTextCharsetInfo(hdc, lpSig, flags). Raster fonts have no Unicode range
+  ;; signature; preserve the selected font's charset rather than forcing ANSI.
   (func $handle_GetTextCharsetInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg1)
       (then (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 24))))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $gdi_dc_text_charset (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -611,6 +614,8 @@
       (i32.load offset=4 (local.get $lf)))
     (call $gdi_font_set_pitch_and_family (local.get $handle)
       (i32.load8_u offset=27 (local.get $lf)))
+    (call $gdi_font_set_charset (local.get $handle)
+      (i32.load8_u offset=23 (local.get $lf)))
     (call $gdi_bitmap_font_bind (local.get $handle)
       (i32.add (local.get $lf) (i32.const 28)))
     (global.set $eax (local.get $handle))
@@ -641,6 +646,8 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
     (call $gdi_font_set_pitch_and_family (local.get $handle)
       (call $gl32 (i32.add (global.get $esp) (i32.const 52))))
+    (call $gdi_font_set_charset (local.get $handle)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
     (call $gdi_bitmap_font_bind (local.get $handle) (local.get $face))
     (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 60))) (return)
@@ -1772,6 +1779,8 @@
     (call $gs16 (i32.add (local.get $arg1) (i32.const 48)) (i32.const 31))           ;; tmDefaultChar
     (call $gs16 (i32.add (local.get $arg1) (i32.const 50)) (i32.const 32))           ;; tmBreakChar
     (i32.store8 offset=55 (local.get $wa) (i32.const 0x26)) ;; tmPitchAndFamily
+    (i32.store8 offset=56 (local.get $wa)
+      (call $gdi_dc_text_charset (local.get $arg0))) ;; tmCharSet
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -1798,6 +1807,8 @@
       (i32.load offset=4 (local.get $lf)))
     (call $gdi_font_set_pitch_and_family (local.get $handle)
       (i32.load8_u offset=27 (local.get $lf)))
+    (call $gdi_font_set_charset (local.get $handle)
+      (i32.load8_u offset=23 (local.get $lf)))
     (call $gdi_bitmap_font_bind (local.get $handle) (local.get $face_wa))
     (if (local.get $face) (then (call $heap_free (local.get $face))))
     (global.set $eax (local.get $handle))
@@ -3147,6 +3158,8 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
     (call $gdi_font_set_pitch_and_family (local.get $handle)
       (call $gl32 (i32.add (global.get $esp) (i32.const 52))))
+    (call $gdi_font_set_charset (local.get $handle)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
     (call $gdi_bitmap_font_bind (local.get $handle) (local.get $face_wa))
     (if (local.get $face) (then (call $heap_free (local.get $face))))
     (global.set $eax (local.get $handle))

@@ -664,6 +664,63 @@
       (then (store.field.memarg GdiFont pitch_and_family (local.get $p)
         (i32.and (local.get $value) (i32.const 0xFF))))))
 
+  ;; Keep the LOGFONT request intact for GetObject, but report the charset of
+  ;; the realized selected font to GetTextCharset/GetTextMetrics. A bound FNT
+  ;; strike is authoritative; DEFAULT_CHARSET maps to the Win98 Western system
+  ;; default when the scalable fallback supplies the glyphs.
+  (func $gdi_font_requested_charset (param $handle i32) (result i32)
+    (local $record i32) (local $object ptr<GdiObject>) (local $font ptr<GdiFont>)
+    (local.set $record (call $gdi_object_record (local.get $handle)))
+    (if (local.get $record)
+      (then
+        (local.set $object (cast ptr<GdiObject> (local.get $record)))
+        (if (i32.eq (load.field GdiObject type (local.get $object)) (i32.const 4))
+          (then
+            (local.set $font (cast ptr<GdiFont> (local.get $object)))
+            (return (load.field GdiFont charset (local.get $font)))))))
+    (if (i32.eq (call $gdi_object_type (local.get $handle)) (i32.const 4))
+      (then (return (select (i32.const 255) (i32.const 0)
+        (i32.eq (local.get $handle) (i32.const 0x3001A))))))
+    (i32.const 1)) ;; DEFAULT_CHARSET on failure
+
+  (func $gdi_font_set_charset (param $handle i32) (param $value i32)
+    (local $record i32) (local $object ptr<GdiObject>) (local $font ptr<GdiFont>)
+    (local.set $record (call $gdi_object_record (local.get $handle)))
+    (if (local.get $record)
+      (then
+        (local.set $object (cast ptr<GdiObject> (local.get $record)))
+        (if (i32.eq (load.field GdiObject type (local.get $object)) (i32.const 4))
+          (then
+            (local.set $font (cast ptr<GdiFont> (local.get $object)))
+            (store.field GdiFont charset (local.get $font)
+              (i32.and (local.get $value) (i32.const 0xFF))))))))
+
+  (func $gdi_font_charset (param $handle i32) (result i32)
+    (local $record i32) (local $object ptr<GdiObject>) (local $font ptr<GdiFont>)
+    (local $strike i32) (local $charset i32)
+    (local.set $record (call $gdi_object_record (local.get $handle)))
+    (if (local.get $record)
+      (then
+        (local.set $object (cast ptr<GdiObject> (local.get $record)))
+        (if (i32.eq (load.field GdiObject type (local.get $object)) (i32.const 4))
+          (then
+            (local.set $font (cast ptr<GdiFont> (local.get $object)))
+            (local.set $strike (load.field GdiFont strike (local.get $font)))
+            (if (local.get $strike)
+              (then (return (i32.and (i32.load offset=52 (local.get $strike))
+                (i32.const 0xFF)))))
+            (local.set $charset (load.field GdiFont charset (local.get $font)))
+            (return (select (i32.const 0) (local.get $charset)
+              (i32.eq (local.get $charset) (i32.const 1))))))))
+    (call $gdi_font_requested_charset (local.get $handle)))
+
+  (func $gdi_dc_text_charset (param $hdc i32) (result i32)
+    (local $record i32) (local $dc ptr<GdiDcState>)
+    (local.set $record (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 1))))
+    (local.set $dc (cast ptr<GdiDcState> (local.get $record)))
+    (call $gdi_font_charset (load.field GdiDcState font (local.get $dc))))
+
   (func $gdi_font_weight (param $handle i32) (result i32)
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
@@ -751,6 +808,8 @@
     (i32.store offset=4 (local.get $dest) (call $gdi_font_width (local.get $handle)))
     (i32.store offset=16 (local.get $dest) (call $gdi_font_weight (local.get $handle)))
     (i32.store8 offset=20 (local.get $dest) (call $gdi_font_italic (local.get $handle)))
+    (i32.store8 offset=23 (local.get $dest)
+      (call $gdi_font_requested_charset (local.get $handle)))
     (i32.store8 offset=27 (local.get $dest)
       (call $gdi_font_pitch_and_family (local.get $handle)))
     (local.set $face (call $gdi_font_face (local.get $handle)))

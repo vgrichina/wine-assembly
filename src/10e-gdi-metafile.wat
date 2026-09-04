@@ -848,6 +848,8 @@
     (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
     (call $gdi_font_set_width (local.get $handle)
       (i32.load16_s offset=8 (local.get $record)))
+    (call $gdi_font_set_charset (local.get $handle)
+      (i32.load8_u offset=19 (local.get $record)))
     (call $gdi_bitmap_font_bind (local.get $handle) (global.get $TEXT_SCRATCH))
     (local.get $handle))
 

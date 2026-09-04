@@ -1894,11 +1894,19 @@
           "stride": 4
         },
         {
+          "name": "charset",
+          "type": "i32",
+          "offset": 40,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
           "name": "__rest",
           "type": "u8",
-          "offset": 40,
-          "size": 8,
-          "count": 8,
+          "offset": 44,
+          "size": 4,
+          "count": 4,
           "stride": 1
         }
       ]
