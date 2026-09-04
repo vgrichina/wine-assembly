@@ -11,6 +11,7 @@ const { createHostImports } = require('../lib/host-imports');
 
 const memory = new ArrayBuffer(64 * 1024);
 const posted = [];
+let clientRectComputes = 0;
 const wasm = {
   exports: {
     post_message_q(hwnd, msg, wParam, lParam) {
@@ -35,7 +36,7 @@ const renderer = {
   _directMouseDown: { targetHwnd: 110 },
   _dialogBtnDrag: { parent: 100, target: 120 },
   _lastDeepChild: { topHwnd: 200, childHwnd: 210 },
-  _computeClientRect() {},
+  _computeClientRect() { clientRectComputes++; },
   _clampToolbarWidth() { return false; },
   scheduleRepaint() {
     this.repaintScheduled = true;
@@ -87,7 +88,10 @@ assert.strictEqual(host.get_window_info(410, 1), 0, 'get_window_info visible');
 assert.strictEqual(host.get_window_info(420, 2), 0, 'get_window_info enabled');
 assert.strictEqual(host.get_window_info(100, 3), 4321, 'get_window_info process owner');
 
+const computesBeforeRect = clientRectComputes;
 host.get_window_rect(510, 128);
+assert.strictEqual(clientRectComputes, computesBeforeRect,
+  'GetWindowRect must not re-enter WAT through client-rect recomputation');
 const childRect = new DataView(memory, 128, 16);
 assert.deepStrictEqual(Array.from({ length: 4 }, (_, i) => childRect.getInt32(i * 4, true)),
   [18, 50, 58, 80], 'GetWindowRect resolves child coordinates without re-entering WAT');

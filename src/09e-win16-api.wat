@@ -2798,7 +2798,113 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 6)))
 
+  ;; Generic thunking is how a 16-bit program calls a 32-bit DLL on Win9x.
+  ;; WISE carries a small W32INST.dll under a random temporary filename and
+  ;; uses it only for three host-integration operations: the administrator
+  ;; probe, shortcut creation and NT service creation. The browser has no
+  ;; native shell or service manager, so keep real handles/procedure tokens
+  ;; for that helper and give those operations their truthful virtual-machine
+  ;; results (administrator available; shortcut/service request accepted).
+  (global $WIN16_W32INST_HANDLE i32 (i32.const 0x57333201))
+  (global $WIN16_W32INST_ISADMIN i32 (i32.const 0x57330001))
+  (global $WIN16_W32INST_SHELLLINK i32 (i32.const 0x57330002))
+  (global $WIN16_W32INST_DOSERVICE i32 (i32.const 0x57330003))
+  (global $win16_w32inst_module_id (mut i32) (i32.const 0))
+
+  (func $win16_w32inst_proc (param $name i32) (result i32)
+    (local $n i32)
+    (local.set $n (i32.load8_u (local.get $name)))
+    ;; ISADMIN
+    (if (i32.and (i32.eq (local.get $n) (i32.const 7))
+          (i32.and
+            (i32.eq (i32.load offset=1 (local.get $name)) (i32.const 0x44415349))
+            (i32.eq (i32.load offset=4 (local.get $name)) (i32.const 0x4E494D44))))
+      (then (return (global.get $WIN16_W32INST_ISADMIN))))
+    ;; SHELLLINK
+    (if (i32.and (i32.eq (local.get $n) (i32.const 9))
+          (i32.and
+            (i32.eq (i32.load offset=1 (local.get $name)) (i32.const 0x4C454853))
+            (i32.and
+              (i32.eq (i32.load offset=5 (local.get $name)) (i32.const 0x4E494C4C))
+              (i32.eq (i32.load8_u offset=9 (local.get $name)) (i32.const 0x4B)))))
+      (then (return (global.get $WIN16_W32INST_SHELLLINK))))
+    ;; DOSERVICE
+    (if (i32.and (i32.eq (local.get $n) (i32.const 9))
+          (i32.and
+            (i32.eq (i32.load offset=1 (local.get $name)) (i32.const 0x45534F44))
+            (i32.and
+              (i32.eq (i32.load offset=5 (local.get $name)) (i32.const 0x43495652))
+              (i32.eq (i32.load8_u offset=9 (local.get $name)) (i32.const 0x45)))))
+      (then (return (global.get $WIN16_W32INST_DOSERVICE))))
+    (i32.const 0))
+
+  ;; LoadLibraryEx32W(LPCSTR, DWORD hFile, DWORD flags) -> DWORD. The PE32
+  ;; helper was already extracted into the VFS by WISE; the token represents
+  ;; its W32INST export surface rather than executable 32-bit code.
+  (func $win16_LoadLibraryEx32W
+    (local $path i32)
+    (local.set $path (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 5)) (call $win16_arg16 (i32.const 4))))
+    (global.set $eax (select (global.get $WIN16_W32INST_HANDLE) (i32.const 0)
+      (i32.ne (call $gl8 (local.get $path)) (i32.const 0))))
+    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+    (call $win16_api_return (i32.const 12)))
+
+  (func $win16_FreeLibrary32W
+    (global.set $edx (i32.const 0))
+    (call $win16_local_identity (i32.const 4) (i32.const 1)))
+
+  ;; GetProcAddress32W(DWORD hModule, LPCSTR) -> DWORD.
+  (func $win16_GetProcAddress32W
+    (local $name i32) (local $target i32)
+    (local.set $name (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (call $win16_cstr_to_pstr (local.get $name) (call $win16_name_scratch) (i32.const 0))
+    (if (i32.eq (call $win16_arg32 (i32.const 2)) (global.get $WIN16_W32INST_HANDLE))
+      (then (local.set $target
+        (call $win16_w32inst_proc (call $g2w (call $win16_name_scratch))))))
+    (global.set $eax (local.get $target))
+    (global.set $edx (i32.shr_u (local.get $target) (i32.const 16)))
+    (call $win16_api_return (i32.const 8)))
+
+  ;; GetVDMPointer32W(LPVOID, UINT) -> linear DWORD. Protected-mode far
+  ;; pointers map directly into the guest address space used by Win32 APIs.
+  (func $win16_GetVDMPointer32W
+    (global.set $eax (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+    (call $win16_api_return (i32.const 6)))
+
+  ;; CallProc32W(arg..., proc, conversion-mask, count). WISE's W32INST
+  ;; exports are stdcall and accept either no argument (IsAdmin) or one
+  ;; converted pointer (ShellLink/DoService). Their host effects have no
+  ;; browser equivalent; the return values match the helper's success path.
+  (func $win16_CallProc32W
+    (local $count i32) (local $proc i32) (local $result i32)
+    (local.set $count (call $win16_arg32 (i32.const 0)))
+    (local.set $proc (call $win16_arg32 (i32.const 4)))
+    (if (i32.eq (local.get $proc) (global.get $WIN16_W32INST_ISADMIN))
+      (then (local.set $result (i32.const 1))))
+    ;; ShellLink returns zero. DoService returns zero for success.
+    (global.set $eax (local.get $result))
+    (global.set $edx (i32.shr_u (local.get $result) (i32.const 16)))
+    (call $win16_api_return
+      (i32.shl (i32.add (local.get $count) (i32.const 3)) (i32.const 2))))
+
   (func $win16_kernel (param $ordinal i32) (result i32)
+    ;; Windows 95 generic thunks, resolved by name through GetProcAddress.
+    ;; WISE uses these to call its 32-bit W32INST helper from the 16-bit setup
+    ;; engine. The private ordinals are the real Win9x KERNEL export numbers.
+    (if (i32.eq (local.get $ordinal) (i32.const 513))
+      (then (call $win16_LoadLibraryEx32W) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 514))
+      (then (call $win16_FreeLibrary32W) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 515))
+      (then (call $win16_GetProcAddress32W) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 516))
+      (then (call $win16_GetVDMPointer32W) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 517))
+      (then (call $win16_CallProc32W) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 131))
       (then (call $win16_GetDOSEnvironment) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 134))
@@ -3193,12 +3299,41 @@
             ;; table full.
             (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
               (then
+                ;; WISE 5's Win9x bootstrapper extracts W32INST.dll under the
+                ;; fixed GLF4.tmp basename, then passes that PE32 helper to
+                ;; Win16 LoadLibrary. There are no NE segments to stage: WOW
+                ;; returns a module handle and later calls its exports through
+                ;; the generic-thunk APIs below. Recognize the exact basename
+                ;; before asking a Worker host for NE bytes; runtime-created
+                ;; VFS entries are not part of its startup module snapshot.
+                (if (i32.and
+                      (i32.eq (i32.load8_u
+                        (call $g2w (call $win16_name_scratch))) (i32.const 4))
+                      (i32.eq (i32.load offset=1
+                        (call $g2w (call $win16_name_scratch)))
+                        (i32.const 0x34464C47)))
+                  (then
+                    (global.set $win16_w32inst_module_id (local.get $id))
+                    (local.set $handle (call $win16_h16
+                      (i32.or (i32.const 0x00D10000) (local.get $id))))
+                    (call $win16_local_identity (i32.const 4) (local.get $handle))
+                    (return)))
                 (local.set $staged_size (call $host_win16_stage_module
                   (call $g2w (call $win16_name_scratch)) (local.get $id)))
                 (if (i32.eqz (local.get $staged_size))
                   (then
                     (call $win16_dynamic_module_release (local.get $id))
                     (call $win16_local_identity (i32.const 4) (i32.const 2))
+                    (return)))
+                ;; The high bit is the host's exact W32INST marker. Win9x's
+                ;; Win16 LoadLibrary accepts this PE32 helper through WOW; it
+                ;; has no NE segments or LibEntry for this loader to execute.
+                (if (i32.lt_s (local.get $staged_size) (i32.const 0))
+                  (then
+                    (global.set $win16_w32inst_module_id (local.get $id))
+                    (local.set $handle (call $win16_h16
+                      (i32.or (i32.const 0x00D10000) (local.get $id))))
+                    (call $win16_local_identity (i32.const 4) (local.get $handle))
                     (return)))))
             (if (i32.eqz (call $load_ne_dll_sized
                            (local.get $id) (local.get $staged_size)))
@@ -3404,6 +3539,23 @@
               (call $win16_name_scratch) (i32.const 0))
             (local.set $ord (call $win16_ctl3d_ordinal
               (call $g2w (call $win16_name_scratch))))
+            (if (local.get $ord)
+              (then (local.set $target
+                (i32.or (i32.shl (global.get $WIN16_THUNK_SEL) (i32.const 16))
+                        (call $win16_thunk_for (local.get $id) (local.get $ord)
+                                               (i32.const 0))))))))
+        ;; WISE loads its PE32 W32INST helper through Win16 LoadLibrary and
+        ;; expects GetProcAddress to return a callable FARPROC. Route each
+        ;; recognized export through the ordinary Win16 thunk dispatcher.
+        (if (i32.and (i32.eq (local.get $id) (global.get $win16_w32inst_module_id))
+                     (i32.ne (local.get $sel) (i32.const 0)))
+          (then
+            (call $win16_cstr_to_pstr
+              (call $win16_far_to_guest (local.get $sel) (local.get $off))
+              (call $win16_name_scratch) (i32.const 0))
+            (local.set $ord
+              (i32.and (call $win16_w32inst_proc
+                (call $g2w (call $win16_name_scratch))) (i32.const 0xFFFF)))
             (if (local.get $ord)
               (then (local.set $target
                 (i32.or (i32.shl (global.get $WIN16_THUNK_SEL) (i32.const 16))
@@ -10679,6 +10831,22 @@
               (i32.and (local.get $target) (i32.const 0xFFFF))))
             (global.set $steps (i32.const 0))
             (return)))))
+
+    ;; Virtual W32INST exports reached through the FARPROCs returned above.
+    ;; IsAdmin takes no arguments and reports true. ShellLink and DoService
+    ;; each take one far pointer; their host-only side effects are accepted.
+    (if (i32.and
+          (i32.ne (global.get $win16_w32inst_module_id) (i32.const 0))
+          (i32.eq (local.get $module) (global.get $win16_w32inst_module_id)))
+      (then
+        (global.set $eax (select (i32.const 1) (i32.const 0)
+          (i32.eq (local.get $ordinal) (i32.const 1))))
+        (global.set $edx (i32.const 0))
+        (call $win16_api_return
+          (select (i32.const 0) (i32.const 4)
+            (i32.eq (local.get $ordinal) (i32.const 1))))
+        (call $win16_trace_ret)
+        (return)))
 
     (if (i32.eq (local.get $module) (i32.const 1))
       (then (if (call $win16_kernel (local.get $ordinal))
