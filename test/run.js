@@ -1979,7 +1979,7 @@ async function main() {
       const memory = new Uint8Array(ctx.getMemory());
       memory.fill(0, base, base + room);
       memory.set(bytes, base);
-      return true;
+      return bytes.length;
     },
   };
   const base = createHostImports(ctx);

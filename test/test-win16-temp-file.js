@@ -56,6 +56,17 @@ const extraWat = String.raw`
     (call $win16_dos_int21)
     (global.get $eax))
 
+  (func (export "test_win16_disk_free") (param $which i32) (result i32)
+    (global.set $eax (i32.const 0x3600))
+    (call $win16_dos_int21)
+    (if (result i32) (i32.eqz (local.get $which))
+      (then (global.get $eax))
+      (else (if (result i32) (i32.eq (local.get $which) (i32.const 1))
+        (then (global.get $ebx))
+        (else (if (result i32) (i32.eq (local.get $which) (i32.const 2))
+          (then (global.get $ecx))
+          (else (global.get $edx))))))))
+
   (func (export "test_win16_rename") (result i32)
     (call $win16_seg_set (i32.const 2) (i32.const 0x00110000)
       (i32.const 0x10000) (i32.const 1) (i32.const 2))
@@ -139,6 +150,9 @@ const extraWat = String.raw`
 (async () => {
   const apiSource = fs.readFileSync(path.join(__dirname, '..', 'src', '09e-win16-api.wat'), 'utf8');
   const dialogSource = fs.readFileSync(path.join(__dirname, '..', 'src', '09e2-win16-dialog.wat'), 'utf8');
+  const loaderSource = fs.readFileSync(path.join(__dirname, '..', 'src', '08c-ne-loader.wat'), 'utf8');
+  const hostImportsSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'host-imports.js'), 'utf8');
+  const browserHostSource = fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8');
   assert.match(apiSource,
     /i32\.eq \(local\.get \$ordinal\) \(i32\.const 7\)[\s\S]{0,120}win16_SetStretchBltMode/,
     'Win16 GDI.7 should dispatch through the shared stretch-mode state');
@@ -149,11 +163,41 @@ const extraWat = String.raw`
     /func \$win16_DialogBoxIndirect[\s\S]*?win16_gseg_field[\s\S]*?win16_dlg_to32[\s\S]*?win16_dlg_run/,
     'DialogBoxIndirect should validate, convert, and run its HGLOBAL template');
   assert.match(dialogSource,
+    /func \$win16_DialogBox \(param \$with_param[\s\S]*?win16_res_module[\s\S]*?win16_res_module_id[\s\S]*?win16_find_resource/,
+    'DialogBox should resolve its template in the caller-supplied hInstance');
+  assert.match(dialogSource,
     /func \$win16_DialogBoxIndirect \(param \$modeless i32\)[\s\S]*?win16_dlg_modeless_pending[\s\S]*?win16_dlg_run/,
     'CreateDialogIndirect should share template conversion but return through the modeless continuation');
+  assert.match(dialogSource,
+    /local\.set \$offset \(select[\s\S]*?local\.set \$handle[\s\S]*?local\.set \$frame \(select \(i32\.const 12\)[\s\S]*?win16_far_to_guest[\s\S]*?local\.get \$offset/,
+    'CreateDialogIndirect should consume its 12-byte frame and convert the supplied far template pointer');
   assert.match(apiSource,
     /ordinal\) \(i32\.const 219\)[\s\S]{0,120}win16_DialogBoxIndirect \(i32\.const 1\)/,
     'USER.219 CreateDialogIndirect should select the modeless indirect-dialog path');
+  assert.match(apiSource,
+    /func \$win16_DispatchMessage[\s\S]*?WNDPROC_DIALOG[\s\S]*?dialog_proc_get[\s\S]*?win16_enter_wndproc/,
+    'DispatchMessage should enter the retained DLGPROC for a modeless Win16 dialog');
+  assert.match(apiSource,
+    /ordinal\) \(i32\.const 89\)[\s\S]{0,120}win16_DialogBox \(i32\.const 0\) \(i32\.const 1\)/,
+    'USER.89 CreateDialog should select the modeless resource-dialog path');
+  assert.match(apiSource,
+    /ordinal\) \(i32\.const 126\)[\s\S]{0,120}win16_InvalidateRgn/,
+    'USER.126 InvalidateRgn should reach the shared invalidation handler');
+  assert.match(loaderSource,
+    /func \$load_ne_dll_sized[\s\S]*?local\.get \$staged_size[\s\S]*?local\.get \$meta_pages[\s\S]*?local\.get \$meta_size/,
+    'dynamic Win16 DLLs should retain their complete staged image, not only the first 64KB');
+  assert.match(loaderSource,
+    /func \$win16_dll_image_size_ptr[\s\S]{0,400}i32\.const 0x8800/,
+    'dynamic image lengths should stay in the gap before the resource descriptor table');
+  assert.match(apiSource,
+    /func \$win16_LoadLibrary[\s\S]*?host_win16_stage_module[\s\S]*?load_ne_dll_sized/,
+    'Win16 LoadLibrary should pass the exact staged byte length to the NE loader');
+  assert.match(hostImportsSource,
+    /return Number\(ctx\.win16StageModule\(name, id\)\) \|\| 0/,
+    'the shared host import should preserve the staged byte length');
+  assert.match(browserHostSource,
+    /_stageWin16Module\(name, id\)[\s\S]*?memory\.set\(bytes, base\);\s*return bytes\.length;/,
+    'the browser staging callback should return the exact helper image length');
   const { exports: e, hostCtx } = await bootRenderHarness({ extraWat, fonts: 'none' });
   const result = e.test_win16_temp_file(0x63, 0x1234) >>> 0;
   assert.strictEqual(result & 0xFFFF, 0x1234,
@@ -168,6 +212,9 @@ const extraWat = String.raw`
     'DOS3Call AH=39 should report successful directory creation in AX');
   assert.ok(hostCtx.vfs.dirs.has('c:\\windows\\temp\\wise'),
     'DOS3Call AH=39 should create the requested VFS directory');
+  assert.deepStrictEqual([0, 1, 2, 3].map(n => e.test_win16_disk_free(n) & 0xFFFF),
+    [8, 32768, 512, 65535],
+    'DOS3Call AH=36 should advertise enough writable space for period installers');
   hostCtx.vfs.files.set('c:\\old.tmp', { data: Uint8Array.of(1, 2, 3), attrs: 0x20 });
   assert.strictEqual(e.test_win16_rename() & 0xFFFF, 0,
     'DOS3Call AH=56 should report successful file rename in AX');

@@ -1708,16 +1708,16 @@
     ;; 36h free disk space, DL = drive (0 = current). AX sectors per cluster,
     ;; BX free clusters, CX bytes per sector, DX clusters in total. The
     ;; filesystem here has no geometry, so it answers with a plain one: 512
-    ;; byte sectors, 8 to a cluster, and a 32MB volume half of which is free.
+    ;; byte sectors, 8 to a cluster, and a 256MB volume half of which is free.
     ;; BX and DX are 16-bit registers: the old 65536/131072 constants wrapped
     ;; both to zero, so InstallShield reported that no drive had 1.2MB free.
     ;; JigSawed asks before it will save a game.
     (if (i32.eq (local.get $ah) (i32.const 0x36))
       (then
         (call $dos_set_ax (i32.const 8))
-        (global.set $ebx (i32.const 4096))
+        (global.set $ebx (i32.const 32768))
         (global.set $ecx (i32.const 512))
-        (global.set $edx (i32.const 8192))
+        (global.set $edx (i32.const 65535))
         (call $dos_cf (i32.const 0))
         (return)))
 
@@ -3140,6 +3140,7 @@
   (func $win16_LoadLibrary
     (local $name i32) (local $id i32) (local $fresh i32)
     (local $handle i32) (local $init i32) (local $ret i32) (local $data_sel i32)
+    (local $staged_size i32)
     (local.set $name (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
     (call $win16_cstr_to_pstr (local.get $name) (call $win16_name_scratch) (i32.const 1))
@@ -3164,13 +3165,15 @@
             ;; table full.
             (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
               (then
-                (if (i32.eqz (call $host_win16_stage_module
-                               (call $g2w (call $win16_name_scratch)) (local.get $id)))
+                (local.set $staged_size (call $host_win16_stage_module
+                  (call $g2w (call $win16_name_scratch)) (local.get $id)))
+                (if (i32.eqz (local.get $staged_size))
                   (then
                     (call $win16_dynamic_module_release (local.get $id))
                     (call $win16_local_identity (i32.const 4) (i32.const 2))
                     (return)))))
-            (if (i32.eqz (call $load_ne_dll (local.get $id)))
+            (if (i32.eqz (call $load_ne_dll_sized
+                           (local.get $id) (local.get $staged_size)))
               (then
                 (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
                   (then (call $win16_dynamic_module_release (local.get $id))))
@@ -4529,6 +4532,8 @@
       (then (call $win16_RegisterWindowMessage) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 125))
       (then (call $win16_InvalidateRect) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 126))
+      (then (call $win16_InvalidateRgn) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 127))
       (then (call $win16_ValidateRect) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 150))
@@ -4627,6 +4632,8 @@
     ;; Dialogs — see 09e2.
     (if (i32.eq (local.get $ordinal) (i32.const 87))
       (then (call $win16_DialogBox (i32.const 0) (i32.const 0)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 89))
+      (then (call $win16_DialogBox (i32.const 0) (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 218))
       (then (call $win16_DialogBoxIndirect (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 219))
@@ -5877,6 +5884,16 @@
     (local.set $lparam (call $gl32 (i32.add (local.get $msg) (i32.const 6))))
     (local.set $hwnd (call $win16_h32 (local.get $hwnd16)))
     (local.set $proc (call $wnd_table_get (local.get $hwnd)))
+    ;; A modeless dialog returns to the task's ordinary GetMessage /
+    ;; DispatchMessage loop after WM_INITDIALOG. Its window-table procedure is
+    ;; USER's WNDPROC_DIALOG marker, while the callable 16-bit DLGPROC lives in
+    ;; the parallel dialog-procedure table. Treating the marker as a native WAT
+    ;; procedure sends WM_COMMAND back through wnd_send_message, which merely
+    ;; queues it again; WISE's Next button therefore spins forever. Resolve the
+    ;; retained DLGPROC here so the callback returns directly to the original
+    ;; DispatchMessage caller, exactly like an ordinary 16-bit window proc.
+    (if (i32.eq (local.get $proc) (global.get $WNDPROC_DIALOG))
+      (then (local.set $proc (call $dialog_proc_get (local.get $hwnd)))))
     ;; A WM_TIMER whose timer was created with a TIMERPROC carries that
     ;; procedure in lParam, and dispatching it means calling that instead of
     ;; the window procedure — the window never sees the message. A TIMERPROC
@@ -6264,6 +6281,20 @@
     (call $win16_call32_end)
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 8)))
+
+  ;; USER.126 InvalidateRgn(hWnd, hRgn, bErase). Both handles are narrow;
+  ;; unlike InvalidateRect there is no structure to widen.
+  (func $win16_InvalidateRgn
+    (local $hwnd i32) (local $hrgn i32) (local $erase i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    (local.set $hrgn (call $win16_h32 (call $win16_arg16 (i32.const 1))))
+    (local.set $erase (call $win16_arg16 (i32.const 0)))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_InvalidateRgn (local.get $hwnd) (local.get $hrgn) (local.get $erase)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 6)))
 
   ;; USER.16 ClipCursor(lpRect). The Win16 RECT has four signed 16-bit fields;
   ;; widen it before handing it to the shared cursor-confinement handler.

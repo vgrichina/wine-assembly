@@ -9,7 +9,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 const { VirtualFS } = require('../lib/filesystem');
 const { analyzeMediaPaths, closeMedia } = require('../lib/media-cli');
 
@@ -67,11 +67,13 @@ async function main(argv = process.argv.slice(2)) {
       `${prepared.plan.entryCount} entries`);
     console.log(`[media] launching ${prepared.candidate.path}` +
       `${prepared.candidate.autorun ? ' (AUTORUN.INF)' : ''}`);
-    const child = spawnSync(process.execPath, runnerArgsFor(prepared, runnerArgs), {
+    const child = spawn(process.execPath, runnerArgsFor(prepared, runnerArgs), {
       stdio: 'inherit',
     });
-    if (child.error) throw child.error;
-    return child.status === null ? 1 : child.status;
+    return await new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('exit', (code, signal) => resolve(signal ? 1 : (code ?? 1)));
+    });
   } finally {
     if (prepared) {
       closeMedia(prepared);

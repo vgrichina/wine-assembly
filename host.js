@@ -505,7 +505,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '281';
+  static SOURCE_VERSION = '282';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -2336,7 +2336,7 @@ class WineAssembly {
     const memory = new Uint8Array(this.memory.buffer);
     memory.fill(0, base, base + room);
     memory.set(bytes, base);
-    return true;
+    return bytes.length;
   }
 
   // Mount every vendored open font at the Win98 filename it substitutes.
