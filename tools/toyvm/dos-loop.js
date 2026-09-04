@@ -1049,7 +1049,15 @@ class DosSession {
     const gusInterval = gp ? Math.max(200, Math.round(gp / this.guestSeconds(1))) : Infinity;
     const shortest = Math.min(gusInterval, this.pitClock
       ? Math.min(this.timerInterval(), this.vgaPeriod || Infinity) : this.irqEvery);
-    const budget = Math.min(this.slice, Math.max(1, Math.floor(shortest / 4)));
+    // The Sound Blaster's block end is an event, not a rate: the slice is cut
+    // to land on it, so the block-done interrupt is raised at the sample the
+    // block ran out on. A slice that overshoots it by a few milliseconds is a
+    // hole of held sample between one single-cycle block and the next, and a
+    // click every block (BRW.EXE). Whole, not quartered: the block's last
+    // sample is where the slice should end, and the next slice is cut again.
+    const sbLeft = machine.sbSecondsLeft ? machine.sbSecondsLeft() : 0;
+    const sbInterval = sbLeft > 0 ? Math.max(200, Math.ceil(sbLeft / this.guestSeconds(1))) : Infinity;
+    const budget = Math.min(this.slice, Math.max(1, Math.floor(shortest / 4)), sbInterval);
     // So a port write inside the slice can say when it happened (audioNow).
     machine.sliceStart = this.dispatched;
     machine.sliceBudget = budget;

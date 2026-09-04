@@ -323,6 +323,12 @@ if (results.length === 2) {
   const t = timeAlign(a, b);
   console.log(`  time scale ${t.scale.toFixed(2)} (offset ${t.offset > 0 ? '+' : ''}${t.offset.toFixed(2)}s, chroma similarity ${t.sim.toFixed(3)}`
     + ` over ${t.frames} frames; at scale 1.00 the best is ${t.simAt1.toFixed(3)})`
-    + ` -- ${Math.abs(t.scale - 1) <= 0.03 ? 'same tempo' : 'DIFFERENT TEMPO'}`);
+    + ` -- ${Math.abs(t.scale - 1) <= 0.03 ? 'same tempo'
+      // A scale that beats 1.00 by a hair is the aligner finding a repeat in
+      // the tune, not a tempo: BRW against its DOSBox-X reference scored
+      // 0.972 at 0.65 and 0.962 at 1.00 with the beat detectors agreeing to
+      // half a percent. Ask for a real margin before calling it different.
+      : t.sim - t.simAt1 < 0.05 ? 'tempo not distinguishable from 1.00 (aligner margin under 0.05; trust the beat line)'
+        : 'DIFFERENT TEMPO'}`);
   console.log(`  beat autocorrelation ${(a.beat * 1000).toFixed(1)}ms vs ${(b.beat * 1000).toFixed(1)}ms (a coarser check: it can pick different multiples)`);
 }

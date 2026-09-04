@@ -16,6 +16,14 @@
 // what the emulated cards have done. One line per second, then a verdict:
 // the share of pulls that underran after the first second of sound.
 //
+// `--wav=out.wav` records what the browser actually pulled off the ring --
+// underruns as the silence they are, and nothing the ring dropped -- so the
+// page's own playback can go through audio-check.js like a headless render
+// and against one (`audio-check.js page.wav headless.wav`). The `dropped`
+// column is the other way a paced run loses sound: frames rendered when the
+// ring was already full, which no underrun count ever shows. Only one
+// name records; the file is what that tile played.
+//
 // Headless Chrome renders audio into a null sink at real time, so the ring's
 // arithmetic is exactly the real page's; what it cannot measure is the load
 // of a real machine with a compositor in front of it, so a clean run here on
@@ -52,7 +60,7 @@ function serve(dir) {
   });
 }
 
-async function probe(page, name, seconds) {
+async function probe(page, name, seconds, wav) {
   const opened = await page.evaluate((n) => {
     const fig = [...document.querySelectorAll('figure[data-live]')].find((f) => f.dataset.live === n);
     if (!fig) return false;
@@ -63,6 +71,21 @@ async function probe(page, name, seconds) {
   const has = await page.evaluate(() => { const b = document.getElementById('lb-play'); return !!b && !b.hidden; });
   if (!has) return { name, error: 'the Run button stayed hidden' };
   await page.evaluate(() => document.getElementById('lb-play').click());
+  if (wav) {
+    // Tap the ring's read: every buffer the audio thread takes is copied
+    // aside, left channel only, so the file is exactly the played stream.
+    // The ring exists once the Run click has made the context, so poll.
+    await page.evaluate(async () => {
+      for (let i = 0; i < 100 && !(self.liveRun && self.liveRun.ring); i++) await new Promise((r) => setTimeout(r, 50));
+      const ring = self.liveRun && self.liveRun.ring;
+      if (!ring) return;
+      const chunks = [];
+      const read = ring.read.bind(ring);
+      const at = [];
+      ring.read = (l, r, n) => { read(l, r, n); chunks.push(l.slice(0, n)); at.push(performance.now()); };
+      self.__tap = { chunks, at, rate: self.liveRun.audioStats().rate };
+    });
+  }
 
   const rows = [];
   const t0 = Date.now();
@@ -76,6 +99,7 @@ async function probe(page, name, seconds) {
       const m = run.machine;
       return {
         audio: a, stalls: run.stalls, dispatched: (run.session && run.session.dispatched) || 0,
+        dropped: run.ring ? run.ring.dropped : 0,
         gus: m && m.gus ? { irqs: m.gus.stats.irqs, starts: m.gus.stats.starts, playing: m.gus.active() } : null,
         status: (document.getElementById('lb-status') || {}).textContent || '',
       };
@@ -84,21 +108,54 @@ async function probe(page, name, seconds) {
     const d = last ? {
       pulls: st.audio.pulls - last.audio.pulls, underruns: st.audio.underruns - last.audio.underruns,
       rendered: st.audio.rendered - last.audio.rendered, stalls: st.stalls - last.stalls,
-      dispatched: st.dispatched - last.dispatched,
-    } : { pulls: st.audio.pulls, underruns: st.audio.underruns, rendered: st.audio.rendered, stalls: st.stalls, dispatched: st.dispatched };
+      dispatched: st.dispatched - last.dispatched, dropped: st.dropped - last.dropped,
+    } : { pulls: st.audio.pulls, underruns: st.audio.underruns, rendered: st.audio.rendered, stalls: st.stalls, dispatched: st.dispatched, dropped: st.dropped };
     rows.push({ t: s, ...d, state: st.audio.state, rate: st.audio.rate, sb: st.audio.sb, opl: st.audio.opl,
       speaker: st.audio.speaker, gus: st.gus, total: st.audio });
     last = st;
   }
+  let recorded = null;
+  if (wav) {
+    // Int16 little-endian in base64: a few MB of samples cross the bridge
+    // in one string instead of a JSON array of floats.
+    const b64 = await page.evaluate(() => {
+      const tap = self.__tap;
+      if (!tap) return null;
+      const n = tap.chunks.reduce((s, c) => s + c.length, 0);
+      const pcm = new Int16Array(n);
+      let o = 0;
+      for (const c of tap.chunks) for (let i = 0; i < c.length; i++) pcm[o++] = Math.max(-32768, Math.min(32767, Math.round(c[i] * 32767)));
+      let s = '';
+      const u8 = new Uint8Array(pcm.buffer);
+      for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+      // Pull timing: the ScriptProcessorNode fires on the main thread, so a
+      // gap between pulls longer than a buffer is a stall the listener heard
+      // as a dropout, whatever the ring held at the time.
+      const gaps = [];
+      for (let i = 1; i < tap.at.length; i++) gaps.push(tap.at[i] - tap.at[i - 1]);
+      const buf = tap.chunks.length ? tap.chunks[0].length / tap.rate * 1000 : 0;
+      return { rate: tap.rate, b64: btoa(s), bufMs: buf, maxGap: Math.max(0, ...gaps), late: gaps.filter((g) => g > buf * 1.5).length, pulls: gaps.length + 1 };
+    });
+    if (b64) {
+      const pcm = Buffer.from(b64.b64, 'base64');
+      const head = Buffer.alloc(44);
+      head.write('RIFF', 0); head.writeUInt32LE(36 + pcm.length, 4); head.write('WAVEfmt ', 8);
+      head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20); head.writeUInt16LE(1, 22);
+      head.writeUInt32LE(b64.rate, 24); head.writeUInt32LE(b64.rate * 2, 28); head.writeUInt16LE(2, 32);
+      head.writeUInt16LE(16, 34); head.write('data', 36); head.writeUInt32LE(pcm.length, 40);
+      fs.writeFileSync(wav, Buffer.concat([head, pcm]));
+      recorded = { file: wav, rate: b64.rate, seconds: pcm.length / 2 / b64.rate, bufMs: b64.bufMs, maxGap: b64.maxGap, late: b64.late, pulls: b64.pulls };
+    }
+  }
   await page.evaluate(() => { const d = document.querySelector('dialog[open]'); if (d) d.close(); });
-  return { name, rows, final: last };
+  return { name, rows, final: last, recorded };
 }
 
 async function main() {
   const dir = path.resolve(arg('dir', path.join(__dirname, '..', '..', 'docs', 'dos-corpus')));
   const names = (arg('names', '') || arg('name', '')).split(',').filter(Boolean);
   if (!names.length) {
-    console.error('usage: live-audio-probe.js --name=DEMO.EXE [--seconds=15] [--mips=10] [--headful] [--json=out.json]');
+    console.error('usage: live-audio-probe.js --name=DEMO.EXE [--seconds=15] [--mips=10] [--headful] [--json=out.json] [--wav=played.wav]');
     process.exit(2);
   }
   const seconds = Number(arg('seconds', 15));
@@ -122,7 +179,7 @@ async function main() {
 
   const out = [];
   for (const name of names) {
-    const r = await probe(page, name, seconds);
+    const r = await probe(page, name, seconds, name === names[0] ? arg('wav') : null);
     out.push(r);
     if (r.error) { console.log(`${name}: ${r.error}`); continue; }
     console.log(`${name} at ${mips} MIPS, ${seconds}s:`);
@@ -134,7 +191,7 @@ async function main() {
       if (row.speaker) src.push(`spk ${row.speaker}`);
       if (row.gus && (row.gus.starts || row.gus.irqs)) src.push(`gus ${row.gus.starts} starts/${row.gus.irqs} irqs${row.gus.playing ? ' playing' : ''}`);
       console.log(`  ${String(row.t).padStart(3)}s  pulls ${String(row.pulls).padStart(4)}  underruns ${String(row.underruns).padStart(3)}`
-        + `  rendered ${String(row.rendered).padStart(6)}  stalls ${String(row.stalls).padStart(3)}`
+        + `  rendered ${String(row.rendered).padStart(6)}  dropped ${String(row.dropped).padStart(5)}  stalls ${String(row.stalls).padStart(3)}`
         + `  ${(row.dispatched / 1e6).toFixed(1).padStart(5)}M dispatches  ${row.state}  ${src.join(', ')}`);
     }
     const a = r.final && r.final.audio;
@@ -146,7 +203,9 @@ async function main() {
       const share = pulls ? under / pulls : 0;
       console.log(`  verdict: ${under} of ${pulls} pulls underran after 1s (${(share * 100).toFixed(1)}%), ${r.final.stalls} stall(s)`
         + ` -- ${share < 0.01 ? 'continuous' : share < 0.1 ? 'OCCASIONAL GAPS' : 'GAPPY: the host cannot keep pace'}`);
-      r.verdict = { pulls, underruns: under, share, stalls: r.final.stalls };
+      r.verdict = { pulls, underruns: under, share, stalls: r.final.stalls, dropped: r.final.dropped };
+      if (r.final.dropped) console.log(`  ${r.final.dropped} frame(s) DROPPED: the machine rendered ahead of a full ring`);
+      if (r.recorded) console.log(`  recorded ${r.recorded.seconds.toFixed(2)}s at ${r.recorded.rate}Hz to ${r.recorded.file}; pull gaps: ${r.recorded.late} of ${r.recorded.pulls} later than 1.5 buffers (${r.recorded.bufMs.toFixed(1)}ms), longest ${r.recorded.maxGap.toFixed(1)}ms`);
     }
   }
   if (errors.length) console.log(`page errors: ${errors.slice(0, 5).join(' | ')}`);

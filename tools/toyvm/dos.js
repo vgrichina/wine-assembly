@@ -2375,6 +2375,19 @@ class Machine {
     return this.sb.len / this.sb.rate;
   }
 
+  // Guest seconds until the block in flight runs out, 0 when nothing is
+  // playing. The loop cuts its slice to this so the block-done interrupt
+  // reaches the guest at the sample the block ended on, not at the end of
+  // whatever slice happened to contain it. A single-cycle player (BRW.EXE:
+  // 4096 samples at 22kHz, 0x14 re-issued from the handler) otherwise gets a
+  // 1-4ms hole between blocks where the card holds its last sample, and that
+  // hole is a click at every block boundary, five times a second.
+  sbSecondsLeft() {
+    const sb = this.sb;
+    if (!sb.pending || sb.paused || !sb.rate || sb.left <= 0) return 0;
+    return sb.left / sb.rate;
+  }
+
   // Whether an IRQ is owed right now rather than at the next cadence tick.
   sbForced() {
     return this.sb.forced;
