@@ -130,7 +130,23 @@ async function main() {
     assert.strictEqual(frag.opened.link, `#${frag.id}`, 'the dialog name does not link to the tile');
     assert.strictEqual(frag.opened.name, frag.name);
     assert.strictEqual(frag.closed.hash, '', `closing left the hash "${frag.closed.hash}"`);
-    // Arrive by link: a fresh load with the fragment opens that tile.
+    // Arrive by link: a fresh load with the fragment opens that tile. A REAL
+    // load, by way of about:blank -- going from demos.html to demos.html#id
+    // is a same-document navigation that only fires hashchange, and that is
+    // how a script that threw on every reload-with-fragment (Safari, the
+    // first report) passed this test.
+    await page.goto('about:blank');
+    await page.goto(`http://127.0.0.1:${port}/demos.html#${frag.id}`, { waitUntil: 'load' });
+    // And the page is still alive after that load: the filter bar answers.
+    await page.evaluate(() => document.getElementById('lb').close());
+    const alive = await page.evaluate(() => {
+      document.querySelector('#filter button[data-kind="text"]').click();
+      return document.getElementById('filter-count').textContent;
+    });
+    assert.ok(/^\d+ of \d+$/.test(alive) && !alive.startsWith('199 of'),
+      `after a load with a fragment the filter bar is dead (count "${alive}")`);
+    await page.evaluate(() => document.querySelector('#filter button[data-kind="all"]').click());
+    await page.goto('about:blank');
     await page.goto(`http://127.0.0.1:${port}/demos.html#${frag.id}`, { waitUntil: 'load' });
     const arrived = await page.evaluate(() => ({
       open: document.getElementById('lb').open,
