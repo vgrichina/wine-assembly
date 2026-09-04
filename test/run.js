@@ -5234,7 +5234,11 @@ async function main() {
       rl.on('close', () => {});
       // But an open stdin must not keep the process alive after the batch
       // loop ends either (a terminal's stdin never reaches EOF).
-      return { close() { rl.close(); process.stdin.unref(); if (server) server.close(); } };
+      return { close() {
+        rl.close();
+        if (typeof process.stdin.unref === 'function') process.stdin.unref();
+        if (server) server.close();
+      } };
     }
     return { close() { if (server) server.close(); } };
   })() : null;

@@ -137,6 +137,30 @@ async function waitFor(what, probe, ms = 45000) {
     new Promise(r => setTimeout(() => r('timeout'), 15000)),
   ]);
   check('quit ends the self-bounded run cleanly', code === 0, `exit=${code}`);
+
+  const preload = path.join(tmpDir, 'stdin-without-unref.js');
+  fs.writeFileSync(preload,
+    "Object.defineProperty(process.stdin, 'unref', { value: undefined, configurable: true });\n");
+  const bounded = spawn('node', [
+    '-r', preload,
+    RUN,
+    `--exe=${EXE}`,
+    '--control-stdin',
+    '--max-seconds=0.05',
+    '--max-batches=100000',
+    '--quiet-api',
+    '--quiet-blocks',
+  ], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  let boundedOutput = '';
+  bounded.stdout.on('data', data => { boundedOutput += data; });
+  bounded.stderr.on('data', data => { boundedOutput += data; });
+  const boundedCode = await Promise.race([
+    new Promise(resolve => bounded.on('exit', resolve)),
+    new Promise(resolve => setTimeout(() => resolve('timeout'), 15000)),
+  ]);
+  check('internal timeout closes stdin without requiring unref',
+    boundedCode === 0 && !/TypeError|stdin\.unref/.test(boundedOutput),
+    `exit=${boundedCode} output=${boundedOutput.slice(-1000)}`);
 })().catch(error => {
   console.log('FAIL  ' + (error.stack || error.message));
   failed = true;

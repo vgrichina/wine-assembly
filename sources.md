@@ -1006,8 +1006,10 @@ through their original installers before using any extracted game files.
   Game startup then exposed a VFS enumeration error: `palettes\\*` against a
   missing directory fell back to the drive root and recursively invented paths
   such as `palettes\\program files\\program files`. Broad wildcards in missing
-  directories now fail normally; TA advances into archive/audio/palette setup,
-  but its next CPU-bound allocator scan has not yet reached a rendered menu.
+  directories now fail normally. TA now completes that initialization, renders
+  its title and campaign menus, loads the first Arm mission, and reaches the
+  live battlefield through the registered installer-produced payload. See
+  [`docs/re-notes/total-annihilation-demo.md`](docs/re-notes/total-annihilation-demo.md).
 - Captain Claw is the direct 11,275,313-byte `claw_demo.exe`. Its original
   InstallShield self-extractor runs from 1% through 99% and yields a complete
   10,689,596-byte `data.z`, 185,356-byte `_setup.lib`, and the native Win16
