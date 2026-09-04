@@ -463,6 +463,26 @@ assert.strictEqual(suspendedRunTm.hasActiveThreads(), true, 'the final resume ma
 suspendedRunTm.runSlice(100);
 assert.strictEqual(suspendedRuns, 1, 'scheduler executes the worker after its final resume');
 
+const vblankTm = makeThreadManager();
+let vblankYield = 13;
+let vblankClears = 0;
+let vblankRuns = 0;
+const vblankThread = makeRunnableThread(1, () => { vblankRuns++; });
+vblankThread.instance.exports.get_yield_reason = () => vblankYield;
+vblankThread.instance.exports.clear_yield = () => {
+  vblankYield = 0;
+  vblankClears++;
+};
+vblankTm.threads.set(0xe1000, vblankThread);
+vblankTm.runSlice(100);
+assert.strictEqual(vblankClears, 1,
+  'a cooperative guest thread clears a parked vblank on its next turn');
+assert.strictEqual(vblankRuns, 0,
+  'clearing a vblank park yields the current turn so the display can advance');
+vblankTm.runSlice(100);
+assert.strictEqual(vblankRuns, 1,
+  'the following cooperative slice re-enters and resumes the parked thread');
+
 let now = 0;
 const budgetTm = makeThreadManager();
 budgetTm._now = () => now;
