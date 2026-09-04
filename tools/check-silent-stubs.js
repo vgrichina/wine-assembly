@@ -194,8 +194,8 @@ const digest = crypto.createHash('sha256')
 // tree and returns the selected PIDL instead of silently reporting Cancel.
 // 2026-09-03: 447 -> 446. Shell_NotifyIconA now owns browser notification-
 // area add/modify/delete state and delivers Win98 mouse callback messages.
-const EXPECTED_COUNT = 446;
-const EXPECTED_SHA256 = 'cab161065674731d7dd4320110834a7b47d65fa42a2b19e79312d158a484d765';
+const EXPECTED_COUNT = 443;
+const EXPECTED_SHA256 = 'de2977a0b2e34c4616ba215527b1b7062e741b609462556efe084ca14845ced9';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

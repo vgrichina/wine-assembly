@@ -110,6 +110,21 @@ function validateCacheVersions(files) {
     errors.push(`host.js SOURCE_VERSION=v${sourceMatch[1]} disagrees with ${hostRefs[0].sourceFile}:${hostRefs[0].line}=v${hostRefs[0].version}`);
   }
 
+  // The generated map and the wasm artifact are one ABI split across two
+  // files. Tie every browser copy of the mirror to the same release key as the
+  // wasm fetch so a cache can never combine generations (the runtime hash
+  // check catches that combination, but by then no application can launch).
+  const regionMapRefs = byAsset.get('lib/region-map.generated.js') || [];
+  if (sourceMatch && regionMapRefs.length !== 2) {
+    errors.push(`browser runtime must contain exactly two versioned lib/region-map.generated.js references (found ${regionMapRefs.length})`);
+  } else if (sourceMatch) {
+    for (const ref of regionMapRefs) {
+      if (ref.version !== sourceMatch[1]) {
+        errors.push(`lib/region-map.generated.js cache key must match SOURCE_VERSION=v${sourceMatch[1]}: ${ref.sourceFile}:${ref.line}=v${ref.version}`);
+      }
+    }
+  }
+
   return {
     errors,
     refs,
@@ -122,12 +137,13 @@ function selfTest() {
   const good = new Map([
     ['index.html', [
       '<script src="build-info.js"></script>',
+      '<script src="lib/region-map.generated.js?v=9"></script>',
       '<script src="lib/shared.js?v=7"></script>',
       '<script src="lib/dll-loader.js?v=4"></script>',
       '<script src="host.js?v=9"></script>',
     ].join('\n')],
     ['host.js', "class Host { static SOURCE_VERSION = '9'; }\nconst worker = 'lib/guest-worker.js?v=3';"],
-    ['lib/guest-worker.js', "importScripts('shared.js?v=7', 'dll-loader.js?v=4');\nconst workerUrl = 'render.js?v=2';"],
+    ['lib/guest-worker.js', "importScripts('region-map.generated.js?v=9', 'shared.js?v=7', 'dll-loader.js?v=4');\nconst workerUrl = 'render.js?v=2';"],
     ['lib/d3d-command-stream.js', "new Worker(options.workerUrl || 'render.js?v=2');"],
   ]);
   assert.deepStrictEqual(validateCacheVersions(good).errors, []);
@@ -139,6 +155,8 @@ function selfTest() {
   };
   assert.match(changed('lib/guest-worker.js', 'shared.js?v=7', 'shared.js?v=8'), /disagreeing cache versions/);
   assert.match(changed('host.js', "SOURCE_VERSION = '9'", "SOURCE_VERSION = '8'"), /SOURCE_VERSION=v8.*=v9/);
+  assert.match(changed('lib/guest-worker.js', 'region-map.generated.js?v=9', 'region-map.generated.js?v=8'), /region-map\.generated\.js.*disagreeing cache versions/);
+  assert.match(changed('index.html', 'region-map.generated.js?v=9', 'region-map.generated.js?v=8'), /region-map\.generated\.js.*disagreeing cache versions/);
   assert.match(changed('lib/guest-worker.js', 'dll-loader.js?v=4', 'dll-loader.js'), /imports lib\/dll-loader\.js without/);
   assert.match(changed('index.html', 'lib/shared.js?v=7', 'lib/shared.js'), /loads lib\/shared\.js without/);
   assert.match(changed('lib/d3d-command-stream.js', 'render.js?v=2', 'render.js?v=3'), /disagreeing cache versions/);

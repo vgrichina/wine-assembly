@@ -296,6 +296,7 @@ UNIT=(
   test/test-relative-mouse-input.js
   test/test-relative-mouse-clip-edge.js
   test/test-clip-cursor-query.js
+  test/test-shell-file-drop.js
   test/test-browser-relative-mouse-lock-gate.js
   test/test-browser-relative-mouse-latch.js
   test/test-renderer-dialog-caption-drag.js
@@ -860,6 +861,7 @@ E2E=(
   test/test-find-mouse-click.js
   test/test-far-manager-candidate.js
   test/test-winrar-candidate.js
+  test/test-winrar-file-drop-web.js
   test/test-liquid-war-candidate.js
   test/test-vlan-tetrinet.js
   test/test-vlan-match.js

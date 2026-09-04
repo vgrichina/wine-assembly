@@ -32,7 +32,7 @@ assert(host.includes('this.renderer._guestWorkerWasms.add(this.instance);'),
   'Worker-backed renderer ownership token should be marked');
 assert(input.includes('if (this._keyboardOwnerRunsInGuestWorker())'),
   'Worker-backed keyboard events should bypass direct calls into the idle instance');
-assert(host.includes("workerUrl: 'lib/guest-worker.js?v=18'"),
+assert(host.includes("workerUrl: 'lib/guest-worker.js?v=19'"),
   'guest Worker cache key should change with its slice result protocol');
 assert(/\(func \$menu_post[\s\S]*?\$shared_post_queue_enqueue[\s\S]*?\n\s*\)/.test(menus),
   'browser-side menu commands must enter the shared owning-thread queue');
