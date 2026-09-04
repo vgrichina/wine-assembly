@@ -248,7 +248,7 @@
   ;; USER.239 DialogBoxParam, which is the same with a dwInitParam under it.
   (func $win16_DialogBox (param $with_param i32) (param $modeless i32)
     (local $id i32) (local $parent i32) (local $proc i32) (local $init i32)
-    (local $res i32) (local $template i32) (local $base i32)
+    (local $res i32) (local $template i32) (local $base i32) (local $module i32)
     (local.set $base (select (i32.const 2) (i32.const 0) (local.get $with_param)))
     (local.set $init (select
       (i32.or (call $win16_arg16 (i32.const 0))
@@ -265,12 +265,21 @@
     ;; which numbered template it is. Blackjack asks for all four of its
     ;; dialogs that way.
     (local.set $id (call $win16_arg16 (i32.add (local.get $base) (i32.const 3))))
+    ;; Resources belong to the hInstance supplied by the caller, not
+    ;; necessarily the task's main NE image. WISE keeps its install-progress
+    ;; dialogs in a loaded helper module; searching the main executable finds
+    ;; an unrelated id 0x72 payload and feeds arbitrary bytes to the template
+    ;; converter. Keep this scoped to the lookup, like FindResource does.
+    (local.set $module (call $win16_res_module
+      (call $win16_arg16 (i32.add (local.get $base) (i32.const 5)))))
+    (global.set $win16_res_module_id (local.get $module))
     (if (call $win16_arg16 (i32.add (local.get $base) (i32.const 4)))
       (then (local.set $res (call $win16_find_resource_ex (i32.const 5) (i32.const 0)
               (call $g2w (call $win16_far_to_guest
                 (call $win16_arg16 (i32.add (local.get $base) (i32.const 4)))
                 (local.get $id))))))
       (else (local.set $res (call $win16_find_resource (i32.const 5) (local.get $id)))))
+    (global.set $win16_res_module_id (i32.const 0))
     (if (i32.eqz (local.get $res))
       (then
         (global.set $eax (i32.const -1))
@@ -293,12 +302,22 @@
   ;; converter needs. WISE's installer builds its language chooser this way.
   (func $win16_DialogBoxIndirect (param $modeless i32)
     (local $proc i32) (local $parent i32) (local $handle i32)
-    (local $index i32) (local $flags i32) (local $len i32) (local $template i32)
+    (local $offset i32) (local $index i32) (local $flags i32)
+    (local $len i32) (local $template i32) (local $frame i32)
     (local.set $proc
       (i32.or (call $win16_arg16 (i32.const 0))
         (i32.shl (call $win16_arg16 (i32.const 1)) (i32.const 16))))
     (local.set $parent (call $win16_h32 (call $win16_arg16 (i32.const 2))))
-    (local.set $handle (call $win16_arg16 (i32.const 3)))
+    ;; DialogBoxIndirect takes an HGLOBAL template handle. CreateDialogIndirect
+    ;; instead takes an LPCDLGTEMPLATE far pointer and therefore has one more
+    ;; word in its Pascal frame. WISE passes 00ef:0008 here; treating 0008 as
+    ;; the selector rejects a valid template, returns -1, and leaves its
+    ;; installer loop polling forever with no dialog.
+    (local.set $offset (select
+      (call $win16_arg16 (i32.const 3)) (i32.const 0) (local.get $modeless)))
+    (local.set $handle (call $win16_arg16
+      (select (i32.const 4) (i32.const 3) (local.get $modeless))))
+    (local.set $frame (select (i32.const 12) (i32.const 10) (local.get $modeless)))
     (local.set $index (call $win16_sel_to_index (local.get $handle)))
     (if (i32.and (i32.ne (local.get $index) (i32.const 0))
                  (i32.lt_u (local.get $index) (global.get $WIN16_SEG_MAX)))
@@ -310,21 +329,21 @@
               (i32.eqz (i32.and (local.get $flags) (global.get $WIN16_SEG_GFREE))))
           (then
             (local.set $len (call $win16_gseg_field (local.get $index) (i32.const 12)))
-            (if (local.get $len)
+            (if (i32.lt_u (local.get $offset) (local.get $len))
               (then
                 (local.set $template (call $win16_dlg_to32
                   (call $g2w (call $win16_far_to_guest
-                    (local.get $handle) (i32.const 0)))
-                  (local.get $len)))))))))
+                    (local.get $handle) (local.get $offset)))
+                  (i32.sub (local.get $len) (local.get $offset))))))))))
     (if (i32.eqz (local.get $template))
       (then
         (global.set $eax (i32.const -1))
-        (call $win16_api_return (i32.const 10))
+        (call $win16_api_return (local.get $frame))
         (return)))
     (if (local.get $modeless)
       (then (global.set $win16_dlg_modeless_pending (global.get $next_hwnd))))
     (call $win16_dlg_run (local.get $template) (local.get $parent) (local.get $proc)
-      (i32.const 0) (call $win16_take_return (i32.const 10))))
+      (i32.const 0) (call $win16_take_return (local.get $frame))))
 
   ;; USER.88 EndDialog(hDlg, nResult). The dialog procedure calls it and then
   ;; returns; the pump acts on it at that return, which is where Windows ends

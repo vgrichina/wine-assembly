@@ -1017,6 +1017,14 @@
                                  (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))
              (i32.add (i32.const 0x8000) (i32.mul (local.get $module_id) (i32.const 16)))))
 
+  ;; The private image length is parallel to the fixed 16-byte module record.
+  ;; Keeping it separate preserves that record's long-standing layout while
+  ;; allowing dynamically staged DLL resources beyond the first 64KB.
+  (func $win16_dll_image_size_ptr (param $module_id i32) (result i32)
+    (i32.add (call $g2w (i32.add (global.get $WIN16_ARENA)
+                                 (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))
+             (i32.add (i32.const 0x8800) (i32.shl (local.get $module_id) (i32.const 2)))))
+
   ;; A record's segment count doubles as its loaded flag: an NE with no
   ;; segments is not something that can be loaded.
   (func $win16_dll_loaded (param $module_id i32) (result i32)
@@ -1026,7 +1034,8 @@
   ;; they were placed — nothing here moves or discards them — but the id stops
   ;; naming a loaded module, so the slot can describe a different one.
   (func $win16_dll_unload (param $module_id i32)
-    (i32.store offset=12 (call $win16_dll_rec (local.get $module_id)) (i32.const 0)))
+    (i32.store offset=12 (call $win16_dll_rec (local.get $module_id)) (i32.const 0))
+    (i32.store (call $win16_dll_image_size_ptr (local.get $module_id)) (i32.const 0)))
 
   ;; Which image owns the code currently running, as (ne_off, staging base).
   ;; Resource lookups follow this rather than the hInstance the caller passed:
@@ -1088,7 +1097,8 @@
       (then
         (if (i32.ge_u (i32.and (local.get $module) (i32.const 0xFFFF))
                       (global.get $WIN16_DYNAMIC_BASE))
-          (then (return (i32.const 0x10000))))))
+          (then (return (i32.load (call $win16_dll_image_size_ptr
+            (i32.and (local.get $module) (i32.const 0xFFFF)))))))))
     (global.get $WIN16_DLL_STAGING_STRIDE))
 
   (func $win16_image_ne_off (result i32)
@@ -1187,12 +1197,14 @@
     (global.get $WIN16_APP_DLL_STAGING_SIZE))
 
   ;; Load the NE already staged for `module_id`. Returns 1 on success.
-  (func $load_ne_dll (export "load_ne_dll") (param $module_id i32) (result i32)
+  (func $load_ne_dll_sized (export "load_ne_dll_sized")
+        (param $module_id i32) (param $staged_size i32) (result i32)
     (local $base i32) (local $ne_off i32) (local $seg_tab i32) (local $seg_count i32)
     (local $shift i32) (local $i i32) (local $e i32) (local $index i32)
     (local $file_pos i32) (local $len i32) (local $flags i32) (local $alloc i32)
     (local $seg_index_base i32) (local $rec i32) (local $seg_base i32) (local $seg_wa i32)
-    (local $stage i32) (local $meta i32) (local $ne_delta i32)
+    (local $stage i32) (local $meta i32) (local $meta_size i32)
+    (local $meta_pages i32) (local $meta_i i32) (local $ne_delta i32)
     (local $nonres_off i32) (local $nonres_len i32)
 
     (local.set $base (call $win16_dll_staging (local.get $module_id)))
@@ -1276,9 +1288,25 @@
     ;; its small contents into the metadata page and retarget the NE header.
     (if (i32.ge_u (local.get $module_id) (global.get $WIN16_DYNAMIC_BASE))
       (then
+        (local.set $meta_size (local.get $staged_size))
+        (if (i32.eqz (local.get $meta_size))
+          (then (local.set $meta_size (i32.const 0x10000))))
+        (if (i32.gt_u (local.get $meta_size) (global.get $WIN16_APP_DLL_STAGING_SIZE))
+          (then (return (i32.const 0))))
+        (local.set $meta_pages (i32.shr_u
+          (i32.add (local.get $meta_size) (i32.const 0xFFFF)) (i32.const 16)))
+        (if (i32.ge_u (i32.add (global.get $win16_next_seg) (local.get $meta_pages))
+                       (global.get $WIN16_SEG_MAX))
+          (then (return (i32.const 0))))
         (local.set $ne_delta (i32.sub (local.get $ne_off) (local.get $stage)))
         (local.set $meta (call $g2w (call $win16_seg_base (call $win16_alloc_segment))))
-        (call $memcpy (local.get $meta) (local.get $stage) (i32.const 0x10000))
+        (local.set $meta_i (i32.const 1))
+        (block $meta_done (loop $meta_alloc
+          (br_if $meta_done (i32.ge_u (local.get $meta_i) (local.get $meta_pages)))
+          (drop (call $win16_alloc_segment))
+          (local.set $meta_i (i32.add (local.get $meta_i) (i32.const 1)))
+          (br $meta_alloc)))
+        (call $memcpy (local.get $meta) (local.get $stage) (local.get $meta_size))
         (local.set $ne_off (i32.add (local.get $meta) (local.get $ne_delta)))
         (local.set $nonres_off (i32.load (i32.add (local.get $ne_off) (i32.const 0x2C))))
         (local.set $nonres_len (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x20))))
@@ -1297,7 +1325,15 @@
     (i32.store offset=4 (local.get $rec) (local.get $seg_index_base))
     (i32.store offset=8 (local.get $rec) (local.get $base))
     (i32.store offset=12 (local.get $rec) (local.get $seg_count))
+    (i32.store (call $win16_dll_image_size_ptr (local.get $module_id))
+      (select (local.get $meta_size) (global.get $WIN16_DLL_STAGING_STRIDE)
+        (i32.ge_u (local.get $module_id) (global.get $WIN16_DYNAMIC_BASE))))
     (i32.const 1))
+
+  ;; Pre-staged modules retain the historical one-argument ABI. Runtime
+  ;; LoadLibrary knows the exact VFS byte length and uses the sized entry.
+  (func $load_ne_dll (export "load_ne_dll") (param $module_id i32) (result i32)
+    (call $load_ne_dll_sized (local.get $module_id) (i32.const 0)))
 
   ;; Point every exported entry at the DLL's OWN data segment.
   ;;
