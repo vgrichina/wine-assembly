@@ -10855,7 +10855,7 @@
   {
     "id": 1265,
     "name": "ICOpen",
-    "nargs": 4,
+    "nargs": 3,
     "convention": "stdcall",
     "hash": 4239926601
   },
