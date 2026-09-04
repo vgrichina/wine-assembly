@@ -493,6 +493,7 @@ UNIT=(
   # listed in E2E below.
   test/test-baldurs-gate-compat-patches.js
   test/test-caesar3-name-entry.js
+  test/test-warwind-compat-patches.js
   test/test-batch-clock.js
   test/test-browser-critical-section-yield.js
   test/test-browser-cooperative-load-library.js
