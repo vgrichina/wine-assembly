@@ -2522,6 +2522,13 @@
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
+    ;; WM_QUERYOPEN (0x13): default processing permits an iconic window to be
+    ;; restored. OpenIcon uses the result as a real application veto.
+    (if (i32.eq (local.get $arg1) (i32.const 0x0013))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; WM_SETTEXT (0x0C): DefWindowProc owns ordinary window captions. VB6
     ;; sends this directly to the visible Thunder form after assigning the
     ;; application title to its hidden ThunderRT6Main owner; ignoring it leaves

@@ -4932,7 +4932,20 @@
 
   ;; CloseWindow(hWnd) — despite the name, Win32 minimizes the window.
   (func $handle_CloseWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (drop (call $host_show_window (local.get $arg0) (i32.const 6))) ;; SW_MINIMIZE
+    (local $top i32)
+    (if (i32.lt_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
+      (then
+        (global.set $last_error (i32.const 1400)) ;; ERROR_INVALID_WINDOW_HANDLE
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; Use the same browser-side transition as SC_MINIMIZE and retain the
+    ;; guest-visible bit queried by IsIconic/GetWindowPlacement.
+    (call $host_sys_command (local.get $arg0) (i32.const 0xF020)) ;; SC_MINIMIZE
+    (call $wnd_apply_show_state (local.get $arg0) (i32.const 6)) ;; SW_MINIMIZE
+    (local.set $top (call $wnd_top_level (local.get $arg0)))
+    (if (i32.eq (global.get $active_hwnd) (local.get $top))
+      (then (drop (call $active_window_transition (i32.const 0)))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -5907,9 +5920,50 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 119: OpenIcon(hwnd) — restores a minimized window; return nonzero
+  ;; Restore and activate an iconic window. OpenIcon is not just a spelling of
+  ;; ShowWindow(SW_RESTORE): USER first gives the wndproc a synchronous
+  ;; WM_QUERYOPEN veto. WAT-native top-levels have no application override, so
+  ;; their zero result means "use the default TRUE"; an x86 wndproc's zero is
+  ;; an intentional veto unless it is a dialog that declined the message.
+  (func $open_icon_core (param $hwnd i32) (result i32)
+    (local $wp i32) (local $query i32) (local $top i32)
+    (if (i32.lt_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
+      (then
+        (global.set $last_error (i32.const 1400)) ;; ERROR_INVALID_WINDOW_HANDLE
+        (return (i32.const 0))))
+    (if (i32.eqz (call $wnd_min_get (local.get $hwnd)))
+      (then (return (i32.const 0))))
+    (local.set $wp (call $wnd_table_get (local.get $hwnd)))
+    (local.set $query
+      (call $wnd_send_message
+        (local.get $hwnd) (i32.const 0x0013) ;; WM_QUERYOPEN
+        (i32.const 0) (i32.const 0)))
+    (if (i32.and
+          (i32.eqz (local.get $query))
+          (i32.or
+            (i32.lt_u (local.get $wp) (i32.const 0xFFFF0000))
+            (i32.and
+              (i32.eq (local.get $wp) (global.get $WNDPROC_DIALOG))
+              (global.get $dialog_last_proc_handled))))
+      (then (return (i32.const 0))))
+
+    (call $host_sys_command (local.get $hwnd) (i32.const 0xF120)) ;; SC_RESTORE
+    (call $wnd_apply_show_state (local.get $hwnd) (i32.const 9)) ;; SW_RESTORE
+    (call $post_resize_messages (local.get $hwnd)
+      (select (i32.const 2) (i32.const 0) (call $wnd_max_get (local.get $hwnd))))
+    (call $paint_flag_set_inv (local.get $hwnd))
+    (call $nc_flags_set (local.get $hwnd) (i32.const 4))
+    (local.set $top (call $wnd_top_level (local.get $hwnd)))
+    (if (i32.and
+          (i32.ge_s (call $wnd_table_find (local.get $top)) (i32.const 0))
+          (i32.eq (call $wnd_get_thread (local.get $top)) (global.get $current_thread_id)))
+      (then (drop (call $active_window_transition (local.get $top)))))
+    (drop (call $host_activate_window (local.get $hwnd)))
+    (i32.const 1))
+
+  ;; 119: OpenIcon(hwnd) — restores a minimized window; return nonzero.
   (func $handle_OpenIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $open_icon_core (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -9062,6 +9116,13 @@
     ;; WM_NCCREATE (0x81): accepting non-client creation is the documented
     ;; default. Returning zero aborts CreateWindowEx before WM_CREATE.
     (if (i32.eq (local.get $arg1) (i32.const 0x0081))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    ;; Encoding-neutral default: permit WM_QUERYOPEN unless the application
+    ;; consumes it before reaching DefWindowProcW.
+    (if (i32.eq (local.get $arg1) (i32.const 0x0013))
       (then
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))

@@ -528,6 +528,7 @@ UNIT=(
   test/test-midi-out-long-msg.js
   test/test-msvcrt-ftol-native.js
   test/test-msi-query-product-state.js
+  test/test-open-icon.js
   test/test-open-mutex-w.js
   test/test-process-environment-launch.js
   test/test-set-std-handle.js

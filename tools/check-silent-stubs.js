@@ -180,8 +180,10 @@ const digest = crypto.createHash('sha256')
 // chain and delivers processed Ctrl+C/Ctrl+Break events through guest callbacks.
 // 2026-09-03: 458 -> 457. EnableScrollBar now retains per-window arrow state,
 // paints disabled arrows, and suppresses their input instead of always TRUE.
-const EXPECTED_COUNT = 457;
-const EXPECTED_SHA256 = '43eca9681649e680fe116c3816338a4ae248879ec6e82ef0ab20e4bb4aab562c';
+// 2026-09-03: 457 -> 456. OpenIcon now sends WM_QUERYOPEN and restores the
+// guest and browser window state instead of returning unconditional success.
+const EXPECTED_COUNT = 456;
+const EXPECTED_SHA256 = '9068f82d1ff130b91dc19d75264450c8f4adafbc4a653c28dccf43ca5628029b';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
