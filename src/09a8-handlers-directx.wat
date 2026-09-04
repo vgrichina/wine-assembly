@@ -1099,6 +1099,21 @@
     (call $dx_vtable_registry_append (local.get $vtbl_guest))
     (local.get $vtbl_guest))
 
+  ;; api_table.json is append-only, while COM vtable slots have a fixed ABI.
+  ;; Rewrite the API id stored in one generated thunk when a method was added
+  ;; after the rest of its interface and therefore has a non-sequential id.
+  (func $set_com_vtable_slot_api_id
+      (param $vtbl_guest i32) (param $slot i32) (param $api_id i32)
+    (local $thunk_guest i32)
+    (local.set $thunk_guest
+      (i32.load
+        (i32.add
+          (call $g2w (local.get $vtbl_guest))
+          (i32.mul (local.get $slot) (i32.const 4)))))
+    (i32.store offset=4
+      (call $g2w (local.get $thunk_guest))
+      (local.get $api_id)))
+
   ;; Extend a parent vtable: copy parent entries, append new thunks for extra methods.
   (func $extend_com_vtable (param $parent_vtbl i32) (param $parent_count i32)
                            (param $ext_api_id i32) (param $total_count i32) (result i32)

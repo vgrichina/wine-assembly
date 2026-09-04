@@ -3133,6 +3133,22 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; Win9x does not page out the emulator's fixed linear-memory backing, so a
+  ;; non-empty guest range is already resident. These APIs remain important as
+  ;; dynamically resolved capability probes in period audio DLLs.
+  (func $virtual_lock_range_valid (param $base i32) (param $size i32) (result i32)
+    (i32.and
+      (i32.ne (local.get $base) (i32.const 0))
+      (i32.ne (local.get $size) (i32.const 0))))
+
+  (func $handle_VirtualLock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $virtual_lock_range_valid (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_VirtualUnlock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $virtual_lock_range_valid (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
   ;; 40: GetACP — process ANSI code page
   (func $handle_GetACP (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (global.get $ansi_code_page))

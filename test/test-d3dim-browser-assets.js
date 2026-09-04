@@ -8,6 +8,19 @@ const { APPS, appFileUrl } = require('../lib/apps');
 const { isLoadableDll, dllPath } = require('../lib/dll-registry');
 
 const root = path.join(__dirname, '..');
+const generatedDispatch = fs.readFileSync(
+  path.join(root, 'src', '09b2-dispatch-table.generated.wat'), 'utf8');
+const directxHandlers = fs.readFileSync(
+  path.join(root, 'src', '09a8-handlers-directx.wat'), 'utf8');
+
+assert(directxHandlers.includes('(func $set_com_vtable_slot_api_id'),
+  'DirectX must provide a helper for stable API ids whose COM slot is non-sequential');
+assert(generatedDispatch.includes(
+  '(call $set_com_vtable_slot_api_id (global.get $DX_VTBL_D3DDEV7) (i32.const 20) (i32.const 1394))'),
+  'IDirect3DDevice7 slot 20 must dispatch SetRenderState');
+assert(generatedDispatch.includes(
+  '(call $set_com_vtable_slot_api_id (global.get $DX_VTBL_D3DDEV7) (i32.const 37) (i32.const 1382))'),
+  'IDirect3DDevice7 slot 37 must dispatch SetTextureStageState');
 
 assert.strictEqual(isLoadableDll('D3DXOF.DLL'), true,
   'browser DLL policy must recognize the retained-mode .x loader');

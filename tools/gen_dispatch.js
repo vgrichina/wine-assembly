@@ -269,7 +269,21 @@ for (const iface of comInterfaces) {
         'COM vtable slots are computed as startId + slot, so this table would call the wrong method.');
     }
   }
-  ifaceInfo.set(iface.prefix, { startId, count: methods.length });
+  let slotApiIds = null;
+  if (iface.methods) {
+    slotApiIds = iface.methods.map(method => {
+      const api = byName.get(`${iface.prefix}_${method}`);
+      if (!api) {
+        fatal(`${iface.prefix} vtable method ${method} has no api_table.json entry`);
+        return startId;
+      }
+      return api.id;
+    });
+    if (slotApiIds.length !== methods.length) {
+      fatal(`${iface.prefix} vtable order has ${slotApiIds.length} slots but ${methods.length} APIs`);
+    }
+  }
+  ifaceInfo.set(iface.prefix, { startId, count: methods.length, slotApiIds });
 }
 
 out.push('');
@@ -298,6 +312,13 @@ for (const iface of comInterfaces) {
   } else {
     out.push(`    ;; ${iface.prefix}: ${info.count} methods starting at api_id ${info.startId}`);
     out.push(`    (global.set $${iface.global} (call $init_com_vtable (i32.const ${info.startId}) (i32.const ${info.count})))`);
+    if (info.slotApiIds) {
+      for (let slot = 0; slot < info.slotApiIds.length; slot++) {
+        const apiId = info.slotApiIds[slot];
+        if (apiId === info.startId + slot) continue;
+        out.push(`    (call $set_com_vtable_slot_api_id (global.get $${iface.global}) (i32.const ${slot}) (i32.const ${apiId}))`);
+      }
+    }
     builtVtableCounts.set(iface.prefix, info.count);
   }
 }

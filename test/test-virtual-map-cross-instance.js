@@ -45,6 +45,18 @@ const extraWat = String.raw`
       (local.get $guest) (i32.const 0) (i32.const 0x8000)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_virtual_lock") (param $guest i32) (param $size i32) (result i32)
+    (global.set $esp (i32.const 0x00500000))
+    (call $handle_VirtualLock
+      (local.get $guest) (local.get $size) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_virtual_unlock") (param $guest i32) (param $size i32) (result i32)
+    (global.set $esp (i32.const 0x00500000))
+    (call $handle_VirtualUnlock
+      (local.get $guest) (local.get $size) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_virtual_commit") (param $guest i32) (param $size i32) (result i32)
     (call $virtual_map_commit (local.get $guest) (local.get $size)))
   (func (export "test_virtual_write32") (param $guest i32) (param $value i32)
@@ -102,6 +114,15 @@ async function main() {
   const worker = await instantiate();
   main.test_virtual_reset();
   worker.test_virtual_worker_reset();
+
+  assert.strictEqual(main.test_virtual_lock(0x00401000, 0x1000), 1,
+    'resident guest memory must be lockable');
+  assert.strictEqual(main.test_virtual_unlock(0x00401000, 0x1000), 1,
+    'a non-empty locked range must be unlockable');
+  assert.strictEqual(main.test_virtual_lock(0, 0x1000), 0,
+    'VirtualLock must reject a null base');
+  assert.strictEqual(main.test_virtual_unlock(0x00401000, 0), 0,
+    'VirtualUnlock must reject an empty range');
 
   const graphicsSize = 0x00a90000;
   const graphicsBase = main.test_virtual_alloc_null(graphicsSize) >>> 0;

@@ -126,6 +126,8 @@ const interfaces = [
     { name: 'GetMaterial',                   nargs: 2 },
     { name: 'SetLight',                      nargs: 3 },
     { name: 'GetLight',                      nargs: 3 },
+    { name: 'SetRenderState',                nargs: 3, body: 'SET_RS' },
+    { name: 'GetRenderState',                nargs: 3 },
     { name: 'BeginStateBlock',               nargs: 1 },
     { name: 'EndStateBlock',                 nargs: 2 },
     { name: 'PreLoad',                       nargs: 2 },
@@ -153,8 +155,6 @@ const interfaces = [
     { name: 'SetClipPlane',                  nargs: 3 },
     { name: 'GetClipPlane',                  nargs: 3 },
     { name: 'GetInfo',                       nargs: 4 },
-    { name: 'SetRenderState',                nargs: 3, body: 'SET_RS' },
-    { name: 'GetRenderState',                nargs: 3 },
   ]},
 
   // ── IDirect3DViewport (v1) ──────────────────────────────────────────
@@ -303,5 +303,13 @@ const vtableGlobals = [
   { prefix: 'IDirect3DTexture',        global: 'DX_VTBL_D3DTEX' },
   { prefix: 'IDirect3DTexture2',       global: 'DX_VTBL_D3DTEX2' },
 ];
+
+// api_table.json is append-only, so a method discovered late cannot be moved
+// into its ABI slot. Give the vtable generator the normative COM order; it
+// patches any slot whose stable API id is no longer sequential.
+for (const vtable of vtableGlobals) {
+  const iface = interfaces.find(candidate => candidate.prefix === vtable.prefix);
+  vtable.methods = iface.methods.map(method => method.name);
+}
 
 module.exports = { interfaces, vtableGlobals };

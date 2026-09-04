@@ -26807,5 +26807,19 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 886341543
+  },
+  {
+    "id": 3215,
+    "name": "VirtualLock",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3609939667
+  },
+  {
+    "id": 3216,
+    "name": "VirtualUnlock",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 44558360
   }
 ]
