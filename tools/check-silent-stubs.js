@@ -184,8 +184,11 @@ const digest = crypto.createHash('sha256')
 // guest and browser window state instead of returning unconditional success.
 // 2026-09-03: 456 -> 453. SetCapture/GetCapture/ReleaseCapture now validate
 // thread ownership and deliver synchronous WM_CAPTURECHANGED transitions.
-const EXPECTED_COUNT = 452;
-const EXPECTED_SHA256 = '468de3ca04bd3d9dcebd84bbc8a8d31f23ad5fd38dccf1129f257939c4635fdd';
+// 2026-09-03: 453 -> 452. GetMapMode now reads canonical per-DC state.
+// 2026-09-03: 452 -> 450. GetStockObject validates the Win98 selector set;
+// GetNearestColor now rejects invalid DCs instead of silently succeeding.
+const EXPECTED_COUNT = 450;
+const EXPECTED_SHA256 = '131df1a020f887537ca6fda5771524de4d81ea5e49b8f346706f5dd866dc4b51';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

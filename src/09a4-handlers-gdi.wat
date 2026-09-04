@@ -457,9 +457,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
   )
 
-  ;; 162: GetStockObject(index) → stock object handle (0x30010 + index)
+  ;; 162: GetStockObject(index) → stock object handle (0x30010 + index).
+  ;; Win98 exposes the classic selectors 0..8 and 10..17; 9 is reserved and
+  ;; DC_BRUSH/DC_PEN (18/19) arrived later. Invalid selectors return NULL --
+  ;; masking them used to alias values such as 32 to WHITE_BRUSH.
   (func $handle_GetStockObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.add (i32.const 0x30010) (i32.and (local.get $arg0) (i32.const 0x1F))))
+    (if (i32.or
+          (i32.le_u (local.get $arg0) (i32.const 8))
+          (i32.and (i32.ge_u (local.get $arg0) (i32.const 10))
+                   (i32.le_u (local.get $arg0) (i32.const 17))))
+      (then (global.set $eax
+        (i32.add (i32.const 0x30010) (local.get $arg0))))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -1991,10 +2000,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg stdcall
   )
 
-  ;; 367: GetNearestColor — STUB: unimplemented
+  ;; 367: GetNearestColor. The browser surface is true-color, so every RGB
+  ;; COLORREF is representable; an invalid HDC still fails with CLR_INVALID.
   (func $handle_GetNearestColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; On true-color display, return the same color
-    (global.set $eax (local.get $arg1))
+    (if (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0))
+      (then (global.set $eax (local.get $arg1)))
+      (else (global.set $eax (i32.const -1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
