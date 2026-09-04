@@ -309,6 +309,10 @@
     (global.set $tv_count (i32.add (global.get $tv_count) (i32.const 1)))
     ;; Slot base address
     (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
+    ;; A deleted slot is reusable. Clear every field before applying the new
+    ;; item's mask so an insertion without TVIF_PARAM/TEXT cannot inherit the
+    ;; previous item's lParam or copied label.
+    (call $zero_memory (local.get $base) (i32.const 32))
     (i32.store (call $tv_owner_cell (local.get $slot)) (local.get $hwnd))
     (local.set $image_rec (call $tv_image_record (local.get $slot)))
     (i32.store (local.get $image_rec) (i32.const -1))
@@ -574,6 +578,18 @@
       (then
         (i32.store offset=24 (local.get $base)
           (i32.load (i32.add (local.get $tvitem_wa) (i32.const 36))))))
+    ;; TVIF_CHILDREN (0x40). The high private bit is the lazy-child hint used
+    ;; until a real firstChild exists. Apps may clear cChildren after an
+    ;; expansion probe finds an empty directory.
+    (if (i32.and (local.get $mask) (i32.const 0x40))
+      (then
+        (if (i32.load offset=32 (local.get $tvitem_wa))
+          (then
+            (i32.store offset=20 (local.get $base)
+              (i32.or (i32.load offset=20 (local.get $base)) (i32.const 0x40000000))))
+          (else
+            (i32.store offset=20 (local.get $base)
+              (i32.and (i32.load offset=20 (local.get $base)) (i32.const 0xBFFFFFFF)))))))
     (if (i32.and (local.get $mask) (i32.const 0x2))
       (then
         (i32.store (call $tv_image_record (local.get $slot))
@@ -583,6 +599,47 @@
         (i32.store offset=4 (call $tv_image_record (local.get $slot))
           (i32.load offset=28 (local.get $tvitem_wa)))))
     (i32.const 1))
+
+  ;; A TreeView owns its copied item labels and per-window caret/scroll state,
+  ;; but never the application-defined lParam values. Destroying a control must
+  ;; release the former and forget every owned slot so a later TreeView cannot
+  ;; inherit labels or exhaust the shared table after repeated modal dialogs.
+  (func $tv_destroy_owned (param $hwnd i32)
+    (local $i i32) (local $base i32) (local $text i32) (local $view i32)
+    (local.set $i (i32.const 0))
+    (block $items_done (loop $items
+      (br_if $items_done (i32.ge_u (local.get $i) (call $tv_slot_limit)))
+      (local.set $base
+        (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
+      (if (i32.and
+            (i32.ne (i32.load (local.get $base)) (i32.const 0))
+            (i32.eq (i32.load (call $tv_owner_cell (local.get $i))) (local.get $hwnd)))
+        (then
+          (local.set $text (i32.load offset=28 (local.get $base)))
+          (if (local.get $text) (then (call $heap_free (local.get $text))))
+          (call $zero_memory (local.get $base) (i32.const 32))
+          (i32.store (call $tv_owner_cell (local.get $i)) (i32.const 0))
+          (i32.store (call $tv_image_record (local.get $i)) (i32.const -1))
+          (i32.store offset=4 (call $tv_image_record (local.get $i)) (i32.const -1))
+          (if (global.get $tv_count)
+            (then (global.set $tv_count (i32.sub (global.get $tv_count) (i32.const 1)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $items)))
+    (local.set $i (i32.const 0))
+    (block $views_done (loop $views
+      (br_if $views_done (i32.ge_u (local.get $i) (global.get $TV_VIEW_COUNT)))
+      (local.set $view
+        (i32.add (global.get $TV_VIEW_TABLE) (i32.mul (local.get $i) (i32.const 16))))
+      (if (i32.eq (i32.load (local.get $view)) (local.get $hwnd))
+        (then (call $zero_memory (local.get $view) (i32.const 16))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $views)))
+    (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
+      (then (global.set $capture_hwnd (i32.const 0))))
+    (if (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))
+      (then
+        (global.set $sb_pressed_hwnd (i32.const 0))
+        (global.set $sb_pressed_part (i32.const 0)))))
 
   (func $tv_item_visible (param $base i32) (result i32)
     (local $parent i32) (local $slot i32) (local $parent_base i32) (local $guard i32)
@@ -1518,6 +1575,12 @@
 
   (func $treeview_wndproc_owned (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $code i32) (local $delta i32) (local $sz i32) (local $h i32) (local $old_row i32) (local $new_row i32)
+    ;; WM_DESTROY — free this control's internal copies and view record. Item
+    ;; lParam data remains owned by the application, as on Win32.
+    (if (i32.eq (local.get $msg) (i32.const 0x0002))
+      (then
+        (call $tv_destroy_owned (local.get $hwnd))
+        (return (i32.const 0))))
     ;; WM_PAINT (0x000F) — draw the tree into the parent's back canvas
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then

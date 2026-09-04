@@ -135,6 +135,7 @@ function saturatedCountInRect(png, left, top, right, bottom) {
   const wasmPath = path.join(temp, 'candidate.wasm');
   const framePath = path.join(temp, 'winrar.png');
   const installedFramePath = path.join(temp, 'winrar-installed.png');
+  const browseFramePath = path.join(temp, 'winrar-browse.png');
   const integrationFramePath = path.join(temp, 'winrar-integration.png');
   const rapidPagesFramePath = path.join(temp, 'winrar-rapid-pages.png');
   const mainFramePath = path.join(temp, 'winrar-main-after-settings.png');
@@ -277,6 +278,50 @@ function saturatedCountInRect(png, left, top, right, bottom) {
       245, 65, 288, 378);
     assert(widenedMenuGray > 9000,
       `WinRAR Commands menu remained clipped (${widenedMenuGray} gray extension pixels)`);
+
+    // Exercise WinRAR's real BROWSEINFOA caller rather than only the shell
+    // dialog internals. The startup Settings sheet is already visible behind
+    // the registration notice: select Paths, press its first Browse button,
+    // and capture as soon as the shell-owned modal becomes visible.
+    const browse = spawnSync('node', [
+      RUN,
+      `--exe=${INSTALLED_WINRAR}`,
+      '--vfs-include=**/*',
+      `--wasm=${wasmPath}`,
+      '--no-build',
+      '--quiet-api',
+      '--quiet-blocks',
+      '--trace-api=SHBrowseForFolderA',
+      '--max-batches=120',
+      '--batch-size=50000',
+      `--input=1:wait-title:Please_register:2000,2:dlg-click:1,` +
+        `10:mousedown:170:76,11:mouseup:170:76,20:dlg-click:104,` +
+        `21:wait-title-snapshot:Browse_for_Folder:100:browse:${browseFramePath}`,
+    ], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      timeout: 120000,
+      maxBuffer: 32 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const browseOutput = `${browse.stdout || ''}${browse.stderr || ''}`;
+    if (browse.error) throw browse.error;
+    assert.strictEqual(browse.status, 0,
+      `WinRAR folder-picker run exited ${browse.status}${browse.signal ? ` (${browse.signal})` : ''}\n${browseOutput.slice(-8000)}`);
+    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(browseOutput),
+      `WinRAR folder-picker run hit a compatibility failure\n${browseOutput.slice(-8000)}`);
+    assert(browseOutput.includes('SHBrowseForFolderA('),
+      `WinRAR did not call SHBrowseForFolderA from Paths > Browse\n${browseOutput.slice(-8000)}`);
+    assert(browseOutput.includes('wait-title: matched "Browse for Folder"'),
+      `WinRAR's folder picker never became visible\n${browseOutput.slice(-8000)}`);
+    assert(fs.existsSync(browseFramePath), 'WinRAR folder picker did not produce a frame');
+    const browsePng = PNG.sync.read(fs.readFileSync(browseFramePath));
+    const browseGray = colorCount(browsePng, [192, 192, 192]);
+    const browseWhite = colorCount(browsePng, [255, 255, 255]);
+    const browseBlue = colorCount(browsePng, [0, 0, 128]);
+    assert(browseGray > 30000 && browseWhite > 10000 && browseBlue > 500,
+      `WinRAR folder picker is not visibly rendered (${browseGray} gray, ${browseWhite} white, ${browseBlue} blue pixels)`);
+
     const installedPng = PNG.sync.read(fs.readFileSync(installedFramePath));
     const installedTeal = colorCount(installedPng, [0, 128, 128]);
     const installedGray = colorCount(installedPng, [192, 192, 192]);

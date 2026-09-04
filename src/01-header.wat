@@ -1202,6 +1202,18 @@
   (data (region.addr $USER_DIALOG_STRINGS 0x243) "Custom colors:\00")
   (data (region.addr $USER_DIALOG_STRINGS 0x252) "Define Custom Colors >>\00")
 
+  ;; Classic shell folder-picker text. Keep it in WAT-owned storage because
+  ;; the dialog remains live while the calling thread is parked in the modal
+  ;; pump; low-page scratch strings are application-writable during that time.
+  (global $BROWSE_DIALOG_STRINGS i32 (region.addr $BROWSE_DIALOG_STRINGS 0))
+  (global $BROWSE_DIALOG_STRINGS_SIZE i32 (region.size $BROWSE_DIALOG_STRINGS))
+  (data (region.addr $BROWSE_DIALOG_STRINGS 0x00) "Browse for Folder\00")
+  (data (region.addr $BROWSE_DIALOG_STRINGS 0x12) "Desktop\00")
+  (data (region.addr $BROWSE_DIALOG_STRINGS 0x1A) "My Computer\00")
+  (data (region.addr $BROWSE_DIALOG_STRINGS 0x26) "Network Neighborhood\00")
+  (data (region.addr $BROWSE_DIALOG_STRINGS 0x3B) "My Documents\00")
+  (data (region.addr $BROWSE_DIALOG_STRINGS 0x48) "C:\\My Documents\00")
+
   ;; A complete VS_VERSIONINFO block (header + VS_FIXEDFILEINFO, no string
   ;; tables) reporting DirectX 6.1a — dplayx.dll 4.06.03.0518, the version
   ;; Windows 98 SE shipped. The file-version APIs hand this back for the

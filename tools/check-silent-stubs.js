@@ -190,8 +190,10 @@ const digest = crypto.createHash('sha256')
 // 2026-09-03: 450 -> 449. GetTextCharset now reports selected font state.
 // 2026-09-03: 449 -> 448. DestroyAcceleratorTable now validates repository
 // handles and releases only live tables instead of always returning success.
-const EXPECTED_COUNT = 448;
-const EXPECTED_SHA256 = 'd613ddd7b53786fec52e8b21910dc60a45cb60010260ea743a9e728a558aaf54';
+// 2026-09-03: 448 -> 447. SHBrowseForFolderA now runs a classic modal shell
+// tree and returns the selected PIDL instead of silently reporting Cancel.
+const EXPECTED_COUNT = 447;
+const EXPECTED_SHA256 = '81c5e4eebbc99fefd306d9f028408ac985d6c4d5deab97f0b940b2f2a615d917';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
