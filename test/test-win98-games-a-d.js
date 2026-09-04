@@ -51,6 +51,8 @@ for (const [id, [exeName, companionCount]] of Object.entries(expected)) {
 
 assert.deepStrictEqual(APPS.broken_sword_demo.dlls.map(file => path.basename(file)),
   ['SMACKW32.DLL']);
+assert.deepStrictEqual(APPS.broken_sword_demo.startupInput,
+  { vk: 0x1B, delayMs: 1500, holdMs: 30 });
 assert.deepStrictEqual(APPS.dungeon_keeper_demo.dlls.map(file => path.basename(file)),
   ['MSS32.DLL', 'WSND7R.DLL', 'SMACKW32.DLL']);
 assert.strictEqual(APPS.atomic_bomberman_demo.touchControls.dpad.ways, 4);
