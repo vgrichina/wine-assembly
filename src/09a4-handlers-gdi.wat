@@ -2601,10 +2601,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 557: GetMapMode(hdc) → MM_TEXT. The host renderer uses pixel/text
-  ;; coordinates, so MM_TEXT is the stable default.
+  ;; 557: GetMapMode(hdc) → current mapping mode, or 0 for an invalid HDC.
+  ;; SetMapMode already owns this value in GdiDcState; returning MM_TEXT here
+  ;; hid anisotropic/isotropic modes from applications that query the DC.
   (func $handle_GetMapMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax
+      (call $gdi_dc_get_field (local.get $arg0) (i32.const 36) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 

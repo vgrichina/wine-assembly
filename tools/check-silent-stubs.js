@@ -184,8 +184,8 @@ const digest = crypto.createHash('sha256')
 // guest and browser window state instead of returning unconditional success.
 // 2026-09-03: 456 -> 453. SetCapture/GetCapture/ReleaseCapture now validate
 // thread ownership and deliver synchronous WM_CAPTURECHANGED transitions.
-const EXPECTED_COUNT = 453;
-const EXPECTED_SHA256 = '5e569bcc04c04af9007613fab421709ef414cdafae6ebe91d48e53c6a9c5d791';
+const EXPECTED_COUNT = 452;
+const EXPECTED_SHA256 = '468de3ca04bd3d9dcebd84bbc8a8d31f23ad5fd38dccf1129f257939c4635fdd';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

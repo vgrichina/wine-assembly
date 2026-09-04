@@ -12,9 +12,21 @@ const { mountBundledFonts } = require('./render-helper');
 // src/00-regions.wat.
 const RegionMap = require('../lib/region-map.generated.js');
 
+const getMapModeTestExport = String.raw`
+  (func (export "test_call_GetMapMode") (param $hdc i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetMapMode
+      (local.get $hdc) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+`;
+
 async function main() {
   const root = path.join(__dirname, '..');
-  const wasm = compileSrcWasm();
+  const wasm = compileSrcWasm((file, source) =>
+    file === '13-exports.wat' ? `${source}\n${getMapModeTestExport}\n` : source);
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const ctx = { getMemory: () => memory.buffer, renderer: null, resourceJson: {} };
   const base = createHostImports(ctx);
@@ -181,13 +193,23 @@ async function main() {
   assert.strictEqual(wat.test_gdi_map_coordinate(3, 1, -4, 20, 8), 16,
     'negative extents must invert an axis');
 
+  assert.strictEqual(wat.test_call_GetMapMode(hdcA), 1,
+    'new device contexts start in MM_TEXT');
+  assert.strictEqual(wat.test_call_GetMapMode(0x7FFFFFFF), 0,
+    'GetMapMode must fail for an invalid HDC');
   assert.strictEqual(wat.test_call_SetMapMode(hdcA, 8), 1);
+  assert.strictEqual(wat.test_call_GetMapMode(hdcA), 8,
+    'GetMapMode must return the per-DC MM_ANISOTROPIC state');
+  assert.strictEqual(wat.test_call_GetMapMode(hdcB), 1,
+    'mapping modes must not leak between device contexts');
   assert.strictEqual(wat.test_gdi_dc_set_field(hdcA, 48, 0x4000, 1), 1);
   assert.strictEqual(wat.test_gdi_dc_set_field(hdcA, 52, 0x4000, 1), 1);
   assert.strictEqual(wat.test_gdi_dc_set_field(hdcA, 64, 0x147B, 1), 1);
   assert.strictEqual(wat.test_gdi_dc_set_field(hdcA, 68, 0x147B, 1), 1);
   assert.strictEqual(wat.test_call_SetMapMode(hdcA, 1), 8,
     'switching a preview DC to MM_TEXT returns the anisotropic mode');
+  assert.strictEqual(wat.test_call_GetMapMode(hdcA), 1,
+    'GetMapMode must observe a switch back to MM_TEXT');
   for (const offset of [48, 52, 64, 68]) {
     assert.strictEqual(wat.test_gdi_dc_get_field(hdcA, offset, 0), 1,
       'MM_TEXT must replace stale anisotropic extents with identity mapping');
