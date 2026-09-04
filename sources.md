@@ -1182,13 +1182,20 @@ is real progress rather than a deadlock: the executable performs a software
 RGB555-to-RGB565 conversion over the whole surface one pixel at a time, then
 leaves that loop and enters its normal message pump.
 
-An actual Chromium launch through the shared web manifest reaches the Caesar III
-main menu, accepts **Start new game** and the default governor name, and loads
-the **Assignment 1 - Aventine / The Birth of a City** briefing from
-`mission1.pak`, with no runtime or missing-API failure. The scripted coordinate
-probe can scroll that briefing but has not yet made its **To the city** button
-advance, so this verifies the browser launch and first mission load but not the
-final transition into the city map.
+The installer-produced payload now has a frozen-stdio acceptance route through
+the Caesar III title, **Start new game**, governor-name entry, the **Assignment
+1 - Aventine / The Birth of a City** briefing from `mission1.pak`, **To the
+city**, and the live 800x600 city simulation. The final frame contains the
+green terrain map, stone control panel, minimap, resources, and construction
+controls rather than a menu or loading frame.
+
+The demo initializes its 32-byte name capture buffer with `The new governor`
+but leaves its overwrite cursor at byte zero, so a short typed name retains the
+old suffix (`Codexew governor`). A verified load-time compatibility patch for
+this exact `c3.exe` skips that one default copy and clears the buffer before the
+game starts capture. The installer-produced executable remains unchanged on
+disk; subsequent typing, drawing, and mission state are the game's own. See
+`docs/re-notes/caesar3-demo.md` and `test/test-caesar3-gameplay.js`.
 
 ### 2026-08-23 Captain Claw demo gameplay
 
