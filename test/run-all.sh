@@ -221,6 +221,7 @@ UNIT=(
   test/test-win98-gdi-font-outline-reference.js
   test/test-wat-text-draw-extent.js
   test/test-wat-font-resource.js
+  test/test-wat-mmio.js
   test/test-wat-gdi-public-metafile.js
   test/test-wat-gdi-printer-surface.js
   test/test-compatible-bitmap-wat.js

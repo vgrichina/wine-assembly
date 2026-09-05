@@ -1368,6 +1368,87 @@
           (local.get $n))))
     (global.set $eax (local.get $n)))
 
+  ;; CreateScalableFontResource writes a .FOT wrapper which AddFontResource
+  ;; later resolves to the named TrueType file.  Our text stack can consume
+  ;; the TTF directly, so retain that association in a tiny heap list.  The
+  ;; VFS copy below also leaves a concrete resource behind on writable media;
+  ;; the association is what keeps an imported read-only CD useful when it
+  ;; contains an otherwise complete installed game (Alpha Centauri does).
+  ;;
+  ;; Node: next, resource path, source path, hidden flag.  Paths are owned
+  ;; guest-heap copies because both callers commonly pass stack buffers.
+  (global $scalable_font_resources (mut i32) (i32.const 0))
+
+  (func $scalable_font_path_copy (param $path i32) (result i32)
+    (local $copy i32) (local $len i32)
+    (if (i32.eqz (local.get $path)) (then (return (i32.const 0))))
+    (local.set $len (call $guest_strlen (local.get $path)))
+    (local.set $copy (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (if (local.get $copy)
+      (then (call $guest_strcpy (local.get $copy) (local.get $path))))
+    (local.get $copy))
+
+  (func $scalable_font_source_for (param $resource i32) (result i32)
+    (local $node i32)
+    (if (i32.eqz (local.get $resource)) (then (return (i32.const 0))))
+    (local.set $node (global.get $scalable_font_resources))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $node)))
+      (if (call $tt_subst_name_equal
+            (call $g2w (local.get $resource))
+            (call $g2w (call $gl32 (i32.add (local.get $node) (i32.const 4)))))
+        (then (return (call $gl32 (i32.add (local.get $node) (i32.const 8))))))
+      (local.set $node (call $gl32 (local.get $node)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $handle_CreateScalableFontResourceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $source i32) (local $source_owned i32) (local $resource_copy i32)
+    (local $source_copy i32) (local $node i32)
+    (global.set $eax (i32.const 0))
+    (block $done
+      (br_if $done (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2))))
+      ;; ERROR_FILE_EXISTS when the destination already exists, including a
+      ;; resource created earlier in this process.
+      (br_if $done (i32.ne
+        (call $host_fs_get_file_attributes (call $g2w (local.get $arg1)) (i32.const 0))
+        (i32.const -1)))
+      (br_if $done (call $scalable_font_source_for (local.get $arg1)))
+
+      (if (local.get $arg3)
+        (then
+          (local.set $source (call $ver_join_path_a (local.get $arg3) (local.get $arg2)))
+          (local.set $source_owned (i32.const 1)))
+        (else (local.set $source (local.get $arg2))))
+      (br_if $done (i32.eqz (local.get $source)))
+      ;; Only TrueType data is accepted.  Opening merely validates/caches the
+      ;; face; it does not enumerate it until AddFontResource is called.
+      (br_if $done (i32.lt_s (call $tt_face_open (local.get $source)) (i32.const 0)))
+
+      (local.set $resource_copy (call $scalable_font_path_copy (local.get $arg1)))
+      (local.set $source_copy (call $scalable_font_path_copy (local.get $source)))
+      (br_if $done (i32.or (i32.eqz (local.get $resource_copy))
+                           (i32.eqz (local.get $source_copy))))
+      (local.set $node (call $heap_alloc (i32.const 16)))
+      (br_if $done (i32.eqz (local.get $node)))
+      (call $gs32 (local.get $node) (global.get $scalable_font_resources))
+      (call $gs32 (i32.add (local.get $node) (i32.const 4)) (local.get $resource_copy))
+      (call $gs32 (i32.add (local.get $node) (i32.const 8)) (local.get $source_copy))
+      (call $gs32 (i32.add (local.get $node) (i32.const 12)) (local.get $arg0))
+      (global.set $scalable_font_resources (local.get $node))
+
+      ;; A copied TTF is sufficient as our concrete .FOT representation.
+      ;; Ignore a read-only-drive failure: the validated association above is
+      ;; still process-local, matching the visibility of a hidden resource.
+      (drop (call $host_fs_copy_file
+        (call $g2w (local.get $source)) (call $g2w (local.get $arg1))
+        (i32.const 1) (i32.const 0)))
+      (global.set $last_error (i32.const 0))
+      (global.set $eax (i32.const 1)))
+    (if (local.get $source_owned)
+      (then (if (local.get $source) (then (call $heap_free (local.get $source))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
   ;; Install a font resource: Win16/Win9x bitmap strikes in the WAT text
   ;; rasterizer, or a TrueType file in the scalable face registry.
   ;;
@@ -1376,23 +1457,33 @@
   ;; "no fonts were added". fontview.exe tests the result and destroys its own
   ;; window without painting, so the file it was launched on never appeared.
   (func $handle_AddFontResourceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $added i32)
+    (local $added i32) (local $source i32)
     (if (local.get $arg0)
       (then
         (local.set $added (call $gdi_bitmap_font_add_resource (local.get $arg0)))
         (if (i32.le_s (local.get $added) (i32.const 0))
-          (then (local.set $added (call $tt_reg_add (local.get $arg0)))))))
+          (then (local.set $added (call $tt_reg_add (local.get $arg0)))))
+        (if (i32.le_s (local.get $added) (i32.const 0))
+          (then
+            (local.set $source (call $scalable_font_source_for (local.get $arg0)))
+            (if (local.get $source)
+              (then (local.set $added (call $tt_reg_add (local.get $source)))))))))
     (global.set $eax (local.get $added))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_RemoveFontResourceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $removed i32)
+    (local $removed i32) (local $source i32)
     (if (local.get $arg0)
       (then
         (local.set $removed
           (call $gdi_bitmap_font_remove_resource (local.get $arg0)))
         (if (i32.le_s (local.get $removed) (i32.const 0))
-          (then (local.set $removed (call $tt_reg_remove (local.get $arg0)))))))
+          (then (local.set $removed (call $tt_reg_remove (local.get $arg0)))))
+        (if (i32.le_s (local.get $removed) (i32.const 0))
+          (then
+            (local.set $source (call $scalable_font_source_for (local.get $arg0)))
+            (if (local.get $source)
+              (then (local.set $removed (call $tt_reg_remove (local.get $source)))))))))
     (global.set $eax (local.get $removed))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 

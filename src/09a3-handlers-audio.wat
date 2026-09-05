@@ -739,62 +739,66 @@
   ;;   +60 dwReserved1, +64 dwReserved2, +68 hmmio.
   ;; The app reads straight out of pchBuffer and calls mmioAdvance to refill,
   ;; so the buffer must be a real guest block that stays put for the life of
-  ;; the handle. $mmio_buf_for binds one 8KB block per HMMIO.
+  ;; the handle. $mmio_buf_for binds a default 8KB block per HMMIO unless
+  ;; mmioSetBuffer has selected a caller-owned or differently-sized buffer.
   (func $mmio_slot_addr (param $slot i32) (result i32)
-    (i32.add (global.get $mmio_buf_table) (i32.mul (local.get $slot) (i32.const 8))))
+    (i32.add (global.get $mmio_buf_table) (i32.mul (local.get $slot) (i32.const 16))))
 
-  ;; Returns the guest buffer bound to $h, binding a free (or recycled) slot
-  ;; on first use. 0 only if the heap is exhausted.
-  (func $mmio_buf_for (param $h i32) (result i32)
-    (local $i i32) (local $addr i32) (local $free i32) (local $buf i32)
+  ;; Returns the slot for $h, optionally allocating a new binding.
+  (func $mmio_slot_for (param $h i32) (param $create i32) (result i32)
+    (local $i i32) (local $addr i32) (local $free i32)
     (if (i32.eqz (global.get $mmio_buf_table))
       (then
+        (if (i32.eqz (local.get $create)) (then (return (i32.const 0))))
         (global.set $mmio_buf_table
-          (call $heap_alloc (i32.mul (global.get $MMIO_BUF_SLOTS) (i32.const 8))))
+          (call $heap_alloc (i32.mul (global.get $MMIO_BUF_SLOTS) (i32.const 16))))
         (if (i32.eqz (global.get $mmio_buf_table)) (then (return (i32.const 0))))
         (call $zero_memory (call $g2w (global.get $mmio_buf_table))
-          (i32.mul (global.get $MMIO_BUF_SLOTS) (i32.const 8)))))
-    (local.set $free (i32.const -1))
+          (i32.mul (global.get $MMIO_BUF_SLOTS) (i32.const 16)))))
+    (local.set $free (i32.const 0))
     (local.set $i (i32.const 0))
-    (block $done
-      (loop $scan
-        (br_if $done (i32.ge_u (local.get $i) (global.get $MMIO_BUF_SLOTS)))
-        (local.set $addr (call $mmio_slot_addr (local.get $i)))
-        (if (i32.eq (call $gl32 (local.get $addr)) (local.get $h))
-          (then (return (call $gl32 (i32.add (local.get $addr) (i32.const 4))))))
-        (if (i32.and (i32.eq (local.get $free) (i32.const -1))
-                     (i32.eqz (call $gl32 (local.get $addr))))
-          (then (local.set $free (local.get $i))))
-        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $scan)))
-    ;; No slot for this handle yet. Recycle deterministically when all are busy.
-    (if (i32.eq (local.get $free) (i32.const -1))
-      (then (local.set $free (i32.and (local.get $h) (i32.const 7)))))
-    (local.set $addr (call $mmio_slot_addr (local.get $free)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MMIO_BUF_SLOTS)))
+      (local.set $addr (call $mmio_slot_addr (local.get $i)))
+      (if (i32.eq (call $gl32 (local.get $addr)) (local.get $h))
+        (then (return (local.get $addr))))
+      (if (i32.and (i32.eqz (local.get $free)) (i32.eqz (call $gl32 (local.get $addr))))
+        (then (local.set $free (local.get $addr))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.and (i32.ne (local.get $create) (i32.const 0))
+                 (i32.ne (local.get $free) (i32.const 0)))
+      (then
+        (call $gs32 (local.get $free) (local.get $h))
+        (return (local.get $free))))
+    (i32.const 0))
+
+  ;; Returns the guest buffer bound to $h, binding a default internal buffer on
+  ;; first use. 0 if the slot table or heap is exhausted.
+  (func $mmio_buf_for (param $h i32) (result i32)
+    (local $addr i32) (local $buf i32)
+    (local.set $addr (call $mmio_slot_for (local.get $h) (i32.const 1)))
+    (if (i32.eqz (local.get $addr)) (then (return (i32.const 0))))
     (local.set $buf (call $gl32 (i32.add (local.get $addr) (i32.const 4))))
     (if (i32.eqz (local.get $buf))
       (then
         (local.set $buf (call $heap_alloc (global.get $MMIO_BUF_SIZE)))
         (if (i32.eqz (local.get $buf)) (then (return (i32.const 0))))
-        (call $gs32 (i32.add (local.get $addr) (i32.const 4)) (local.get $buf))))
-    (call $gs32 (local.get $addr) (local.get $h))
+        (call $gs32 (i32.add (local.get $addr) (i32.const 4)) (local.get $buf))
+        (call $gs32 (i32.add (local.get $addr) (i32.const 8)) (global.get $MMIO_BUF_SIZE))
+        (call $gs32 (i32.add (local.get $addr) (i32.const 12)) (i32.const 1))))
     (local.get $buf))
 
-  ;; Drops the handle→buffer binding (the block itself is kept for reuse).
+  ;; Drops the handle→buffer binding and releases an internally-owned block.
   (func $mmio_buf_release (param $h i32)
-    (local $i i32) (local $addr i32)
-    (if (i32.eqz (global.get $mmio_buf_table)) (then (return)))
-    (local.set $i (i32.const 0))
-    (block $done
-      (loop $scan
-        (br_if $done (i32.ge_u (local.get $i) (global.get $MMIO_BUF_SLOTS)))
-        (local.set $addr (call $mmio_slot_addr (local.get $i)))
-        (if (i32.eq (call $gl32 (local.get $addr)) (local.get $h))
-          (then
-            (call $gs32 (local.get $addr) (i32.const 0))
-            (return)))
-        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $scan))))
+    (local $addr i32)
+    (local.set $addr (call $mmio_slot_for (local.get $h) (i32.const 0)))
+    (if (i32.eqz (local.get $addr)) (then (return)))
+    (if (i32.and
+          (i32.ne (call $gl32 (i32.add (local.get $addr) (i32.const 12))) (i32.const 0))
+          (i32.ne (call $gl32 (i32.add (local.get $addr) (i32.const 4))) (i32.const 0)))
+      (then (call $heap_free (call $gl32 (i32.add (local.get $addr) (i32.const 4))))))
+    (call $zero_memory (call $g2w (local.get $addr)) (i32.const 16)))
 
   ;; Refills lpmmioinfo's buffer from the file. The app's own pchNext says how
   ;; much of the previous fill it consumed, so the next disk read starts there.
@@ -840,13 +844,14 @@
     (call $zero_memory (local.get $info_wa) (i32.const 72))
     (i32.store (local.get $info_wa) (i32.const 0x00010000))           ;; dwFlags = MMIO_ALLOCBUF
     (i32.store (i32.add (local.get $info_wa) (i32.const 4)) (i32.const 0x454C4946))  ;; fccIOProc "FILE"
-    (i32.store (i32.add (local.get $info_wa) (i32.const 20)) (global.get $MMIO_BUF_SIZE))
+    (i32.store (i32.add (local.get $info_wa) (i32.const 20))
+      (call $gl32 (i32.add (call $mmio_slot_for (local.get $arg0) (i32.const 0)) (i32.const 8))))
     (i32.store (i32.add (local.get $info_wa) (i32.const 24)) (local.get $buf))       ;; pchBuffer
     ;; Buffer starts empty: pchNext == pchEndRead makes the app call mmioAdvance.
     (i32.store (i32.add (local.get $info_wa) (i32.const 28)) (local.get $buf))       ;; pchNext
     (i32.store (i32.add (local.get $info_wa) (i32.const 32)) (local.get $buf))       ;; pchEndRead
     (i32.store (i32.add (local.get $info_wa) (i32.const 36))
-      (i32.add (local.get $buf) (global.get $MMIO_BUF_SIZE)))                        ;; pchEndWrite
+      (i32.add (local.get $buf) (i32.load (i32.add (local.get $info_wa) (i32.const 20))))) ;; pchEndWrite
     (i32.store (i32.add (local.get $info_wa) (i32.const 40)) (local.get $pos))       ;; lBufOffset
     (i32.store (i32.add (local.get $info_wa) (i32.const 44)) (local.get $pos))       ;; lDiskOffset
     (i32.store (i32.add (local.get $info_wa) (i32.const 68)) (local.get $arg0))      ;; hmmio
@@ -878,6 +883,40 @@
             (i32.sub (i32.load (i32.add (local.get $info_wa) (i32.const 28)))
                      (local.get $buf)))                               ;; + consumed
           (i32.const 0)))))
+    (global.set $eax (i32.const 0)))
+
+  ;; mmioSetBuffer(hmmio, pchBuffer, cchBuffer, fuBuffer) — 4 args stdcall.
+  ;; Bind caller storage, allocate internal storage for NULL+size, or disable
+  ;; buffering for NULL+zero. Alpha Centauri requests a 16 KiB internal buffer.
+  (func $handle_mmioSetBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $slot i32) (local $buf i32) (local $owned i32) (local $old i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (if (i32.or (local.get $arg3) (i32.lt_s (local.get $arg2) (i32.const 0)))
+      (then (global.set $eax (i32.const 5)) (return)))               ;; MMSYSERR_INVALPARAM
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (call $mmio_buf_release (local.get $arg0))
+        (global.set $eax (i32.const 0))
+        (return)))
+    (local.set $slot (call $mmio_slot_for (local.get $arg0) (i32.const 1)))
+    (if (i32.eqz (local.get $slot))
+      (then (global.set $eax (i32.const 258)) (return)))             ;; MMIOERR_OUTOFMEMORY
+    (local.set $buf (local.get $arg1))
+    (if (i32.eqz (local.get $buf))
+      (then
+        (local.set $buf (call $heap_alloc (local.get $arg2)))
+        (if (i32.eqz (local.get $buf))
+          (then (global.set $eax (i32.const 258)) (return)))         ;; MMIOERR_OUTOFMEMORY
+        (local.set $owned (i32.const 1))))
+    (local.set $old (call $gl32 (i32.add (local.get $slot) (i32.const 4))))
+    (if (i32.and
+          (i32.ne (call $gl32 (i32.add (local.get $slot) (i32.const 12))) (i32.const 0))
+          (i32.and (i32.ne (local.get $old) (i32.const 0))
+                   (i32.ne (local.get $old) (local.get $buf))))
+      (then (call $heap_free (local.get $old))))
+    (call $gs32 (i32.add (local.get $slot) (i32.const 4)) (local.get $buf))
+    (call $gs32 (i32.add (local.get $slot) (i32.const 8)) (local.get $arg2))
+    (call $gs32 (i32.add (local.get $slot) (i32.const 12)) (local.get $owned))
     (global.set $eax (i32.const 0)))
 
   (func $mci_slot_addr (param $slot i32) (result i32)

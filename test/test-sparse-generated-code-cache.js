@@ -99,6 +99,36 @@ async function main() {
   assert.strictEqual(execute(), 0x55667788,
     'rewriting sparse generated code must invalidate its decoded block');
 
+  // A branch may enter generated code one byte after an already-decoded entry.
+  // Both decodes then cover the same immediate and terminator. The page index
+  // has only one owner per byte, so publishing the interior entry must retire
+  // the older overlapping block instead of hiding it behind the newer cover
+  // marks. Otherwise patching the shared immediate retires only the new block
+  // and the old entry keeps executing stale threaded code. Retail Diablo's
+  // Storm SCode copier uses overlapping count-dependent entries in this shape.
+  const overlapCode = 0x4ff61000;
+  assert.strictEqual(e.test_sparse_map_for_code(overlapCode, 0x1000) >>> 0, overlapCode);
+  const installOverlap = value => {
+    const machineCode = [0x90, 0xb8, ...le32(value), 0xc3]; // nop; mov eax,value; ret
+    machineCode.forEach((byte, index) => e.guest_write8(overlapCode + index, byte));
+  };
+  const executeOverlap = entry => {
+    e.set_esp(stack);
+    e.guest_write32(stack, 0);
+    e.set_eip(entry);
+    e.run(1000);
+    assert.strictEqual(e.get_eip() >>> 0, 0);
+    return e.get_eax() >>> 0;
+  };
+  installOverlap(0x31415926);
+  assert.strictEqual(executeOverlap(overlapCode), 0x31415926,
+    'outer generated entry should execute');
+  assert.strictEqual(executeOverlap(overlapCode + 1), 0x31415926,
+    'interior generated entry should execute');
+  le32(0x27182818).forEach((byte, index) => e.guest_write8(overlapCode + 2 + index, byte));
+  assert.strictEqual(executeOverlap(overlapCode), 0x27182818,
+    'patching bytes shared by overlapping entries must retire the older entry');
+
   // A decoded block is retired by the page it STARTS on, so a block that
   // begins near the end of one page and runs into the next used to survive a
   // rewrite of its own tail. Storm's byte copier is exactly that shape: a long
