@@ -139,6 +139,13 @@ async function main() {
     ['D:\\SETUP.EXE', 'D:\\CIV2.EXE', 'D:\\SETUP_DE.EXE']);
   assert.strictEqual(plan.exeCandidates[0].autorun, true,
     'a mixed-mode disc must honor AUTORUN.INF before generic candidate ranking');
+  const setupEntry = mediaImport.makeAppEntry(plan, {
+    exePath: 'D:\\SETUP.EXE',
+  });
+  assert.strictEqual(setupEntry.workingDirectory, 'D:\\',
+    'a mounted installer must start in the directory containing its executable');
+  assert.strictEqual(setupEntry.mirrorWorkingDirectoryToC, true,
+    'mounted sidecars must follow the C:\\ path reported for the executable');
   assert.strictEqual(plan.storageFiles.length, 3, 'keeping must retain CUE plus both BINs');
   assert.strictEqual(audio.reads, 0, 'analysis must not read an audio track');
   assert.strictEqual(mediaImport.rankCandidates([

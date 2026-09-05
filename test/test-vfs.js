@@ -236,6 +236,33 @@ test('createFile OPEN_EXISTING without match returns error', () => {
   assert(!h || h === -1 || h === null, 'should fail when file not found');
 });
 
+test('writable opens never basename-fallback onto a read-only source drive', () => {
+  const vfs = makeVFS({ 'd:\\readme.txt': 50 });
+  vfs.dirs.add('d:');
+  vfs.dirs.add('d:\\');
+  vfs.setDriveReadOnly('D:');
+  vfs.dirs.add('c:\\program files\\warwind');
+
+  assert.strictEqual(vfs.createFile(
+    'C:\\Program Files\\WarWind\\Data\\readme.txt', 0x80000000, 3), 0,
+  'a missing C: install subtree must not borrow a mounted-media basename');
+  assert.strictEqual(vfs.createFile(
+    'C:\\Program Files\\WarWind\\readme.txt', 0x80000000, 3), 0,
+  'an exact probe in an existing destination directory must not find the CD basename');
+  assert.strictEqual(vfs.createFile(
+    'C:\\Program Files\\WarWind\\readme.txt', 0x40000000, 3), 0,
+  'writable OPEN_EXISTING must not substitute an identically named CD file');
+  const h = vfs.createFile(
+    'C:\\Program Files\\WarWind\\readme.txt', 0x40000000, 4);
+  assert(h, 'writable OPEN_ALWAYS should create the requested destination');
+  assert.strictEqual(vfs.handles.get(h).path,
+    'c:\\program files\\warwind\\readme.txt');
+  assert.deepStrictEqual(vfs.writeFile(h, Uint8Array.of(1, 2, 3), 3),
+    { ok: true, bytesWritten: 3 });
+  assert.strictEqual(vfs.files.get('d:\\readme.txt').data.length, 50,
+    'creating the C: destination must leave the mounted source unchanged');
+});
+
 test('read-only drive permits reads and rejects every write path', () => {
   const vfs = makeVFS({ 'd:\\manual.hlp': 50 });
   vfs.dirs.add('d:');

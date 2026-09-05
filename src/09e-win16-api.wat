@@ -4227,6 +4227,37 @@
       (then (global.set $eax (call $win16_h16 (i32.const 0x60001)))))
     (call $win16_api_return (i32.const 6)))
 
+  ;; USER.457 DestroyIcon(hIcon). Built and copied icons are private and lose
+  ;; both their icon-table slot and their Win16 handle mapping. Icons loaded
+  ;; from a module are shared: USER reports success but leaves them live.
+  (func $win16_DestroyIcon
+    (local $h i32) (local $record i32) (local $owned i32)
+    (local.set $h (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    ;; Sample ownership before the shared handler clears a private record.
+    ;; Cursor handles are accepted by DestroyIcon too; every CURSOR_TABLE
+    ;; record is private, while an ICON_TABLE record uses the resource-id high
+    ;; bit to distinguish a copied/built slot from a loaded shared resource.
+    (local.set $record (call $cursor_record (local.get $h)))
+    (if (local.get $record)
+      (then (local.set $owned (i32.const 1)))
+      (else
+        (local.set $record (call $icon_table_record (local.get $h)))
+        (if (local.get $record)
+          (then (local.set $owned (i32.ne
+            (i32.and (i32.load offset=4 (local.get $record))
+              (i32.const 0x80000000))
+            (i32.const 0)))))))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_DestroyIcon (local.get $h)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (if (i32.and
+          (i32.ne (global.get $eax) (i32.const 0))
+          (local.get $owned))
+      (then (call $win16_h16_forget (local.get $h))))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 2)))
+
   ;; USER.286 GetDesktopWindow(). The desktop is 0x10000 on the 32-bit side and
   ;; goes through the handle map like any other window.
   (func $win16_GetDesktopWindow
@@ -4428,6 +4459,8 @@
         (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 407))
       (then (call $win16_CreateIcon) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 457))
+      (then (call $win16_DestroyIcon) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 131))
       (then (call $win16_class_long (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 132))
