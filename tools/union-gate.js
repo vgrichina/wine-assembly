@@ -113,7 +113,6 @@ const UNIONS = {
       '$gdi_bitmap_bits':            'GdiBitmap',  // 10a:723 record_valid
       '$gdi_bitmap_create_common_toolbar': 'GdiBitmap', // 10a:794 create_owned
       '$gdi_bitmap_clone_owned':     'GdiBitmap',  // 10a:873 record_valid
-      '$shell_system_icon_handle':   'GdiBitmap',  // 09a9:189 record_valid/source + create_owned destination
       '$gdi_screen_surface_clear_rect': 'GdiBitmap', // 10f:967 $gdi_screen_bitmap
       '$gdi_screen_readback_sync':   'GdiBitmap',  // 10f:1025 $gdi_screen_bitmap
       '$gdi_printer_page_clear':     'GdiBitmap',  // 10f:1043 `+4 == 3`
