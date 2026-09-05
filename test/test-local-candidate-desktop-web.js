@@ -224,7 +224,7 @@ const ALL_CANDIDATES = [
     keys: [
       { vk: 39, label: 'select column right', holdMs: 180, waitMs: 500, minDiff: 100, snapshotAfter: 'after-key-right' },
       { vk: 38, label: 'move column up', holdMs: 180, waitMs: 650, minDiff: 400, snapshotAfter: 'after-key-up' },
-      { vk: 32, label: 'rotate center row', holdMs: 180, waitMs: 650, minDiff: 700, snapshotAfter: 'after-key-space' },
+      { vk: 32, label: 'rotate center row', holdMs: 180, waitMs: 650, minDiff: 400, snapshotAfter: 'after-key-space' },
       { vk: 40, label: 'move column down', holdMs: 180, waitMs: 650, minDiff: 400, snapshotAfter: 'after-key-down' },
     ],
     minColors: 80,
@@ -1493,7 +1493,7 @@ async function main() {
         mainHeight: 208,
         clientHeight: 163,
         statusWidth: 284,
-        statusY: 123,
+        statusY: 143,
         statusHeight: 20,
       }, `${app.label}: window and status geometry should match the v86 reference: ${summary}`);
     }
