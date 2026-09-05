@@ -60,6 +60,8 @@ UNIT=(
   test/test-win16-exec.js
   test/test-win16-civ2-apis.js
   test/test-win16-temp-file.js
+  test/test-win16-lazy-file-read.js
+  test/test-win16-destroy-icon.js
   test/test-fs-prefix.js
   test/test-create-directory-last-error.js
   test/test-unhandled-exception-filter.js
@@ -98,6 +100,7 @@ UNIT=(
   test/test-menu-modify-submenu.js
   test/test-menu-check-position.js
   test/test-image-list-icons.js
+  test/test-shgetfileinfo.js
   test/test-insert-menu-item-host-bar.js
   test/test-menu-popup-text.js
   test/test-dynamic-menu-bar.js
@@ -493,6 +496,7 @@ UNIT=(
   # listed in E2E below.
   test/test-baldurs-gate-compat-patches.js
   test/test-caesar3-name-entry.js
+  test/test-warwind-compat-patches.js
   test/test-batch-clock.js
   test/test-browser-critical-section-yield.js
   test/test-browser-cooperative-load-library.js
@@ -567,6 +571,7 @@ UNIT=(
   test/test-toyvm-audio.js
   test/test-toyvm-volatile.js
   test/test-toyvm-operand-patch.js
+  test/test-toyvm-dac-default.js
   test/test-user-default-ui-language.js
   test/test-virtual-query-user-boundary.js
   test/test-wave-in-dev-caps.js

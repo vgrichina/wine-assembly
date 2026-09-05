@@ -2632,7 +2632,7 @@
     (call $win16_api_return (i32.const 2)))
 
   (func $win16_lread (param $write i32)
-    (local $h i32) (local $buf i32) (local $n i32)
+    (local $h i32) (local $buf i32) (local $n i32) (local $lazy i32)
     (local.set $n (call $win16_arg16 (i32.const 0)))
     (local.set $buf (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
@@ -2644,6 +2644,19 @@
       (else (call $handle__lread (local.get $h) (local.get $buf) (local.get $n)
               (i32.const 0) (i32.const 0) (i32.const 0))))
     (call $win16_call32_end)
+    ;; A provider-backed disc read can miss the synchronous chunk cache. The
+    ;; Win32 ReadFile handler parks its stdcall frame itself, but that contract
+    ;; cannot cross $win16_call32_begin's scratch stack. Ask after restoring
+    ;; the real Pascal frame and park it intact instead; the host fills the
+    ;; range and re-enters this same thunk, where the retry takes the cache hit.
+    (if (i32.and (i32.eqz (global.get $eax)) (i32.eqz (local.get $write)))
+      (then
+        (local.set $lazy (call $host_fs_read_pending))
+        (if (i32.eq (local.get $lazy) (i32.const 1))
+          (then
+            (call $win16_set_sreg (i32.const 1) (global.get $WIN16_THUNK_SEL))
+            (call $spin_park (i32.const 12)) ;; IO_WAIT
+            (return)))))
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 8)))
 
@@ -2651,7 +2664,7 @@
   ;; returns its LONG result in DX:AX. InstallShield uses it for setup.bmp as
   ;; soon as its Win95 platform gate succeeds.
   (func $win16_hread
-    (local $h i32) (local $buf i32) (local $n i32)
+    (local $h i32) (local $buf i32) (local $n i32) (local $lazy i32)
     (local.set $n (call $win16_arg32 (i32.const 0)))
     (local.set $buf (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
@@ -2660,6 +2673,14 @@
     (call $handle__hread (local.get $h) (local.get $buf) (local.get $n)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
+    (if (i32.eqz (global.get $eax))
+      (then
+        (local.set $lazy (call $host_fs_read_pending))
+        (if (i32.eq (local.get $lazy) (i32.const 1))
+          (then
+            (call $win16_set_sreg (i32.const 1) (global.get $WIN16_THUNK_SEL))
+            (call $spin_park (i32.const 12)) ;; IO_WAIT
+            (return)))))
     (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 10)))
@@ -2759,15 +2780,22 @@
         (i32.eq (call $win16_arg16 (i32.const 0)) (i32.const 3)))))
     (call $win16_api_return (i32.const 2)))
 
-  ;; KERNEL.166 WinExec(lpCmdLine, uCmdShow) -> UINT. The 16-bit InstallShield
-  ;; bootstrap uses this only after it has completely expanded the 32-bit
-  ;; engine into TEMP. This single-process runtime cannot replace its current
-  ;; image in the middle of the call, so match the existing Win32 spelling's
-  ;; bounded success contract; installer orchestration can then run the fully
-  ;; produced PE as its next native stage.
+  ;; KERNEL.166 WinExec(lpCmdLine, uCmdShow) -> UINT. Use the shared shell
+  ;; boundary so a Win16 InstallShield bootstrap can hand its newly expanded
+  ;; 32-bit engine to the browser with the caller's VFS intact. The operation
+  ;; marker selects WinExec command-line parsing in host.js.
   (func $win16_WinExec
-    (global.set $eax (i32.const 33))
+    (local $command i32) (local $show i32)
+    (local.set $show (call $win16_arg16 (i32.const 0)))
+    (if (call $win16_arg16 (i32.const 2))
+      (then (local.set $command (call $g2w (call $win16_far_to_guest
+        (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1)))))))
+    (i64.store (global.get $TEXT_SCRATCH) (i64.const 0x00636578456E6957)) ;; "WinExec\0"
+    (global.set $eax (call $host_shell_execute
+      (i32.const 0) (global.get $TEXT_SCRATCH) (local.get $command)
+      (i32.const 0) (i32.const 0) (local.get $show)))
     (global.set $edx (i32.const 0))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 6)))
 
   (func $win16_kernel (param $ordinal i32) (result i32)
@@ -4199,6 +4227,37 @@
       (then (global.set $eax (call $win16_h16 (i32.const 0x60001)))))
     (call $win16_api_return (i32.const 6)))
 
+  ;; USER.457 DestroyIcon(hIcon). Built and copied icons are private and lose
+  ;; both their icon-table slot and their Win16 handle mapping. Icons loaded
+  ;; from a module are shared: USER reports success but leaves them live.
+  (func $win16_DestroyIcon
+    (local $h i32) (local $record i32) (local $owned i32)
+    (local.set $h (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    ;; Sample ownership before the shared handler clears a private record.
+    ;; Cursor handles are accepted by DestroyIcon too; every CURSOR_TABLE
+    ;; record is private, while an ICON_TABLE record uses the resource-id high
+    ;; bit to distinguish a copied/built slot from a loaded shared resource.
+    (local.set $record (call $cursor_record (local.get $h)))
+    (if (local.get $record)
+      (then (local.set $owned (i32.const 1)))
+      (else
+        (local.set $record (call $icon_table_record (local.get $h)))
+        (if (local.get $record)
+          (then (local.set $owned (i32.ne
+            (i32.and (i32.load offset=4 (local.get $record))
+              (i32.const 0x80000000))
+            (i32.const 0)))))))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_DestroyIcon (local.get $h)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (if (i32.and
+          (i32.ne (global.get $eax) (i32.const 0))
+          (local.get $owned))
+      (then (call $win16_h16_forget (local.get $h))))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 2)))
+
   ;; USER.286 GetDesktopWindow(). The desktop is 0x10000 on the 32-bit side and
   ;; goes through the handle map like any other window.
   (func $win16_GetDesktopWindow
@@ -4400,6 +4459,8 @@
         (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 407))
       (then (call $win16_CreateIcon) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 457))
+      (then (call $win16_DestroyIcon) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 131))
       (then (call $win16_class_long (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 132))
@@ -10404,6 +10465,11 @@
   (func $win16_dispatch (export "win16_dispatch") (param $thunk_off i32) (param $ret_lin i32)
     (local $module i32) (local $ordinal i32) (local $target i32)
     (global.set $win16_api_calls (i32.add (global.get $win16_api_calls) (i32.const 1)))
+    ;; The linear twin of this selector:offset import. Win16 file reads use it
+    ;; to park on an async cache miss, then the run loop recognizes CS as the
+    ;; thunk selector and dispatches this same offset after the host fills it.
+    (global.set $current_thunk_eip
+      (call $win16_far_to_guest (global.get $WIN16_THUNK_SEL) (local.get $thunk_off)))
     (local.set $module  (call $win16_thunk_module  (local.get $thunk_off)))
     (local.set $ordinal (call $win16_thunk_ordinal (local.get $thunk_off)))
     (global.set $win16_last_module (local.get $module))

@@ -1749,7 +1749,7 @@ async function once(exe, o, extra) {
   // follows. Replaying them somewhere else is only sound if those assumptions
   // still hold, so each is switchable in BOTH arms -- that is what tells an
   // unsound region apart from a wrong one.
-  const r = await runDos({ exe, budget: o.budget, slice: o.slice, cpu: o.cpu,
+  const r = await runDos({ exe, budget: o.budget, slice: o.slice, cpu: o.cpu, cpuMeter: true,
     irqEvery: o.irqEvery, dispatchesPerTick: o.dispatchesPerTick,
     spinLoops: !flag('no-spin'), traceBlocks: !flag('no-traced'),
     crossFlags: !flag('no-cross-flags'), fuse: !flag('no-fuse'),

@@ -106,6 +106,7 @@ assert(cliSource.includes('forwardGuestLogs: VERBOSE || TRACE_API || TRACE_API_C
 
 const keyboardMemory = new ArrayBuffer(1024);
 const renderer = {
+  canvas: { style: { cursor: 'default' } },
   peekKeyDownState(vKey) {
     return vKey === 0x01 || vKey === 0x41 ? 0x8000 : 0;
   },
@@ -128,6 +129,13 @@ assert.strictEqual(keys[0x41], 0x80, 'held keyboard VK state is included');
 assert.strictEqual(keys[0x40], 0, 'released keys remain clear');
 assert.strictEqual(windowHost.imports.get_keyboard_state(900), 0,
   'out-of-bounds snapshots fail without partially writing memory');
+
+windowHost.imports.set_cursor(0);
+assert.strictEqual(renderer.canvas.style.cursor, 'none',
+  'SetCursor(NULL) hides the browser cursor for software-cursor games');
+windowHost.imports.set_cursor(0x67F00);
+assert.strictEqual(renderer.canvas.style.cursor, 'default',
+  'selecting IDC_ARROW restores the browser cursor');
 
 const wat = fs.readFileSync(path.join(ROOT, 'src/09a-handlers.wat'), 'utf8');
 const begin = wat.indexOf('(func $handle_GetKeyboardState');

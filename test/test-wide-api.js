@@ -248,8 +248,8 @@ async function main() {
 
   const fileInfo = e.guest_alloc(692);
   const fullPath = writeWide('C:\\MEDIA\\PINBALL.MID');
-  check('SHGetFileInfoW returns a display-name basename',
-    e.test_call_SHGetFileInfoW(fullPath, fileInfo, 692, 0x200) !== 0 &&
+  check('SHGetFileInfoW returns a display-name basename for an attributed synthetic path',
+    e.test_call_SHGetFileInfoW(fullPath, fileInfo, 692, 0x210) !== 0 &&
       readWide(fileInfo + 12) === 'PINBALL.MID', readWide(fileInfo + 12));
 
   console.log(`--- wide-api: ${pass} passed, ${fail} failed`);

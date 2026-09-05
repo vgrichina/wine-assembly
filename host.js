@@ -505,7 +505,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '282';
+  static SOURCE_VERSION = '284';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -1491,10 +1491,25 @@ class WineAssembly {
       // GetAsyncKeyState press bit.
       const ownerInstance = ctx.instance || self.instance;
       const owns = (self._hwndBase && self._multiApp)
-        ? (e) => !e.hwnd || (e.hwnd >= self._hwndBase && e.hwnd < self._hwndBase + 0x10000)
+        ? (e) => {
+          if (!e || !e.hwnd) return true;
+          const win = self.renderer.windows && self.renderer.windows[e.hwnd];
+          // The renderer stamps every created window with its WineAssembly
+          // process. Prefer that identity over the numeric range: a Worker
+          // can create its first window after the browser assigns a newer
+          // base than the one captured by this host-import closure.
+          if (win && win.processId) return win.processId === self.processId;
+          return e.hwnd >= self._hwndBase && e.hwnd < self._hwndBase + 0x10000;
+        }
         : (e) => {
           if (!ownerInstance || !e || !e.hwnd) return true;
           const win = self.renderer.windows && self.renderer.windows[e.hwnd];
+          // Every real guest thread has its own WASM instance, but all of
+          // those instances belong to one Win32 process. A window may create
+          // its message pump on a different thread from the one that created
+          // it (Dungeon Keeper does this after its intro), so instance
+          // identity would leave otherwise valid clicks queued forever.
+          if (win && win.processId) return win.processId === self.processId;
           return !win || !win.wasm || win.wasm === ownerInstance;
         };
       const evt = self.renderer.takeInput(owns);
@@ -1533,7 +1548,9 @@ class WineAssembly {
         const renderer = self.renderer;
         const windows = Object.values((renderer && renderer.windows) || {})
           .filter(win => win && win.visible && !win.isChild &&
-            (!win.wasm || win.wasm === ownerInstance))
+            (win.processId
+              ? win.processId === self.processId
+              : (!win.wasm || win.wasm === ownerInstance)))
           .sort((a, b) => renderer && renderer._compareTopLevelZ
             ? renderer._compareTopLevelZ(b, a)
             : ((b.zOrder || 0) - (a.zOrder || 0)));
@@ -2141,7 +2158,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=19',
+        workerUrl: 'lib/guest-worker.js?v=21',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },

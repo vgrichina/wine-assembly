@@ -751,7 +751,17 @@ class Machine {
     this.mem = mem;
     this.log = opts.log || (() => {});
     this.videoMode = 3;
+    // Power-on is mode 3, and the BIOS has already loaded the text-mode DAC by
+    // the time a program gets the CPU: the EGA's 64 colours in entries 0-63 and
+    // black above them. Leaving all 768 bytes zero is only invisible while
+    // nothing reads the DAC back -- and reading it back is exactly what a demo
+    // that wants to fade the DOS prompt out does. ATTIC.EXE opens with
+    // `out 3C7,0` and 768 `in 3C9` in mode 3h, scales what it read towards
+    // black over 64 passes and writes each pass back; against 256 blacks every
+    // one of those 49920 writes is a zero, so the fade it renders is a screen
+    // that was already black. See loadTextDac.
     this.palette = new Uint8Array(768);
+    this.loadTextDac();
     this.dacWriteIndex = 0;
     // Every DAC entry the guest has written, by port or by BIOS. The progress
     // detector needs it: a palette loop drives the screen without touching a
@@ -3149,6 +3159,17 @@ class Machine {
     return null;
   }
 
+  // The DAC a VGA BIOS leaves behind for a mode that is not 256-colour: the
+  // EGA's own 64 colours in entries 0-63. Text mode gets it as well as the
+  // 16-colour graphics modes -- the DAC is a piece of hardware, not a property
+  // of the mode, and mode 3h reads back the same 64 entries mode 12h does. The
+  // text renderer here reaches its sixteen colours through CGA_DAC rather than
+  // through this array, so loading it changes nothing that is drawn; what it
+  // changes is what a program that reads the DAC back is told.
+  loadTextDac() {
+    this.palette.set(EGA_DAC);
+  }
+
   int10(ah, al, r) {
     if (ah === 0x00) {
       // A BIOS mode set leaves any VESA mode. Keeping the VESA surface across
@@ -3174,6 +3195,11 @@ class Machine {
       // colours overwrites these immediately; one that does not is entitled to
       // the BIOS default rather than to 256 blacks.
       if (this.vga.bpp === 8) this.palette.set(VGA_DAC);
+      // ...and a text mode gets the same 64 EGA entries a 16-colour graphics
+      // mode does. A program that drops back to mode 3h and then reads the DAC
+      // -- to fade the DOS prompt, or to save a palette it means to restore --
+      // must not be told the card came up black.
+      if (this.vga.bpp === 0) this.loadTextDac();
       // A CGA graphics mode clears its own buffer and reaches its four colours
       // through the same DAC everything else here does, so it needs the
       // EGA-compatible entries loaded for CGA_PALETTE to name anything.

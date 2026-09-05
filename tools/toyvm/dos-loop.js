@@ -50,7 +50,7 @@ const VOLATILE_AFTER = 8;
 // before the paragraph goes back to the cache (CodeCache.volatileEntry).
 const VOLATILE_STALE = 256;
 const { compileProgram } = require('./compile');
-const { decodeOne } = require('./decode');
+const { decodeOne, readOperand, OPERAND_SIZE } = require('./decode');
 const { ARITY, NOFLAG, FUSE, TRACE, SPIN, PSPIN } = require('./emit');
 const { STUB_SEG, STUB_OFF, STUB_BYTE } = require('./dos');
 
@@ -106,6 +106,8 @@ class CodeCache {
     // Self-modify breaks answered by rewriting an operand word in the arena
     // instead of dropping the program (repairOperands).
     this.patched = 0;
+    this.fastRepairs = 0;
+    this.plans = new Map();      // see repairOperands
     this.repairWhy = new Map();   // decline reason -> count, for --smc-census
     // Watchpoints, as [lo, hi] linear byte ranges. They ride the CODE_BITMAP
     // rather than adding a range test to $wr8, because $wr8 is on the hot path
@@ -209,6 +211,7 @@ class CodeCache {
     this.regions.clear();
     this.blockIndex.clear();
     this.byPara.clear();
+    this.plans.clear();
     this.stubProgs.clear();
     this.vm.set('rtop', 0);
     this.jtab.fill(0);
@@ -272,6 +275,36 @@ class CodeCache {
     // A slice's stores into code, as one range. Past this it is a program
     // moving its image, and invalidateRange's own width test takes it.
     if (hi - lo > 512) return this.decline('range too wide');
+    // The same site writes the same range every time (CYCLE's mixer ISR:
+    // 30879 breaks, one range), and the decode walk below costs more than
+    // the compile it replaces -- 46us against 12.6us, decodeOne + repairProg
+    // were 17% of a profile. So the first repair of a range leaves a plan:
+    // which operand words it patched and what every OTHER decoded byte in
+    // the range held. A later break on the same range whose non-operand
+    // bytes still match is the same repair with new operand values, read
+    // straight off memory. Any other case takes the full walk again.
+    const key = lo * 4096 + (hi - lo);
+    const plan = this.plans.get(key);
+    if (plan) {
+      const mem = this.vm.mem;
+      let ok = true;
+      for (const prog of plan.progs) if (!prog.live) { ok = false; break; }
+      const { at, byte } = plan;
+      for (let i = 0; ok && i < at.length; i++) if (mem[at[i]] !== byte[i]) ok = false;
+      if (ok) {
+        const arena = new Int32Array(mem.buffer);
+        const rd = (l) => mem[l];
+        for (const [prog, q, a, kind] of plan.ops) {
+          const v = readOperand(rd, a, kind);
+          prog.words[q] = v;
+          arena[(prog.arenaBase >> 2) + q] = v;
+        }
+        this.patched++;
+        this.fastRepairs++;
+        return true;
+      }
+      this.plans.delete(key);
+    }
     const progs = new Set();
     for (let p = lo >>> 4; p <= hi >>> 4; p++) {
       for (const prog of (this.byPara.get(p) || [])) progs.add(prog);
@@ -279,13 +312,44 @@ class CodeCache {
     if (!progs.size) return this.decline('no cached program covers the range');
     const patches = [];
     for (const prog of progs) if (!this.repairProg(prog, lo, hi, patches)) return false;
-    const arena = new Int32Array(this.vm.mem.buffer);
+    const mem = this.vm.mem;
+    const arena = new Int32Array(mem.buffer);
     for (const [prog, q, v] of patches) {
       prog.words[q] = v;
       arena[(prog.arenaBase >> 2) + q] = v;
     }
     this.patched++;
+    this.rememberPlan(key, lo, hi, progs, patches);
     return true;
+  }
+
+  // The plan is only kept when the operand value the walk produced IS what
+  // readOperand reads back at the operand's bytes, for every operand -- so
+  // the fast path cannot differ from the walk on this site. Bytes the walk
+  // decoded but did not patch are snapshotted; bytes in the range no program
+  // decoded (the ISR's own counters, sitting between its instructions) are
+  // not, because the walk never looked at them either.
+  rememberPlan(key, lo, hi, progs, patches) {
+    const mem = this.vm.mem;
+    const rd = (l) => mem[l];
+    const isOperand = new Uint8Array(hi - lo + 1);
+    const ops = [];
+    for (const [prog, q, v, at, kind] of patches) {
+      if (readOperand(rd, at, kind) !== v) return;
+      const size = OPERAND_SIZE[kind];
+      for (let b = at; b < at + size; b++) if (b >= lo && b <= hi) isOperand[b - lo] = 1;
+      ops.push([prog, q, at, kind]);
+    }
+    const at = [], byte = [];
+    for (const prog of progs) {
+      for (const [from, to] of prog.covered) {
+        for (let b = Math.max(lo, from); b <= Math.min(hi, to - 1); b++) {
+          if (!isOperand[b - lo]) { at.push(b); byte.push(mem[b]); }
+        }
+      }
+    }
+    if (this.plans.size >= 256) this.plans.clear();
+    this.plans.set(key, { progs: [...progs], ops, at, byte });
   }
 
   repairProg(prog, lo, hi, patches) {
@@ -336,7 +400,8 @@ class CodeCache {
       // values, so writing them makes the arena what a fresh compile would
       // be, whatever the store touched.
       for (let b = Math.max(lo, lin); b <= Math.min(hi, lin + span - 1); b++) reached[b - lo] = 1;
-      for (const o of ops) patches.push([prog, q + o.word, w[o.word]]);
+      // o.at is the operand's offset within the instruction.
+      for (const o of ops) patches.push([prog, q + o.word, w[o.word], (lin + o.at) & mask, o.kind]);
     }
     // ...as long as every byte in the range this program decoded went
     // through that comparison. One none reached -- a trailing refused byte,
@@ -392,6 +457,7 @@ class CodeCache {
   // dropped since they were recorded.
   dropProgs(doomed) {
     for (const prog of doomed) {
+      prog.live = false;
       const list = this.regions.get(prog.key);
       if (list) {
         const at = list.indexOf(prog);
@@ -794,6 +860,7 @@ class CodeCache {
     // What the decode was asked with, so repairOperands can decode one of
     // this program's instructions again the same way.
     prog.codeBase = codeBase;
+    prog.live = true;            // cleared by dropProgs; a repair plan checks it
     prog.mask = mask;
     prog.d32 = d32;
     // A Set, because covered ranges can overlap each other within one program.
@@ -1595,7 +1662,7 @@ class DosSession {
   stats() {
     return {
       dispatched: this.dispatched, handbacks: this.handbacks, ints: this.ints,
-      irqs: this.irqs, smcBreaks: this.smcBreaks, smcPatched: this.cache.patched, stuckAt: this.stuckAt,
+      irqs: this.irqs, smcBreaks: this.smcBreaks, smcPatched: this.cache.patched, smcFastRepairs: this.cache.fastRepairs, stuckAt: this.stuckAt,
       smcSites: this.smcSites, retiredPatches: this.cache.benign.size,
       repairWhy: this.cache.repairWhy,
       traps: this.traps, icebps: this.icebps,

@@ -177,9 +177,29 @@ async function main() {
   }, mips);
   await page.goto(`http://127.0.0.1:${port}/demos.html`, { waitUntil: 'load' });
 
+  // `--cpu-profile=FILE`: V8's sampling profiler over the first name's run,
+  // written as a .cpuprofile for tools/cpuprof-top.js. The underrun share
+  // says the page cannot keep pace; this says what the main thread was
+  // doing instead -- and it is a different answer from the CLI's profile,
+  // because the page's per-slice work (pacing, paint, the ring) is its own.
+  const cpuProfile = arg('cpu-profile');
+  let cdp = null;
+  if (cpuProfile) {
+    cdp = await page.target().createCDPSession();
+    await cdp.send('Profiler.enable');
+    await cdp.send('Profiler.setSamplingInterval', { interval: 200 });
+  }
+
   const out = [];
   for (const name of names) {
+    const profiling = cdp && name === names[0];
+    if (profiling) await cdp.send('Profiler.start');
     const r = await probe(page, name, seconds, name === names[0] ? arg('wav') : null);
+    if (profiling) {
+      const { profile } = await cdp.send('Profiler.stop');
+      fs.writeFileSync(cpuProfile, JSON.stringify(profile));
+      console.log(`cpu profile of ${name} written to ${cpuProfile} (node tools/cpuprof-top.js ${cpuProfile})`);
+    }
     out.push(r);
     if (r.error) { console.log(`${name}: ${r.error}`); continue; }
     console.log(`${name} at ${mips} MIPS, ${seconds}s:`);
@@ -192,7 +212,9 @@ async function main() {
       if (row.gus && (row.gus.starts || row.gus.irqs)) src.push(`gus ${row.gus.starts} starts/${row.gus.irqs} irqs${row.gus.playing ? ' playing' : ''}`);
       console.log(`  ${String(row.t).padStart(3)}s  pulls ${String(row.pulls).padStart(4)}  underruns ${String(row.underruns).padStart(3)}`
         + `  rendered ${String(row.rendered).padStart(6)}  dropped ${String(row.dropped).padStart(5)}  stalls ${String(row.stalls).padStart(3)}`
-        + `  ${(row.dispatched / 1e6).toFixed(1).padStart(5)}M dispatches  ${row.state}  ${src.join(', ')}`);
+        + `  ${(row.dispatched / 1e6).toFixed(1).padStart(5)}M dispatches`
+        + (row.total.budgetMs !== undefined ? `  budget ${row.total.budgetMs.toFixed(1)}ms` : '')
+        + `  ${row.state}  ${src.join(', ')}`);
     }
     const a = r.final && r.final.audio;
     if (a) {

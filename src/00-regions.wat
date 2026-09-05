@@ -99,9 +99,9 @@
   ;; raw (data (i32.const ...)) segments in no region at all; each is sized to
   ;; exactly the bytes its segment emits, so growing one is a compile error.
   (region.declare $WIN16_FONT_FACES (size 0x00000030) (align 0x00000100)
-    (owner "09e-win16-api.wat:9518"))
+    (owner "09e-win16-api.wat:9579"))
   (region.declare $WIN16_MMSYSTEM_NAMES (size 0x0000005D) (align 0x00000010)
-    (owner "09e-win16-api.wat:10346"))
+    (owner "09e-win16-api.wat:10407"))
   (region.declare $DIALOG_STATE_TABLE (size 0x00001000) (align 0x00001000)
     (owner "09c0-window-table.wat:550"))
   (region.declare $WINDOW_UNICODE_TABLE (size 0x00000100) (align 0x00001000)
@@ -199,7 +199,7 @@
   (region.declare $BROWSE_DIALOG_STRINGS (size 0x00000060) (align 0x00000010)
     (owner "01-header.wat:1213"))
   (region.declare $DX_VERSION_INFO (size 0x0000005C) (align 0x00000010)
-    (owner "09a-handlers.wat:18566"))
+    (owner "09a-handlers.wat:18840"))
   ;; Storage for every string the compiler interns from a `"text"` literal.
   ;; Named by `(string.pool $WATX_STRING_POOL)` in 01-header.wat; without that
   ;; declaration the pool is placed above the last data segment, which in this
@@ -225,7 +225,7 @@
   ;; before the fixed guest mirror. Keep the address allocator-owned rather
   ;; than pinning another raw address.
   (region.declare $LAST_ACTIVE_POPUP_TABLE (size 0x00000400) (align 0x00000100)
-    (owner "09a-handlers.wat:19538"))
+    (owner "09a-handlers.wat:19821"))
   ;; WIDENED 0x100000 -> 0x3EE000 (wave 3). The low heap never fitted in 1MB:
   ;; $heap_low_reserve hands out 1MB chunks and stopped only when the next
   ;; chunk would reach $PAGE_INDEX_ARENA, which the hand-placed map happened to
@@ -283,7 +283,7 @@
   (region.declare $WND_HINSTANCE_TABLE (size 0x00000400) (align 0x00000100)
     (owner "09c0-window-table.wat:164"))
   (region.declare $WIN16_BUILTIN_NAMES (size 0x00000200) (align 0x00001000)
-    (owner "09e-win16-api.wat:10348"))
+    (owner "09e-win16-api.wat:10409"))
   (region.declare $WND_THREAD_TABLE (size 0x00000400) (align 0x00000100)
     (owner "09c0-window-table.wat:41"))
   (region.declare $THREAD_MSG_QUEUES (size 0x00002080) (align 0x00000100)
@@ -364,14 +364,14 @@
   (region.declare $TAB_NATIVE_STATE_TABLE (size 0x00000100) (align 0x00000100)
     (owner "09c3-controls.wat:862"))
   (region.declare $ICON_TABLE (size 0x00000100) (align 0x00000100)
-    (owner "09a-handlers.wat:5150"))
+    (owner "09a-handlers.wat:5155"))
   (region.declare $CURSOR_TABLE (size 0x00000300) (align 0x00000100)
     (stride $CURSOR_TABLE_STRIDE (count 32))
-    (owner "09a-handlers.wat:5254"))
+    (owner "09a-handlers.wat:5281"))
   (region.declare $CURSOR_MASK_DESC (size 0x00000050) (align 0x00000100)
-    (owner "09a-handlers.wat:5355"))
+    (owner "09a-handlers.wat:5382"))
   (region.declare $CURSOR_COLOR_DESC (size 0x00000050) (align 0x00000010)
-    (owner "09a-handlers.wat:5356"))
+    (owner "09a-handlers.wat:5383"))
   (region.declare $EDIT_LAYOUT_SCRATCH (size 0x00000C00) (align 0x00000100)
     (owner "09c3-controls.wat:14569"))
   (region.declare $VIRTUAL_MAP_STATE (size 0x00000010) (align 0x00000100)
@@ -404,7 +404,7 @@
     (owner "01-header.wat:2371"))
   (region.declare $CS_TABLE (size 0x00000400) (align 0x00000010)
     (stride 0x4 (count $CS_TABLE_ENTRIES))
-    (owner "09a-handlers.wat:10217"))
+    (owner "09a-handlers.wat:10244"))
   (region.declare $SHARED_COUNTERS (size 0x00000010) (align 0x00000010)
     (owner "01-header.wat:2408"))
   (region.declare $GDI_TABLE_MARKS (size 0x00000010) (align 0x00000010)
@@ -498,9 +498,9 @@
     (stride 0x4 (count $DX_MAX))
     (owner "09a8-handlers-directx.wat:688"))
   (region.declare $CP1252_TO_CP437 (size 0x00000100) (align 0x00001000)
-    (owner "09a-handlers.wat:17580"))
+    (owner "09a-handlers.wat:17854"))
   (region.declare $CP437_TO_CP1252 (size 0x00000100) (align 0x00000100)
-    (owner "09a-handlers.wat:17581"))
+    (owner "09a-handlers.wat:17855"))
   (region.declare $BRANCH_CMP_JCC_HIST (size 0x00001000) (align 0x00001000)
     (owner "04-cache.wat:1074"))
   (region.declare $BRANCH_TEST_JCC_HIST (size 0x00001000) (align 0x00001000)
@@ -536,6 +536,12 @@
   (region.declare $VSOCK_TABLE (size 0x00002000) (align 0x00001000)
     (stride $VSOCK_REC_SIZE (count $VSOCK_MAX))
     (owner "09d-winsock.wat:99"))
+  ;; Per-process shell image-list identity plus the short immutable strings
+  ;; SHGetFileInfo copies into SHFILEINFO.  WAT globals are per instance, so
+  ;; the two HIMAGELIST handles themselves must live in shared memory for a
+  ;; process whose API calls arrive through more than one Worker instance.
+  (region.declare $SHELL_FILE_INFO (size 0x00000080) (align 0x00000010)
+    (owner "09a9-comctl32.wat:14"))
   (region.declare-fixed $VIRTUAL_BACKING_BASE (base 0x08000000) (size 0x14000000) (align 0x00001000)
     (owner "08-pe-loader.wat:57"))
   (region.declare-fixed $DIB_BACKING_BASE (base 0x1C000000) (size 0x03F00000) (align 0x00001000)

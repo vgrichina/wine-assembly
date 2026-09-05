@@ -104,6 +104,32 @@
     (call $gs32 (i32.add (local.get $ga) (i32.const 12))
       (i32x4.extract_lane 3 (local.get $v))))
 
+  (func $xmm_lane_get (param $v v128) (param $lane i32) (result i32)
+    (if (i32.eq (local.get $lane) (i32.const 0))
+      (then (return (i32x4.extract_lane 0 (local.get $v)))))
+    (if (i32.eq (local.get $lane) (i32.const 1))
+      (then (return (i32x4.extract_lane 1 (local.get $v)))))
+    (if (i32.eq (local.get $lane) (i32.const 2))
+      (then (return (i32x4.extract_lane 2 (local.get $v)))))
+    (i32x4.extract_lane 3 (local.get $v)))
+
+  ;; SHUFPS has a runtime immediate, while WebAssembly's native shuffle lane
+  ;; indices are compile-time immediates. Build the four selected dwords with
+  ;; static replace-lane instructions so all 256 guest masks remain exact.
+  (func $sse_shufps (param $d v128) (param $s v128) (param $imm i32) (result v128)
+    (i32x4.replace_lane 3
+      (i32x4.replace_lane 2
+        (i32x4.replace_lane 1
+          (i32x4.replace_lane 0 (i32x4.splat (i32.const 0))
+            (call $xmm_lane_get (local.get $d)
+              (i32.and (local.get $imm) (i32.const 3))))
+          (call $xmm_lane_get (local.get $d)
+            (i32.and (i32.shr_u (local.get $imm) (i32.const 2)) (i32.const 3))))
+        (call $xmm_lane_get (local.get $s)
+          (i32.and (i32.shr_u (local.get $imm) (i32.const 4)) (i32.const 3))))
+      (call $xmm_lane_get (local.get $s)
+        (i32.and (i32.shr_u (local.get $imm) (i32.const 6)) (i32.const 3)))))
+
   ;; CVTT* converts with truncation toward zero and returns x86's integer
   ;; indefinite value for NaN or overflow. WebAssembly's saturating conversion
   ;; avoids a host trap; explicit bounds restore x86's high-overflow behavior.
@@ -117,12 +143,13 @@
     (i32.trunc_sat_f32_s (local.get $v)))
 
   ;; sub=0 is a 128-bit move; sub=1 is XORPS; sub=2 is MOVSS; sub=3 is
-  ;; UNPCKLPS; sub=4 is MOVLHPS (register source). These are all lane/bit moves
-  ;; and therefore independent of floating-point NaN/rounding behavior.
+  ;; UNPCKLPS; sub=4 is MOVLHPS (register source); sub=7 is SHUFPS, with its
+  ;; imm8 in operand bits 16..23; sub=8/9 are ADDPS/MULPS.
   (func $th_sse_rr (param $op i32)
     (local $sub i32) (local $dst i32) (local $src i32)
     (local $d v128) (local $s v128) (local $v v128)
-    (local.set $sub (i32.shr_u (local.get $op) (i32.const 8)))
+    (local.set $sub
+      (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xFF)))
     (local.set $dst (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
     (local.set $src (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $d (call $xmm_get (local.get $dst)))
@@ -146,9 +173,17 @@
     (local.set $v (local.get $s))
     (if (i32.eq (local.get $sub) (i32.const 1))
       (then (local.set $v (v128.xor (local.get $d) (local.get $s)))))
+    (if (i32.eq (local.get $sub) (i32.const 8))
+      (then (local.set $v (f32x4.add (local.get $d) (local.get $s)))))
+    (if (i32.eq (local.get $sub) (i32.const 9))
+      (then (local.set $v (f32x4.mul (local.get $d) (local.get $s)))))
     (if (i32.eq (local.get $sub) (i32.const 2))
       (then (local.set $v (i32x4.replace_lane 0
         (local.get $d) (i32x4.extract_lane 0 (local.get $s))))))
+    (if (i32.eq (local.get $sub) (i32.const 7))
+      (then (local.set $v (call $sse_shufps
+        (local.get $d) (local.get $s)
+        (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xFF))))))
     (if (i32.eq (local.get $sub) (i32.const 3))
       (then (local.set $v
         (i32x4.replace_lane 3
@@ -169,7 +204,8 @@
   (func $th_sse_rm (param $op i32)
     (local $sub i32) (local $dst i32) (local $addr i32)
     (local $d v128) (local $s v128) (local $v v128)
-    (local.set $sub (i32.shr_u (local.get $op) (i32.const 8)))
+    (local.set $sub
+      (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xFF)))
     (local.set $dst (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
     (local.set $addr (call $read_addr))
     (local.set $d (call $xmm_get (local.get $dst)))
@@ -199,9 +235,17 @@
       (else
         (local.set $s (call $xmm_load128 (local.get $addr)))
         (local.set $v (local.get $s))
+        (if (i32.eq (local.get $sub) (i32.const 7))
+          (then (local.set $v (call $sse_shufps
+            (local.get $d) (local.get $s)
+            (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xFF))))))
         (if (i32.eq (local.get $sub) (i32.const 1))
           (then (local.set $v
             (v128.xor (local.get $d) (local.get $s)))))
+        (if (i32.eq (local.get $sub) (i32.const 8))
+          (then (local.set $v (f32x4.add (local.get $d) (local.get $s)))))
+        (if (i32.eq (local.get $sub) (i32.const 9))
+          (then (local.set $v (f32x4.mul (local.get $d) (local.get $s)))))
         (if (i32.eq (local.get $sub) (i32.const 3))
           (then (local.set $v
             (i32x4.replace_lane 3

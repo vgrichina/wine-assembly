@@ -5137,6 +5137,11 @@
   ;; bitmap as its "resource", and drawing one blits that bitmap — see
   ;; $icon_draw_handle. Visual Basic's controls build their pictures this way.
   (global $ICON_FROM_BITMAP i32 (i32.const 0x1C0B17))
+  ;; A caller-owned shell icon is one cell cropped from the system image-list
+  ;; strip.  Keep it distinct from CreateIcon's bitmap wrapper: the shell
+  ;; strip uses the Win9x image-list magenta key and DrawIcon must preserve
+  ;; those transparent pixels rather than copying the key colour to the DC.
+  (global $ICON_FROM_SHELL_BITMAP i32 (i32.const 0x5E1100))
   (global $ICON_FROM_OPAQUE i32 (i32.const 0x0FACED))
   ;; A Win16 NE module id, stored in ICON_TABLE's hInstance word. The low 24
   ;; bits are the $win16_res_module selector (task=1, DLL=0x10000|id).
@@ -5183,7 +5188,29 @@
                    (i32.mul (local.get $slot) (i32.const 8))))
     (if (i32.eqz (i32.load offset=4 (local.get $p)))
       (then (return (i32.const 0))))
-    ;; cx/cy of 0 mean "the icon's own size" — the DrawIconEx default.
+    ;; SHGetFileInfo's HICON is a private crop of one system-list cell.  Its
+    ;; natural dimensions come from that crop (16 or 32), and the same
+    ;; magenta colour key used by Win98 common controls supplies transparency.
+    (if (i32.eq (i32.load (local.get $p)) (global.get $ICON_FROM_SHELL_BITMAP))
+      (then
+        (if (i32.le_s (local.get $cx) (i32.const 0))
+          (then (local.set $cx (call $host_gdi_get_object_w
+            (i32.and (i32.load offset=4 (local.get $p)) (i32.const 0x7FFFFFFF))))))
+        (if (i32.le_s (local.get $cy) (i32.const 0))
+          (then (local.set $cy (call $host_gdi_get_object_h
+            (i32.and (i32.load offset=4 (local.get $p)) (i32.const 0x7FFFFFFF))))))
+        (local.set $ok (call $gdi_dc_alloc))
+        (if (i32.eqz (local.get $ok)) (then (return (i32.const 0))))
+        (drop (call $host_gdi_select_object (local.get $ok)
+          (i32.and (i32.load offset=4 (local.get $p)) (i32.const 0x7FFFFFFF))))
+        (local.set $slot (call $host_gdi_transparent_blt
+          (local.get $hdc) (local.get $x) (local.get $y)
+          (local.get $cx) (local.get $cy) (local.get $ok)
+          (i32.const 0) (i32.const 0) (i32.const 0x00FF00FF)))
+        (drop (call $gdi_dc_delete (local.get $ok)))
+        (return (local.get $slot))))
+    ;; cx/cy of 0 mean "the icon's own size" — resources and CreateIcon's
+    ;; legacy bitmap wrapper default to the Win98 large-icon metric.
     (if (i32.le_s (local.get $cx) (i32.const 0))
       (then (local.set $cx (i32.const 32))))
     (if (i32.le_s (local.get $cy) (i32.const 0))
@@ -12950,58 +12977,305 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; SHGetFileInfo's display name: the final component of the path, copied into
-  ;; SHFILEINFO.szDisplayName (byte 12, 260 characters). Both spellings come
-  ;; here; $wide says how wide the caller's path and struct are.
-  (func $sh_file_info_display_name
-      (param $path i32) (param $psfi i32) (param $cb i32) (param $wide i32) (result i32)
-    (local $step i32) (local $src i32) (local $base i32) (local $dst i32)
-    (local $ch i32) (local $count i32)
+  ;; Bounded ANSI/UTF-16 copy. $capacity is the actual byte extent remaining
+  ;; in the caller's SHFILEINFO, not merely the public array's nominal size.
+  (func $sh_copy_string_bounded
+      (param $src i32) (param $dst i32) (param $capacity i32)
+      (param $src_wide i32) (param $dst_wide i32)
+    (local $src_step i32) (local $dst_step i32) (local $max i32)
+    (local $count i32) (local $ch i32)
+    (local.set $src_step (select (i32.const 2) (i32.const 1) (local.get $src_wide)))
+    (local.set $dst_step (select (i32.const 2) (i32.const 1) (local.get $dst_wide)))
+    (local.set $max (i32.div_u (local.get $capacity) (local.get $dst_step)))
+    (if (i32.eqz (local.get $max)) (then (return)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (i32.add (local.get $count) (i32.const 1)) (local.get $max)))
+      (local.set $ch (call $load_char (local.get $src) (local.get $src_wide)))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (if (local.get $dst_wide)
+        (then (i32.store16
+          (i32.add (local.get $dst) (i32.shl (local.get $count) (i32.const 1)))
+          (local.get $ch)))
+        (else (i32.store8 (i32.add (local.get $dst) (local.get $count)) (local.get $ch))))
+      (local.set $src (i32.add (local.get $src) (local.get $src_step)))
+      (local.set $count (i32.add (local.get $count) (i32.const 1)))
+      (br $copy)))
+    (if (local.get $dst_wide)
+      (then (i32.store16
+        (i32.add (local.get $dst) (i32.shl (local.get $count) (i32.const 1))) (i32.const 0)))
+      (else (i32.store8 (i32.add (local.get $dst) (local.get $count)) (i32.const 0)))))
+
+  (func $sh_path_basename (param $path i32) (param $wide i32) (result i32)
+    (local $step i32) (local $scan i32) (local $base i32) (local $ch i32)
     (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
-    (if (i32.and (i32.ne (local.get $path) (i32.const 0))
-                 (i32.and (i32.ne (local.get $psfi) (i32.const 0))
-                          (i32.ge_u (local.get $cb) (i32.const 14))))
+    (local.set $scan (local.get $path))
+    (local.set $base (local.get $path))
+    (block $done (loop $chars
+      (local.set $ch (call $load_char (local.get $scan) (local.get $wide)))
+      (br_if $done (i32.eqz (local.get $ch)))
+      ;; Keep the full root name for a trailing separator (not an empty base).
+      (if (i32.and
+            (i32.or (i32.eq (local.get $ch) (i32.const 47))
+                    (i32.eq (local.get $ch) (i32.const 92)))
+            (i32.ne (call $load_char
+              (i32.add (local.get $scan) (local.get $step)) (local.get $wide)) (i32.const 0)))
+        (then (local.set $base (i32.add (local.get $scan) (local.get $step)))))
+      (local.set $scan (i32.add (local.get $scan) (local.get $step)))
+      (br $chars)))
+    (local.get $base))
+
+  ;; Lower-case three-character extension packed little-endian, or zero.
+  (func $sh_path_extension3 (param $path i32) (param $wide i32) (result i32)
+    (local $step i32) (local $scan i32) (local $dot i32) (local $ch i32)
+    (local $a i32) (local $b i32) (local $c i32)
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (local.set $scan (local.get $path))
+    (block $done (loop $chars
+      (local.set $ch (call $load_char (local.get $scan) (local.get $wide)))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (if (i32.or (i32.eq (local.get $ch) (i32.const 47))
+                  (i32.eq (local.get $ch) (i32.const 92)))
+        (then (local.set $dot (i32.const 0)))
+        (else (if (i32.eq (local.get $ch) (i32.const 46))
+          (then (local.set $dot (local.get $scan))))))
+      (local.set $scan (i32.add (local.get $scan) (local.get $step)))
+      (br $chars)))
+    (if (i32.eqz (local.get $dot)) (then (return (i32.const 0))))
+    (local.set $a (i32.or (call $load_char
+      (i32.add (local.get $dot) (local.get $step)) (local.get $wide)) (i32.const 0x20)))
+    (local.set $b (i32.or (call $load_char
+      (i32.add (local.get $dot) (i32.mul (local.get $step) (i32.const 2)))
+      (local.get $wide)) (i32.const 0x20)))
+    (local.set $c (i32.or (call $load_char
+      (i32.add (local.get $dot) (i32.mul (local.get $step) (i32.const 3)))
+      (local.get $wide)) (i32.const 0x20)))
+    (if (i32.ne (call $load_char
+          (i32.add (local.get $dot) (i32.mul (local.get $step) (i32.const 4)))
+          (local.get $wide)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (i32.or (local.get $a)
+      (i32.or (i32.shl (local.get $b) (i32.const 8))
+              (i32.shl (local.get $c) (i32.const 16)))))
+
+  ;; System-list indices used by the Win98-era shell clients in the corpus:
+  ;; 0 open folder, 1 closed folder, 2 document, 3 application, 4 drive.
+  (func $sh_file_icon_class
+      (param $path i32) (param $attrs i32) (param $flags i32) (param $wide i32)
+      (result i32)
+    (local $step i32) (local $c0 i32) (local $c1 i32) (local $c2 i32) (local $ext i32)
+    (if (local.get $path)
       (then
-        (local.set $src (local.get $path))
-        (local.set $base (local.get $path))
-        ;; Find the final path component without modifying the caller's path.
-        (block $scan_done (loop $scan
-          (local.set $ch (if (result i32) (local.get $wide)
-            (then (call $gl16 (local.get $src))) (else (call $gl8 (local.get $src)))))
-          (br_if $scan_done (i32.eqz (local.get $ch)))
-          (if (i32.or (i32.eq (local.get $ch) (i32.const 47))
-                      (i32.eq (local.get $ch) (i32.const 92)))
-            (then (local.set $base (i32.add (local.get $src) (local.get $step)))))
-          (local.set $src (i32.add (local.get $src) (local.get $step)))
-          (br $scan)))
-        (local.set $src (local.get $base))
-        (local.set $dst (i32.add (local.get $psfi) (i32.const 12)))
-        (block $copy_done (loop $copy
-          (br_if $copy_done (i32.ge_u (local.get $count) (i32.const 259)))
-          (local.set $ch (if (result i32) (local.get $wide)
-            (then (call $gl16 (local.get $src))) (else (call $gl8 (local.get $src)))))
-          (br_if $copy_done (i32.eqz (local.get $ch)))
-          (if (local.get $wide)
-            (then (call $gs16
-              (i32.add (local.get $dst) (i32.mul (local.get $count) (i32.const 2)))
-              (local.get $ch)))
-            (else (call $gs8
-              (i32.add (local.get $dst) (local.get $count)) (local.get $ch))))
-          (local.set $count (i32.add (local.get $count) (i32.const 1)))
-          (local.set $src (i32.add (local.get $src) (local.get $step)))
-          (br $copy)))
-        (if (local.get $wide)
-          (then (call $gs16
-            (i32.add (local.get $dst) (i32.mul (local.get $count) (i32.const 2))) (i32.const 0)))
-          (else (call $gs8
-            (i32.add (local.get $dst) (local.get $count)) (i32.const 0))))))
-    (if (result i32) (local.get $psfi) (then (i32.const 1)) (else (i32.const 0))))
+        (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+        (local.set $c0 (i32.or (call $load_char (local.get $path) (local.get $wide))
+          (i32.const 0x20)))
+        (local.set $c1 (call $load_char
+          (i32.add (local.get $path) (local.get $step)) (local.get $wide)))
+        (local.set $c2 (call $load_char
+          (i32.add (local.get $path) (i32.shl (local.get $step) (i32.const 1)))
+          (local.get $wide)))
+        (if (i32.and
+              (i32.and (i32.ge_u (local.get $c0) (i32.const 0x61))
+                       (i32.le_u (local.get $c0) (i32.const 0x7A)))
+              (i32.and (i32.eq (local.get $c1) (i32.const 58))
+                (i32.or (i32.eqz (local.get $c2))
+                  (i32.and
+                    (i32.or (i32.eq (local.get $c2) (i32.const 47))
+                            (i32.eq (local.get $c2) (i32.const 92)))
+                    (i32.eqz (call $load_char
+                      (i32.add (local.get $path) (i32.mul (local.get $step) (i32.const 3)))
+                      (local.get $wide)))))))
+          (then (return (i32.const 4))))))
+    (if (i32.ne (i32.and (local.get $attrs) (i32.const 0x10)) (i32.const 0))
+      (then (return (select (i32.const 0) (i32.const 1)
+        (i32.ne (i32.and (local.get $flags) (i32.const 2)) (i32.const 0))))))
+    (if (local.get $path)
+      (then
+        (local.set $ext (call $sh_path_extension3 (local.get $path) (local.get $wide)))
+        (if (i32.or
+              (i32.or (i32.eq (local.get $ext) (i32.const 0x657865))
+                      (i32.eq (local.get $ext) (i32.const 0x6D6F63)))
+              (i32.or
+                (i32.or (i32.eq (local.get $ext) (i32.const 0x746162))
+                        (i32.eq (local.get $ext) (i32.const 0x6C6C64)))
+                (i32.or
+                  (i32.or (i32.eq (local.get $ext) (i32.const 0x726373))
+                          (i32.eq (local.get $ext) (i32.const 0x666970)))
+                  (i32.eq (local.get $ext) (i32.const 0x6C7063)))))
+          (then (return (i32.const 3))))))
+    (i32.const 2))
+
+  (func $sh_file_info_copy_literal
+      (param $source_offset i32) (param $dst i32) (param $capacity i32) (param $wide i32)
+    (call $sh_copy_string_bounded
+      (i32.add (global.get $SHELL_FILE_INFO) (local.get $source_offset))
+      (local.get $dst) (local.get $capacity) (i32.const 0) (local.get $wide)))
+
+  ;; Translate the file-system facts available to this shell into the
+  ;; IShellFolder SFGAO_* namespace required by SHGFI_ATTRIBUTES.  These are
+  ;; deliberately not FILE_ATTRIBUTE_* values: the two flag families overlap
+  ;; numerically but describe different contracts.
+  (func $sh_file_sfgao (param $path i32) (param $attrs i32) (result i32)
+    (local $result i32)
+    (if (local.get $path)
+      (then
+        ;; CANCOPY | CANMOVE | CANLINK | CANRENAME | CANDELETE |
+        ;; HASPROPSHEET | DROPTARGET | FILESYSTEM.
+        (local.set $result (i32.const 0x40000177)))
+      (else
+        ;; Opaque shell namespace roots are folders and drop targets, but are
+        ;; not themselves Win32 file-system paths.
+        (local.set $result (i32.const 0x20000100))))
+    (if (i32.ne (i32.and (local.get $attrs) (i32.const 0x10)) (i32.const 0))
+      (then
+        ;; FILESYSANCESTOR | FOLDER. HASSUBFOLDER is intentionally omitted:
+        ;; determining it requires enumerating the directory.
+        (local.set $result (i32.or (local.get $result) (i32.const 0x30000000)))))
+    (if (i32.ne (i32.and (local.get $attrs) (i32.const 2)) (i32.const 0))
+      (then (local.set $result (i32.or (local.get $result) (i32.const 0x00080000)))))
+    (local.get $result))
+
+  ;; Shared A/W implementation for Win98's SHFILEINFO fields and per-process
+  ;; system image list.  PIDLs remain opaque except for this shell's WAFP/WAVP
+  ;; formats, so foreign namespace items are safely classified as folders.
+  (func $sh_get_file_info
+      (param $path_guest i32) (param $attrs_arg i32) (param $psfi_guest i32)
+      (param $cb i32) (param $flags i32) (param $wide i32) (result i32)
+    (local $path i32) (local $pidl i32) (local $psfi i32)
+    (local $attrs i32) (local $class i32) (local $tag i32) (local $csidl i32)
+    (local $step i32) (local $path_wide i32)
+    (local $field_offset i32) (local $field_capacity i32)
+    (local $source_offset i32) (local $list i32) (local $shell_attrs i32)
+    (local $icon i32) (local $icon_size i32)
+    (if (i32.eqz (local.get $psfi_guest)) (then (return (i32.const 0))))
+    (if (i32.and (i32.eqz (local.get $path_guest))
+                 (i32.eqz (i32.and (local.get $flags) (i32.const 8))))
+      (then (return (i32.const 0))))
+    (local.set $psfi (call $g2w (local.get $psfi_guest)))
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (if (i32.ne (i32.and (local.get $flags) (i32.const 8)) (i32.const 0))
+      (then
+        (if (local.get $path_guest)
+          (then
+            (local.set $pidl (call $g2w (local.get $path_guest)))
+            (local.set $tag (i32.load offset=2 align=1 (local.get $pidl)))
+            (if (i32.and (i32.eq (local.get $tag) (i32.const 0x50464157))
+                  (i32.and (i32.ge_u (i32.load16_u (local.get $pidl)) (i32.const 8))
+                           (i32.le_u (i32.load16_u (local.get $pidl)) (i32.const 266))))
+              (then
+                ;; ITEMIDLIST bytes do not change with the A/W entry point;
+                ;; this shell's WAFP provider payload is explicitly ANSI.
+                (local.set $path (i32.add (local.get $pidl) (i32.const 6)))
+                (local.set $path_wide (i32.const 0)))
+              (else (if (i32.and (i32.eq (local.get $tag) (i32.const 0x50564157))
+                                  (i32.eq (i32.load16_u (local.get $pidl)) (i32.const 10)))
+                (then (local.set $csidl (i32.load offset=6 align=1 (local.get $pidl))))))))))
+      (else
+        (local.set $path (call $g2w (local.get $path_guest)))
+        (local.set $path_wide (local.get $wide))))
+    (if (i32.ne (i32.and (local.get $flags) (i32.const 0x10)) (i32.const 0))
+      (then (local.set $attrs (local.get $attrs_arg)))
+      (else
+        (if (local.get $path)
+          (then
+            (local.set $attrs (call $host_fs_get_file_attributes
+              (local.get $path) (local.get $path_wide)))
+            (if (i32.eq (local.get $attrs) (i32.const -1))
+              (then (return (i32.const 0)))))
+          (else (local.set $attrs (i32.const 0x10))))))
+    (local.set $class
+      (if (result i32) (i32.eq (local.get $csidl) (i32.const 0x11))
+        (then (i32.const 4))
+        (else (call $sh_file_icon_class
+          (local.get $path) (local.get $attrs) (local.get $flags) (local.get $path_wide)))))
+
+    (if (i32.and (i32.ne (i32.and (local.get $flags) (i32.const 0x800)) (i32.const 0))
+                 (i32.ge_u (local.get $cb) (i32.const 12)))
+      (then
+        (local.set $shell_attrs
+          (call $sh_file_sfgao (local.get $path) (local.get $attrs)))
+        ;; SHGFI_ATTR_SPECIFIED makes the incoming dwAttributes an SFGAO mask.
+        (if (i32.ne (i32.and (local.get $flags) (i32.const 0x20000)) (i32.const 0))
+          (then (local.set $shell_attrs (i32.and (local.get $shell_attrs)
+            (i32.load offset=8 (local.get $psfi))))))
+        (i32.store offset=8 (local.get $psfi) (local.get $shell_attrs))))
+    (if (i32.and (i32.ne (i32.and (local.get $flags) (i32.const 0x200)) (i32.const 0))
+                 (i32.gt_u (local.get $cb) (i32.const 12)))
+      (then
+        (local.set $field_capacity (i32.sub (local.get $cb) (i32.const 12)))
+        (if (i32.gt_u (local.get $field_capacity) (i32.mul (i32.const 260) (local.get $step)))
+          (then (local.set $field_capacity (i32.mul (i32.const 260) (local.get $step)))))
+        (if (local.get $path)
+          (then (call $sh_copy_string_bounded
+            (call $sh_path_basename (local.get $path) (local.get $path_wide))
+            (i32.add (local.get $psfi) (i32.const 12)) (local.get $field_capacity)
+            (local.get $path_wide) (local.get $wide)))
+          (else
+            (local.set $source_offset
+              (if (result i32) (i32.eq (local.get $csidl) (i32.const 0x11))
+                (then (i32.const 0x50))
+                (else (select (i32.const 0x5C) (i32.const 0x48)
+                  (i32.eq (local.get $csidl) (i32.const 0x12))))))
+            (call $sh_file_info_copy_literal (local.get $source_offset)
+              (i32.add (local.get $psfi) (i32.const 12))
+              (local.get $field_capacity) (local.get $wide))))))
+    (if (i32.ne (i32.and (local.get $flags) (i32.const 0x400)) (i32.const 0))
+      (then
+        (local.set $field_offset (select (i32.const 532) (i32.const 272) (local.get $wide)))
+        (if (i32.gt_u (local.get $cb) (local.get $field_offset))
+          (then
+            (local.set $field_capacity (i32.sub (local.get $cb) (local.get $field_offset)))
+            (if (i32.gt_u (local.get $field_capacity) (i32.mul (i32.const 80) (local.get $step)))
+              (then (local.set $field_capacity (i32.mul (i32.const 80) (local.get $step)))))
+            (local.set $source_offset
+              (if (result i32) (i32.eq (local.get $class) (i32.const 3))
+                (then (i32.const 0x31))
+                (else (if (result i32) (i32.eq (local.get $class) (i32.const 4))
+                  (then (i32.const 0x3D))
+                  (else (select (i32.const 0x25) (i32.const 0x20)
+                    (i32.or (i32.eqz (local.get $class))
+                            (i32.eq (local.get $class) (i32.const 1)))))))))
+            (call $sh_file_info_copy_literal (local.get $source_offset)
+              (i32.add (local.get $psfi) (local.get $field_offset))
+              (local.get $field_capacity) (local.get $wide))))))
+    ;; SHGFI_ICON and SHGFI_SYSICONINDEX both publish the system image index.
+    ;; SHGFI_ICON additionally returns an independently owned HICON in hIcon;
+    ;; unlike the system HIMAGELIST, the caller must release it with
+    ;; DestroyIcon.  Require both leading fields to fit before promising that
+    ;; result instead of silently succeeding with a partial SHFILEINFO.
+    (if (i32.ne (i32.and (local.get $flags) (i32.const 0x4100)) (i32.const 0))
+      (then
+        (if (i32.lt_u (local.get $cb) (i32.const 8))
+          (then (return (i32.const 0))))
+        (i32.store offset=4 (local.get $psfi) (local.get $class))))
+    (if (i32.ne (i32.and (local.get $flags) (i32.const 0x100)) (i32.const 0))
+      (then
+        (local.set $icon_size
+          (select (i32.const 16) (i32.const 32)
+            (i32.ne (i32.and (local.get $flags) (i32.const 1)) (i32.const 0))))
+        (local.set $icon
+          (call $shell_system_icon_handle (local.get $class) (local.get $icon_size)))
+        (if (i32.eqz (local.get $icon)) (then (return (i32.const 0))))
+        (i32.store (local.get $psfi) (local.get $icon))))
+    (if (i32.ne (i32.and (local.get $flags) (i32.const 0x4000)) (i32.const 0))
+      (then
+        (local.set $list (call $shell_system_image_list
+          (select (i32.const 16) (i32.const 32)
+            (i32.ne (i32.and (local.get $flags) (i32.const 1)) (i32.const 0)))))
+        (if (i32.eqz (local.get $list))
+          (then
+            (if (local.get $icon)
+              (then
+                (drop (call $icon_destroy_handle (local.get $icon)))
+                (i32.store (local.get $psfi) (i32.const 0))))))
+        (return (local.get $list))))
+    (i32.const 1))
 
   ;; SHGetFileInfoW(pszPath, attrs, psfi, cb, flags). Media Player asks for
-  ;; SHGFI_DISPLAYNAME and uses szDisplayName in its caption.
+  ;; DISPLAYNAME; WinRAR also asks for the shared system image list.
   (func $handle_SHGetFileInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $sh_file_info_display_name
-      (local.get $arg0) (local.get $arg2) (local.get $arg3) (i32.const 1)))
+    (global.set $eax (call $sh_get_file_info
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
@@ -19008,7 +19282,9 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
           (then (return (i32.const 0))))
         (local.set $hinst (global.get $ICON_FROM_OPAQUE))
         (local.set $resid (local.get $handle))))
-    (if (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
+    (if (i32.or
+          (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
+          (i32.eq (local.get $hinst) (global.get $ICON_FROM_SHELL_BITMAP)))
       (then
         (local.set $resid (call $gdi_bitmap_clone_owned (local.get $resid)))
         (if (i32.eqz (local.get $resid)) (then (return (i32.const 0))))))
@@ -19030,8 +19306,11 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         ;; A loaded icon is shared and remains valid; a copied slot is private.
         (if (i32.and (local.get $resid) (i32.const 0x80000000))
           (then
-            (if (i32.eq (i32.load (local.get $record))
-                        (global.get $ICON_FROM_BITMAP))
+            (if (i32.or
+                  (i32.eq (i32.load (local.get $record))
+                    (global.get $ICON_FROM_BITMAP))
+                  (i32.eq (i32.load (local.get $record))
+                    (global.get $ICON_FROM_SHELL_BITMAP)))
               (then (drop (call $gdi_object_delete_full
                 (i32.and (local.get $resid) (i32.const 0x7FFFFFFF))))))
             (memory.fill (local.get $record) (i32.const 0) (i32.const 8))))
@@ -19057,7 +19336,9 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
           (return (i32.or (global.get $ICON_HANDLE_TAG) (local.get $i)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    (if (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
+    (if (i32.or
+          (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
+          (i32.eq (local.get $hinst) (global.get $ICON_FROM_SHELL_BITMAP)))
       (then (drop (call $gdi_object_delete_full (local.get $resid)))))
     (i32.const 0))
 
@@ -19282,7 +19563,9 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (local.set $resid (i32.and (i32.load offset=4 (local.get $record))
       (i32.const 0x7FFFFFFF)))
     (if (i32.or
-          (i32.or (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
+          (i32.or
+            (i32.or (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
+              (i32.eq (local.get $hinst) (global.get $ICON_FROM_SHELL_BITMAP)))
             (i32.eq (local.get $hinst) (global.get $ICON_FROM_OPAQUE)))
           (i32.or
             (i32.eq (local.get $hinst)

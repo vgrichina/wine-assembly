@@ -249,6 +249,39 @@ function win(x, y, w, h, extra) {
   assert.strictEqual(v.dstY, 178, 'and stays centred on the whole display');
 }
 
+// Fit/Fill is a presentation choice even for an exclusive DirectDraw game.
+// Broken Sword owns a 640x480 display, so Fit keeps all of it; Fill on a
+// portrait phone keeps the centre strip and maps taps through that crop.
+{
+  const renderer = makeRenderer(390, 844, 390, 844);
+  const game = win(10, 20, 640, 480);
+  const fit = renderer._computeExclusiveView(game);
+  assert.deepStrictEqual(
+    { cropX: fit.viewport.cropX, cropY: fit.viewport.cropY,
+      cropW: fit.viewport.cropW, cropH: fit.viewport.cropH },
+    { cropX: 0, cropY: 0, cropW: 640, cropH: 480 },
+    'Fit should present the complete exclusive display from its local origin');
+  assert.strictEqual(fit.viewport.dstH, 293,
+    'Fit should preserve 4:3 and letterbox it on a portrait phone');
+
+  renderer.setViewMode('zoom');
+  const fill = renderer._computeExclusiveView(game);
+  assert.strictEqual(fill.viewport.dstW, 390, 'Fill should cover the output width');
+  assert.strictEqual(fill.viewport.dstH, 844, 'Fill should cover the output height');
+  assert.strictEqual(fill.viewport.cropW, 222,
+    'Fill should retain only the source width matching the phone aspect');
+  assert.strictEqual(fill.viewport.cropH, 480, 'the full source height should survive');
+  assert.strictEqual(fill.viewport.cropX, 209,
+    'the presentation crop is local to the exclusive window');
+  assert.strictEqual(fill.transform.srcX, 219,
+    'input coordinates retain the exclusive window screen origin');
+
+  renderer._exclusiveTransform = fill.transform;
+  renderer._exclusivePresentationViewport = fill.viewport;
+  assert.deepStrictEqual(renderer._mapExclusiveInputPoint(195, 422), { x: 330, y: 260 },
+    'the output centre should map to the centre of the cropped guest display');
+}
+
 // The presented rectangle the touch zones are laid out against follows the
 // viewport, inset and all.
 {

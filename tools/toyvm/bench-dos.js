@@ -132,7 +132,7 @@ async function main() {
       for (const v of order) {
         let r;
         try {
-          r = await runDos({ exe, ...armOpts(v), budget, cpu, log: quiet, autoKey });
+          r = await runDos({ exe, ...armOpts(v), budget, cpu, log: quiet, autoKey, cpuMeter: cpuTime });
         } catch (e) {
           failed = `${v}: ${(e.message || String(e)).split('\n')[0]}`;
           break;

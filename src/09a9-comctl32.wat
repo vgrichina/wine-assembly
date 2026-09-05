@@ -7,6 +7,230 @@
   ;; 09a-handlers.wat, the file for everything that had nowhere else to go.
   ;; ============================================================
 
+  ;; SHGetFileInfo returns one small and one large system image list for the
+  ;; lifetime of a process.  Keep those handles in shared memory: mutable WAT
+  ;; globals are instance-local, while guest threads can execute APIs through
+  ;; separate Worker instances over the same linear memory.
+  (global $SHELL_FILE_INFO i32 (region.addr $SHELL_FILE_INFO 0))
+  (global $SHELL_FILE_INFO_SIZE i32 (region.size $SHELL_FILE_INFO))
+  (data (region.addr $SHELL_FILE_INFO 0x20)
+    "File\00File Folder\00Application\00Local Disk\00Desktop\00My Computer\00Network Neighborhood\00")
+
+  ;; Paint one scaled rectangle into a five-image, 32-bpp top-down strip.
+  ;; Coordinates are expressed in a 16x16 design grid so the same classic
+  ;; glyphs remain crisp in both system image lists.
+  (func $shell_icon_rect
+      (param $bits i32) (param $stride i32) (param $size i32) (param $index i32)
+      (param $left i32) (param $top i32) (param $right i32) (param $bottom i32)
+      (param $color i32)
+    (local $x0 i32) (local $x1 i32) (local $y0 i32) (local $y1 i32)
+    (local $x i32) (local $y i32) (local $row i32)
+    (local.set $x0 (i32.add (i32.mul (local.get $index) (local.get $size))
+      (i32.div_u (i32.mul (local.get $left) (local.get $size)) (i32.const 16))))
+    (local.set $x1 (i32.add (i32.mul (local.get $index) (local.get $size))
+      (i32.div_u (i32.mul (local.get $right) (local.get $size)) (i32.const 16))))
+    (local.set $y0
+      (i32.div_u (i32.mul (local.get $top) (local.get $size)) (i32.const 16)))
+    (local.set $y1
+      (i32.div_u (i32.mul (local.get $bottom) (local.get $size)) (i32.const 16)))
+    (local.set $y (local.get $y0))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_u (local.get $y) (local.get $y1)))
+      (local.set $row (i32.add (local.get $bits)
+        (i32.mul (local.get $y) (local.get $stride))))
+      (local.set $x (local.get $x0))
+      (block $cols_done (loop $cols
+        (br_if $cols_done (i32.ge_u (local.get $x) (local.get $x1)))
+        (i32.store (i32.add (local.get $row) (i32.shl (local.get $x) (i32.const 2)))
+          (local.get $color))
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br $cols)))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $rows))))
+
+  (func $shell_draw_system_icons (param $bits i32) (param $stride i32) (param $size i32)
+    (local $i i32)
+    ;; Transparent mask colour, one complete cell at a time.
+    (block $background_done (loop $background
+      (br_if $background_done (i32.ge_u (local.get $i) (i32.const 5)))
+      (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+        (local.get $i) (i32.const 0) (i32.const 0) (i32.const 16) (i32.const 16)
+        (i32.const 0x00FF00FF))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $background)))
+
+    ;; 2: generic document, with the folded upper-right corner.
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 2) (i32.const 3) (i32.const 1) (i32.const 13) (i32.const 15) (i32.const 0x00000000))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 2) (i32.const 4) (i32.const 2) (i32.const 12) (i32.const 14) (i32.const 0x00FFFFFF))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 2) (i32.const 9) (i32.const 2) (i32.const 12) (i32.const 6) (i32.const 0x00C0C0C0))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 2) (i32.const 5) (i32.const 9) (i32.const 11) (i32.const 10) (i32.const 0x00808080))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 2) (i32.const 5) (i32.const 11) (i32.const 10) (i32.const 12) (i32.const 0x00808080))
+
+    ;; 1: closed folder.
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 1) (i32.const 1) (i32.const 4) (i32.const 15) (i32.const 14) (i32.const 0x00000000))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 1) (i32.const 2) (i32.const 5) (i32.const 14) (i32.const 13) (i32.const 0x00F0C040))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 1) (i32.const 2) (i32.const 2) (i32.const 8) (i32.const 6) (i32.const 0x00000000))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 1) (i32.const 3) (i32.const 3) (i32.const 7) (i32.const 6) (i32.const 0x00FFFF80))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 1) (i32.const 3) (i32.const 6) (i32.const 13) (i32.const 7) (i32.const 0x00FFFF80))
+
+    ;; 0: open folder; the stepped front lip distinguishes SHGFI_OPENICON.
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 0) (i32.const 1) (i32.const 4) (i32.const 13) (i32.const 13) (i32.const 0x00000000))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 0) (i32.const 2) (i32.const 5) (i32.const 12) (i32.const 12) (i32.const 0x00F0C040))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 0) (i32.const 2) (i32.const 2) (i32.const 8) (i32.const 6) (i32.const 0x00000000))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 0) (i32.const 3) (i32.const 3) (i32.const 7) (i32.const 6) (i32.const 0x00FFFF80))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 0) (i32.const 3) (i32.const 7) (i32.const 15) (i32.const 14) (i32.const 0x00000000))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 0) (i32.const 4) (i32.const 8) (i32.const 14) (i32.const 13) (i32.const 0x00FFFF80))
+
+    ;; 3: application window.
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 3) (i32.const 1) (i32.const 2) (i32.const 15) (i32.const 14) (i32.const 0x00000000))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 3) (i32.const 2) (i32.const 3) (i32.const 14) (i32.const 13) (i32.const 0x00C0C0C0))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 3) (i32.const 3) (i32.const 4) (i32.const 13) (i32.const 7) (i32.const 0x000080C0))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 3) (i32.const 3) (i32.const 8) (i32.const 13) (i32.const 12) (i32.const 0x00FFFFFF))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 3) (i32.const 4) (i32.const 9) (i32.const 7) (i32.const 11) (i32.const 0x00008080))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 3) (i32.const 8) (i32.const 9) (i32.const 12) (i32.const 10) (i32.const 0x00808080))
+
+    ;; 4: local drive.
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 4) (i32.const 1) (i32.const 5) (i32.const 15) (i32.const 13) (i32.const 0x00000000))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 4) (i32.const 2) (i32.const 6) (i32.const 14) (i32.const 12) (i32.const 0x00C0C0C0))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 4) (i32.const 3) (i32.const 6) (i32.const 13) (i32.const 8) (i32.const 0x00FFFFFF))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 4) (i32.const 2) (i32.const 10) (i32.const 14) (i32.const 12) (i32.const 0x00808080))
+    (call $shell_icon_rect (local.get $bits) (local.get $stride) (local.get $size)
+      (i32.const 4) (i32.const 11) (i32.const 10) (i32.const 13) (i32.const 11) (i32.const 0x0000C000)))
+
+  ;; Return the per-process system image list for one icon size.  Construction
+  ;; happens without a lock because bitmap registration calls the host.  A CAS
+  ;; publishes the completed object; a rare racing loser tears its candidate
+  ;; down instead of exposing a half-initialized shared object or deadlocking a
+  ;; browser main thread against a Worker RPC.
+  (func $shell_system_image_list (param $size i32) (result i32)
+    (local $slot i32) (local $existing i32) (local $candidate i32)
+    (local $candidate_wa i32) (local $bits_guest i32) (local $bits i32)
+    (local $width i32) (local $stride i32) (local $bitmap i32)
+    (local.set $slot (i32.add (global.get $SHELL_FILE_INFO)
+      (select (i32.const 0) (i32.const 4) (i32.eq (local.get $size) (i32.const 16)))))
+    (local.set $existing (i32.atomic.load (local.get $slot)))
+    (if (local.get $existing) (then (return (local.get $existing))))
+    (local.set $width (i32.mul (local.get $size) (i32.const 5)))
+    (local.set $stride (i32.shl (local.get $width) (i32.const 2)))
+    (local.set $bits_guest
+      (call $dib_alloc (i32.mul (local.get $stride) (local.get $size))))
+    (if (i32.eqz (local.get $bits_guest)) (then (return (i32.const 0))))
+    (local.set $bits (call $g2w (local.get $bits_guest)))
+    (call $shell_draw_system_icons
+      (local.get $bits) (local.get $stride) (local.get $size))
+    (local.set $bitmap (call $gdi_bitmap_alloc
+      (local.get $width) (local.get $size) (i32.const 32) (i32.const 6)
+      (local.get $bits) (local.get $stride) (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $bitmap))
+      (then
+        (call $dib_free_wasm (local.get $bits))
+        (return (i32.const 0))))
+    (local.set $candidate (call $heap_alloc (i32.const 36)))
+    (if (i32.eqz (local.get $candidate))
+      (then
+        (drop (call $gdi_object_delete_full (local.get $bitmap)))
+        (return (i32.const 0))))
+    (local.set $candidate_wa (call $g2w (local.get $candidate)))
+    (call $zero_memory (local.get $candidate_wa) (i32.const 36))
+    (i32.store          (local.get $candidate_wa) (local.get $size))
+    (i32.store offset=4 (local.get $candidate_wa) (local.get $size))
+    (i32.store offset=8 (local.get $candidate_wa) (i32.const -1)) ;; CLR_NONE
+    (i32.store offset=12 (local.get $candidate_wa) (i32.const 5))
+    (i32.store offset=16 (local.get $candidate_wa) (local.get $bitmap))
+    (i32.store offset=20 (local.get $candidate_wa) (i32.const 0x00FF00FF))
+    (i32.store offset=32 (local.get $candidate_wa) (i32.const 0x4C4D4948)) ;; HIML
+    (local.set $existing
+      (i32.atomic.rmw.cmpxchg (local.get $slot) (i32.const 0) (local.get $candidate)))
+    (if (local.get $existing)
+      (then
+        (drop (call $gdi_object_delete_full (local.get $bitmap)))
+        (call $heap_free (local.get $candidate))
+        (return (local.get $existing))))
+    (local.get $candidate))
+
+  ;; Materialize one system image-list cell as a caller-owned HICON for
+  ;; SHGFI_ICON.  Win98 returns the index and an icon with independent
+  ;; lifetime; pointing hIcon at the shared strip would make DestroyIcon tear
+  ;; down pixels still owned by every list view in the process.
+  (func $shell_system_icon_handle (param $index i32) (param $size i32) (result i32)
+    (local $list i32) (local $list_wa i32) (local $source_bitmap i32)
+    (local $source_record i32) (local $source_record_bitmap ptr<GdiBitmap>)
+    (local $source_bits i32) (local $source_stride i32)
+    (local $copy i32) (local $copy_bitmap ptr<GdiBitmap>) (local $copy_bits i32)
+    (local $copy_stride i32) (local $row i32)
+    (if (i32.or (i32.ge_u (local.get $index) (i32.const 5))
+          (i32.and (i32.ne (local.get $size) (i32.const 16))
+            (i32.ne (local.get $size) (i32.const 32))))
+      (then (return (i32.const 0))))
+    (local.set $list (call $shell_system_image_list (local.get $size)))
+    (if (i32.eqz (local.get $list)) (then (return (i32.const 0))))
+    (local.set $list_wa (call $g2w (local.get $list)))
+    (local.set $source_bitmap (i32.load offset=16 (local.get $list_wa)))
+    (local.set $source_record (call $gdi_object_record (local.get $source_bitmap)))
+    (if (i32.eqz (call $gdi_bitmap_record_valid (local.get $source_record)))
+      (then (return (i32.const 0))))
+    (local.set $source_record_bitmap (cast ptr<GdiBitmap> (local.get $source_record)))
+    (memory.fill (global.get $GDI_BITMAP_PLAN) (i32.const 0) (i32.const 48))
+    (i32.store          (global.get $GDI_BITMAP_PLAN) (local.get $size))
+    (i32.store offset=4 (global.get $GDI_BITMAP_PLAN) (local.get $size))
+    (i32.store offset=8 (global.get $GDI_BITMAP_PLAN) (i32.const 32))
+    (i32.store offset=12 (global.get $GDI_BITMAP_PLAN) (i32.const 2)) ;; top-down
+    (local.set $copy_stride (i32.shl (local.get $size) (i32.const 2)))
+    (i32.store offset=16 (global.get $GDI_BITMAP_PLAN) (local.get $copy_stride))
+    (i32.store offset=32 (global.get $GDI_BITMAP_PLAN)
+      (i32.mul (local.get $copy_stride) (local.get $size)))
+    (local.set $copy (call $gdi_bitmap_create_owned
+      (global.get $GDI_BITMAP_PLAN) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
+    ;; gdi_bitmap_create_owned is the producer/type proof for the destination;
+    ;; cast each union record once and retain that typed identity for all field
+    ;; access below.
+    (local.set $copy_bitmap
+      (cast ptr<GdiBitmap> (call $gdi_object_record (local.get $copy))))
+    (local.set $source_bits (load.field GdiBitmap bits (local.get $source_record_bitmap)))
+    (local.set $source_stride (load.field GdiBitmap stride (local.get $source_record_bitmap)))
+    (local.set $copy_bits (load.field GdiBitmap bits (local.get $copy_bitmap)))
+    (block $done (loop $rows
+      (br_if $done (i32.ge_u (local.get $row) (local.get $size)))
+      (memory.copy
+        (i32.add (local.get $copy_bits)
+          (i32.mul (local.get $row) (local.get $copy_stride)))
+        (i32.add
+          (i32.add (local.get $source_bits)
+            (i32.mul (local.get $row) (local.get $source_stride)))
+          (i32.shl (i32.mul (local.get $index) (local.get $size)) (i32.const 2)))
+        (local.get $copy_stride))
+      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+      (br $rows)))
+    (call $icon_private_slot (global.get $ICON_FROM_SHELL_BITMAP) (local.get $copy)))
+
   ;; InitCommonControls() — 0 args, void return, registers common control window classes
   (func $handle_InitCommonControls (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; No-op: our window creation handles class names directly
@@ -35,6 +259,18 @@
   (func $handle_ImageList_Destroy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sw i32) (local $icons i32)
     (global.set $eax (i32.const 0))
+    ;; The lists returned by SHGFI_SYSICONINDEX are shared system resources;
+    ;; applications must not destroy them.  Refuse the operation so the stable
+    ;; process handles never point at reclaimed heap blocks.
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+          (i32.or
+            (i32.eq (local.get $arg0)
+              (i32.atomic.load (global.get $SHELL_FILE_INFO)))
+            (i32.eq (local.get $arg0)
+              (i32.atomic.load offset=4 (global.get $SHELL_FILE_INFO)))))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (if (local.get $arg0)
       (then
         (local.set $sw (call $g2w (local.get $arg0)))

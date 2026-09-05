@@ -146,12 +146,11 @@
   )
 
   ;; 783: SHGetFileInfoA(pszPath, dwFileAttributes, psfi, cbFileInfo, uFlags) — 5 args stdcall
-  ;; This returned 0 — "the shell knows nothing about that file" — while the W
-  ;; spelling filled in szDisplayName, so an ANSI app that titles its window
-  ;; with the display name got an empty caption. Same core, ANSI struct.
+  ;; Share the bounded shell-field and system-image-list implementation with W.
   (func $handle_SHGetFileInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $sh_file_info_display_name
-      (local.get $arg0) (local.get $arg2) (local.get $arg3) (i32.const 0)))
+    (global.set $eax (call $sh_get_file_info
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 

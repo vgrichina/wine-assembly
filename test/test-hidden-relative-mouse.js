@@ -9,8 +9,10 @@ const { Win98Renderer } = require('../lib/renderer');
 
 const renderer = new Win98Renderer(createCanvas(640, 480));
 let cursorCount = -1;
+let currentCursor = 0x67F00;
 const guestExports = {
   get_cursor_display_count: () => cursorCount,
+  get_cursor: () => currentCursor,
   clip_cursor_active: () => 0,
 };
 const wasm = { exports: guestExports };
@@ -38,6 +40,12 @@ assert.strictEqual(renderer.wantsHiddenMouse(320, 240), false,
   'a nonnegative ShowCursor count should restore the browser cursor');
 assert.strictEqual(renderer.wantsRelativeMouse(320, 240), false,
   'a visible unclipped guest should retain absolute browser input');
+
+currentCursor = 0;
+assert.strictEqual(renderer.wantsHiddenMouse(320, 240), true,
+  'SetCursor(NULL) should hide the browser cursor independently of ShowCursor');
+assert.strictEqual(renderer.wantsRelativeMouse(320, 240), false,
+  'SetCursor(NULL) alone should not force an absolute-pointer game into relative capture');
 
 const browserSource = fs.readFileSync(path.join(__dirname, '..', 'lib/browser-input.js'), 'utf8');
 const pageSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');

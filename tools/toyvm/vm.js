@@ -95,11 +95,23 @@ async function makeVm(variant, opts = {}) {
   // mode both stay inside 16 bits on their own (see $spm and `wip`), so the
   // unmasked read is the same number there.
   const WIDE = new Set(['gip', 'sp']);
-  const get = (r) => (WIDE.has(r) ? ex[`get_${r}`]() >>> 0 : ex[`get_${r}`]() & 0xFFFF);
-  const set = (r, v) => ex[`set_${r}`](WIDE.has(r) ? v : (v & 0xFFFF));
+  // One closure per export, built once: the run loop reads a dozen globals
+  // per handback, and building the export's name from the register's on
+  // every read was 9.8% of a CYCLE profile (40k handbacks a guest second).
+  // Names outside the export table (`smc`, `steps`, ...) resolve lazily so
+  // the set of readable globals is still whatever the module exports.
+  const getters = Object.create(null), setters = Object.create(null), raws = Object.create(null);
+  const getter = (r) => getters[r] || (getters[r] = WIDE.has(r)
+    ? (() => { const f = ex[`get_${r}`]; return () => f() >>> 0; })()
+    : (() => { const f = ex[`get_${r}`]; return () => f() & 0xFFFF; })());
+  const setter = (r) => setters[r] || (setters[r] = WIDE.has(r)
+    ? ex[`set_${r}`]
+    : (() => { const f = ex[`set_${r}`]; return (v) => f(v & 0xFFFF); })());
+  const get = (r) => getter(r)();
+  const set = (r, v) => setter(r)(v);
   // The masked view is what every 16-bit caller wants, but $steps/$left are
   // counters and the register file is 32 bits wide -- both need the whole word.
-  const raw = (r) => ex[`get_${r}`]();
+  const raw = (r) => (raws[r] || (raws[r] = ex[`get_${r}`]))();
 
   return {
     variant, wat, bytes, exports: ex, mem, regionBase,

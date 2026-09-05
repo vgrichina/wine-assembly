@@ -268,6 +268,16 @@ function saturatedCountInRect(png, left, top, right, bottom) {
     const toolbarColor = saturatedCountInRect(mainPng, 35, 65, 411, 120);
     assert(toolbarColor > 1000,
       `WinRAR toolbar was still blank after Settings closed (${toolbarColor} colored pixels)`);
+    // WinRAR binds SHGFI_SYSICONINDEX as LVSIL_SMALL. Its first six visible
+    // rows are files and row seven is the Formats directory: the old fake
+    // HIMAGELIST=1 drew dark placeholders, while an incorrectly ordered strip
+    // paints every file as a yellow folder.
+    const fileFolderYellow = colorCountInRect(mainPng, [240, 192, 64],
+      28, 170, 45, 266);
+    const directoryYellow = colorCountInRect(mainPng, [240, 192, 64],
+      28, 266, 45, 282);
+    assert(fileFolderYellow < 5 && directoryYellow > 60,
+      `WinRAR shell icons are misclassified (${fileFolderYellow} file-folder pixels, ${directoryYellow} directory pixels)`);
     assert(fs.existsSync(commandsFramePath),
       'WinRAR did not capture its Commands menu');
     const commandsPng = PNG.sync.read(fs.readFileSync(commandsFramePath));

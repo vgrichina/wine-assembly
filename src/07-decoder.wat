@@ -4962,8 +4962,9 @@
           ;; SDL2's Win32 video bootstrap is built with baseline SSE and uses
           ;; these exact bitwise/move forms before it has created a window.
           ;; F3 0F10/11 are scalar MOVSS; 0F14 is UNPCKLPS; 0F16/17 are the
-          ;; MOVHPS/MOVLHPS lane moves. 0F2C and F3 0F2C are truncating packed
-          ;; and scalar float-to-integer conversions. 66/F2 variants remain unsupported.
+          ;; MOVHPS/MOVLHPS lane moves; 0FC6 is SHUFPS. 0F2C and F3 0F2C are
+          ;; truncating packed and scalar float-to-integer conversions.
+          ;; 66/F2 variants remain unsupported.
           (if (i32.and
                 (i32.and
                   (i32.eqz (local.get $prefix_66))
@@ -4992,7 +4993,13 @@
                       (i32.eq (local.get $op) (i32.const 0x29)))
                     (i32.or
                       (i32.eq (local.get $op) (i32.const 0x2c))
-                      (i32.eq (local.get $op) (i32.const 0x57))))))
+                      (i32.or
+                        (i32.eq (local.get $op) (i32.const 0x57))
+                        (i32.or
+                          (i32.eq (local.get $op) (i32.const 0x58))
+                          (i32.or
+                            (i32.eq (local.get $op) (i32.const 0x59))
+                            (i32.eq (local.get $op) (i32.const 0xC6)))))))))
             (then
               (call $decode_modrm)
               (local.set $imm (i32.const 0))
@@ -5004,15 +5011,25 @@
                 (else
                   (if (i32.eq (local.get $op) (i32.const 0x57))
                     (then (local.set $imm (i32.const 1))))
+                  (if (i32.eq (local.get $op) (i32.const 0x58))
+                    (then (local.set $imm (i32.const 8))))
+                  (if (i32.eq (local.get $op) (i32.const 0x59))
+                    (then (local.set $imm (i32.const 9))))
                   (if (i32.eq (local.get $op) (i32.const 0x14))
                     (then (local.set $imm (i32.const 3))))
                   (if (i32.or (i32.eq (local.get $op) (i32.const 0x16))
                               (i32.eq (local.get $op) (i32.const 0x17)))
                     (then (local.set $imm (i32.const 4))))
                   (if (i32.eq (local.get $op) (i32.const 0x2c))
-                    (then (local.set $imm (i32.const 5))))))
+                    (then (local.set $imm (i32.const 5))))
+                  (if (i32.eq (local.get $op) (i32.const 0xC6))
+                    (then (local.set $imm (i32.const 7))))))
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
                 (then
+                  (if (i32.eq (local.get $op) (i32.const 0xC6))
+                    (then (local.set $imm
+                      (i32.or (local.get $imm)
+                        (i32.shl (call $d_fetch8) (i32.const 8))))))
                   (if (i32.eq (local.get $op) (i32.const 0x17))
                     (then
                       (call $host_log_i32 (i32.const 0xCA5E0F17))
@@ -5030,6 +5047,10 @@
                 (else
                   (call $apply_seg_override)
                   (local.set $a (call $emit_sib_or_abs))
+                  (if (i32.eq (local.get $op) (i32.const 0xC6))
+                    (then (local.set $imm
+                      (i32.or (local.get $imm)
+                        (i32.shl (call $d_fetch8) (i32.const 8))))))
                   (if (i32.or (i32.eq (local.get $op) (i32.const 0x11))
                               (i32.or (i32.eq (local.get $op) (i32.const 0x29))
                                       (i32.eq (local.get $op) (i32.const 0x17))))

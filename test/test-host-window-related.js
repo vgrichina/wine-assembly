@@ -52,7 +52,8 @@ const renderer = {
     400: { hwnd: 400, style: 0x90000000, visible: true, enabled: true, isChild: false, ownerHwnd: 100, zOrder: 40, wasm },
     410: { hwnd: 410, style: 0x90000000, visible: false, enabled: true, isChild: false, ownerHwnd: 100, zOrder: 50, wasm },
     420: { hwnd: 420, style: 0x90000000, visible: true, enabled: false, isChild: false, ownerHwnd: 100, zOrder: 60, wasm },
-    510: { hwnd: 510, x: 5, y: 7, w: 40, h: 30, parentHwnd: 100, isChild: true, zOrder: 1, wasm },
+    510: { hwnd: 510, x: 5, y: 7, w: 40, h: 30, clientRect: { x: 18, y: 50, w: 40, h: 30 }, parentHwnd: 100, isChild: true, zOrder: 1, wasm },
+    520: { hwnd: 520, x: 2, y: 3, w: 10, h: 8, parentHwnd: 510, isChild: true, zOrder: 2, wasm },
   },
 };
 
@@ -90,6 +91,28 @@ host.get_window_rect(510, 128);
 const childRect = new DataView(memory, 128, 16);
 assert.deepStrictEqual(Array.from({ length: 4 }, (_, i) => childRect.getInt32(i * 4, true)),
   [18, 50, 58, 80], 'GetWindowRect resolves child coordinates without re-entering WAT');
+host.get_window_rect(520, 144);
+const nestedRect = new DataView(memory, 144, 16);
+assert.deepStrictEqual(Array.from({ length: 4 }, (_, i) => nestedRect.getInt32(i * 4, true)),
+  [20, 53, 30, 61], 'nested child uses its immediate absolute client origin exactly once');
+
+let reentries = 0;
+wasm.exports.wnd_window_screen_x = hwnd => {
+  reentries++;
+  host.get_window_rect(hwnd, 160);
+  return 101;
+};
+wasm.exports.wnd_window_screen_y = () => 202;
+wasm.exports.wnd_screen_w = () => 40;
+wasm.exports.wnd_screen_h = () => 30;
+host.get_window_rect(510, 176);
+const reentrantFallback = new DataView(memory, 160, 16);
+assert.deepStrictEqual(Array.from({ length: 4 }, (_, i) => reentrantFallback.getInt32(i * 4, true)),
+  [18, 50, 58, 80], 'a nested rectangle query uses the bounded renderer fallback');
+const authoritativeRect = new DataView(memory, 176, 16);
+assert.deepStrictEqual(Array.from({ length: 4 }, (_, i) => authoritativeRect.getInt32(i * 4, true)),
+  [101, 202, 141, 232], 'outer child query keeps authoritative guest coordinates');
+assert.strictEqual(reentries, 1, 'guest rectangle lookup cannot recursively re-enter itself');
 
 host.set_parent(100, 510);
 assert.strictEqual(renderer.windows[100].parentHwnd, undefined,

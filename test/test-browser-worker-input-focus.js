@@ -26,13 +26,19 @@ assert(host.includes('self._workerFocusHwnd = r.focusHwnd | 0;'),
   'browser Worker loop should cache the focus returned by slot 0');
 assert(host.includes("evt.type === 'mouse' && evt.msg === 0x0201 && evt.hwnd"),
   'dequeued mouse-down should update Worker focus before rapid following keys');
+assert(/const owns = \(self\._hwndBase && self\._multiApp\)[\s\S]*?if \(win && win\.processId\) return win\.processId === self\.processId;[\s\S]*?return e\.hwnd >= self\._hwndBase/.test(host),
+  'multi-app input should prefer recorded process ownership over a stale HWND range');
+assert(/if \(win && win\.processId\) return win\.processId === self\.processId;/.test(host),
+  'guest threads in one Win32 process should share ownership of queued window input');
+assert(/win\.processId\s*\? win\.processId === self\.processId\s*:\s*\(!win\.wasm \|\| win\.wasm === ownerInstance\)/.test(host),
+  'Worker keyboard fallback should use process ownership before legacy WASM identity');
 assert(/const routingExports = self\.guestWorker[\s\S]*?get_focus_hwnd: \(\) => self\._workerFocusHwnd \| 0[\s\S]*?keyboardFallback[\s\S]*?inputEventHwnd\(evt, routingExports, null, keyboardFallback\)/.test(host),
   'browser keyboard routing should consult Worker focus then its visible owner window');
 assert(host.includes('this.renderer._guestWorkerWasms.add(this.instance);'),
   'Worker-backed renderer ownership token should be marked');
 assert(input.includes('if (this._keyboardOwnerRunsInGuestWorker())'),
   'Worker-backed keyboard events should bypass direct calls into the idle instance');
-assert(host.includes("workerUrl: 'lib/guest-worker.js?v=19'"),
+assert(host.includes("workerUrl: 'lib/guest-worker.js?v=21'"),
   'guest Worker cache key should change with its slice result protocol');
 assert(/\(func \$menu_post[\s\S]*?\$shared_post_queue_enqueue[\s\S]*?\n\s*\)/.test(menus),
   'browser-side menu commands must enter the shared owning-thread queue');

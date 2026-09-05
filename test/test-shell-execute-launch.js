@@ -107,9 +107,18 @@ function makeShell(opts = {}) {
   assert.match(shellSource,
     /wine\.loadExe\(app\.exe,\s*\{[\s\S]*?\bargs:\s*app\.args,[\s\S]*?\}\)/,
     'browser launch must pass app.args into loadExe before PE startup');
+  assert.match(shellSource,
+    /vfs\.setCurrentDirectory\(app\.workingDirectory\)/,
+    'browser launch must apply an imported-media executable directory before startup');
+  assert.match(shellSource,
+    /if \(app\.mirrorWorkingDirectoryToC && vfs\.files instanceof Map\)/,
+    'browser launch must mirror imported sidecars beside its reported C:\\ executable path');
+  assert.match(shellSource,
+    /vfs\.copyFile\(path, alias, false\)/,
+    'sidecar aliases must remain lazy but detach safely if the C: copy is written');
   const hostSource = fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8');
   assert.match(hostSource,
-    /if \(shell\.launchVfsExe && shell\.launchVfsExe\(file, self, dir, params\)\)/,
+    /if \(absolute && shell\.launchVfsExe && shell\.launchVfsExe\(launchFile, self, launchDir, params\)\)/,
     'browser host offers relative and absolute executable names to the caller VFS');
   assert.strictEqual(
     (shellSource.match(/queuePendingLaunch\(key, SINGLE_APP\(\)\);/g) || []).length,
