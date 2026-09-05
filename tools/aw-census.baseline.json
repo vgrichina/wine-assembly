@@ -3,7 +3,6 @@
   "STUB": [],
   "DIVERGENT": [
     "GetCommandLine",
-    "LoadLibraryEx",
     "wsprintf",
     "wvsprintf"
   ],

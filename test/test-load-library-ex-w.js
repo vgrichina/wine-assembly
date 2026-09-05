@@ -6,6 +6,14 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_load_library_ex_a") (param $name i32) (param $file i32) (param $flags i32) (result i32)
+    (global.set $image_base (i32.const 0x00400000))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_LoadLibraryExA
+      (local.get $name) (local.get $file) (local.get $flags)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+
   (func (export "test_load_library_ex_w") (param $name i32) (param $file i32) (param $flags i32) (result i32)
     (global.set $image_base (i32.const 0x00400000))
     (global.set $esp (i32.const 0x00300000))
@@ -27,12 +35,16 @@ const extraWat = String.raw`
 (async () => {
   const { exports: wat } = await bootRenderHarness({ extraWat, fonts: 'none' });
   const name = 0x00402600;
+  const ansiName = 0x00402700;
   const value = 'uxtheme.dll';
   wat.test_init_image_base();
   for (let i = 0; i <= value.length; i++) {
     const code = i < value.length ? value.charCodeAt(i) : 0;
     wat.guest_write8(name + i * 2, code & 0xff);
     wat.guest_write8(name + i * 2 + 1, code >>> 8);
+  }
+  for (let i = 0; i <= value.length; i++) {
+    wat.guest_write8(ansiName + i, i < value.length ? value.charCodeAt(i) : 0);
   }
 
   assert.strictEqual(wat.test_wide_uxtheme_match(name), 1,
@@ -43,8 +55,32 @@ const extraWat = String.raw`
     'Unicode wrapper preserves the optional-uxtheme unavailable result');
   assert.strictEqual(wat.get_esp(), 0x00300010,
     'three-argument stdcall pops return address plus all arguments');
+  assert.strictEqual(wat.test_load_library_ex_a(ansiName, 0, 2), 0,
+    'ANSI wrapper shares the optional-uxtheme unavailable result');
+  assert.strictEqual(wat.get_esp(), 0x00300010,
+    'ANSI three-argument stdcall pops return address plus all arguments');
 
-  console.log('PASS LoadLibraryExW delegates Unicode lookup and consumes three arguments');
+  const { exports: yielding } = await bootRenderHarness({
+    extraWat,
+    fonts: 'none',
+    extraHostOverrides: { has_dll_file: () => 1 },
+  });
+  const dynamicName = 0x00402800;
+  const dynamicValue = 'plugin.dll';
+  for (let i = 0; i <= dynamicValue.length; i++) {
+    const code = i < dynamicValue.length ? dynamicValue.charCodeAt(i) : 0;
+    yielding.guest_write8(dynamicName + i * 2, code & 0xff);
+    yielding.guest_write8(dynamicName + i * 2 + 1, code >>> 8);
+  }
+  yielding.test_load_library_ex_w(dynamicName, 0, 0);
+  assert.strictEqual(yielding.get_yield_reason(), 5,
+    'Unicode dynamic DLL lookup preserves the loader yield reason');
+  assert.strictEqual(yielding.get_yield_flag(), 1,
+    'Unicode dynamic DLL lookup preserves the loader yield flag');
+  assert.strictEqual(yielding.get_esp(), 0x00300010,
+    'yielding LoadLibraryExW still consumes all three arguments');
+
+  console.log('PASS LoadLibraryExA/W delegate encoded lookup and consume three arguments');
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

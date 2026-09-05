@@ -1300,17 +1300,25 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; LoadLibraryExA(lpFileName, hFile, dwFlags). With dwFlags=0 this is
-  ;; exactly LoadLibraryA; the Wise DX-Ball installer uses that documented
-  ;; form to obtain KERNEL32 before probing an optional procedure.
+  ;; LoadLibraryEx adds hFile and dwFlags to the encoding-specific LoadLibrary
+  ;; entry point. Keep the common stack/yield behavior in one place: the base
+  ;; handler consumes return+name, then this consumes the two Ex-only args.
+  (func $handle_LoadLibraryEx_core (param $name i32) (param $hfile i32)
+        (param $flags i32) (param $wide i32)
+    (if (local.get $wide)
+      (then
+        (call $handle_LoadLibraryW
+          (local.get $name) (local.get $hfile) (local.get $flags)
+          (i32.const 0) (i32.const 0) (i32.const 0)))
+      (else
+        (call $handle_LoadLibraryA
+          (local.get $name) (local.get $hfile) (local.get $flags)
+          (i32.const 0) (i32.const 0) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   (func $handle_LoadLibraryExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_LoadLibraryA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
-    ;; LoadLibraryA consumed its return address plus one argument. Consume the
-    ;; two additional Ex arguments without changing its result/yield state.
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
+    (call $handle_LoadLibraryEx_core
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
 
   ;; Win32 DDEML state.  DDE objects are scoped to the instance returned by
   ;; DdeInitialize: passing a freed HSZ to another instance, using a dead
@@ -9734,16 +9742,9 @@
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
-  ;; LoadLibraryExW(lpFileName, hFile, dwFlags). The flags select how Windows
-  ;; exposes the mapped image, but do not change our module/resource lookup.
-  ;; Preserve LoadLibraryW's result (and possible DLL-load yield), then consume
-  ;; the two additional Ex arguments.
   (func $handle_LoadLibraryExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_LoadLibraryW
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
+    (call $handle_LoadLibraryEx_core
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
 
   ;; 301: GetStartupInfoW — zero-fill the struct
   (func $handle_GetStartupInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
