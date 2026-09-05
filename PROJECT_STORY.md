@@ -2,6 +2,8 @@
 
 *A retrospective from the initial commit (2026-03-26) through 2026-09-04: 3,758 commits across 163 calendar days and 106 active commit days. The last sixteen days alone added about 1,600 of them.*
 
+*Short on time? The [articles](articles/README.md) take one question each — the x86 interpreter, lazy flags, real DLLs, the Win32 layer, software GDI, DirectX, Win16, the virtual LAN, the DOS toy VM, the WATX memory map, scripting the emulator, and working with coding agents — in a few minutes apiece.*
+
 ---
 
 ## 0. The premise

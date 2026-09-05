@@ -2,7 +2,7 @@
 // Render the repository's Markdown into static HTML pages for the live site,
 // plus a sitemap.xml that lists them.
 //
-//   node tools/gen-site-pages.js            write story.html, docs/**/*.html, sitemap.xml
+//   node tools/gen-site-pages.js            write story.html, articles/*.html, docs/**/*.html, sitemap.xml
 //   node tools/gen-site-pages.js --list     print what would be written, write nothing
 //
 // WHY THIS EXISTS: story.html used to fetch PROJECT_STORY.md and render it
@@ -175,6 +175,19 @@ const NAV_HOME = `<a href="/">&larr; Run the emulator</a>`;
 const NAV_STORY = `<a href="/story.html">The Story</a>`;
 const NAV_DOCS = `<a href="/docs/">Design docs &amp; RE notes</a>`;
 const NAV_REPO = `<a href="${REPO}">GitHub</a>`;
+const NAV_ARTICLES = `<a href="/articles/">Articles</a>`;
+
+// articles/*.md: one standalone page per question ("how do lazy flags
+// work", "how are real DLLs loaded"), written to be found by a search for
+// that question rather than read top to bottom like the story. README.md
+// there is the hand-kept index and becomes articles/index.html.
+function listArticles() {
+  const dir = path.join(ROOT, 'articles');
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).sort()
+    .filter(f => f.endsWith('.md') && f !== 'README.md')
+    .map(f => ({ rel: `articles/${f}`, urlPath: `articles/${f.replace(/\.md$/, '.html')}` }));
+}
 
 function listDocs() {
   const out = [];
@@ -205,11 +218,44 @@ function generatePages() {
       title: 'How Wine-Assembly was built: a Windows 98 emulator in raw WebAssembly',
       description: 'The history of Wine-Assembly, an x86 Windows 98 emulator written directly in WebAssembly Text: from the first instruction decoder to a browser that runs Notepad, Pinball, Winamp, DirectX games and 16-bit Windows apps.',
       urlPath: 'story.html', sourceRel: 'PROJECT_STORY.md',
-      nav: [NAV_HOME, NAV_DOCS, NAV_REPO].join(' '),
+      nav: [NAV_HOME, NAV_ARTICLES, NAV_DOCS, NAV_REPO].join(' '),
       dates: storyDates,
     }),
   });
   urls.push({ loc: `${SITE}/story.html`, lastmod: storyDates.modified, priority: '0.8', changefreq: 'monthly' });
+
+  // Articles.
+  for (const a of listArticles()) {
+    const md = fs.readFileSync(path.join(ROOT, a.rel), 'utf-8');
+    const meta = extractMeta(md);
+    const dates = { published: gitDate(a.rel, 'first'), modified: gitDate(a.rel) };
+    pages.push({
+      name: a.urlPath,
+      content: pageHtml({
+        md, title: meta.title, description: meta.description,
+        urlPath: a.urlPath, sourceRel: a.rel,
+        nav: [NAV_HOME, NAV_ARTICLES, NAV_STORY, NAV_DOCS, NAV_REPO].join(' '),
+        dates,
+      }),
+    });
+    urls.push({ loc: `${SITE}/${a.urlPath}`, lastmod: dates.modified, priority: '0.8', changefreq: 'monthly' });
+  }
+  const articlesIndexRel = 'articles/README.md';
+  if (fs.existsSync(path.join(ROOT, articlesIndexRel))) {
+    const md = fs.readFileSync(path.join(ROOT, articlesIndexRel), 'utf-8');
+    const meta = extractMeta(md);
+    const dates = { published: gitDate(articlesIndexRel, 'first'), modified: gitDate(articlesIndexRel) };
+    pages.push({
+      name: 'articles/index.html',
+      content: pageHtml({
+        md, title: meta.title, description: meta.description,
+        urlPath: 'articles/', sourceRel: articlesIndexRel,
+        nav: [NAV_HOME, NAV_STORY, NAV_DOCS, NAV_REPO].join(' '),
+        dates,
+      }).replace('class="wrap"', 'class="wrap docs-index"'),
+    });
+    urls.push({ loc: `${SITE}/articles/`, lastmod: dates.modified, priority: '0.8', changefreq: 'monthly' });
+  }
 
   // Design docs and reverse-engineering notes.
   const docs = listDocs();
@@ -224,7 +270,7 @@ function generatePages() {
       content: pageHtml({
         md, title: meta.title, description: meta.description,
         urlPath: d.urlPath, sourceRel: d.rel,
-        nav: [NAV_HOME, NAV_STORY, NAV_DOCS, NAV_REPO].join(' '),
+        nav: [NAV_HOME, NAV_ARTICLES, NAV_STORY, NAV_DOCS, NAV_REPO].join(' '),
         dates,
       }),
     });
@@ -254,7 +300,7 @@ function generatePages() {
       title: 'Wine-Assembly design docs and reverse-engineering notes',
       description: 'How a Windows 98 emulator written in WebAssembly Text works: memory map, threaded-code x86 dispatch, lazy flags, software GDI, DirectX, Win16, and per-game reverse-engineering notes.',
       urlPath: 'docs/', sourceRel: 'docs',
-      nav: [NAV_HOME, NAV_STORY, NAV_REPO].join(' '),
+      nav: [NAV_HOME, NAV_ARTICLES, NAV_STORY, NAV_REPO].join(' '),
       dates: { modified: new Date().toISOString().slice(0, 10) },
     }).replace('class="wrap"', 'class="wrap docs-index"'),
   });
@@ -285,6 +331,6 @@ if (require.main === module) {
     for (const p of pages) console.log(`${p.name}  (${p.content.length} bytes)`);
   } else {
     writePages(pages);
-    console.log(`wrote ${pages.length} pages (story.html, docs/**/*.html, sitemap.xml)`);
+    console.log(`wrote ${pages.length} pages (story.html, articles/*.html, docs/**/*.html, sitemap.xml)`);
   }
 }
