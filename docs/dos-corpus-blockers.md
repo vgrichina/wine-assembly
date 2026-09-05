@@ -530,6 +530,59 @@ code there is the point. And the word table at `110:3b00` (`e4 00 d8 00 cb 00
 c0 00 …` — 228, 216, 203, 192, each ~1.059x the next) is a chromatic
 PC-speaker divisor table, not a copy-range table.
 
+### STHINTRO.EXE (`1995-b-blsthtro`) — fixed
+
+The row said `art`, so the sweep counted it as a pass: what it photographed was
+the program's **text-mode sound-card setup menu**, 148 non-blank cells, which
+looks like deliberate text art and is not. Behind it the run was over. The
+program wrote `DVT.VTO`, restored 20 interrupt vectors and exited, and the
+loader that should have taken over `retf`ed off an empty stack to `0000:0000`
+where it spun until `--stuck-after` gave up. **A text row is not a pass** — it
+is a picture of whatever the console last held, and this one was a menu the
+demo puts up before it starts.
+
+There is no AH=4Bh anywhere in the run, which is what made "the EXEC path is
+missing" the wrong first guess. STHINTRO's loader at `110:` is a hand-rolled
+EXEC and never asks DOS to run anything:
+
+```
+110:0923  mov ah,55h / mov dx,[021f] / int 21h    ; child PSP at 213
+110:093d  mov ax,09c1 / mov es:[0Ah],ax           ; ...its terminate vector
+110:094a  mov es:[0Ch],cs                         ;    is 110:09c1
+110:09ab  cli / mov ss,[020f] / mov sp,[0211]     ; the CHILD's stack
+110:09bc  jmp far cs:[002c]                       ; into the child
+```
+
+...and `110:09c1` is `xor ax,ax / jmp 09dc`, where `09dc` is one byte: `C3`, a
+**near** `ret`. It is the tail of the loader's own `call spawn` at `110:00de`,
+so everything that `ret` needs — the return address, and the DS the caller had —
+is the parent's context, and the only place it exists once the loader has loaded
+the child's SS:SP is inside DOS.
+
+Two halves, both now in `Machine.pspSaveStack`:
+
+* **SS:SP, from PSP+2Eh.** DOS records the caller's stack there on every INT 21h
+  call; the terminate path reads it out of the *parent* PSP and restores it
+  before jumping through INT 22h. With it, the `ret` lands on `110:00e1` — the
+  `jc` immediately after `call 06d9` — instead of at `0000:0000`.
+* **The register file saved with it.** DOS's INT 21h prologue pushes AX BX CX DX
+  SI DI BP DS ES on the caller's stack and the exit path pops all nine. Without
+  that half the loader reached `110:00e3`, `dec word [0113]`, with DS still
+  holding the child's `0398` instead of its own `01ae`: it decremented a word of
+  someone else's memory, took the wrong branch, read the next subfile header
+  from **handle 0** (stdin, answered out of the auto-key rotation) and printed
+  `[ERROR]: Executing internal subfile...`. Half a fix reads exactly like a
+  different bug.
+
+It now loads `STHINTRO.MOD`, resets the Sound Blaster, takes 13 EMS handles and
+draws the *blossom presents* title in mode 13h — 63,997 non-black pixels of
+64,000. `test/test-toyvm-dos-terminate.js` is the sequence in eleven
+instructions of hand-assembled `.COM`.
+
+The title is byte-identical at 20M, 60M and 150M dispatches, with INT 1Ch ticks
+still accumulating (26 → 254) and no spin: the demo is holding it on the
+timer, and how long is a pacing question, not this one.
+
 ### BLIQ.EXE (2 rows — `1994-b-bliq` and `1994-b-black` are the same program)
 
 Reaches mode 13h **unchained** (Mode X, 202,978 planar writes, display start

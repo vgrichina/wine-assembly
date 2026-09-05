@@ -1169,6 +1169,13 @@ class DosSession {
       for (const k of ['cs', 'ss', 'ds', 'es']) vm.set(k, t[k]);
       vm.set('gip', t.ip);
       vm.set('sp', t.sp);
+      // The caller's register file, when the transfer is a terminate handing a
+      // parent its own context back. DOS pops the nine words its INT 21h
+      // prologue pushed on the way out, so a program resumed through INT 22h
+      // finds DS, ES and the rest exactly as they were at the call that
+      // launched the child. Applied after the segment loads above so a saved DS
+      // wins over the exiting child's.
+      if (t.regs) for (const k of Object.keys(t.regs)) vm.set(k, t.regs[k]);
       if (t.ax !== undefined) vm.set('ax', t.ax);
     }
   }

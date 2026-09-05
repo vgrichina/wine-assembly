@@ -106,6 +106,9 @@ const XMS_ENTRY_SEG = 0x00C0; // three bytes below the PSP: int 2Dh; retf
 const XMS_INT = 0x2D;
 const XMS_TOTAL_KB = 8192;
 const PSP_SEG = 0x0100;
+// The nine words DOS's INT 21h prologue pushes onto the caller's stack, in the
+// order it pushes them, plus the flags its IRET hands back. See pspSaveStack.
+const PSP_SAVED_REGS = ['ax', 'bx', 'cx', 'dx', 'si', 'di', 'bp', 'ds', 'es', 'flags'];
 const LOAD_SEG = 0x0110;      // PSP is 0x100 bytes = 0x10 paragraphs
 // The environment block, in the gap between the BIOS data area and the PSP.
 // 0x0060..0x00C0 is 1.5K, which is more than any of these programs reads.
@@ -898,6 +901,9 @@ class Machine {
     // critical error, 3 terminate-and-stay-resident. See AH=4Dh.
     this.lastExitType = 0;
     this.curPsp = PSP_SEG;             // whose PSP AH=51h/62h reports
+    // Per-PSP: the caller's registers as of its last INT 21h call, the half of
+    // PSP+2Eh that does not fit in a DWORD. See pspSaveStack.
+    this.pspRegs = new Map();
     this.xmsBlocks = new Map(); this.xmsNext = 1; this.xmsMoved = 0;
     // Whether the guest's addresses still wrap at 1MB. They do until it takes
     // an extended-memory handle; see openBus.
@@ -3729,6 +3735,7 @@ class Machine {
   // the CF write rather than editing a dozen call sites -- and it stays correct
   // when a new one is added.
   int21(ah, al, r) {
+    this.pspSaveStack(ah, r);
     if (ah !== 0x59) {
       const setCf = r.setResultCf;
       r.setResultCf = (on) => {
@@ -3850,6 +3857,60 @@ class Machine {
         if (b.seg + b.size >= this.allocTop) { this.allocTop = b.seg; this.memFree.splice(i, 1); done = false; break; }
       }
     }
+  }
+
+  // PSP+2Eh -- "SS:SP on entry to the last INT 21h call". DOS writes it on
+  // every call from its own INT 21h prologue, before it switches to an internal
+  // stack, and it is not bookkeeping nobody reads: the terminate path is how a
+  // program that ended gives its parent's stack back, and the only copy of that
+  // stack pointer is this field. STHINTRO.EXE is the case. Its loader is a
+  // hand-rolled EXEC -- AH=55h for a child PSP, the terminate vector poked into
+  // it at +0Ah, then `mov ss,[020f] / mov sp,[0211]` onto the *child's* stack
+  // and a far jump into the child -- so by the time the child calls AH=4Ch the
+  // loader's own SS:SP exists nowhere but here. Its terminate handler at
+  // 110:09c1 is `xor ax,ax / ret`: a NEAR ret, popping the return address of
+  // the loader's own `call spawn`. With the child's stack still loaded that ret
+  // pops whatever the child left and lands at 0000:0000.
+  //
+  // The saved SP is the one the INT handler sees, so it includes the six bytes
+  // the interrupt pushed; the terminate path adds them back the way DOS's IRET
+  // out of the system call does.
+  //
+  // The exclusions are DOS's own: AH=50h/51h/62h/64h run on the caller's stack
+  // rather than the internal one and never touch the field, and neither does
+  // anything at or above AH=6Ch.
+  //
+  // What DOS keeps beside SS:SP is the caller's whole register set: its INT 21h
+  // prologue pushes AX BX CX DX SI DI BP DS ES onto the user stack and only
+  // then records the stack pointer, and the exit path pops all nine back before
+  // it transfers. That is why a program resumed through INT 22h finds its data
+  // segment where it left it -- STHINTRO's loader runs `dec word [0113]` two
+  // instructions past the `ret`, and with DS still holding the child's 0398
+  // instead of its own 01ae it decrements a word of somebody else's memory and
+  // takes the wrong branch. We service the call from the host rather than on
+  // the guest's stack, so the nine registers are held here, per PSP, instead of
+  // in the 18 bytes below the saved SP where DOS puts them.
+  pspSaveStack(ah, r) {
+    if (ah === 0x50 || ah === 0x51 || ah === 0x62 || ah === 0x64 || ah >= 0x6C) return;
+    const at = (this.curPsp << 4) + 0x2E;
+    const ss = r.get('ss') & 0xFFFF, sp = (r.ret.sp - 6) & 0xFFFF;
+    this.mem[at] = sp & 0xFF; this.mem[at + 1] = (sp >> 8) & 0xFF;
+    this.mem[at + 2] = ss & 0xFF; this.mem[at + 3] = (ss >> 8) & 0xFF;
+    const regs = {};
+    for (const n of PSP_SAVED_REGS) regs[n] = r.get(n) & 0xFFFF;
+    this.pspRegs.set(this.curPsp, regs);
+  }
+
+  // What that field holds for one PSP, already stepped past the IRET frame --
+  // DOS's own IRET out of the system call consumes it -- together with the
+  // registers saved alongside. Null when nothing has been saved there yet,
+  // which is the ordinary top-level program whose PSP has no parent.
+  pspSavedStack(psp) {
+    const at = ((psp & 0xFFFF) << 4) + 0x2E;
+    const sp = this.mem[at] | (this.mem[at + 1] << 8);
+    const ss = this.mem[at + 2] | (this.mem[at + 3] << 8);
+    if (!ss && !sp) return null;
+    return { ss, sp: (sp + 6) & 0xFFFF, regs: this.pspRegs.get(psp & 0xFFFF) || null };
   }
 
   // The INT 22h address the current PSP carries at +0Ah, or null when nothing
@@ -3990,12 +4051,25 @@ class Machine {
               if (size !== undefined) this.memReleaseBlock(s, size);
             }
           }
-          // SS:SP and the data segments stay as they are. DOS leaves them
-          // undefined across INT 22h, and a loader that installed the vector
-          // sets up whatever it needs on the other side of the jump.
+          // The stack goes back to the parent's. DOS restores SS:SP out of the
+          // parent PSP's +2Eh field before it jumps through INT 22h -- see
+          // pspSaveStack -- and that is the whole of what a hand-rolled EXEC
+          // gets back, because it switched to the child's stack itself and kept
+          // no copy. Without it STHINTRO.EXE's `xor ax,ax / ret` terminate
+          // handler returns through the dead child's stack to 0000:0000.
+          //
+          // The registers saved with it come back too -- DOS pops the nine
+          // words its prologue pushed -- so the parent finds DS and ES pointing
+          // where they did at the call. With no saved frame (a top-level PSP
+          // whose +16h names no parent) nothing is restored and the exiting
+          // program's own SS:SP and segments carry through, which is what this
+          // path did before and what every program already through it expects.
+          const back = (parent && parent !== leaving) ? this.pspSavedStack(parent) : null;
           this.transfer = {
-            cs: term.cs, ip: term.ip, ss: r.get('ss'), sp: r.ret.sp,
+            cs: term.cs, ip: term.ip,
+            ss: back ? back.ss : r.get('ss'), sp: back ? back.sp : r.ret.sp,
             ds: r.get('ds'), es: r.get('es'),
+            ...(back && back.regs ? { regs: back.regs } : {}),
           };
           return true;
         }
