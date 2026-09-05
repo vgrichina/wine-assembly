@@ -1,6 +1,6 @@
 # Wine-Assembly — The Whole Story
 
-*A retrospective from the initial commit (2026-03-26) through 2026-08-19: 2,131 commits across 147 calendar days and 90 active commit days.*
+*A retrospective from the initial commit (2026-03-26) through 2026-09-04: 3,758 commits across 163 calendar days and 106 active commit days. The last sixteen days alone added about 1,600 of them.*
 
 ---
 
@@ -8,13 +8,13 @@
 
 > Run real Windows 98 `.exe` files in the browser. No source, no recompilation, no porting layer. Just raw WebAssembly Text interpreting x86 machine code, with the Win32 API reimplemented inside the WASM module itself.
 
-This is the kind of project that "shouldn't" be a sprint at all. It started as a single WAT file. It is now about 150k lines of WAT across 54 parts plus 122k lines of browser, test, and tooling JavaScript. The 114-binary smoke matrix spans Win98/XP accessories, MFC applications, games, installers, screensavers, DirectDraw, Direct3D Immediate/Retained Mode, audio, RichEdit, and OLE — and since Aug 15 it is no longer only a 32-bit story: 16-bit NE images load, link and run, so the original Windows Entertainment Pack plays in the browser next to its 32-bit remake.
+This is the kind of project that "shouldn't" be a sprint at all. It started as a single WAT file. It is now about 210k lines of WAT across 61 parts plus 270k lines of browser, test, and tooling JavaScript, compiled by its own vendored compiler for a WAT dialect that allocates the emulator's memory map and type-checks its structs. The app registry names 181 programs: Win98/XP accessories, MFC applications, games, installers, screensavers, DirectDraw, Direct3D Immediate/Retained Mode, OpenGL, audio, RichEdit, and OLE — and since Aug 15 it is no longer only a 32-bit story: 16-bit NE images load, link and run, so the original Windows Entertainment Pack plays in the browser next to its 32-bit remake. Since late August there is a third machine beside them: a toy 8086 VM that runs a corpus of 199 DOS demoscene programs and exists to answer interpreter-design questions the big emulator is too expensive to ask.
 
 The history is also a record of AI-assisted systems work. The implementation is **coded directly in WAT**—there is no C/Rust-to-WASM emulator build—but it should not be described as solely "hand-written." Large parts of the reverse engineering, code, tests, and design were produced through sustained collaboration with Claude Code and Codex. This retrospective was refreshed from all three available records: Git, the repository's Claude session history/memories, and Codex rollout transcripts. The final week is visibly a *multi-agent* record: up to six sessions worked the same tree at once, coordinating through an append-only `messageboard.txt` and building every commit in a throwaway `GIT_INDEX_FILE` so nobody swept up a neighbour's in-flight edits.
 
 ---
 
-## 1. The arc, in thirteen acts
+## 1. The arc, in sixteen acts
 
 ```
 Act I     Mar 26-28   Decoder, lazy flags, FPU, SEH        →  Notepad runs
@@ -31,6 +31,12 @@ Act XI    Jul 06-30   Safari regressions, RichEdit start   →  WordPad becomes 
 Act XII   Aug 01-12   WordPad/OLE, Paint, accessories      →  Desktop workflows + software GDI
 Act XIII  Aug 13-19   Fonts, WinHelp, Win16, LAN, de-drift →  Canvas text deleted; NE runs; two
                                                               emulators play each other
+Act XIV   Aug 20-26   Games as the workload, perf ledger   →  Diablo/StarCraft/Quake II reach play;
+                                                              measured nulls written down
+Act XV    Aug 26-30   Toy VM, DOS corpus, bring-your-own   →  199 demos captured; ISO/zip mounts;
+                      media                                   region JIT; OpenGL command stream
+Act XVI   Aug 31-Sep 4 WATX cutover, allocated memory map,  →  288 commits in one day; compiler
+                      typed layouts, agent control channel    owns the map; agents play the games
 ```
 
 ### Commit cadence
@@ -95,10 +101,24 @@ July       19 commits  Safari fixes and native WordPad/RichEdit bring-up
 08-17      53 commits  DDEML, menu sweep across the corpus, threads probe
 08-18      76 commits  Architecture review, then de-drift: A/W merge, file splits
 08-19     113 commits  Win16 breadth, VB games, web desktop cleanup
+08-20..22 117 commits  Diablo to town, StarCraft installer, TrueType hinting, Win16 all playable
+08-23     129 commits  Real threads merged; Caesar/Heroes/RCT profiled; single-app phone mode
+08-24     144 commits  Hash block cache deleted; RLE fold; Diablo credits; dropdown sweep
+08-25     106 commits  bench-loops harness; page-compile measured dead even; MMX on SIMD
+08-26      54 commits  Recording every app's audio; toy VM starts; Jazz 2 MMX ratio
+08-27..28 129 commits  DOS corpus to 190+; MW3 textures; Half-Life GL; searchable picker
+08-29      89 commits  Console APIs; VESA and protected mode; Baldur's Gate previews
+08-30     168 commits  BYO media (zip/ISO/C: overlay); OpenGL command buffer; FAR, WinRAR
+08-31     288 commits  WATX cutover, legacy retired, allocated map, 1,258 layout sites
+09-01     106 commits  Typed pointers and unions; agent control channel; frozen mode
+09-02     114 commits  Region JIT whole-program; toyvm site with sound; Shut Down Windows
+09-03      87 commits  Installers end to end; GUS/OPL2; Windows demoscene; CD Player
+09-04      55 commits  War Wind, AoE campaigns, shell icons; the site made findable
 
-The peak day is now Aug 14 (154 commits), which displaced Apr 26 (56). The last
-seven days carried 632 commits — 30% of the project's entire history — with up
-to six agent sessions committing into one worktree at once.
+The peak day is now Aug 31 (288 commits), which displaced Aug 14 (154). The
+sixteen days from Aug 20 carried 1,586 commits — 43% of the project's entire
+history — and the message board logged 96 distinct agent-day rows on Aug 31
+alone.
 ```
 
 ---
@@ -717,6 +737,296 @@ under a gate, and a perf HUD learned to separate *game* fps from *page* fps so
 
 ---
 
+## Act XIV — "Games are the workload now" (Aug 20–26)
+
+The instruction that opens this act is one line in a Codex session: *"first
+make Diablo work and reach gameplay. then the same for Starcraft and Fallout."*
+Everything else in the week is what happens when a platform that was tuned on
+Notepad and Solitaire is pointed at Blizzard and id Software.
+
+**Diablo shareware reaches Tristram.** The pre-release demo had been in the
+debug dropdown since `35d50d6`; the maintainer then found the shareware edition
+on the Internet Archive ("seems like more full version than pre-release") and
+insisted its own installer run inside the emulator — *"don't use wine, why? we
+want to fix bugs in installer too."* The path from title screen to a Warrior in
+town went through a CRT `atexit`/`strstr` gap, a critical-section retry that ate
+8 bytes of stack per park, a modal dialog whose `DWLP_DLGPROC` the game reads
+back, a nested message wait, and a focus bug that left the class-selection
+screen dead. The credits screen's solid white bars turned out to be
+`CreateDIBitmap(fdwInit=0)` adopting the caller's colour table (`59f11790`). To
+read the game's art without the emulator in the loop, `tools/mpq-dir.js` and
+`tools/mpq-extract.js` learned the MPQ container — decryption, PKWARE explode,
+PCX-to-PNG — so a wrong sprite could be compared against ground truth.
+Save games persist in the browser (`7cc3e1fc`), and the shareware's later
+regression ("looks broken again, used to work") was chased through both thread
+backends until *"make Diablo Shareware work properly with Threads backend"*
+held.
+
+**StarCraft, Heroes II, Caesar III, RollerCoaster Tycoon, Jazz Jackrabbit 2.**
+StarCraft's native installer wrote its 35,9xx-byte MPQ short until inline
+`EnterCriticalSection` retries stopped consuming stack (`d05c5a3`); the title
+then painted fully and stayed there, alive on DirectSound and DirectDraw locks,
+which the RE notes record as "not the missing .smk" rather than a fix. Heroes II
+hung ten batches after its menu because the CLI parked the whole emulator when
+Miles Sound System suspended the main thread from inside its own timer
+callback; `host.js` had always exempted that case and `run.js` now agrees. Its
+build sound looping forever was traced through the Miles disassembly rather
+than worked around (*"don't do workaround. fix for real"*). Caesar III got a
+scripted route into a running city and a measured cost of ~143,000 x86 steps per
+presented frame. RCT's "no window" report was really "loads after a while at
+very low fps", and a per-pixel JavaScript surface conversion was the cost; the
+`$invalidate_page` path came out 5.4x cheaper. Jazz 2 became the corpus's first
+genuine dual-path MMX binary: with the eight MMX registers as i64 globals and
+packed ops widened to wasm SIMD, the same frames present 1.53x faster, and that
+number is quoted from *presents counted*, never API calls.
+
+**The performance ledger, including the negatives.** A session opened with the
+maintainer's design idea — compile x86 into micro-ops and delete the redundant
+side effects at block-compile time — and the counter-question *"didn't you just
+measure that optimizing dispatches don't really help in practice?"* The answer
+was to build the measurement first. `tools/bench-loops.js` injects hand-encoded
+x86 into a live instance and runs both arms in one process, interleaved and
+rotated, with a ±1% noise floor against the 24–42% that had made every
+whole-app A/B unresolvable on a loaded box. What it and the app-level runs then
+established is written in `docs/` as a ledger rather than a changelog: a
+dispatch is ~8 ns and a block transfer ~9 ns on top; `$th_rect_run` is worth
+~12% on Caesar and `$th_case_chain` ~0% because *the discriminator is whether a
+fold removes guest memory accesses*; the RLE sprite-row fold is +7% and a
+one-app fold (1 of 287 PEs in the corpus has that shape); page-level compilation
+halves decodes and measures dead even at every V8 tier (`ed4b27df`, "built,
+measured, not shipped"); the 4,096-slot hash block cache was simply deleted
+(`9c257a88`) because pages had replaced it. The hot-block histogram, the
+`--batch-stats` stop-reason census and `--decode-stats` exist so that "slow per
+batch" stops hiding two opposite causes.
+
+**Real threads merged.** The worker-thread branch that Act XIII probed was
+brought to main behind a checkbox (*"make sure that threads disabled unless
+checkbox is on + cli has both modes as well"*), with `--threads` and
+`--no-threads` as mutually exclusive CLI twins and `--rpc-census` to count the
+round trips a worker makes to the main thread — which is what found Winamp's
+decoder spending 9,909 of them on `math_pow`.
+
+**Fonts finished properly.** The maintainer refused a shortcut twice in one
+day: a C hinter compiled to WAT ("why you have this C code?") and reading
+FreeType ("try to not look at freetype code"). The runtime TrueType instruction
+engine — fpgm/prep/glyph programs, scaled CVT, twilight points, eight ppem
+contexts — was written in WAT from the specification and checked against Arial
+12 px bitmaps captured from a real Windows 98 box, with the `m` advance and the
+missing top row of a glyph as the oracle that disproved a plausible operand-order
+fix within four minutes of proposing it.
+
+**Win16 made playable, not just present.** *"make sure all win16 games are
+playable, not just present a window with nothing or crash when you try to
+play."* Jigsawed's 6x6 cells, Pipe Dream's help and cursor, Klotski's modal
+collision, Tetris focus, IdleWild's honest "it is a screensaver manager, not a
+game" — each got its own board thread and its own bounded test; the corrupt
+bytes in two Internet Archive images were repaired and documented.
+
+**And the phone.** A single-app mode for small screens (taskbar hidden, the
+app's own close button as the exit, maximize then zoom), a recorder that taps
+every running app's `AudioContext` instead of the first one, and an iOS
+self-test server because Chrome's device emulation cannot reproduce Safari's
+retractable toolbars.
+
+The week's messageboard shows the cost of the multi-agent model as clearly as
+its speed: a commit built from a stale isolated index silently reverted 35
+pre-extracted-icon paths from HEAD and had to be restored by hand; another
+agent's phase-2 ZIP mount was deleted wholesale by a neighbour's commit and
+re-landed as `6a876ff0`; and cache-version bumps in `index.html` travelled as
+"whoever commits this file next, please carry it." The throwaway-index rule
+that Act XIII adopted was retired for ordinary staging plus the board (*"just
+commit normally, coordinate over messageboard"*).
+
+---
+
+## Act XV — "A second machine, and bring your own disc" (Aug 26–30)
+
+Two things started this act, and neither was on any plan. The maintainer asked
+about SIMD for the corpus and got a census; then, because a 16-bit 8086 is the
+cheapest possible place to test interpreter designs, a toy VM appeared under
+`tools/toyvm/`. And a design question about browser storage — *"what if we
+want to extend it to the point where you can bring your own .isos, installer
+exes, archives, etc?"* — became a six-phase design doc and then, the same week,
+shipped.
+
+**The toy VM and the DOS corpus.** *"let's start a separate collection of dos
+games to the sources md for toyvm corpus in addition to pouet demos."* The toy
+VM grew from a decoder to real mode with a BIOS, VGA mode 13h and the default
+palette (`03a39be7`), hardware interrupts through the IDT (`81a7ff57`), a
+vertical-retrace interrupt, VESA for the 640x480 demos, protected mode and V86,
+a Sound Blaster whose interrupt timing was two bugs rather than a DMA gap
+(`b2044574`), and finally the `AUTORUN`-style question of *what counts as a
+frame worth keeping* — "an unlit graphics screen is not a frame", "photograph
+the picture, not the flash", "keep what a run SAID apart from what it showed".
+The corpus went 193, 194, then 199 of 199 captured. Each dead program got a
+commit with its diagnosis as the subject: *"BLINKY: the failure is a bad
+return address, not bad code"*, *"JULTRO: the int operand was planted, not
+rolled"*, *"ANGEL: the chipset id is never written, because we present no video
+BIOS"*, *"DINO: keys do reach it, one row per 775M dispatches"*.
+
+The point of the toy was to measure. Four dispatch shells (`tailcall`,
+`repl_tailcall`, `calls`, `switch`) were priced against each other; a micro-op
+tier lowered a hot trace past its x86 shape (`b0086961`, tier 3 folding the
+segment lookup out); and a region JIT compiled a hot loop into wasm and ran the
+demo with it (`041ab7cb`). Two of its early numbers were retracted the same
+week — a 0.94x that a snapshot bench had produced, and a "jmp tracing" arm
+recorded as a negative — and the correctness rule that made the JIT stick was
+that *a region owns the bytes it was compiled from* and must be refused when
+the guest rewrites them (`9b67633d`). The findings were written up as a proposal
+for the main emulator (`199e2414`, replicated dispatch tails), tried there
+experimentally, and merged.
+
+**Bring your own media.** The BYO design (`ba7a2511`) landed in one day at
+`650bc6bb`: ZIP archives mount read-only into the VFS, ISO 9660 images mount
+as a CD-ROM drive with Joliet, files are served through a byte provider instead
+of a buffer so a 600 MB image is never slurped, a writable `C:\` overlay keeps
+what an installer writes, save bundles export/import and sync to berrry's data
+API, and the browser gets an "Add a game" flow. Civilization II runs from local
+media with CD audio ("seems like we can implement cd audio why not" — "don't
+look at wine just impl from spec"), and a few days later `.bin`/`.cue` pairs
+mount, a bare `.bin` is sniffed for its ISO track and its audio tracks are
+inferred from sector statistics, because the maintainer pushed twice past "we
+can't recover tracks from stats."
+
+**Console and OpenGL.** *"looks like we need to get far manager as good test
+exe for this?"* Console screen buffers, `ReadConsoleOutputA`, input flushing,
+persistent titles, device files, viewport handling and browser keys routed into
+the console arrived in a two-day run that ended with FAR Manager and WinRAR
+launchable and painted correctly. Quake II's OpenGL renderer was too slow with
+real threads, and the maintainer's diagnosis — *"can we have the gl calls just
+write commands into buffer until it either gets flushed to screen explicitly or
+overflows?"* — became the only path: every GL call appends to a command buffer,
+textures upload without an extra copy, and the immediate replay path was removed
+(`6cc2dcaa`). Half-Life's Uplink demo switches renderers and moves; MechWarrior
+3 got perspective texture stages, depth, RGB565 colour-key rows and a threaded
+Direct3D rasterizer prototype (`b5baede5`); the D3DIM SDK demos got their
+menus, options and FPS counters made honest ("pay attention to what demos
+themselves display as fps"). Mouse capture for first-person games went through
+several rounds — pointer lock, relative motion gated until capture, raw
+movement — because "once I get a bit from center with mouse the aim moves crazy
+fast."
+
+**The stub ratchet.** `fable-review.md` was re-run against the tree on Aug 27,
+and its silent-success stub count became a build gate that only goes down: 330,
+329, 328, 327, 326 across as many commits, each one a real behaviour (registry
+disposition, `WaitMessage` blocking, owned popup visibility, recursive mutex
+ownership) replacing a return-zero.
+
+The corpus doubled in ambition over these days: Baldur's Gate previews, Icewind
+Dale, Deus Ex, Motocross Madness, GTA2, the free GOG titles, Rodent's Revenge in
+both editions, and a searchable Win98-style cascading app picker for a debug
+dropdown that had become too long to scroll.
+
+---
+
+## Act XVI — "The compiler owns the memory map" (Aug 31–Sep 4)
+
+Aug 31 is the biggest day in the history: 288 commits, most of them one
+migration, and the messageboard shows 96 agent-day rows for it. The subject was
+the compiler.
+
+**WATX.** The project had always compiled its WAT with its own JavaScript
+compiler rather than `wat2wasm`. WATX is a sibling project's dialect of WAT with
+`(include ...)`, `(region.declare ...)` and `(layout ...)` — and its `br_table`
+syntax differed from standard WAT, which the maintainer had patched away in one
+morning ("just make it accept it fine, without standardWat:true") before the
+migration plan was written (`f999ec21`). The plan had milestones and a
+one-way door, and the day walked through all of them: vendor the compiler and
+freeze the legacy baseline (`903ca110`); a decoded-ABI differential gate that
+compares what the two compilers emit function by function; a syntax census over
+the whole 210k-line closure ("six pieces of standard WAT the census found
+missing", each taught to WATX); the `(module ...)` wrapper moved out of the
+source so every fragment balances on its own; `src/main.watx` made the one
+source order; a test matrix that runs the same tests against both compilers'
+artifacts and treats a *symmetric* failure as red rather than silent green.
+Then the cutover at byte identity (`23ed9639`), and — the same day, as
+scheduled — the legacy compiler retired (`24b79256`), because the next step put
+things in the source that only WATX can lower.
+
+**The memory map stopped being hand-placed.** For five months every WAT table
+had a hex address typed into a comment and copied into JavaScript. Wave 1
+declared the whole fixed map as 160 regions with zero emitted bytes
+(`52b22646`); wave 2 found the orphans and the under-declared string block;
+wave 3 let the allocator place the map (`c409c554`) and proved it by running a
+real app on a *shaken* map — regions rotated, padded, gapped, reseeded — with
+pixel-identical output. Four pinned ABI bases survive as literals; everything
+else is the allocator's output and `lib/region-map.generated.js` is the one
+mirror. The rule that came out of it is in `CLAUDE.md` in bold: an allocated
+base copied into JS is now a build failure (`6a01cb65`), because a moved region
+breaks JavaScript silently — three literals read zeros for hours before anyone
+noticed.
+
+**Structs got names.** A census found 12,587 hand-spelled struct offsets. Over
+two days ~1,258 of them became `(layout ...)` field accesses — the winsock
+socket, the window record, the DX object, the TrueType point, the DC state and
+path, the paint scratch slots — every wave shasum-gated byte-identical against
+the previous wasm, so a mislabeled field is the *only* thing byte identity
+cannot catch and the doc says so. The GDI object record turned out to be a
+discriminated union and got seven variants plus a prefix view; the control-state
+records turned out to be a union *harder* than that (no shared prefix, no shared
+size, no in-record tag), and the question "why do these even need a common type
+vs each control has its own layout?" settled it as thirteen independent
+layouts. On Sep 1 the maintainer signed off on typed pointers, layout unions,
+views, enums and checked casts (`5c397054` spec, `1fe7824c` implementation), and
+the first drift bug the types found was already shipping: `SetWindowLongA`
+hand-synced a control's id for one class only, so four other classes reported
+one id and notified with another.
+
+The build now runs 28 gates, and the doc that lists them is a paragraph in
+`CLAUDE.md`. Several were born from a gate that *stopped running without
+failing* — a check pattern-matched the old spelling, the migration removed the
+spelling, and the count went 23 to 0 with the build green. "After migrating a
+family, grep gates for the old spelling they match on" is now a written lesson.
+Measured nulls were written down beside the wins so nobody re-runs them:
+`wasm-opt` (0% throughput, 3x startup), a cross-mode parse cache, an accessor
+fast-path split (mechanism worked, 0%), and the `(NEXT)` source-inline macro
+(3–4% *slower*, reverted at `4baf3f04` with a doc explaining why V8 only
+collects the inline win in its top tier).
+
+**Agents drive the games.** *"let's design a feature where we can send
+continuous stream of events to cli vm or connect agent to browser. browser
+connection should be simple copy pasta."* The control channel (`cda630f8`) gives
+`run.js` an HTTP and stdin command stream, the dev server a long-poll hub, and
+the debug toolbar an "Agent handoff" button whose link *returns the protocol as
+plain text* when fetched. `--frozen` parks the emulator and advances it only on
+`step`, so a session can be recorded on the guest clock rather than the wall
+clock (`79ad6b64`), and a dashboard watches many sessions at once. The first
+uses were exactly what the maintainer asked for: an agent won Minesweeper over
+the channel (and was told it forgot to sign its name), played Heroes II in the
+user's own tab, and then — *"build profitable park in RCT while taking a
+video"* — drove RollerCoaster Tycoon headlessly with audio into an `.mp4`
+(`58dedb55`). A frame-pacing census found eight games holding their rate by
+spinning on the clock (`fee7d7c1`), which is why vblank parks and clock-spin
+parks landed as a released lane.
+
+**The toy VM grew up.** Its region JIT went whole-program — every hot loop and
+trace installed into a real run, +35.9% mean CPU on the bench set, detour arms
+taking ADDY_II from +15 to +51 — and two of the clocks it was measuring against
+turned out to be the harness's own (`d91e54b2`). The corpus report became a
+five-page mini-site under `docs/dos-corpus/` with demos paced to real time at a
+selectable MIPS, Sound Blaster DMA, PC speaker, an OPL2 synthesized behind ports
+388h/389h (`048fcccc`) and a Gravis Ultrasound (`c01c7afa`), all validated by
+rendering headless WAVs. Windows demoscene followed: Heaven Seven and four
+others run under the Win32 emulator with GLU shims, and a searchable demos page
+with per-tile fragments went live.
+
+**Everything else that shipped in four days** reads like a release: Shut Down
+Windows, rendered through the emulator's own GDI after the maintainer rejected a
+fake DOS prompt ("also try to make other stuff look authentic"); a CD Player
+that hot-inserts imported discs; installers for Jazz 2, Total Annihilation,
+Pocket Tanks, Icy Tower, Captain Claw and War Wind run end to end in the browser
+and chain-launch what they installed; DirectPlay, DDEML, clipboard, menu and
+deferred-window-position state moved from JavaScript into owned WAT records;
+DX-Ball and Blobby Volley were published to the site with a Sources page
+pointing at the authors' archives; touch became a trackpad for relative-mouse
+games; Age of Empires' campaigns mount correctly and its cursor restores are
+classified by copy size; the vendored WATX compiler compiles the closure
+cooperatively so Safari does not stall on it; and on Sep 4 the site and repo
+were made findable by search engines, which is the commit this document is
+being refreshed in.
+
+---
+
 ## 2. Architecture today
 
 ```
@@ -753,7 +1063,11 @@ under a gate, and a perf HUD learned to separate *game* fps from *page* fps so
 └────────────────────────────────────────────────────────────┘
 ```
 
-**Source layout (concatenation order = filename alphabetical):**
+**Source layout** (the compile order is the `(include ...)` list in
+`src/main.watx`, which the build gates against the directory; the tree below
+is the Act XIII shape and has since gained `00-regions.wat`, the declared
+memory map, plus the loop-idiom matcher, MMX, D3D9 and the Win16 dialog/DDEML
+parts — 61 files today):
 ```
 src/
 ├─ 01-header.wat               ┐
@@ -855,7 +1169,11 @@ text backend, while per-window canvases remain the desktop composition target.
 | Audio | Sound Recorder, Volume Control, Winamp 2.91 | Real microphone capture/playback, cross-app Wave/MIDI gain buses, skinned MP3 playback and visualization |
 | Installers | Winamp 2.91/2.95 NSIS | Silent and interactive flows extract expected files, exercise RichEdit/progress controls, and finish cleanly |
 | DirectDraw/D3D | Marbles, DX5 samples, Organic Art | Meaningful 2D/3D frames with real execute buffers, transforms, clipping, depth, and broad D3D3/D3D7 state |
-| Heavy demos | AoE, AoE2, Abe, MCM, MW3, RCT | Promoted startup/frame smokes; AoE also has a scripted route into the map. These are not claimed as complete games |
+| Heavy demos | AoE, AoE2, Abe, MCM, MW3, RCT, Caesar III, Heroes II | Scripted routes into gameplay with frame-level checks; an agent has driven RCT to a profitable park over the control channel. These are not claimed as complete games |
+| Commercial demos and shareware | Diablo shareware, StarCraft, Quake II, Half-Life Uplink, Jazz 2, Deus Ex, Baldur's Gate, Icewind Dale, GTA2, Civilization II, Total Annihilation, Captain Claw, War Wind | Native installers run inside the emulator and chain-launch the game; Diablo reaches town, Quake II and Half-Life render through the OpenGL command stream, StarCraft stops at its title |
+| Bring your own media | ZIP, ISO 9660, BIN/CUE, installer EXEs | Read-only mounts through a byte provider, a writable `C:\` overlay, save bundles synced to berrry, CD audio in CD Player |
+| Console | FAR Manager, WinRAR | Real screen buffers, console input, directory-change notifications |
+| DOS (toy VM) | 199 demoscene programs, plus Settlers II and GTA1 demos | 199/199 captured; paced playback with Sound Blaster, PC speaker, OPL2 and GUS on the corpus mini-site |
 | Web shell | Multi-app desktop/PWA | PE icons, touch/mobile keyboard, Safari compatibility build, cross-app focus/audio/window management, and active-window recording |
 | 16-bit | Windows Entertainment Pack 1–4, Hearts, Chess, Klotski, Pipe Dream | NE images load/link/run with real menus, dialogs, resources and help; all 31 launch and most draw their game |
 | Help | Windows 98 Help viewer plus each app's own `.hlp` | WAT-native `.hlp`/`.cnt` parsing, topics, keyword index, hotspots, macros, secondary windows |
@@ -962,35 +1280,42 @@ The `--trace-*` family in particular pays compounding interest. Every time someo
 ## 6. The numbers
 
 ```
-Lines of WAT           149,989     (54 files in src/)
-Lines of JS support    122,630     (lib/ + test/ + tools/)
-WASM builds             ~765 KB    (tail-call and compatibility variants)
-Commits                 2,131
-Calendar span           147 days   (Mar 26 through Aug 19, inclusive)
-Active commit days      90
-Avg / active day        ~23.7 commits
-Peak day                154 commits (Aug 14)
-Last seven days         632 commits (30% of all history)
-Focused test files      365 in test/
-Smoke matrix            114 binaries; last full run 106 PASS / 0 FAIL, and the
-                        4 former 16-bit NE skips now run
-Per-app investigations  36 *.md files in apps/
-History sources         Git + Claude project history/memory (24 sessions since
-                        Aug 12 alone) + 72 repo-tagged Codex rollout transcripts
-                        + 1,549 messageboard entries
+Lines of WAT           211,125     (61 files in src/, compiled by the vendored WATX)
+Lines of JS support    270,840     (lib/ + test/ + tools/)
+WASM build            ~1.04 MB     (plus a compatibility build)
+Commits                 3,758
+Calendar span           163 days   (Mar 26 through Sep 4, inclusive)
+Active commit days      106
+Avg / active day        ~35 commits
+Peak day                288 commits (Aug 31, the WATX cutover)
+Aug 20 – Sep 4        ~1,600 commits (43% of all history)
+Win32 APIs in the table 3,295
+Apps in the registry    181
+Focused test files      859 in test/
+Build gates             28 in tools/build.sh
+Declared memory regions 174, all but 7 placed by the compiler
+DOS corpus              199 programs, 199 captured
+Per-app RE notes        38 files in docs/re-notes/
+History sources         Git + 431 Claude sessions (2.2 GB of transcripts and
+                        memory) + 118 Codex rollouts (7.3 GB) + 4,405
+                        messageboard entries from 14 named agent identities
 ```
+
+At Aug 19 the same table read 149,989 lines of WAT in 54 files, 2,131 commits,
+a 154-commit peak day and 1,549 board entries.
 
 ---
 
 ## 7. What's in flight right now
 
-1. **Win16 breadth** — NE images load, link and run, and the 16-bit Entertainment Pack plays; the tail is per-app (Visual Basic 1.0 forms, DOS-era CRT assumptions, 16-bit GDI corner cases) rather than structural ([status](TODOS.md)).
-2. **Real threads in the browser** — a probe took the pipeline all the way from WAT to WASM workers to canvas, and answered the gating question: production is not cross-origin-isolated today but has a route there. Single-threaded stays a permanent supported mode ([design](docs/design-real-threads.md)).
-3. **Finishing the de-drift pass** — `fable-review.md` is largely worked off, and the remaining items are the ones that need design rather than a move: the residual "dispatch" bucket files, the hottest interpreter paths (per-block scan tax, generic re-dispatch of decode-time constants), and the browser drive loop's composite-per-step.
-4. **OLE persistence and WordPad revalidation** — the in-memory storage/stream contract is broad and green. Finish deterministic compound-file serialization/reading, then re-run bounded fresh-process static-image save/delete/reopen pixels on the settled GDI path ([plan](docs/non-gdi-work-plan.md), [status](apps/wordpad.md)).
-5. **Generic threaded/block compilation** — AoE profiling identified register/flag/EA reuse opportunities and an isolated proof of concept showed a modest browser win. The next step is a generic compiler design that stays web-buildable and does not bake in AoE algorithms ([performance notes](docs/aoe-performance-optimization.md), [stack-threaded design](docs/wasm-stack-threaded-code.md)).
-6. **Direct3D and heavy-app depth** — the broad frame-level surface is real, but D3DRM ProgressiveMesh/Viewer fidelity, deeper MCM/MW3/RCT gameplay, long AoE simulation/save/load, and complete NT Paint remain separate compatibility programs ([DirectX status](apps/directx.md)).
-7. **Explicit platform boundaries** — VB6 without its runtime, DX9, full DirectAnimation, and embedded browser engines are still unsupported. 16-bit NE left this list on Aug 15. The project records these as limits rather than hiding them behind silent stubs.
+1. **Deploying the WATX tree** — the migration is complete and the site runs on a deploy-candidate branch merged back into main; the open items are the browser's compile-time memory (a sub-100 MB gate for the in-page compiler, and an iPhone pass on the LAN) and the maintainer's sign-off ([plan](docs/watx-migration-plan.md), [region design](docs/watx-region-safety-design.md)).
+2. **Region JIT for the main emulator** — the toy VM's region JIT is +36% to +44% on its bench set and the replicated-dispatch proposal was tried in the main emulator; the question is which of those results carries into a 32-bit machine with a 4 GB address space and self-modifying decoders ([toyvm bench](docs/toyvm-bench-20.md), [proposal](docs/repl-tailcall-main-emu.md)). The measured nulls — page compile, accessor split, `(NEXT)` inline, `wasm-opt` — are written down so they are not re-run.
+3. **The remaining commercial-demo blockers** — StarCraft's title stall, Diablo II's `SMemReAlloc` critical error, Fallout, and the frame-pacing games that spin on the clock ([RE notes](docs/re-notes/README.md)). Each has a note naming what was ruled out.
+4. **Agents as players** — the control channel, frozen mode and the dashboard work; what is missing is a library of per-game drivers (the RCT one exists) and a way to record a session on the guest clock from the browser as well as the CLI ([design](docs/design-agent-control.md)).
+5. **Bring-your-own media on Safari** — OPFS overlays, cooperative compilation and CD audio all have Safari-specific fixes from this week; the storage ceiling and the private-browsing slowdown remain documented limits ([design](docs/design-byo-media.md), [Safari](docs/safari-private-browsing.md)).
+6. **Phones** — single-app mode, touch-as-trackpad, flippers for Pinball, battery-aware scheduling and a widescreen mode list landed; the per-game control audit exists as a table and most of its adaptations are still unbuilt.
+7. **Direct3D and heavy-app depth** — MW3 has a threaded rasterizer prototype and the D3DIM demos have honest FPS counters, but D3DRM ProgressiveMesh/Viewer fidelity, long AoE simulation/save/load and complete NT Paint remain separate compatibility programs.
+8. **Explicit platform boundaries** — VB6 without its runtime, full DirectAnimation, and embedded browser engines are still unsupported; DX9 left the list when `pawn` drew its chessboard. The project records these as limits rather than hiding them behind silent stubs, and the silent-stub inventory is a ratchet that only goes down.
 
 ---
 
@@ -1012,6 +1337,9 @@ prove the bounded claim” looks like. Every act made the next one cheaper:
 - Act XI chose native RichEdit as the next compositional platform test and set an honest bounded target before implementing it.
 - Act XII made that target real, then used the same platform pieces to make Paint, RegEdit, Sound Recorder, Volume Control, and Task Manager behave as a connected Win98 desktop.
 - Act XIII finished the migration Act IV started. GDI, fonts, WinHelp and Winsock all moved into WAT, and the JavaScript text path was *deleted* rather than deprecated — the host now knows nothing about Windows except how to put pixels on a surface and bytes on a wire. Underneath, a second CPU mode appeared: 16-bit NE. And with the code doubled, the tree got a structural review and spent a day paying off the drift it found.
+- Act XIV changed the workload. Once the platform was WAT-owned, the maintainer pointed it at Diablo, StarCraft, Quake II and Heroes II, and the bugs that surfaced were the platform's last untested corners: critical sections under real threads, timer callbacks that suspend their own thread, DirectDraw presented from a worker. The performance program stopped guessing and started keeping a ledger, and half the entries are measured zeros.
+- Act XV built a second, smaller machine to ask the questions the first one could not afford, and it paid back in a week: dispatch shells, micro-op tiers and a region JIT were all priced on 199 real DOS programs. In the same days the emulator learned to mount the user's own discs and archives, which is the difference between a demo site and a machine.
+- Act XVI is the compiler's act. WATX became the only compiler on the biggest day in the history, the memory map that every earlier act had hand-placed became the allocator's output, and 1,258 struct offsets became named fields with the build checking them. The typed pointers that followed found a shipping bug on their first day. Then the agents were handed a control channel and started *playing* the games they had spent the summer fixing.
 
 The progression matters more than the raw commit count. Early sessions asked
 whether Notepad could decode. Current sessions argue about `glyf` composite
@@ -1025,12 +1353,26 @@ so nobody commits a neighbour's half-finished hunk, and a review pass that four
 agents wrote in parallel and one day of work then consumed. The rules in
 `CLAUDE.md` stopped being style preferences and became the concurrency protocol.
 
-The next inflection point is likelier to be CPU than pixels now: the raster
-surface is WAT-owned and deterministic, so the open architectural payoff is a
-generic compiled threaded/block path that buys enough throughput for heavy games
-and multimedia — with real browser threads as the other half of that answer. In
-parallel, compound-storage persistence can turn the current static-image OLE
-slice into reusable document compatibility, and Win16 has a long, shallow tail
-that mostly needs apps run and bugs read. The same tracing, focused tests, and
+Acts XIV–XVI ran that protocol at a scale the earlier acts never reached: the
+board grew from 1,549 entries to 4,405, one Codex identity alone wrote 2,324 of
+them, and Aug 31 shows 96 distinct agent-day rows. The failure modes of that
+model are on the record too — a stale index that reverted 35 files, a commit
+that deleted a sibling's entire phase, a cache bump that nobody owned — and each
+one produced a rule (explicit-path commits, `git status` on the file before
+editing *and* before committing, gates that refuse rather than warn). The
+maintainer's messages in these sessions are short and mostly corrective:
+"don't use wine", "fix for real", "why you have this C code?", "just commit
+normally, coordinate over messageboard", "you are not responsible person" when
+an agent hesitated over a thirty-year-old shareware notice. The agents did the
+reading; the maintainer chose what counted as done.
+
+The next inflection point is a compiled tier for the 32-bit machine. The
+region JIT exists and pays on the toy; the main emulator has the ledger of what
+does *not* pay, an allocated memory map, typed records and a compiler it owns,
+which is the precondition for lowering hot guest loops into wasm without
+guessing what they touch. The other open lines are shallower: Safari's storage
+and compile ceilings for the media people bring, the per-game control
+adaptations for phones, and the handful of commercial demos that still stop at
+a title screen with a note explaining why. The same tracing, focused tests, and
 session-to-session written state make each of those programs cumulative instead
 of starting over.
