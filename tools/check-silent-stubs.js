@@ -202,8 +202,10 @@ const digest = crypto.createHash('sha256')
 // materialize caller-owned PE/NE/ICO icons instead of returning fake success.
 // 2026-09-04: 439 -> 438. GetForegroundWindow now queries renderer-wide
 // top-level z-order instead of returning this process's main HWND.
-const EXPECTED_COUNT = 438;
-const EXPECTED_SHA256 = '6e33bbf2a5e29ff558119b9771d8cbbb1d11e1c0afe57a207e36ea46400cdeea';
+// 2026-09-05: 438 -> 437. The Win98 Shell32 ArrangeWindows ordinal now tiles
+// eligible renderer windows instead of returning an unconditional zero.
+const EXPECTED_COUNT = 437;
+const EXPECTED_SHA256 = '030f24c394c47127bf27f3dadd1152325bb01217a33f83b28aab227fa7c5251f';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

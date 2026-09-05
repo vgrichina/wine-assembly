@@ -691,6 +691,7 @@ E2E=(
   test/test-winhelp-reference.js
   test/test-taskman-tasks.js
   test/test-taskman-arrange.js
+  test/test-shell-arrange-windows.js
   test/test-taskman-web.js
   test/test-taskman-shutdown.js
   test/test-web-shutdown.js

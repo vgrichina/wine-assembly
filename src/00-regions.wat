@@ -199,7 +199,7 @@
   (region.declare $BROWSE_DIALOG_STRINGS (size 0x00000060) (align 0x00000010)
     (owner "01-header.wat:1217"))
   (region.declare $DX_VERSION_INFO (size 0x0000005C) (align 0x00000010)
-    (owner "09a-handlers.wat:19055"))
+    (owner "09a-handlers.wat:19061"))
   ;; Storage for every string the compiler interns from a `"text"` literal.
   ;; Named by `(string.pool $WATX_STRING_POOL)` in 01-header.wat; without that
   ;; declaration the pool is placed above the last data segment, which in this
@@ -225,7 +225,7 @@
   ;; before the fixed guest mirror. Keep the address allocator-owned rather
   ;; than pinning another raw address.
   (region.declare $LAST_ACTIVE_POPUP_TABLE (size 0x00000400) (align 0x00000100)
-    (owner "09a-handlers.wat:20027"))
+    (owner "09a-handlers.wat:20033"))
   ;; WIDENED 0x100000 -> 0x3EE000 (wave 3). The low heap never fitted in 1MB:
   ;; $heap_low_reserve hands out 1MB chunks and stopped only when the next
   ;; chunk would reach $PAGE_INDEX_ARENA, which the hand-placed map happened to
@@ -500,9 +500,9 @@
     (stride 0x4 (count $DX_MAX))
     (owner "09a8-handlers-directx.wat:688"))
   (region.declare $CP1252_TO_CP437 (size 0x00000100) (align 0x00001000)
-    (owner "09a-handlers.wat:18069"))
+    (owner "09a-handlers.wat:18075"))
   (region.declare $CP437_TO_CP1252 (size 0x00000100) (align 0x00000100)
-    (owner "09a-handlers.wat:18070"))
+    (owner "09a-handlers.wat:18076"))
   (region.declare $BRANCH_CMP_JCC_HIST (size 0x00001000) (align 0x00001000)
     (owner "04-cache.wat:1093"))
   (region.declare $BRANCH_TEST_JCC_HIST (size 0x00001000) (align 0x00001000)

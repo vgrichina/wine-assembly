@@ -13876,9 +13876,15 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; ArrangeWindows(hwndParent, dwReserved, lpRect, cKids, lpKids) — 5 args, return count
+  ;; Win98 SHELL32 ordinal 184: tile visible, non-iconic child windows in the
+  ;; requested rectangle. dwReserved is ignored; NULL lpKids enumerates the
+  ;; parent's children. Returns the number of windows actually arranged.
   (func $handle_ArrangeWindows (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $host_arrange_windows
+      (i32.const 3) (local.get $arg0)
+      (select (call $g2w (local.get $arg2)) (i32.const 0) (i32.ne (local.get $arg2) (i32.const 0)))
+      (local.get $arg3)
+      (select (call $g2w (local.get $arg4)) (i32.const 0) (i32.ne (local.get $arg4) (i32.const 0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
