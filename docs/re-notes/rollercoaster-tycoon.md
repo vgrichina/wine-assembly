@@ -165,3 +165,26 @@ screenshot-request handler at `0x42e8d8`, raised by the redraw path), not a
 per-frame render gate; `0x56fdb2` is a screen-effect state machine (1 =
 normal). The DirectSound guard dword at `0x562f2c` protects the TimeProc
 above, unrelated to all of this.
+
+## Permanent gameplay gate (2026-09-05)
+
+The native demo now has a deterministic one-process acceptance route beyond
+the title screen. After 3,000 frozen 200,000-block batches, a click at
+`(198,430)` opens **Select Scenario For New Game**. Clicking `(310,166)` picks
+the enabled **Forest Frontiers** scenario. After its load, `(428,157)` closes
+the objective window and exposes the live park.
+
+Two park frames separated by 120 explicit batches differed at 61,107 pixels in
+the verified run. Clicking toolbar coordinate `(382,15)` then opened the real
+**Path Construction** panel; more than 10,000 pixels changed in its left-hand
+region. This proves both live scenario simulation/rendering and interactive
+construction UI, rather than only the animated title-screen attract mode.
+
+```bash
+bash tools/build.sh
+RCT_SCREENSHOT=/private/tmp/rct-construction.png node test/test-rct-gameplay.js
+```
+
+The test launches one `--control-stdin --frozen` CLI process, advances only by
+explicit step commands, and uses the CLI's internal `--max-seconds` guard. It
+does not wrap the emulator in an external signal timeout.
