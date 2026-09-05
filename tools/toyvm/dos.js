@@ -929,6 +929,10 @@ class Machine {
     this.sb = {
       out: [], cmd: 0, args: [], expect: 0, speaker: 0, block: 0,
       pending: false, autoInit: false, paused: false, forced: false, shortWait: false,
+      // The width a forced IRQ answers for -- F2h/F3h, or a short block that
+      // was waiting on its DMA channel -- which picks the mixer 0x82 bit and
+      // so the port the ISR acknowledges on. See sbIrq.
+      forcedBits: 8,
       detects: 0, commands: 0, irqs: 0,
       // The two numbers that say how long a block takes: samples in it, and
       // samples per second. See sbBlockSeconds.
@@ -2359,7 +2363,12 @@ class Machine {
     // Unlike a transfer's completion this one is immediate by definition -- the
     // driver's wait is a `loopz` and not a long one -- so it is delivered on the
     // next opportunity rather than on the periodic IRQ cadence.
-    if (v === 0xF2 || v === 0xF3) { this.sb.forced = true; this.endSlice(); return; }
+    if (v === 0xF2 || v === 0xF3) {
+      this.sb.forced = true;
+      this.sb.forcedBits = v === 0xF3 ? 16 : 8;
+      this.endSlice();
+      return;
+    }
     if (v === 0xD0) { this.sb.paused = true; this.sb.pending = false; return; }
     if (v === 0xD4) { this.sb.paused = false; this.sb.pending = true; return; }
     // DAh stops an auto-init transfer for good.
@@ -2375,19 +2384,34 @@ class Machine {
   }
 
   // The DMA controller was written. A short block waiting for its channel
-  // (sbRun) completes the moment an 8-bit channel opens, on that channel:
-  // the card's DREQ goes wherever the jumper says, and the program has just
-  // told us where it believes that is.
+  // (sbRun) completes the moment a channel of the block's own width opens, on
+  // that channel: the card's DREQ goes wherever the jumper says, and the
+  // program has just told us where it believes that is.
+  //
+  // The width half is not cosmetic. A 16-bit block moves through the SECOND
+  // 8237 -- channels 4-7, programmed through 0xC0-0xCE and masked through
+  // 0xD4 -- and a search that only ever looked at channels 0-3 could not see
+  // one open. ATTIC.EXE's DSMI driver finds its 16-bit channel exactly that
+  // way: it masks 8-bit channels 0/1/3 AND 16-bit 5/6/7, issues B6h (16-bit
+  // single-cycle, 6 samples), then programs channel 5 and unmasks it alone.
+  // With only 0-3 considered the answer was always "no channel is open", the
+  // probe never completed, no IRQ ever fired, and DSMI reported no card --
+  // which is the screen that says "It is not possible to run the demo without
+  // music". Channel 4 is the cascade and never carries data.
   sbDmaWritten() {
     if (!this.sb.shortWait || !this.sb.pending) return;
     const dma = this.audio.dma;
+    const wide = this.sb.bits === 16;
+    const lo = wide ? 5 : 0, hi = wide ? 8 : 4;
+    const recent = wide ? dma.recent16 : dma.recent8;
     let c = -1;
-    if (this.sbChannelOpen(dma.recent8)) c = dma.recent8;
-    else for (let i = 0; i < 4; i++) if (this.sbChannelOpen(i)) { c = i; break; }
+    if (recent >= lo && recent < hi && this.sbChannelOpen(recent)) c = recent;
+    else for (let i = lo; i < hi; i++) if (this.sbChannelOpen(i)) { c = i; break; }
     if (c < 0) return;
     this.sb.chan = c;
     this.sb.shortWait = false;
     this.sb.forced = true;
+    this.sb.forcedBits = this.sb.bits;
     this.endSlice();
   }
 
@@ -2404,7 +2428,15 @@ class Machine {
     // out from under it. A block's own interrupt is owed once the last sample
     // of it went through the DMA channel (Sound.sbNext), and auto-init has
     // already re-armed the next block by the time it is delivered.
-    if (this.sb.forced) { this.sb.forced = false; this.sb.irqLatched |= 1; }
+    // Which block-interrupt bit the mixer's 0x82 shows, and therefore which
+    // port the ISR will read to acknowledge it: 0x22E for an 8-bit block,
+    // 0x22F for a 16-bit one. A forced IRQ carries the width of whatever
+    // asked for it (F2h/F3h, or the short block that was waiting on its DMA
+    // channel); a block's own completion carries the width it is playing.
+    if (this.sb.forced) {
+      this.sb.forced = false;
+      this.sb.irqLatched |= this.sb.forcedBits === 16 ? 2 : 1;
+    }
     else { this.sb.irqDue = false; this.sb.irqLatched |= this.sb.bits === 16 ? 2 : 1; }
     this.sb.irqs++;
     return SB_IRQ_VEC;
@@ -2718,7 +2750,13 @@ class Machine {
       // (-1 for the rest), and its timer status is folded into the AdLib
       // status read below rather than answered here.
       const goff = port - this.gus.base;
-      if (goff >= 0 && goff <= 0x107 && goff !== 0x008) {
+      // 0x22F is the Sound Blaster's 16-bit interrupt acknowledge, and with
+      // the GF1 at its default 0x220 that is also the GF1's 0x2X F, which
+      // answers 0xFF for "a classic card has no register controls". The BYTE
+      // is the same either way; what is not the same is the side effect --
+      // reading it is how an ISR takes a 16-bit block's interrupt down, and
+      // shadowed by the GF1 the latch in mixer register 82h never cleared.
+      if (goff >= 0 && goff <= 0x107 && goff !== 0x008 && port !== 0x22F) {
         const r = this.gus.in(goff, w);
         if (r >= 0) return r;
       }
