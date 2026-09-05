@@ -3141,9 +3141,13 @@
           (i32.ne (i32.and (local.get $arg2) (i32.const 0x10)) (i32.const 0))
           (i32.ge_s (call $wnd_table_find (local.get $arg1)) (i32.const 0)))
       (then
-        (if (i32.eqz (i32.and (call $wnd_get_style (local.get $arg1))
-                              (i32.const 0x10000000))) ;; WS_VISIBLE
-          (then (drop (call $host_show_window (local.get $arg1) (i32.const 5)))))))
+        ;; Do not use the guest WS_VISIBLE bit as a proxy for host visibility.
+        ;; SetWindowLong(GWL_STYLE) changes that bit without performing a
+        ;; ShowWindow transition; Blitz then enters exclusive mode and expects
+        ;; DirectDraw to reveal its device window. Repeating SW_SHOW for an
+        ;; already-visible renderer window is harmless and keeps both views in
+        ;; sync when the application changed only the guest-side style.
+        (drop (call $host_show_window (local.get $arg1) (i32.const 5)))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
