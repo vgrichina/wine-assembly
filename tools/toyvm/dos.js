@@ -942,6 +942,9 @@ class Machine {
       // owed, and the level the stream is currently at. See Sound.sbNext.
       left: 0, chan: 1, bits: 8, signed: false, stereo: false, irqDue: false,
       lastL: 0, lastR: 0,
+      // The block in flight was started by a high-speed command (90h/91h) on a
+      // DSP that has no high-speed mode to leave. See sbRun.
+      hsAuto: false,
       // The SB16 mixer's register file (index at 0x224, data at 0x225) and
       // the interrupt-status bits register 0x82 reports: bit 0 an 8-bit
       // block's IRQ, bit 1 a 16-bit one, each held until its ack port
@@ -2306,6 +2309,32 @@ class Machine {
       // the mode byte that follows says signed/stereo, not that.
       this.sb.autoInit = v === 0x1C || v === 0x1D || v === 0x2C || v === 0x90
         || (v >= 0xB0 && v <= 0xCF && (v & 4) !== 0);
+      // 90h and 91h are the SB 2.0/Pro *high-speed* forms. On those cards the
+      // documented rule is that 91h plays one block, raises its interrupt and
+      // LEAVES high-speed mode, so a driver has to send it again -- which is
+      // what a DSP 2.01 sees here and what every other emulator implements.
+      //
+      // A DSP 4.xx SB16 has no high-speed mode to leave: the commands are not
+      // in its manual at all, the card runs at full rate always, and 48h is
+      // just an interrupt period. STHINTRO.EXE's player (DemoVT 1.60) is the
+      // program in this corpus that says so out loud -- it re-sends 91h from
+      // its block ISR on every card EXCEPT one whose DSP answered 4.x, where
+      // it sends 48h+91h once and then only acknowledges:
+      //
+      //   ece3  cmp [d82],0     ; the "DSP is a 4.x" flag
+      //   ed25  jz  ed2d        ; 2.x/3.x: send 91h again
+      //   ed27  cmp [bp+6],0    ; 4.x and already playing:
+      //   ed2b  jnz ed37        ;   send nothing at all
+      //
+      // With the block ended at the count the card had no way of knowing was
+      // final, its music stopped after two blocks (2 IRQs in 60M dispatches),
+      // its mixer never ran again and the demo held its title screen forever.
+      // What keeps such a stream running is the only counter still armed: the
+      // 8237's own auto-init bit, which this player leaves set (mode 59h). So
+      // the block reloads while that bit is set, and the DMA controller --
+      // not the DSP -- decides when the music stops. Read at the block end
+      // rather than here, because a driver programs the 8237 AFTER the DSP.
+      this.sb.hsAuto = (v === 0x90 || v === 0x91) && this.dspVersion[0] >= 4;
       this.sb.pending = true;
       // How long the block is, in samples. The 8-bit single-cycle commands
       // carry it themselves; the auto-init ones use whatever 48h last set; the
@@ -2853,6 +2882,13 @@ class Machine {
         this.sb.resetting = false;
         this.sb.out.length = 0;
         this.sb.shortWait = false;
+        // A reset is the documented way out of high-speed mode, and it is the
+        // only way out of a block this card is reloading off the 8237's
+        // auto-init bit rather than off a DSP command (see sbRun). Nothing
+        // else here touches a transfer in flight, deliberately -- that is
+        // pre-existing behaviour and no program in the corpus depends on a
+        // reset ending an ordinary block.
+        if (this.sb.hsAuto) { this.sb.hsAuto = false; this.sb.pending = false; }
         this.sb.out.push(0xAA);
         this.sb.detects++;
       }

@@ -579,9 +579,77 @@ draws the *blossom presents* title in mode 13h — 63,997 non-black pixels of
 64,000. `test/test-toyvm-dos-terminate.js` is the sequence in eleven
 instructions of hand-assembled `.COM`.
 
-The title is byte-identical at 20M, 60M and 150M dispatches, with INT 1Ch ticks
-still accumulating (26 → 254) and no spin: the demo is holding it on the
-timer, and how long is a pacing question, not this one.
+**The title then held forever, and it was not a pacing question.** It was
+byte-identical at 20M, 60M and 150M dispatches with INT 1Ch ticks still
+accumulating (26 → 1738) and no spin, which reads as "the demo is waiting on
+its own timer". It was waiting on its music, and the music had stopped.
+
+`--trace-io` on the card's ports is the whole story in eleven writes. The
+player is **DemoVT 1.60** (VangeliSTracker); it programs the 8237 for channel
+1 in mode `59h` — single mode, read, **auto-init** — and then sends the DSP
+`40h D3h` (22222 Hz), `48h 63h 2Bh` (block length) and `91h`, the SB 2.0
+*high-speed single-cycle* output command. Its block ISR at `e1b:30` reads
+`22Eh`, reads `22Ah` and calls a far routine that decides what to send next:
+
+```
+ece3  mov ax,[0d86]   ; the length last programmed
+      cmp ax,[bp+8]   ; the same one again?
+      jnz --> [bp+6] = 0, send 48h and re-arm
+ed20  cmp [0d82],0    ; the "the DSP answered 4.x" flag
+      jz  ed2d        ; 2.x/3.x: send 91h again
+      cmp [bp+6],0    ; 4.x, and already playing:
+      jnz ed37        ;   send nothing at all
+```
+
+So on a DSP 2.01 card it re-sends `91h` from every block interrupt, and on a
+4.x card it sends `48h`+`91h` **once** and thereafter only acknowledges. Our
+card has answered `4.05` since 2026-09-03 (it gained CONTAGIO.EXE), so this
+demo took the second path: **2 interrupts in 60M dispatches**, the DMA count
+at port 03h froze at `0x1852` after 36.4M, the mixer never ran again, and the
+picture stopped there. The far-call loop at `37ad:17a` was the player spinning
+on a play position that had stopped moving.
+
+Two second opinions, both from DOSBox-X on the same binary:
+
+| arm | what the DSP answers | 43s recording |
+|---|---|---|
+| `--sbtype=sb2` | 2.01 | music for the whole capture; the mode 13h AVI is 110KB |
+| `--sbtype=sb16` | 4.xx | 3 seconds of music, then silence; the AVI is 34KB — one keyframe and nothing after it |
+
+DOSBox-X's SB16 freezes the demo exactly the way we did, and so does 86Box:
+both map `91h` to the single-cycle path. That is right for the card the
+command belongs to — Creative documents `91h` as ending the block, raising its
+interrupt and **leaving high-speed mode**, which is why a 2.01 driver has to
+send it again. It is not right for a DSP 4.xx, which has no high-speed mode to
+leave: the commands are not in the SB16's manual at all, the card always runs
+at full rate, and `48h` is only an interrupt period. What is still feeding such
+a card after a block is the only counter left armed — the 8237's own auto-init
+bit, which this player leaves set.
+
+So `Sound.sbNext` now reloads the block, when the DSP command was `90h`/`91h`
+**and** the card is a 4.xx **and** the 8237 channel it reads is in auto-init
+(`Machine.sbRun` sets `sb.hsAuto`; the mode bit is read at the block end,
+because a driver programs the 8237 after the DSP). All three conditions are
+load-bearing and `test/test-toyvm-sb-highspeed-autoinit.js` holds each one
+down: the same card with the 8237 in single mode still stops after one block,
+and a 2.01 card still stops after one block whatever the 8237 says.
+
+STHINTRO now advances. Before the fix the frame hash was `fba9159e` at 60M,
+150M **and** 300M — one picture, 63,997 of 64,000 non-black, 2 block
+interrupts and 346 EMS page maps whatever the budget. After it, all three
+budgets differ (`49fd1c5d` at 60M, `cfd4f373` at 150M, `079ae741` at 300M,
+64,000 of 64,000 non-black), EMS page maps go 346 → 4,274 and INT 67h
+411 → 4,339 at 300M, and the render is 30 seconds of unbroken music: 11 block
+interrupts against 2, peak 0.582 against 0.411, and against the DOSBox-X
+`sb2` recording **0 cents of pitch offset, a 1535.4ms beat against 1536.9ms,
+and 0.976 chroma similarity**.
+
+One other program in the corpus is the same player and the same bug:
+`RUNDEMO.EXE` (`1994-b-bltdemo`, which ships `SHELLVT.EXE`) sends `91h` three
+times and then stops, and went from 3 block interrupts and 0.4 seconds of
+sound in an 8-second render to 190 interrupts and 8 seconds of it, with the
+frame hash unchanged. Nothing else in the 27-program Sound Blaster witness set
+moved at all.
 
 ### BLIQ.EXE (2 rows — `1994-b-bliq` and `1994-b-black` are the same program)
 
