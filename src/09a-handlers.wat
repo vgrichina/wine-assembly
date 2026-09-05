@@ -2323,6 +2323,8 @@
       (local.get $creation)            ;; creation disposition
       (local.get $flags)               ;; flags and attributes
       (i32.const 0)))                  ;; isWide=0
+    (if (i32.eq (global.get $eax) (i32.const -1))
+      (then (global.set $last_error (i32.const 2)))) ;; ERROR_FILE_NOT_FOUND
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; 7 args + ret
   )
 
@@ -12305,6 +12307,8 @@ HookEx — no next hook in chain, return 0
     (global.set $eax (call $host_fs_create_file
       (local.get $path_wa) (local.get $arg1)
       (local.get $creation_w) (local.get $flags_w) (i32.const 1)))
+    (if (i32.eq (global.get $eax) (i32.const -1))
+      (then (global.set $last_error (i32.const 2)))) ;; ERROR_FILE_NOT_FOUND
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
 

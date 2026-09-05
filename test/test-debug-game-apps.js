@@ -12,6 +12,7 @@ const expectedLocalCandidates = new Map([
   ['cdplayer', 'binaries/win98-apps/cdplayer.exe'],
   ['elasto_mania', 'test/binaries/candidates/elasto-mania/Elma/Elma.exe'],
   ['jardinains', 'test/binaries/candidates/jardinains/installed/jardinains.exe'],
+  ['nethack_win32', 'test/binaries/candidates/nethack-win32/installed/NetHackW.exe'],
   ['jazz2_demo', 'test/binaries/candidates/jazz-jackrabbit-2-demo-installer/installed/jazz2.exe'],
   ['quake2_demo', 'test/binaries/candidates/quake-2-demo-installer/installed-extracted/Install/Data/quake2.exe'],
   ['quake2_demo_installer', 'test/binaries/candidates/quake-2-demo-installer/q2-314-demo-x86.exe'],
@@ -35,6 +36,19 @@ assert.strictEqual(APPS.jardinains.asyncMultimediaTimer, true,
   'Jardinains advances its Blitz multimedia timers while the guest runs');
 assert.strictEqual(APPS.jardinains.localFileManifest,
   'test/binaries/candidates/jardinains/installed/.wine-assembly-browser.json');
+assert.deepStrictEqual(APPS.nethack_win32.environment, { HACKDIR: 'C:\\' });
+assert.strictEqual(APPS.nethack_win32.localFileManifest,
+  'test/binaries/candidates/nethack-win32/.wine-assembly-browser.json');
+assert.deepStrictEqual(APPS.nethack_win32.persistFiles,
+  ['c:\\user-*.0', 'c:\\record']);
+const browserShellSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'browser-shell.js'), 'utf8');
+const cliSource = fs.readFileSync(path.join(__dirname, 'run.js'), 'utf8');
+assert(browserShellSource.includes('Object.entries(app.environment || {})') &&
+  browserShellSource.includes("callGuest('set_process_environment_a'"),
+  'browser launch applies registered environments in both guest modes');
+assert(cliSource.includes('(ASSET_ENTRY && ASSET_ENTRY.environment) || {}') &&
+  cliSource.includes('processEnvironment.set(name, value)'),
+  'CLI launch merges registered environments before explicit --env overrides');
 assert.strictEqual(APPS.elasto_mania.requiredFiles, true);
 assert.strictEqual(APPS.elasto_mania.localFileManifest,
   'test/binaries/candidates/elasto-mania/.wine-assembly-browser.json');

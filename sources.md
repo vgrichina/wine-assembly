@@ -1052,6 +1052,25 @@ Level 1 brick field. See
 installer workflow, DirectDraw diagnosis, hashes, and frozen CLI gameplay
 gate.
 
+### NetHack 3.4.3 for Windows
+
+The [official NetHack 3.4.3 Windows download
+page](https://www.nethack.org/v343/ports/download-win.html) provides the native
+Win32 graphical and console builds for Windows 95/98. The unchanged
+[`nethack-343-win.zip`](https://www.nethack.org/download/3.4.3/nethack-343-win.zip)
+is 2,046,488 bytes: MD5 `b91739c9f101a787220853eae904941d`, SHA-1
+`5b8e4717fb18d7888678f54b47aafd0060bf576b`, and SHA-256
+`c067acbca513961640e0064da21ec41359fda5150533ed53132012d188184ff7`.
+
+This official package has no installer. Its `README` instructs users to unzip
+all files into one directory, which is exactly what the reproducible candidate
+fetch recipe does. The included NetHack General Public License permits
+verbatim redistribution when its notices and source-access conditions are
+preserved. Wine-Assembly links the original package here and keeps the fetched
+runtime local/gitignored. The graphical build reaches an interactive tile
+dungeon; see [`docs/re-notes/nethack-win32.md`](docs/re-notes/nethack-win32.md)
+for exact executable hashes, compatibility fixes, and the gameplay gate.
+
 Recommended order:
 
 1. [Jazz Jackrabbit 2 Demo v1.23s](https://archive.org/details/JazzJackrabbit2Demo)

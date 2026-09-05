@@ -55,6 +55,7 @@ finish one, add what you learned.
 | Heroes of Might and Magic II (demo) | [heroes2-demo.md](heroes2-demo.md) |
 | Icy Tower v1.3.1 | [icy-tower.md](icy-tower.md) |
 | Jardinains! v1.2 | [jardinains.md](jardinains.md) |
+| NetHack 3.4.3 for Windows | [nethack-win32.md](nethack-win32.md) |
 | Liquid War 5.6.2 | [liquid-war.md](liquid-war.md) |
 | Little Fighter 2 v1.9 | [little-fighter-2.md](little-fighter-2.md) |
 | Pocket Tanks shareware | [pocket-tanks.md](pocket-tanks.md) |

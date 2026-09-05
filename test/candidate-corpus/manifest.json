@@ -236,16 +236,31 @@
     },
     {
       "id": "nethack-win32",
-      "name": "NetHack Win32 console",
+      "name": "NetHack for Windows",
       "kind": "game",
-      "version": "3.3.1",
+      "version": "3.4.3",
       "executables": [
-        "nethack.exe"
+        "installed/NetHackW.exe",
+        "installed/NetHack.exe"
       ],
-      "sourcePage": "https://ww2.nethack.org/v331/ports/download-nt.html",
+      "sourcePage": "https://www.nethack.org/v343/ports/download-win.html",
       "license": "NetHack General Public License",
-      "packages": [],
-      "manual": "Acquire the official nh331NTi.zip Win32 package. Do not use Archive item nh331rm2; it contains DOS MZ binaries."
+      "packages": [
+        {
+          "url": "https://www.nethack.org/download/3.4.3/nethack-343-win.zip",
+          "sha1": "5b8e4717fb18d7888678f54b47aafd0060bf576b",
+          "type": "archive",
+          "into": "installed"
+        }
+      ],
+      "browser": {
+        "fileRoot": "installed",
+        "exe": "installed/NetHackW.exe"
+      },
+      "cli": {
+        "maxBatches": 45,
+        "batchSize": 25000
+      }
     },
     {
       "id": "jazz-jackrabbit-2-demo-installer",

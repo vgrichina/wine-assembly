@@ -60,6 +60,8 @@ const extraWat = String.raw`
     (global.get $eax))
   (func (export "test_last_error") (result i32)
     (global.get $last_error))
+  (func (export "test_set_last_error") (param $value i32)
+    (global.set $last_error (local.get $value)))
   (func (export "test_get_console_info") (param $handle i32) (param $info i32)
         (result i32)
     (local $saved i32)
@@ -230,6 +232,21 @@ const extraWat = String.raw`
   wat.guest_write16(wideConout + 14, 0);
   assert.strictEqual(wat.test_create_file_w(wideConout), 2,
     'wide mixed-case CONOUT$ did not open console output');
+  wat.test_set_last_error(87);
+  assert.strictEqual(wat.test_create_file_a(allocText('C:\\missing-save.0')) >>> 0,
+    0xffffffff, 'missing ANSI file unexpectedly opened');
+  assert.strictEqual(wat.test_last_error(), 2,
+    'missing ANSI CreateFile did not publish ERROR_FILE_NOT_FOUND');
+  const wideMissing = wat.guest_alloc(40) >>> 0;
+  for (const [i, ch] of [...'C:\\missing-wide.0'].entries()) {
+    wat.guest_write16(wideMissing + i * 2, ch.charCodeAt(0));
+  }
+  wat.guest_write16(wideMissing + 'C:\\missing-wide.0'.length * 2, 0);
+  wat.test_set_last_error(87);
+  assert.strictEqual(wat.test_create_file_w(wideMissing) >>> 0, 0xffffffff,
+    'missing Unicode file unexpectedly opened');
+  assert.strictEqual(wat.test_last_error(), 2,
+    'missing Unicode CreateFile did not publish ERROR_FILE_NOT_FOUND');
   assert.strictEqual(wat.test_console_title_first_byte(), 'C'.charCodeAt(0),
     'default console title storage was not initialized');
   assert.strictEqual(wat.test_get_console_title_a(titleBuffer, 32), 7);

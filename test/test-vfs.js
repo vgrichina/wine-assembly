@@ -331,6 +331,17 @@ test('relative path resolves against CWD', () => {
   assert.strictEqual(vfs._resolvePath('data.dat'), 'c:\\game\\data.dat');
 });
 
+test('drive-relative paths resolve against that drive current directory', () => {
+  const vfs = new VirtualFS();
+  assert.strictEqual(vfs._resolvePath('C:defaults.nh'), 'c:\\defaults.nh');
+  vfs.dirs.add('c:\\games');
+  assert.strictEqual(vfs.setCurrentDirectory('C:\\games'), true);
+  assert.strictEqual(vfs._resolvePath('C:save\\player.0'),
+    'c:\\games\\save\\player.0');
+  assert.strictEqual(vfs._resolvePath('C:'), 'c:\\games');
+  assert.strictEqual(vfs._resolvePath('D:data.dat'), 'd:\\data.dat');
+});
+
 test('GetCurrentDirectory omits a trailing backslash except at a drive root', () => {
   const vfs = new VirtualFS();
   vfs.dirs.add('c:\\game');

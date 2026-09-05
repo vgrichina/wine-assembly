@@ -3934,7 +3934,10 @@ async function main() {
   // Queue environment overrides before loading DLLs: a CRT's DllMain snapshots
   // GetEnvironmentStrings while it initializes. The WAT export keeps this
   // lazy, so queueing here does not allocate or perturb the early guest heap.
-  for (const [name, value] of PROCESS_ENVIRONMENT) {
+  const processEnvironment = new Map(Object.entries(
+    (ASSET_ENTRY && ASSET_ENTRY.environment) || {}));
+  for (const [name, value] of PROCESS_ENVIRONMENT) processEnvironment.set(name, value);
+  for (const [name, value] of processEnvironment) {
     if (!setEnvironmentVariable(instance.exports, memory.buffer, name, value)) {
       throw new Error(`failed to set guest process environment variable ${name}`);
     }
