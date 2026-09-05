@@ -77,7 +77,7 @@ const inputSpec = [
 
 const args = [
   RUN,
-  `--exe=${EXE}`,
+  '--app=aoe1',
   '--no-build',
   '--max-batches=34722',
   // Use the same work/time ratio as the original 1000-block/200ms route, but
@@ -194,6 +194,23 @@ function darkRatio(img, rect) {
   return total ? dark / total : 0;
 }
 
+function grassRatio(img, rect) {
+  const r = clampRect(img, rect);
+  let grass = 0;
+  let total = 0;
+  for (let y = r.y0; y < r.y1; y++) {
+    for (let x = r.x0; x < r.x1; x++) {
+      const i = (y * img.w + x) * 4;
+      const red = img.data[i];
+      const green = img.data[i + 1];
+      const blue = img.data[i + 2];
+      if (green > red * 1.08 && green > blue * 1.15 && green > 45) grass++;
+      total++;
+    }
+  }
+  return total ? grass / total : 0;
+}
+
 function diffRect(a, b, rect) {
   if (a.w !== b.w || a.h !== b.h) return -1;
   const r = clampRect(a, rect);
@@ -240,6 +257,11 @@ function diffRect(a, b, rect) {
 
   const menuRect = { x0: 200, y0: 95, x1: 600, y1: 505 };
   if (before && selected && menu1 && cancelled && menu2 && options) {
+    const worldRect = { x0: 0, y0: 20, x1: 640, y1: 375 };
+    const beforeGrass = grassRatio(before, worldRect);
+    console.log(`  gameplay world grass ratio=${beforeGrass.toFixed(3)}`);
+    checks.push({ name: 'Gameplay world renders grass terrain', pass: beforeGrass > 0.25 });
+
     const selectionRect = { x0: 0, y0: 380, x1: 115, y1: 475 };
     const beforeDark = darkRatio(before, selectionRect);
     const selectedDark = darkRatio(selected, selectionRect);
