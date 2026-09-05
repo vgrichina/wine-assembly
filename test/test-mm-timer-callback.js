@@ -43,16 +43,24 @@ const extraWat = String.raw`
       (i32.const 0x00402000) (i32.const 0) (i32.const 0) (i32.const 0))
     (call $mm_timer_consume_slot (call $mm_timer_due_slot))
     (i32.load (call $mm_timer_due_slot)))
-  (func (export "test_mm_timer_defers_parked_wait") (result i32)
+  (func (export "test_mm_timer_enters_from_parked_wait") (result i32)
     (global.set $image_base (i32.const 0x00400000))
     (global.set $esp (i32.const 0x00500000))
     (global.set $eip (i32.const 0x00405678))
     (call $test_clear_slots)
     (call $test_set_slot (i32.const 0) (i32.const 1) (i32.const 0)
       (i32.const 0x00401000) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $mm_timer_ret_thunk (i32.const 0x00402000))
+    (i32.store (global.get $THUNK_BASE) (i32.const 0xCACA000A))
+    (i32.store offset=4 (global.get $THUNK_BASE) (i32.const 0))
     (global.set $mm_timer_in_cb (i32.const 0))
     (global.set $yield_reason (i32.const 1))
     (call $fire_mm_timer))
+  (func (export "test_mm_timer_parked_wait_return") (result i32)
+    ;; Model the TimeProc's RET 20, then execute its return continuation.
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    (call $win32_dispatch (i32.const 0))
+    (global.get $yield_reason))
   (func (export "test_mm_timer_callback_return") (result i32)
     ;; Model fire_mm_timer's interrupted frame, followed by the callback's
     ;; stdcall RET landing on the dedicated CACA000A continuation.
@@ -63,6 +71,7 @@ const extraWat = String.raw`
     (call $save_caller_regs)
     (i32.store (global.get $THUNK_BASE) (i32.const 0xCACA000A))
     (i32.store offset=4 (global.get $THUNK_BASE) (i32.const 0))
+    (global.set $mm_timer_resume_yield (i32.const 0))
     (global.set $mm_timer_in_cb (i32.const 1))
     (call $win32_dispatch (i32.const 0))
     (global.get $mm_timer_in_cb))
@@ -131,10 +140,18 @@ const extraWat = String.raw`
   assert.strictEqual(wat.test_mm_timer_oneshot_keeps_periodic() >>> 0, 2,
     'retiring a one-shot leaves the periodic timer in another slot running');
 
-  assert.strictEqual(wat.test_mm_timer_defers_parked_wait(), 0,
-    'a multimedia callback cannot interrupt a parked Win32 wait frame');
+  assert.strictEqual(wat.test_mm_timer_enters_from_parked_wait(), 1,
+    'a multimedia callback can borrow a context parked in WaitForSingleObject');
+  assert.strictEqual(wat.get_eip() >>> 0, 0x00401000,
+    'the parked wait enters the due multimedia callback');
+  assert.strictEqual(wat.get_yield_reason(), 0,
+    'the borrowed context is runnable while the callback is active');
+  assert.strictEqual(wat.test_mm_timer_parked_wait_return(), 1,
+    'the multimedia callback return restores the parked wait reason');
   assert.strictEqual(wat.get_eip() >>> 0, 0x00405678,
-    'deferring the callback preserves the parked instruction pointer');
+    'the multimedia callback restores the parked instruction pointer');
+  assert.strictEqual(wat.get_esp() >>> 0, 0x00500000,
+    'the multimedia callback restores the parked wait frame intact');
   wat.clear_yield();
 
   assert.strictEqual(

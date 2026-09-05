@@ -2171,6 +2171,7 @@
     ;; the host must still schedule this borrowed context until it resumes that
     ;; handle and reaches CACA000A.
     (global.set $eip (local.get $tmp))
+    (global.set $mm_timer_resume_yield (i32.const 0))
     (global.set $mm_timer_in_cb (i32.const 1))
     (call $save_caller_regs)
     ;; Push 5 args right-to-left: dw2, dw1, dwUser, uMsg, uTimerID
@@ -2284,32 +2285,23 @@
     ;; enter the proc on the main interpreter context just like an ordinary
     ;; x86 WndProc. The synchronous wrapper uses a bounded recursive run and
     ;; cannot preserve a still-live nested modal stack when that bound expires.
-    ;; DefDlgProc has no default processing for messages >= WM_USER or custom
-    ;; command ids, making the direct BOOL result equivalent there. Keep IDOK
-    ;; and IDCANCEL on the wrapper path because an unhandled one has real modal
-    ;; default behavior. Half-Life Uplink's New Game (1016) and Easy (26)
-    ;; commands both enter nested native modal/engine work here.
+    ;; DefDlgProc has no default processing for messages >= WM_USER. Every
+    ;; queued WM_COMMAND also enters the retained proc directly: IDOK and
+    ;; IDCANCEL are frequently wizard navigation that opens another modal
+    ;; page, and this is already the app's ordinary x86 dispatch stack rather
+    ;; than a recursive WAT call. Synchronous SendMessage still routes through
+    ;; DefDlgProc and preserves its unhandled modal fallback. Half-Life
+    ;; Uplink's New Game (1016) and Easy (26), plus Jardinains' IDOK-based
+    ;; Next/Install pages, all enter nested native work here.
     (if (i32.eq (local.get $wndproc) (global.get $WNDPROC_DIALOG))
       (then
         (if (i32.or
               (i32.ge_u
                 (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
                 (i32.const 0x0400))
-              (i32.and
-                (i32.eq
-                  (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
-                  (i32.const 0x0111))
-                (i32.and
-                  (i32.ne
-                    (i32.and
-                      (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
-                      (i32.const 0xFFFF))
-                    (i32.const 1))
-                  (i32.ne
-                    (i32.and
-                      (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
-                      (i32.const 0xFFFF))
-                    (i32.const 2)))))
+              (i32.eq
+                (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
+                (i32.const 0x0111)))
           (then
             (local.set $wndproc
               (call $dialog_proc_get (call $gl32 (local.get $arg0)))))

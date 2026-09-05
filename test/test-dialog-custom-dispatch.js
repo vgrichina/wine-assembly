@@ -81,6 +81,15 @@ const extraWat = String.raw`
   assert.strictEqual(wat.guest_read32(0x00500000) >>> 0, 1016,
     'the native frame carries the custom command id');
 
+  assert.strictEqual(wat.test_dispatch_dialog_custom(hwnd, proc, 0x0111, 1) >>> 0, proc,
+    'queued IDOK enters the DLGPROC directly for wizard Next/Install work');
+  assert.strictEqual(wat.guest_read32(0x00500000) >>> 0, 1,
+    'the native frame carries IDOK');
+  assert.strictEqual(wat.test_dispatch_dialog_custom(hwnd, proc, 0x0111, 2) >>> 0, proc,
+    'queued IDCANCEL enters the DLGPROC directly for wizard Back/Cancel work');
+  assert.strictEqual(wat.guest_read32(0x00500000) >>> 0, 2,
+    'the native frame carries IDCANCEL');
+
   const stormHwnd = 0x10024;
   assert.strictEqual(wat.test_defdlg_custom_tail(stormHwnd, proc, 0x0BD2) >>> 0, proc,
     'DefDlgProc tail-dispatches a custom message from a native dialog wrapper');

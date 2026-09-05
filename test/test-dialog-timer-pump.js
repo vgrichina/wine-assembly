@@ -23,6 +23,24 @@ const extraWat = String.raw`
     (global.set $handler_set_eip (i32.const 0))
     (global.set $esp (local.get $stack))
     (global.set $eip (global.get $dlg_loop_thunk)))
+
+  (func (export "test_start_dialog_post")
+      (param $hwnd i32) (param $dlgproc i32) (param $stack i32)
+      (param $msg i32) (param $wparam i32) (param $lparam i32)
+    (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_DIALOG))
+    (drop (call $dialog_proc_set (local.get $hwnd) (local.get $dlgproc)))
+    (global.set $dlg_pump_hwnd (local.get $hwnd))
+    (global.set $dlg_proc (local.get $dlgproc))
+    (global.set $dlg_callback_yield_pending (i32.const 0))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $handler_set_eip (i32.const 0))
+    (global.set $post_queue_count (i32.const 0))
+    (drop (call $post_queue_push
+      (local.get $hwnd) (local.get $msg)
+      (local.get $wparam) (local.get $lparam)))
+    (global.set $esp (local.get $stack))
+    (global.set $eip (global.get $dlg_loop_thunk)))
 `;
 
 function u32(value) {
@@ -75,7 +93,23 @@ function u32(value) {
   assert.strictEqual(view.getUint32(seenWa + 12, true), 0,
     'ordinary window timer has no callback lParam');
 
-  console.log('PASS  DialogBox modal pump dispatches due window timers');
+  new Uint8Array(memory.buffer, seenWa, 16).fill(0);
+  const commandHwnd = 0x10003;
+  e.test_start_dialog_post(commandHwnd, proc, stack,
+    0x0111, 1, 0x10004);
+  e.run(100000);
+  assert.strictEqual(view.getUint32(seenWa, true), commandHwnd,
+    'modal dialog pump dispatches a queued command to its dialog hwnd');
+  assert.strictEqual(view.getUint32(seenWa + 4, true), 0x0111,
+    'modal dialog pump preserves queued WM_COMMAND');
+  assert.strictEqual(view.getUint32(seenWa + 8, true), 1,
+    'modal dialog pump preserves queued IDOK');
+  assert.strictEqual(view.getUint32(seenWa + 12, true), 0x10004,
+    'modal dialog pump preserves the BUTTON hwnd');
+  assert.strictEqual(e.get_sync_msg_depth(), 0,
+    'queued dialog command does not enter the recursive synchronous sender');
+
+  console.log('PASS  DialogBox modal pump dispatches timers and posted commands');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

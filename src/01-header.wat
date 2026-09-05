@@ -2925,6 +2925,9 @@
   (global $MM_TIMER_NEXT_ID i32 (region.addr $MM_TIMER_NEXT_ID 0))
   (global $MM_TIMER_NEXT_ID_SIZE i32 (region.size $MM_TIMER_NEXT_ID))
   (global $mm_timer_in_cb    (mut i32) (i32.const 0))  ;; re-entrancy guard
+  ;; A system timer may interrupt a main thread parked in WaitForSingleObject.
+  ;; The callback borrows this WASM context, then restores the parked wait.
+  (global $mm_timer_resume_yield (mut i32) (i32.const 0))
   (global $mm_timer_ret_thunk (mut i32) (i32.const 0)) ;; CACA000A return thunk
   (global $font_enum_ret_thunk (mut i32) (i32.const 0)) ;; CACA0011 EnumFontFamilies callback return
   ;; LineDDA callback continuation (CACA0012) and exact integer walk state.

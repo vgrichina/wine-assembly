@@ -87,6 +87,19 @@ const RegionMap = require('../lib/region-map.generated.js');
     }
   });
 
+  check('ABC widths terminate for a sign-extended ANSI singleton', () => {
+    const { hdc } = createTextDc();
+    const abc = allocZero(24);
+    bytes.fill(0xa5, wa(abc), wa(abc) + 24);
+    assert.strictEqual(wat.test_call_GetCharABCWidthsA(
+      hdc, 0xffffffff, 0xffffffff, abc), 1);
+    assert.strictEqual(wat.guest_read32(abc), 0);
+    assert(wat.guest_read32(abc + 4) > 0);
+    assert.strictEqual(wat.guest_read32(abc + 8), 0);
+    assert.deepStrictEqual([...bytes.slice(wa(abc) + 12, wa(abc) + 24)],
+      Array(12).fill(0xa5));
+  });
+
   check('GetGlyphOutlineA provides GGO_METRICS and a sized GGO_BITMAP', () => {
     const { hdc } = createTextDc();
     const metrics = allocZero(20);

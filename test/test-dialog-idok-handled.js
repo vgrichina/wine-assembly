@@ -59,6 +59,14 @@ const extraWat = String.raw`
     e.send_message(button, 0x0201, 1, 0);
     e.send_message(button, 0x0202, 0, 0);
   };
+  const dispatchClick = button => {
+    click(button);
+    const parent = e.wnd_get_parent(button) >>> 0;
+    assert.strictEqual(e.get_post_queue_count(), 1,
+      'native dialog button notification should be queued');
+    e.set_post_queue_count(0);
+    e.send_message(parent, 0x0111, 1, button);
+  };
 
   // mov eax,1; ret 16 — handled WM_COMMAND with the default zero
   // DWL_MSGRESULT. The dialog procedure intentionally keeps the dialog alive.
@@ -67,7 +75,7 @@ const extraWat = String.raw`
   ]));
   const handledButton = e.test_create_idok_button(handledProc) >>> 0;
   const handledDialog = e.wnd_get_parent(handledButton) >>> 0;
-  click(handledButton);
+  dispatchClick(handledButton);
   assert.strictEqual(e.test_window_exists(handledDialog), 1,
     'handled IDOK must not run the dialog manager default close');
 
@@ -78,14 +86,14 @@ const extraWat = String.raw`
   ]));
   const modelessButton = e.test_create_idok_button(unhandledProc) >>> 0;
   const modelessDialog = e.wnd_get_parent(modelessButton) >>> 0;
-  click(modelessButton);
+  dispatchClick(modelessButton);
   assert.strictEqual(e.test_window_exists(modelessDialog), 1,
     'unhandled modeless IDOK must not destroy a CreateDialogParamA window');
 
   const modalButton = e.test_create_idok_button(unhandledProc) >>> 0;
   const modalDialog = e.wnd_get_parent(modalButton) >>> 0;
   e.test_set_modal_dialog(modalDialog);
-  click(modalButton);
+  dispatchClick(modalButton);
   assert.strictEqual(e.test_window_exists(modalDialog), 0,
     'unhandled modal IDOK receives the DialogBoxParamA fallback close');
 

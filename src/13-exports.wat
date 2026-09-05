@@ -3533,10 +3533,12 @@
 
   (func $fire_mm_timer (export "fire_mm_timer") (result i32)
     (local $slot i32) (local $id i32) (local $dwuser i32) (local $cb i32)
-    ;; A yielded Win32 wait keeps its stdcall frame parked for the cooperative
-    ;; scheduler. Interrupting that frame would make wait completion mistake
-    ;; this callback's continuation thunk for the wait's return address.
-    (if (global.get $yield_reason) (then (return (i32.const 0))))
+    ;; Most yielded APIs cannot be interrupted. A plain object wait is the one
+    ;; exception: timeSetEvent runs on a system thread on Win32 and is commonly
+    ;; used specifically to signal the object the application is waiting on.
+    (if (i32.and (global.get $yield_reason)
+          (i32.ne (global.get $yield_reason) (i32.const 1)))
+      (then (return (i32.const 0))))
     ;; The CACA000A callback-return continuation clears this flag exactly when
     ;; the guest callback returns. Do not infer that event from later ESP: the
     ;; interrupted code may already have entered a deeper call by this poll.
@@ -3551,6 +3553,9 @@
     ;; turning host scheduling lateness into permanent periodic-timer drift,
     ;; retiring the slot first if it was a one-shot.
     (call $mm_timer_consume_slot (local.get $slot))
+    (global.set $mm_timer_resume_yield (global.get $yield_reason))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
     (global.set $mm_timer_in_cb (i32.const 1))
     ;; Save caller-saved regs + flags (36 bytes, includes EIP for restore)
     (call $save_caller_regs)

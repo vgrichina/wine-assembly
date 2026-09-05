@@ -5,7 +5,8 @@
 // Delivering that command through the recursive synchronous sender strands the
 // browser inside the outer click, so the nested dialog can never receive its
 // own input. Custom dialog commands stay on the ordinary message pump, while
-// IDOK/IDCANCEL retain USER's synchronous/default semantics.
+// IDOK/IDCANCEL can be wizard navigation and stay on that pump too. A true
+// DialogBox gets its unhandled IDOK fallback when the queued command runs.
 
 const assert = require('assert');
 const fs = require('fs');
@@ -119,12 +120,34 @@ function u32(value) {
   // Clear the synthetic queue before checking the standard command path.
   e.set_post_queue_count(0);
   const ok = e.test_create_dialog_button(proc, 1) >>> 0;
+  const okParent = e.wnd_get_parent(ok) >>> 0;
   e.test_button_click(ok);
-  assert.deepStrictEqual(captured(), [0x0111, 1, ok],
-    'IDOK still reaches the DLGPROC synchronously');
-  assert.strictEqual(e.get_post_queue_count(), 0,
-    'IDOK is not converted into a posted command');
+  assert.strictEqual(e.get_post_queue_count(), 1,
+    'modeless IDOK stays on the main pump for wizard navigation');
+  assert.deepStrictEqual([
+    view.getUint32(0x400, true),
+    view.getUint32(0x404, true),
+    view.getUint32(0x408, true),
+    view.getUint32(0x40c, true),
+  ], [okParent, 0x0111, 1, ok],
+  'queued modeless IDOK retains the parent and button HWND');
 
+  e.set_post_queue_count(0);
+  const nativeOk = e.test_create_dialog_button(proc, 1) >>> 0;
+  const nativeOkParent = e.wnd_get_parent(nativeOk) >>> 0;
+  e.test_make_unowned_guest_parent(nativeOk, proc);
+  e.test_button_click(nativeOk);
+  assert.strictEqual(e.get_post_queue_count(), 1,
+    'native installer IDOK stays on the main pump for nested license pages');
+  assert.deepStrictEqual([
+    view.getUint32(0x400, true),
+    view.getUint32(0x404, true),
+    view.getUint32(0x408, true),
+    view.getUint32(0x40c, true),
+  ], [nativeOkParent, 0x0111, 1, nativeOk],
+  'queued native installer IDOK retains the parent and button HWND');
+
+  e.set_post_queue_count(0);
   const owned = e.test_create_dialog_button(proc, 0) >>> 0;
   const ownedParent = e.wnd_get_parent(owned) >>> 0;
   assert.strictEqual(e.test_set_button_id(owned, 0x1009), 0,
