@@ -4543,6 +4543,24 @@ class Machine {
         // matter: a demo uses it to find out whether stdout is a file or the
         // console. DX bit 7 set means character device.
         if (al === 0x00) { r.set('dx', 0x80D3); r.setResultCf(false); return true; }
+        // AL=06 "get input status" and AL=07 "get output status" answer with
+        // AL=0FFh ready / 00h not ready, CF clear -- they are not optional and
+        // they are how a program decides a handle it just opened is a live
+        // character device. ACME-VIC.EXE opens EMMXXXX0, checks bit 7 of the
+        // AL=00 word, then asks AL=07 and compares AL against 0FFh; answering
+        // "invalid function" made the ready device read as dead and the demo
+        // ran with expanded memory switched off. A file handle is always ready
+        // to write and is ready to read until its position reaches the end.
+        if (al === 0x06 || al === 0x07) {
+          const bx = r.get('bx') & 0xFFFF;
+          const f = this.files.get(bx);
+          if (!f && bx > 4) { r.setResultCf(true); r.set('ax', 6); return true; }
+          const ready = (al === 0x07 || !f || f.device) ? 0xFF
+            : (f.pos < f.buf.length ? 0xFF : 0x00);
+          r.set('ax', (r.get('ax') & 0xFF00) | ready);
+          r.setResultCf(false);
+          return true;
+        }
         r.setResultCf(true); r.set('ax', 1);    // "invalid function"
         return true;
       }

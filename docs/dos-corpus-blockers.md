@@ -1204,3 +1204,76 @@ added, and both found only by sweeping the whole corpus:
   demoting the frame that carried it lost the rung its switch and the demo its
   64000 pixels. Rows now carry a `says` field with any refusal the run printed,
   whatever that frame scored, and the rungs read it alongside the kept screen.
+
+### ACME-VIC.EXE — one bug fixed, and the one behind it is the load address
+
+Two things stacked here, and the first hid the second completely.
+
+**1. IOCTL "get output status" was not implemented (fixed).** The demo's
+expanded-memory probe at `110:c554` opens `EMMXXXX0`, checks bit 7 of the
+`INT 21h AX=4400` word, then asks `AX=4407` and compares `AL` against `0FFh`:
+
+```
+c576  b8 07 44   mov ax, 0x4407
+c579  cd 21      int 0x21
+c57b  50         push ax
+c57c  b4 3e      mov ah, 0x3e        ; close the handle
+c57e  cd 21      int 0x21
+c580  58         pop ax
+c581  3c ff      cmp al, 0xff
+c583  75 05      jne 0xc58a          ; skip "EMS is present"
+c585  c6 06 4a c5 ff  mov byte [0xc54a], 0xff
+```
+
+`AH=44h` answered only `AL=00`; everything else returned CF set, `AX=1`
+("invalid function"). So `AL` came back 1, the ready device read as dead, and
+the demo ran with expanded memory switched off — it never issued a single
+`INT 67h`. With the documented `AL=0FFh` / CF clear the same run goes from
+**11 DOS calls, no sound** to **145 DOS calls, 2 `INT 67h` calls and a GUS
+playing 14 voices**. `test/test-toyvm-ioctl-status.js` locks in `AL=06`/`AL=07`.
+
+**2. What still stops it is where DOS puts the program.** The demo's own driver
+install at `110:c4f5` sets `DS=0` to save the `INT AC/AD/AEh` vectors out of the
+IVT, and then calls the EMS probe **without setting `DS` back**:
+
+```
+110:c4f5  fa 33 c0 8e d8   cli; xor ax,ax; mov ds,ax
+...       (copies 0000:02b0 to CS:9725, installs three vectors)
+110:c529  e8 28 00         call 110:c554
+110:c554  c6 06 4a c5 00   mov byte [0xc54a], 0   ; DS=0 -> linear 0000:C54A
+```
+
+That store is a guest bug, and on any real DOS it is absorbed: linear `0xC54A`
+is 49K up, which on a machine whose DOS occupies the first ~70K is inside DOS's
+own data. Here `LOAD_SEG` is `0x0110`, so `0000:C54A` is `110:B44A` — **live
+code**. It turns `83 c3 4c` (`add bx,0x4c`, intact in the sibling loop at
+`110:b5ae`) into `00 c3` + `4c` (`add bl,al`; `dec sp`), so the channel walk at
+`110:b42c` never advances `bx` and leaks one byte of SP per iteration
+(measured: SP `01c8` → `01bc` over 12 iterations). The misaligned `ret` at
+`110:b5cd` lands at `110:06df` inside a palette buffer, runs through zeros into
+`110:0c11`, whose `ret` goes to `110:8efd`, and the wreck parks in a jump table.
+The reported "`call [0x9757]` into data at `110:9791`" is the end of that
+chain, not its start — those table slots hold `0xc549`, a `ret` stub, by design.
+
+Proved by moving the program above the write: at `PSP_SEG`/`LOAD_SEG` =
+`0x0D00`/`0x0D10` the same store still happens (`f000:121 wrote c54a-c54a
+(slice from d10:c554)`) and is harmless — the demo runs, sets 220/256 DAC
+entries, issues 1396 `INT 67h` calls and is still animating at 150M dispatches
+(16939 non-black pixels, frame moving).
+
+**That is not a fix that can be shipped as it stands**, and the corpus says why
+in one line: at `0x0D00` `ACME-BIG.EXE` prints *"This demo requires at least
+600k of free base memory!"* and exits 1. Free conventional memory is
+`(DEFAULT_ALLOC_TOP - PSP_SEG) * 16`, so 600K needs `PSP_SEG <= 0x0900` while
+ACME-VIC needs `LOAD_SEG > 0x0C55`. The two are mutually exclusive under a
+fixed `0x9F00` ceiling, and `RUNDEMO.EXE`'s frame changes as well
+(`08502c5c` → `eb577156`), so any move of the load address is a corpus-wide
+change that has to be measured as one — not a side effect of a demo fix.
+
+**How to find a write like this again.** `--watch=SEG:OFF` marks the bytes in
+the code bitmap and every store there lands in the self-modify census. Two
+things the census could not say and now does: a byte written by the *host's*
+INT service is named by vector and AX rather than showing up as the anonymous
+`f000:1NN` stub, and a store followed by an `int n` in the same slice prints
+`(slice from CS:IP)` — the block that actually wrote it. That annotation is
+what turned `f000:121 wrote c54a-c54a` into `110:c554`.

@@ -1150,7 +1150,27 @@ class DosSession {
     // printed as `ax=1e61`, which reads exactly like a program calling a
     // function 1Eh that does not exist.
     const before = this.hooks.onInt ? ['ax', 'bx', 'cx', 'dx'].map(n => vm.get(n)) : null;
+    // A watched byte written by the HOST's own INT service is invisible to the
+    // store census: the census names the guest cs:ip, which for a serviced INT
+    // is always the one-byte stub, so every such write reads as `f000:1NN`
+    // and says nothing about which DOS/BIOS function did it. Diff the watched
+    // bytes across the service call and name the vector and AX instead.
+    const wax = vm.get('ax');
+    const wsnap = (this.smcSites && this.cache.watch.length)
+      ? this.cache.watch.map(([lo, hi]) => vm.mem.slice(lo, hi + 1)) : null;
     const ok = machine.service(vec, r);
+    if (wsnap) {
+      for (let i = 0; i < this.cache.watch.length; i++) {
+        const [lo, hi] = this.cache.watch[i];
+        for (let a = lo; a <= hi; a++) {
+          if (vm.mem[a] === wsnap[i][a - lo]) continue;
+          const hex = (n) => n.toString(16);
+          const key = `int ${hex(vec)}h ax=${hex(wax)} (host) wrote ${hex(a)}`
+            + ` ${hex(wsnap[i][a - lo])}->${hex(vm.mem[a])}`;
+          this.smcSites.set(key, (this.smcSites.get(key) || 0) + 1);
+        }
+      }
+    }
     if (this.hooks.onInt) {
       this.hooks.onInt({ vec, before, ok, retCs: rd(2), retIp: rd(0), ax: vm.get('ax') });
     }
@@ -1436,7 +1456,13 @@ class DosSession {
       if (this.smcSites) {
         const hex = (n) => n.toString(16);
         const key = kind === 2
+          // The cs:ip is where the slice STOPPED, which for a store followed by
+          // an `int n` is the one-byte stub -- `f000:1NN` names the vector and
+          // not the writer. The slice's own entry is the block that did it, so
+          // both are printed when they differ.
           ? `${hex(vm.get('cs'))}:${hex(vm.get('gip'))} wrote ${hex(lo)}-${hex(hi)}`
+            + ((vm.get('cs') !== cs || vm.get('gip') !== ip)
+              ? ` (slice from ${hex(cs)}:${hex(ip)})` : '')
           // A kind-1 break carries no range of its own: what benignPatch
           // judged it against is the site's last kind-2 range, if it ever
           // had one, and that is worth seeing when a site refuses to retire.

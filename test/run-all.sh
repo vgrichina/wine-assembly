@@ -576,6 +576,7 @@ UNIT=(
   test/test-toyvm-retrace.js
   test/test-toyvm-dos-terminate.js
   test/test-toyvm-sb-single-cycle.js
+  test/test-toyvm-ioctl-status.js
   test/test-user-default-ui-language.js
   test/test-virtual-query-user-boundary.js
   test/test-wave-in-dev-caps.js
