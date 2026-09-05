@@ -174,6 +174,63 @@
         (return (local.get $existing))))
     (local.get $candidate))
 
+  ;; Materialize one system image-list cell as a caller-owned HICON for
+  ;; SHGFI_ICON.  Win98 returns the index and an icon with independent
+  ;; lifetime; pointing hIcon at the shared strip would make DestroyIcon tear
+  ;; down pixels still owned by every list view in the process.
+  (func $shell_system_icon_handle (param $index i32) (param $size i32) (result i32)
+    (local $list i32) (local $list_wa i32) (local $source_bitmap i32)
+    (local $source_record i32) (local $source_record_bitmap ptr<GdiBitmap>)
+    (local $source_bits i32) (local $source_stride i32)
+    (local $copy i32) (local $copy_bitmap ptr<GdiBitmap>) (local $copy_bits i32)
+    (local $copy_stride i32) (local $row i32)
+    (if (i32.or (i32.ge_u (local.get $index) (i32.const 5))
+          (i32.and (i32.ne (local.get $size) (i32.const 16))
+            (i32.ne (local.get $size) (i32.const 32))))
+      (then (return (i32.const 0))))
+    (local.set $list (call $shell_system_image_list (local.get $size)))
+    (if (i32.eqz (local.get $list)) (then (return (i32.const 0))))
+    (local.set $list_wa (call $g2w (local.get $list)))
+    (local.set $source_bitmap (i32.load offset=16 (local.get $list_wa)))
+    (local.set $source_record (call $gdi_object_record (local.get $source_bitmap)))
+    (if (i32.eqz (call $gdi_bitmap_record_valid (local.get $source_record)))
+      (then (return (i32.const 0))))
+    (local.set $source_record_bitmap (cast ptr<GdiBitmap> (local.get $source_record)))
+    (memory.fill (global.get $GDI_BITMAP_PLAN) (i32.const 0) (i32.const 48))
+    (i32.store          (global.get $GDI_BITMAP_PLAN) (local.get $size))
+    (i32.store offset=4 (global.get $GDI_BITMAP_PLAN) (local.get $size))
+    (i32.store offset=8 (global.get $GDI_BITMAP_PLAN) (i32.const 32))
+    (i32.store offset=12 (global.get $GDI_BITMAP_PLAN) (i32.const 2)) ;; top-down
+    (local.set $copy_stride (i32.shl (local.get $size) (i32.const 2)))
+    (i32.store offset=16 (global.get $GDI_BITMAP_PLAN) (local.get $copy_stride))
+    (i32.store offset=32 (global.get $GDI_BITMAP_PLAN)
+      (i32.mul (local.get $copy_stride) (local.get $size)))
+    (local.set $copy (call $gdi_bitmap_create_owned
+      (global.get $GDI_BITMAP_PLAN) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
+    ;; gdi_bitmap_create_owned is the producer/type proof for the destination;
+    ;; cast each union record once and retain that typed identity for all field
+    ;; access below.
+    (local.set $copy_bitmap
+      (cast ptr<GdiBitmap> (call $gdi_object_record (local.get $copy))))
+    (local.set $source_bits (load.field GdiBitmap bits (local.get $source_record_bitmap)))
+    (local.set $source_stride (load.field GdiBitmap stride (local.get $source_record_bitmap)))
+    (local.set $copy_bits (load.field GdiBitmap bits (local.get $copy_bitmap)))
+    (block $done (loop $rows
+      (br_if $done (i32.ge_u (local.get $row) (local.get $size)))
+      (memory.copy
+        (i32.add (local.get $copy_bits)
+          (i32.mul (local.get $row) (local.get $copy_stride)))
+        (i32.add
+          (i32.add (local.get $source_bits)
+            (i32.mul (local.get $row) (local.get $source_stride)))
+          (i32.shl (i32.mul (local.get $index) (local.get $size)) (i32.const 2)))
+        (local.get $copy_stride))
+      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+      (br $rows)))
+    (call $icon_private_slot (global.get $ICON_FROM_SHELL_BITMAP) (local.get $copy)))
+
   ;; InitCommonControls() — 0 args, void return, registers common control window classes
   (func $handle_InitCommonControls (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; No-op: our window creation handles class names directly
