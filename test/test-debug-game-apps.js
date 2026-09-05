@@ -10,6 +10,7 @@ const debugIds = new Set(DEBUG_ONLY_APPS.map(([id]) => id));
 const localCandidateIds = new Set(LOCAL_CANDIDATE_APPS.map(([id]) => id));
 const expectedLocalCandidates = new Map([
   ['cdplayer', 'binaries/win98-apps/cdplayer.exe'],
+  ['jardinains', 'test/binaries/candidates/jardinains/installed/jardinains.exe'],
   ['jazz2_demo', 'test/binaries/candidates/jazz-jackrabbit-2-demo-installer/installed/jazz2.exe'],
   ['quake2_demo', 'test/binaries/candidates/quake-2-demo-installer/installed-extracted/Install/Data/quake2.exe'],
   ['quake2_demo_installer', 'test/binaries/candidates/quake-2-demo-installer/q2-314-demo-x86.exe'],
@@ -28,6 +29,11 @@ for (const [id, exe] of expectedLocalCandidates) {
   assert.strictEqual(APPS[id].exe, exe, `${id} launches the pinned local payload`);
 }
 assert(APPS.jazz2_demo, 'Jazz Jackrabbit 2 has an app manifest');
+assert.strictEqual(APPS.jardinains.requiredFiles, true);
+assert.strictEqual(APPS.jardinains.asyncMultimediaTimer, true,
+  'Jardinains advances its Blitz multimedia timers while the guest runs');
+assert.strictEqual(APPS.jardinains.localFileManifest,
+  'test/binaries/candidates/jardinains/installed/.wine-assembly-browser.json');
 assert.strictEqual(APPS.jazz2_demo.requiredFiles, true);
 assert(APPS.jazz2_demo.files.some(file => file.endsWith('/share1.j2l')),
   'Jazz Jackrabbit 2 mounts its playable shareware level');
@@ -222,8 +228,8 @@ assert.strictEqual(captainClawReg.get('Skip Logo Movies'), 1);
 
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const browserShell = fs.readFileSync(path.join(root, 'lib/browser-shell.js'), 'utf8');
-assert(/<script src="lib\/apps\.js\?v=22"><\/script>/.test(html),
-  'the browser fetches the corrected Age of Empires asset manifest');
+assert(/<script src="lib\/apps\.js\?v=23"><\/script>/.test(html),
+  'the browser fetches the playable Jardinains asset manifest');
 assert(/case 'quake2_demo':\s*return 10000;/.test(browserShell),
   'Quake II OpenGL startup uses the proven cooperative browser slice');
 assert(/<option value=["']jazz2_demo["']>Jazz Jackrabbit 2 Demo<\/option>/.test(html),

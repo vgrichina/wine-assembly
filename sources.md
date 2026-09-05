@@ -1027,6 +1027,31 @@ packages without the author's permission. Preserve the original package and
 those conditions for any public distribution; the extracted local browser
 payload remains gitignored.
 
+### Jardinains! v1.2 shareware
+
+The original author's [Jardinains 2 downloads
+page](https://jardinains2.com/otherDownloads.html) still links the
+[original Jardinains! 1.2 Windows
+installer](https://jardinains2.com/download.php?download=1). The current
+4,647,761-byte download is byte-identical to the pinned local package: SHA-1
+`805d7639f3ffbc0e771800c580c4799546d86bd7`, SHA-256
+`78c37d94d9bcf927343b56201ac6cdefed5b3233819c935650ce24260c49268c`.
+
+The installed manual describes this as fully functional shareware that may be
+played indefinitely, but its copyright notice explicitly prohibits
+redistribution or reproduction without written consent. Wine-Assembly
+therefore links to the original distribution and keeps both the installer and
+its installed payload local/gitignored. The unchanged installer produces 115
+files; its `jardinains.exe` hashes to
+`f1a8ba7040b190da398ced766940b6a853d747cb2dbbd6c46690a41a8368f117`.
+
+The installer-produced game now renders its original menu art, accepts the
+DirectInput-driven **New Game** and **Easy** choices, and reaches the playable
+Level 1 brick field. See
+[`docs/re-notes/jardinains.md`](docs/re-notes/jardinains.md) for the original
+installer workflow, DirectDraw diagnosis, hashes, and frozen CLI gameplay
+gate.
+
 Recommended order:
 
 1. [Jazz Jackrabbit 2 Demo v1.23s](https://archive.org/details/JazzJackrabbit2Demo)

@@ -496,13 +496,14 @@
         "jardinains_1_2.exe",
         "jardinains.exe"
       ],
-      "sourcePage": "https://archive.org/details/Jardinains1",
+      "sourcePage": "https://jardinains2.com/otherDownloads.html",
       "license": "shareware/free personal use; original installer license explicitly forbids redistribution without written consent",
       "packages": [
         {
-          "url": "https://archive.org/download/Jardinains1/Jardinains.rar",
-          "sha1": "177d42a0c18559320117671d30e6511f0e757550",
-          "type": "archive"
+          "url": "https://jardinains2.com/download.php?download=1",
+          "sha1": "805d7639f3ffbc0e771800c580c4799546d86bd7",
+          "type": "file",
+          "destination": "jardinains_1_2.exe"
         }
       ],
       "cli": {
