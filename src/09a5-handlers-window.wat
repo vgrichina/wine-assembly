@@ -1071,13 +1071,39 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
   )
 
-  ;; Shared ANSI message-box presentation. $stack_advance differs between the
+  ;; Shared ANSI/Wide message-box presentation. Wide strings are narrowed into
+  ;; temporary guest buffers only until create_msgbox_dialog has copied them
+  ;; into the window/control tables. $stack_advance differs between the
   ;; ordinary four-argument API and MessageBoxIndirectA's structure argument.
-  (func $handle_MessageBoxA_core (param $owner i32) (param $text i32)
-                                 (param $caption i32) (param $type i32)
-                                 (param $stack_advance i32)
+  (func $handle_MessageBox_core (param $owner i32) (param $text i32)
+                                (param $caption i32) (param $type i32)
+                                (param $stack_advance i32) (param $wide i32)
     (local $dlg i32) (local $cap_wa i32) (local $text_wa i32)
-    (local.set $cap_wa (call $g2w (local.get $caption))) (local.set $text_wa (call $g2w (local.get $text))) (call $modal_capture_nonvolatile)
+    (local $cap_gp i32) (local $text_gp i32) (local $n i32)
+    (call $modal_capture_nonvolatile)
+    (if (local.get $wide)
+      (then
+        (if (i32.ge_u (local.get $text) (i32.const 0x10000))
+          (then
+            (local.set $n (i32.add (call $guest_wcslen (local.get $text)) (i32.const 1)))
+            (local.set $text_gp (call $heap_alloc (local.get $n)))
+            (if (local.get $text_gp)
+              (then
+                (drop (call $wide_to_ansi
+                  (local.get $text) (local.get $text_gp) (local.get $n)))
+                (local.set $text_wa (call $g2w (local.get $text_gp)))))))
+        (if (i32.ge_u (local.get $caption) (i32.const 0x10000))
+          (then
+            (local.set $n (i32.add (call $guest_wcslen (local.get $caption)) (i32.const 1)))
+            (local.set $cap_gp (call $heap_alloc (local.get $n)))
+            (if (local.get $cap_gp)
+              (then
+                (drop (call $wide_to_ansi
+                  (local.get $caption) (local.get $cap_gp) (local.get $n)))
+                (local.set $cap_wa (call $g2w (local.get $cap_gp))))))))
+      (else
+        (local.set $cap_wa (call $g2w (local.get $caption)))
+        (local.set $text_wa (call $g2w (local.get $text)))))
     ;; Log via existing host hook so traces still show the text.
     (drop (call $host_message_box (local.get $owner)
       (local.get $text_wa) (local.get $cap_wa) (local.get $type)))
@@ -1089,6 +1115,8 @@
       (local.get $dlg) (local.get $owner)
       (local.get $cap_wa) (local.get $text_wa)
       (local.get $type))
+    (if (local.get $text_gp) (then (call $heap_free (local.get $text_gp))))
+    (if (local.get $cap_gp) (then (call $heap_free (local.get $cap_gp))))
     (call $modal_begin (local.get $dlg) (local.get $stack_advance)))
 
   ;; 69: MessageBoxA(hWnd, lpText, lpCaption, uType) — build a real modal
@@ -1096,8 +1124,8 @@
   ;; is delivered into EAX through the CACA0006 modal pump when the user
   ;; (or a test driver) clicks a button.
   (func $handle_MessageBoxA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_MessageBoxA_core (local.get $arg0) (local.get $arg1)
-      (local.get $arg2) (local.get $arg3) (i32.const 20)))
+    (call $handle_MessageBox_core (local.get $arg0) (local.get $arg1)
+      (local.get $arg2) (local.get $arg3) (i32.const 20) (i32.const 0)))
 
   ;; MessageBoxIndirectA(lpMsgBoxParams). MSGBOXPARAMSA is ten DWORDs; icon,
   ;; help callback/context, and language affect decoration/notifications but
@@ -1110,12 +1138,12 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     (local.set $p (call $g2w (local.get $arg0)))
-    (call $handle_MessageBoxA_core
+    (call $handle_MessageBox_core
       (i32.load offset=4 (local.get $p))
       (i32.load offset=12 (local.get $p))
       (i32.load offset=16 (local.get $p))
       (i32.load offset=20 (local.get $p))
-      (i32.const 8)))
+      (i32.const 8) (i32.const 0)))
 
   ;; 70: MessageBeep(uType) — play system sound via host
   (func $handle_MessageBeep (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

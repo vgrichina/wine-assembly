@@ -9476,44 +9476,11 @@
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
-;; 293: MessageBoxW — build the same modal UI as MessageBoxA
+  ;; 293: MessageBoxW — narrow its UTF-16 strings into the one message-box
+  ;; implementation shared with MessageBoxA/MessageBoxIndirectA.
   (func $handle_MessageBoxW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dlg i32) (local $text_gp i32) (local $cap_gp i32) (local $text_wa i32) (local $cap_wa i32)
-    (call $modal_capture_nonvolatile)
-    (if (i32.ge_u (local.get $arg1) (i32.const 0x10000))
-      (then
-        (local.set $text_gp (call $heap_alloc
-          (i32.add (call $guest_wcslen (local.get $arg1)) (i32.const 1))))
-        (if (local.get $text_gp)
-          (then
-            (drop (call $wide_to_ansi
-              (local.get $arg1)
-              (local.get $text_gp)
-              (i32.add (call $guest_wcslen (local.get $arg1)) (i32.const 1))))
-            (local.set $text_wa (call $g2w (local.get $text_gp)))))))
-    (if (i32.ge_u (local.get $arg2) (i32.const 0x10000))
-      (then
-        (local.set $cap_gp (call $heap_alloc
-          (i32.add (call $guest_wcslen (local.get $arg2)) (i32.const 1))))
-        (if (local.get $cap_gp)
-          (then
-            (drop (call $wide_to_ansi
-              (local.get $arg2)
-              (local.get $cap_gp)
-              (i32.add (call $guest_wcslen (local.get $arg2)) (i32.const 1))))
-            (local.set $cap_wa (call $g2w (local.get $cap_gp)))))))
-    (drop (call $host_message_box
-      (local.get $arg0) (local.get $text_wa) (local.get $cap_wa) (local.get $arg3)))
-    (local.set $dlg (global.get $next_hwnd))
-    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
-    (call $create_msgbox_dialog
-      (local.get $dlg) (local.get $arg0)
-      (local.get $cap_wa) (local.get $text_wa)
-      (local.get $arg3))
-    (if (local.get $text_gp) (then (call $heap_free (local.get $text_gp))))
-    (if (local.get $cap_gp) (then (call $heap_free (local.get $cap_gp))))
-    (call $modal_begin (local.get $dlg) (i32.const 20))
-  )
+    (call $handle_MessageBox_core (local.get $arg0) (local.get $arg1)
+      (local.get $arg2) (local.get $arg3) (i32.const 20) (i32.const 1)))
 
   ;; 294: SetWindowTextW(hwnd, lpString) → BOOL
   (func $handle_SetWindowTextW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
