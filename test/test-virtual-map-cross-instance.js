@@ -18,11 +18,18 @@ const extraWat = String.raw`
     (call $zero_memory (global.get $VIRTUAL_MAP_STATE)
       (i32.add (global.get $VIRTUAL_MAP_STATE_SIZE)
         (global.get $VIRTUAL_MAP_TABLE_SIZE)))
+    (call $zero_memory (global.get $GUEST_PAGE_DIR)
+      (global.get $GUEST_PAGE_DIR_SIZE))
+    (call $zero_memory (global.get $GUEST_PAGE_STATE)
+      (global.get $GUEST_PAGE_STATE_SIZE))
     (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))
       (global.get $VIRTUAL_BACKING_BASE))
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
     (global.set $heap_sparse_ptr (i32.const 0))
-    (global.set $heap_sparse_end (i32.const 0)))
+    (global.set $heap_sparse_end (i32.const 0))
+    ;; Preserve this instance's selected A/B arm across the test-only shared
+    ;; table reset, including the process-wide publication bit.
+    (call $guest_page_translation_set (global.get $guest_page_translation)))
   (func (export "test_virtual_worker_reset")
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
     (global.set $heap_sparse_ptr (i32.const 0))
@@ -115,6 +122,11 @@ async function main() {
   main.test_virtual_reset();
   worker.test_virtual_worker_reset();
 
+  assert.strictEqual(main.get_guest_page_translation(), 0,
+    'packed sparse translation must remain opt-in while it is experimental');
+  main.set_guest_page_translation(1);
+  worker.set_guest_page_translation(1);
+
   assert.strictEqual(main.test_virtual_lock(0x00401000, 0x1000), 1,
     'resident guest memory must be lockable');
   assert.strictEqual(main.test_virtual_unlock(0x00401000, 0x1000), 1,
@@ -149,6 +161,28 @@ async function main() {
     'the coalesced sparse map should begin at the worker heap reservation');
   assert.strictEqual(state.getUint32(MAP_TABLE + 4, true), graphicsSize + 0x00100000,
     'the coalesced sparse map should cover each reservation exactly once');
+  const graphicsBacking = state.getUint32(MAP_TABLE + 8, true) +
+    (graphicsBase - heapBlock);
+  assert.strictEqual(main.guest_to_wasm(graphicsBase) >>> 0, graphicsBacking >>> 0,
+    'packed translation must resolve the main instance mapping');
+  assert.strictEqual(worker.guest_to_wasm(graphicsBase) >>> 0, graphicsBacking >>> 0,
+    'packed translations published by one instance must be visible to workers');
+  assert(main.get_guest_page_leaf_count() > 0,
+    'committed sparse mappings must allocate directory leaves on demand');
+  assert.strictEqual(main.get_guest_page_fallback(), 0,
+    'ordinary sparse maps must fit without falling back to record scans');
+
+  // A cleared PTE is authoritative in packed mode. In particular, do not fall
+  // through to this instance's old four-entry cache after MEM_RELEASE.
+  main.test_virtual_reset();
+  const released = main.test_virtual_alloc_commit(0x2000) >>> 0;
+  const releasedBacking = main.guest_to_wasm(released) >>> 0;
+  assert.notStrictEqual(releasedBacking, 0xf0,
+    'freshly committed page must have packed backing');
+  assert.strictEqual(main.test_virtual_free(released) >>> 0, 1,
+    'packed mapping should remain releasable');
+  assert.strictEqual(main.guest_to_wasm(released) >>> 0, 0xf0,
+    'released packed mapping must become unmapped immediately');
 
   // Storm's image preload performs more than 2048 short-lived reserve/commit
   // cycles. Returning success from VirtualFree without removing mappings made

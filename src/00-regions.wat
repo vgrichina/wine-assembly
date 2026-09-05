@@ -544,6 +544,17 @@
   ;; process whose API calls arrive through more than one Worker instance.
   (region.declare $SHELL_FILE_INFO (size 0x00000080) (align 0x00000010)
     (owner "09a9-comctl32.wat:14"))
+  ;; Optional two-level guest page table. The 8KB directory covers the Win98
+  ;; user half of the address space in 1MB chunks; each allocated 1KB leaf has
+  ;; one packed i32 per 4KB guest page. Leaves are demand-allocated so the
+  ;; experiment does not spend 2MB on a flat table before measurements prove
+  ;; that replacing the sparse-map scan is worthwhile.
+  (region.declare $GUEST_PAGE_DIR (size 0x00002000) (align 0x00001000)
+    (owner "01-header.wat:2339"))
+  (region.declare $GUEST_PAGE_LEAVES (size 0x00100000) (align 0x00001000)
+    (owner "01-header.wat:2341"))
+  (region.declare $GUEST_PAGE_STATE (size 0x00000010) (align 0x00000010)
+    (owner "01-header.wat:2343"))
   (region.declare-fixed $VIRTUAL_BACKING_BASE (base 0x08000000) (size 0x14000000) (align 0x00001000)
     (owner "08-pe-loader.wat:57"))
   (region.declare-fixed $DIB_BACKING_BASE (base 0x1C000000) (size 0x03F00000) (align 0x00001000)

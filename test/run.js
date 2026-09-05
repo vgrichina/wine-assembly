@@ -474,6 +474,10 @@ const TRACE_CALLSTACK_DEPTH = TRACE_CALLSTACK_RAW && TRACE_CALLSTACK_RAW.include
 const FAULT_NULL_RAW = args.find(a => a === '--fault-null' || a.startsWith('--fault-null='));
 const FAULT_NULL = !FAULT_NULL_RAW ? 0
   : (FAULT_NULL_RAW.split('=')[1] === 'stop' ? 2 : 1);
+// Experimental two-level packed translation for sparse VirtualAlloc pages.
+// This is deliberately separate from future permission audit/enforcement:
+// the flag changes only how an already-valid mapping finds its WASM backing.
+const GUEST_PAGE_TRANSLATION = hasFlag('guest-page-translation');
 const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break at address(es)
 const BREAK_ONCE = hasFlag('break-once'); // --break-once: do NOT re-arm bp after first hit (so prev_eip stays the true caller)
 const TRACE_AT = getArg('trace-at', null); // --trace-at=0xADDR: log regs each time EIP hits addr (non-interactive)
@@ -3863,6 +3867,7 @@ async function main() {
   if (NO_RECT_RUN) inheritWasm('set_rect_run', 0);
   if (NO_CASE_CHAIN) inheritWasm('set_case_chain', 0);
   if (NO_RLE_RUN) inheritWasm('set_rle_run', 0);
+  if (GUEST_PAGE_TRANSLATION) inheritWasm('set_guest_page_translation', 1);
 
   threadManager = new ThreadManager(wasmModule, memory, instance, makeWorkerImports, {
     workerBackend: guestThreadHost,
@@ -4678,6 +4683,10 @@ async function main() {
     instance.exports.set_fault_unmapped(FAULT_NULL);
     console.log(`[fault] --fault-null armed (mode=${FAULT_NULL}: `
       + `${FAULT_NULL === 2 ? 'log and trap' : 'log and continue'})`);
+  }
+  if (GUEST_PAGE_TRANSLATION && instance.exports.set_guest_page_translation) {
+    instance.exports.set_guest_page_translation(1);
+    console.log('[memory] packed sparse guest-page translation enabled');
   }
   if (TRACE_WIN16_DDE && instance.exports.set_win16_dde_trace) {
     instance.exports.set_win16_dde_trace(1);
