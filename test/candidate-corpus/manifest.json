@@ -488,6 +488,33 @@
       }
     },
     {
+      "id": "elasto-mania",
+      "name": "Elasto Mania",
+      "kind": "game",
+      "version": "1.0 registered",
+      "executables": [
+        "Elma/Elma.exe"
+      ],
+      "sourcePage": "https://archive.org/details/elmav10",
+      "license": "proprietary registered release; no redistribution permission found, so keep as a local ignored candidate fixture",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/elmav10/Elmav10.zip",
+          "sha1": "11e0703f51268caf7e4d99ddf014fb12f95246e7",
+          "type": "archive"
+        }
+      ],
+      "browser": {
+        "fileRoot": "Elma",
+        "exe": "Elma/Elma.exe"
+      },
+      "cli": {
+        "maxBatches": 1150,
+        "batchSize": 200000
+      }
+    },
+    {
       "id": "jardinains",
       "name": "Jardinains!",
       "kind": "game",

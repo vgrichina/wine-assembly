@@ -419,7 +419,7 @@ function writeBrowserManifest(candidate, destination) {
   if (!browser) return;
   assertSafeRelative(browser.fileRoot, `${candidate.id}.browser.fileRoot`);
   assertSafeRelative(browser.exe, `${candidate.id}.browser.exe`);
-  assertSafeRelative(browser.cue, `${candidate.id}.browser.cue`);
+  if (browser.cue) assertSafeRelative(browser.cue, `${candidate.id}.browser.cue`);
 
   const fileRoot = path.join(destination, browser.fileRoot);
   const executable = path.normalize(browser.exe);
@@ -439,20 +439,23 @@ function writeBrowserManifest(candidate, destination) {
       };
     }).filter(Boolean);
 
-  const cuePath = path.join(destination, browser.cue);
-  const cue = fs.readFileSync(cuePath, 'utf8');
   const trackSizes = {};
-  for (const match of cue.matchAll(/^\s*FILE\s+(?:"([^"]+)"|(\S+))\s+\S+/gmi)) {
-    const name = match[1] || match[2];
-    assertSafeRelative(name, `${candidate.id}.browser CUE FILE`);
-    trackSizes[name] = fs.statSync(path.join(path.dirname(cuePath), name)).size;
-  }
-  if (!Object.keys(trackSizes).length) {
-    throw new Error(`${candidate.id}.browser.cue has no FILE entries`);
+  if (browser.cue) {
+    const cuePath = path.join(destination, browser.cue);
+    const cue = fs.readFileSync(cuePath, 'utf8');
+    for (const match of cue.matchAll(/^\s*FILE\s+(?:"([^"]+)"|(\S+))\s+\S+/gmi)) {
+      const name = match[1] || match[2];
+      assertSafeRelative(name, `${candidate.id}.browser CUE FILE`);
+      trackSizes[name] = fs.statSync(path.join(path.dirname(cuePath), name)).size;
+    }
+    if (!Object.keys(trackSizes).length) {
+      throw new Error(`${candidate.id}.browser.cue has no FILE entries`);
+    }
   }
 
   fs.writeFileSync(path.join(destination, '.wine-assembly-browser.json'),
-    `${JSON.stringify({ schemaVersion: 1, files, trackSizes }, null, 2)}\n`);
+    `${JSON.stringify({ schemaVersion: 1, files,
+      ...(browser.cue ? { trackSizes } : {}) }, null, 2)}\n`);
 }
 
 async function fetchCandidate(candidate) {
