@@ -851,6 +851,11 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   return {
     words, blocks, fixups, unresolved, covered, wordIp, volatileCuts, calls, cyclic,
     unimplemented: [...unimplemented],
+    // The decoder refused the very first instruction of the program's ENTRY
+    // block, so the compiled entry is `end, ip` and running it moves the guest
+    // nowhere. See DosSession.checkProgress: that is not a program in a wait,
+    // it is a program that is not being executed at all.
+    refusedAtEntry: unimplemented.has(entry),
     entryAddr: blocks.get(entry),
     deadFlags: deadFlagCount,
     tracedBlocks,

@@ -813,6 +813,22 @@ class Machine {
     this.autoKeyAnswered = null; // its text lines: what the next menu did not draw
     this.autoKeyQueue = [];      // the rest of a multi-character typed answer
     this.autoKeyRead = 0;        // keys chosen by reading, not by rotating
+    // Which of the two readers built the string in autoKeyScreen. They use
+    // different formats on purpose -- autoKeyPoll appends the highlight
+    // position and autoKeyNext does not -- so a page that is byte-identical
+    // still produces a different string depending on who asks. The epoch gates
+    // below may only skip a reader when the LAST look was that same reader's.
+    this.autoKeyScreenKind = null;
+    this.autoKeyPollEpoch = -1;
+    this.autoKeyNextEpoch = -1;
+    // See textPageEpoch. Built in setMemory, because that is where `mem` -- and
+    // therefore the console page -- comes from.
+    this.conWords = null;
+    this.conSnapWords = null;
+    this.conEpoch = 0;
+    // screenHighlight's attribute histogram, reused across calls and left zero
+    // by every path out of it.
+    this.hlCounts = null;
     // The keyboard as hardware: scancodes waiting to be delivered as IRQ1, and
     // the one port 60h reads right now. See keyboardIrq.
     this.kbQueue = [];
@@ -1305,17 +1321,59 @@ class Machine {
     f.buf = rec.data.subarray(0, rec.len);
   }
 
+  // A number that changes exactly when the text page does, and does not change
+  // when it does not.
+  //
+  // Everything that reads the console -- the menu reader, the highlight finder,
+  // the stuck detector's cell count -- reads guest memory at B8000 and nothing
+  // else, so a byte-for-byte comparison against the last look is a complete and
+  // EXACT answer to "is any of that going to come out different this time".
+  // 1000 word comparisons, against 2000 cells through two accessors plus a
+  // 25-line string build plus a trailing-space regex per line.
+  //
+  // The reason to want it is that those readers run per HANDBACK, and a program
+  // that polls the BIOS keyboard from inside its frame loop hands back every
+  // few instructions. ASMINST.EXE's title screen is `mov ah,1 / int 16h` at
+  // 42f:1d2 with the animation behind it: 1,170,503 polls in a 20M-dispatch
+  // run, 17 dispatches apiece, and the CPU profile put 28.8% of the whole run
+  // in screenHighlight, 15.5% in the `\s+$` regex inside screenText and 13.1%
+  // in screenText itself -- against 1.4% in wasm.
+  //
+  // A counter rather than a boolean because there are several readers with
+  // different lifetimes; each remembers the epoch it last acted on. It is
+  // deliberately NOT an answer to "did the STRING change" -- two different
+  // pages can render the same text -- so it may only ever be used to SKIP work
+  // whose result is already known, never to decide that something changed.
+  textPageEpoch() {
+    const w = this.conWords, s = this.conSnapWords;
+    if (!w) return this.conEpoch;
+    for (let i = 0; i < w.length; i++) {
+      if (w[i] !== s[i]) { s.set(w); return ++this.conEpoch; }
+    }
+    return this.conEpoch;
+  }
+
   // What is on the text page, as lines. The autoKey menu reader works off this,
   // and so does any caller that wants to know what a program said.
   screenText() {
     const c = this.con, rows = [];
     for (let y = 0; y < c.rows; y++) {
+      // Find the last printable cell first and build only up to it. The row is
+      // trimmed of trailing whitespace either way; doing it with `\s+$` on a
+      // freshly built 80-character string was 15.5% of ASMINST.EXE's run, and a
+      // regex is the one part of this that a JIT cannot make cheap.
+      let end = c.cols;
+      while (end > 0) {
+        const b = c.getCh(y * c.cols + end - 1);
+        if (b > 0x20 && b < 0x7F) break;
+        end--;
+      }
       let s = '';
-      for (let x = 0; x < c.cols; x++) {
+      for (let x = 0; x < end; x++) {
         const b = c.getCh(y * c.cols + x);
         s += (b >= 0x20 && b < 0x7F) ? String.fromCharCode(b) : ' ';
       }
-      rows.push(s.replace(/\s+$/, ''));
+      rows.push(s);
     }
     while (rows.length && rows[rows.length - 1] === '') rows.pop();
     return rows;
@@ -1332,23 +1390,34 @@ class Machine {
   // runs it is coloured art rather than a menu with a cursor on it.
   screenHighlight() {
     const c = this.con;
-    const seen = new Map();
+    // An attribute is a byte, so the histogram is 256 counters and not a Map --
+    // this walks all 2000 cells and ran on every keyboard poll (28.8% of
+    // ASMINST.EXE's whole run before textPageEpoch gated it). `order` keeps the
+    // attributes in first-appearance order, which is the order a Map would have
+    // iterated in: the two winner searches below break ties by taking the FIRST
+    // one seen, so scanning 0..255 instead would quietly pick a different
+    // attribute on a page where two are equally common.
+    const count = this.hlCounts || (this.hlCounts = new Int32Array(256));
+    const order = [];
     for (let i = 0; i < c.cells; i++) {
       const ch = c.getCh(i);
       if (ch === 0 || ch === 0x20) continue;
       const a = c.getAt(i);
-      seen.set(a, (seen.get(a) || 0) + 1);
+      if (count[a] === 0) order.push(a);
+      count[a]++;
     }
-    if (seen.size < 2) return null;
     // The RAREST attribute, not simply a non-default one. DINO's page has four:
     // 0x07 for its text, 0x4f for the title bar, 0x0f for the headings and the
     // sentence at the bottom, and 0x3f on exactly one label -- the one the
     // cursor is on. Anything the page uses widely is decoration.
     let plain = 0, most = -1, cursor = 0, least = Infinity;
-    for (const [a, n] of seen) if (n > most) { most = n; plain = a; }
-    for (const [a, n] of seen) {
-      if (a !== plain && n < least) { least = n; cursor = a; }
+    for (const a of order) if (count[a] > most) { most = count[a]; plain = a; }
+    for (const a of order) {
+      if (a !== plain && count[a] < least) { least = count[a]; cursor = a; }
     }
+    const attrs = order.length;
+    for (const a of order) count[a] = 0;   // the histogram is reused next call
+    if (attrs < 2) return null;
     if (least > CURSOR_CELLS) return null;
     let row = -1, from = -1, to = -1;
     for (let i = 0; i < c.cells && row < 0; i++) {
@@ -1718,8 +1787,18 @@ class Machine {
     // A typed answer is more than one keystroke, so it queues; the program
     // reads it one INT 16h at a time exactly as it would from a real typist.
     if (this.autoKeyQueue.length) return this.autoKeyQueue.shift();
-    const text = this.screenText();
-    const shown = text.join('\n');
+    // The page is byte-identical to the one THIS reader last built its string
+    // from, so the string it would build is the same one already sitting in
+    // autoKeyScreen and the comparison below is settled. The kind check is not
+    // optional: autoKeyPoll writes a different format into the same field, so a
+    // look by the other reader in between leaves a string this one would not
+    // match even on an unchanged page. See textPageEpoch.
+    const epoch = this.textPageEpoch();
+    const settled = epoch === this.autoKeyNextEpoch && this.autoKeyScreenKind === 'next';
+    const text = settled ? null : this.screenText();
+    const shown = settled ? this.autoKeyScreen : text.join('\n');
+    this.autoKeyNextEpoch = epoch;
+    this.autoKeyScreenKind = 'next';
     if (shown !== this.autoKeyScreen) {
       this.autoKeyScreen = shown;
       const k = this.menuKey();
@@ -1778,6 +1857,17 @@ class Machine {
   autoKeyPoll() {
     if (!this.autoKey || this.keys.length) return;
     if (!TEXT_MODES.has(this.videoMode)) { this.autoKeyPollGraphics(); return; }
+    // Nothing below can come out different while the page is byte-identical to
+    // the one this reader last looked at: the string it would build is the one
+    // already in autoKeyScreen and the answer it gave then was nothing. See
+    // textPageEpoch. A program parked on a menu polls INT 16h from inside its
+    // animation loop -- ASMINST.EXE made 1.17M of these calls in a 20M-dispatch
+    // run before the poll stopped handing back -- and each one rebuilding the
+    // whole 80x25 page as a string is the entire cost of answering it.
+    const epoch = this.textPageEpoch();
+    if (epoch === this.autoKeyPollEpoch && this.autoKeyScreenKind === 'poll') return;
+    this.autoKeyPollEpoch = epoch;
+    this.autoKeyScreenKind = 'poll';
     // The highlight is part of "what is on the screen". A grid menu answers a
     // key by moving its cursor, which is a colour and not a character, so a
     // gate that compares text alone sees the demo ignore every key after the
@@ -1823,6 +1913,19 @@ class Machine {
     this.mem = mem;
     this.vmExports = ex || null;
     this.con.mem = mem;
+    // The text page as words, and a copy of it. See textPageEpoch. A wasm
+    // memory's byte offset is zero in practice and VRAM_TEXT is a multiple of
+    // four, but a Uint32Array over a misaligned buffer throws, so fall back to
+    // bytes rather than assume.
+    const cellBytes = this.con.cells * 2;
+    const aligned = ((mem.byteOffset + VRAM_TEXT) & 3) === 0 && (cellBytes & 3) === 0;
+    this.conWords = aligned
+      ? new Uint32Array(mem.buffer, mem.byteOffset + VRAM_TEXT, cellBytes >> 2)
+      : mem.subarray(VRAM_TEXT, VRAM_TEXT + cellBytes);
+    this.conSnapWords = this.conWords.slice();
+    this.conEpoch = 1;
+    this.autoKeyPollEpoch = -1;
+    this.autoKeyNextEpoch = -1;
     this.con.fillCells(0, this.con.cells, 0x20, 0x07);
     // reset() ran against the placeholder array, so re-apply everything it put
     // in the BIOS data area now that there is somewhere real to put it.

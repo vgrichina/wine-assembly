@@ -383,6 +383,13 @@ async function runDos(o) {
   const ipSamples = new Map();
   const ipSampleLog = [];          // flat [dispatched, ip, dispatched, ip, ...]
 
+  let cellsEpoch = 0, cellsCount = 0;
+  const cellsCached = (con) => {
+    const e = machine.textPageEpoch();
+    if (e !== cellsEpoch) { cellsEpoch = e; cellsCount = conCells(con); }
+    return cellsCount;
+  };
+
   const session = new DosSession(vm, machine, {
     slice, noCache, smcFlush, wasmDecode, fuse, deadFlags, crossFlags, traceBlocks, spinLoops,
     regSpec, regionAt, regionSucc, regionBytes, regionCodeBits, volatileCode,
@@ -391,7 +398,13 @@ async function runDos(o) {
     stuckWork,
     // A watch reports through the census, so asking for one turns it on.
     smcCensus: smcCensus || watch.length > 0, watch,
-    cells: conCells,
+    // The same count, not recomputed while the page it counts has not changed.
+    // checkProgress asks for this on EVERY handback in mode 3, and it walks all
+    // 2000 cells through two accessors. On a program that hands back every few
+    // instructions that is the run: STHINTRO.EXE's derailed spin put 53% of its
+    // whole profile in checkProgress, and ASMINST.EXE's keyboard poll 6.3%.
+    // Exact -- see Machine.textPageEpoch, which compares the bytes.
+    cells: cellsCached,
     hooks: {
       onInt: !traceInt ? undefined : ({ vec, before, ok, retCs, retIp, ax }) => {
         log(`int ${vec.toString(16).padStart(2, '0')}h ax=${before[0].toString(16)}`
