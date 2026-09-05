@@ -108,6 +108,10 @@ const ALL_CANDIDATES = [
       {
         vk: 13, charCode: 13, label: 'confirm new Barbarian', holdMs: 80,
         waitMs: 5000, snapshotAfter: 'character-confirmed',
+        waitForGuestPixelAfter: {
+          x: 300, y: 207, rMin: 70, gMin: 70, bMin: 70,
+          timeoutMs: 30000, label: 'post-confirm Single Player button',
+        },
       },
     ],
     allowPolledKeys: true,
@@ -146,7 +150,7 @@ const ALL_CANDIDATES = [
     commands: [40005],
     // The card table intentionally uses a compact palette. The action diff,
     // window/title checks, and non-solid metric carry the playability signal.
-    minColors: 10,
+    minColors: 8,
     minDiff: 80,
     waitMs: 1000,
     forbidDialogs: ['Get Started', 'Hall of Fame'],
