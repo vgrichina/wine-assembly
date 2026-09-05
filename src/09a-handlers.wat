@@ -18006,108 +18006,78 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; CharLowerA(lpsz) — mirror of CharUpperA.
-  (func $handle_CharLowerA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $p i32) (local $c i32)
-    (global.set $eax (local.get $arg0))
-    (if (i32.eqz (i32.and (local.get $arg0) (i32.const 0xffff0000)))
+  ;; CharLower accepts either a character in the low word or a mutable,
+  ;; NUL-terminated string. Translate a string pointer once, then vary only
+  ;; the character width between A and W.
+  (func $char_lower (param $value i32) (param $wide i32) (result i32)
+    (local $p_wa i32) (local $c i32) (local $lower i32) (local $step i32)
+    (if (i32.eqz (i32.and (local.get $value) (i32.const 0xffff0000)))
       (then
-        (local.set $c (i32.and (local.get $arg0) (i32.const 0xff)))
-        (if (i32.and
-              (i32.ge_u (local.get $c) (i32.const 0x41))
-              (i32.le_u (local.get $c) (i32.const 0x5a)))
-          (then (global.set $eax (i32.add (local.get $c) (i32.const 0x20))))))
-      (else
-        (local.set $p (call $g2w (local.get $arg0)))
-        (block $done (loop $lp
-          (local.set $c (i32.load8_u (local.get $p)))
-          (br_if $done (i32.eqz (local.get $c)))
-          (if (i32.and
-                (i32.ge_u (local.get $c) (i32.const 0x41))
-                (i32.le_u (local.get $c) (i32.const 0x5a)))
-            (then (i32.store8 (local.get $p) (i32.add (local.get $c) (i32.const 0x20)))))
-          (local.set $p (i32.add (local.get $p) (i32.const 1)))
-          (br $lp)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; CharLowerW(lpsz) — Unicode counterpart of CharLowerA. Win32 also accepts
-  ;; a single WCHAR encoded directly in the low word; otherwise lowercase the
-  ;; NUL-terminated UTF-16 string in place. Preserve non-ASCII code units.
-  (func $handle_CharLowerW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $p i32) (local $c i32)
-    (global.set $eax (local.get $arg0))
-    (if (i32.eqz (i32.and (local.get $arg0) (i32.const 0xffff0000)))
-      (then
-        (local.set $c (i32.and (local.get $arg0) (i32.const 0xffff)))
-        (if (i32.and
-              (i32.ge_u (local.get $c) (i32.const 0x41))
-              (i32.le_u (local.get $c) (i32.const 0x5a)))
-          (then (global.set $eax (i32.add (local.get $c) (i32.const 0x20))))))
-      (else
-        (local.set $p (local.get $arg0))
-        (block $done (loop $lp
-          (local.set $c (call $gl_char (local.get $p) (i32.const 1)))
-          (br_if $done (i32.eqz (local.get $c)))
-          (if (i32.and
-                (i32.ge_u (local.get $c) (i32.const 0x41))
-                (i32.le_u (local.get $c) (i32.const 0x5a)))
-            (then (call $store_char (local.get $p)
-              (i32.add (local.get $c) (i32.const 0x20)) (i32.const 1))))
-          (local.set $p (i32.add (local.get $p) (i32.const 2)))
-          (br $lp)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; CharLowerBuffA(lpsz, cchLength) — lowercase exactly cchLength ANSI bytes
-  ;; in place. Returns the number of bytes processed.
-  (func $handle_CharLowerBuffA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $p i32) (local $i i32) (local $c i32)
-    (if (i32.eqz (local.get $arg0))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-        (return)))
-    (local.set $p (call $g2w (local.get $arg0)))
+        (local.set $c (i32.and (local.get $value)
+          (if (result i32) (local.get $wide)
+            (then (i32.const 0xffff)) (else (i32.const 0xff)))))
+        (return (call $tolower (local.get $c)))))
+    (local.set $p_wa (call $g2w (local.get $value)))
+    (local.set $step (i32.shl (i32.const 1) (local.get $wide)))
     (block $done (loop $lp
-      (br_if $done (i32.ge_u (local.get $i) (local.get $arg1)))
-      (local.set $c (i32.load8_u (i32.add (local.get $p) (local.get $i))))
-      (if (i32.and
-            (i32.ge_u (local.get $c) (i32.const 0x41))
-            (i32.le_u (local.get $c) (i32.const 0x5a)))
+      (local.set $c
+        (if (result i32) (local.get $wide)
+          (then (i32.load16_u (local.get $p_wa)))
+          (else (i32.load8_u (local.get $p_wa)))))
+      (br_if $done (i32.eqz (local.get $c)))
+      (local.set $lower (call $tolower (local.get $c)))
+      (if (i32.ne (local.get $lower) (local.get $c))
         (then
-          (i32.store8
-            (i32.add (local.get $p) (local.get $i))
-            (i32.add (local.get $c) (i32.const 0x20)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (if (local.get $wide)
+            (then (i32.store16 (local.get $p_wa) (local.get $lower)))
+            (else (i32.store8 (local.get $p_wa) (local.get $lower))))))
+      (local.set $p_wa (i32.add (local.get $p_wa) (local.get $step)))
       (br $lp)))
-    (global.set $eax (local.get $arg1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
+    (local.get $value))
 
-  ;; CharLowerBuffW(lpsz, cchLength) — lowercase exactly cchLength UTF-16
-  ;; code units in place. As with the ANSI form, an embedded NUL does not end
-  ;; the counted buffer and the return value is the requested character count.
-  (func $handle_CharLowerBuffW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $i i32) (local $c i32) (local $at i32)
-    (if (i32.eqz (local.get $arg0))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-        (return)))
+  (func $handle_CharLowerA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $char_lower (local.get $arg0) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_CharLowerW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $char_lower (local.get $arg0) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; CharLowerBuff is count-delimited and therefore processes embedded NULs.
+  ;; cchLength is a character count for both encodings, not a byte count for W.
+  (func $char_lower_buff (param $buf_g i32) (param $length i32)
+        (param $wide i32) (result i32)
+    (local $base_wa i32) (local $at_wa i32)
+    (local $i i32) (local $c i32) (local $lower i32)
+    (if (i32.eqz (local.get $buf_g)) (then (return (i32.const 0))))
+    (local.set $base_wa (call $g2w (local.get $buf_g)))
     (block $done (loop $lp
-      (br_if $done (i32.ge_u (local.get $i) (local.get $arg1)))
-      (local.set $at (i32.add (local.get $arg0) (i32.shl (local.get $i) (i32.const 1))))
-      (local.set $c (call $gl16 (local.get $at)))
-      (if (i32.and
-            (i32.ge_u (local.get $c) (i32.const 0x41))
-            (i32.le_u (local.get $c) (i32.const 0x5a)))
-        (then (call $gs16 (local.get $at) (i32.add (local.get $c) (i32.const 0x20)))))
+      (br_if $done (i32.ge_u (local.get $i) (local.get $length)))
+      (local.set $at_wa (i32.add (local.get $base_wa)
+        (i32.shl (local.get $i) (local.get $wide))))
+      (local.set $c
+        (if (result i32) (local.get $wide)
+          (then (i32.load16_u (local.get $at_wa)))
+          (else (i32.load8_u (local.get $at_wa)))))
+      (local.set $lower (call $tolower (local.get $c)))
+      (if (i32.ne (local.get $lower) (local.get $c))
+        (then
+          (if (local.get $wide)
+            (then (i32.store16 (local.get $at_wa) (local.get $lower)))
+            (else (i32.store8 (local.get $at_wa) (local.get $lower))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
-    (global.set $eax (local.get $arg1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
+    (local.get $length))
+
+  (func $handle_CharLowerBuffA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $char_lower_buff
+      (local.get $arg0) (local.get $arg1) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_CharLowerBuffW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $char_lower_buff
+      (local.get $arg0) (local.get $arg1) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; CharUpperBuffA(lpsz, cchLength) — uppercase cchLength characters in
   ;; place and return how many were converted. Unlike CharUpperA this does not
