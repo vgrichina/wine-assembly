@@ -12,6 +12,15 @@ Large parts of the reverse engineering, implementation, testing, and documentati
 
 ## What runs
 
+| | | | |
+|:-:|:-:|:-:|:-:|
+| [![Solitaire](screenshots/readme/sol.png)](https://wine-assembly.berrry.app/?app=sol) | [![Chip's Challenge, 16-bit](screenshots/readme/wep16_chips.png)](https://wine-assembly.berrry.app/?app=wep16_chips) | [![SkiFree](screenshots/readme/ski32.png)](https://wine-assembly.berrry.app/?app=ski32) | [![Winamp 2.91](screenshots/readme/winamp.png)](https://wine-assembly.berrry.app/?app=winamp) |
+| Solitaire | Chip's Challenge (Win16) | SkiFree | Winamp 2.91 |
+| [![Diablo shareware](screenshots/readme/diablo_shareware.png)](https://wine-assembly.berrry.app/?app=diablo_shareware) | [![Marbles, DirectDraw](screenshots/readme/marbles.png)](https://wine-assembly.berrry.app/?app=marbles) | [![WordPad](screenshots/readme/wordpad.png)](https://wine-assembly.berrry.app/?app=wordpad) | [![Paint](screenshots/readme/mspaint.png)](https://wine-assembly.berrry.app/?app=mspaint) |
+| Diablo shareware | Marbles (DirectDraw) | WordPad | Paint |
+
+Every tile links to that app on the live site. All screenshots are the emulator's own output, captured headlessly from the real binaries.
+
 - **Games:** 3D Pinball Space Cadet, SkiFree, Solitaire, FreeCell, Minesweeper (Win98 and XP), the Windows Entertainment Pack (Golf, Reversi, Pegged, Taipei, TicTactics, Rattler Race, Cruel), Chip's Challenge, Rodent's Revenge, Icy Tower, DX-Ball, Marbles, and the 16-bit Windows 3.1 originals of the Entertainment Pack
 - **Windows 98 accessories:** Notepad, WordPad, Calculator (standard and scientific), Paint with all 16 tools, RegEdit, Sound Recorder with microphone capture, Volume Control, Task Manager, the WinHelp viewer
 - **Winamp 2.91 and 2.95:** skinned multi-window UI, MP3 playback, visualization, and the NSIS installers themselves

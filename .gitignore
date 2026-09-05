@@ -23,6 +23,8 @@ binaries
 !icons/*.png
 !icons/apps/
 !icons/apps/*.png
+!screenshots/readme/
+!screenshots/readme/*.png
 *.dll
 *.DLL
 *.wav
