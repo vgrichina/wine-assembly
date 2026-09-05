@@ -60,9 +60,9 @@ function fakeGuest(name, { nameGetter }) {
   const hostSource = fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8');
   assert.match(pageSource, /lib\/process-boot\.js\?v=4/,
     'the browser must not reuse the loader that parsed oversized NE files as PE');
-  assert.match(pageSource, /host\.js\?v=289/);
-  assert.match(hostSource, /static SOURCE_VERSION = '289'/,
-    'the clipboard-sequence memory map needs a new browser artifact key');
+  assert.match(pageSource, /host\.js\?v=290/);
+  assert.match(hostSource, /static SOURCE_VERSION = '290'/,
+    'the file-security API surface needs a new browser artifact key');
 
   const peBytes = syntheticLargePe();
   const peMemory = new ArrayBuffer(0x5000);
