@@ -57,6 +57,7 @@ tmp/
 # (story.html is the one committed output so a local http.server has it).
 apps/*.html
 articles/*.html
+design/*.html
 docs/*.html
 docs/re-notes/*.html
 sitemap.xml

@@ -121,8 +121,12 @@ function rewriteMdLinks(html) {
   return html.replace(/href="([^"#:]+)\.md(#[^"]*)?"/g, (m, p, hash) => `href="${p}.html${hash || ''}"`);
 }
 
-function pageHtml({ md, title, description, urlPath, sourceRel, nav, dates, extraHead, ldExtra, ogImage = OG_IMAGE }) {
+function pageHtml({ md, title, description, urlPath, sourceRel, nav = NAV, dates, extraHead, ldExtra, ogImage = OG_IMAGE, canonical }) {
   const url = `${SITE}/${urlPath}`;
+  // A page that has been folded into another (articles/ and docs/ into
+  // design/) keeps serving its old URL but declares the new one canonical,
+  // so what search engines already indexed transfers instead of competing.
+  const canonicalUrl = canonical ? `${SITE}/${canonical}` : url;
   const body = rewriteMdLinks(marked.parse(md, { gfm: true, breaks: false }));
   const ld = {
     '@context': 'https://schema.org',
@@ -147,7 +151,7 @@ function pageHtml({ md, title, description, urlPath, sourceRel, nav, dates, extr
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${esc(fullTitle)}</title>
   <meta name="description" content="${esc(description)}">
-  <link rel="canonical" href="${url}">
+  <link rel="canonical" href="${canonicalUrl}">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="${SITE_NAME}">
   <meta property="og:title" content="${esc(fullTitle)}">
@@ -184,10 +188,14 @@ ${body}
 
 const NAV_HOME = `<a href="/">&larr; Run the emulator</a>`;
 const NAV_STORY = `<a href="/story.html">The Story</a>`;
-const NAV_DOCS = `<a href="/docs/">Design docs &amp; RE notes</a>`;
 const NAV_REPO = `<a href="${REPO}">GitHub</a>`;
-const NAV_ARTICLES = `<a href="/articles/">Articles</a>`;
 const NAV_APPS = `<a href="/apps/">Apps</a>`;
+const NAV_DESIGN = `<a href="/design/">Design</a>`;
+// One nav on every page, mirroring the Start menu in index.html: the two
+// hubs (Apps, Design), the story, the repo. Five identical links everywhere
+// concentrate internal links on the hubs instead of spreading them over
+// per-page variants.
+const NAV = [NAV_HOME, NAV_APPS, NAV_DESIGN, NAV_STORY, NAV_REPO].join(' ');
 
 // Per-app pages, one for each production desktop icon and nothing else: a search for
 // "space cadet pinball in browser" should land on a page that says what the
@@ -419,7 +427,6 @@ function generatePages() {
       title: 'How Wine-Assembly was built: a Windows 98 emulator in raw WebAssembly',
       description: 'The history of Wine-Assembly, an x86 Windows 98 emulator written directly in WebAssembly Text: from the first instruction decoder to a browser that runs Notepad, Pinball, Winamp, DirectX games and 16-bit Windows apps.',
       urlPath: 'story.html', sourceRel: 'PROJECT_STORY.md',
-      nav: [NAV_HOME, NAV_APPS, NAV_ARTICLES, NAV_DOCS, NAV_REPO].join(' '),
       dates: storyDates,
     }),
   });
@@ -435,7 +442,6 @@ function generatePages() {
       content: pageHtml({
         md, title: meta.title, description: meta.description,
         urlPath: a.urlPath, sourceRel: a.rel,
-        nav: [NAV_HOME, NAV_APPS, NAV_ARTICLES, NAV_STORY, NAV_DOCS, NAV_REPO].join(' '),
         dates,
       }),
     });
@@ -463,7 +469,6 @@ function generatePages() {
         title: `${app.name} in your browser`,
         description: extractMeta(md).description,
         urlPath: `apps/${app.id}.html`, sourceRel: APP_BLURBS_REL,
-        nav: [NAV_HOME, NAV_APPS, NAV_ARTICLES, NAV_STORY, NAV_REPO].join(' '),
         dates: blurbDates,
         ogImage,
         ldExtra: {
@@ -483,7 +488,6 @@ function generatePages() {
       title: 'Windows 98 programs you can run in your browser',
       description: extractMeta(appsIndex).description,
       urlPath: 'apps/', sourceRel: APP_BLURBS_REL,
-      nav: [NAV_HOME, NAV_ARTICLES, NAV_STORY, NAV_DOCS, NAV_REPO].join(' '),
       dates: blurbDates,
     }),
   });
@@ -499,11 +503,10 @@ function generatePages() {
       content: pageHtml({
         md, title: meta.title, description: meta.description,
         urlPath: 'articles/', sourceRel: articlesIndexRel,
-        nav: [NAV_HOME, NAV_STORY, NAV_DOCS, NAV_REPO].join(' '),
+        canonical: 'design/',
         dates,
       }).replace('class="wrap"', 'class="wrap docs-index"'),
     });
-    urls.push({ loc: `${SITE}/articles/`, lastmod: dates.modified, priority: '0.8', changefreq: 'monthly' });
   }
 
   // Design docs and reverse-engineering notes.
@@ -519,7 +522,6 @@ function generatePages() {
       content: pageHtml({
         md, title: meta.title, description: meta.description,
         urlPath: d.urlPath, sourceRel: d.rel,
-        nav: [NAV_HOME, NAV_ARTICLES, NAV_STORY, NAV_DOCS, NAV_REPO].join(' '),
         dates,
       }),
     });
@@ -527,21 +529,54 @@ function generatePages() {
     index.push({ ...d, ...meta, dates });
   }
 
-  // docs/index.html: the crawlable table of contents. Two sections so a
-  // reader looking for "how does the emulator work" and one looking for
-  // "what did you find inside Diablo" each land on the right list.
+  // The docs table of contents. Two sections so a reader looking for "how
+  // does the emulator work" and one looking for "what did you find inside
+  // Diablo" each land on the right list.
   const section = (heading, items) => `## ${heading}\n\n` + items.map(i =>
     `- [${i.title}](/${i.urlPath})${i.description ? `  \n  <small>${i.description}</small>` : ''}`).join('\n') + '\n\n';
   const design = index.filter(i => !i.rel.startsWith('docs/re-notes/'));
   const re = index.filter(i => i.rel.startsWith('docs/re-notes/') && i.rel !== 'docs/re-notes/README.md');
-  const indexMd = `# Wine-Assembly design docs and reverse-engineering notes\n\n` +
-    `Wine-Assembly runs real Windows 98 executables in the browser: an x86 interpreter and a Win32 API layer ` +
-    `written directly in WebAssembly Text. These pages are the working notes behind it — the memory map, ` +
-    `the interpreter's dispatch and lazy-flag design, the software GDI rasterizer, the DirectX and Win16 layers, ` +
-    `the performance ledger, and one file per game or application we have taken apart to make it run. ` +
-    `They are rendered from the Markdown in [docs/](${REPO}/tree/main/docs) on GitHub.\n\n` +
+  const docsSections =
     section('Emulator design and performance', design) +
     section('Reverse-engineering notes, one per application', re);
+  const docsIntro =
+    `These pages are the working notes behind it — the memory map, ` +
+    `the interpreter's dispatch and lazy-flag design, the software GDI rasterizer, the DirectX and Win16 layers, ` +
+    `the performance ledger, and one file per game or application we have taken apart to make it run. ` +
+    `They are rendered from the Markdown in [docs/](${REPO}/tree/main/docs) on GitHub.`;
+  const today = new Date().toISOString().slice(0, 10);
+
+  // design/index.html: the one "how it works" hub the Start menu and every
+  // page nav point at. Articles first (the readable layer, each answering one
+  // question), then the design docs and RE notes (the reference layer). The
+  // older articles/ and docs/ indexes keep serving but declare this page
+  // canonical, so nothing already indexed or linked breaks.
+  const articlesBody = fs.existsSync(path.join(ROOT, articlesIndexRel))
+    ? fs.readFileSync(path.join(ROOT, articlesIndexRel), 'utf-8').replace(/^[\s\S]*?(?=^## )/m, '').replace(/^## /gm, '### ')
+    : '';
+  const designMd = `# How Wine-Assembly works: articles, design docs and reverse-engineering notes\n\n` +
+    `Wine-Assembly runs real Windows 98 programs in the browser: an x86 interpreter, a Win32 API layer, ` +
+    `a software GDI, DirectX and a 16-bit loader, all written directly in WebAssembly Text. ` +
+    `The articles below each answer one question about how that is built and are the place to start; ` +
+    `the design docs and per-application reverse-engineering notes after them are the working record ` +
+    `the articles are drawn from. [The story](/story.html) tells it in order.\n\n` +
+    `## Articles\n\n` + articlesBody.trim() + `\n\n` +
+    `## Design docs and reverse-engineering notes\n\n` + docsIntro + `\n\n` + docsSections.replace(/^## /gm, '### ');
+  pages.push({
+    name: 'design/index.html',
+    content: pageHtml({
+      md: designMd,
+      title: 'How Wine-Assembly works: articles, design docs and reverse-engineering notes',
+      description: 'How a Windows 98 emulator written in WebAssembly Text works: articles on the x86 interpreter, lazy flags, real DLLs, software GDI, DirectX and Win16, plus the design docs and per-game reverse-engineering notes behind them.',
+      urlPath: 'design/', sourceRel: 'articles/README.md',
+      dates: { modified: today },
+    }).replace('class="wrap"', 'class="wrap docs-index"'),
+  });
+  urls.push({ loc: `${SITE}/design/`, priority: '0.8', changefreq: 'weekly' });
+
+  const indexMd = `# Wine-Assembly design docs and reverse-engineering notes\n\n` +
+    `Wine-Assembly runs real Windows 98 executables in the browser: an x86 interpreter and a Win32 API layer ` +
+    `written directly in WebAssembly Text. ` + docsIntro + `\n\n` + docsSections;
   pages.push({
     name: 'docs/index.html',
     content: pageHtml({
@@ -549,11 +584,10 @@ function generatePages() {
       title: 'Wine-Assembly design docs and reverse-engineering notes',
       description: 'How a Windows 98 emulator written in WebAssembly Text works: memory map, threaded-code x86 dispatch, lazy flags, software GDI, DirectX, Win16, and per-game reverse-engineering notes.',
       urlPath: 'docs/', sourceRel: 'docs',
-      nav: [NAV_HOME, NAV_ARTICLES, NAV_STORY, NAV_REPO].join(' '),
-      dates: { modified: new Date().toISOString().slice(0, 10) },
+      canonical: 'design/',
+      dates: { modified: today },
     }).replace('class="wrap"', 'class="wrap docs-index"'),
   });
-  urls.push({ loc: `${SITE}/docs/`, priority: '0.7', changefreq: 'weekly' });
 
   const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +

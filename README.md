@@ -1,6 +1,6 @@
 # Wine-Assembly: run real Windows 98 apps and games in your browser
 
-**[Try it now → wine-assembly.berrry.app](https://wine-assembly.berrry.app)** · [Apps you can run](https://wine-assembly.berrry.app/apps/) · [The story of how it was built](https://wine-assembly.berrry.app/story.html) · [Articles on how it works](https://wine-assembly.berrry.app/articles/) · [Design docs & reverse-engineering notes](https://wine-assembly.berrry.app/docs/)
+**[Try it now → wine-assembly.berrry.app](https://wine-assembly.berrry.app)** · [Apps you can run](https://wine-assembly.berrry.app/apps/) · [The story of how it was built](https://wine-assembly.berrry.app/story.html) · [How it works: articles, design docs & reverse-engineering notes](https://wine-assembly.berrry.app/design/)
 
 [![3D Pinball Space Cadet, SkiFree, Solitaire and other Windows 98 programs running in a browser tab](icons/og-image.png)](https://wine-assembly.berrry.app)
 
