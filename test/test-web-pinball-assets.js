@@ -327,9 +327,9 @@ assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API source
 assert(webApp.includes('lib/storage.js?v=170'), 'web host should cache-bust storage after renderer-aware registry delivery');
 assert(webApp.includes('lib/filesystem.js?v=173'), 'web host should cache-bust persisted Win32 file timestamps');
 assert(webApp.includes('lib/gdi-surface.js?v=2'), 'web host should load the canonical GDI surface module');
-assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=214'),
+assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=215'),
   'web host should load the GDI surface module before host imports');
-assert(webApp.includes('lib/host-imports.js?v=214'), 'web host should cache-bust the current host imports');
+assert(webApp.includes('lib/host-imports.js?v=215'), 'web host should cache-bust the current host imports');
 assert(/lib\/touch-cursor\.js\?v=\d+/.test(webApp), 'web host should cache-bust custom touch cursor rendering');
 assert(webApp.includes('lib/thread-manager.js?v=188'), 'web host should cache-bust DLL thread-notification routing');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
@@ -358,7 +358,8 @@ assert(pageHtml.includes('lib/watx-launcher.js'),
   'the page should load the WATX launcher that backs the source-compilation fallback');
 assert(hostJs.includes('Promise.all([fontsReady, wasmReady, apiTableReady])'), 'web startup should overlap independent font, WASM, and API-table loading');
 assert(hostJs.includes('Promise.all(dllPaths.map(async item =>'), 'web startup should fetch independent DLL payloads in parallel');
-assert(deployJs.includes("const BINARY_DIRS = ['binaries', 'icons', 'build']"), 'deploy should include precompiled browser WASM artifacts');
+assert(/const BINARY_DIRS = \[[^\]]*'build'/.test(deployJs),
+  'deploy should include precompiled browser WASM artifacts');
 assert(deployJs.includes("'build/wine-assembly.wasm'"), 'deploy should allow the tail-call browser WASM artifact above the general binary-size cap');
 assert(deployJs.includes("'build/wine-assembly.compat.wasm'"), 'deploy should allow the compatibility browser WASM artifact above the general binary-size cap');
 assert(deployJs.includes("'.wasm'"), 'deploy should encode WASM artifacts as binary');
