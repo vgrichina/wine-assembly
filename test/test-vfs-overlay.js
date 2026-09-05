@@ -21,6 +21,14 @@ const {
 } = require('../lib/overlay-store');
 const byteProvider = require('../lib/byte-provider');
 
+const browserShellSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'browser-shell.js'), 'utf8');
+assert.match(browserShellSource,
+  /wine\._vfsOverlayTimer = wine\._vfsOverlayDurable \? setInterval/,
+  'session imports must not repeatedly clone their growing installer output into a memory store');
+assert.match(browserShellSource,
+  /if \(wine\._vfsOverlayDurable\) void flushBrowserOverlay\(wine, 'stop'\)/,
+  'stopping a session import must not serialize its live VFS into a redundant memory copy');
+
 const GENERIC_WRITE = 0x40000000;
 const GENERIC_READ = 0x80000000;
 const GENERIC_ALL = 0x10000000;

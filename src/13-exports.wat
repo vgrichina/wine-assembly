@@ -3914,6 +3914,16 @@
     (global.set $exe_name_wa (i32.const 0x120))
     (global.set $exe_name_len (local.get $n)))
 
+  ;; The browser and CLI know the guest launch path. Keep GetModuleFileName and
+  ;; argv on that drive instead of pretending every mounted executable is C:.
+  (func (export "set_exe_drive") (param $drive i32)
+    (local.set $drive (i32.and (local.get $drive) (i32.const 0xDF)))
+    (if (i32.and
+          (i32.ge_u (local.get $drive) (i32.const 0x41))
+          (i32.le_u (local.get $drive) (i32.const 0x5A)))
+      (then (global.set $exe_drive (local.get $drive)))
+      (else (global.set $exe_drive (i32.const 0x43)))))
+
   ;; Get GUEST_BASE for direct WASM memory access
   (func (export "get_guest_base") (result i32) (global.get $GUEST_BASE))
   (func (export "get_dll_table") (result i32) (global.get $DLL_TABLE))

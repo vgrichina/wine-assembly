@@ -2638,6 +2638,7 @@
   (global $launch_env_len (mut i32) (i32.const 0))
   (global $exe_name_wa (mut i32) (region.addr $STRING_CONSTANTS 0x00000020))   ;; WASM addr of exe name string
   (global $exe_name_len (mut i32) (i32.const 7))      ;; length of exe name
+  (global $exe_drive (mut i32) (i32.const 0x43))      ;; drive letter reported for the process image
   ;; MSVCRT static data pointers (allocated on first use from heap)
   (global $msvcrt_fmode_ptr   (mut i32) (i32.const 0))
   (global $msvcrt_commode_ptr (mut i32) (i32.const 0))
