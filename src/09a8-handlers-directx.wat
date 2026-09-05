@@ -1810,9 +1810,10 @@
   (func $handle_IDirectDraw_CreateSurface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ddsd_wa i32) (local $caps i32) (local $w i32) (local $h i32) (local $bpp i32)
     (local $pitch i32) (local $dib_size i32) (local $dib_guest i32) (local $fmt i32) (local $dib_wa i32)
-    (local $obj i32) (local $entry i32) (local $flags i32)
+    (local $obj i32) (local $entry i32) (local $flags i32) (local $ddsd_flags i32)
     (local $back_obj i32) (local $back_entry i32) (local $vidmem_bytes i32)
     (local.set $ddsd_wa (call $g2w (local.get $arg1)))
+    (local.set $ddsd_flags (i32.load offset=4 (local.get $ddsd_wa)))
     ;; DDSURFACEDESC:
     ;;   +0  dwSize (4)
     ;;   +4  dwFlags (4)
@@ -1848,7 +1849,7 @@
         (if (i32.eqz (local.get $w)) (then (local.set $w (call $dx_display_w_get))))
         (if (i32.eqz (local.get $h)) (then (local.set $h (call $dx_display_h_get))))
         ;; Use pixel format bpp from DDSURFACEDESC if DDSD_PIXELFORMAT (0x1000) is set
-        (if (i32.and (i32.load (i32.add (local.get $ddsd_wa) (i32.const 4))) (i32.const 0x1000))
+        (if (i32.and (local.get $ddsd_flags) (i32.const 0x1000))
           (then
             (local.set $bpp (i32.load (i32.add (local.get $ddsd_wa) (i32.const 84)))))
           (else
@@ -1858,7 +1859,7 @@
         (if (i32.eqz (local.get $bpp)) (then (local.set $bpp (call $dx_display_bpp_get))))
         (local.set $flags (i32.const 4)))) ;; flag=offscreen
     (local.set $fmt (call $dx_surf_fmt_default (local.get $bpp)))
-    (if (i32.and (i32.load offset=4 (local.get $ddsd_wa)) (i32.const 0x1000))
+    (if (i32.and (local.get $ddsd_flags) (i32.const 0x1000))
       (then (local.set $fmt
         (call $dx_surf_fmt_from_ddpf
           (i32.add (local.get $ddsd_wa) (i32.const 72)) (local.get $bpp)))))
@@ -1866,6 +1867,12 @@
     (local.set $pitch (i32.and
       (i32.add (i32.mul (local.get $w) (i32.div_u (local.get $bpp) (i32.const 8))) (i32.const 3))
       (i32.const 0xFFFFFFFC)))
+    ;; DDSD_PITCH: system-memory surfaces may have caller padding that every
+    ;; subsequent Lock must preserve.
+    (if (i32.and
+          (i32.ne (i32.and (local.get $ddsd_flags) (i32.const 0x00000008)) (i32.const 0))
+          (i32.ne (i32.load offset=16 (local.get $ddsd_wa)) (i32.const 0)))
+      (then (local.set $pitch (i32.load offset=16 (local.get $ddsd_wa)))))
     ;; Allocate DIB, plus slack rows past the end.
     ;;
     ;; A real primary surface is the front of a video-memory aperture that
@@ -1885,9 +1892,24 @@
     ;; 640x480 primary. $dib_size stays the logical size, so pitch, vidmem
     ;; accounting and everything that reads the surface are unchanged.
     (local.set $dib_size (i32.mul (local.get $pitch) (local.get $h)))
-    (local.set $dib_guest (call $dib_alloc
-      (i32.add (local.get $dib_size)
-        (i32.add (i32.mul (local.get $pitch) (i32.const 16)) (i32.const 64)))))
+    ;; DDSD_LPSURFACE lets a SYSTEMMEMORY surface alias storage owned by the
+    ;; caller. FreeImage/Blitz uses this to expose its decoded ARGB rows to
+    ;; DirectDraw before converting them into the display format. Replacing
+    ;; that pointer with a fresh zeroed DIB turns every loaded image black.
+    (if (i32.and
+          (i32.ne (i32.and (local.get $ddsd_flags) (i32.const 0x00000800)) (i32.const 0))
+          (i32.and
+            (i32.ne (i32.and (local.get $caps) (i32.const 0x00000800)) (i32.const 0))
+            (i32.ne (i32.load offset=36 (local.get $ddsd_wa)) (i32.const 0))))
+      (then
+        (local.set $dib_guest (i32.load offset=36 (local.get $ddsd_wa)))
+        (local.set $dib_wa (call $g2w (local.get $dib_guest)))
+        (local.set $flags (i32.or (local.get $flags) (i32.const 0x200)))
+        (local.set $vidmem_bytes (i32.const 0)))
+      (else
+        (local.set $dib_guest (call $dib_alloc
+          (i32.add (local.get $dib_size)
+            (i32.add (i32.mul (local.get $pitch) (i32.const 16)) (i32.const 64)))))))
     ;; An exhausted heap returns 0, and g2w(0) is the base of the guest image --
     ;; zeroing a 640x480 surface from there wipes the first 300KB of the PE's
     ;; own code, so the app dies executing zeros a long way from the real cause.
@@ -1897,12 +1919,18 @@
         (global.set $eax (i32.const 0x8876017C)) ;; DDERR_OUTOFVIDEOMEMORY
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
-    (local.set $dib_wa (call $g2w (local.get $dib_guest))) (call $zero_memory (local.get $dib_wa) (local.get $dib_size))
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x200)))
+      (then
+        (local.set $dib_wa (call $g2w (local.get $dib_guest)))
+        (call $zero_memory (local.get $dib_wa) (local.get $dib_size))))
     ;; Mipmap: the pyramid adds ~1/3 of level-0 bytes. DDSCAPS_MIPMAP=0x400000.
     ;; Only level 0 is allocated in RAM; extra pyramid bytes are accounted in
     ;; vidmem only so MCM's GetAvailableVidMem-delta footprint check matches.
-    (local.set $vidmem_bytes (local.get $dib_size))
-    (if (i32.and (local.get $caps) (i32.const 0x400000))
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x200)))
+      (then (local.set $vidmem_bytes (local.get $dib_size))))
+    (if (i32.and
+          (i32.eqz (i32.and (local.get $flags) (i32.const 0x200)))
+          (i32.ne (i32.and (local.get $caps) (i32.const 0x400000)) (i32.const 0)))
       (then (local.set $vidmem_bytes
         (i32.div_u (i32.mul (local.get $dib_size) (i32.const 4)) (i32.const 3)))))
     (global.set $dx_vidmem_used (i32.add (global.get $dx_vidmem_used) (local.get $vidmem_bytes)))
@@ -1910,7 +1938,8 @@
     (local.set $obj (call $dx_create_com_obj (i32.const 2) (global.get $DX_VTBL_DDSURF2)))
     (if (i32.eqz (local.get $obj))
       (then
-        (call $dib_free_wasm (local.get $dib_wa))
+        (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x200)))
+          (then (call $dib_free_wasm (local.get $dib_wa))))
         (global.set $eax (i32.const 0x80004005))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
@@ -3497,7 +3526,8 @@
         (if (i32.eq (local.get $entry) (global.get $dx_primary_wa))
           (then (global.set $dx_primary_wa (i32.const 0))))
         (call $dx_cursor_reset (local.get $entry))
-        (call $dib_free_wasm (local.get $dib_wa))
+        (if (i32.eqz (i32.and (load.field DxObject flags (local.get $entry)) (i32.const 0x200)))
+          (then (call $dib_free_wasm (local.get $dib_wa))))
         (call $dx_free (local.get $entry))))
     (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
@@ -4236,12 +4266,25 @@
 
   ;; GetAttachedSurface(this, lpDDSCaps, lplpDDAttachedSurface)
   (func $handle_IDirectDrawSurface_GetAttachedSurface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
+    (local $entry i32) (local $child i32) (local $child_entry i32)
+    (local $requested i32) (local $actual i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
-    ;; misc0 stores the back buffer guest ptr (or 0)
-    (if (load.field DxObject misc0 (local.get $entry))
+    (local.set $child (load.field DxObject misc0 (local.get $entry)))
+    (if (local.get $child)
       (then
-        (call $gs32 (local.get $arg2) (load.field DxObject misc0 (local.get $entry)))
+        (local.set $child_entry (call $dx_from_this (local.get $child)))
+        (local.set $requested (call $gl32 (local.get $arg1)))
+        (local.set $actual (i32.load (call $dx_surf_meta_ptr (local.get $child_entry))))))
+    ;; Every requested capability must belong to the returned attachment.
+    ;; Blitz probes a primary for TEXTURE|MIPMAP before converting loaded
+    ;; images. Returning its unrelated back buffer makes Blitz copy that empty
+    ;; surface over the decoded image instead of taking its no-mipmap path.
+    (if (i32.and
+          (i32.ne (local.get $child) (i32.const 0))
+          (i32.eq (i32.and (local.get $actual) (local.get $requested))
+                  (local.get $requested)))
+      (then
+        (call $gs32 (local.get $arg2) (local.get $child))
         (global.set $eax (i32.const 0)))
       (else
         (global.set $eax (i32.const 0x887600FF)))) ;; DDERR_NOTFOUND
