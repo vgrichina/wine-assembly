@@ -15400,89 +15400,74 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 545: GetSystemDirectoryA(lpBuffer, uSize) — 2 args stdcall
+  (func $fixed_windows_path_char (param $i i32) (result i32)
+    (local $c i32)
+    (if (i32.eq (local.get $i) (i32.const 0)) (then (local.set $c (i32.const 67))))  ;; C
+    (if (i32.eq (local.get $i) (i32.const 1)) (then (local.set $c (i32.const 58))))  ;; :
+    (if (i32.eq (local.get $i) (i32.const 2)) (then (local.set $c (i32.const 92))))  ;; \
+    (if (i32.eq (local.get $i) (i32.const 3)) (then (local.set $c (i32.const 87))))  ;; W
+    (if (i32.eq (local.get $i) (i32.const 4)) (then (local.set $c (i32.const 73))))  ;; I
+    (if (i32.eq (local.get $i) (i32.const 5)) (then (local.set $c (i32.const 78))))  ;; N
+    (if (i32.eq (local.get $i) (i32.const 6)) (then (local.set $c (i32.const 68))))  ;; D
+    (if (i32.eq (local.get $i) (i32.const 7)) (then (local.set $c (i32.const 79))))  ;; O
+    (if (i32.eq (local.get $i) (i32.const 8)) (then (local.set $c (i32.const 87))))  ;; W
+    (if (i32.eq (local.get $i) (i32.const 9)) (then (local.set $c (i32.const 83))))  ;; S
+    (if (i32.eq (local.get $i) (i32.const 10)) (then (local.set $c (i32.const 92)))) ;; \
+    (if (i32.eq (local.get $i) (i32.const 11)) (then (local.set $c (i32.const 83)))) ;; S
+    (if (i32.eq (local.get $i) (i32.const 12)) (then (local.set $c (i32.const 89)))) ;; Y
+    (if (i32.eq (local.get $i) (i32.const 13)) (then (local.set $c (i32.const 83)))) ;; S
+    (if (i32.eq (local.get $i) (i32.const 14)) (then (local.set $c (i32.const 84)))) ;; T
+    (if (i32.eq (local.get $i) (i32.const 15)) (then (local.set $c (i32.const 69)))) ;; E
+    (if (i32.eq (local.get $i) (i32.const 16)) (then (local.set $c (i32.const 77)))) ;; M
+    (local.get $c))
+
+  ;; The emulated Win98 installation has one fixed Windows directory and its
+  ;; SYSTEM child. Both APIs share the same TCHAR-count and truncation rules.
+  (func $get_fixed_windows_directory (param $buf_g i32) (param $size i32)
+        (param $wide i32) (param $system i32) (result i32)
+    (local $required i32) (local $length i32)
+    (local $base_wa i32) (local $at_wa i32) (local $i i32) (local $c i32)
+    (local.set $required
+      (select (i32.const 18) (i32.const 11) (local.get $system)))
+    (local.set $length (i32.sub (local.get $required) (i32.const 1)))
+    (if (i32.or (i32.eqz (local.get $buf_g))
+                (i32.lt_u (local.get $size) (local.get $required)))
+      (then (return (local.get $required))))
+    (local.set $base_wa (call $g2w (local.get $buf_g)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $required)))
+      (local.set $at_wa (i32.add (local.get $base_wa)
+        (i32.shl (local.get $i) (local.get $wide))))
+      (local.set $c
+        (if (result i32) (i32.lt_u (local.get $i) (local.get $length))
+          (then (call $fixed_windows_path_char (local.get $i)))
+          (else (i32.const 0))))
+      (if (local.get $wide)
+        (then (i32.store16 (local.get $at_wa) (local.get $c)))
+        (else (i32.store8 (local.get $at_wa) (local.get $c))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (local.get $length))
+
   (func $handle_GetSystemDirectoryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32)
-    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
-                 (i32.ge_u (local.get $arg1) (i32.const 18)))
-      (then
-        (local.set $dst (call $g2w (local.get $arg0)))
-        ;; Write "C:\WINDOWS\SYSTEM" (18 chars including null)
-        (i32.store (local.get $dst) (i32.const 0x575c3a43))          ;; C:\W
-        (i32.store (i32.add (local.get $dst) (i32.const 4)) (i32.const 0x4f444e49))   ;; INDO
-        (i32.store (i32.add (local.get $dst) (i32.const 8)) (i32.const 0x535c5357))   ;; WS\S
-        (i32.store (i32.add (local.get $dst) (i32.const 12)) (i32.const 0x45545359))  ;; YSTE
-        (i32.store16 (i32.add (local.get $dst) (i32.const 16)) (i32.const 0x004d))    ;; M\0
-        (global.set $eax (i32.const 17)))
-      (else
-        ;; Required size includes the terminator when the buffer is short.
-        (global.set $eax (i32.const 18))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
+    (global.set $eax (call $get_fixed_windows_directory
+      (local.get $arg0) (local.get $arg1) (i32.const 0) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; GetSystemDirectoryW(lpBuffer, uSize) — UTF-16 counterpart.  On a short
-  ;; buffer Win32 returns the required size including the terminator and does
-  ;; not publish a partial path; on success it excludes the terminator.
   (func $handle_GetSystemDirectoryW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32)
-    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
-                 (i32.ge_u (local.get $arg1) (i32.const 18)))
-      (then
-        (local.set $dst (call $g2w (local.get $arg0)))
-        ;; UTF-16LE "C:\\WINDOWS\\SYSTEM\0".
-        (i32.store (local.get $dst) (i32.const 0x003a0043))
-        (i32.store offset=4 (local.get $dst) (i32.const 0x0057005c))
-        (i32.store offset=8 (local.get $dst) (i32.const 0x004e0049))
-        (i32.store offset=12 (local.get $dst) (i32.const 0x004f0044))
-        (i32.store offset=16 (local.get $dst) (i32.const 0x00530057))
-        (i32.store offset=20 (local.get $dst) (i32.const 0x0053005c))
-        (i32.store offset=24 (local.get $dst) (i32.const 0x00530059))
-        (i32.store offset=28 (local.get $dst) (i32.const 0x00450054))
-        (i32.store offset=32 (local.get $dst) (i32.const 0x0000004d))
-        (global.set $eax (i32.const 17)))
-      (else
-        (global.set $eax (i32.const 18))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
+    (global.set $eax (call $get_fixed_windows_directory
+      (local.get $arg0) (local.get $arg1) (i32.const 1) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 813: GetWindowsDirectoryA(lpBuffer, uSize) → length
   (func $handle_GetWindowsDirectoryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32)
-    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
-                 (i32.ge_u (local.get $arg1) (i32.const 11)))
-      (then
-        (local.set $dst (call $g2w (local.get $arg0)))
-        ;; Write "C:\WINDOWS" (10 chars + null)
-        (i32.store (local.get $dst) (i32.const 0x575c3a43))          ;; C:\W
-        (i32.store (i32.add (local.get $dst) (i32.const 4)) (i32.const 0x4f444e49))   ;; INDO
-        (i32.store16 (i32.add (local.get $dst) (i32.const 8)) (i32.const 0x5357))     ;; WS
-        (i32.store8 (i32.add (local.get $dst) (i32.const 10)) (i32.const 0))          ;; NUL
-        (global.set $eax (i32.const 10)))
-      (else
-        (global.set $eax (i32.const 11))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
+    (global.set $eax (call $get_fixed_windows_directory
+      (local.get $arg0) (local.get $arg1) (i32.const 0) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; GetWindowsDirectoryW(lpBuffer, uSize) — UTF-16 counterpart with the
-  ;; Win32 required-size contract used by Unicode setup runtimes.
   (func $handle_GetWindowsDirectoryW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32)
-    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
-                 (i32.ge_u (local.get $arg1) (i32.const 11)))
-      (then
-        (local.set $dst (call $g2w (local.get $arg0)))
-        ;; UTF-16LE "C:\WINDOWS\0".
-        (i32.store (local.get $dst) (i32.const 0x003a0043))
-        (i32.store offset=4 (local.get $dst) (i32.const 0x0057005c))
-        (i32.store offset=8 (local.get $dst) (i32.const 0x004e0049))
-        (i32.store offset=12 (local.get $dst) (i32.const 0x004f0044))
-        (i32.store offset=16 (local.get $dst) (i32.const 0x00530057))
-        (i32.store16 offset=20 (local.get $dst) (i32.const 0))
-        (global.set $eax (i32.const 10)))
-      (else
-        (global.set $eax (i32.const 11))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
+    (global.set $eax (call $get_fixed_windows_directory
+      (local.get $arg0) (local.get $arg1) (i32.const 1) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 546: GetVolumeInformationW — the same volume GetVolumeInformationA
   ;; describes, with its two strings written as UTF-16.
