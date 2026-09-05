@@ -220,6 +220,8 @@ assert.strictEqual(captainClawReg.get('Skip Logo Movies'), 1);
 
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const browserShell = fs.readFileSync(path.join(root, 'lib/browser-shell.js'), 'utf8');
+assert(/<script src="lib\/apps\.js\?v=20"><\/script>/.test(html),
+  'the browser fetches the corrected Age of Empires asset manifest');
 assert(/case 'quake2_demo':\s*return 10000;/.test(browserShell),
   'Quake II OpenGL startup uses the proven cooperative browser slice');
 assert(/<option value=["']jazz2_demo["']>Jazz Jackrabbit 2 Demo<\/option>/.test(html),
