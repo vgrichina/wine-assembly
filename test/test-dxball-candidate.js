@@ -155,15 +155,19 @@ async function main() {
       // "could not find its data". The install is flat, so one glob covers it.
       '--vfs-include=*',
       '--batch-size=50000',
-      '--max-batches=340',
-      '--stuck-after=500',
+      '--max-batches=900',
+      '--stuck-after=1000',
       '--trace-api=midiStreamOpen,midiStreamOut,midiStreamRestart,midiStreamPause,IDirectSound_CreateSoundBuffer,IDirectSound_Release',
       '--trace-host=voice_play_ring',
-      `--input=62:keydown:27,63:keyup:27,120:png-pixels:${menuPng},123:dump-focus:before-gameplay,` +
-        `124:mousedown:320:240,140:mouseup:320:240,180:dump-focus:gameplay,220:png-pixels:${readyPng},` +
-        `235:mousedown:320:430,245:mouseup:320:430,255:png-pixels:${ballPngA},` +
-        `275:png-pixels:${ballPngB},295:png-pixels:${ballPngC},` +
-        `305:mousemove:120:430,325:png-pixels:${paddleLeftPng}`,
+      // The first click advances the title into its fading instructions page;
+      // wait for that page to settle before the second click starts a level.
+      // Clicking again during the fade is ignored by the original game.
+      `--input=62:keydown:27,63:keyup:27,123:dump-focus:before-gameplay,` +
+        `124:mousedown:320:240,140:mouseup:320:240,340:png-pixels:${menuPng},` +
+        `360:mousedown:320:240,375:mouseup:320:240,376:dump-focus:gameplay,480:png-pixels:${readyPng},` +
+        `500:mousedown:320:430,515:mouseup:320:430,600:png-pixels:${ballPngA},` +
+        `680:png-pixels:${ballPngB},760:png-pixels:${ballPngC},` +
+        `800:mousemove:120:430,880:png-pixels:${paddleLeftPng}`,
     ], 60000);
     assert(/title="DX-Ball"/i.test(gameOutput), 'installed game did not create its DX-Ball window');
     for (const frame of [menuPng, readyPng, ballPngA, ballPngB, ballPngC, paddleLeftPng]) {
