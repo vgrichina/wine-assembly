@@ -290,18 +290,20 @@ async function runGameplay(gameExe, screenshotDir) {
 }
 
 async function main() {
-  if (!fs.existsSync(INSTALLER)) {
+  const seed = String(process.env.SNOOD_INSTALLED_ROOT || '').trim();
+  if (!fs.existsSync(INSTALLER) && !seed) {
     console.log('SKIP Snood candidate: fetch with node tools/fetch-candidate-corpus.js --id=snood');
     return;
   }
-  assert(sha256(INSTALLER) === INSTALLER_SHA256, 'Snood installer hash mismatch');
+  if (fs.existsSync(INSTALLER)) {
+    assert(sha256(INSTALLER) === INSTALLER_SHA256, 'Snood installer hash mismatch');
+  }
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-snood-candidate-'));
   const captureDir = path.join(temp, 'bootstrap-vfs');
   const installRoot = path.join(temp, 'installed-vfs');
   const screenshotDir = process.env.SNOOD_SCREENSHOT_DIR || path.join(ROOT, 'build', 'snood-candidate');
   fs.mkdirSync(screenshotDir, { recursive: true });
   try {
-    const seed = String(process.env.SNOOD_INSTALLED_ROOT || '').trim();
     if (seed) {
       console.log(`Snood stage 1/2: reusing emulator-installed VFS ${seed}`);
       fs.cpSync(seed, installRoot, { recursive: true });
