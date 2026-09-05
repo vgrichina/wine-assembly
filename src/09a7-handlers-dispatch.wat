@@ -35,7 +35,8 @@
     (drop (local.get $arg3))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
-    (global.set $eax (call $clipboard_register_format_a (local.get $arg0)))
+    (global.set $eax
+      (call $clipboard_register_format (local.get $arg0) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; stdcall 1 param
   )
 

@@ -3697,8 +3697,8 @@
               (then (i32.const 1))
               (else (i32.const 0))))))
       (if (i32.ne
-            (call $gl8 (i32.add (local.get $gp) (local.get $i)))
-            (call $clipboard_rtf_name_char (local.get $i)))
+            (call $tolower (call $gl8 (i32.add (local.get $gp) (local.get $i))))
+            (call $tolower (call $clipboard_rtf_name_char (local.get $i))))
         (then (return (i32.const 0))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -3779,25 +3779,28 @@
       (br $scan)))
     (i32.const 0))
 
-  (func $clipboard_register_format_a (param $name_g i32) (result i32)
-    (local $id i32)
-    (local.set $id (call $clipfmt_intern (local.get $name_g)))
+  (func $clipboard_register_format (param $name_g i32) (param $wide i32) (result i32)
+    (local $ansi_g i32) (local $id i32)
+    (if (i32.eqz (local.get $name_g)) (then (return (i32.const 0))))
+    (if (local.get $wide)
+      (then
+        (local.set $ansi_g (call $clipfmt_wide_to_ansi (local.get $name_g)))
+        (if (i32.eqz (local.get $ansi_g)) (then (return (i32.const 0)))))
+      (else (local.set $ansi_g (local.get $name_g))))
+    (local.set $id (call $clipfmt_intern (local.get $ansi_g)))
     ;; The RTF payload has its own storage and its own id global; keep that
     ;; global pointing at the interned value so both agree.
     (if (i32.and (i32.ne (local.get $id) (i32.const 0))
-                 (call $guest_str_is_rich_text_format_a (local.get $name_g)))
+                 (call $guest_str_is_rich_text_format_a (local.get $ansi_g)))
       (then (global.set $clipboard_rtf_format_id (local.get $id))))
+    (if (local.get $wide) (then (call $heap_free (local.get $ansi_g))))
     (local.get $id))
 
+  (func $clipboard_register_format_a (param $name_g i32) (result i32)
+    (call $clipboard_register_format (local.get $name_g) (i32.const 0)))
+
   (func $clipboard_register_format_w (param $name_g i32) (result i32)
-    (local $ansi i32) (local $id i32)
-    ;; Intern through the same ANSI table: a W registration and an A
-    ;; registration of the same name must produce the same id.
-    (local.set $ansi (call $clipfmt_wide_to_ansi (local.get $name_g)))
-    (if (i32.eqz (local.get $ansi)) (then (return (i32.const 0))))
-    (local.set $id (call $clipboard_register_format_a (local.get $ansi)))
-    (call $heap_free (local.get $ansi))
-    (local.get $id))
+    (call $clipboard_register_format (local.get $name_g) (i32.const 1)))
 
   ;; NUL-terminated UTF-16 to a freshly allocated ANSI copy. Format names are
   ;; ASCII in every app we have met; a character above 0xFF becomes '?'.

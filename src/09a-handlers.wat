@@ -11544,7 +11544,8 @@ HookEx — no next hook in chain, return 0
     (drop (local.get $arg3))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
-    (global.set $eax (call $clipboard_register_format_w (local.get $arg0)))
+    (global.set $eax
+      (call $clipboard_register_format (local.get $arg0) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 399: CopyRect(lprcDst, lprcSrc) → BOOL — 2 args stdcall

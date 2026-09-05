@@ -8,7 +8,6 @@
     "GetSystemDirectory",
     "GetWindowsDirectory",
     "LoadLibraryEx",
-    "RegisterClipboardFormat",
     "wsprintf",
     "wvsprintf"
   ],
