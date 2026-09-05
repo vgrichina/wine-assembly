@@ -31,9 +31,32 @@ failure: the actual movie renders after the payload is ready.
 
 ## Cursor behavior
 
-WINSWORD loads `IDC_ARROW` during window creation, then calls `SetCursor(NULL)`
-when its own context-sensitive software cursor takes over. It draws that cursor
-into the game surface, so the browser/system cursor must be hidden. Win32
-defines a NULL `SetCursor` independently of the signed `ShowCursor` display
-count. The host previously mapped handle zero through its unknown-ID fallback
-to CSS `default`, causing the normal arrow to appear over the game cursor.
+This was checked against the corpus executable, not inferred from another
+engine or release. In `WINSWORD.EXE` the window-class setup at `0x00401266`
+loads `IDC_ARROW`. Its WndProc at `0x00401033` handles `WM_SETCURSOR` at
+`0x0040111f` by calling `SetCursor(NULL)` and returning 1. That is the only
+`SetCursor` call in the executable.
+
+The missing system pointer is intentional because WINSWORD owns a software
+cursor:
+
+- `WM_MOUSEMOVE` at `0x004011d8` passes the raw client coordinates to
+  `0x0041486f`, which stores them in the mouse state rooted at `0x004387e4`.
+- `0x00407a96` selects cursor resources; zero clears the pointer, while
+  `0x04010000` is the default arrow and the following resource IDs are its
+  context-sensitive variants.
+- `0x004073da` enables mouse input and selects that default resource.
+- `0x00414680` locks the DirectDraw surface, composites the cursor pixels at
+  the current coordinates, and unlocks it for presentation.
+
+A deterministic CLI run reached café gameplay with resource `0x04010000` and
+the software arrow at `(320,240)`. Moving to real hotspots changed it to the
+magnifier and gear; clicking did not clear it, and moving away restored the
+arrow. Therefore a cursor that disappears after a click is a host input or
+surface-publication defect, not intended WINSWORD behavior.
+
+The browser/system cursor must remain hidden while this software cursor is
+active. Win32 defines a NULL `SetCursor` independently of the signed
+`ShowCursor` display count. The host previously mapped handle zero through its
+unknown-ID fallback to CSS `default`, causing the normal arrow to appear over
+the game cursor.
