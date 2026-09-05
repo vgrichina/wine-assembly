@@ -200,8 +200,10 @@ const digest = crypto.createHash('sha256')
 // ERROR_CALL_NOT_IMPLEMENTED result instead of claiming an ACL was persisted.
 // 2026-09-04: 441 -> 439. ExtractIconA and ExtractIconExA now enumerate and
 // materialize caller-owned PE/NE/ICO icons instead of returning fake success.
-const EXPECTED_COUNT = 439;
-const EXPECTED_SHA256 = '172acea85f88f840222ac3ee31bef8671f2d2197db18fdbf25c9fd332b075aac';
+// 2026-09-04: 439 -> 438. GetForegroundWindow now queries renderer-wide
+// top-level z-order instead of returning this process's main HWND.
+const EXPECTED_COUNT = 438;
+const EXPECTED_SHA256 = '6e33bbf2a5e29ff558119b9771d8cbbb1d11e1c0afe57a207e36ea46400cdeea';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

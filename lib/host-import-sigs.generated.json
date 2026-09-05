@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 234,
+  "count": 235,
   "sigs": {
     "log": {
       "params": [
@@ -530,6 +530,12 @@
       "params": [
         "i32"
       ],
+      "results": [
+        "i32"
+      ]
+    },
+    "foreground_window": {
+      "params": [],
       "results": [
         "i32"
       ]

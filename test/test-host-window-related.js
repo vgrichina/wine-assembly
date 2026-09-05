@@ -87,6 +87,18 @@ assert.strictEqual(host.get_window_info(100, 0), 0x10c00000, 'get_window_info st
 assert.strictEqual(host.get_window_info(410, 1), 0, 'get_window_info visible');
 assert.strictEqual(host.get_window_info(420, 2), 0, 'get_window_info enabled');
 assert.strictEqual(host.get_window_info(100, 3), 4321, 'get_window_info process owner');
+assert.strictEqual(host.foreground_window(), 420,
+  'foreground_window returns the highest visible renderer top-level');
+renderer.windows[420].visible = false;
+assert.strictEqual(host.foreground_window(), 400,
+  'foreground_window skips hidden top-level windows');
+renderer.windows[420].visible = true;
+const topLevels = Object.values(renderer.windows).filter(win => !win.isChild);
+const priorVisibility = topLevels.map(win => win.visible);
+topLevels.forEach(win => { win.visible = false; });
+assert.strictEqual(host.foreground_window(), 0,
+  'foreground_window returns NULL while no top-level window is visible');
+topLevels.forEach((win, index) => { win.visible = priorVisibility[index]; });
 
 const computesBeforeRect = clientRectComputes;
 host.get_window_rect(510, 128);
@@ -136,6 +148,8 @@ assert(renderer.windows[100].zOrder >= 100, 'activate_window raises z-order');
 assert(renderer.repaintScheduled, 'activate_window schedules repaint');
 assert.strictEqual(renderer.keyboardOwner, renderer.windows[100],
   'activate_window assigns keyboard input to the activated top-level');
+assert.strictEqual(host.foreground_window(), 100,
+  'activating a window makes it the renderer-wide foreground window');
 
 const topZBeforeChildActivation = renderer.windows[100].zOrder;
 host.set_window_zorder(110, 0);

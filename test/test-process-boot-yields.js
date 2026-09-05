@@ -62,7 +62,7 @@ function fakeGuest(name, { nameGetter }) {
     'the browser must not reuse the loader that parsed oversized NE files as PE');
   assert.match(pageSource, /host\.js\?v=292/);
   assert.match(hostSource, /static SOURCE_VERSION = '292'/,
-    'the ExtractIcon host import needs a new browser artifact key');
+    'the current host imports need a matching browser artifact key');
 
   const peBytes = syntheticLargePe();
   const peMemory = new ArrayBuffer(0x5000);

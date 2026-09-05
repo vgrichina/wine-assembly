@@ -15787,10 +15787,11 @@ SetColorAdjustment — validate and copy complete per-DC state.
     (call $heap_free (local.get $ansi))
   )
 
-  ;; 610: GetForegroundWindow — STUB: unimplemented
+  ;; 610: GetForegroundWindow
   (func $handle_GetForegroundWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; GetForegroundWindow() — 0 args, return active window handle
-    (global.set $eax (global.get $main_hwnd))
+    ;; This is system-wide, unlike GetActiveWindow's calling-thread queue.
+    ;; The renderer owns the cross-process top-level z-order.
+    (global.set $eax (call $host_foreground_window))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 

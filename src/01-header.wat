@@ -179,6 +179,8 @@
   (import "host" "post_window_message" (func $host_post_window_message (param i32 i32 i32 i32) (result i32)))
   ;; post_window_message(...) → 1 when routed to another app instance.
   (import "host" "activate_window" (func $host_activate_window (param i32) (result i32)))
+  (import "host" "foreground_window" (func $host_foreground_window (result i32)))
+  ;; foreground_window() → renderer-wide foreground top-level HWND, or NULL.
   ;; arrange_windows(mode, flags, rectWA, count, hwndsWA):
   ;; mode 0=cascade, 1=tile, 2=arrange minimized icons.
   (import "host" "arrange_windows" (func $host_arrange_windows (param i32 i32 i32 i32 i32) (result i32)))
