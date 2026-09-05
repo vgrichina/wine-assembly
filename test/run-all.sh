@@ -244,6 +244,8 @@ UNIT=(
   test/test-region-layout-fingerprint.js
   test/test-region-shake.js
   test/test-region-owner-ratchet.js
+  test/test-aw-census.js
+  test/test-messagebox-aw.js
   test/test-control-variant-gate.js
   test/test-union-gate.js
   test/test-worker-thread-scheduler.js

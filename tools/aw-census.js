@@ -23,6 +23,8 @@
 //   node tools/aw-census.js                 # summary table, worst first
 //   node tools/aw-census.js --kind=STUB     # only one class
 //   node tools/aw-census.js --name=Foo      # one pair, with both bodies' calls
+//   node tools/aw-census.js --check          # fail on a new drifted pair
+//   node tools/aw-census.js --record         # record the current issue set
 
 const fs = require('fs');
 const path = require('path');
@@ -32,14 +34,18 @@ const SRC = path.join(ROOT, 'src');
 
 const argKind = (process.argv.find(a => a.startsWith('--kind=')) || '').split('=')[1];
 const argName = (process.argv.find(a => a.startsWith('--name=')) || '').split('=')[1];
+const CHECK = process.argv.includes('--check');
+const RECORD = process.argv.includes('--record');
+const baselineArg = (process.argv.find(a => a.startsWith('--baseline=')) || '').split('=')[1];
+const BASELINE = baselineArg ? path.resolve(baselineArg) : path.join(__dirname, 'aw-census.baseline.json');
 
 // Collect every (func $handle_NAME ...) body in the WAT sources. Paren depth is
 // enough to find the end: WAT has no strings that contain unbalanced parens in
 // these files, and comments are stripped per line before counting.
-function collectHandlers() {
+function collectHandlers(src = SRC) {
   const out = new Map();
-  for (const file of fs.readdirSync(SRC).filter(f => f.endsWith('.wat')).sort()) {
-    const lines = fs.readFileSync(path.join(SRC, file), 'utf8').split('\n');
+  for (const file of fs.readdirSync(src).filter(f => f.endsWith('.wat')).sort()) {
+    const lines = fs.readFileSync(path.join(src, file), 'utf8').split('\n');
     for (let i = 0; i < lines.length; i++) {
       const m = lines[i].match(/^\s*\(func\s+\$handle_([A-Za-z0-9_]+)/);
       if (!m) continue;
@@ -92,45 +98,131 @@ function classify(a, w) {
   return 'DIVERGENT';
 }
 
-const handlers = collectHandlers();
-const pairs = [];
-for (const [name, h] of handlers) {
-  if (!name.endsWith('A')) continue;
-  const base = name.slice(0, -1);
-  const w = handlers.get(base + 'W');
-  if (!w) continue;
-  pairs.push({ base, a: h, w, kind: classify(h, w) });
+function collectPairs(handlers = collectHandlers()) {
+  const pairs = [];
+  for (const [name, h] of handlers) {
+    if (!name.endsWith('A')) continue;
+    const base = name.slice(0, -1);
+    const w = handlers.get(base + 'W');
+    if (!w) continue;
+    pairs.push({ base, a: h, w, kind: classify(h, w) });
+  }
+  return pairs;
 }
 
 const RANK = { STUB: 0, DIVERGENT: 1, BOTH_STUB: 2, SHARED: 3, DELEGATES: 4 };
-pairs.sort((x, y) => RANK[x.kind] - RANK[y.kind] ||
-  Math.abs(y.a.lines - y.w.lines) - Math.abs(x.a.lines - x.w.lines));
+const ISSUE_KINDS = ['STUB', 'DIVERGENT', 'BOTH_STUB'];
 
-if (argName) {
-  const p = pairs.find(p => p.base === argName || p.base.toLowerCase() === argName.toLowerCase());
-  if (!p) { console.error(`no A/W pair named ${argName}`); process.exit(1); }
-  console.log(`${p.base}A/W  ${p.kind}`);
-  for (const h of [p.a, p.w]) {
-    console.log(`\n  $handle_${h.name}  ${h.file}:${h.line}  ${h.lines} lines`);
-    const c = [...callsOf(h)].filter(x => !BOILERPLATE.test(x));
-    console.log(`  calls: ${c.length ? c.join(', ') : '(nothing)'}`);
+function issueSet(pairs) {
+  return Object.fromEntries(ISSUE_KINDS.map(kind => [kind,
+    pairs.filter(p => p.kind === kind).map(p => p.base).sort()]));
+}
+
+// The baseline is a set of NAMES, not just three counts. Replacing one old
+// independent implementation with a newly-divergent pair must fail even when
+// the headline total stays flat. Removing or consolidating a listed pair is
+// an improvement and passes; --record trims the stale baseline afterward.
+function compareBaseline(pairs, baseline) {
+  const current = issueSet(pairs);
+  const added = {};
+  const fixed = {};
+  for (const kind of ISSUE_KINDS) {
+    const allowed = new Set(Array.isArray(baseline[kind]) ? baseline[kind] : []);
+    const actual = new Set(current[kind]);
+    added[kind] = current[kind].filter(name => !allowed.has(name));
+    fixed[kind] = [...allowed].filter(name => !actual.has(name)).sort();
   }
-  process.exit(0);
+  return { current, added, fixed };
 }
 
-const shown = argKind ? pairs.filter(p => p.kind === argKind) : pairs;
-console.log('KIND       A-lines  W-lines  NAME                          A at');
-for (const p of shown) {
-  console.log(
-    p.kind.padEnd(10) +
-    String(p.a.lines).padStart(7) +
-    String(p.w.lines).padStart(9) + '  ' +
-    (p.base + 'A/W').padEnd(30) +
-    `${p.a.file}:${p.a.line}`);
+function readBaseline(file = BASELINE) {
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-const counts = {};
-for (const p of pairs) counts[p.kind] = (counts[p.kind] || 0) + 1;
-console.log('\n' + pairs.length + ' A/W pairs: ' +
-  Object.entries(counts).sort((a, b) => RANK[a[0]] - RANK[b[0]])
-    .map(([k, n]) => `${k} ${n}`).join(', '));
+function writeBaseline(pairs, file = BASELINE) {
+  const issues = issueSet(pairs);
+  fs.writeFileSync(file, `${JSON.stringify({
+    comment: 'Known independent or stubbed ANSI/Wide handler pairs. The build ' +
+      'allows entries to disappear but rejects a new name in any issue class. ' +
+      'Run node tools/aw-census.js --record only after reviewing every change.',
+    ...issues,
+  }, null, 2)}\n`);
+  return issues;
+}
+
+function checkBaseline(pairs, baseline = readBaseline()) {
+  const result = compareBaseline(pairs, baseline);
+  const additions = ISSUE_KINDS.flatMap(kind =>
+    result.added[kind].map(name => `${kind} ${name}A/W`));
+  return { ...result, additions };
+}
+
+function main() {
+  const pairs = collectPairs();
+  pairs.sort((x, y) => RANK[x.kind] - RANK[y.kind] ||
+    Math.abs(y.a.lines - y.w.lines) - Math.abs(x.a.lines - x.w.lines));
+
+  if (RECORD) {
+    const issues = writeBaseline(pairs);
+    console.log(`aw-census: recorded ${ISSUE_KINDS.map(k => `${k} ${issues[k].length}`).join(', ')} ` +
+      `in ${path.relative(ROOT, BASELINE)}`);
+    return 0;
+  }
+
+  if (CHECK) {
+    let result;
+    try {
+      result = checkBaseline(pairs);
+    } catch (err) {
+      console.error(`aw-census: cannot read ${path.relative(ROOT, BASELINE)}: ${err.message}`);
+      return 1;
+    }
+    if (result.additions.length) {
+      for (const item of result.additions) console.error(`aw-census: NEW ${item}`);
+      console.error('aw-census: ANSI/Wide drift grew; share a core or delegate one spelling.');
+      return 1;
+    }
+    const counts = ISSUE_KINDS.map(k => `${k} ${result.current[k].length}`).join(', ');
+    const fixed = ISSUE_KINDS.flatMap(k => result.fixed[k].map(n => `${k} ${n}A/W`));
+    console.log(`aw-census: ratchet ok — ${counts}`);
+    if (fixed.length) {
+      console.log(`aw-census: ${fixed.length} baseline issue(s) fixed; trim with --record: ${fixed.join(', ')}`);
+    }
+    return 0;
+  }
+
+  if (argName) {
+    const p = pairs.find(p => p.base === argName || p.base.toLowerCase() === argName.toLowerCase());
+    if (!p) { console.error(`no A/W pair named ${argName}`); return 1; }
+    console.log(`${p.base}A/W  ${p.kind}`);
+    for (const h of [p.a, p.w]) {
+      console.log(`\n  $handle_${h.name}  ${h.file}:${h.line}  ${h.lines} lines`);
+      const c = [...callsOf(h)].filter(x => !BOILERPLATE.test(x));
+      console.log(`  calls: ${c.length ? c.join(', ') : '(nothing)'}`);
+    }
+    return 0;
+  }
+
+  const shown = argKind ? pairs.filter(p => p.kind === argKind) : pairs;
+  console.log('KIND       A-lines  W-lines  NAME                          A at');
+  for (const p of shown) {
+    console.log(
+      p.kind.padEnd(10) +
+      String(p.a.lines).padStart(7) +
+      String(p.w.lines).padStart(9) + '  ' +
+      (p.base + 'A/W').padEnd(30) +
+      `${p.a.file}:${p.a.line}`);
+  }
+
+  const counts = {};
+  for (const p of pairs) counts[p.kind] = (counts[p.kind] || 0) + 1;
+  console.log('\n' + pairs.length + ' A/W pairs: ' +
+    Object.entries(counts).sort((a, b) => RANK[a[0]] - RANK[b[0]])
+      .map(([k, n]) => `${k} ${n}`).join(', '));
+  return 0;
+}
+
+module.exports = { collectHandlers, collectPairs, callsOf, classify, issueSet,
+  compareBaseline, checkBaseline, writeBaseline };
+
+if (require.main === module) process.exit(main());

@@ -34,6 +34,8 @@ assert.strictEqual(shell.selectedRunSlice('halflife_uplink', false), 10000,
   'cooperative Uplink gives OpenGL enough work per slice for gameplay');
 assert.strictEqual(shell.selectedRunSlice('halflife_uplink', true), 10000,
   'the Worker override is app-scoped');
+assert.strictEqual(shell.selectedRunSlice('cue:speed-demons', false), 500000,
+  'Speed Demons Auto uses the measured installer/gameplay budget');
 
 selected = '10000';
 assert.strictEqual(shell.selectedRunSlice('jazz2_demo', true), 10000,

@@ -25,7 +25,7 @@ assert(html.includes('id="app-picker"') && html.includes('class="app-picker-popu
   'debug toolbar must expose the searchable app-picker shell');
 assert(html.includes('lib/debug-app-picker.js?v=2'),
   'debug app picker must be loaded with an explicit browser cache token');
-assert(html.includes('lib/browser-shell.js?v=39'),
+assert(html.includes('lib/browser-shell.js?v=40'),
   'browser shell must be cache-busted for session-overlay installer throughput');
 const dropdownIds = [...select[1].matchAll(/<option value="([^"]+)"/g)]
   .map(match => match[1]);
