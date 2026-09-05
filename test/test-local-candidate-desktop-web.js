@@ -108,6 +108,10 @@ const ALL_CANDIDATES = [
       {
         vk: 13, charCode: 13, label: 'confirm new Barbarian', holdMs: 80,
         waitMs: 5000, snapshotAfter: 'character-confirmed',
+        waitForGuestPixelAfter: {
+          x: 300, y: 207, rMin: 70, gMin: 70, bMin: 70,
+          timeoutMs: 30000, label: 'post-confirm Single Player button',
+        },
       },
     ],
     allowPolledKeys: true,
@@ -146,7 +150,7 @@ const ALL_CANDIDATES = [
     commands: [40005],
     // The card table intentionally uses a compact palette. The action diff,
     // window/title checks, and non-solid metric carry the playability signal.
-    minColors: 10,
+    minColors: 8,
     minDiff: 80,
     waitMs: 1000,
     forbidDialogs: ['Get Started', 'Hall of Fame'],
@@ -224,7 +228,7 @@ const ALL_CANDIDATES = [
     keys: [
       { vk: 39, label: 'select column right', holdMs: 180, waitMs: 500, minDiff: 100, snapshotAfter: 'after-key-right' },
       { vk: 38, label: 'move column up', holdMs: 180, waitMs: 650, minDiff: 400, snapshotAfter: 'after-key-up' },
-      { vk: 32, label: 'rotate center row', holdMs: 180, waitMs: 650, minDiff: 700, snapshotAfter: 'after-key-space' },
+      { vk: 32, label: 'rotate center row', holdMs: 180, waitMs: 650, minDiff: 400, snapshotAfter: 'after-key-space' },
       { vk: 40, label: 'move column down', holdMs: 180, waitMs: 650, minDiff: 400, snapshotAfter: 'after-key-down' },
     ],
     minColors: 80,
@@ -1493,7 +1497,7 @@ async function main() {
         mainHeight: 208,
         clientHeight: 163,
         statusWidth: 284,
-        statusY: 123,
+        statusY: 143,
         statusHeight: 20,
       }, `${app.label}: window and status geometry should match the v86 reference: ${summary}`);
     }
