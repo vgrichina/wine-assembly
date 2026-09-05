@@ -3528,49 +3528,65 @@
     (call $gs32 (global.get $esp) (global.get $ddenum_ret_thunk))
     (global.set $eip (local.get $arg0))
     (global.set $steps (i32.const 0)))
+  ;; Both entry points share one host MCI parser. cchReturn is a character
+  ;; count, so W uses an equally-sized ANSI staging buffer and widens the
+  ;; bounded result at the API boundary.
+  (func $mci_send_string (param $cmd_g i32) (param $ret_g i32)
+        (param $ret_chars i32) (param $wide i32) (result i32)
+    (local $cmd_work_g i32) (local $cmd_wa i32) (local $cmd_len i32)
+    (local $ret_work_g i32) (local $ret_wa i32) (local $err i32)
+    (if (local.get $cmd_g)
+      (then
+        (if (local.get $wide)
+          (then
+            (local.set $cmd_len (call $guest_wcslen (local.get $cmd_g)))
+            (local.set $cmd_work_g
+              (call $heap_alloc (i32.add (local.get $cmd_len) (i32.const 1))))
+            (if (i32.eqz (local.get $cmd_work_g))
+              (then (return (i32.const 0x109)))) ;; MCIERR_OUT_OF_MEMORY
+            (drop (call $wide_to_ansi (local.get $cmd_g) (local.get $cmd_work_g)
+              (i32.add (local.get $cmd_len) (i32.const 1)))))
+          (else (local.set $cmd_work_g (local.get $cmd_g))))
+        (local.set $cmd_wa (call $g2w (local.get $cmd_work_g)))))
+    (if (i32.and (i32.ne (local.get $ret_g) (i32.const 0))
+                 (i32.ne (local.get $ret_chars) (i32.const 0)))
+      (then
+        (if (local.get $wide)
+          (then
+            (local.set $ret_work_g (call $heap_alloc (local.get $ret_chars)))
+            (if (i32.eqz (local.get $ret_work_g))
+              (then
+                (if (local.get $cmd_work_g) (then (call $heap_free (local.get $cmd_work_g))))
+                (return (i32.const 0x109))))) ;; MCIERR_OUT_OF_MEMORY
+          (else (local.set $ret_work_g (local.get $ret_g))))
+        (local.set $ret_wa (call $g2w (local.get $ret_work_g)))
+        (i32.store8 (local.get $ret_wa) (i32.const 0))))
+    (local.set $err
+      (call $host_mci_string (local.get $cmd_wa) (local.get $ret_wa)
+        (local.get $ret_chars)))
+    (if (i32.and (i32.ne (local.get $wide) (i32.const 0))
+                 (i32.ne (local.get $ret_work_g) (i32.const 0)))
+      (then
+        (drop (call $ansi_to_wide (local.get $ret_work_g) (local.get $ret_g)
+          (local.get $ret_chars)))
+        (call $heap_free (local.get $ret_work_g))))
+    (if (i32.and (i32.ne (local.get $wide) (i32.const 0))
+                 (i32.ne (local.get $cmd_work_g) (i32.const 0)))
+      (then (call $heap_free (local.get $cmd_work_g))))
+    (local.get $err))
+
   ;; mciSendStringA(cmd, retbuf, retlen, hCallback) → MCIERR (0 = no error)
   (func $handle_mciSendStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_wa i32)
-    (if (local.get $arg1) (then (local.set $ret_wa (call $g2w (local.get $arg1)))))
-    ;; Clear return buffer if provided, then let the host parse/execute the
-    ;; command string. The host owns MCI aliases and MIDI sequencing.
-    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.ne (local.get $arg2) (i32.const 0)))
-      (then (i32.store8 (local.get $ret_wa) (i32.const 0))))
     (global.set $eax
-      (call $host_mci_string
-        (if (result i32) (local.get $arg0) (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
-        (local.get $ret_wa)
-        (local.get $arg2)))
+      (call $mci_send_string (local.get $arg0) (local.get $arg1)
+        (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  ;; mciSendStringW(cmd, retbuf, retlen, hCallback) — use the same host MCI
-  ;; parser as A, converting its command and optional result at the boundary.
+  ;; mciSendStringW(cmd, retbuf, retlen, hCallback) → MCIERR
   (func $handle_mciSendStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cmd_g i32) (local $ret_g i32) (local $ret_wa i32) (local $cmd_len i32) (local $err i32)
-    (if (local.get $arg0)
-      (then
-        (local.set $cmd_len (call $guest_wcslen (local.get $arg0)))
-        (local.set $cmd_g (call $heap_alloc (i32.add (local.get $cmd_len) (i32.const 1))))
-        (drop (call $wide_to_ansi (local.get $arg0) (local.get $cmd_g)
-                (i32.add (local.get $cmd_len) (i32.const 1))))))
-    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0))
-                 (i32.ne (local.get $arg2) (i32.const 0)))
-      (then
-        (local.set $ret_g (call $heap_alloc (local.get $arg2)))
-        (local.set $ret_wa (call $g2w (local.get $ret_g))) (call $zero_memory (local.get $ret_wa) (local.get $arg2))))
-    (local.set $err
-      (call $host_mci_string
-        (if (result i32) (local.get $cmd_g)
-          (then (call $g2w (local.get $cmd_g))) (else (i32.const 0)))
-        (if (result i32) (local.get $ret_g)
-          (then (local.get $ret_wa)) (else (i32.const 0)))
-        (local.get $arg2)))
-    (if (local.get $ret_g)
-      (then
-        (drop (call $ansi_to_wide (local.get $ret_g) (local.get $arg1) (local.get $arg2)))
-        (call $heap_free (local.get $ret_g))))
-    (if (local.get $cmd_g) (then (call $heap_free (local.get $cmd_g))))
-    (global.set $eax (local.get $err))
+    (global.set $eax
+      (call $mci_send_string (local.get $arg0) (local.get $arg1)
+        (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 862: GlobalMemoryStatus(lpBuffer) — fill MEMORYSTATUS struct

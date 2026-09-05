@@ -25,6 +25,22 @@ const dynamicModuleTestExports = String.raw`
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $sp))
     (global.get $eax))
+  (func (export "test_call_mciSendStringA")
+        (param $command i32) (param $result i32) (param $chars i32) (result i32)
+    (local $sp i32)
+    (local.set $sp (global.get $esp))
+    (call $handle_mciSendStringA (local.get $command) (local.get $result)
+      (local.get $chars) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $sp))
+    (global.get $eax))
+  (func (export "test_call_mciSendStringW")
+        (param $command i32) (param $result i32) (param $chars i32) (result i32)
+    (local $sp i32)
+    (local.set $sp (global.get $esp))
+    (call $handle_mciSendStringW (local.get $command) (local.get $result)
+      (local.get $chars) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $sp))
+    (global.get $eax))
 `;
 
 async function main() {
@@ -43,6 +59,20 @@ async function main() {
   base.host.wait_single = () => 0;
   base.host.wait_multiple = () => 0;
   base.host.com_create_instance = () => 0x80004002;
+  const mciCalls = [];
+  base.host.mci_string = (command, result, chars) => {
+    let text = '';
+    if (command) {
+      for (let i = command; u8[i]; i++) text += String.fromCharCode(u8[i]);
+    }
+    mciCalls.push({ text, result, chars });
+    if (result && chars) {
+      const answer = Buffer.from('playing\0', 'ascii');
+      u8.set(answer.subarray(0, chars), result);
+      u8[result + chars - 1] = 0;
+    }
+    return 0;
+  };
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, base);
   const e = instance.exports;
@@ -86,6 +116,13 @@ async function main() {
       if (!ch) break;
       out += String.fromCharCode(ch);
     }
+    return out;
+  }
+
+  function readAscii(g, max = 256) {
+    const p = wa(g);
+    let out = '';
+    for (let i = 0; i < max && u8[p + i]; i++) out += String.fromCharCode(u8[p + i]);
     return out;
   }
 
@@ -245,6 +282,23 @@ async function main() {
   check('wsprintfW converts %hs ANSI strings',
     e.test_wsprintf_w(ansiOut, ansiFmt, writeDwords([ansi])) === 23 &&
       readWide(ansiOut) === 'missing mciSendCommandW', readWide(ansiOut));
+
+  const mciAnsiOut = e.guest_alloc(5);
+  check('mciSendStringA forwards ANSI commands and bounds its character result',
+    e.test_call_mciSendStringA(writeAscii('status song mode'), mciAnsiOut, 5) === 0 &&
+      readAscii(mciAnsiOut) === 'play' &&
+      mciCalls.at(-1).text === 'status song mode' && mciCalls.at(-1).chars === 5,
+    `${readAscii(mciAnsiOut)} ${JSON.stringify(mciCalls.at(-1))}`);
+  const mciWideOut = e.guest_alloc(10);
+  check('mciSendStringW shares the parser and treats cchReturn as wide characters',
+    e.test_call_mciSendStringW(writeWide('status song mode'), mciWideOut, 5) === 0 &&
+      readWide(mciWideOut) === 'play' &&
+      mciCalls.at(-1).text === 'status song mode' && mciCalls.at(-1).chars === 5,
+    `${readWide(mciWideOut)} ${JSON.stringify(mciCalls.at(-1))}`);
+  check('zero-capacity MCI results do not translate or touch the caller buffer',
+    e.test_call_mciSendStringW(writeWide('status song mode'), 0xdeadbeef, 0) === 0 &&
+      mciCalls.at(-1).result === 0 && mciCalls.at(-1).chars === 0,
+    JSON.stringify(mciCalls.at(-1)));
 
   const fileInfo = e.guest_alloc(692);
   const fullPath = writeWide('C:\\MEDIA\\PINBALL.MID');

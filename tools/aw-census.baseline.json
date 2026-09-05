@@ -11,7 +11,6 @@
     "GetWindowsDirectory",
     "LoadLibraryEx",
     "RegisterClipboardFormat",
-    "mciSendString",
     "wsprintf",
     "wvsprintf"
   ],
