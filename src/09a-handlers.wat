@@ -17378,7 +17378,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
           (i32.const 0) (i32.const 0)))))
     (call $clipboard_clear_all_data)
     (global.set $clipboard_owner_hwnd (global.get $clipboard_open_hwnd))
-    (global.set $clipboard_emptied_by_opener (i32.const 1))
+    (global.set $clipboard_emptied_by_opener (i32.const 1)) (call $clipboard_sequence_bump)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
@@ -17417,7 +17417,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         (global.set $eax
           (if (result i32) (call $clipboard_store_rtf_data (local.get $arg1))
             (then (local.get $arg1))
-            (else (i32.const 0))))
+            (else (i32.const 0)))) (if (global.get $eax) (then (call $clipboard_sequence_bump)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     (if (i32.eqz
@@ -17426,7 +17426,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
       (then
         (if (i32.eq (local.get $arg0) (i32.const 8)) ;; CF_DIB
           (then
-            (global.set $eax (call $clipboard_store_binary_data (local.get $arg0) (local.get $arg1)))
+            (global.set $eax (call $clipboard_store_binary_data (local.get $arg0) (local.get $arg1))) (if (global.get $eax) (then (call $clipboard_sequence_bump)))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
             (return)))
         (global.set $eax (local.get $arg1))
@@ -17450,7 +17450,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     (call $memcpy (call $g2w (global.get $clipboard_ptr)) (call $g2w (local.get $arg1)) (local.get $need))
-    (global.set $clipboard_len (local.get $len))
+    (global.set $clipboard_len (local.get $len)) (call $clipboard_sequence_bump)
     (global.set $eax (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
@@ -17475,10 +17475,10 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; GetClipboardSequenceNumber() — the host clipboard is not bridged, so its
-  ;; generation remains stable for the lifetime of this isolated process.
+  ;; GetClipboardSequenceNumber() — the process-wide/window-station serial;
+  ;; successful materialized mutations advance it, failures and polls do not.
   (func $handle_GetClipboardSequenceNumber (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $clipboard_sequence_get))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   ;; 690: SetWindowContextHelpId(hwnd, dwContextHelpId). No imported getter
@@ -19933,3 +19933,17 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (call $handle_CopyAcceleratorTableW
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  ;; The clipboard sequence belongs to the window station, not one guest
+  ;; thread's WASM instance. A zero-filled fresh process is exposed as serial
+  ;; 1; atomically publishing that initial value keeps every Worker instance
+  ;; on the same generation before the first clipboard mutation.
+  (func $clipboard_sequence_get (result i32)
+    (drop (i32.atomic.rmw.cmpxchg
+      (global.get $CLIPBOARD_SEQUENCE) (i32.const 0) (i32.const 1)))
+    (i32.atomic.load (global.get $CLIPBOARD_SEQUENCE)))
+
+  (func $clipboard_sequence_bump
+    (drop (call $clipboard_sequence_get))
+    (drop (i32.atomic.rmw.add
+      (global.get $CLIPBOARD_SEQUENCE) (i32.const 1))))

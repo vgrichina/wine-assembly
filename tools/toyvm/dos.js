@@ -106,6 +106,9 @@ const XMS_ENTRY_SEG = 0x00C0; // three bytes below the PSP: int 2Dh; retf
 const XMS_INT = 0x2D;
 const XMS_TOTAL_KB = 8192;
 const PSP_SEG = 0x0100;
+// The nine words DOS's INT 21h prologue pushes onto the caller's stack, in the
+// order it pushes them, plus the flags its IRET hands back. See pspSaveStack.
+const PSP_SAVED_REGS = ['ax', 'bx', 'cx', 'dx', 'si', 'di', 'bp', 'ds', 'es', 'flags'];
 const LOAD_SEG = 0x0110;      // PSP is 0x100 bytes = 0x10 paragraphs
 // The environment block, in the gap between the BIOS data area and the PSP.
 // 0x0060..0x00C0 is 1.5K, which is more than any of these programs reads.
@@ -898,6 +901,9 @@ class Machine {
     // critical error, 3 terminate-and-stay-resident. See AH=4Dh.
     this.lastExitType = 0;
     this.curPsp = PSP_SEG;             // whose PSP AH=51h/62h reports
+    // Per-PSP: the caller's registers as of its last INT 21h call, the half of
+    // PSP+2Eh that does not fit in a DWORD. See pspSaveStack.
+    this.pspRegs = new Map();
     this.xmsBlocks = new Map(); this.xmsNext = 1; this.xmsMoved = 0;
     // Whether the guest's addresses still wrap at 1MB. They do until it takes
     // an extended-memory handle; see openBus.
@@ -923,6 +929,10 @@ class Machine {
     this.sb = {
       out: [], cmd: 0, args: [], expect: 0, speaker: 0, block: 0,
       pending: false, autoInit: false, paused: false, forced: false, shortWait: false,
+      // The width a forced IRQ answers for -- F2h/F3h, or a short block that
+      // was waiting on its DMA channel -- which picks the mixer 0x82 bit and
+      // so the port the ISR acknowledges on. See sbIrq.
+      forcedBits: 8,
       detects: 0, commands: 0, irqs: 0,
       // The two numbers that say how long a block takes: samples in it, and
       // samples per second. See sbBlockSeconds.
@@ -932,6 +942,9 @@ class Machine {
       // owed, and the level the stream is currently at. See Sound.sbNext.
       left: 0, chan: 1, bits: 8, signed: false, stereo: false, irqDue: false,
       lastL: 0, lastR: 0,
+      // The block in flight was started by a high-speed command (90h/91h) on a
+      // DSP that has no high-speed mode to leave. See sbRun.
+      hsAuto: false,
       // The SB16 mixer's register file (index at 0x224, data at 0x225) and
       // the interrupt-status bits register 0x82 reports: bit 0 an 8-bit
       // block's IRQ, bit 1 a 16-bit one, each held until its ack port
@@ -2296,6 +2309,32 @@ class Machine {
       // the mode byte that follows says signed/stereo, not that.
       this.sb.autoInit = v === 0x1C || v === 0x1D || v === 0x2C || v === 0x90
         || (v >= 0xB0 && v <= 0xCF && (v & 4) !== 0);
+      // 90h and 91h are the SB 2.0/Pro *high-speed* forms. On those cards the
+      // documented rule is that 91h plays one block, raises its interrupt and
+      // LEAVES high-speed mode, so a driver has to send it again -- which is
+      // what a DSP 2.01 sees here and what every other emulator implements.
+      //
+      // A DSP 4.xx SB16 has no high-speed mode to leave: the commands are not
+      // in its manual at all, the card runs at full rate always, and 48h is
+      // just an interrupt period. STHINTRO.EXE's player (DemoVT 1.60) is the
+      // program in this corpus that says so out loud -- it re-sends 91h from
+      // its block ISR on every card EXCEPT one whose DSP answered 4.x, where
+      // it sends 48h+91h once and then only acknowledges:
+      //
+      //   ece3  cmp [d82],0     ; the "DSP is a 4.x" flag
+      //   ed25  jz  ed2d        ; 2.x/3.x: send 91h again
+      //   ed27  cmp [bp+6],0    ; 4.x and already playing:
+      //   ed2b  jnz ed37        ;   send nothing at all
+      //
+      // With the block ended at the count the card had no way of knowing was
+      // final, its music stopped after two blocks (2 IRQs in 60M dispatches),
+      // its mixer never ran again and the demo held its title screen forever.
+      // What keeps such a stream running is the only counter still armed: the
+      // 8237's own auto-init bit, which this player leaves set (mode 59h). So
+      // the block reloads while that bit is set, and the DMA controller --
+      // not the DSP -- decides when the music stops. Read at the block end
+      // rather than here, because a driver programs the 8237 AFTER the DSP.
+      this.sb.hsAuto = (v === 0x90 || v === 0x91) && this.dspVersion[0] >= 4;
       this.sb.pending = true;
       // How long the block is, in samples. The 8-bit single-cycle commands
       // carry it themselves; the auto-init ones use whatever 48h last set; the
@@ -2353,7 +2392,12 @@ class Machine {
     // Unlike a transfer's completion this one is immediate by definition -- the
     // driver's wait is a `loopz` and not a long one -- so it is delivered on the
     // next opportunity rather than on the periodic IRQ cadence.
-    if (v === 0xF2 || v === 0xF3) { this.sb.forced = true; this.endSlice(); return; }
+    if (v === 0xF2 || v === 0xF3) {
+      this.sb.forced = true;
+      this.sb.forcedBits = v === 0xF3 ? 16 : 8;
+      this.endSlice();
+      return;
+    }
     if (v === 0xD0) { this.sb.paused = true; this.sb.pending = false; return; }
     if (v === 0xD4) { this.sb.paused = false; this.sb.pending = true; return; }
     // DAh stops an auto-init transfer for good.
@@ -2369,19 +2413,34 @@ class Machine {
   }
 
   // The DMA controller was written. A short block waiting for its channel
-  // (sbRun) completes the moment an 8-bit channel opens, on that channel:
-  // the card's DREQ goes wherever the jumper says, and the program has just
-  // told us where it believes that is.
+  // (sbRun) completes the moment a channel of the block's own width opens, on
+  // that channel: the card's DREQ goes wherever the jumper says, and the
+  // program has just told us where it believes that is.
+  //
+  // The width half is not cosmetic. A 16-bit block moves through the SECOND
+  // 8237 -- channels 4-7, programmed through 0xC0-0xCE and masked through
+  // 0xD4 -- and a search that only ever looked at channels 0-3 could not see
+  // one open. ATTIC.EXE's DSMI driver finds its 16-bit channel exactly that
+  // way: it masks 8-bit channels 0/1/3 AND 16-bit 5/6/7, issues B6h (16-bit
+  // single-cycle, 6 samples), then programs channel 5 and unmasks it alone.
+  // With only 0-3 considered the answer was always "no channel is open", the
+  // probe never completed, no IRQ ever fired, and DSMI reported no card --
+  // which is the screen that says "It is not possible to run the demo without
+  // music". Channel 4 is the cascade and never carries data.
   sbDmaWritten() {
     if (!this.sb.shortWait || !this.sb.pending) return;
     const dma = this.audio.dma;
+    const wide = this.sb.bits === 16;
+    const lo = wide ? 5 : 0, hi = wide ? 8 : 4;
+    const recent = wide ? dma.recent16 : dma.recent8;
     let c = -1;
-    if (this.sbChannelOpen(dma.recent8)) c = dma.recent8;
-    else for (let i = 0; i < 4; i++) if (this.sbChannelOpen(i)) { c = i; break; }
+    if (recent >= lo && recent < hi && this.sbChannelOpen(recent)) c = recent;
+    else for (let i = lo; i < hi; i++) if (this.sbChannelOpen(i)) { c = i; break; }
     if (c < 0) return;
     this.sb.chan = c;
     this.sb.shortWait = false;
     this.sb.forced = true;
+    this.sb.forcedBits = this.sb.bits;
     this.endSlice();
   }
 
@@ -2398,7 +2457,15 @@ class Machine {
     // out from under it. A block's own interrupt is owed once the last sample
     // of it went through the DMA channel (Sound.sbNext), and auto-init has
     // already re-armed the next block by the time it is delivered.
-    if (this.sb.forced) { this.sb.forced = false; this.sb.irqLatched |= 1; }
+    // Which block-interrupt bit the mixer's 0x82 shows, and therefore which
+    // port the ISR will read to acknowledge it: 0x22E for an 8-bit block,
+    // 0x22F for a 16-bit one. A forced IRQ carries the width of whatever
+    // asked for it (F2h/F3h, or the short block that was waiting on its DMA
+    // channel); a block's own completion carries the width it is playing.
+    if (this.sb.forced) {
+      this.sb.forced = false;
+      this.sb.irqLatched |= this.sb.forcedBits === 16 ? 2 : 1;
+    }
     else { this.sb.irqDue = false; this.sb.irqLatched |= this.sb.bits === 16 ? 2 : 1; }
     this.sb.irqs++;
     return SB_IRQ_VEC;
@@ -2712,7 +2779,13 @@ class Machine {
       // (-1 for the rest), and its timer status is folded into the AdLib
       // status read below rather than answered here.
       const goff = port - this.gus.base;
-      if (goff >= 0 && goff <= 0x107 && goff !== 0x008) {
+      // 0x22F is the Sound Blaster's 16-bit interrupt acknowledge, and with
+      // the GF1 at its default 0x220 that is also the GF1's 0x2X F, which
+      // answers 0xFF for "a classic card has no register controls". The BYTE
+      // is the same either way; what is not the same is the side effect --
+      // reading it is how an ISR takes a 16-bit block's interrupt down, and
+      // shadowed by the GF1 the latch in mixer register 82h never cleared.
+      if (goff >= 0 && goff <= 0x107 && goff !== 0x008 && port !== 0x22F) {
         const r = this.gus.in(goff, w);
         if (r >= 0) return r;
       }
@@ -2809,6 +2882,13 @@ class Machine {
         this.sb.resetting = false;
         this.sb.out.length = 0;
         this.sb.shortWait = false;
+        // A reset is the documented way out of high-speed mode, and it is the
+        // only way out of a block this card is reloading off the 8237's
+        // auto-init bit rather than off a DSP command (see sbRun). Nothing
+        // else here touches a transfer in flight, deliberately -- that is
+        // pre-existing behaviour and no program in the corpus depends on a
+        // reset ending an ordinary block.
+        if (this.sb.hsAuto) { this.sb.hsAuto = false; this.sb.pending = false; }
         this.sb.out.push(0xAA);
         this.sb.detects++;
       }
@@ -3729,6 +3809,7 @@ class Machine {
   // the CF write rather than editing a dozen call sites -- and it stays correct
   // when a new one is added.
   int21(ah, al, r) {
+    this.pspSaveStack(ah, r);
     if (ah !== 0x59) {
       const setCf = r.setResultCf;
       r.setResultCf = (on) => {
@@ -3850,6 +3931,60 @@ class Machine {
         if (b.seg + b.size >= this.allocTop) { this.allocTop = b.seg; this.memFree.splice(i, 1); done = false; break; }
       }
     }
+  }
+
+  // PSP+2Eh -- "SS:SP on entry to the last INT 21h call". DOS writes it on
+  // every call from its own INT 21h prologue, before it switches to an internal
+  // stack, and it is not bookkeeping nobody reads: the terminate path is how a
+  // program that ended gives its parent's stack back, and the only copy of that
+  // stack pointer is this field. STHINTRO.EXE is the case. Its loader is a
+  // hand-rolled EXEC -- AH=55h for a child PSP, the terminate vector poked into
+  // it at +0Ah, then `mov ss,[020f] / mov sp,[0211]` onto the *child's* stack
+  // and a far jump into the child -- so by the time the child calls AH=4Ch the
+  // loader's own SS:SP exists nowhere but here. Its terminate handler at
+  // 110:09c1 is `xor ax,ax / ret`: a NEAR ret, popping the return address of
+  // the loader's own `call spawn`. With the child's stack still loaded that ret
+  // pops whatever the child left and lands at 0000:0000.
+  //
+  // The saved SP is the one the INT handler sees, so it includes the six bytes
+  // the interrupt pushed; the terminate path adds them back the way DOS's IRET
+  // out of the system call does.
+  //
+  // The exclusions are DOS's own: AH=50h/51h/62h/64h run on the caller's stack
+  // rather than the internal one and never touch the field, and neither does
+  // anything at or above AH=6Ch.
+  //
+  // What DOS keeps beside SS:SP is the caller's whole register set: its INT 21h
+  // prologue pushes AX BX CX DX SI DI BP DS ES onto the user stack and only
+  // then records the stack pointer, and the exit path pops all nine back before
+  // it transfers. That is why a program resumed through INT 22h finds its data
+  // segment where it left it -- STHINTRO's loader runs `dec word [0113]` two
+  // instructions past the `ret`, and with DS still holding the child's 0398
+  // instead of its own 01ae it decrements a word of somebody else's memory and
+  // takes the wrong branch. We service the call from the host rather than on
+  // the guest's stack, so the nine registers are held here, per PSP, instead of
+  // in the 18 bytes below the saved SP where DOS puts them.
+  pspSaveStack(ah, r) {
+    if (ah === 0x50 || ah === 0x51 || ah === 0x62 || ah === 0x64 || ah >= 0x6C) return;
+    const at = (this.curPsp << 4) + 0x2E;
+    const ss = r.get('ss') & 0xFFFF, sp = (r.ret.sp - 6) & 0xFFFF;
+    this.mem[at] = sp & 0xFF; this.mem[at + 1] = (sp >> 8) & 0xFF;
+    this.mem[at + 2] = ss & 0xFF; this.mem[at + 3] = (ss >> 8) & 0xFF;
+    const regs = {};
+    for (const n of PSP_SAVED_REGS) regs[n] = r.get(n) & 0xFFFF;
+    this.pspRegs.set(this.curPsp, regs);
+  }
+
+  // What that field holds for one PSP, already stepped past the IRET frame --
+  // DOS's own IRET out of the system call consumes it -- together with the
+  // registers saved alongside. Null when nothing has been saved there yet,
+  // which is the ordinary top-level program whose PSP has no parent.
+  pspSavedStack(psp) {
+    const at = ((psp & 0xFFFF) << 4) + 0x2E;
+    const sp = this.mem[at] | (this.mem[at + 1] << 8);
+    const ss = this.mem[at + 2] | (this.mem[at + 3] << 8);
+    if (!ss && !sp) return null;
+    return { ss, sp: (sp + 6) & 0xFFFF, regs: this.pspRegs.get(psp & 0xFFFF) || null };
   }
 
   // The INT 22h address the current PSP carries at +0Ah, or null when nothing
@@ -3990,12 +4125,25 @@ class Machine {
               if (size !== undefined) this.memReleaseBlock(s, size);
             }
           }
-          // SS:SP and the data segments stay as they are. DOS leaves them
-          // undefined across INT 22h, and a loader that installed the vector
-          // sets up whatever it needs on the other side of the jump.
+          // The stack goes back to the parent's. DOS restores SS:SP out of the
+          // parent PSP's +2Eh field before it jumps through INT 22h -- see
+          // pspSaveStack -- and that is the whole of what a hand-rolled EXEC
+          // gets back, because it switched to the child's stack itself and kept
+          // no copy. Without it STHINTRO.EXE's `xor ax,ax / ret` terminate
+          // handler returns through the dead child's stack to 0000:0000.
+          //
+          // The registers saved with it come back too -- DOS pops the nine
+          // words its prologue pushed -- so the parent finds DS and ES pointing
+          // where they did at the call. With no saved frame (a top-level PSP
+          // whose +16h names no parent) nothing is restored and the exiting
+          // program's own SS:SP and segments carry through, which is what this
+          // path did before and what every program already through it expects.
+          const back = (parent && parent !== leaving) ? this.pspSavedStack(parent) : null;
           this.transfer = {
-            cs: term.cs, ip: term.ip, ss: r.get('ss'), sp: r.ret.sp,
+            cs: term.cs, ip: term.ip,
+            ss: back ? back.ss : r.get('ss'), sp: back ? back.sp : r.ret.sp,
             ds: r.get('ds'), es: r.get('es'),
+            ...(back && back.regs ? { regs: back.regs } : {}),
           };
           return true;
         }
@@ -4431,6 +4579,24 @@ class Machine {
         // matter: a demo uses it to find out whether stdout is a file or the
         // console. DX bit 7 set means character device.
         if (al === 0x00) { r.set('dx', 0x80D3); r.setResultCf(false); return true; }
+        // AL=06 "get input status" and AL=07 "get output status" answer with
+        // AL=0FFh ready / 00h not ready, CF clear -- they are not optional and
+        // they are how a program decides a handle it just opened is a live
+        // character device. ACME-VIC.EXE opens EMMXXXX0, checks bit 7 of the
+        // AL=00 word, then asks AL=07 and compares AL against 0FFh; answering
+        // "invalid function" made the ready device read as dead and the demo
+        // ran with expanded memory switched off. A file handle is always ready
+        // to write and is ready to read until its position reaches the end.
+        if (al === 0x06 || al === 0x07) {
+          const bx = r.get('bx') & 0xFFFF;
+          const f = this.files.get(bx);
+          if (!f && bx > 4) { r.setResultCf(true); r.set('ax', 6); return true; }
+          const ready = (al === 0x07 || !f || f.device) ? 0xFF
+            : (f.pos < f.buf.length ? 0xFF : 0x00);
+          r.set('ax', (r.get('ax') & 0xFF00) | ready);
+          r.setResultCf(false);
+          return true;
+        }
         r.setResultCf(true); r.set('ax', 1);    // "invalid function"
         return true;
       }

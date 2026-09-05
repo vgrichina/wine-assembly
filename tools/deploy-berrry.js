@@ -175,7 +175,7 @@ function collectTextFiles() {
   }
   // docs/: only the rendered .html pages, never the raw Markdown, JSON
   // status ledgers or the DOS corpus report tree.
-  for (const subdir of ['docs', 'docs/re-notes']) {
+  for (const subdir of ['articles', 'docs', 'docs/re-notes']) {
     const dir = path.join(ROOT, subdir);
     if (!fs.existsSync(dir)) continue;
     for (const entry of fs.readdirSync(dir)) {

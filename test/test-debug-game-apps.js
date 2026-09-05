@@ -53,6 +53,8 @@ assert.strictEqual(aoe1File('Multip_1.scn').vfsPath, 'c:\\scenario\\multip_1.scn
   'Age of Empires mounts scenarios under its runtime scenario directory');
 assert.strictEqual(aoe1File('Scenario.inf').vfsPath, 'c:\\scenario\\scenario.inf');
 assert.strictEqual(aoe1File('Empires.dat').vfsPath, 'c:\\data\\empires.dat');
+assert.strictEqual(aoe1File('Tileedge.dat').vfsPath, 'c:\\data\\tileedge.dat',
+  'Age of Empires mounts the terrain edge table at the path hard-coded by the renderer');
 assert.strictEqual(aoe1File('Music1.mid').vfsPath, 'c:\\sound\\music1.mid');
 const quake2Controls = fs.readFileSync(path.join(root, 'lib/quake2-modern-controls.ini'), 'utf8');
 for (const binding of [
@@ -220,7 +222,7 @@ assert.strictEqual(captainClawReg.get('Skip Logo Movies'), 1);
 
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const browserShell = fs.readFileSync(path.join(root, 'lib/browser-shell.js'), 'utf8');
-assert(/<script src="lib\/apps\.js\?v=20"><\/script>/.test(html),
+assert(/<script src="lib\/apps\.js\?v=22"><\/script>/.test(html),
   'the browser fetches the corrected Age of Empires asset manifest');
 assert(/case 'quake2_demo':\s*return 10000;/.test(browserShell),
   'Quake II OpenGL startup uses the proven cooperative browser slice');

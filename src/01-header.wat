@@ -3905,3 +3905,7 @@
   ;; popup group. This table is process-shared like the HWND/owner records.
   (global $LAST_ACTIVE_POPUP_TABLE i32 (region.addr $LAST_ACTIVE_POPUP_TABLE 0))
   (global $LAST_ACTIVE_POPUP_TABLE_SIZE i32 (region.size $LAST_ACTIVE_POPUP_TABLE))
+
+  ;; Window-station clipboard generation, shared by every guest Worker.
+  (global $CLIPBOARD_SEQUENCE i32 (region.addr $CLIPBOARD_SEQUENCE 0))
+  (global $CLIPBOARD_SEQUENCE_SIZE i32 (region.size $CLIPBOARD_SEQUENCE))

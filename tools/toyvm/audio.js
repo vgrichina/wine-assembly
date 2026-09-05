@@ -252,7 +252,10 @@ class Sound {
     }
     if (--sb.left <= 0) {
       sb.irqDue = true;
-      if (sb.autoInit) sb.left = sb.len;
+      // Auto-init from the DSP command, or -- for a high-speed block on a DSP
+      // that has no high-speed mode to leave (see Machine.sbRun) -- from the
+      // 8237's own auto-init bit, which is what is still feeding the card.
+      if (sb.autoInit || (sb.hsAuto && (this.dma.mode[sb.chan] & 0x10) !== 0)) sb.left = sb.len;
       else sb.pending = false;
     }
   }

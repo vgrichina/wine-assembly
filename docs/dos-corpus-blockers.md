@@ -530,6 +530,127 @@ code there is the point. And the word table at `110:3b00` (`e4 00 d8 00 cb 00
 c0 00 …` — 228, 216, 203, 192, each ~1.059x the next) is a chromatic
 PC-speaker divisor table, not a copy-range table.
 
+### STHINTRO.EXE (`1995-b-blsthtro`) — fixed
+
+The row said `art`, so the sweep counted it as a pass: what it photographed was
+the program's **text-mode sound-card setup menu**, 148 non-blank cells, which
+looks like deliberate text art and is not. Behind it the run was over. The
+program wrote `DVT.VTO`, restored 20 interrupt vectors and exited, and the
+loader that should have taken over `retf`ed off an empty stack to `0000:0000`
+where it spun until `--stuck-after` gave up. **A text row is not a pass** — it
+is a picture of whatever the console last held, and this one was a menu the
+demo puts up before it starts.
+
+There is no AH=4Bh anywhere in the run, which is what made "the EXEC path is
+missing" the wrong first guess. STHINTRO's loader at `110:` is a hand-rolled
+EXEC and never asks DOS to run anything:
+
+```
+110:0923  mov ah,55h / mov dx,[021f] / int 21h    ; child PSP at 213
+110:093d  mov ax,09c1 / mov es:[0Ah],ax           ; ...its terminate vector
+110:094a  mov es:[0Ch],cs                         ;    is 110:09c1
+110:09ab  cli / mov ss,[020f] / mov sp,[0211]     ; the CHILD's stack
+110:09bc  jmp far cs:[002c]                       ; into the child
+```
+
+...and `110:09c1` is `xor ax,ax / jmp 09dc`, where `09dc` is one byte: `C3`, a
+**near** `ret`. It is the tail of the loader's own `call spawn` at `110:00de`,
+so everything that `ret` needs — the return address, and the DS the caller had —
+is the parent's context, and the only place it exists once the loader has loaded
+the child's SS:SP is inside DOS.
+
+Two halves, both now in `Machine.pspSaveStack`:
+
+* **SS:SP, from PSP+2Eh.** DOS records the caller's stack there on every INT 21h
+  call; the terminate path reads it out of the *parent* PSP and restores it
+  before jumping through INT 22h. With it, the `ret` lands on `110:00e1` — the
+  `jc` immediately after `call 06d9` — instead of at `0000:0000`.
+* **The register file saved with it.** DOS's INT 21h prologue pushes AX BX CX DX
+  SI DI BP DS ES on the caller's stack and the exit path pops all nine. Without
+  that half the loader reached `110:00e3`, `dec word [0113]`, with DS still
+  holding the child's `0398` instead of its own `01ae`: it decremented a word of
+  someone else's memory, took the wrong branch, read the next subfile header
+  from **handle 0** (stdin, answered out of the auto-key rotation) and printed
+  `[ERROR]: Executing internal subfile...`. Half a fix reads exactly like a
+  different bug.
+
+It now loads `STHINTRO.MOD`, resets the Sound Blaster, takes 13 EMS handles and
+draws the *blossom presents* title in mode 13h — 63,997 non-black pixels of
+64,000. `test/test-toyvm-dos-terminate.js` is the sequence in eleven
+instructions of hand-assembled `.COM`.
+
+**The title then held forever, and it was not a pacing question.** It was
+byte-identical at 20M, 60M and 150M dispatches with INT 1Ch ticks still
+accumulating (26 → 1738) and no spin, which reads as "the demo is waiting on
+its own timer". It was waiting on its music, and the music had stopped.
+
+`--trace-io` on the card's ports is the whole story in eleven writes. The
+player is **DemoVT 1.60** (VangeliSTracker); it programs the 8237 for channel
+1 in mode `59h` — single mode, read, **auto-init** — and then sends the DSP
+`40h D3h` (22222 Hz), `48h 63h 2Bh` (block length) and `91h`, the SB 2.0
+*high-speed single-cycle* output command. Its block ISR at `e1b:30` reads
+`22Eh`, reads `22Ah` and calls a far routine that decides what to send next:
+
+```
+ece3  mov ax,[0d86]   ; the length last programmed
+      cmp ax,[bp+8]   ; the same one again?
+      jnz --> [bp+6] = 0, send 48h and re-arm
+ed20  cmp [0d82],0    ; the "the DSP answered 4.x" flag
+      jz  ed2d        ; 2.x/3.x: send 91h again
+      cmp [bp+6],0    ; 4.x, and already playing:
+      jnz ed37        ;   send nothing at all
+```
+
+So on a DSP 2.01 card it re-sends `91h` from every block interrupt, and on a
+4.x card it sends `48h`+`91h` **once** and thereafter only acknowledges. Our
+card has answered `4.05` since 2026-09-03 (it gained CONTAGIO.EXE), so this
+demo took the second path: **2 interrupts in 60M dispatches**, the DMA count
+at port 03h froze at `0x1852` after 36.4M, the mixer never ran again, and the
+picture stopped there. The far-call loop at `37ad:17a` was the player spinning
+on a play position that had stopped moving.
+
+Two second opinions, both from DOSBox-X on the same binary:
+
+| arm | what the DSP answers | 43s recording |
+|---|---|---|
+| `--sbtype=sb2` | 2.01 | music for the whole capture; the mode 13h AVI is 110KB |
+| `--sbtype=sb16` | 4.xx | 3 seconds of music, then silence; the AVI is 34KB — one keyframe and nothing after it |
+
+DOSBox-X's SB16 freezes the demo exactly the way we did, and so does 86Box:
+both map `91h` to the single-cycle path. That is right for the card the
+command belongs to — Creative documents `91h` as ending the block, raising its
+interrupt and **leaving high-speed mode**, which is why a 2.01 driver has to
+send it again. It is not right for a DSP 4.xx, which has no high-speed mode to
+leave: the commands are not in the SB16's manual at all, the card always runs
+at full rate, and `48h` is only an interrupt period. What is still feeding such
+a card after a block is the only counter left armed — the 8237's own auto-init
+bit, which this player leaves set.
+
+So `Sound.sbNext` now reloads the block, when the DSP command was `90h`/`91h`
+**and** the card is a 4.xx **and** the 8237 channel it reads is in auto-init
+(`Machine.sbRun` sets `sb.hsAuto`; the mode bit is read at the block end,
+because a driver programs the 8237 after the DSP). All three conditions are
+load-bearing and `test/test-toyvm-sb-highspeed-autoinit.js` holds each one
+down: the same card with the 8237 in single mode still stops after one block,
+and a 2.01 card still stops after one block whatever the 8237 says.
+
+STHINTRO now advances. Before the fix the frame hash was `fba9159e` at 60M,
+150M **and** 300M — one picture, 63,997 of 64,000 non-black, 2 block
+interrupts and 346 EMS page maps whatever the budget. After it, all three
+budgets differ (`49fd1c5d` at 60M, `cfd4f373` at 150M, `079ae741` at 300M,
+64,000 of 64,000 non-black), EMS page maps go 346 → 4,274 and INT 67h
+411 → 4,339 at 300M, and the render is 30 seconds of unbroken music: 11 block
+interrupts against 2, peak 0.582 against 0.411, and against the DOSBox-X
+`sb2` recording **0 cents of pitch offset, a 1535.4ms beat against 1536.9ms,
+and 0.976 chroma similarity**.
+
+One other program in the corpus is the same player and the same bug:
+`RUNDEMO.EXE` (`1994-b-bltdemo`, which ships `SHELLVT.EXE`) sends `91h` three
+times and then stops, and went from 3 block interrupts and 0.4 seconds of
+sound in an 8-second render to 190 interrupts and 8 seconds of it, with the
+frame hash unchanged. Nothing else in the 27-program Sound Blaster witness set
+moved at all.
+
 ### BLIQ.EXE (2 rows — `1994-b-bliq` and `1994-b-black` are the same program)
 
 Reaches mode 13h **unchained** (Mode X, 202,978 planar writes, display start
@@ -1151,3 +1272,76 @@ added, and both found only by sweeping the whole corpus:
   demoting the frame that carried it lost the rung its switch and the demo its
   64000 pixels. Rows now carry a `says` field with any refusal the run printed,
   whatever that frame scored, and the rungs read it alongside the kept screen.
+
+### ACME-VIC.EXE — one bug fixed, and the one behind it is the load address
+
+Two things stacked here, and the first hid the second completely.
+
+**1. IOCTL "get output status" was not implemented (fixed).** The demo's
+expanded-memory probe at `110:c554` opens `EMMXXXX0`, checks bit 7 of the
+`INT 21h AX=4400` word, then asks `AX=4407` and compares `AL` against `0FFh`:
+
+```
+c576  b8 07 44   mov ax, 0x4407
+c579  cd 21      int 0x21
+c57b  50         push ax
+c57c  b4 3e      mov ah, 0x3e        ; close the handle
+c57e  cd 21      int 0x21
+c580  58         pop ax
+c581  3c ff      cmp al, 0xff
+c583  75 05      jne 0xc58a          ; skip "EMS is present"
+c585  c6 06 4a c5 ff  mov byte [0xc54a], 0xff
+```
+
+`AH=44h` answered only `AL=00`; everything else returned CF set, `AX=1`
+("invalid function"). So `AL` came back 1, the ready device read as dead, and
+the demo ran with expanded memory switched off — it never issued a single
+`INT 67h`. With the documented `AL=0FFh` / CF clear the same run goes from
+**11 DOS calls, no sound** to **145 DOS calls, 2 `INT 67h` calls and a GUS
+playing 14 voices**. `test/test-toyvm-ioctl-status.js` locks in `AL=06`/`AL=07`.
+
+**2. What still stops it is where DOS puts the program.** The demo's own driver
+install at `110:c4f5` sets `DS=0` to save the `INT AC/AD/AEh` vectors out of the
+IVT, and then calls the EMS probe **without setting `DS` back**:
+
+```
+110:c4f5  fa 33 c0 8e d8   cli; xor ax,ax; mov ds,ax
+...       (copies 0000:02b0 to CS:9725, installs three vectors)
+110:c529  e8 28 00         call 110:c554
+110:c554  c6 06 4a c5 00   mov byte [0xc54a], 0   ; DS=0 -> linear 0000:C54A
+```
+
+That store is a guest bug, and on any real DOS it is absorbed: linear `0xC54A`
+is 49K up, which on a machine whose DOS occupies the first ~70K is inside DOS's
+own data. Here `LOAD_SEG` is `0x0110`, so `0000:C54A` is `110:B44A` — **live
+code**. It turns `83 c3 4c` (`add bx,0x4c`, intact in the sibling loop at
+`110:b5ae`) into `00 c3` + `4c` (`add bl,al`; `dec sp`), so the channel walk at
+`110:b42c` never advances `bx` and leaks one byte of SP per iteration
+(measured: SP `01c8` → `01bc` over 12 iterations). The misaligned `ret` at
+`110:b5cd` lands at `110:06df` inside a palette buffer, runs through zeros into
+`110:0c11`, whose `ret` goes to `110:8efd`, and the wreck parks in a jump table.
+The reported "`call [0x9757]` into data at `110:9791`" is the end of that
+chain, not its start — those table slots hold `0xc549`, a `ret` stub, by design.
+
+Proved by moving the program above the write: at `PSP_SEG`/`LOAD_SEG` =
+`0x0D00`/`0x0D10` the same store still happens (`f000:121 wrote c54a-c54a
+(slice from d10:c554)`) and is harmless — the demo runs, sets 220/256 DAC
+entries, issues 1396 `INT 67h` calls and is still animating at 150M dispatches
+(16939 non-black pixels, frame moving).
+
+**That is not a fix that can be shipped as it stands**, and the corpus says why
+in one line: at `0x0D00` `ACME-BIG.EXE` prints *"This demo requires at least
+600k of free base memory!"* and exits 1. Free conventional memory is
+`(DEFAULT_ALLOC_TOP - PSP_SEG) * 16`, so 600K needs `PSP_SEG <= 0x0900` while
+ACME-VIC needs `LOAD_SEG > 0x0C55`. The two are mutually exclusive under a
+fixed `0x9F00` ceiling, and `RUNDEMO.EXE`'s frame changes as well
+(`08502c5c` → `eb577156`), so any move of the load address is a corpus-wide
+change that has to be measured as one — not a side effect of a demo fix.
+
+**How to find a write like this again.** `--watch=SEG:OFF` marks the bytes in
+the code bitmap and every store there lands in the self-modify census. Two
+things the census could not say and now does: a byte written by the *host's*
+INT service is named by vector and AX rather than showing up as the anonymous
+`f000:1NN` stub, and a store followed by an `int n` in the same slice prints
+`(slice from CS:IP)` — the block that actually wrote it. That annotation is
+what turned `f000:121 wrote c54a-c54a` into `110:c554`.
