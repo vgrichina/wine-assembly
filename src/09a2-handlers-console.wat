@@ -264,6 +264,9 @@
     (memory.fill (global.get $CONSOLE_HANDLE_TABLE) (i32.const 0) (i32.const 256))
     (memory.fill (global.get $CONSOLE_TITLE_STORAGE) (i32.const 0)
       (global.get $CONSOLE_TITLE_MAX))
+    ;; +A80 is the process-shared initialized flag. It cannot be inferred from
+    ;; the first byte because an empty title is valid.
+    (i32.atomic.store (region.addr $CONSOLE_INPUT 0xA80) (i32.const 0))
     (global.set $console_width (i32.const 80))
     (global.set $console_height (i32.const 25))
     (global.set $console_cursor_x (i32.const 0))
@@ -305,9 +308,11 @@
   (func $console_title_ensure
     ;; load_pe clears mutable high-memory tables after WebAssembly data
     ;; initialization. Restore the default title on first console use.
-    (if (i32.eqz (i32.load8_u (global.get $CONSOLE_TITLE_STORAGE)))
-      (then (i64.store (global.get $CONSOLE_TITLE_STORAGE)
-        (i64.const 0x00656c6f736e6f43))))) ;; "Console\0", little-endian
+    (if (i32.eqz (i32.atomic.load (region.addr $CONSOLE_INPUT 0xA80)))
+      (then
+        (i64.store (global.get $CONSOLE_TITLE_STORAGE)
+          (i64.const 0x00656c6f736e6f43)) ;; "Console\0", little-endian
+        (i32.atomic.store (region.addr $CONSOLE_INPUT 0xA80) (i32.const 1)))))
 
   ;; DuplicateHandle must create a distinct process handle, not merely copy the
   ;; small GetStdHandle number. Standard-console aliases live in shared memory
@@ -770,96 +775,88 @@
         (call $defwndproc_do_ncpaint (local.get $hwnd))
         (call $host_set_window_text (local.get $hwnd) (global.get $CONSOLE_TITLE_STORAGE)))))
 
-  ;; SetConsoleTitleW(lpConsoleTitle) → BOOL. The renderer and WAT caption
-  ;; tables use ANSI bytes, so retain the process title in its CP1252 form.
-  (func $handle_SetConsoleTitleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; Store one console title for both entry points. The renderer and WAT
+  ;; caption tables use ANSI bytes, so the W entry point narrows into the same
+  ;; process-shared representation instead of maintaining a divergent copy.
+  (func $console_title_set (param $title_gp i32) (param $wide i32) (result i32)
     (local $src i32) (local $len i32) (local $ch i32)
-    (if (i32.eqz (local.get $arg0))
+    (if (i32.eqz (local.get $title_gp))
       (then
         (global.set $last_error (i32.const 87))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    (local.set $src (call $g2w (local.get $arg0)))
+        (return (i32.const 0))))
+    (local.set $src (call $g2w (local.get $title_gp)))
     (block $done (loop $copy
       (br_if $done (i32.ge_u (local.get $len)
         (i32.sub (global.get $CONSOLE_TITLE_MAX) (i32.const 1))))
-      (local.set $ch (i32.load16_u (i32.add (local.get $src)
-        (i32.shl (local.get $len) (i32.const 1)))))
+      (local.set $ch
+        (if (result i32) (local.get $wide)
+          (then (i32.load16_u (i32.add (local.get $src)
+            (i32.shl (local.get $len) (i32.const 1)))))
+          (else (i32.load8_u (i32.add (local.get $src) (local.get $len))))))
       (br_if $done (i32.eqz (local.get $ch)))
       (i32.store8 (i32.add (global.get $CONSOLE_TITLE_STORAGE) (local.get $len))
-        (select (local.get $ch) (i32.const 0x3f)
-          (i32.le_u (local.get $ch) (i32.const 0xff))))
+        (select
+          (select (local.get $ch) (i32.const 0x3f)
+            (i32.le_u (local.get $ch) (i32.const 0xff)))
+          (local.get $ch)
+          (local.get $wide)))
       (local.set $len (i32.add (local.get $len) (i32.const 1)))
       (br $copy)))
     (i32.store8 (i32.add (global.get $CONSOLE_TITLE_STORAGE) (local.get $len)) (i32.const 0))
+    (i32.atomic.store (region.addr $CONSOLE_INPUT 0xA80) (i32.const 1))
     (call $console_title_publish)
     (global.set $last_error (i32.const 0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+    (i32.const 1))
 
   ;; SetConsoleTitleA(lpConsoleTitle) → BOOL
   (func $handle_SetConsoleTitleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $src i32) (local $len i32) (local $ch i32)
-    (if (i32.eqz (local.get $arg0))
-      (then
-        (global.set $last_error (i32.const 87))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    (local.set $src (call $g2w (local.get $arg0)))
-    (block $done (loop $copy
-      (br_if $done (i32.ge_u (local.get $len)
-        (i32.sub (global.get $CONSOLE_TITLE_MAX) (i32.const 1))))
-      (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $len))))
-      (br_if $done (i32.eqz (local.get $ch)))
-      (i32.store8 (i32.add (global.get $CONSOLE_TITLE_STORAGE) (local.get $len)) (local.get $ch))
-      (local.set $len (i32.add (local.get $len) (i32.const 1)))
-      (br $copy)))
-    (i32.store8 (i32.add (global.get $CONSOLE_TITLE_STORAGE) (local.get $len)) (i32.const 0))
-    (call $console_title_publish)
-    (global.set $last_error (i32.const 0))
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $console_title_set (local.get $arg0) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; GetConsoleTitleA/W copy at most nSize-1 characters, always terminate a
-  ;; non-empty destination, and return the count excluding that terminator.
-  (func $handle_GetConsoleTitleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32) (local $len i32) (local $copy i32)
-    (call $console_title_ensure)
-    (local.set $len (call $strlen (global.get $CONSOLE_TITLE_STORAGE)))
-    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
-          (i32.ne (local.get $arg1) (i32.const 0)))
-      (then
-        (local.set $dst (call $g2w (local.get $arg0)))
-        (local.set $copy (local.get $len))
-        (if (i32.ge_u (local.get $copy) (local.get $arg1))
-          (then (local.set $copy (i32.sub (local.get $arg1) (i32.const 1)))))
-        (memory.copy (local.get $dst) (global.get $CONSOLE_TITLE_STORAGE) (local.get $copy))
-        (i32.store8 (i32.add (local.get $dst) (local.get $copy)) (i32.const 0))))
-    (global.set $eax (local.get $copy))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  ;; SetConsoleTitleW(lpConsoleTitle) → BOOL
+  (func $handle_SetConsoleTitleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $console_title_set (local.get $arg0) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  (func $handle_GetConsoleTitleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; Copy at most nSize-1 characters, always terminate a non-empty
+  ;; destination, and return the count excluding that terminator. nSize is a
+  ;; character count for both entry points, so the wide path scales addresses
+  ;; but not the limit.
+  (func $console_title_get (param $title_gp i32) (param $size i32)
+        (param $wide i32) (result i32)
     (local $dst i32) (local $len i32) (local $copy i32) (local $i i32)
     (call $console_title_ensure)
+    (if (i32.or (i32.eqz (local.get $title_gp)) (i32.eqz (local.get $size)))
+      (then (return (i32.const 0))))
     (local.set $len (call $strlen (global.get $CONSOLE_TITLE_STORAGE)))
-    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
-          (i32.ne (local.get $arg1) (i32.const 0)))
+    (local.set $dst (call $g2w (local.get $title_gp)))
+    (local.set $copy (local.get $len))
+    (if (i32.ge_u (local.get $copy) (local.get $size))
+      (then (local.set $copy (i32.sub (local.get $size) (i32.const 1)))))
+    (if (local.get $wide)
       (then
-        (local.set $dst (call $g2w (local.get $arg0)))
-        (local.set $copy (local.get $len))
-        (if (i32.ge_u (local.get $copy) (local.get $arg1))
-          (then (local.set $copy (i32.sub (local.get $arg1) (i32.const 1)))))
         (block $done (loop $widen
           (br_if $done (i32.ge_u (local.get $i) (local.get $copy)))
-          (i32.store16 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 1)))
+          (i32.store16 (i32.add (local.get $dst)
+              (i32.shl (local.get $i) (i32.const 1)))
             (i32.load8_u (i32.add (global.get $CONSOLE_TITLE_STORAGE) (local.get $i))))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $widen)))
-        (i32.store16 (i32.add (local.get $dst) (i32.shl (local.get $copy) (i32.const 1)))
-          (i32.const 0))))
-    (global.set $eax (local.get $copy))
+        (i32.store16 (i32.add (local.get $dst)
+          (i32.shl (local.get $copy) (i32.const 1))) (i32.const 0)))
+      (else
+        (memory.copy (local.get $dst) (global.get $CONSOLE_TITLE_STORAGE) (local.get $copy))
+        (i32.store8 (i32.add (local.get $dst) (local.get $copy)) (i32.const 0))))
+    (local.get $copy))
+
+  (func $handle_GetConsoleTitleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (call $console_title_get (local.get $arg0) (local.get $arg1) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_GetConsoleTitleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (call $console_title_get (local.get $arg0) (local.get $arg1) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; SetConsoleWindowInfo(hConsole, bAbsolute, lpConsoleWindow) → BOOL

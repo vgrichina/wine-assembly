@@ -6,13 +6,11 @@
     "CharLowerBuff",
     "GetCommandLine",
     "GetComputerName",
-    "GetConsoleTitle",
     "GetSystemDirectory",
     "GetUserName",
     "GetWindowsDirectory",
     "LoadLibraryEx",
     "RegisterClipboardFormat",
-    "SetConsoleTitle",
     "mciSendString",
     "wsprintf",
     "wvsprintf"
