@@ -660,11 +660,30 @@
             ;; The dialog and its controls held the focus; hand it back to the
             ;; owner so an app that paused on WM_KILLFOCUS resumes.
             (call $focus_restore_after_modal (local.get $arg4))
-            (global.set $eax (global.get $dlg_result))
-            (global.set $eip (global.get $dlg_ret_addr))
-            (global.set $dlg_pump_hwnd (i32.const 0))
-            (i32.store (global.get $SHARED_DLG_PUMP_HWND) (i32.const 0))
+            ;; The consumed DialogBoxParamA frame remains at ESP. Preserve the
+            ;; completed call's return/result while restoring the previous
+            ;; modal pump saved in its five argument slots.
+            (local.set $arg0 (global.get $dlg_result))
+            (local.set $arg1 (global.get $dlg_ret_addr))
+            (global.set $dlg_pump_hwnd
+              (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+            (global.set $dlg_proc
+              (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
+            (global.set $dlg_ret_addr
+              (call $gl32 (i32.add (global.get $esp) (i32.const 12))))
+            (global.set $dlg_callback_yield_pending
+              (call $gl32 (i32.add (global.get $esp) (i32.const 16))))
+            (global.set $dlg_init_focus_hwnd
+              (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+            (if (global.get $dlg_pump_hwnd)
+              (then (global.set $dlg_hwnd (global.get $dlg_pump_hwnd))))
+            (i32.store (global.get $SHARED_DLG_PUMP_HWND)
+              (global.get $dlg_pump_hwnd))
+            (global.set $eax (local.get $arg0))
+            (global.set $eip (local.get $arg1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
             (global.set $dlg_ended (i32.const 0))
+            (global.set $dlg_result (i32.const 0))
             (global.set $quit_flag (i32.const 0))
             (return)))
         ;; A guest DlgProc/WndProc has just returned to the modal loop.
@@ -772,14 +791,21 @@
                 (i32.mul (global.get $post_queue_count) (i32.const 16)))))
             ;; Dispatch by hwnd wndproc — WAT-native controls handle directly
             (local.set $arg4 (call $wnd_table_get (local.get $arg0)))
-            (if (i32.ge_u (local.get $arg4) (i32.const 0xFFFF0000))
+            ;; WNDPROC_DIALOG is a USER marker, not a WAT callback. Enter its
+            ;; retained DLGPROC on this continuation stack so a posted command
+            ;; may open another modal dialog without nesting $wnd_send_message.
+            (if (i32.eq (local.get $arg4) (global.get $WNDPROC_DIALOG))
               (then
-                (drop (call $wat_wndproc_dispatch
-                  (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-                ;; Re-enter dialog loop
-                (global.set $eip (global.get $dlg_loop_thunk))
-                (global.set $steps (i32.const 0))
-                (return)))
+                (local.set $arg4 (call $dialog_proc_get (local.get $arg0))))
+              (else
+                (if (i32.ge_u (local.get $arg4) (i32.const 0xFFFF0000))
+                  (then
+                    (drop (call $wat_wndproc_dispatch
+                      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+                    ;; Re-enter dialog loop
+                    (global.set $eip (global.get $dlg_loop_thunk))
+                    (global.set $steps (i32.const 0))
+                    (return)))))
             ;; x86 wndproc or dialog proc — call via guest stack
             (if (i32.eqz (local.get $arg4))
               (then (local.set $arg4 (global.get $dlg_proc))))
@@ -1146,6 +1172,11 @@
         ;; returns from the callback and immediately enters a deeper call.
         (global.set $mm_timer_in_cb (i32.const 0))
         (call $restore_caller_regs)
+        (if (global.get $mm_timer_resume_yield)
+          (then
+            (global.set $yield_reason (global.get $mm_timer_resume_yield))
+            (global.set $mm_timer_resume_yield (i32.const 0))
+            (global.set $steps (i32.const 0))))
         (return)))
 
     ;; Unresolved ordinal import from a system DLL (marker "ORD\0")

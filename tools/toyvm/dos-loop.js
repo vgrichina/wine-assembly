@@ -49,6 +49,12 @@ const VOLATILE_AFTER = 8;
 // ...and how many uncached compiles in a row may find the bytes unchanged
 // before the paragraph goes back to the cache (CodeCache.volatileEntry).
 const VOLATILE_STALE = 256;
+
+// The registers checkProgress folds into its "did anything move" hash. Hoisted
+// out of the function because that function runs once per handback, and a
+// program polling the BIOS keyboard from inside its frame loop hands back
+// every seventeen instructions.
+const PROGRESS_REGS = ['ax', 'bx', 'cx', 'dx', 'si', 'di', 'bp', 'sp', 'ds', 'es'];
 const { compileProgram } = require('./compile');
 const { decodeOne, readOperand, OPERAND_SIZE } = require('./decode');
 const { ARITY, NOFLAG, FUSE, TRACE, SPIN, PSPIN } = require('./emit');
@@ -202,6 +208,18 @@ class CodeCache {
     // which is what turns a self-modifying store into a few dropped regions
     // instead of an empty cache.
     this.byPara = new Map();
+    // Arena addresses of entries whose FIRST instruction the decoder refused.
+    // Running one of those moves the guest nowhere -- the compiled block is
+    // `end, ip` -- so a run that keeps arriving at one is not executing the
+    // program at all. See DosSession.checkProgress.
+    //
+    // Keyed by arena address rather than by cs:ip because step() asks on every
+    // handback and already has the address in hand: a number in a Set costs a
+    // hash, and building the pair into a string would put back the allocation
+    // checkProgress was just relieved of. The arena is bump-allocated, so an
+    // address is unique while it is live, and every path that recycles or drops
+    // one empties this with it.
+    this.refusedEntries = new Set();
   }
 
   // Everything compiled is now suspect, because the guest wrote into code that
@@ -213,6 +231,7 @@ class CodeCache {
     this.byPara.clear();
     this.plans.clear();
     this.stubProgs.clear();
+    this.refusedEntries.clear();
     this.vm.set('rtop', 0);
     this.jtab.fill(0);
     this.codeBits.fill(0);
@@ -432,6 +451,11 @@ class CodeCache {
       for (const prog of (this.byPara.get(p) || [])) doomed.add(prog);
     }
     if (!doomed.size) return;
+    // A refusal is a verdict on the BYTES, and these are the bytes that just
+    // changed -- a decryptor writing the real opcode over the one we refused is
+    // exactly the case. Forget every refusal rather than work out which ones
+    // this store reached; the next compile puts back the ones still true.
+    this.refusedEntries.clear();
     // The shadow return stack holds ARENA addresses, and $rpop validates them
     // against the guest ip and cs only -- it has no way to know the region they
     // point into has just been dropped. The arena is never overwritten in
@@ -794,6 +818,8 @@ class CodeCache {
       this.stubProgs.clear();
       this.arenaNext = isa.THREAD_BASE;
       this.arenaResets++;
+      // Addresses about to be handed out again to different code.
+      this.refusedEntries.clear();
       vm.set('rtop', 0);
       this.jtab.fill(0);
       // Every program that owned a code bit is gone with the arena, so the bits
@@ -835,6 +861,10 @@ class CodeCache {
       if (!list) this.stubProgs.set(q, list = []);
       list.push(prog);
     }
+    // A decoder refusal AT THE ENTRY compiles to `end, ip`: running it retires
+    // one dispatch and moves the guest nowhere. Remember the arena address so
+    // checkProgress can tell that spin apart from a program in a real wait.
+    if (prog.refusedAtEntry) this.refusedEntries.add(prog.entryAddr);
     this.deadFlagsDropped += prog.deadFlags || 0;
     this.tracedBlocks += prog.tracedBlocks || 0;
     this.spinBlocks += prog.spinBlocks || 0;
@@ -1014,7 +1044,7 @@ class DosSession {
     this.vgaPeriod = 0;
     this.vgaFrame = 0;
     this.retraceEdge = false;
-    this.lastKey = '';
+    this.lastKey = -1;
     this.lastWritten = 0;
     this.lastRegs = 0;
   }
@@ -1498,7 +1528,7 @@ class DosSession {
       if (kvec) { this.lastKbIrq = this.dispatched; this.raise(kvec); }
     }
 
-    this.checkProgress(cs, ip);
+    this.checkProgress(cs, ip, this.cache.refusedEntries.has(entry));
     return 'ran';
   }
 
@@ -1527,9 +1557,14 @@ class DosSession {
   // is still the guest's. That mix printed CAVEIRA.COM as "stuck at 1dcd:103" --
   // the guest's segment spliced onto STUB_OFF+3, a pair the program never had,
   // and a report naming an address that never existed is worse than no report.
-  checkProgress(cs, ip) {
+  checkProgress(cs, ip, refusedEntry = false) {
     const { vm, machine } = this;
-    const key = `${cs.toString(16)}:${ip.toString(16)}`;
+    // The pair as a number. This runs on every handback and the string was
+    // three allocations of it -- two toString(16) and a template -- for a value
+    // only ever printed when the detector actually fires, which is once per run
+    // at most. `cs` is 16 bits and `ip` can be 32, so the two go in a float
+    // rather than into an int32 the shift would truncate.
+    const key = cs * 0x100000000 + (ip >>> 0);
     // Anything the guest has put anywhere an observer could see it. The video
     // terms are not decoration: outside mode 3 the console count never moves,
     // so without them a program drawing a picture is judged entirely on ten
@@ -1539,8 +1574,8 @@ class DosSession {
       + machine.dacWrites + machine.vga.maskWrites
       + (machine.videoMode === 3 && this.cells ? this.cells(machine.con) : 0);
     let regs = 2166136261;
-    for (const n of ['ax', 'bx', 'cx', 'dx', 'si', 'di', 'bp', 'sp', 'ds', 'es']) {
-      regs = (Math.imul(regs, 16777619) ^ vm.get(n)) >>> 0;
+    for (let i = 0; i < PROGRESS_REGS.length; i++) {
+      regs = (Math.imul(regs, 16777619) ^ vm.get(PROGRESS_REGS[i])) >>> 0;
     }
     const same = key === this.lastKey && wrote === this.lastWritten && regs === this.lastRegs;
     this.stuck = same ? this.stuck + 1 : 0;
@@ -1565,9 +1600,26 @@ class DosSession {
     // while", which is the actual question, and it does not change meaning when
     // the handback rate does. It can only ever turn a stuck verdict into a
     // pass, never the reverse, so no run that completes today starts failing.
+    // ...with one exception, and it is not a heuristic: the work floor asks
+    // "has this program done nothing for a while", and it is the right question
+    // only for a program that is being RUN. A block whose first instruction the
+    // decoder refused compiles to `end, ip` -- entering it moves the guest
+    // nowhere by construction, and no amount of guest time can change that,
+    // because no guest instruction is executing. The only thing that ever makes
+    // one of those addresses live again is a write to its bytes, and that drops
+    // the refusal (see CodeCache.invalidateRange) along with the run of
+    // identical handbacks that got us here. STHINTRO.EXE is what this costs:
+    // its protector derails into the interrupt vector table at 0:18c, whose
+    // bytes are `63 01 00 f0` -- an ARPL the decoder will not emit in real mode
+    // -- and the run then retires ONE dispatch per handback. The work floor is
+    // counted in dispatches, so 20M of idleness needs 20M handbacks: 8,888,943
+    // of them in a 10M-dispatch run, 90% of the wall clock, and the report says
+    // "10.0M dispatches" as though the program had been running the whole time.
     const idle = this.dispatched - (this.stuckSince || 0);
     if (this.stuckLimit && this.stuck > this.stuckLimit
-        && idle > this.stuckWork) this.stuckAt = key;
+        && (refusedEntry || idle > this.stuckWork)) {
+      this.stuckAt = `${cs.toString(16)}:${(ip >>> 0).toString(16)}`;
+    }
   }
 
   // Run until the budget is spent or the program is finished. The headless

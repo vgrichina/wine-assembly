@@ -116,6 +116,9 @@ function makeShell(opts = {}) {
   assert.match(shellSource,
     /vfs\.copyFile\(path, alias, false\)/,
     'sidecar aliases must remain lazy but detach safely if the C: copy is written');
+  assert(shellSource.indexOf('vfs.copyFile(path, alias, false)') <
+      shellSource.indexOf('await attachDynamicOverlay(wine, app, sel)'),
+    'base-media aliases must exist before overlay change tracking begins');
   const hostSource = fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8');
   assert.match(hostSource,
     /if \(absolute && shell\.launchVfsExe && shell\.launchVfsExe\(launchFile, self, launchDir, params\)\)/,
@@ -131,6 +134,18 @@ function makeShell(opts = {}) {
   assert.match(shellSource, /finally \{\s*launchInFlight = false;\s*dispatchPendingLaunch\(\);/,
     'ending the current boot wakes a child that was queued during synchronous startup');
   console.log('ok: vfs child launch keeps args before PE startup');
+}
+
+// DirectX 2 redistributables must not replace the newer emulated runtime.
+{
+  const { shell, launched, logs } = makeShell();
+  assert.strictEqual(shell.launchVfsExe(
+    'C:\\REDIST\\DIRECTX\\DXSETUP.EXE', null, '', ''), true,
+    'legacy DXSETUP is accepted as already satisfied');
+  assert.strictEqual(launched.length, 0, 'no obsolete driver installer is launched');
+  assert(logs.some(line => /skipped obsolete DirectX setup/i.test(line)),
+    'the DirectX no-op is visible in the debug log');
+  console.log('ok: obsolete DirectX setup is already satisfied');
 }
 
 // 4. An installer that exits without launching its game leaves a lightweight

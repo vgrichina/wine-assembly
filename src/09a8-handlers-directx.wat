@@ -873,9 +873,9 @@
     (if (local.get $entry_wa)
       (then (i32.store offset=4 (call $dx_surf_state_ptr (local.get $entry_wa)) (i32.const 0)))))
 
-  ;; Record only an unscaled plain copy into a cursor-sized smaller surface.
-  ;; AoE's 280x140 UI backing surface is not cursor storage; suppressing its
-  ;; legitimate restore stamps resource-bar fragments across the scrolling map.
+  ;; Record only a cursor-sized unscaled plain copy into a smaller surface.
+  ;; The scratch allocation itself can be larger than the copied cursor rect;
+  ;; full 280x140 AoE UI restores must remain ordinary drawing operations.
   (func $dx_surf_note_copy
     (param $dst_entry i32) (param $src_entry i32)
     (param $dx i32) (param $dy i32) (param $sx i32) (param $sy i32)
@@ -897,7 +897,7 @@
     (local.set $src_area
       (i32.mul (load.field.memarg DxObject width (local.get $src_entry))
                (load.field.memarg DxObject height (local.get $src_entry))))
-    (if (i32.or (i32.ge_u (local.get $dst_area) (local.get $src_area)) (i32.or (i32.gt_u (load.field.memarg DxObject width (local.get $dst_entry)) (i32.const 64)) (i32.gt_u (load.field.memarg DxObject height (local.get $dst_entry)) (i32.const 64)))) (then (return)))
+    (if (i32.or (i32.ge_u (local.get $dst_area) (local.get $src_area)) (i32.or (i32.gt_u (local.get $w) (i32.const 64)) (i32.gt_u (local.get $h) (i32.const 64)))) (then (return)))
     (local.set $state (call $dx_surf_state_ptr (local.get $dst_entry)))
     (i32.store offset=4 (local.get $state)
       (i32.add (call $dx_slot_of (local.get $src_entry)) (i32.const 1)))

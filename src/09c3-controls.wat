@@ -6131,15 +6131,18 @@
                   (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
             ;; Send WM_COMMAND(MAKEWPARAM(ctrl_id, BN_CLICKED=0), button_hwnd)
             ;; to parent. Native BUTTON controls normally notify parents
-            ;; synchronously, and ordinary non-owned parents plus
-            ;; IDOK/IDCANCEL keep that behavior. A custom command on a native
-            ;; dialog or an owned guest form may enter a nested modal loop,
-            ;; though. Running that through $wnd_send_message
+            ;; synchronously. A dialog command or an IDOK/IDCANCEL command on
+            ;; a native guest window may enter a nested modal loop, though.
+            ;; Running that through $wnd_send_message
             ;; traps the browser inside its recursive interpreter frame, so no
             ;; later click can reach the child modal dialog; if its bounded run
             ;; expires, the live x86 continuation is abandoned. Queue those
-            ;; custom modal-form commands instead. A retained DLGPROC receives
-            ;; WM_COMMAND on the main interpreter context. VCL's owned forms
+            ;; dialog commands instead. Wizard pages also use IDOK/IDCANCEL as
+            ;; ordinary Next/Back commands, and either one may open another
+            ;; modal dialog. A retained DLGPROC receives every WM_COMMAND on
+            ;; the main interpreter context. DefDlgProc applies an unhandled
+            ;; modal IDOK fallback when that queued message is dispatched.
+            ;; VCL's owned forms
             ;; normally reflect that parent notification back to the control as
             ;; CN_COMMAND; its HWND association is private framework state, so
             ;; deliver the reflected message directly to the guest subclass.
@@ -6155,12 +6158,18 @@
                   (i32.and (call $ctrl_table_get_id (local.get $hwnd))
                            (i32.const 0xFFFF)))
                 (global.set $dialog_last_proc_handled (i32.const 0))
-                (if (i32.and
+                (if (i32.or
                       (i32.ne (call $dialog_proc_get (local.get $parent))
                               (i32.const 0))
                       (i32.and
-                        (i32.ne (local.get $cmd_id) (i32.const 1))
-                        (i32.ne (local.get $cmd_id) (i32.const 2))))
+                        (i32.or
+                          (i32.eq (local.get $cmd_id) (i32.const 1))
+                          (i32.eq (local.get $cmd_id) (i32.const 2)))
+                        (i32.and
+                          (i32.ne (call $wnd_table_get (local.get $parent))
+                                  (i32.const 0))
+                          (i32.lt_u (call $wnd_table_get (local.get $parent))
+                                    (i32.const 0xFFFE0000)))))
                   (then
                     (drop (call $post_queue_push
                       (local.get $parent)
@@ -6200,13 +6209,7 @@
                           ;; wParam: low 16 = current ctrl_id, high 16 = BN_CLICKED (0)
                           (local.get $cmd_id)
                           (local.get $hwnd))))))) ;; lParam = button hwnd
-                ;; USER's default IDOK close applies only when the dialog proc
-                ;; did not handle the command itself. A handled command may
-                ;; intentionally post follow-up work while keeping the dialog.
-                (if (i32.and
-                      (i32.eq (local.get $cmd_id) (i32.const 1))
-                      (i32.eqz (global.get $dialog_last_proc_handled)))
-                  (then (call $dialog_default_idok_close (local.get $parent))))))
+                ))
             ))
         (return (i32.const 0))))
 
@@ -16950,6 +16953,18 @@
                     (i32.eq (local.get $msg) (i32.const 0x0037)))))) ;; WM_QUERYDRAGICON
           (then (return (local.get $handled))))
         (return (call $dialog_extra_get (local.get $hwnd) (i32.const 0)))))
+    ;; BUTTON notifications arrive through the ordinary message pump so a
+    ;; dialog procedure can enter another modal loop without stranding a
+    ;; recursive WAT interpreter frame. If a true DialogBox DLGPROC leaves
+    ;; IDOK unhandled, apply USER's default close now, after that queued
+    ;; WM_COMMAND has run. Modeless dialogs remain application-owned.
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x0111))
+          (i32.eq (i32.and (local.get $wParam) (i32.const 0xFFFF))
+                  (i32.const 1)))
+      (then
+        (call $dialog_default_idok_close (local.get $hwnd))
+        (return (i32.const 0))))
     ;; FALSE from the DLGPROC hands WM_WINDOWPOSCHANGED to DefDlgProc's
     ;; DefWindowProc tail, which owns the derived WM_MOVE/WM_SIZE messages.
     (if (i32.eq (local.get $msg) (i32.const 0x0047))

@@ -6512,6 +6512,20 @@
     ;; per-dialog block and then asserts it non-NULL — a 0 there took the
     ;; app straight to ExitProcess(1).
     (local.set $init_param (local.get $arg4))
+    ;; Keep the previous modal pump in this call's consumed argument frame.
+    ;; The initial DLGPROC frame is placed below it, and CACA0004 restores
+    ;; these words when this DialogBox returns. Nested modal dialogs therefore
+    ;; compose on the guest stack instead of overwriting one global pump.
+    (call $gs32 (i32.add (global.get $esp) (i32.const 4))
+      (global.get $dlg_pump_hwnd))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 8))
+      (global.get $dlg_proc))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 12))
+      (global.get $dlg_ret_addr))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 16))
+      (global.get $dlg_callback_yield_pending))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 20))
+      (global.get $dlg_init_focus_hwnd))
     ;; Allocate HWND
     (local.set $hwnd (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
@@ -6598,11 +6612,15 @@
     (drop (call $host_show_window (local.get $hwnd) (i32.const 1)))
     ;; Save return address — we'll restore it when EndDialog is called
     (global.set $dlg_ret_addr (call $gl32 (global.get $esp)))
-    ;; Clean DialogBoxParamA frame (ret + 5 args = 24 bytes)
+    ;; Apply the five-argument stdcall cleanup explicitly. The callback frame
+    ;; below reaches back across these 24 bytes so the consumed API frame stays
+    ;; beneath it as nested-pump storage.
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
     ;; Set up call to dialog proc: push args for DlgProc(hwnd, WM_INITDIALOG, 0, dwInitParam)
-    ;; Return to dialog loop thunk which pumps messages until EndDialog
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))  ;; 4 args + ret addr
+    ;; Return to dialog loop thunk which pumps messages until EndDialog. Keep
+    ;; this API frame in place until then: its consumed args hold the previous
+    ;; pump state, and CACA0004 pops all 24 bytes after restoring them.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 44)))  ;; API frame + 4 args + ret
     (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))  ;; ret → dialog message loop
     (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $hwnd))          ;; hDlg
     (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0110))         ;; WM_INITDIALOG

@@ -1701,14 +1701,16 @@
 
   (func $gdi_char_abc_widths_a (param $hdc i32) (param $first i32)
         (param $last i32) (param $out i32) (result i32)
-    (local $ch i32) (local $index i32) (local $width i32) (local $entry i32)
+    (local $ch i32) (local $index i32) (local $span i32)
+    (local $width i32) (local $entry i32)
     (if (i32.or (i32.eqz (local.get $out))
           (i32.or (i32.gt_u (local.get $first) (local.get $last))
             (i32.gt_u (i32.sub (local.get $last) (local.get $first)) (i32.const 255))))
       (then (return (i32.const 0))))
-    (local.set $ch (local.get $first))
+    (local.set $span (i32.sub (local.get $last) (local.get $first)))
     (block $done (loop $characters
-      (br_if $done (i32.gt_u (local.get $ch) (local.get $last)))
+      (br_if $done (i32.gt_u (local.get $index) (local.get $span)))
+      (local.set $ch (i32.add (local.get $first) (local.get $index)))
       (i32.store8 (global.get $TEXT_SCRATCH) (local.get $ch))
       (i32.store8 offset=1 (global.get $TEXT_SCRATCH) (i32.const 0))
       (local.set $width (call $host_measure_text (local.get $hdc)
@@ -1719,7 +1721,6 @@
       (i32.store offset=4 (local.get $entry) (local.get $width))
       (i32.store offset=8 (local.get $entry) (i32.const 0))
       (local.set $index (i32.add (local.get $index) (i32.const 1)))
-      (local.set $ch (i32.add (local.get $ch) (i32.const 1)))
       (br $characters)))
     (i32.const 1))
 
