@@ -87,6 +87,8 @@ assert.strictEqual(host.get_window_info(100, 0), 0x10c00000, 'get_window_info st
 assert.strictEqual(host.get_window_info(410, 1), 0, 'get_window_info visible');
 assert.strictEqual(host.get_window_info(420, 2), 0, 'get_window_info enabled');
 assert.strictEqual(host.get_window_info(100, 3), 4321, 'get_window_info process owner');
+assert.strictEqual(host.get_window_info(100, 4), 1, 'get_window_info finds an existing window');
+assert.strictEqual(host.get_window_info(999, 4), 0, 'get_window_info rejects an unknown window');
 assert.strictEqual(host.foreground_window(), 420,
   'foreground_window returns the highest visible renderer top-level');
 renderer.windows[420].visible = false;

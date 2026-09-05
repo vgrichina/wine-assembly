@@ -73,6 +73,7 @@ const u32 = value => [value, value >>> 8, value >>> 16, value >>> 24]
 
 (async () => {
   const hostCalls = [];
+  const rendererHwnd = 0x70001;
   const { exports: e, memory } = await bootRenderHarness({
     extraWat,
     fonts: 'none',
@@ -84,6 +85,8 @@ const u32 = value => [value, value >>> 8, value >>> 16, value >>> 24]
         hostCalls.push(['activate', hwnd >>> 0]);
         return 1;
       },
+      get_window_info: (hwnd, prop) =>
+        ((hwnd >>> 0) === rendererHwnd && prop === 4 ? 1 : 0),
       invalidate_frame() {},
     },
   });
@@ -160,12 +163,17 @@ const u32 = value => [value, value >>> 8, value >>> 16, value >>> 24]
   assert.strictEqual(new DataView(memory.buffer).getUint32(toWasm(observed), true), 0x0013,
     'OpenIcon synchronously sent WM_QUERYOPEN');
 
+  assert.strictEqual(e.test_close_window(rendererHwnd), 1,
+    'CloseWindow accepts a live renderer-owned window from another process');
+  assert.deepStrictEqual(hostCalls.at(-1), ['sys', rendererHwnd, 0xF020],
+    'a foreign window is minimized through the shared renderer');
+
   assert.strictEqual(e.test_close_window(0x7fffffff), 0);
   assert.strictEqual(e.test_last_error(), 1400);
   assert.strictEqual(e.test_open_icon(0x7fffffff), 0);
   assert.strictEqual(e.test_last_error(), 1400);
 
-  console.log('PASS  OpenIcon/CloseWindow synchronize Win98 iconic state and honor WM_QUERYOPEN');
+  console.log('PASS  OpenIcon/CloseWindow synchronize local and renderer-owned Win98 state');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

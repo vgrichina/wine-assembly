@@ -175,7 +175,7 @@
   (import "host" "get_window_related" (func $host_get_window_related (param i32 i32) (result i32)))
   ;; get_window_related(hwnd, GW_*) → renderer-wide top-level relation.
   (import "host" "get_window_info" (func $host_get_window_info (param i32 i32) (result i32)))
-  ;; get_window_info(hwnd, 0=style, 1=visible) → renderer window property.
+  ;; get_window_info(hwnd, 0=style, 1=visible, 2=enabled, 3=pid, 4=exists) → renderer property.
   (import "host" "post_window_message" (func $host_post_window_message (param i32 i32 i32 i32) (result i32)))
   ;; post_window_message(...) → 1 when routed to another app instance.
   (import "host" "activate_window" (func $host_activate_window (param i32) (result i32)))

@@ -4990,8 +4990,10 @@
 
   ;; CloseWindow(hWnd) — despite the name, Win32 minimizes the window.
   (func $handle_CloseWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $top i32)
-    (if (i32.lt_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
+    (local $top i32) (local $slot i32)
+    (local.set $slot (call $wnd_table_find (local.get $arg0)))
+    (if (i32.and (i32.lt_s (local.get $slot) (i32.const 0))
+                 (i32.eqz (call $host_get_window_info (local.get $arg0) (i32.const 4))))
       (then
         (global.set $last_error (i32.const 1400)) ;; ERROR_INVALID_WINDOW_HANDLE
         (global.set $eax (i32.const 0))
@@ -5000,10 +5002,12 @@
     ;; Use the same browser-side transition as SC_MINIMIZE and retain the
     ;; guest-visible bit queried by IsIconic/GetWindowPlacement.
     (call $host_sys_command (local.get $arg0) (i32.const 0xF020)) ;; SC_MINIMIZE
-    (call $wnd_apply_show_state (local.get $arg0) (i32.const 6)) ;; SW_MINIMIZE
-    (local.set $top (call $wnd_top_level (local.get $arg0)))
-    (if (i32.eq (global.get $active_hwnd) (local.get $top))
-      (then (drop (call $active_window_transition (i32.const 0)))))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (call $wnd_apply_show_state (local.get $arg0) (i32.const 6)) ;; SW_MINIMIZE
+        (local.set $top (call $wnd_top_level (local.get $arg0)))
+        (if (i32.eq (global.get $active_hwnd) (local.get $top))
+          (then (drop (call $active_window_transition (i32.const 0)))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -9949,8 +9953,8 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; IsWindow(hwnd) → BOOL. The desktop is the one permanent HWND that does
-  ;; not occupy a WND_RECORDS slot; every created window must have a live slot.
+  ;; IsWindow(hwnd) → BOOL. Desktop has no WND_RECORDS slot, and windows owned
+  ;; by another process exist only in the shared renderer window registry.
   ;; A value merely resembling the 0x10000+ handle range is not sufficient:
   ;; HWND_BROADCAST (-1) is unsigned-greater than 0x10000, and treating it as a
   ;; window leaves old InstallShield splash pumps waiting for it forever.
@@ -9959,7 +9963,7 @@
       (i32.ne (local.get $arg0) (i32.const 0))
       (i32.or
         (i32.eq (local.get $arg0) (i32.const 0x10000))
-        (i32.ge_s (call $wnd_table_find (local.get $arg0)) (i32.const 0)))))
+        (i32.or (i32.ge_s (call $wnd_table_find (local.get $arg0)) (i32.const 0)) (call $host_get_window_info (local.get $arg0) (i32.const 4))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IsWindowUnicode(hwnd) reflects whether the HWND was created through a W
