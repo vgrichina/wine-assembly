@@ -1,0 +1,15 @@
+{
+  "_comment": "Extra test/run.js flags per app id for tools/screenshot-registry.sh, so the per-app page picture shows the program rather than its About box, its setup dialog or an expired level timer. Batch numbers are where a scheduled --input lands; a dlg-cmd with no dialog open is a logged no-op, so the same command is repeated at a few points. Flags here are placed before the script's own, so a --max-seconds here wins.",
+
+  "snake": "--tick-ms-per-batch=5 --input=300:keydown:0x71 --max-batches=600",
+  "freecell": "--input=300:keydown:0x71",
+  "funtris": "--input=400:dlg-cmd:1,1500:dlg-cmd:1,4000:dlg-cmd:1",
+  "peaks": "--input=400:dlg-cmd:1,1500:dlg-cmd:1,4000:dlg-cmd:1",
+  "fourstones": "--input=400:dlg-cmd:1,1500:dlg-cmd:1,4000:dlg-cmd:1",
+  "qblackjack": "--input=400:dlg-cmd:1,1500:dlg-cmd:2,4000:dlg-cmd:1",
+  "sndrec32_98": "--input=400:dlg-cmd:6,1500:dlg-cmd:6,4000:dlg-cmd:6",
+  "heaven7": "--max-seconds=150 --batch-size=20000 --input=40:dlg-cmd:1,150:dlg-cmd:1",
+  "bakkslide7": "--max-seconds=120 --batch-size=20000 --input=40:dlg-cmd:1,150:dlg-cmd:1",
+  "ptct": "--max-seconds=120 --batch-size=20000 --png-canvas --input=40:dlg-cmd:1,150:dlg-cmd:1",
+  "cashcow": "--max-seconds=150 --batch-size=20000"
+}

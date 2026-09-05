@@ -150,12 +150,15 @@ for (const link of [
   'https://archive.org/details/DX-Ball_game',
   'https://archive.org/download/volley/volley.zip',
   'https://archive.org/details/volley',
+  'https://archive.org/download/elmav10/Elmav10.zip',
+  'https://archive.org/details/elmav10',
 ]) {
   assert(sourcesHtml.includes(link), `Sources miniapp links ${link}`);
 }
 assert(sourcesHtml.includes('37e3d984366cdd683c3ad509d4df298521ab303b') &&
-  sourcesHtml.includes('8d22d8918960dec5cda1abc3b5e97eb83aca982d'),
-  'Sources miniapp pins both original archive hashes');
+  sourcesHtml.includes('8d22d8918960dec5cda1abc3b5e97eb83aca982d') &&
+  sourcesHtml.includes('11e0703f51268caf7e4d99ddf014fb12f95246e7'),
+  'Sources miniapp pins all original archive hashes');
 assert(webApp.includes('<option value="diablo_demo">Diablo (pre-release demo)</option>'),
   'debug app selector should expose the local Diablo demo candidate');
 assert(/DEBUG_ONLY_APPS\s*=\s*\[[\s\S]*\[\s*'diablo_demo'\s*,\s*'Diablo Demo'/s.test(webApp),

@@ -10,6 +10,7 @@ const debugIds = new Set(DEBUG_ONLY_APPS.map(([id]) => id));
 const localCandidateIds = new Set(LOCAL_CANDIDATE_APPS.map(([id]) => id));
 const expectedLocalCandidates = new Map([
   ['cdplayer', 'binaries/win98-apps/cdplayer.exe'],
+  ['elasto_mania', 'test/binaries/candidates/elasto-mania/Elma/Elma.exe'],
   ['jardinains', 'test/binaries/candidates/jardinains/installed/jardinains.exe'],
   ['jazz2_demo', 'test/binaries/candidates/jazz-jackrabbit-2-demo-installer/installed/jazz2.exe'],
   ['quake2_demo', 'test/binaries/candidates/quake-2-demo-installer/installed-extracted/Install/Data/quake2.exe'],
@@ -34,6 +35,11 @@ assert.strictEqual(APPS.jardinains.asyncMultimediaTimer, true,
   'Jardinains advances its Blitz multimedia timers while the guest runs');
 assert.strictEqual(APPS.jardinains.localFileManifest,
   'test/binaries/candidates/jardinains/installed/.wine-assembly-browser.json');
+assert.strictEqual(APPS.elasto_mania.requiredFiles, true);
+assert.strictEqual(APPS.elasto_mania.localFileManifest,
+  'test/binaries/candidates/elasto-mania/.wine-assembly-browser.json');
+assert.deepStrictEqual(APPS.elasto_mania.persistFiles,
+  ['c:\\state.dat', 'c:\\stats.txt', 'c:\\Rec\\*.rec']);
 assert.strictEqual(APPS.jazz2_demo.requiredFiles, true);
 assert(APPS.jazz2_demo.files.some(file => file.endsWith('/share1.j2l')),
   'Jazz Jackrabbit 2 mounts its playable shareware level');

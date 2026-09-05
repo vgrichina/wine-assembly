@@ -209,7 +209,7 @@
   (region.declare $WATX_STRING_POOL (size 0x00000400) (align 0x00000010)
     (owner "01-header.wat: (string.pool ...)"))
   (region.declare $DI_DIK_VK_TABLE (size 0x00000100) (align 0x00000100)
-    (owner "09a8-handlers-directx.wat:6635"))
+    (owner "09a8-handlers-directx.wat:6645"))
   (region.declare $RICHEDIT_FORMAT_TABLE (size 0x00000400) (align 0x00000010)
     (owner "10-helpers.wat:2546"))
   (region.declare $RICHEDIT_PARA_TABLE (size 0x00000400) (align 0x00000010)
