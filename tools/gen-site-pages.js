@@ -121,7 +121,7 @@ function rewriteMdLinks(html) {
   return html.replace(/href="([^"#:]+)\.md(#[^"]*)?"/g, (m, p, hash) => `href="${p}.html${hash || ''}"`);
 }
 
-function pageHtml({ md, title, description, urlPath, sourceRel, nav, dates, extraHead, ldExtra }) {
+function pageHtml({ md, title, description, urlPath, sourceRel, nav, dates, extraHead, ldExtra, ogImage = OG_IMAGE }) {
   const url = `${SITE}/${urlPath}`;
   const body = rewriteMdLinks(marked.parse(md, { gfm: true, breaks: false }));
   const ld = {
@@ -130,7 +130,7 @@ function pageHtml({ md, title, description, urlPath, sourceRel, nav, dates, extr
     headline: title,
     description,
     url,
-    image: OG_IMAGE,
+    image: ogImage,
     author: { '@type': 'Person', name: AUTHOR, url: REPO },
     publisher: { '@type': 'Organization', name: SITE_NAME, url: SITE },
     isPartOf: { '@type': 'WebSite', name: SITE_NAME, url: SITE },
@@ -153,13 +153,13 @@ function pageHtml({ md, title, description, urlPath, sourceRel, nav, dates, extr
   <meta property="og:title" content="${esc(fullTitle)}">
   <meta property="og:description" content="${esc(description)}">
   <meta property="og:url" content="${url}">
-  <meta property="og:image" content="${OG_IMAGE}">
+  <meta property="og:image" content="${ogImage}">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="${esc(fullTitle)}">
   <meta name="twitter:description" content="${esc(description)}">
-  <meta name="twitter:image" content="${OG_IMAGE}">
+  <meta name="twitter:image" content="${ogImage}">
   <meta name="theme-color" content="#008080">
   <link rel="icon" href="${SITE}/icons/icon-192.png">
   <script type="application/ld+json">${JSON.stringify(ld)}</script>${extraHead || ''}
@@ -199,6 +199,8 @@ const NAV_APPS = `<a href="/apps/">Apps</a>`;
 // prose comes from tools/site-app-blurbs.json; everything else (exe, format,
 // DLLs, data files, command line) is read off the registry entry itself.
 const APP_BLURBS_REL = 'tools/site-app-blurbs.json';
+const OG_DIR = 'screenshots/og';
+const { ogCard } = require('./gen-og-images');
 // The selector's groups are about where a binary came from; the pages group
 // by what a visitor is looking for, so a few labels fold together.
 const GROUP_LABELS = {
@@ -445,6 +447,15 @@ function generatePages() {
   for (const app of apps) {
     const siblings = apps.filter(s => s.group === app.group && s.id !== app.id);
     const md = appPageMd(app, siblings);
+    // The app's own 1200x630 link-preview card, built from its screenshot.
+    // Generated beside the pages (screenshots/og/ is not committed) and
+    // uploaded by deploy-berrry.js with the other binary directories.
+    let ogImage = OG_IMAGE;
+    if (app.shot) {
+      const card = `${OG_DIR}/${app.id}.png`;
+      ogCard(path.join(ROOT, app.shot), path.join(ROOT, card));
+      ogImage = `${SITE}/${card}`;
+    }
     pages.push({
       name: `apps/${app.id}.html`,
       content: pageHtml({
@@ -454,10 +465,11 @@ function generatePages() {
         urlPath: `apps/${app.id}.html`, sourceRel: APP_BLURBS_REL,
         nav: [NAV_HOME, NAV_APPS, NAV_ARTICLES, NAV_STORY, NAV_REPO].join(' '),
         dates: blurbDates,
+        ogImage,
         ldExtra: {
           '@type': 'WebPage',
           about: { '@type': 'SoftwareApplication', name: app.name, operatingSystem: 'Windows 98', applicationCategory: app.group },
-          ...(app.shot ? { image: `${SITE}/${app.shot}` } : {}),
+          ...(app.shot ? { image: [ogImage, `${SITE}/${app.shot}`] } : {}),
         },
       }),
     });
@@ -568,6 +580,6 @@ if (require.main === module) {
     for (const p of pages) console.log(`${p.name}  (${p.content.length} bytes)`);
   } else {
     writePages(pages);
-    console.log(`wrote ${pages.length} pages (story.html, apps/*.html, articles/*.html, docs/**/*.html, sitemap.xml)`);
+    console.log(`wrote ${pages.length} pages (story.html, apps/*.html, articles/*.html, docs/**/*.html, sitemap.xml) and ${OG_DIR}/*.png`);
   }
 }

@@ -31,7 +31,7 @@ const SKIP_FILES = new Set(['package.json', 'package-lock.json',
 const SKIP_DIRS = new Set(['node_modules', '.git', '.claude', 'scratch', 'tools', 'test', 'build', 'binaries']);
 
 // Directories that contain binary assets (base64-encoded)
-const BINARY_DIRS = ['binaries', 'icons', 'build', 'screenshots/apps'];
+const BINARY_DIRS = ['binaries', 'icons', 'build', 'screenshots/apps', 'screenshots/og'];
 
 // berrry rejects any single file over this with HTTP 400. Oversized binary
 // assets are therefore published as name.part000, name.part001, ...; the web
