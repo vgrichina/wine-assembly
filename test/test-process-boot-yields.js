@@ -60,9 +60,10 @@ function fakeGuest(name, { nameGetter }) {
   const hostSource = fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8');
   assert.match(pageSource, /lib\/process-boot\.js\?v=5/,
     'the browser must not reuse the loader that parsed oversized NE files as PE');
-  assert.match(pageSource, /host\.js\?v=294/);
-  assert.match(hostSource, /static SOURCE_VERSION = '294'/,
-    'the current host imports need a matching browser artifact key');
+  const sourceVersion = hostSource.match(/static SOURCE_VERSION = '(\d+)'/);
+  assert(sourceVersion, 'the browser host declares a numeric artifact source version');
+  assert(pageSource.includes(`host.js?v=${sourceVersion[1]}`),
+    'the page host cache key agrees with the artifact source version');
 
   const peBytes = syntheticLargePe();
   const peMemory = new ArrayBuffer(0x5000);
