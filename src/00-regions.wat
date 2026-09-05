@@ -407,6 +407,8 @@
     (owner "09a-handlers.wat:10304"))
   (region.declare $SHARED_COUNTERS (size 0x00000010) (align 0x00000010)
     (owner "01-header.wat:2408"))
+  (region.declare $CLIPBOARD_SEQUENCE (size 0x00000004) (align 0x00000004)
+    (owner "01-header.wat:3910"))
   (region.declare $GDI_TABLE_MARKS (size 0x00000010) (align 0x00000010)
     (owner "10d-gdi-region-path.wat:765"))
   (region.declare $TV_SLOT_MARK (size 0x00000004) (align 0x00000010)
