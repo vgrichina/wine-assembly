@@ -200,8 +200,12 @@ const digest = crypto.createHash('sha256')
 // ERROR_CALL_NOT_IMPLEMENTED result instead of claiming an ACL was persisted.
 // 2026-09-04: 441 -> 439. ExtractIconA and ExtractIconExA now enumerate and
 // materialize caller-owned PE/NE/ICO icons instead of returning fake success.
-const EXPECTED_COUNT = 439;
-const EXPECTED_SHA256 = '172acea85f88f840222ac3ee31bef8671f2d2197db18fdbf25c9fd332b075aac';
+// 2026-09-04: 439 -> 438. GetForegroundWindow now queries renderer-wide
+// top-level z-order instead of returning this process's main HWND.
+// 2026-09-05: 438 -> 437. The Win98 Shell32 ArrangeWindows ordinal now tiles
+// eligible renderer windows instead of returning an unconditional zero.
+const EXPECTED_COUNT = 437;
+const EXPECTED_SHA256 = '030f24c394c47127bf27f3dadd1152325bb01217a33f83b28aab227fa7c5251f';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

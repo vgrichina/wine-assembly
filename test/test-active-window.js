@@ -70,6 +70,15 @@ const extraWat = String.raw`
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
 
+  (func (export "test_get_foreground") (param $stack i32) (result i64)
+    (global.set $esp (local.get $stack))
+    (call $handle_GetForegroundWindow
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i64.or
+      (i64.extend_i32_u (global.get $eax))
+      (i64.shl (i64.extend_i32_u (global.get $esp)) (i64.const 32))))
+
   (func (export "test_set_foreground") (param $hwnd i32) (result i32)
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
@@ -96,8 +105,10 @@ const extraWat = String.raw`
 (async () => {
   assert.strictEqual(apiTable.find(api => api.name === 'SetActiveWindow').nargs, 1);
   assert.strictEqual(apiTable.find(api => api.name === 'GetActiveWindow').nargs, 0);
+  assert.strictEqual(apiTable.find(api => api.name === 'GetForegroundWindow').nargs, 0);
 
   const hostCalls = [];
+  const externalForeground = 0x76543210;
   const harness = await bootRenderHarness({
     extraWat,
     fonts: 'none',
@@ -106,6 +117,7 @@ const extraWat = String.raw`
         hostCalls.push(['activate', hwnd >>> 0]);
         return hwnd ? 1 : 0;
       },
+      foreground_window() { return externalForeground; },
       set_window_zorder(hwnd, after) {
         hostCalls.push(['zorder', hwnd >>> 0, after | 0]);
       },
@@ -147,7 +159,12 @@ const extraWat = String.raw`
 
   assert.strictEqual(e.test_get_active(), 0,
     'a thread queue starts without an active window');
-  let packed = e.test_set_active(first, stack);
+  let packed = e.test_get_foreground(stack);
+  assert.strictEqual(result(packed), externalForeground,
+    'GetForegroundWindow reads renderer-wide state rather than this process main HWND');
+  assert.strictEqual(finalEsp(packed), stack + 4,
+    'zero-argument GetForegroundWindow pops its return address');
+  packed = e.test_set_active(first, stack);
   assert.strictEqual(result(packed), 0,
     'first successful SetActiveWindow returns the previous NULL active window');
   assert.strictEqual(finalEsp(packed), stack + 8, 'SetActiveWindow cleans stdcall');
