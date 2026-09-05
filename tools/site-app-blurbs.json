@@ -1,5 +1,7 @@
 {
   "_comment": "One or two sentences per desktop app id (DESKTOP_APPS in lib/apps.js), read by tools/gen-site-pages.js for the per-app pages (apps/<id>.html). Only the desktop set gets a page; candidates, SDK samples and demos do not. Keep these factual: what the program is and, where known, how far it runs here.",
+  "_skip_comment": "Desktop ids that get no page yet: they are not on the production desktop (wine-assembly.berrry.app/lib/apps.js) or have no usable screenshot. Remove an id from here, add its blurb, and shoot it with tools/screenshot-registry.sh when it ships.",
+  "_skip": ["dxball", "blobby_volley", "heaven7", "cashcow", "bakkslide7", "ptct"],
 
   "notepad": "The Windows 98 text editor, and the first program this emulator ever ran. Typing, selection, word wrap, Find and Replace, the Font and Open/Save dialogs and the help file all work.",
   "calc": "The Windows 98 Calculator in standard and scientific modes. It needs the real msvcrt.dll, which is loaded beside it.",
@@ -33,14 +35,7 @@
   "fourstones": "FourStones, a community remake of Tic Tac Drop.",
   "cwordzap": "CWordZap, a community remake of WordZap.",
   "qblackjack": "QuickBlackjack, a community blackjack game.",
-  "dxball": "DX-Ball, the freeware Breakout game by Michael P. Welch, running on DirectDraw. Shipped with the site as a freeware package.",
-  "blobby_volley": "Blobby Volley, the freeware two-player volleyball game. Its game loop is interpreter-bound, which made it the project's reference case for measuring throughput rather than scheduling.",
   "winamp": "Winamp 2.91, extracted from its installer. The skinned main window, playlist and equalizer draw through SetWindowRgn, and MP3 playback runs the real in_mp3 decoder on its own thread.",
   "heroes2_demo": "The Heroes of Might and Magic II demo, redistributable and shipped with the site. It is the project's standing benchmark for interpreter throughput.",
-  "rct": "RollerCoaster Tycoon, Chris Sawyer's assembly-language park simulator. Its resolution byte is patched at launch to fit the screen.",
-
-  "heaven7": "Heaven Seven by Exceed, the 64K demoscene intro from 2000, running its software raytracer in the interpreter.",
-  "cashcow": "Cashcow, a 64K demoscene intro.",
-  "bakkslide7": "Bakkslide 7, a 64K intro in its Win32 port.",
-  "ptct": "Please the Cookie Thing, a 64K intro rendered through the emulator's OpenGL 1.x bridge."
+  "rct": "RollerCoaster Tycoon, Chris Sawyer's assembly-language park simulator. Its resolution byte is patched at launch to fit the screen."
 }
