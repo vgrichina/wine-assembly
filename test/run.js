@@ -1182,6 +1182,7 @@ async function main() {
   //   B:wait-vfs-file:LIMIT:PATH — delay until PATH exists in the guest VFS
   //   B:sleep-ms:MS — wait real wall-clock time before continuing scheduled actions
   //   B:set-batch-size:BLOCKS — change the main guest block budget for later batches
+  //   B:set-win16-trace:0|1 — toggle Win16 API tracing during a long run
   //   B:wait-go[:LIMIT] — hold later events until the parent sends {t:'go'} over IPC (LIMIT in batches; default none)
   //   B:call-func:ADDR[:A0:A1:A2:A3] — call a guest function through the WASM helper
   //   B:read-dword:ADDR[:LABEL] — log a guest dword value
@@ -1631,6 +1632,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'sleep-ms', ms: parseInt(parts[2]) || 0 });
       } else if (kind === 'set-batch-size') {
         scheduledInput.push({ batch, action: 'set-batch-size', size: parseInt(parts[2]) || 1 });
+      } else if (kind === 'set-win16-trace') {
+        scheduledInput.push({ batch, action: 'set-win16-trace', enabled: parseInt(parts[2]) !== 0 });
       } else if (kind === 'canvas-resize') {
         // B:canvas-resize:WIDTH:HEIGHT — emulate browser backing-canvas resize.
         scheduledInput.push({ batch, action: 'canvas-resize', w: parseInt(parts[2]), h: parseInt(parts[3]) });
@@ -1979,7 +1982,10 @@ async function main() {
       }
       if (!bytes) {
         const resident = residentWin16Module(ctx.vfs, name);
-        if (resident) bytes = resident.bytes;
+        if (resident) {
+          bytes = resident.bytes;
+          if (resident.format === 'w32inst') return (bytes.length | 0x80000000) >>> 0;
+        }
       }
       if (!bytes) return false;
       const room = ctx.exports.win16_app_dll_staging_size
@@ -6249,7 +6255,7 @@ async function main() {
         if (renderer) {
           const wins = Object.values(renderer.windows || {})
             .filter(w => w && w.visible && w.isDialog)
-            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+            .sort((a, b) => ((b.zOrder || 0) - (a.zOrder || 0)) || ((b.hwnd || 0) - (a.hwnd || 0)));
           if (wins.length) dlg = wins[0].hwnd | 0;
         }
         if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
@@ -6284,7 +6290,7 @@ async function main() {
         if (renderer) {
           const wins = Object.values(renderer.windows || {})
             .filter(w => w && w.visible && w.isDialog)
-            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+            .sort((a, b) => ((b.zOrder || 0) - (a.zOrder || 0)) || ((b.hwnd || 0) - (a.hwnd || 0)));
           if (wins.length) dlg = wins[0].hwnd | 0;
         }
         if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
@@ -6319,7 +6325,7 @@ async function main() {
         if (renderer) {
           const wins = Object.values(renderer.windows || {})
             .filter(w => w && w.visible && w.isDialog)
-            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+            .sort((a, b) => ((b.zOrder || 0) - (a.zOrder || 0)) || ((b.hwnd || 0) - (a.hwnd || 0)));
           if (wins.length) dlg = wins[0].hwnd | 0;
         }
         if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
@@ -6340,7 +6346,7 @@ async function main() {
         if (renderer) {
           const wins = Object.values(renderer.windows || {})
             .filter(w => w && w.visible && w.isDialog)
-            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+            .sort((a, b) => ((b.zOrder || 0) - (a.zOrder || 0)) || ((b.hwnd || 0) - (a.hwnd || 0)));
           if (wins.length) dlg = wins[0].hwnd | 0;
         }
         if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
@@ -6381,7 +6387,7 @@ async function main() {
         if (renderer) {
           const wins = Object.values(renderer.windows || {})
             .filter(w => w && w.visible && w.isDialog)
-            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+            .sort((a, b) => ((b.zOrder || 0) - (a.zOrder || 0)) || ((b.hwnd || 0) - (a.hwnd || 0)));
           if (wins.length) dlg = wins[0].hwnd | 0;
         }
         if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
@@ -6457,7 +6463,7 @@ async function main() {
         if (renderer) {
           const wins = Object.values(renderer.windows || {})
             .filter(w => w && w.visible)
-            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+            .sort((a, b) => ((b.zOrder || 0) - (a.zOrder || 0)) || ((b.hwnd || 0) - (a.hwnd || 0)));
           for (const w of wins) {
             found = findChildById(w.hwnd | 0);
             if (found) break;
@@ -6529,7 +6535,7 @@ async function main() {
         if (renderer) {
           const wins = Object.values(renderer.windows || {})
             .filter(w => w && w.visible)
-            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+            .sort((a, b) => ((b.zOrder || 0) - (a.zOrder || 0)) || ((b.hwnd || 0) - (a.hwnd || 0)));
           for (const w of wins) {
             found = findChildById(w.hwnd | 0);
             if (found) break;
@@ -6562,7 +6568,7 @@ async function main() {
         if (renderer) {
           const wins = Object.values(renderer.windows || {})
             .filter(w => w && w.visible && w.isDialog)
-            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+            .sort((a, b) => ((b.zOrder || 0) - (a.zOrder || 0)) || ((b.hwnd || 0) - (a.hwnd || 0)));
           if (wins.length) dlg = wins[0].hwnd | 0;
         }
         if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
@@ -6616,7 +6622,7 @@ async function main() {
         if (renderer) {
           const wins = Object.values(renderer.windows || {})
             .filter(w => w && w.visible && w.isDialog)
-            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+            .sort((a, b) => ((b.zOrder || 0) - (a.zOrder || 0)) || ((b.hwnd || 0) - (a.hwnd || 0)));
           if (wins.length) dlg = wins[0].hwnd | 0;
         }
         if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
@@ -6654,7 +6660,7 @@ async function main() {
         if (renderer) {
           const wins = Object.values(renderer.windows || {})
             .filter(w => w && w.visible && w.isDialog)
-            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+            .sort((a, b) => ((b.zOrder || 0) - (a.zOrder || 0)) || ((b.hwnd || 0) - (a.hwnd || 0)));
           if (wins.length) dlg = wins[0].hwnd | 0;
         }
         if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
@@ -6856,7 +6862,7 @@ async function main() {
         if (renderer) {
           const wins = Object.values(renderer.windows || {})
             .filter(w => w && w.visible && w.isDialog)
-            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+            .sort((a, b) => ((b.zOrder || 0) - (a.zOrder || 0)) || ((b.hwnd || 0) - (a.hwnd || 0)));
           if (wins.length) dlg = wins[0].hwnd | 0;
         }
         let painted = 0;
@@ -6879,7 +6885,7 @@ async function main() {
         try {
           const wins = Object.values(renderer.windows || {})
             .filter(w => w && w.visible && w.isDialog)
-            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+            .sort((a, b) => ((b.zOrder || 0) - (a.zOrder || 0)) || ((b.hwnd || 0) - (a.hwnd || 0)));
           const dlgWin = wins[0] || null;
           const canvas = dlgWin && dlgWin._backCanvas;
           if (!canvas) throw new Error('no dialog back-canvas');
@@ -7310,7 +7316,7 @@ async function main() {
           if (renderer) {
             const dialogs = Object.values(renderer.windows || {})
               .filter(w => w && w.visible && w.isDialog)
-              .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+              .sort((a, b) => ((b.zOrder || 0) - (a.zOrder || 0)) || ((b.hwnd || 0) - (a.hwnd || 0)));
             if (dialogs.length) dlg = dialogs[0].hwnd | 0;
           }
           if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
@@ -7420,7 +7426,7 @@ async function main() {
         if (renderer) {
           const wins = Object.values(renderer.windows || {})
             .filter(w => w && w.visible && w.isDialog)
-            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+            .sort((a, b) => ((b.zOrder || 0) - (a.zOrder || 0)) || ((b.hwnd || 0) - (a.hwnd || 0)));
           for (const w of wins) {
             found = findChildById(w.hwnd | 0);
             if (found) break;
@@ -7564,6 +7570,9 @@ async function main() {
       } else if (ev.action === 'set-batch-size') {
         BATCH_SIZE = Math.max(1, ev.size | 0);
         logs.push(`[input] set-batch-size ${BATCH_SIZE} at batch ${batch}`);
+      } else if (ev.action === 'set-win16-trace') {
+        if (instance.exports.set_win16_trace) instance.exports.set_win16_trace(ev.enabled ? 1 : 0);
+        logs.push(`[input] set-win16-trace ${ev.enabled ? 1 : 0} at batch ${batch}`);
       } else if (ev.action === 'wave-in-feed') {
         const samples = new Float32Array(ev.frames);
         for (let i = 0; i < samples.length; i++) {
