@@ -55,6 +55,14 @@ magnifier and gear; clicking did not clear it, and moving away restored the
 arrow. Therefore a cursor that disappears after a click is a host input or
 surface-publication defect, not intended WINSWORD behavior.
 
+There is one intentional cursor-off interval that looks like gameplay at a
+glance. In the browser, the café background and George appear while his
+scripted entrance is still running, before control is handed to the player.
+At that point mouse coordinates already track `WM_MOUSEMOVE`, but the exact
+executable globals remain `enabled=0` and `resource=0`; no software pointer is
+supposed to be drawn and clicks do not control George. Cursor conclusions must
+be taken only after `0x004288a4` becomes nonzero.
+
 The browser/system cursor must remain hidden while this software cursor is
 active. Win32 defines a NULL `SetCursor` independently of the signed
 `ShowCursor` display count. The host previously mapped handle zero through its

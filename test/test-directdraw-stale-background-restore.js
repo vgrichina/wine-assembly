@@ -115,6 +115,19 @@ function writeRect(wat, address, left, top, right, bottom) {
   const panel = wat.test_dx_surface_new(280, 140) >>> 0;
   const framePanelRect = 0x410040;
   const panelRect = 0x410060;
+
+  // The allocation holding the saved pixels may be larger than the cursor.
+  // Classify the copied rectangle, not the whole scratch surface.
+  writeRect(wat, framePanelRect, 500, 300, 532, 332);
+  writeRect(wat, panelRect, 16, 24, 48, 56);
+  wat.test_dx_surface_set(frame, 500, 300, 21);
+  assert.strictEqual(wat.test_dx_surface_blt(panel, panelRect, frame, framePanelRect) >>> 0, 0);
+  wat.test_dx_surface_set(frame, 500, 300, 23);
+  assert.strictEqual(wat.test_dx_surface_unlock(frame) >>> 0, 0);
+  assert.strictEqual(wat.test_dx_surface_blt(frame, framePanelRect, panel, panelRect) >>> 0, 0);
+  assert.strictEqual(wat.test_dx_surface_get(frame, 500, 300), 23,
+    'small stale cursor restore must be suppressed inside a larger scratch surface');
+
   writeRect(wat, framePanelRect, 100, 80, 380, 220);
   writeRect(wat, panelRect, 0, 0, 280, 140);
   wat.test_dx_surface_set(frame, 100, 80, 17);
