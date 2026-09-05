@@ -1385,9 +1385,9 @@
     (local.set $ptr (call $heap_alloc (i32.const 1536)))
     (global.set $fake_cmdline_addr (local.get $ptr))
     (global.set $msvcrt_acmdln_ptr (local.get $ptr))
-    ;; Write "C:\<exe_name>" — full path matching GetModuleFileNameA
+    ;; Write "<drive>:\<exe_name>" — full path matching GetModuleFileNameA
     (local.set $dst (call $g2w (local.get $ptr)))
-    (i32.store8 (local.get $dst) (i32.const 0x43))  ;; 'C'
+    (i32.store8 (local.get $dst) (global.get $exe_drive))
     (i32.store8 (i32.add (local.get $dst) (i32.const 1)) (i32.const 0x3A))  ;; ':'
     (i32.store8 (i32.add (local.get $dst) (i32.const 2)) (i32.const 0x5C))  ;; '\'
     (local.set $len (global.get $exe_name_len))
@@ -1474,8 +1474,8 @@
     (local $ptr i32) (local $i i32) (local $len i32) (local $extra i32)
     (local.set $ptr (call $heap_alloc (i32.const 2048)))
     (global.set $msvcrt_wcmdln_ptr (local.get $ptr))
-    ;; Write L"C:\<exe_name>" and mirror set_extra_cmdline as UTF-16.
-    (call $gs16 (local.get $ptr) (i32.const 0x43))  ;; 'C'
+    ;; Write L"<drive>:\<exe_name>" and mirror set_extra_cmdline as UTF-16.
+    (call $gs16 (local.get $ptr) (global.get $exe_drive))
     (call $gs16 (i32.add (local.get $ptr) (i32.const 2)) (i32.const 0x3A))  ;; ':'
     (call $gs16 (i32.add (local.get $ptr) (i32.const 4)) (i32.const 0x5C))  ;; '\'
     (local.set $len (global.get $exe_name_len))

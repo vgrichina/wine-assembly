@@ -320,12 +320,12 @@ assert(/lib\/renderer-input\.js\?v=\d+/.test(webApp), 'web host should cache-bus
 assert(/lib\/browser-input\.js\?v=\d+/.test(webApp), 'web host should cache-bust explicit Quake relative-mouse capture');
 assert(/lib\/renderer\.js\?v=\d+/.test(webApp), 'web host should cache-bust renderer after nested Worker modal publication');
 assert(webApp.includes('lib/pe.js?v=1'), 'web host should load the shared PE section reader');
-assert(webApp.includes('lib/process-boot.js?v=4'), 'web host should cache-bust timed DllMain resume plumbing');
+assert(webApp.includes('lib/process-boot.js?v=5'), 'web host should cache-bust mounted executable drive plumbing');
 assert(webApp.includes('lib/app-profiles.js?v=3'), 'web host should cache-bust executable compatibility patches');
 assert(webApp.includes('lib/host-window.js?v=10'), 'web host should cache-bust foreground window behavior');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(webApp.includes('lib/storage.js?v=170'), 'web host should cache-bust storage after renderer-aware registry delivery');
-assert(webApp.includes('lib/filesystem.js?v=173'), 'web host should cache-bust persisted Win32 file timestamps');
+assert(webApp.includes('lib/filesystem.js?v=174'), 'web host should cache-bust persisted Win32 file timestamps');
 assert(webApp.includes('lib/gdi-surface.js?v=2'), 'web host should load the canonical GDI surface module');
 assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=215'),
   'web host should load the GDI surface module before host imports');
@@ -334,7 +334,7 @@ assert(/lib\/touch-cursor\.js\?v=\d+/.test(webApp), 'web host should cache-bust 
 assert(webApp.includes('lib/thread-manager.js?v=188'), 'web host should cache-bust DLL thread-notification routing');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
 assert(webApp.includes('lib/guest-rpc.js?v=8'), 'web host should cache-bust Worker clock RPC');
-assert(webApp.includes('lib/guest-thread-host.js?v=10'), 'web host should cache-bust Worker DllMain clock routing');
+assert(webApp.includes('lib/guest-thread-host.js?v=11'), 'web host should cache-bust Worker executable drive routing');
 assert(webApp.includes('lib/dll-loader.js?v=172'), 'web host should cache-bust timed DllMain resume');
 assert(webApp.includes('lib/debug-thread-state.js?v=7'), 'web host should cache-bust live Worker status diagnostics');
 assert(/lib\/host-audio\.js\?v=\d+/.test(webApp), 'web host should cache-bust CD-DA and waveOut scheduling');

@@ -57,6 +57,8 @@ UNIT=(
   test/test-load32-esp-run.js
   test/test-shift-equivalence.js
   test/test-ne-loader.js
+  test/test-win16-huge-pointer-imports.js
+  test/test-exe-drive-path.js
   test/test-win16-exec.js
   test/test-win16-civ2-apis.js
   test/test-win16-temp-file.js
@@ -661,6 +663,7 @@ E2E=(
   test/test-elasto-mania-candidate.js
   test/test-jardinains-candidate.js
   test/test-nethack-win32.js
+  test/test-rct-gameplay.js
   test/test-total-annihilation-candidate.js
   test/test-diablo2-demo-installer.js
   test/test-diablo2-demo-installed.js

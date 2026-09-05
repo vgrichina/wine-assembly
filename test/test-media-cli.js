@@ -60,6 +60,13 @@ const { splitArgs, prepareLaunch, runnerArgsFor } = require('../tools/run-media'
       'dialog automation should prefer the newest wizard page when z-order values tie');
     assert.match(runSource, /action: 'set-win16-trace'/,
       'long CLI installer runs should be able to enable Win16 tracing only near a failure');
+    assert.match(runSource, /setExeDrive\(instance\.exports, MEDIA_EXE\)/,
+      'mounted-media processes should report the selected guest drive');
+    assert.match(runSource, /ctx\.vfs\.materialize\(guestExe\)[\s\S]*?await capturedLaunch\.materialize/,
+      'a provider-backed ShellExecute child must be resident before CLI capture exports it');
+    const browserShellSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'browser-shell.js'), 'utf8');
+    assert.match(browserShellSource, /case 'cue:speed-demons':[\s\S]*?return compatDispatch \? 500 : 500000/,
+      'the browser should give the measured Win16 installer copy loop a non-stalling quantum');
     assert.match(mediaHarnessSource, /const \{ spawn \} = require\('child_process'\)/);
     assert.doesNotMatch(mediaHarnessSource, /spawnSync/,
       'the media parent must keep its event loop live for --control-stdin commands');

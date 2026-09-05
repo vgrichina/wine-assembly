@@ -248,7 +248,7 @@ assert.strictEqual(captainClawReg.get('Skip Logo Movies'), 1);
 
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const browserShell = fs.readFileSync(path.join(root, 'lib/browser-shell.js'), 'utf8');
-assert(/<script src="lib\/apps\.js\?v=23"><\/script>/.test(html),
+assert(/<script src="lib\/apps\.js\?v=24"><\/script>/.test(html),
   'the browser fetches the playable Jardinains asset manifest');
 assert(/case 'quake2_demo':\s*return 10000;/.test(browserShell),
   'Quake II OpenGL startup uses the proven cooperative browser slice');

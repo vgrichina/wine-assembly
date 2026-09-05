@@ -4,7 +4,7 @@ const { execSync } = require('child_process');
 const { createHostImports } = require('../lib/host-imports');
 const { loadDlls, callDllMain, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
 const { inputEventHwnd } = require('../lib/host-window');
-const { resolveDllGraph, mountLoadedDllFiles, stageAndLoadPe, setExeName, setExtraCmdline,
+const { resolveDllGraph, mountLoadedDllFiles, stageAndLoadPe, setExeName, setExeDrive, setExtraCmdline,
   setEnvironmentVariable, handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
 const {
   applyExeCompatibilityPatches: applyProfilePatches,
@@ -2960,10 +2960,18 @@ async function main() {
     }
     const guestExe = ctx.vfs._normPath ? ctx.vfs._normPath(executable) : executable.toLowerCase();
     if (!ctx.vfs.files.has(guestExe)) return result;
+    // A mounted ISO entry may still be provider-backed here: ShellExecute
+    // names it without opening it first. Start the asynchronous read now and
+    // await it after the guest stops, before the synchronous VFS exporter
+    // writes the snapshot for the child stage.
+    const materialize = typeof ctx.vfs.materialize === 'function'
+      ? Promise.resolve(ctx.vfs.materialize(guestExe))
+      : null;
     capturedLaunch = {
       guestExe,
       args: [inlineArgs, params.trim()].filter(Boolean).join(' '),
       directory,
+      materialize,
       vfs: {
         files: new Map(ctx.vfs.files),
         dirs: new Set(ctx.vfs.dirs),
@@ -3895,6 +3903,7 @@ async function main() {
   // MSVCRT data imports (__argc/__argv) can be resolved while load_pe walks
   // the executable import table. Seed process identity first so a lazy argv
   // block built during import resolution sees the real launcher metadata.
+  setExeDrive(instance.exports, MEDIA_EXE);
   setExeName(instance.exports, memory.buffer, path.basename(EXE_PATH));
   if (EXTRA_ARGS) {
     setExtraCmdline(instance.exports, memory.buffer, EXTRA_ARGS);
@@ -9350,6 +9359,16 @@ if (VERBOSE) {
     });
   }
   if (CAPTURE_LAUNCH && capturedLaunch) {
+    if (capturedLaunch.materialize) {
+      const bytes = await capturedLaunch.materialize;
+      const entry = capturedLaunch.vfs.files.get(capturedLaunch.guestExe);
+      if (entry && bytes) {
+        capturedLaunch.vfs.files.set(capturedLaunch.guestExe, {
+          ...entry,
+          data: bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes),
+        });
+      }
+    }
     const written = saveVfsToHost(capturedLaunch.vfs, CAPTURE_LAUNCH, {
       log: line => console.log(line.replace(/^\[save-vfs\]/, '[capture-launch]')),
     });

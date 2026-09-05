@@ -505,7 +505,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '293';
+  static SOURCE_VERSION = '295';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -2158,7 +2158,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=28',
+        workerUrl: 'lib/guest-worker.js?v=30',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
@@ -2215,7 +2215,10 @@ class WineAssembly {
     let entry;
     if (this.guestWorker) {
       entry = await this.guestWorker.loadPe(
-        exeBytes, exeName, this.processId, { extraArgs: this._extraArgs || '' });
+        exeBytes, exeName, this.processId, {
+          extraArgs: this._extraArgs || '',
+          exeDrive: ProcessBoot.exeDriveForPath(url),
+        });
       const meta = await this.guestWorker.readExports([
         'get_image_base', 'get_code_start', 'get_code_end',
         'get_thunk_base', 'get_thunk_end', 'get_num_thunks',
@@ -2228,6 +2231,7 @@ class WineAssembly {
           meta.get_code_end, meta.get_thunk_base, meta.get_thunk_end, meta.get_num_thunks);
       }
     } else {
+      ProcessBoot.setExeDrive(this.instance.exports, url);
       ProcessBoot.setExeName(this.instance.exports, this.memory.buffer, exeName);
       if (this._extraArgs) {
         ProcessBoot.setExtraCmdline(this.instance.exports, this.memory.buffer, this._extraArgs);
@@ -2254,6 +2258,7 @@ class WineAssembly {
       VfsSeed.seedExeImage(this._helpCtx.vfs, exeBytes, exeName);
     }
     if (this.guestWorker) {
+      ProcessBoot.setExeDrive(this.instance.exports, url);
       ProcessBoot.setExeName(this.instance.exports, this.memory.buffer, exeName);
     }
 
