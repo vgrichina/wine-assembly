@@ -55,6 +55,8 @@ assert.deepStrictEqual(APPS.broken_sword_demo.dlls.map(file => path.basename(fil
   ['SMACKW32.DLL']);
 assert.strictEqual(APPS.broken_sword_demo.startupInput, undefined,
   'the working opening movie is not skipped automatically');
+assert.deepStrictEqual(APPS.broken_sword_demo.touchControls, {},
+  'the mouse-driven game exposes mobile Fit/Fill without fake game buttons');
 assert.deepStrictEqual(APPS.dungeon_keeper_demo.dlls.map(file => path.basename(file)),
   ['MSS32.DLL', 'WSND7R.DLL', 'SMACKW32.DLL']);
 assert.strictEqual(APPS.atomic_bomberman_demo.touchControls.dpad.ways, 4);
