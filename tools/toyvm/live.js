@@ -139,6 +139,8 @@ class LiveRun {
     this.owed = 0;
     this.lastTick = 0;
     this.stalls = 0;              // frames the host could not keep pace
+    this.budgetMs = this.msPerFrame;   // this frame's guest budget; see tick
+    this.maxBudgetMs = 14;             // of a 16.7ms frame: the rest is the browser's
     // Audio: the ring the machine renders into and the node that drains it.
     this.ring = null;
     this.node = null;
@@ -309,6 +311,7 @@ class LiveRun {
       sb: this.machine.sb.irqs, opl: this.machine.audio.opl.keyOns,
       speaker: this.machine.audio.speakerWrites,
       gus: this.machine.gus ? this.machine.gus.stats.starts : 0,
+      budgetMs: this.budgetMs,
     };
   }
 
@@ -342,7 +345,7 @@ class LiveRun {
     if (!this.running) return;
     const s = this.session;
     const now = performance.now();
-    const deadline = now + this.msPerFrame;
+    const deadline = now + this.budgetMs;
     let allow = Infinity;
     if (this.paced) {
       const elapsed = Math.min(Math.max(0, now - this.lastTick), 100);
@@ -359,7 +362,20 @@ class LiveRun {
       // Overshoot is carried: a slice is up to a few tens of thousands of
       // dispatches and the next frame owes that much less.
       this.owed -= ran;
-      if (ran < allow && !s.done && performance.now() >= deadline) this.stalls++;
+      const stalled = ran < allow && !s.done && performance.now() >= deadline;
+      if (stalled) this.stalls++;
+      // The budget breathes. A CPU profile of the page running CYCLE.EXE had
+      // the main thread IDLE 50% of the time while the audio ring underran
+      // on 58% of its pulls: at a fixed 8ms of every 16.7ms frame the guest
+      // can never use more than half the machine, so a demo that costs 9ms
+      // of host time per guest frame falls behind forever with the other
+      // half of the frame unused. A stalled frame raises the next frame's
+      // budget, a kept one lets it sink back to msPerFrame, and the ceiling
+      // still leaves the browser a few ms to composite and pull audio. A
+      // demo that keeps pace never sees anything but msPerFrame.
+      this.budgetMs = stalled
+        ? Math.min(this.budgetMs * 1.5, this.maxBudgetMs)
+        : Math.max(this.msPerFrame, this.budgetMs - 1);
     }
     this.paint();
     this.frames++;
