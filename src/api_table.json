@@ -27367,5 +27367,12 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2246307167
+  },
+  {
+    "id": 3295,
+    "name": "ImageList_Remove",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4083096311
   }
 ]
