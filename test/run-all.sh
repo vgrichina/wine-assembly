@@ -221,6 +221,7 @@ UNIT=(
   test/test-win98-gdi-font-outline-reference.js
   test/test-wat-text-draw-extent.js
   test/test-wat-font-resource.js
+  test/test-wat-mmio.js
   test/test-wat-gdi-public-metafile.js
   test/test-wat-gdi-printer-surface.js
   test/test-compatible-bitmap-wat.js
@@ -691,6 +692,7 @@ E2E=(
   test/test-winhelp-reference.js
   test/test-taskman-tasks.js
   test/test-taskman-arrange.js
+  test/test-shell-arrange-windows.js
   test/test-taskman-web.js
   test/test-taskman-shutdown.js
   test/test-web-shutdown.js

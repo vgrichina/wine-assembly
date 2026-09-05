@@ -635,7 +635,7 @@
     (local $base i32) (local $slot i32) (local $used i32) (local $len i32)
     (local $desc i32) (local $class i32) (local $needed i32)
     (local $old_chunk i32) (local $new_chunk i32) (local $new_class i32)
-    (local $o i32) (local $olast i32)
+    (local $o i32) (local $olast i32) (local $overlap_stop i32)
     (local.set $len (i32.sub (local.get $tend) (local.get $tstart)))
     (if (i32.le_s (local.get $len) (i32.const 0)) (then (return (i32.const -1))))
     (local.set $base (i32.and (local.get $start_eip) (i32.const 0xFFFFF000)))
@@ -652,6 +652,25 @@
             (if (i32.eqz (call $page_create (local.get $base) (local.get $len)))
               (then (return (i32.const -1))))))))
     (local.set $slot (call $page_dir_slot (local.get $base)))
+    ;; The byte index has one owner per guest offset. A control transfer into
+    ;; the middle of an existing block therefore cannot merely overwrite that
+    ;; block's cover entries: doing so would leave its distinct entry point
+    ;; live while hiding it from a later write to the shared bytes. Storm's
+    ;; count-dependent SCode entries do exactly this, and the hidden old block
+    ;; then executes a stale generated jump after the shared tail is patched.
+    ;;
+    ;; Retire every old block touched by the new guest extent before publishing
+    ;; it. This preserves the index invariant that any live block covering a
+    ;; byte is the block named by that byte. Re-entering a retired outer entry
+    ;; simply decodes it again (and symmetrically retires the interior entry).
+    (local.set $o (i32.and (local.get $start_eip) (i32.const 0xFFF)))
+    (local.set $overlap_stop (i32.sub (local.get $guest_end) (local.get $base)))
+    (if (i32.gt_u (local.get $overlap_stop) (i32.const 4096))
+      (then (local.set $overlap_stop (i32.const 4096))))
+    (block $overlap_done (loop $overlap_scan
+      (br_if $overlap_done (i32.ge_u (local.get $o) (local.get $overlap_stop)))
+      (local.set $o (call $page_retire_at (local.get $slot) (local.get $o)))
+      (br $overlap_scan)))
     (local.set $desc (i32.load offset=12 (local.get $slot)))
     (local.set $used (call $page_desc_used (local.get $desc)))
     (local.set $class (call $page_desc_class (local.get $desc)))

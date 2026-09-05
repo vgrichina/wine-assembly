@@ -175,10 +175,12 @@
   (import "host" "get_window_related" (func $host_get_window_related (param i32 i32) (result i32)))
   ;; get_window_related(hwnd, GW_*) → renderer-wide top-level relation.
   (import "host" "get_window_info" (func $host_get_window_info (param i32 i32) (result i32)))
-  ;; get_window_info(hwnd, 0=style, 1=visible) → renderer window property.
+  ;; get_window_info(hwnd, 0=style, 1=visible, 2=enabled, 3=pid, 4=exists) → renderer property.
   (import "host" "post_window_message" (func $host_post_window_message (param i32 i32 i32 i32) (result i32)))
   ;; post_window_message(...) → 1 when routed to another app instance.
   (import "host" "activate_window" (func $host_activate_window (param i32) (result i32)))
+  (import "host" "foreground_window" (func $host_foreground_window (result i32)))
+  ;; foreground_window() → renderer-wide foreground top-level HWND, or NULL.
   ;; arrange_windows(mode, flags, rectWA, count, hwndsWA):
   ;; mode 0=cascade, 1=tile, 2=arrange minimized icons.
   (import "host" "arrange_windows" (func $host_arrange_windows (param i32 i32 i32 i32 i32) (result i32)))
@@ -2717,8 +2719,8 @@
   (global $wave_out_volume (mut i32) (i32.const 0xFFFFFFFF))  ;; packed L|R, default max
   ;; MMIO buffered-I/O slots. mmioGetInfo/mmioAdvance hand the app a real
   ;; read buffer it memcpy's out of, so each open HMMIO that asks for one
-  ;; needs a stable guest-heap block. Lazily allocated table of
-  ;; $MMIO_BUF_SLOTS {hmmio, pchBuffer} pairs; buffers are reused, never freed.
+  ;; needs a stable guest block. Lazily allocated table of $MMIO_BUF_SLOTS
+  ;; {hmmio, pchBuffer, cchBuffer, owned} records; owned blocks die on close.
   (global $mmio_buf_table (mut i32) (i32.const 0))
   (global $MMIO_BUF_SLOTS i32 (i32.const 8))
   (global $MMIO_BUF_SIZE i32 (i32.const 8192))

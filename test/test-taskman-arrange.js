@@ -29,7 +29,7 @@ const input = [
   '5:dump-listbox:initial',
   '7:click:20:59',
   '8:keydown:17',                    // Ctrl-click the second task
-  '8:click:20:75',
+  '8:click:20:100',               // owner-draw rows are 39px high
   '8:keyup:17',
   '9:dump-listbox:selected',
   '10:post-cmd:408',                 // Cascade
@@ -69,7 +69,8 @@ try {
 
 function windowRows(label) {
   return output.split('\n').filter(line =>
-    line.includes(`window:${label}`) && /title="(?:Calculator|Untitled - Notepad)"/.test(line));
+    line.includes(`window:${label}`) && line.includes('parent=0x0') &&
+    /title="(?:Calculator|Untitled - Notepad)"/.test(line));
 }
 
 function geometry(line) {

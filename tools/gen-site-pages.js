@@ -188,7 +188,7 @@ const NAV_REPO = `<a href="${REPO}">GitHub</a>`;
 const NAV_ARTICLES = `<a href="/articles/">Articles</a>`;
 const NAV_APPS = `<a href="/apps/">Apps</a>`;
 
-// Per-app pages, one for each desktop icon and nothing else: a search for
+// Per-app pages, one for each production desktop icon and nothing else: a search for
 // "space cadet pinball in browser" should land on a page that says what the
 // program is, shows it running here and has one launch button. Candidates,
 // SDK samples and demos stay in the ?debug dropdown without a page.
@@ -249,7 +249,11 @@ function loadDesktopApps() {
     ? fs.readdirSync(reDir).filter(f => f.endsWith('.md') && f !== 'README.md')
         .map(f => ({ rel: `docs/re-notes/${f}`, md: fs.readFileSync(path.join(reDir, f), 'utf-8') }))
     : [];
-  return DESKTOP_APPS.map(([id, name, emoji]) => {
+  // `_skip` names desktop ids the pages leave out: not on the production
+  // desktop yet, or no usable screenshot. The live site's lib/apps.js is the
+  // reference for "production desktop", not this checkout's.
+  const skip = new Set(blurbs._skip || []);
+  return DESKTOP_APPS.filter(([id]) => !skip.has(id)).map(([id, name, emoji]) => {
     const app = APPS[id] || {};
     const exe = app.exe || '';
     const shot = `screenshots/apps/${id}.png`;

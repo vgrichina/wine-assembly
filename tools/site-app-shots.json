@@ -7,9 +7,5 @@
   "peaks": "--input=400:dlg-cmd:1,1500:dlg-cmd:1,4000:dlg-cmd:1",
   "fourstones": "--input=400:dlg-cmd:1,1500:dlg-cmd:1,4000:dlg-cmd:1",
   "qblackjack": "--input=400:dlg-cmd:1,1500:dlg-cmd:2,4000:dlg-cmd:1",
-  "sndrec32_98": "--input=400:dlg-cmd:6,1500:dlg-cmd:6,4000:dlg-cmd:6",
-  "heaven7": "--max-seconds=150 --batch-size=20000 --input=40:dlg-cmd:1,150:dlg-cmd:1",
-  "bakkslide7": "--max-seconds=120 --batch-size=20000 --input=40:dlg-cmd:1,150:dlg-cmd:1",
-  "ptct": "--max-seconds=120 --batch-size=20000 --png-canvas --input=40:dlg-cmd:1,150:dlg-cmd:1",
-  "cashcow": "--max-seconds=150 --batch-size=20000"
+  "sndrec32_98": "--input=400:dlg-cmd:6,1500:dlg-cmd:6,4000:dlg-cmd:6"
 }

@@ -27388,5 +27388,19 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 1185974870
+  },
+  {
+    "id": 3298,
+    "name": "CreateScalableFontResourceA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3483756338
+  },
+  {
+    "id": 3299,
+    "name": "mmioSetBuffer",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2705998195
   }
 ]
