@@ -102,6 +102,25 @@ check('a runtime-created Win16 temporary module is found by its stripped stem', 
   assert.strictEqual(found.bytes, ne, 'staging reuses the resident guest-written bytes');
 });
 
+check('the WISE W32INST PE helper is distinguished from an arbitrary PE', () => {
+  const vfs = fakeVfs();
+  const helper = new Uint8Array(0xa0);
+  helper[0] = 0x4d; helper[1] = 0x5a;
+  helper[0x3c] = 0x80;
+  helper[0x80] = 0x50; helper[0x81] = 0x45;
+  helper.set(Buffer.from('W32INST.dll', 'ascii'), 0x90);
+  vfs.files.set('c:\\windows\\temp\\glf4.tmp', { data: helper, attrs: 0x20 });
+  const found = residentWin16Module(vfs, 'GLF4');
+  assert.strictEqual(found.format, 'w32inst');
+  assert.strictEqual(found.bytes, helper);
+
+  const plainPe = helper.slice();
+  plainPe.fill(0, 0x90);
+  vfs.files.set('c:\\windows\\temp\\other.tmp', { data: plainPe, attrs: 0x20 });
+  assert.strictEqual(residentWin16Module(vfs, 'other'), null,
+    'normal PE files must still be rejected by the Win16 module loader');
+});
+
 check('runtime module lookup rejects lazy and non-NE entries', () => {
   const vfs = fakeVfs();
   vfs.files.set('d:\\lazy.dll', {
@@ -138,6 +157,16 @@ check('the page loads the module before host.js needs it', () => {
   const host = html.indexOf('<script src="host.js');
   assert.ok(seed > 0, 'index.html never loads lib/vfs-seed.js — VfsSeed is undefined at launch');
   assert.ok(seed < host, 'vfs-seed.js must be loaded before host.js');
+});
+
+check('WISE helper exports use callable Win16 thunks', () => {
+  const wat = fs.readFileSync(path.join(ROOT, 'src', '09e-win16-api.wat'), 'utf8');
+  assert.match(wat, /fixed GLF4\.tmp basename/,
+    'Worker mode must recognize the helper before consulting its startup-only module snapshot');
+  assert.match(wat, /\(call \$win16_thunk_for \(local\.get \$id\) \(local\.get \$ord\)/,
+    'GetProcAddress must return a callable FARPROC rather than a raw 32-bit token');
+  assert.match(wat, /\(i32\.eq \(local\.get \$module\) \(global\.get \$win16_w32inst_module_id\)\)/,
+    'the Win16 dispatcher must execute W32INST FARPROCs');
 });
 
 console.log(failures === 0 ? '\nAll vfs-seed checks passed' : `\n${failures} failed`);

@@ -505,7 +505,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '286';
+  static SOURCE_VERSION = '288';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -2158,7 +2158,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=22',
+        workerUrl: 'lib/guest-worker.js?v=23',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
@@ -2341,7 +2341,10 @@ class WineAssembly {
     if (!bytes && typeof VfsSeed !== 'undefined' && VfsSeed.residentWin16Module) {
       const vfs = this._helpCtx && this._helpCtx.vfs;
       const resident = VfsSeed.residentWin16Module(vfs, name);
-      if (resident) bytes = resident.bytes;
+      if (resident) {
+        bytes = resident.bytes;
+        if (resident.format === 'w32inst') return (bytes.length | 0x80000000) >>> 0;
+      }
     }
     const exports = this.instance && this.instance.exports;
     if (!bytes || !exports || !exports.win16_dll_staging) return false;

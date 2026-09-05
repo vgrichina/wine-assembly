@@ -50,12 +50,16 @@ const { splitArgs, prepareLaunch, runnerArgsFor } = require('../tools/run-media'
     const runSource = fs.readFileSync(path.join(__dirname, 'run.js'), 'utf8');
     const mediaHarnessSource = fs.readFileSync(path.join(__dirname, '..', 'tools', 'run-media.js'), 'utf8');
     const pageSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-    assert.match(pageSource, /lib\/media-import\.js\?v=9/,
+    assert.match(pageSource, /lib\/media-import\.js\?v=10/,
       'the browser must not reuse the importer from before CUE AUTORUN selection');
     assert.match(runSource, /analyzeMediaPaths\(MEDIA_MOUNTS/,
       'the headless runner should mount the original media with the shared importer');
     assert.match(runSource, /residentWin16Module\(ctx\.vfs, name\)/,
       'runtime Win16 helpers extracted by an installer should stage from the mounted VFS');
+    assert.match(runSource, /\(\(b\.zOrder \|\| 0\) - \(a\.zOrder \|\| 0\)\) \|\| \(\(b\.hwnd \|\| 0\) - \(a\.hwnd \|\| 0\)\)/,
+      'dialog automation should prefer the newest wizard page when z-order values tie');
+    assert.match(runSource, /action: 'set-win16-trace'/,
+      'long CLI installer runs should be able to enable Win16 tracing only near a failure');
     assert.match(mediaHarnessSource, /const \{ spawn \} = require\('child_process'\)/);
     assert.doesNotMatch(mediaHarnessSource, /spawnSync/,
       'the media parent must keep its event loop live for --control-stdin commands');

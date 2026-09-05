@@ -74,6 +74,7 @@ async function main() {
   const create = makeCaller('ImageList_Create');
   const destroy = makeCaller('ImageList_Destroy');
   const addMasked = makeCaller('ImageList_AddMasked');
+  const remove = makeCaller('ImageList_Remove');
   const replace = makeCaller('ImageList_ReplaceIcon');
   const get = makeCaller('ImageList_GetIcon');
   const getIconInfo = makeCaller('GetIconInfo');
@@ -126,6 +127,25 @@ async function main() {
     'destroying the image list releases its private appended copy');
   assert.strictEqual(destroy([imageList]), 0, 'destroying the same image list twice fails');
 
+  // Resource-loaded lists begin as bitmap strips with no retained-icon array.
+  // Replacing an early cell must reserve slots for the full logical count;
+  // otherwise later GetIcon/Destroy operations walk beyond the allocation.
+  const mixedList = create([4, 4, 1, 0, 4]);
+  const mixedStrip = e.test_call_CreateBitmap(8, 4, 1, 32, 0) >>> 0;
+  e.guest_write32(mixedList + 12, 2);
+  e.guest_write32(mixedList + 16, mixedStrip);
+  e.guest_write32(mixedList + 20, 0x00ff00ff);
+  assert.strictEqual(replace([mixedList, 0, 0x123455]), 0,
+    'a bitmap-backed image can be replaced');
+  assert(e.guest_read32(mixedList + 28) >= 2,
+    'replacement capacity covers every pre-existing bitmap cell');
+  const mixedTail = get([mixedList, 1, 0]);
+  assert(mixedTail, 'an unreplaced tail cell still resolves safely');
+  assert.strictEqual(destroy([mixedList]), 1,
+    'mixed retained/bitmap list destruction stays within its icon capacity');
+  assert.strictEqual(destroyIcon([mixedTail]), 1);
+  e.test_call_DeleteObject(mixedStrip);
+
   // Bitmap-backed lists have no retained HICON to borrow. GetIcon must crop
   // the requested cell and materialize the image-list colour key as an AND
   // mask, then keep both planes alive independently of the source list.
@@ -137,16 +157,32 @@ async function main() {
     for (let x = 0; x < 8; x++) {
       const within = x & 3;
       const border = within === 0 || within === 3 || y === 0 || y === 3;
-      const color = border ? 0x00ff00ff : (x < 4 ? 0x000000ff : 0x0000ff00);
+      const color = x === 4 && y === 0
+        ? 0x000000ff
+        : border ? 0x00ff00ff : (x < 4 ? 0x000000ff : 0x0000ff00);
       dv.setUint32(stripBits + (y * 8 + x) * 4, color, true);
     }
   }
-  assert.strictEqual(addMasked([bitmapList, strip, 0x00ff00ff]), 0,
-    'ImageList_AddMasked adds both four-pixel cells');
+  assert.strictEqual(addMasked([bitmapList, strip, 0xff000000]), 0,
+    'ImageList_AddMasked adds both cells and derives CLR_DEFAULT from pixel 0,0');
   assert.strictEqual(e.guest_read32(bitmapList + 12) >>> 0, 2,
     'bitmap strip exposes two image-list entries');
-  const bitmapIcon = get([bitmapList, 1, 0]);
-  assert(bitmapIcon, 'ImageList_GetIcon materializes a bitmap-strip entry');
+  assert.strictEqual(e.guest_read32(bitmapList + 16) >>> 0, 0,
+    'ImageList_AddMasked copies pixels instead of retaining the source bitmap');
+  assert(e.guest_read32(bitmapList + 24) >>> 0,
+    'copied cells are retained in the private icon array');
+  e.test_call_DeleteObject(strip);
+  assert.strictEqual(remove([bitmapList, 2]), 0,
+    'ImageList_Remove rejects an out-of-range index without changing the list');
+  assert.strictEqual(e.guest_read32(bitmapList + 12) >>> 0, 2);
+  assert.strictEqual(remove([bitmapList, 0]), 1,
+    'ImageList_Remove removes a selected entry');
+  assert.strictEqual(e.guest_read32(bitmapList + 12) >>> 0, 1,
+    'removal closes the image-index gap');
+  assert.strictEqual(get([bitmapList, 1, 0]), 0,
+    'the old final index no longer resolves');
+  const bitmapIcon = get([bitmapList, 0, 0]);
+  assert(bitmapIcon, 'the old second cell shifts down and remains independently drawable');
   const info = alloc(20);
   assert.strictEqual(getIconInfo([bitmapIcon, info]), 1,
     'materialized image-list icon has real ICONINFO');
@@ -161,8 +197,12 @@ async function main() {
   e.test_call_DeleteObject(mask);
   e.test_call_DeleteObject(color);
 
-  assert.strictEqual(destroy([bitmapList]), 1, 'source bitmap list can be destroyed first');
-  e.test_call_DeleteObject(strip);
+  assert.strictEqual(remove([bitmapList, 0xffffffff]), 1,
+    'ImageList_Remove(-1) removes every remaining image');
+  assert.strictEqual(e.guest_read32(bitmapList + 12) >>> 0, 0);
+  assert.strictEqual(get([bitmapList, 0, 0]), 0,
+    'a cleared image list has no index zero');
+  assert.strictEqual(destroy([bitmapList]), 1, 'the emptied source list can be destroyed first');
   const target = e.test_call_CreateBitmap(8, 8, 1, 32, 0) >>> 0;
   const targetBits = e.test_gdi_bitmap_storage(target) >>> 0;
   const background = 0x00123456;
@@ -171,8 +211,10 @@ async function main() {
   e.test_call_SelectObject(targetDc, target);
   assert.strictEqual(drawIcon([targetDc, 2, 2, bitmapIcon]), 1,
     'DrawIcon accepts the materialized image-list HICON');
-  assert.strictEqual(dv.getUint32(targetBits + (2 * 8 + 2) * 4, true), background,
-    'the image-list mask leaves the transparent border untouched');
+  assert.strictEqual(dv.getUint32(targetBits + (2 * 8 + 2) * 4, true), 0x000000ff,
+    'CLR_DEFAULT comes from the whole strip pixel 0,0, not each cell origin');
+  assert.strictEqual(dv.getUint32(targetBits + (2 * 8 + 5) * 4, true), background,
+    'the image-list mask leaves matching border pixels untouched');
   assert.strictEqual(dv.getUint32(targetBits + (3 * 8 + 3) * 4, true), 0x0000ff00,
     'the requested second cell paints its green image pixels');
   assert.strictEqual(dv.getUint32(targetBits + (7 * 8 + 7) * 4, true), background,
@@ -183,7 +225,7 @@ async function main() {
   e.test_call_DeleteDC(targetDc);
   e.test_call_DeleteObject(target);
 
-  console.log('PASS image-list owned icon extraction, mask pixels, replacement, and destruction semantics');
+  console.log('PASS image-list owned add/remove, mask pixels, replacement, and destruction semantics');
 }
 
 main().catch(error => {

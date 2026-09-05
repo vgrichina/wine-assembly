@@ -200,7 +200,8 @@
             (i32.gt_s (local.get $cy) (i32.const 256))))
       (then (return (i32.const 0))))
     (local.set $icons (i32.load offset=24 (local.get $sw)))
-    (if (local.get $icons)
+    (if (i32.and (i32.ne (local.get $icons) (i32.const 0))
+          (i32.lt_u (local.get $index) (i32.load offset=28 (local.get $sw))))
       (then
         (local.set $retained (i32.load (call $g2w (i32.add (local.get $icons)
           (i32.shl (local.get $index) (i32.const 2))))))
@@ -265,8 +266,17 @@
         (drop (call $gdi_object_delete_full (local.get $color)))
         (return (i32.const 0))))
     (local.set $mask_key (i32.load offset=20 (local.get $sw)))
-    (if (i32.ne (local.get $mask_key) (i32.const -1))
-      (then (local.set $mask_key (call $gdi_raster_swap_rb (local.get $mask_key)))))
+    ;; CLR_DEFAULT asks common controls to derive transparency from the
+    ;; bitmap's upper-left pixel.  gdi_raster_read already returns the
+    ;; canonical channel order; an explicit COLORREF still needs conversion.
+    (if (i32.eq (local.get $mask_key) (i32.const 0xFF000000))
+      (then
+        (local.set $mask_key (call $gdi_raster_read (local.get $source)
+          (i32.const 0) (i32.const 0))))
+      (else
+        (if (i32.ne (local.get $mask_key) (i32.const -1))
+          (then (local.set $mask_key
+            (call $gdi_raster_swap_rb (local.get $mask_key)))))))
     (block $rows_done (loop $rows
       (br_if $rows_done (i32.ge_u (local.get $y) (local.get $cy)))
       (local.set $x (i32.const 0))
@@ -300,6 +310,24 @@
         (drop (call $gdi_object_delete_full (local.get $color)))))
     (local.get $result))
 
+  ;; Release an image-list's private HICON array.  The bitmap strip at +16 is
+  ;; deliberately not touched: resource-loaded strips are owned by GDI, while
+  ;; ImageList_AddMasked copies caller pixels into this private icon array.
+  (func $image_list_destroy_icon_array (param $icons i32) (param $count i32)
+    (local $icons_wa i32) (local $i i32) (local $icon i32)
+    (if (local.get $icons)
+      (then
+        (local.set $icons_wa (call $g2w (local.get $icons)))
+        (block $done (loop $entries
+          (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+          (local.set $icon (i32.load (i32.add (local.get $icons_wa)
+            (i32.shl (local.get $i) (i32.const 2)))))
+          (if (local.get $icon)
+            (then (drop (call $icon_destroy_handle (local.get $icon)))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $entries)))
+        (call $heap_free (local.get $icons)))))
+
   ;; InitCommonControls() — 0 args, void return, registers common control window classes
   (func $handle_InitCommonControls (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; No-op: our window creation handles class names directly
@@ -326,8 +354,7 @@
 
   ;; ImageList_Destroy(himl) — 1 arg, returns BOOL
   (func $handle_ImageList_Destroy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $sw i32) (local $icons i32) (local $icons_wa i32)
-    (local $count i32) (local $i i32) (local $icon i32)
+    (local $sw i32) (local $icons i32) (local $count i32)
     (global.set $eax (i32.const 0))
     ;; The lists returned by SHGFI_SYSICONINDEX are shared system resources;
     ;; applications must not destroy them.  Refuse the operation so the stable
@@ -353,17 +380,9 @@
             (i32.store offset=24 (local.get $sw) (i32.const 0))
             (if (local.get $icons)
               (then
-                (local.set $icons_wa (call $g2w (local.get $icons)))
                 (local.set $count (i32.load offset=12 (local.get $sw)))
-                (block $done (loop $entries
-                  (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
-                  (local.set $icon (i32.load (i32.add (local.get $icons_wa)
-                    (i32.shl (local.get $i) (i32.const 2)))))
-                  (if (local.get $icon)
-                    (then (drop (call $icon_destroy_handle (local.get $icon)))))
-                  (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                  (br $entries)))
-                (call $heap_free (local.get $icons))))
+                (call $image_list_destroy_icon_array
+                  (local.get $icons) (local.get $count))))
             (call $heap_free (local.get $arg0))
             (global.set $eax (i32.const 1))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
@@ -434,29 +453,123 @@
 
   ;; ImageList_AddMasked(himl, hbmImage, crMask) — 3 args, returns image index
   (func $handle_ImageList_AddMasked (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $count i32) (local $cx i32) (local $bmp_w i32) (local $add_count i32) (local $sw i32)
+    (local $count i32) (local $cx i32) (local $cy i32)
+    (local $bmp_w i32) (local $bmp_h i32) (local $add_count i32)
+    (local $new_count i32) (local $capacity i32) (local $sw i32)
+    (local $old_icons i32) (local $new_icons i32) (local $new_icons_wa i32)
+    (local $probe i32) (local $probe_wa i32)
+    (local $i i32) (local $icon i32)
+    (global.set $eax (i32.const -1))
     (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
       (then
-        (global.set $eax (i32.const 0xffffffff))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
     (local.set $sw (call $g2w (local.get $arg0)))
+    (if (i32.ne (i32.load offset=32 (local.get $sw)) (i32.const 0x4C4D4948))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (local.set $count (i32.load offset=12 (local.get $sw)))
     (local.set $cx (i32.load (local.get $sw)))
-    (if (i32.le_s (local.get $cx) (i32.const 0))
-      (then (local.set $cx (i32.const 16))))
-    (local.set $add_count (i32.const 1))
+    (local.set $cy (i32.load offset=4 (local.get $sw)))
     (local.set $bmp_w (call $host_gdi_get_object_w (local.get $arg1)))
-    (if (i32.gt_s (local.get $bmp_w) (i32.const 0))
+    (local.set $bmp_h (call $host_gdi_get_object_h (local.get $arg1)))
+    (if (i32.or
+          (i32.or (i32.le_s (local.get $cx) (i32.const 0))
+            (i32.le_s (local.get $cy) (i32.const 0)))
+          (i32.or (i32.lt_s (local.get $bmp_w) (local.get $cx))
+            (i32.lt_s (local.get $bmp_h) (local.get $cy))))
       (then
-        (local.set $add_count (i32.div_u (local.get $bmp_w) (local.get $cx)))
-        (if (i32.eqz (local.get $add_count))
-          (then (local.set $add_count (i32.const 1))))))
-    (if (i32.eqz (i32.load offset=16 (local.get $sw)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $add_count (i32.div_u (local.get $bmp_w) (local.get $cx)))
+    (local.set $new_count (i32.add (local.get $count) (local.get $add_count)))
+    (if (i32.or (i32.lt_u (local.get $new_count) (local.get $count))
+          (i32.gt_u (local.get $new_count) (i32.const 0x10000)))
       (then
-        (i32.store offset=16 (local.get $sw) (local.get $arg1))
-        (i32.store offset=20 (local.get $sw) (local.get $arg2))))
-    (i32.store offset=12 (local.get $sw) (i32.add (local.get $count) (local.get $add_count)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+
+    ;; Build the complete replacement array before touching the live list.
+    ;; This gives ImageList_AddMasked its documented copy semantics: the
+    ;; caller may DeleteObject(hbmImage) immediately after this function.
+    (local.set $capacity (i32.const 4))
+    (block $capacity_ready (loop $grow_capacity
+      (br_if $capacity_ready
+        (i32.ge_u (local.get $capacity) (local.get $new_count)))
+      (local.set $capacity (i32.shl (local.get $capacity) (i32.const 1)))
+      (br $grow_capacity)))
+    (local.set $new_icons
+      (call $heap_alloc (i32.shl (local.get $capacity) (i32.const 2))))
+    (if (i32.eqz (local.get $new_icons))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $new_icons_wa (call $g2w (local.get $new_icons)))
+    (call $zero_memory (local.get $new_icons_wa)
+      (i32.shl (local.get $capacity) (i32.const 2)))
+
+    ;; Preserve every existing entry, whether it is already an owned HICON or
+    ;; still backed by a resource-loaded bitmap strip.
+    (block $old_done (loop $old_entries
+      (br_if $old_done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $icon
+        (call $image_list_icon_handle (local.get $arg0) (local.get $i)))
+      (if (i32.eqz (local.get $icon))
+        (then
+          (call $image_list_destroy_icon_array
+            (local.get $new_icons) (local.get $i))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+          (return)))
+      (i32.store (i32.add (local.get $new_icons_wa)
+        (i32.shl (local.get $i) (i32.const 2))) (local.get $icon))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $old_entries)))
+
+    ;; A small temporary list lets the canonical bitmap-cell extractor apply
+    ;; the colour key and create private colour/mask planes for each new cell.
+    (local.set $probe (call $heap_alloc (i32.const 36)))
+    (if (i32.eqz (local.get $probe))
+      (then
+        (call $image_list_destroy_icon_array
+          (local.get $new_icons) (local.get $count))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $probe_wa (call $g2w (local.get $probe)))
+    (call $zero_memory (local.get $probe_wa) (i32.const 36))
+    (i32.store          (local.get $probe_wa) (local.get $cx))
+    (i32.store offset=4 (local.get $probe_wa) (local.get $cy))
+    (i32.store offset=12 (local.get $probe_wa) (local.get $add_count))
+    (i32.store offset=16 (local.get $probe_wa) (local.get $arg1))
+    (i32.store offset=20 (local.get $probe_wa) (local.get $arg2))
+    (i32.store offset=32 (local.get $probe_wa) (i32.const 0x4C4D4948))
+    (local.set $i (i32.const 0))
+    (block $new_done (loop $new_entries
+      (br_if $new_done (i32.ge_u (local.get $i) (local.get $add_count)))
+      (local.set $icon
+        (call $image_list_icon_handle (local.get $probe) (local.get $i)))
+      (if (i32.eqz (local.get $icon))
+        (then
+          (call $heap_free (local.get $probe))
+          (call $image_list_destroy_icon_array
+            (local.get $new_icons) (i32.add (local.get $count) (local.get $i)))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+          (return)))
+      (i32.store (i32.add (local.get $new_icons_wa)
+        (i32.shl (i32.add (local.get $count) (local.get $i)) (i32.const 2)))
+        (local.get $icon))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $new_entries)))
+    (call $heap_free (local.get $probe))
+
+    (local.set $old_icons (i32.load offset=24 (local.get $sw)))
+    (call $image_list_destroy_icon_array
+      (local.get $old_icons) (local.get $count))
+    (i32.store offset=12 (local.get $sw) (local.get $new_count))
+    (i32.store offset=16 (local.get $sw) (i32.const 0))
+    (i32.store offset=20 (local.get $sw) (i32.const -1))
+    (i32.store offset=24 (local.get $sw) (local.get $new_icons))
+    (i32.store offset=28 (local.get $sw) (local.get $capacity))
     (global.set $eax (local.get $count))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -502,6 +615,11 @@
           (then (local.set $new_capacity (i32.const 4))))
         (if (i32.le_u (local.get $new_capacity) (local.get $index))
           (then (local.set $new_capacity (i32.add (local.get $index) (i32.const 1)))))
+        ;; A bitmap-backed list can already expose many cells without an icon
+        ;; array.  Replacing any one cell needs addressable slots for every
+        ;; logical image, otherwise GetIcon/Destroy would read past capacity.
+        (if (i32.lt_u (local.get $new_capacity) (local.get $count))
+          (then (local.set $new_capacity (local.get $count))))
         (local.set $new_icons
           (call $heap_alloc (i32.shl (local.get $new_capacity) (i32.const 2))))
         (if (i32.eqz (local.get $new_icons))
@@ -542,6 +660,108 @@
   (func $handle_ImageList_GetIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $image_list_icon_handle (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; ImageList_Remove(himl, i) — remove one image and close the index gap, or
+  ;; remove every image when i == -1.  Rebuild through owned HICONs before
+  ;; mutating the live list so a bitmap-backed list remains unchanged if any
+  ;; source cell cannot be materialized.
+  (func $handle_ImageList_Remove (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $sw i32) (local $count i32) (local $new_count i32)
+    (local $old_icons i32) (local $new_icons i32) (local $new_icons_wa i32)
+    (local $capacity i32) (local $source_index i32) (local $dest_index i32)
+    (local $icon i32)
+    (global.set $eax (i32.const 0))
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    ;; SHGFI_SYSICONINDEX lists are shared process resources and cannot be
+    ;; changed by applications.
+    (if (i32.or
+          (i32.eq (local.get $arg0)
+            (i32.atomic.load (global.get $SHELL_FILE_INFO)))
+          (i32.eq (local.get $arg0)
+            (i32.atomic.load offset=4 (global.get $SHELL_FILE_INFO))))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $sw (call $g2w (local.get $arg0)))
+    (if (i32.ne (i32.load offset=32 (local.get $sw)) (i32.const 0x4C4D4948))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $count (i32.load offset=12 (local.get $sw)))
+    (local.set $old_icons (i32.load offset=24 (local.get $sw)))
+
+    (if (i32.eq (local.get $arg1) (i32.const -1))
+      (then
+        (call $image_list_destroy_icon_array
+          (local.get $old_icons) (local.get $count))
+        (i32.store offset=12 (local.get $sw) (i32.const 0))
+        (i32.store offset=16 (local.get $sw) (i32.const 0))
+        (i32.store offset=20 (local.get $sw) (i32.const -1))
+        (i32.store offset=24 (local.get $sw) (i32.const 0))
+        (i32.store offset=28 (local.get $sw) (i32.const 0))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.ge_u (local.get $arg1) (local.get $count))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+
+    (local.set $new_count (i32.sub (local.get $count) (i32.const 1)))
+    (if (local.get $new_count)
+      (then
+        (local.set $capacity (i32.const 4))
+        (block $capacity_ready (loop $grow_capacity
+          (br_if $capacity_ready
+            (i32.ge_u (local.get $capacity) (local.get $new_count)))
+          (local.set $capacity
+            (i32.shl (local.get $capacity) (i32.const 1)))
+          (br $grow_capacity)))
+        (local.set $new_icons
+          (call $heap_alloc (i32.shl (local.get $capacity) (i32.const 2))))
+        (if (i32.eqz (local.get $new_icons))
+          (then
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+            (return)))
+        (local.set $new_icons_wa (call $g2w (local.get $new_icons)))
+        (call $zero_memory (local.get $new_icons_wa)
+          (i32.shl (local.get $capacity) (i32.const 2)))
+        (block $done (loop $entries
+          (br_if $done
+            (i32.ge_u (local.get $source_index) (local.get $count)))
+          (if (i32.ne (local.get $source_index) (local.get $arg1))
+            (then
+              (local.set $icon (call $image_list_icon_handle
+                (local.get $arg0) (local.get $source_index)))
+              (if (i32.eqz (local.get $icon))
+                (then
+                  (call $image_list_destroy_icon_array
+                    (local.get $new_icons) (local.get $dest_index))
+                  (global.set $esp
+                    (i32.add (global.get $esp) (i32.const 12)))
+                  (return)))
+              (i32.store (i32.add (local.get $new_icons_wa)
+                (i32.shl (local.get $dest_index) (i32.const 2)))
+                (local.get $icon))
+              (local.set $dest_index
+                (i32.add (local.get $dest_index) (i32.const 1)))))
+          (local.set $source_index
+            (i32.add (local.get $source_index) (i32.const 1)))
+          (br $entries)))))
+
+    (call $image_list_destroy_icon_array
+      (local.get $old_icons) (local.get $count))
+    (i32.store offset=12 (local.get $sw) (local.get $new_count))
+    (i32.store offset=16 (local.get $sw) (i32.const 0))
+    (i32.store offset=20 (local.get $sw) (i32.const -1))
+    (i32.store offset=24 (local.get $sw) (local.get $new_icons))
+    (i32.store offset=28 (local.get $sw) (local.get $capacity))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   (func $create_status_window
