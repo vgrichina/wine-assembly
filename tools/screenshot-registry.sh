@@ -15,6 +15,8 @@
 #   SHOT_JOBS=N      parallel apps (default 3)
 #   SHOT_RESUME=1    skip ids that already have a non-empty PNG in out_dir
 #   SHOT_SCREEN=WxH  guest screen (default 640x480, the CLI default)
+#   SHOT_CROP=0      keep the whole desktop; default crops each PNG to its
+#                    window with tools/png-crop-desktop.js
 #
 # tools/site-app-shots.json may give an id extra run.js flags (a dlg-cmd that
 # dismisses its About box, a slower tick for a level timer, a longer budget
@@ -61,6 +63,9 @@ shoot_one() {
     --png="$png" --quiet-api --quiet-blocks > "$log" 2>&1
   st=$?
   if [ -s "$png" ]; then
+    # Windowed apps: drop the teal desktop around the window so the page
+    # picture is the program, not the margin. Full-frame captures are kept.
+    [ "${SHOT_CROP:-1}" = "1" ] && node tools/png-crop-desktop.js "$png" >> "$log" 2>&1
     echo "  ok    $id  (run status=$st)"
   else
     echo "  NOPNG $id  (run status=$st): $(grep -m1 -i 'error\|not found\|crash\|unimplemented' "$log" | cut -c1-120)"

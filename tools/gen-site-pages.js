@@ -68,7 +68,8 @@ const STYLE = `
     .app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; margin: 0.8em 0 1.6em; }
     .app-card { display: block; text-decoration: none; color: inherit; background: #fff; border: 1px solid #d8d2c4; border-radius: 6px; overflow: hidden; }
     .app-card:hover { border-color: #0645ad; }
-    .app-card img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; object-position: top left; background: #008080; }
+    .app-card img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: #008080; }
+    .app-shot { max-width: 100%; height: auto; }
     .app-card span { display: block; padding: 6px 9px; font-size: 14px; font-weight: 600; }
     .app-card small { display: block; padding: 0 9px 8px; font-size: 12px; color: #666; font-weight: 400; }
     .app-launch { display: inline-block; background: #008080; color: #fff !important; text-decoration: none; padding: 9px 16px; border-radius: 4px; font-weight: 600; margin: 0.4em 0 1em; }
@@ -208,6 +209,19 @@ const GROUP_LABELS = {
 };
 const NO_GROUP = 'More games';
 
+// Width/height straight from the PNG's IHDR, so the <img> attributes match
+// the file: the captures are cropped to the window by tools/png-crop-desktop.js
+// and are no longer all 640x480, and a wrong attribute pair makes the browser
+// reserve the wrong box and reflow when the picture arrives.
+function pngSize(file) {
+  const b = Buffer.alloc(24);
+  const fd = fs.openSync(file, 'r');
+  fs.readSync(fd, b, 0, 24, 0);
+  fs.closeSync(fd);
+  return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+}
+const sizeAttrs = s => s ? `width="${s.width}" height="${s.height}"` : '';
+
 function dropdownGroups() {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf-8');
   const start = html.indexOf('id="app-select"');
@@ -272,6 +286,7 @@ function loadDesktopApps() {
       lan: !!app.lan,
       touch: !!app.touchControls,
       shot: fs.existsSync(path.join(ROOT, shot)) ? shot : null,
+      shotSize: fs.existsSync(path.join(ROOT, shot)) ? pngSize(path.join(ROOT, shot)) : null,
       notes,
     };
   });
@@ -291,7 +306,7 @@ function appPageMd(app, siblings) {
   L.push(`<a class="app-launch" href="/?app=${app.id}">Launch ${app.name} &rarr;</a>`);
   L.push('');
   if (app.shot) {
-    L.push(`<img class="app-shot" src="/${app.shot}" alt="${esc(app.name)} running in Wine-Assembly" width="640" height="480">`);
+    L.push(`<img class="app-shot" src="/${app.shot}" alt="${esc(app.name)} running in Wine-Assembly" ${sizeAttrs(app.shotSize)}>`);
     L.push('');
   }
   L.push('## About this program');
@@ -351,7 +366,7 @@ function appsIndexMd(apps) {
     L.push('');
     L.push('<div class="app-grid">');
     for (const a of list) {
-      const img = a.shot ? `<img src="/${a.shot}" alt="" loading="lazy" width="320" height="240">` : '';
+      const img = a.shot ? `<img src="/${a.shot}" alt="" loading="lazy" ${sizeAttrs(a.shotSize)}>` : '';
       const first = a.blurb.split(/(?<=\.)\s/)[0];
       L.push(`<a class="app-card" href="/apps/${a.id}.html">${img}<span>${esc(a.name)}</span><small>${esc(first)}</small></a>`);
     }
