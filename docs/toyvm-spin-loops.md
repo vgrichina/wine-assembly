@@ -253,11 +253,29 @@ for the first 9% of the period, bit 0 through that and through the first fifth
 of every scanline. The read is pure. `in al,dx` answers 3DAh inline and never
 calls the host; `in ax,dx` and the host's `--trace-io` path ask the same
 function. The attribute flip-flop moved into a wasm global with it, because
-the 3DAh read that resets it no longer reaches `dos.js`. The period is quoted
-against the same timer interval the old cadence was, `irqEvery × 18.2 / 70`
-(26000 dispatches; `/60` over 525 lines for the 480-line modes), and IRQ2 is
-now the rising edge of that bit: `dos-loop.js` arms it when `dispatched`
-crosses a period boundary and delivers it at the next handback.
+the 3DAh read that resets it no longer reaches `dos.js`. IRQ2 is now the
+rising edge of that bit: `dos-loop.js` arms it when `dispatched` crosses a
+period boundary and delivers it at the next handback.
+
+**The period is real time, and must be quoted against the real-time clock**
+(2026-09-04). It was originally quoted against the same timer interval the old
+IRQ cadence had been, `tickUnit() × 18.2 / hz`. That is `dispatchesPerTick`
+under `--pit-clock` and `irqEvery` — 100e3 — on the default two-clock path,
+while `guestSeconds()` is `dispatchesPerTick` (550e3) either way. So by
+default a "70Hz" frame was 26,000 dispatches against a guest second of 10.0M:
+**the card ran at 385Hz** and every retrace-paced demo played its show 5.5×
+too fast. ACME-SUX.EXE reached its exit in 7.4M dispatches — 0.74 guest
+seconds for 285 frames a real VGA takes ~4 seconds to show. The two
+expressions agree under `--pit-clock`, which is why the fast arm looked right
+and hid it for two days. The period is now `1 / (hz × guestSeconds(1))`:
+143,051 dispatches for a 70Hz mode-13h frame, 166,893 for the 60Hz 480-line
+ones, and `tickScale` reaches it, so `clock-probe.js`'s x16 arm speeds the
+frame along with the PIT instead of leaving the card alone. ACME-SUX now exits
+at 39.6M dispatches — 3.95 guest seconds, 277 frames, 70.1Hz — and the default
+and `--pit-clock` arms agree on the frame rate for the first time.
+`test/test-toyvm-retrace.js` pins both halves: the shape (pure, one window per
+frame, 9% of it) off the exports, and the rate as a guest program counting
+BIOS ticks across 182 retraces in both clock modes.
 
 With the port pure inside a slice, the poll is a loop over nothing but the
 clock, and `in_{cmp,test}_ri8_j<cc>_pspin` turns it inside one handler: read
