@@ -5137,11 +5137,6 @@
   ;; bitmap as its "resource", and drawing one blits that bitmap — see
   ;; $icon_draw_handle. Visual Basic's controls build their pictures this way.
   (global $ICON_FROM_BITMAP i32 (i32.const 0x1C0B17))
-  ;; A caller-owned shell icon is one cell cropped from the system image-list
-  ;; strip.  Keep it distinct from CreateIcon's bitmap wrapper: the shell
-  ;; strip uses the Win9x image-list magenta key and DrawIcon must preserve
-  ;; those transparent pixels rather than copying the key colour to the DC.
-  (global $ICON_FROM_SHELL_BITMAP i32 (i32.const 0x5E1100))
   (global $ICON_FROM_OPAQUE i32 (i32.const 0x0FACED))
   ;; A Win16 NE module id, stored in ICON_TABLE's hInstance word. The low 24
   ;; bits are the $win16_res_module selector (task=1, DLL=0x10000|id).
@@ -5171,6 +5166,87 @@
     (i32.store offset=4 (local.get $p) (local.get $resid))
     (i32.or (global.get $ICON_HANDLE_TAG) (local.get $free)))
 
+  ;; Draw a bitmap-backed ICONINFO record.  cursor_rasterize is the one place
+  ;; that interprets the AND/XOR planes, including DDB orientation and
+  ;; monochrome icons; sampling that canonical BGRA result keeps DrawIcon and
+  ;; the browser cursor path on the same pixels.  Win98 icons have binary
+  ;; transparency, so an opaque source pixel replaces the destination while a
+  ;; transparent one leaves it untouched.
+  (func $cursor_draw_handle (param $hicon i32) (param $hdc i32)
+        (param $x i32) (param $y i32) (param $cx i32) (param $cy i32)
+        (param $di_flags i32) (result i32)
+    (local $record i32) (local $src_w i32) (local $src_h i32)
+    (local $pixels_ga i32) (local $pixels i32) (local $dst i32)
+    (local $dx i32) (local $dy i32) (local $px i32) (local $py i32)
+    (local $sx i32) (local $sy i32) (local $pixel i32)
+    (local.set $record (call $cursor_record (local.get $hicon)))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
+    (local.set $src_w (call $cursor_width (local.get $record)))
+    (local.set $src_h (call $cursor_height (local.get $record)))
+    (if (i32.or
+          (i32.or (i32.le_s (local.get $src_w) (i32.const 0))
+            (i32.gt_s (local.get $src_w) (i32.const 1024)))
+          (i32.or (i32.le_s (local.get $src_h) (i32.const 0))
+            (i32.gt_s (local.get $src_h) (i32.const 1024))))
+      (then (return (i32.const 0))))
+    (if (i32.le_s (local.get $cx) (i32.const 0))
+      (then (local.set $cx (local.get $src_w))))
+    (if (i32.le_s (local.get $cy) (i32.const 0))
+      (then (local.set $cy (local.get $src_h))))
+    (if (i32.or
+          (i32.or (i32.le_s (local.get $cx) (i32.const 0))
+            (i32.gt_s (local.get $cx) (i32.const 4096)))
+          (i32.or (i32.le_s (local.get $cy) (i32.const 0))
+            (i32.gt_s (local.get $cy) (i32.const 4096))))
+      (then (return (i32.const 0))))
+    (local.set $pixels_ga (call $dib_alloc
+      (i32.shl (i32.mul (local.get $src_w) (local.get $src_h)) (i32.const 2))))
+    (if (i32.eqz (local.get $pixels_ga)) (then (return (i32.const 0))))
+    (local.set $pixels (call $g2w (local.get $pixels_ga)))
+    (if (i32.eqz (call $cursor_rasterize (local.get $record) (local.get $pixels)))
+      (then
+        (call $dib_free_wasm (local.get $pixels))
+        (return (i32.const 0))))
+    (local.set $dst (global.get $GDI_BLIT_DST_DESC))
+    (if (i32.eqz (call $gdi_surface_descriptor (local.get $hdc) (local.get $dst)))
+      (then
+        (call $dib_free_wasm (local.get $pixels))
+        (return (i32.const 0))))
+    (local.set $dx (call $gdi_line_map_x (local.get $dst) (local.get $x)))
+    (local.set $dy (call $gdi_line_map_y (local.get $dst) (local.get $y)))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_u (local.get $py) (local.get $cy)))
+      (local.set $sy (i32.div_u (i32.mul (local.get $py) (local.get $src_h))
+        (local.get $cy)))
+      (local.set $px (i32.const 0))
+      (block $cols_done (loop $cols
+        (br_if $cols_done (i32.ge_u (local.get $px) (local.get $cx)))
+        (local.set $sx (i32.div_u (i32.mul (local.get $px) (local.get $src_w))
+          (local.get $cx)))
+        (local.set $pixel (i32.load (i32.add (local.get $pixels)
+          (i32.shl (i32.add (i32.mul (local.get $sy) (local.get $src_w))
+            (local.get $sx)) (i32.const 2)))))
+        (if (i32.and
+              (i32.ne (i32.and (local.get $pixel) (i32.const 0xFF000000))
+                (i32.const 0))
+              (call $gdi_raster_clip_visible (local.get $hdc) (local.get $dst)
+                (i32.add (local.get $dx) (local.get $px))
+                (i32.add (local.get $dy) (local.get $py))))
+          (then (drop (call $gdi_raster_write (local.get $dst)
+            (i32.add (local.get $dx) (local.get $px))
+            (i32.add (local.get $dy) (local.get $py))
+            (i32.and (local.get $pixel) (i32.const 0x00FFFFFF))))))
+        (local.set $px (i32.add (local.get $px) (i32.const 1)))
+        (br $cols)))
+      (local.set $py (i32.add (local.get $py) (i32.const 1)))
+      (br $rows)))
+    (call $gdi_geometry_present (local.get $hdc) (local.get $dst)
+      (local.get $dx) (local.get $dy)
+      (i32.add (local.get $dx) (local.get $cx))
+      (i32.add (local.get $dy) (local.get $cy)))
+    (call $dib_free_wasm (local.get $pixels))
+    (i32.const 1))
+
   ;; Paint an interned icon. Returns 0 for any handle we did not intern, which
   ;; keeps the old opaque handles (and system icons we ship no pixels for)
   ;; behaving exactly as before instead of drawing garbage.
@@ -5178,6 +5254,11 @@
         (param $x i32) (param $y i32) (param $cx i32) (param $cy i32)
         (param $di_flags i32) (result i32)
     (local $slot i32) (local $p i32) (local $ok i32)
+    (if (call $cursor_draw_handle
+          (local.get $hicon) (local.get $hdc)
+          (local.get $x) (local.get $y) (local.get $cx) (local.get $cy)
+          (local.get $di_flags))
+      (then (return (i32.const 1))))
     (if (i32.ne (i32.and (local.get $hicon) (i32.const 0xFFFF0000))
                 (global.get $ICON_HANDLE_TAG))
       (then (return (i32.const 0))))
@@ -5188,27 +5269,6 @@
                    (i32.mul (local.get $slot) (i32.const 8))))
     (if (i32.eqz (i32.load offset=4 (local.get $p)))
       (then (return (i32.const 0))))
-    ;; SHGetFileInfo's HICON is a private crop of one system-list cell.  Its
-    ;; natural dimensions come from that crop (16 or 32), and the same
-    ;; magenta colour key used by Win98 common controls supplies transparency.
-    (if (i32.eq (i32.load (local.get $p)) (global.get $ICON_FROM_SHELL_BITMAP))
-      (then
-        (if (i32.le_s (local.get $cx) (i32.const 0))
-          (then (local.set $cx (call $host_gdi_get_object_w
-            (i32.and (i32.load offset=4 (local.get $p)) (i32.const 0x7FFFFFFF))))))
-        (if (i32.le_s (local.get $cy) (i32.const 0))
-          (then (local.set $cy (call $host_gdi_get_object_h
-            (i32.and (i32.load offset=4 (local.get $p)) (i32.const 0x7FFFFFFF))))))
-        (local.set $ok (call $gdi_dc_alloc))
-        (if (i32.eqz (local.get $ok)) (then (return (i32.const 0))))
-        (drop (call $host_gdi_select_object (local.get $ok)
-          (i32.and (i32.load offset=4 (local.get $p)) (i32.const 0x7FFFFFFF))))
-        (local.set $slot (call $host_gdi_transparent_blt
-          (local.get $hdc) (local.get $x) (local.get $y)
-          (local.get $cx) (local.get $cy) (local.get $ok)
-          (i32.const 0) (i32.const 0) (i32.const 0x00FF00FF)))
-        (drop (call $gdi_dc_delete (local.get $ok)))
-        (return (local.get $slot))))
     ;; cx/cy of 0 mean "the icon's own size" — resources and CreateIcon's
     ;; legacy bitmap wrapper default to the Win98 large-icon metric.
     (if (i32.le_s (local.get $cx) (i32.const 0))
@@ -13252,15 +13312,18 @@ HookEx — no next hook in chain, return 0
         (local.set $icon_size
           (select (i32.const 16) (i32.const 32)
             (i32.ne (i32.and (local.get $flags) (i32.const 1)) (i32.const 0))))
+        (local.set $list (call $shell_system_image_list (local.get $icon_size)))
+        (if (i32.eqz (local.get $list)) (then (return (i32.const 0))))
         (local.set $icon
-          (call $shell_system_icon_handle (local.get $class) (local.get $icon_size)))
+          (call $image_list_icon_handle (local.get $list) (local.get $class)))
         (if (i32.eqz (local.get $icon)) (then (return (i32.const 0))))
         (i32.store (local.get $psfi) (local.get $icon))))
     (if (i32.ne (i32.and (local.get $flags) (i32.const 0x4000)) (i32.const 0))
       (then
-        (local.set $list (call $shell_system_image_list
-          (select (i32.const 16) (i32.const 32)
-            (i32.ne (i32.and (local.get $flags) (i32.const 1)) (i32.const 0)))))
+        (if (i32.eqz (local.get $list))
+          (then (local.set $list (call $shell_system_image_list
+            (select (i32.const 16) (i32.const 32)
+              (i32.ne (i32.and (local.get $flags) (i32.const 1)) (i32.const 0)))))))
         (if (i32.eqz (local.get $list))
           (then
             (if (local.get $icon)
@@ -19282,9 +19345,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
           (then (return (i32.const 0))))
         (local.set $hinst (global.get $ICON_FROM_OPAQUE))
         (local.set $resid (local.get $handle))))
-    (if (i32.or
-          (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
-          (i32.eq (local.get $hinst) (global.get $ICON_FROM_SHELL_BITMAP)))
+    (if (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
       (then
         (local.set $resid (call $gdi_bitmap_clone_owned (local.get $resid)))
         (if (i32.eqz (local.get $resid)) (then (return (i32.const 0))))))
@@ -19306,11 +19367,8 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         ;; A loaded icon is shared and remains valid; a copied slot is private.
         (if (i32.and (local.get $resid) (i32.const 0x80000000))
           (then
-            (if (i32.or
-                  (i32.eq (i32.load (local.get $record))
-                    (global.get $ICON_FROM_BITMAP))
-                  (i32.eq (i32.load (local.get $record))
-                    (global.get $ICON_FROM_SHELL_BITMAP)))
+            (if (i32.eq (i32.load (local.get $record))
+                        (global.get $ICON_FROM_BITMAP))
               (then (drop (call $gdi_object_delete_full
                 (i32.and (local.get $resid) (i32.const 0x7FFFFFFF))))))
             (memory.fill (local.get $record) (i32.const 0) (i32.const 8))))
@@ -19336,9 +19394,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
           (return (i32.or (global.get $ICON_HANDLE_TAG) (local.get $i)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    (if (i32.or
-          (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
-          (i32.eq (local.get $hinst) (global.get $ICON_FROM_SHELL_BITMAP)))
+    (if (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
       (then (drop (call $gdi_object_delete_full (local.get $resid)))))
     (i32.const 0))
 
@@ -19563,9 +19619,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (local.set $resid (i32.and (i32.load offset=4 (local.get $record))
       (i32.const 0x7FFFFFFF)))
     (if (i32.or
-          (i32.or
-            (i32.or (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
-              (i32.eq (local.get $hinst) (global.get $ICON_FROM_SHELL_BITMAP)))
+          (i32.or (i32.eq (local.get $hinst) (global.get $ICON_FROM_BITMAP))
             (i32.eq (local.get $hinst) (global.get $ICON_FROM_OPAQUE)))
           (i32.or
             (i32.eq (local.get $hinst)

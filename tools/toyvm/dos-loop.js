@@ -1104,7 +1104,12 @@ class DosSession {
     return Math.max(200, Math.round(this.dispatchesPerTick * reload / 65536));
   }
 
-  // Dispatches per 18.2Hz tick as the frame and keyboard clocks count them.
+  // Dispatches per 18.2Hz tick as the INTERRUPT cadences count them: under the
+  // two-clock defaults an IRQ is scheduled off irqEvery, and only under
+  // pitClock is it scheduled off the same number guest wall time is measured
+  // in. Anything that is a real-time interval rather than an IRQ cadence --
+  // the VGA frame period is the one that got this wrong -- must go through
+  // guestSeconds() instead, which is dispatchesPerTick either way.
   tickUnit() {
     return this.pitClock ? this.dispatchesPerTick : this.irqEvery;
   }
@@ -1295,14 +1300,27 @@ class DosSession {
     // The VGA clock. Port 3DAh is answered inside the VM from where the
     // dispatch count sits in the current frame (emit.js, $vga_status), so hand
     // it the phase this slice starts at, and the period whenever the mode's
-    // frame rate changed. The period is quoted against the tick unit the same
-    // way the retrace IRQ's cadence always was: one 18.2Hz tick is tickUnit()
-    // dispatches, so one 70Hz frame is tickUnit() * 18.2 / 70 of them.
+    // frame rate changed.
+    //
+    // The period is a REAL-TIME interval, so it is quoted against the same
+    // clock everything else real-time here is quoted against: guestSeconds(),
+    // which is dispatchesPerTick and tickScale and nothing else. It used to be
+    // quoted against tickUnit(), which is dispatchesPerTick only under
+    // --pit-clock and irqEvery (100e3) otherwise -- so on the default
+    // two-clock path a "70Hz" frame was 26,000 dispatches while a guest
+    // second was 10.0M of them, and the card ran at 385Hz. A retrace-paced
+    // demo then played its whole show 5.5x too fast: ACME-SUX.EXE reached its
+    // exit in 7.4M dispatches (0.74 guest seconds) for 285 frames of content
+    // that a real VGA takes ~4 seconds to show. Under --pit-clock the two
+    // expressions already agreed, which is why the fast arm looked correct
+    // and hid this.
     if (vm.exports.set_vga_phase0) {
       const t = machine.vgaTiming ? machine.vgaTiming() : { hz: 70, lines: 449 };
       if (t.hz !== this.vgaHz) {
         this.vgaHz = t.hz;
-        this.vgaPeriod = Math.max(100, Math.round(this.tickUnit() * 18.2 / t.hz));
+        // Dispatches in one frame: the frame's length in guest seconds
+        // divided by what one dispatch is worth.
+        this.vgaPeriod = Math.max(100, Math.round(1 / (t.hz * this.guestSeconds(1))));
         vm.exports.set_vga_period(this.vgaPeriod, t.lines);
       }
       vm.exports.set_vga_phase0(this.dispatched % this.vgaPeriod);

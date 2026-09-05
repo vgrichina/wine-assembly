@@ -573,6 +573,7 @@ UNIT=(
   test/test-toyvm-operand-patch.js
   test/test-toyvm-dac-default.js
   test/test-toyvm-dead-entry.js
+  test/test-toyvm-retrace.js
   test/test-user-default-ui-language.js
   test/test-virtual-query-user-boundary.js
   test/test-wave-in-dev-caps.js

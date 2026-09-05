@@ -148,6 +148,34 @@ function makeShell(opts = {}) {
   console.log('ok: obsolete DirectX setup is already satisfied');
 }
 
+// War Wind asks to run that obsolete redistributable from its final setup
+// dialog. Once the no-op succeeds, continue into the game from the completed
+// installer VFS instead of leaving the Win16 bootstrap visible at 39%.
+{
+  const { shell, launched, logs } = makeShell();
+  const installedPath = 'c:\\program files\\warwind\\ww.exe';
+  const vfs = {
+    files: new Map([[installedPath, { data: new Uint8Array([77, 90]), attrs: 0x20 }]]),
+    dirs: new Set(['c:\\program files', 'c:\\program files\\warwind']),
+    readOnlyDrives: new Set(),
+    cwd: 'c:\\program files\\warwind\\',
+    _normPath: p => String(p).toLowerCase(),
+    _resolvePath(p) {
+      const value = /^[a-z]:/i.test(p) ? p : this.cwd + p;
+      return this._normPath(value).replace(/\\+/g, '\\');
+    },
+  };
+  assert.strictEqual(shell.launchVfsExe(
+    'C:\\REDIST\\DIRECTX\\DXSETUP.EXE', { _helpCtx: { vfs } }, '', ''), true);
+  setTimeout(() => {
+    assert.deepStrictEqual(launched, ['vfs:' + installedPath],
+      'accepted final DXSETUP prompt starts the completed War Wind install');
+    assert(logs.some(line => /starting installed War Wind after setup/i.test(line)),
+      'the automatic handoff is visible in the debug log');
+    console.log('ok: War Wind final setup prompt starts the installed game');
+  }, 0);
+}
+
 // 4. An installer that exits without launching its game leaves a lightweight
 //    filesystem snapshot behind for a later desktop/Start-menu launch.
 {

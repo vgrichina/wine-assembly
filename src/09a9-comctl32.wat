@@ -174,62 +174,131 @@
         (return (local.get $existing))))
     (local.get $candidate))
 
-  ;; Materialize one system image-list cell as a caller-owned HICON for
-  ;; SHGFI_ICON.  Win98 returns the index and an icon with independent
-  ;; lifetime; pointing hIcon at the shared strip would make DestroyIcon tear
-  ;; down pixels still owned by every list view in the process.
-  (func $shell_system_icon_handle (param $index i32) (param $size i32) (result i32)
-    (local $list i32) (local $list_wa i32) (local $source_bitmap i32)
-    (local $source_record i32) (local $source_record_bitmap ptr<GdiBitmap>)
-    (local $source_bits i32) (local $source_stride i32)
-    (local $copy i32) (local $copy_bitmap ptr<GdiBitmap>) (local $copy_bits i32)
-    (local $copy_stride i32) (local $row i32)
-    (if (i32.or (i32.ge_u (local.get $index) (i32.const 5))
-          (i32.and (i32.ne (local.get $size) (i32.const 16))
-            (i32.ne (local.get $size) (i32.const 32))))
-      (then (return (i32.const 0))))
-    (local.set $list (call $shell_system_image_list (local.get $size)))
+  ;; Create the independent HICON promised by ImageList_GetIcon. An entry
+  ;; retained by ImageList_ReplaceIcon is copied through USER's normal icon
+  ;; ownership path. A bitmap-strip entry is materialized into owned colour
+  ;; and 1-bpp AND-mask planes, so arbitrary image-list mask colours remain
+  ;; correct after the source list is changed or destroyed.
+  (func $image_list_icon_handle (param $list i32) (param $index i32) (result i32)
+    (local $sw i32) (local $cx i32) (local $cy i32) (local $icons i32)
+    (local $retained i32) (local $source_bitmap i32) (local $mask_key i32)
+    (local $source i32) (local $color_desc i32) (local $mask_desc i32)
+    (local $color i32) (local $mask i32) (local $mask_stride i32)
+    (local $x i32) (local $y i32) (local $pixel i32) (local $result i32)
     (if (i32.eqz (local.get $list)) (then (return (i32.const 0))))
-    (local.set $list_wa (call $g2w (local.get $list)))
-    (local.set $source_bitmap (i32.load offset=16 (local.get $list_wa)))
-    (local.set $source_record (call $gdi_object_record (local.get $source_bitmap)))
-    (if (i32.eqz (call $gdi_bitmap_record_valid (local.get $source_record)))
+    (local.set $sw (call $g2w (local.get $list)))
+    (if (i32.or
+          (i32.ne (i32.load offset=32 (local.get $sw)) (i32.const 0x4C4D4948))
+          (i32.ge_u (local.get $index) (i32.load offset=12 (local.get $sw))))
       (then (return (i32.const 0))))
-    (local.set $source_record_bitmap (cast ptr<GdiBitmap> (local.get $source_record)))
+    (local.set $cx (i32.load (local.get $sw)))
+    (local.set $cy (i32.load offset=4 (local.get $sw)))
+    (if (i32.or
+          (i32.or (i32.le_s (local.get $cx) (i32.const 0))
+            (i32.gt_s (local.get $cx) (i32.const 256)))
+          (i32.or (i32.le_s (local.get $cy) (i32.const 0))
+            (i32.gt_s (local.get $cy) (i32.const 256))))
+      (then (return (i32.const 0))))
+    (local.set $icons (i32.load offset=24 (local.get $sw)))
+    (if (local.get $icons)
+      (then
+        (local.set $retained (i32.load (call $g2w (i32.add (local.get $icons)
+          (i32.shl (local.get $index) (i32.const 2))))))
+        (if (local.get $retained)
+          (then (return (call $icon_copy_handle (local.get $retained)))))))
+    (local.set $source_bitmap (i32.load offset=16 (local.get $sw)))
+    (if (i32.or (i32.eqz (local.get $source_bitmap))
+          (i32.or
+            (i32.lt_s (call $host_gdi_get_object_w (local.get $source_bitmap))
+              (i32.mul (i32.add (local.get $index) (i32.const 1)) (local.get $cx)))
+            (i32.lt_s (call $host_gdi_get_object_h (local.get $source_bitmap))
+              (local.get $cy))))
+      (then (return (i32.const 0))))
+
+    ;; Owned 32-bpp colour plane.
     (memory.fill (global.get $GDI_BITMAP_PLAN) (i32.const 0) (i32.const 48))
-    (i32.store          (global.get $GDI_BITMAP_PLAN) (local.get $size))
-    (i32.store offset=4 (global.get $GDI_BITMAP_PLAN) (local.get $size))
+    (i32.store          (global.get $GDI_BITMAP_PLAN) (local.get $cx))
+    (i32.store offset=4 (global.get $GDI_BITMAP_PLAN) (local.get $cy))
     (i32.store offset=8 (global.get $GDI_BITMAP_PLAN) (i32.const 32))
     (i32.store offset=12 (global.get $GDI_BITMAP_PLAN) (i32.const 2)) ;; top-down
-    (local.set $copy_stride (i32.shl (local.get $size) (i32.const 2)))
-    (i32.store offset=16 (global.get $GDI_BITMAP_PLAN) (local.get $copy_stride))
+    (i32.store offset=16 (global.get $GDI_BITMAP_PLAN)
+      (i32.shl (local.get $cx) (i32.const 2)))
     (i32.store offset=32 (global.get $GDI_BITMAP_PLAN)
-      (i32.mul (local.get $copy_stride) (local.get $size)))
-    (local.set $copy (call $gdi_bitmap_create_owned
+      (i32.shl (i32.mul (local.get $cx) (local.get $cy)) (i32.const 2)))
+    (local.set $color (call $gdi_bitmap_create_owned
       (global.get $GDI_BITMAP_PLAN) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0) (i32.const 0)))
-    (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
-    ;; gdi_bitmap_create_owned is the producer/type proof for the destination;
-    ;; cast each union record once and retain that typed identity for all field
-    ;; access below.
-    (local.set $copy_bitmap
-      (cast ptr<GdiBitmap> (call $gdi_object_record (local.get $copy))))
-    (local.set $source_bits (load.field GdiBitmap bits (local.get $source_record_bitmap)))
-    (local.set $source_stride (load.field GdiBitmap stride (local.get $source_record_bitmap)))
-    (local.set $copy_bits (load.field GdiBitmap bits (local.get $copy_bitmap)))
-    (block $done (loop $rows
-      (br_if $done (i32.ge_u (local.get $row) (local.get $size)))
-      (memory.copy
-        (i32.add (local.get $copy_bits)
-          (i32.mul (local.get $row) (local.get $copy_stride)))
-        (i32.add
-          (i32.add (local.get $source_bits)
-            (i32.mul (local.get $row) (local.get $source_stride)))
-          (i32.shl (i32.mul (local.get $index) (local.get $size)) (i32.const 2)))
-        (local.get $copy_stride))
-      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+    (if (i32.eqz (local.get $color)) (then (return (i32.const 0))))
+
+    ;; Owned 1-bpp AND mask. Its rows are DWORD-aligned like a Win32 DDB.
+    (local.set $mask_stride (i32.shl
+      (i32.shr_u (i32.add (local.get $cx) (i32.const 31)) (i32.const 5))
+      (i32.const 2)))
+    (memory.fill (global.get $GDI_BITMAP_PLAN) (i32.const 0) (i32.const 48))
+    (i32.store          (global.get $GDI_BITMAP_PLAN) (local.get $cx))
+    (i32.store offset=4 (global.get $GDI_BITMAP_PLAN) (local.get $cy))
+    (i32.store offset=8 (global.get $GDI_BITMAP_PLAN) (i32.const 1))
+    (i32.store offset=12 (global.get $GDI_BITMAP_PLAN) (i32.const 2)) ;; top-down
+    (i32.store offset=16 (global.get $GDI_BITMAP_PLAN) (local.get $mask_stride))
+    (i32.store offset=32 (global.get $GDI_BITMAP_PLAN)
+      (i32.mul (local.get $mask_stride) (local.get $cy)))
+    (local.set $mask (call $gdi_bitmap_create_owned
+      (global.get $GDI_BITMAP_PLAN) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $mask))
+      (then
+        (drop (call $gdi_object_delete_full (local.get $color)))
+        (return (i32.const 0))))
+    (local.set $source (global.get $GDI_BLIT_SRC_DESC))
+    (local.set $color_desc (global.get $CURSOR_COLOR_DESC))
+    (local.set $mask_desc (global.get $CURSOR_MASK_DESC))
+    (if (i32.or
+          (i32.eqz (call $gdi_raster_desc_from_bitmap
+            (local.get $source_bitmap) (local.get $source)))
+          (i32.or
+            (i32.eqz (call $gdi_raster_desc_from_bitmap
+              (local.get $color) (local.get $color_desc)))
+            (i32.eqz (call $gdi_raster_desc_from_bitmap
+              (local.get $mask) (local.get $mask_desc)))))
+      (then
+        (drop (call $gdi_object_delete_full (local.get $mask)))
+        (drop (call $gdi_object_delete_full (local.get $color)))
+        (return (i32.const 0))))
+    (local.set $mask_key (i32.load offset=20 (local.get $sw)))
+    (if (i32.ne (local.get $mask_key) (i32.const -1))
+      (then (local.set $mask_key (call $gdi_raster_swap_rb (local.get $mask_key)))))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_u (local.get $y) (local.get $cy)))
+      (local.set $x (i32.const 0))
+      (block $cols_done (loop $cols
+        (br_if $cols_done (i32.ge_u (local.get $x) (local.get $cx)))
+        (local.set $pixel (call $gdi_raster_read (local.get $source)
+          (i32.add (i32.mul (local.get $index) (local.get $cx)) (local.get $x))
+          (local.get $y)))
+        (if (i32.eq (local.get $pixel) (i32.const -1))
+          (then
+            (drop (call $gdi_object_delete_full (local.get $mask)))
+            (drop (call $gdi_object_delete_full (local.get $color)))
+            (return (i32.const 0))))
+        (drop (call $gdi_raster_write (local.get $color_desc)
+          (local.get $x) (local.get $y) (local.get $pixel)))
+        (drop (call $gdi_raster_write_index (local.get $mask_desc)
+          (local.get $x) (local.get $y)
+          (i32.and (i32.ne (local.get $mask_key) (i32.const -1))
+            (i32.eq (local.get $pixel) (local.get $mask_key)))))
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br $cols)))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $rows)))
-    (call $icon_private_slot (global.get $ICON_FROM_SHELL_BITMAP) (local.get $copy)))
+    (local.set $result (call $cursor_intern (i32.const 1)
+      (i32.shr_u (local.get $cx) (i32.const 1))
+      (i32.shr_u (local.get $cy) (i32.const 1))
+      (local.get $mask) (local.get $color)))
+    (if (i32.eqz (local.get $result))
+      (then
+        (drop (call $gdi_object_delete_full (local.get $mask)))
+        (drop (call $gdi_object_delete_full (local.get $color)))))
+    (local.get $result))
 
   ;; InitCommonControls() — 0 args, void return, registers common control window classes
   (func $handle_InitCommonControls (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -257,7 +326,8 @@
 
   ;; ImageList_Destroy(himl) — 1 arg, returns BOOL
   (func $handle_ImageList_Destroy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $sw i32) (local $icons i32)
+    (local $sw i32) (local $icons i32) (local $icons_wa i32)
+    (local $count i32) (local $i i32) (local $icon i32)
     (global.set $eax (i32.const 0))
     ;; The lists returned by SHGFI_SYSICONINDEX are shared system resources;
     ;; applications must not destroy them.  Refuse the operation so the stable
@@ -281,7 +351,19 @@
             (i32.store offset=32 (local.get $sw) (i32.const 0))
             (local.set $icons (i32.load offset=24 (local.get $sw)))
             (i32.store offset=24 (local.get $sw) (i32.const 0))
-            (if (local.get $icons) (then (call $heap_free (local.get $icons))))
+            (if (local.get $icons)
+              (then
+                (local.set $icons_wa (call $g2w (local.get $icons)))
+                (local.set $count (i32.load offset=12 (local.get $sw)))
+                (block $done (loop $entries
+                  (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+                  (local.set $icon (i32.load (i32.add (local.get $icons_wa)
+                    (i32.shl (local.get $i) (i32.const 2)))))
+                  (if (local.get $icon)
+                    (then (drop (call $icon_destroy_handle (local.get $icon)))))
+                  (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                  (br $entries)))
+                (call $heap_free (local.get $icons))))
             (call $heap_free (local.get $arg0))
             (global.set $eax (i32.const 1))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
@@ -385,6 +467,7 @@
     (local $sw i32) (local $count i32) (local $index i32)
     (local $icons i32) (local $icons_wa i32) (local $capacity i32)
     (local $new_icons i32) (local $new_icons_wa i32) (local $new_capacity i32)
+    (local $copy i32) (local $old i32)
     (global.set $eax (i32.const -1))
     (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg2)))
       (then
@@ -400,6 +483,14 @@
           (then
             (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
             (return)))))
+    ;; Common controls copies the icon's image and mask; it never retains the
+    ;; caller's HICON. This private copy lets the caller destroy hicon as soon
+    ;; as ImageList_ReplaceIcon returns, exactly as the Win32 contract allows.
+    (local.set $copy (call $icon_copy_handle (local.get $arg2)))
+    (if (i32.eqz (local.get $copy))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (local.set $icons (i32.load offset=24 (local.get $sw)))
     (if (local.get $icons)
       (then (local.set $icons_wa (call $g2w (local.get $icons)))))
@@ -415,6 +506,7 @@
           (call $heap_alloc (i32.shl (local.get $new_capacity) (i32.const 2))))
         (if (i32.eqz (local.get $new_icons))
           (then
+            (drop (call $icon_destroy_handle (local.get $copy)))
             (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
             (return)))
         (local.set $new_icons_wa (call $g2w (local.get $new_icons)))
@@ -429,31 +521,26 @@
         (local.set $capacity (local.get $new_capacity))
         (i32.store offset=24 (local.get $sw) (local.get $icons))
         (i32.store offset=28 (local.get $sw) (local.get $capacity))))
+    (if (i32.lt_u (local.get $index) (local.get $count))
+      (then
+        (local.set $old (i32.load (i32.add (local.get $icons_wa)
+          (i32.shl (local.get $index) (i32.const 2)))))
+        (if (local.get $old)
+          (then (drop (call $icon_destroy_handle (local.get $old)))))))
     (i32.store (i32.add (local.get $icons_wa)
-      (i32.shl (local.get $index) (i32.const 2))) (local.get $arg2))
+      (i32.shl (local.get $index) (i32.const 2))) (local.get $copy))
     (if (i32.eq (local.get $index) (local.get $count))
       (then (i32.store offset=12 (local.get $sw) (i32.add (local.get $count) (i32.const 1)))))
     (global.set $eax (local.get $index))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; ImageList_GetIcon(himl, i, flags) — return the icon retained for an entry.
-  ;; The flags affect the duplicated icon's draw style on Windows; the runtime
-  ;; keeps guest icon handles opaque, so returning the retained handle preserves
-  ;; the observable identity needed by setup helpers.
+  ;; ImageList_GetIcon(himl, i, flags) — create an independent HICON from the
+  ;; entry's image and mask. The caller owns the result and releases it with
+  ;; DestroyIcon. ILD_NORMAL/ILD_TRANSPARENT share the same stored planes;
+  ;; overlay/blend styling remains a draw-time compatibility extension.
   (func $handle_ImageList_GetIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $sw i32) (local $icons i32)
-    (global.set $eax (i32.const 0))
-    (if (local.get $arg0)
-      (then
-        (local.set $sw (call $g2w (local.get $arg0)))
-        (if (i32.lt_u (local.get $arg1) (i32.load offset=12 (local.get $sw)))
-          (then
-            (local.set $icons (i32.load offset=24 (local.get $sw)))
-            (if (local.get $icons)
-              (then
-                (global.set $eax (i32.load (call $g2w (i32.add (local.get $icons)
-                  (i32.shl (local.get $arg1) (i32.const 2))))))))))))
+    (global.set $eax (call $image_list_icon_handle (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
