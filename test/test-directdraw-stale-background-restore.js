@@ -108,6 +108,23 @@ function writeRect(wat, address, left, top, right, bottom) {
   assert.strictEqual(wat.test_dx_surface_get(large, 41, 10), 11,
     'non-inverse rectangle copy must not be suppressed');
 
+  // AoE's 280x140 UI backing surface is smaller than its 800x600 render
+  // target, but it is not cursor storage. Its inverse restore remains real
+  // drawing even when the render target was CPU-redrawn in between.
+  const frame = wat.test_dx_surface_new(800, 600) >>> 0;
+  const panel = wat.test_dx_surface_new(280, 140) >>> 0;
+  const framePanelRect = 0x410040;
+  const panelRect = 0x410060;
+  writeRect(wat, framePanelRect, 100, 80, 380, 220);
+  writeRect(wat, panelRect, 0, 0, 280, 140);
+  wat.test_dx_surface_set(frame, 100, 80, 17);
+  assert.strictEqual(wat.test_dx_surface_blt(panel, panelRect, frame, framePanelRect) >>> 0, 0);
+  wat.test_dx_surface_set(frame, 100, 80, 19);
+  assert.strictEqual(wat.test_dx_surface_unlock(frame) >>> 0, 0);
+  assert.strictEqual(wat.test_dx_surface_blt(frame, framePanelRect, panel, panelRect) >>> 0, 0);
+  assert.strictEqual(wat.test_dx_surface_get(frame, 100, 80), 17,
+    'large UI backing-surface restore must not be mistaken for a stale cursor restore');
+
   console.log('PASS  DirectDraw drops only stale exact background restores');
 })().catch(error => {
   console.error(error && error.stack || error);
