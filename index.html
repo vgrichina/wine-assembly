@@ -9,8 +9,57 @@
   <meta name="apple-mobile-web-app-title" content="Wine-Assembly">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <title>Wine-Assembly — Windows 98 Emulator</title>
+  <title>Wine-Assembly — Run Windows 98 apps and games in your browser</title>
+  <meta name="description" content="Play Space Cadet Pinball, SkiFree, Solitaire, Minesweeper, Winamp and dozens of real Windows 98 programs in your browser. Wine-Assembly runs the original .exe files on an x86 emulator written in WebAssembly — no OS image, no source ports.">
+  <link rel="canonical" href="https://wine-assembly.berrry.app/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Wine-Assembly">
+  <meta property="og:title" content="Wine-Assembly — Run Windows 98 apps and games in your browser">
+  <meta property="og:description" content="Real Windows 98 .exe files running on an x86 emulator written in WebAssembly. Pinball, SkiFree, Solitaire, Winamp, DirectX games and more, no install.">
+  <meta property="og:url" content="https://wine-assembly.berrry.app/">
+  <meta property="og:image" content="https://wine-assembly.berrry.app/icons/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Space Cadet Pinball running on a Windows 98 desktop inside a browser tab">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Wine-Assembly — Run Windows 98 apps and games in your browser">
+  <meta name="twitter:description" content="Real Windows 98 .exe files running on an x86 emulator written in WebAssembly. Pinball, SkiFree, Solitaire, Winamp, DirectX games and more, no install.">
+  <meta name="twitter:image" content="https://wine-assembly.berrry.app/icons/og-image.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "@id": "https://wine-assembly.berrry.app/#website",
+        "url": "https://wine-assembly.berrry.app/",
+        "name": "Wine-Assembly",
+        "description": "Run real Windows 98 apps and games in your browser."
+      },
+      {
+        "@type": "SoftwareApplication",
+        "name": "Wine-Assembly",
+        "url": "https://wine-assembly.berrry.app/",
+        "applicationCategory": "GameApplication",
+        "applicationSubCategory": "Emulator",
+        "operatingSystem": "Any (web browser)",
+        "browserRequirements": "Requires a modern browser with WebAssembly",
+        "image": "https://wine-assembly.berrry.app/icons/og-image.png",
+        "description": "A Windows 98 emulator that runs unmodified Win32 and Win16 executables in the browser. The x86 interpreter and the Win32 API layer are written directly in WebAssembly Text.",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "author": { "@type": "Person", "name": "Vladimir Grichina", "url": "https://github.com/vgrichina" },
+        "license": "https://opensource.org/licenses/MIT",
+        "codeRepository": "https://github.com/vgrichina/wine-assembly",
+        "isPartOf": { "@id": "https://wine-assembly.berrry.app/#website" }
+      }
+    ]
+  }
+  </script>
   <style>
+    /* Crawlable summary of what this page is. The desktop below is built by
+       script, so without this the served HTML says nothing but "Start". Kept
+       off-screen rather than display:none so it still counts as content. */
+    #site-intro { position: absolute; left: -10000px; top: 0; width: 1px; height: 1px; overflow: hidden; }
     @font-face {
       font-family: "W95FA";
       src: url("fonts/w95fa.woff2") format("woff2"),
@@ -990,6 +1039,20 @@
   </style>
 </head>
 <body>
+  <header id="site-intro">
+    <h1>Wine-Assembly: run real Windows 98 apps and games in your browser</h1>
+    <p>Wine-Assembly is a Windows 98 emulator that runs the original, unmodified .exe files in a browser tab:
+      3D Pinball Space Cadet, SkiFree, Solitaire, FreeCell, Minesweeper, Notepad, Paint, Calculator, Winamp,
+      the Windows Entertainment Pack, DirectDraw and Direct3D games, and 16-bit Windows 3.1 programs.
+      There is no operating-system image and no source port. An x86 interpreter and a reimplementation of the
+      Win32 API are written directly in WebAssembly Text, and the guest program's machine code runs on them.
+      Pick an application on the desktop and double-click it to launch.</p>
+    <ul>
+      <li><a href="story.html">How Wine-Assembly was built</a></li>
+      <li><a href="docs/">Design docs and reverse-engineering notes</a></li>
+      <li><a href="https://github.com/vgrichina/wine-assembly">Source code on GitHub (MIT)</a></li>
+    </ul>
+  </header>
   <div id="compile-status">Compiling WAT source...</div>
   <button id="debug-peek" onclick="toggleDebugPanels()">Debug</button>
   <div id="shell">

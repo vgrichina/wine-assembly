@@ -18,10 +18,14 @@ const SUBDOMAIN = 'wine-assembly';
 const ROOT = path.resolve(__dirname, '..');
 
 // Text file extensions (served as-is)
-const TEXT_EXTS = new Set(['.html', '.js', '.json', '.wat', '.css', '.md', '.webmanifest', '.ini']);
+const TEXT_EXTS = new Set(['.html', '.js', '.json', '.wat', '.css', '.md', '.webmanifest', '.ini', '.xml']);
 
-// Skip these root text files
-const SKIP_FILES = new Set(['package.json', 'package-lock.json']);
+// Skip these root text files. The Markdown entries are working notes for
+// the people and agents in this tree (an outreach plan, a TODO snapshot, a
+// review, agent instructions) and were being served verbatim from the site
+// root; README.md and PROJECT_STORY.md stay public on purpose.
+const SKIP_FILES = new Set(['package.json', 'package-lock.json',
+  'MARKETING.md', 'TODOS.md', 'fable-review.md', 'AGENTS.md', 'CLAUDE.md', 'sources.md']);
 
 // Directories to skip entirely
 const SKIP_DIRS = new Set(['node_modules', '.git', '.claude', 'scratch', 'tools', 'test', 'build', 'binaries']);
@@ -147,6 +151,11 @@ function writeBuildInfo() {
 function collectTextFiles() {
   const files = [];
   writeBuildInfo();
+  // Static pages (story.html, docs/**/*.html, sitemap.xml) are rendered from
+  // the repo's Markdown right before upload, so the served story is never
+  // behind PROJECT_STORY.md and the docs index never misses a new note.
+  const site = require('./gen-site-pages');
+  site.writePages(site.generatePages());
   // Root-level text files
   for (const entry of fs.readdirSync(ROOT)) {
     const ext = path.extname(entry);
@@ -163,6 +172,18 @@ function collectTextFiles() {
     const found = walk(dir, subdir, (name) => TEXT_EXTS.has(path.extname(name)));
     for (const f of found)
       files.push({ name: f.rel, content: fs.readFileSync(f.full, 'utf-8') });
+  }
+  // docs/: only the rendered .html pages, never the raw Markdown, JSON
+  // status ledgers or the DOS corpus report tree.
+  for (const subdir of ['docs', 'docs/re-notes']) {
+    const dir = path.join(ROOT, subdir);
+    if (!fs.existsSync(dir)) continue;
+    for (const entry of fs.readdirSync(dir)) {
+      if (path.extname(entry) !== '.html') continue;
+      const full = path.join(dir, entry);
+      if (fs.statSync(full).isFile())
+        files.push({ name: `${subdir}/${entry}`, content: fs.readFileSync(full, 'utf-8') });
+    }
   }
   return files;
 }
