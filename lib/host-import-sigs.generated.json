@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 233,
+  "count": 234,
   "sigs": {
     "log": {
       "params": [
@@ -85,6 +85,19 @@
     },
     "read_file": {
       "params": [
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "shell_extract_icon_resource": {
+      "params": [
+        "i32",
+        "i32",
+        "i32",
         "i32",
         "i32",
         "i32"
