@@ -198,8 +198,10 @@ const digest = crypto.createHash('sha256')
 // window-station serial advanced by successful clipboard mutations.
 // 2026-09-04: 442 -> 441. SetFileSecurityW now reports the Win98
 // ERROR_CALL_NOT_IMPLEMENTED result instead of claiming an ACL was persisted.
-const EXPECTED_COUNT = 441;
-const EXPECTED_SHA256 = 'e1b26724a4939ff32978f60ec920cba025d0d25564df5f89db52dc6794a7584d';
+// 2026-09-04: 441 -> 439. ExtractIconA and ExtractIconExA now enumerate and
+// materialize caller-owned PE/NE/ICO icons instead of returning fake success.
+const EXPECTED_COUNT = 439;
+const EXPECTED_SHA256 = '172acea85f88f840222ac3ee31bef8671f2d2197db18fdbf25c9fd332b075aac';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

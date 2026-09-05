@@ -30,6 +30,8 @@
   (import "host" "exit" (func $host_exit (param i32)))
   (import "host" "draw_rect" (func $host_draw_rect (param i32 i32 i32 i32 i32)))
   (import "host" "read_file" (func $host_read_file (param i32 i32 i32) (result i32)))
+  (import "host" "shell_extract_icon_resource" (func $host_shell_extract_icon_resource
+    (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "host" "get_ticks" (func $host_get_ticks (result i32)))
   ;; Wall clock, as against the guest clock above, which a harness may
   ;; synthesise — test/run.js derives get_ticks from the batch counter. Use

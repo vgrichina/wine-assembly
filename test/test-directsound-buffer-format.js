@@ -13,8 +13,25 @@ const { compileSrcWasm } = require('./compile-src');
 
 const ROOT = path.join(__dirname, '..');
 const extraWat = String.raw`
-  (func (export "test_dsbuf_create") (result i32)
-    (call $dx_create_com_obj (i32.const 5) (global.get $DX_VTBL_DSBUF)))
+  (func (export "test_ds_create_primary")
+        (param $desc i32) (param $output i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_IDirectSound_CreateSoundBuffer
+      (i32.const 0) (local.get $desc) (local.get $output)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_dsbuf_get_caps")
+        (param $this i32) (param $caps i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_IDirectSoundBuffer_GetCaps
+      (local.get $this) (local.get $caps)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
 
   (func (export "test_dsbuf_set_format")
         (param $this i32) (param $format i32) (result i32)
@@ -70,11 +87,26 @@ async function main() {
   const format = e.guest_alloc(18) >>> 0;
   const output = e.guest_alloc(18) >>> 0;
   const written = e.guest_alloc(4) >>> 0;
+  const desc = e.guest_alloc(20) >>> 0;
+  const bufferOutput = e.guest_alloc(4) >>> 0;
+  const caps = e.guest_alloc(20) >>> 0;
   const formatWa = wa(format);
   const outputWa = wa(output);
   const writtenWa = wa(written);
-  const buffer = e.test_dsbuf_create() >>> 0;
-  assert(buffer, 'DirectSound buffer fixture allocates');
+  const descWa = wa(desc);
+  const bufferOutputWa = wa(bufferOutput);
+  const capsWa = wa(caps);
+  dv.setUint32(descWa, 20, true);
+  dv.setUint32(descWa + 4, 1, true); // DSBCAPS_PRIMARYBUFFER
+  dv.setUint32(descWa + 8, 0, true); // required for a primary buffer
+  dv.setUint32(descWa + 16, 0, true); // primary format is set separately
+  assert.strictEqual(e.test_ds_create_primary(desc, bufferOutput) >>> 0, 0);
+  const buffer = dv.getUint32(bufferOutputWa, true);
+  assert(buffer, 'DirectSound primary buffer fixture allocates');
+
+  assert.strictEqual(e.test_dsbuf_get_caps(buffer, caps) >>> 0, 0);
+  assert.strictEqual(dv.getUint32(capsWa + 8, true), 0x10000,
+    'primary buffer exposes device-owned backing storage despite dwBufferBytes=0');
 
   function writePcm(channels, rate, bits) {
     const align = channels * bits / 8;

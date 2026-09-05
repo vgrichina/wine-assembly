@@ -12901,17 +12901,68 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 465: ExtractIconW — 3 args stdcall, return fake icon handle
-  (func $handle_ExtractIconW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_ExtractIconA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
-  )
+  ;; Shell container walking stays in the host because the source is a VFS
+  ;; file, not a mapped module. The returned bytes are a packed Win9x RT_ICON;
+  ;; cursor_create_from_resource copies them into ordinary caller-owned HICON
+  ;; mask/color planes before this temporary buffer is released.
+  (global $EXTRACT_ICON_RESOURCE_CAPACITY i32 (i32.const 0x50000))
 
-  ;; ExtractIconA — 3 args stdcall, return fake icon handle
+  (func $extract_icon_resource_handle (param $file i32) (param $index i32)
+        (param $wide i32) (param $size i32) (param $buffer i32) (result i32)
+    (local $bytes i32)
+    (local.set $bytes (call $host_shell_extract_icon_resource
+      (call $g2w (local.get $file)) (local.get $wide) (local.get $index)
+      (local.get $size) (call $g2w (local.get $buffer))
+      (global.get $EXTRACT_ICON_RESOURCE_CAPACITY)))
+    (if (i32.le_s (local.get $bytes) (i32.const 0))
+      (then (return (local.get $bytes))))
+    (call $cursor_create_from_resource
+      (local.get $buffer) (local.get $bytes) (i32.const 1)
+      (i32.const 0x00030000) (local.get $size) (local.get $size) (i32.const 0)))
+
+  (func $extract_icon_one (param $file i32) (param $index i32)
+        (param $wide i32) (result i32)
+    (local $count i32) (local $buffer i32) (local $icon i32)
+    (local.set $count (call $host_shell_extract_icon_resource
+      (call $g2w (local.get $file)) (local.get $wide) (local.get $index)
+      (i32.const 0) (i32.const 0) (i32.const 0)))
+    (if (i32.lt_s (local.get $count) (i32.const 0))
+      (then
+        (global.set $last_error (i32.sub (i32.const 0) (local.get $count)))
+        ;; ExtractIcon's documented bad-container sentinel is HICON 1.
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $index) (i32.const -1))
+      (then (return (local.get $count))))
+    (if (i32.and (i32.ge_s (local.get $index) (i32.const 0))
+          (i32.ge_u (local.get $index) (local.get $count)))
+      (then (return (i32.const 0))))
+    (local.set $buffer (call $heap_alloc (global.get $EXTRACT_ICON_RESOURCE_CAPACITY)))
+    (if (i32.eqz (local.get $buffer))
+      (then
+        (global.set $last_error (i32.const 8)) ;; ERROR_NOT_ENOUGH_MEMORY
+        (return (i32.const 0))))
+    (local.set $icon (call $extract_icon_resource_handle
+      (local.get $file) (local.get $index) (local.get $wide)
+      (i32.const 32) (local.get $buffer)))
+    (call $heap_free (local.get $buffer))
+    (if (i32.lt_s (local.get $icon) (i32.const 0))
+      (then
+        (global.set $last_error (i32.sub (i32.const 0) (local.get $icon)))
+        (return (i32.const 1))))
+    (local.get $icon))
+
+  ;; 465: ExtractIconW — Unicode filename, same owned HICON contract.
+  (func $handle_ExtractIconW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $extract_icon_one
+      (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; ExtractIconA(hInst, file, index). hInst is retained for ABI compatibility;
+  ;; the returned icon is private and must be released with DestroyIcon.
   (func $handle_ExtractIconA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x0000FACE))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
+    (global.set $eax (call $extract_icon_one
+      (local.get $arg1) (local.get $arg2) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 466: ShellAboutW — return 1, 4 args stdcall
   ;; OleUIAddVerbMenuA(lpOleObj, lpszShortType, hMenu, uPos, uIDVerbMin,
@@ -13351,18 +13402,109 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; ExtractIconExA(lpszFile, nIconIndex, phiconLarge, phiconSmall, nIcons) — 5 args, return 0 icons
-  (func $handle_ExtractIconExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
+  (func $extract_icon_ex (param $file i32) (param $index i32)
+        (param $large_out i32) (param $small_out i32) (param $requested i32)
+        (param $wide i32) (result i32)
+    (local $count i32) (local $limit i32) (local $buffer i32)
+    (local $i i32) (local $current i32) (local $large i32) (local $small i32)
+    (local $extracted i32) (local $error i32)
+    (local.set $count (call $host_shell_extract_icon_resource
+      (call $g2w (local.get $file)) (local.get $wide) (local.get $index)
+      (i32.const 0) (i32.const 0) (i32.const 0)))
+    (if (i32.lt_s (local.get $count) (i32.const 0))
+      (then
+        ;; The count-only spelling returns zero for a missing/bad container;
+        ;; extraction reports UINT_MAX and publishes the host's Win32 error.
+        (if (i32.and (i32.eq (local.get $index) (i32.const -1))
+              (i32.and (i32.eqz (local.get $large_out))
+                (i32.eqz (local.get $small_out))))
+          (then (return (i32.const 0))))
+        (global.set $last_error (i32.sub (i32.const 0) (local.get $count)))
+        (return (i32.const -1))))
+    (if (i32.and (i32.eq (local.get $index) (i32.const -1))
+          (i32.and (i32.eqz (local.get $large_out))
+            (i32.eqz (local.get $small_out))))
+      (then (return (local.get $count))))
+    (if (i32.or (i32.eqz (local.get $requested))
+          (i32.and (i32.eqz (local.get $large_out))
+            (i32.eqz (local.get $small_out))))
+      (then (return (i32.const 0))))
+    (if (i32.lt_s (local.get $index) (i32.const 0))
+      (then (local.set $limit (select (i32.const 1) (local.get $requested)
+        (i32.gt_u (local.get $requested) (i32.const 1)))))
+      (else
+        (if (i32.ge_u (local.get $index) (local.get $count))
+          (then (return (i32.const 0))))
+        (local.set $limit (i32.sub (local.get $count) (local.get $index)))
+        (if (i32.gt_u (local.get $limit) (local.get $requested))
+          (then (local.set $limit (local.get $requested))))))
+    (local.set $buffer (call $heap_alloc (global.get $EXTRACT_ICON_RESOURCE_CAPACITY)))
+    (if (i32.eqz (local.get $buffer))
+      (then
+        (global.set $last_error (i32.const 8))
+        (return (i32.const -1))))
+    (block $done (loop $icons
+      (br_if $done (i32.ge_u (local.get $i) (local.get $limit)))
+      (local.set $current (select (local.get $index)
+        (i32.add (local.get $index) (local.get $i))
+        (i32.lt_s (local.get $index) (i32.const 0))))
+      (local.set $large (i32.const 0))
+      (local.set $small (i32.const 0))
+      (if (local.get $large_out)
+        (then
+          (call $gs32 (i32.add (local.get $large_out)
+            (i32.shl (local.get $i) (i32.const 2))) (i32.const 0))
+          (local.set $large (call $extract_icon_resource_handle
+            (local.get $file) (local.get $current) (local.get $wide)
+            (i32.const 32) (local.get $buffer)))
+          (if (i32.lt_s (local.get $large) (i32.const 0))
+            (then (local.set $error (local.get $large)) (br $done)))
+          (call $gs32 (i32.add (local.get $large_out)
+            (i32.shl (local.get $i) (i32.const 2))) (local.get $large))))
+      (if (local.get $small_out)
+        (then
+          (call $gs32 (i32.add (local.get $small_out)
+            (i32.shl (local.get $i) (i32.const 2))) (i32.const 0))
+          (local.set $small (call $extract_icon_resource_handle
+            (local.get $file) (local.get $current) (local.get $wide)
+            (i32.const 16) (local.get $buffer)))
+          (if (i32.lt_s (local.get $small) (i32.const 0))
+            (then
+              ;; Do not strand the large icon if the parallel small-image
+              ;; selection fails after it was already materialized.
+              (if (local.get $large)
+                (then
+                  (drop (call $icon_destroy_handle (local.get $large)))
+                  (call $gs32 (i32.add (local.get $large_out)
+                    (i32.shl (local.get $i) (i32.const 2))) (i32.const 0))))
+              (local.set $error (local.get $small))
+              (br $done)))
+          (call $gs32 (i32.add (local.get $small_out)
+            (i32.shl (local.get $i) (i32.const 2))) (local.get $small))))
+      (br_if $done (i32.eqz (i32.or (local.get $large) (local.get $small))))
+      (local.set $extracted (i32.add (local.get $extracted) (i32.const 1)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $icons)))
+    (call $heap_free (local.get $buffer))
+    (if (local.get $error)
+      (then
+        (global.set $last_error (i32.sub (i32.const 0) (local.get $error)))
+        (return (i32.const -1))))
+    (local.get $extracted))
 
-  ;; ExtractIconExW has the same output-handle/result contract. The bounded
-  ;; implementation does not inspect the filename in either encoding.
-  (func $handle_ExtractIconExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_ExtractIconExA
+  ;; ExtractIconExA creates parallel arrays of private 32x32 and 16x16 icons.
+  (func $handle_ExtractIconExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $extract_icon_ex
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+      (local.get $arg3) (local.get $arg4) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; ExtractIconExW uses the same resource/lifetime path over a UTF-16 name.
+  (func $handle_ExtractIconExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $extract_icon_ex
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; The GOG ScummVM executable links WinSparkle's updater API directly. The
   ;; emulator has no updater/network service, so expose one coherent disabled

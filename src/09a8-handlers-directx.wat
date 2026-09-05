@@ -5193,7 +5193,17 @@
     ;; DSBCAPS_PRIMARYBUFFER = 1
     (if (i32.and (local.get $flags) (i32.const 1))
       (then
-        ;; Primary buffer — no allocation needed, just a marker
+        ;; A primary DS buffer is backed by device-owned memory even though its
+        ;; DSBUFFERDESC requires dwBufferBytes=0.  Streamers query GetCaps and
+        ;; Lock that memory directly; reporting a zero-byte ring makes their
+        ;; first refill fail (Elasto Mania aborts with "buffsize < 20").
+        ;; Model a common Win9x-era 64 KiB hardware ring in guest memory.
+        (local.set $buf_size (i32.const 0x10000))
+        (local.set $buf_guest (call $heap_alloc (local.get $buf_size)))
+        (local.set $buf_wa (call $g2w (local.get $buf_guest)))
+        (call $zero_memory (local.get $buf_wa) (local.get $buf_size))
+        (store.field DxObject misc1 (local.get $entry) (local.get $buf_wa))
+        (i32.store (i32.add (local.get $entry) (i32.const 12)) (local.get $buf_size))
         (store.field DxObject flags (local.get $entry) (i32.const 1)))
       (else
         ;; Secondary buffer — allocate guest memory for sound data
