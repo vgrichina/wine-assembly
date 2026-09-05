@@ -27374,5 +27374,19 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4083096311
+  },
+  {
+    "id": 3296,
+    "name": "GetFileSecurityW",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 678466176
+  },
+  {
+    "id": 3297,
+    "name": "SetFileSecurityA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1185974870
   }
 ]

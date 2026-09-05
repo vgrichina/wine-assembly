@@ -2049,13 +2049,22 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; The VFS has no cross-process ACL enforcement, but accepting a valid
-  ;; descriptor preserves installer control flow and the metadata contract.
+  ;; Win9x has no NT file security descriptors. Keep all four A/W compatibility
+  ;; exports callable for binaries that import them unconditionally, but report
+  ;; the same unsupported result instead of pretending an ACL mutation stuck.
+  (func $file_security_not_supported (param $length_needed i32)
+    (if (local.get $length_needed)
+      (then (call $gs32 (local.get $length_needed) (i32.const 0))))
+    (global.set $last_error (i32.const 120)) ;; ERROR_CALL_NOT_IMPLEMENTED
+    (global.set $eax (i32.const 0)))
+
+  (func $handle_SetFileSecurityA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $file_security_not_supported (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
   (func $handle_SetFileSecurityW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.and (i32.ne (local.get $arg0) (i32.const 0))
-                             (i32.ne (local.get $arg2) (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
+    (call $file_security_not_supported (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_AllocateAndInitializeSid (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sid i32) (local $out i32) (local $sid_wa i32)

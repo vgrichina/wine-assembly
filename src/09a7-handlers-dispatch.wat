@@ -3767,12 +3767,12 @@
   ;; and a NULL there turned into RaiseException 0xC06D007F + ExitProcess in
   ;; the middle of File > Save (mfc42 6.00).
   (func $handle_GetFileSecurityA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg4)
-      (then (call $gs32 (local.get $arg4) (i32.const 0))))
-    (global.set $last_error (i32.const 120)) ;; ERROR_CALL_NOT_IMPLEMENTED
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
+    (call $file_security_not_supported (local.get $arg4))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  (func $handle_GetFileSecurityW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $file_security_not_supported (local.get $arg4))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; CommandLineToArgvW — already handled above as crash stub replacement
 

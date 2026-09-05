@@ -196,8 +196,10 @@ const digest = crypto.createHash('sha256')
 // area add/modify/delete state and delivers Win98 mouse callback messages.
 // 2026-09-04: 443 -> 442. GetClipboardSequenceNumber now reads the shared
 // window-station serial advanced by successful clipboard mutations.
-const EXPECTED_COUNT = 442;
-const EXPECTED_SHA256 = 'bc47a9246edbd614d83a036c583cc3c124014c6337105f3b062dec9a4a18080c';
+// 2026-09-04: 442 -> 441. SetFileSecurityW now reports the Win98
+// ERROR_CALL_NOT_IMPLEMENTED result instead of claiming an ACL was persisted.
+const EXPECTED_COUNT = 441;
+const EXPECTED_SHA256 = 'e1b26724a4939ff32978f60ec920cba025d0d25564df5f89db52dc6794a7584d';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

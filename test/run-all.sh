@@ -356,6 +356,7 @@ UNIT=(
   test/test-winexec-vfs-launch.js
   test/test-win32-dde-progman.js
   test/test-win98-scm-probe.js
+  test/test-file-security-win98.js
   test/test-x86-16bit-upper-half.js
   # Recovered 2026-08-18: written, never listed here, so never run. All green
   # on the sweep that found them; see QUARANTINE for the ones that were not.
