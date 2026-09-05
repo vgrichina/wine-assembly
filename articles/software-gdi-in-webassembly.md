@@ -28,6 +28,23 @@ Clipping is band-based: a DC's clip region is intersected with the surface bound
 
 Every top-level `HWND` owns one offscreen back-canvas the size of the whole window, allocated lazily. All GDI output for that window and its children lands there, with child coordinates offset into the parent's surface, and non-client painting (title bar, borders, menu bar) draws into the same surface from `DefWindowProc` in WAT. `repaint()` in JavaScript composites the back-canvases in z-order onto the screen canvas. The screen is never a drawing target.
 
+```mermaid
+flowchart TB
+    subgraph wat["WebAssembly (WAT)"]
+        APP["App: Rectangle, BitBlt, TextOut ..."] --> DC["Device context state<br/>10f: pen, brush, clip, origin"]
+        NC["DefWindowProc non-client paint<br/>title bar, borders, menu"] --> DC
+        CHILD["Child controls<br/>offset into the parent"] --> DC
+        DC --> RAST["Rasteriser<br/>10g: spans, clip bands, ROPs"]
+        RAST --> BC1["Back-canvas<br/>top-level hwnd A"]
+        RAST --> BC2["Back-canvas<br/>top-level hwnd B"]
+    end
+    subgraph js["JavaScript"]
+        BC1 --> REP["repaint(): composite in z-order"]
+        BC2 --> REP
+        REP --> SCREEN["Screen canvas<br/>never a drawing target"]
+    end
+```
+
 This is the rule the project keeps repeating in its own docs: **do not add a second drawing surface.** Every time one appeared (a JS overlay for menus, a per-control canvas) a ghost or a stale rectangle followed, because two surfaces disagree about who erased what. The `--trace-ctrl` and `--trace-dc` flags exist to answer "who drew these pixels and onto what".
 
 ## Text

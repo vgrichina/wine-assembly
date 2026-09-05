@@ -17,6 +17,18 @@ Early on the project shipped stock Win98 copies of `advapi32`, `shell32` and `sh
 3. **Resolve imports.** For each imported function the loader looks first at the DLLs already loaded, matching by name or by ordinal; anything unresolved is assumed to be the operating system and bound to a *thunk address*. When `EIP` enters the thunk zone, `$win32_dispatch` looks the API up and runs its handler in WAT.
 4. **Run `DllMain`** with `DLL_PROCESS_ATTACH`, in the guest, before the program's entry point.
 
+```mermaid
+flowchart TD
+    EXE["program.exe<br/>+ DLLs next to it"] --> MAP["1. Map sections<br/>g2w = guest - image_base + GUEST_BASE"]
+    MAP --> REL["2. Apply .reloc<br/>patch every absolute address by the delta"]
+    REL --> IMP{"3. Each import:<br/>found in a loaded DLL?"}
+    IMP -->|"yes, by name or ordinal"| DLLFN["bind to the DLL's<br/>own x86 code"]
+    IMP -->|"no: it is the OS"| THUNK["bind to a thunk address"]
+    THUNK -.->|"EIP enters the thunk zone"| DISP["$win32_dispatch<br/>handler written in WAT"]
+    DLLFN --> DM["4. DllMain(DLL_PROCESS_ATTACH)"]
+    DM --> ENTRY["program entry point"]
+```
+
 Ordinal imports are the awkward case. `mfc42.dll` exports six thousand functions almost entirely by ordinal, and the emulator's own Win32 layer must answer ordinal imports from system DLLs. Two separate tables map ordinals to names, one used by the EXE loader and one by the DLL loader, and forgetting to update both is a mistake the project's memory notes record more than once. `tools/check-data-strings.js` guards the string offsets those tables point at, because inserting one string silently shifts every later one.
 
 ## The parts that were not obvious

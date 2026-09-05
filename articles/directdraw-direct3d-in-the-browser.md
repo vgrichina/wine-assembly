@@ -17,6 +17,18 @@ Objects themselves are `DxObject` records in a WAT-owned table (`src/09a8-handle
 
 `Lock` has to return a pointer the game can write pixels through. Surfaces are therefore DIB-shaped buffers in a dedicated 63 MB backing window, mapped into the guest at `0x50000000`, so a locked surface is ordinary guest memory. `Unlock`, `Blt`, `BltFast` and `Flip` operate on that memory in WAT: `Blt` does a nearest-neighbour stretch when the rectangles differ (the WIN98 screensaver's doubled logo), `BltFast` honours `DDBLTFAST_SRCCOLORKEY` for sprite transparency, and `ColorFill` fills.
 
+```mermaid
+flowchart TD
+    GAME["Game<br/>call dword [eax+0x30]"] -->|"vtable slot = thunk address"| OBJ["DxObject table (WAT)<br/>kind, refcount, vtable, payload"]
+    OBJ -->|"Lock()"| PTR["pointer into guest 0x50000000"]
+    PTR --> BACK["Surface bytes<br/>63 MB DIB backing window"]
+    GAME -->|"writes pixels"| BACK
+    OBJ -->|"Blt / BltFast / ColorFill"| BACK
+    OBJ -->|"GetDC + TextOut"| GDI["Software GDI"] --> BACK
+    OBJ -->|"Flip / Blt to primary"| PRES["Present: expand 8bpp<br/>through the primary's palette"]
+    BACK --> PRES --> CANVAS["Canvas (JS composites)"]
+```
+
 Most of these games run at 8 bits per pixel with a palette. The palette bound to the *primary* surface, set by `IDirectDrawPalette::SetEntries`, is what the present step uses to expand the 8-bit surface to RGBA for the canvas. A surface can also have a GDI DC (`GetDC`), so a game that draws its menu text with `TextOut` onto a DirectDraw surface goes through the software GDI and back into the same bytes.
 
 Presenting is an explicit step (`Flip`, or `Blt` to the primary), and the browser's `PRESENT/s` counter in the perf HUD counts those. The headless CLI's `--dx-surfaces` flag lists every live surface at exit with its size, depth, bound palette and a sampled colour count, which is how "renders nothing" is split into "primary never written" versus "wrong surface captured".

@@ -14,6 +14,17 @@ A 32-bit PE program lives in a flat address space and imports functions by name 
 
 **Win16 dispatch** (`src/09e-win16-api.wat`) is the Pascal-convention twin of `$win32_dispatch`: it identifies the API by module and ordinal, reads arguments in the reversed order, and cleans the stack itself. Many handlers forward to the 32-bit implementation after widening the arguments, since `CreateWindow` is `CreateWindow` under either convention. Dialogs are the exception: 16-bit `RT_DIALOG` templates are a different format, so `src/09e2-win16-dialog.wat` rewrites each template into the 32-bit form and runs the same modal pump the 32-bit path uses. Win16 DDEML (`src/09f-win16-ddeml.wat`) interns string and data handles and answers service registration truthfully, which is what the networked Hearts client turned out to need.
 
+```mermaid
+flowchart TD
+    NE["NE file<br/>segment table + per-segment fixups"] --> LOAD["NE loader<br/>08c-ne-loader.wat"]
+    LOAD --> ARENA["64 KB-strided arena<br/>selector -> base by arithmetic"]
+    LOAD -->|"ordinal imports"| TS["thunk segment<br/>USER.#113 ..."]
+    ARENA --> EXEC["16-bit execution<br/>05c-seg16-ops.wat: far call, LDS/LES, ES:/DS: overrides"]
+    EXEC -->|"CALL FAR into the thunk segment"| W16["$win16_dispatch<br/>Pascal convention, callee pops"]
+    W16 -->|"widen args"| W32["32-bit handlers<br/>CreateWindow is CreateWindow"]
+    W16 -->|"RT_DIALOG (16-bit)"| DLG["rewrite template to 32-bit form<br/>09e2-win16-dialog.wat"] --> W32
+```
+
 ## What runs
 
 The 16-bit corpus is the Windows Entertainment Packs 1 to 4 and a set of shareware from [win16-app-sources.md](/docs/win16-app-sources.md). At the last sweep all 31 entries launched, and the majority drew their game screens; the ones that do not are catalogued with causes rather than left as a number. Microsoft Hearts is the case that pushed furthest, because its network mode drove the DDEML implementation and then the [virtual LAN](/articles/virtual-lan-multiplayer-in-the-browser.html).

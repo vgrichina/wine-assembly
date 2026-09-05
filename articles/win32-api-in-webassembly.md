@@ -10,6 +10,17 @@ When the [loader](/articles/loading-real-windows-dlls-in-the-browser.html) canno
 2. A generated `br_table` (`src/09b2-dispatch-table.generated.wat`) jumps on that id to the handler function, `$handle_CreateWindowExA` and so on.
 3. The handler reads its arguments off the guest stack, does the work, writes `EAX`, and pops the arguments the way a `stdcall` callee would.
 
+```mermaid
+flowchart TD
+    CALL["call [CreateWindowExA]<br/>(import bound to a thunk)"] --> ZONE["EIP in the thunk zone"]
+    ZONE --> HASH["FNV-1a hash of the name<br/>01b-api-hashes.generated.wat"]
+    HASH -->|"api id"| BR["br_table<br/>09b2-dispatch-table.generated.wat"]
+    BR --> H["$handle_CreateWindowExA<br/>reads args off the guest stack"]
+    H --> RET["EAX = result<br/>ESP += 4 + nargs * 4<br/>EIP = return address"]
+    JSON["src/api_table.json<br/>index == api id, append-only"] -.->|generates| HASH
+    JSON -.->|generates| BR
+```
+
 The whole table is driven by one JSON file, `src/api_table.json`. Its array index *is* the API id, baked into the compiled hash table, so the file is append-only and a build gate rejects a mid-array insert. Each entry can also carry typed argument descriptions, which is what lets the `--trace-api` flag print `CreateWindowExA(class="Edit", style=WS_CHILD|WS_VISIBLE, ...)` with decoded flags, and decode out-parameters after the handler ran.
 
 COM interfaces use the same machinery. A DirectDraw or Direct3D vtable is a block of thunk addresses whose ids are computed from the interface prefix (`IDirectDrawSurface_*`), so adding a method never requires renumbering.
@@ -19,6 +30,21 @@ COM interfaces use the same machinery. A DirectDraw or Direct3D vtable is a bloc
 The hard part of a Win32 layer is not the function count but the calls that re-enter the program. `SendMessage` must run the window procedure synchronously and return its result; `DialogBox` must pump messages until the dialog closes; `CreateWindow` must deliver `WM_CREATE` before it returns.
 
 The emulator does these with *continuation thunks*. `SendMessageA` pushes the wndproc's arguments on the guest stack, sets `EIP` to the wndproc, and pushes a return address in a reserved range (`0xCACA0005`). When the wndproc's `RET` lands there, the dispatcher recognises the address, collects `EAX` as the message result and resumes the original `SendMessage` caller. Modal dialogs and message boxes use the same trick with a small message pump inside the thunk. `UpdateWindow` finishes the paint before it returns for the same reason real Windows does: Taipei draws its splash screen on the line after it, and a deferred erase would cover it.
+
+```mermaid
+sequenceDiagram
+    participant G as Guest code
+    participant D as $win32_dispatch (WAT)
+    participant W as Guest wndproc
+    G->>D: SendMessageA(hwnd, WM_SETTEXT, ...)
+    D->>D: push wndproc args on the guest stack
+    D->>D: push return address 0xCACA0005
+    D->>W: EIP = wndproc
+    W->>W: runs as ordinary x86 (may call more APIs)
+    W->>D: RET lands on 0xCACA0005
+    D->>D: collect EAX as the message result
+    D-->>G: resume SendMessageA caller with EAX
+```
 
 `GetMessage` itself is a priority sequence rather than a single queue: quit, pending child `WM_CREATE`/`WM_SIZE`, the posted-message ring, startup activation messages, host input, paint, timers, and finally `WM_NULL` for idle.
 

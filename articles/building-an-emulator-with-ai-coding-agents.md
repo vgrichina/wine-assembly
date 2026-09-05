@@ -6,6 +6,17 @@ Wine-Assembly, a Windows 98 emulator written in WebAssembly Text, was built in a
 
 The single most important practice was a rule about stubs. When an unimplemented Windows API is hit, the emulator traps with `unreachable` and names the function; it never returns 0 and carries on. A silent stub turns "implement `CreateDIBSection`" into "why is the installer's tree view invisible three thousand instructions later", and an agent given the second problem burns a session on it. Given the first, it opens the right file. The rule is enforced by a build gate, and its origin is the second week of the project, when fourteen early silent stubs were converted to traps and a string of mystery bugs went away.
 
+```mermaid
+flowchart TD
+    RUN["Run a real program"] --> HIT{"Unimplemented API?"}
+    HIT -->|"silent stub returns 0"| LATER["corruption 3,000 instructions later<br/>a session spent finding it"]
+    HIT -->|"$crash_unimplemented"| NAME["crash names CreateDIBSection"]
+    NAME --> IMPL["agent opens the right file<br/>implements the real behaviour"]
+    IMPL --> GATE["build gate: no new silent stubs,<br/>every handler pops its args"]
+    GATE --> RUN
+    style LATER fill:#f6d6d6,stroke:#a33
+```
+
 The same logic produced the tracing flags. Rather than have each session add `console.log` lines that rot, the CLI grew a flag for every question that recurred: which API was called with what, which file was probed, which registry key, which routing branch swallowed a click, which control painted where. A new session starts with `--trace-api` instead of an edit, and the flag outlives the session.
 
 ## Write down what was ruled out
@@ -26,6 +37,16 @@ By late August 2026 there were often five to ten sessions working in the same ch
 - **Commit by explicit path.** With a shared index, `git add -A` or a bare `git commit -a` takes another session's staged work. Every session stages the files it owns and nothing else, after reading the board.
 - **No `git stash`, no resets, no history rewrites** from an agent. Bisects happen in a separate worktree.
 - **Fix, do not revert.** A refactor that broke something is debugged to the cause; "revert the safe slice" was banned after it hid a real bug twice.
+
+```mermaid
+flowchart TB
+    S1["Session A<br/>(Claude)"] & S2["Session B<br/>(Codex)"] & S3["Session C<br/>(Claude)"] -->|"append-only, >> only"| BOARD["messageboard.txt<br/>CLAIM / COMMIT / RELEASE / CORRECTION"]
+    BOARD -->|"read before staging"| S1 & S2 & S3
+    S1 -->|"git add by explicit path"| MAIN["shared main"]
+    S2 -->|"git add by explicit path"| MAIN
+    S3 -->|"git add by explicit path"| MAIN
+    MAIN -.->|"no stash, no reset,<br/>bisect in a worktree"| MAIN
+```
 
 Most of these rules were written down as *memory* entries after an incident, in the form "what happened, why, how to apply", and are loaded into every new session. The story's later acts record the incidents that produced them.
 

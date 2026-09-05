@@ -11,6 +11,20 @@ The routing all lives in WAT. The JavaScript side, `lib/vlan-wire.js`, is a tran
 - **LoopbackSegment**: every emulator instance in one page shares a segment, so two desktop windows running the same game can find each other with no network at all.
 - **The `vln/1` wire**: the headless CLI can run two emulator processes and join them across child IPC with `--vlan-wire`, each given its own `--vlan-ip`. `--trace-net` prints every frame decoded (`-> SYN 10.77.0.2:49152 -> 10.77.0.1:8035`), which is the tool for "who is not answering".
 
+```mermaid
+flowchart LR
+    subgraph A["Emulator instance 10.77.0.1"]
+        GA["Hearts / Liquid War"] --> WSA["Winsock in WAT<br/>socket table, connect, select"]
+    end
+    subgraph B["Emulator instance 10.77.0.2"]
+        GB["Hearts / Liquid War"] --> WSB["Winsock in WAT"]
+    end
+    WSA <-->|"opaque frames<br/>src, dst, bytes"| T{"Transport<br/>lib/vlan-wire.js"}
+    T <--> WSB
+    T -.-|"same page"| LB["LoopbackSegment"]
+    T -.-|"two processes"| WIRE["vln/1 wire over child IPC<br/>--vlan-wire, --trace-net"]
+```
+
 Keeping the transport opaque was deliberate: a routing decision in JavaScript would be a second implementation of Winsock state, and the project's rule is that guest-visible state lives in WAT once.
 
 ## Hearts: the DDE game

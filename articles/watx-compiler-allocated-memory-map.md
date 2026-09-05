@@ -22,6 +22,23 @@ WATX keeps everything WAT has and adds a few forms the compiler expands:
 - `region.declare-derived`: a base expressed as an offset from another region, for the guest-visible addresses that must stay in a fixed relationship.
 - Typed pointers ([watx-typed-pointers-design.md](/docs/watx-typed-pointers-design.md)): struct layouts declared once, field accesses by name, so that a record's offsets stop being magic numbers repeated at each use site. About 1,260 layout sites were converted.
 
+```mermaid
+flowchart LR
+    subgraph before["Before"]
+        H1["01-header.wat<br/>WND_RECORDS = 0x00E40000<br/>GDI_OBJECTS = 0x00F20000<br/>... 170 literal bases"] --> C1["copies in WAT handlers"]
+        H1 --> C2["copies in lib/*.js"]
+        C2 -.->|"base moves, JS reads stale memory"| BUG["silent bug"]
+    end
+    subgraph after["After (WATX)"]
+        D["00-regions.wat<br/>region.declare WND_RECORDS size=...<br/>region.declare-fixed GUEST_BASE 0x12000"] --> COMP["tools/build-compile-wat.js<br/>allocates every base"]
+        COMP --> WASM["wine-assembly.wasm"]
+        COMP --> MIRROR["lib/region-map.generated.js<br/>the one JS mirror"]
+        COMP --> GATES["gates: overlaps, freshness,<br/>no JS copies, shake modes pixel-identical"]
+    end
+    before ~~~ after
+    style BUG fill:#f6d6d6,stroke:#a33
+```
+
 The compiler, `tools/build-compile-wat.js`, is the project's own WAT-to-wasm compiler with these extensions, vendored with a sealed changelog and SHA-256 provenance check so a build cannot pick up an unreviewed compiler change. `wat2wasm` is not used at all.
 
 ## How the migration was verified

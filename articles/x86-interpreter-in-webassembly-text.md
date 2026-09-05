@@ -8,6 +8,21 @@ Most interpreters written in a systems language are a `switch` over opcodes insi
 
 The decoder in `src/07-decoder.wat` reads x86 bytes once per basic block and emits a sequence of `(handler index, operand)` pairs into a *thread cache*. Every x86 instruction form has a small WAT function, a *handler*, that does its work and then calls `$next`. `$next` advances the thread pointer, loads the next handler index and jumps to it through the handler table (`src/02-thread-table.wat`, several hundred entries). A basic block is therefore executed as a chain of indirect calls, and the x86 bytes are never looked at again until the block is evicted.
 
+```mermaid
+flowchart TD
+    X86["x86 bytes<br/>(guest memory)"] -->|"once per basic block"| DEC["Decoder<br/>src/07-decoder.wat"]
+    DEC --> TC["Thread cache<br/>(handler, operand) pairs"]
+    TC --> NEXT["$next<br/>load index, call_indirect"]
+    NEXT --> H1["handler: add r32"]
+    H1 -->|"return_call $next"| NEXT
+    NEXT --> H2["handler: mov [mem]"]
+    H2 -->|"return_call $next"| NEXT
+    NEXT --> H3["handler: jcc"]
+    H3 -->|"next block: cache lookup"| BC{"Block cache<br/>4096 slots"}
+    BC -->|hit| TC
+    BC -->|miss| DEC
+```
+
 Two consequences shape everything else:
 
 - **Decoding is amortised.** A tight game loop is decoded once and then runs as threaded code. The decoder can afford to be careful, since it does not sit on the hot path.
@@ -31,6 +46,18 @@ Because the whole machine is indirect calls, dispatch cost is the number that ma
 ## Folding loops into super-ops
 
 Since dispatch is the cost, the obvious lever is fewer dispatches. `src/07b-loop-match.wat` looks at every self-loop block the decoder emits, classifies its ops into roles (induction variables, memory streams, side effects) and, when a known idiom holds, replaces the whole body with one super-op that runs the loop inside a single handler. `REP MOVS`/`STOS` were the first case, lowered to `memory.copy` and `memory.fill`. Table-lookup runs (`LUT_RUN`) are on by default; a run-length sprite blit fold for Caesar III bought about 7%, a rectangle-fill fold about 12%.
+
+```mermaid
+flowchart TB
+    subgraph before["Before: one self-loop block, N iterations"]
+        direction TB
+        L1["load [esi]"] --> L2["xlat"] --> L3["store [edi]"] --> L4["inc esi, inc edi"] --> L5["dec ecx"] --> L6["jnz"] -->|"dispatch x6 per iteration"| L1
+    end
+    subgraph after["After: the matcher recognised LUT_RUN"]
+        S1["LUT_RUN super-op<br/>whole loop in one handler"]
+    end
+    before -->|"src/07b-loop-match.wat"| after
+```
 
 The design doc, [loop-idiom-superops-design.md](/docs/loop-idiom-superops-design.md), records the matcher's decline histogram across ten games: only about 2% of static self-loops match, and calls and multi-branch bodies are most of the declines. The lesson recorded there is to **fold memory traffic, not control flow**: a fold that removed a jump chain but kept every dispatch measured at roughly zero.
 

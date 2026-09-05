@@ -25,6 +25,24 @@ Two flags matter for anything time-paced. `--tick-ms-per-batch=N` sets how much 
 {"action":"quit"}
 ```
 
+```mermaid
+sequenceDiagram
+    participant C as Controller (script or AI agent)
+    participant R as test/run.js --control-stdin --frozen
+    participant E as Emulator (wasm)
+    C->>R: {"action":"step","n":500}
+    R->>E: run 500 batches (scheduled --input keys land here)
+    E-->>R: parked again
+    R-->>C: {"ok":true,"batch":500}
+    C->>R: {"action":"png","path":"frame.png"}
+    R->>E: composite back-canvases
+    R-->>C: frame.png written
+    Note over C: look at the frame, decide
+    C->>R: {"action":"step","n":200}
+    C->>R: {"action":"quit"}
+    R-->>C: exit with diagnostics
+```
+
 Nothing happens between commands, so a controller can step, look, and decide. A scheduled `--input=` list still runs alongside, so a preamble of keys and clicks can be fixed at launch and the live channel takes over from there; `eval` runs an expression inside the process for anything the fixed commands do not cover. `--max-seconds=N` is the in-process wall-clock guard for these runs, checked between batches, so the process shuts down with its diagnostics instead of being killed from outside.
 
 The design is in [design-agent-control.md](/docs/design-agent-control.md). Its purpose is to let an AI agent be the *player*: given a screenshot and the ability to step, an agent can work through a game's menus, find the state where a bug appears, and hand back a reproducible command line. Several of the reverse-engineering notes in `docs/re-notes/` record command lines that reach a given screen for exactly this reason.

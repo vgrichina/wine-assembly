@@ -15,6 +15,23 @@ Instead of a flags register, the interpreter keeps four mutable globals:
 
 An `ADD` handler stores its operands and result and moves on. A `JZ` handler calls `$get_zf`, which is `flag_res == 0` masked to the operation width. `$get_cf` for a subtraction is an unsigned compare of the operands; for a shift it is the last bit shifted out, which the shift handler has to stash because it cannot be recovered from the result. `$get_of` needs the sign of both operands and the result, which is why `flag_sign_shift` exists.
 
+```mermaid
+sequenceDiagram
+    participant P as Guest program
+    participant ALU as ADD / SUB / TEST handlers
+    participant F as flag_op, flag_a, flag_b, flag_res
+    participant J as JZ / SETcc / ADC handlers
+    P->>ALU: add eax, ebx
+    ALU->>F: store op=add, a, b, res (no flags computed)
+    P->>ALU: sub ecx, 1
+    ALU->>F: overwrite op=sub, a, b, res
+    P->>ALU: mov / lea / push ... (flags untouched)
+    P->>J: jz target
+    J->>F: $get_zf: is flag_res == 0 at this width?
+    F-->>J: 0 or 1, computed now
+    J-->>P: branch taken or not
+```
+
 The saving is real because flag *reads* cluster: a loop body of ten instructions typically reads flags once, at its branch.
 
 ## Where it bit

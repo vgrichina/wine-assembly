@@ -31,6 +31,9 @@ const SITE_NAME = 'Wine-Assembly';
 const AUTHOR = 'Vladimir Grichina';
 const REPO = 'https://github.com/vgrichina/wine-assembly';
 const OG_IMAGE = `${SITE}/icons/og-image.png`;
+// Pinned: a diagram that rendered under one mermaid parser should keep
+// rendering, and a floating "latest" has broken flowchart syntax before.
+const MERMAID_URL = 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs';
 
 const STYLE = `
     * { box-sizing: border-box; }
@@ -65,6 +68,8 @@ const STYLE = `
     footer { margin-top: 48px; padding-top: 14px; border-top: 1px solid #d8d2c4; font-size: 13px; color: #555; }
     .docs-index li { margin: 0.35em 0; }
     .docs-index small { color: #666; display: block; }
+    pre.mermaid { background: #fff; color: #222; border: 1px solid #d8d2c4; text-align: center; overflow-x: auto; padding: 10px 6px; }
+    pre.mermaid svg { max-width: 100%; height: auto; }
     .app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; margin: 0.8em 0 1.6em; }
     .app-card { display: block; text-decoration: none; color: inherit; background: #fff; border: 1px solid #d8d2c4; border-radius: 6px; overflow: hidden; }
     .app-card:hover { border-color: #0645ad; }
@@ -127,7 +132,15 @@ function pageHtml({ md, title, description, urlPath, sourceRel, nav = NAV, dates
   // design/) keeps serving its old URL but declares the new one canonical,
   // so what search engines already indexed transfers instead of competing.
   const canonicalUrl = canonical ? `${SITE}/${canonical}` : url;
-  const body = rewriteMdLinks(marked.parse(md, { gfm: true, breaks: false }));
+  let body = rewriteMdLinks(marked.parse(md, { gfm: true, breaks: false }));
+  // ```mermaid fences: GitHub renders them in the .md; here they become
+  // <pre class="mermaid"> and the page loads mermaid only when it has one.
+  // marked's entity escaping is fine, mermaid reads the element's textContent.
+  const hasMermaid = /<pre><code class="language-mermaid">/.test(body);
+  body = body.replace(/<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g, '<pre class="mermaid">$1</pre>');
+  const mermaidHead = hasMermaid
+    ? `\n  <script type="module">import mermaid from "${MERMAID_URL}"; mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "strict", flowchart: { htmlLabels: true, curve: "basis" } });</script>`
+    : '';
   const ld = {
     '@context': 'https://schema.org',
     '@type': 'Article',
@@ -166,7 +179,7 @@ function pageHtml({ md, title, description, urlPath, sourceRel, nav = NAV, dates
   <meta name="twitter:image" content="${ogImage}">
   <meta name="theme-color" content="#008080">
   <link rel="icon" href="${SITE}/icons/icon-192.png">
-  <script type="application/ld+json">${JSON.stringify(ld)}</script>${extraHead || ''}
+  <script type="application/ld+json">${JSON.stringify(ld)}</script>${extraHead || ''}${mermaidHead}
   <style>${STYLE}  </style>
 </head>
 <body>

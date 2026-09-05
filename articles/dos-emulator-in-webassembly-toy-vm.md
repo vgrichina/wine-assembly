@@ -22,6 +22,16 @@ The toy VM runs the same programs on three execution tiers, which is the whole p
 2. **Micro-ops and superinstructions**: [toyvm-superinstructions.md](/docs/toyvm-superinstructions.md) folds common pairs, [toyvm-stream-loops.md](/docs/toyvm-stream-loops.md) and [toyvm-spin-loops.md](/docs/toyvm-spin-loops.md) fold the loop shapes demos are made of, and `REP` string operations widen to `memory.copy`/`memory.fill` under hoisted guards, a 9x on one copper-bar demo.
 3. **A region JIT**: [toyvm-trace-jit.md](/docs/toyvm-trace-jit.md) and [toyvm-trace-blocks.md](/docs/toyvm-trace-blocks.md) describe compiling hot regions of guest code into fresh WebAssembly functions at runtime. Across the twenty-program benchmark in [toyvm-bench-20.md](/docs/toyvm-bench-20.md) the region JIT is about 36% faster than the interpreter on average, with detours around self-modifying code that the design had to learn to tolerate.
 
+```mermaid
+flowchart LR
+    PROG["Same DOS program<br/>(199-entry corpus)"] --> T1["Tier 1<br/>threaded-code interpreter<br/>baseline"]
+    PROG --> T2["Tier 2<br/>micro-ops + superinstructions<br/>REP -> memory.copy"]
+    PROG --> T3["Tier 3<br/>region JIT<br/>hot regions -> fresh wasm functions"]
+    T1 & T2 & T3 --> HASH["frame hash + screenshot<br/>must agree"]
+    HASH --> REF["dosbox-ref.js<br/>DOSBox as ground truth"]
+    T3 -->|"+36% over the interpreter<br/>toyvm-bench-20"| MAIN["findings applied to<br/>the main emulator"]
+```
+
 Self-modifying code is the DOS-specific complication. Demos patch their own inner loops, so a compiled region can be invalidated by the code it is running. The toy VM handles that with *operand repair*, re-reading the patched immediate rather than throwing the region away, and a plan cache so a region rebuilt after a patch is found again.
 
 ## What transferred back
