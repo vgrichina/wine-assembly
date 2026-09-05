@@ -3240,105 +3240,84 @@
     ;; wProcessorRevision=0 → already zero
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; GetUserNameA(lpBuffer, pcbBuffer) — write "user\0" then update *pcbBuffer = 5
+  ;; GetUserName reports its size including the NUL on both success and
+  ;; insufficient-buffer failure. A/W differ only in the destination width.
+  (func $get_user_name (param $buf_g i32) (param $size_g i32)
+        (param $wide i32) (result i32)
+    (local $buf_wa i32) (local $size_wa i32)
+    (if (i32.eqz (local.get $size_g))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (return (i32.const 0))))
+    (local.set $size_wa (call $g2w (local.get $size_g)))
+    (if (i32.or (i32.eqz (local.get $buf_g))
+                (i32.lt_u (i32.load (local.get $size_wa)) (i32.const 5)))
+      (then
+        (i32.store (local.get $size_wa) (i32.const 5))
+        (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
+        (return (i32.const 0))))
+    (local.set $buf_wa (call $g2w (local.get $buf_g)))
+    (if (local.get $wide)
+      (then
+        (i32.store16 offset=0 (local.get $buf_wa) (i32.const 117)) ;; 'u'
+        (i32.store16 offset=2 (local.get $buf_wa) (i32.const 115)) ;; 's'
+        (i32.store16 offset=4 (local.get $buf_wa) (i32.const 101)) ;; 'e'
+        (i32.store16 offset=6 (local.get $buf_wa) (i32.const 114)) ;; 'r'
+        (i32.store16 offset=8 (local.get $buf_wa) (i32.const 0)))
+      (else
+        (i32.store8 offset=0 (local.get $buf_wa) (i32.const 117)) ;; 'u'
+        (i32.store8 offset=1 (local.get $buf_wa) (i32.const 115)) ;; 's'
+        (i32.store8 offset=2 (local.get $buf_wa) (i32.const 101)) ;; 'e'
+        (i32.store8 offset=3 (local.get $buf_wa) (i32.const 114)) ;; 'r'
+        (i32.store8 offset=4 (local.get $buf_wa) (i32.const 0))))
+    (i32.store (local.get $size_wa) (i32.const 5))
+    (global.set $last_error (i32.const 0))
+    (i32.const 1))
+
   (func $handle_GetUserNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wbuf i32) (local $wlen i32)
-    (if (i32.eqz (local.get $arg1))
-      (then
-        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-        (return)))
-    (local.set $wlen (call $g2w (local.get $arg1)))
-    (if (i32.or (i32.eqz (local.get $arg0))
-                (i32.lt_u (i32.load (local.get $wlen)) (i32.const 5)))
-      (then
-        (i32.store (local.get $wlen) (i32.const 5))
-        (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
-        (global.set $eax (i32.const 0)))
-      (else
-        (local.set $wbuf (call $g2w (local.get $arg0)))
-        (i32.store8 offset=0 (local.get $wbuf) (i32.const 117)) ;; 'u'
-        (i32.store8 offset=1 (local.get $wbuf) (i32.const 115)) ;; 's'
-        (i32.store8 offset=2 (local.get $wbuf) (i32.const 101)) ;; 'e'
-        (i32.store8 offset=3 (local.get $wbuf) (i32.const 114)) ;; 'r'
-        (i32.store8 offset=4 (local.get $wbuf) (i32.const 0))
-        (i32.store (local.get $wlen) (i32.const 5))
-        (global.set $last_error (i32.const 0))
-        (global.set $eax (i32.const 1))))
+    (global.set $eax (call $get_user_name (local.get $arg0) (local.get $arg1) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; GetUserNameW(lpBuffer, pcbBuffer) — UTF-16 counterpart.  Unlike
-  ;; GetComputerName, this API reports the terminating NUL in *pcbBuffer on
-  ;; both success and insufficient-buffer failure.
   (func $handle_GetUserNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wbuf i32) (local $wlen i32)
-    (local.set $wlen (call $g2w (local.get $arg1)))
-    (if (i32.or (i32.eqz (local.get $arg0))
-                (i32.lt_u (i32.load (local.get $wlen)) (i32.const 5)))
-      (then
-        (i32.store (local.get $wlen) (i32.const 5))
-        (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
-        (global.set $eax (i32.const 0)))
-      (else
-        (local.set $wbuf (call $g2w (local.get $arg0)))
-        (i32.store16 offset=0 (local.get $wbuf) (i32.const 117)) ;; 'u'
-        (i32.store16 offset=2 (local.get $wbuf) (i32.const 115)) ;; 's'
-        (i32.store16 offset=4 (local.get $wbuf) (i32.const 101)) ;; 'e'
-        (i32.store16 offset=6 (local.get $wbuf) (i32.const 114)) ;; 'r'
-        (i32.store16 offset=8 (local.get $wbuf) (i32.const 0))
-        (i32.store (local.get $wlen) (i32.const 5))
-        (global.set $last_error (i32.const 0))
-        (global.set $eax (i32.const 1))))
+    (global.set $eax (call $get_user_name (local.get $arg0) (local.get $arg1) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; GetComputerNameA(lpBuffer, pcbBuffer) — write "PC\0" then update *pcbBuffer = 2
-  (func $handle_GetComputerNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wbuf i32) (local $wlen i32)
-    (if (i32.eqz (local.get $arg1))
+  ;; GetComputerName reports the required size including NUL on overflow,
+  ;; but the copied character count excluding NUL on success.
+  (func $get_computer_name (param $buf_g i32) (param $size_g i32)
+        (param $wide i32) (result i32)
+    (local $buf_wa i32) (local $size_wa i32)
+    (if (i32.eqz (local.get $size_g))
       (then
         (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-        (return)))
-    (local.set $wlen (call $g2w (local.get $arg1)))
-    (if (i32.or (i32.eqz (local.get $arg0))
-                (i32.lt_u (i32.load (local.get $wlen)) (i32.const 3)))
+        (return (i32.const 0))))
+    (local.set $size_wa (call $g2w (local.get $size_g)))
+    (if (i32.or (i32.eqz (local.get $buf_g))
+                (i32.lt_u (i32.load (local.get $size_wa)) (i32.const 3)))
       (then
-        (i32.store (local.get $wlen) (i32.const 3))
+        (i32.store (local.get $size_wa) (i32.const 3))
         (global.set $last_error (i32.const 111)) ;; ERROR_BUFFER_OVERFLOW
-        (global.set $eax (i32.const 0)))
+        (return (i32.const 0))))
+    (local.set $buf_wa (call $g2w (local.get $buf_g)))
+    (if (local.get $wide)
+      (then
+        (i32.store16 offset=0 (local.get $buf_wa) (i32.const 80)) ;; 'P'
+        (i32.store16 offset=2 (local.get $buf_wa) (i32.const 67)) ;; 'C'
+        (i32.store16 offset=4 (local.get $buf_wa) (i32.const 0)))
       (else
-        (local.set $wbuf (call $g2w (local.get $arg0)))
-        (i32.store8 offset=0 (local.get $wbuf) (i32.const 80))  ;; 'P'
-        (i32.store8 offset=1 (local.get $wbuf) (i32.const 67))  ;; 'C'
-        (i32.store8 offset=2 (local.get $wbuf) (i32.const 0))
-        (i32.store (local.get $wlen) (i32.const 2))
-        (global.set $last_error (i32.const 0))
-        (global.set $eax (i32.const 1))))
+        (i32.store8 offset=0 (local.get $buf_wa) (i32.const 80)) ;; 'P'
+        (i32.store8 offset=1 (local.get $buf_wa) (i32.const 67)) ;; 'C'
+        (i32.store8 offset=2 (local.get $buf_wa) (i32.const 0))))
+    (i32.store (local.get $size_wa) (i32.const 2))
+    (global.set $last_error (i32.const 0))
+    (i32.const 1))
+
+  (func $handle_GetComputerNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $get_computer_name (local.get $arg0) (local.get $arg1) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; GetComputerNameW(lpBuffer, pcbBuffer) — the Unicode machine name uses
-  ;; the same deterministic identity as GetComputerNameA.  pcbBuffer is an
-  ;; in/out WCHAR count: failure reports the required count including NUL,
-  ;; while success reports the two characters excluding it.
   (func $handle_GetComputerNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wbuf i32) (local $wlen i32)
-    (local.set $wlen (call $g2w (local.get $arg1)))
-    (if (i32.or (i32.eqz (local.get $arg0))
-                (i32.lt_u (i32.load (local.get $wlen)) (i32.const 3)))
-      (then
-        (i32.store (local.get $wlen) (i32.const 3))
-        (global.set $last_error (i32.const 111)) ;; ERROR_BUFFER_OVERFLOW
-        (global.set $eax (i32.const 0)))
-      (else
-        (local.set $wbuf (call $g2w (local.get $arg0)))
-        (i32.store16 offset=0 (local.get $wbuf) (i32.const 80)) ;; 'P'
-        (i32.store16 offset=2 (local.get $wbuf) (i32.const 67)) ;; 'C'
-        (i32.store16 offset=4 (local.get $wbuf) (i32.const 0))
-        (i32.store (local.get $wlen) (i32.const 2))
-        (global.set $last_error (i32.const 0))
-        (global.set $eax (i32.const 1))))
+    (global.set $eax (call $get_computer_name (local.get $arg0) (local.get $arg1) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; DirectPlayCreate(lpGUIDSP, lplpDP, pUnk) — the pre-COM entry point into
