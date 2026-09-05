@@ -31,7 +31,7 @@ const SKIP_FILES = new Set(['package.json', 'package-lock.json',
 const SKIP_DIRS = new Set(['node_modules', '.git', '.claude', 'scratch', 'tools', 'test', 'build', 'binaries']);
 
 // Directories that contain binary assets (base64-encoded)
-const BINARY_DIRS = ['binaries', 'icons', 'build'];
+const BINARY_DIRS = ['binaries', 'icons', 'build', 'screenshots/apps'];
 
 // berrry rejects any single file over this with HTTP 400. Oversized binary
 // assets are therefore published as name.part000, name.part001, ...; the web
@@ -175,7 +175,7 @@ function collectTextFiles() {
   }
   // docs/: only the rendered .html pages, never the raw Markdown, JSON
   // status ledgers or the DOS corpus report tree.
-  for (const subdir of ['articles', 'docs', 'docs/re-notes']) {
+  for (const subdir of ['apps', 'articles', 'docs', 'docs/re-notes']) {
     const dir = path.join(ROOT, subdir);
     if (!fs.existsSync(dir)) continue;
     for (const entry of fs.readdirSync(dir)) {
