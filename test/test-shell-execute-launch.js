@@ -90,13 +90,16 @@ function makeShell(opts = {}) {
       for (const dir of other.dirs) this.dirs.add(dir);
     },
   };
+  const caller = { _helpCtx: { vfs }, _runSliceAppKey: 'cue:speed-demons' };
   const ok = shell.launchVfsExe('C:\\windows\\temp\\is-test.tmp\\child.tmp',
-    { _helpCtx: { vfs } }, '', '/SL4 $10001 "C:\\ptanks.exe" 2743738 52736');
+    caller, '', '/SL4 $10001 "C:\\ptanks.exe" 2743738 52736');
   assert.strictEqual(ok, true, 'absolute child exe in the caller VFS is accepted');
   const child = apps['vfs:c:\\windows\\temp\\is-test.tmp\\child.tmp'];
   assert.ok(child, 'dynamic vfs app entry is registered');
   assert.strictEqual(child.args, '/SL4 $10001 "C:\\ptanks.exe" 2743738 52736',
     'dynamic child command line is preserved');
+  assert.strictEqual(child.runSliceAppKey, 'cue:speed-demons',
+    'dynamic child inherits the mounted app Auto run-slice policy');
 
   assert.strictEqual(shell.launchVfsExe('child.tmp', { _helpCtx: { vfs } }, '', ''), true,
     'relative child exe resolves against the caller working directory');
