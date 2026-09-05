@@ -177,6 +177,12 @@ async function runDos(o) {
     shots = null, shotEvery = 20,
     mouse = [0, 0], clicks = [], dumpAt = [],
     cpu = 386, report = false, log = console.log, autoKey = false, repFast = true,
+    // Meter the guest's CPU time per slice (`guestCpuSecs`). Two getrusage
+    // calls per handback, and CYCLE takes 40k handbacks a guest second: on a
+    // 40M-dispatch run they were 12.6% of the profile, more than the guest
+    // itself. Off unless a benchmark asks (bench-dos.js --cpu-time,
+    // region-jit.js), so a plain run does not pay for a number nobody reads.
+    cpuMeter = false,
     // Build the instrumented dispatch and print the census at exit. `hist` is
     // how many handlers to list, `histPairs` how many pairs; 0 for either
     // suppresses that table. Timings from such a run are meaningless -- three
@@ -458,7 +464,7 @@ async function runDos(o) {
       },
       beforeSlice: () => {
         sliceT0 = process.hrtime.bigint();
-        sliceCpu0 = process.cpuUsage();
+        if (cpuMeter) sliceCpu0 = process.cpuUsage();
       },
       afterSlice: ({ left, dispatched, cs, ip }) => {
         guestNs += process.hrtime.bigint() - sliceT0;
@@ -466,8 +472,10 @@ async function runDos(o) {
         // clock inside the slice counts the scheduler too, and this machine sits
         // at load 10-40 with other agents on it -- there the wall number's
         // run-to-run spread is wider than any dispatch effect worth shipping.
-        const c = process.cpuUsage(sliceCpu0);
-        guestCpuUs += c.user + c.system;
+        if (cpuMeter) {
+          const c = process.cpuUsage(sliceCpu0);
+          guestCpuUs += c.user + c.system;
+        }
         // A divide fault ends the trace inside the guest's own INT 0 handler,
         // so it never reaches the stub segment and --trace-int cannot see it.
         // The faulting address is on the guest stack, which is the only place
@@ -585,7 +593,7 @@ async function runDos(o) {
     }
   }
   const {
-    dispatched, handbacks, ints, irqs, smcBreaks, smcPatched, repairWhy, traps, icebps, stuckAt, blockedOn32, badSelector,
+    dispatched, handbacks, ints, irqs, smcBreaks, smcPatched, smcFastRepairs, repairWhy, traps, icebps, stuckAt, blockedOn32, badSelector,
     compiles, compiledWords, arenaResets, unimplemented, regions, jtab, smcSites, retiredPatches,
     deadFlagsDropped, tracedBlocks, spinBlocks, specOps, rep, volatile,
   } = session.stats();
@@ -607,7 +615,7 @@ async function runDos(o) {
     guestCpuSecs: guestCpuUs / 1e6,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets, deadFlagsDropped,
     tracedBlocks, spinBlocks, specOps, rep, volatile,
-    smcBreaks, smcPatched, repairWhy, traps, icebps, smcSites, retiredPatches,
+    smcBreaks, smcPatched, smcFastRepairs, repairWhy, traps, icebps, smcSites, retiredPatches,
     stuckAt, blockedOn32, badSelector, ranOutOfTime,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
     // A program that never put the adapter in a graphics mode has no frame to
@@ -982,7 +990,8 @@ async function main() {
     // arena and kept the program (CodeCache.repairOperands). The rest dropped
     // regions, or found nothing compiled (the kind-1 census lines).
     + (r.smcBreaks ? `\n  ${r.smcBreaks} self-modify breaks`
-        + (r.smcPatched ? `, ${r.smcPatched} break(s) repaired in place` : '') : '')
+        + (r.smcPatched ? `, ${r.smcPatched} break(s) repaired in place`
+          + (r.smcFastRepairs ? ` (${r.smcFastRepairs} by a remembered plan)` : '') : '') : '')
     // Where the JIT switched itself off: paragraphs the guest rewrote often
     // enough to stop caching, and how many uncached compiles those cost. A
     // demotion is a paragraph that turned out to be entered far more than it

@@ -135,9 +135,13 @@ for (const [name, c] of Object.entries(CASES)) {
   assert.ok(/exited=true/.test(log), `${name}: did not exit:\n${log}`);
   assert.strictEqual(screen(log), c.expected(), `${name}: printed the wrong sum`);
   assert.strictEqual(screen(flushed), c.expected(), `${name}: --no-volatile arm printed the wrong sum`);
-  const m = /(\d+) self-modify breaks, (\d+) break\(s\) repaired in place/.exec(log);
+  const m = /(\d+) self-modify breaks, (\d+) break\(s\) repaired in place \((\d+) by a remembered plan\)/.exec(log);
   assert.ok(m, `${name}: no repair count in:\n${log}`);
   assert.ok(+m[2] >= ITER - 5, `${name}: expected ~${ITER} repairs, got ${m[2]} of ${m[1]} breaks`);
+  // One site, one range: the first repair walks the decode and leaves a
+  // plan, every later one is the plan re-read off memory (CYCLE's ISR takes
+  // 30k of these; the walk cost more than the compile it replaced).
+  assert.ok(+m[3] >= +m[2] - 2, `${name}: expected the repairs to come from a remembered plan, got ${m[3]} of ${m[2]}`);
   assert.ok(!/volatile paragraph/.test(log), `${name}: a paragraph went volatile:\n${log}`);
   assert.ok(arenaKb(log) <= 8, `${name}: the arena grew to ${arenaKb(log)}KB`);
   summary.push(`${name} ${screen(log)} (${m[2]}/${m[1]} breaks repaired, ${arenaKb(log)}KB)`);
