@@ -25,6 +25,9 @@ binaries
 !icons/apps/*.png
 !screenshots/readme/
 !screenshots/readme/*.png
+!screenshots/apps/
+!screenshots/apps/*.png
+screenshots/apps/*.log
 *.dll
 *.DLL
 *.wav
@@ -52,6 +55,7 @@ tmp/
 
 # Static site pages rendered by tools/gen-site-pages.js at deploy time
 # (story.html is the one committed output so a local http.server has it).
+apps/*.html
 articles/*.html
 docs/*.html
 docs/re-notes/*.html

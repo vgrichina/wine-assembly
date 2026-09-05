@@ -2,7 +2,7 @@
 // Render the repository's Markdown into static HTML pages for the live site,
 // plus a sitemap.xml that lists them.
 //
-//   node tools/gen-site-pages.js            write story.html, articles/*.html, docs/**/*.html, sitemap.xml
+//   node tools/gen-site-pages.js            write story.html, apps/*.html, articles/*.html, docs/**/*.html, sitemap.xml
 //   node tools/gen-site-pages.js --list     print what would be written, write nothing
 //
 // WHY THIS EXISTS: story.html used to fetch PROJECT_STORY.md and render it
@@ -65,6 +65,15 @@ const STYLE = `
     footer { margin-top: 48px; padding-top: 14px; border-top: 1px solid #d8d2c4; font-size: 13px; color: #555; }
     .docs-index li { margin: 0.35em 0; }
     .docs-index small { color: #666; display: block; }
+    .app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; margin: 0.8em 0 1.6em; }
+    .app-card { display: block; text-decoration: none; color: inherit; background: #fff; border: 1px solid #d8d2c4; border-radius: 6px; overflow: hidden; }
+    .app-card:hover { border-color: #0645ad; }
+    .app-card img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; object-position: top left; background: #008080; }
+    .app-card span { display: block; padding: 6px 9px; font-size: 14px; font-weight: 600; }
+    .app-card small { display: block; padding: 0 9px 8px; font-size: 12px; color: #666; font-weight: 400; }
+    .app-launch { display: inline-block; background: #008080; color: #fff !important; text-decoration: none; padding: 9px 16px; border-radius: 4px; font-weight: 600; margin: 0.4em 0 1em; }
+    .app-launch:hover { background: #006666; }
+    .app-shot { border: 1px solid #d8d2c4; }
 `;
 
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -111,7 +120,7 @@ function rewriteMdLinks(html) {
   return html.replace(/href="([^"#:]+)\.md(#[^"]*)?"/g, (m, p, hash) => `href="${p}.html${hash || ''}"`);
 }
 
-function pageHtml({ md, title, description, urlPath, sourceRel, nav, dates, extraHead }) {
+function pageHtml({ md, title, description, urlPath, sourceRel, nav, dates, extraHead, ldExtra }) {
   const url = `${SITE}/${urlPath}`;
   const body = rewriteMdLinks(marked.parse(md, { gfm: true, breaks: false }));
   const ld = {
@@ -128,6 +137,7 @@ function pageHtml({ md, title, description, urlPath, sourceRel, nav, dates, extr
   };
   if (dates.published) ld.datePublished = dates.published;
   if (dates.modified) ld.dateModified = dates.modified;
+  if (ldExtra) Object.assign(ld, ldExtra);
   const fullTitle = title.includes(SITE_NAME) ? title : `${title} — ${SITE_NAME}`;
   return `<!DOCTYPE html>
 <html lang="en">
@@ -176,6 +186,176 @@ const NAV_STORY = `<a href="/story.html">The Story</a>`;
 const NAV_DOCS = `<a href="/docs/">Design docs &amp; RE notes</a>`;
 const NAV_REPO = `<a href="${REPO}">GitHub</a>`;
 const NAV_ARTICLES = `<a href="/articles/">Articles</a>`;
+const NAV_APPS = `<a href="/apps/">Apps</a>`;
+
+// Per-app pages, one for each desktop icon and nothing else: a search for
+// "space cadet pinball in browser" should land on a page that says what the
+// program is, shows it running here and has one launch button. Candidates,
+// SDK samples and demos stay in the ?debug dropdown without a page.
+//
+// Name and emoji come from DESKTOP_APPS; the group comes from the <optgroup>
+// the id sits under in index.html's selector so the two never disagree; the
+// prose comes from tools/site-app-blurbs.json; everything else (exe, format,
+// DLLs, data files, command line) is read off the registry entry itself.
+const APP_BLURBS_REL = 'tools/site-app-blurbs.json';
+// The selector's groups are about where a binary came from; the pages group
+// by what a visitor is looking for, so a few labels fold together.
+const GROUP_LABELS = {
+  'Other': 'Games and players',
+  'Local Candidates': 'Games and players',
+  'DirectX Shareware': 'Games and players',
+  'Entertainment Pack 2 (16-bit)': 'Entertainment Pack',
+};
+const NO_GROUP = 'More games';
+
+function dropdownGroups() {
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf-8');
+  const start = html.indexOf('id="app-select"');
+  const end = html.indexOf('</select>', start);
+  const map = new Map();
+  if (start < 0 || end < 0) return map;
+  let group = 'Win98 Accessories';
+  const re = /<optgroup label="([^"]*)"|<option value="([^"]*)"/g;
+  let m;
+  while ((m = re.exec(html.slice(start, end)))) {
+    if (m[1]) group = m[1];
+    else map.set(m[2], GROUP_LABELS[group] || group);
+  }
+  return map;
+}
+
+function exeFormat(rel) {
+  try {
+    const fd = fs.openSync(path.join(ROOT, rel), 'r');
+    const head = Buffer.alloc(0x40);
+    fs.readSync(fd, head, 0, 0x40, 0);
+    if (head[0] !== 0x4d || head[1] !== 0x5a) { fs.closeSync(fd); return null; }
+    const off = head.readUInt32LE(0x3c);
+    const sig = Buffer.alloc(2);
+    fs.readSync(fd, sig, 0, 2, off);
+    fs.closeSync(fd);
+    if (sig[0] === 0x4e && sig[1] === 0x45) return '16-bit Windows (NE)';
+    if (sig[0] === 0x50 && sig[1] === 0x45) return '32-bit Windows (PE)';
+    return null;
+  } catch (_) { return null; }
+}
+
+function loadDesktopApps() {
+  const { APPS, DESKTOP_APPS, appFileUrl } = require(path.join(ROOT, 'lib', 'apps.js'));
+  const blurbs = JSON.parse(fs.readFileSync(path.join(ROOT, APP_BLURBS_REL), 'utf-8'));
+  const groups = dropdownGroups();
+  const reDir = path.join(ROOT, 'docs', 're-notes');
+  const reNotes = fs.existsSync(reDir)
+    ? fs.readdirSync(reDir).filter(f => f.endsWith('.md') && f !== 'README.md')
+        .map(f => ({ rel: `docs/re-notes/${f}`, md: fs.readFileSync(path.join(reDir, f), 'utf-8') }))
+    : [];
+  return DESKTOP_APPS.map(([id, name, emoji]) => {
+    const app = APPS[id] || {};
+    const exe = app.exe || '';
+    const shot = `screenshots/apps/${id}.png`;
+    const notes = reNotes
+      .filter(n => n.md.includes('`' + id + '`') || n.md.includes(`--app=${id}`))
+      .map(n => ({ rel: n.rel, title: extractMeta(n.md).title }));
+    return {
+      id, name, emoji,
+      blurb: blurbs[id] || `${name}, one of the programs on the Wine-Assembly desktop.`,
+      group: groups.get(id) || NO_GROUP,
+      exe: exe ? path.posix.basename(exe) : null,
+      format: exe ? exeFormat(exe) : null,
+      dlls: (app.dlls || []).map(d => path.posix.basename(d)),
+      files: (app.files || []).map(appFileUrl).filter(Boolean).length,
+      args: app.args || '',
+      lan: !!app.lan,
+      touch: !!app.touchControls,
+      shot: fs.existsSync(path.join(ROOT, shot)) ? shot : null,
+      notes,
+    };
+  });
+}
+
+const ARTICLE_FOR_FORMAT = {
+  '16-bit Windows (NE)': ['/articles/running-16-bit-windows-apps-in-webassembly.html', 'how 16-bit Windows programs run here'],
+  '32-bit Windows (PE)': ['/articles/loading-real-windows-dlls-in-the-browser.html', 'how the program and its DLLs are loaded'],
+};
+
+function appPageMd(app, siblings) {
+  const L = [];
+  L.push(`# ${app.name} in your browser`);
+  L.push('');
+  L.push(`${app.blurb} ${app.name} runs in Wine-Assembly, a Windows 98 emulator written in WebAssembly Text, so it starts in the browser with nothing to install.`);
+  L.push('');
+  L.push(`<a class="app-launch" href="/?app=${app.id}">Launch ${app.name} &rarr;</a>`);
+  L.push('');
+  if (app.shot) {
+    L.push(`<img class="app-shot" src="/${app.shot}" alt="${esc(app.name)} running in Wine-Assembly" width="640" height="480">`);
+    L.push('');
+  }
+  L.push('## About this program');
+  L.push('');
+  L.push('| Detail | |');
+  L.push('|---|---|');
+  if (app.exe) L.push(`| Executable | \`${app.exe}\` |`);
+  if (app.format) L.push(`| Format | ${app.format} |`);
+  L.push(`| Libraries loaded beside it | ${app.dlls.length ? app.dlls.map(d => '`' + d + '`').join(', ') : 'none; everything else is the emulator\'s own Win32 layer'} |`);
+  if (app.files) L.push(`| Data files mounted | ${app.files} |`);
+  if (app.args) L.push(`| Command line | \`${app.args.replace(/\|/g, '\\|')}\` |`);
+  if (app.lan) L.push('| Network | plays over the emulator\'s virtual LAN |');
+  if (app.touch) L.push('| Phones | on-screen controls in single-app mode |');
+  L.push(`| Desktop group | ${app.group} |`);
+  L.push('');
+  L.push('## How it runs here');
+  L.push('');
+  const fmt = ARTICLE_FOR_FORMAT[app.format];
+  L.push(`The x86 code is interpreted by [threaded code written in WebAssembly Text](/articles/x86-interpreter-in-webassembly-text.html); ` +
+    `windows, controls, menus and dialogs are the emulator's own [Win32 layer](/articles/win32-api-in-webassembly.html), and every pixel is drawn by a [software GDI](/articles/software-gdi-in-webassembly.html) in the same module.` +
+    (fmt ? ` See [${fmt[1]}](${fmt[0]}).` : ''));
+  L.push('');
+  if (app.notes.length) {
+    L.push('Reverse-engineering notes for this program:');
+    L.push('');
+    for (const n of app.notes) L.push(`- [${n.title}](/${n.rel})`);
+    L.push('');
+  }
+  L.push(`Something wrong? The emulator is open source; [report it on GitHub](${REPO}/issues) with the app name and what you clicked.`);
+  L.push('');
+  if (siblings.length) {
+    L.push(`## Also under "${app.group}"`);
+    L.push('');
+    L.push(siblings.map(s => `[${s.name}](/apps/${s.id}.html)`).join(' · '));
+    L.push('');
+  }
+  L.push(`[All programs on the desktop](/apps/) · [How Wine-Assembly was built](/story.html)`);
+  L.push('');
+  return L.join('\n');
+}
+
+function appsIndexMd(apps) {
+  const byGroup = new Map();
+  for (const a of apps) {
+    if (!byGroup.has(a.group)) byGroup.set(a.group, []);
+    byGroup.get(a.group).push(a);
+  }
+  const L = [];
+  L.push('# Windows 98 programs you can run in your browser');
+  L.push('');
+  L.push(`Every icon on the Wine-Assembly desktop, with a page each: what the program is, a picture of it running here, and a link that starts it. ` +
+    `They are real Windows 98 executables, not ports; the emulator underneath is an x86 interpreter and Win32 layer written in WebAssembly Text. ` +
+    `Programs the site cannot redistribute (game demos, shareware installers, the DirectX SDK samples) are in the debug dropdown on the [main page](/?debug) instead.`);
+  L.push('');
+  for (const [group, list] of byGroup) {
+    L.push(`## ${group}`);
+    L.push('');
+    L.push('<div class="app-grid">');
+    for (const a of list) {
+      const img = a.shot ? `<img src="/${a.shot}" alt="" loading="lazy" width="320" height="240">` : '';
+      const first = a.blurb.split(/(?<=\.)\s/)[0];
+      L.push(`<a class="app-card" href="/apps/${a.id}.html">${img}<span>${esc(a.name)}</span><small>${esc(first)}</small></a>`);
+    }
+    L.push('</div>');
+    L.push('');
+  }
+  return L.join('\n');
+}
 
 // articles/*.md: one standalone page per question ("how do lazy flags
 // work", "how are real DLLs loaded"), written to be found by a search for
@@ -218,7 +398,7 @@ function generatePages() {
       title: 'How Wine-Assembly was built: a Windows 98 emulator in raw WebAssembly',
       description: 'The history of Wine-Assembly, an x86 Windows 98 emulator written directly in WebAssembly Text: from the first instruction decoder to a browser that runs Notepad, Pinball, Winamp, DirectX games and 16-bit Windows apps.',
       urlPath: 'story.html', sourceRel: 'PROJECT_STORY.md',
-      nav: [NAV_HOME, NAV_ARTICLES, NAV_DOCS, NAV_REPO].join(' '),
+      nav: [NAV_HOME, NAV_APPS, NAV_ARTICLES, NAV_DOCS, NAV_REPO].join(' '),
       dates: storyDates,
     }),
   });
@@ -234,12 +414,50 @@ function generatePages() {
       content: pageHtml({
         md, title: meta.title, description: meta.description,
         urlPath: a.urlPath, sourceRel: a.rel,
-        nav: [NAV_HOME, NAV_ARTICLES, NAV_STORY, NAV_DOCS, NAV_REPO].join(' '),
+        nav: [NAV_HOME, NAV_APPS, NAV_ARTICLES, NAV_STORY, NAV_DOCS, NAV_REPO].join(' '),
         dates,
       }),
     });
     urls.push({ loc: `${SITE}/${a.urlPath}`, lastmod: dates.modified, priority: '0.8', changefreq: 'monthly' });
   }
+  // Per-app pages for the desktop set.
+  const apps = loadDesktopApps();
+  const blurbDates = { published: gitDate(APP_BLURBS_REL, 'first'), modified: gitDate(APP_BLURBS_REL) };
+  for (const app of apps) {
+    const siblings = apps.filter(s => s.group === app.group && s.id !== app.id);
+    const md = appPageMd(app, siblings);
+    pages.push({
+      name: `apps/${app.id}.html`,
+      content: pageHtml({
+        md,
+        title: `${app.name} in your browser`,
+        description: extractMeta(md).description,
+        urlPath: `apps/${app.id}.html`, sourceRel: APP_BLURBS_REL,
+        nav: [NAV_HOME, NAV_APPS, NAV_ARTICLES, NAV_STORY, NAV_REPO].join(' '),
+        dates: blurbDates,
+        ldExtra: {
+          '@type': 'WebPage',
+          about: { '@type': 'SoftwareApplication', name: app.name, operatingSystem: 'Windows 98', applicationCategory: app.group },
+          ...(app.shot ? { image: `${SITE}/${app.shot}` } : {}),
+        },
+      }),
+    });
+    urls.push({ loc: `${SITE}/apps/${app.id}.html`, lastmod: blurbDates.modified, priority: '0.7', changefreq: 'monthly' });
+  }
+  const appsIndex = appsIndexMd(apps);
+  pages.push({
+    name: 'apps/index.html',
+    content: pageHtml({
+      md: appsIndex,
+      title: 'Windows 98 programs you can run in your browser',
+      description: extractMeta(appsIndex).description,
+      urlPath: 'apps/', sourceRel: APP_BLURBS_REL,
+      nav: [NAV_HOME, NAV_ARTICLES, NAV_STORY, NAV_DOCS, NAV_REPO].join(' '),
+      dates: blurbDates,
+    }),
+  });
+  urls.push({ loc: `${SITE}/apps/`, lastmod: blurbDates.modified, priority: '0.8', changefreq: 'monthly' });
+
   const articlesIndexRel = 'articles/README.md';
   if (fs.existsSync(path.join(ROOT, articlesIndexRel))) {
     const md = fs.readFileSync(path.join(ROOT, articlesIndexRel), 'utf-8');
@@ -331,6 +549,6 @@ if (require.main === module) {
     for (const p of pages) console.log(`${p.name}  (${p.content.length} bytes)`);
   } else {
     writePages(pages);
-    console.log(`wrote ${pages.length} pages (story.html, articles/*.html, docs/**/*.html, sitemap.xml)`);
+    console.log(`wrote ${pages.length} pages (story.html, apps/*.html, articles/*.html, docs/**/*.html, sitemap.xml)`);
   }
 }

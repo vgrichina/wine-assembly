@@ -54,11 +54,20 @@
     footer { margin-top: 48px; padding-top: 14px; border-top: 1px solid #d8d2c4; font-size: 13px; color: #555; }
     .docs-index li { margin: 0.35em 0; }
     .docs-index small { color: #666; display: block; }
+    .app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; margin: 0.8em 0 1.6em; }
+    .app-card { display: block; text-decoration: none; color: inherit; background: #fff; border: 1px solid #d8d2c4; border-radius: 6px; overflow: hidden; }
+    .app-card:hover { border-color: #0645ad; }
+    .app-card img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; object-position: top left; background: #008080; }
+    .app-card span { display: block; padding: 6px 9px; font-size: 14px; font-weight: 600; }
+    .app-card small { display: block; padding: 0 9px 8px; font-size: 12px; color: #666; font-weight: 400; }
+    .app-launch { display: inline-block; background: #008080; color: #fff !important; text-decoration: none; padding: 9px 16px; border-radius: 4px; font-weight: 600; margin: 0.4em 0 1em; }
+    .app-launch:hover { background: #006666; }
+    .app-shot { border: 1px solid #d8d2c4; }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <nav class="top"><a href="/">&larr; Run the emulator</a> <a href="/articles/">Articles</a> <a href="/docs/">Design docs &amp; RE notes</a> <a href="https://github.com/vgrichina/wine-assembly">GitHub</a></nav>
+    <nav class="top"><a href="/">&larr; Run the emulator</a> <a href="/apps/">Apps</a> <a href="/articles/">Articles</a> <a href="/docs/">Design docs &amp; RE notes</a> <a href="https://github.com/vgrichina/wine-assembly">GitHub</a></nav>
     <article>
 <h1>Wine-Assembly — The Whole Story</h1>
 <p><em>A retrospective from the initial commit (2026-03-26) through 2026-09-04: 3,758 commits across 163 calendar days and 106 active commit days. The last sixteen days alone added about 1,600 of them.</em></p>
