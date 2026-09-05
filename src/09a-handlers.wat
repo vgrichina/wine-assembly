@@ -3608,7 +3608,7 @@
   )
 
   ;; 54: GetModuleFileNameA
-  ;; "C:\<exe_name>" into the caller's buffer, ANSI or wide, truncated to
+  ;; "<drive>:\<exe_name>" into the caller's buffer, ANSI or wide, truncated to
   ;; nSize characters as Win32 does. Returns the characters written, not
   ;; counting the terminator. One writer for both spellings.
   (func $module_file_name (param $buf_g i32) (param $size i32) (param $wide i32) (result i32)
@@ -3623,7 +3623,7 @@
     (block $done (loop $copy
       (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
       (local.set $ch (block $c (result i32)
-        (if (i32.eq (local.get $i) (i32.const 0)) (then (br $c (i32.const 0x43))))  ;; 'C'
+        (if (i32.eq (local.get $i) (i32.const 0)) (then (br $c (global.get $exe_drive))))
         (if (i32.eq (local.get $i) (i32.const 1)) (then (br $c (i32.const 0x3A))))  ;; ':'
         (if (i32.eq (local.get $i) (i32.const 2)) (then (br $c (i32.const 0x5C))))  ;; '\'
         (i32.load8_u (i32.add (global.get $exe_name_wa)

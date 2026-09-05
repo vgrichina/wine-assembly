@@ -361,6 +361,7 @@
     (local $addr_type i32) (local $rel_type i32) (local $additive i32)
     (local $site i32) (local $a i32) (local $c i32)
     (local $tgt_sel i32) (local $tgt_off i32) (local $next i32) (local $seg_out i32)
+    (local $module i32) (local $constant i32)
     (local.set $p (local.get $rec_wa))
     (local.set $count (i32.load16_u (local.get $p)))
     (local.set $p (i32.add (local.get $p) (i32.const 2)))
@@ -412,10 +413,22 @@
               ;; IMPORTORDINAL. `a` indexes the module-reference table, whose
               ;; entries are offsets into the imported-name table, where the
               ;; module's Pascal-string name lives.
-              (local.set $tgt_sel (global.get $WIN16_THUNK_SEL))
-              (local.set $tgt_off (call $win16_thunk_for
-                (call $win16_module_id (call $win16_module_name (local.get $ne_off) (local.get $a)))
-                (local.get $c) (i32.const 0))))
+              (local.set $module
+                (call $win16_module_id
+                  (call $win16_module_name (local.get $ne_off) (local.get $a))))
+              (local.set $constant
+                (call $win16_import_constant (local.get $module) (local.get $c)))
+              (if (i32.and
+                    (i32.ge_s (local.get $constant) (i32.const 0))
+                    (i32.or (i32.eqz (local.get $addr_type))
+                            (i32.eq (local.get $addr_type) (i32.const 5))))
+                (then
+                  (local.set $tgt_sel (i32.const 0))
+                  (local.set $tgt_off (local.get $constant)))
+                (else
+                  (local.set $tgt_sel (global.get $WIN16_THUNK_SEL))
+                  (local.set $tgt_off (call $win16_thunk_for
+                    (local.get $module) (local.get $c) (i32.const 0))))))
             (else
               ;; IMPORTNAME (2) names the entry point instead of numbering it,
               ;; with `c` an offset into the imported-name table. The module is
@@ -1534,6 +1547,22 @@
     (if (result i32) (local.get $ne_off)
       (then (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x10))))
       (else (i32.const 0))))
+
+  ;; KERNEL's __AHSHIFT and __AHINCR exports are absolute constants, not
+  ;; callable entry points. 16-bit compilers import them through OFFSET
+  ;; fixups to normalize huge pointers: selector += carry << __AHSHIFT.
+  ;; Sending those fixups through the thunk allocator substitutes the thunk
+  ;; offsets (currently 0x20/0x28) for 3/8 and sends every access after the
+  ;; first 64KB into the wrong selector.
+  (func $win16_import_constant (export "win16_import_constant")
+        (param $module i32) (param $ordinal i32) (result i32)
+    (if (i32.eq (local.get $module) (i32.const 1)) ;; KERNEL
+      (then
+        (if (i32.eq (local.get $ordinal) (i32.const 113))
+          (then (return (i32.const 3))))  ;; __AHSHIFT
+        (if (i32.eq (local.get $ordinal) (i32.const 114))
+          (then (return (i32.const 8)))))) ;; __AHINCR
+    (i32.const -1))
 
   ;; ---- Inspection exports (used by test/test-ne-loader.js) ----
   (func (export "win16_seg_count") (result i32) (global.get $win16_seg_count))

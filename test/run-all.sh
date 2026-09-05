@@ -57,6 +57,8 @@ UNIT=(
   test/test-load32-esp-run.js
   test/test-shift-equivalence.js
   test/test-ne-loader.js
+  test/test-win16-huge-pointer-imports.js
+  test/test-exe-drive-path.js
   test/test-win16-exec.js
   test/test-win16-civ2-apis.js
   test/test-win16-temp-file.js
