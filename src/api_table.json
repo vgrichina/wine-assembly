@@ -27402,5 +27402,12 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2705998195
+  },
+  {
+    "id": 3300,
+    "name": "SHAppBarMessage",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4289600817
   }
 ]

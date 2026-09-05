@@ -11875,7 +11875,7 @@ HookEx — no next hook in chain, return 0
     ;; FindNextFileW(hFindFile, lpFindFileData) — 2 args
     (global.set $eax (call $host_fs_find_next_file
       (local.get $arg0) (local.get $arg1) (i32.const 1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (if (i32.eqz (global.get $eax)) (then (global.set $last_error (i32.const 18)))) (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 412: RaiseException(dwExceptionCode, dwExceptionFlags, nNumberOfArguments, lpArguments)
@@ -13884,7 +13884,7 @@ HookEx — no next hook in chain, return 0
     ;; FindNextFileA(hFindFile, lpFindFileData) — 2 args
     (global.set $eax (call $host_fs_find_next_file
       (local.get $arg0) (local.get $arg1) (i32.const 0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (if (i32.eqz (global.get $eax)) (then (global.set $last_error (i32.const 18)))) (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 471: GetEnvironmentVariableA(lpName, lpBuffer, nSize) → chars written
@@ -19022,7 +19022,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   ;; === VERSION.DLL APIs ===
 
   ;; GetFileVersionInfoSizeA(lptstrFilename, lpdwHandle) → size or 0
-  ;; Finds RT_VERSION (16) resource ID 1 in the loaded PE and returns its size.
+  ;; Reads RT_VERSION (16) from the PE named by lptstrFilename.
   (func $handle_GetFileVersionInfoSizeA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $size i32)
     ;; If lpdwHandle is non-null, set *lpdwHandle = 0
@@ -19036,15 +19036,15 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         (global.set $eax (global.get $DX_VERSION_INFO_SIZE))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
-    ;; Find RT_VERSION (16) resource with ID 1
-    (local.set $entry (call $find_resource (i32.const 16) (i32.const 1)))
-    (if (local.get $entry)
-      (then
-        ;; entry points to data entry: +0=RVA, +4=size
-        (local.set $size (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $entry) (i32.const 4)))))
-        (global.set $eax (local.get $size)))
-      (else
-        (global.set $eax (i32.const 0))))
+    ;; Ordinary calls inspect the named file, including freshly extracted DLLs.
+    (call $file_version_info_size_named
+      (local.get $arg0) (local.get $arg1) (i32.const 0))
+    (drop (local.get $entry))
+    (drop (local.get $size))
+
+
+
+
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; GetFileVersionInfoA(lptstrFilename, dwHandle, dwLen, lpData) → BOOL
@@ -19061,38 +19061,38 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
-    ;; Find RT_VERSION (16) resource with ID 1
-    (local.set $entry (call $find_resource (i32.const 16) (i32.const 1)))
-    (if (i32.eqz (local.get $entry))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-        (return)))
-    (local.set $rva (call $gl32 (i32.add (global.get $image_base) (local.get $entry))))
-    (local.set $size (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $entry) (i32.const 4)))))
-    ;; Copy min(dwLen, size) bytes from resource to lpData
-    (local.set $len (local.get $arg2))
-    (if (i32.gt_u (local.get $len) (local.get $size))
-      (then (local.set $len (local.get $size))))
-    (memory.copy
-      (call $g2w (local.get $arg3))
-      (call $g2w (i32.add (global.get $image_base) (local.get $rva)))
-      (local.get $len))
-    (global.set $eax (i32.const 1))
+    ;; The file reader maps RVA through section headers rather than assuming
+    ;; the on-disk image has already been loaded at image_base.
+    (call $file_version_info_named
+      (local.get $arg0) (local.get $arg2) (local.get $arg3) (i32.const 0))
+    (drop (local.get $entry))
+    (drop (local.get $rva))
+    (drop (local.get $size))
+    (drop (local.get $len))
+
+
+
+
+
+
+
+
+
+
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  ;; The VERSION resource itself is encoding-neutral. The filename is only a
-  ;; selector for synthetic DirectX modules; ordinary PE callers, including
-  ;; Unicode Inno Setup, read the current image's same binary blob.
+  ;; The VERSION resource itself is encoding-neutral; only the path width
+  ;; differs. Wide callers therefore share the parser while retaining their
+  ;; UTF-16 filename instead of treating its low bytes as an ANSI path.
   (func $handle_GetFileVersionInfoSizeW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_GetFileVersionInfoSizeA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+    (call $file_version_info_size_named
+      (local.get $arg0) (local.get $arg1) (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_GetFileVersionInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_GetFileVersionInfoA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+    (call $file_version_info_named
+      (local.get $arg0) (local.get $arg2) (local.get $arg3) (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; VerQueryValueA(pBlock, lpSubBlock, lplpBuffer, puLen) → BOOL
   ;; Only handles "\" (root query) — returns pointer to VS_FIXEDFILEINFO.
@@ -20080,3 +20080,320 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (drop (call $clipboard_sequence_get))
     (drop (i32.atomic.rmw.add
       (global.get $CLIPBOARD_SEQUENCE) (i32.const 1))))
+
+  ;; Read an exact range from a VFS file without disturbing guest stack data.
+  (func $version_read_exact (param $handle i32) (param $offset i32)
+      (param $size i32) (param $dest_g i32) (param $count_g i32) (result i32)
+    (if (i32.ne (call $host_fs_set_file_pointer
+          (local.get $handle) (local.get $offset) (i32.const 0))
+        (local.get $offset))
+      (then (return (i32.const 0))))
+    (call $gs32 (local.get $count_g) (i32.const 0))
+    (if (i32.eqz (call $host_fs_read_file
+          (local.get $handle) (local.get $dest_g)
+          (local.get $size) (local.get $count_g)))
+      (then (return (i32.const 0))))
+    (i32.eq (call $gl32 (local.get $count_g)) (local.get $size)))
+
+  ;; Return the child dword for an ID in a resource directory, or -1. With
+  ;; any=1, return the first entry. Every offset is relative to resource root.
+  (func $version_rsrc_child (param $root_g i32) (param $root_size i32)
+      (param $dir_off i32) (param $want_id i32) (param $any i32) (result i32)
+    (local $count i32) (local $entry i32) (local $i i32) (local $id i32)
+    (if (i32.or
+          (i32.gt_u (local.get $dir_off) (local.get $root_size))
+          (i32.lt_u (i32.sub (local.get $root_size) (local.get $dir_off))
+            (i32.const 16)))
+      (then (return (i32.const -1))))
+    (local.set $count (i32.add
+      (call $gl16 (i32.add (local.get $root_g)
+        (i32.add (local.get $dir_off) (i32.const 12))))
+      (call $gl16 (i32.add (local.get $root_g)
+        (i32.add (local.get $dir_off) (i32.const 14))))))
+    (if (i32.gt_u (local.get $count)
+          (i32.div_u
+            (i32.sub (i32.sub (local.get $root_size) (local.get $dir_off))
+              (i32.const 16))
+            (i32.const 8)))
+      (then (return (i32.const -1))))
+    (local.set $entry (i32.add (local.get $dir_off) (i32.const 16)))
+    (block $not_found
+      (loop $scan
+        (br_if $not_found (i32.ge_u (local.get $i) (local.get $count)))
+        (local.set $id (call $gl32
+          (i32.add (local.get $root_g) (local.get $entry))))
+        (if (i32.or (local.get $any)
+              (i32.and
+                (i32.eqz (i32.and (local.get $id) (i32.const 0x80000000)))
+                (i32.eq (local.get $id) (local.get $want_id))))
+          (then (return (call $gl32
+            (i32.add (local.get $root_g)
+              (i32.add (local.get $entry) (i32.const 4)))))))
+        (local.set $entry (i32.add (local.get $entry) (i32.const 8)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan)))
+    (i32.const -1))
+
+  ;; Load the named PE's RT_VERSION blob into a temporary guest allocation.
+  ;; The parser reads only headers, the resource section, and the final blob.
+  (func $file_version_resource (param $filename_g i32) (param $wide i32)
+      (param $size_out_wa i32) (result i32)
+    (local $handle i32) (local $file_size i32) (local $count_g i32)
+    (local $headers_g i32) (local $headers_size i32) (local $pe_off i32)
+    (local $num_sections i32) (local $opt_size i32) (local $section_table i32)
+    (local $rsrc_rva i32) (local $rsrc_size i32) (local $rsrc_g i32)
+    (local $section i32) (local $section_rva i32) (local $section_vsize i32)
+    (local $section_raw i32) (local $section_raw_size i32) (local $span i32)
+    (local $root_off i32) (local $root_size i32) (local $root_g i32)
+    (local $type_child i32) (local $name_child i32) (local $lang_child i32)
+    (local $data_entry i32) (local $data_rva i32) (local $data_size i32)
+    (local $data_raw i32) (local $delta i32) (local $blob_g i32)
+    (local $i i32) (local $found i32) (local $ok i32)
+    (i32.store (local.get $size_out_wa) (i32.const 0))
+    (local.set $handle (i32.const -1))
+    (block $load
+      (br_if $load (i32.eqz (local.get $filename_g)))
+      (local.set $handle (call $host_fs_create_file
+        (call $g2w (local.get $filename_g))
+        (i32.const 0x80000000) (i32.const 3) (i32.const 0x80)
+        (local.get $wide)))
+      (br_if $load (i32.eq (local.get $handle) (i32.const -1)))
+      (local.set $file_size (call $host_fs_get_file_size (local.get $handle)))
+      (br_if $load (i32.lt_u (local.get $file_size) (i32.const 64)))
+      (local.set $count_g (call $heap_alloc (i32.const 4)))
+      (local.set $headers_g (call $heap_alloc (i32.const 64)))
+      (br_if $load (i32.or
+        (i32.eqz (local.get $count_g)) (i32.eqz (local.get $headers_g))))
+      (br_if $load (i32.eqz (call $version_read_exact
+        (local.get $handle) (i32.const 0) (i32.const 64)
+        (local.get $headers_g) (local.get $count_g))))
+      (br_if $load (i32.ne (call $gl16 (local.get $headers_g)) (i32.const 0x5A4D)))
+      (local.set $pe_off (call $gl32
+        (i32.add (local.get $headers_g) (i32.const 0x3C))))
+      (br_if $load (i32.or
+        (i32.gt_u (local.get $pe_off) (local.get $file_size))
+        (i32.lt_u (i32.sub (local.get $file_size) (local.get $pe_off))
+          (i32.const 24))))
+      (call $heap_free (local.get $headers_g))
+      (local.set $headers_g (call $heap_alloc (i32.const 24)))
+      (br_if $load (i32.eqz (local.get $headers_g)))
+      (br_if $load (i32.eqz (call $version_read_exact
+        (local.get $handle) (local.get $pe_off) (i32.const 24)
+        (local.get $headers_g) (local.get $count_g))))
+      (br_if $load (i32.ne (call $gl32 (local.get $headers_g))
+        (i32.const 0x00004550)))
+      (local.set $num_sections (call $gl16
+        (i32.add (local.get $headers_g) (i32.const 6))))
+      (local.set $opt_size (call $gl16
+        (i32.add (local.get $headers_g) (i32.const 20))))
+      (br_if $load (i32.or
+        (i32.or (i32.eqz (local.get $num_sections))
+          (i32.gt_u (local.get $num_sections) (i32.const 96)))
+        (i32.lt_u (local.get $opt_size) (i32.const 120))))
+      (local.set $headers_size (i32.add
+        (i32.add (i32.const 24) (local.get $opt_size))
+        (i32.mul (local.get $num_sections) (i32.const 40))))
+      (br_if $load (i32.gt_u (local.get $headers_size)
+        (i32.sub (local.get $file_size) (local.get $pe_off))))
+      (call $heap_free (local.get $headers_g))
+      (local.set $headers_g (call $heap_alloc (local.get $headers_size)))
+      (br_if $load (i32.eqz (local.get $headers_g)))
+      (br_if $load (i32.eqz (call $version_read_exact
+        (local.get $handle) (local.get $pe_off) (local.get $headers_size)
+        (local.get $headers_g) (local.get $count_g))))
+      (br_if $load (i32.ne (call $gl16
+        (i32.add (local.get $headers_g) (i32.const 24))) (i32.const 0x010B)))
+      (br_if $load (i32.lt_u (call $gl32
+        (i32.add (local.get $headers_g) (i32.const 116))) (i32.const 3)))
+      (local.set $rsrc_rva (call $gl32
+        (i32.add (local.get $headers_g) (i32.const 136))))
+      (local.set $rsrc_size (call $gl32
+        (i32.add (local.get $headers_g) (i32.const 140))))
+      (br_if $load (i32.or
+        (i32.eqz (local.get $rsrc_rva)) (i32.eqz (local.get $rsrc_size))))
+      (local.set $section_table (i32.add (i32.const 24) (local.get $opt_size)))
+      (block $rsrc_section_done
+        (loop $rsrc_section_scan
+          (br_if $rsrc_section_done
+            (i32.ge_u (local.get $i) (local.get $num_sections)))
+          (local.set $section (i32.add (local.get $headers_g)
+            (i32.add (local.get $section_table)
+              (i32.mul (local.get $i) (i32.const 40)))))
+          (local.set $section_vsize (call $gl32
+            (i32.add (local.get $section) (i32.const 8))))
+          (local.set $section_rva (call $gl32
+            (i32.add (local.get $section) (i32.const 12))))
+          (local.set $section_raw_size (call $gl32
+            (i32.add (local.get $section) (i32.const 16))))
+          (local.set $span (local.get $section_raw_size))
+          (if (i32.gt_u (local.get $section_vsize) (local.get $span))
+            (then (local.set $span (local.get $section_vsize))))
+          (if (i32.and
+                (i32.ge_u (local.get $rsrc_rva) (local.get $section_rva))
+                (i32.lt_u (i32.sub (local.get $rsrc_rva) (local.get $section_rva))
+                  (local.get $span)))
+            (then
+              (local.set $section_raw (call $gl32
+                (i32.add (local.get $section) (i32.const 20))))
+              (local.set $found (i32.const 1))
+              (br $rsrc_section_done)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $rsrc_section_scan)))
+      (br_if $load (i32.eqz (local.get $found)))
+      (local.set $root_off (i32.sub (local.get $rsrc_rva) (local.get $section_rva)))
+      (br_if $load (i32.or
+        (i32.ge_u (local.get $root_off) (local.get $section_raw_size))
+        (i32.or
+          (i32.gt_u (local.get $section_raw) (local.get $file_size))
+          (i32.gt_u (local.get $section_raw_size)
+            (i32.sub (local.get $file_size) (local.get $section_raw))))))
+      (local.set $rsrc_g (call $heap_alloc (local.get $section_raw_size)))
+      (br_if $load (i32.eqz (local.get $rsrc_g)))
+      (br_if $load (i32.eqz (call $version_read_exact
+        (local.get $handle) (local.get $section_raw)
+        (local.get $section_raw_size) (local.get $rsrc_g) (local.get $count_g))))
+      (local.set $root_g (i32.add (local.get $rsrc_g) (local.get $root_off)))
+      (local.set $root_size (i32.sub
+        (local.get $section_raw_size) (local.get $root_off)))
+      (local.set $type_child (call $version_rsrc_child
+        (local.get $root_g) (local.get $root_size) (i32.const 0)
+        (i32.const 16) (i32.const 0)))
+      (br_if $load (i32.eqz
+        (i32.and (local.get $type_child) (i32.const 0x80000000))))
+      (local.set $name_child (call $version_rsrc_child
+        (local.get $root_g) (local.get $root_size)
+        (i32.and (local.get $type_child) (i32.const 0x7FFFFFFF))
+        (i32.const 0) (i32.const 1)))
+      (br_if $load (i32.eqz
+        (i32.and (local.get $name_child) (i32.const 0x80000000))))
+      (local.set $lang_child (call $version_rsrc_child
+        (local.get $root_g) (local.get $root_size)
+        (i32.and (local.get $name_child) (i32.const 0x7FFFFFFF))
+        (i32.const 0) (i32.const 1)))
+      (br_if $load (i32.ne
+        (i32.and (local.get $lang_child) (i32.const 0x80000000)) (i32.const 0)))
+      (local.set $data_entry
+        (i32.and (local.get $lang_child) (i32.const 0x7FFFFFFF)))
+      (br_if $load (i32.or
+        (i32.gt_u (local.get $data_entry) (local.get $root_size))
+        (i32.lt_u (i32.sub (local.get $root_size) (local.get $data_entry))
+          (i32.const 16))))
+      (local.set $data_rva (call $gl32
+        (i32.add (local.get $root_g) (local.get $data_entry))))
+      (local.set $data_size (call $gl32
+        (i32.add (local.get $root_g)
+          (i32.add (local.get $data_entry) (i32.const 4)))))
+      (br_if $load (i32.eqz (local.get $data_size)))
+      (local.set $i (i32.const 0))
+      (local.set $found (i32.const 0))
+      (block $data_section_done
+        (loop $data_section_scan
+          (br_if $data_section_done
+            (i32.ge_u (local.get $i) (local.get $num_sections)))
+          (local.set $section (i32.add (local.get $headers_g)
+            (i32.add (local.get $section_table)
+              (i32.mul (local.get $i) (i32.const 40)))))
+          (local.set $section_rva (call $gl32
+            (i32.add (local.get $section) (i32.const 12))))
+          (local.set $section_raw_size (call $gl32
+            (i32.add (local.get $section) (i32.const 16))))
+          (if (i32.ge_u (local.get $data_rva) (local.get $section_rva))
+            (then
+              (local.set $delta
+                (i32.sub (local.get $data_rva) (local.get $section_rva)))
+              (if (i32.and
+                    (i32.le_u (local.get $delta) (local.get $section_raw_size))
+                    (i32.le_u (local.get $data_size)
+                      (i32.sub (local.get $section_raw_size) (local.get $delta))))
+                (then
+                  (local.set $section_raw (call $gl32
+                    (i32.add (local.get $section) (i32.const 20))))
+                  (local.set $data_raw
+                    (i32.add (local.get $section_raw) (local.get $delta)))
+                  (local.set $found (i32.const 1))
+                  (br $data_section_done)))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $data_section_scan)))
+      (br_if $load (i32.eqz (local.get $found)))
+      (br_if $load (i32.or
+        (i32.gt_u (local.get $data_raw) (local.get $file_size))
+        (i32.gt_u (local.get $data_size)
+          (i32.sub (local.get $file_size) (local.get $data_raw)))))
+      (local.set $blob_g (call $heap_alloc (local.get $data_size)))
+      (br_if $load (i32.eqz (local.get $blob_g)))
+      (br_if $load (i32.eqz (call $version_read_exact
+        (local.get $handle) (local.get $data_raw) (local.get $data_size)
+        (local.get $blob_g) (local.get $count_g))))
+      (i32.store (local.get $size_out_wa) (local.get $data_size))
+      (local.set $ok (i32.const 1)))
+    (if (i32.ne (local.get $handle) (i32.const -1))
+      (then (drop (call $host_fs_close_handle (local.get $handle)))))
+    (call $heap_free (local.get $rsrc_g))
+    (call $heap_free (local.get $headers_g))
+    (call $heap_free (local.get $count_g))
+    (if (i32.eqz (local.get $ok))
+      (then
+        (call $heap_free (local.get $blob_g))
+        (return (i32.const 0))))
+    (local.get $blob_g))
+
+  (func $file_version_info_size_named
+      (param $filename_g i32) (param $handle_out_g i32) (param $wide i32)
+    (local $scratch_g i32) (local $blob_g i32)
+    (if (local.get $handle_out_g)
+      (then (call $gs32 (local.get $handle_out_g) (i32.const 0))))
+    (local.set $scratch_g (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (local.get $scratch_g) (i32.const 0))
+    (local.set $blob_g (call $file_version_resource
+      (local.get $filename_g) (local.get $wide) (call $g2w (local.get $scratch_g))))
+    (global.set $eax (call $gl32 (local.get $scratch_g)))
+    (call $heap_free (local.get $blob_g)))
+
+  (func $file_version_info_named
+      (param $filename_g i32) (param $capacity i32)
+      (param $data_g i32) (param $wide i32)
+    (local $scratch_g i32) (local $blob_g i32) (local $size i32)
+    (local.set $scratch_g (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (local.get $scratch_g) (i32.const 0))
+    (local.set $blob_g (call $file_version_resource
+      (local.get $filename_g) (local.get $wide) (call $g2w (local.get $scratch_g))))
+    (if (i32.eqz (local.get $blob_g))
+      (then
+        (global.set $eax (i32.const 0))
+        (return)))
+    (local.set $size (call $gl32 (local.get $scratch_g)))
+    (if (i32.gt_u (local.get $size) (local.get $capacity))
+      (then (local.set $size (local.get $capacity))))
+    (if (i32.and
+          (i32.ne (local.get $size) (i32.const 0))
+          (i32.ne (local.get $data_g) (i32.const 0)))
+      (then (memory.copy
+        (call $g2w (local.get $data_g))
+        (call $g2w (local.get $blob_g)) (local.get $size))))
+    (call $heap_free (local.get $blob_g))
+    (global.set $eax (i32.const 1)))
+
+  ;; SHAppBarMessage. ABM_GETTASKBARPOS asks only for APPBARDATA.cbSize and
+  ;; writes the taskbar's screen-coordinate RECT at +16. The browser desktop
+  ;; presents the Win98 taskbar at the bottom edge with the classic 28px size.
+  (func $handle_SHAppBarMessage
+      (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+      (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $data i32) (local $width i32) (local $height i32)
+    (if (i32.ne (local.get $arg0) (i32.const 5)) ;; ABM_GETTASKBARPOS
+      (then (call $crash_unimplemented (local.get $name_ptr))))
+    (global.set $eax (i32.const 0))
+    (if (local.get $arg1)
+      (then
+        (local.set $data (call $g2w (local.get $arg1)))
+        (if (i32.ge_u (i32.load (local.get $data)) (i32.const 36))
+          (then
+            (local.set $width (call $screen_metric_w))
+            (local.set $height (call $screen_metric_h))
+            (i32.store offset=16 (local.get $data) (i32.const 0))
+            (i32.store offset=20 (local.get $data)
+              (i32.sub (local.get $height) (i32.const 28)))
+            (i32.store offset=24 (local.get $data) (local.get $width))
+            (i32.store offset=28 (local.get $data) (local.get $height))
+            (global.set $eax (i32.const 1))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
