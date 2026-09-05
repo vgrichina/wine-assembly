@@ -34,6 +34,7 @@ node tools/check-region-decls.js --strict
 # RATCHET on that recorded set — a region declared or moved since the baseline
 # must name itself within +/-3 lines of the location it claims.
 node tools/check-region-decls.js --check-owners
+node tools/aw-census.js --check
 # Raw address literals inside declared regions are a RATCHET: the count per file
 # may fall (bank it with --record), never rise, and a region marked converted
 # must stay at zero. This is what keeps the symbolization wave from regressing.
