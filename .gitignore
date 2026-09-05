@@ -52,6 +52,7 @@ tmp/
 
 # Static site pages rendered by tools/gen-site-pages.js at deploy time
 # (story.html is the one committed output so a local http.server has it).
+articles/*.html
 docs/*.html
 docs/re-notes/*.html
 sitemap.xml
