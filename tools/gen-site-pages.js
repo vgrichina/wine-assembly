@@ -578,14 +578,28 @@ function generatePages() {
     const meta = extractMeta(md);
     const dates = { published: gitDate(d.rel, 'first'), modified: gitDate(d.rel) };
     const isIndex = d.rel === 'docs/re-notes/README.md';
+    const content = pageHtml({
+      md, title: meta.title, description: meta.description,
+      urlPath: d.urlPath, sourceRel: d.rel,
+      dates,
+    });
     pages.push({
       name: d.urlPath,
-      content: pageHtml({
-        md, title: meta.title, description: meta.description,
-        urlPath: d.urlPath, sourceRel: d.rel,
-        dates,
-      }),
+      content,
     });
+    // README.html was the original public route. Berry updates do not delete
+    // old files, so keep that URL current while making the directory index the
+    // canonical page used by navigation and the sitemap.
+    if (isIndex) {
+      pages.push({
+        name: 'docs/re-notes/README.html',
+        content: pageHtml({
+          md, title: meta.title, description: meta.description,
+          urlPath: 'docs/re-notes/README.html', sourceRel: d.rel,
+          canonical: 'docs/re-notes/', dates,
+        }),
+      });
+    }
     urls.push({ loc: `${SITE}/${d.urlPath}`, lastmod: dates.modified, priority: isIndex ? '0.5' : '0.6', changefreq: 'monthly' });
     index.push({ ...d, ...meta, dates });
   }
