@@ -1393,3 +1393,21 @@ DirectInput right-arrow state, and verifies that Claw and the level camera move.
 Fresh manually inspected captures are `/private/tmp/claw-before.png` and
 `/private/tmp/claw-after.png`; see `docs/re-notes/captain-claw-demo.md` for the
 repeatable command and visual acceptance criteria.
+
+## Snood 2.2W shareware
+
+Verified 2026-09-05. The authentic 1,450,602-byte Windows installer is
+available from the preserved PCH 1200 disc through DiscMaster's
+[browser page](https://discmaster.textfiles.com/browse/40163/PCH_1200.iso/program/spel/snood/SnoodWin22Install.exe)
+and [original file](https://discmaster.textfiles.com/file/40163/PCH_1200.iso/program/spel/snood/SnoodWin22Install.exe).
+Its SHA-256 is
+`af87ef644d2a8d5a99f160ac522a7d318b0dc378285fd337c53dbf41c70db4ea`.
+
+This is the native Windows 95/98/NT 4.0 demonstration build, not the unrelated
+DOS/DJGPP Archive item previously recorded by the candidate manifest. The
+installed readme permits a 30-day trial and then requires registration or
+deletion; no public redistribution grant was found. Wine Assembly keeps the
+download and emulator-installed tree as ignored local fixtures and publishes
+only these source links and compatibility metadata. The original bootstrap,
+its generated Inno child, installation route, and verified interactive
+gameplay are documented in `docs/re-notes/snood.md`.
