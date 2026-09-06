@@ -182,6 +182,7 @@ UNIT=(
   test/test-waveout-pause-handlers.js
   test/test-wavein-audio.js
   test/test-audio-mixer.js
+  test/test-mixer-control-details.js
   test/test-directsound-loop-refresh.js
   test/test-directsound3d-web-audio.js
   test/test-directsound3d-listener.js
