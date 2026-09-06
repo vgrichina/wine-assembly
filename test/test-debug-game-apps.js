@@ -172,6 +172,16 @@ assert.deepStrictEqual(diabloShareware.files, [
   'test/binaries/candidates/diablo-shareware/installed/standard.snp',
 ]);
 
+const diablo2Demo = APPS.diablo2_demo;
+for (const renderer of ['d2direct3d.dll', 'd2gdi.dll', 'd2glide.dll']) {
+  assert(!diablo2Demo.dlls.some(file => file.endsWith('/' + renderer)),
+    `${renderer} is an alternate renderer, not a startup DLL seed`);
+  assert(diablo2Demo.files.some(file => file.endsWith('/' + renderer)),
+    `${renderer} remains available for on-demand LoadLibrary`);
+}
+assert(diablo2Demo.dlls.some(file => file.endsWith('/d2ddraw.dll')),
+  'the selected DirectDraw renderer remains in the startup dependency graph');
+
 const worms2 = APPS.worms2_demo;
 assert.strictEqual(worms2.exe,
   'test/binaries/candidates/worms-2-demo/installed-10oct/worms2.dat');
