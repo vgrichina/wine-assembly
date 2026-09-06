@@ -2332,19 +2332,15 @@
   (global $SYNC_TABLE i32 (region.addr $SYNC_TABLE 0))
   (global $SYNC_TABLE_SIZE i32 (region.size $SYNC_TABLE))
   (global $MAX_SYNC_OBJECTS i32 (i32.const 512))
-  ;; Optional packed guest page table. Directory entries point at 1KB leaves;
-  ;; leaf entries store an aligned WASM backing page plus normalized access
-  ;; flags in the otherwise-zero low 12 bits. STATE+0 is the next leaf index,
-  ;; +4 records leaf exhaustion, and +8 says at least one instance enabled the
-  ;; experiment so VirtualAlloc must keep PTEs coherent process-wide.
-  (global $GUEST_PAGE_DIR i32 (region.addr $GUEST_PAGE_DIR 0))
-  (global $GUEST_PAGE_DIR_SIZE i32 (region.size $GUEST_PAGE_DIR))
-  (global $GUEST_PAGE_LEAVES i32 (region.addr $GUEST_PAGE_LEAVES 0))
-  (global $GUEST_PAGE_LEAVES_SIZE i32 (region.size $GUEST_PAGE_LEAVES))
+  ;; Optional packed guest page table. One entry covers each 4KB page in the
+  ;; complete 32-bit guest address space. Entries store an aligned WASM backing
+  ;; page plus normalized access flags in the otherwise-zero low 12 bits.
+  ;; STATE+8 says at least one instance enabled the experiment so VirtualAlloc
+  ;; must keep PTEs coherent process-wide.
+  (global $GUEST_PAGE_TABLE i32 (region.addr $GUEST_PAGE_TABLE 0))
+  (global $GUEST_PAGE_TABLE_SIZE i32 (region.size $GUEST_PAGE_TABLE))
   (global $GUEST_PAGE_STATE i32 (region.addr $GUEST_PAGE_STATE 0))
   (global $GUEST_PAGE_STATE_SIZE i32 (region.size $GUEST_PAGE_STATE))
-  (global $GUEST_PAGE_LEAF_SIZE i32 (i32.const 0x400))
-  (global $GUEST_PAGE_LEAF_COUNT i32 (i32.const 1024))
   (global $GUEST_PTE_PRESENT i32 (i32.const 0x001))
   (global $GUEST_PTE_COMMITTED i32 (i32.const 0x002))
   (global $GUEST_PTE_READ i32 (i32.const 0x004))

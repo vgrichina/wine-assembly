@@ -116,14 +116,14 @@ was not assigned a synthetic result.
 
 ### Repeated fixed-work controls
 
-Each row below uses four legacy and four packed runs in the interleaved order
-off/on/on/off/on/off/off/on. Wall and user CPU medians are reported separately;
-the exact batch count and input schedule were held constant. This is CLI
-translator evidence, not a claim about headful browser frame rate.
+Each row below uses at least four legacy and four packed runs in a rotated,
+interleaved order. Wall and user CPU medians are reported separately; the exact
+batch count and input schedule were held constant. This is CLI translator
+evidence, not a claim about headful browser frame rate.
 
 | Application and sampled path | Legacy median | Packed median | Interpretation |
 | --- | ---: | ---: | --- |
-| Fallout demo, 8,000-batch early load | 1.315s wall / 1.370s CPU | 1.220s / 1.300s | preliminary 7.2% wall and 5.1% CPU reduction |
+| Fallout demo, 8,000-batch early load | 1.125s wall / 1.255s CPU | 1.130s / 1.255s | eight runs per mode correct the shorter sample: neutral |
 | Half-Life Uplink, 1,000-batch renderer startup | 19.055s / 17.275s | 17.495s / 16.460s | noisy preliminary 8.2% wall and 4.7% CPU reduction |
 | Age of Empires II, 400-batch first-run flow | 0.310s / 0.325s | 0.320s / 0.335s | too short for a speed claim; effectively neutral |
 | GTA2 demo, 4,500-batch gameplay entry | 9.080s / 7.715s | 7.715s / 6.830s | variance is large; neutral-to-positive, with no demonstrated regression |
@@ -134,26 +134,78 @@ Fallout title, Half-Life startup, AoE II first-run frame, GTA2 Wild Demo frame,
 and Quake II renderer frame were byte-identical between modes. GTA2 also ended
 with identical thread/CPU state and execution counters; Quake II ended with
 identical execution counters. The long Fallout pair had severe run-order drift
-(56.41s/36.94s then 35.05s/22.32s), which is why only its shorter interleaved
-series is used above.
+(56.41s/36.94s then 35.05s/22.32s). Doubling the short interleaved series to
+eight runs per mode removed the apparent packed win; the table reports that
+larger neutral sample.
+
+## Flat-table follow-up
+
+The demand-leaf design saves roughly 3MB but needs two dependent atomic loads,
+has a finite leaf arena, indexes only the lower 2GB, and retains a legacy-scan
+fallback. A follow-up replaced it with one 4 MiB array: one four-byte PTE for
+every 4 KiB page in the complete 32-bit guest address space.
+
+```text
+guest address 0xFEDCBA98
+          | page index = (guest >> 10) & 0x003ffffc
+          v
+4 MiB PTE array --------------------> backing page | access bits
+                                                + guest & 0xfff
+```
+
+The first implementation failed its runtime gate immediately: using
+`guest >> 10` without clearing its low two bits made non-page-aligned scalar
+accesses issue unaligned atomic loads. Keeping that failure in the experiment
+was useful—the corrected mask above is now exercised by cross-instance scalar
+reads, releases, recommits, and an explicit mapping above `0x80000000`.
+
+The same rotated sparse microbenchmark produced:
+
+| Scattered mappings | Two-level result | Flat-table result |
+| ---: | ---: | ---: |
+| 1 | -7.8% | +0.9% paired median |
+| 2 | +7.4% | +10.0% |
+| 8 | +19.0% | +27.8% |
+| 16 | +22.7% to +25.1% | +32.1% |
+| 64 | +45.6% | +46.8% |
+
+Those percentages compare each packed implementation with its own legacy arm.
+Directly alternating the two packed artifacts made them effectively tied: the
+flat table was 0.5% faster at one mapping and 1.4% faster at 64 mappings, below
+this session's trustworthy threshold. The important result is therefore not a
+speed claim between packed layouts. It is that the flat table retains the
+fragmented-map win, removes the one-map loss, covers all guest addresses, and
+needs neither leaf management nor a translation fallback.
+
+Flat-table application controls remained neutral. Quake II's 1,200-batch GL
+startup measured 2.580s median wall and 2.560s CPU in both arms. Fallout's
+expanded 8,000-batch series is the neutral row above; a separate 32,000-batch
+title pair took 13.51s/13.65s and produced byte-identical frames with identical
+execution counters. Half-Life's eight-run-per-mode repeat measured 10.085s
+legacy versus 10.110s packed wall time (10.505s/10.600s CPU), correcting its
+earlier noisy apparent win to neutral. Quake II's flat-table off/on frames were
+also byte-identical.
 
 ## Verdict
 
 Keep the candidate opt-in and isolated; do not enable it by default yet. The
 expanded sample now looks positive or neutral rather than exposing a clear
-whole-application regression. Fallout and Half-Life extend the promising set;
-Quake II supplies a useful neutral control. Large variance in GTA2 and the
-single complete Diablo II pair still prevent a universal-speedup claim.
+whole-application regression. Quake II and the larger Fallout repeat are useful
+neutral controls. Large variance in GTA2 and the single complete Diablo II pair
+still prevent a universal-speedup claim.
+
+Prefer the flat-table follow-up over the demand-leaf prototype for eventual
+integration. Its extra memory is fixed and modest, its lookup is no slower in
+the measurements, and it removes the conditions that required a legacy
+translation fallback. A separate hot cache is not justified by the current
+data: the flat lookup already removed the one-map regression.
+
 Before integrating:
 
 1. Count packed hits, misses, legacy cache ranks, and record-scan depth in real
    gameplay without enabling counters in production runs.
-2. Compare the two-level candidate with a full 4 MiB page table and a one-entry
-   hot sparse-range/page cache. A full table can cover the complete 32-bit guest
-   space and remove leaf-exhaustion fallback complexity; putting all four
-   legacy range checks ahead of packed lookup would penalize fragmented cases.
-3. Repeat fixed-work **browser** A/Bs for Heroes II/III, Diablo, StarCraft,
+2. Repeat fixed-work **browser** A/Bs for Heroes II/III, Diablo, StarCraft,
    Diablo II, and Alpha Centauri with rotated arm order; D2 now has a healthy
    baseline but only one complete pair.
-4. Only then layer optional audit/enforcement of `VirtualAlloc` and
+3. Only then layer optional audit/enforcement of `VirtualAlloc` and
    `VirtualProtect` access flags onto the chosen translator.

@@ -74,53 +74,13 @@
   ;; (simulating Windows null-page behavior) and writes go to a harmless sink.
   (global $NULL_SENTINEL i32 (i32.const 0xF0))
 
-  ;; Return the directory leaf for one low-user-space guest address. Directory
-  ;; slots cover 1MB each; leaves contain 256 packed 4KB-page entries.
-  (func $guest_page_leaf (param $ga i32) (result i32)
-    (if (i32.ge_u (local.get $ga) (i32.const 0x80000000))
-      (then (return (i32.const 0))))
-    (i32.atomic.load
-      (i32.add (global.get $GUEST_PAGE_DIR)
-        (i32.and (i32.shr_u (local.get $ga) (i32.const 18))
-          (i32.const 0x1FFC)))))
-
-  ;; Called only while the virtual-map lock is held (or before guest workers
-  ;; exist). Publish the directory pointer last so lock-free readers never see
-  ;; a leaf until its bytes are zero and ready.
-  (func $guest_page_leaf_create (param $ga i32) (result i32)
-    (local $dir_slot i32) (local $leaf i32) (local $next i32)
-    (if (i32.ge_u (local.get $ga) (i32.const 0x80000000))
-      (then (return (i32.const 0))))
-    (local.set $dir_slot
-      (i32.add (global.get $GUEST_PAGE_DIR)
-        (i32.and (i32.shr_u (local.get $ga) (i32.const 18))
-          (i32.const 0x1FFC))))
-    (local.set $leaf (i32.atomic.load (local.get $dir_slot)))
-    (if (local.get $leaf) (then (return (local.get $leaf))))
-    (local.set $next (i32.load (global.get $GUEST_PAGE_STATE)))
-    (if (i32.ge_u (local.get $next) (global.get $GUEST_PAGE_LEAF_COUNT))
-      (then
-        ;; Once any committed mapping could not be indexed, an absent PTE is
-        ;; ambiguous. Translation mode then falls back to the record walk.
-        (i32.atomic.store (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 4))
-          (i32.const 1))
-        (return (i32.const 0))))
-    (local.set $leaf
-      (i32.add (global.get $GUEST_PAGE_LEAVES)
-        (i32.mul (local.get $next) (global.get $GUEST_PAGE_LEAF_SIZE))))
-    (call $zero_memory (local.get $leaf) (global.get $GUEST_PAGE_LEAF_SIZE))
-    (i32.store (global.get $GUEST_PAGE_STATE)
-      (i32.add (local.get $next) (i32.const 1)))
-    (i32.atomic.store (local.get $dir_slot) (local.get $leaf))
-    (local.get $leaf))
-
   ;; Publish an affine, page-aligned guest-to-WASM range into packed PTEs.
   ;; Low 12 bits remain available for access state; the initial translation
   ;; experiment records the permissive behavior the sparse mapper has today.
   (func $guest_page_publish_range
       (param $guest i32) (param $size i32) (param $backing i32)
       (param $flags i32) (result i32)
-    (local $cur i32) (local $end i32) (local $back i32) (local $leaf i32)
+    (local $cur i32) (local $end i32) (local $back i32)
     (if (i32.or
           (i32.or
             (i32.ne (i32.and (local.get $guest) (i32.const 0xFFF)) (i32.const 0))
@@ -135,20 +95,10 @@
     (local.set $back (local.get $backing))
     (block $done (loop $pages
       (br_if $done (i32.ge_u (local.get $cur) (local.get $end)))
-      (local.set $leaf (call $guest_page_leaf_create (local.get $cur)))
-      (if (i32.eqz (local.get $leaf))
-        (then
-          ;; This also covers an address outside the indexed user half. Once
-          ;; any page could not be represented, absent PTEs are no longer
-          ;; authoritative and readers must retain the legacy record walk.
-          (i32.atomic.store
-            (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 4))
-            (i32.const 1))
-          (return (i32.const 0))))
       (i32.atomic.store
-        (i32.add (local.get $leaf)
+        (i32.add (global.get $GUEST_PAGE_TABLE)
           (i32.and (i32.shr_u (local.get $cur) (i32.const 10))
-            (i32.const 0x3FC)))
+            (i32.const 0x003FFFFC)))
         (i32.or (i32.and (local.get $back) (i32.const 0xFFFFF000))
           (i32.or (local.get $flags) (global.get $GUEST_PTE_PRESENT))))
       (local.set $cur (i32.add (local.get $cur) (i32.const 0x1000)))
@@ -157,33 +107,27 @@
     (i32.const 1))
 
   (func $guest_page_clear_range (param $guest i32) (param $size i32)
-    (local $cur i32) (local $end i32) (local $leaf i32)
+    (local $cur i32) (local $end i32)
     (local.set $end (i32.add (local.get $guest) (local.get $size)))
     (if (i32.lt_u (local.get $end) (local.get $guest)) (then (return)))
     (local.set $cur (local.get $guest))
     (block $done (loop $pages
       (br_if $done (i32.ge_u (local.get $cur) (local.get $end)))
-      (local.set $leaf (call $guest_page_leaf (local.get $cur)))
-      (if (local.get $leaf)
-        (then
-          (i32.atomic.store
-            (i32.add (local.get $leaf)
-              (i32.and (i32.shr_u (local.get $cur) (i32.const 10))
-                (i32.const 0x3FC)))
-            (i32.const 0))))
+      (i32.atomic.store
+        (i32.add (global.get $GUEST_PAGE_TABLE)
+          (i32.and (i32.shr_u (local.get $cur) (i32.const 10))
+            (i32.const 0x003FFFFC)))
+        (i32.const 0))
       (local.set $cur (i32.add (local.get $cur) (i32.const 0x1000)))
       (br $pages))))
 
   (func $guest_page_translate (param $ga i32) (result i32)
-    (local $leaf i32) (local $pte i32)
-    (local.set $leaf (call $guest_page_leaf (local.get $ga)))
-    (if (i32.eqz (local.get $leaf))
-      (then (return (global.get $NULL_SENTINEL))))
+    (local $pte i32)
     (local.set $pte
       (i32.atomic.load
-        (i32.add (local.get $leaf)
+        (i32.add (global.get $GUEST_PAGE_TABLE)
           (i32.and (i32.shr_u (local.get $ga) (i32.const 10))
-            (i32.const 0x3FC)))))
+            (i32.const 0x003FFFFC)))))
     (if (i32.eqz (i32.and (local.get $pte) (global.get $GUEST_PTE_PRESENT)))
       (then (return (global.get $NULL_SENTINEL))))
     (i32.or
@@ -216,18 +160,15 @@
         (return (i32.add
           (global.get $DIB_BACKING_BASE)
           (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))))))
-    ;; Experimental sparse fast path. An absent entry is authoritative unless
-    ;; leaf storage was exhausted; in that rare case preserve correctness by
-    ;; falling through to the established cache and record walk.
+    ;; Experimental sparse fast path. The flat table covers the complete guest
+    ;; address space, so an absent entry is authoritative and never falls
+    ;; through to the established range cache or record walk.
     (if (global.get $guest_page_translation)
       (then
         (local.set $wa (call $guest_page_translate (local.get $ga)))
         (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
           (then (return (local.get $wa))))
-        (if (i32.eqz
-              (i32.atomic.load
-                (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 4))))
-          (then (return (call $g2w_miss (local.get $ga)))))))
+        (return (call $g2w_miss (local.get $ga)))))
     ;; Sparse VirtualAlloc mappings live outside the direct image-relative
     ;; window. Map records are append-only (VirtualFree currently preserves
     ;; its backing), so a successful last-range translation remains valid even

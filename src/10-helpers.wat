@@ -484,18 +484,19 @@
           (call $zero_memory (local.get $backing_ptr) (local.get $size))
           ;; Publish packed translations before the larger record size. A
           ;; reader that chooses the page-table path can therefore never see a
-          ;; committed byte whose PTE still names no backing. Leaf exhaustion
-          ;; is non-fatal: it sets the table's fallback bit and legacy lookup
-          ;; remains authoritative for the unindexed tail.
+          ;; committed byte whose PTE still names no backing. Publication
+          ;; failure rejects the commit before its larger record size becomes
+          ;; visible, so packed readers never need a record-scan fallback.
           (if (i32.atomic.load
                 (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 8)))
             (then
-              (drop (call $guest_page_publish_range
-                (local.get $guest) (local.get $size) (local.get $backing_ptr)
-                (i32.or (global.get $GUEST_PTE_COMMITTED)
-                  (i32.or (global.get $GUEST_PTE_READ)
-                    (i32.or (global.get $GUEST_PTE_WRITE)
-                      (global.get $GUEST_PTE_EXEC))))))))
+              (if (i32.eqz (call $guest_page_publish_range
+                    (local.get $guest) (local.get $size) (local.get $backing_ptr)
+                    (i32.or (global.get $GUEST_PTE_COMMITTED)
+                      (i32.or (global.get $GUEST_PTE_READ)
+                        (i32.or (global.get $GUEST_PTE_WRITE)
+                          (global.get $GUEST_PTE_EXEC))))))
+                (then (return (i32.const 0))))))
           ;; Published last, atomically: a reader that sees the larger size is
           ;; guaranteed the backing behind it exists and is zeroed.
           (i32.atomic.store (i32.add (local.get $rec) (i32.const 4))
@@ -521,12 +522,13 @@
     (if (i32.atomic.load
           (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 8)))
       (then
-        (drop (call $guest_page_publish_range
-          (local.get $guest) (local.get $size) (local.get $backing_ptr)
-          (i32.or (global.get $GUEST_PTE_COMMITTED)
-            (i32.or (global.get $GUEST_PTE_READ)
-              (i32.or (global.get $GUEST_PTE_WRITE)
-                (global.get $GUEST_PTE_EXEC))))))))
+        (if (i32.eqz (call $guest_page_publish_range
+              (local.get $guest) (local.get $size) (local.get $backing_ptr)
+              (i32.or (global.get $GUEST_PTE_COMMITTED)
+                (i32.or (global.get $GUEST_PTE_READ)
+                  (i32.or (global.get $GUEST_PTE_WRITE)
+                    (global.get $GUEST_PTE_EXEC))))))
+          (then (return (i32.const 0))))))
     ;; The record is complete and its backing zeroed before the count that makes
     ;; it visible. Reversing these two lines is the whole bug this ordering
     ;; avoids: $g2w would map a guest address onto a record still being filled.
@@ -696,7 +698,7 @@
   ;; per-instance; the shared active bit makes every later VirtualAlloc publish
   ;; PTEs even when another worker performs the commit.
   (func $guest_page_translation_set (param $enabled i32)
-    (local $count i32) (local $i i32) (local $rec i32)
+    (local $count i32) (local $i i32) (local $rec i32) (local $ok i32)
     (if (i32.eqz (local.get $enabled))
       (then
         (global.set $guest_page_translation (i32.const 0))
@@ -707,6 +709,9 @@
           (i32.atomic.load
             (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 8))))
       (then
+        (call $zero_memory (global.get $GUEST_PAGE_TABLE)
+          (global.get $GUEST_PAGE_TABLE_SIZE))
+        (local.set $ok (i32.const 1))
         (local.set $count (i32.atomic.load (global.get $VIRTUAL_MAP_STATE)))
         (local.set $i (i32.const 0))
         (block $done (loop $maps
@@ -714,23 +719,30 @@
           (local.set $rec
             (i32.add (global.get $VIRTUAL_MAP_TABLE)
               (i32.shl (local.get $i) (i32.const 4))))
-          (drop (call $guest_page_publish_range
-            (i32.load (local.get $rec))
-            (i32.load (i32.add (local.get $rec) (i32.const 4)))
-            (i32.load (i32.add (local.get $rec) (i32.const 8)))
-            (i32.or (global.get $GUEST_PTE_COMMITTED)
-              (i32.or (global.get $GUEST_PTE_READ)
-                (i32.or (global.get $GUEST_PTE_WRITE)
-                  (global.get $GUEST_PTE_EXEC))))))
+          (if (i32.eqz (call $guest_page_publish_range
+                (i32.load (local.get $rec))
+                (i32.load (i32.add (local.get $rec) (i32.const 4)))
+                (i32.load (i32.add (local.get $rec) (i32.const 8)))
+                (i32.or (global.get $GUEST_PTE_COMMITTED)
+                  (i32.or (global.get $GUEST_PTE_READ)
+                    (i32.or (global.get $GUEST_PTE_WRITE)
+                      (global.get $GUEST_PTE_EXEC))))))
+            (then
+              (local.set $ok (i32.const 0))
+              (br $done)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $maps)))
-        ;; Publish active last: every existing record now has either a PTE or
-        ;; the explicit leaf-exhaustion fallback marker.
-        (i32.atomic.store
-          (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 8))
-          (i32.const 1))))
+        ;; Publish active last: every existing record now has a PTE. Failure
+        ;; leaves the experiment disabled rather than creating a mixed mode.
+        (if (local.get $ok)
+          (then
+            (i32.atomic.store
+              (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 8))
+              (i32.const 1))))))
     (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
-    (global.set $guest_page_translation (i32.const 1))
+    (global.set $guest_page_translation
+      (i32.atomic.load
+        (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 8))))
     (global.set $g2w_gl8_page (i32.const -1)))
 
   ;; HeapAlloc starts in the low direct guest window for compatibility, then

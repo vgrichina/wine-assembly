@@ -18,8 +18,8 @@ const extraWat = String.raw`
     (call $zero_memory (global.get $VIRTUAL_MAP_STATE)
       (i32.add (global.get $VIRTUAL_MAP_STATE_SIZE)
         (global.get $VIRTUAL_MAP_TABLE_SIZE)))
-    (call $zero_memory (global.get $GUEST_PAGE_DIR)
-      (global.get $GUEST_PAGE_DIR_SIZE))
+    (call $zero_memory (global.get $GUEST_PAGE_TABLE)
+      (global.get $GUEST_PAGE_TABLE_SIZE))
     (call $zero_memory (global.get $GUEST_PAGE_STATE)
       (global.get $GUEST_PAGE_STATE_SIZE))
     (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))
@@ -167,10 +167,24 @@ async function main() {
     'packed translation must resolve the main instance mapping');
   assert.strictEqual(worker.guest_to_wasm(graphicsBase) >>> 0, graphicsBacking >>> 0,
     'packed translations published by one instance must be visible to workers');
-  assert(main.get_guest_page_leaf_count() > 0,
-    'committed sparse mappings must allocate directory leaves on demand');
-  assert.strictEqual(main.get_guest_page_fallback(), 0,
-    'ordinary sparse maps must fit without falling back to record scans');
+  assert.strictEqual(main.get_guest_page_table_size(), 0x400000,
+    'packed translation must cover all 4GB with one flat PTE array');
+
+  // The former two-level directory covered only addresses below 2GB. The flat
+  // index is deliberately unsigned and covers the upper half as well, even
+  // though ordinary Win98 VirtualAlloc(NULL, ...) currently chooses lower
+  // addresses from its own arena.
+  main.test_virtual_reset();
+  const upperGuest = 0x90001000;
+  assert.strictEqual(main.test_virtual_commit(upperGuest, 0x1000) >>> 0, upperGuest,
+    'a high-bit guest address must fit the complete flat page table');
+  main.test_virtual_write32(upperGuest + 0xabc, 0x89abcdef);
+  assert.strictEqual(worker.test_virtual_read32(upperGuest + 0xabc) >>> 0, 0x89abcdef,
+    'workers must translate packed PTEs in the upper half of guest space');
+  assert.strictEqual(main.test_virtual_free(upperGuest) >>> 0, 1,
+    'an upper-half packed mapping must remain releasable');
+  assert.strictEqual(worker.guest_to_wasm(upperGuest) >>> 0, 0xf0,
+    'upper-half PTE release must become visible across instances');
 
   // A cleared PTE is authoritative in packed mode. In particular, do not fall
   // through to this instance's old four-entry cache after MEM_RELEASE.

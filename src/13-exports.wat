@@ -3258,10 +3258,8 @@
     (call $guest_page_translation_set (local.get $enabled)))
   (func (export "get_guest_page_translation") (result i32)
     (global.get $guest_page_translation))
-  (func (export "get_guest_page_leaf_count") (result i32)
-    (i32.atomic.load (global.get $GUEST_PAGE_STATE)))
-  (func (export "get_guest_page_fallback") (result i32)
-    (i32.atomic.load (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 4))))
+  (func (export "get_guest_page_table_size") (result i32)
+    (global.get $GUEST_PAGE_TABLE_SIZE))
   (func (export "get_bp_first_caller") (result i32) (global.get $bp_first_caller))
 
   ;; --trace-esp wiring (test harness uses this). Pass hi=0 to disable the
