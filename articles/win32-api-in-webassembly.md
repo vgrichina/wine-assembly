@@ -1,4 +1,5 @@
 # Implementing the Win32 API in WebAssembly: 3,000 functions, one dispatch table
+<!-- description: How 3,300 Win32 API handlers in WebAssembly Text are dispatched: a thunk zone, a hash table, a br_table, continuation thunks for SendMessage, no silent stubs. -->
 
 A Windows program is mostly calls into the operating system: create a window, get a message, draw text, open a file. Wine-Assembly answers those calls with handlers written in WebAssembly Text, about 3,300 of them, chosen one crash at a time by running real Windows 98 software until it asked for something missing. This article is about how that API layer is structured, how a call gets from the program to a handler, and the two rules that kept it honest.
 

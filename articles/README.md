@@ -1,4 +1,5 @@
 # Wine-Assembly articles: how a Windows 98 emulator in WebAssembly works
+<!-- description: Short articles on how a Windows 98 emulator in WebAssembly Text works: the x86 interpreter, lazy flags, real DLLs, the Win32 API, GDI, DirectX, Win16 and more. -->
 
 Wine-Assembly runs real Windows 98 programs in the browser: an x86 interpreter, a Win32 API layer, a software GDI, DirectX and a 16-bit loader, all written directly in WebAssembly Text. These articles each answer one question about how it is built. They are drawn from [the full project story](/story.html) and the [design docs](/docs/), and are shorter than either.
 

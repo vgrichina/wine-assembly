@@ -1,4 +1,5 @@
 # A DOS emulator in WebAssembly built to answer interpreter-design questions
+<!-- description: A real-mode DOS emulator in WebAssembly built to A/B interpreter designs: three execution tiers, a 199-program corpus, and what moved back to the main emulator. -->
 
 Alongside its Windows 98 emulator, Wine-Assembly contains a second, much smaller x86 machine: a real-mode DOS emulator, called the toy VM in the repository, that runs a corpus of 199 DOS programs and demos with VGA, PC speaker, Sound Blaster, OPL2 and GUS audio. It exists because the main emulator had become too large to A/B an interpreter design on, and it turned into the place where dispatch strategies, lazy flags, superinstructions, tracing JITs and a region JIT were tried with numbers. This article is about what it is and what it found.
 
