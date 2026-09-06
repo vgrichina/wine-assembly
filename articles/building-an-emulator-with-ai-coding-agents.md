@@ -1,4 +1,5 @@
 # Building an emulator with AI coding agents: what 3,700 commits with Claude Code and Codex taught
+<!-- description: What 3,700 commits with Claude Code and Codex taught: crash instead of stub, record what failed, measure honestly, and many agents in one source tree. -->
 
 Wine-Assembly, a Windows 98 emulator written in WebAssembly Text, was built in about five months by one maintainer working with Claude Code and Codex, often several agent sessions at once in one repository. The record of that collaboration is unusually complete: 3,758 commits, 431 Claude sessions, 118 Codex rollouts and a 4,400-line shared message board, all reconstructed in [the project story](/story.html). This article pulls out what actually made it work, for anyone trying to run systems work with coding agents rather than demos.
 

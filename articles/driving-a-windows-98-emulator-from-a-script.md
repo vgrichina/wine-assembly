@@ -1,4 +1,5 @@
 # Driving a Windows 98 emulator from a script: headless runs, frozen mode and the agent control channel
+<!-- description: How to drive a Windows 98 emulator from a script: headless runs, batch-scheduled input, frozen mode, a JSON control channel and the browser's agent handoff. -->
 
 Wine-Assembly can be operated entirely from the command line: load a program, advance it by an exact number of steps, inject keys and clicks at chosen points, take screenshots, dump memory, and hand the whole session to another process over a JSON channel. That is how its regression suite works, how AI agents play its games, and how the recordings on the site are made. This article walks through the control surface, from the headless CLI to the browser's "Agent handoff" button.
 

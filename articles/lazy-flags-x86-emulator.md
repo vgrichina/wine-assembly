@@ -1,4 +1,5 @@
 # Lazy flags: how an x86 emulator avoids computing EFLAGS after every instruction
+<!-- description: How an x86 emulator skips computing EFLAGS after every instruction: four globals, flags computed on read, the bugs the scheme caused and measured numbers. -->
 
 Almost every x86 arithmetic instruction updates the carry, zero, sign, overflow and parity flags, and almost no instruction reads them. An emulator that computes all five after every `ADD` spends most of its ALU time on results nobody looks at. Wine-Assembly, a Windows 98 emulator written in WebAssembly Text, uses *lazy flags*: it records what the last flag-setting operation was and computes a flag only when a `Jcc`, `SETcc`, `ADC` or `PUSHF` actually asks. This article explains the scheme, the bugs it produced, and what a second implementation in the project's toy VM taught about it.
 

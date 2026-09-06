@@ -93,12 +93,20 @@ function gitDate(rel, which) {
   } catch (_) { return null; }
 }
 
-// Title = first H1; description = first real paragraph, trimmed to what a
-// search snippet shows. Markdown is stripped by rendering the paragraph and
-// dropping the tags, so a description never carries a stray backtick.
+// Title = first H1. Description: an explicit `<!-- description: ... -->`
+// comment when the page has one (invisible on GitHub, so the .md stays the
+// source), else the first real paragraph cut at a sentence end that fits a
+// search snippet, else a word cut with an ellipsis. Markdown is stripped by
+// rendering the paragraph and dropping the tags, so a description never
+// carries a stray backtick, and entities are decoded so esc() at the tag
+// does not double-escape an apostrophe.
+const DESC_MAX = 158;
+const unescapeHtml = s => s.replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n))
+  .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 function extractMeta(md) {
   const lines = md.split('\n');
   let title = null;
+  const explicit = md.match(/<!--\s*description:\s*([\s\S]*?)-->/);
   const paras = [];
   let cur = [];
   let inFence = false;
@@ -114,9 +122,19 @@ function extractMeta(md) {
     cur.push(line.trim());
   }
   if (cur.length) paras.push(cur.join(' '));
+  if (explicit) return { title: title || SITE_NAME, description: explicit[1].replace(/\s+/g, ' ').trim() };
+  // A page that opens with a table or a list has no paragraph to quote;
+  // the title is a better snippet than an empty attribute.
+  if (!paras.length) return { title: title || SITE_NAME, description: `${title || SITE_NAME}: notes from the ${SITE_NAME} Windows 98 emulator.` };
   const first = paras.find(p => p.replace(/[*_`]/g, '').length > 40) || paras[0] || '';
-  let text = marked.parseInline(first).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-  if (text.length > 158) text = text.slice(0, 155).replace(/\s+\S*$/, '') + '…';
+  let text = unescapeHtml(marked.parseInline(first).replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
+  if (text.length > DESC_MAX) {
+    // Prefer ending on a whole sentence: the last ". " that still leaves a
+    // description of useful length. Otherwise cut at a word.
+    const head = text.slice(0, DESC_MAX);
+    const end = head.lastIndexOf('. ');
+    text = end >= 40 ? head.slice(0, end + 1) : text.slice(0, DESC_MAX - 3).replace(/\s+\S*$/, '') + '…';
+  }
   return { title: title || SITE_NAME, description: text };
 }
 
@@ -262,6 +280,15 @@ function pngSize(file) {
   return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
 }
 const sizeAttrs = s => s ? `width="${s.width}" height="${s.height}"` : '';
+
+// Snippet for an app page: the blurb, plus the "runs in your browser" line
+// when a one-line blurb leaves room for it; a long blurb is cut at a
+// sentence end rather than padded.
+function appDescription(app) {
+  const tail = ` Runs in your browser on ${SITE_NAME}, a Windows 98 emulator in WebAssembly.`;
+  const base = app.blurb.length <= DESC_MAX ? app.blurb : extractMeta(app.blurb).description;
+  return base.length + tail.length <= DESC_MAX ? base + tail : base;
+}
 
 function dropdownGroups() {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf-8');
@@ -457,7 +484,7 @@ function generatePages() {
     content: pageHtml({
       md: storyMd,
       title: 'How Wine-Assembly was built: a Windows 98 emulator in raw WebAssembly',
-      description: 'The history of Wine-Assembly, an x86 Windows 98 emulator written directly in WebAssembly Text: from the first instruction decoder to a browser that runs Notepad, Pinball, Winamp, DirectX games and 16-bit Windows apps.',
+      description: 'The history of Wine-Assembly, a Windows 98 emulator in WebAssembly: from the first x86 decoder to a browser running Pinball, Winamp, DirectX and Win16 apps.',
       urlPath: 'story.html', sourceRel: 'PROJECT_STORY.md',
       dates: storyDates,
     }),
@@ -499,7 +526,9 @@ function generatePages() {
       content: pageHtml({
         md,
         title: `${app.name} in your browser`,
-        description: extractMeta(md).description,
+        // The blurb is the description; the boilerplate sentence after it
+        // in the page body only pads a snippet.
+        description: appDescription(app),
         urlPath: `apps/${app.id}.html`, sourceRel: APP_BLURBS_REL,
         dates: blurbDates,
         ogImage,
@@ -599,7 +628,7 @@ function generatePages() {
     content: pageHtml({
       md: designMd,
       title: 'How Wine-Assembly works: articles, design docs and reverse-engineering notes',
-      description: 'How a Windows 98 emulator written in WebAssembly Text works: articles on the x86 interpreter, lazy flags, real DLLs, software GDI, DirectX and Win16, plus the design docs and per-game reverse-engineering notes behind them.',
+      description: 'How a Windows 98 emulator in WebAssembly Text works: articles on the x86 interpreter, lazy flags, DLLs, GDI, DirectX and Win16, plus design docs and RE notes.',
       urlPath: 'design/', sourceRel: 'articles/README.md',
       dates: { modified: today },
     }).replace('class="wrap"', 'class="wrap docs-index"'),
@@ -614,7 +643,7 @@ function generatePages() {
     content: pageHtml({
       md: indexMd,
       title: 'Wine-Assembly design docs and reverse-engineering notes',
-      description: 'How a Windows 98 emulator written in WebAssembly Text works: memory map, threaded-code x86 dispatch, lazy flags, software GDI, DirectX, Win16, and per-game reverse-engineering notes.',
+      description: 'Design docs and reverse-engineering notes for a Windows 98 emulator in WebAssembly Text: memory map, x86 dispatch, lazy flags, software GDI, DirectX, Win16.',
       urlPath: 'docs/', sourceRel: 'docs',
       canonical: 'design/',
       dates: { modified: today },

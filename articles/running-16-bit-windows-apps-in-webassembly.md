@@ -1,4 +1,5 @@
 # Running 16-bit Windows 3.x programs in the browser: an NE loader in WebAssembly
+<!-- description: How 16-bit Windows 3.x programs run in the browser: an NE loader, segmented-execution handlers and a Pascal-convention Win16 dispatcher, all in WebAssembly. -->
 
 Windows 98 still ran 16-bit programs, and a lot of the shareware, entertainment packs and utilities of the era are NE (New Executable) files that use segmented addressing and call `KERNEL`, `USER` and `GDI` by ordinal through the Pascal calling convention. Wine-Assembly runs them on the same interpreter as its 32-bit programs by adding a second loader, a set of segmented-memory instruction handlers and a Win16 API dispatcher. This article explains the three pieces and what it took to get the 16-bit Entertainment Pack running.
 

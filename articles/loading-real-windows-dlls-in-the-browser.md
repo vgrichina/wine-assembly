@@ -1,4 +1,5 @@
 # Loading real Windows DLLs in the browser: MFC42, msvcrt, DirectX and the rest
+<!-- description: How Wine-Assembly loads real mfc42, msvcrt and DirectX DLLs in the browser: section mapping, relocations, import resolution, and the traps found on the way. -->
 
 Wine-Assembly does not reimplement MFC, the Visual C++ runtime or Direct3D Retained Mode. It loads the real `mfc42.dll`, `msvcrt.dll`, `d3drm.dll` and whatever DLLs ship next to a program, relocates them into the emulated address space and runs their x86 code in the same interpreter as the program itself. Only the operating system boundary, the Win32 API, is implemented by the emulator. This article is about the loader that makes that split work.
 
