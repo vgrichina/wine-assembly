@@ -9,8 +9,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
 const { PNG } = require('pngjs');
+const { startControlSession } = require('./control-session');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -69,7 +69,7 @@ async function main() {
   const probePath = process.env.GENERALLY_PROBE || path.join(temp, 'race-probe.png');
   const frameAPath = path.join(temp, 'race-a.png');
   const frameBPath = process.env.GENERALLY_SCREENSHOT || path.join(temp, 'race-b.png');
-  const child = spawn('node', [
+  const session = startControlSession([
     RUN,
     '--app=generally',
     '--screen=800x600',
@@ -78,52 +78,8 @@ async function main() {
     '--quiet-api',
     '--quiet-blocks',
     '--repaint-every=1000',
-  ], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
-
-  let output = '';
-  let lineBuf = '';
-  let nextId = 1;
-  const pending = new Map();
-  const childExit = new Promise(resolve => child.on('exit', code => resolve(code)));
-
-  function onData(data) {
-    output += data;
-    lineBuf += String(data);
-    const lines = lineBuf.split(/\r?\n/);
-    lineBuf = lines.pop() || '';
-    for (const line of lines) {
-      const match = line.match(/^\[ctl\] (.*)$/);
-      if (!match) continue;
-      let reply;
-      try { reply = JSON.parse(match[1]); } catch (_) { continue; }
-      const waiter = pending.get(reply.id);
-      if (!waiter) continue;
-      pending.delete(reply.id);
-      reply.ok ? waiter.resolve(reply.value) : waiter.reject(new Error(reply.error));
-    }
-  }
-
-  child.stdout.on('data', onData);
-  child.stderr.on('data', data => { output += data; });
-  child.on('exit', code => {
-    for (const [id, waiter] of pending) {
-      waiter.reject(new Error(`run.js exited before replying to ${id} (exit ${code})`));
-    }
-    pending.clear();
-  });
-
-  function send(command) {
-    const id = `g${nextId++}`;
-    const payload = typeof command === 'string' ? { id, cmd: command } : { id, ...command };
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      child.stdin.write(`${JSON.stringify(payload)}\n`, error => {
-        if (!error) return;
-        pending.delete(id);
-        reject(error);
-      });
-    });
-  }
+  ], { cwd: ROOT, idPrefix: 'g' });
+  const { send } = session;
 
   async function waitFor(description, probe, ms = 85000) {
     const deadline = Date.now() + ms;
@@ -133,7 +89,7 @@ async function main() {
       if (last) return last;
       await sleep(250);
     }
-    throw new Error(`timed out waiting for ${description}; last=${JSON.stringify(last)}\n${output.slice(-5000)}`);
+    throw new Error(`timed out waiting for ${description}; last=${JSON.stringify(last)}\n${session.output().slice(-5000)}`);
   }
 
   try {
@@ -192,21 +148,15 @@ async function main() {
     const changed = pixelDiff(a.png, b.png);
     assert(changed > 3000,
       `GeneRally race did not advance after acceleration/steering: ${changed} changed pixels`);
-    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(output),
-      `GeneRally hit a compatibility failure\n${output.slice(-8000)}`);
+    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(session.output()),
+      `GeneRally hit a compatibility failure\n${session.output().slice(-8000)}`);
 
-    await send({ action: 'quit' });
-    child.stdin.end();
-    const code = await childExit;
-    assert(code === 0, `GeneRally CLI exited ${code}\n${output.slice(-8000)}`);
+    const code = await session.quit();
+    assert(code === 0, `GeneRally CLI exited ${code}\n${session.output().slice(-8000)}`);
     console.log(`PASS GeneRally gameplay: ${race.colors} race colors, ${changed} changed pixels`);
     console.log(`PASS GeneRally screenshot: ${frameBPath}`);
   } catch (error) {
-    if (child.exitCode === null) {
-      try { await send({ action: 'quit' }); } catch (_) {}
-      child.stdin.end();
-      await childExit;
-    }
+    await session.quit({ ignoreReplyError: true });
     throw error;
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });

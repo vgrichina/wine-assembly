@@ -9,8 +9,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
 const { PNG } = require('pngjs');
+const { startControlSession } = require('./control-session');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -58,7 +58,7 @@ async function main() {
   const probePath = process.env.CAVE_STORY_PROBE || path.join(temp, 'probe.png');
   const frameAPath = path.join(temp, 'gameplay-a.png');
   const frameBPath = process.env.CAVE_STORY_SCREENSHOT || path.join(temp, 'gameplay-b.png');
-  const child = spawn('node', [
+  const session = startControlSession([
     RUN,
     '--app=cave_story',
     '--screen=800x600',
@@ -68,52 +68,8 @@ async function main() {
     '--quiet-api',
     '--quiet-blocks',
     '--repaint-every=2000',
-  ], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
-
-  let output = '';
-  let lineBuf = '';
-  let nextId = 1;
-  const pending = new Map();
-  const childExit = new Promise(resolve => child.on('exit', code => resolve(code)));
-
-  function onData(data) {
-    output += data;
-    lineBuf += String(data);
-    const lines = lineBuf.split(/\r?\n/);
-    lineBuf = lines.pop() || '';
-    for (const line of lines) {
-      const match = line.match(/^\[ctl\] (.*)$/);
-      if (!match) continue;
-      let reply;
-      try { reply = JSON.parse(match[1]); } catch (_) { continue; }
-      const waiter = pending.get(reply.id);
-      if (!waiter) continue;
-      pending.delete(reply.id);
-      reply.ok ? waiter.resolve(reply.value) : waiter.reject(new Error(reply.error));
-    }
-  }
-
-  child.stdout.on('data', onData);
-  child.stderr.on('data', data => { output += data; });
-  child.on('exit', code => {
-    for (const [id, waiter] of pending) {
-      waiter.reject(new Error(`run.js exited before replying to ${id} (exit ${code})`));
-    }
-    pending.clear();
-  });
-
-  function send(command) {
-    const id = `c${nextId++}`;
-    const payload = typeof command === 'string' ? { id, cmd: command } : { id, ...command };
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      child.stdin.write(`${JSON.stringify(payload)}\n`, error => {
-        if (!error) return;
-        pending.delete(id);
-        reject(error);
-      });
-    });
-  }
+  ], { cwd: ROOT, idPrefix: 'c' });
+  const { send } = session;
 
   async function waitFor(description, probe, ms) {
     const deadline = Date.now() + ms;
@@ -123,7 +79,7 @@ async function main() {
       if (last) return last;
       await sleep(1000);
     }
-    throw new Error(`timed out waiting for ${description}; last=${JSON.stringify(last)}\n${output.slice(-6000)}`);
+    throw new Error(`timed out waiting for ${description}; last=${JSON.stringify(last)}\n${session.output().slice(-6000)}`);
   }
 
   async function pulse(vk, gap = 300) {
@@ -181,21 +137,15 @@ async function main() {
     const changed = pixelDiff(a.png, b.png);
     assert(changed > 1000,
       `Cave Story did not move after right+jump input: ${changed} changed pixels`);
-    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(output),
-      `Cave Story hit a compatibility failure\n${output.slice(-8000)}`);
+    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(session.output()),
+      `Cave Story hit a compatibility failure\n${session.output().slice(-8000)}`);
 
-    await send({ action: 'quit' });
-    child.stdin.end();
-    const code = await childExit;
-    assert(code === 0, `Cave Story CLI exited ${code}\n${output.slice(-8000)}`);
+    const code = await session.quit();
+    assert(code === 0, `Cave Story CLI exited ${code}\n${session.output().slice(-8000)}`);
     console.log(`PASS Cave Story gameplay: ${title.colors}/${room.colors} title/room colors, ${changed} changed pixels`);
     console.log(`PASS Cave Story screenshot: ${frameBPath}`);
   } catch (error) {
-    if (child.exitCode === null) {
-      try { await send({ action: 'quit' }); } catch (_) {}
-      child.stdin.end();
-      await childExit;
-    }
+    await session.quit({ ignoreReplyError: true });
     throw error;
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });

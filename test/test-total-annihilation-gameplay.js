@@ -4,8 +4,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
 const { PNG } = require('pngjs');
+const { startControlSession } = require('./control-session');
 
 const ROOT = path.join(__dirname, '..');
 const INSTALLED = path.join(__dirname, 'binaries', 'candidates',
@@ -50,55 +50,13 @@ async function main() {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-ta-gameplay-'));
   const frameAPath = path.join(temp, 'battlefield-a.png');
   const frameBPath = process.env.TA_SCREENSHOT || path.join(temp, 'battlefield-b.png');
-  const child = spawn(process.execPath, [
+  const session = startControlSession([
     'test/run.js', '--app=total_annihilation_demo', '--screen=640x480',
     '--batch-size=1000', '--control-stdin', '--frozen', '--max-seconds=120',
     '--quiet-api', '--quiet-blocks', '--no-close', '--no-build',
     '--repaint-every=1000000',
-  ], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
-
-  let output = '';
-  let lineBuffer = '';
-  let serial = 0;
-  const pending = new Map();
-  const exited = new Promise(resolve => child.on('exit', resolve));
-
-  child.stdout.on('data', data => {
-    output += data;
-    lineBuffer += data;
-    const lines = lineBuffer.split(/\r?\n/);
-    lineBuffer = lines.pop() || '';
-    for (const line of lines) {
-      const match = line.match(/^\[ctl\] (.*)$/);
-      if (!match) continue;
-      let reply;
-      try { reply = JSON.parse(match[1]); } catch (_) { continue; }
-      const waiter = pending.get(reply.id);
-      if (!waiter) continue;
-      pending.delete(reply.id);
-      reply.ok ? waiter.resolve(reply.value) : waiter.reject(new Error(reply.error));
-    }
-  });
-  child.stderr.on('data', data => { output += data; });
-  child.on('exit', code => {
-    for (const [id, waiter] of pending) {
-      waiter.reject(new Error(`run.js exited before replying to ${id} (exit ${code})`));
-    }
-    pending.clear();
-  });
-
-  function send(command) {
-    const id = `ta${++serial}`;
-    const payload = typeof command === 'string' ? { id, cmd: command } : { id, ...command };
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      child.stdin.write(`${JSON.stringify(payload)}\n`, error => {
-        if (!error) return;
-        pending.delete(id);
-        reject(error);
-      });
-    });
-  }
+  ], { cwd: ROOT, idPrefix: 'ta' });
+  const { send } = session;
 
   try {
     await send({ action: 'ping' });
@@ -131,21 +89,16 @@ async function main() {
     assert(minimap > 100, `battlefield minimap is missing (${minimap} green pixels)`);
     assert(resourceText > 100, `resource HUD is missing (${resourceText} yellow pixels)`);
     assert(changed > 100, `battlefield did not respond to pointer input (${changed} changed pixels)`);
-    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(output),
-      `Total Annihilation hit a compatibility failure\n${output.slice(-6000)}`);
+    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(session.output()),
+      `Total Annihilation hit a compatibility failure\n${session.output().slice(-6000)}`);
 
-    await send({ action: 'quit' });
-    child.stdin.end();
-    const code = await exited;
-    assert(code === 0, `Total Annihilation CLI exited ${code}\n${output.slice(-6000)}`);
+    const code = await session.quit();
+    assert(code === 0,
+      `Total Annihilation CLI exited ${code}\n${session.output().slice(-6000)}`);
     console.log(`PASS Total Annihilation gameplay: terrain=${terrain}, minimap=${minimap}, inputPixels=${changed}`);
     console.log(`PASS Total Annihilation screenshot: ${frameBPath}`);
   } catch (error) {
-    if (child.exitCode === null) {
-      try { await send({ action: 'quit' }); } catch (_) {}
-      child.stdin.end();
-      await exited;
-    }
+    await session.quit({ ignoreReplyError: true });
     throw error;
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });

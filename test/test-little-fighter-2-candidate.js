@@ -10,8 +10,9 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn, spawnSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const { PNG } = require('pngjs');
+const { startControlSession } = require('./control-session');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -136,7 +137,7 @@ async function runGameplay(gameExe, screenshotDir) {
   const frameAPath = path.join(screenshotDir, 'gameplay-a.png');
   const frameBPath = path.join(screenshotDir, 'gameplay-b.png');
   const useRegisteredApp = process.env.PREPARE_LF2_DEBUG_WEB === '1';
-  const child = spawn('node', [
+  const session = startControlSession([
     RUN,
     useRegisteredApp ? '--app=little_fighter_2' : `--exe=${gameExe}`,
     ...(useRegisteredApp ? [] : ['--vfs-include=**/*']),
@@ -148,52 +149,8 @@ async function runGameplay(gameExe, screenshotDir) {
     '--quiet-api',
     '--quiet-blocks',
     '--no-build',
-  ], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
-
-  let output = '';
-  let lineBuf = '';
-  let nextId = 1;
-  const pending = new Map();
-  const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
-
-  function onData(data) {
-    output += data;
-    lineBuf += String(data);
-    const lines = lineBuf.split(/\r?\n/);
-    lineBuf = lines.pop() || '';
-    for (const line of lines) {
-      const match = line.match(/^\[ctl\] (.*)$/);
-      if (!match) continue;
-      let reply;
-      try { reply = JSON.parse(match[1]); } catch (_) { continue; }
-      const waiter = pending.get(reply.id);
-      if (!waiter) continue;
-      pending.delete(reply.id);
-      reply.ok ? waiter.resolve(reply.value) : waiter.reject(new Error(reply.error));
-    }
-  }
-
-  child.stdout.on('data', onData);
-  child.stderr.on('data', data => { output += data; });
-  child.on('exit', code => {
-    for (const [id, waiter] of pending) {
-      waiter.reject(new Error(`run.js exited before replying to ${id} (exit ${code})`));
-    }
-    pending.clear();
-  });
-
-  function send(command) {
-    const id = `lf${nextId++}`;
-    const payload = typeof command === 'string' ? { id, cmd: command } : { id, ...command };
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      child.stdin.write(`${JSON.stringify(payload)}\n`, error => {
-        if (!error) return;
-        pending.delete(id);
-        reject(error);
-      });
-    });
-  }
+  ], { cwd: ROOT, idPrefix: 'lf' });
+  const { send } = session;
 
   // Short stepped bursts cap continuous CPU use. Between bursts the frozen
   // CLI blocks on stdin and executes no emulator work.
@@ -203,7 +160,7 @@ async function runGameplay(gameExe, screenshotDir) {
       const n = Math.min(chunk, remaining);
       const reply = await send({ action: 'step', n });
       assert(reply.ran === n,
-        `LF2 requested ${n} steps but ran ${reply.ran}: ${JSON.stringify(reply)}\n${output.slice(-5000)}`);
+        `LF2 requested ${n} steps but ran ${reply.ran}: ${JSON.stringify(reply)}\n${session.output().slice(-5000)}`);
       remaining -= n;
       if (remaining) await sleep(40);
     }
@@ -269,20 +226,15 @@ async function runGameplay(gameExe, screenshotDir) {
     const changed = pixelDiff(a.png, b.png);
     assert(changed > 50000,
       `LF2 fighters/arena did not advance after movement and attack: ${changed} pixels`);
-    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(output),
-      `LF2 hit a compatibility failure\n${output.slice(-8000)}`);
+    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(session.output()),
+      `LF2 hit a compatibility failure\n${session.output().slice(-8000)}`);
 
-    await send({ action: 'quit' });
-    child.stdin.end();
-    const code = await exited;
-    assert(code === 0, `LF2 gameplay CLI exited ${code}\n${output.slice(-8000)}`);
+    const code = await session.quit();
+    assert(code === 0,
+      `LF2 gameplay CLI exited ${code}\n${session.output().slice(-8000)}`);
     return { a, b, changed, frameAPath, frameBPath };
   } catch (error) {
-    if (child.exitCode === null) {
-      try { await send({ action: 'quit' }); } catch (_) {}
-      child.stdin.end();
-      await exited;
-    }
+    await session.quit({ ignoreReplyError: true });
     throw error;
   }
 }

@@ -10,6 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { startControlSession } = require('./control-session');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -29,60 +30,26 @@ const check = (name, ok, detail) => {
   if (!ok) failed = true;
 };
 
-const child = spawn('node', [
+const privateClients = fs.readdirSync(__dirname)
+  .filter(name => /^test-.*\.js$/.test(name))
+  .filter(name => {
+    const source = fs.readFileSync(path.join(__dirname, name), 'utf8');
+    return source.includes('--control-stdin') &&
+      /pending\s*=\s*new Map\s*\(\)/.test(source) &&
+      /\\?\[ctl\\?\]/.test(source);
+  });
+check('control tests share one reply parser', privateClients.length === 0,
+  privateClients.join(', '));
+
+const session = startControlSession([
   RUN,
   `--exe=${EXE}`,
   '--control-stdin',
   '--max-seconds=45',
   '--quiet-api',
   '--quiet-blocks',
-], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
-
-let output = '';
-let lineBuf = '';
-let nextId = 1;
-const pending = new Map();
-const childExit = new Promise(resolve => child.on('exit', code => resolve(code)));
-
-function onData(data) {
-  output += data;
-  lineBuf += String(data);
-  const lines = lineBuf.split(/\r?\n/);
-  lineBuf = lines.pop() || '';
-  for (const line of lines) {
-    const match = line.match(/^\[ctl\] (.*)$/);
-    if (!match) continue;
-    let reply;
-    try { reply = JSON.parse(match[1]); } catch (_) { continue; }
-    const waiter = pending.get(reply.id);
-    if (!waiter) continue;
-    pending.delete(reply.id);
-    reply.ok ? waiter.resolve(reply.value) : waiter.reject(new Error(reply.error || 'control command failed'));
-  }
-}
-
-child.stdout.on('data', onData);
-child.stderr.on('data', d => { output += d; });
-child.on('exit', code => {
-  for (const [id, waiter] of pending) {
-    waiter.reject(new Error(`run.js exited before replying to ${id} (exit ${code})`));
-  }
-  pending.clear();
-});
-
-function send(cmd) {
-  const id = `s${nextId++}`;
-  const payload = typeof cmd === 'string' ? { id, cmd } : { id, ...cmd };
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    child.stdin.write(`${JSON.stringify(payload)}\n`, error => {
-      if (error) {
-        pending.delete(id);
-        reject(error);
-      }
-    });
-  });
-}
+], { cwd: ROOT, idPrefix: 's' });
+const { child, exited: childExit, send } = session;
 
 async function typeText(text) {
   for (const ch of text) {
@@ -101,7 +68,7 @@ async function waitFor(what, probe, ms = 45000) {
     if (last) return last;
     await new Promise(r => setTimeout(r, 250));
   }
-  throw new Error(`timed out waiting for ${what}; last=${JSON.stringify(last)}\n--- child output tail ---\n${output.slice(-2000)}`);
+  throw new Error(`timed out waiting for ${what}; last=${JSON.stringify(last)}\n--- child output tail ---\n${session.output().slice(-2000)}`);
 }
 
 (async () => {
@@ -161,6 +128,21 @@ async function waitFor(what, probe, ms = 45000) {
   check('internal timeout closes stdin without requiring unref',
     boundedCode === 0 && !/TypeError|stdin\.unref/.test(boundedOutput),
     `exit=${boundedCode} output=${boundedOutput.slice(-1000)}`);
+
+  const abandoned = startControlSession([
+    '-e', 'process.stdin.once("data", () => process.exit(7))',
+  ], { cwd: ROOT, idPrefix: 'drop' });
+  const abandonedResult = abandoned.send({ action: 'ping' }).then(
+    value => ({ value }),
+    error => ({ error }),
+  );
+  const abandonedCode = await abandoned.exited;
+  const abandonedReply = await abandonedResult;
+  check('child exit rejects every pending control request',
+    abandonedCode === 7 && abandonedReply.error instanceof Error &&
+      /run\.js exited before replying to drop1 \(exit 7\)/
+        .test(abandonedReply.error.message),
+    `exit=${abandonedCode} reply=${JSON.stringify(abandonedReply)}`);
 })().catch(error => {
   console.log('FAIL  ' + (error.stack || error.message));
   failed = true;

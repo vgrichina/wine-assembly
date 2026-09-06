@@ -10,8 +10,9 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn, spawnSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const { PNG } = require('pngjs');
+const { startControlSession } = require('./control-session');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -103,52 +104,7 @@ function prepareDebugWeb(installDir) {
 }
 
 function startControlled(args, prefix) {
-  const child = spawn('node', [RUN, ...args], {
-    cwd: ROOT,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  let output = '';
-  let lineBuf = '';
-  let nextId = 1;
-  const pending = new Map();
-  const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
-
-  function onData(data) {
-    output += data;
-    lineBuf += String(data);
-    const lines = lineBuf.split(/\r?\n/);
-    lineBuf = lines.pop() || '';
-    for (const line of lines) {
-      const match = line.match(/^\[ctl\] (.*)$/);
-      if (!match) continue;
-      let reply;
-      try { reply = JSON.parse(match[1]); } catch (_) { continue; }
-      const waiter = pending.get(reply.id);
-      if (!waiter) continue;
-      pending.delete(reply.id);
-      reply.ok ? waiter.resolve(reply.value) : waiter.reject(new Error(reply.error));
-    }
-  }
-  child.stdout.on('data', onData);
-  child.stderr.on('data', data => { output += data; });
-  child.on('exit', code => {
-    for (const [, waiter] of pending) waiter.reject(new Error(`run.js exited ${code}`));
-    pending.clear();
-  });
-
-  function send(command) {
-    const id = `${prefix}${nextId++}`;
-    const payload = typeof command === 'string' ? { id, cmd: command } : { id, ...command };
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      child.stdin.write(`${JSON.stringify(payload)}\n`, error => {
-        if (!error) return;
-        pending.delete(id);
-        reject(error);
-      });
-    });
-  }
-  return { child, exited, send, output: () => output };
+  return startControlSession([RUN, ...args], { cwd: ROOT, idPrefix: prefix });
 }
 
 async function stepTotal(session, count, chunk = 25) {
@@ -164,11 +120,7 @@ async function stepTotal(session, count, chunk = 25) {
 }
 
 async function quitSession(session) {
-  if (session.child.exitCode === null) {
-    try { await session.send({ action: 'quit' }); } catch (_) {}
-    session.child.stdin.end();
-  }
-  return session.exited;
+  return session.quit();
 }
 
 const clickVisibleButtonCode = source => `(() => {
