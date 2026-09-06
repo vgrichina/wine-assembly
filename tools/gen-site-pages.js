@@ -120,10 +120,28 @@ function extractMeta(md) {
   return { title: title || SITE_NAME, description: text };
 }
 
-// Relative .md links inside the rendered pages point at the .html twin we
-// generate; everything else (src/, lib/, http) is left alone.
-function rewriteMdLinks(html) {
-  return html.replace(/href="([^"#:]+)\.md(#[^"]*)?"/g, (m, p, hash) => `href="${p}.html${hash || ''}"`);
+// Markdown links are resolved from the source document, not the generated
+// page. Documents rendered by this generator get their public HTML route;
+// repository-only Markdown stays useful by linking to its GitHub source
+// instead of inventing a local .html URL that the deploy does not contain.
+function markdownPublicUrl(sourceRel, href, hash) {
+  const absolute = href.startsWith('/');
+  const target = path.posix.normalize(absolute
+    ? href.slice(1)
+    : path.posix.join(path.posix.dirname(sourceRel), href));
+  if (target === 'PROJECT_STORY.md') return `/story.html${hash || ''}`;
+  if (target === 'articles/README.md') return `/articles/${hash || ''}`;
+  if (target === 'docs/re-notes/README.md') return `/docs/re-notes/${hash || ''}`;
+  if (/^articles\/[^/]+\.md$/.test(target) || /^docs\/(?:re-notes\/)?[^/]+\.md$/.test(target)) {
+    return `/${target.replace(/\.md$/, '.html')}${hash || ''}`;
+  }
+  const githubPath = target.split('/').map(encodeURIComponent).join('/');
+  return `${REPO}/blob/main/${githubPath}${hash || ''}`;
+}
+
+function rewriteMdLinks(html, sourceRel) {
+  return html.replace(/href="([^"#]+\.md)(#[^"]*)?"/g,
+    (match, href, hash) => `href="${markdownPublicUrl(sourceRel, href, hash)}"`);
 }
 
 function pageHtml({ md, title, description, urlPath, sourceRel, nav = NAV, dates, extraHead, ldExtra, ogImage = OG_IMAGE, canonical }) {
@@ -132,7 +150,7 @@ function pageHtml({ md, title, description, urlPath, sourceRel, nav = NAV, dates
   // design/) keeps serving its old URL but declares the new one canonical,
   // so what search engines already indexed transfers instead of competing.
   const canonicalUrl = canonical ? `${SITE}/${canonical}` : url;
-  let body = rewriteMdLinks(marked.parse(md, { gfm: true, breaks: false }));
+  let body = rewriteMdLinks(marked.parse(md, { gfm: true, breaks: false }), sourceRel);
   // ```mermaid fences: GitHub renders them in the .md; here they become
   // <pre class="mermaid"> and the page loads mermaid only when it has one.
   // marked's entity escaping is fine, mermaid reads the element's textContent.
@@ -419,7 +437,8 @@ function listDocs() {
     if (!fs.existsSync(full)) continue;
     for (const f of fs.readdirSync(full).sort()) {
       if (!f.endsWith('.md')) continue;
-      out.push({ rel: `${dir}/${f}`, urlPath: `docs/${prefix}${f.replace(/\.md$/, '.html')}` });
+      const page = f === 'README.md' ? 'index.html' : f.replace(/\.md$/, '.html');
+      out.push({ rel: `${dir}/${f}`, urlPath: `docs/${prefix}${page}` });
     }
   }
   return out;
