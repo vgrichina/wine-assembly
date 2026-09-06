@@ -144,7 +144,7 @@ function rewriteMdLinks(html) {
   return html.replace(/href="([^"#:]+)\.md(#[^"]*)?"/g, (m, p, hash) => `href="${p}.html${hash || ''}"`);
 }
 
-function pageHtml({ md, title, description, urlPath, sourceRel, nav = NAV, dates, extraHead, ldExtra, ogImage = OG_IMAGE, canonical }) {
+function pageHtml({ md, title, description, urlPath, sourceRel, nav = NAV, dates, extraHead, ldExtra, ldMore = [], ogImage = OG_IMAGE, canonical }) {
   const url = `${SITE}/${urlPath}`;
   // A page that has been folded into another (articles/ and docs/ into
   // design/) keeps serving its old URL but declares the new one canonical,
@@ -197,7 +197,7 @@ function pageHtml({ md, title, description, urlPath, sourceRel, nav = NAV, dates
   <meta name="twitter:image" content="${ogImage}">
   <meta name="theme-color" content="#008080">
   <link rel="icon" href="${SITE}/icons/icon-192.png">
-  <script type="application/ld+json">${JSON.stringify(ld)}</script>${extraHead || ''}${mermaidHead}
+  <script type="application/ld+json">${JSON.stringify(ld)}</script>${ldMore.map(x => `\n  <script type="application/ld+json">${JSON.stringify(x)}</script>`).join('')}${extraHead || ''}${mermaidHead}
   <style>${STYLE}  </style>
 </head>
 <body>
@@ -238,6 +238,7 @@ const NAV = [NAV_HOME, NAV_APPS, NAV_DESIGN, NAV_STORY, NAV_REPO].join(' ');
 // prose comes from tools/site-app-blurbs.json; everything else (exe, format,
 // DLLs, data files, command line) is read off the registry entry itself.
 const APP_BLURBS_REL = 'tools/site-app-blurbs.json';
+const APP_FAQ_REL = 'tools/site-app-faq.json';
 const OG_DIR = 'screenshots/og';
 const { ogCard } = require('./gen-og-images');
 // The selector's groups are about where a binary came from; the pages group
@@ -262,6 +263,38 @@ function pngSize(file) {
   return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
 }
 const sizeAttrs = s => s ? `width="${s.width}" height="${s.height}"` : '';
+
+// The Questions section of an app page, and the FAQPage JSON-LD that mirrors
+// it. Answers are built from facts the registry and the code already state
+// (touch layout, LAN flag, exe format, localStorage-backed registry/INI
+// persistence, the AudioContext resume on first input) plus the per-app
+// controls line in tools/site-app-faq.json. Nothing here claims a feature the
+// program has not been seen to use.
+function appFaq(app, faq) {
+  const qa = [];
+  qa.push([`How do I play ${app.name} in my browser?`,
+    `Open the ${app.name} page and click Launch. The program's files are fetched from this site and run inside the tab as WebAssembly; nothing is installed and nothing is uploaded.`]);
+  qa.push([`What are the controls for ${app.name}?`,
+    faq[app.id] || `${app.name} is played with the mouse and the same keyboard shortcuts as the original Windows 98 program; its menus list them.`]);
+  qa.push([`Does ${app.name} work on a phone?`,
+    app.touch
+      ? `Yes. On a phone the desktop scales to the screen and ${app.name} gets on-screen controls for the keys it needs, plus a keyboard button for anything else.`
+      : `It loads in mobile Safari and Chrome and the desktop scales to the screen, but ${app.name} was made for a mouse and a keyboard, so it plays best on a desktop browser. Taps act as clicks.`]);
+  qa.push([`Are my scores and settings saved?`,
+    `Whatever ${app.name} writes to the Windows registry or to its INI file is kept in this browser's local storage, so it is there next time on the same device and browser. Clearing site data removes it.`]);
+  qa.push([`Does sound work?`,
+    `Sound the program plays through the Windows wave and DirectSound APIs is routed to the browser's Web Audio. Browsers only allow audio after a click or a key press, so it starts with your first input.`]);
+  if (app.lan) qa.push([`Can I play ${app.name} against someone else?`,
+    `Yes, over the emulator's virtual LAN: two copies of the game on the same page share a network segment, so one can host and the other join as the original did on a 1990s LAN.`]);
+  qa.push([`Is this the real ${app.name} or a remake?`,
+    `It is the original ${app.format || 'Windows'} executable${app.exe ? ` (${app.exe})` : ''}, run instruction by instruction by an x86 interpreter written in WebAssembly Text. The emulator provides the Windows API underneath it, not a rewrite of the program.`]);
+  return qa;
+}
+const faqLd = qa => ({
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: qa.map(([q, a]) => ({ '@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a } })),
+});
 
 // Snippet for an app page: the blurb, plus the "runs in your browser" line
 // when a one-line blurb leaves room for it; a long blurb is cut at a
@@ -347,7 +380,7 @@ const ARTICLE_FOR_FORMAT = {
   '32-bit Windows (PE)': ['/articles/loading-real-windows-dlls-in-the-browser.html', 'how the program and its DLLs are loaded'],
 };
 
-function appPageMd(app, siblings) {
+function appPageMd(app, siblings, qa) {
   const L = [];
   L.push(`# ${app.name} in your browser`);
   L.push('');
@@ -387,6 +420,14 @@ function appPageMd(app, siblings) {
   }
   L.push(`Something wrong? The emulator is open source; [report it on GitHub](${REPO}/issues) with the app name and what you clicked.`);
   L.push('');
+  L.push('## Questions');
+  L.push('');
+  for (const [q, a] of qa) {
+    L.push(`### ${q}`);
+    L.push('');
+    L.push(a);
+    L.push('');
+  }
   if (siblings.length) {
     L.push(`## Also under "${app.group}"`);
     L.push('');
@@ -490,9 +531,11 @@ function generatePages() {
   // Per-app pages for the desktop set.
   const apps = loadDesktopApps();
   const blurbDates = { published: gitDate(APP_BLURBS_REL, 'first'), modified: gitDate(APP_BLURBS_REL) };
+  const faq = fs.existsSync(path.join(ROOT, APP_FAQ_REL)) ? JSON.parse(fs.readFileSync(path.join(ROOT, APP_FAQ_REL), 'utf-8')) : {};
   for (const app of apps) {
     const siblings = apps.filter(s => s.group === app.group && s.id !== app.id);
-    const md = appPageMd(app, siblings);
+    const qa = appFaq(app, faq);
+    const md = appPageMd(app, siblings, qa);
     // The app's own 1200x630 link-preview card, built from its screenshot.
     // Generated beside the pages (screenshots/og/ is not committed) and
     // uploaded by deploy-berrry.js with the other binary directories.
@@ -513,6 +556,7 @@ function generatePages() {
         urlPath: `apps/${app.id}.html`, sourceRel: APP_BLURBS_REL,
         dates: blurbDates,
         ogImage,
+        ldMore: [faqLd(qa)],
         ldExtra: {
           '@type': 'WebPage',
           about: { '@type': 'SoftwareApplication', name: app.name, operatingSystem: 'Windows 98', applicationCategory: app.group },
