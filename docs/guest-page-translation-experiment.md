@@ -69,11 +69,24 @@ host-load drift.
 | Diablo | +0.8%, -4.9% | inconsistent; approximately neutral/slightly negative |
 | StarCraft | -15.8%, +3.6% | host drift dominates; no conclusion |
 | Diablo II demo | 0.0%, -0.07% | early startup is neutral |
+| Diablo II gameplay | 139.99s off / 101.43s packed | one fixed-work pair: 27.5% less wall time, or 38.0% more throughput |
 
 Diablo II also demonstrates why map count is insufficient: it has the largest
-launch census but no startup throughput change. Its deterministic gameplay
-replay currently stops at the existing `Unable to start LNG manager` dialog in
-both arms against this base, so there is no valid gameplay A/B yet.
+launch census but no startup throughput change. The first gameplay attempt
+stopped at `Unable to start LNG manager` in both arms because the corpus
+preloaded all three mutually exclusive renderers and exhausted the emulator's
+16-slot DLL table before the game dynamically loaded `d2.lng`. Keeping the
+selected DirectDraw dependency graph preloaded while mounting the unused
+Direct3D/GDI/Glide renderers as on-demand files restored the original gameplay
+gate without changing emulator-wide capacity.
+
+The corrected replay performed the same 1,680 one-million-block batches in
+both arms and captured the Rogue Encampment at batch 1,652. The two PNGs are
+byte-identical (SHA-256
+`c9becc47c222ac49e9609a1a817f0f75326c0e2e0e76192f4258226644fd70ff`).
+Packed translation reduced externally measured wall time from 139.99s to
+101.43s. This is a strong preliminary result, but it is still one pair rather
+than a distribution and must not be presented as a stable gameplay speedup.
 
 ## Verdict
 
@@ -83,7 +96,8 @@ but the other applications do not establish a broad win. Before integrating:
 
 1. Count packed hits, misses, legacy cache ranks, and record-scan depth in real
    gameplay without enabling counters in production runs.
-2. Repeat fixed-work browser A/Bs for Heroes II/III, Diablo, StarCraft, and
-   Diablo II after the latter's baseline gameplay route is healthy.
+2. Repeat fixed-work browser A/Bs for Heroes II/III, Diablo, StarCraft, Diablo
+   II, and Alpha Centauri with rotated arm order; D2 now has a healthy baseline
+   but only one complete pair.
 3. Only then layer optional audit/enforcement of `VirtualAlloc` and
    `VirtualProtect` access flags onto the chosen translator.
