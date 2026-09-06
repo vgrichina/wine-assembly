@@ -52,6 +52,10 @@ const LARGE_OK_PATHS = new Set([
   'binaries/wep32-community/Funpack/FunPack.dll',
   'binaries/wep32-community/QBlackjack/QuickBlackjack.exe',
   'binaries/plus98/DIALOG.BMP',
+  'screenshots/apps/heroes2_demo.png',
+  'screenshots/apps/rct.png',
+  'screenshots/og/heroes2_demo.png',
+  'screenshots/og/rct.png',
 ]);
 
 
