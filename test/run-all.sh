@@ -668,6 +668,7 @@ E2E=(
   test/test-pocket-tanks-candidate.js
   test/test-icy-tower-candidate.js
   test/test-snood-candidate.js
+  test/test-worms2-candidate.js
   test/test-elasto-mania-candidate.js
   test/test-jardinains-candidate.js
   test/test-nethack-win32.js

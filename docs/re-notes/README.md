@@ -65,3 +65,4 @@ finish one, add what you learned.
 | Quake II (demo) | [quake2-demo.md](quake2-demo.md) |
 | Rodent's Revenge (Win16) | [wep16-rodent.md](wep16-rodent.md) |
 | Snood 2.2W | [snood.md](snood.md) |
+| Worms 2 October demo | [worms2-demo.md](worms2-demo.md) |

@@ -1088,10 +1088,12 @@ Recommended order:
    most scenarios, some rides, and ride music disabled. It is a useful change
    from action games: dense GDI/DirectDraw UI, timers, simulation, and mouse
    interaction matter more than twitch input.
-3. [Worms 2 Demo](https://archive.org/details/Worms2_1020) is a 1998 Windows
-   action/strategy demo in a 13.6 MB Archive item. Turn-based local play makes
-   it forgiving of emulator speed while still exercising destructible 2D
-   graphics, sound, keyboard, and precise mouse input.
+3. [Worms 2 Demo](https://archive.org/details/Worms2_1020) is now a completed
+   target. The tested package is Team17's smaller
+   [October 9, 1997 demo](http://www.classicdosgames.com/files/games/team17/Worms2Demo10Oct.zip),
+   whose installed README permits redistribution while the original files stay
+   intact. Turn-based local play exercises destructible 2D graphics,
+   DirectSound, keyboard input, and timers; this demo explicitly has no music.
 4. [Total Annihilation Demo](https://archive.org/details/TotalAnnihilation_201405)
    is a 1997 Windows strategy-game demo offered as a 20.6 MB item with a direct
    Windows executable download. It is a strong later stress target for large
@@ -1124,13 +1126,16 @@ through their original installers before using any extracted game files.
   It exits normally through its own completion message and writes all 53 files
   and shortcuts under `C:\\Games\\Jazz2Sw`. Launching the installer-produced
   `jazz2.exe` reaches distinct animated Darn Ratz gameplay frames.
-- Worms 2 was ultimately installed from Team17's smaller October demo archive,
+- Worms 2 was ultimately installed from Team17's smaller
+  [October demo archive](http://www.classicdosgames.com/files/games/team17/Worms2Demo10Oct.zip),
   `Worms2Demo10Oct.zip` (7,299,379 bytes; SHA-256
   `c65d36cef69437f066a3d50d8ff26d43d228a0595d7bcc106d541375e1d3cfd8`).
   The original Win16 InstallShield bootstrap expanded and ran its native
   32-bit engine; fixing `IsWindow(HWND_BROADCAST)` to reject the `0xFFFF`
   sentinel let that unchanged bootstrap finish, and three ordinary **Next**
-  clicks completed the install to `C:\\Team 17\\Worms 2 Demo`.
+  clicks completed the install to `C:\\Team 17\\Worms 2 Demo`. The durable gate
+  runs the bootstrap and its emitted child inside Wine-Assembly and never opens
+  an InstallShield cabinet on the host.
 - Total Annihilation is the direct `Total Annihilation.exe`. The native
   self-extractor calls `FindResourceA` with string-form integer names `#130`,
   `#135`, and `#136`; these correspond to numeric `ADD` resources containing
@@ -1158,7 +1163,7 @@ through their original installers before using any extracted game files.
 ### 2026-08-22 Worms 2 October demo gameplay
 
 The completed native install contains `worms2demo.exe` plus `worms2.dat`, the
-terrain/graphics/level archives, and 136 installed effect and speech WAV files.
+terrain/graphics/level archives, and 140 installed effect and speech WAV files.
 Despite its extension, `worms2.dat` is the actual PE32 game. Static and runtime
 tracing show that `worms2demo.exe` is only a promotional carousel: a click
 posts `WM_CHAR`, enters its `_spawn` implementation, and calls
@@ -1166,13 +1171,14 @@ posts `WM_CHAR`, enters its `_spawn` implementation, and calls
 single-process browser model, the debug manifest launches that exact installed
 PE directly instead of emulating a second process solely for the wrapper.
 
-An unchanged direct run finished the native loading sequence and entered the
-playable two-player medieval demo match. Captures at batches 50,000, 100,000,
-150,000, and 199,000 show different live worms (`Fudge`, `Nadger`, `Knuckle`,
-and `Woodbine`), turn arrows, moving camera/cursor, health, and changing turn
-timers. The first gameplay evidence is
-`/private/tmp/w2-direct-50k.png`; the later sustained-gameplay capture is
-`/private/tmp/w2-direct-199k.png`.
+An unchanged direct run finishes the native loading sequence and enters the
+playable two-player medieval demo match. The frozen stdio gate now launches
+only files produced by that installer run, uses a 5 ms-per-batch clock, and
+holds Left to move `Fudge` from the shore into a visible drowning animation.
+It checks the 640x480 8-bit DirectDraw surface, changed gameplay pixels, and
+submitted DirectSound bytes. Durable captures are written beneath
+`build/worms2-candidate/`; exact hashes and reproduction details are in
+[`docs/re-notes/worms2-demo.md`](docs/re-notes/worms2-demo.md).
 
 The shared `worms2_demo` app manifest was then exercised through the actual
 Chromium page, not only the CLI host. After loading the same installed files,

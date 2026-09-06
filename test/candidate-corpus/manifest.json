@@ -554,6 +554,32 @@
       }
     },
     {
+      "id": "worms-2-demo",
+      "name": "Worms 2 Demo",
+      "kind": "game",
+      "version": "October 9, 1997 multiplayer demo 1.1",
+      "executables": [
+        "installer-10oct/SETUP.EXE"
+      ],
+      "sourcePage": "http://www.classicdosgames.com/game/Worms_2.html",
+      "license": "playable demo; bundled README explicitly permits redistribution while the original files remain intact and unchanged",
+      "packages": [
+        {
+          "url": "http://www.classicdosgames.com/files/games/team17/Worms2Demo10Oct.zip",
+          "sha1": "30d3c4858cc99c412a21085e1740bd7ca9123a8a",
+          "type": "archive",
+          "into": "installer-10oct"
+        }
+      ],
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 25000,
+        "vfsInclude": [
+          "*"
+        ]
+      }
+    },
+    {
       "id": "snood",
       "name": "Snood",
       "kind": "game",
