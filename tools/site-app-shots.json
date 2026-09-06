@@ -7,5 +7,8 @@
   "peaks": "--input=400:dlg-cmd:1,1500:dlg-cmd:1,4000:dlg-cmd:1",
   "fourstones": "--input=400:dlg-cmd:1,1500:dlg-cmd:1,4000:dlg-cmd:1",
   "qblackjack": "--input=400:dlg-cmd:1,1500:dlg-cmd:2,4000:dlg-cmd:1",
-  "sndrec32_98": "--input=400:dlg-cmd:6,1500:dlg-cmd:6,4000:dlg-cmd:6"
+  "sndrec32_98": "--input=400:dlg-cmd:6,1500:dlg-cmd:6,4000:dlg-cmd:6",
+  "heaven7": "--input=1:wait-dlg-control:1:5000,2:dlg-cmd:1",
+  "bakkslide7": "--input=1:wait-dlg-control:1001:5000,2:dlg-click:1001,3:dlg-cmd:1002",
+  "ptct": "--input=1:wait-dlg-control:1:5000,2:dlg-cmd:1"
 }
