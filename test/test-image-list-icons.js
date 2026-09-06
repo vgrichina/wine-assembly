@@ -26,13 +26,31 @@ const extraWat = String.raw`
 
 const u32 = value => [value, value >>> 8, value >>> 16, value >>> 24].map(v => v & 0xff);
 
+function makeBmp() {
+  const bmp = new Uint8Array(86);
+  const dv = new DataView(bmp.buffer);
+  bmp[0] = 0x42;
+  bmp[1] = 0x4d;
+  dv.setUint32(2, bmp.length, true);
+  dv.setUint32(10, 54, true);
+  dv.setUint32(14, 40, true);
+  dv.setInt32(18, 4, true);
+  dv.setInt32(22, 2, true);
+  dv.setUint16(26, 1, true);
+  dv.setUint16(28, 32, true);
+  dv.setUint32(34, 32, true);
+  for (let i = 54; i < bmp.length; i++) bmp[i] = (i * 17) & 0xff;
+  return bmp;
+}
+
 async function main() {
   // Plain append: src fragments are self-balanced, so there is no trailing `)`
   // for the old splice to match — it silently dropped the fragment.
   const wasm = compileSrcWasm((file, source) =>
     file === '13-exports.wat' ? `${source}\n${extraWat}\n` : source);
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
-  const imports = createHostImports({ getMemory: () => memory.buffer, renderer: null, resourceJson: {} });
+  const hostCtx = { getMemory: () => memory.buffer, renderer: null, resourceJson: {} };
+  const imports = createHostImports(hostCtx);
   imports.host.memory = memory;
   Object.assign(imports.host, {
     create_thread: () => 0, exit_thread: () => 0, terminate_thread: () => 0,
@@ -43,6 +61,7 @@ async function main() {
 
   const { instance } = await WebAssembly.instantiate(wasm, imports);
   const e = instance.exports;
+  hostCtx.exports = e;
   const exe = fs.readFileSync(path.join(ROOT, 'test', 'binaries', 'calc.exe'));
   new Uint8Array(memory.buffer).set(exe, e.get_staging());
   assert(e.load_pe(exe.length), 'fixture PE initializes API dispatch');
@@ -53,6 +72,18 @@ async function main() {
   const bytes = new Uint8Array(memory.buffer);
   const dv = new DataView(memory.buffer);
   const alloc = size => e.guest_alloc(size) >>> 0;
+  const writeStringA = value => {
+    const encoded = Buffer.from(`${value}\0`, 'latin1');
+    const guest = alloc(encoded.length);
+    bytes.set(encoded, wa(guest));
+    return guest;
+  };
+  const writeStringW = value => {
+    const guest = alloc((value.length + 1) * 2);
+    for (let i = 0; i < value.length; i++) dv.setUint16(wa(guest) + i * 2, value.charCodeAt(i), true);
+    dv.setUint16(wa(guest) + value.length * 2, 0, true);
+    return guest;
+  };
   const makeCaller = name => {
     const api = apiTable.find(entry => entry.name === name);
     assert(api, `${name} is registered`);
@@ -73,6 +104,8 @@ async function main() {
 
   const create = makeCaller('ImageList_Create');
   const destroy = makeCaller('ImageList_Destroy');
+  const loadA = makeCaller('ImageList_LoadImageA');
+  const loadW = makeCaller('ImageList_LoadImageW');
   const addMasked = makeCaller('ImageList_AddMasked');
   const remove = makeCaller('ImageList_Remove');
   const replace = makeCaller('ImageList_ReplaceIcon');
@@ -80,6 +113,57 @@ async function main() {
   const getIconInfo = makeCaller('GetIconInfo');
   const destroyIcon = makeCaller('DestroyIcon');
   const drawIcon = makeCaller('DrawIcon');
+  const deleteObject = makeCaller('DeleteObject');
+
+  assert.strictEqual(loadA([0xffffffff, 0, 15, 1, 0xffffffff, 1, 0]), 0,
+    'ImageList_LoadImage rejects non-bitmap image types');
+  assert.strictEqual(loadA([0xffffffff, 0, 0xffffffff, 1, 0xffffffff, 0, 0]), 0,
+    'ImageList_LoadImage rejects a negative image width');
+  assert.strictEqual(loadA([imageBase, 0xffff, 15, 1, 0xffffffff, 0, 0]), 0,
+    'a missing bitmap resource returns NULL instead of an empty image list');
+
+  const resourceListA = loadA([0xffffffff, 0, 15, 1, 0x00112233, 0, 0]);
+  assert(resourceListA, 'ImageList_LoadImageA loads an integer bitmap resource');
+  assert.strictEqual(e.guest_read32(resourceListA) >>> 0, 15, 'requested image width is retained');
+  assert.strictEqual(e.guest_read32(resourceListA + 4) >>> 0, 15,
+    'image height comes from the bitmap resource');
+  assert.strictEqual(e.guest_read32(resourceListA + 12) >>> 0, 16,
+    'initial image count is inferred from the strip width');
+  assert.strictEqual(e.guest_read32(resourceListA + 20) >>> 0, 0x00112233,
+    'mask color reaches the image-list record');
+  const resourceStripA = e.guest_read32(resourceListA + 16) >>> 0;
+  assert(resourceStripA, 'resource-backed image list owns a bitmap strip');
+  assert.strictEqual(destroy([resourceListA]), 1);
+  assert.strictEqual(deleteObject([resourceStripA]), 0,
+    'destroying a loaded image list releases its owned bitmap strip');
+
+  const resourceListW = loadW([0xffffffff, 0, 0, 1, 0xffffffff, 0, 0]);
+  assert(resourceListW, 'ImageList_LoadImageW shares integer-resource behavior');
+  assert.strictEqual(e.guest_read32(resourceListW) >>> 0, 240,
+    'cx=0 uses the complete bitmap width instead of inventing a 16px cell');
+  assert.strictEqual(e.guest_read32(resourceListW + 12) >>> 0, 1);
+  assert.strictEqual(destroy([resourceListW]), 1);
+
+  hostCtx.vfs.files.set('c:\\imagelist.bmp', { data: makeBmp(), attrs: 0x20 });
+  const pathA = writeStringA('c:\\imagelist.bmp');
+  const fileListA = loadA([0, pathA, 2, 1, 0xffffffff, 0, 0x10]);
+  assert(fileListA, 'ImageList_LoadImageA honors LR_LOADFROMFILE');
+  assert.strictEqual(e.guest_read32(fileListA) >>> 0, 2);
+  assert.strictEqual(e.guest_read32(fileListA + 4) >>> 0, 2);
+  assert.strictEqual(e.guest_read32(fileListA + 12) >>> 0, 2);
+  assert.strictEqual(destroy([fileListA]), 1);
+
+  const pathW = writeStringW('c:\\imagelist.bmp');
+  const fileListW = loadW([0, pathW, 2, 1, 0xffffffff, 0, 0x10]);
+  assert(fileListW, 'ImageList_LoadImageW converts its UTF-16 LR_LOADFROMFILE path');
+  assert.strictEqual(e.guest_read32(fileListW + 4) >>> 0, 2);
+  assert.strictEqual(e.guest_read32(fileListW + 12) >>> 0, 2);
+  assert.strictEqual(destroy([fileListW]), 1);
+
+  const missingPath = writeStringA('c:\\missing.bmp');
+  assert.strictEqual(loadA([0, missingPath, 2, 1, 0xffffffff, 0, 0x10]), 0,
+    'a missing LR_LOADFROMFILE bitmap returns NULL');
+
   const imageList = create([16, 16, 1, 0, 4]);
   assert(imageList, 'ImageList_Create returns a handle');
 
@@ -225,7 +309,7 @@ async function main() {
   e.test_call_DeleteDC(targetDc);
   e.test_call_DeleteObject(target);
 
-  console.log('PASS image-list owned add/remove, mask pixels, replacement, and destruction semantics');
+  console.log('PASS image-list loading, owned add/remove, mask pixels, replacement, and destruction semantics');
 }
 
 main().catch(error => {
