@@ -1,6 +1,5 @@
 {
   "_comment": "Per-app answers for the Questions section on apps/<id>.html (tools/gen-site-pages.js). Only `controls` is read today: one or two sentences on how the program is played, used verbatim as the answer to 'What are the controls?'. Ids without an entry get a generic answer. Keep these to what has been measured or read out of the program: the comments in lib/apps.js next to each touchControls block are the source for the games with on-screen pads.",
-
   "snake": "Arrow keys steer the snake and F2 starts a level. On a phone there is a four-way pad, swipes on the board also turn, and a New game button.",
   "ski32": "The skier follows the mouse pointer, so moving the mouse (or dragging on a phone) steers. F makes the skier go fast and F2 starts a new run; both are on-screen buttons on a phone.",
   "pinball": "Z is the left flipper, / is the right flipper, Space pulls the plunger, X and . nudge the table, and F2 starts a new game. On a phone the left half of the table flips left, the right half flips right, and the strip over the plunger lane launches the ball.",
@@ -25,5 +24,34 @@
   "winamp": "Click Play or drag the position slider. The playlist and equalizer windows toggle from the buttons on the main window, and the volume slider is on the main window.",
   "heroes2_demo": "The mouse does everything: left-click to select and move, right-click and hold for information. The adventure map scrolls when the pointer touches an edge.",
   "rct": "The mouse does everything. Scroll the map by dragging with the right button, and the toolbar at the top opens rides, scenery and finances.",
-  "blobby_volley": "The keyboard moves the blobs; the game's own options screen shows the keys for each player, and the opening menu picks a computer opponent."
+  "blobby_volley": "The keyboard moves the blobs; the game's own options screen shows the keys for each player, and the opening menu picks a computer opponent.",
+  "_sound_comment": "Per-app answer to 'Does sound work?'. Measured 2026-09-06 by a headless sweep (pe-imports + --trace-api on the audio APIs) and a read of lib/host-audio.js: the wave, DirectSound, MCI and MIDI paths all reach Web Audio; PlaySoundA only plays SND_RESOURCE sounds. Apps not listed get the generic wave/DirectSound sentence.",
+  "_sound": {
+    "notepad": "Notepad has no sound of its own; the original only beeps on an error, and that beep is played.",
+    "calc": "Calculator has no sound of its own; the original only beeps on an error, and that beep is played.",
+    "mspaint98": "Paint has no sound of its own; the original only beeps on an error, and that beep is played.",
+    "wordpad": "WordPad has no sound of its own; the original only beeps on an error, and that beep is played.",
+    "regedit": "Registry Editor has no sound of its own; the original only beeps on an error, and that beep is played.",
+    "taskman": "Task Manager has no sound; the original plays none.",
+    "freecell": "FreeCell has no sound; the original plays none.",
+    "sol": "Solitaire has no sound; the original plays none.",
+    "cruel": "Cruel has no sound; the original plays none.",
+    "golf": "Golf has no sound; the original plays none.",
+    "pegged": "Pegged has no sound; the original plays none.",
+    "snake": "Rattler has no sound; the original plays none.",
+    "reversi": "Reversi has no sound; the original plays none.",
+    "winmine_wep": "Minesweeper has no sound; the original plays none.",
+    "spider": "Spider has no sound; the original plays none.",
+    "taipei": "Taipei has no sound apart from an error beep, which is played.",
+    "tictac": "TicTactics has no sound apart from an error beep, which is played.",
+    "wep16_rodent": "Rodent's Revenge has no sound apart from an error beep, which is played.",
+    "empipe": "Yes. The music is MIDI, played by a General MIDI synthesizer built into the page, so it sounds like a 1990s software synth rather than a specific sound card. Browsers only allow audio after a click or a key press.",
+    "marbles": "Yes. Sound effects go through DirectSound to the browser's Web Audio and the music is MIDI, played by a General MIDI synthesizer built into the page. Browsers only allow audio after a click or a key press.",
+    "heroes2_demo": "The sound effects and MIDI music work: effects go to Web Audio and the music plays on a General MIDI synthesizer built into the page. The CD audio tracks of the full game are not available, as there is no game CD mounted.",
+    "bricks": "Not verified. Bricks plays its sounds through PlaySound, and the emulator plays only sounds stored as resources through that call; sounds loaded from a file or memory are accepted silently.",
+    "cwordzap": "Not verified. Word Zap plays its sounds through PlaySound, and the emulator plays only sounds stored as resources through that call; sounds loaded from a file or memory are accepted silently.",
+    "qblackjack": "Not verified. Blackjack plays its sounds through PlaySound, and the emulator plays only sounds stored as resources through that call; sounds loaded from a file or memory are accepted silently.",
+    "blobby_volley": "Not verified. Blobby Volley plays its sounds through PlaySound, and the emulator plays only sounds stored as resources through that call; sounds loaded from a file or memory are accepted silently.",
+    "winamp": "Yes. Decoded audio goes through the wave-out API to the browser's Web Audio once a track is loaded. Browsers only allow audio after a click or a key press, so it starts with your first input."
+  }
 }

@@ -300,8 +300,9 @@ function appFaq(app, faq) {
       : `It loads in mobile Safari and Chrome and the desktop scales to the screen, but ${app.name} was made for a mouse and a keyboard, so it plays best on a desktop browser. Taps act as clicks.`]);
   qa.push([`Are my scores and settings saved?`,
     `Whatever ${app.name} writes to the Windows registry or to its INI file is kept in this browser's local storage, so it is there next time on the same device and browser. Clearing site data removes it.`]);
-  qa.push([`Does sound work?`,
-    `Sound the program plays through the Windows wave and DirectSound APIs is routed to the browser's Web Audio. Browsers only allow audio after a click or a key press, so it starts with your first input.`]);
+  qa.push([`Does ${app.name} have sound here?`,
+    (faq._sound && faq._sound[app.id])
+      || `Yes. Sound the program plays through the Windows wave and DirectSound APIs is routed to the browser's Web Audio. Browsers only allow audio after a click or a key press, so it starts with your first input.`]);
   if (app.lan) qa.push([`Can I play ${app.name} against someone else?`,
     `Yes, over the emulator's virtual LAN: two copies of the game on the same page share a network segment, so one can host and the other join as the original did on a 1990s LAN.`]);
   qa.push([`Is this the real ${app.name} or a remake?`,
