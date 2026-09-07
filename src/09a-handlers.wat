@@ -3933,144 +3933,134 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; 65: sndPlaySoundA(pszSound, fuSound) — legacy 2-arg sound API.
-  ;; Handles resource and memory WAVs; file/alias names are accepted as no-op.
+  ;; Validate and submit a complete RIFF/WAVE image. The browser bridge copies
+  ;; bytes synchronously before decodeAudioData runs, so callers may release a
+  ;; temporary VFS buffer as soon as this returns.
+  (func $play_sound_wav_data (param $data_wa i32) (param $available i32) (result i32)
+    (local $riff_size i32)
+    (if (i32.or (i32.eqz (local.get $data_wa))
+                (i32.lt_u (local.get $available) (i32.const 12)))
+      (then (return (i32.const 0))))
+    (if (i32.or
+          (i32.ne (i32.load (local.get $data_wa)) (i32.const 0x46464952)) ;; RIFF
+          (i32.ne (i32.load offset=8 (local.get $data_wa)) (i32.const 0x45564157))) ;; WAVE
+      (then (return (i32.const 0))))
+    (local.set $riff_size (i32.add (i32.load offset=4 (local.get $data_wa)) (i32.const 8)))
+    (if (i32.or (i32.lt_u (local.get $riff_size) (i32.const 12))
+                (i32.gt_u (local.get $riff_size) (local.get $available)))
+      (then (return (i32.const 0))))
+    (call $host_play_sound (local.get $data_wa) (local.get $riff_size))
+    (i32.const 1))
+
+  ;; Load one WAVE file through the same process VFS used by CreateFile. This
+  ;; makes browser-mounted and installed media audible without exposing host
+  ;; paths to Web Audio. A 32 MiB ceiling keeps malformed RIFF sizes bounded.
+  (func $play_sound_wav_file (param $path_wa i32) (param $wide i32) (result i32)
+    (local $handle i32) (local $size i32) (local $data_g i32) (local $data_wa i32)
+    (local $read_g i32) (local $read_wa i32) (local $read_ok i32) (local $played i32)
+    (if (i32.eqz (local.get $path_wa)) (then (return (i32.const 0))))
+    (local.set $handle (call $host_fs_create_file
+      (local.get $path_wa) (i32.const 0x80000000) ;; GENERIC_READ
+      (i32.const 3) (i32.const 0x80) (local.get $wide))) ;; OPEN_EXISTING, normal
+    (if (i32.eq (local.get $handle) (i32.const -1)) (then (return (i32.const 0))))
+    (local.set $size (call $host_fs_get_file_size (local.get $handle)))
+    (if (i32.or (i32.lt_u (local.get $size) (i32.const 12))
+                (i32.gt_u (local.get $size) (i32.const 0x02000000)))
+      (then
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (return (i32.const 0))))
+    (local.set $data_g (call $heap_alloc (local.get $size)))
+    (local.set $read_g (call $heap_alloc (i32.const 4)))
+    (if (i32.or (i32.eqz (local.get $data_g)) (i32.eqz (local.get $read_g)))
+      (then
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (if (local.get $data_g) (then (call $heap_free (local.get $data_g))))
+        (if (local.get $read_g) (then (call $heap_free (local.get $read_g))))
+        (return (i32.const 0))))
+    (local.set $read_wa (call $g2w (local.get $read_g)))
+    (i32.store (local.get $read_wa) (i32.const 0))
+    (local.set $read_ok (call $host_fs_read_file
+      (local.get $handle) (local.get $data_g) (local.get $size) (local.get $read_g)))
+    (drop (call $host_fs_close_handle (local.get $handle)))
+    (if (i32.and (i32.ne (local.get $read_ok) (i32.const 0))
+                  (i32.eq (i32.load (local.get $read_wa)) (local.get $size)))
+      (then
+        (local.set $data_wa (call $g2w (local.get $data_g)))
+        (local.set $played (call $play_sound_wav_data
+          (local.get $data_wa) (local.get $size)))))
+    (call $heap_free (local.get $read_g))
+    (call $heap_free (local.get $data_g))
+    (local.get $played))
+
+  (func $play_sound_wav_memory (param $data_g i32) (result i32)
+    (local $data_wa i32) (local $size i32)
+    (if (i32.eqz (local.get $data_g)) (then (return (i32.const 0))))
+    (local.set $data_wa (call $g2w (local.get $data_g)))
+    (if (i32.ne (i32.load (local.get $data_wa)) (i32.const 0x46464952))
+      (then (return (i32.const 0))))
+    (local.set $size (i32.add (i32.load offset=4 (local.get $data_wa)) (i32.const 8)))
+    (if (i32.gt_u (local.get $size) (i32.const 0x02000000))
+      (then (return (i32.const 0))))
+    (call $play_sound_wav_data (local.get $data_wa) (local.get $size)))
+
+  ;; SND_RESOURCE is 0x00040004 and therefore overlaps the SND_MEMORY bit.
+  ;; Resolve it first, in the caller-selected module context, rather than
+  ;; interpreting MAKEINTRESOURCE as a guest pointer.
+  (func $play_sound_wav_resource (param $name i32) (param $hmod i32) (result i32)
+    (local $entry i32) (local $entry_wa i32) (local $data_wa i32)
+    (local $data_rva i32) (local $size i32) (local $played i32)
+    (call $push_rsrc_ctx (local.get $hmod))
+    (local.set $entry (call $find_resource_named_type (local.get $name)))
+    (if (local.get $entry)
+      (then
+        (local.set $entry_wa (call $g2w (i32.add (call $r_base) (local.get $entry))))
+        (local.set $data_rva (i32.load (local.get $entry_wa)))
+        (local.set $size (i32.load offset=4 (local.get $entry_wa)))
+        (local.set $data_wa (call $g2w (i32.add (call $r_base) (local.get $data_rva))))
+        (local.set $played (call $play_sound_wav_data
+          (local.get $data_wa) (local.get $size)))))
+    (call $pop_rsrc_ctx)
+    (local.get $played))
+
+  (func $play_sound_core
+    (param $sound i32) (param $hmod i32) (param $flags i32) (param $wide i32) (result i32)
+    ;; Preserve the existing stop/purge behavior. The one-shot browser bridge
+    ;; has no retained source yet, but Win9x callers rely on a successful stop.
+    (if (i32.or (i32.eqz (local.get $sound))
+                (i32.ne (i32.and (local.get $flags) (i32.const 0x40)) (i32.const 0)))
+      (then (return (i32.const 1))))
+    (if (i32.ne (i32.and (local.get $flags) (i32.const 0x40000)) (i32.const 0))
+      (then (return (call $play_sound_wav_resource
+        (local.get $sound) (local.get $hmod)))))
+    (if (i32.ne (i32.and (local.get $flags) (i32.const 0x4)) (i32.const 0))
+      (then (return (call $play_sound_wav_memory (local.get $sound)))))
+    (if (i32.ne (i32.and (local.get $flags) (i32.const 0x20000)) (i32.const 0))
+      (then (return (call $play_sound_wav_file
+        (call $g2w (local.get $sound)) (local.get $wide)))))
+    ;; Explicit system aliases keep their previous accepted/no-op behavior.
+    ;; With no alias selector, both APIs fall back to interpreting the string
+    ;; as a filename when no registry/WIN.INI association exists.
+    (if (i32.ne (i32.and (local.get $flags) (i32.const 0x110000)) (i32.const 0))
+      (then (return (i32.const 1))))
+    (call $play_sound_wav_file (call $g2w (local.get $sound)) (local.get $wide)))
+
+  ;; 65: sndPlaySoundA(lpszSound, fuSound) — legacy 2-arg sound API.
   (func $handle_sndPlaySoundA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $flags i32) (local $name_id i32) (local $hrsrc i32)
-    (local $data_entry_wa i32) (local $data_rva i32) (local $data_size i32) (local $data_wa i32)
-    (local.set $flags (local.get $arg1))
-    (local.set $name_id (local.get $arg0))
-    ;; NULL or SND_PURGE: stop current sound. We don't track active one-shots,
-    ;; but Win9x callers treat TRUE as successful purge.
-    (if (i32.or (i32.eqz (local.get $name_id))
-                (i32.and (local.get $flags) (i32.const 0x40)))
-      (then
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    ;; SND_MEMORY (0x4): pszSound points at a complete WAV image in memory.
-    ;; Use the RIFF size at +4 plus the 8-byte RIFF header when it looks sane.
-    (if (i32.and (local.get $flags) (i32.const 0x4))
-      (then
-        (local.set $data_wa (call $g2w (local.get $name_id)))
-        (local.set $data_size (i32.add (i32.load (i32.add (local.get $data_wa) (i32.const 4))) (i32.const 8)))
-        (if (i32.and
-              (i32.eq (i32.load (local.get $data_wa)) (i32.const 0x46464952)) ;; "RIFF"
-              (i32.gt_u (local.get $data_size) (i32.const 12)))
-          (then (call $host_play_sound (local.get $data_wa) (local.get $data_size))))
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    ;; SND_RESOURCE (0x40004): pszSound is MAKEINTRESOURCE(id).
-    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x40000)))
-      (then
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    (if (i32.eqz (global.get $rsrc_rva))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    (local.set $hrsrc (call $find_resource_named_type (local.get $name_id)))
-    (if (i32.eqz (local.get $hrsrc))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    (local.set $data_entry_wa (call $g2w (i32.add (global.get $image_base) (local.get $hrsrc))))
-    (local.set $data_rva (i32.load (local.get $data_entry_wa)))
-    (local.set $data_size (i32.load (i32.add (local.get $data_entry_wa) (i32.const 4))))
-    (if (i32.eqz (local.get $data_size))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    (local.set $data_wa (call $g2w (i32.add (global.get $image_base) (local.get $data_rva))))
-    (call $host_play_sound (local.get $data_wa) (local.get $data_size))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
+    (global.set $eax (call $play_sound_core
+      (local.get $arg0) (i32.const 0) (local.get $arg1) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 863: PlaySoundW(pszSound, hmod, fdwSound) — 3 args stdcall
-  ;; SND_RESOURCE=0x40004: pszSound is MAKEINTRESOURCE(id), find WAVE resource and play it
-  ;; SND_PURGE=0x40: stop playing, return TRUE
+  ;; 863: PlaySoundW(pszSound, hmod, fdwSound) — 3 args stdcall.
   (func $handle_PlaySoundW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $flags i32) (local $name_id i32) (local $hrsrc i32)
-    (local $data_entry_wa i32) (local $data_rva i32) (local $data_size i32) (local $data_wa i32)
-    (local.set $flags (local.get $arg2))
-    (local.set $name_id (local.get $arg0))
-    ;; If pszSound is NULL or SND_PURGE, just return TRUE (stop sound)
-    (if (i32.or (i32.eqz (local.get $name_id))
-                (i32.and (local.get $flags) (i32.const 0x40)))
-      (then
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    ;; Only handle SND_RESOURCE (0x40004) — find WAVE resource by integer ID
-    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x40000)))
-      (then
-        ;; Not a resource — just return TRUE (no file/alias support)
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    ;; Find WAVE resource: walk type entries looking for named "WAVE"
-    (if (i32.eqz (global.get $rsrc_rva))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    ;; Find WAVE type entry (named type, need to match "WAVE" string)
-    (local.set $hrsrc (call $find_resource_named_type (local.get $name_id)))
-    (if (i32.eqz (local.get $hrsrc))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    ;; hrsrc points to data entry (RVA, Size at rsrc_rva-relative offset)
-    ;; Read data RVA and size from the resource data entry
-    (local.set $data_entry_wa (call $g2w (i32.add (global.get $image_base) (local.get $hrsrc))))
-    (local.set $data_rva (i32.load (local.get $data_entry_wa)))
-    (local.set $data_size (i32.load (i32.add (local.get $data_entry_wa) (i32.const 4))))
-    (if (i32.eqz (local.get $data_size))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    ;; Convert data RVA to WASM address and call host
-    (local.set $data_wa (call $g2w (i32.add (global.get $image_base) (local.get $data_rva))))
-    (call $host_play_sound (local.get $data_wa) (local.get $data_size))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
+    (global.set $eax (call $play_sound_core
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; PlaySoundA(pszSound, hmod, fdwSound) — 3 args stdcall. Shares logic with PlaySoundW:
-  ;; for SND_RESOURCE the pszSound is MAKEINTRESOURCE(id) which is format-independent; for
-  ;; file/alias strings we don't support audio playback, so just return TRUE.
+  ;; PlaySoundA(pszSound, hmod, fdwSound) — ANSI twin of PlaySoundW.
   (func $handle_PlaySoundA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $flags i32) (local $name_id i32) (local $hrsrc i32)
-    (local $data_entry_wa i32) (local $data_rva i32) (local $data_size i32) (local $data_wa i32)
-    (local.set $flags (local.get $arg2))
-    (local.set $name_id (local.get $arg0))
-    (if (i32.or (i32.eqz (local.get $name_id))
-                (i32.and (local.get $flags) (i32.const 0x40)))
-      (then
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x40000)))
-      (then
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (if (i32.eqz (global.get $rsrc_rva))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (local.set $hrsrc (call $find_resource_named_type (local.get $name_id)))
-    (if (i32.eqz (local.get $hrsrc))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (local.set $data_entry_wa (call $g2w (i32.add (global.get $image_base) (local.get $hrsrc))))
-    (local.set $data_rva (i32.load (local.get $data_entry_wa)))
-    (local.set $data_size (i32.load (i32.add (local.get $data_entry_wa) (i32.const 4))))
-    (if (i32.eqz (local.get $data_size))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (local.set $data_wa (call $g2w (i32.add (global.get $image_base) (local.get $data_rva))))
-    (call $host_play_sound (local.get $data_wa) (local.get $data_size))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
+    (global.set $eax (call $play_sound_core
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; RegisterWindowMessage is an *interning* call: registering the same name
   ;; twice must give the same number back, which is how two components (or two
