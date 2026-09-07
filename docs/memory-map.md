@@ -8,11 +8,13 @@ current major regions; the memory-map comment and sized globals in
 
 ```
 0x20000000 ┌────────────────────────┐  End of shared linear memory
-           │  DIB pixel arena (64MB)│  Fixed CreateDIBSection backing
+           │  DIB pixel arena (63MB)│  Fixed CreateDIBSection backing
 0x1C000000 ├────────────────────────┤
+           │ Flat guest PTEs (4MB)  │  One packed entry per 4KB guest page
+0x1BC00000 ├────────────────────────┤
            │                        │
-           │  VirtualAlloc backing │  320MB for sparse high guest maps
-           │  pool (320MB)          │
+           │  VirtualAlloc backing │  316MB for sparse high guest maps
+           │  pool (316MB)          │
            │                        │
 0x08000000 ├────────────────────────┤  End of direct g2w window
            │  High private tables   │  API hashes, regions, COM/DX state

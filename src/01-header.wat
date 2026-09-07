@@ -1524,7 +1524,7 @@
   ;; 0x07992200  128B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
   ;; 0x07992300   64B    DLL path table (16 guest string pointers)
   ;; 0x07992400  ...     File mapping zone (MapViewOfFile allocations)
-  ;; 0x08000000 320MB    VirtualAlloc backing pool for sparse high guest maps
+  ;; 0x08000000 316MB    VirtualAlloc backing; 0x1BC00000 4MB flat guest PTE table
   ;; 0x1C000000  63MB    Page-aligned CreateDIBSection pixel arena
   ;; 0x1FF00000   1MB    THREAD_RPC (per-thread host-import control blocks)
   ;; Total: 8192 pages = 512MB

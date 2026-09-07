@@ -43,13 +43,14 @@ const DECLS = path.join(ROOT, 'src', '00-regions.wat');
 // unable to place them at all.
 const ALLOC_FLOOR = 0x100;
 
-// The guest image base every `g2w` is stated against, and the seven bases that
+// The guest image base every `g2w` is stated against, and the eight bases that
 // are an ABI rather than a placement. Four are anchored by a guest address
 // (declared `region.declare-derived (base (g2w VA))`, so the arithmetic is in
-// the source rather than in a comment) and three are the backing windows,
-// which are sized to consume whatever memory is left and therefore have
-// nowhere to move to. §8.1 of docs/watx-region-safety-design.md is where the
-// list comes from.
+// the source rather than in a comment); three are backing windows sized around
+// the fixed memory ceiling. §8.1 of docs/watx-region-safety-design.md is where
+// that original list comes from. The guest page table is emulator-private
+// rather than guest ABI, but it is fixed because it occupies the carved tail
+// between backing pools and must never be shaken into the direct guest window.
 const IMAGE_BASE = 0x400000;
 const PINNED_ABI = new Map([
   ['$GUEST_BASE', 0x00012000],
@@ -57,6 +58,7 @@ const PINNED_ABI = new Map([
   ['$GUEST_STACK', 0x07012000],
   ['$THUNK_BASE', 0x07112000],
   ['$VIRTUAL_BACKING_BASE', 0x08000000],
+  ['$GUEST_PAGE_TABLE', 0x1BC00000],
   ['$DIB_BACKING_BASE', 0x1C000000],
   ['$THREAD_RPC', 0x1FF00000],
 ]);
@@ -219,7 +221,7 @@ function shakeAll() {
     console.log(`region-alloc --shake-all: ${failures} of ${SHAKE_MODES.length} shake mode(s) ` +
       `cannot be placed. The map has outgrown the room a shake needs to move it, so §8's ` +
       `instrument is unusable. Shrink something below ${hex(SHAKE_CEILING)}, or decide that ` +
-      `$VIRTUAL_BACKING_BASE's 320 MB is the wrong shape (design doc §13, "next, in order").`);
+      `$VIRTUAL_BACKING_BASE's 316 MB is the wrong shape (design doc §13, "next, in order").`);
     return 1;
   }
   console.log(`region-alloc --shake-all: all ${SHAKE_MODES.length} shake modes place`);

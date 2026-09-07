@@ -488,7 +488,7 @@
           ;; failure rejects the commit before its larger record size becomes
           ;; visible, so packed readers never need a record-scan fallback.
           (if (i32.atomic.load
-                (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 8)))
+                (region.addr $GUEST_PAGE_STATE 8))
             (then
               (if (i32.eqz (call $guest_page_publish_range
                     (local.get $guest) (local.get $size) (local.get $backing_ptr)
@@ -520,7 +520,7 @@
     (i32.store (i32.add (local.get $rec) (i32.const 12)) (i32.const 0))
     (call $zero_memory (local.get $backing_ptr) (local.get $size))
     (if (i32.atomic.load
-          (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 8)))
+          (region.addr $GUEST_PAGE_STATE 8))
       (then
         (if (i32.eqz (call $guest_page_publish_range
               (local.get $guest) (local.get $size) (local.get $backing_ptr)
@@ -662,7 +662,7 @@
           ;; backing becomes reusable. Page-table readers then see either the
           ;; old valid PTE or an unmapped page, never a recycled alias.
           (if (i32.atomic.load
-                (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 8)))
+                (region.addr $GUEST_PAGE_STATE 8))
             (then
               (call $guest_page_clear_range (local.get $guest) (local.get $size))))
           (local.set $backing_ptr
@@ -707,7 +707,7 @@
     (call $lock_acquire (global.get $LOCK_VIRTUAL_MAP))
     (if (i32.eqz
           (i32.atomic.load
-            (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 8))))
+            (region.addr $GUEST_PAGE_STATE 8)))
       (then
         (call $zero_memory (global.get $GUEST_PAGE_TABLE)
           (global.get $GUEST_PAGE_TABLE_SIZE))
@@ -737,12 +737,12 @@
         (if (local.get $ok)
           (then
             (i32.atomic.store
-              (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 8))
+              (region.addr $GUEST_PAGE_STATE 8)
               (i32.const 1))))))
     (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
     (global.set $guest_page_translation
       (i32.atomic.load
-        (i32.add (global.get $GUEST_PAGE_STATE) (i32.const 8))))
+        (region.addr $GUEST_PAGE_STATE 8)))
     (global.set $g2w_gl8_page (i32.const -1)))
 
   ;; HeapAlloc starts in the low direct guest window for compatibility, then
