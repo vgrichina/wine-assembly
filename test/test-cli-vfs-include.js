@@ -28,6 +28,9 @@ try {
   fs.writeFileSync(path.join(temp, 'assets', 'keep.dat'), 'keep');
   fs.writeFileSync(path.join(temp, 'assets', 'drop.txt'), 'drop');
   fs.writeFileSync(path.join(temp, 'unrelated', 'outside.bin'), 'outside');
+  const captured = path.join(temp, 'captured');
+  fs.mkdirSync(path.join(captured, 'windows', 'temp', 'wzs1.tmp'), { recursive: true });
+  fs.writeFileSync(path.join(captured, 'windows', 'temp', 'wzs1.tmp', 'setup.dat'), 'setup');
 
   const bare = run();
   assert.match(bare, /c:\\probe\.exe \(/i);
@@ -47,7 +50,15 @@ try {
   assert.match(registered, /c:\\notepad\.hlp \(/i);
   assert.match(registered, /c:\\notepad\.cnt \(/i);
 
-  console.log('CLI VFS include tests: 8 passed, 0 failed');
+  const replayed = run([
+    `--vfs-tree=${captured}`, '--cwd=C:\\windows\\temp\\wzs1.tmp',
+  ]);
+  assert.match(replayed, /c:\\windows\\temp\\wzs1\.tmp\\setup\.dat \(/i);
+  assert.doesNotMatch(replayed, /c:\\captured\\windows/i,
+    'a captured tree root must map to the guest drive root, not become a directory');
+  assert.match(replayed, /\[vfs\] working directory: c:\\windows\\temp\\wzs1\.tmp/i);
+
+  console.log('CLI VFS include tests: 11 passed, 0 failed');
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

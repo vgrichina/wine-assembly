@@ -448,6 +448,7 @@ UNIT=(
   test/test-ole-static-handler.js
   test/test-ole-storage.js
   test/test-parent-child-paint-order.js
+  test/test-pe-entry-return.js
   test/test-pe-zero-original-first-thunk.js
   test/test-peek-message-filter.js
   test/test-raster-canvas.js
@@ -533,6 +534,7 @@ UNIT=(
   test/test-free-console.js
   test/test-gdiplus-flat-api.js
   test/test-get-ancestor.js
+  test/test-get-class-info-ex-common-control.js
   test/test-get-clipboard-sequence-number.js
   test/test-get-computer-name-w.js
   test/test-get-cursor.js
@@ -569,6 +571,7 @@ UNIT=(
   test/test-shell-notify-icon.js
   test/test-shell-execute-ex-w.js
   test/test-showwindow-dialog-promotion.js
+  test/test-showwindow-child-size.js
   test/test-showwindow-owned-form-activation.js
   test/test-winmine-name-dialog-frame.js
   test/test-system-enum-dispatch.js

@@ -16,6 +16,10 @@ const RUN = path.join(__dirname, 'run.js');
 const INSTALLER = path.join(__dirname, 'binaries', 'candidates',
   'pocket-tanks-installer', 'ptanks.exe');
 
+const runSource = fs.readFileSync(RUN, 'utf8');
+assert(runSource.includes('ctx.vfs._resolvePath ? ctx.vfs._resolvePath(executable)'),
+  'relative installer children must resolve against the guest current directory');
+
 if (!fs.existsSync(INSTALLER)) {
   console.log('SKIP  Pocket Tanks installer fixture not found at ' + INSTALLER);
   process.exit(0);

@@ -1207,6 +1207,23 @@
         ;; keeping our stale update region lets hidden controls draw fragments
         ;; after SW_HIDE.
         (call $paint_clear_subtree (local.get $arg0))))
+    ;; USER sends a newly shown child its current client size. Hidden child
+    ;; containers commonly defer layout until this notification; Unreal
+    ;; Setup creates its inner owner-draw list only after the hidden wrapper's
+    ;; creation-time sizing has completed.
+    (if (i32.and
+          (i32.and
+            (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+                     (i32.eqz (local.get $was_visible)))
+            (i32.ne
+              (i32.and (call $wnd_get_style (local.get $arg0))
+                       (i32.const 0x40000000))
+              (i32.const 0)))
+          (i32.ne (local.get $client_size) (i32.const 0)))
+      (then
+        (drop (call $post_queue_push
+          (local.get $arg0) (i32.const 0x0005)
+          (i32.const 0) (local.get $client_size)))))
     ;; Some VCL apps create hidden utility/application HWNDs before showing the
     ;; real form. If the stored main window is still invisible, promote the
     ;; first shown app wndproc window so activation/focus reaches the form.

@@ -113,12 +113,13 @@
       (then (call $process_imports (local.get $import_rva))))
 
     (global.set $eip (global.get $entry_point))
-    ;; ESP must be a guest address. GUEST_STACK is the WASM-space stack base;
-    ;; ESP starts at the top of the 1MB stack region.
+    ;; ESP is a guest address; reserve a zero return word below StackBase so a
+    ;; returning self-extractor entry point stops instead of executing garbage.
     (global.set $esp (i32.add
       (i32.sub (i32.add (global.get $GUEST_STACK) (global.get $GUEST_STACK_SIZE))
                (global.get $GUEST_BASE))
-      (global.get $image_base)))
+      (i32.sub (global.get $image_base) (i32.const 4))))
+    (call $gs32 (global.get $esp) (i32.const 0))
     (global.set $eax (i32.const 0)) (global.set $ecx (i32.const 0))
     (global.set $edx (i32.const 0)) (global.set $ebx (i32.const 0))
     (global.set $ebp (i32.const 0)) (global.set $esi (i32.const 0))
@@ -131,9 +132,11 @@
     ;; TIB+0x18: Self-pointer (linear address of TIB)
     (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x18)) (global.get $fs_base))
     ;; TIB+0x04: Stack top
-    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x04)) (global.get $esp))
+    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x04))
+      (i32.add (global.get $esp) (i32.const 4)))
     ;; TIB+0x08: Stack bottom
-    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x08)) (i32.sub (global.get $esp) (global.get $GUEST_STACK_SIZE)))
+    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x08))
+      (i32.sub (i32.add (global.get $esp) (i32.const 4)) (global.get $GUEST_STACK_SIZE)))
     ;; TIB+0x2c: ThreadLocalStoragePointer — point at our TLS slot array so that
     ;; apps doing direct FS:[0x2c][index*4] reads (bypassing TlsGetValue) see the
     ;; same values our TlsSetValue writes. Eagerly allocate the slot array.

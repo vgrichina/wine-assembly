@@ -9,7 +9,6 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
 const { startControlSession } = require('./control-session');
 
 const ROOT = path.join(__dirname, '..');
@@ -49,10 +48,26 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   const queued = await send('keypress:65');
   assert.strictEqual(queued.queued, true);
+  const injected = await send({
+    action: 'input-message', hwnd: 0, msg: 0, wParam: 0, lParam: 0,
+  });
+  assert.strictEqual(injected.queued, true);
+  assert.strictEqual(injected.msg, 0);
+  const injectedAgain = await send({
+    action: 'input-message', hwnd: 0, msg: 0, wParam: 1, lParam: 2,
+  });
+  assert.strictEqual(injectedAgain.queued, true,
+    'stdio messages should post independently without a pending-input stall');
   const stepped = await send('step 8');
   assert.strictEqual(stepped.frozen, true);
   assert.strictEqual(stepped.ran, 8);
   assert.strictEqual(stepped.steps, 8);
+
+  const streamedA = send({ action: 'step', n: 2 });
+  const streamedB = send({ action: 'step', n: 2 });
+  const streamed = await Promise.all([streamedA, streamedB]);
+  assert.deepStrictEqual(streamed.map(result => result.ran), [2, 2],
+    'stdio commands arriving together must execute in stream order');
 
   const after = await send({ action: 'snapshot' });
   await sleep(400);
@@ -73,10 +88,10 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const code = await exited;
   assert.strictEqual(code, 0,
     'frozen CLI exited ' + code + '\n' + session.output().slice(-3000));
-  assert(/Stats: \d+ API calls, 8 batches/.test(session.output()),
-    'frozen CLI did not report exactly eight batches\n' + session.output().slice(-3000));
+  assert(/Stats: \d+ API calls, 12 batches/.test(session.output()),
+    'frozen CLI did not report exactly twelve batches\n' + session.output().slice(-3000));
 
-  const bounded = spawn('node', [
+  const bounded = startControlSession([
     RUN,
     '--exe=' + EXE,
     '--control-stdin',
@@ -85,16 +100,19 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     '--quiet-api',
     '--quiet-blocks',
     '--no-build',
-  ], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
-  let boundedOutput = '';
-  bounded.stdout.on('data', data => { boundedOutput += data; });
-  bounded.stderr.on('data', data => { boundedOutput += data; });
-  const boundedCode = await new Promise(resolve => bounded.on('exit', resolve));
+  ], { cwd: ROOT, idPrefix: 'b' });
+  await sleep(400);
+  const boundedStill = await bounded.send({ action: 'snapshot' });
+  assert.strictEqual(boundedStill.batch, 0,
+    'idle frozen CLI advanced while its active-time guard was paused');
+  await bounded.send({ action: 'quit' });
+  bounded.child.stdin.end();
+  const boundedCode = await bounded.exited;
   assert.strictEqual(boundedCode, 0, 'self-bounded frozen CLI exited ' + boundedCode);
-  assert(/\[max-seconds\].*batch 0/.test(boundedOutput),
-    'max-seconds did not wake a frozen CLI\n' + boundedOutput.slice(-2000));
-  assert(/Stats: \d+ API calls, 0 batches/.test(boundedOutput),
-    'idle frozen CLI unexpectedly executed a batch\n' + boundedOutput.slice(-2000));
+  assert(!/\[max-seconds\]/.test(bounded.output()),
+    'max-seconds counted frozen wait time\n' + bounded.output().slice(-2000));
+  assert(/Stats: \d+ API calls, 0 batches/.test(bounded.output()),
+    'idle frozen CLI unexpectedly executed a batch\n' + bounded.output().slice(-2000));
   console.log('PASS  CLI frozen stdin control pauses and steps exactly');
 })().catch(async error => {
   console.error(error.stack || error);

@@ -46,6 +46,18 @@ const { exeDriveForPath, setExeDrive } = require('../lib/process-boot');
   assert.strictEqual(Buffer.from(u8.subarray(wa(output), end)).toString('ascii'),
     'D:\\setup.exe');
 
+  u8.set(Buffer.from('System\\setup.exe', 'ascii'), staging);
+  e.set_exe_name(staging, 16);
+  const nested = e.guest_alloc(260);
+  assert.strictEqual(e.test_call_GetModuleFileNameA(0, nested, 260), 19);
+  end = wa(nested);
+  while (u8[end]) end++;
+  assert.strictEqual(Buffer.from(u8.subarray(wa(nested), end)).toString('ascii'),
+    'D:\\System\\setup.exe');
+
+  u8.set(Buffer.from('setup.exe', 'ascii'), staging);
+  e.set_exe_name(staging, 9);
+
   const wide = e.test_call_GetCommandLineW();
   let command = '';
   for (let p = wa(wide); dv.getUint16(p, true); p += 2) {
