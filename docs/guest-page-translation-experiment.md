@@ -208,6 +208,7 @@ benchmarks—the atomic increments intentionally perturb timing.
 | Heroes III, 3s | 60,785,583 | 390,177 | 542,328 / 1 | 0 |
 | StarCraft Shareware, 5s | 80,309,409 | 3,702,407 | 3,189,735 / 0 | 0 |
 | Diablo II demo, 5s | 142,114,125 | 14 | 65,416,844 / 0 | 0 |
+| Alpha Centauri v4, 5s | 80,363,555 | 1,516,778 | 746,791 / 0 | 0 |
 
 Diablo II's matching legacy run made 65,520,052 sparse-cache hits and 15,465
 record-scan hits. Those scans examined 617,374 records, an average depth of
@@ -218,6 +219,14 @@ instances. Adding `set_guest_page_translation`/`get_guest_page_translation` to
 that shared table makes both cooperative and real Worker backends inherit the
 option. Focused Worker tests and all three repeated packed censuses now show
 zero legacy translation activity.
+
+Alpha used the complete 395-file disc program tree with Firaxis's official v4
+replacement payload layered over it, matching the diagnostic browser setup
+that reaches gameplay. Its matching legacy census made 746,750 sparse-cache
+hits and 41 record-scan hits; the scans examined 486 records (11.85 average
+depth). This establishes its translation shape, not production installer
+acceptance—the separate exact-disc path still has to run the original updater
+inside the emulator.
 
 The browser exposes the same experiment as `?guest-page-translation`, applied
 before the guest's first slice. A StarCraft browser smoke run stayed live
