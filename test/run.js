@@ -3521,6 +3521,12 @@ async function main() {
     console.log(`  legacy scan hit=${stats.legacy_scan_hit} miss=${stats.legacy_scan_miss} ` +
       `records=${stats.legacy_scan_records} avg-depth=${legacyScans
         ? (stats.legacy_scan_records / legacyScans).toFixed(2) : 'n/a'}`);
+    const legacySpanScans = stats.span_legacy_scan_hit + stats.span_legacy_scan_miss;
+    console.log(`  affine span packed hit=${stats.span_packed_hit} miss=${stats.span_packed_miss}`);
+    console.log(`  affine span legacy cache=${stats.span_legacy_cache_hit} ` +
+      `scan hit=${stats.span_legacy_scan_hit} miss=${stats.span_legacy_scan_miss} ` +
+      `records=${stats.span_legacy_scan_records} avg-depth=${legacySpanScans
+        ? (stats.span_legacy_scan_records / legacySpanScans).toFixed(2) : 'n/a'}`);
   };
   // A run that is stopped from outside still knows things worth having. The
   // two-process tests kill both emulators when their checks are done, and

@@ -26,6 +26,12 @@ const STAT_NAMES = Object.freeze([
   'legacy_scan_hit',
   'legacy_scan_miss',
   'legacy_scan_records',
+  'span_packed_hit',
+  'span_packed_miss',
+  'span_legacy_cache_hit',
+  'span_legacy_scan_hit',
+  'span_legacy_scan_miss',
+  'span_legacy_scan_records',
 ]);
 
 function getArg(name, fallback) {
@@ -132,27 +138,85 @@ function instrumentRegisters(source) {
   return source.slice(0, start) + body + source.slice(end);
 }
 
+function instrumentAffineSpan(source) {
+  const startMarker = '  (func $g2w_affine_span (param $ga i32) (param $len i32) (result i32)';
+  const endMarker = '\n  (func $w2g (param $wa i32) (result i32)';
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start);
+  if (start < 0 || end < 0) {
+    throw new Error('page-translation-stats: cannot isolate $g2w_affine_span');
+  }
+  let body = source.slice(start, end);
+
+  body = replaceOne(body,
+    String.raw`    (if (global.get $guest_page_translation)
+      (then
+        (return
+          (call $guest_page_affine_span (local.get $ga) (local.get $len)))))`,
+    String.raw`    (if (global.get $guest_page_translation)
+      (then
+        (local.set $wa
+          (call $guest_page_affine_span (local.get $ga) (local.get $len)))
+        (if (i32.eq (local.get $wa) (global.get $NULL_SENTINEL))
+          (then (call $g2w_stat_inc (i32.const 12)))
+          (else (call $g2w_stat_inc (i32.const 11))))
+        (return (local.get $wa))))`,
+    'packed affine result');
+
+  for (const backing of [
+    '$g2w_sparse_backing', '$g2w_sparse_backing1',
+    '$g2w_sparse_backing2', '$g2w_sparse_backing3',
+  ]) {
+    const needle = `      (then\n        (return (i32.add (global.get ${backing}) (local.get $off)))))`;
+    const replacement = `      (then\n        (call $g2w_stat_inc (i32.const 13))\n` +
+      `        (return (i32.add (global.get ${backing}) (local.get $off)))))`;
+    body = replaceOne(body, needle, replacement, `legacy affine cache ${backing}`);
+  }
+  body = replaceOne(body,
+    '      (br_if $mapped_done (i32.ge_u (local.get $i) (local.get $count)))',
+    '      (br_if $mapped_done (i32.ge_u (local.get $i) (local.get $count)))\n' +
+      '      (call $g2w_stat_inc (i32.const 16))',
+    'legacy affine scan iteration');
+  body = replaceOne(body,
+    '          (return (i32.add (local.get $backing) (local.get $off)))))',
+    '          (call $g2w_stat_inc (i32.const 14))\n' +
+      '          (return (i32.add (local.get $backing) (local.get $off)))))',
+    'legacy affine scan hit');
+  body = replaceOne(body,
+    '    (global.get $NULL_SENTINEL)',
+    '    (call $g2w_stat_inc (i32.const 15))\n' +
+      '    (global.get $NULL_SENTINEL)',
+    'legacy affine scan miss');
+
+  return source.slice(0, start) + body + source.slice(end);
+}
+
 function instrumentExports(source) {
   const marker = '  ;; --trace-esp wiring (test harness uses this). Pass hi=0 to disable';
   const exports = String.raw`  ;; Offline-only page-translation census exports. The instrumented
-  ;; artifact stores eleven shared u32 counters at TEST_SCRATCH+0..43.
+  ;; artifact stores seventeen shared u32 counters at TEST_SCRATCH+0..67.
   (func (export "reset_guest_page_stats")
-    (memory.fill (global.get $TEST_SCRATCH) (i32.const 0) (i32.const 44)))
-  (func (export "get_guest_page_stat_count") (result i32) (i32.const 11))
+    (memory.fill (global.get $TEST_SCRATCH) (i32.const 0) (i32.const 68)))
+  (func (export "get_guest_page_stat_count") (result i32) (i32.const 17))
   (func (export "get_guest_page_stat") (param $slot i32) (result i32)
-    (if (result i32) (i32.lt_u (local.get $slot) (i32.const 11))
+    (if (result i32) (i32.lt_u (local.get $slot) (i32.const 17))
       (then
         (i32.atomic.load
           (i32.add (global.get $TEST_SCRATCH)
             (i32.shl (local.get $slot) (i32.const 2)))))
       (else (i32.const 0))))
+  (func (export "test_guest_page_affine_span")
+      (param $ga i32) (param $len i32) (result i32)
+    (call $g2w_affine_span (local.get $ga) (local.get $len)))
 
 `;
   return replaceOne(source, marker, exports + marker, 'debug export marker');
 }
 
 function instrumentSource(filename, source) {
-  if (filename === '03-registers.wat') return instrumentRegisters(source);
+  if (filename === '03-registers.wat') {
+    return instrumentAffineSpan(instrumentRegisters(source));
+  }
   if (filename === '13-exports.wat') return instrumentExports(source);
   return source;
 }

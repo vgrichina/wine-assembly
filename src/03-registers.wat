@@ -134,6 +134,33 @@
       (i32.and (local.get $pte) (i32.const 0xFFFFF000))
       (i32.and (local.get $ga) (i32.const 0xFFF))))
 
+  ;; Resolve a complete sparse span only when every crossed guest page maps to
+  ;; the corresponding contiguous backing page. Checking merely the two ends
+  ;; would accept a hole or a differently backed middle page; checking each
+  ;; page boundary proves the affine range that bulk string/loop helpers need.
+  (func $guest_page_affine_span (param $ga i32) (param $len i32) (result i32)
+    (local $start_wa i32) (local $cur_wa i32)
+    (local $end i32) (local $cur i32)
+    (local.set $start_wa (call $guest_page_translate (local.get $ga)))
+    (if (i32.eq (local.get $start_wa) (global.get $NULL_SENTINEL))
+      (then (return (global.get $NULL_SENTINEL))))
+    (if (i32.eqz (local.get $len)) (then (return (local.get $start_wa))))
+    (local.set $end (i32.add (local.get $ga) (local.get $len)))
+    (if (i32.le_u (local.get $end) (local.get $ga))
+      (then (return (global.get $NULL_SENTINEL))))
+    (local.set $cur
+      (i32.add (i32.or (local.get $ga) (i32.const 0xFFF)) (i32.const 1)))
+    (block $done (loop $pages
+      (br_if $done (i32.ge_u (local.get $cur) (local.get $end)))
+      (local.set $cur_wa (call $guest_page_translate (local.get $cur)))
+      (if (i32.ne (local.get $cur_wa)
+            (i32.add (local.get $start_wa)
+              (i32.sub (local.get $cur) (local.get $ga))))
+        (then (return (global.get $NULL_SENTINEL))))
+      (local.set $cur (i32.add (local.get $cur) (i32.const 0x1000)))
+      (br $pages)))
+    (local.get $start_wa))
+
   (func $g2w_miss (param $ga i32) (result i32)
     (if (global.get $fault_unmapped)
       (then
@@ -257,6 +284,14 @@
             (i32.sub (global.get $DIB_GUEST_CAPACITY) (local.get $off))))
       (then
         (return (i32.add (global.get $DIB_BACKING_BASE) (local.get $off)))))
+
+    ;; Packed mode validates the complete span from PTEs and never consults
+    ;; the legacy cache/record walk below. The page-boundary loop is amortized
+    ;; by the bulk operation that requested the span.
+    (if (global.get $guest_page_translation)
+      (then
+        (return
+          (call $guest_page_affine_span (local.get $ga) (local.get $len)))))
 
     ;; Check the four per-instance sparse records before scanning the shared
     ;; append-only table. A cached size is published atomically by g2w's scan.

@@ -228,6 +228,17 @@ depth). This establishes its translation shape, not production installer
 acceptance—the separate exact-disc path still has to run the original updater
 inside the emulator.
 
+The census also covers `$g2w_affine_span`, the bulk-operation helper that had
+still used the legacy range cache/table even when scalar packed translation
+was enabled. Packed mode now proves a span by checking every crossed PTE maps
+to the expected contiguous backing page; it never enters the legacy span
+cache or record scan. None of the short launch windows above requested a
+sparse affine fast path. A focused backward `REP MOVSD` regression forces a
+span across adjacent guest pages with non-contiguous backing and proves both
+translators reject the unsafe fast path and complete through elementwise
+translation instead. Separate tests cover contiguous, unmapped, zero-length,
+and wrapping packed spans.
+
 The browser exposes the same experiment as `?guest-page-translation`, applied
 before the guest's first slice. A StarCraft browser smoke run stayed live
 (four of five screen probes changed) and reported the option enabled in both

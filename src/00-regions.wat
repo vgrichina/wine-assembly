@@ -220,7 +220,7 @@
   (region.declare $POWER_SCREEN_STRINGS (size 0x000000C0) (align 0x00000010)
     (owner "09c3-controls.wat:1716"))
   (region.declare-fixed $GUEST_BASE (base 0x00012000) (size 0x03C00000) (align 0x00001000)
-    (owner "03-registers.wat:149"))
+    (owner "03-registers.wat:176"))
   ;; Per-owner USER activation history fits in the remaining aligned table gap
   ;; before the fixed guest mirror. Keep the address allocator-owned rather
   ;; than pinning another raw address.
