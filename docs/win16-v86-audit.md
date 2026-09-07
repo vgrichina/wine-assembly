@@ -9,8 +9,9 @@ Entertainment Pack entries.  The `.IW` files are IdleWild modules rather than
 standalone applications, so they are exercised through IdleWild and are not
 double-counted as apps.
 
-The complete contact sheet is
-[`test/output/win16-v86-comparison/contact-sheet-all.png`](../test/output/win16-v86-comparison/contact-sheet-all.png).
+The complete contact sheet is produced locally at
+`test/output/win16-v86-comparison/contact-sheet-all.png`; generated audit
+artifacts under `test/output/` are not published with the site.
 Every pair places native Windows 98 on the left and wine-assembly on the right.
 Native metadata, payload hashes, full-size PNGs, and local transcripts live in
 the corresponding per-app directory.  All full-size pairs were inspected

@@ -11997,14 +11997,14 @@
     (local.set $sw (call $g2w (local.get $state)))
 
     ;; ---------- LB_ADDSTRING (0x0180) ----------
-    ;; lParam = guest ptr to NUL-terminated string. Returns new index, or
-    ;; LB_ERR(-1) on failure (we never fail here).
+    ;; Without LBS_HASSTRINGS, owner-draw lists receive item data rather than text.
     (if (i32.eq (local.get $msg) (i32.const 0x0180))
       (then
-        (local.set $src_g (local.get $lParam))
-        (if (i32.eqz (local.get $src_g)) (then (return (i32.const -1))))
-        (local.set $src_w (call $g2w (local.get $src_g)))
-        (local.set $slen (call $strlen (local.get $src_w)))
+        (local.set $ownerdraw (i32.and (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0030)) (i32.const 0)) (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0040))))) (local.set $slen (i32.const 0))
+        (if (i32.eqz (local.get $ownerdraw)) (then (local.set $src_g (local.get $lParam))
+          (if (i32.eqz (local.get $src_g)) (then (return (i32.const -1))))
+          (local.set $src_w (call $g2w (local.get $src_g)))
+          (local.set $slen (call $strlen (local.get $src_w)))))
         (local.set $used (call $lb_items_used (local.get $sw)))
         (local.set $cap  (call $lb_items_cap (local.get $sw)))
         (local.set $need (i32.add (local.get $used) (i32.add (local.get $slen) (i32.const 1))))
@@ -12033,7 +12033,7 @@
         (call $lb_set_items_used (local.get $sw)
           (i32.add (local.get $used) (i32.add (local.get $slen) (i32.const 1))))
         (call $lb_set_count (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
-        ;; Grow parallel data array if needed; default new slot to 0.
+        ;; Grow parallel data array; no-string owner-draw items start with lParam.
         (local.set $cap (call $lb_data_cap (local.get $sw)))
         (if (i32.ge_u (local.get $count) (local.get $cap))
           (then
@@ -12052,7 +12052,7 @@
         (i32.store
           (i32.add (call $g2w (call $lb_data_ptr (local.get $sw)))
                    (i32.mul (local.get $count) (i32.const 4)))
-          (i32.const 0))
+          (select (local.get $lParam) (i32.const 0) (local.get $ownerdraw)))
         ;; Grow the byte-per-row multi-selection array in parallel.
         (local.set $cap (call $lb_sel_cap (local.get $sw)))
         (if (i32.ge_u (local.get $count) (local.get $cap))
@@ -12210,6 +12210,73 @@
     ;; asked for in WM_MEASUREITEM.
     (if (i32.eq (local.get $msg) (i32.const 0x01A1))
       (then (return (call $lb_row_height (local.get $sw)))))
+
+    ;; ---------- LB_GETITEMRECT (0x0198) ----------
+    ;; Return the row bounds in listbox client coordinates. Rows scrolled
+    ;; above the viewport intentionally have negative top/bottom values.
+    (if (i32.eq (local.get $msg) (i32.const 0x0198))
+      (then
+        (local.set $idx (local.get $wParam))
+        (local.set $count (call $lb_count (local.get $sw)))
+        (if (i32.or
+              (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                      (i32.ge_s (local.get $idx) (local.get $count)))
+              (i32.eqz (local.get $lParam)))
+          (then (return (i32.const -1))))
+        (local.set $row_h (call $lb_row_height (local.get $sw)))
+        (local.set $row_y
+          (i32.mul
+            (i32.sub (local.get $idx) (call $lb_top_index (local.get $sw)))
+            (local.get $row_h)))
+        (local.set $w
+          (i32.and (call $ctrl_get_wh_packed (local.get $hwnd))
+                   (i32.const 0xFFFF)))
+        (local.set $dest_w (call $g2w (local.get $lParam)))
+        (i32.store           (local.get $dest_w) (i32.const 0))
+        (i32.store offset=4  (local.get $dest_w) (local.get $row_y))
+        (i32.store offset=8  (local.get $dest_w) (local.get $w))
+        (i32.store offset=12 (local.get $dest_w)
+          (i32.add (local.get $row_y) (local.get $row_h)))
+        (return (i32.const 0))))
+
+    ;; ---------- LB_ITEMFROMPOINT (0x01A9) ----------
+    ;; LOWORD is the nearest item; HIWORD reports whether the point lies
+    ;; outside the listbox client area. This remains distinct from whether the
+    ;; point lies below the final populated row.
+    (if (i32.eq (local.get $msg) (i32.const 0x01A9))
+      (then
+        (local.set $count (call $lb_count (local.get $sw)))
+        (if (i32.eqz (local.get $count))
+          (then (return (i32.const 0x0000FFFF))))
+        (local.set $w (i32.extend16_s (local.get $lParam)))
+        (local.set $h
+          (i32.extend16_s
+            (i32.shr_u (local.get $lParam) (i32.const 16))))
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $code
+          (i32.or
+            (i32.or (i32.lt_s (local.get $w) (i32.const 0))
+                    (i32.lt_s (local.get $h) (i32.const 0)))
+            (i32.or
+              (i32.ge_s (local.get $w)
+                (i32.and (local.get $sz) (i32.const 0xFFFF)))
+              (i32.ge_s (local.get $h)
+                (i32.shr_u (local.get $sz) (i32.const 16))))))
+        (local.set $row_h (call $lb_row_height (local.get $sw)))
+        (local.set $idx (call $lb_top_index (local.get $sw)))
+        (if (i32.gt_s (local.get $h) (i32.const 0))
+          (then
+            (local.set $idx
+              (i32.add (local.get $idx)
+                (i32.div_s (local.get $h) (local.get $row_h))))))
+        (if (i32.lt_s (local.get $idx) (i32.const 0))
+          (then (local.set $idx (i32.const 0))))
+        (if (i32.ge_s (local.get $idx) (local.get $count))
+          (then (local.set $idx (i32.sub (local.get $count) (i32.const 1)))))
+        (return
+          (i32.or
+            (i32.and (local.get $idx) (i32.const 0xFFFF))
+            (i32.shl (local.get $code) (i32.const 16))))))
 
     ;; ---------- LB_SETCURSEL (0x0186) ----------
     ;; wParam = index (-1 to clear). Clamp to count-1 if out of range.
@@ -12712,19 +12779,17 @@
         (return (i32.load (local.get $dest_w)))))
 
     ;; ---------- LB_FINDSTRING (0x018F) / LB_FINDSTRINGEXACT (0x01A2) ----------
-    ;; wParam = start index (-1 = from 0); lParam = NUL-terminated query.
-    ;; FINDSTRING does prefix match (case-insensitive); FINDSTRINGEXACT
-    ;; requires equal length AND case-insensitive match. Wraps around.
-    ;; Returns first index found, or LB_ERR(-1).
+    ;; Text lists compare strings; no-string owner-draw lists compare item data.
     (if (i32.or (i32.eq (local.get $msg) (i32.const 0x018F))
                 (i32.eq (local.get $msg) (i32.const 0x01A2)))
       (then
-        (if (i32.eqz (local.get $lParam)) (then (return (i32.const -1))))
         (local.set $count (call $lb_count (local.get $sw)))
         (if (i32.eqz (local.get $count)) (then (return (i32.const -1))))
-        (local.set $src_w (call $g2w (local.get $lParam)))
-        (local.set $slen (call $strlen (local.get $src_w)))
-        ;; Walk all items starting at (start+1) % count, wrapping back.
+        (local.set $ownerdraw (i32.and (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0030)) (i32.const 0)) (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0040)))))
+        (if (i32.eqz (local.get $ownerdraw)) (then
+          (if (i32.eqz (local.get $lParam)) (then (return (i32.const -1))))
+          (local.set $src_w (call $g2w (local.get $lParam)))
+          (local.set $slen (call $strlen (local.get $src_w)))))
         (local.set $idx (local.get $wParam))
         (if (i32.lt_s (local.get $idx) (i32.const 0))
           (then (local.set $idx (i32.sub (local.get $count) (i32.const 1)))))
@@ -12735,7 +12800,11 @@
           (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
           (if (i32.ge_s (local.get $idx) (local.get $count))
             (then (local.set $idx (i32.const 0))))
-          ;; Walk to item $idx
+          (if (local.get $ownerdraw) (then
+            (if (i32.eq (i32.load (i32.add (call $g2w (call $lb_data_ptr (local.get $sw)))
+                                           (i32.mul (local.get $idx) (i32.const 4)))) (local.get $lParam))
+              (then (return (local.get $idx))))
+            (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $fsloop)))
           (local.set $p (local.get $items_w))
           (local.set $row (i32.const 0))
           (block $fsskip (loop $fssk
@@ -12745,13 +12814,11 @@
             (local.set $row (i32.add (local.get $row) (i32.const 1)))
             (br $fssk)))
           (local.set $row_y (call $strlen (local.get $p))) ;; reuse $row_y as item-len
-          ;; FINDSTRINGEXACT requires equal length; FINDSTRING needs item len >= query len
           (if (i32.eq (local.get $msg) (i32.const 0x01A2))
             (then (if (i32.ne (local.get $row_y) (local.get $slen))
                     (then (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $fsloop))))
             (else (if (i32.lt_u (local.get $row_y) (local.get $slen))
                     (then (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $fsloop)))))
-          ;; Case-insensitive compare $slen bytes
           (if (call $listbox_strncmpi (local.get $p) (local.get $src_w) (local.get $slen))
             (then (return (local.get $idx))))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))

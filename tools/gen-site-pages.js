@@ -93,12 +93,20 @@ function gitDate(rel, which) {
   } catch (_) { return null; }
 }
 
-// Title = first H1; description = first real paragraph, trimmed to what a
-// search snippet shows. Markdown is stripped by rendering the paragraph and
-// dropping the tags, so a description never carries a stray backtick.
+// Title = first H1. Description: an explicit `<!-- description: ... -->`
+// comment when the page has one (invisible on GitHub, so the .md stays the
+// source), else the first real paragraph cut at a sentence end that fits a
+// search snippet, else a word cut with an ellipsis. Markdown is stripped by
+// rendering the paragraph and dropping the tags, so a description never
+// carries a stray backtick, and entities are decoded so esc() at the tag
+// does not double-escape an apostrophe.
+const DESC_MAX = 158;
+const unescapeHtml = s => s.replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n))
+  .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 function extractMeta(md) {
   const lines = md.split('\n');
   let title = null;
+  const explicit = md.match(/<!--\s*description:\s*([\s\S]*?)-->/);
   const paras = [];
   let cur = [];
   let inFence = false;
@@ -114,25 +122,53 @@ function extractMeta(md) {
     cur.push(line.trim());
   }
   if (cur.length) paras.push(cur.join(' '));
+  if (explicit) return { title: title || SITE_NAME, description: explicit[1].replace(/\s+/g, ' ').trim() };
+  // A page that opens with a table or a list has no paragraph to quote;
+  // the title is a better snippet than an empty attribute.
+  if (!paras.length) return { title: title || SITE_NAME, description: `${title || SITE_NAME}: notes from the ${SITE_NAME} Windows 98 emulator.` };
   const first = paras.find(p => p.replace(/[*_`]/g, '').length > 40) || paras[0] || '';
-  let text = marked.parseInline(first).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-  if (text.length > 158) text = text.slice(0, 155).replace(/\s+\S*$/, '') + '…';
+  let text = unescapeHtml(marked.parseInline(first).replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
+  if (text.length > DESC_MAX) {
+    // Prefer ending on a whole sentence: the last ". " that still leaves a
+    // description of useful length. Otherwise cut at a word.
+    const head = text.slice(0, DESC_MAX);
+    const end = head.lastIndexOf('. ');
+    text = end >= 40 ? head.slice(0, end + 1) : text.slice(0, DESC_MAX - 3).replace(/\s+\S*$/, '') + '…';
+  }
   return { title: title || SITE_NAME, description: text };
 }
 
-// Relative .md links inside the rendered pages point at the .html twin we
-// generate; everything else (src/, lib/, http) is left alone.
-function rewriteMdLinks(html) {
-  return html.replace(/href="([^"#:]+)\.md(#[^"]*)?"/g, (m, p, hash) => `href="${p}.html${hash || ''}"`);
+// Markdown links are resolved from the source document, not the generated
+// page. Documents rendered by this generator get their public HTML route;
+// repository-only Markdown stays useful by linking to its GitHub source
+// instead of inventing a local .html URL that the deploy does not contain.
+function markdownPublicUrl(sourceRel, href, hash) {
+  const absolute = href.startsWith('/');
+  const target = path.posix.normalize(absolute
+    ? href.slice(1)
+    : path.posix.join(path.posix.dirname(sourceRel), href));
+  if (target === 'PROJECT_STORY.md') return `/story.html${hash || ''}`;
+  if (target === 'articles/README.md') return `/articles/${hash || ''}`;
+  if (target === 'docs/re-notes/README.md') return `/docs/re-notes/${hash || ''}`;
+  if (/^articles\/[^/]+\.md$/.test(target) || /^docs\/(?:re-notes\/)?[^/]+\.md$/.test(target)) {
+    return `/${target.replace(/\.md$/, '.html')}${hash || ''}`;
+  }
+  const githubPath = target.split('/').map(encodeURIComponent).join('/');
+  return `${REPO}/blob/main/${githubPath}${hash || ''}`;
 }
 
-function pageHtml({ md, title, description, urlPath, sourceRel, nav = NAV, dates, extraHead, ldExtra, ogImage = OG_IMAGE, canonical }) {
+function rewriteMdLinks(html, sourceRel) {
+  return html.replace(/href="([^"#]+\.md)(#[^"]*)?"/g,
+    (match, href, hash) => `href="${markdownPublicUrl(sourceRel, href, hash)}"`);
+}
+
+function pageHtml({ md, title, description, urlPath, sourceRel, nav = NAV, dates, extraHead, ldExtra, ldMore = [], ogImage = OG_IMAGE, canonical }) {
   const url = `${SITE}/${urlPath}`;
   // A page that has been folded into another (articles/ and docs/ into
   // design/) keeps serving its old URL but declares the new one canonical,
   // so what search engines already indexed transfers instead of competing.
   const canonicalUrl = canonical ? `${SITE}/${canonical}` : url;
-  let body = rewriteMdLinks(marked.parse(md, { gfm: true, breaks: false }));
+  let body = rewriteMdLinks(marked.parse(md, { gfm: true, breaks: false }), sourceRel);
   // ```mermaid fences: GitHub renders them in the .md; here they become
   // <pre class="mermaid"> and the page loads mermaid only when it has one.
   // marked's entity escaping is fine, mermaid reads the element's textContent.
@@ -179,7 +215,7 @@ function pageHtml({ md, title, description, urlPath, sourceRel, nav = NAV, dates
   <meta name="twitter:image" content="${ogImage}">
   <meta name="theme-color" content="#008080">
   <link rel="icon" href="${SITE}/icons/icon-192.png">
-  <script type="application/ld+json">${JSON.stringify(ld)}</script>${extraHead || ''}${mermaidHead}
+  <script type="application/ld+json">${JSON.stringify(ld)}</script>${ldMore.map(x => `\n  <script type="application/ld+json">${JSON.stringify(x)}</script>`).join('')}${extraHead || ''}${mermaidHead}
   <style>${STYLE}  </style>
 </head>
 <body>
@@ -220,6 +256,7 @@ const NAV = [NAV_HOME, NAV_APPS, NAV_DESIGN, NAV_STORY, NAV_REPO].join(' ');
 // prose comes from tools/site-app-blurbs.json; everything else (exe, format,
 // DLLs, data files, command line) is read off the registry entry itself.
 const APP_BLURBS_REL = 'tools/site-app-blurbs.json';
+const APP_FAQ_REL = 'tools/site-app-faq.json';
 const OG_DIR = 'screenshots/og';
 const { ogCard } = require('./gen-og-images');
 // The selector's groups are about where a binary came from; the pages group
@@ -244,6 +281,48 @@ function pngSize(file) {
   return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
 }
 const sizeAttrs = s => s ? `width="${s.width}" height="${s.height}"` : '';
+
+// The Questions section of an app page, and the FAQPage JSON-LD that mirrors
+// it. Answers are built from facts the registry and the code already state
+// (touch layout, LAN flag, exe format, localStorage-backed registry/INI
+// persistence, the AudioContext resume on first input) plus the per-app
+// controls line in tools/site-app-faq.json. Nothing here claims a feature the
+// program has not been seen to use.
+function appFaq(app, faq) {
+  const qa = [];
+  qa.push([`How do I play ${app.name} in my browser?`,
+    `Open the ${app.name} page and click Launch. The program's files are fetched from this site and run inside the tab as WebAssembly; nothing is installed and nothing is uploaded.`]);
+  qa.push([`What are the controls for ${app.name}?`,
+    faq[app.id] || `${app.name} is played with the mouse and the same keyboard shortcuts as the original Windows 98 program; its menus list them.`]);
+  qa.push([`Does ${app.name} work on a phone?`,
+    app.touch
+      ? `Yes. On a phone the desktop scales to the screen and ${app.name} gets on-screen controls for the keys it needs, plus a keyboard button for anything else.`
+      : `It loads in mobile Safari and Chrome and the desktop scales to the screen, but ${app.name} was made for a mouse and a keyboard, so it plays best on a desktop browser. Taps act as clicks.`]);
+  qa.push([`Are my scores and settings saved?`,
+    `Whatever ${app.name} writes to the Windows registry or to its INI file is kept in this browser's local storage, so it is there next time on the same device and browser. Clearing site data removes it.`]);
+  qa.push([`Does ${app.name} have sound here?`,
+    (faq._sound && faq._sound[app.id])
+      || `Yes. Sound the program plays through the Windows wave and DirectSound APIs is routed to the browser's Web Audio. Browsers only allow audio after a click or a key press, so it starts with your first input.`]);
+  if (app.lan) qa.push([`Can I play ${app.name} against someone else?`,
+    `Yes, over the emulator's virtual LAN: two copies of the game on the same page share a network segment, so one can host and the other join as the original did on a 1990s LAN.`]);
+  qa.push([`Is this the real ${app.name} or a remake?`,
+    `It is the original ${app.format || 'Windows'} executable${app.exe ? ` (${app.exe})` : ''}, run instruction by instruction by an x86 interpreter written in WebAssembly Text. The emulator provides the Windows API underneath it, not a rewrite of the program.`]);
+  return qa;
+}
+const faqLd = qa => ({
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: qa.map(([q, a]) => ({ '@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a } })),
+});
+
+// Snippet for an app page: the blurb, plus the "runs in your browser" line
+// when a one-line blurb leaves room for it; a long blurb is cut at a
+// sentence end rather than padded.
+function appDescription(app) {
+  const tail = ` Runs in your browser on ${SITE_NAME}, a Windows 98 emulator in WebAssembly.`;
+  const base = app.blurb.length <= DESC_MAX ? app.blurb : extractMeta(app.blurb).description;
+  return base.length + tail.length <= DESC_MAX ? base + tail : base;
+}
 
 function dropdownGroups() {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf-8');
@@ -320,7 +399,7 @@ const ARTICLE_FOR_FORMAT = {
   '32-bit Windows (PE)': ['/articles/loading-real-windows-dlls-in-the-browser.html', 'how the program and its DLLs are loaded'],
 };
 
-function appPageMd(app, siblings) {
+function appPageMd(app, siblings, qa) {
   const L = [];
   L.push(`# ${app.name} in your browser`);
   L.push('');
@@ -360,6 +439,14 @@ function appPageMd(app, siblings) {
   }
   L.push(`Something wrong? The emulator is open source; [report it on GitHub](${REPO}/issues) with the app name and what you clicked.`);
   L.push('');
+  L.push('## Questions');
+  L.push('');
+  for (const [q, a] of qa) {
+    L.push(`### ${q}`);
+    L.push('');
+    L.push(a);
+    L.push('');
+  }
   if (siblings.length) {
     L.push(`## Also under "${app.group}"`);
     L.push('');
@@ -419,7 +506,8 @@ function listDocs() {
     if (!fs.existsSync(full)) continue;
     for (const f of fs.readdirSync(full).sort()) {
       if (!f.endsWith('.md')) continue;
-      out.push({ rel: `${dir}/${f}`, urlPath: `docs/${prefix}${f.replace(/\.md$/, '.html')}` });
+      const page = f === 'README.md' ? 'index.html' : f.replace(/\.md$/, '.html');
+      out.push({ rel: `${dir}/${f}`, urlPath: `docs/${prefix}${page}` });
     }
   }
   return out;
@@ -438,7 +526,7 @@ function generatePages() {
     content: pageHtml({
       md: storyMd,
       title: 'How Wine-Assembly was built: a Windows 98 emulator in raw WebAssembly',
-      description: 'The history of Wine-Assembly, an x86 Windows 98 emulator written directly in WebAssembly Text: from the first instruction decoder to a browser that runs Notepad, Pinball, Winamp, DirectX games and 16-bit Windows apps.',
+      description: 'The history of Wine-Assembly, a Windows 98 emulator in WebAssembly: from the first x86 decoder to a browser running Pinball, Winamp, DirectX and Win16 apps.',
       urlPath: 'story.html', sourceRel: 'PROJECT_STORY.md',
       dates: storyDates,
     }),
@@ -463,9 +551,11 @@ function generatePages() {
   // Per-app pages for the desktop set.
   const apps = loadDesktopApps();
   const blurbDates = { published: gitDate(APP_BLURBS_REL, 'first'), modified: gitDate(APP_BLURBS_REL) };
+  const faq = fs.existsSync(path.join(ROOT, APP_FAQ_REL)) ? JSON.parse(fs.readFileSync(path.join(ROOT, APP_FAQ_REL), 'utf-8')) : {};
   for (const app of apps) {
     const siblings = apps.filter(s => s.group === app.group && s.id !== app.id);
-    const md = appPageMd(app, siblings);
+    const qa = appFaq(app, faq);
+    const md = appPageMd(app, siblings, qa);
     // The app's own 1200x630 link-preview card, built from its screenshot.
     // Generated beside the pages (screenshots/og/ is not committed) and
     // uploaded by deploy-berrry.js with the other binary directories.
@@ -480,10 +570,13 @@ function generatePages() {
       content: pageHtml({
         md,
         title: `${app.name} in your browser`,
-        description: extractMeta(md).description,
+        // The blurb is the description; the boilerplate sentence after it
+        // in the page body only pads a snippet.
+        description: appDescription(app),
         urlPath: `apps/${app.id}.html`, sourceRel: APP_BLURBS_REL,
         dates: blurbDates,
         ogImage,
+        ldMore: [faqLd(qa)],
         ldExtra: {
           '@type': 'WebPage',
           about: { '@type': 'SoftwareApplication', name: app.name, operatingSystem: 'Windows 98', applicationCategory: app.group },
@@ -530,14 +623,28 @@ function generatePages() {
     const meta = extractMeta(md);
     const dates = { published: gitDate(d.rel, 'first'), modified: gitDate(d.rel) };
     const isIndex = d.rel === 'docs/re-notes/README.md';
+    const content = pageHtml({
+      md, title: meta.title, description: meta.description,
+      urlPath: d.urlPath, sourceRel: d.rel,
+      dates,
+    });
     pages.push({
       name: d.urlPath,
-      content: pageHtml({
-        md, title: meta.title, description: meta.description,
-        urlPath: d.urlPath, sourceRel: d.rel,
-        dates,
-      }),
+      content,
     });
+    // README.html was the original public route. Berry updates do not delete
+    // old files, so keep that URL current while making the directory index the
+    // canonical page used by navigation and the sitemap.
+    if (isIndex) {
+      pages.push({
+        name: 'docs/re-notes/README.html',
+        content: pageHtml({
+          md, title: meta.title, description: meta.description,
+          urlPath: 'docs/re-notes/README.html', sourceRel: d.rel,
+          canonical: 'docs/re-notes/', dates,
+        }),
+      });
+    }
     urls.push({ loc: `${SITE}/${d.urlPath}`, lastmod: dates.modified, priority: isIndex ? '0.5' : '0.6', changefreq: 'monthly' });
     index.push({ ...d, ...meta, dates });
   }
@@ -580,7 +687,7 @@ function generatePages() {
     content: pageHtml({
       md: designMd,
       title: 'How Wine-Assembly works: articles, design docs and reverse-engineering notes',
-      description: 'How a Windows 98 emulator written in WebAssembly Text works: articles on the x86 interpreter, lazy flags, real DLLs, software GDI, DirectX and Win16, plus the design docs and per-game reverse-engineering notes behind them.',
+      description: 'How a Windows 98 emulator in WebAssembly Text works: articles on the x86 interpreter, lazy flags, DLLs, GDI, DirectX and Win16, plus design docs and RE notes.',
       urlPath: 'design/', sourceRel: 'articles/README.md',
       dates: { modified: today },
     }).replace('class="wrap"', 'class="wrap docs-index"'),
@@ -595,7 +702,7 @@ function generatePages() {
     content: pageHtml({
       md: indexMd,
       title: 'Wine-Assembly design docs and reverse-engineering notes',
-      description: 'How a Windows 98 emulator written in WebAssembly Text works: memory map, threaded-code x86 dispatch, lazy flags, software GDI, DirectX, Win16, and per-game reverse-engineering notes.',
+      description: 'Design docs and reverse-engineering notes for a Windows 98 emulator in WebAssembly Text: memory map, x86 dispatch, lazy flags, software GDI, DirectX, Win16.',
       urlPath: 'docs/', sourceRel: 'docs',
       canonical: 'design/',
       dates: { modified: today },

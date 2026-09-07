@@ -9,8 +9,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
 const { PNG } = require('pngjs');
+const { startControlSession } = require('./control-session');
 
 const ROOT = path.join(__dirname, '..');
 const INSTALLER = path.join(__dirname, 'binaries', 'candidates', 'jardinains',
@@ -86,56 +86,14 @@ async function main() {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-jardinains-candidate-'));
   const readyPath = path.join(temp, 'level-ready.png');
   const activePath = process.env.JARDINAINS_SCREENSHOT || path.join(temp, 'level-active.png');
-  const child = spawn(process.execPath, [
+  const session = startControlSession([
     'test/run.js', '--app=jardinains', '--control-stdin', '--frozen',
     '--max-seconds=240', '--max-batches=1000000000', '--batch-size=200000',
     '--tick-ms-per-batch=16', '--quiet-api', '--quiet-blocks', '--no-close',
     '--no-build', '--copy-superops', '--async-mm-timer',
     '--repaint-every=1000000',
-  ], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
-
-  let output = '';
-  let lineBuffer = '';
-  let serial = 0;
-  const pending = new Map();
-  const exited = new Promise(resolve => child.on('exit', resolve));
-
-  child.stdout.on('data', data => {
-    output += data;
-    lineBuffer += data;
-    const lines = lineBuffer.split(/\r?\n/);
-    lineBuffer = lines.pop() || '';
-    for (const line of lines) {
-      const match = line.match(/^\[ctl\] (.*)$/);
-      if (!match) continue;
-      let reply;
-      try { reply = JSON.parse(match[1]); } catch (_) { continue; }
-      const waiter = pending.get(reply.id);
-      if (!waiter) continue;
-      pending.delete(reply.id);
-      reply.ok ? waiter.resolve(reply.value) : waiter.reject(new Error(reply.error));
-    }
-  });
-  child.stderr.on('data', data => { output += data; });
-  child.on('exit', code => {
-    for (const [id, waiter] of pending) {
-      waiter.reject(new Error(`run.js exited before replying to ${id} (exit ${code})`));
-    }
-    pending.clear();
-  });
-
-  function send(command) {
-    const id = `j${++serial}`;
-    const payload = typeof command === 'string' ? { id, cmd: command } : { id, ...command };
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      child.stdin.write(`${JSON.stringify(payload)}\n`, error => {
-        if (!error) return;
-        pending.delete(id);
-        reject(error);
-      });
-    });
-  }
+  ], { cwd: ROOT, idPrefix: 'j' });
+  const { send } = session;
 
   async function liveClick(x, y) {
     await send({ action: 'frozen', mode: 'off' });
@@ -170,19 +128,15 @@ async function main() {
     assert(stats.colors > 250 && stats.red > 5000 && stats.blue > 5000 &&
       stats.orange > 3000,
     `expected the multicolored Level 1 brick field, got ${JSON.stringify(stats)}\n` +
-      output.slice(-12000));
+      session.output().slice(-12000));
     assert(changed > 100,
       `launching the ball and moving the paddle changed only ${changed} pixels`);
-    assert(!/STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED API:/i.test(output),
-      `Jardinains emitted a crash marker:\n${output.slice(-12000)}`);
+    assert(!/STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED API:/i.test(session.output()),
+      `Jardinains emitted a crash marker:\n${session.output().slice(-12000)}`);
     console.log(`PASS Jardinains installer-produced Level 1 is playable (${changed} changed pixels)`);
     console.log(`  screenshot: ${activePath}`);
   } finally {
-    if (child.exitCode === null) {
-      try { await send({ action: 'quit' }); } catch (_) {}
-      child.stdin.end();
-    }
-    await exited;
+    await session.quit({ ignoreReplyError: true });
     if (!process.env.KEEP_JARDINAINS_CANDIDATE_TMP && !process.env.JARDINAINS_SCREENSHOT) {
       fs.rmSync(temp, { recursive: true, force: true });
     }

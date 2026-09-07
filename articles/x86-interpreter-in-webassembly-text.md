@@ -1,4 +1,5 @@
 # How to write an x86 interpreter in raw WebAssembly Text
+<!-- description: How Wine-Assembly's x86 interpreter works in raw WebAssembly Text: threaded code via call_indirect, a block cache, measured dispatch cost and loop super-ops. -->
 
 Wine-Assembly runs Windows 98 programs in the browser on an x86 interpreter written directly in WebAssembly Text (WAT), with no C, Rust or AssemblyScript in front of it. This is how that interpreter is put together: a decoder that turns x86 into threaded code, an indirect-call dispatcher, a block cache, and the measurements that decided which optimisations were worth keeping. It is the technical core of [the project story](/story.html).
 

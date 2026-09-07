@@ -122,6 +122,7 @@ UNIT=(
   test/test-oem-to-char-buff.js
   test/test-ver-find-file.js
   test/test-static-dx-version.js
+  test/test-file-version-info.js
   test/test-icopen-stack.js
   test/test-midi-mci.js
   test/test-tinysynth-offline.js
@@ -326,6 +327,7 @@ UNIT=(
   test/test-expand-environment-strings.js
   test/test-file-api-codepage.js
   test/test-find-first-last-error.js
+  test/test-find-next-last-error.js
   test/test-font-render-history.js
   test/test-get-number-format.js
   test/test-getclassname-controls.js
@@ -446,6 +448,7 @@ UNIT=(
   test/test-ole-static-handler.js
   test/test-ole-storage.js
   test/test-parent-child-paint-order.js
+  test/test-pe-entry-return.js
   test/test-pe-zero-original-first-thunk.js
   test/test-peek-message-filter.js
   test/test-raster-canvas.js
@@ -531,6 +534,7 @@ UNIT=(
   test/test-free-console.js
   test/test-gdiplus-flat-api.js
   test/test-get-ancestor.js
+  test/test-get-class-info-ex-common-control.js
   test/test-get-clipboard-sequence-number.js
   test/test-get-computer-name-w.js
   test/test-get-cursor.js
@@ -560,11 +564,15 @@ UNIT=(
   test/test-find-close-change-notification.js
   test/test-sh-get-folder-path-w.js
   test/test-shell-malloc.js
+  test/test-shell-import-aliases.js
   test/test-shell-pidl.js
+  test/test-sh-appbar-message.js
   test/test-shbrowseforfolder.js
   test/test-shell-notify-icon.js
   test/test-shell-execute-ex-w.js
   test/test-showwindow-dialog-promotion.js
+  test/test-showwindow-child-size.js
+  test/test-showwindow-owned-form-activation.js
   test/test-winmine-name-dialog-frame.js
   test/test-system-enum-dispatch.js
   test/test-thread-manager-sparse-stack.js
@@ -662,6 +670,8 @@ E2E=(
   test/test-little-fighter-2-candidate.js
   test/test-pocket-tanks-candidate.js
   test/test-icy-tower-candidate.js
+  test/test-snood-candidate.js
+  test/test-worms2-candidate.js
   test/test-elasto-mania-candidate.js
   test/test-jardinains-candidate.js
   test/test-nethack-win32.js

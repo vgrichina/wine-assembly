@@ -1207,6 +1207,23 @@
         ;; keeping our stale update region lets hidden controls draw fragments
         ;; after SW_HIDE.
         (call $paint_clear_subtree (local.get $arg0))))
+    ;; USER sends a newly shown child its current client size. Hidden child
+    ;; containers commonly defer layout until this notification; Unreal
+    ;; Setup creates its inner owner-draw list only after the hidden wrapper's
+    ;; creation-time sizing has completed.
+    (if (i32.and
+          (i32.and
+            (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+                     (i32.eqz (local.get $was_visible)))
+            (i32.ne
+              (i32.and (call $wnd_get_style (local.get $arg0))
+                       (i32.const 0x40000000))
+              (i32.const 0)))
+          (i32.ne (local.get $client_size) (i32.const 0)))
+      (then
+        (drop (call $post_queue_push
+          (local.get $arg0) (i32.const 0x0005)
+          (i32.const 0) (local.get $client_size)))))
     ;; Some VCL apps create hidden utility/application HWNDs before showing the
     ;; real form. If the stored main window is still invisible, promote the
     ;; first shown app wndproc window so activation/focus reaches the form.
@@ -1219,10 +1236,10 @@
               (i32.and
                 (i32.and (i32.ne (local.get $arg1) (i32.const 0))
                          (i32.ne (local.get $arg0) (global.get $main_hwnd)))
-                (i32.eqz (global.get $show_window_activated)))
-              (i32.eqz (call $wnd_is_effectively_visible (global.get $main_hwnd))))
+                (i32.or (i32.eqz (global.get $show_window_activated)) (call $show_window_replaces_utility_main (local.get $arg0))))
+              (i32.or (i32.eqz (call $wnd_is_effectively_visible (global.get $main_hwnd))) (call $show_window_replaces_utility_main (local.get $arg0))))
             (i32.eqz (call $wnd_get_parent (local.get $arg0))))
-          (i32.eqz (call $wnd_get_owner (local.get $arg0))))
+          (i32.or (i32.eqz (call $wnd_get_owner (local.get $arg0))) (call $show_window_replaces_utility_main (local.get $arg0))))
       (then
         (local.set $wndproc (call $wnd_table_get (local.get $arg0)))
         ;; A dialog record exposes USER's WNDPROC_DIALOG marker in the window
@@ -1242,7 +1259,7 @@
                        (i32.ne (local.get $app_wndproc) (global.get $WNDPROC_BUILTIN)))
               (i32.lt_u (local.get $app_wndproc) (i32.const 0xFFFF0000)))
           (then
-            (global.set $main_hwnd (local.get $arg0))
+            (if (call $show_window_replaces_utility_main (local.get $arg0)) (then (global.set $show_window_activated (i32.const 0)))) (global.set $main_hwnd (local.get $arg0))
             (if (local.get $client_size)
               (then (global.set $pending_wm_size (local.get $client_size))))))))
     ;; Showing a window should trigger WM_PAINT. Region-driven dispatch only
@@ -1300,7 +1317,7 @@
                           (i32.eq (local.get $arg0) (global.get $main_hwnd)))
                  (i32.eqz (global.get $show_window_activated)))
       (then
-        (global.set $active_hwnd (global.get $main_hwnd))
+        (global.set $active_hwnd (global.get $main_hwnd)) (drop (call $host_activate_window (global.get $main_hwnd)))
         (local.set $wndproc (call $wnd_table_get (global.get $main_hwnd)))
         ;; Dialog HWNDs store USER's WNDPROC_DIALOG marker rather than an x86
         ;; callback address.  Entering that marker as guest code strands the
@@ -1447,9 +1464,9 @@
             (global.set $focus_hwnd (local.get $arg0))
             (drop (call $post_queue_push (local.get $arg0) (i32.const 0x0007)
               (i32.const 0) (i32.const 0)))))))
+    (call $show_window_activate_top_level (local.get $arg0) (local.get $arg1))
     (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-  )
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return))
 
   ;; 72: UpdateWindow
   (func $handle_UpdateWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -3449,3 +3466,33 @@
     (call $handle_CreateAcceleratorTableA
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  ;; Activating ShowWindow commands change the active top-level even after an
+  ;; application's hidden utility HWND consumed the one-time startup chain.
+  ;; Old VCL/Inno creates its visible form as an owned top-level and constructs
+  ;; the wizard only from that form's synchronous WM_ACTIVATE handler.
+  (func $show_window_replaces_utility_main (param $hwnd i32) (result i32)
+    (i32.and
+      (i32.and
+        (i32.ne (global.get $main_hwnd) (i32.const 0))
+        (i32.eq (call $wnd_get_owner (local.get $hwnd)) (global.get $main_hwnd)))
+      (i32.or
+        (i32.le_s (call $wnd_screen_w (global.get $main_hwnd)) (i32.const 0))
+        (i32.le_s (call $wnd_screen_h (global.get $main_hwnd)) (i32.const 0)))))
+
+  (func $show_window_activate_top_level (param $hwnd i32) (param $cmd i32)
+    (local $activating i32)
+    (local.set $activating
+      (i32.or
+        (i32.or (i32.eq (local.get $cmd) (i32.const 1))
+                (i32.eq (local.get $cmd) (i32.const 3)))
+        (i32.or (i32.eq (local.get $cmd) (i32.const 5))
+          (i32.or (i32.eq (local.get $cmd) (i32.const 9))
+                  (i32.eq (local.get $cmd) (i32.const 10))))))
+    (if (i32.and
+          (i32.and (local.get $activating)
+                   (i32.eqz (call $wnd_get_parent (local.get $hwnd))))
+          (i32.ne (global.get $active_hwnd) (local.get $hwnd)))
+      (then
+        (drop (call $active_window_transition (local.get $hwnd)))
+        (drop (call $host_activate_window (local.get $hwnd))))))

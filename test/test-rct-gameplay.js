@@ -8,8 +8,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
 const { PNG } = require('pngjs');
+const { startControlSession } = require('./control-session');
 
 const ROOT = path.join(__dirname, '..');
 const EXE = path.join(ROOT, 'binaries', 'shareware', 'rct', 'English', 'RCT.exe');
@@ -65,54 +65,13 @@ async function main() {
   const frameAPath = path.join(temp, 'park-a.png');
   const frameBPath = path.join(temp, 'park-b.png');
   const constructionPath = process.env.RCT_SCREENSHOT || path.join(temp, 'construction.png');
-  const child = spawn(process.execPath, [
+  const session = startControlSession([
     'test/run.js', '--app=rct', '--control-stdin', '--frozen',
     '--max-seconds=180', '--max-batches=1000000000', '--batch-size=200000',
     '--quiet-api', '--quiet-blocks', '--no-close', '--no-build',
     '--repaint-every=1000000',
-  ], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
-
-  let output = '';
-  let lineBuffer = '';
-  let serial = 0;
-  const pending = new Map();
-  const exited = new Promise(resolve => child.on('exit', resolve));
-  child.stdout.on('data', data => {
-    output += data;
-    lineBuffer += data;
-    const lines = lineBuffer.split(/\r?\n/);
-    lineBuffer = lines.pop() || '';
-    for (const line of lines) {
-      const match = line.match(/^\[ctl\] (.*)$/);
-      if (!match) continue;
-      let reply;
-      try { reply = JSON.parse(match[1]); } catch (_) { continue; }
-      const waiter = pending.get(reply.id);
-      if (!waiter) continue;
-      pending.delete(reply.id);
-      reply.ok ? waiter.resolve(reply.value) : waiter.reject(new Error(reply.error));
-    }
-  });
-  child.stderr.on('data', data => { output += data; });
-  child.on('exit', code => {
-    for (const [id, waiter] of pending) {
-      waiter.reject(new Error(`run.js exited before replying to ${id} (exit ${code})`));
-    }
-    pending.clear();
-  });
-
-  function send(command) {
-    const id = `r${++serial}`;
-    const payload = typeof command === 'string' ? { id, cmd: command } : { id, ...command };
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      child.stdin.write(`${JSON.stringify(payload)}\n`, error => {
-        if (!error) return;
-        pending.delete(id);
-        reject(error);
-      });
-    });
-  }
+  ], { cwd: ROOT, idPrefix: 'r' });
+  const { send } = session;
 
   try {
     await send({ action: 'ping' });
@@ -142,17 +101,13 @@ async function main() {
       `Forest Frontiers did not visibly advance: ${simulationChanged} changed pixels`);
     assert(panelChanged > 10000,
       `Path Construction did not open: ${panelChanged} changed panel pixels`);
-    assert(!/STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED API:/i.test(output),
-      `RCT emitted a failure marker:\n${output.slice(-12000)}`);
+    assert(!/STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED API:/i.test(session.output()),
+      `RCT emitted a failure marker:\n${session.output().slice(-12000)}`);
     console.log(`PASS RCT Forest Frontiers gameplay (${simulationChanged} live pixels, ` +
       `${panelChanged} construction-panel pixels)`);
     console.log(`  screenshot: ${constructionPath}`);
   } finally {
-    if (child.exitCode === null) {
-      try { await send({ action: 'quit' }); } catch (_) {}
-      child.stdin.end();
-    }
-    await exited;
+    await session.quit({ ignoreReplyError: true });
     if (!process.env.RCT_SCREENSHOT) fs.rmSync(temp, { recursive: true, force: true });
   }
 }

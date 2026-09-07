@@ -2,7 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { expandIncludePatterns } = require('../lib/vfs-host-files');
+const { expandIncludePatterns, guestPathInTree } = require('../lib/vfs-host-files');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-vfs-include-'));
 try {
@@ -38,7 +38,14 @@ try {
   assert.throws(() => expandIncludePatterns(appDir, [path.join(root, '**')]),
     /must be relative/, 'absolute patterns must not broaden the host boundary');
 
-  console.log('VFS host include tests: 5 passed, 0 failed');
+  assert.strictEqual(
+    guestPathInTree(root, path.join(appDir, 'plugins', 'input.dll')),
+    'C:\\app\\plugins\\input.dll',
+    'a captured DLL retains its path below the guest drive root');
+  assert.strictEqual(guestPathInTree(appDir, path.join(root, 'outside.dll')), null,
+    'a file outside the captured tree cannot acquire a guest path');
+
+  console.log('VFS host include tests: 7 passed, 0 failed');
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
 }

@@ -1,4 +1,5 @@
 # DirectDraw and Direct3D in the browser: running 1990s DirectX games in WebAssembly
+<!-- description: How DirectDraw and Direct3D are implemented in WebAssembly: COM vtables through thunks, lockable surface memory, 8-bit palettes, and what each game needed. -->
 
 Diablo, StarCraft's title screen, Jazz Jackrabbit 2, Caesar III, Age of Empires, the Plus! 98 screensavers and the DirectX SDK samples all talk to the display through DirectDraw and Direct3D. Wine-Assembly implements those COM interfaces in WebAssembly Text, backs every surface with memory the game can lock and write, and composites the result onto a canvas. This article covers how the COM layer is dispatched, how surfaces and palettes work, and how far the 3D side goes.
 

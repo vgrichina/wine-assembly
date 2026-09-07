@@ -10,6 +10,8 @@
 //   - LB_GETTEXT round-trips each string
 //   - LB_GETTEXTLEN matches strlen
 //   - LB_GETITEMHEIGHT reports the renderer's 16px native row height
+//   - LB_GETITEMRECT returns displayed client coordinates and rejects bad rows
+//   - LB_ITEMFROMPOINT returns the nearest row and outside-client flag
 //   - LB_SETCURSEL / LB_GETCURSEL round-trip; out-of-range clamps to -1
 //   - LB_RESETCONTENT zeros count and selection
 //   - Click at row 1 (y=20) sets cur_sel=1 and posts WM_COMMAND with
@@ -108,6 +110,25 @@ async function main() {
     `got ${count} expected ${items.length}`);
   check('LB_GETITEMHEIGHT reports 16px rows', e.send_message(lb, 0x01A1, 0, 0) === 16);
 
+  const rect = e.guest_alloc(16);
+  const rectWa = RegionMap.g2w(rect, e.get_image_base());
+  const view = new DataView(memory.buffer);
+  check('LB_GETITEMRECT returns row 1 client bounds',
+    e.send_message(lb, 0x0198, 1, rect) === 0 &&
+    view.getInt32(rectWa, true) === 0 &&
+    view.getInt32(rectWa + 4, true) === 16 &&
+    view.getInt32(rectWa + 8, true) === 200 &&
+    view.getInt32(rectWa + 12, true) === 32);
+  check('LB_GETITEMRECT rejects an invalid row',
+    e.send_message(lb, 0x0198, items.length, rect) === -1);
+
+  const pointInRow1 = (5 & 0xFFFF) | ((20 & 0xFFFF) << 16);
+  const pointOutsideRow1 = (205 & 0xFFFF) | ((20 & 0xFFFF) << 16);
+  check('LB_ITEMFROMPOINT finds row 1 inside the client',
+    e.send_message(lb, 0x01A9, 0, pointInRow1) === 1);
+  check('LB_ITEMFROMPOINT marks an outside point and keeps nearest row',
+    e.send_message(lb, 0x01A9, 0, pointOutsideRow1) === 0x00010001);
+
   // Round-trip every item via LB_GETTEXT and check LB_GETTEXTLEN agrees
   let allOk = true;
   for (let i = 0; i < items.length; i++) {
@@ -152,7 +173,7 @@ async function main() {
 
   // Click at y=20 (row 1) → cur_sel=1
   // lParam = (x & 0xFFFF) | (y << 16)
-  const clickL = (5 & 0xFFFF) | ((20 & 0xFFFF) << 16);
+  const clickL = pointInRow1;
   e.send_message(lb, 0x0201, 0, clickL); // WM_LBUTTONDOWN
   check('click at y=20 selects row 1', e.send_message(lb, 0x0188, 0, 0) === 1);
 
@@ -204,6 +225,23 @@ async function main() {
   check('LB_DIR listbox text matches VFS files',
     dirItems[0] === 'pop.eqf' && dirItems[1] === 'rock.eqf',
     `got ${dirItems.join(',')}`);
+
+  // LBS_OWNERDRAWVARIABLE without LBS_HASSTRINGS stores each LB_ADDSTRING
+  // lParam as item data. Unreal's installer uses this for component objects.
+  const dataLb = e.test_create_listbox(0, 0, 200, 100);
+  e.wnd_set_style_export(dataLb, 0x50000020);
+  const objectData = 0x4f9ce1f0;
+  check('owner-draw LB_ADDSTRING accepts null item data',
+    e.send_message(dataLb, 0x0180, 0, 0) === 0);
+  check('owner-draw LB_ADDSTRING accepts opaque item data',
+    e.send_message(dataLb, 0x0180, 0, objectData) === 1);
+  check('owner-draw LB_GETITEMDATA returns LB_ADDSTRING lParam',
+    e.send_message(dataLb, 0x0199, 0, 0) === 0 &&
+    e.send_message(dataLb, 0x0199, 1, 0) === objectData);
+  check('owner-draw LB_FINDSTRING searches opaque item data',
+    e.send_message(dataLb, 0x018f, -1, objectData) === 1 &&
+    e.send_message(dataLb, 0x018f, -1, 0x4f9ce000) === -1);
+  if (e.wnd_destroy_tree) e.wnd_destroy_tree(dataLb - 1);
 
   // Tear down via $wnd_destroy_tree on the parent — the helper allocated
   // parent before lb so parent = lb - 1. wnd_destroy_tree posts WM_DESTROY

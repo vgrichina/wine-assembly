@@ -1292,8 +1292,7 @@
     (if (i32.eq (local.get $atom) (i32.const 0x0085)) (then (return (i32.const 5))))   ;; ComboBox
     (i32.const 0))
 
-  ;; The classes comctl32 and riched register. Unlike USER's six these have no
-  ;; predefined atom -- an app can only name them -- so they are matched as
+  ;; The classes comctl32 and riched register have no predefined USER atom, so they are matched as
   ;; strings, on the lowercased LE dwords the rest of this file uses.
   ;;
   ;; Matching is by prefix, deliberately and unchanged from when these lived
@@ -1338,6 +1337,7 @@
                    (i32.eq (i32.or (i32.load16_u offset=4 (local.get $wa)) (i32.const 0x2020))
                            (i32.const 0x7265))))
       (then (return (i32.const 19))))
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x7463736d)) (i32.eq (local.get $d1) (i32.const 0x707f736c))) (then (return (i32.const 17)))) ;; msctls_progress32
     ;; "comb"+"olbo"+"x\0" -> the popup list a combobox drops down, which some
     ;; apps create directly. Same control as a ListBox.
     (if (i32.and (i32.eq (local.get $d0) (i32.const 0x626d6f63))

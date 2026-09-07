@@ -98,7 +98,7 @@
             (call $str_eq (local.get $name_wa) "GetMessageA"))
           (call $dll_name_match (local.get $dll_name_ga) "USER32.dll"))
       (then (return (call $lookup_api_id "MessageBoxA"))))
-    (i32.const -1))
+    (local.set $name_wa (call $shell_legacy_import_alias (local.get $dll_name_ga) (local.get $name_wa))) (local.get $name_wa))
 
   ;; Apply segment override to an address. FS=5 adds fs_base. GS=6 traps
   ;; (no Win32 use of GS in this emulator). Other segments treated flat.
@@ -5965,3 +5965,16 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy)))
     (local.get $out))
+
+  ;; Win95/98 SHELL32 exported these folder APIs without the A suffix as well
+  ;; as through the SDK's encoding aliases. Old Delphi import units bind the
+  ;; unsuffixed names directly; keep one implementation and canonical API id.
+  (func $shell_legacy_import_alias
+      (param $dll_name_ga i32) (param $name_wa i32) (result i32)
+    (if (call $dll_name_match (local.get $dll_name_ga) "SHELL32.dll")
+      (then
+        (if (call $str_eq (local.get $name_wa) "SHGetPathFromIDList")
+          (then (return (call $lookup_api_id "SHGetPathFromIDListA"))))
+        (if (call $str_eq (local.get $name_wa) "SHBrowseForFolder")
+          (then (return (call $lookup_api_id "SHBrowseForFolderA"))))))
+    (i32.const -1))

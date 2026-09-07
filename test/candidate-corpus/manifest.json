@@ -554,21 +554,54 @@
       }
     },
     {
+      "id": "worms-2-demo",
+      "name": "Worms 2 Demo",
+      "kind": "game",
+      "version": "October 9, 1997 multiplayer demo 1.1",
+      "executables": [
+        "installer-10oct/SETUP.EXE"
+      ],
+      "sourcePage": "http://www.classicdosgames.com/game/Worms_2.html",
+      "license": "playable demo; bundled README explicitly permits redistribution while the original files remain intact and unchanged",
+      "packages": [
+        {
+          "url": "http://www.classicdosgames.com/files/games/team17/Worms2Demo10Oct.zip",
+          "sha1": "30d3c4858cc99c412a21085e1740bd7ca9123a8a",
+          "type": "archive",
+          "into": "installer-10oct"
+        }
+      ],
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 25000,
+        "vfsInclude": [
+          "*"
+        ]
+      }
+    },
+    {
       "id": "snood",
       "name": "Snood",
       "kind": "game",
       "version": "Windows shareware release",
       "executables": [
+        "SnoodWin22Install.exe",
         "Snood.exe",
         "snood.exe"
       ],
-      "sourcePage": "https://archive.org/details/Snood_20180218",
-      "license": "shareware; verify original package terms before public deployment",
-      "packages": [],
-      "manual": "The linked Archive item is the DOS/DJGPP build; acquire and hash a verified PE32 Windows shareware release manually",
+      "sourcePage": "https://discmaster.textfiles.com/browse/40163/PCH_1200.iso/program/spel/snood/SnoodWin22Install.exe",
+      "license": "commercial shareware demonstration; the installed readme allows a 30-day trial but contains no public redistribution grant, so keep the package and installed payload local",
+      "packages": [
+        {
+          "url": "https://discmaster.textfiles.com/file/40163/PCH_1200.iso/program/spel/snood/SnoodWin22Install.exe",
+          "sha1": "82f03c667de5db46b17106745973b8c54c390d7e",
+          "type": "file",
+          "destination": "SnoodWin22Install.exe"
+        }
+      ],
       "cli": {
-        "maxBatches": 80,
-        "batchSize": 25000
+        "maxBatches": 300,
+        "batchSize": 100000
       }
     },
     {

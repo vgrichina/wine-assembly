@@ -7,8 +7,8 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
 const { PNG } = require('pngjs');
+const { startControlSession } = require('./control-session');
 
 const ROOT = path.join(__dirname, '..');
 const EXE = path.join(ROOT, 'test/binaries/candidates/caesar-3-demo/installed/c3.exe');
@@ -70,52 +70,8 @@ async function main() {
     '--quiet-api', '--quiet-blocks', '--no-close', '--repaint-every=1000000',
   ];
   if (fs.existsSync(path.join(ROOT, 'build/wine-assembly.wasm'))) args.push('--no-build');
-  const child = spawn(process.execPath, args, { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
-
-  let output = '';
-  let lineBuffer = '';
-  let serial = 0;
-  const pending = new Map();
-  const exited = new Promise(resolve => child.on('exit', resolve));
-
-  child.stdout.on('data', data => {
-    output += data;
-    lineBuffer += data;
-    const lines = lineBuffer.split(/\r?\n/);
-    lineBuffer = lines.pop() || '';
-    for (const line of lines) {
-      const match = line.match(/^\[ctl\] (.*)$/);
-      if (!match) continue;
-      let reply;
-      try { reply = JSON.parse(match[1]); } catch (_) { continue; }
-      const waiter = pending.get(reply.id);
-      if (!waiter) continue;
-      pending.delete(reply.id);
-      reply.ok ? waiter.resolve(reply.value) : waiter.reject(new Error(reply.error));
-    }
-  });
-  child.stderr.on('data', data => { output += data; });
-  child.on('exit', code => {
-    for (const [id, waiter] of pending) {
-      waiter.reject(new Error(`run.js exited before replying to ${id} (exit ${code})`));
-    }
-    pending.clear();
-  });
-
-  function send(command) {
-    const id = `c3-${++serial}`;
-    const payload = typeof command === 'string' ? { id, cmd: command } : { id, ...command };
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      child.stdin.write(`${JSON.stringify(payload)}\n`, error => {
-        if (!error) return;
-        pending.delete(id);
-        reject(error);
-      });
-    });
-  }
-
-  const step = n => send({ action: 'step', n });
+  const session = startControlSession(args, { cwd: ROOT, idPrefix: 'c3-' });
+  const { send, step } = session;
   async function pressAt(x, y, moveGap = 40, holdGap = 40) {
     await send(`mousemove:${x}:${y}`);
     await step(moveGap);
@@ -159,23 +115,18 @@ async function main() {
     await send(`png:${cityPath}`);
 
     verifyCity(cityPath);
-    assert(output.includes('patched Caesar III new-career name buffer starts empty'),
-      `Caesar III compatibility patch was not reported\n${output.slice(-5000)}`);
-    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(output),
-      `Caesar III hit a compatibility failure\n${output.slice(-5000)}`);
+    assert(session.output().includes('patched Caesar III new-career name buffer starts empty'),
+      `Caesar III compatibility patch was not reported\n${session.output().slice(-5000)}`);
+    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(session.output()),
+      `Caesar III hit a compatibility failure\n${session.output().slice(-5000)}`);
 
-    await send({ action: 'quit' });
-    child.stdin.end();
-    const code = await exited;
-    assert.strictEqual(code, 0, `Caesar III CLI exited ${code}\n${output.slice(-5000)}`);
+    const code = await session.quit();
+    assert.strictEqual(code, 0,
+      `Caesar III CLI exited ${code}\n${session.output().slice(-5000)}`);
     console.log(`PASS  Caesar III typed-name screenshot: ${namePath}`);
     console.log(`PASS  Caesar III playable-city screenshot: ${cityPath}`);
   } catch (error) {
-    if (child.exitCode === null) {
-      try { await send({ action: 'quit' }); } catch (_) {}
-      child.stdin.end();
-      await exited;
-    }
+    await session.quit({ ignoreReplyError: true });
     throw error;
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });

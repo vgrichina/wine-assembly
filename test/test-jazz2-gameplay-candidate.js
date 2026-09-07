@@ -10,8 +10,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
 const { PNG } = require('pngjs');
+const { startControlSession } = require('./control-session');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -65,7 +65,7 @@ async function main() {
   const launchArgs = process.env.JAZZ2_INSTALLED
     ? [`--exe=${EXE}`, '--args=Share1.j2l -nonetwork', '--vfs-include=*']
     : ['--app=jazz2_demo'];
-  const child = spawn('node', [
+  const session = startControlSession([
     RUN,
     ...launchArgs,
     '--screen=800x600',
@@ -75,52 +75,8 @@ async function main() {
     '--quiet-api',
     '--quiet-blocks',
     '--repaint-every=2000',
-  ], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
-
-  let output = '';
-  let lineBuf = '';
-  let nextId = 1;
-  const pending = new Map();
-  const childExit = new Promise(resolve => child.on('exit', code => resolve(code)));
-
-  function onData(data) {
-    output += data;
-    lineBuf += String(data);
-    const lines = lineBuf.split(/\r?\n/);
-    lineBuf = lines.pop() || '';
-    for (const line of lines) {
-      const match = line.match(/^\[ctl\] (.*)$/);
-      if (!match) continue;
-      let reply;
-      try { reply = JSON.parse(match[1]); } catch (_) { continue; }
-      const waiter = pending.get(reply.id);
-      if (!waiter) continue;
-      pending.delete(reply.id);
-      reply.ok ? waiter.resolve(reply.value) : waiter.reject(new Error(reply.error));
-    }
-  }
-
-  child.stdout.on('data', onData);
-  child.stderr.on('data', data => { output += data; });
-  child.on('exit', code => {
-    for (const [id, waiter] of pending) {
-      waiter.reject(new Error(`run.js exited before replying to ${id} (exit ${code})`));
-    }
-    pending.clear();
-  });
-
-  function send(command) {
-    const id = `j${nextId++}`;
-    const payload = typeof command === 'string' ? { id, cmd: command } : { id, ...command };
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      child.stdin.write(`${JSON.stringify(payload)}\n`, error => {
-        if (!error) return;
-        pending.delete(id);
-        reject(error);
-      });
-    });
-  }
+  ], { cwd: ROOT, idPrefix: 'j' });
+  const { send } = session;
 
   async function pulseKey(vk) {
     await send(`keydown:${vk}`);
@@ -143,7 +99,8 @@ async function main() {
       await send(`png:${probePath}`);
       const stats = imageStats(probePath);
       const bytes = fs.statSync(probePath).size;
-      const namedLevel = /Jazz Jackrabbit 2 Shareware - (?:Darn Ratz|Retro Rabbit|Frog Stomp)/.test(output);
+      const namedLevel = /Jazz Jackrabbit 2 Shareware - (?:Darn Ratz|Retro Rabbit|Frog Stomp)/
+        .test(session.output());
       if (namedLevel && !startedNewGame) {
         startedNewGame = true;
         // Dismiss the menu over the running attraction; more Enter presses can
@@ -160,7 +117,8 @@ async function main() {
       await pulseKey(bytes > 300000 ? 13 : 27);
       await sleep(1200);
     }
-    assert(gameplay, `Jazz 2 did not reach textured gameplay\n${output.slice(-8000)}`);
+    assert(gameplay,
+      `Jazz 2 did not reach textured gameplay\n${session.output().slice(-8000)}`);
     fs.copyFileSync(probePath, frameAPath);
 
     const a = imageStats(frameAPath);
@@ -182,21 +140,15 @@ async function main() {
       }
     }
     assert(b, 'Jazz 2 did not produce a second distinct textured gameplay frame');
-    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(output),
-      `Jazz 2 hit a compatibility failure\n${output.slice(-8000)}`);
+    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(session.output()),
+      `Jazz 2 hit a compatibility failure\n${session.output().slice(-8000)}`);
 
-    await send({ action: 'quit' });
-    child.stdin.end();
-    const code = await childExit;
-    assert(code === 0, `Jazz 2 CLI exited ${code}\n${output.slice(-8000)}`);
+    const code = await session.quit();
+    assert(code === 0, `Jazz 2 CLI exited ${code}\n${session.output().slice(-8000)}`);
     console.log(`PASS Jazz 2 gameplay: ${a.colors}/${b.colors} colors, ${changed} changed pixels`);
     console.log(`PASS Jazz 2 screenshot: ${frameBPath}`);
   } catch (error) {
-    if (child.exitCode === null) {
-      try { await send({ action: 'quit' }); } catch (_) {}
-      child.stdin.end();
-      await childExit;
-    }
+    await session.quit({ ignoreReplyError: true });
     throw error;
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });

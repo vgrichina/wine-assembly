@@ -3913,9 +3913,28 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 672: SetMenuItemBitmaps — STUB: unimplemented
+  ;; 672: SetMenuItemBitmaps(hMenu, uPosition, uFlags, hBitmapUnchecked,
+  ;; hBitmapChecked). The compact menu records do not retain custom checkmark
+  ;; artwork yet, but USER32 still has to validate the addressed item and let
+  ;; applications continue with the normal checkmark painter.
   (func $handle_SetMenuItemBitmaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $by_position i32)
+    (local.set $by_position
+      (i32.ne (i32.and (local.get $arg2) (i32.const 0x400)) (i32.const 0)))
+    (if (call $dynamic_menu_state_w (local.get $arg0))
+      (then
+        (global.set $eax
+          (i32.ne
+            (call $dynamic_menu_item_w
+              (local.get $arg0) (local.get $arg1) (local.get $by_position))
+            (i32.const 0))))
+      (else
+        (global.set $eax
+          (i32.ne
+            (call $menu_handle_locate
+              (local.get $arg0) (local.get $arg1) (local.get $by_position))
+            (i32.const -1)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 673: ModifyMenuW — item metadata shares the A path. String rendering of

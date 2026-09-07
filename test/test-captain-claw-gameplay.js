@@ -8,8 +8,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
 const { PNG } = require('pngjs');
+const { startControlSession } = require('./control-session');
 
 const ROOT = path.join(__dirname, '..');
 const INSTALLED = path.join(ROOT, 'test/binaries/candidates/captain-claw-demo/installed');
@@ -60,57 +60,13 @@ async function main() {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-captain-claw-'));
   const beforePath = process.env.CLAW_BEFORE_SCREENSHOT || path.join(temp, 'before.png');
   const afterPath = process.env.CLAW_SCREENSHOT || path.join(temp, 'after.png');
-  const child = spawn(process.execPath, [
+  const session = startControlSession([
     'test/run.js', '--app=captain_claw_demo', '--screen=640x480',
     '--batch-size=10000', '--control-stdin', '--frozen', '--max-seconds=90',
     '--max-batches=1000000', '--quiet-api', '--quiet-blocks', '--no-close',
     '--no-build', '--repaint-every=1000000',
-  ], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
-
-  let output = '';
-  let lineBuffer = '';
-  let serial = 0;
-  const pending = new Map();
-  const exited = new Promise(resolve => child.on('exit', resolve));
-
-  child.stdout.on('data', data => {
-    output += data;
-    lineBuffer += data;
-    const lines = lineBuffer.split(/\r?\n/);
-    lineBuffer = lines.pop() || '';
-    for (const line of lines) {
-      const match = line.match(/^\[ctl\] (.*)$/);
-      if (!match) continue;
-      let reply;
-      try { reply = JSON.parse(match[1]); } catch (_) { continue; }
-      const waiter = pending.get(reply.id);
-      if (!waiter) continue;
-      pending.delete(reply.id);
-      reply.ok ? waiter.resolve(reply.value) : waiter.reject(new Error(reply.error));
-    }
-  });
-  child.stderr.on('data', data => { output += data; });
-  child.on('exit', code => {
-    for (const [id, waiter] of pending) {
-      waiter.reject(new Error(`run.js exited before replying to ${id} (exit ${code})`));
-    }
-    pending.clear();
-  });
-
-  function send(command) {
-    const id = `claw-${++serial}`;
-    const payload = typeof command === 'string' ? { id, cmd: command } : { id, ...command };
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      child.stdin.write(`${JSON.stringify(payload)}\n`, error => {
-        if (!error) return;
-        pending.delete(id);
-        reject(error);
-      });
-    });
-  }
-
-  const step = n => send({ action: 'step', n });
+  ], { cwd: ROOT, idPrefix: 'claw-' });
+  const { send, step } = session;
   try {
     await send({ action: 'ping' });
     await step(500);
@@ -136,22 +92,17 @@ async function main() {
     assert(stats.blue > 1000, `Claw/water scene detail is missing (${stats.blue} blue pixels)`);
     assert(changed > 30000,
       `holding DirectInput Right did not move Claw and the camera (${changed} changed pixels)`);
-    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(output),
-      `Captain Claw hit a compatibility failure\n${output.slice(-6000)}`);
+    assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(session.output()),
+      `Captain Claw hit a compatibility failure\n${session.output().slice(-6000)}`);
 
-    await send({ action: 'quit' });
-    child.stdin.end();
-    const code = await exited;
-    assert.strictEqual(code, 0, `Captain Claw CLI exited ${code}\n${output.slice(-6000)}`);
+    const code = await session.quit();
+    assert.strictEqual(code, 0,
+      `Captain Claw CLI exited ${code}\n${session.output().slice(-6000)}`);
     console.log(`PASS  Captain Claw La Roca gameplay: visible=${stats.visible}, ` +
       `gold=${stats.gold}, blue=${stats.blue}, inputPixels=${changed}`);
     console.log(`PASS  Captain Claw screenshot: ${afterPath}`);
   } catch (error) {
-    if (child.exitCode === null) {
-      try { await send({ action: 'quit' }); } catch (_) {}
-      child.stdin.end();
-      await exited;
-    }
+    await session.quit({ ignoreReplyError: true });
     throw error;
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });

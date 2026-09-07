@@ -6,8 +6,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
 const { PNG } = require('pngjs');
+const { startControlSession } = require('./control-session');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -54,48 +54,7 @@ function pixelDiff(a, b) {
 }
 
 function startControlled(args) {
-  const child = spawn('node', [RUN, ...args],
-    { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
-
-  let output = '', lineBuffer = '';
-  let nextId = 1;
-  const pending = new Map();
-  const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
-  const onData = data => {
-    output += data;
-    lineBuffer += String(data);
-    const lines = lineBuffer.split(/\r?\n/);
-    lineBuffer = lines.pop() || '';
-    for (const line of lines) {
-      const match = /^\[ctl\] (.*)$/.exec(line);
-      if (!match) continue;
-      let reply;
-      try { reply = JSON.parse(match[1]); } catch (_) { continue; }
-      const waiter = pending.get(reply.id);
-      if (!waiter) continue;
-      pending.delete(reply.id);
-      reply.ok ? waiter.resolve(reply.value) : waiter.reject(new Error(reply.error));
-    }
-  };
-  child.stdout.on('data', onData);
-  child.stderr.on('data', data => { output += data; });
-  child.on('exit', code => {
-    for (const [, waiter] of pending) waiter.reject(new Error(`run.js exited ${code}`));
-    pending.clear();
-  });
-  const send = command => {
-    const id = `ta${nextId++}`;
-    const payload = typeof command === 'string' ? { id, cmd: command } : { id, ...command };
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      child.stdin.write(`${JSON.stringify(payload)}\n`, error => {
-        if (!error) return;
-        pending.delete(id);
-        reject(error);
-      });
-    });
-  };
-  return { child, exited, send, output: () => output };
+  return startControlSession([RUN, ...args], { cwd: ROOT, idPrefix: 'ta' });
 }
 
 async function step(session, n) {
@@ -105,11 +64,7 @@ async function step(session, n) {
 }
 
 async function quit(session) {
-  if (session.child.exitCode === null) {
-    try { await session.send({ action: 'quit' }); } catch (_) {}
-    session.child.stdin.end();
-  }
-  return session.exited;
+  return session.quit();
 }
 
 async function runInstaller(installRoot) {

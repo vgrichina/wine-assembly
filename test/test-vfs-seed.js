@@ -44,6 +44,17 @@ check('a launch path is reduced to its basename, lowercased', () => {
   assert.strictEqual(win.base, 'hearts.exe', 'a backslash path is a path too');
 });
 
+check('an explicit guest launch path is seeded without losing default aliases', () => {
+  const vfs = fakeVfs();
+  const bytes = new Uint8Array([0x4d, 0x5a]);
+  const r = seedExeImage(vfs, bytes, 'Setup.exe', 'D:\\System\\Setup.exe');
+  assert.strictEqual(r.base, 'setup.exe');
+  assert.deepStrictEqual(r.paths, [
+    'c:\\app.exe', 'c:\\setup.exe', 'd:\\system\\setup.exe',
+  ]);
+  assert.strictEqual(vfs.files.get('d:\\system\\setup.exe').data, bytes);
+});
+
 check('an exe already named app.exe is seeded once', () => {
   const vfs = fakeVfs();
   seedExeImage(vfs, new Uint8Array(4), 'APP.EXE');

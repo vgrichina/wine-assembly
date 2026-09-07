@@ -16,7 +16,7 @@ const {
   createInheritedWasmGlobals, recordInheritedWasmGlobal,
 } = require('../lib/worker-imports');
 const { seedExeImage, win16FileCandidates, residentWin16Module } = require('../lib/vfs-seed');
-const { expandIncludePatterns } = require('../lib/vfs-host-files');
+const { expandIncludePatterns, guestPathInTree } = require('../lib/vfs-host-files');
 const { saveVfsToHost } = require('../lib/vfs-export');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
@@ -543,6 +543,11 @@ let nextOverlayFlushAt = 0;
 let signalExitStarted = false;
 const VFS_DRIVE = getArg('vfs-drive', null); // --vfs-drive=D: mirror the EXE + explicit --vfs-include files on read-only D:\
 const VFS_INCLUDE = getArgs('vfs-include'); // --vfs-include=GLOB: mount matching files relative to the EXE directory
+// --vfs-tree=DIR: replay a captured VFS directory at C:\ while preserving its
+// relative paths. This is the second stage of --capture-launch for bootstrap
+// installers whose real child lives below WINDOWS\TEMP.
+const VFS_TREES = getArgs('vfs-tree');
+const GUEST_CWD = getArg('cwd', null); // --cwd=C:\DIR: initial guest process working directory
 // --vfs-mount=HOSTPATH=GUESTPATH: mount one host file at an exact guest path.
 // --vfs-include can only place a file at its own path relative to the EXE, so
 // an asset that has to appear somewhere else has no other way in -- a Winamp
@@ -675,9 +680,28 @@ const COPY_SUPEROPS = resolveCopySuperops(
 // Registry paths are repo-relative and lean on the top-level `binaries`
 // symlink, so they resolve the same from the page and from here.
 const appAsset = p => (path.isAbsolute(p) ? p : path.join(ROOT, p));
+const capturedGuestPath = hostPath => {
+  for (const tree of VFS_TREES) {
+    const guestPath = guestPathInTree(appAsset(tree), hostPath);
+    if (guestPath) return guestPath;
+  }
+  return null;
+};
 const EXE_PATH = getArg('exe', ZIP_LAUNCH ? ZIP_LAUNCH.exePath
   : ISO_LAUNCH ? ISO_LAUNCH.exePath
   : (APP_ENTRY ? appAsset(APP_ENTRY.exe) : 'test/binaries/notepad.exe'));
+const EXE_GUEST_PATH = (() => {
+  const requested = getArg('exe-guest-path', null);
+  if (!requested) return null;
+  const rooted = /^[a-z]:[\\/]/i.test(requested) ? requested : `c:\\${requested}`;
+  const normalized = path.win32.normalize(rooted.replace(/\//g, '\\'));
+  if (!/^[a-z]:\\[^\\]/i.test(normalized)) {
+    throw new Error(`--exe-guest-path needs a file path, got: ${requested}`);
+  }
+  return normalized;
+})();
+const EXE_PROCESS_NAME = EXE_GUEST_PATH
+  ? EXE_GUEST_PATH.replace(/^[a-z]:\\/i, '') : path.basename(EXE_PATH);
 const canonicalPath = p => {
   try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); }
 };
@@ -2962,7 +2986,8 @@ async function main() {
         executable = executable.slice(1, close);
       }
     }
-    const guestExe = ctx.vfs._normPath ? ctx.vfs._normPath(executable) : executable.toLowerCase();
+    const guestExe = ctx.vfs._resolvePath ? ctx.vfs._resolvePath(executable)
+      : (ctx.vfs._normPath ? ctx.vfs._normPath(executable) : executable.toLowerCase());
     if (!ctx.vfs.files.has(guestExe)) return result;
     // A mounted ISO entry may still be provider-backed here: ShellExecute
     // names it without opening it first. Start the asynchronous read now and
@@ -2974,7 +2999,8 @@ async function main() {
     capturedLaunch = {
       guestExe,
       args: [inlineArgs, params.trim()].filter(Boolean).join(' '),
-      directory,
+      directory: directory || (ctx.vfs.getCurrentDirectory
+        ? ctx.vfs.getCurrentDirectory() : ctx.vfs.cwd || ''),
       materialize,
       vfs: {
         files: new Map(ctx.vfs.files),
@@ -3908,8 +3934,8 @@ async function main() {
   // MSVCRT data imports (__argc/__argv) can be resolved while load_pe walks
   // the executable import table. Seed process identity first so a lazy argv
   // block built during import resolution sees the real launcher metadata.
-  setExeDrive(instance.exports, MEDIA_EXE);
-  setExeName(instance.exports, memory.buffer, path.basename(EXE_PATH));
+  setExeDrive(instance.exports, EXE_GUEST_PATH || MEDIA_EXE);
+  setExeName(instance.exports, memory.buffer, EXE_PROCESS_NAME);
   if (EXTRA_ARGS) {
     setExtraCmdline(instance.exports, memory.buffer, EXTRA_ARGS);
   }
@@ -4022,7 +4048,11 @@ async function main() {
           ? appAsset(spec)
           : (findDllFile(name) || (appFileByName.has(name.toLowerCase())
               ? appAsset(appFileByName.get(name.toLowerCase())) : null));
-        return (p && fs.existsSync(p)) ? { name, bytes: fs.readFileSync(p) } : null;
+        return (p && fs.existsSync(p)) ? {
+          name,
+          bytes: fs.readFileSync(p),
+          path: capturedGuestPath(p) || undefined,
+        } : null;
       },
     });
   }
@@ -4070,7 +4100,7 @@ async function main() {
 
   // Put the exe where a running image expects to find itself; see lib/vfs-seed.js.
   if (ctx.vfs) {
-    const exeName = seedExeImage(ctx.vfs, exeBytes, path.basename(EXE_PATH)).base;
+    const exeName = seedExeImage(ctx.vfs, exeBytes, path.basename(EXE_PATH), EXE_GUEST_PATH).base;
     const exeDir = path.dirname(EXE_PATH);
     const addFile = (rawPath, hostPath, size) => {
       let vfsPath = String(rawPath).toLowerCase().replace(/\//g, '\\');
@@ -4095,6 +4125,9 @@ async function main() {
     // an EXE directly in /private/tmp no longer indexes every unrelated file
     // and directory below /private/tmp (nor any sibling directory above it).
     const includedFiles = expandIncludePatterns(exeDir, VFS_INCLUDE);
+    for (const tree of VFS_TREES) {
+      includedFiles.push(...expandIncludePatterns(appAsset(tree), ['**/*']));
+    }
     for (const file of includedFiles) {
       const size = fs.statSync(file.hostPath).size;
       addFile(file.guestPath, file.hostPath, size);
@@ -4234,6 +4267,15 @@ async function main() {
         `label="${media.plan.volumeLabel || ''}" (${media.plan.entryCount} entries)`);
       console.log(`[media] launching ${guestExe} from ${guestDir}` +
         `${media.candidate.autorun ? ' (AUTORUN.INF)' : ''}`);
+    }
+
+    if (GUEST_CWD) {
+      const rooted = /^[a-z]:[\\/]/i.test(GUEST_CWD) ? GUEST_CWD : `c:\\${GUEST_CWD}`;
+      const cwd = path.win32.normalize(rooted.replace(/\//g, '\\'));
+      if (!ctx.vfs.setCurrentDirectory(cwd)) {
+        throw new Error(`--cwd directory is not present in the guest VFS: ${GUEST_CWD}`);
+      }
+      console.log(`[vfs] working directory: ${ctx.vfs.getCurrentDirectory()}`);
     }
 
     // The writable C:\ overlay (docs/design-byo-media.md ⑤). Attached after
@@ -5074,7 +5116,7 @@ async function main() {
       }
     }
   };
-  const deadlineMs = MAX_SECONDS ? Date.now() + MAX_SECONDS * 1000 : 0;
+  let deadlineMs = MAX_SECONDS ? Date.now() + MAX_SECONDS * 1000 : 0;
   // --control: live agent command channel (docs/design-agent-control.md).
   // Commands arrive over HTTP between batches. Input entries go through the
   // same parseInputEntries the --input schedule uses and drain through the
@@ -5086,15 +5128,12 @@ async function main() {
   let controlFrozen = CONTROL_FROZEN_START;
   let controlRunCredits = 0;
   let controlWake = null;
-  let controlWakeTimer = null;
   let controlPreviousBatchRan = false;
   let controlStepWaiter = null;
   const wakeControlLoop = () => {
     if (!controlWake) return;
     const wake = controlWake;
     controlWake = null;
-    if (controlWakeTimer) clearTimeout(controlWakeTimer);
-    controlWakeTimer = null;
     wake();
   };
   const finishPreviousControlBatch = () => {
@@ -5114,16 +5153,11 @@ async function main() {
   };
   const waitForControlBatch = async () => {
     while (controlFrozen && controlRunCredits <= 0 && !stopped) {
+      const pausedAt = deadlineMs ? Date.now() : 0;
       await new Promise(resolve => {
         controlWake = resolve;
-        if (deadlineMs) {
-          controlWakeTimer = setTimeout(wakeControlLoop, Math.max(0, deadlineMs - Date.now()));
-        }
       });
-      if (deadlineMs && Date.now() >= deadlineMs) {
-        stopped = true;
-        console.log(`[max-seconds] stopping after ${MAX_SECONDS}s at batch ${tickState.batch | 0}`);
-      }
+      if (deadlineMs) deadlineMs += Date.now() - pausedAt;
     }
     if (!stopped) controlPreviousBatchRan = true;
   };
@@ -5218,6 +5252,19 @@ async function main() {
     if (cmd.action === 'snapshot') return controlSnapshot();
     if (cmd.action === 'eval') return controlEval(cmd.code || '');
     if (cmd.action === 'png') return controlPng(String(cmd.path || ''));
+    if (cmd.action === 'input-message') {
+      const fields = ['hwnd', 'msg', 'wParam', 'lParam'];
+      const values = Object.fromEntries(fields.map(field => [field, Number(cmd[field] || 0)]));
+      if (!fields.every(field => Number.isFinite(values[field]))) {
+        throw new Error('input-message fields must be finite numbers');
+      }
+      if (!instance.exports.post_message_q) throw new Error('guest message queue is unavailable');
+      const queued = instance.exports.post_message_q(
+        values.hwnd, values.msg, values.wParam, values.lParam) | 0;
+      if (!queued) throw new Error('guest message queue is full');
+      if (renderer && renderer._wakeMessageWait) renderer._wakeMessageWait();
+      return { queued: true, batch: tickState.batch | 0, ...values };
+    }
     if (cmd.action === 'quit') { stopped = true; wakeControlLoop(); return { quitting: true }; }
     if (cmd.action === 'frozen') {
       const mode = cmd.mode || 'on';
@@ -5284,7 +5331,7 @@ async function main() {
       return { recording: true, ...videoRecorder.summary(), everyNSteps: videoEvery };
     }
     const entry = String(cmd.cmd || '');
-    if (!entry) throw new Error('need {cmd:"action:args"} or action: ping|snapshot|eval|png|frozen|step|record|quit');
+    if (!entry) throw new Error('need {cmd:"action:args"} or action: ping|snapshot|eval|png|input-message|frozen|step|record|quit');
     // A frozen CLI is already at a coherent between-batches boundary. Capture
     // there instead of queueing a png action that cannot execute until a
     // later `step` (ctl.js checks that the file exists before it returns).
@@ -5326,6 +5373,7 @@ async function main() {
     }) : null;
     if (CONTROL_STDIN) {
       const rl = require('readline').createInterface({ input: process.stdin, terminal: false });
+      let stdinCommands = Promise.resolve();
       rl.on('line', (line) => {
         const text = line.trim();
         if (!text) return;
@@ -5333,9 +5381,9 @@ async function main() {
         try { cmd = JSON.parse(text); } catch (_) { cmd = { cmd: text }; }
         const list = Array.isArray(cmd) ? cmd : [cmd];
         for (const one of list) {
-          Promise.resolve().then(() => handleControlCommand(one)).then(
+          stdinCommands = stdinCommands.then(() => Promise.resolve(handleControlCommand(one)).then(
             value => console.log(`[ctl] ${JSON.stringify({ ok: true, id: one.id, value })}`),
-            error => console.log(`[ctl] ${JSON.stringify({ ok: false, id: one.id, error: String(error && error.message || error) })}`));
+            error => console.log(`[ctl] ${JSON.stringify({ ok: false, id: one.id, error: String(error && error.message || error) })}`)));
         }
       });
       // EOF just ends the stream — the pipe's producer finishing must not

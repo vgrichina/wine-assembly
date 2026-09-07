@@ -4,23 +4,23 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>How Wine-Assembly was built: a Windows 98 emulator in raw WebAssembly</title>
-  <meta name="description" content="The history of Wine-Assembly, an x86 Windows 98 emulator written directly in WebAssembly Text: from the first instruction decoder to a browser that runs Notepad, Pinball, Winamp, DirectX games and 16-bit Windows apps.">
+  <meta name="description" content="The history of Wine-Assembly, a Windows 98 emulator in WebAssembly: from the first x86 decoder to a browser running Pinball, Winamp, DirectX and Win16 apps.">
   <link rel="canonical" href="https://wine-assembly.berrry.app/story.html">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="Wine-Assembly">
   <meta property="og:title" content="How Wine-Assembly was built: a Windows 98 emulator in raw WebAssembly">
-  <meta property="og:description" content="The history of Wine-Assembly, an x86 Windows 98 emulator written directly in WebAssembly Text: from the first instruction decoder to a browser that runs Notepad, Pinball, Winamp, DirectX games and 16-bit Windows apps.">
+  <meta property="og:description" content="The history of Wine-Assembly, a Windows 98 emulator in WebAssembly: from the first x86 decoder to a browser running Pinball, Winamp, DirectX and Win16 apps.">
   <meta property="og:url" content="https://wine-assembly.berrry.app/story.html">
   <meta property="og:image" content="https://wine-assembly.berrry.app/icons/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="How Wine-Assembly was built: a Windows 98 emulator in raw WebAssembly">
-  <meta name="twitter:description" content="The history of Wine-Assembly, an x86 Windows 98 emulator written directly in WebAssembly Text: from the first instruction decoder to a browser that runs Notepad, Pinball, Winamp, DirectX games and 16-bit Windows apps.">
+  <meta name="twitter:description" content="The history of Wine-Assembly, a Windows 98 emulator in WebAssembly: from the first x86 decoder to a browser running Pinball, Winamp, DirectX and Win16 apps.">
   <meta name="twitter:image" content="https://wine-assembly.berrry.app/icons/og-image.png">
   <meta name="theme-color" content="#008080">
   <link rel="icon" href="https://wine-assembly.berrry.app/icons/icon-192.png">
-  <script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"How Wine-Assembly was built: a Windows 98 emulator in raw WebAssembly","description":"The history of Wine-Assembly, an x86 Windows 98 emulator written directly in WebAssembly Text: from the first instruction decoder to a browser that runs Notepad, Pinball, Winamp, DirectX games and 16-bit Windows apps.","url":"https://wine-assembly.berrry.app/story.html","image":"https://wine-assembly.berrry.app/icons/og-image.png","author":{"@type":"Person","name":"Vladimir Grichina","url":"https://github.com/vgrichina/wine-assembly"},"publisher":{"@type":"Organization","name":"Wine-Assembly","url":"https://wine-assembly.berrry.app"},"isPartOf":{"@type":"WebSite","name":"Wine-Assembly","url":"https://wine-assembly.berrry.app"},"inLanguage":"en","datePublished":"2026-04-15","dateModified":"2026-09-04"}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"How Wine-Assembly was built: a Windows 98 emulator in raw WebAssembly","description":"The history of Wine-Assembly, a Windows 98 emulator in WebAssembly: from the first x86 decoder to a browser running Pinball, Winamp, DirectX and Win16 apps.","url":"https://wine-assembly.berrry.app/story.html","image":"https://wine-assembly.berrry.app/icons/og-image.png","author":{"@type":"Person","name":"Vladimir Grichina","url":"https://github.com/vgrichina/wine-assembly"},"publisher":{"@type":"Organization","name":"Wine-Assembly","url":"https://wine-assembly.berrry.app"},"isPartOf":{"@type":"WebSite","name":"Wine-Assembly","url":"https://wine-assembly.berrry.app"},"inLanguage":"en","datePublished":"2026-04-15","dateModified":"2026-09-04"}</script>
   <style>
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; }
@@ -74,7 +74,7 @@
     <article>
 <h1>Wine-Assembly — The Whole Story</h1>
 <p><em>A retrospective from the initial commit (2026-03-26) through 2026-09-04: 3,758 commits across 163 calendar days and 106 active commit days. The last sixteen days alone added about 1,600 of them.</em></p>
-<p><em>Short on time? The <a href="articles/README.html">articles</a> take one question each — the x86 interpreter, lazy flags, real DLLs, the Win32 layer, software GDI, DirectX, Win16, the virtual LAN, the DOS toy VM, the WATX memory map, scripting the emulator, and working with coding agents — in a few minutes apiece.</em></p>
+<p><em>Short on time? The <a href="/articles/">articles</a> take one question each — the x86 interpreter, lazy flags, real DLLs, the Win32 layer, software GDI, DirectX, Win16, the virtual LAN, the DOS toy VM, the WATX memory map, scripting the emulator, and working with coding agents — in a few minutes apiece.</em></p>
 <hr>
 <h2>0. The premise</h2>
 <blockquote>
@@ -1357,11 +1357,11 @@ a 154-commit peak day and 1,549 board entries.</p>
 <hr>
 <h2>7. What&#39;s in flight right now</h2>
 <ol>
-<li><strong>Deploying the WATX tree</strong> — the migration is complete and the site runs on a deploy-candidate branch merged back into main; the open items are the browser&#39;s compile-time memory (a sub-100 MB gate for the in-page compiler, and an iPhone pass on the LAN) and the maintainer&#39;s sign-off (<a href="docs/watx-migration-plan.html">plan</a>, <a href="docs/watx-region-safety-design.html">region design</a>).</li>
-<li><strong>Region JIT for the main emulator</strong> — the toy VM&#39;s region JIT is +36% to +44% on its bench set and the replicated-dispatch proposal was tried in the main emulator; the question is which of those results carries into a 32-bit machine with a 4 GB address space and self-modifying decoders (<a href="docs/toyvm-bench-20.html">toyvm bench</a>, <a href="docs/repl-tailcall-main-emu.html">proposal</a>). The measured nulls — page compile, accessor split, <code>(NEXT)</code> inline, <code>wasm-opt</code> — are written down so they are not re-run.</li>
-<li><strong>The remaining commercial-demo blockers</strong> — StarCraft&#39;s title stall, Diablo II&#39;s <code>SMemReAlloc</code> critical error, Fallout, and the frame-pacing games that spin on the clock (<a href="docs/re-notes/README.html">RE notes</a>). Each has a note naming what was ruled out.</li>
-<li><strong>Agents as players</strong> — the control channel, frozen mode and the dashboard work; what is missing is a library of per-game drivers (the RCT one exists) and a way to record a session on the guest clock from the browser as well as the CLI (<a href="docs/design-agent-control.html">design</a>).</li>
-<li><strong>Bring-your-own media on Safari</strong> — OPFS overlays, cooperative compilation and CD audio all have Safari-specific fixes from this week; the storage ceiling and the private-browsing slowdown remain documented limits (<a href="docs/design-byo-media.html">design</a>, <a href="docs/safari-private-browsing.html">Safari</a>).</li>
+<li><strong>Deploying the WATX tree</strong> — the migration is complete and the site runs on a deploy-candidate branch merged back into main; the open items are the browser&#39;s compile-time memory (a sub-100 MB gate for the in-page compiler, and an iPhone pass on the LAN) and the maintainer&#39;s sign-off (<a href="/docs/watx-migration-plan.html">plan</a>, <a href="/docs/watx-region-safety-design.html">region design</a>).</li>
+<li><strong>Region JIT for the main emulator</strong> — the toy VM&#39;s region JIT is +36% to +44% on its bench set and the replicated-dispatch proposal was tried in the main emulator; the question is which of those results carries into a 32-bit machine with a 4 GB address space and self-modifying decoders (<a href="/docs/toyvm-bench-20.html">toyvm bench</a>, <a href="/docs/repl-tailcall-main-emu.html">proposal</a>). The measured nulls — page compile, accessor split, <code>(NEXT)</code> inline, <code>wasm-opt</code> — are written down so they are not re-run.</li>
+<li><strong>The remaining commercial-demo blockers</strong> — StarCraft&#39;s title stall, Diablo II&#39;s <code>SMemReAlloc</code> critical error, Fallout, and the frame-pacing games that spin on the clock (<a href="/docs/re-notes/">RE notes</a>). Each has a note naming what was ruled out.</li>
+<li><strong>Agents as players</strong> — the control channel, frozen mode and the dashboard work; what is missing is a library of per-game drivers (the RCT one exists) and a way to record a session on the guest clock from the browser as well as the CLI (<a href="/docs/design-agent-control.html">design</a>).</li>
+<li><strong>Bring-your-own media on Safari</strong> — OPFS overlays, cooperative compilation and CD audio all have Safari-specific fixes from this week; the storage ceiling and the private-browsing slowdown remain documented limits (<a href="/docs/design-byo-media.html">design</a>, <a href="/docs/safari-private-browsing.html">Safari</a>).</li>
 <li><strong>Phones</strong> — single-app mode, touch-as-trackpad, flippers for Pinball, battery-aware scheduling and a widescreen mode list landed; the per-game control audit exists as a table and most of its adaptations are still unbuilt.</li>
 <li><strong>Direct3D and heavy-app depth</strong> — MW3 has a threaded rasterizer prototype and the D3DIM demos have honest FPS counters, but D3DRM ProgressiveMesh/Viewer fidelity, long AoE simulation/save/load and complete NT Paint remain separate compatibility programs.</li>
 <li><strong>Explicit platform boundaries</strong> — VB6 without its runtime, full DirectAnimation, and embedded browser engines are still unsupported; DX9 left the list when <code>pawn</code> drew its chessboard. The project records these as limits rather than hiding them behind silent stubs, and the silent-stub inventory is a ratchet that only goes down.</li>
