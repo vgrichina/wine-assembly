@@ -41,7 +41,7 @@ function moduleWat() {
       (local.set $fn (i32.load (global.get $ip)))
       (local.set $op (i32.load offset=4 (global.get $ip)))
       (global.set $ip (i32.add (global.get $ip) (i32.const 8)))
-      (if (i32.ge_u (local.get $fn) (i32.const 443))
+      (if (i32.ge_u (local.get $fn) (i32.const 444))
         (then
           (return_call $dispatch_bad (local.get $fn))))
       (if (global.get $handler_hist_enabled)
@@ -100,7 +100,7 @@ function storeThreadWord(memory, addr, fn, op) {
     assert.strictEqual(e.get_bad(), 0, `${label}: valid handler took bad-dispatch path`);
 
     e.set_state(0x180, 2);
-    storeThreadWord(e.memory, 0x180, 443, 456);
+    storeThreadWord(e.memory, 0x180, 444, 456);
     e.entry();
     assert.strictEqual(e.get_hits(), 1, `${label}: entry handler should run once before bad dispatch`);
     assert.strictEqual(e.get_ip(), 0x188, `${label}: bad-dispatch fetch should advance ip`);

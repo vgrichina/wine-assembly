@@ -1419,8 +1419,8 @@
   ;; 0x07EF12E0  80B     GDI_BRUSH_DESC scratch
   ;; 0x07EF1730   4B     GDI_OBJECT_GEN (object-table generation counter)
   ;; 0x07EF1734   4B     GDI_WINDOW_SURFACE_HWM (window-surface high-water mark)
-  ;; 0x07EF1800 24KB     GDI_DC_STATE_TABLE (256 x 96-byte canonical DC state)
-  ;; 0x07EF7800 12KB     GDI_OBJECT_TABLE (256 x 48-byte object records)
+  ;; GDI_DC_STATE_TABLE (512 x 96-byte canonical DC state; compiler-placed)
+  ;; GDI_OBJECT_TABLE (512 x 48-byte object records; compiler-placed)
   ;; 0x07EFA800 8KB      GDI_WINDOW_SURFACE_TABLE (256 x 32-byte records)
   ;; 0x07EFC800 8KB      GDI_DC_AUX_TABLE (256 x 32-byte extended DC state)
   ;; 0x07EFE800 6KB      GDI_COLOR_ADJUST_TABLE (256 x 24-byte structures)
@@ -1955,7 +1955,7 @@
   ;; presentation surfaces contain pixels only and own no GDI semantics.
   (global $GDI_DC_STATE_TABLE i32 (region.addr $GDI_DC_STATE_TABLE 0))
   (global $GDI_DC_STATE_TABLE_SIZE i32 (region.size $GDI_DC_STATE_TABLE))
-  (global $GDI_DC_STATE_COUNT i32 (i32.const 256))
+  (global $GDI_DC_STATE_COUNT i32 (i32.const 512))
   (global $GDI_DC_STATE_STRIDE i32 (i32.const 96))
   ;; Dynamic WAT-owned pen, brush, bitmap, font, palette, and metafile records.
   ;; Handles and all semantic object fields are allocated here.
@@ -1966,7 +1966,7 @@
   (global $GDI_OBJECT_GEN_SIZE i32 (region.size $GDI_OBJECT_GEN))
   (global $GDI_OBJECT_TABLE i32 (region.addr $GDI_OBJECT_TABLE 0))
   (global $GDI_OBJECT_TABLE_SIZE i32 (region.size $GDI_OBJECT_TABLE))
-  (global $GDI_OBJECT_COUNT i32 (i32.const 256))
+  (global $GDI_OBJECT_COUNT i32 (i32.const 512))
   (global $GDI_OBJECT_STRIDE i32 (i32.const 48))
   ;; One past the highest surface slot ever allocated. Slots are handed out
   ;; front-first, so every live record is below it and a lookup never has to

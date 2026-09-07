@@ -3400,6 +3400,12 @@
     (global.get $loop_aoe_span_matches))
   (func (export "get_loop_aoe_span_runs") (result i32)
     (global.get $loop_aoe_span_runs))
+  (func (export "get_loop_colorkey8_matches") (result i32)
+    (global.get $loop_colorkey8_matches))
+  (func (export "get_loop_colorkey8_runs") (result i32)
+    (global.get $loop_colorkey8_runs))
+  (func (export "get_loop_colorkey8_bytes") (result i64)
+    (global.get $loop_colorkey8_bytes))
 
   ;; --no-sib-fusion: emit the unfused compute_ea_sib + consumer pair, so a
   ;; fused build and an unfused one differ in exactly one thing and need no
@@ -5784,8 +5790,8 @@
     (i32.store8 (i32.add (call $g2w (local.get $dest_guest)) (local.get $len)) (i32.const 0))
     (local.get $len))
 
-  ;; GDI table occupancy. Both the DC-state and object tables are fixed 256-slot
-  ;; arrays, and running one dry does not announce itself: GetDC starts
+  ;; GDI table occupancy. The DC-state and object tables are fixed-size arrays,
+  ;; and running one dry does not announce itself: GetDC starts
   ;; returning NULL and the app converts that into whatever its own error path
   ;; is (MFC throws CResourceException, which lands as an unhandled C++ throw
   ;; several thousand instructions away from the leak). These are pure reads of
@@ -5801,6 +5807,9 @@
       (br $scan)))
     (local.get $n))
 
+  (func (export "gdi_dc_state_capacity") (result i32)
+    (global.get $GDI_DC_STATE_COUNT))
+
   (func (export "gdi_object_used") (result i32)
     (local $i i32) (local $n i32)
     (block $done (loop $scan
@@ -5811,6 +5820,9 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (local.get $n))
+
+  (func (export "gdi_object_capacity") (result i32)
+    (global.get $GDI_OBJECT_COUNT))
 
   ;; DIB backing arena occupancy. $kind: 0 = used pages, 1 = free pages,
   ;; 2 = largest free contiguous run, 3 = total pages. A screen-sized overlay

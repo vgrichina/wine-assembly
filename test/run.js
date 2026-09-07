@@ -8864,8 +8864,13 @@ if (VERBOSE) {
       }
     }
     if (instance.exports.gdi_dc_state_used) {
-      console.log('gdi: dc_states', instance.exports.gdi_dc_state_used(), '/ 256   objects',
-        instance.exports.gdi_object_used(), '/ 256   dc_mark', instance.exports.gdi_table_mark(2));
+      const dcCapacity = instance.exports.gdi_dc_state_capacity
+        ? instance.exports.gdi_dc_state_capacity() : 256;
+      const objectCapacity = instance.exports.gdi_object_capacity
+        ? instance.exports.gdi_object_capacity() : 256;
+      console.log('gdi: dc_states', instance.exports.gdi_dc_state_used(), '/',
+        dcCapacity, '  objects', instance.exports.gdi_object_used(), '/', objectCapacity,
+        '  dc_mark', instance.exports.gdi_table_mark(2));
     }
     if (instance.exports.gdi_dib_arena_stat) {
       const st = instance.exports.gdi_dib_arena_stat;

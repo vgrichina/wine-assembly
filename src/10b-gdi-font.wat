@@ -1877,6 +1877,13 @@
     (if (i32.eqz (call $gdi_raster_clip_visible_row
           (local.get $hdc) (local.get $desc) (local.get $x) (local.get $y)))
       (then (return (i32.const 0))))
+    (if (i32.and
+          (i32.le_u (i32.load offset=16 (local.get $desc)) (i32.const 8))
+          (i32.eq (i32.and (local.get $color) (i32.const 0xFFFF0000))
+            (i32.const 0x10FF0000)))
+      (then (return (call $gdi_raster_write_index
+        (local.get $desc) (local.get $x) (local.get $y)
+        (i32.and (local.get $color) (i32.const 0xFFFF))))))
     (call $gdi_raster_write (local.get $desc) (local.get $x) (local.get $y) (local.get $color)))
 
   (func $gdi_bitmap_text_pixel_rect (param $hdc i32) (param $desc i32)
@@ -1920,6 +1927,22 @@
         (br $row)))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $rows))))
+
+  ;; WinG's DIBINDEX macro encodes a destination bitmap palette index as
+  ;; 0x10FFiiii. Unlike PALETTEINDEX, it is resolved through the selected
+  ;; bitmap's color table, not the DC's logical palette. Keep the qualifier in
+  ;; DC state and resolve it only after the destination descriptor is known.
+  (func $gdi_bitmap_text_color (param $hdc i32) (param $desc i32)
+        (param $colorref i32) (result i32)
+    (if (i32.eq (i32.and (local.get $colorref) (i32.const 0xFFFF0000))
+          (i32.const 0x10FF0000))
+      (then
+        (if (i32.le_u (i32.load offset=16 (local.get $desc)) (i32.const 8))
+          (then (return (local.get $colorref))))
+        (return (call $gdi_raster_palette_color (local.get $desc)
+          (i32.and (local.get $colorref) (i32.const 0xFFFF))))))
+    (call $gdi_raster_swap_rb
+      (call $gdi_dc_resolve_colorref (local.get $hdc) (local.get $colorref))))
 
   (func $gdi_bitmap_text_scale_x_delta (param $desc i32) (param $delta i32) (result i32)
     (call $gdi_round_ratio
@@ -2601,9 +2624,11 @@
     (local.set $left (local.get $cursor))
     (local.set $right (i32.add (local.get $cursor) (local.get $width)))
     (local.set $bottom (i32.add (local.get $top) (local.get $height)))
-    (local.set $text_color (call $gdi_raster_swap_rb
+    (local.set $text_color (call $gdi_bitmap_text_color
+      (local.get $hdc) (local.get $desc)
       (call $gdi_dc_get_field (local.get $hdc) (i32.const 20) (i32.const 0))))
-    (local.set $bk_color (call $gdi_raster_swap_rb
+    (local.set $bk_color (call $gdi_bitmap_text_color
+      (local.get $hdc) (local.get $desc)
       (call $gdi_dc_get_field (local.get $hdc) (i32.const 24) (i32.const 0xFFFFFF))))
     (local.set $dirty_left (local.get $left))
     (local.set $dirty_top (local.get $top))

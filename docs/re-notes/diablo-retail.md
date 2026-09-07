@@ -104,7 +104,7 @@ reads synchronously.
 - Escape at the title/menu exits the app cleanly (`[Exit] code=0`) — don't use
   Esc to "skip intros" in scripted runs.
 
-## Driven to gameplay headlessly (2026-08-31, clean 45857dee)
+## Driven to gameplay headlessly
 
 The shareware recipe in diablo-shareware.md transfers to retail unchanged —
 same batch numbers, same geometry (retail's "New Single Player Hero" screen
@@ -130,3 +130,25 @@ plain HEAD is a two-minute check
 (`node tools/concat-wat.js && node tools/build-compile-wat.js`, then the title
 run with `--no-build`) and it settled in one step what a commit hunt could
 not.
+
+The exact `/Users/vg/Downloads/DIABLO.ISO` was re-run on 2026-09-05 with the
+installed retail v1.00 files and the disc still mounted. The native runner
+advanced through the title/menu, Warrior selection, hero naming, cathedral
+loading screen, and into controllable Tristram. This proves the disc layout,
+installed files, `AUTORUN.INF`, CD check, and synchronous ISO path.
+
+The browser's asynchronous ISO-provider path was re-verified through actual
+Tristram gameplay. Three path-provenance details matter after hero naming:
+
+- an app-local DLL preload must retain `C:\Diablo\storm.dll` as the module's
+  path, rather than flattening it to the compatibility alias `C:\storm.dll`;
+- bare `LoadLibrary("standard.snp")` follows the process current directory;
+- exact current-directory lookup must precede the compatibility basename scan,
+  because this disc also contains an unrelated `D:\DEMO\SMACKW32.DLL`.
+
+With those rules, Storm derives and enumerates `C:\Diablo\*.snp`, dynamically
+loads both `battle.snp` and `standard.snp`, resolves `SnpQuery`/`SnpBind`, and
+creates a non-null provider object. The exact browser run then advanced through
+the cathedral load into a controllable Warrior standing in Tristram. It did not
+reproduce either the former `SNetInitializeProvider` error or the old generated
+blitter WebAssembly trap.

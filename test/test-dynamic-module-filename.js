@@ -20,10 +20,19 @@ async function main() {
     maximum: 8192,
     shared: true,
   });
+  const vfs = {
+    cwd: 'c:\\diablo\\',
+    files: new Map([['c:\\diablo\\standard.snp', { data: Uint8Array.of(77, 90) }]]),
+    _resolvePath(name) {
+      const lower = String(name).toLowerCase().replace(/\//g, '\\');
+      return /^[a-z]:/i.test(lower) ? lower : this.cwd + lower.replace(/^\\+/, '');
+    },
+  };
   const imports = createHostImports({
     getMemory: () => memory.buffer,
     renderer: null,
     resourceJson: {},
+    vfs,
   });
   imports.host.memory = memory;
   Object.assign(imports.host, {
@@ -73,6 +82,9 @@ async function main() {
     'loaded module handle reports its recorded load path');
   assert.strictEqual(length, modulePath.length,
     'GetModuleFileNameA returns the loaded module path length');
+  const sibling = writeAscii('standard.snp');
+  assert.strictEqual(imports.host.has_dll_file(wa(sibling)), 1,
+    'a bare dynamic module name resolves against the process current directory');
   console.log('test-dynamic-module-filename: PASS');
 }
 

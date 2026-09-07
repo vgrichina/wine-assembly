@@ -21,6 +21,8 @@ const extraWat = `
   (func (export "test_gdi_object_alloc_type") (param $type i32) (result i32)
     (call $gdi_object_alloc (local.get $type)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+  (func (export "test_gdi_dc_state_entry") (param $hdc i32) (result i32)
+    (call $gdi_dc_state_entry (local.get $hdc) (i32.const 1)))
 `;
 
 let passed = 0;
@@ -65,6 +67,29 @@ const check = (label, fn) => { fn(); passed++; console.log(`  ok  ${label}`); };
   check('the earlier records survive the invalidation', () => {
     assert.strictEqual(wat.test_gdi_object_record(h1) >>> 0, p1);
     assert.strictEqual(wat.test_gdi_object_record(h2) >>> 0, p2);
+  });
+
+  check('the object table accommodates workloads above the old 256-object ceiling', () => {
+    const handles = [];
+    for (let i = 0; i < 300; i++) {
+      const handle = wat.test_gdi_object_alloc_type(3) >>> 0;
+      assert(handle, `allocation ${i + 1} must succeed`);
+      handles.push(handle);
+    }
+    assert(wat.gdi_object_used() > 256,
+      'the live-object census must cross the former fixed limit');
+    for (const handle of handles) {
+      assert.strictEqual(wat.test_gdi_object_delete(handle), 1);
+    }
+  });
+
+  check('the DC-state table accommodates workloads above the old 256-DC ceiling', () => {
+    for (let i = 0; i < 300; i++) {
+      assert(wat.test_gdi_dc_state_entry(0x03200000 + i),
+        `DC-state allocation ${i + 1} must succeed`);
+    }
+    assert(wat.gdi_dc_state_used() > 256,
+      'the live-DC census must cross the former fixed limit');
   });
 
   console.log(`\ntest-gdi-object-record-cache: ${passed}/${passed} passed`);

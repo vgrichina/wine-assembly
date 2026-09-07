@@ -1987,11 +1987,9 @@
     ;; refusal each PeekMessage call.
     (if (i32.ne (global.get $pending_input_packed) (i32.const 0))
       (then
-        ;; Cached event from a previous PM_NOREMOVE call
-        (local.set $packed (global.get $pending_input_packed))
-        ;; If PM_REMOVE, consume the cache
-        (if (i32.and (local.get $arg4) (i32.const 1))
-          (then (global.set $pending_input_packed (i32.const 0)))))
+        ;; Cached event from a previous peek. It may have been retained either
+        ;; by PM_NOREMOVE or because an earlier filter did not admit it.
+        (local.set $packed (global.get $pending_input_packed)))
       (else
         ;; No cache — fetch from JS
         (local.set $packed (call $host_check_input))
@@ -2000,9 +1998,9 @@
             ;; Save hwnd and lparam immediately (only valid until next host_check_input)
             (global.set $pending_input_hwnd (call $host_check_input_hwnd))
             (global.set $pending_input_lparam (call $host_check_input_lparam))
-            ;; If PM_NOREMOVE, keep the cache for next call
-            (if (i32.eqz (i32.and (local.get $arg4) (i32.const 1)))
-              (then (global.set $pending_input_packed (local.get $packed))))))))
+            ;; A PeekMessage filter scans without deleting messages it skips.
+            ;; Cache first and consume only after this event is admitted.
+            (global.set $pending_input_packed (local.get $packed))))))
     (if (i32.ne (local.get $packed) (i32.const 0))
       (then
         (local.set $msg (i32.and (local.get $packed) (i32.const 0xFFFF)))
@@ -2015,6 +2013,8 @@
               (i32.and (i32.ge_u (local.get $msg) (local.get $arg2))
                        (i32.le_u (local.get $msg) (local.get $arg3))))
           (then
+            (if (i32.and (local.get $arg4) (i32.const 1))
+              (then (global.set $pending_input_packed (i32.const 0))))
             (if (local.get $hotkey)
               (then
                 (call $hotkey_store_message (local.get $arg0) (local.get $hotkey))
@@ -2056,6 +2056,23 @@
             (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
             (return)
+          )
+          (else
+            ;; host_check_input is a FIFO, while PeekMessage filters scan past
+            ;; nonmatching messages without deleting them. Move this skipped
+            ;; event into the ordinary scanned queue so the next peek can ask
+            ;; the host for a later event; a single cached slot otherwise lets
+            ;; an excluded WM_CHAR permanently hide every following mouse
+            ;; message (Alpha Centauri uses exactly those disjoint filters).
+            (local.set $tmp (global.get $pending_input_hwnd))
+            (if (i32.eqz (local.get $tmp))
+              (then (local.set $tmp (global.get $main_hwnd))))
+            (drop (call $post_queue_push
+              (local.get $tmp)
+              (i32.and (local.get $packed) (i32.const 0xFFFF))
+              (i32.shr_u (local.get $packed) (i32.const 16))
+              (global.get $pending_input_lparam)))
+            (global.set $pending_input_packed (i32.const 0))
           )
         )
       )
@@ -2104,6 +2121,13 @@
               (i32.load offset=8 (local.get $qaddr)))
             (call $gs32 (i32.add (local.get $arg0) (i32.const 12))
               (i32.load offset=12 (local.get $qaddr)))
+            ;; Posted messages still carry a complete MSG. In particular,
+            ;; callers may compare MSG.time across separate filtered peeks.
+            (call $msg_store_input_tail
+              (local.get $arg0)
+              (i32.load (local.get $qaddr))
+              (i32.load offset=4 (local.get $qaddr))
+              (i32.load offset=12 (local.get $qaddr)))
             (if (i32.and (local.get $arg4) (i32.const 1))
               (then
                 (global.set $post_queue_count
@@ -2134,6 +2158,15 @@
     ;; messages. Do this for PM_NOREMOVE too: otherwise PeekMessage can report
     ;; a native-control WM_PAINT that the following GetMessage retires
     ;; internally and then blocks, violating the observable peek/get contract.
+    ;; A filtered peek must leave paint pending. SMAC polls only WM_USER+1
+    ;; throughout terrain generation; returning WM_PAINT from that query makes
+    ;; it repaint the transition frame thousands of times instead of building
+    ;; the map.
+    (if (i32.or
+          (i32.and (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg3)))
+          (i32.and (i32.le_u (local.get $arg2) (i32.const 0x000F))
+                   (i32.ge_u (local.get $arg3) (i32.const 0x000F))))
+    (then
     (drop (call $paint_drain_native_control_paints))
     (local.set $tmp (call $paint_select_next_dirty))
     (if (local.get $tmp)
@@ -2166,10 +2199,18 @@
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
     (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))))
     ;; No paint — deliver WM_TIMER if any timer is due
     ;; Pass PM_REMOVE flag (arg4 & 1) as consume param — PM_NOREMOVE peeks without resetting last_tick
-    (if (call $timer_check_due (local.get $arg0) (i32.and (local.get $arg4) (i32.const 1)))
+    (if (i32.and
+          (i32.or
+            (i32.and (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg3)))
+            (i32.or
+              (i32.and (i32.le_u (local.get $arg2) (i32.const 0x0113))
+                       (i32.ge_u (local.get $arg3) (i32.const 0x0113)))
+              (i32.and (i32.le_u (local.get $arg2) (i32.const 0x7FF0))
+                       (i32.ge_u (local.get $arg3) (i32.const 0x7FF0)))))
+          (call $timer_check_due (local.get $arg0) (i32.and (local.get $arg4) (i32.const 1))))
       (then
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
@@ -2187,11 +2228,11 @@
     (global.set $eax (i32.const 0))  ;; no message
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
     (global.set $eip (local.get $tmp))
-    ;; Native idle loops commonly spin on PeekMessage(..., PM_NOREMOVE) until
-    ;; a message arrives. Yield after an empty peek so JS can pump timers/input
-    ;; instead of burning a whole run() slice in one guest loop.
-    (global.set $yield_flag (i32.const 1))
-    (global.set $steps (i32.const 0))
+    ;; PeekMessage is nonblocking. Ordinary pumps must be allowed to return to
+    ;; their caller inside the current slice: SMAC polls while generating each
+    ;; terrain fragment, and making every empty poll a host boundary turns a
+    ;; seconds-long Quick Start into tens of thousands of batches. A true idle
+    ;; loop still parks above after K adjacent calls from the same call site.
     (return)
   )
 

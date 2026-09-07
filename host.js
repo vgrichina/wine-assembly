@@ -2568,6 +2568,20 @@ class WineAssembly {
   // the yield pumps themselves are shared (lib/process-boot.js).
   async _findDllBytes(fileName, fullName, { exeDir = false, vfsPaths = null } = {}) {
     const ctx = this._helpCtx;
+    // Resolve a bare LoadLibrary name exactly as the guest filesystem does
+    // before the compatibility basename scan. An ISO can contain another DLL
+    // with the same basename (retail Diablo has D:\DEMO\SMACKW32.DLL); taking
+    // that earlier-mounted lazy entry instead of C:\Diablo\SMACKW32.DLL both
+    // selects the wrong module and asks a synchronous lookup to read an async
+    // provider. This method is already async, so materialize the exact VFS
+    // result here.
+    if (ctx && ctx.vfs && typeof ctx.vfs._resolvePath === 'function') {
+      let resolved = '';
+      try { resolved = ctx.vfs._resolvePath(fullName); } catch (_) {}
+      if (resolved && ctx.vfs.files.has(resolved)) {
+        return ctx.vfs.materialize(resolved);
+      }
+    }
     if (ctx && ctx.readFile) {
       const fromVfs = ctx.readFile(fullName);
       if (fromVfs) return fromVfs;
@@ -2645,7 +2659,15 @@ class WineAssembly {
   async _resolveDllBytes(dllName) {
     const fileName = dllName.split('\\').pop().toLowerCase();
     const ctx = this._helpCtx;
-    let dllBytes = ctx && ctx.readFile ? ctx.readFile(dllName) : null;
+    let dllBytes = null;
+    if (ctx && ctx.vfs && typeof ctx.vfs._resolvePath === 'function') {
+      let resolved = '';
+      try { resolved = ctx.vfs._resolvePath(dllName); } catch (_) {}
+      if (resolved && ctx.vfs.files.has(resolved)) {
+        dllBytes = await ctx.vfs.materialize(resolved);
+      }
+    }
+    if (!dllBytes && ctx && ctx.readFile) dllBytes = ctx.readFile(dllName);
     if (!dllBytes && this._loadedDllBytesByName) {
       dllBytes = this._loadedDllBytesByName[fileName] || null;
     }
@@ -4081,6 +4103,13 @@ class WineAssembly {
             // active workers enough total steps to use that budget.
             const audioHot = self._isAudioHot();
             const menuOpen = self._hasOpenMenu();
+            if (self.threadManager.drainCooperativeWakes) {
+              const wakeStats = await self.threadManager.drainCooperativeWakes({
+                maxTotalSteps: recentInputWake ? (64 * 1024 * 1024) : (2 * 1024 * 1024),
+                serviceLoadLibraries: () => self.handleCooperativeThreadLoadLibraries(),
+              });
+              if (perf && wakeStats) perf.countSteps(wakeStats.steps | 0);
+            }
             // Recent input used to zero the worker budget outright, so the
             // main thread could deliver the message without competition.
             // That is fine for a click, and catastrophic for a game played
