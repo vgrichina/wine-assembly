@@ -132,7 +132,7 @@ function signalFlush() {
   const child = spawn('node', [RUN,
     `--exe=${INSTALLER}`, '--args=/S',
     '--max-batches=1000000', '--batch-size=5000', '--quiet-api',
-    '--control-stdin', '--overlay-flush-ms=0',
+    '--control-stdin', '--frozen', '--overlay-flush-ms=0',
     `--overlay-dir=${signalDir}`,
   ], {
     cwd: ROOT,
@@ -140,13 +140,23 @@ function signalFlush() {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   let out = '';
-  child.stdout.on('data', chunk => { out += chunk.toString(); });
-  child.stderr.on('data', chunk => { out += chunk.toString(); });
-  const signal = setTimeout(() => child.kill('SIGTERM'), 1000);
+  let signalSent = false;
+  const collect = chunk => {
+    out += chunk.toString();
+    // Loading/compilation time varies with host load. Terminate only after a
+    // deterministic amount of frozen guest work reaches a between-batches
+    // boundary; stdin safely queues this command until control is installed.
+    if (!signalSent && /"steps":5000/.test(out)) {
+      signalSent = true;
+      child.kill('SIGTERM');
+    }
+  };
+  child.stdout.on('data', collect);
+  child.stderr.on('data', collect);
+  child.stdin.write(JSON.stringify({ action: 'step', n: 5000 }) + '\n');
   const hardStop = setTimeout(() => child.kill('SIGKILL'), 30000);
   return new Promise(resolve => {
     child.on('exit', code => {
-      clearTimeout(signal);
       clearTimeout(hardStop);
       const line = /\[overlay\] SIGTERM flushed (\d+) record\(s\)/.exec(out);
       check('SIGTERM awaits an overlay flush before exit', !!line && code === 0,
