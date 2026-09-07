@@ -94,6 +94,12 @@ function bodyFor(method, prefix) {
       return [
         '(global.set $eax (call $d3dim_device_delete_viewport (local.get $arg0) (local.get $arg1)))',
       ];
+    case 'NEXT_VIEWPORT':
+      return [
+        '(global.set $eax',
+        '  (call $d3dim_device_next_viewport',
+        '    (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))',
+      ];
     case 'CREATE_LIGHT':
       return [
         '(global.set $eax (call $d3dim_create_child',

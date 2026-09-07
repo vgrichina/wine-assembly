@@ -204,3 +204,7 @@ eligible renderer windows instead of returning an unconditional zero.
 
 2026-09-06: 437 -> 435. Direct3D Device2/Device3 DeleteViewport now validate
 ownership, clear current selection, and release attachment references.
+
+2026-09-06: 435 -> 432. Direct3D Device 1/2/3 NextViewport now walks each
+device's retained Win9x viewport list, returns AddRef'd HEAD/TAIL/NEXT
+interfaces, and distinguishes invalid input, empty lists, and list end.

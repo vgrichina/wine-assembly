@@ -9167,7 +9167,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_NextViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax
+      (call $d3dim_device_next_viewport
+        (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   (func $handle_IDirect3DDevice3_EnumTextureFormats (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

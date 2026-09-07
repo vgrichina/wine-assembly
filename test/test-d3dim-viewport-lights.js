@@ -31,6 +31,11 @@ const extraWat = String.raw`
     (local.set $entry (call $dx_from_this (local.get $device)))
     (call $dx_get_wrapper_for_vtbl
       (call $dx_slot_of (local.get $entry)) (i32.const 0x54000000)))
+  (func (export "test_d3dim_viewport_alias") (param $viewport i32) (result i32)
+    (local $entry i32)
+    (local.set $entry (call $dx_from_this (local.get $viewport)))
+    (call $dx_get_wrapper_for_vtbl
+      (call $dx_slot_of (local.get $entry)) (i32.const 0x55000000)))
   (func (export "test_d3dim_add_viewport")
     (param $revision i32) (param $device i32) (param $viewport i32) (result i32)
     (global.set $esp (i32.const 0x00300000))
@@ -59,6 +64,22 @@ const extraWat = String.raw`
           (i32.const 0) (i32.const 0)))
         (else (call $handle_IDirect3DDevice3_DeleteViewport
           (local.get $device) (local.get $viewport) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0))))))
+    (global.get $eax))
+  (func (export "test_d3dim_next_viewport")
+    (param $revision i32) (param $device i32) (param $viewport i32)
+    (param $out i32) (param $flags i32) (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (if (i32.eq (local.get $revision) (i32.const 1))
+      (then (call $handle_IDirect3DDevice_NextViewport
+        (local.get $device) (local.get $viewport) (local.get $out) (local.get $flags)
+        (i32.const 0) (i32.const 0)))
+      (else (if (i32.eq (local.get $revision) (i32.const 2))
+        (then (call $handle_IDirect3DDevice2_NextViewport
+          (local.get $device) (local.get $viewport) (local.get $out) (local.get $flags)
+          (i32.const 0) (i32.const 0)))
+        (else (call $handle_IDirect3DDevice3_NextViewport
+          (local.get $device) (local.get $viewport) (local.get $out) (local.get $flags)
           (i32.const 0) (i32.const 0))))))
     (global.get $eax))
   (func (export "test_d3dim_set_current_viewport")
@@ -276,6 +297,7 @@ const E_INVALIDARG = 0x80070057;
 const CLASS_E_NOAGGREGATION = 0x80040110;
 const D3DERR_LIGHTHASVIEWPORT = 0x887602ef;
 const D3DERR_LIGHTNOTINTHISVIEWPORT = 0x887602f0;
+const D3DERR_NOVIEWPORTS = 0x88760304;
 const D3DERR_VIEWPORTHASNODEVICE = 0x88760306;
 const D3DERR_NOCURRENTVIEWPORT = 0x88760307;
 const D3DNEXT_NEXT = 1;
@@ -328,10 +350,25 @@ const D3DNEXT_TAIL = 4;
     const otherDevice = wat.test_d3dim_create_device() >>> 0;
     const attached = wat.test_d3dim_create_viewport() >>> 0;
     const unattached = wat.test_d3dim_create_viewport() >>> 0;
+    const middle = wat.test_d3dim_create_viewport() >>> 0;
+    const newest = wat.test_d3dim_create_viewport() >>> 0;
     const wrongType = wat.test_d3dim_create_light() >>> 0;
     assert(device && deviceAlias && deviceAlias !== device &&
-      otherDevice && attached && unattached && wrongType,
+      otherDevice && attached && unattached && middle && newest && wrongType,
       `D3D${revision} viewport relationship setup failed`);
+
+    wat.guest_write32(currentOut, 0xdeadbeef);
+    assert.strictEqual(
+      wat.test_d3dim_next_viewport(revision, device, 0,
+        currentOut, D3DNEXT_HEAD) >>> 0,
+      D3DERR_NOVIEWPORTS, 'an empty device reports D3DERR_NOVIEWPORTS');
+    assert.strictEqual(wat.guest_read32(currentOut), 0,
+      'empty NextViewport clears its caller output');
+    assert.strictEqual(wat.test_d3dim_esp() >>> 0, 0x00300014,
+      'NextViewport pops its four arguments and return address');
+    assert.strictEqual(
+      wat.test_d3dim_next_viewport(revision, device, 0, 0, D3DNEXT_HEAD) >>> 0,
+      E_INVALIDARG, 'NextViewport rejects a null output pointer');
 
     assert.strictEqual(
       wat.test_d3dim_add_viewport(revision, device, 0) >>> 0,
@@ -360,6 +397,72 @@ const D3DNEXT_TAIL = 4;
       D3DERR_VIEWPORTHASNODEVICE, 'one viewport cannot belong to two devices');
     assert.strictEqual(wat.test_d3dim_object_ref(attached), 2,
       'rejected viewport attachments do not AddRef');
+
+    assert.strictEqual(
+      wat.test_d3dim_add_viewport(revision, deviceAlias, middle) >>> 0,
+      D3D_OK, 'a device can own multiple ordered viewports');
+    assert.strictEqual(
+      wat.test_d3dim_add_viewport(revision, device, newest) >>> 0,
+      D3D_OK, 'later AddViewport inserts another list member');
+    const middleAlias = wat.test_d3dim_viewport_alias(middle) >>> 0;
+    const newestAlias = wat.test_d3dim_viewport_alias(newest) >>> 0;
+    assert(middleAlias && middleAlias !== middle && newestAlias && newestAlias !== newest,
+      'viewport aliases use distinct wrappers for one COM identity');
+
+    const nextViewport = (viewport, flags, expected, message) => {
+      wat.guest_write32(currentOut, 0xdeadbeef);
+      assert.strictEqual(
+        wat.test_d3dim_next_viewport(revision, deviceAlias, viewport,
+          currentOut, flags) >>> 0,
+        D3D_OK, message);
+      assert.strictEqual(wat.guest_read32(currentOut) >>> 0, expected, message);
+      if (expected) {
+        assert.strictEqual(wat.test_d3dim_object_ref(expected), 3,
+          'NextViewport AddRefs the returned interface');
+        assert.strictEqual(wat.test_d3dim_viewport_release(revision, expected), 2,
+          'the caller can release its NextViewport reference');
+      }
+    };
+    nextViewport(wrongType, D3DNEXT_HEAD, newest,
+      'HEAD ignores its input and returns the newest viewport');
+    nextViewport(0, D3DNEXT_TAIL, attached,
+      'TAIL ignores NULL input and returns the oldest viewport');
+    nextViewport(newestAlias, D3DNEXT_NEXT, middle,
+      'NEXT accepts an alias and follows Win9x head insertion order');
+    nextViewport(middleAlias, D3DNEXT_NEXT, attached,
+      'NEXT continues toward the oldest viewport');
+    nextViewport(attached, D3DNEXT_NEXT, 0,
+      'NEXT at the list end succeeds with a NULL result');
+
+    wat.guest_write32(currentOut, 0xdeadbeef);
+    assert.strictEqual(
+      wat.test_d3dim_next_viewport(revision, device, unattached,
+        currentOut, D3DNEXT_NEXT) >>> 0,
+      E_INVALIDARG, 'NEXT rejects a viewport outside this device');
+    assert.strictEqual(wat.guest_read32(currentOut), 0,
+      'failed NEXT clears its caller output');
+    wat.guest_write32(currentOut, 0xdeadbeef);
+    assert.strictEqual(
+      wat.test_d3dim_next_viewport(revision, device, newest,
+        currentOut, 0x80) >>> 0,
+      E_INVALIDARG, 'NextViewport rejects unsupported flag combinations');
+    assert.strictEqual(wat.guest_read32(currentOut), 0,
+      'invalid flags leave a cleared output');
+
+    assert.strictEqual(
+      wat.test_d3dim_delete_viewport(revision, deviceAlias, middleAlias) >>> 0,
+      D3D_OK, 'DeleteViewport accepts an alias for a middle list member');
+    assert.strictEqual(wat.test_d3dim_object_ref(middle), 1,
+      'deleting a middle member releases its list reference');
+    nextViewport(newest, D3DNEXT_NEXT, attached,
+      'deleting a middle viewport reconnects its neighbors');
+    assert.strictEqual(
+      wat.test_d3dim_delete_viewport(revision, device, newest) >>> 0,
+      D3D_OK, 'DeleteViewport removes the list head');
+    assert.strictEqual(wat.test_d3dim_object_ref(newest), 1,
+      'deleting the head releases its list reference');
+    nextViewport(0, D3DNEXT_HEAD, attached,
+      'HEAD advances after deleting the newest viewport');
 
     assert.strictEqual(
       wat.test_d3dim_delete_viewport(revision, otherDevice, attached) >>> 0,
@@ -452,6 +555,8 @@ const D3DNEXT_TAIL = 4;
 
     assert.strictEqual(wat.test_d3dim_viewport_release(revision, attached), 0);
     assert.strictEqual(wat.test_d3dim_viewport_release(revision, unattached), 0);
+    assert.strictEqual(wat.test_d3dim_viewport_release(revision, middle), 0);
+    assert.strictEqual(wat.test_d3dim_viewport_release(revision, newest), 0);
     assert.strictEqual(wat.test_d3dim_light_release(wrongType), 0);
     assert.strictEqual(wat.test_d3dim_device_release(revision, otherDevice), 0);
     assert.strictEqual(wat.test_d3dim_device_release(revision, deviceAlias), 0);
