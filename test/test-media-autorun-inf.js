@@ -48,13 +48,14 @@ function directoryRecord(bytes, off, lba, size, flags, name) {
 
 // The retail-Diablo shape: an INF naming AUTORUN.EXE, beside a patch and a
 // setup stub the filename heuristic would otherwise prefer or sink.
-function makeIso(infText) {
+function makeIso(infText, includeDiabdat = false) {
   const files = [
     { name: 'AUTORUN.EXE;1', lba: 19 },
     { name: 'DRTL104.EXE;1', lba: 20 },
     { name: 'SETUP.EXE;1', lba: 21 },
   ];
-  const sectors = 23;
+  if (includeDiabdat) files.push({ name: 'DIABDAT.MPQ;1', lba: 23 });
+  const sectors = includeDiabdat ? 25 : 23;
   const bytes = new Uint8Array(sectors * ISO_SECTOR);
   const pvd = 16 * ISO_SECTOR;
   bytes[pvd] = 1;
@@ -115,6 +116,15 @@ async function main() {
   assert.strictEqual(withInf.exeCandidates[0].autorun, true);
   assert.strictEqual(withInf.exeCandidates.length, 3,
     'the other programs stay offered, only ordered');
+  assert.strictEqual(withInf.asyncMultimediaTimer, false,
+    'an autorun filename alone does not opt unrelated discs into timer callbacks');
+
+  const retailDiablo = await mediaImport.analyze(
+    makeIso('[autorun]\nopen=autorun.exe\n', true), { name: 'DIABLO.ISO' });
+  assert.strictEqual(retailDiablo.asyncMultimediaTimer, true,
+    'a root DIABDAT.MPQ identifies retail Diablo timer semantics');
+  assert.strictEqual(mediaImport.makeAppEntry(retailDiablo).asyncMultimediaTimer, true,
+    'the imported app carries its identified runtime semantics');
 
   const noInf = await mediaImport.analyze(makeIso(null), { name: 'DIABLO.ISO' });
   assert.notStrictEqual(noInf.exeCandidates[0].path, 'D:\\AUTORUN.EXE',
@@ -124,6 +134,43 @@ async function main() {
     makeIso('[autorun]\nopen=missing.exe\n'), { name: 'DIABLO.ISO' });
   assert.notStrictEqual(badTarget.exeCandidates[0].path, 'D:\\AUTORUN.EXE',
     'an INF naming a file the disc does not have falls back to the ranking');
+
+  const smacCandidates = mediaImport.applyIsoCompatibility('SMAC-E1_0Z', [
+    { path: 'D:\\AUTOMENU.EXE', name: 'AUTOMENU.EXE', autorun: true },
+    { path: 'D:\\SETUP.EXE', name: 'SETUP.EXE' },
+    { path: 'D:\\PROGRAMS\\TERRAN.EXE', name: 'TERRAN.EXE' },
+    { path: 'D:\\PATCH\\SMACP4E.EXE', name: 'SMACP4E.EXE' },
+    { path: 'D:\\AUTORUN.EXE', name: 'AUTORUN.EXE' },
+  ]);
+  assert.strictEqual(smacCandidates[0].path, 'D:\\SETUP.EXE',
+    'the exact SMAC mastering error defaults to the original installer');
+  assert.strictEqual(smacCandidates[0].recommended, true);
+  assert.strictEqual(smacCandidates[0].compatibilityLabel,
+    'original installer');
+  assert.strictEqual(smacCandidates[1].path, 'D:\\PATCH\\SMACP4E.EXE');
+  assert.strictEqual(smacCandidates[1].compatibilityLabel, 'official v4 updater');
+  assert.strictEqual(smacCandidates[2].brokenAutorun, true,
+    'the broken wrapper remains offered but is no longer tagged as autorun');
+  assert.strictEqual(mediaImport.applyIsoCompatibility('ANOTHER_DISC', [
+    { path: 'D:\\AUTOMENU.EXE', name: 'AUTOMENU.EXE', autorun: true },
+    { path: 'D:\\PROGRAMS\\TERRAN.EXE', name: 'TERRAN.EXE' },
+  ])[0].path, 'D:\\AUTOMENU.EXE',
+  'the override cannot match a different disc with similar filenames');
+
+  const staged = [];
+  const profileVfs = {
+    files: new Map([
+      ['d:\\setup.ini', { _provider: true }],
+      ['d:\\setup.lid', { _provider: true }],
+      ['d:\\data.cab', { _provider: true }],
+    ]),
+    _normPath: value => value.toLowerCase(),
+    materialize: async value => { staged.push(value.toLowerCase()); },
+  };
+  await mediaImport.materializeIniFiles(
+    profileVfs, ['D:\\SETUP.INI', 'D:\\SETUP.LID', 'D:\\DATA.CAB']);
+  assert.deepStrictEqual(staged, ['d:\\setup.ini', 'd:\\setup.lid'],
+    'synchronous profile consumers stage INI and InstallShield LID files only');
 
   console.log('PASS test-media-autorun-inf');
 }
