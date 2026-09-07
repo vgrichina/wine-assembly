@@ -36,6 +36,9 @@ assert.strictEqual(shell.selectedRunSlice('halflife_uplink', true), 10000,
   'the Worker override is app-scoped');
 assert.strictEqual(shell.selectedRunSlice('cue:speed-demons', false), 500000,
   'Speed Demons Auto uses the measured installer/gameplay budget');
+assert.strictEqual(shell.selectedRunSlice(
+  'iso:sidmeieralphacentauriclassic-windows95', false), 500000,
+  'the exact SMAC disc feeds synchronous Quick Start terrain generation');
 
 selected = '10000';
 assert.strictEqual(shell.selectedRunSlice('jazz2_demo', true), 10000,

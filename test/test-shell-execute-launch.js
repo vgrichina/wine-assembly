@@ -90,7 +90,8 @@ function makeShell(opts = {}) {
       for (const dir of other.dirs) this.dirs.add(dir);
     },
   };
-  const caller = { _helpCtx: { vfs }, _runSliceAppKey: 'cue:speed-demons' };
+  const caller = { _helpCtx: { vfs }, _runSliceAppKey: 'cue:speed-demons',
+    asyncMultimediaTimer: true };
   const ok = shell.launchVfsExe('C:\\windows\\temp\\is-test.tmp\\child.tmp',
     caller, '', '/SL4 $10001 "C:\\ptanks.exe" 2743738 52736');
   assert.strictEqual(ok, true, 'absolute child exe in the caller VFS is accepted');
@@ -100,6 +101,8 @@ function makeShell(opts = {}) {
     'dynamic child command line is preserved');
   assert.strictEqual(child.runSliceAppKey, 'cue:speed-demons',
     'dynamic child inherits the mounted app Auto run-slice policy');
+  assert.strictEqual(child.asyncMultimediaTimer, true,
+    'chain-launched installed children inherit multimedia timer semantics');
 
   assert.strictEqual(shell.launchVfsExe('child.tmp', { _helpCtx: { vfs } }, '', ''), true,
     'relative child exe resolves against the caller working directory');
@@ -119,10 +122,16 @@ function makeShell(opts = {}) {
   assert.match(shellSource,
     /vfs\.copyFile\(path, alias, false\)/,
     'sidecar aliases must remain lazy but detach safely if the C: copy is written');
+  assert.match(shellSource,
+    /return \{ name, path: mountedPath, bytes: await vfs\.materialize\(mountedPath\) \}/,
+    'app-local DLLs retain their installed path for GetModuleFileName and sibling plug-in discovery');
   assert(shellSource.indexOf('vfs.copyFile(path, alias, false)') <
       shellSource.indexOf('await attachDynamicOverlay(wine, app, sel)'),
     'base-media aliases must exist before overlay change tracking begins');
   const hostSource = fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8');
+  assert.match(hostSource,
+    /resolved = ctx\.vfs\._resolvePath\(fullName\)[\s\S]*?return ctx\.vfs\.materialize\(resolved\)/,
+    'runtime DLL loading prefers the exact current-directory VFS entry over duplicate basenames');
   assert.match(hostSource,
     /if \(absolute && shell\.launchVfsExe && shell\.launchVfsExe\(launchFile, self, launchDir, params\)\)/,
     'browser host offers relative and absolute executable names to the caller VFS');

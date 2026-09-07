@@ -337,6 +337,17 @@
                 (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0113))            ;; WM_TIMER
                 (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.add (local.get $addr) (i32.const 4))))   ;; wParam=timerID
                 (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.load (i32.add (local.get $addr) (i32.const 16)))) ;; lParam=callback
+                ;; MSG.time participates in application-side queue ordering.
+                ;; SMAC peeks three disjoint ranges into three MSG structs and
+                ;; removes the one with the oldest timestamp. Leaving the tail
+                ;; untouched (the caller initializes it to UINT_MAX) makes a
+                ;; timer found in the second range lose a three-way tie to the
+                ;; empty first struct, so the due timer is never consumed.
+                (call $msg_store_input_tail
+                  (local.get $msg_ptr)
+                  (i32.load (local.get $addr))
+                  (i32.const 0x0113)
+                  (i32.load (i32.add (local.get $addr) (i32.const 16))))
                 (local.set $found (i32.const 1))
                 (br $break)
               )
@@ -360,6 +371,11 @@
         (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (local.get $addr)))  ;; wParam=timerID
         (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
           (i32.load offset=8 (local.get $addr)))                                          ;; lParam=callback
+        (call $msg_store_input_tail
+          (local.get $msg_ptr)
+          (i32.load offset=12 (local.get $addr))
+          (i32.const 0x7FF0)
+          (i32.load offset=8 (local.get $addr)))
         ;; Retire the one-shot only when the caller is really taking the
         ;; message; a PM_NOREMOVE peek must still see it next time.
         (if (local.get $consume)
@@ -429,6 +445,11 @@
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.load offset=4 (local.get $slot)))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load offset=8 (local.get $slot)))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.load offset=12 (local.get $slot)))
+    (call $msg_store_input_tail
+      (local.get $msg_ptr)
+      (i32.load (local.get $slot))
+      (i32.load offset=4 (local.get $slot))
+      (i32.load offset=12 (local.get $slot)))
     (if (local.get $remove)
       (then
         (i32.store offset=4 (local.get $queue)
@@ -2949,6 +2970,12 @@
   (func $handle_SetEvent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_set_event (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ;; A kernel transition that wakes another thread is a natural scheduler
+    ;; preemption point.  Cooperative execution otherwise lets the signaler
+    ;; run an entire 100k-block browser slice before the waiter gets a turn;
+    ;; Storm queues MPQ work and can recycle the destination in that gap.
+    (if (global.get $eax)
+      (then (global.set $yield_flag (i32.const 1))))
   )
 
   ;; PulseEvent(hEvent) — 1 arg stdcall. Deprecated on modern Windows, but

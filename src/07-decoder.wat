@@ -3130,6 +3130,10 @@
             (then
               (local.set $done (i32.const 1))
               (br $decode)))
+          (if (call $try_emit_colorkey8_run (local.get $start_eip))
+            (then
+              (local.set $done (i32.const 1))
+              (br $decode)))
           (if (call $try_emit_rle_run (local.get $start_eip))
             (then
               (local.set $done (i32.const 1))

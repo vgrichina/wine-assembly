@@ -62,6 +62,9 @@
   (global $loop_aoe_fill_bytes (mut i64) (i64.const 0))
   (global $loop_aoe_span_matches (mut i32) (i32.const 0))
   (global $loop_aoe_span_runs (mut i32) (i32.const 0))
+  (global $loop_colorkey8_matches (mut i32) (i32.const 0))
+  (global $loop_colorkey8_runs (mut i32) (i32.const 0))
+  (global $loop_colorkey8_bytes (mut i64) (i64.const 0))
   ;; LUT_RUN and COPY_RUN have independent gates. The role-proved LUT lowering
   ;; is on by default; COPY remains off while its historical Storm divergence
   ;; is investigated. set_loop_emit still controls both for compatibility.
@@ -239,6 +242,31 @@
       (i32.add (local.get $start_eip)
         (select (i32.const 0x6b) (i32.const 0x6a)
           (i32.eq (local.get $mode) (i32.const 1)))))
+    (i32.const 1))
+
+  ;; A branch-split 8-bit color-key row used by Alpha Centauri's FLC/menu
+  ;; compositor. The conditional store keeps it outside the self-loop matcher:
+  ;;
+  ;;   cmp byte [edi],ah; jne +2; mov [edi],al; inc edi; dec esi; jne head
+  ;;
+  ;; Match the complete encoding, but derive both continuations from the block
+  ;; address. Another binary emitting these ten bytes gets the same semantics.
+  (func $try_emit_colorkey8_run (param $start_eip i32) (result i32)
+    (if (global.get $code16) (then (return (i32.const 0))))
+    (if (i32.or
+          (i32.ne (call $gl32 (local.get $start_eip)) (i32.const 0x02752738))
+          (i32.or
+            (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 4)))
+              (i32.const 0x4e470788))
+            (i32.ne (call $gl16 (i32.add (local.get $start_eip) (i32.const 8)))
+              (i32.const 0xf675))))
+      (then (return (i32.const 0))))
+    (global.set $loop_colorkey8_matches
+      (i32.add (global.get $loop_colorkey8_matches) (i32.const 1)))
+    (call $te (i32.const 443) (i32.const 0))
+    (call $te_raw (i32.add (local.get $start_eip) (i32.const 10))) ;; fall
+    (call $te_raw (local.get $start_eip))                          ;; restart
+    (global.set $d_pc (i32.add (local.get $start_eip) (i32.const 10)))
     (i32.const 1))
 
   ;; Is this handler index a conditional branch? 44 is the generic form
@@ -3788,6 +3816,74 @@
         (if (local.get $row_head)
           (then (global.set $eip (i32.add (local.get $start) (i32.const 0xaf))))
           (else (global.set $eip (i32.add (local.get $start) (i32.const 0x6a)))))))
+    (return_call $branch_end))
+
+  ;; 443: whole 8-bit color-key replacement row. AH is the transparent/key
+  ;; byte and AL is its replacement. ESI counts down while EDI advances.
+  (func $th_colorkey8_run (param $op i32)
+    (local $tp i32) (local $fall i32) (local $back i32)
+    (local $ptr i32) (local $count i32) (local $old_count i32)
+    (local $old_ptr i32) (local $byte i32) (local $key i32)
+    (local $replacement i32) (local $cost i32) (local $iters i32)
+    (local.set $tp (global.get $ip))
+    (global.set $ip (i32.add (local.get $tp) (i32.const 8)))
+    (local.set $fall (i32.load (local.get $tp)))
+    (local.set $back (i32.load offset=4 (local.get $tp)))
+    (local.set $ptr (global.get $edi))
+    (local.set $count (global.get $esi))
+    (local.set $key
+      (i32.and (i32.shr_u (global.get $eax) (i32.const 8)) (i32.const 0xff)))
+    (local.set $replacement (i32.and (global.get $eax) (i32.const 0xff)))
+    (global.set $loop_colorkey8_runs
+      (i32.add (global.get $loop_colorkey8_runs) (i32.const 1)))
+
+    ;; Authentic callers supply a positive row width. Preserve the x86
+    ;; do-while behavior for zero without attempting an unbounded 2^32-byte
+    ;; fold: execute one element and resume at the original loop head.
+    (local.set $iters
+      (select (local.get $count) (i32.const 1)
+        (i32.ne (local.get $count) (i32.const 0))))
+    (block $done
+      (loop $bytes
+        (local.set $old_ptr (local.get $ptr))
+        (local.set $old_count (local.get $count))
+        (local.set $byte (call $gl8 (local.get $ptr)))
+        ;; CMP + JNE + INC + DEC + JNE always execute; the replacement MOV is
+        ;; the sixth instruction only when the compare is equal.
+        (local.set $cost (i32.add (local.get $cost) (i32.const 5)))
+        (if (i32.eq (local.get $byte) (local.get $key))
+          (then
+            (call $gs8 (local.get $ptr) (local.get $replacement))
+            (local.set $cost (i32.add (local.get $cost) (i32.const 1)))))
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+        (local.set $count (i32.sub (local.get $count) (i32.const 1)))
+        (br_if $done (i32.eqz (local.get $count)))
+        ;; Zero entered as a wrapped do-while is deliberately one-at-a-time.
+        (br_if $done (i32.eq (local.get $iters) (i32.const 1)))
+        (br $bytes)))
+
+    ;; Recreate the last iteration's lazy flags exactly. CMP sets byte-width
+    ;; carry; INC EDI preserves it; DEC ESI preserves it again and supplies
+    ;; the final ZF/SF/OF state consumed by JNE.
+    (drop (call $do_alu_sized (i32.const 7) (local.get $byte) (local.get $key)
+      (i32.const 0xff) (i32.const 7)))
+    (call $set_flags_inc (local.get $old_ptr) (local.get $ptr))
+    (call $set_flags_dec (local.get $old_count) (local.get $count))
+    (global.set $edi (local.get $ptr))
+    (global.set $esi (local.get $count))
+    (global.set $steps
+      (i32.sub (global.get $steps) (i32.sub (local.get $cost) (i32.const 1))))
+    ;; Each element enters the compare/JNE block and the induction/JNE block.
+    ;; The dispatcher already charged the current H443 block entry.
+    (global.set $block_budget
+      (i32.sub (global.get $block_budget)
+        (i32.sub (i32.mul (local.get $iters) (i32.const 2)) (i32.const 1))))
+    (global.set $loop_colorkey8_bytes
+      (i64.add (global.get $loop_colorkey8_bytes)
+        (i64.extend_i32_u (local.get $iters))))
+    (global.set $eip
+      (select (local.get $back) (local.get $fall)
+        (i32.ne (local.get $count) (i32.const 0))))
     (return_call $branch_end))
 
   ;; ------------------------------------------------------------------

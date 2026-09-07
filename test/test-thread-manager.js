@@ -595,6 +595,24 @@ assert.strictEqual(
 assert.strictEqual(cooperativeRuns, 1, 'nested infinite wait should wake and run its sleeping target worker');
 assert.strictEqual(cooperativeThread.sleepUntil, 0, 'nested infinite wait should clear the target sleep gate');
 
+const duplicateWaitTm = makeThreadManager();
+const duplicateWaitHandle = 0xe1014;
+let duplicateWaitRuns = 0;
+const duplicateWaitThread = makeRunnableThread(1, () => {
+  duplicateWaitRuns++;
+  duplicateWaitTm._markThreadExited(
+    duplicateWaitHandle, duplicateWaitThread, 0, 'duplicated cooperative wait test');
+});
+duplicateWaitTm.threads.set(duplicateWaitHandle, duplicateWaitThread);
+const duplicateAlias = duplicateWaitTm.duplicateCurrentThread(2);
+assert.strictEqual(
+  duplicateWaitTm.waitSingleCooperative(duplicateAlias, 0xFFFFFFFF),
+  0,
+  'a nested wait through a duplicated handle runs the underlying worker'
+);
+assert.strictEqual(duplicateWaitRuns, 1,
+  'duplicated handle selection resolves to the canonical scheduler handle');
+
 const finiteWaitTm = makeThreadManager();
 let finiteRuns = 0;
 finiteWaitTm.threads.set(0xe1011, makeRunnableThread(1, () => { finiteRuns++; }));

@@ -1,11 +1,337 @@
 # Wine-Assembly — Architecture & Performance Review
 
-Four passes, newest first. **Pass 4 (2026-08-31)** reviews the day the WATX
-migration completed and the BYO-media subsystem in full; **Pass 3
-(2026-08-30)** is a delta review three days after Pass 2, with a dated
-addendum verifying each commit window as it landed; **Pass 2 (2026-08-27)**
-and the **2026-08-18 pass** follow unchanged, each with its action log, as the
-record of what was found and fixed then.
+Five passes, newest first. **Pass 5 (2026-09-05)** is a redundancy-focused
+delta over the five days since Pass 4's last addendum tick; **Pass 4
+(2026-08-31)** reviews the day the WATX migration completed and the BYO-media
+subsystem in full; **Pass 3 (2026-08-30)** is a delta review three days after
+Pass 2, with a dated addendum verifying each commit window as it landed;
+**Pass 2 (2026-08-27)** and the **2026-08-18 pass** follow unchanged, each
+with its action log, as the record of what was found and fixed then.
+
+---
+
+# Pass 5 — 2026-09-05
+
+*Reviewed at HEAD `8b114034`, 525 commits after Pass 4's `763bcc44` and 330
+after the last dated tick (`6feb6120`, Sep 1 20:20): 831 files, +55,226 /
+−6,844 lines, ~12 agent lanes on `messageboard.txt` (6,072 lines). Focus by
+request: **code redundancy**. Method: a new name-agnostic duplicate census
+over `src/*.wat` (`tools/wat-dup-census.js`, written for this pass — exact
+groups after alpha-renaming the function's own name, plus shingle-Jaccard
+near pairs, with `--new-from=REV` marking what the window added); a
+cross-file scan of every JS line added in the window that appears in two or
+more files; a per-file churn census asking what fraction of a file's commits
+changed only mirrored data; `tools/aw-census.js` re-run; and a full
+`tools/build.sh` at HEAD: **exit 0**, 21 gate invocations, layout hash
+`ca1bb76d751dc43f`, 1,043,374 B. The Gemini second-opinion pass the global
+instructions call for could not run (CLI auth ineligible), so every number
+below is from the local tools.*
+
+## Verdict
+
+**The window's new code is not copying itself; the repository's old
+redundancy is now countable, and its *mirrored data* is the tax every lane
+pays.** Of 287 functions added to the WAT in five days, the census tags 11 in
+exact groups (all 2–4-line stubs) and 2 in near pairs — the DirectPlay,
+DDEML, shutdown, file-security and font work is genuinely new. Three things
+are wrong instead, in order of cost:
+
+1. **Mirrored data that unrelated commits must re-touch.** 69 of the 88
+   commits that changed `src/00-regions.wat` this window changed nothing but
+   `(owner "file:line")` numbers; 57 of 70 `index.html` commits changed only
+   `?v=` keys; 83 of 84 `test/run-all.sh` commits added one membership line.
+   The board is full of "mechanical owner anchors" claims for this reason,
+   and the version key still produced a 40-minute red test on the shared tree
+   this morning (board 01:21, fixed in `8b114034`). None of these three
+   fields carries information the repository does not already hold.
+2. **Copy-paste the census makes measurable for the first time:** 477 stub
+   handlers in identical 3-line shapes, 126 COM `AddRef`/`Release`/
+   `QueryInterface` bodies in exact groups, 246 hand-written `test_call_*`
+   wrappers (1,704 lines), 18 open-coded guest `strdup`s (the newest one, in
+   `8b114034`, is a parameter-renamed copy of an existing helper), and nine
+   pairs of *byte-identical* handler bodies including an A/W pair the Pass-1
+   fix left behind. A/W divergence has regressed from 4 to **15** pairs.
+3. **The test corpus copies its harness.** The `--control-stdin` session
+   driver is pasted into 13 test files, 12 of them in this window.
+
+None of it is a shipping bug. All of it is the kind of thing that makes the
+*next* bug: a stub table that has to be hand-edited in 477 places, an A/W
+pair whose W half quietly stops matching, a session driver whose reply parser
+is fixed in one of thirteen copies.
+
+## P5-0 — Numbers
+
+| | 08-31 (P4) | 09-05 | note |
+|---|---|---|---|
+| `src/*.wat` lines / parts | 198,273 / 61 | **211,546 / 61** | +13.3k in five days |
+| Handler table | 443 | 443 | |
+| `api_table.json` | 3,108 | **3,300** | +192 |
+| `crash_unimplemented` call sites | 131 | 131 | |
+| Silent-handler ratchet pin | 505 | **439** | 531 peak → 439; DirectPlay/DDEML/DeferWindowPos got real state |
+| Test files (`test/test-*.js`) | 738 | **845** | +107 |
+| Build gate invocations | 17 | **21** | + browser cache-version graph (new this window) |
+| `run.js` / `host.js` / `index.html` | 9,023 / 2,775 / 2,536 | **9,817 / 4,190 / 2,799** | host.js +51% |
+| Biggest WAT parts | 09c3 16,855 / 09a 16,700 | **09a 20,100 / 09c3 18,383** | item 18: 09a +3,400 in five days |
+| `?v=` script tags | 58 | **59** | still typed by hand, now gated for agreement |
+| `(owner "file:line")` clauses | 174 | **184** | 69 anchor-only commits this window |
+| toyvm lines | 26,379 | **33,779** | SB/OPL2/GUS audio, site generator |
+| Exact-duplicate WAT groups (≥12 tokens) | — | **204** (477 functions ≤33 tokens) | `wat-dup-census.js` |
+| A/W pairs DIVERGENT / BOTH_STUB | 4 / 1 (P1 fix) | **15 / 1** | `aw-census.js` |
+
+## P5-1 — What the 330 commits were
+
+App lanes dominate the count: Alpha Centauri (`8b114034`: CreateScalableFontResource, mmioSetBuffer, the overlapping-entry retire in `04-cache.wat`), NetHack Win32, Speed Demons' mounted-disc install, DX-Ball, Jardinains, Elasto Mania, Pocket Tanks, Little Fighter 2, Icy Tower, Total Annihilation, StarCraft shareware, Diablo retail (two disproved hypotheses, both honestly retracted on the board). Infrastructure: the shutdown lane (`lib/shutdown.js`, 579 lines, WAT-painted power screens), Win98 file-security and clipboard-sequence semantics, shell icon extraction, the OPFS overlay store (`083fe203` — Pass-4 M3 closed), MODE1 CUE (`f5a4a24b` — M5 closed), the cache-version gate, and the owner-anchor ratchet turned refusal (`d369831d`). Real-state conversions drove the silent-stub pin from 531 to 439: DirectPlay entities, DDEML instances, Begin/EndDeferWindowPos, hooks. toyvm gained a Sound Blaster DMA model, OPL2, GUS, a DOSBox reference oracle and a generated mini-site. Prose: twelve standalone articles, per-app pages for 39 desktop programs with a screenshot each, `sources.md`.
+
+## P5-2 — Mirrored data: the churn tax, ranked
+
+Each of these is a value the repository can derive but currently asks a
+human (or an agent) to retype. The measure is *what share of a file's commits
+this window touched nothing else*.
+
+**1. `(owner "file:line")` — 184 clauses, 69 of 88 commits anchor-only.**
+`tools/check-region-decls.js:231-257` explains the design honestly: the
+ratchet was drained to zero stale owners on Sep 1 and the ±3-line tolerance
+was removed because it let a wrong owner pass. Exactness is right; the
+*representation* is wrong. A line number is a mirror of position, and every
+insertion above it in the same file invalidates it with no semantic change —
+which is why `737892f9` (icon extraction) had to re-anchor nine unrelated
+regions in `01-header.wat`, and why the board carries "exact mechanically
+shifted owner anchors" claims almost hourly. Two fixes, either sufficient:
+owners name a **symbol** (`(owner $mci_slot_addr)`, `(owner
+$MM_TIMER_NEXT_ID.reader)`) and the gate resolves the symbol to a line itself;
+or the compiler emits the owner from the first `global.get $REGION` site it
+sees and the clause disappears. Both keep the gate's guarantee (the region is
+used where the declaration says) and delete the tax.
+
+**2. `?v=` cache keys — gated for agreement, still hand-typed in four files
+and asserted in twelve tests.** `tools/check-browser-cache-versions.js` is
+new this window and closes the half of Pass-4 rec 7 that said "nothing
+enforces agreement": disagreeing versions of one asset, an unversioned
+script, a `host.js` reference not matching `SOURCE_VERSION`, and the
+region-map/wasm pairing are all build errors now. The `d3d-render-worker`
+v=1/v=2 pair from P4 is gone (both v=2). What remains is the *source*: the
+value is typed in `host.js:508`, `index.html` (×2), `lib/guest-worker.js`,
+and then asserted as a literal in 12 test files (`test-process-boot-yields`,
+`test-asset-parts`, `test-debug-dropdown-manifests`, `test-web-pinball-assets`,
+`test-media-cli`, …). Measured: 57 of 70 `index.html` commits and 9 of 15
+`test-process-boot-yields.js` commits were bumps, and the board's 01:21 entry
+records the test red for the gap between the index bump and the test edit.
+Fix: one constant in `build-info.js` (already generated, already loaded
+first), the script tags templated from it at build time, and tests that
+assert *agreement* by calling `validateCacheVersions()` rather than
+re-stating the number.
+
+**3. `test/run-all.sh` tier membership — 83 of 84 commits one-line adds.**
+The gate (`build.sh:92`: "a test that is not named in a run-all tier never
+executes") is correct and was itself a Pass-3 finding. But the list is now
+845 entries that are, with few exceptions, the glob sorted: `test-*-web.js`
+→ WEB, `test-toyvm-*` → TOYVM, `test-wat-*` and `test-*-candidate.js` by
+convention. Derive tiers from filename convention with an explicit
+exception list, keep the gate as "every file is placed", and the 83
+one-line commits (and their merge conflicts — several board entries this
+window are about exactly that line) go away.
+
+**4. `tools/check-silent-stubs.js` — 51 commits.** The digest ratchet is
+doing its job (531 → 439 with a dated reason per step). The 60-entry dated
+changelog now lives *inside the tool*, so every handler conversion is a
+commit to a gate file. Move the log to `docs/` and keep only the pin.
+
+## P5-3 — Copy-paste in WAT, measured
+
+The census is name-agnostic, so `$handle_Foo` and `$handle_Bar` with the
+same body land in one group. Line numbers are HEAD `8b114034`.
+
+**Stub shapes: 477 functions in ≤33-token exact groups.** The biggest
+groups are ×71, ×59, ×43, ×34, ×27 … and every one is `esp += N; eax = K`
+(`$handle_SetLayout` 09a4:3286, `$handle_FreeResource` 09a:3848,
+`$handle_IDirect3DDevice9_SetFVF` 09ad:758). That is ~1,400 lines of
+hand-written table. They are the population the silent-stub ratchet
+counts, and the reason its pin moves on every commit. A `"stub": {"pop":
+12, "ret": 0}` field in `api_table.json` would let `gen_dispatch.js` emit
+them, make the ratchet a property of the table (grep the JSON, no digest),
+and leave `src/` holding only handlers with behavior. Note the group also
+contains things that are *not* stubs but happen to share the shape
+(`LockResource` returning its argument) — the field must be opt-in per
+entry, never inferred.
+
+**COM boilerplate: 58 `AddRef`, 49 `Release`, 19 `QueryInterface` bodies
+in exact groups** — ×21 at 7 lines, ×14 at 8, ×14 at 6, ×6 at 9, ×13 at 4,
+×9 at 3 — roughly 800 lines. Every DirectX/D3DIM/D3D9/OLE interface carries
+its own copy of "bump the refcount in the DxObject record". Two shared
+functions (`$com_addref`, `$com_release`) plus per-interface names emitted
+by `gen_dispatch.js` (which already computes every vtable start) would
+delete them, and would make the QI-must-AddRef rule (memory:
+`feedback_com_qi_addref`) a one-place invariant instead of a 19-place one.
+
+**Byte-identical twins that carry two names.** These are exact after
+renaming only the function's own name — the second copy has no reason to
+exist:
+
+| pair | where | lines |
+|---|---|---|
+| `PlaySoundA` / `PlaySoundW` | 09a:3988 / 3941 | 35 / 43 |
+| `ImageList_LoadImageA` / `W` | 09a9:392 / 425 | 31 / 28 |
+| `mixerGetControlDetailsA` / `W` | 09a7c:242 / 264 | 21 / 21 (Pass-1 item, still open) |
+| `_mbsnbcmp` / `memcmp` | 09a6:86 / 109 | 21 / 21 |
+| `GetLocalTime` / `GetSystemTime` | 09a:771 / 14745 | 18 / 18 |
+| `_lread` / `_hread` / `mmioRead` | 09a:2496 / 2676, 09a3:692 | 16 / 13 / 13 |
+| `IDirect3D{,2,3}_CreateLight`, `_CreateViewport` | 09a8:8326/8400, 09aa:252 … | 3 × 10 each |
+| `IDirect3DDevice{,2,3}_AddViewport` | 09a8:9186, 09aa:582/921 | 3 × 8 |
+| `IDirect3DDevice{3,7}_ComputeSphereVisibility` | 09a8:9417 / 09aa:1319 | 11 / 11 |
+
+`PlaySoundW`'s comment says the W body treats `pszSound` only as
+`MAKEINTRESOURCE`, so identity is semantically fine today — and is exactly
+the state that drifts the day one of them learns to open a file.
+
+**A/W divergence regressed: 4 → 15.** Pass 1 measured 184 pairs at
+DIVERGENT 35 and fixed them to 4 (`aaf8af5e`); the census now reads 219
+pairs at **DIVERGENT 15**: `MessageBoxA/W` (3 vs 37 lines), `mciSendStringA/W`,
+`GetConsoleTitleA/W`, `SetConsoleTitleA/W`, `GetUserNameA/W`,
+`GetComputerNameA/W`, `GetSystemDirectoryA/W`, `GetWindowsDirectoryA/W`,
+`CharLowerA/W`, `CharLowerBuffA/W`, `LoadLibraryExA/W`, `wsprintfA/W`,
+`wvsprintfA/W`, `RegisterClipboardFormatA/W`, `GetCommandLineA/W`. Some are
+legitimately different (the console title pair converts encodings), but
+`MessageBoxA` at 3 lines beside a 37-line `W` is the Pass-1 shape again. The
+census exists; it is not a gate. Ratchet it at 15.
+
+**Near twins (Jaccard ≥ 0.85 on 4-token shingles, ≥40 tokens):**
+`$th_muldiv_m16` / `_ro` (05-alu:1292/1342, 50 lines, 0.91) and
+`$th_muldiv_m8` / `_ro` (0.84); `$tt_horizontal_edges_form_stub` /
+`$tt_vertical_edges_form_stub` (10c:1576/1675, 33 lines, 0.94);
+`$win16_DeferWindowPos` / `$win16_SetWindowPos` (09e:7061/7127, 0.85);
+`$dc_exclude_children_for_clip` / `_visible_children_for_erase`
+(10-helpers:4494/4531, 0.87); `$toolbar_button_raw_width` /
+`$toolbar_button_width` (09c3:9993/10122, 0.90); `$win16_Ellipse` /
+`ExcludeClipRect` / `IntersectClipRect` / `Rectangle` (four 15-line bodies
+at 0.92); `$statusbar_native_mark_slot` / `$tab_native_mark_slot` (0.90);
+`$win16_image_ne_off` / `$win16_image_base_addr` (0.91); `$th_lea_sib` /
+`$th_load32_sib` (0.91); the `$ole_guest_callback_invoke1..6` ladder; and
+at 0.75 the two biggest, `$loop_try_avg_shift_cursor` /
+`$loop_try_avg_round_cursor` (07b:1655/1796, 133 and 168 lines). **The
+`$th_*` pairs are deliberate** — memory-form and register-form handlers are
+specialized so `$next` dispatches once, and merging them would re-add the
+branch the split removed; leave them. The rest are ordinary factoring.
+
+**`strdup`, eighteen times.** `heap_alloc(len+1)` followed by a copy is
+open-coded at 18 sites across 09a, 09a4, 09a7, 09a8, 09c3, 09c9, 10-helpers
+and 13-exports, with four named variants (`$dp_clone_string` 09a8:7220,
+`$handle__strdup` 09a6:164 which also open-codes `strlen`, a wide one at
+10-helpers:3739, and `$scalable_font_path_copy` 09a4:1382). The last is new
+in `8b114034` and is `$dp_clone_string` with `$src` renamed `$path`. One
+`$guest_strdup` in 10-helpers, and the census would show 17 deletions.
+
+**`test_call_*` wrappers: 246 exports, 1,704 lines in `13-exports.wat`.**
+82 are the identical eight-line "save esp, call handler with zeros, restore
+esp, return eax" shape; the others add a local or two. They are the
+replay-calls-not-the-app testing pattern (memory
+`feedback_replay_calls_not_app`) and that pattern is right — but the wrapper
+is derivable from `api_table.json`'s `nargs`. A `"test_call": true` field
+and a generator would remove ~1,500 lines and the class of wrapper that
+forgets to pop (`CreateScalableFontResourceA` and `mmioSetBuffer` this
+window both got theirs by hand, correctly).
+
+**New in the window, small:** `$handle_AddFontResourceA` / `RemoveFontResourceA`
+(09a4:1459 / 1476) now each carry the same three-step ladder (bitmap
+registry → TrueType registry → `.FOT` association → TrueType registry
+again); resolve the source once and call each registry once. The uncommitted
+`mmioSetBuffer` this review first read leaked a `heap_alloc` per call and
+ignored the MMIO slot record that already anticipated it; the committed
+version (`8b114034`, 09a3:891) binds through `$mmio_slot_for` — fixed before
+it landed, noted here because it is the shape the redundancy above produces:
+a record exists, a handler is written without it.
+
+**Carried from earlier passes, re-verified open:** `readSyncObjectName`
+still twice (`host.js:1584`, `run.js:3259`); `debug-app-picker.js:10-14`
+still keeps app-id lists outside `apps.js`; the PNG inspectors are now
+**seven** (`png-pixel.js` joined on 08-29); `04-cache.wat:433` still
+describes a fallback into the deleted hash cache; the 16 `$th_jcc_*`
+differing only in the condition (P2 4.6) are unchanged; item 18 (split
+09a/09c3) is unaddressed and 09a grew 3,400 lines in five days.
+
+## P5-4 — The test corpus copies its harness
+
+The cross-file scan over every JS line added this window (≥45 chars,
+whitespace-normalized, comments excluded) ranks by lines shared between
+files:
+
+- **The `--control-stdin` session driver, 13 files.** `spawn run.js`,
+  a `pending` map of `{id → waiter}`, the stdout JSON reply parser
+  (`reply.ok ? waiter.resolve(reply.value) : waiter.reject(...)`), `send`,
+  the "exited before replying" rejection loop, `quit` — ~45 lines, pasted
+  into `test-caesar3-gameplay`, `captain-claw-gameplay`, `cave-story-`,
+  `generally-`, `icy-tower-`, `jardinains-`, `jazz2-gameplay-`,
+  `little-fighter-2-`, `pocket-tanks-`, `total-annihilation-candidate`,
+  `total-annihilation-gameplay`, `control-stdin-frozen-cli`. Three already
+  disagree on the rejection message. `test/control-session.js` with
+  `start(args)`, `send`, `step(n)`, `quit` is one afternoon and removes ~500
+  lines.
+- **Candidate-install scaffolding ×3** (`walkFiles`, `DEBUG_WEB_DIR`,
+  `spawnSync run.js`, copy-into-installed — 19/16/8 shared lines between
+  icy-tower, little-fighter-2, pocket-tanks).
+- **A static `http.createServer` file server** — 49 files call it (34
+  `test-*-web.js`, 12 tools, plus two new toyvm probes sharing a MIME
+  table), while `tools/dev-server.js`, `tools/ios-selftest-server.js` and
+  `test/hearts-web-helper.js` already exist. One `test/static-server.js`.
+- **toyvm SB tests share a 28-line mini-assembler** (`label`/`abs16`/`rel8`
+  fixups) between `test-toyvm-sb-highspeed-autoinit` and `-single-cycle`;
+  the Win16 segment fixture (`$win16_seg_set` ×3) is repeated in four
+  `test-win16-*` files.
+- **Counter-example, and the proof it works:** 263 tests go through
+  `bootRenderHarness`, and the WAT-side `test_call_*` exports are shared by
+  construction. Where a helper exists, agents use it; the copies above are
+  where none existed when the second author arrived.
+
+## P5-5 — Pass-4 recommendations, re-verified
+
+| # | item | status |
+|---|---|---|
+| 1 | H1 `materialize()` loops `readRange` | **done** `8ff2b10d` |
+| 2 | per-agent worktrees as default | **done in practice** — this window's board entries name `/private/tmp/wa-*` isolated worktrees for nearly every lane; zero sweeps reported |
+| 3 | H2 safe-integer provider math | **done** `db182b2d` |
+| 4 | H3 ISO name sanitizer | **done** `5a46a063` |
+| 5 | M4 `cleanupOrphans` | **done** `6feb6120` |
+| 6 | M1 save-bundle skips unresident | not verified this pass |
+| 7 | one version constant | **half** — agreement gated (new tool), source still ×4 + 12 tests (§P5-2.2) |
+| 8 | browser overlay | **done** `083fe203` OPFS overlay store |
+| 9 | `--app` applies `copySuperops` | **done** (`run.js:669` via `resolveCopySuperops`) |
+| 10 | stale handler-id comments; CLAUDE.md 128 MB | 128 MB **gone**; handler-id comments not re-checked |
+| 11 | M2 overlay flush/re-mark | commits `2878b7ed`, `986f6717` address it; not exercised here |
+| T3 | split 09a/09c3 | **open, worse** (20,100 / 18,383) |
+| T3 | MODE1/2048 CUE | **done** `f5a4a24b` |
+| T3 | PNG inspectors, broken requires | open; inspectors now seven |
+
+## P5-6 — What's healthy (keep doing this)
+
+The refusal-not-ratchet move on owners (`d369831d`) and the new cache-version
+gate are the right *kind* of fix even though §P5-2 argues their inputs should
+be derived. The silent-stub pin fell 92 in five days by giving handlers real
+state, not by re-pinning. Two Diablo hypotheses were instrumented, disproved
+and retracted on the board with the files reverted — the process finding of
+Pass 4 (shared-tree contamination) has not recurred once the lanes moved to
+isolated worktrees. The census tool this pass added is small, has no
+dependencies, and scopes to a window; it belongs in the build as a ratchet
+the way `aw-census.js` should have been.
+
+## Pass-5 recommendations
+
+**Tier 1 — the churn tax (each removes tens of commits a week):**
+1. Owners by symbol, or compiler-emitted (§P5-2.1).
+2. One `SOURCE_VERSION` source; tests assert agreement, not the literal (§P5-2.2).
+3. Tier membership by filename convention plus an exception list (§P5-2.3).
+
+**Tier 2 — make the census a gate, then drain it:**
+4. Ratchet `aw-census.js` at DIVERGENT 15 / BOTH_STUB 1 and
+   `wat-dup-census.js` at 204 exact groups; alpha-rename locals in the census
+   so `$dp_clone_string`/`$scalable_font_path_copy` count as exact.
+5. `$guest_strdup` (17 deletions); `$com_addref`/`$com_release` + generated
+   per-interface names (~800 lines); the nine byte-identical twins delegate.
+6. `test/control-session.js`; `test/static-server.js`.
+
+**Tier 3 — generation over transcription:**
+7. `"stub"` and `"test_call"` fields in `api_table.json`, emitted by
+   `gen_dispatch.js` (~2,900 lines of `src/` become table rows).
+8. Carried: split 09a/09c3 (now 38k lines between them), `readSyncObjectName`,
+   PNG inspectors, `04-cache.wat:433`, silent-stub changelog to `docs/`.
 
 ---
 

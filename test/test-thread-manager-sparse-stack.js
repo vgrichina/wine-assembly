@@ -54,19 +54,15 @@ async function main() {
       set_tls_slots(value) { fakeThread.tlsSlots = value >>> 0; },
     },
   };
-  const tm = new ThreadManager({}, memory, { exports: mainExports }, () => ({ host: {} }));
+  const tm = new ThreadManager({}, memory, { exports: mainExports }, () => ({ host: {} }), {
+    instantiateCooperative: () => fakeThread,
+  });
   tm._log = () => {};
   const stackSize = 0x10000;
   new Uint8Array(memory.buffer, sparseWasmBase, stackSize + 0x200).fill(0xaa);
   const handle = tm.createThread(0x00401000, 0x12345678, stackSize, 0);
 
-  const originalInstantiate = WebAssembly.instantiate;
-  WebAssembly.instantiate = async () => fakeThread;
-  try {
-    await tm.spawnPending();
-  } finally {
-    WebAssembly.instantiate = originalInstantiate;
-  }
+  await tm.spawnPending();
 
   assert.strictEqual(fakeThread.esp, sparseBase + stackSize - 8);
   assert.strictEqual(fakeThread.eip, 0x00401000);

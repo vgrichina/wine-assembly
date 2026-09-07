@@ -545,6 +545,8 @@ const OVERLAY_FLUSH_MS = Math.max(0,
 let vfsOverlay = null;
 let nextOverlayFlushAt = 0;
 let signalExitStarted = false;
+let terminationSignal = null;
+let signalExitWake = null;
 const VFS_DRIVE = getArg('vfs-drive', null); // --vfs-drive=D: mirror the EXE + explicit --vfs-include files on read-only D:\
 const VFS_INCLUDE = getArgs('vfs-include'); // --vfs-include=GLOB: mount matching files relative to the EXE directory
 // --vfs-tree=DIR: replay a captured VFS directory at C:\ while preserving its
@@ -3577,30 +3579,15 @@ async function main() {
     process.on(sig, () => {
       if (signalExitStarted) return;
       signalExitStarted = true;
-      if (countAddrs.length && instance.exports.get_count) reportHitCounts(`Hit counts (on ${sig}):`);
-      reportMmx();
-      reportGuestPageStats();
-      if (!vfsOverlay) {
-        process.exit(0);
-        return;
-      }
-      // The handler runs only after the active WASM batch returns. Once it
-      // does, give the overlay's asynchronous contract a real chance to land
-      // instead of process.exit() discarding the promise immediately.
-      const fallback = setTimeout(() => {
-        console.error(`[overlay] ${sig} flush did not finish within 5 seconds`);
-        process.exit(1);
-      }, 5000);
-      Promise.resolve().then(() => vfsOverlay.flush()).then(flushed => {
-        console.log(`[overlay] ${sig} flushed ${flushed.written} record(s) to ${OVERLAY_DIR}` +
-          (flushed.failed ? `, ${flushed.failed} failed` : ''));
-      }, error => {
-        console.error(`[overlay] ${sig} flush failed: ${error && error.message || error}`);
-        process.exitCode = 1;
-      }).finally(() => {
-        clearTimeout(fallback);
-        process.exit(process.exitCode || 0);
-      });
+      terminationSignal = sig;
+      console.log(`[signal] ${sig} requested orderly shutdown`);
+      // Leave through the normal cleanup path. In particular, a controlled
+      // recording owns an ffmpeg child plus buffered audio; process.exit()
+      // orphaned the temporary video and made a deliberate stop look exactly
+      // like a crashed control server. A frozen runner may be parked in
+      // waitForControlBatch(), so wake that wait as well as setting stopped.
+      stopped = true;
+      if (signalExitWake) signalExitWake();
     });
   }
   if (instance.exports.set_process_id) instance.exports.set_process_id(ctx.processId);
@@ -5173,6 +5160,7 @@ async function main() {
     controlWake = null;
     wake();
   };
+  signalExitWake = wakeControlLoop;
   const finishPreviousControlBatch = () => {
     if (!controlPreviousBatchRan) return;
     controlPreviousBatchRan = false;
@@ -8910,8 +8898,13 @@ if (VERBOSE) {
       }
     }
     if (instance.exports.gdi_dc_state_used) {
-      console.log('gdi: dc_states', instance.exports.gdi_dc_state_used(), '/ 256   objects',
-        instance.exports.gdi_object_used(), '/ 256   dc_mark', instance.exports.gdi_table_mark(2));
+      const dcCapacity = instance.exports.gdi_dc_state_capacity
+        ? instance.exports.gdi_dc_state_capacity() : 256;
+      const objectCapacity = instance.exports.gdi_object_capacity
+        ? instance.exports.gdi_object_capacity() : 256;
+      console.log('gdi: dc_states', instance.exports.gdi_dc_state_used(), '/',
+        dcCapacity, '  objects', instance.exports.gdi_object_used(), '/', objectCapacity,
+        '  dc_mark', instance.exports.gdi_table_mark(2));
     }
     if (instance.exports.gdi_dib_arena_stat) {
       const st = instance.exports.gdi_dib_arena_stat;
@@ -9441,7 +9434,8 @@ if (VERBOSE) {
   // journal, which is the documented cost of not writing through every write.
   if (vfsOverlay) {
     const flushed = await vfsOverlay.flush();
-    console.log(`[overlay] flushed ${flushed.written} record(s) to ${OVERLAY_DIR}` +
+    const signalPrefix = terminationSignal ? `${terminationSignal} ` : '';
+    console.log(`[overlay] ${signalPrefix}flushed ${flushed.written} record(s) to ${OVERLAY_DIR}` +
       (flushed.failed ? `, ${flushed.failed} failed` : ''));
     for (const error of vfsOverlay.errors) console.log(`[overlay] ${error.message}`);
   }

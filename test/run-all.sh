@@ -52,6 +52,7 @@ UNIT=(
   test/test-packed-avg-run.js
   test/test-mw3-rgb565-alpha-run.js
   test/test-mw3-rgb565-colorkey-run.js
+  test/test-smac-colorkey-run.js
   test/test-mw3-grid-filter-run.js
   test/test-lut-span.js
   test/test-load32-esp-run.js
@@ -265,6 +266,7 @@ UNIT=(
   test/test-wat-gdi-callback-state.js
   test/test-wat-gdi-window-surface.js
   test/test-wat-gdi-directdraw-surface.js
+  test/test-gdi-dibindex-text.js
   test/test-wat-gdi-screen-surface.js
   test/test-vsnprintf.js
   test/test-strncmp.js

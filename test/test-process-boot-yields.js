@@ -88,7 +88,7 @@ function fakeGuest(name, { nameGetter }) {
 (async () => {
   const pageSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   const hostSource = fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8');
-  assert.match(pageSource, /lib\/process-boot\.js\?v=5/,
+  assert.match(pageSource, /lib\/process-boot\.js\?v=6/,
     'the browser must not reuse the loader that parsed oversized NE files as PE');
   const sourceVersion = hostSource.match(/static SOURCE_VERSION = '(\d+)'/);
   assert(sourceVersion, 'the browser host declares a numeric artifact source version');

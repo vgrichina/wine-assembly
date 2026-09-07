@@ -27,9 +27,11 @@ if (spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status !== 0) {
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-frozen-recording-'));
 const video = path.join(tmpDir, 'stepped.mp4');
+const signalVideo = path.join(tmpDir, 'signal-finalized.mp4');
 const png = path.join(tmpDir, 'frozen.png');
 const deadline = Date.now() + 60000;
 let failed = false;
+let signalChild = null;
 const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${ok ? '' : `  (${detail})`}`);
   if (!ok) failed = true;
@@ -139,11 +141,59 @@ const waitFor = async (label, probe) => {
     new Promise(resolve => setTimeout(() => resolve('timeout'), 10000)),
   ]);
   check('quit wakes and closes a frozen CLI', code === 0, `exit=${code}`);
+
+  // A process audit or terminal close sends SIGTERM rather than `ctl quit`.
+  // That used to call process.exit() from the signal handler, orphaning the
+  // encoder's hidden video-only temporary file and dropping the requested
+  // MP4. Exercise the actual HTTP/frozen/ffmpeg path so this cannot regress.
+  const signalPort = PORT + 1;
+  signalChild = spawn(process.execPath, [
+    RUN, `--exe=${EXE}`, `--control=${signalPort}`, '--frozen',
+    '--tick-ms-per-batch=20', '--batch-size=50000', '--max-seconds=45',
+    '--quiet-api', '--quiet-blocks', '--no-close', '--no-build',
+  ], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  let signalOut = '';
+  signalChild.stdout.on('data', d => { signalOut += d; });
+  signalChild.stderr.on('data', d => { signalOut += d; });
+  let signalCode = null;
+  const signalExit = new Promise(resolve => signalChild.on('exit', code => {
+    signalCode = code;
+    resolve(code);
+  }));
+  const signalCtl = (...args) => new Promise((resolve, reject) => {
+    execFile(process.execPath, [CTL, `--port=${signalPort}`, ...args], {
+      cwd: ROOT, encoding: 'utf8', timeout: 20000,
+    }, (error, stdout) => error ? reject(error) : resolve(stdout));
+  });
+  while (!signalOut.includes('[control] listening')) {
+    if (signalCode !== null) throw new Error(`signal child exited ${signalCode}\n${signalOut.slice(-3000)}`);
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for signal-run control server\n${signalOut.slice(-3000)}`);
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  await signalCtl('record', 'on', signalVideo);
+  // Keep a long step request in flight: the Quake incident was terminated
+  // while a combat slice was active, not while the runner was already parked.
+  const interruptedStep = signalCtl('step', '100000').catch(() => null);
+  await new Promise(resolve => setTimeout(resolve, 250));
+  signalChild.kill('SIGTERM');
+  const gracefulCode = await Promise.race([
+    signalExit,
+    new Promise(resolve => setTimeout(() => resolve('timeout'), 10000)),
+  ]);
+  check('SIGTERM takes the orderly frozen-run cleanup path',
+    gracefulCode === 0 && /\[signal\] SIGTERM requested orderly shutdown/.test(signalOut),
+    `exit=${gracefulCode} output=${signalOut.slice(-1000)}`);
+  check('SIGTERM finalizes the requested MP4',
+    fs.existsSync(signalVideo) && fs.statSync(signalVideo).size > 1000
+      && /\[video\] wrote .*signal-finalized\.mp4/.test(signalOut),
+    fs.existsSync(signalVideo) ? `${fs.statSync(signalVideo).size} bytes` : 'missing');
+  await interruptedStep;
 })().catch(error => {
   console.log(`FAIL  ${error.message}`);
   failed = true;
 }).finally(() => {
   try { if (child.exitCode === null) child.kill('SIGTERM'); } catch (_) {}
+  try { if (signalChild && signalChild.exitCode === null) signalChild.kill('SIGKILL'); } catch (_) {}
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
   console.log(failed ? 'TEST FAILED' : 'TEST PASSED');
   process.exit(failed ? 1 : 0);
