@@ -82,6 +82,18 @@ function bodyFor(method, prefix) {
         '  (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))',
         '  (else (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc)) (global.set $eax (local.get $rc))))',
       ];
+    case 'RELEASE_DEVICE':
+      return [
+        '(global.set $eax (call $d3dim_device_release (local.get $arg0)))',
+      ];
+    case 'ADD_VIEWPORT':
+      return [
+        '(global.set $eax (call $d3dim_device_add_viewport (local.get $arg0) (local.get $arg1)))',
+      ];
+    case 'DELETE_VIEWPORT':
+      return [
+        '(global.set $eax (call $d3dim_device_delete_viewport (local.get $arg0) (local.get $arg1)))',
+      ];
     case 'CREATE_LIGHT':
       return [
         '(global.set $eax (call $d3dim_create_child',

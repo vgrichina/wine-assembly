@@ -189,26 +189,26 @@
     (local.get $hr))
 
   (func $d3dim_viewport_release_lights (param $this i32)
-    (local $head_addr i32) (local $light i32) (local $entry i32)
-    (local $next i32) (local $count i32)
+    ;; Viewport::Release enters here without holding LOCK_DX.  Device teardown
+    ;; and current-viewport replacement already hold it, so the list walker is
+    ;; split into the locked core appended in 09ab and this locking wrapper.
     (if (i32.eqz (local.get $this)) (then (return)))
-    (local.set $head_addr (call $d3dim_viewport_light_head_addr (local.get $this)))
     (call $lock_acquire (global.get $LOCK_DX))
-    (local.set $light (i32.load (local.get $head_addr)))
-    (i32.store (local.get $head_addr) (i32.const 0))
-    (block $done (loop $release
-      (br_if $done (i32.eqz (local.get $light)))
-      (br_if $done (i32.ge_u (local.get $count) (i32.const 8)))
-      (local.set $entry (call $dx_from_this (local.get $light)))
-      (local.set $next (load.field DxObject misc1 (local.get $entry)))
-      (i32.store (i32.add (local.get $entry) (i32.const 12)) (i32.const 0))
-      (i32.store (i32.add (local.get $entry) (i32.const 16)) (i32.const 0))
-      (store.field DxObject misc1 (local.get $entry) (i32.const 0))
-      (store.field DxObject misc2 (local.get $entry) (i32.const 0))
-      (call $d3dim_light_release_locked (local.get $entry))
-      (local.set $light (local.get $next))
-      (local.set $count (i32.add (local.get $count) (i32.const 1)))
-      (br $release)))
+    (call $d3dim_viewport_release_lights_locked (local.get $this))
+    ;; Do not make the locked core acquire recursively: the DX lock is shared
+    ;; between real Worker instances, and device destruction needs to drop two
+    ;; viewport references while keeping owner/current state atomic.
+    ;;
+    ;; Keeping this wrapper also leaves every Viewport1/2/3 Release handler on
+    ;; one path. A viewport that owns lights can therefore be destroyed either
+    ;; directly or as the last consequence of device cleanup without leaking
+    ;; the light-list references.
+    ;;
+    ;; The locked helper keeps the list's eight-entry bound before walking it,
+    ;; matching AddLight and NextLight's bounded state model.
+    ;;
+    ;;
+    ;;
     (call $lock_release (global.get $LOCK_DX)))
 
   ;; ── IDirect3D2 — 9 methods ─────────────
@@ -364,12 +364,11 @@
 
   ;; IDirect3DDevice_Release — 1 args (incl. this)
   (func $handle_IDirect3DDevice_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
-      (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
+    ;; All QI revisions share one type-20 device and attachment lifetime.
+    (global.set $eax (call $d3dim_device_release (local.get $arg0)))
+
+
+
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DDevice_Initialize — 4 args (incl. this)
@@ -574,12 +573,12 @@
 
   ;; IDirect3DDevice_AddViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice_AddViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $vp_entry i32)
-    (if (local.get $arg1) (then
-      (local.set $vp_entry (call $dx_from_this (local.get $arg1)))
-      (if (local.get $vp_entry)
-        (then (i32.store (i32.add (local.get $vp_entry) (i32.const 8)) (local.get $arg0))))))
-    (global.set $eax (i32.const 0))
+    ;; Retain exactly one reference while the viewport belongs to the device.
+    (global.set $eax
+      (call $d3dim_device_add_viewport (local.get $arg0) (local.get $arg1)))
+
+
+
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice_DeleteViewport — 2 args (incl. this)
@@ -587,12 +586,13 @@
   ;; at +8, so subsequent SetCurrentViewport/EndScene don't dereference a
   ;; stale device pointer if the viewport survives the detach.
   (func $handle_IDirect3DDevice_DeleteViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $vp_entry i32)
-    (if (local.get $arg1) (then
-      (local.set $vp_entry (call $dx_from_this (local.get $arg1)))
-      (if (local.get $vp_entry)
-        (then (i32.store (i32.add (local.get $vp_entry) (i32.const 8)) (i32.const 0))))))
-    (global.set $eax (i32.const 0))
+    (global.set $eax
+      (call $d3dim_device_delete_viewport (local.get $arg0) (local.get $arg1)))
+
+
+
+
+
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice_NextViewport — 4 args (incl. this)
@@ -886,12 +886,12 @@
 
   ;; IDirect3DDevice2_Release — 1 args (incl. this)
   (func $handle_IDirect3DDevice2_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
-      (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
+    ;; All QI revisions share one type-20 device and attachment lifetime.
+    (global.set $eax (call $d3dim_device_release (local.get $arg0)))
+
+
+
+
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DDevice2_GetCaps — 3 args (incl. this): (this, lpHWDesc, lpHELDesc)
@@ -913,17 +913,17 @@
 
   ;; IDirect3DDevice2_AddViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice2_AddViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $vp_entry i32)
-    (if (local.get $arg1) (then
-      (local.set $vp_entry (call $dx_from_this (local.get $arg1)))
-      (if (local.get $vp_entry)
-        (then (i32.store (i32.add (local.get $vp_entry) (i32.const 8)) (local.get $arg0))))))
-    (global.set $eax (i32.const 0))
+    (global.set $eax
+      (call $d3dim_device_add_viewport (local.get $arg0) (local.get $arg1)))
+
+
+
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice2_DeleteViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice2_DeleteViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax
+      (call $d3dim_device_delete_viewport (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice2_NextViewport — 4 args (incl. this)
@@ -1107,12 +1107,12 @@
 
   ;; IDirect3DDevice7_Release — 1 args (incl. this)
   (func $handle_IDirect3DDevice7_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
-      (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
+    ;; Device7 can be the last QI reference to the same legacy device object.
+    (global.set $eax (call $d3dim_device_release (local.get $arg0)))
+
+
+
+
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DDevice7_GetCaps — 2 args (incl. this)

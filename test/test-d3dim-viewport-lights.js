@@ -17,6 +17,114 @@ const extraWat = String.raw`
     (call $dx_create_com_obj (i32.const 23) (i32.const 0x51000000)))
   (func (export "test_d3dim_create_light") (result i32)
     (call $dx_create_com_obj (i32.const 24) (i32.const 0x52000000)))
+  (func (export "test_d3dim_create_device") (result i32)
+    (local $obj i32) (local $entry i32) (local $state i32)
+    (local.set $obj (call $dx_create_com_obj (i32.const 20) (i32.const 0x53000000)))
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (local.set $entry (call $dx_from_this (local.get $obj)))
+    (local.set $state (call $heap_alloc (i32.const 4096)))
+    (call $d3ddev_init_state (local.get $state))
+    (i32.store offset=16 (local.get $entry) (local.get $state))
+    (local.get $obj))
+  (func (export "test_d3dim_device_alias") (param $device i32) (result i32)
+    (local $entry i32)
+    (local.set $entry (call $dx_from_this (local.get $device)))
+    (call $dx_get_wrapper_for_vtbl
+      (call $dx_slot_of (local.get $entry)) (i32.const 0x54000000)))
+  (func (export "test_d3dim_add_viewport")
+    (param $revision i32) (param $device i32) (param $viewport i32) (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (if (i32.eq (local.get $revision) (i32.const 1))
+      (then (call $handle_IDirect3DDevice_AddViewport
+        (local.get $device) (local.get $viewport) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0)))
+      (else (if (i32.eq (local.get $revision) (i32.const 2))
+        (then (call $handle_IDirect3DDevice2_AddViewport
+          (local.get $device) (local.get $viewport) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0)))
+        (else (call $handle_IDirect3DDevice3_AddViewport
+          (local.get $device) (local.get $viewport) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0))))))
+    (global.get $eax))
+  (func (export "test_d3dim_delete_viewport")
+    (param $revision i32) (param $device i32) (param $viewport i32) (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (if (i32.eq (local.get $revision) (i32.const 1))
+      (then (call $handle_IDirect3DDevice_DeleteViewport
+        (local.get $device) (local.get $viewport) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0)))
+      (else (if (i32.eq (local.get $revision) (i32.const 2))
+        (then (call $handle_IDirect3DDevice2_DeleteViewport
+          (local.get $device) (local.get $viewport) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0)))
+        (else (call $handle_IDirect3DDevice3_DeleteViewport
+          (local.get $device) (local.get $viewport) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0))))))
+    (global.get $eax))
+  (func (export "test_d3dim_set_current_viewport")
+    (param $revision i32) (param $device i32) (param $viewport i32) (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (if (i32.eq (local.get $revision) (i32.const 2))
+      (then (call $handle_IDirect3DDevice2_SetCurrentViewport
+        (local.get $device) (local.get $viewport) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0)))
+      (else (call $handle_IDirect3DDevice3_SetCurrentViewport
+        (local.get $device) (local.get $viewport) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0))))
+    (global.get $eax))
+  (func (export "test_d3dim_set_current_viewport_core")
+    (param $device i32) (param $viewport i32) (result i32)
+    (call $d3dim_device_set_current_viewport
+      (local.get $device) (local.get $viewport)))
+  (func (export "test_d3dim_get_current_viewport")
+    (param $revision i32) (param $device i32) (param $out i32) (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (if (i32.eq (local.get $revision) (i32.const 2))
+      (then (call $handle_IDirect3DDevice2_GetCurrentViewport
+        (local.get $device) (local.get $out) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0)))
+      (else (call $handle_IDirect3DDevice3_GetCurrentViewport
+        (local.get $device) (local.get $out) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0))))
+    (global.get $eax))
+  (func (export "test_d3dim_device_add_ref")
+    (param $revision i32) (param $device i32) (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (if (i32.eq (local.get $revision) (i32.const 1))
+      (then (call $handle_IDirect3DDevice_AddRef
+        (local.get $device) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0)))
+      (else (if (i32.eq (local.get $revision) (i32.const 2))
+        (then (call $handle_IDirect3DDevice2_AddRef
+          (local.get $device) (i32.const 0) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0)))
+        (else (if (i32.eq (local.get $revision) (i32.const 3))
+          (then (call $handle_IDirect3DDevice3_AddRef
+            (local.get $device) (i32.const 0) (i32.const 0) (i32.const 0)
+            (i32.const 0) (i32.const 0)))
+          (else (call $handle_IDirect3DDevice7_AddRef
+            (local.get $device) (i32.const 0) (i32.const 0) (i32.const 0)
+            (i32.const 0) (i32.const 0))))))))
+    (global.get $eax))
+  (func (export "test_d3dim_device_release")
+    (param $revision i32) (param $device i32) (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (if (i32.eq (local.get $revision) (i32.const 1))
+      (then (call $handle_IDirect3DDevice_Release
+        (local.get $device) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0)))
+      (else (if (i32.eq (local.get $revision) (i32.const 2))
+        (then (call $handle_IDirect3DDevice2_Release
+          (local.get $device) (i32.const 0) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0)))
+        (else (if (i32.eq (local.get $revision) (i32.const 3))
+          (then (call $handle_IDirect3DDevice3_Release
+            (local.get $device) (i32.const 0) (i32.const 0) (i32.const 0)
+            (i32.const 0) (i32.const 0)))
+          (else (call $handle_IDirect3DDevice7_Release
+            (local.get $device) (i32.const 0) (i32.const 0) (i32.const 0)
+            (i32.const 0) (i32.const 0))))))))
+    (global.get $eax))
   (func (export "test_d3dim_add_light")
     (param $revision i32) (param $viewport i32) (param $light i32) (result i32)
     (global.set $esp (i32.const 0x00300000))
@@ -105,6 +213,15 @@ const extraWat = String.raw`
     (i32.load offset=4 (call $dx_from_this (local.get $object))))
   (func (export "test_d3dim_light_owner") (param $light i32) (result i32)
     (i32.load offset=12 (call $dx_from_this (local.get $light))))
+  (func (export "test_d3dim_viewport_owner") (param $viewport i32) (result i32)
+    (load.field DxObject misc0 (call $dx_from_this (local.get $viewport))))
+  (func (export "test_d3dim_current_viewport_slot") (param $device i32) (result i32)
+    (local $state i32)
+    (local.set $state (call $d3ddev_state (local.get $device)))
+    (if (result i32) (local.get $state)
+      (then (call $gl32
+        (i32.add (local.get $state) (global.get $D3DIM_OFF_CUR_VP))))
+      (else (i32.const 0))))
   (func (export "test_d3dim_light_index") (param $light i32) (result i32)
     (i32.load offset=16 (call $dx_from_this (local.get $light))))
   (func (export "test_d3dim_viewport_head") (param $viewport i32) (result i32)
@@ -159,6 +276,8 @@ const E_INVALIDARG = 0x80070057;
 const CLASS_E_NOAGGREGATION = 0x80040110;
 const D3DERR_LIGHTHASVIEWPORT = 0x887602ef;
 const D3DERR_LIGHTNOTINTHISVIEWPORT = 0x887602f0;
+const D3DERR_VIEWPORTHASNODEVICE = 0x88760306;
+const D3DERR_NOCURRENTVIEWPORT = 0x88760307;
 const D3DNEXT_NEXT = 1;
 const D3DNEXT_HEAD = 2;
 const D3DNEXT_TAIL = 4;
@@ -201,6 +320,186 @@ const D3DNEXT_TAIL = 4;
         'a null output consumes no DX object slot');
     }
   }
+
+  const currentOut = 0x410000;
+  for (const revision of [1, 2, 3]) {
+    const device = wat.test_d3dim_create_device() >>> 0;
+    const deviceAlias = wat.test_d3dim_device_alias(device) >>> 0;
+    const otherDevice = wat.test_d3dim_create_device() >>> 0;
+    const attached = wat.test_d3dim_create_viewport() >>> 0;
+    const unattached = wat.test_d3dim_create_viewport() >>> 0;
+    const wrongType = wat.test_d3dim_create_light() >>> 0;
+    assert(device && deviceAlias && deviceAlias !== device &&
+      otherDevice && attached && unattached && wrongType,
+      `D3D${revision} viewport relationship setup failed`);
+
+    assert.strictEqual(
+      wat.test_d3dim_add_viewport(revision, device, 0) >>> 0,
+      E_INVALIDARG, `D3D${revision} AddViewport rejects NULL`);
+    assert.strictEqual(wat.test_d3dim_esp() >>> 0, 0x0030000c,
+      'AddViewport pops this, viewport, and the return address');
+    assert.strictEqual(
+      wat.test_d3dim_add_viewport(revision, device, wrongType) >>> 0,
+      E_INVALIDARG, `D3D${revision} AddViewport rejects a non-viewport object`);
+    assert.strictEqual(wat.test_d3dim_object_ref(wrongType), 1,
+      'rejected AddViewport input is not retained');
+
+    assert.strictEqual(
+      wat.test_d3dim_add_viewport(revision, device, attached) >>> 0,
+      D3D_OK, `D3D${revision} AddViewport succeeds`);
+    assert.strictEqual(wat.test_d3dim_viewport_owner(attached) >>> 0, device,
+      'AddViewport records the owning device');
+    assert.strictEqual(wat.test_d3dim_object_ref(attached), 2,
+      'AddViewport owns one viewport reference');
+    assert.strictEqual(
+      wat.test_d3dim_add_viewport(revision, deviceAlias, attached) >>> 0,
+      D3DERR_VIEWPORTHASNODEVICE,
+      'duplicate AddViewport reports existing ownership through another interface');
+    assert.strictEqual(
+      wat.test_d3dim_add_viewport(revision, otherDevice, attached) >>> 0,
+      D3DERR_VIEWPORTHASNODEVICE, 'one viewport cannot belong to two devices');
+    assert.strictEqual(wat.test_d3dim_object_ref(attached), 2,
+      'rejected viewport attachments do not AddRef');
+
+    assert.strictEqual(
+      wat.test_d3dim_delete_viewport(revision, otherDevice, attached) >>> 0,
+      E_INVALIDARG, 'DeleteViewport rejects a viewport owned by another device');
+    assert.strictEqual(wat.test_d3dim_viewport_owner(attached) >>> 0, device);
+    assert.strictEqual(wat.test_d3dim_object_ref(attached), 2);
+
+    if (revision >= 2) {
+      wat.guest_write32(currentOut, 0xdeadbeef);
+      assert.strictEqual(
+        wat.test_d3dim_get_current_viewport(revision, deviceAlias, currentOut) >>> 0,
+        D3DERR_NOCURRENTVIEWPORT, 'GetCurrentViewport distinguishes no selection');
+      assert.strictEqual(wat.guest_read32(currentOut), 0,
+        'failed GetCurrentViewport clears output');
+      assert.strictEqual(
+        wat.test_d3dim_get_current_viewport(revision, deviceAlias, 0) >>> 0,
+        E_INVALIDARG, 'GetCurrentViewport rejects a null output pointer');
+      assert.strictEqual(wat.test_d3dim_viewport_owner(unattached), 0,
+        'fresh viewport starts without a device owner');
+      assert.strictEqual(
+        wat.test_d3dim_set_current_viewport_core(deviceAlias, unattached) >>> 0,
+        E_INVALIDARG, 'SetCurrentViewport core rejects an unattached viewport');
+      assert.strictEqual(
+        wat.test_d3dim_set_current_viewport(revision, deviceAlias, unattached) >>> 0,
+        E_INVALIDARG, `D3D${revision} SetCurrentViewport requires prior AddViewport ownership`);
+      assert.strictEqual(wat.test_d3dim_viewport_owner(unattached), 0,
+        'SetCurrentViewport cannot manufacture device ownership');
+      assert.strictEqual(wat.test_d3dim_object_ref(unattached), 1);
+
+      assert.strictEqual(
+        wat.test_d3dim_set_current_viewport(revision, deviceAlias, attached) >>> 0,
+        D3D_OK, 'SetCurrentViewport selects an attached viewport');
+      assert.strictEqual(wat.test_d3dim_object_ref(attached), 3,
+        'current viewport selection owns an independent reference');
+      assert.strictEqual(
+        wat.test_d3dim_set_current_viewport(revision, deviceAlias, attached) >>> 0,
+        D3D_OK, 'selecting the current viewport again is idempotent');
+      assert.strictEqual(wat.test_d3dim_object_ref(attached), 3,
+        'idempotent selection does not leak a reference');
+      wat.guest_write32(currentOut, 0xdeadbeef);
+      assert.strictEqual(
+        wat.test_d3dim_get_current_viewport(revision, deviceAlias, currentOut) >>> 0,
+        D3D_OK, 'GetCurrentViewport returns the selected viewport');
+      assert.strictEqual(wat.guest_read32(currentOut) >>> 0, attached);
+      assert.strictEqual(wat.test_d3dim_object_ref(attached), 4,
+        'GetCurrentViewport AddRefs its returned interface');
+      assert.strictEqual(wat.test_d3dim_viewport_release(revision, attached), 3,
+        'caller can release the GetCurrentViewport reference');
+      assert.notStrictEqual(wat.test_d3dim_current_viewport_slot(deviceAlias), 0,
+        'SetCurrentViewport records a nonzero viewport slot in device state');
+
+      assert.strictEqual(
+        wat.test_d3dim_add_viewport(revision, deviceAlias, unattached) >>> 0,
+        D3D_OK, 'AddViewport accepts another interface for the owning device');
+      assert.strictEqual(wat.test_d3dim_viewport_owner(unattached) >>> 0, device,
+        'viewport ownership records canonical COM identity, not interface pointer');
+      assert.strictEqual(
+        wat.test_d3dim_set_current_viewport(revision, deviceAlias, unattached) >>> 0,
+        D3D_OK, 'SetCurrentViewport replaces the selected viewport');
+      assert.strictEqual(wat.test_d3dim_object_ref(attached), 2,
+        'replacing current viewport releases the old selection reference');
+      assert.strictEqual(wat.test_d3dim_object_ref(unattached), 3,
+        'replacement viewport owns list and current-selection references');
+    }
+
+    assert.strictEqual(
+      wat.test_d3dim_delete_viewport(revision, deviceAlias, attached) >>> 0,
+      D3D_OK, `D3D${revision} DeleteViewport succeeds`);
+    assert.strictEqual(wat.test_d3dim_esp() >>> 0, 0x0030000c,
+      'DeleteViewport pops this, viewport, and the return address');
+    assert.strictEqual(wat.test_d3dim_viewport_owner(attached), 0,
+      'DeleteViewport clears ownership');
+    assert.strictEqual(wat.test_d3dim_object_ref(attached), 1,
+      `D3D${revision} DeleteViewport releases every reference this attachment owns`);
+    assert.strictEqual(
+      wat.test_d3dim_delete_viewport(revision, deviceAlias, attached) >>> 0,
+      E_INVALIDARG, 'a detached viewport cannot be deleted twice');
+    if (revision >= 2) {
+      assert.strictEqual(
+        wat.test_d3dim_delete_viewport(revision, deviceAlias, unattached) >>> 0,
+        D3D_OK, 'deleting the replacement viewport drops list and current references');
+      assert.strictEqual(wat.test_d3dim_viewport_owner(unattached), 0);
+      assert.strictEqual(wat.test_d3dim_object_ref(unattached), 1);
+      wat.guest_write32(currentOut, 0xdeadbeef);
+      assert.strictEqual(
+        wat.test_d3dim_get_current_viewport(revision, deviceAlias, currentOut) >>> 0,
+        D3DERR_NOCURRENTVIEWPORT, 'deleting the current viewport clears selection');
+      assert.strictEqual(wat.guest_read32(currentOut), 0);
+    }
+
+    assert.strictEqual(wat.test_d3dim_viewport_release(revision, attached), 0);
+    assert.strictEqual(wat.test_d3dim_viewport_release(revision, unattached), 0);
+    assert.strictEqual(wat.test_d3dim_light_release(wrongType), 0);
+    assert.strictEqual(wat.test_d3dim_device_release(revision, otherDevice), 0);
+    assert.strictEqual(wat.test_d3dim_device_release(revision, deviceAlias), 0);
+  }
+
+  for (const releaseRevision of [1, 2, 3, 7]) {
+    const device = wat.test_d3dim_create_device() >>> 0;
+    const deviceAlias = wat.test_d3dim_device_alias(device) >>> 0;
+    const current = wat.test_d3dim_create_viewport() >>> 0;
+    const listed = wat.test_d3dim_create_viewport() >>> 0;
+    const retainedLight = wat.test_d3dim_create_light() >>> 0;
+    assert.strictEqual(wat.test_d3dim_add_viewport(3, device, current), D3D_OK);
+    assert.strictEqual(wat.test_d3dim_add_viewport(3, device, listed), D3D_OK);
+    assert.strictEqual(wat.test_d3dim_set_current_viewport(3, device, current), D3D_OK);
+    assert.strictEqual(wat.test_d3dim_add_light(3, listed, retainedLight), D3D_OK);
+    assert.strictEqual(wat.test_d3dim_viewport_release(3, current), 2,
+      'caller release leaves list plus current references');
+    assert.strictEqual(wat.test_d3dim_viewport_release(3, listed), 1,
+      'caller release leaves the device list reference');
+
+    assert.strictEqual(wat.test_d3dim_device_add_ref(releaseRevision, device), 2,
+      `Device${releaseRevision} AddRef shares the underlying object count`);
+    assert.strictEqual(wat.test_d3dim_device_release(releaseRevision, device), 1,
+      'a nonfinal device Release preserves attachment state');
+    assert.strictEqual(wat.test_d3dim_object_type(device), 20);
+    assert.strictEqual(wat.test_d3dim_viewport_owner(current) >>> 0, device);
+    assert.strictEqual(wat.test_d3dim_object_ref(current), 2,
+      'nonfinal device Release preserves list and current references');
+    assert.strictEqual(wat.test_d3dim_object_ref(listed), 1,
+      'nonfinal device Release preserves ordinary list ownership');
+
+    assert.strictEqual(wat.test_d3dim_device_release(releaseRevision, deviceAlias), 0,
+      `final Device${releaseRevision} Release succeeds`);
+    assert.strictEqual(wat.test_d3dim_esp() >>> 0, 0x00300008,
+      'every device Release revision has one-argument COM cleanup');
+    assert.strictEqual(wat.test_d3dim_object_type(device), 0,
+      'final device Release destroys the device');
+    assert.strictEqual(wat.test_d3dim_object_type(current), 0,
+      'device teardown releases both current viewport references');
+    assert.strictEqual(wat.test_d3dim_object_type(listed), 0,
+      'device teardown releases non-current viewport list ownership');
+    assert.strictEqual(wat.test_d3dim_light_owner(retainedLight), 0,
+      'viewport destruction during device teardown detaches its lights');
+    assert.strictEqual(wat.test_d3dim_object_ref(retainedLight), 1,
+      'device teardown returns attached lights to their caller reference');
+    assert.strictEqual(wat.test_d3dim_light_release(retainedLight), 0);
+  }
+
   const viewport = wat.test_d3dim_create_viewport() >>> 0;
   const otherViewport = wat.test_d3dim_create_viewport() >>> 0;
   const lights = Array.from({ length: 9 }, () => wat.test_d3dim_create_light() >>> 0);
@@ -293,7 +592,7 @@ const D3DNEXT_TAIL = 4;
   }
   assert.strictEqual(wat.test_d3dim_viewport_release(1, otherViewport), 0);
 
-  console.log('PASS  D3DIM child creation and viewport-light ownership match legacy contracts');
+  console.log('PASS  D3DIM child creation and device/viewport/light ownership match legacy contracts');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

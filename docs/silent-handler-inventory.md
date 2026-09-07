@@ -201,3 +201,6 @@ top-level z-order instead of returning this process's main HWND.
 
 2026-09-05: 438 -> 437. The Win98 Shell32 ArrangeWindows ordinal now tiles
 eligible renderer windows instead of returning an unconditional zero.
+
+2026-09-06: 437 -> 435. Direct3D Device2/Device3 DeleteViewport now validate
+ownership, clear current selection, and release attachment references.
