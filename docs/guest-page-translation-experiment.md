@@ -59,6 +59,13 @@ The result is the expected crossover: the established cache is excellent for
 one hot affine mapping; packed lookup wins as the active mapping set exceeds
 that cache. These are path upper bounds, not whole-application speed claims.
 
+After rebasing the flat-table candidate onto current main, the two endpoint
+controls were repeated with seven interleaved repetitions over 4 MiB. One
+scattered mapping was neutral (packed minimum -0.1%, paired median +0.2%);
+64 scattered mappings remained a large win (packed minimum +47.3%, paired
+median +47.2%). This corrects the older one-mapping result above and shows that
+the current implementation no longer pays a measurable hot-single-map tax.
+
 ## Application census and preliminary A/B
 
 An eight-second launch census found 1 sparse mapping in Heroes II, 4 in
@@ -242,17 +249,26 @@ and wrapping packed spans.
 The browser exposes the same experiment as `?guest-page-translation`, applied
 before the guest's first slice. A StarCraft browser smoke run stayed live
 (four of five screen probes changed) and reported the option enabled in both
-the main and spawned cooperative WASM instances. The host was above the
-project's load-average threshold during this check, so its frame figures are
-deliberately not used as performance evidence.
+the main and spawned cooperative WASM instances.
+
+StarCraft was then repeated under the project's acceptable host-load threshold
+in rotated legacy/packed order, with a four-second warmup and five-second
+sample. Legacy guest frame rates were 14.61 and 14.64 fps; packed rates were
+14.99 and 14.59 fps. Their medians (14.63 versus 14.79 fps, +1.1%) are within
+browser-run noise, so this is a neutral result rather than a speed claim. All
+four runs stayed live at the same guest EIP and showed no frame-pacing
+regression. The browser's instantaneous `stepsPerSec` snapshots varied by
+multiple billions between otherwise equivalent runs and are therefore not
+used as evidence.
 
 ## Verdict
 
-Keep the candidate opt-in and isolated; do not enable it by default yet. The
-expanded sample now looks positive or neutral rather than exposing a clear
-whole-application regression. Quake II and the larger Fallout repeat are useful
-neutral controls. Large variance in GTA2 and the single complete Diablo II pair
-still prevent a universal-speedup claim.
+Keep the candidate isolated until the remaining browser acceptance runs are
+complete. The expanded sample looks positive or neutral rather than exposing a
+clear whole-application regression. Quake II, the larger Fallout repeat, the
+current-main one-map microbenchmark, and StarCraft in-browser are useful neutral
+controls. Large variance in GTA2 and the single complete Diablo II pair still
+prevent a universal-speedup claim.
 
 Prefer the flat-table follow-up over the demand-leaf prototype for eventual
 integration. Its extra memory is fixed and modest, its lookup is no slower in
@@ -262,8 +278,8 @@ data: the flat lookup already removed the one-map regression.
 
 Before integrating:
 
-1. Repeat fixed-work **browser** A/Bs for Heroes II/III, Diablo, StarCraft,
-   Diablo II, and Alpha Centauri with rotated arm order; D2 now has a healthy
-   baseline but only one complete pair.
+1. Repeat fixed-work **browser** A/Bs for Heroes II/III, Diablo, Diablo II, and
+   Alpha Centauri with rotated arm order; StarCraft is neutral, while D2 has a
+   healthy CLI baseline but only one complete pair.
 2. Only then layer optional audit/enforcement of `VirtualAlloc` and
    `VirtualProtect` access flags onto the chosen translator.
