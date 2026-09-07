@@ -5546,3 +5546,22 @@
     (i32.store16 (i32.add (local.get $wa) (i32.const 186)) (i32.const 1))    ;; wMaxSimultaneousTextures
     (i32.store (i32.add (local.get $wa) (i32.const 188)) (i32.const 8))      ;; dwMaxActiveLights
     (f32.store (i32.add (local.get $wa) (i32.const 192)) (f32.const 1.0)))
+
+  ;; IDirect3D v1-v3 expose the same child-object creation contract for lights
+  ;; and viewports.  Validate before allocating so a bad output/aggregation
+  ;; request cannot consume one of the finite DX object slots, and clear a
+  ;; caller-provided output on every failure path.
+  (func $d3dim_create_child
+    (param $out i32) (param $outer i32) (param $type i32) (param $vtbl i32)
+    (result i32)
+    (local $obj i32)
+    (if (local.get $out) (then (call $gs32 (local.get $out) (i32.const 0))))
+    (if (local.get $outer)
+      (then (return (i32.const 0x80040110)))) ;; CLASS_E_NOAGGREGATION
+    (if (i32.eqz (local.get $out))
+      (then (return (i32.const 0x80070057)))) ;; DDERR_INVALIDPARAMS
+    (local.set $obj (call $dx_create_com_obj (local.get $type) (local.get $vtbl)))
+    (if (i32.eqz (local.get $obj))
+      (then (return (i32.const 0x80004005)))) ;; E_FAIL
+    (call $gs32 (local.get $out) (local.get $obj))
+    (i32.const 0))

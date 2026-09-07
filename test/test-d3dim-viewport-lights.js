@@ -10,7 +10,9 @@ const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
   (func (export "test_d3dim_light_init")
-    (global.set $current_thread_id (i32.const 1)))
+    (global.set $current_thread_id (i32.const 1))
+    (global.set $DX_VTBL_D3DVP3 (i32.const 0x51000000))
+    (global.set $DX_VTBL_D3DLIGHT (i32.const 0x52000000)))
   (func (export "test_d3dim_create_viewport") (result i32)
     (call $dx_create_com_obj (i32.const 23) (i32.const 0x51000000)))
   (func (export "test_d3dim_create_light") (result i32)
@@ -107,11 +109,54 @@ const extraWat = String.raw`
     (i32.load offset=16 (call $dx_from_this (local.get $light))))
   (func (export "test_d3dim_viewport_head") (param $viewport i32) (result i32)
     (i32.load (call $d3dim_viewport_light_head_addr (local.get $viewport))))
+  (func (export "test_d3dim_create_child_api")
+    (param $revision i32) (param $type i32) (param $out i32) (param $outer i32)
+    (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (if (i32.eq (local.get $type) (i32.const 24))
+      (then
+        (if (i32.eq (local.get $revision) (i32.const 1))
+          (then (call $handle_IDirect3D_CreateLight
+            (i32.const 0) (local.get $out) (local.get $outer) (i32.const 0)
+            (i32.const 0) (i32.const 0)))
+          (else (if (i32.eq (local.get $revision) (i32.const 2))
+            (then (call $handle_IDirect3D2_CreateLight
+              (i32.const 0) (local.get $out) (local.get $outer) (i32.const 0)
+              (i32.const 0) (i32.const 0)))
+            (else (call $handle_IDirect3D3_CreateLight
+              (i32.const 0) (local.get $out) (local.get $outer) (i32.const 0)
+              (i32.const 0) (i32.const 0)))))))
+      (else
+        (if (i32.eq (local.get $revision) (i32.const 1))
+          (then (call $handle_IDirect3D_CreateViewport
+            (i32.const 0) (local.get $out) (local.get $outer) (i32.const 0)
+            (i32.const 0) (i32.const 0)))
+          (else (if (i32.eq (local.get $revision) (i32.const 2))
+            (then (call $handle_IDirect3D2_CreateViewport
+              (i32.const 0) (local.get $out) (local.get $outer) (i32.const 0)
+              (i32.const 0) (i32.const 0)))
+            (else (call $handle_IDirect3D3_CreateViewport
+              (i32.const 0) (local.get $out) (local.get $outer) (i32.const 0)
+              (i32.const 0) (i32.const 0))))))))
+    (global.get $eax))
+  (func (export "test_d3dim_esp") (result i32) (global.get $esp))
+  (func (export "test_d3dim_live_type") (param $type i32) (result i32)
+    (local $i i32) (local $count i32) (local $entry i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $DX_MAX)))
+      (local.set $entry (i32.add (global.get $DX_OBJECTS)
+        (i32.mul (local.get $i) (global.get $DX_ENTRY_SIZE))))
+      (if (i32.eq (load.field DxObject type (local.get $entry)) (local.get $type))
+        (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $count))
 `;
 
 const D3D_OK = 0;
 const E_NOTIMPL = 0x80004001;
 const E_INVALIDARG = 0x80070057;
+const CLASS_E_NOAGGREGATION = 0x80040110;
 const D3DERR_LIGHTHASVIEWPORT = 0x887602ef;
 const D3DERR_LIGHTNOTINTHISVIEWPORT = 0x887602f0;
 const D3DNEXT_NEXT = 1;
@@ -121,6 +166,41 @@ const D3DNEXT_TAIL = 4;
 (async () => {
   const { exports: wat } = await bootRenderHarness({ extraWat, fonts: 'none' });
   wat.test_d3dim_light_init();
+  const createOut = 0x410000;
+  for (const type of [23, 24]) {
+    for (const revision of [1, 2, 3]) {
+      const before = wat.test_d3dim_live_type(type);
+      wat.guest_write32(createOut, 0xdeadbeef);
+      assert.strictEqual(
+        wat.test_d3dim_create_child_api(revision, type, createOut, 0) >>> 0,
+        D3D_OK, `D3D${revision} type ${type} creation succeeds`);
+      assert.strictEqual(wat.test_d3dim_esp() >>> 0, 0x00300010,
+        'all creation wrappers pop their three arguments and return address');
+      const created = wat.guest_read32(createOut) >>> 0;
+      assert(created, 'successful creation publishes a child interface');
+      assert.strictEqual(wat.test_d3dim_object_type(created), type);
+      assert.strictEqual(wat.test_d3dim_object_ref(created), 1);
+      assert.strictEqual(wat.test_d3dim_live_type(type), before + 1);
+      if (type === 23) wat.test_d3dim_viewport_release(revision, created);
+      else wat.test_d3dim_light_release(created);
+      assert.strictEqual(wat.test_d3dim_live_type(type), before);
+
+      wat.guest_write32(createOut, 0xdeadbeef);
+      assert.strictEqual(
+        wat.test_d3dim_create_child_api(revision, type, createOut, 1) >>> 0,
+        CLASS_E_NOAGGREGATION, 'legacy D3D child objects do not aggregate');
+      assert.strictEqual(wat.guest_read32(createOut), 0,
+        'failed aggregation clears the caller output');
+      assert.strictEqual(wat.test_d3dim_live_type(type), before,
+        'failed aggregation consumes no DX object slot');
+
+      assert.strictEqual(
+        wat.test_d3dim_create_child_api(revision, type, 0, 0) >>> 0,
+        E_INVALIDARG, 'a null child output is invalid');
+      assert.strictEqual(wat.test_d3dim_live_type(type), before,
+        'a null output consumes no DX object slot');
+    }
+  }
   const viewport = wat.test_d3dim_create_viewport() >>> 0;
   const otherViewport = wat.test_d3dim_create_viewport() >>> 0;
   const lights = Array.from({ length: 9 }, () => wat.test_d3dim_create_light() >>> 0);
@@ -213,7 +293,7 @@ const D3DNEXT_TAIL = 4;
   }
   assert.strictEqual(wat.test_d3dim_viewport_release(1, otherViewport), 0);
 
-  console.log('PASS  D3DIM viewport lights retain, enumerate, cap, detach, and fail honestly');
+  console.log('PASS  D3DIM child creation and viewport-light ownership match legacy contracts');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

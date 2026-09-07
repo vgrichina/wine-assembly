@@ -8315,14 +8315,9 @@
 
   ;; IDirect3D::CreateLight — mirrors the IDirect3D3 pattern (DX type 24, vtbl D3DLIGHT)
   (func $handle_IDirect3D_CreateLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 24) (global.get $DX_VTBL_D3DLIGHT)))
-    (if (i32.eqz (local.get $obj)) (then
-      (global.set $eax (i32.const 0x80004005))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-      (return)))
-    (call $gs32 (local.get $arg1) (local.get $obj))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_create_child
+      (local.get $arg1) (local.get $arg2)
+      (i32.const 24) (global.get $DX_VTBL_D3DLIGHT)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3D::CreateMaterial returns the legacy v1 material layout.
@@ -8340,14 +8335,9 @@
 
   ;; IDirect3D::CreateViewport — DX type 23, vtbl D3DVP3
   (func $handle_IDirect3D_CreateViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 23) (global.get $DX_VTBL_D3DVP3)))
-    (if (i32.eqz (local.get $obj)) (then
-      (global.set $eax (i32.const 0x80004005))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-      (return)))
-    (call $gs32 (local.get $arg1) (local.get $obj))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_create_child
+      (local.get $arg1) (local.get $arg2)
+      (i32.const 23) (global.get $DX_VTBL_D3DVP3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3D::FindDevice — return a concrete legacy RGB device GUID. D3DRM
@@ -8389,14 +8379,9 @@
 
   ;; IDirect3D3::CreateLight(this, lplpDirect3DLight, pUnkOuter) — 3 args
   (func $handle_IDirect3D3_CreateLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 24) (global.get $DX_VTBL_D3DLIGHT)))
-    (if (i32.eqz (local.get $obj)) (then
-      (global.set $eax (i32.const 0x80004005))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-      (return)))
-    (call $gs32 (local.get $arg1) (local.get $obj))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_create_child
+      (local.get $arg1) (local.get $arg2)
+      (i32.const 24) (global.get $DX_VTBL_D3DLIGHT)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3D3::CreateMaterial(this, lplpDirect3DMaterial, pUnkOuter) — 3 args
@@ -8413,14 +8398,9 @@
 
   ;; IDirect3D3::CreateViewport(this, lplpDirect3DViewport, pUnkOuter) — 3 args
   (func $handle_IDirect3D3_CreateViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 23) (global.get $DX_VTBL_D3DVP3)))
-    (if (i32.eqz (local.get $obj)) (then
-      (global.set $eax (i32.const 0x80004005))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-      (return)))
-    (call $gs32 (local.get $arg1) (local.get $obj))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_create_child
+      (local.get $arg1) (local.get $arg2)
+      (i32.const 23) (global.get $DX_VTBL_D3DVP3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3D3::FindDevice(this, lpD3DFDS, lpD3DFDR) — 3 args

@@ -83,14 +83,10 @@ function bodyFor(method, prefix) {
         '  (else (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc)) (global.set $eax (local.get $rc))))',
       ];
     case 'CREATE_LIGHT':
-      // arg1 = lplpDirect3DLight, arg2 = pUnkOuter — mirror IDirect3D3_CreateLight
       return [
-        '(local $obj i32)',
-        '(local.set $obj (call $dx_create_com_obj (i32.const 24) (global.get $DX_VTBL_D3DLIGHT)))',
-        '(if (i32.eqz (local.get $obj)) (then (global.set $eax (i32.const 0x80004005))',
-        `  ${popExpr(method.nargs)} (return)))`,
-        '(call $gs32 (local.get $arg1) (local.get $obj))',
-        '(global.set $eax (i32.const 0))',
+        '(global.set $eax (call $d3dim_create_child',
+        '  (local.get $arg1) (local.get $arg2)',
+        '  (i32.const 24) (global.get $DX_VTBL_D3DLIGHT)))',
       ];
     case 'CREATE_MATERIAL':
       return [
@@ -103,12 +99,9 @@ function bodyFor(method, prefix) {
       ];
     case 'CREATE_VIEWPORT':
       return [
-        '(local $obj i32)',
-        '(local.set $obj (call $dx_create_com_obj (i32.const 23) (global.get $DX_VTBL_D3DVP3)))',
-        '(if (i32.eqz (local.get $obj)) (then (global.set $eax (i32.const 0x80004005))',
-        `  ${popExpr(method.nargs)} (return)))`,
-        '(call $gs32 (local.get $arg1) (local.get $obj))',
-        '(global.set $eax (i32.const 0))',
+        '(global.set $eax (call $d3dim_create_child',
+        '  (local.get $arg1) (local.get $arg2)',
+        '  (i32.const 23) (global.get $DX_VTBL_D3DVP3)))',
       ];
     case 'CREATE_DEVICE2':
       // IDirect3D2::CreateDevice(this, refclsid, lpDDSurface, lplpD3DDevice) — 4 args
