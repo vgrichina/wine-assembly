@@ -81,6 +81,15 @@ assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/pinball\/PINBALL\.DAT'/s.t
 assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/pinball-plus95\/PINBALL\.DAT'/s.test(deployJs), 'deploy should include large Plus! 95 pinball DAT');
 assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/wep32-community\/QBlackjack\/QuickBlackjack\.exe'/s.test(deployJs), 'deploy should allow large QuickBlackjack binary');
 assert(/LARGE_OK_PATHS\s*=\s*new Set\([^)]*'binaries\/plus98\/DIALOG\.BMP'/s.test(deployJs), 'deploy should allow large Marbles dialog art');
+for (const pageImage of [
+  'screenshots/apps/heroes2_demo.png',
+  'screenshots/apps/rct.png',
+  'screenshots/og/heroes2_demo.png',
+  'screenshots/og/rct.png',
+]) {
+  assert(deployJs.includes(`'${pageImage}'`),
+    `deploy should include generated-page image ${pageImage} above the generic size cutoff`);
+}
 assertDeployFile('binaries/entertainment-pack/tictac.exe');
 assertDeployFile('binaries/entertainment-pack/winmine.exe');
 assertDeployFile('binaries/plus98/SPIDER.EXE');

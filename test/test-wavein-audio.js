@@ -84,6 +84,40 @@ console.log('PASS  waveIn stop/reset complete partial and queued buffers');
 console.log('PASS  waveIn CALLBACK_WINDOW posts MM_WIM_DATA and MM_WIM_CLOSE');
 
 (async () => {
+  const previousWindowForPrime = global.window;
+  try {
+    global.window = { addEventListener() {}, removeEventListener() {} };
+    let captureRequests = 0;
+    let settleCapture;
+    const captureRequest = new Promise(resolve => { settleCapture = resolve; });
+    const primedSharedAudio = {};
+    const primed = createHostImports({
+      getMemory: () => memory,
+      sharedAudio: primedSharedAudio,
+      getUserMedia: () => {
+        captureRequests++;
+        return captureRequest;
+      },
+    }).host;
+    assert.strictEqual(typeof primedSharedAudio.waveIn.primeCapture, 'function',
+      'browser audio state should expose gesture-time capture priming');
+    primedSharedAudio.waveIn.primeCapture();
+    assert.strictEqual(captureRequests, 1,
+      'capture prime should invoke getUserMedia inside the gesture call');
+    const primedHandle = primed.wave_in_open(22050, 1, 16, 0, 0, 0);
+    assert.strictEqual(primed.wave_in_start(primedHandle), 0);
+    assert.strictEqual(captureRequests, 1,
+      'waveInStart should consume the primed request instead of acquiring again');
+    assert.strictEqual(primedSharedAudio.waveIn.primeConsumes, 1,
+      'waveInStart should record the gesture reservation handoff');
+    settleCapture(null);
+    await new Promise(resolve => setImmediate(resolve));
+    primed.wave_in_close(primedHandle);
+  } finally {
+    if (previousWindowForPrime === undefined) delete global.window;
+    else global.window = previousWindowForPrime;
+  }
+
   let reportedError = '';
   const rejectedSharedAudio = {};
   const rejected = createHostImports({
@@ -121,6 +155,7 @@ console.log('PASS  waveIn CALLBACK_WINDOW posts MM_WIM_DATA and MM_WIM_CLOSE');
   }
 
   console.log('PASS  browser waveIn reports permission and secure-context failures');
+  console.log('PASS  browser waveIn consumes one gesture-primed capture request');
 })().catch(error => {
   console.error(error.stack || error);
   process.exitCode = 1;

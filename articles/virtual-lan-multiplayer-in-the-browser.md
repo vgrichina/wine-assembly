@@ -1,4 +1,5 @@
 # A virtual LAN for Windows 98 multiplayer games in the browser
+<!-- description: How two 1990s Windows games play each other in the browser: Winsock in WebAssembly Text over a virtual LAN across tabs or processes, with Hearts and Liquid War. -->
 
 Two copies of a 1990s Windows game can play each other inside Wine-Assembly: Winsock is implemented in WebAssembly Text over a virtual LAN segment, and that segment can span browser tabs in one page or emulator processes on different machines. This article covers what the virtual LAN is, how frames move, and what Hearts and Liquid War needed from it.
 

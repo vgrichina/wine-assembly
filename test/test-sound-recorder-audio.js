@@ -124,6 +124,8 @@ async function inspectScreenshot(file) {
   const feedCount = (output.match(/wave-in-feed[^\n]*written=2205/g) || []).length;
   const checks = [
     ['emulator run completed', !runFailed],
+    ['no false settings-changed warning',
+      !/Sound Recorder settings have been changed by another program/.test(output)],
     [`five microphone-like chunks captured (${feedCount})`, feedCount === 5],
     ['native waveIn device opened and closed', /\[waveIn\] open: 22050Hz 1ch 16bit/.test(output) && /\[waveIn\] close/.test(output)],
     [`captured playback contains PCM (${pcm.length} bytes)`, pcm.length >= 20000],

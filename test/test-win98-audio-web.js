@@ -756,6 +756,7 @@ async function main() {
             processor: !!device.processor,
             queue: device.queue.length,
             capturedFrames: device.capturedFrames || 0,
+            gesturePrimeConsumes: waveIn.primeConsumes || 0,
             error: device.lastError || '',
           }), 1200);
         } else if (device && device.lastError) {
@@ -885,7 +886,8 @@ async function main() {
     `Sound Recorder browser window should include full client area, got ${recorder.width}x${recorder.height}`);
   assert(recorder.transportBottomInk >= 180 && recorder.lowerChromeInk >= 200,
     `Sound Recorder transport row should not be clipped: ${JSON.stringify(recorder)}`);
-  assert(capture.stream && capture.processor && capture.capturedFrames >= 1000 && !capture.error,
+  assert(capture.stream && capture.processor && capture.capturedFrames >= 1000 &&
+    capture.gesturePrimeConsumes >= 1 && !capture.error,
     `Sound Recorder should acquire and process browser microphone audio: ${JSON.stringify(capture)}`);
   assert(recorder.displayGreen >= 100,
     `Sound Recorder should render captured microphone PCM, green=${recorder.displayGreen}`);

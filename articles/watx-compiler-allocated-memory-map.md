@@ -1,4 +1,5 @@
 # Letting the compiler own the memory map: WATX, an extended WebAssembly Text
+<!-- description: Why 170 hand-placed hex addresses became untenable, and how WATX, an extended WebAssembly Text, lets the compiler allocate and verify the memory map. -->
 
 A program written directly in WebAssembly Text has no linker. Every table, arena and buffer in a 512 MB linear memory is a hand-chosen hex address, and a 200,000-line project accumulates more than a thousand of them. Wine-Assembly replaced that with WATX, a small superset of WAT compiled by a vendored compiler, in which regions are declared by size and the compiler places them. This article explains why the hand-placed map became untenable, what WATX adds, and how the migration was verified.
 
