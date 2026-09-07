@@ -219,6 +219,13 @@ that shared table makes both cooperative and real Worker backends inherit the
 option. Focused Worker tests and all three repeated packed censuses now show
 zero legacy translation activity.
 
+The browser exposes the same experiment as `?guest-page-translation`, applied
+before the guest's first slice. A StarCraft browser smoke run stayed live
+(four of five screen probes changed) and reported the option enabled in both
+the main and spawned cooperative WASM instances. The host was above the
+project's load-average threshold during this check, so its frame figures are
+deliberately not used as performance evidence.
+
 ## Verdict
 
 Keep the candidate opt-in and isolated; do not enable it by default yet. The
