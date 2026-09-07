@@ -474,10 +474,14 @@ const TRACE_CALLSTACK_DEPTH = TRACE_CALLSTACK_RAW && TRACE_CALLSTACK_RAW.include
 const FAULT_NULL_RAW = args.find(a => a === '--fault-null' || a.startsWith('--fault-null='));
 const FAULT_NULL = !FAULT_NULL_RAW ? 0
   : (FAULT_NULL_RAW.split('=')[1] === 'stop' ? 2 : 1);
-// Experimental two-level packed translation for sparse VirtualAlloc pages.
+// Experimental flat packed translation for sparse VirtualAlloc pages.
 // This is deliberately separate from future permission audit/enforcement:
 // the flag changes only how an already-valid mapping finds its WASM backing.
 const GUEST_PAGE_TRANSLATION = hasFlag('guest-page-translation');
+// Offline census mode requires the separately built instrumented artifact from
+// tools/build-page-translation-stats.js. The canonical WASM has no counter
+// branch in $g2w, so profiling cannot perturb ordinary production runs.
+const GUEST_PAGE_STATS = hasFlag('guest-page-stats');
 const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break at address(es)
 const BREAK_ONCE = hasFlag('break-once'); // --break-once: do NOT re-arm bp after first hit (so prev_eip stays the true caller)
 const TRACE_AT = getArg('trace-at', null); // --trace-at=0xADDR: log regs each time EIP hits addr (non-interactive)
@@ -3487,6 +3491,35 @@ async function main() {
 
   const instance = await WebAssembly.instantiate(wasmModule, imports);
   ctx.exports = instance.exports;
+  if (GUEST_PAGE_STATS) {
+    if (!instance.exports.reset_guest_page_stats || !instance.exports.get_guest_page_stat) {
+      throw new Error('--guest-page-stats requires the offline artifact from ' +
+        '`node tools/build-page-translation-stats.js`');
+    }
+    instance.exports.reset_guest_page_stats();
+  }
+  let guestPageStatsReported = false;
+  const reportGuestPageStats = () => {
+    if (!GUEST_PAGE_STATS || guestPageStatsReported) return;
+    guestPageStatsReported = true;
+    const { STAT_NAMES } = require('../tools/build-page-translation-stats.js');
+    const values = STAT_NAMES.map((_, i) => instance.exports.get_guest_page_stat(i) >>> 0);
+    const stats = Object.fromEntries(STAT_NAMES.map((name, i) => [name, values[i]]));
+    const packedTotal = stats.packed_hit + stats.packed_miss;
+    const legacyCache = stats.legacy_cache_0 + stats.legacy_cache_1 +
+      stats.legacy_cache_2 + stats.legacy_cache_3;
+    const legacyScans = stats.legacy_scan_hit + stats.legacy_scan_miss;
+    const pct = (n, d) => d ? `${(n * 100 / d).toFixed(2)}%` : 'n/a';
+    console.log(`\nGuest page translation stats (${GUEST_PAGE_TRANSLATION ? 'packed' : 'legacy'}):`);
+    console.log(`  direct=${stats.direct} dib=${stats.dib}`);
+    console.log(`  packed hit=${stats.packed_hit} miss=${stats.packed_miss} ` +
+      `hit-rate=${pct(stats.packed_hit, packedTotal)}`);
+    console.log(`  legacy cache=[${stats.legacy_cache_0}, ${stats.legacy_cache_1}, ` +
+      `${stats.legacy_cache_2}, ${stats.legacy_cache_3}] total=${legacyCache}`);
+    console.log(`  legacy scan hit=${stats.legacy_scan_hit} miss=${stats.legacy_scan_miss} ` +
+      `records=${stats.legacy_scan_records} avg-depth=${legacyScans
+        ? (stats.legacy_scan_records / legacyScans).toFixed(2) : 'n/a'}`);
+  };
   // A run that is stopped from outside still knows things worth having. The
   // two-process tests kill both emulators when their checks are done, and
   // without this the --count summary -- the whole point of the flag -- was
@@ -3546,6 +3579,7 @@ async function main() {
       signalExitStarted = true;
       if (countAddrs.length && instance.exports.get_count) reportHitCounts(`Hit counts (on ${sig}):`);
       reportMmx();
+      reportGuestPageStats();
       if (!vfsOverlay) {
         process.exit(0);
         return;
@@ -4730,6 +4764,9 @@ async function main() {
     instance.exports.set_guest_page_translation(1);
     console.log('[memory] packed sparse guest-page translation enabled');
   }
+  // Exclude PE/DLL load and the packed backfill itself. Both A/B arms now
+  // begin at the same boundary immediately before guest execution.
+  if (GUEST_PAGE_STATS) instance.exports.reset_guest_page_stats();
   if (TRACE_WIN16_DDE && instance.exports.set_win16_dde_trace) {
     instance.exports.set_win16_dde_trace(1);
   }
@@ -9055,6 +9092,7 @@ if (VERBOSE) {
   console.log(`\nStats: ${apiCount} API calls, ${batchesRun} batches`
     + (MAX_SECONDS ? ` in ${MAX_SECONDS}s (${(batchesRun / MAX_SECONDS).toFixed(0)} batches/s)` : ''));
   reportMmx();
+  reportGuestPageStats();
 
   // --reg-export writes what the run left in the registry/INI store, which is
   // what a browser tab would have kept in localStorage. Feed it back with

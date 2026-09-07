@@ -73,7 +73,7 @@ const inheritedFlags = [
   '--trace-eip-range=ffffffff-ffffffff', '--count=ffffffff',
   '--no-loop-superops', '--no-lut-superops', '--no-copy-superops',
   '--no-aoe-fill', '--no-aoe-span', '--no-sib-fusion', '--no-rect-run',
-  '--no-case-chain', '--no-rle-run',
+  '--no-case-chain', '--no-rle-run', '--guest-page-translation',
 ];
 const worker = run('worker', ['--threads', ...inheritedFlags]);
 const coop = run('cooperative', ['--no-threads', ...inheritedFlags]);
@@ -105,7 +105,7 @@ const checks = [
       'set_trace_eip_range', 'set_count', 'set_loop_emit',
       'set_loop_lut_emit', 'set_loop_copy_emit', 'set_loop_aoe_fill_emit',
       'set_loop_aoe_span_emit', 'set_sib_fusion', 'set_rect_run',
-      'set_case_chain', 'set_rle_run',
+      'set_case_chain', 'set_rle_run', 'set_guest_page_translation',
     ].every(setter => inheritedSetters.has(setter))],
   ['the scheduler reports the worker backend',
     !!spawnEvent && spawnEvent.backend === 'worker'],

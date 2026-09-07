@@ -465,6 +465,7 @@ UNIT=(
   test/test-shell-link-com.js
   test/test-solitaire-web.js
   test/test-sparse-width-boundary.js
+  test/test-page-translation-stats.js
   test/test-string-ops-sparse-boundary.js
   test/test-sparse-generated-code-cache.js
   test/test-surface.js

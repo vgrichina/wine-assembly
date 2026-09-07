@@ -13,26 +13,30 @@ access policy remain separate so each can be measured independently.
 
 ## Candidate
 
-The opt-in `--guest-page-translation` path leaves direct and DIB translation
-unchanged. Sparse mappings use a demand-allocated two-level table:
+The current opt-in `--guest-page-translation` path leaves direct and DIB
+translation unchanged. Sparse mappings use one flat 4 MiB array with one
+four-byte PTE for every 4 KiB page in the complete 32-bit guest address space:
 
 ```text
-guest address
-  | bits 30..20              bits 19..12       bits 11..0
-  v                          v                 v
-8 KiB directory ----> 1 KiB leaf ----> packed PTE + byte offset
-  2048 slots          256 pages        backing page | access bits
+guest address 0xFEDCBA98
+          | page index = (guest >> 10) & 0x003ffffc
+          v
+4 MiB PTE array --------------------> backing page | access bits
+                                                + guest & 0xfff
 ```
 
-The 1 MiB leaf arena can represent 1024 populated 1 MiB guest ranges. If an
-address or leaf cannot be represented, a shared fallback bit keeps the old
-range cache/record walk authoritative. Sparse commits publish PTEs before the
-mapping becomes visible; release clears PTEs before backing can be reused.
-Enabling the option backfills existing mappings while holding the shared
-virtual-map lock, then makes later allocations publish across worker instances.
+Sparse commits publish PTEs before the mapping becomes visible; release clears
+PTEs before backing can be reused. Enabling the option backfills existing
+mappings while holding the shared virtual-map lock, then makes later
+allocations publish across worker instances.
 
-The default remains off. Off-mode memory operands retain the established path;
-only sparse allocation/free performs a shared active-bit check.
+There is no runtime legacy fallback in packed mode. A zero PTE is an
+authoritative miss and goes directly to the normal unmapped-access result. The
+old four-entry range cache and record walk remain compiled only as the off arm
+of the current A/B experiment. `VIRTUAL_MAP_TABLE` still remains necessary as
+allocation, release, and `VirtualQuery` metadata; translation no longer needs
+to scan it. The default remains off while application/browser acceptance is in
+progress.
 
 ## Synthetic results
 
@@ -138,9 +142,9 @@ identical execution counters. The long Fallout pair had severe run-order drift
 eight runs per mode removed the apparent packed win; the table reports that
 larger neutral sample.
 
-## Flat-table follow-up
+## Why the flat table replaced the first prototype
 
-The demand-leaf design saves roughly 3MB but needs two dependent atomic loads,
+The first demand-leaf design saves roughly 3MB but needs two dependent atomic loads,
 has a finite leaf arena, indexes only the lower 2GB, and retains a legacy-scan
 fallback. A follow-up replaced it with one 4 MiB array: one four-byte PTE for
 every 4 KiB page in the complete 32-bit guest address space.
@@ -186,6 +190,35 @@ legacy versus 10.110s packed wall time (10.505s/10.600s CPU), correcting its
 earlier noisy apparent win to neutral. Quake II's flat-table off/on frames were
 also byte-identical.
 
+## Offline path census
+
+`tools/build-page-translation-stats.js` builds a separately named,
+instrumented WASM artifact. It atomically counts translation paths across the
+main and guest-thread instances without adding a branch to the production
+module. `test/run.js --guest-page-stats` reports the counters and rejects a
+canonical artifact, so the census cannot accidentally be mistaken for an
+ordinary benchmark build.
+
+The counters reset immediately before guest execution, excluding PE/DLL load
+and packed-table backfill. These short runs are path censuses, not throughput
+benchmarks—the atomic increments intentionally perturb timing.
+
+| Application | Direct | DIB | Packed hit/miss | Legacy work in packed mode |
+| --- | ---: | ---: | ---: | ---: |
+| Heroes III, 3s | 60,785,583 | 390,177 | 542,328 / 1 | 0 |
+| StarCraft Shareware, 5s | 80,309,409 | 3,702,407 | 3,189,735 / 0 | 0 |
+| Diablo II demo, 5s | 142,114,125 | 14 | 65,416,844 / 0 | 0 |
+
+Diablo II's matching legacy run made 65,520,052 sparse-cache hits and 15,465
+record-scan hits. Those scans examined 617,374 records, an average depth of
+39.92. The first packed census still showed roughly 62 million legacy
+translations because the option was applied only to the main WASM instance;
+the declarative inherited-global table discarded it for guest-thread
+instances. Adding `set_guest_page_translation`/`get_guest_page_translation` to
+that shared table makes both cooperative and real Worker backends inherit the
+option. Focused Worker tests and all three repeated packed censuses now show
+zero legacy translation activity.
+
 ## Verdict
 
 Keep the candidate opt-in and isolated; do not enable it by default yet. The
@@ -202,10 +235,8 @@ data: the flat lookup already removed the one-map regression.
 
 Before integrating:
 
-1. Count packed hits, misses, legacy cache ranks, and record-scan depth in real
-   gameplay without enabling counters in production runs.
-2. Repeat fixed-work **browser** A/Bs for Heroes II/III, Diablo, StarCraft,
+1. Repeat fixed-work **browser** A/Bs for Heroes II/III, Diablo, StarCraft,
    Diablo II, and Alpha Centauri with rotated arm order; D2 now has a healthy
    baseline but only one complete pair.
-3. Only then layer optional audit/enforcement of `VirtualAlloc` and
+2. Only then layer optional audit/enforcement of `VirtualAlloc` and
    `VirtualProtect` access flags onto the chosen translator.
