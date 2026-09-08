@@ -564,6 +564,46 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; mmioStringToFOURCCA(sz, uFlags) — pack four bytes, padding with spaces.
+  ;; MMIO_TOUPPER (0x10) applies ASCII case folding before packing.
+  (func $handle_mmioStringToFOURCCA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $src i32) (local $i i32) (local $ch i32)
+    (local $fourcc i32) (local $ended i32)
+    (if (local.get $arg0)
+      (then (local.set $src (call $g2w (local.get $arg0))))
+      (else (local.set $ended (i32.const 1))))
+    (block $done
+      (loop $pack
+        (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
+        (local.set $ch (i32.const 0x20))
+        (if (i32.eqz (local.get $ended))
+          (then
+            (local.set $ch (i32.load8_u
+              (i32.add (local.get $src) (local.get $i))))
+            (if (i32.eqz (local.get $ch))
+              (then
+                (local.set $ended (i32.const 1))
+                (local.set $ch (i32.const 0x20)))
+              (else
+                (if (i32.and
+                      (i32.ne (i32.and (local.get $arg1) (i32.const 0x10))
+                              (i32.const 0))
+                      (i32.and
+                        (i32.ge_u (local.get $ch) (i32.const 0x61))
+                        (i32.le_u (local.get $ch) (i32.const 0x7A))))
+                  (then
+                    (local.set $ch
+                      (i32.sub (local.get $ch) (i32.const 0x20)))))))))
+        (local.set $fourcc
+          (i32.or (local.get $fourcc)
+            (i32.shl (local.get $ch)
+              (i32.mul (local.get $i) (i32.const 8)))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $pack)))
+    (global.set $eax (local.get $fourcc))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
   ;; 806: mmioDescend(hmmio, lpck, lpckParent, wFlags) — 4 args stdcall
   ;; Descends into a RIFF chunk. Reads 8-byte chunk header (ckid + cksize).
   ;; MMCKINFO struct: +0 ckid, +4 cksize, +8 fccType, +12 dwDataOffset, +16 dwFlags
