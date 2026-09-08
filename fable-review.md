@@ -335,6 +335,19 @@ the way `aw-census.js` should have been.
 8. Carried: split 09a/09c3 (now 38k lines between them), `readSyncObjectName`,
    PNG inspectors, `04-cache.wat:433`, silent-stub changelog to `docs/`.
 
+## Pass-5 current status — 2026-09-08
+
+| # | status | current evidence |
+|---|---|---|
+| 1 | **OPEN** | All 184 region declarations still carry hand-maintained `file:line` owners; even the comment-only `2b82fe43` shift required seven mechanical owner edits. |
+| 2 | **OPEN** | Cache-version agreement is gated, but the source build version is still repeated in `host.js`, `index.html` and `lib/guest-worker.js` (current v296). |
+| 3 | **OPEN** | `test/run-all.sh` still transcribes all 889 test memberships by hand. |
+| 4 | **DONE** | A/W drift is a name-based build ratchet (`76883d22`). Exact WAT duplication is now alpha-normalized across function, parameter and local names and gated at 197 groups / 928 existing members (`d6b08cdd`); removals pass, while a new duplicated member or a higher group count fails. Near-pair scoring remains an interactive report so it does not add ~35 seconds to every build. |
+| 5 | **OPEN** | No shared `$guest_strdup`, `$com_addref` or `$com_release` exists yet; the current A/W census still records 14 divergent pairs and one both-stub pair. |
+| 6 | **PARTIAL** | The copied CLI client is now `test/control-session.js` (`35a05fff`), but no shared `test/static-server.js` exists. |
+| 7 | **OPEN** | `api_table.json` has no `stub` or `test_call` fields; the generated-dispatch arc has not started. |
+| 8 | **PARTIAL** | The obsolete hash-cache fallback description is corrected (`2b82fe43`). `readSyncObjectName` remains in both hosts, the PNG helpers and silent-stub changelog remain distributed, and 09a/09c3 are currently 20,471 / 18,575 lines. |
+
 ---
 
 # Pass 4 — 2026-08-31
