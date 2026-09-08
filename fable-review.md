@@ -240,13 +240,15 @@ version (`8b114034`, 09a3:891) binds through `$mmio_slot_for` — fixed before
 it landed, noted here because it is the shape the redundancy above produces:
 a record exists, a handler is written without it.
 
-**Carried from earlier passes, re-verified open:** `readSyncObjectName`
-still twice (`host.js:1584`, `run.js:3259`); `debug-app-picker.js:10-14`
-still keeps app-id lists outside `apps.js`; the PNG inspectors are now
-**seven** (`png-pixel.js` joined on 08-29); `04-cache.wat:433` still
-describes a fallback into the deleted hash cache; the 16 `$th_jcc_*`
-differing only in the condition (P2 4.6) are unchanged; item 18 (split
-09a/09c3) is unaddressed and 09a grew 3,400 lines in five days.
+**Carried from earlier passes, current audit:** `readSyncObjectName` is still
+twice (`host.js:1584`, `run.js:3259`); `debug-app-picker.js:10-14` still keeps
+app-id lists outside `apps.js`; the PNG inspectors are now **seven**
+(`png-pixel.js` joined on 08-29); the 16 `$th_jcc_*` differing only in the
+condition (P2 4.6) are unchanged; item 18 (split 09a/09c3) is unaddressed and
+09a grew 3,400 lines in five days. The stale `04-cache.wat` description of a
+fallback into the deleted hash cache was corrected in `2b82fe43`: an
+unpublishable freshly decoded block executes from its emit scratch and is
+decoded again on a later entry; there is no second cache lookup.
 
 ## P5-4 — The test corpus copies its harness
 
