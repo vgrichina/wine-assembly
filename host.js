@@ -512,6 +512,7 @@ class WineAssembly {
   // damage when one of those deadlines is wrong or a wake source is missing,
   // turning a hang into 20Hz polling.
   static MAX_PARK_SLEEP_MS = 50;
+  static CLOCK_SPIN_PARK_MS = 1;
   // How long an AudioContext may sit 'running' with nothing playing before it
   // is suspended. A running context holds the audio hardware awake.
   static AUDIO_IDLE_SUSPEND_MS = 10000;
@@ -3703,7 +3704,11 @@ class WineAssembly {
         now = ex.get_tick_count ? (ex.get_tick_count() >>> 0) : 0;
       } catch (_) { return 1; }
       const owed = (due - now) | 0;
-      return Math.max(1, Math.min(WineAssembly.MAX_PARK_SLEEP_MS, owed));
+      const configured = Number.isFinite(this.spinParkClockMs)
+        ? Math.max(1, Math.min(WineAssembly.MAX_PARK_SLEEP_MS,
+          Math.round(this.spinParkClockMs))) : WineAssembly.CLOCK_SPIN_PARK_MS;
+      return Math.max(configured,
+        Math.max(1, Math.min(WineAssembly.MAX_PARK_SLEEP_MS, owed)));
     }
     let timerDue = -1;
     try { timerDue = ex.next_timer_due_ms ? (ex.next_timer_due_ms() | 0) : -1; } catch (_) {}

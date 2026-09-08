@@ -1853,6 +1853,9 @@
     (local $qidx i32) (local $qaddr i32) (local $qmsg i32) (local $nc_rect i32)
     (local $ret i32)
     (local $hotkey i32)
+    (local $spin_activity_marked i32)
+    (local.set $spin_activity_marked (global.get $spin_peek_activity_marked))
+    (global.set $spin_peek_activity_marked (i32.const 0))
     ;; Same reason as GetMessageA: an idle message pump is where a
     ;; WSAAsyncSelect server spends its time, so it has to move the wire.
     (call $vsock_pump)
@@ -2221,7 +2224,14 @@
       (then
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
-    ;; Nothing to deliver. If this is the Kth empty peek in a row from the same
+    ;; Nothing to deliver. Undo the activity mark $win32_dispatch made for
+    ;; PeekMessage: only this proven-empty path is neutral to the clock-spin
+    ;; detector. Every successful Peek remains observable work and breaks it.
+    (if (local.get $spin_activity_marked)
+      (then
+        (global.set $spin_nonpoll_seq
+          (i32.sub (global.get $spin_nonpoll_seq) (i32.const 1)))))
+    ;; If this is the Kth empty peek in a row from the same
     ;; call site with NO other Win32 call in between, the guest is not pumping,
     ;; it is spinning — tetrinet, GTA2, Total Annihilation and the Heroes II
     ;; title screen all sit here. Park until input arrives or a timer comes due

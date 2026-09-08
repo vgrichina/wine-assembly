@@ -3107,9 +3107,9 @@
   ;;
   ;;   * the same value came back (clock only) -- a 60 fps game reading
   ;;     delta-time sees a different millisecond every frame and never trips;
-  ;;   * no OTHER Win32 call happened in between ($spin_dispatch_seq advanced by
-  ;;     exactly one, this call) -- a real frame loop renders between two clock
-  ;;     reads, and rendering is API calls;
+  ;;   * no meaningful Win32 work happened in between ($spin_nonpoll_seq did
+  ;;     not change) -- empty PeekMessage polls are neutral, while a delivered
+  ;;     message and rendering API calls both break the run;
   ;;   * the same return address, so it is one call site, not a pump;
   ;;   * the same ESP, so it is the same stack depth and not a recursion.
   ;;
@@ -3914,3 +3914,16 @@
   ;; Window-station clipboard generation, shared by every guest Worker.
   (global $CLIPBOARD_SEQUENCE i32 (region.addr $CLIPBOARD_SEQUENCE 0))
   (global $CLIPBOARD_SEQUENCE_SIZE i32 (region.size $CLIPBOARD_SEQUENCE))
+
+  ;; Dispatches other than clock reads. PeekMessage begins as activity too,
+  ;; then its proven-empty return path rolls that one mark back. This lets the
+  ;; clock detector retain evidence across an empty pump pass while a delivered
+  ;; message still breaks the run.
+  (global $spin_nonpoll_seq (mut i32) (i32.const 0))
+  (global $clock_spin_qualified_valid (mut i32) (i32.const 0))
+  (global $clock_spin_qualified_ret (mut i32) (i32.const 0))
+  (global $clock_spin_qualified_esp (mut i32) (i32.const 0))
+  ;; One-shot token saying the dispatcher counted the PeekMessage call that is
+  ;; entering its handler. The Win16 bridge also calls that handler directly,
+  ;; so the empty path may roll activity back only when this token was present.
+  (global $spin_peek_activity_marked (mut i32) (i32.const 0))
