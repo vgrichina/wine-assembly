@@ -261,14 +261,20 @@ regression. The browser's instantaneous `stepsPerSec` snapshots varied by
 multiple billions between otherwise equivalent runs and are therefore not
 used as evidence.
 
+Diablo Shareware used the same rotated 2x2 protocol at host load 1.97--2.27.
+Legacy guest frame rates were 14.76 and 14.89 fps; packed rates were 14.98 and
+14.74 fps. Their medians (14.82 versus 14.86 fps, +0.3%) are neutral. Every run
+presented 152 full frames during the sample, remained live in the game's main
+loop, and had smooth compositor pacing with no sampled interval above 33 ms.
+
 ## Verdict
 
 Keep the candidate isolated until the remaining browser acceptance runs are
 complete. The expanded sample looks positive or neutral rather than exposing a
 clear whole-application regression. Quake II, the larger Fallout repeat, the
-current-main one-map microbenchmark, and StarCraft in-browser are useful neutral
-controls. Large variance in GTA2 and the single complete Diablo II pair still
-prevent a universal-speedup claim.
+current-main one-map microbenchmark, StarCraft in-browser, and Diablo
+in-browser are useful neutral controls. Large variance in GTA2 and the single
+complete Diablo II pair still prevent a universal-speedup claim.
 
 Prefer the flat-table follow-up over the demand-leaf prototype for eventual
 integration. Its extra memory is fixed and modest, its lookup is no slower in
@@ -278,8 +284,8 @@ data: the flat lookup already removed the one-map regression.
 
 Before integrating:
 
-1. Repeat fixed-work **browser** A/Bs for Heroes II/III, Diablo, Diablo II, and
-   Alpha Centauri with rotated arm order; StarCraft is neutral, while D2 has a
-   healthy CLI baseline but only one complete pair.
+1. Repeat fixed-work **browser** A/Bs for Heroes II/III, Diablo II, and Alpha
+   Centauri with rotated arm order; StarCraft and Diablo are neutral, while D2
+   has a healthy CLI baseline but only one complete pair.
 2. Only then layer optional audit/enforcement of `VirtualAlloc` and
    `VirtualProtect` access flags onto the chosen translator.
