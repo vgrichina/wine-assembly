@@ -112,3 +112,46 @@ general dispatch/register throughput), not the 20 ms clock wait. The
 These absolute timings came from a loaded development machine and profiling
 adds overhead; the attribution and call-count ordering were stable across
 repeats.
+
+### Chrome CPU sampling and clock A/B
+
+A 200-us Chrome CPU sample over the same complete turn put 13.2% of self time
+in threaded-interpreter `$next`, 11.1% in `PeekMessageA`, and 10.3% in the
+host `performance.now()` wrapper reached through `get_ticks`. Generic branch,
+register, effective-address, and guest-memory handlers account for much of the
+remaining profile. By contrast, `$decode_block` was 1.1%, `$g2w` 1.1%, and
+page resolution 1.6%; neither decode churn nor address translation is the
+primary limit. The sampling harness's `getImageData` consumed 2.7% and is not
+emulator work.
+
+The timer path contained a real duplicate clock sample: `$timer_check_due`
+refreshes `$tick_count`, then its no-WM_TIMER fallback called
+`$mm_timer_due_slot`, which refreshed it again. An isolated build reused the
+first sample for that fallback while retaining a fresh sample for standalone
+multimedia-timer polling. Host clock self time fell from 10.3% to 5.9%, but
+the measured turn changed only from 17.55 s to 17.39 s (about 0.9%, within
+run-to-run noise). The game simply performs more polls while waiting for the
+same wall-clock deadline. This cleanup may still be worthwhile, but it is not
+the frame-rate lever.
+
+An isolated spin-park prototype then let repeated clock reads retain their
+evidence across `PeekMessageA`, while every other Win32 call still reset the
+run. At the production confidence threshold (`K=8`), 1 ms and 5 ms parks fired
+only 75 and 62 times and changed nothing measurable. At `K=2`, a 1 ms request
+completed the turn in 17.53 s with 24.7% Chrome-profiler idle time; 5 ms took
+17.64 s with 26.2% idle. The unparked profile had about 1% idle. Content kept
+changing and Mission Year advanced in both arms. Thus yielding after two
+identical same-site/same-millisecond reads can reclaim roughly one quarter of
+browser CPU without lengthening this turn, but 5 ms is no better than the safer
+1 ms request because browser timer scheduling already coarsens the yield. This
+remains a prototype: pure guest computation between two clock calls is
+invisible to the API-only detector, so `K=2` needs broader game-corpus false-
+park testing before becoming a global default.
+
+The remaining frame-rate work is reducing dispatches with narrowly measured
+instruction fusion or moving to a native/dynamic translation tier. Making
+`$next` cheaper, source-inlining it, and splitting hot memory-accessor fast
+paths have already measured neutral or slower on other games; they are not
+experiments to repeat. Optimizing canvas presentation, growing the decode
+cache, or special-casing only the 25-record search likewise has little support
+in this profile.
