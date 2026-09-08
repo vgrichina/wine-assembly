@@ -2332,24 +2332,16 @@
   (global $SYNC_TABLE i32 (region.addr $SYNC_TABLE 0))
   (global $SYNC_TABLE_SIZE i32 (region.size $SYNC_TABLE))
   (global $MAX_SYNC_OBJECTS i32 (i32.const 512))
-  ;; Optional packed guest page table. One entry covers each 4KB page in the
+  ;; Packed guest page table. One entry covers each 4KB page in the
   ;; complete 32-bit guest address space. Entries store an aligned WASM backing
   ;; page plus normalized access flags in the otherwise-zero low 12 bits.
-  ;; STATE+8 says at least one instance enabled the experiment so VirtualAlloc
-  ;; must keep PTEs coherent process-wide.
   (global $GUEST_PAGE_TABLE i32 (region.addr $GUEST_PAGE_TABLE 0))
   (global $GUEST_PAGE_TABLE_SIZE i32 (region.size $GUEST_PAGE_TABLE))
-  (global $GUEST_PAGE_STATE i32 (region.addr $GUEST_PAGE_STATE 0))
-  (global $GUEST_PAGE_STATE_SIZE i32 (region.size $GUEST_PAGE_STATE))
   (global $GUEST_PTE_PRESENT i32 (i32.const 0x001))
   (global $GUEST_PTE_COMMITTED i32 (i32.const 0x002))
   (global $GUEST_PTE_READ i32 (i32.const 0x004))
   (global $GUEST_PTE_WRITE i32 (i32.const 0x008))
   (global $GUEST_PTE_EXEC i32 (i32.const 0x010))
-  ;; 0 keeps the established sparse record/cache path; 1 uses packed PTEs.
-  ;; Direct-window and DIB translations precede this switch in $g2w, so the
-  ;; experiment adds no branch to the overwhelmingly common direct path.
-  (global $guest_page_translation (mut i32) (i32.const 0))
   ;; Sparse VirtualAlloc mapping table. Guest reserve addresses are high
   ;; virtual addresses; committed chunks are backed here so they do not collide
   ;; with the low HeapAlloc arena.
@@ -2614,28 +2606,6 @@
   (global $heap_end (mut i32) (i32.const 0))   ;; exclusive end of this arena
   (global $heap_sparse_ptr (mut i32) (i32.const 0))
   (global $heap_sparse_end (mut i32) (i32.const 0))
-  ;; Four recent successful sparse guest translations. Storm's decompressor
-  ;; stays in slot 0; generated video converters alternate palette/input/output
-  ;; ranges and need the extra slots to avoid rescanning hundreds of append-only
-  ;; map records on nearly every instruction.
-  (global $g2w_sparse_base (mut i32) (i32.const 0))
-  (global $g2w_sparse_size (mut i32) (i32.const 0))
-  (global $g2w_sparse_backing (mut i32) (i32.const 0))
-  (global $g2w_sparse_base1 (mut i32) (i32.const 0))
-  (global $g2w_sparse_size1 (mut i32) (i32.const 0))
-  (global $g2w_sparse_backing1 (mut i32) (i32.const 0))
-  (global $g2w_sparse_base2 (mut i32) (i32.const 0))
-  (global $g2w_sparse_size2 (mut i32) (i32.const 0))
-  (global $g2w_sparse_backing2 (mut i32) (i32.const 0))
-  (global $g2w_sparse_base3 (mut i32) (i32.const 0))
-  (global $g2w_sparse_size3 (mut i32) (i32.const 0))
-  (global $g2w_sparse_backing3 (mut i32) (i32.const 0))
-  ;; Byte reads in generated converters repeatedly hit one palette page while
-  ;; dword input/output accesses use other mappings. Keep that translation
-  ;; separate from the shared recent-range cache so the access classes do not
-  ;; evict or linearly probe through each other.
-  (global $g2w_gl8_page (mut i32) (i32.const -1))
-  (global $g2w_gl8_delta (mut i32) (i32.const 0))
   ;; Guest-space top of the downward-growing sparse VirtualAlloc arena. Kept
   ;; 64KB-aligned to match Win32 allocation granularity for NULL MEM_RESERVE
   ;; calls.

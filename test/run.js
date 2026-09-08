@@ -474,10 +474,6 @@ const TRACE_CALLSTACK_DEPTH = TRACE_CALLSTACK_RAW && TRACE_CALLSTACK_RAW.include
 const FAULT_NULL_RAW = args.find(a => a === '--fault-null' || a.startsWith('--fault-null='));
 const FAULT_NULL = !FAULT_NULL_RAW ? 0
   : (FAULT_NULL_RAW.split('=')[1] === 'stop' ? 2 : 1);
-// Experimental flat packed translation for sparse VirtualAlloc pages.
-// This is deliberately separate from future permission audit/enforcement:
-// the flag changes only how an already-valid mapping finds its WASM backing.
-const GUEST_PAGE_TRANSLATION = hasFlag('guest-page-translation');
 // Offline census mode requires the separately built instrumented artifact from
 // tools/build-page-translation-stats.js. The canonical WASM has no counter
 // branch in $g2w, so profiling cannot perturb ordinary production runs.
@@ -3508,25 +3504,12 @@ async function main() {
     const values = STAT_NAMES.map((_, i) => instance.exports.get_guest_page_stat(i) >>> 0);
     const stats = Object.fromEntries(STAT_NAMES.map((name, i) => [name, values[i]]));
     const packedTotal = stats.packed_hit + stats.packed_miss;
-    const legacyCache = stats.legacy_cache_0 + stats.legacy_cache_1 +
-      stats.legacy_cache_2 + stats.legacy_cache_3;
-    const legacyScans = stats.legacy_scan_hit + stats.legacy_scan_miss;
     const pct = (n, d) => d ? `${(n * 100 / d).toFixed(2)}%` : 'n/a';
-    console.log(`\nGuest page translation stats (${GUEST_PAGE_TRANSLATION ? 'packed' : 'legacy'}):`);
+    console.log('\nGuest page translation stats (packed):');
     console.log(`  direct=${stats.direct} dib=${stats.dib}`);
     console.log(`  packed hit=${stats.packed_hit} miss=${stats.packed_miss} ` +
       `hit-rate=${pct(stats.packed_hit, packedTotal)}`);
-    console.log(`  legacy cache=[${stats.legacy_cache_0}, ${stats.legacy_cache_1}, ` +
-      `${stats.legacy_cache_2}, ${stats.legacy_cache_3}] total=${legacyCache}`);
-    console.log(`  legacy scan hit=${stats.legacy_scan_hit} miss=${stats.legacy_scan_miss} ` +
-      `records=${stats.legacy_scan_records} avg-depth=${legacyScans
-        ? (stats.legacy_scan_records / legacyScans).toFixed(2) : 'n/a'}`);
-    const legacySpanScans = stats.span_legacy_scan_hit + stats.span_legacy_scan_miss;
     console.log(`  affine span packed hit=${stats.span_packed_hit} miss=${stats.span_packed_miss}`);
-    console.log(`  affine span legacy cache=${stats.span_legacy_cache_hit} ` +
-      `scan hit=${stats.span_legacy_scan_hit} miss=${stats.span_legacy_scan_miss} ` +
-      `records=${stats.span_legacy_scan_records} avg-depth=${legacySpanScans
-        ? (stats.span_legacy_scan_records / legacySpanScans).toFixed(2) : 'n/a'}`);
   };
   // A run that is stopped from outside still knows things worth having. The
   // two-process tests kill both emulators when their checks are done, and
@@ -3920,7 +3903,6 @@ async function main() {
   if (NO_RECT_RUN) inheritWasm('set_rect_run', 0);
   if (NO_CASE_CHAIN) inheritWasm('set_case_chain', 0);
   if (NO_RLE_RUN) inheritWasm('set_rle_run', 0);
-  if (GUEST_PAGE_TRANSLATION) inheritWasm('set_guest_page_translation', 1);
 
   threadManager = new ThreadManager(wasmModule, memory, instance, makeWorkerImports, {
     workerBackend: guestThreadHost,
@@ -4753,12 +4735,7 @@ async function main() {
     console.log(`[fault] --fault-null armed (mode=${FAULT_NULL}: `
       + `${FAULT_NULL === 2 ? 'log and trap' : 'log and continue'})`);
   }
-  if (GUEST_PAGE_TRANSLATION && instance.exports.set_guest_page_translation) {
-    instance.exports.set_guest_page_translation(1);
-    console.log('[memory] packed sparse guest-page translation enabled');
-  }
-  // Exclude PE/DLL load and the packed backfill itself. Both A/B arms now
-  // begin at the same boundary immediately before guest execution.
+  // Exclude PE/DLL load from the offline translation-path census.
   if (GUEST_PAGE_STATS) instance.exports.reset_guest_page_stats();
   if (TRACE_WIN16_DDE && instance.exports.set_win16_dde_trace) {
     instance.exports.set_win16_dde_trace(1);

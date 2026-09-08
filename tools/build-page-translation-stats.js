@@ -2,9 +2,8 @@
 'use strict';
 
 // Build an offline-only WASM artifact that counts which $g2w translation path
-// real applications use. The canonical source and build artifacts deliberately
-// contain no counter branch: this tool patches an in-memory WATX closure, then
-// writes a separately named module for `test/run.js --guest-page-stats`.
+// real applications use. Production WAT remains branch-free: this tool patches
+// the source closure in memory and writes a separately named module.
 
 const fs = require('fs');
 const os = require('os');
@@ -19,19 +18,8 @@ const STAT_NAMES = Object.freeze([
   'dib',
   'packed_hit',
   'packed_miss',
-  'legacy_cache_0',
-  'legacy_cache_1',
-  'legacy_cache_2',
-  'legacy_cache_3',
-  'legacy_scan_hit',
-  'legacy_scan_miss',
-  'legacy_scan_records',
   'span_packed_hit',
   'span_packed_miss',
-  'span_legacy_cache_hit',
-  'span_legacy_scan_hit',
-  'span_legacy_scan_miss',
-  'span_legacy_scan_records',
 ]);
 
 function getArg(name, fallback) {
@@ -49,11 +37,10 @@ function replaceOne(source, needle, replacement, label) {
 }
 
 function instrumentRegisters(source) {
-  const helperMarker = '  (func $g2w_miss (param $ga i32) (result i32)';
-  const helper = String.raw`  ;; Offline-only counters injected by tools/build-page-translation-stats.js.
-  ;; TEST_SCRATCH is shared by every WASM instance, so worker and main-thread
-  ;; translations contribute to one process total. This artifact is not used by
-  ;; the test pool: those tests own the scratch region for their own fixtures.
+  const missMarker = '  (func $g2w_miss (param $ga i32) (result i32)';
+  const helper = String.raw`  ;; Offline-only counters injected by
+  ;; tools/build-page-translation-stats.js. TEST_SCRATCH is shared by every
+  ;; WASM instance, so main and guest threads contribute to one process total.
   (func $g2w_stat_inc (param $slot i32)
     (drop (i32.atomic.rmw.add
       (i32.add (global.get $TEST_SCRATCH)
@@ -61,16 +48,9 @@ function instrumentRegisters(source) {
       (i32.const 1))))
 
 `;
-  source = replaceOne(source, helperMarker, helper + helperMarker, '$g2w_miss marker');
+  source = replaceOne(source, missMarker, helper + missMarker, '$g2w_miss marker');
 
-  const startMarker = '  (func $g2w (param $ga i32) (result i32)';
-  const endMarker = '\n  ;; Translate a complete guest span only when one affine mapping contains it.';
-  const start = source.indexOf(startMarker);
-  const end = source.indexOf(endMarker, start);
-  if (start < 0 || end < 0) throw new Error('page-translation-stats: cannot isolate $g2w');
-  let body = source.slice(start, end);
-
-  body = replaceOne(body,
+  source = replaceOne(source,
     String.raw`    (if (i32.eqz (i32.or (i32.lt_s (local.get $wa) (i32.const 0))
                 (i32.ge_u (local.get $wa) (region.end $DIRECT_WINDOW))))
       (then (return (local.get $wa))))`,
@@ -80,7 +60,8 @@ function instrumentRegisters(source) {
         (call $g2w_stat_inc (i32.const 0))
         (return (local.get $wa))))`,
     'direct return');
-  body = replaceOne(body,
+
+  source = replaceOne(source,
     String.raw`      (then
         (return (i32.add
           (global.get $DIB_BACKING_BASE)
@@ -91,120 +72,56 @@ function instrumentRegisters(source) {
           (global.get $DIB_BACKING_BASE)
           (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))))))`,
     'DIB return');
-  body = replaceOne(body,
-    String.raw`        (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
-          (then (return (local.get $wa))))
-        (return (call $g2w_miss (local.get $ga))))`,
-    String.raw`        (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
-          (then
-            (call $g2w_stat_inc (i32.const 2))
-            (return (local.get $wa))))
-        (call $g2w_stat_inc (i32.const 3))
-        (return (call $g2w_miss (local.get $ga))))`,
+
+  source = replaceOne(source,
+    String.raw`    (local.set $wa (call $guest_page_translate (local.get $ga)))
+    (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
+      (then (return (local.get $wa))))
+    (call $g2w_miss (local.get $ga))`,
+    String.raw`    (local.set $wa (call $guest_page_translate (local.get $ga)))
+    (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
+      (then
+        (call $g2w_stat_inc (i32.const 2))
+        (return (local.get $wa))))
+    (call $g2w_stat_inc (i32.const 3))
+    (call $g2w_miss (local.get $ga))`,
     'packed result');
 
-  const cacheReturns = [
-    ['(global.get $g2w_sparse_backing)', 4],
-    ['(global.get $g2w_sparse_backing1)', 5],
-    ['(global.get $g2w_sparse_backing2)', 6],
-    ['(global.get $g2w_sparse_backing3)', 7],
-  ];
-  for (const [backing, slot] of cacheReturns) {
-    const needle = `      (then\n        (return (i32.add ${backing} (local.get $off)))))`;
-    const replacement = `      (then\n        (call $g2w_stat_inc (i32.const ${slot}))\n        (return (i32.add ${backing} (local.get $off)))))`;
-    body = replaceOne(body, needle, replacement, `legacy cache rank ${slot - 4}`);
-  }
-
-  body = replaceOne(body,
-    '      (br_if $mapped_done (i32.ge_u (local.get $i) (local.get $count)))',
-    '      (br_if $mapped_done (i32.ge_u (local.get $i) (local.get $count)))\n' +
-      '      (call $g2w_stat_inc (i32.const 10))',
-    'legacy scan iteration');
-  body = replaceOne(body,
-    String.raw`          (global.set $g2w_sparse_backing (local.get $backing))
-          (return (i32.add (local.get $backing) (i32.sub (local.get $ga) (local.get $base))))))`,
-    String.raw`          (global.set $g2w_sparse_backing (local.get $backing))
-          (call $g2w_stat_inc (i32.const 8))
-          (return (i32.add (local.get $backing) (i32.sub (local.get $ga) (local.get $base))))))`,
-    'legacy scan hit');
-  body = replaceOne(body,
-    String.raw`    ;; Nothing maps this address.
-    (call $g2w_miss (local.get $ga))`,
-    String.raw`    ;; Nothing maps this address.
-    (call $g2w_stat_inc (i32.const 9))
-    (call $g2w_miss (local.get $ga))`,
-    'legacy scan miss');
-
-  return source.slice(0, start) + body + source.slice(end);
-}
-
-function instrumentAffineSpan(source) {
-  const startMarker = '  (func $g2w_affine_span (param $ga i32) (param $len i32) (result i32)';
-  const endMarker = '\n  (func $w2g (param $wa i32) (result i32)';
-  const start = source.indexOf(startMarker);
-  const end = source.indexOf(endMarker, start);
-  if (start < 0 || end < 0) {
-    throw new Error('page-translation-stats: cannot isolate $g2w_affine_span');
-  }
-  let body = source.slice(start, end);
-
-  body = replaceOne(body,
-    String.raw`    (if (global.get $guest_page_translation)
-      (then
-        (return
-          (call $guest_page_affine_span (local.get $ga) (local.get $len)))))`,
-    String.raw`    (if (global.get $guest_page_translation)
-      (then
-        (local.set $wa
-          (call $guest_page_affine_span (local.get $ga) (local.get $len)))
-        (if (i32.eq (local.get $wa) (global.get $NULL_SENTINEL))
-          (then (call $g2w_stat_inc (i32.const 12)))
-          (else (call $g2w_stat_inc (i32.const 11))))
-        (return (local.get $wa))))`,
+  source = replaceOne(source,
+    String.raw`    (call $guest_page_affine_span (local.get $ga) (local.get $len))
+  )
+  (func $w2g`,
+    String.raw`    (local.set $wa
+      (call $guest_page_affine_span (local.get $ga) (local.get $len)))
+    (if (i32.eq (local.get $wa) (global.get $NULL_SENTINEL))
+      (then (call $g2w_stat_inc (i32.const 5)))
+      (else (call $g2w_stat_inc (i32.const 4))))
+    (local.get $wa)
+  )
+  (func $w2g`,
     'packed affine result');
 
-  for (const backing of [
-    '$g2w_sparse_backing', '$g2w_sparse_backing1',
-    '$g2w_sparse_backing2', '$g2w_sparse_backing3',
-  ]) {
-    const needle = `      (then\n        (return (i32.add (global.get ${backing}) (local.get $off)))))`;
-    const replacement = `      (then\n        (call $g2w_stat_inc (i32.const 13))\n` +
-      `        (return (i32.add (global.get ${backing}) (local.get $off)))))`;
-    body = replaceOne(body, needle, replacement, `legacy affine cache ${backing}`);
-  }
-  body = replaceOne(body,
-    '      (br_if $mapped_done (i32.ge_u (local.get $i) (local.get $count)))',
-    '      (br_if $mapped_done (i32.ge_u (local.get $i) (local.get $count)))\n' +
-      '      (call $g2w_stat_inc (i32.const 16))',
-    'legacy affine scan iteration');
-  body = replaceOne(body,
-    '          (return (i32.add (local.get $backing) (local.get $off)))))',
-    '          (call $g2w_stat_inc (i32.const 14))\n' +
-      '          (return (i32.add (local.get $backing) (local.get $off)))))',
-    'legacy affine scan hit');
-  body = replaceOne(body,
-    '    (global.get $NULL_SENTINEL)',
-    '    (call $g2w_stat_inc (i32.const 15))\n' +
-      '    (global.get $NULL_SENTINEL)',
-    'legacy affine scan miss');
-
-  return source.slice(0, start) + body + source.slice(end);
+  return source;
 }
 
 function instrumentExports(source) {
   const marker = '  ;; --trace-esp wiring (test harness uses this). Pass hi=0 to disable';
-  const exports = String.raw`  ;; Offline-only page-translation census exports. The instrumented
-  ;; artifact stores seventeen shared u32 counters at TEST_SCRATCH+0..67.
+  const bytes = STAT_NAMES.length * 4;
+  const exports = String.raw`  ;; Offline-only page-translation census exports.
   (func (export "reset_guest_page_stats")
-    (memory.fill (global.get $TEST_SCRATCH) (i32.const 0) (i32.const 68)))
-  (func (export "get_guest_page_stat_count") (result i32) (i32.const 17))
+    (memory.fill (global.get $TEST_SCRATCH) (i32.const 0) (i32.const ${bytes})))
+  (func (export "get_guest_page_stat_count") (result i32)
+    (i32.const ${STAT_NAMES.length}))
   (func (export "get_guest_page_stat") (param $slot i32) (result i32)
-    (if (result i32) (i32.lt_u (local.get $slot) (i32.const 17))
+    (if (result i32) (i32.lt_u (local.get $slot) (i32.const ${STAT_NAMES.length}))
       (then
         (i32.atomic.load
           (i32.add (global.get $TEST_SCRATCH)
             (i32.shl (local.get $slot) (i32.const 2)))))
       (else (i32.const 0))))
+  (func (export "test_guest_page_map")
+      (param $ga i32) (param $len i32) (result i32)
+    (call $virtual_map_commit (local.get $ga) (local.get $len)))
   (func (export "test_guest_page_affine_span")
       (param $ga i32) (param $len i32) (result i32)
     (call $g2w_affine_span (local.get $ga) (local.get $len)))
@@ -214,9 +131,7 @@ function instrumentExports(source) {
 }
 
 function instrumentSource(filename, source) {
-  if (filename === '03-registers.wat') {
-    return instrumentAffineSpan(instrumentRegisters(source));
-  }
+  if (filename === '03-registers.wat') return instrumentRegisters(source);
   if (filename === '13-exports.wat') return instrumentExports(source);
   return source;
 }
@@ -234,7 +149,7 @@ function main() {
   const outPath = path.resolve(getArg('out', DEFAULT_OUT));
   const result = buildInstrumented(outPath);
   console.log(`page-translation-stats: wrote ${result.outPath} (${result.bytes} bytes)`);
-  console.log(`run with: node test/run.js --no-build --wasm=${result.outPath} --guest-page-stats [--guest-page-translation] ...`);
+  console.log(`run with: node test/run.js --no-build --wasm=${result.outPath} --guest-page-stats ...`);
 }
 
 if (require.main === module) {

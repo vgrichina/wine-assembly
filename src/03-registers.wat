@@ -171,8 +171,7 @@
     (global.get $NULL_SENTINEL))
 
   (func $g2w (param $ga i32) (result i32)
-    (local $wa i32) (local $i i32) (local $count i32) (local $off i32)
-    (local $rec i32) (local $base i32) (local $size i32) (local $backing i32)
+    (local $wa i32)
     (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
     (if (i32.eqz (i32.or (i32.lt_s (local.get $wa) (i32.const 0))
                 (i32.ge_u (local.get $wa) (region.end $DIRECT_WINDOW))))
@@ -187,74 +186,12 @@
         (return (i32.add
           (global.get $DIB_BACKING_BASE)
           (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))))))
-    ;; Experimental sparse fast path. The flat table covers the complete guest
-    ;; address space, so an absent entry is authoritative and never falls
-    ;; through to the established range cache or record walk.
-    (if (global.get $guest_page_translation)
-      (then
-        (local.set $wa (call $guest_page_translate (local.get $ga)))
-        (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
-          (then (return (local.get $wa))))
-        (return (call $g2w_miss (local.get $ga)))))
-    ;; Sparse VirtualAlloc mappings live outside the direct image-relative
-    ;; window. Map records are append-only (VirtualFree currently preserves
-    ;; its backing), so a successful last-range translation remains valid even
-    ;; when another thread appends or extends a record. An extension can miss
-    ;; the old cached size once, then the scan below refreshes it.
-    (local.set $off
-      (i32.sub (local.get $ga) (global.get $g2w_sparse_base)))
-    (if (i32.lt_u (local.get $off) (global.get $g2w_sparse_size))
-      (then
-        (return (i32.add (global.get $g2w_sparse_backing) (local.get $off)))))
-    (local.set $off
-      (i32.sub (local.get $ga) (global.get $g2w_sparse_base1)))
-    (if (i32.lt_u (local.get $off) (global.get $g2w_sparse_size1))
-      (then
-        (return (i32.add (global.get $g2w_sparse_backing1) (local.get $off)))))
-    (local.set $off
-      (i32.sub (local.get $ga) (global.get $g2w_sparse_base2)))
-    (if (i32.lt_u (local.get $off) (global.get $g2w_sparse_size2))
-      (then
-        (return (i32.add (global.get $g2w_sparse_backing2) (local.get $off)))))
-    (local.set $off
-      (i32.sub (local.get $ga) (global.get $g2w_sparse_base3)))
-    (if (i32.lt_u (local.get $off) (global.get $g2w_sparse_size3))
-      (then
-        (return (i32.add (global.get $g2w_sparse_backing3) (local.get $off)))))
-    ;; Scan only after direct, DIB, and cached sparse translation failed.
-    ;; The count and each record's size are the two fields $virtual_map_commit
-    ;; publishes LAST, after the memory they describe is mapped and zeroed. Read
-    ;; them atomically so this scan cannot be reordered ahead of the record it is
-    ;; about to trust. Everything else here is read-only, so no lock: the writer
-    ;; holds $LOCK_VIRTUAL_MAP, the readers never do — see $virtual_map_commit.
-    (local.set $count (i32.atomic.load (global.get $VIRTUAL_MAP_STATE)))
-    (local.set $i (i32.const 0))
-    (block $mapped_done (loop $mapped_scan
-      (br_if $mapped_done (i32.ge_u (local.get $i) (local.get $count)))
-      (local.set $rec (i32.add (global.get $VIRTUAL_MAP_TABLE) (i32.shl (local.get $i) (i32.const 4))))
-      (local.set $base (i32.load (local.get $rec)))
-      (local.set $size (i32.atomic.load (i32.add (local.get $rec) (i32.const 4))))
-      (if (i32.and
-            (i32.ge_u (local.get $ga) (local.get $base))
-            (i32.lt_u (local.get $ga) (i32.add (local.get $base) (local.get $size))))
-        (then
-          (local.set $backing (i32.load (i32.add (local.get $rec) (i32.const 8))))
-          (global.set $g2w_sparse_base3 (global.get $g2w_sparse_base2))
-          (global.set $g2w_sparse_size3 (global.get $g2w_sparse_size2))
-          (global.set $g2w_sparse_backing3 (global.get $g2w_sparse_backing2))
-          (global.set $g2w_sparse_base2 (global.get $g2w_sparse_base1))
-          (global.set $g2w_sparse_size2 (global.get $g2w_sparse_size1))
-          (global.set $g2w_sparse_backing2 (global.get $g2w_sparse_backing1))
-          (global.set $g2w_sparse_base1 (global.get $g2w_sparse_base))
-          (global.set $g2w_sparse_size1 (global.get $g2w_sparse_size))
-          (global.set $g2w_sparse_backing1 (global.get $g2w_sparse_backing))
-          (global.set $g2w_sparse_base (local.get $base))
-          (global.set $g2w_sparse_size (local.get $size))
-          (global.set $g2w_sparse_backing (local.get $backing))
-          (return (i32.add (local.get $backing) (i32.sub (local.get $ga) (local.get $base))))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $mapped_scan)))
-    ;; Nothing maps this address.
+    ;; Sparse VirtualAlloc mappings use the flat PTE table. A missing entry is
+    ;; authoritative: VIRTUAL_MAP_TABLE remains allocation/query metadata and
+    ;; is never a second translation mechanism.
+    (local.set $wa (call $guest_page_translate (local.get $ga)))
+    (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
+      (then (return (local.get $wa))))
     (call $g2w_miss (local.get $ga))
   )
 
@@ -264,8 +201,7 @@
   ;; a mapping boundary or is unmapped, so callers can retain their elementwise
   ;; fallback. The unsigned `len <= size-off` form also rejects wrapped ends.
   (func $g2w_affine_span (param $ga i32) (param $len i32) (result i32)
-    (local $wa i32) (local $off i32) (local $i i32) (local $count i32)
-    (local $rec i32) (local $base i32) (local $size i32) (local $backing i32)
+    (local $wa i32) (local $off i32)
 
     (local.set $wa
       (i32.add (i32.sub (local.get $ga) (global.get $image_base))
@@ -285,81 +221,10 @@
       (then
         (return (i32.add (global.get $DIB_BACKING_BASE) (local.get $off)))))
 
-    ;; Packed mode validates the complete span from PTEs and never consults
-    ;; the legacy cache/record walk below. The page-boundary loop is amortized
-    ;; by the bulk operation that requested the span.
-    (if (global.get $guest_page_translation)
-      (then
-        (return
-          (call $guest_page_affine_span (local.get $ga) (local.get $len)))))
-
-    ;; Check the four per-instance sparse records before scanning the shared
-    ;; append-only table. A cached size is published atomically by g2w's scan.
-    (local.set $off (i32.sub (local.get $ga) (global.get $g2w_sparse_base)))
-    (if (i32.and
-          (i32.lt_u (local.get $off) (global.get $g2w_sparse_size))
-          (i32.le_u (local.get $len)
-            (i32.sub (global.get $g2w_sparse_size) (local.get $off))))
-      (then
-        (return (i32.add (global.get $g2w_sparse_backing) (local.get $off)))))
-    (local.set $off (i32.sub (local.get $ga) (global.get $g2w_sparse_base1)))
-    (if (i32.and
-          (i32.lt_u (local.get $off) (global.get $g2w_sparse_size1))
-          (i32.le_u (local.get $len)
-            (i32.sub (global.get $g2w_sparse_size1) (local.get $off))))
-      (then
-        (return (i32.add (global.get $g2w_sparse_backing1) (local.get $off)))))
-    (local.set $off (i32.sub (local.get $ga) (global.get $g2w_sparse_base2)))
-    (if (i32.and
-          (i32.lt_u (local.get $off) (global.get $g2w_sparse_size2))
-          (i32.le_u (local.get $len)
-            (i32.sub (global.get $g2w_sparse_size2) (local.get $off))))
-      (then
-        (return (i32.add (global.get $g2w_sparse_backing2) (local.get $off)))))
-    (local.set $off (i32.sub (local.get $ga) (global.get $g2w_sparse_base3)))
-    (if (i32.and
-          (i32.lt_u (local.get $off) (global.get $g2w_sparse_size3))
-          (i32.le_u (local.get $len)
-            (i32.sub (global.get $g2w_sparse_size3) (local.get $off))))
-      (then
-        (return (i32.add (global.get $g2w_sparse_backing3) (local.get $off)))))
-
-    (local.set $count (i32.atomic.load (global.get $VIRTUAL_MAP_STATE)))
-    (local.set $i (i32.const 0))
-    (block $mapped_done (loop $mapped_scan
-      (br_if $mapped_done (i32.ge_u (local.get $i) (local.get $count)))
-      (local.set $rec
-        (i32.add (global.get $VIRTUAL_MAP_TABLE)
-          (i32.shl (local.get $i) (i32.const 4))))
-      (local.set $base (i32.load (local.get $rec)))
-      (local.set $size
-        (i32.atomic.load (i32.add (local.get $rec) (i32.const 4))))
-      (local.set $off (i32.sub (local.get $ga) (local.get $base)))
-      (if (i32.and
-            (i32.lt_u (local.get $off) (local.get $size))
-            (i32.le_u (local.get $len)
-              (i32.sub (local.get $size) (local.get $off))))
-        (then
-          (local.set $backing
-            (i32.load (i32.add (local.get $rec) (i32.const 8))))
-          ;; Populate the ordinary g2w cache too: a later scalar access to the
-          ;; same record should benefit from this scan rather than repeat it.
-          (global.set $g2w_sparse_base3 (global.get $g2w_sparse_base2))
-          (global.set $g2w_sparse_size3 (global.get $g2w_sparse_size2))
-          (global.set $g2w_sparse_backing3 (global.get $g2w_sparse_backing2))
-          (global.set $g2w_sparse_base2 (global.get $g2w_sparse_base1))
-          (global.set $g2w_sparse_size2 (global.get $g2w_sparse_size1))
-          (global.set $g2w_sparse_backing2 (global.get $g2w_sparse_backing1))
-          (global.set $g2w_sparse_base1 (global.get $g2w_sparse_base))
-          (global.set $g2w_sparse_size1 (global.get $g2w_sparse_size))
-          (global.set $g2w_sparse_backing1 (global.get $g2w_sparse_backing))
-          (global.set $g2w_sparse_base (local.get $base))
-          (global.set $g2w_sparse_size (local.get $size))
-          (global.set $g2w_sparse_backing (local.get $backing))
-          (return (i32.add (local.get $backing) (local.get $off)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $mapped_scan)))
-    (global.get $NULL_SENTINEL)
+    ;; The page-boundary walk is amortized by the bulk operation that requested
+    ;; the span. NULL_SENTINEL tells that caller to preserve exact x86 ordering
+    ;; through its elementwise path when pages are missing or non-contiguous.
+    (call $guest_page_affine_span (local.get $ga) (local.get $len))
   )
   (func $w2g (param $wa i32) (result i32)
     (if (result i32)
@@ -411,21 +276,7 @@
       (i32.load8_u (local.get $wa))
       (i32.shl (i32.load8_u (local.get $end_wa)) (i32.const 8))))
   (func $gl8 (param $ga i32) (result i32)
-    (local $page i32) (local $wa i32)
-    (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
-    (if (i32.eq (local.get $page) (global.get $g2w_gl8_page))
-      (then
-        (return (i32.load8_u
-          (i32.add (local.get $ga) (global.get $g2w_gl8_delta))))))
-    (local.set $wa (call $g2w (local.get $ga)))
-    ;; Never cache an invalid translation: NULL_SENTINEL is four bytes, not a
-    ;; backing page, and adding an address offset to it would turn later bad
-    ;; reads into arbitrary linear-memory reads.
-    (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
-      (then
-        (global.set $g2w_gl8_page (local.get $page))
-        (global.set $g2w_gl8_delta (i32.sub (local.get $wa) (local.get $ga)))))
-    (i32.load8_u (local.get $wa)))
+    (i32.load8_u (call $g2w (local.get $ga))))
   ;; Cheap "could a write here be touching code?" test, for one guest address.
   ;; Split out of $invalidate_code_write so the range form can skip it when the
   ;; write spans pages and the per-page walk will ask the question anyway.

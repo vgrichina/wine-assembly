@@ -3251,13 +3251,6 @@
   ;; call to see the same setting.
   (func (export "set_fault_unmapped") (param $mode i32)
     (global.set $fault_unmapped (local.get $mode)))
-  ;; Experimental packed sparse-page translation. Kept independent from the
-  ;; later permission policy so lookup speed can be measured without changing
-  ;; which guest accesses succeed.
-  (func (export "set_guest_page_translation") (param $enabled i32)
-    (call $guest_page_translation_set (local.get $enabled)))
-  (func (export "get_guest_page_translation") (result i32)
-    (global.get $guest_page_translation))
   (func (export "get_guest_page_table_size") (result i32)
     (global.get $GUEST_PAGE_TABLE_SIZE))
   (func (export "get_bp_first_caller") (result i32) (global.get $bp_first_caller))

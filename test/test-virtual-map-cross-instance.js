@@ -20,16 +20,11 @@ const extraWat = String.raw`
         (global.get $VIRTUAL_MAP_TABLE_SIZE)))
     (call $zero_memory (global.get $GUEST_PAGE_TABLE)
       (global.get $GUEST_PAGE_TABLE_SIZE))
-    (call $zero_memory (global.get $GUEST_PAGE_STATE)
-      (global.get $GUEST_PAGE_STATE_SIZE))
     (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))
       (global.get $VIRTUAL_BACKING_BASE))
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
     (global.set $heap_sparse_ptr (i32.const 0))
-    (global.set $heap_sparse_end (i32.const 0))
-    ;; Preserve this instance's selected A/B arm across the test-only shared
-    ;; table reset, including the process-wide publication bit.
-    (call $guest_page_translation_set (global.get $guest_page_translation)))
+    (global.set $heap_sparse_end (i32.const 0)))
   (func (export "test_virtual_worker_reset")
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
     (global.set $heap_sparse_ptr (i32.const 0))
@@ -122,11 +117,6 @@ async function main() {
   main.test_virtual_reset();
   worker.test_virtual_worker_reset();
 
-  assert.strictEqual(main.get_guest_page_translation(), 0,
-    'packed sparse translation must remain opt-in while it is experimental');
-  main.set_guest_page_translation(1);
-  worker.set_guest_page_translation(1);
-
   assert.strictEqual(main.test_virtual_lock(0x00401000, 0x1000), 1,
     'resident guest memory must be lockable');
   assert.strictEqual(main.test_virtual_unlock(0x00401000, 0x1000), 1,
@@ -186,17 +176,22 @@ async function main() {
   assert.strictEqual(worker.guest_to_wasm(upperGuest) >>> 0, 0xf0,
     'upper-half PTE release must become visible across instances');
 
-  // A cleared PTE is authoritative in packed mode. In particular, do not fall
-  // through to this instance's old four-entry cache after MEM_RELEASE.
+  // A cleared PTE is authoritative. In particular, do not resurrect released
+  // backing by consulting the allocation metadata table after MEM_RELEASE.
   main.test_virtual_reset();
   const released = main.test_virtual_alloc_commit(0x2000) >>> 0;
   const releasedBacking = main.guest_to_wasm(released) >>> 0;
   assert.notStrictEqual(releasedBacking, 0xf0,
     'freshly committed page must have packed backing');
+  main.test_virtual_write32(released, 0x7b);
+  assert.strictEqual(main.guest_read8(released), 0x7b,
+    'byte read must observe the live sparse mapping');
   assert.strictEqual(main.test_virtual_free(released) >>> 0, 1,
     'packed mapping should remain releasable');
   assert.strictEqual(main.guest_to_wasm(released) >>> 0, 0xf0,
     'released packed mapping must become unmapped immediately');
+  assert.strictEqual(main.guest_read8(released), 0,
+    'byte reads must not retain a per-instance translation after release');
 
   // Storm's image preload performs more than 2048 short-lived reserve/commit
   // cycles. Returning success from VirtualFree without removing mappings made

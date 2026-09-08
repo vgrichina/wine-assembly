@@ -3,19 +3,19 @@
 ## Question
 
 Wine Assembly's common image-relative and DIB guest addresses already use
-constant-time arithmetic. Sparse `VirtualAlloc` addresses instead use a
+constant-time arithmetic. Sparse `VirtualAlloc` addresses formerly used a
 four-entry range cache followed by a linear map-record scan. This experiment
-asks whether an optional packed page lookup is a useful foundation for later
-Win98 page-access auditing, without changing which accesses currently succeed.
+asked whether a packed page lookup was a useful foundation for later Win98
+page-access auditing, without changing which accesses currently succeed.
 
 It does **not** implement `PAGE_*` enforcement. Translation mechanism and
 access policy remain separate so each can be measured independently.
 
 ## Candidate
 
-The current opt-in `--guest-page-translation` path leaves direct and DIB
-translation unchanged. Sparse mappings use one flat 4 MiB array with one
-four-byte PTE for every 4 KiB page in the complete 32-bit guest address space:
+The promoted implementation leaves direct and DIB translation unchanged.
+Sparse mappings use one flat 4 MiB array with one four-byte PTE for every 4 KiB
+page in the complete 32-bit guest address space:
 
 ```text
 guest address 0xFEDCBA98
@@ -25,25 +25,24 @@ guest address 0xFEDCBA98
                                                 + guest & 0xfff
 ```
 
-Sparse commits publish PTEs before the mapping becomes visible; release clears
-PTEs before backing can be reused. Enabling the option backfills existing
-mappings while holding the shared virtual-map lock, then makes later
-allocations publish across worker instances.
+Sparse commits always publish PTEs before the mapping becomes visible; release
+always clears PTEs before backing can be reused. The shared table therefore
+needs no per-instance enable flag or Worker-global propagation.
 
-There is no runtime legacy fallback in packed mode. A zero PTE is an
-authoritative miss and goes directly to the normal unmapped-access result. The
-old four-entry range cache and record walk remain compiled only as the off arm
-of the current A/B experiment. `VIRTUAL_MAP_TABLE` still remains necessary as
-allocation, release, and `VirtualQuery` metadata; translation no longer needs
-to scan it. The default remains off while application/browser acceptance is in
-progress.
+There is no runtime legacy fallback. A zero PTE is an authoritative miss and
+goes directly to the normal unmapped-access result. The old four-entry range
+cache, byte-page cache, record walk, enable flag, CLI/browser toggle, and Worker
+inheritance plumbing have been removed. `VIRTUAL_MAP_TABLE` remains necessary
+as allocation, release, and `VirtualQuery` metadata; translation never scans
+it.
 
 ## Synthetic results
 
-`tools/bench-loops.js` now supports `--mapping=sparse`, the
-`guest_page_translation` A/B toggle, and a `sparse_scatter` shape that cycles
-through separately mapped pages. Results below use interleaved arms; positive
-numbers mean packed lookup was faster.
+During the experiment `tools/bench-loops.js` supported a
+`guest_page_translation` A/B toggle alongside `--mapping=sparse` and the
+`sparse_scatter` shape. Results below use interleaved arms; positive numbers
+mean packed lookup was faster. The production toggle was removed after the
+decision; the sparse shapes remain as translator benchmarks.
 
 | Sparse working set | Packed result |
 | --- | ---: |
@@ -204,7 +203,10 @@ instrumented WASM artifact. It atomically counts translation paths across the
 main and guest-thread instances without adding a branch to the production
 module. `test/run.js --guest-page-stats` reports the counters and rejects a
 canonical artifact, so the census cannot accidentally be mistaken for an
-ordinary benchmark build.
+ordinary benchmark build. After promotion its schema contains only the six
+real production paths: direct, DIB, packed hit/miss, and packed affine-span
+hit/miss. The legacy counters below are preserved historical evidence, not
+paths the current tool can exercise.
 
 The counters reset immediately before guest execution, excluding PE/DLL load
 and packed-table backfill. These short runs are path censuses, not throughput
@@ -246,10 +248,10 @@ translators reject the unsafe fast path and complete through elementwise
 translation instead. Separate tests cover contiguous, unmapped, zero-length,
 and wrapping packed spans.
 
-The browser exposes the same experiment as `?guest-page-translation`, applied
-before the guest's first slice. A StarCraft browser smoke run stayed live
-(four of five screen probes changed) and reported the option enabled in both
-the main and spawned cooperative WASM instances.
+During A/B collection the browser exposed the same experiment as
+`?guest-page-translation`, applied before the guest's first slice. A StarCraft
+browser smoke run stayed live (four of five screen probes changed) and reported
+the option enabled in both the main and spawned cooperative WASM instances.
 
 StarCraft was then repeated under the project's acceptable host-load threshold
 in rotated legacy/packed order, with a four-second warmup and five-second
@@ -267,25 +269,28 @@ Legacy guest frame rates were 14.76 and 14.89 fps; packed rates were 14.98 and
 presented 152 full frames during the sample, remained live in the game's main
 loop, and had smooth compositor pacing with no sampled interval above 33 ms.
 
-## Verdict
+After promotion, a normal browser launch with no translation query kept
+StarCraft live (six of seven screen probes changed), exposed the 4 MiB table,
+and no longer exported `set_guest_page_translation`. The query seam and its
+cache-busted browser code were removed rather than retained as a hidden mode.
 
-Keep the candidate isolated until the remaining browser acceptance runs are
-complete. The expanded sample looks positive or neutral rather than exposing a
-clear whole-application regression. Quake II, the larger Fallout repeat, the
-current-main one-map microbenchmark, StarCraft in-browser, and Diablo
-in-browser are useful neutral controls. Large variance in GTA2 and the single
-complete Diablo II pair still prevent a universal-speedup claim.
+## Decision and integration
 
-Prefer the flat-table follow-up over the demand-leaf prototype for eventual
-integration. Its extra memory is fixed and modest, its lookup is no slower in
-the measurements, and it removes the conditions that required a legacy
-translation fallback. A separate hot cache is not justified by the current
-data: the flat lookup already removed the one-map regression.
+Promote the flat packed table and remove the legacy translator. The expanded
+sample is positive or neutral rather than exposing a clear whole-application
+regression. Quake II, the larger Fallout repeat, the current-main one-map
+microbenchmark, StarCraft in-browser, and Diablo in-browser are useful neutral
+controls. Large variance in GTA2 and the single complete Diablo II pair still
+prevent a universal-speedup claim, but a universal speedup is not required for
+the simpler authoritative translator.
 
-Before integrating:
+The promoted branch always publishes and clears PTEs, removes the two sparse
+translation caches and allocation-record scan, and deletes the CLI/browser and
+Worker option plumbing. A focused release test proves byte reads cannot retain
+stale per-instance backing, cross-instance tests cover publication and release,
+and a rebuilt browser artifact keeps StarCraft live without the old setter.
 
-1. Repeat fixed-work **browser** A/Bs for Heroes II/III, Diablo II, and Alpha
-   Centauri with rotated arm order; StarCraft and Diablo are neutral, while D2
-   has a healthy CLI baseline but only one complete pair.
-2. Only then layer optional audit/enforcement of `VirtualAlloc` and
-   `VirtualProtect` access flags onto the chosen translator.
+The next memory-model step is optional audit/enforcement of `VirtualAlloc` and
+`VirtualProtect` access flags on this one authoritative translator. Remaining
+game runs now serve general acceptance and permission-policy evaluation; they
+are no longer a gate for selecting between two address lookup implementations.

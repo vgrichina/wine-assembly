@@ -45,7 +45,7 @@ for (const setter of [
   'set_trace_eip_range', 'set_count', 'set_loop_trace', 'set_loop_emit',
   'set_loop_lut_emit', 'set_loop_copy_emit', 'set_loop_aoe_fill_emit',
   'set_loop_aoe_span_emit', 'set_sib_fusion', 'set_rect_run',
-  'set_case_chain', 'set_rle_run', 'set_guest_page_translation',
+  'set_case_chain', 'set_rle_run',
 ]) {
   assert(setters.includes(setter), `${setter} is missing from inherited WASM globals`);
 }
@@ -63,7 +63,6 @@ record('set_sib_fusion', 0);
 record('set_rect_run', 0);
 record('set_case_chain', 0);
 record('set_rle_run', 0);
-record('set_guest_page_translation', 1);
 record('set_cs_steal_after', 37);
 record('set_fault_unmapped', 2);
 record('set_callstack_enabled', 1);
@@ -80,7 +79,6 @@ const state = manager._workerWasmGlobals({
   get_bp_addr: () => 0x407000,
   get_watch_size: () => 2,
   get_watch_addr: () => 0x408000,
-  get_guest_page_translation: () => 1,
 });
 const calls = inheritedWasmCalls(state);
 const bySetter = new Map(calls.map(call => [call.setter, call.args]));
@@ -89,7 +87,6 @@ assert.deepStrictEqual(bySetter.get('set_winver'), [0xC0000A04]);
 assert.deepStrictEqual(bySetter.get('set_bp'), [0x407000]);
 assert.deepStrictEqual(bySetter.get('set_watchpoint_size'), [2]);
 assert.deepStrictEqual(bySetter.get('set_watchpoint'), [0x408000]);
-assert.deepStrictEqual(bySetter.get('set_guest_page_translation'), [1]);
 assert.deepStrictEqual(calls.filter(call => call.setter === 'set_count'), [
   { setter: 'set_count', args: [0, 0x404000] },
   { setter: 'set_count', args: [2, 0x406000] },

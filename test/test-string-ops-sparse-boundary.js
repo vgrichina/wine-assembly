@@ -65,8 +65,7 @@ async function main() {
   const code = imageBase + 0x2000;
   new Uint8Array(memory.buffer).set([0xfd, 0xf3, 0xa5, 0xfc, 0xc3], direct(code));
   const stack = imageBase + 0xd00000;
-  const runCopy = (packed) => {
-    e.set_guest_page_translation(packed ? 1 : 0);
+  const runCopy = () => {
     for (let i = 0; i < values.length; i++) {
       e.guest_write32(destination + i * 4, 0);
     }
@@ -78,21 +77,19 @@ async function main() {
     e.set_eip(code);
     e.run(100000);
 
-    const mode = packed ? 'packed' : 'legacy';
-    assert.strictEqual(e.get_eip() >>> 0, 0, `${mode}: test code should return to the sentinel`);
-    assert.strictEqual(e.get_ecx() >>> 0, 0, `${mode}: REP MOVSD should consume ECX`);
-    assert.strictEqual(e.get_esi() >>> 0, source - 4, `${mode}: DF copy should decrement ESI`);
+    assert.strictEqual(e.get_eip() >>> 0, 0, 'test code should return to the sentinel');
+    assert.strictEqual(e.get_ecx() >>> 0, 0, 'REP MOVSD should consume ECX');
+    assert.strictEqual(e.get_esi() >>> 0, source - 4, 'DF copy should decrement ESI');
     assert.strictEqual(e.get_edi() >>> 0, destination - 4,
-      `${mode}: DF copy should decrement EDI`);
+      'DF copy should decrement EDI');
     for (let i = 0; i < values.length; i++) {
       assert.strictEqual(e.guest_read32(destination + i * 4) >>> 0, values[i],
-        `${mode}: dword ${i} should cross the sparse-map boundary intact`);
+        `dword ${i} should cross the sparse-map boundary intact`);
     }
   };
-  runCopy(false);
-  runCopy(true);
+  runCopy();
 
-  console.log('PASS  REP MOVSD crosses non-contiguous sparse backing safely in both translators');
+  console.log('PASS  REP MOVSD falls back elementwise across non-contiguous sparse backing');
 }
 
 main().catch(error => {

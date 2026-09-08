@@ -58,8 +58,7 @@
 //   node tools/bench-loops.js --list
 //   node tools/bench-loops.js                          # all shapes, 4MB set
 //   node tools/bench-loops.js --shapes=lut,store_stream --bytes=16m
-//   node tools/bench-loops.js --shapes=lut,store_stream --mapping=sparse \
-//     --toggle=guest_page_translation
+//   node tools/bench-loops.js --shapes=lut,store_stream --mapping=sparse
 //   node tools/bench-loops.js --shapes=cmp_ladder --toggle=case_chain
 //   node tools/bench-loops.js --json
 
@@ -482,7 +481,6 @@ const TOGGLES = {
   case_chain: 'set_case_chain',
   rle_run: 'set_rle_run',
   rect_run: 'set_rect_run',
-  guest_page_translation: 'set_guest_page_translation',
 };
 
 // ---------------------------------------------------------------------------
@@ -717,12 +715,6 @@ async function main() {
     // over from the previous shape would make this one's numbers depend on run
     // order, which is the exact failure mode that wrecked the whole-app A/Bs.
     const inst = await newInstance();
-    // PTE publication is dormant in real off-runs. Arm it before allocating
-    // benchmark mappings so the timed off arm measures only legacy lookup,
-    // while both arms share identical already-created backing.
-    if (toggle === 'guest_page_translation') {
-      inst.e.set_guest_page_translation(1);
-    }
     const a = layout(inst.imageBase, bufBytes);
     a.scatterPageCount = scatterPageCount;
     if (mapping === 'sparse') {

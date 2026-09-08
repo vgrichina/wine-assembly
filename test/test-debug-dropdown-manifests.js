@@ -25,12 +25,11 @@ assert(html.includes('id="app-picker"') && html.includes('class="app-picker-popu
   'debug toolbar must expose the searchable app-picker shell');
 assert(html.includes('lib/debug-app-picker.js?v=2'),
   'debug app picker must be loaded with an explicit browser cache token');
-assert(html.includes('lib/browser-shell.js?v=41'),
-  'browser shell must be cache-busted for packed guest-page A/B support');
-assert(browserShell.includes("has('guest-page-translation')") &&
-  browserShell.includes("recordInheritedWasmGlobal('set_guest_page_translation', 1)") &&
-  browserShell.includes("wine.callGuest('set_guest_page_translation', 1)"),
-  'the browser packed-translation opt-in must reach the main guest and future Workers');
+assert(html.includes('lib/browser-shell.js?v=42'),
+  'browser shell must be cache-busted after removing the packed-page A/B seam');
+assert(!browserShell.includes('guest-page-translation') &&
+  !guestExports.includes('set_guest_page_translation'),
+  'packed translation is unconditional and must not retain a browser runtime toggle');
 const dropdownIds = [...select[1].matchAll(/<option value="([^"]+)"/g)]
   .map(match => match[1]);
 
