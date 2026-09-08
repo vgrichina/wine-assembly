@@ -63,6 +63,7 @@ UNIT=(
   test/test-win16-exec.js
   test/test-win16-civ2-apis.js
   test/test-win16-temp-file.js
+  test/test-win16-version.js
   test/test-win16-lazy-file-read.js
   test/test-win16-destroy-icon.js
   test/test-fs-prefix.js
@@ -185,6 +186,7 @@ UNIT=(
   test/test-directsound3d-web-audio.js
   test/test-directsound3d-listener.js
   test/test-directsound-ordinals.js
+  test/test-directsound-cocreate.js
   test/test-directsound-buffer-format.js
   test/test-wave-out-get-id.js
   test/test-core-no-app-fast-paths.js

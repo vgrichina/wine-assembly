@@ -1796,6 +1796,26 @@
           (i32.ne (local.get $obj_guest) (i32.const 0))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
+    ;; CLSID_DirectSound {47D4D946-62E8-11CF-93BC-444553540000}.
+    ;; The Win98-era SMAC demo creates IID_IDirectSound through COM rather
+    ;; than calling DirectSoundCreate, but both entry points own the same
+    ;; native interface and object state.
+    (if (i32.eq (local.get $clsid_d1) (i32.const 0x47D4D946))
+      (then
+        (if (i32.or (local.get $arg1) (i32.eqz (local.get $arg4)))
+          (then
+            (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
+            (global.set $eax (select (i32.const 0x80040110) (i32.const 0x80004003)
+              (i32.ne (local.get $arg4) (i32.const 0))))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)))
+        (local.set $obj_guest (call $dx_create_com_obj
+          (i32.const 4) (global.get $DX_VTBL_DSOUND)))
+        (call $gs32 (local.get $arg4) (local.get $obj_guest))
+        (global.set $eax (select (i32.const 0) (i32.const 0x8007000E)
+          (i32.ne (local.get $obj_guest) (i32.const 0))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
     ;; CLSID_DirectX7 {E1211353-8E94-11D1-8808-00C04FC2C602}, the VB6
     ;; DX7VB automation bootstrap. Its first direct method manufactures the
     ;; existing IDirectDraw7-compatible wrapper.
