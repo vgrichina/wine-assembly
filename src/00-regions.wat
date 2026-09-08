@@ -373,7 +373,7 @@
   (region.declare $CURSOR_COLOR_DESC (size 0x00000050) (align 0x00000010)
     (owner "09a-handlers.wat:5512"))
   (region.declare $EDIT_LAYOUT_SCRATCH (size 0x00000C00) (align 0x00000100)
-    (owner "09c3-controls.wat:14637"))
+    (owner "09c3-controls.wat:14760"))
   (region.declare $VIRTUAL_MAP_STATE (size 0x00000010) (align 0x00000100)
     (owner "10-helpers.wat:447"))
   (region.declare $VIRTUAL_MAP_TABLE (size 0x00008000) (align 0x00000010)

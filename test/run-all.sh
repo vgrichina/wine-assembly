@@ -302,6 +302,7 @@ UNIT=(
   test/test-get-last-active-popup.js
   test/test-process-id.js
   test/test-render-color-dlg.js
+  test/test-static-bitmap-control.js
   test/test-render-find-dlg.js
   test/test-render-font-dlg.js
   test/test-render-open-dlg.js

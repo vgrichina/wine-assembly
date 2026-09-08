@@ -6624,6 +6624,9 @@
     (local $fmt i32) (local $ex i32) (local $tx_l i32) (local $tx_t i32)
     (local $tx_r i32) (local $tx_b i32) (local $brush i32) (local $ctrl_id i32)
     (local $origin_clip i32) (local $image i32) (local $previous i32)
+    (local $full_style i32) (local $bitmap i32) (local $bitmap_w i32)
+    (local $bitmap_h i32) (local $bitmap_dc i32) (local $bitmap_owned i32)
+    (local $bitmap_x i32) (local $bitmap_y i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -6765,6 +6768,35 @@
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (return (call $static_image_ord (call $g2w (local.get $state))))))
 
+    ;; ---------- STM_SETIMAGE / STM_GETIMAGE ----------
+    ;; HBITMAP is carried in lParam for STM_SETIMAGE; unlike a resource
+    ;; ordinal supplied at creation, the caller retains ownership.
+    (if (i32.eq (local.get $msg) (i32.const 0x0172))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (if (i32.or
+              (i32.ne (local.get $wParam) (i32.const 0)) ;; IMAGE_BITMAP
+              (i32.ne
+                (i32.and (call $static_style (local.get $state_w)) (i32.const 0x0F))
+                (i32.const 0x0E)))
+          (then (return (i32.const 0))))
+        (local.set $previous (call $static_image_ord (local.get $state_w)))
+        (call $static_set_image_ord (local.get $state_w) (local.get $lParam))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (local.get $previous))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0173))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (if (i32.or
+              (i32.ne (local.get $wParam) (i32.const 0)) ;; IMAGE_BITMAP
+              (i32.ne
+                (i32.and (call $static_style (local.get $state_w)) (i32.const 0x0F))
+                (i32.const 0x0E)))
+          (then (return (i32.const 0))))
+        (return (call $static_image_ord (local.get $state_w)))))
+
     ;; ---------- WM_PAINT ----------
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
@@ -6781,7 +6813,8 @@
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
-        (local.set $style (i32.and (call $static_style (local.get $state_w)) (i32.const 0x0F)))
+        (local.set $full_style (call $static_style (local.get $state_w)))
+        (local.set $style (i32.and (local.get $full_style) (i32.const 0x0F)))
         (local.set $ex (call $ctrl_get_ex_style (local.get $hwnd)))
         (local.set $ctrl_id (call $ctrl_table_get_id (local.get $hwnd)))
         ;; Default text rect = full client.
@@ -6878,6 +6911,97 @@
           (select (call $static_font (local.get $state_w)) (i32.const 0x30021)
             (i32.ne (call $static_font (local.get $state_w)) (i32.const 0)))))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+        ;; SS_BITMAP accepts either a dialog-template RT_BITMAP ordinal or an
+        ;; HBITMAP installed with STM_SETIMAGE. Resource bitmaps are temporary
+        ;; WAT GDI objects: release them after the blit so repainting a static
+        ;; cannot exhaust the fixed object table.
+        (if (i32.and
+              (i32.eq (local.get $style) (i32.const 0x0E))
+              (i32.ne (call $static_image_ord (local.get $state_w)) (i32.const 0)))
+          (then
+            (local.set $image (call $static_image_ord (local.get $state_w)))
+            (local.set $bitmap_owned (i32.lt_u (local.get $image) (i32.const 0x10000)))
+            (local.set $bitmap
+              (if (result i32) (local.get $bitmap_owned)
+                (then (call $gdi_bitmap_load_resource
+                  (i32.const 0) (local.get $image) (i32.const 0)))
+                (else (local.get $image))))
+            (if (local.get $bitmap)
+              (then
+                (local.set $bitmap_w (call $host_gdi_get_object_w (local.get $bitmap)))
+                (local.set $bitmap_h (call $host_gdi_get_object_h (local.get $bitmap)))
+                (if (i32.and
+                      (i32.and
+                        (i32.gt_s (local.get $bitmap_w) (i32.const 0))
+                        (i32.gt_s (local.get $bitmap_h) (i32.const 0)))
+                      (i32.and
+                        (i32.eqz (i32.and (local.get $full_style) (i32.const 0x200))) ;; SS_CENTERIMAGE
+                        (i32.eqz (i32.and (local.get $full_style) (i32.const 0x40))))) ;; SS_REALSIZECONTROL
+                  (then
+                    ;; SS_BITMAP ignores the requested extent and adopts the
+                    ;; image's natural size. SS_RIGHTJUST keeps the original
+                    ;; lower-right corner fixed while that adjustment occurs.
+                    (local.set $bitmap_x (call $ctrl_get_x_s (local.get $hwnd)))
+                    (local.set $bitmap_y (call $ctrl_get_y_s (local.get $hwnd)))
+                    (if (i32.and (local.get $full_style) (i32.const 0x400))
+                      (then
+                        (local.set $bitmap_x
+                          (i32.add (local.get $bitmap_x)
+                            (i32.sub (local.get $w) (local.get $bitmap_w))))
+                        (local.set $bitmap_y
+                          (i32.add (local.get $bitmap_y)
+                            (i32.sub (local.get $h) (local.get $bitmap_h))))))
+                    (call $ctrl_geom_set (call $wnd_table_find (local.get $hwnd))
+                      (local.get $bitmap_x) (local.get $bitmap_y)
+                      (local.get $bitmap_w) (local.get $bitmap_h))
+                    (local.set $w (local.get $bitmap_w))
+                    (local.set $h (local.get $bitmap_h))
+                    ;; The paint DC was bound above using the template extent.
+                    ;; Rebuild its USER clip before drawing the resized image.
+                    (call $dc_apply_client_clip (local.get $hdc) (local.get $hwnd))))
+                (if (i32.and
+                      (i32.gt_s (local.get $bitmap_w) (i32.const 0))
+                      (i32.gt_s (local.get $bitmap_h) (i32.const 0)))
+                  (then
+                    (local.set $bitmap_x (i32.const 0))
+                    (local.set $bitmap_y (i32.const 0))
+                    (if (i32.and (local.get $full_style) (i32.const 0x200)) ;; SS_CENTERIMAGE
+                      (then
+                        (local.set $bitmap_x
+                          (i32.div_s (i32.sub (local.get $w) (local.get $bitmap_w))
+                            (i32.const 2)))
+                        (local.set $bitmap_y
+                          (i32.div_s (i32.sub (local.get $h) (local.get $bitmap_h))
+                            (i32.const 2)))))
+                    (local.set $bitmap_dc (call $host_gdi_create_compat_dc (local.get $hdc)))
+                    (if (local.get $bitmap_dc)
+                      (then
+                        (drop (call $host_gdi_select_object
+                          (local.get $bitmap_dc) (local.get $bitmap)))
+                        (if (i32.and
+                              (i32.ne
+                                (i32.and (local.get $full_style) (i32.const 0x40))
+                                (i32.const 0))
+                              (i32.eqz
+                                (i32.and (local.get $full_style) (i32.const 0x200))))
+                          (then
+                            (drop (call $host_gdi_stretch_blt
+                              (local.get $hdc) (i32.const 0) (i32.const 0)
+                              (local.get $w) (local.get $h)
+                              (local.get $bitmap_dc) (i32.const 0) (i32.const 0)
+                              (local.get $bitmap_w) (local.get $bitmap_h)
+                              (i32.const 0x00CC0020)))) ;; SRCCOPY
+                          (else
+                            (drop (call $host_gdi_bitblt
+                              (local.get $hdc)
+                              (local.get $bitmap_x) (local.get $bitmap_y)
+                              (local.get $bitmap_w) (local.get $bitmap_h)
+                              (local.get $bitmap_dc) (i32.const 0) (i32.const 0)
+                              (i32.const 0x00CC0020))))) ;; SRCCOPY
+                        (drop (call $host_gdi_delete_dc (local.get $bitmap_dc)))))))
+                (if (local.get $bitmap_owned)
+                  (then (drop (call $gdi_object_delete_full (local.get $bitmap)))))))
+            (return (i32.const 0))))
         ;; SS_ICON dialog controls preserve their RT_GROUP_ICON ordinal in the
         ;; static state. Decode the color plane and transparency mask through
         ;; the canonical WAT raster path.
