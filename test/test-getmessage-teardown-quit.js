@@ -30,6 +30,18 @@ const extraWat = String.raw`
     (global.set $eip (local.get $saved_eip))
     (local.get $result))
 
+  (func (export "test_call_PostThreadMessageA")
+    (param $tid i32) (param $msg i32) (result i32)
+    (local $saved_esp i32) (local $result i32)
+    (local.set $saved_esp (global.get $esp))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_PostThreadMessageA
+      (local.get $tid) (local.get $msg) (i32.const 0x1234)
+      (i32.const 0x5678) (i32.const 0) (i32.const 0))
+    (local.set $result (global.get $eax))
+    (global.set $esp (local.get $saved_esp))
+    (local.get $result))
+
   (func (export "test_call_WaitMessage") (result i32)
     (global.set $esp (i32.const 0x00300000))
     (global.set $eax (i32.const 0))
@@ -78,6 +90,17 @@ const extraWat = String.raw`
     'explicit marker is delivered as WM_QUIT');
 
   e.test_set_quit_flag(0);
+  assert.strictEqual(e.test_call_PostThreadMessageA(1, 0x0012), 1,
+    'PostThreadMessage accepts WM_QUIT for the current thread id');
+  assert.strictEqual(e.test_call_GetMessageA(guestMsg), 0,
+    'cross-thread queued WM_QUIT terminates GetMessage');
+  assert.strictEqual(msg.getUint32(0, true), 0,
+    'thread messages carry a null hwnd');
+  assert.strictEqual(msg.getUint32(4, true), 0x0012,
+    'cross-thread queued WM_QUIT is copied into MSG');
+  assert.strictEqual(msg.getUint32(8, true), 0x1234);
+  assert.strictEqual(msg.getUint32(12, true), 0x5678);
+
   e.test_set_main_hwnd(0);
   e.set_post_queue_count(0);
   assert.strictEqual(e.has_pending_message(), 0,

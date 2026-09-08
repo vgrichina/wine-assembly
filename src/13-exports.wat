@@ -2954,8 +2954,10 @@
   (func (export "get_peek_spin_parks") (result i32) (global.get $peek_spin_parks))
   (func (export "get_clock_spin_count") (result i32) (global.get $clock_spin_count))
   (func (export "get_peek_spin_count") (result i32) (global.get $peek_spin_count))
+  (func (export "get_spin_nonpoll_seq") (result i32) (global.get $spin_nonpoll_seq))
   (func (export "test_spin_reset")
     (global.set $spin_dispatch_seq (i32.const 0))
+    (global.set $spin_nonpoll_seq (i32.const 0))
     (global.set $spin_deadline_ms (i32.const 0))
     (global.set $clock_spin_count (i32.const 0))
     (global.set $clock_spin_value (i32.const 0))
@@ -2964,6 +2966,10 @@
     (global.set $clock_spin_esp (i32.const 0))
     (global.set $clock_spin_parked_value (i32.const 0))
     (global.set $clock_spin_parked_valid (i32.const 0))
+    (global.set $clock_spin_qualified_valid (i32.const 0))
+    (global.set $clock_spin_qualified_ret (i32.const 0))
+    (global.set $clock_spin_qualified_esp (i32.const 0))
+    (global.set $spin_peek_activity_marked (i32.const 0))
     (global.set $clock_spin_parks (i32.const 0))
     (global.set $peek_spin_count (i32.const 0))
     (global.set $peek_spin_seq (i32.const 0))
@@ -3013,6 +3019,7 @@
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
     (global.set $spin_dispatch_seq (i32.add (global.get $spin_dispatch_seq) (i32.const 1)))
+    (global.set $spin_nonpoll_seq (i32.add (global.get $spin_nonpoll_seq) (i32.const 1)))
     (call $handle_GetDoubleClickTime
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
@@ -3023,6 +3030,8 @@
     (local.set $saved_esp (global.get $esp))
     (local.set $saved_eip (global.get $eip))
     (global.set $spin_dispatch_seq (i32.add (global.get $spin_dispatch_seq) (i32.const 1)))
+    (global.set $spin_nonpoll_seq (i32.add (global.get $spin_nonpoll_seq) (i32.const 1)))
+    (global.set $spin_peek_activity_marked (i32.const 1))
     (call $handle_PeekMessageA
       (local.get $msg) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
@@ -3042,6 +3051,21 @@
     (global.set $yield_flag (i32.const 0))
     (global.set $handler_set_eip (i32.const 0))
     (local.get $bits))
+  ;; Model the Win16 USER bridge, which invokes the ANSI handler without first
+  ;; passing through $win32_dispatch. Its empty result must not roll back some
+  ;; earlier Win32 call's activity mark.
+  (func (export "test_peek_spin_direct_empty") (param $msg i32)
+    (local $saved_esp i32) (local $saved_eip i32)
+    (local.set $saved_esp (global.get $esp))
+    (local.set $saved_eip (global.get $eip))
+    (call $handle_PeekMessageA
+      (local.get $msg) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.set $eip (local.get $saved_eip))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $handler_set_eip (i32.const 0)))
   (func $has_pending_message (export "has_pending_message") (result i32)
     (if (global.get $quit_flag) (then (return (i32.const 1))))
     (if (global.get $pending_child_create) (then (return (i32.const 1))))
@@ -5270,6 +5294,29 @@
   ;; standalone dialog/control without going through find/about teardown.
   (func (export "wnd_destroy_tree") (param $hwnd i32)
     (call $wnd_destroy_tree (local.get $hwnd)))
+
+  ;; Windows owned by a terminating thread do not survive that thread. Scan
+  ;; the shared USER table and restart after each recursive teardown because
+  ;; descendants can occupy any later slot.
+  (func (export "wnd_destroy_thread_windows") (param $tid i32) (result i32)
+    (local $slot i32) (local $ptr i32) (local $hwnd i32) (local $count i32)
+    (block $done
+      (loop $scan
+        (br_if $done (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)))
+        (local.set $ptr (call $wnd_record_addr (local.get $slot)))
+        (local.set $hwnd (load.field WndRecord hwnd (local.get $ptr)))
+        (if (i32.and
+              (i32.ne (local.get $hwnd) (i32.const 0))
+              (i32.eq (i32.load (call $wnd_thread_addr (local.get $slot)))
+                      (local.get $tid)))
+          (then
+            (call $wnd_destroy_recursive (local.get $hwnd))
+            (local.set $count (i32.add (local.get $count) (i32.const 1)))
+            (local.set $slot (i32.const 0))
+            (br $scan)))
+        (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+        (br $scan)))
+    (local.get $count))
 
   ;; Tear down a dialog frame without sending WM_DESTROY to the dialog proc.
   ;; DialogBoxParamA uses the same shape after EndDialog; modeless dialog

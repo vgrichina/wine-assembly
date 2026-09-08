@@ -558,15 +558,28 @@ priorityTm.runBudgeted({
 assert.strictEqual(priorityRuns[0], 'visualizer', 'budgeted scheduler should alternate priority so hot audio cannot starve visual workers');
 
 const exitNotifications = [];
+const exitedWindowThreads = [];
 const exitTm = makeThreadManager({
   onThreadExit: info => exitNotifications.push(info),
 });
 exitTm.markAudioThread(3, 1000);
-const exitThread = { tid: 3, state: 'active', startAddr: 0x440330, param: 0x458060 };
+const exitThread = {
+  tid: 3,
+  state: 'active',
+  startAddr: 0x440330,
+  param: 0x458060,
+  instance: {
+    exports: {
+      wnd_destroy_thread_windows: tid => exitedWindowThreads.push(tid),
+    },
+  },
+};
 exitTm.threads.set(0xe1007, exitThread);
 exitTm._markThreadExited(0xe1007, exitThread, 7, 'test');
 exitTm._markThreadExited(0xe1007, exitThread, 8, 'duplicate');
 assert.strictEqual(exitNotifications.length, 1, 'thread exit callback should fire once');
+assert.deepStrictEqual(exitedWindowThreads, [4],
+  'thread exit should destroy its Win32 thread id windows exactly once');
 assert.deepStrictEqual(exitNotifications[0], {
   handle: 0xe1007,
   tid: 3,
