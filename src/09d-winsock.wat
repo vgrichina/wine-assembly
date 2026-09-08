@@ -88,6 +88,10 @@
   ;; per instance. See $vsock_alloc_port.
   (global $wsa_last_error (mut i32) (i32.const 0))
   (global $wsa_started (mut i32) (i32.const 0))
+  ;; Win16 DDEML shares the virtual-LAN wire reader with Winsock. Keeping an
+  ;; explicit user count lets ordinary GUI message pumps avoid a host wire
+  ;; poll when neither subsystem can consume a frame.
+  (global $win16_dde_users (mut i32) (i32.const 0))
   (global $vsock_ntoa_buf (mut i32) (i32.const 0))
   (global $vsock_hostent (mut i32) (i32.const 0))
   (global $vsock_servent (mut i32) (i32.const 0))
@@ -667,6 +671,9 @@
   ;; socket entry point: an empty wire costs one host call.
   (func $vsock_pump
     (local $wa i32) (local $n i32) (local $guard i32)
+    (if (i32.and (i32.eqz (global.get $wsa_started))
+                 (i32.eqz (global.get $win16_dde_users)))
+      (then (return)))
     (local.set $wa (call $vsock_frame_wa))
     (if (i32.eqz (local.get $wa)) (then (return)))
     (local.set $guard (i32.const 0))

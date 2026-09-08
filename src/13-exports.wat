@@ -4009,7 +4009,16 @@
   (func (export "test_dde_intern") (param $ga i32) (result i32)
     (call $win16_dde_hsz_intern (local.get $ga)))
   (func (export "test_dde_instance") (param $i i32) (param $used i32)
-    (i32.store (call $win16_dde_inst (local.get $i)) (local.get $used)))
+    (local $slot i32) (local $was_used i32)
+    (local.set $slot (call $win16_dde_inst (local.get $i)))
+    (local.set $was_used (i32.ne (i32.load (local.get $slot)) (i32.const 0)))
+    (local.set $used (i32.ne (local.get $used) (i32.const 0)))
+    (if (i32.ne (local.get $was_used) (local.get $used))
+      (then
+        (global.set $win16_dde_users
+          (i32.add (global.get $win16_dde_users)
+            (select (i32.const 1) (i32.const -1) (local.get $used))))))
+    (i32.store (local.get $slot) (local.get $used)))
   ;; Point an instance's DDE callback at a far proc. A real task sets this
   ;; through DdeInitialize; a test needs it to aim the callback at a stub it
   ;; can predict the answer of, which is the only way to exercise the
