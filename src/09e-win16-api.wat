@@ -760,6 +760,211 @@
       (then (call $win16_StackTraceNext) (return (i32.const 1))))
     (i32.const 0))
 
+  ;; Win16 installers probe GDI.EXE to choose their language-dialog format.
+  ;; That Windows system image is implemented by the emulator rather than
+  ;; shipped in the VFS, so it needs a synthesized Win98 version resource.
+  (func $win16_version_name_is_gdi (param $name i32) (result i32)
+    (local $p i32) (local $base i32) (local $c i32)
+    (local.set $p (local.get $name))
+    (local.set $base (local.get $name))
+    (block $done (loop $scan
+      (local.set $c (call $gl8 (local.get $p)))
+      (br_if $done (i32.eqz (local.get $c)))
+      (if (i32.or (i32.eq (local.get $c) (i32.const 0x5C))
+                  (i32.eq (local.get $c) (i32.const 0x2F)))
+        (then (local.set $base (i32.add (local.get $p) (i32.const 1)))))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (br $scan)))
+    (if (i32.ne (i32.sub (local.get $p) (local.get $base)) (i32.const 7))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $tolower (call $gl8 (local.get $base))) (i32.const 0x67))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $base) (i32.const 1))))
+                (i32.const 0x64)) (then (return (i32.const 0))))
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $base) (i32.const 2))))
+                (i32.const 0x69)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl8 (i32.add (local.get $base) (i32.const 3))) (i32.const 0x2E))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $base) (i32.const 4))))
+                (i32.const 0x65)) (then (return (i32.const 0))))
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $base) (i32.const 5))))
+                (i32.const 0x78)) (then (return (i32.const 0))))
+    (i32.eq (call $tolower (call $gl8 (i32.add (local.get $base) (i32.const 6))))
+            (i32.const 0x65)))
+
+  ;; VER.6 GetFileVersionInfoSize(filename, handle) -> DWORD.
+  (func $win16_GetFileVersionInfoSize
+    (local $file i32) (local $handle i32)
+    (local.set $file (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
+    (if (call $win16_arg16 (i32.const 1))
+      (then (local.set $handle (call $win16_far_to_guest
+        (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))))
+    (if (call $win16_version_name_is_gdi (local.get $file))
+      (then
+        (if (local.get $handle) (then (call $gs32 (local.get $handle) (i32.const 0))))
+        (global.set $eax (i32.add (global.get $DX_VERSION_INFO_SIZE) (i32.const 4)))
+        (global.set $edx (i32.const 0))
+        (call $win16_api_return (i32.const 8))
+        (return)))
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_GetFileVersionInfoSizeA (local.get $file) (local.get $handle)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 8)))
+
+  ;; VER.7 GetFileVersionInfo(filename, handle, len, data) -> BOOL.
+  (func $win16_GetFileVersionInfo
+    (local $file i32) (local $handle i32) (local $len i32) (local $data i32)
+    (local $copy_len i32)
+    (local.set $file (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 7)) (call $win16_arg16 (i32.const 6))))
+    (local.set $handle (call $win16_arg32 (i32.const 4)))
+    (local.set $len (call $win16_arg32 (i32.const 2)))
+    (local.set $data (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (if (call $win16_version_name_is_gdi (local.get $file))
+      (then
+        (local.set $copy_len (local.get $len))
+        (if (i32.gt_u (local.get $copy_len) (global.get $DX_VERSION_INFO_SIZE))
+          (then (local.set $copy_len (global.get $DX_VERSION_INFO_SIZE))))
+        (memory.copy (call $g2w (local.get $data))
+          (global.get $DX_VERSION_INFO) (local.get $copy_len))
+        (if (i32.ge_u (local.get $copy_len) (i32.const 2))
+          (then (call $gs16 (local.get $data)
+            (i32.add (global.get $DX_VERSION_INFO_SIZE) (i32.const 4)))))
+        (if (i32.ge_u (local.get $copy_len) (i32.const 0x40))
+          (then
+            ;; 4.10.2222.0, the Windows 98 SE system-file generation.
+            (call $gs32 (i32.add (local.get $data) (i32.const 0x30)) (i32.const 0x0004000A))
+            (call $gs32 (i32.add (local.get $data) (i32.const 0x34)) (i32.const 0x08AE0000))
+            (call $gs32 (i32.add (local.get $data) (i32.const 0x38)) (i32.const 0x0004000A))
+            (call $gs32 (i32.add (local.get $data) (i32.const 0x3C)) (i32.const 0x08AE0000))))
+        (if (i32.ge_u (local.get $len)
+                      (i32.add (global.get $DX_VERSION_INFO_SIZE) (i32.const 4)))
+          (then
+            ;; US English, Windows ANSI code page 1252. InstallShield asks
+            ;; only for this translation pair before choosing its dialog.
+            (call $gs32 (i32.add (local.get $data) (global.get $DX_VERSION_INFO_SIZE))
+              (i32.const 0x04E40409))))
+        (global.set $eax (i32.const 1))
+        (global.set $edx (i32.const 0))
+        (call $win16_api_return (i32.const 16))
+        (return)))
+    (call $win16_call32_begin (i32.const 4))
+    (call $handle_GetFileVersionInfoA (local.get $file) (local.get $handle)
+      (local.get $len) (local.get $data) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (global.set $edx (i32.const 0))
+    (call $win16_api_return (i32.const 16)))
+
+  ;; VER.10 VerLanguageName(language, buffer, capacity) -> chars excluding NUL.
+  ;; The emulated installation is US English, matching the locale reported by
+  ;; the 32-bit side. The bounded copy retains the Win16 API's truncation rule.
+  (func $win16_VerLanguageName
+    (local $buf i32) (local $capacity i32) (local $scratch i32) (local $copied i32)
+    (local.set $capacity (call $win16_arg16 (i32.const 0)))
+    (if (call $win16_arg16 (i32.const 2))
+      (then (local.set $buf (call $win16_far_to_guest
+        (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))))
+    (global.set $eax (i32.const 0))
+    (global.set $edx (i32.const 0))
+    (if (i32.and (i32.ne (local.get $buf) (i32.const 0))
+                 (i32.ne (local.get $capacity) (i32.const 0)))
+      (then
+        (local.set $scratch (region.addr $GUEST_STACK 0x300))
+        (call $gs32 (local.get $scratch) (i32.const 0x6C676E45))
+        (call $gs32 (i32.add (local.get $scratch) (i32.const 4)) (i32.const 0x20687369))
+        (call $gs32 (i32.add (local.get $scratch) (i32.const 8)) (i32.const 0x696E5528))
+        (call $gs32 (i32.add (local.get $scratch) (i32.const 12)) (i32.const 0x20646574))
+        (call $gs32 (i32.add (local.get $scratch) (i32.const 16)) (i32.const 0x74617453))
+        (call $gs32 (i32.add (local.get $scratch) (i32.const 20)) (i32.const 0x00297365))
+        (call $guest_strncpy (local.get $buf) (local.get $scratch) (local.get $capacity))
+        (local.set $copied (i32.sub (local.get $capacity) (i32.const 1)))
+        (if (i32.gt_u (local.get $copied) (i32.const 23))
+          (then (local.set $copied (i32.const 23))))
+        (global.set $eax (local.get $copied))))
+    (call $win16_api_return (i32.const 8)))
+
+  ;; VER.11 VerQueryValue(block, subBlock, outFarPtr, outWordLen) -> BOOL.
+  ;; The shared parser returns a flat pointer. Win16 callers require that same
+  ;; address expressed relative to the selector of the supplied version block.
+  (func $win16_VerQueryValue
+    (local $block i32) (local $block_off i32) (local $block_sel i32)
+    (local $sub i32) (local $out i32) (local $len_out i32)
+    (local $tmp_out i32) (local $tmp_len i32) (local $result i32)
+    (local $value i32) (local $delta i32) (local $value_off i32)
+    (local.set $block_off (call $win16_arg16 (i32.const 6)))
+    (local.set $block_sel (call $win16_arg16 (i32.const 7)))
+    (local.set $block (call $win16_far_to_guest
+      (local.get $block_sel) (local.get $block_off)))
+    (local.set $sub (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 5)) (call $win16_arg16 (i32.const 4))))
+    (if (call $win16_arg16 (i32.const 3))
+      (then (local.set $out (call $win16_far_to_guest
+        (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))))
+    (if (call $win16_arg16 (i32.const 1))
+      (then (local.set $len_out (call $win16_far_to_guest
+        (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))))
+    (local.set $tmp_out (region.addr $GUEST_STACK 0x380))
+    (local.set $tmp_len (region.addr $GUEST_STACK 0x384))
+    (call $gs32 (local.get $tmp_out) (i32.const 0))
+    (call $gs32 (local.get $tmp_len) (i32.const 0))
+    (if (i32.and (i32.ne (local.get $out) (i32.const 0))
+                 (i32.ne (local.get $len_out) (i32.const 0)))
+      (then
+        (call $win16_call32_begin (i32.const 4))
+        (call $handle_VerQueryValueA (local.get $block) (local.get $sub)
+          (local.get $tmp_out) (local.get $tmp_len) (i32.const 0) (i32.const 0))
+        (local.set $result (global.get $eax))
+        (call $win16_call32_end)))
+    (if (local.get $result)
+      (then
+        (local.set $value (call $gl32 (local.get $tmp_out)))
+        ;; The shared ANSI parser keeps its compatibility translation pair in
+        ;; scratch memory. For our synthesized GDI block, expose the identical
+        ;; Win16 data from the four bytes reserved at the end of that block so
+        ;; the returned far pointer remains relative to the caller's selector.
+        (if (i32.and
+              (i32.eq (call $gl16 (local.get $block))
+                (i32.add (global.get $DX_VERSION_INFO_SIZE) (i32.const 4)))
+              (i32.eq (call $gl32 (i32.add (local.get $block) (i32.const 0x30)))
+                (i32.const 0x0004000A)))
+          (then (local.set $value
+            (i32.add (local.get $block) (global.get $DX_VERSION_INFO_SIZE)))))
+        (local.set $delta (i32.sub (local.get $value) (local.get $block)))
+        (local.set $value_off (i32.add (local.get $block_off) (local.get $delta)))
+        (if (i32.or (i32.lt_s (local.get $delta) (i32.const 0))
+                    (i32.gt_u (local.get $value_off) (i32.const 0xFFFF)))
+          (then (local.set $result (i32.const 0))))
+        (if (local.get $result)
+          (then
+            (call $gs32 (local.get $out)
+              (i32.or (i32.shl (local.get $block_sel) (i32.const 16))
+                      (local.get $value_off)))
+            (call $gs16 (local.get $len_out) (call $gl32 (local.get $tmp_len)))))))
+    (if (i32.eqz (local.get $result))
+      (then (if (local.get $len_out) (then (call $gs16 (local.get $len_out) (i32.const 0))))))
+    (global.set $eax (local.get $result))
+    (global.set $edx (i32.const 0))
+    (call $win16_api_return (i32.const 16)))
+
+  (func $win16_ver (param $module i32) (param $ordinal i32) (result i32)
+    (if (i32.eqz (call $win16_module_is_ver (local.get $module)))
+      (then (return (i32.const 0))))
+    (if (i32.eq (local.get $ordinal) (i32.const 6))
+      (then (call $win16_GetFileVersionInfoSize) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 7))
+      (then (call $win16_GetFileVersionInfo) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 10))
+      (then (call $win16_VerLanguageName) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 11))
+      (then (call $win16_VerQueryValue) (return (i32.const 1))))
+    (i32.const 0))
+
   ;; USER.430 lstrcmp / USER.471 lstrcmpi(lpString1, lpString2) -> <0, 0, >0.
   ;; Case folding is ASCII only, which is what the code pages these apps run
   ;; under amount to for the comparisons they make.
@@ -3170,6 +3375,22 @@
       (then (return (i32.const 1))))
     (i32.const 0))
 
+  ;; VER.DLL is a Windows 3.1 system component, but its name is not assigned a
+  ;; fixed id by the NE loader. Match the exact dynamic Pascal name and route
+  ;; the small version-query surface through the shared Win32 implementation.
+  (func $win16_module_is_ver (param $id i32) (result i32)
+    (local $slot i32)
+    (if (i32.or (i32.lt_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
+                (i32.ge_u (local.get $id)
+                  (i32.add (global.get $WIN16_DYNAMIC_BASE)
+                           (global.get $WIN16_DYNAMIC_MODULES))))
+      (then (return (i32.const 0))))
+    (local.set $slot (call $win16_dynamic_module_slot
+      (i32.sub (local.get $id) (global.get $WIN16_DYNAMIC_BASE))))
+    (i32.and
+      (i32.eq (i32.load8_u (local.get $slot)) (i32.const 3))
+      (i32.eq (i32.load offset=1 (local.get $slot)) (i32.const 0x00524556))))
+
   ;; Private ordinals for the CTL3D entry points WISE obtains by name. These
   ;; need only be stable inside this task: no static import table observes the
   ;; numbers, and GetProcAddress builds the matching thunk below.
@@ -3227,7 +3448,8 @@
             (i32.or (i32.eq (local.get $id) (i32.const 10))
             (i32.or (i32.eq (local.get $id) (i32.const 11))
             (i32.or (i32.eq (local.get $id) (i32.const 12))
-                    (call $win16_module_is_ctl3d (local.get $id)))))))
+            (i32.or (call $win16_module_is_ctl3d (local.get $id))
+                    (call $win16_module_is_ver (local.get $id))))))))
 
   ;; Scratch for the Pascal string above, at the unused bottom of the 32-bit
   ;; task's stack region, which a 16-bit task never touches.
@@ -10882,6 +11104,8 @@
       (then (if (call $win16_ctl3d (local.get $ordinal))
               (then (call $win16_trace_ret) (return)))))
     (if (call $win16_toolhelp (local.get $module) (local.get $ordinal))
+      (then (call $win16_trace_ret) (return)))
+    (if (call $win16_ver (local.get $module) (local.get $ordinal))
       (then (call $win16_trace_ret) (return)))
 
     ;; Anything not implemented reports itself and stops, on the same reasoning

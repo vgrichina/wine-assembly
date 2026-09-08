@@ -27409,5 +27409,23 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4289600817
+  },
+  {
+    "id": 3301,
+    "name": "mmioStringToFOURCCA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3348540376,
+    "args": [
+      {
+        "name": "sz",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "uFlags",
+        "type": "UINT"
+      }
+    ],
+    "ret": "DWORD"
   }
 ]
