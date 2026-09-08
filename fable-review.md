@@ -3499,20 +3499,17 @@ a few unrelated commits from a parallel session are interleaved in the log.*
   `$host_get_window_client_size` — both read the real rect, which is why the
   mirror was dead (`18dd07b`).
 
-**Still open**
+**Final closure audit**
 
-- §3.7 named accessors for the *remaining* per-class state structs. The
-  offsets mean different things per class, so this is a per-class job, not one
-  rename, and ButtonState is the first class done (`ad9b3de`): text ptr/len,
-  flags, ctrl_id, image type/handle and the embedded owner-draw
-  DRAWITEMSTRUCT, with the wndproc, the three sibling-default walkers,
-  `$ctrl_get/set_check_state` and the three JS-facing exports all reading
-  through them. StaticState (shared with SysLink), ProgressState and
-  TrackBarState followed in `92217e4`, then the three big ones: ListBoxState
-  (`4682d5a`), ComboBoxState (`da4a7ac`) and ListViewState (`f3d2f45`). Only
-  EditState is left, and it is held by a parallel session that owns
-  `$edit_wndproc`.
-  The table-level half is finished: the CONTROL_TABLE row is `$ctrl_slot_addr`
+- §3.7's per-class state migration is finished. ButtonState was the first
+  class named (`ad9b3de`), followed by StaticState (shared with SysLink),
+  ProgressState and TrackBarState (`92217e4`), then ListBoxState (`4682d5a`),
+  ComboBoxState (`da4a7ac`) and ListViewState (`f3d2f45`). The later typed
+  ControlState migration introduced EditState with the other variant layouts
+  (`f6ae1917`) and converted the remaining raw state accesses in
+  `cfb48609`, `493dae80` and `68461381`; the current `state_w`/`sw` raw-offset
+  census is zero.
+  The table-level half is also finished: the CONTROL_TABLE row is `$ctrl_slot_addr`
   plus documented field offsets, GetDlgCtrlID and the exported `ctrl_get_id`
   stopped re-implementing `$ctrl_table_get_id` (`f0ac4b6`), and the six
   Set/Get Scroll{Pos,Range,Info} handlers that still open-coded both scroll
