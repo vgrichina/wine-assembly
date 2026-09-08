@@ -1650,11 +1650,10 @@
         (if (i32.or (i32.eqz (local.get $length)) (i32.ge_u (local.get $length) (i32.const 65536)))
           (then (global.set $eax (i32.const 0)))
           (else
-            (local.set $copy_g (call $heap_alloc (i32.add (local.get $length) (i32.const 1))))
+            (local.set $copy_g (call $guest_strdup (local.get $arg1)))
             (if (i32.eqz (local.get $copy_g))
               (then (global.set $eax (i32.const 0)))
               (else
-                (call $guest_strcpy (local.get $copy_g) (local.get $arg1))
                 (local.set $meta (call $gdi_dc_meta_entry (local.get $arg0) (i32.const 1)))
                 (if (i32.eqz (local.get $meta))
                   (then (call $heap_free (local.get $copy_g)) (global.set $eax (i32.const 0)))

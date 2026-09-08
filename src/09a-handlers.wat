@@ -1644,14 +1644,13 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
-    (local.set $copy (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (local.set $copy (call $guest_strdup (local.get $arg1)))
     (if (i32.eqz (local.get $copy))
       (then
         (call $dde32_set_error (local.get $arg0) (i32.const 0x4008))
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
-    (call $guest_strcpy (local.get $copy) (local.get $arg1))
     (local.set $handle (global.get $dde32_next_hsz))
     (global.set $dde32_next_hsz
       (i32.add (global.get $dde32_next_hsz) (i32.const 1)))

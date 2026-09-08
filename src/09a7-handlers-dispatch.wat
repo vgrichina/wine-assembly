@@ -2692,10 +2692,8 @@
       (local.set $e (i32.add (local.get $table) (i32.mul (local.get $i) (i32.const 8))))
       (if (i32.eqz (i32.load (local.get $e)))
         (then
-          (local.set $copy (call $heap_alloc
-            (i32.add (call $guest_strlen (local.get $name)) (i32.const 1))))
+          (local.set $copy (call $guest_strdup (local.get $name)))
           (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
-          (call $guest_strcpy (local.get $copy) (local.get $name))
           (i32.store (local.get $e) (local.get $copy))
           (i32.store offset=4 (local.get $e) (i32.const 1))
           (return (i32.add (global.get $ATOM_FIRST) (local.get $i)))))

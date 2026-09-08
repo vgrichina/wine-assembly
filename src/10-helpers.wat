@@ -3756,10 +3756,8 @@
         (global.set $clipboard_fmt_counter
           (i32.add (global.get $clipboard_fmt_counter) (i32.const 1)))
         (return (i32.add (i32.const 0xC000) (global.get $clipboard_fmt_counter)))))
-    (local.set $copy (call $heap_alloc
-      (i32.add (call $guest_strlen (local.get $name_g)) (i32.const 1))))
+    (local.set $copy (call $guest_strdup (local.get $name_g)))
     (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
-    (call $guest_strcpy (local.get $copy) (local.get $name_g))
     (global.set $clipboard_fmt_counter
       (i32.add (global.get $clipboard_fmt_counter) (i32.const 1)))
     (i32.store (local.get $e) (local.get $copy))
