@@ -18,8 +18,8 @@
 // The whole design rests on the DETECTOR, because a false park is a stall in a
 // healthy game. Four things must hold K times in a row before either detector
 // fires -- same value (clock only), same call site, same stack depth, and no
-// other Win32 call in between -- and the tests below are mostly about proving
-// each of those four actually resets the run. In particular:
+// meaningful Win32 work in between -- and the tests below are mostly about
+// proving each of those four actually resets the run. In particular:
 //
 //   * "reset on a changed value" is what keeps a 60 fps game reading
 //     delta-time out of this entirely: it sees a different millisecond every
@@ -163,8 +163,13 @@ async function main() {
   check('a stalled clock is parked on exactly once',
     (e.get_clock_spin_parks() >>> 0) === 1, `${e.get_clock_spin_parks() >>> 0} trips`);
   clock.now += 1;
-  for (let i = 0; i < K * 2; i++) e.test_clock_spin_once();
-  check('the next millisecond re-arms the park',
+  const qualifiedFirst = e.test_clock_spin_once() >>> 0;
+  const qualifiedSecond = e.test_clock_spin_once() >>> 0;
+  check('a qualified site does not park on its first read of a new millisecond',
+    (qualifiedFirst & PARKED) === 0);
+  check('a qualified site re-arms on its second matching read',
+    (qualifiedSecond & PARKED) !== 0);
+  check('the next millisecond records one new park',
     (e.get_clock_spin_parks() >>> 0) === 2, `${e.get_clock_spin_parks() >>> 0} trips`);
 
   // ---- 6. the off switch ----------------------------------------------
@@ -185,6 +190,42 @@ async function main() {
   // observation. A scratch MSG buffer well inside the image is enough; the
   // empty path does not write to it.
   const MSG = IMAGE_BASE + 0x2000;
+  // An empty nonblocking message pump is part of many clock limiters. It does
+  // not make progress and therefore must not hide an otherwise proven spin.
+  e.test_spin_reset();
+  for (let i = 0; i < K; i++) {
+    e.test_clock_spin_once();
+    e.test_peek_spin_once(MSG);
+  }
+  check('empty PeekMessage calls retain the clock-spin run',
+    (e.get_clock_spin_parks() >>> 0) === 1);
+
+  // A delivered message is observable work, even when it was posted by
+  // another thread rather than by an API call in this one. Its successful
+  // PeekMessage must retain the dispatch activity mark and break clock-spin
+  // evidence. PM_NOREMOVE lets the test inspect the success, then the direct
+  // queue seam drains it before the remaining detector checks.
+  e.test_spin_reset();
+  for (let i = 0; i < K - 1; i++) {
+    e.test_clock_spin_once();
+    e.test_peek_spin_once(MSG);
+  }
+  check('the test message was queued', e.test_shared_post(0, 0x1234, 0, 0) === 1);
+  const successfulPeek = e.test_peek_spin_once(MSG) >>> 0;
+  check('PeekMessage reports a queued message', (successfulPeek & RETURNED) === 0);
+  check('the queued message can be drained', e.test_shared_post_read(MSG, 1) === 1);
+  const afterSuccessfulPeek = e.test_clock_spin_once() >>> 0;
+  check('a successful PeekMessage breaks clock-spin evidence',
+    (afterSuccessfulPeek & PARKED) === 0 && (e.get_clock_spin_count() >>> 0) === 1,
+    `count=${e.get_clock_spin_count() >>> 0}`);
+
+  e.test_spin_reset();
+  e.test_spin_other_call();
+  const activityBeforeDirectPeek = e.get_spin_nonpoll_seq() >>> 0;
+  e.test_peek_spin_direct_empty(MSG);
+  check('a direct Win16-style empty peek cannot roll back earlier activity',
+    (e.get_spin_nonpoll_seq() >>> 0) === activityBeforeDirectPeek);
+
   e.test_spin_reset();
   let peekParkedAt = -1, peekBits = 0;
   for (let i = 1; i <= K; i++) {
@@ -261,6 +302,12 @@ async function main() {
     host({ get_spin_deadline_ms: () => 1001, get_tick_count: () => 1000 })._spinParkDelay(14) === 1);
   check('a clock park never sleeps zero',
     host({ get_spin_deadline_ms: () => 1000, get_tick_count: () => 1000 })._spinParkDelay(14) === 1);
+  {
+    const adjustable = host({ get_spin_deadline_ms: () => 1001, get_tick_count: () => 1000 });
+    adjustable.spinParkClockMs = 5;
+    check('the browser clock-spin park duration is adjustable',
+      adjustable._spinParkDelay(14) === 5);
+  }
   check('a clock park is capped',
     host({ get_spin_deadline_ms: () => 9999, get_tick_count: () => 0 })._spinParkDelay(14) === CAP,
     `cap=${CAP}`);

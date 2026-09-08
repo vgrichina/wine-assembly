@@ -126,6 +126,26 @@
     (local.set $name_rva (i32.load (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8)))))
     (local.set $api_id (i32.load (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8))) (i32.const 4))))
 
+    ;; The handler consumes this one-shot bit at entry. Its Win16 caller does
+    ;; not pass through this dispatcher and therefore must not undo activity
+    ;; belonging to an earlier Win32 call.
+    (global.set $spin_peek_activity_marked
+      (i32.or
+        (i32.eq (local.get $api_id) (global.get $API_ID_PeekMessageA))
+        (i32.eq (local.get $api_id) (global.get $API_ID_PeekMessageW))))
+
+    ;; Clock limiters commonly put one or more empty nonblocking message polls
+    ;; between reads. Preserve a second activity sequence that treats clock
+    ;; reads as polling. PeekMessage starts as real activity too; only its
+    ;; proven-empty return path rolls this one increment back.
+    ;; API ids are append-only positions in api_table.json.
+    (if (i32.and
+          (i32.ne (local.get $api_id) (i32.const 338))  ;; GetTickCount
+          (i32.ne (local.get $api_id) (i32.const 826))) ;; timeGetTime
+      (then
+        (global.set $spin_nonpoll_seq
+          (i32.add (global.get $spin_nonpoll_seq) (i32.const 1)))))
+
     ;; ── Continuation thunks (CACA markers) ──────────────────────
 
     ;; Catch-return thunk — SEH catch handler returned

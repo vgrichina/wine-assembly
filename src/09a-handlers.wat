@@ -12174,17 +12174,18 @@ HookEx — no next hook in chain, return 0
 
   ;; One step of the clock debounce. Returns 1 when this read is the Kth in a
   ;; row that is indistinguishable from the last one -- same millisecond, same
-  ;; call site, same stack depth, and nothing else dispatched in between.
+  ;; call site, same stack depth, and no meaningful API work in between. An
+  ;; empty PeekMessage is neutral; a successful one is work and resets the run.
   ;; Anything different resets the run to 1, so the state is always about the
   ;; CONSECUTIVE reads and never accumulates across a frame.
   (func $clock_spin_step (param $value i32) (result i32)
-    (local $ret i32)
+    (local $ret i32) (local $threshold i32)
     (local.set $ret (call $spin_call_site))
     (if (i32.and
           (i32.and
             (i32.eq (local.get $value) (global.get $clock_spin_value))
-            (i32.eq (global.get $spin_dispatch_seq)
-                    (i32.add (global.get $clock_spin_seq) (i32.const 1))))
+            (i32.eq (global.get $spin_nonpoll_seq)
+                    (global.get $clock_spin_seq)))
           (i32.and
             (i32.eq (local.get $ret) (global.get $clock_spin_ret))
             (i32.eq (global.get $esp) (global.get $clock_spin_esp))))
@@ -12197,12 +12198,22 @@ HookEx — no next hook in chain, return 0
         (if (i32.ne (local.get $value) (global.get $clock_spin_parked_value))
           (then (global.set $clock_spin_parked_valid (i32.const 0))))))
     (global.set $clock_spin_value (local.get $value))
-    (global.set $clock_spin_seq (global.get $spin_dispatch_seq))
+    (global.set $clock_spin_seq (global.get $spin_nonpoll_seq))
     (global.set $clock_spin_ret (local.get $ret))
     (global.set $clock_spin_esp (global.get $esp))
+    (local.set $threshold (global.get $spin_park_k))
+    ;; A site must first survive the conservative K-read proof. Once qualified,
+    ;; two identical reads are enough to re-arm later milliseconds at that same
+    ;; return address and stack depth.
+    (if (i32.and
+          (global.get $clock_spin_qualified_valid)
+          (i32.and
+            (i32.eq (local.get $ret) (global.get $clock_spin_qualified_ret))
+            (i32.eq (global.get $esp) (global.get $clock_spin_qualified_esp))))
+      (then (local.set $threshold (i32.const 2))))
     (i32.and
       (i32.ne (global.get $spin_park_k) (i32.const 0))
-      (i32.ge_u (global.get $clock_spin_count) (global.get $spin_park_k))))
+      (i32.ge_u (global.get $clock_spin_count) (local.get $threshold))))
 
   ;; Take the park, if this millisecond has not already had one. Returns 1 when
   ;; the caller must return immediately without popping its frame.
@@ -12212,14 +12223,18 @@ HookEx — no next hook in chain, return 0
       (then (return (i32.const 0))))
     (global.set $clock_spin_parked_value (local.get $value))
     (global.set $clock_spin_parked_valid (i32.const 1))
+    (global.set $clock_spin_qualified_valid (i32.const 1))
+    (global.set $clock_spin_qualified_ret (global.get $clock_spin_ret))
+    (global.set $clock_spin_qualified_esp (global.get $clock_spin_esp))
     (global.set $clock_spin_parks (i32.add (global.get $clock_spin_parks) (i32.const 1)))
     ;; The deadline is the next millisecond, because the millisecond is the
     ;; resolution of the thing being waited on: any wake earlier than that finds
     ;; the identical value and parks again. Tier 3 -- learning the deadline the
     ;; guest is actually counting to -- is deliberately not built.
     (global.set $spin_deadline_ms (i32.add (local.get $value) (i32.const 1)))
-    ;; A park ends the run of identical reads it was taken for: the next K have
-    ;; to establish themselves again before another one.
+    ;; A park ends the run of identical reads it was taken for. This site is now
+    ;; qualified, so a later millisecond re-arms after two matching reads rather
+    ;; than paying the conservative first-proof threshold again.
     (global.set $clock_spin_count (i32.const 0))
     (call $spin_park (i32.const 14))
     (i32.const 1))
