@@ -143,9 +143,9 @@ completed the turn in 17.53 s with 24.7% Chrome-profiler idle time; 5 ms took
 changing and Mission Year advanced in both arms. Thus yielding after two
 identical same-site/same-millisecond reads can reclaim roughly one quarter of
 browser CPU without lengthening this turn, but 5 ms is no better than the safer
-1 ms request because browser timer scheduling already coarsens the yield. This
-remains a prototype: pure guest computation between two clock calls is
-invisible to the API-only detector, so `K=2` needs broader game-corpus false-
+1 ms request because browser timer scheduling already coarsens the yield. That
+global K2 form remained a prototype: pure guest computation between two clock
+calls is invisible to the API-only detector, so `K=2` needs broader game-corpus false-
 park testing before becoming a global default.
 
 The remaining frame-rate work is reducing dispatches with narrowly measured
@@ -155,3 +155,17 @@ paths have already measured neutral or slower on other games; they are not
 experiments to repeat. Optimizing canvas presentation, growing the decode
 cache, or special-casing only the 25-record search likewise has little support
 in this profile.
+
+An adaptive clock-spin park was accepted as a CPU-courtesy measure, not as an
+FPS fix. A call site must first produce eight identical clock reads with the
+same return address/stack and no meaningful API work; after that proof, the
+same site re-arms on two reads in later milliseconds. Empty `PeekMessage`
+passes are neutral, but a delivered message breaks the evidence. The browser
+requests a 1 ms park (adjustable for diagnostics); timer coarsening may make
+the real pause longer. In a direct-disc diagnostic run using the official v4
+payload overlay, the adaptive K8-to-K2 path completed a turn in 17.48 seconds,
+recorded 112 parks and 65 changed screen samples, and advanced to Mission Year
+2102 without a crash. This is essentially the same wall time as the unparked
+~17.55-second result: the change avoids some proven useless polling but does
+not make Alpha produce animation frames faster. Heroes II, GTA2, and SkiFree
+gameplay plus the focused message/timer regressions retained progress.
