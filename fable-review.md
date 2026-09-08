@@ -3519,11 +3519,23 @@ a few unrelated commits from a parallel session are interleaved in the log.*
   strides — 24 for the legacy record, 16 for the SCROLLINFO fields — now call
   `$scroll_bar_addr` / `$scroll_aux_bar_addr` (`1675bea`), and PAINT_SCRATCH is
   now a ring rather than one shared rect (`2c4ef73`).
-- §3.8's remaining window-rect/JS-authority arc — window rect is owned by
-  CONTROL_GEOM for children and by the JS host for top-levels. Show state is
-  closed (`1ba6a38`), which was the worst of the set because the second owner
-  was not merely redundant — the guest-facing half did not exist at all, so
-  IsIconic and IsZoomed answered with a constant.
+- §3.8's window-rect/JS-authority arc is a **scope boundary, not duplicate
+  ownership**. Top-level placement must be global because renderer windows are
+  shared across guest processes and browser title-bar/resize drags originate
+  there. Child geometry stays in the owning process's CONTROL_GEOM because WAT
+  controls paint into their parent and deliberately have no renderer record.
+  The `get_window_rect` host boundary already routes renderer-known children
+  back through their owning WAT geometry exports while using the global record
+  for top-level and foreign windows. Consolidating either way would discard
+  one of those domains. What was genuinely wrong at the seam is now fixed:
+  GetWindowRect no longer turns an invalid/destroyed HWND into the 640x480
+  desktop rectangle and TRUE. One shared validity predicate covers local WAT,
+  permanent desktop and foreign renderer HWNDs for both IsWindow and
+  GetWindowRect, with a focused regression for all four paths.
+
+  Show state remains closed (`1ba6a38`); unlike rectangle scope, it really was
+  duplicated, and the guest-facing half did not exist at all, so IsIconic and
+  IsZoomed answered with a constant.
 
   The EDIT/LISTVIEW/WinHelp scroll item is **not a duplicate-owner cleanup**.
   Microsoft documents `SetScrollPos` as changing the scroll box, while

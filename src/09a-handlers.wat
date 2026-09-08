@@ -4602,9 +4602,28 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; A local WND_RECORDS entry, the permanent desktop, or a top-level window
+  ;; owned by another process through the shared renderer are the three valid
+  ;; HWND domains. Keep this predicate shared so geometry APIs and IsWindow do
+  ;; not drift on cross renderer-only windows.
+  (func $window_handle_valid (param $hwnd i32) (result i32)
+    (i32.and
+      (i32.ne (local.get $hwnd) (i32.const 0))
+      (i32.or
+        (i32.eq (local.get $hwnd) (i32.const 0x10000))
+        (i32.or
+          (i32.ge_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
+          (call $host_get_window_info (local.get $hwnd) (i32.const 4))))))
+
   ;; 93: GetWindowRect
   (func $handle_GetWindowRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; GetWindowRect(hwnd, lpRect) — fills RECT with screen coords
+    (if (i32.eqz (call $window_handle_valid (local.get $arg0)))
+      (then
+        (global.set $last_error (i32.const 1400)) ;; ERROR_INVALID_WINDOW_HANDLE
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (call $host_get_window_rect (local.get $arg0) (call $g2w (local.get $arg1)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
@@ -9963,11 +9982,7 @@
   ;; HWND_BROADCAST (-1) is unsigned-greater than 0x10000, and treating it as a
   ;; window leaves old InstallShield splash pumps waiting for it forever.
   (func $handle_IsWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.and
-      (i32.ne (local.get $arg0) (i32.const 0))
-      (i32.or
-        (i32.eq (local.get $arg0) (i32.const 0x10000))
-        (i32.or (i32.ge_s (call $wnd_table_find (local.get $arg0)) (i32.const 0)) (call $host_get_window_info (local.get $arg0) (i32.const 4))))))
+    (global.set $eax (call $window_handle_valid (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IsWindowUnicode(hwnd) reflects whether the HWND was created through a W
