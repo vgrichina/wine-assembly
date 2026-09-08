@@ -190,7 +190,7 @@
     (field col_widths_ptr    i32)  ;; +24  guest ptr to u32[]
     (field col_texts_ptr     i32)  ;; +28  guest ptr to u32[] heap string ptrs
     (field selected_index    i32)  ;; +32  -1 = none
-    (field top_index         i32)  ;; +36
+    (field top_index         i32)  ;; +36  content viewport; not SetScrollPos's thumb-only state
     (field extended_style    i32)  ;; +40  LVM_SETEXTENDEDLISTVIEWSTYLE shadow
     (field drag_anchor_y     i32)  ;; +44
     (field drag_anchor_top   i32)  ;; +48
@@ -7610,7 +7610,8 @@
   ;;   +24  col_widths_ptr   guest ptr to u32[]
   ;;   +28  col_texts_ptr    guest ptr to u32[] heap string pointers
   ;;   +32  selected_index   -1 = none
-  ;;   +36  top_index
+  ;;   +36  top_index        content viewport (LVM_GETTOPINDEX), distinct from
+  ;;                         the thumb-only state changed by SetScrollPos
   ;;   +40  extended_style   LVM_SETEXTENDEDLISTVIEWSTYLE shadow
   ;;   +44  drag_anchor_y
   ;;   +48  drag_anchor_top

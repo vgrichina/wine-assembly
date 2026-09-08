@@ -3519,13 +3519,22 @@ a few unrelated commits from a parallel session are interleaved in the log.*
   strides — 24 for the legacy record, 16 for the SCROLLINFO fields — now call
   `$scroll_bar_addr` / `$scroll_aux_bar_addr` (`1675bea`), and PAINT_SCRATCH is
   now a ring rather than one shared rect (`2c4ef73`).
-- §3.8's remaining bullets and §4.3, the dual-ownership and JS-authority arcs
-  — window rect owned by CONTROL_GEOM for children and by the JS host for
-  top-levels, the EDIT/LISTVIEW/WinHelp scroll state stored twice. These are
-  real second owners, unlike the geometry globals, and multi-session. One of
-  them is closed: show state (`1ba6a38`), which was the worst of the set
-  because the second owner was not merely redundant — the guest-facing half
-  did not exist at all, so IsIconic and IsZoomed answered with a constant.
+- §3.8's remaining window-rect/JS-authority arc — window rect is owned by
+  CONTROL_GEOM for children and by the JS host for top-levels. Show state is
+  closed (`1ba6a38`), which was the worst of the set because the second owner
+  was not merely redundant — the guest-facing half did not exist at all, so
+  IsIconic and IsZoomed answered with a constant.
+
+  The EDIT/LISTVIEW/WinHelp scroll item is **not a duplicate-owner cleanup**.
+  Microsoft documents `SetScrollPos` as changing the scroll box, while
+  `LVM_GETTOPINDEX` returns the topmost visible content item. Calling
+  SetScrollPos directly must therefore be able to move the thumb without
+  scrolling ListView content; the control later projects its viewport back
+  into the standard scrollbar repository when it handles a real scroll.
+  A focused ListView regression now pins that divergence and subsequent
+  resynchronization. The same content-vs-chrome distinction applies to EDIT
+  and WinHelp, so merging either state pair would make the architecture neater
+  and Win98 behavior less accurate.
 
 **Declined, with reasons**
 
