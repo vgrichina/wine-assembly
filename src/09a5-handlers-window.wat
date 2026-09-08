@@ -1681,8 +1681,9 @@
     (then
     ;; Dequeue first message (shift queue down)
     (local.set $tmp (i32.const 0x400))
+    (local.set $msg (i32.load offset=4 (local.get $tmp)))
     (call $gs32 (local.get $msg_ptr) (i32.load (local.get $tmp)))                        ;; hwnd
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.load (i32.add (local.get $tmp) (i32.const 4))))  ;; msg
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (local.get $msg))           ;; msg
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.add (local.get $tmp) (i32.const 8))))  ;; wParam
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.load (i32.add (local.get $tmp) (i32.const 12)))) ;; lParam
     ;; Shift remaining messages down
@@ -1690,11 +1691,15 @@
     (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
     (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
     (i32.mul (global.get $post_queue_count) (i32.const 16)))))
-    (global.set $eax (i32.const 1))
+    ;; GetMessage returns zero for WM_QUIT even when it arrived through a
+    ;; posted-message queue rather than PostQuitMessage's process-local flag.
+    (global.set $eax (i32.ne (local.get $msg) (i32.const 0x0012)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     (if (call $shared_post_queue_read (local.get $msg_ptr) (i32.const 1))
     (then
-    (global.set $eax (i32.const 1))
+    (global.set $eax (i32.ne
+      (call $gl32 (i32.add (local.get $msg_ptr) (i32.const 4)))
+      (i32.const 0x0012)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; Deliver pending WM_SIZE after posted messages are drained
     (if (global.get $pending_wm_size)
@@ -1827,7 +1832,9 @@
     ;; A producer may have posted after the earlier queue check in this handler.
     (if (call $shared_post_queue_read (local.get $msg_ptr) (i32.const 1))
     (then
-      (global.set $eax (i32.const 1))
+      (global.set $eax (i32.ne
+        (call $gl32 (i32.add (local.get $msg_ptr) (i32.const 4)))
+        (i32.const 0x0012)))
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; No message ready. Real GetMessage blocks here; keep the API call live
     ;; and let JS wake/re-enter this handler when input/post/paint/timer work

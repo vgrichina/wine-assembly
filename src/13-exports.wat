@@ -5269,6 +5269,29 @@
   (func (export "wnd_destroy_tree") (param $hwnd i32)
     (call $wnd_destroy_tree (local.get $hwnd)))
 
+  ;; Windows owned by a terminating thread do not survive that thread. Scan
+  ;; the shared USER table and restart after each recursive teardown because
+  ;; descendants can occupy any later slot.
+  (func (export "wnd_destroy_thread_windows") (param $tid i32) (result i32)
+    (local $slot i32) (local $ptr i32) (local $hwnd i32) (local $count i32)
+    (block $done
+      (loop $scan
+        (br_if $done (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)))
+        (local.set $ptr (call $wnd_record_addr (local.get $slot)))
+        (local.set $hwnd (load.field WndRecord hwnd (local.get $ptr)))
+        (if (i32.and
+              (i32.ne (local.get $hwnd) (i32.const 0))
+              (i32.eq (i32.load (call $wnd_thread_addr (local.get $slot)))
+                      (local.get $tid)))
+          (then
+            (call $wnd_destroy_recursive (local.get $hwnd))
+            (local.set $count (i32.add (local.get $count) (i32.const 1)))
+            (local.set $slot (i32.const 0))
+            (br $scan)))
+        (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+        (br $scan)))
+    (local.get $count))
+
   ;; Tear down a dialog frame without sending WM_DESTROY to the dialog proc.
   ;; DialogBoxParamA uses the same shape after EndDialog; modeless dialog
   ;; titlebar-close fallback uses this when the guest closes its children but
