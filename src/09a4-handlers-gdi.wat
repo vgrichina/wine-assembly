@@ -1379,15 +1379,6 @@
   ;; guest-heap copies because both callers commonly pass stack buffers.
   (global $scalable_font_resources (mut i32) (i32.const 0))
 
-  (func $scalable_font_path_copy (param $path i32) (result i32)
-    (local $copy i32) (local $len i32)
-    (if (i32.eqz (local.get $path)) (then (return (i32.const 0))))
-    (local.set $len (call $guest_strlen (local.get $path)))
-    (local.set $copy (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
-    (if (local.get $copy)
-      (then (call $guest_strcpy (local.get $copy) (local.get $path))))
-    (local.get $copy))
-
   (func $scalable_font_source_for (param $resource i32) (result i32)
     (local $node i32)
     (if (i32.eqz (local.get $resource)) (then (return (i32.const 0))))
@@ -1425,8 +1416,8 @@
       ;; face; it does not enumerate it until AddFontResource is called.
       (br_if $done (i32.lt_s (call $tt_face_open (local.get $source)) (i32.const 0)))
 
-      (local.set $resource_copy (call $scalable_font_path_copy (local.get $arg1)))
-      (local.set $source_copy (call $scalable_font_path_copy (local.get $source)))
+      (local.set $resource_copy (call $guest_strdup (local.get $arg1)))
+      (local.set $source_copy (call $guest_strdup (local.get $source)))
       (br_if $done (i32.or (i32.eqz (local.get $resource_copy))
                            (i32.eqz (local.get $source_copy))))
       (local.set $node (call $heap_alloc (i32.const 16)))

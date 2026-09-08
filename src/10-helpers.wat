@@ -5962,3 +5962,15 @@
         (if (call $str_eq (local.get $name_wa) "SHBrowseForFolder")
           (then (return (call $lookup_api_id "SHBrowseForFolderA"))))))
     (i32.const -1))
+
+  ;; Own an ANSI guest string beyond the caller's buffer lifetime. Both the
+  ;; source and result are guest addresses; HeapAlloc failure and NULL input
+  ;; preserve the ordinary Win32 NULL result.
+  (func $guest_strdup (param $src i32) (result i32)
+    (local $copy i32) (local $len i32)
+    (if (i32.eqz (local.get $src)) (then (return (i32.const 0))))
+    (local.set $len (call $guest_strlen (local.get $src)))
+    (local.set $copy (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (if (local.get $copy)
+      (then (call $guest_strcpy (local.get $copy) (local.get $src))))
+    (local.get $copy))

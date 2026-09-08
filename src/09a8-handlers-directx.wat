@@ -7217,15 +7217,6 @@
               (i32.mul (global.get $DP_ENTITY_MAX) (global.get $DP_ENTITY_STRIDE)))))))
     (global.get $dp_entity_table))
 
-  (func $dp_clone_string (param $src i32) (result i32)
-    (local $copy i32) (local $len i32)
-    (if (i32.eqz (local.get $src)) (then (return (i32.const 0))))
-    (local.set $len (call $guest_strlen (local.get $src)))
-    (local.set $copy (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
-    (if (local.get $copy)
-      (then (call $guest_strcpy (local.get $copy) (local.get $src))))
-    (local.get $copy))
-
   (func $dp_clone_name (param $src i32) (result i32)
     (local $name i32)
     (local.set $name (call $heap_alloc (i32.const 16)))
@@ -7237,10 +7228,10 @@
         (call $gs32 (i32.add (local.get $name) (i32.const 4))
           (call $gl32 (i32.add (local.get $src) (i32.const 4))))
         (call $gs32 (i32.add (local.get $name) (i32.const 8))
-          (call $dp_clone_string
+          (call $guest_strdup
             (call $gl32 (i32.add (local.get $src) (i32.const 8)))))
         (call $gs32 (i32.add (local.get $name) (i32.const 12))
-          (call $dp_clone_string
+          (call $guest_strdup
             (call $gl32 (i32.add (local.get $src) (i32.const 12)))))))
     (local.get $name))
 
