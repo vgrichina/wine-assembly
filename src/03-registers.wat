@@ -74,12 +74,44 @@
   ;; (simulating Windows null-page behavior) and writes go to a harmless sink.
   (global $NULL_SENTINEL i32 (i32.const 0xF0))
 
+  ;; Win98 private-page protections accepted by VirtualAlloc/VirtualProtect.
+  ;; PAGE_WRITECOPY variants apply to mapped views, and PAGE_WRITECOMBINE did
+  ;; not exist on the target OS. PAGE_GUARD/PAGE_NOCACHE are mutually exclusive
+  ;; and neither may modify PAGE_NOACCESS.
+  (func $guest_page_protection_valid (param $protect i32) (result i32)
+    (local $base i32) (local $modifier i32)
+    (if (i32.ne
+          (i32.and (local.get $protect)
+            (i32.xor (global.get $GUEST_PTE_PROTECT_MASK) (i32.const -1)))
+          (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $base (i32.and (local.get $protect) (i32.const 0xFF)))
+    (if (i32.eqz
+          (i32.or
+            (i32.or (i32.eq (local.get $base) (i32.const 0x01))
+                    (i32.eq (local.get $base) (i32.const 0x02)))
+            (i32.or
+              (i32.or (i32.eq (local.get $base) (i32.const 0x04))
+                      (i32.eq (local.get $base) (i32.const 0x10)))
+              (i32.or (i32.eq (local.get $base) (i32.const 0x20))
+                      (i32.eq (local.get $base) (i32.const 0x40))))))
+      (then (return (i32.const 0))))
+    (local.set $modifier (i32.and (local.get $protect) (i32.const 0x700)))
+    (if (i32.ne (i32.and (local.get $modifier) (i32.const 0x400)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (if (i32.eq (local.get $modifier) (i32.const 0x300))
+      (then (return (i32.const 0))))
+    (if (i32.and
+          (i32.eq (local.get $base) (i32.const 0x01))
+          (i32.ne (local.get $modifier) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (i32.const 1))
+
   ;; Publish an affine, page-aligned guest-to-WASM range into packed PTEs.
-  ;; Low 12 bits remain available for access state; the initial translation
-  ;; experiment records the permissive behavior the sparse mapper has today.
+  ;; Low bits retain the caller's validated PAGE_* value verbatim.
   (func $guest_page_publish_range
-      (param $guest i32) (param $size i32) (param $backing i32)
-      (param $flags i32) (result i32)
+    (param $guest i32) (param $size i32) (param $backing i32)
+      (param $protect i32) (result i32)
     (local $cur i32) (local $end i32) (local $back i32)
     (if (i32.or
           (i32.or
@@ -100,7 +132,9 @@
           (i32.and (i32.shr_u (local.get $cur) (i32.const 10))
             (i32.const 0x003FFFFC)))
         (i32.or (i32.and (local.get $back) (i32.const 0xFFFFF000))
-          (i32.or (local.get $flags) (global.get $GUEST_PTE_PRESENT))))
+          (i32.or
+            (i32.and (local.get $protect) (global.get $GUEST_PTE_PROTECT_MASK))
+            (global.get $GUEST_PTE_PRESENT))))
       (local.set $cur (i32.add (local.get $cur) (i32.const 0x1000)))
       (local.set $back (i32.add (local.get $back) (i32.const 0x1000)))
       (br $pages)))
@@ -120,6 +154,54 @@
         (i32.const 0))
       (local.set $cur (i32.add (local.get $cur) (i32.const 0x1000)))
       (br $pages))))
+
+  ;; Change PAGE_* on a page-rounded committed range. The caller holds
+  ;; LOCK_VIRTUAL_MAP, so the validation pass and update pass are atomic with
+  ;; respect to commit/release. Return -1 without changing anything if a page
+  ;; is missing; otherwise return the first page's previous protection.
+  (func $guest_page_protect_range
+      (param $guest i32) (param $size i32) (param $protect i32) (result i32)
+    (local $base i32) (local $raw_end i32) (local $end i32) (local $cur i32)
+    (local $cell i32) (local $pte i32) (local $old i32)
+    (local.set $base (i32.and (local.get $guest) (i32.const 0xFFFFF000)))
+    (local.set $raw_end (i32.add (local.get $guest) (local.get $size)))
+    (if (i32.or
+          (i32.le_u (local.get $raw_end) (local.get $guest))
+          (i32.gt_u (local.get $raw_end) (i32.const 0xFFFFF000)))
+      (then (return (i32.const -1))))
+    (local.set $end
+      (i32.and (i32.add (local.get $raw_end) (i32.const 0xFFF))
+        (i32.const 0xFFFFF000)))
+    (local.set $cur (local.get $base))
+    (block $checked (loop $check
+      (br_if $checked (i32.ge_u (local.get $cur) (local.get $end)))
+      (local.set $cell
+        (i32.add (global.get $GUEST_PAGE_TABLE)
+          (i32.and (i32.shr_u (local.get $cur) (i32.const 10))
+            (i32.const 0x003FFFFC))))
+      (local.set $pte (i32.atomic.load (local.get $cell)))
+      (if (i32.eqz (i32.and (local.get $pte) (global.get $GUEST_PTE_PRESENT)))
+        (then (return (i32.const -1))))
+      (if (i32.eq (local.get $cur) (local.get $base))
+        (then (local.set $old
+          (i32.and (local.get $pte) (global.get $GUEST_PTE_PROTECT_MASK)))))
+      (local.set $cur (i32.add (local.get $cur) (i32.const 0x1000)))
+      (br $check)))
+    (local.set $cur (local.get $base))
+    (block $updated (loop $update
+      (br_if $updated (i32.ge_u (local.get $cur) (local.get $end)))
+      (local.set $cell
+        (i32.add (global.get $GUEST_PAGE_TABLE)
+          (i32.and (i32.shr_u (local.get $cur) (i32.const 10))
+            (i32.const 0x003FFFFC))))
+      (local.set $pte (i32.atomic.load (local.get $cell)))
+      (i32.atomic.store (local.get $cell)
+        (i32.or
+          (i32.and (local.get $pte) (i32.const 0xFFFFF800))
+          (i32.and (local.get $protect) (global.get $GUEST_PTE_PROTECT_MASK))))
+      (local.set $cur (i32.add (local.get $cur) (i32.const 0x1000)))
+      (br $update)))
+    (local.get $old))
 
   (func $guest_page_translate (param $ga i32) (result i32)
     (local $pte i32)

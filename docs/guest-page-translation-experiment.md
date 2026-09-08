@@ -294,3 +294,24 @@ The next memory-model step is optional audit/enforcement of `VirtualAlloc` and
 `VirtualProtect` access flags on this one authoritative translator. Remaining
 game runs now serve general acceptance and permission-policy evaluation; they
 are no longer a gate for selecting between two address lookup implementations.
+
+## PAGE_* metadata follow-up
+
+The packed PTE now keeps the caller's validated `PAGE_*` value verbatim in its
+low 11 bits and uses bit 11 as the private present marker. Sparse
+`VirtualAlloc` publishes that protection on every committed page.
+`VirtualProtect` rounds the requested byte range to pages, validates the whole
+range before writing any PTE, and returns the first page's actual previous
+protection. This follows Microsoft's documented all-or-nothing committed-range
+contract and old-protection rule:
+
+- <https://learn.microsoft.com/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect>
+- <https://learn.microsoft.com/windows/win32/memory/memory-protection-constants>
+
+Private allocations reject `PAGE_WRITECOPY` variants, unknown bits,
+`PAGE_WRITECOMBINE`, `PAGE_GUARD | PAGE_NOCACHE`, and modifiers on
+`PAGE_NOACCESS`. Access checks are intentionally not enabled by this change.
+Direct image/heap pages also remain permissive until PE-section and low-memory
+page metadata can describe them. That separation makes the new metadata
+observable and testable without putting a permission branch on the direct/DIB
+translation paths or changing existing game execution.

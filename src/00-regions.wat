@@ -81,7 +81,7 @@
   ;; statusbar/toolbar classes -- sat outside every region and outside every
   ;; gate. The three blocks that follow used to be undeclared data segments.
   (region.declare $CLASS_NAME_STRINGS (size 0x000001A0) (align 0x00000100)
-    (owner "09a-handlers.wat:4532"))
+    (owner "09a-handlers.wat:4540"))
   (region.declare $DIB_DEFAULT_RGB555_MASKS (size 0x0000000C) (align 0x00000010)
     (owner "01-header.wat:1281"))
   (region.declare $OLE_STRINGS (size 0x000000E0) (align 0x00000010)
@@ -156,7 +156,7 @@
   (region.declare $FLASH_TABLE (size 0x00000100) (align 0x00000010)
     (owner "09a5-handlers-window.wat:3480"))
   (region.declare $NC_FLAGS (size 0x00000400) (align 0x00000010)
-    (owner "10-helpers.wat:2903"))
+    (owner "10-helpers.wat:2887"))
   (region.declare $TITLE_TABLE (size 0x00000800) (align 0x00000010)
     (owner "01-header.wat:1773"))
   (region.declare $CLIENT_RECT (size 0x00001000) (align 0x00000010)
@@ -199,7 +199,7 @@
   (region.declare $BROWSE_DIALOG_STRINGS (size 0x00000060) (align 0x00000010)
     (owner "01-header.wat:1217"))
   (region.declare $DX_VERSION_INFO (size 0x0000005C) (align 0x00000010)
-    (owner "09a-handlers.wat:19087"))
+    (owner "09a-handlers.wat:19117"))
   ;; Storage for every string the compiler interns from a `"text"` literal.
   ;; Named by `(string.pool $WATX_STRING_POOL)` in 01-header.wat; without that
   ;; declaration the pool is placed above the last data segment, which in this
@@ -225,7 +225,7 @@
   ;; before the fixed guest mirror. Keep the address allocator-owned rather
   ;; than pinning another raw address.
   (region.declare $LAST_ACTIVE_POPUP_TABLE (size 0x00000400) (align 0x00000100)
-    (owner "09a-handlers.wat:20035"))
+    (owner "09a-handlers.wat:20065"))
   ;; WIDENED 0x100000 -> 0x3EE000 (wave 3). The low heap never fitted in 1MB:
   ;; $heap_low_reserve hands out 1MB chunks and stopped only when the next
   ;; chunk would reach $PAGE_INDEX_ARENA, which the hand-placed map happened to
@@ -364,20 +364,20 @@
   (region.declare $TAB_NATIVE_STATE_TABLE (size 0x00000100) (align 0x00000100)
     (owner "09c3-controls.wat:862"))
   (region.declare $ICON_TABLE (size 0x00000100) (align 0x00000100)
-    (owner "09a-handlers.wat:5192"))
+    (owner "09a-handlers.wat:5200"))
   (region.declare $CURSOR_TABLE (size 0x00000300) (align 0x00000100)
     (stride $CURSOR_TABLE_STRIDE (count 32))
-    (owner "09a-handlers.wat:5383"))
+    (owner "09a-handlers.wat:5391"))
   (region.declare $CURSOR_MASK_DESC (size 0x00000050) (align 0x00000100)
-    (owner "09a-handlers.wat:5484"))
+    (owner "09a-handlers.wat:5492"))
   (region.declare $CURSOR_COLOR_DESC (size 0x00000050) (align 0x00000010)
-    (owner "09a-handlers.wat:5485"))
+    (owner "09a-handlers.wat:5493"))
   (region.declare $EDIT_LAYOUT_SCRATCH (size 0x00000C00) (align 0x00000100)
     (owner "09c3-controls.wat:14636"))
   (region.declare $VIRTUAL_MAP_STATE (size 0x00000010) (align 0x00000100)
-    (owner "10-helpers.wat:440"))
+    (owner "10-helpers.wat:447"))
   (region.declare $VIRTUAL_MAP_TABLE (size 0x00008000) (align 0x00000010)
-    (owner "10-helpers.wat:448"))
+    (owner "10-helpers.wat:455"))
   (region.declare $GDI_BITMAP_FONT_IO (size 0x00000004) (align 0x00000010)
     (owner "10b-gdi-font.wat:11"))
   (region.declare $GDI_BITMAP_FONT_DESC (size 0x00000050) (align 0x00000010)
@@ -404,7 +404,7 @@
     (owner "01-header.wat:2385"))
   (region.declare $CS_TABLE (size 0x00000400) (align 0x00000010)
     (stride 0x4 (count $CS_TABLE_ENTRIES))
-    (owner "09a-handlers.wat:10313"))
+    (owner "09a-handlers.wat:10321"))
   (region.declare $SHARED_COUNTERS (size 0x00000010) (align 0x00000010)
     (owner "01-header.wat:2422"))
   (region.declare $CLIPBOARD_SEQUENCE (size 0x00000004) (align 0x00000004)
@@ -440,7 +440,7 @@
   (region.declare $TIMER_SHARED (size 0x00000050) (align 0x00000100)
     (owner "09a-handlers.wat:138"))
   (region.declare $EXTRA_CMDLINE_BUFFER (size 0x00000100) (align 0x00000100)
-    (owner "10-helpers.wat:1306"))
+    (owner "10-helpers.wat:1353"))
   (region.declare $TLS_NEXT_INDEX_SHARED (size 0x00000040) (align 0x00000100)
     (owner "01-header.wat:2774"))
   (region.declare $DI_MOUSE_INPUT_STATE (size 0x00000118) (align 0x00000100)
@@ -500,9 +500,9 @@
     (stride 0x4 (count $DX_MAX))
     (owner "09a8-handlers-directx.wat:688"))
   (region.declare $CP1252_TO_CP437 (size 0x00000100) (align 0x00001000)
-    (owner "09a-handlers.wat:18077"))
+    (owner "09a-handlers.wat:18107"))
   (region.declare $CP437_TO_CP1252 (size 0x00000100) (align 0x00000100)
-    (owner "09a-handlers.wat:18078"))
+    (owner "09a-handlers.wat:18108"))
   (region.declare $BRANCH_CMP_JCC_HIST (size 0x00001000) (align 0x00001000)
     (owner "04-cache.wat:1093"))
   (region.declare $BRANCH_TEST_JCC_HIST (size 0x00001000) (align 0x00001000)

@@ -479,6 +479,7 @@ UNIT=(
   test/test-v86-reference-paint-workflows.js
   test/test-vfs-legacy-hfile.js
   test/test-virtual-map-cross-instance.js
+  test/test-virtual-page-protection.js
   test/test-wat-drive-types.js
   test/test-wat-gdi-region-lazy-mirror.js
   test/test-wat-gdi-screen-readback.js

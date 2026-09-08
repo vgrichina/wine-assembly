@@ -3147,6 +3147,12 @@
   ;; NULL reserves return 64KB-granularity bases; commits are page-aligned.
   (func $handle_VirtualAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $size i32) (local $new_top i32)
+    (if (i32.eqz (call $guest_page_protection_valid (local.get $arg3)))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; Round size up to page boundary
     (local.set $size (i32.and (i32.add (local.get $arg1) (i32.const 0xFFF)) (i32.const 0xFFFFF000)))
     (if (i32.eqz (local.get $size))
@@ -3159,7 +3165,8 @@
         (if (i32.ge_u (local.get $arg0) (global.get $VIRTUAL_ALLOC_MIN))
           (then
             ;; Commit into a sparse high guest reserve.
-            (global.set $eax (call $virtual_map_commit (local.get $arg0) (local.get $size))))
+            (global.set $eax (call $virtual_map_commit_protect
+              (local.get $arg0) (local.get $size) (local.get $arg3))))
           (else
             ;; MEM_COMMIT at an existing low address. Refuse commits that would
             ;; map into emulator-private decoded-code/cache memory.
@@ -3177,7 +3184,8 @@
           (then (global.set $eax (i32.const 0)))
           (else
             (if (i32.and (local.get $arg2) (i32.const 0x1000))
-              (then (global.set $eax (call $virtual_map_commit (local.get $new_top) (local.get $size))))
+              (then (global.set $eax (call $virtual_map_commit_protect
+                (local.get $new_top) (local.get $size) (local.get $arg3))))
               (else (global.set $eax (local.get $new_top))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
@@ -15064,20 +15072,42 @@ HookEx — no next hook in chain, return 0
   )
 
   ;; VirtualProtect(lpAddress, dwSize, flNewProtect, lpflOldProtect).
-  ;; The interpreter's linear memory has no host page-permission distinction,
-  ;; so a valid committed/direct guest range is already readable, writable,
-  ;; and executable. Publish that effective prior protection and accept the
-  ;; requested mode; generated/self-modifying code is handled by cache guards.
+  ;; Sparse VirtualAlloc pages retain their exact PAGE_* value in packed PTEs.
+  ;; Validate the complete page-rounded range before changing any page and
+  ;; publish the first page's actual previous value. Direct image/heap pages
+  ;; remain permissive until their section/page metadata joins this model.
   (func $handle_VirtualProtect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $old i32) (local $old_wa i32)
     (if (i32.or
           (i32.eqz (local.get $arg0))
-          (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg3))))
+          (i32.or
+            (i32.eqz (local.get $arg1))
+            (i32.or
+              (i32.eqz (local.get $arg3))
+              (i32.eqz (call $guest_page_protection_valid (local.get $arg2))))))
       (then
         (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
         (global.set $eax (i32.const 0)))
       (else
-        (call $gs32 (local.get $arg3) (i32.const 0x40)) ;; PAGE_EXECUTE_READWRITE
-        (global.set $eax (i32.const 1))))
+        (local.set $old_wa (call $g2w (local.get $arg3)))
+        (if (i32.eq (local.get $old_wa) (global.get $NULL_SENTINEL))
+          (then
+            (global.set $last_error (i32.const 87))
+            (global.set $eax (i32.const 0)))
+          (else
+            (if (i32.ge_u (local.get $arg0) (global.get $VIRTUAL_ALLOC_MIN))
+              (then
+                (local.set $old (call $virtual_map_protect
+                  (local.get $arg0) (local.get $arg1) (local.get $arg2))))
+              (else
+                (local.set $old (i32.const 0x40))))
+            (if (i32.eq (local.get $old) (i32.const -1))
+              (then
+                (global.set $last_error (i32.const 487)) ;; ERROR_INVALID_ADDRESS
+                (global.set $eax (i32.const 0)))
+              (else
+                (i32.store (local.get $old_wa) (local.get $old))
+                (global.set $eax (i32.const 1))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 

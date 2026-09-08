@@ -2337,11 +2337,11 @@
   ;; page plus normalized access flags in the otherwise-zero low 12 bits.
   (global $GUEST_PAGE_TABLE i32 (region.addr $GUEST_PAGE_TABLE 0))
   (global $GUEST_PAGE_TABLE_SIZE i32 (region.size $GUEST_PAGE_TABLE))
-  (global $GUEST_PTE_PRESENT i32 (i32.const 0x001))
-  (global $GUEST_PTE_COMMITTED i32 (i32.const 0x002))
-  (global $GUEST_PTE_READ i32 (i32.const 0x004))
-  (global $GUEST_PTE_WRITE i32 (i32.const 0x008))
-  (global $GUEST_PTE_EXEC i32 (i32.const 0x010))
+  ;; Backing pages are 4KB-aligned, leaving the low 12 PTE bits for state.
+  ;; Keep PAGE_* verbatim in bits 0..10 so VirtualQuery/Protect need no lossy
+  ;; reverse mapping. Bit 11 is private PRESENT; a zero entry is unmapped.
+  (global $GUEST_PTE_PROTECT_MASK i32 (i32.const 0x7FF))
+  (global $GUEST_PTE_PRESENT i32 (i32.const 0x800))
   ;; Sparse VirtualAlloc mapping table. Guest reserve addresses are high
   ;; virtual addresses; committed chunks are backed here so they do not collide
   ;; with the low HeapAlloc arena.
