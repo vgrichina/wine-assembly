@@ -2,17 +2,11 @@
 
 'use strict';
 
-// `tools/check-region-decls.js --check-owners` gates the `(owner "file:line")`
-// clause every region declaration carries. The clause is documentation the
-// compiler never reads, and two waves of moving code once left 155 of them
-// aimed at lines that have nothing to do with the region — worse than no owner
-// at all, because it sends the next reader somewhere confident and wrong.
-//
-// It landed as a ratchet over those 155; they have since all been re-derived,
-// so the whitelist is empty and the mode is a flat refusal. The two things
-// worth testing are still the two directions of its verdict: an owner that
-// names its region passes, and one that does not is caught. A gate nobody has
-// watched fire is a gate nobody knows works.
+// `tools/check-region-decls.js --check-owners` gates the stable
+// `(owner "file:$symbol")` clause every region declaration carries. For WAT,
+// the symbol's complete top-level form must still reference the region: merely
+// leaving a same-named function elsewhere in the file cannot hide ownership
+// drift. Test-only non-WAT owners require exact anchor and region symbols.
 //
 // It tests `ownerVerdict` directly rather than shelling out to the CLI, because
 // the CLI path is baseline bookkeeping; exercising it proves nothing about
@@ -21,7 +15,11 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { collectDeclarations, ownerVerdict } = require('../tools/check-region-decls.js');
+const {
+  collectDeclarations,
+  ownerVerdict,
+  watTopLevelForms,
+} = require('../tools/check-region-decls.js');
 
 let checks = 0;
 const check = (cond, what) => { assert.ok(cond, what); checks++; };
@@ -36,77 +34,78 @@ const ownerless = decls.filter(d => !d.owner);
 check(ownerless.length === 0,
   `every region has an (owner "…"): ${ownerless.map(d => d.name).join(', ')}`);
 
-// 2. A synthetic owner pointing at a line that DOES mention the region passes.
-//    Built from the live tree so the fixture cannot go stale: find the region's
-//    own declaration line in 00-regions.wat and aim the owner at it.
-const regionsPath = path.join(__dirname, '..', 'src', '00-regions.wat');
-const regionsLines = fs.readFileSync(regionsPath, 'utf8').split('\n');
-const sample = decls[0];
-const selfLine = regionsLines.findIndex(l => l.includes(`$${sample.name}`)) + 1;
-check(selfLine > 0, `found $${sample.name}'s own line in 00-regions.wat`);
-check(ownerVerdict({ name: sample.name, owner: `"00-regions.wat:${selfLine}"` }).state === 'ok',
-  'an owner aimed at a line naming the region verdicts ok');
+// 2. A global symbol that owns the region mirror is valid.
+check(ownerVerdict({
+  name: 'STRING_CONSTANTS',
+  owner: '"01-header.wat:$STRING_CONSTANTS"',
+}).state === 'ok', 'a live region-mirror symbol verdicts ok');
 
-// 3. ...and one aimed at a line that does not mention it is STALE. Line 1 of
-//    00-regions.wat is the shebang-less header comment; no region name is
-//    within three lines of it.
-const stale = ownerVerdict({ name: sample.name, owner: '"00-regions.wat:1"' });
-check(stale.state === 'stale', `a wrong line is caught (got ${stale.state})`);
-check(/does not mention/.test(stale.why || ''), 'and the message says why');
-
-// 4. A near miss is stale too. This is the regression shape that justified
-//    exact matching: the former +/-3 window accepted an owner after a nearby
-//    edit shifted its real use by one line. Derive an adjacent line from the
-//    live fixture, and first prove that line does not itself repeat the name.
-const adjacentLine = selfLine < regionsLines.length ? selfLine + 1 : selfLine - 1;
-check(!(regionsLines[adjacentLine - 1] || '').includes(sample.name),
-  'the adjacent-line fixture does not itself mention the region');
-const adjacent = ownerVerdict({
-  name: sample.name,
-  owner: `"00-regions.wat:${adjacentLine}"`,
+// 3. A function symbol is valid only while that function still uses the exact
+//    region (not merely its similarly prefixed _SIZE global).
+check(ownerVerdict({
+  name: 'CLASS_NAME_STRINGS',
+  owner: '"09a-handlers.wat:$control_class_name_ptr"',
+}).state === 'ok', 'a live function owner verdicts ok');
+const wrongFunction = ownerVerdict({
+  name: 'STRING_CONSTANTS',
+  owner: '"01-header.wat:$UPDATE_RECT"',
 });
-check(adjacent.state === 'stale',
-  `an owner one line beside its real use is stale (got ${adjacent.state})`);
-check((adjacent.why || '').includes(`actual line is 00-regions.wat:${selfLine}`),
-  'the near-miss diagnostic names the exact corrected line');
+check(wrongFunction.state === 'stale',
+  `a function that does not use the region is caught (got ${wrongFunction.state})`);
+check(/no longer references/.test(wrongFunction.why || ''), 'and the message says why');
+
+// 4. A vanished symbol is stale, even when the file and region both exist.
+const vanished = ownerVerdict({
+  name: 'STRING_CONSTANTS',
+  owner: '"01-header.wat:$no_such_owner_symbol"',
+});
+check(vanished.state === 'stale', `a vanished symbol is caught (got ${vanished.state})`);
 
 // 5. An owner naming a file that does not exist is stale, not a crash.
-check(ownerVerdict({ name: 'X', owner: '"no-such-file.wat:1"' }).state === 'stale',
+check(ownerVerdict({ name: 'X', owner: '"no-such-file.wat:$X"' }).state === 'stale',
   'a vanished owner file is caught');
 
-// 6. An owner past the end of its file is stale, not a silent pass on an empty
-//    window — this is the shape a deleted block leaves behind.
-check(ownerVerdict({ name: 'X', owner: '"00-regions.wat:999999"' }).state === 'stale',
-  'an owner past EOF is caught');
+// 6. The line-number representation is rejected; keeping it as a fallback
+//    would quietly reintroduce the churn this migration removes.
+const legacyLine = ownerVerdict({
+  name: 'STRING_CONSTANTS',
+  owner: '"01-header.wat:903"',
+});
+check(legacyLine.state === 'stale', 'legacy file:line owners are rejected');
+check(/unsupported/.test(legacyLine.why || ''), 'the diagnostic names the unsupported form');
 
-// 7. An owner that is deliberately not a file:line is SKIPPED, not failed.
-//    "01-header.wat: (string.pool …)" names a mechanism; there is nothing to
-//    grep and inventing a line number for it would be a fabricated claim.
-check(ownerVerdict({ name: 'X', owner: '"01-header.wat: (string.pool ...)"' }).state === 'skip',
-  'a non-file:line owner is skipped, not failed');
+// 7. A test-only region may name a repository-relative non-WAT source that
+//    mentions its exact symbol. It is verified rather than skipped.
+check(ownerVerdict({
+  name: 'TEST_SCRATCH',
+  owner: '"test/test-wat-window-tables.js:$TEST_SCRATCH"',
+}).state === 'ok', 'a test-only JavaScript symbol owner verifies');
 
-// 8. The baseline is EMPTY. It used to hold 155 names and this check used to
-//    assert the opposite, on the reasoning that an empty list would make the
-//    ratchet look green while checking nothing. That reasoning belonged to the
-//    period when the drain was pending: the guarantee comes from checks 2-7
-//    (the matcher can see both verdicts) and check 9 (it verifies real owners
-//    in the live tree), not from the whitelist having entries. Now that all 155
-//    are re-derived the list is a flat refusal, and a name reappearing here is
-//    the regression — a wrong owner laundered by --record-owners rather than
-//    fixed.
-const baselinePath = path.join(__dirname, '..', 'tools', 'check-region-decls.owners.json');
-const baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf8'));
-check(Array.isArray(baseline.stale), 'the recorded stale set is a list');
-check(baseline.stale.length === 0,
-  `the stale baseline is drained: ${baseline.stale.join(', ')}`);
+// 8. The top-level reader ignores fake forms/symbols in both comment kinds and
+//    string bytes; owner validation must inspect WAT code, not documentation.
+const parsed = watTopLevelForms([
+  ';; (func $line_fake (global.get $FAKE))',
+  '(; (func $block_fake (global.get $FAKE)) ;)',
+  '(func $real (drop (i32.const 1)) (data.drop $inside))',
+  '(data (i32.const 0) "(func $string_fake)")',
+].join('\n'));
+check(parsed.length === 2, `only two real top-level forms were found (${parsed.length})`);
+check(parsed[0].symbol === '$real', 'the real function symbol is parsed');
+check(!parsed.some(form => /\$(?:line|block|string)_fake/.test(form.code)),
+  'comment and string symbols are absent from owner-checking code');
 
-// 9. And no declaration in the live tree is stale — the drain holds without the
-//    whitelist. This is what check 8 used to delegate to the baseline.
+// 9. No declaration in the live tree is stale, and every owner clause —
+//    including the storage-free span omitted from collectDeclarations — uses
+//    the stable symbol spelling.
 const liveStale = decls.filter(d => ownerVerdict(d).state === 'stale');
 check(liveStale.length === 0,
   `no live declaration has a stale owner: ${liveStale.map(d => d.name).join(', ')}`);
 const okCount = decls.filter(d => ownerVerdict(d).state === 'ok').length;
-check(okCount > 100, `the matcher verifies real owners (${okCount} do)`);
+check(okCount === decls.length, `the matcher verifies every owner (${okCount})`);
+const regionsText = fs.readFileSync(path.join(__dirname, '..', 'src', '00-regions.wat'), 'utf8');
+const ownerClauses = [...regionsText.matchAll(/\(owner\s+"([^"]+)"\)/g)].map(match => match[1]);
+check(ownerClauses.length > decls.length, 'the raw owner set includes the storage-free span');
+check(ownerClauses.every(owner => /:\$[A-Za-z0-9_.\-]+$/.test(owner)),
+  'every declaration and span uses file:$symbol ownership');
 
-console.log(`PASS  region owner ratchet (${checks} checks, ${okCount} owners verify, ` +
-  `${baseline.stale.length} baselined stale)`);
+console.log(`PASS  region symbol owners (${checks} checks, ${okCount} owners verify)`);
