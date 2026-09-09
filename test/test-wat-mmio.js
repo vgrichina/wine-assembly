@@ -21,6 +21,12 @@ const { bootRenderHarness } = require('./render-helper');
       (local.get $handle) (local.get $buf) (local.get $count)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_mmio_lazy_advance")
+        (param $handle i32) (param $info i32) (result i32)
+    (call $handle_mmioAdvance
+      (local.get $handle) (local.get $info) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_mmio_set_call_state") (param $esp_value i32) (param $thunk i32)
     (global.set $esp (local.get $esp_value))
     (global.set $current_thunk_eip (local.get $thunk))
@@ -29,15 +35,20 @@ const { bootRenderHarness } = require('./render-helper');
   `;
   let wat;
   let lazyReads = 0;
+  let bufferedReads = 0;
+  let pendingRead = false;
   const lazyPayload = Uint8Array.from([0x53, 0x4d, 0x41, 0x43]);
   const { exports, memory } = await bootRenderHarness({
     extraWat,
     extraHostOverrides: {
       fs_read_file(handle, buffer, requested, count) {
-        if (handle !== 0x70000120) return 0;
+        const isDirect = handle === 0x70000120;
+        const isBuffered = handle === 0x70000121;
+        if (!isDirect && !isBuffered) return 0;
         assert.strictEqual(requested, lazyPayload.length);
-        lazyReads++;
-        if (lazyReads === 1) return 0;
+        const reads = isDirect ? ++lazyReads : ++bufferedReads;
+        pendingRead = reads === 1;
+        if (pendingRead) return 0;
         for (let i = 0; i < lazyPayload.length; i++) {
           wat.guest_write8(buffer + i, lazyPayload[i]);
         }
@@ -45,7 +56,7 @@ const { bootRenderHarness } = require('./render-helper');
         return 1;
       },
       fs_read_pending() {
-        return lazyReads === 1 ? 1 : 0;
+        return pendingRead ? 1 : 0;
       },
     },
   });
@@ -132,7 +143,40 @@ const { bootRenderHarness } = require('./render-helper');
     'the resumed provider bytes reach the movie buffer');
   assert.strictEqual(lazyReads, 2, 'one pending mmioRead is retried exactly once');
 
-  console.log('PASS: mmio FOURCC conversion, buffer management, and lazy-read retry');
+  const bufferedHandle = 0x70000121;
+  const bufferedStorage = wat.guest_alloc(lazyPayload.length) >>> 0;
+  const bufferedInfo = wat.guest_alloc(72) >>> 0;
+  const bufferedInfoWa = (bufferedInfo - imageBase + guestBase) >>> 0;
+  assert.strictEqual(setBuffer(bufferedHandle, bufferedStorage, lazyPayload.length), 0);
+  assert.strictEqual(wat.test_call_mmioGetInfo(bufferedHandle, bufferedInfo), 0);
+  wat.test_mmio_set_call_state(lazyEsp, lazyThunk);
+  assert.strictEqual(wat.test_mmio_lazy_advance(bufferedHandle, bufferedInfo), 0,
+    'a pending buffered refill retains the MMIO success contract');
+  assert.strictEqual(wat.get_yield_reason(), 12,
+    'a pending mmioAdvance parks on IO_WAIT');
+  assert.strictEqual(wat.test_mmio_esp() >>> 0, lazyEsp,
+    'the mmioAdvance stdcall frame remains intact while parked');
+  assert.strictEqual(wat.get_eip() >>> 0, lazyThunk,
+    'the buffered refill retries from the original API thunk');
+  assert.strictEqual(view.getUint32(bufferedInfoWa + 32, true), bufferedStorage,
+    'a pending refill exposes no false end-of-file bytes');
+
+  wat.test_mmio_set_call_state(lazyEsp, lazyThunk);
+  assert.strictEqual(wat.test_mmio_lazy_advance(bufferedHandle, bufferedInfo), 0,
+    'the resumed buffered refill succeeds');
+  assert.strictEqual(wat.test_mmio_esp() >>> 0, lazyEsp + 16,
+    'the successful mmioAdvance retry pops the stdcall frame once');
+  assert.strictEqual(view.getUint32(bufferedInfoWa + 32, true),
+    bufferedStorage + lazyPayload.length,
+    'the resumed refill publishes all resident bytes');
+  assert.deepStrictEqual(
+    Array.from(lazyPayload, (_, i) => wat.guest_read8(bufferedStorage + i)),
+    Array.from(lazyPayload),
+    'the resumed buffered provider bytes reach the MMIO buffer');
+  assert.strictEqual(bufferedReads, 2,
+    'one pending mmioAdvance refill is retried exactly once');
+
+  console.log('PASS: mmio FOURCC conversion, buffer management, and lazy read/refill retry');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);

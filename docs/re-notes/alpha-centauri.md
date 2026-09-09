@@ -41,7 +41,19 @@ provider's pending result as EOF instead of parking and retrying the Win32
 call. The proof was the first four-byte read returning zero followed by the
 player's `mmioSeek(-4, SEEK_CUR)` still starting from position zero. `mmioRead`
 now uses the same pending-I/O retry contract as `ReadFile`; after resumption the
-player reads the WVE header and then progresses contiguously through the file.
+player reads the WVE header. The decoder later switches to buffered
+`mmioAdvance`, which crosses the same lazy-provider boundary, so its refill now
+parks and retries as well instead of presenting an empty buffer as end-of-file.
+Without that second retry the corrected movie animated until the next unloaded
+ISO extent and then remained forever on its white terminal frame; Escape only
+hid the truncated playback and exposed the already-working main menu.
+
+The source movie is deliberately letterboxed at 400x192 inside Alpha's
+640x480 exclusive primary. The `terran.exe` presentation profile crops that
+exact centred rectangle and aspect-fits it to the browser output. The crop is
+guarded by the 640x480 backing size, so Alpha's later resized menu and gameplay
+surfaces return to ordinary full-surface presentation without a game-state
+heuristic or pixel scan.
 
 Once reads worked, the movie animated with severely corrupted horizontal
 bands. This was already present in both raw 640x480 RGB565 DirectDraw surfaces,

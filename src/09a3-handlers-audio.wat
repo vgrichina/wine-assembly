@@ -908,10 +908,22 @@
 
   ;; mmioAdvance(hmmio, lpmmioinfo, fuAdvance) — 3 args stdcall
   (func $handle_mmioAdvance (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $result i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
     (if (i32.eqz (local.get $arg1))
       (then (global.set $eax (i32.const 5)) (return)))                ;; MMSYSERR_INVALPARAM
-    (global.set $eax (call $mmio_refill (local.get $arg0) (local.get $arg1))))
+    (local.set $result (call $mmio_refill (local.get $arg0) (local.get $arg1)))
+    (global.set $eax (local.get $result))
+    ;; Buffered ISO input has the same asynchronous provider boundary as
+    ;; mmioRead. A successful MMIO refill with no resident bytes may mean the
+    ;; provider is fetching the next extent, not end-of-file. Retry the whole
+    ;; API thunk after IO_WAIT so a transient empty buffer cannot terminate a
+    ;; movie at the first lazy chunk boundary.
+    (if (i32.and
+          (i32.eqz (local.get $result))
+          (i32.eq (call $host_fs_read_pending) (i32.const 1)))
+      (then (call $io_block (i32.const 16))))
+  )
 
   ;; mmioSetInfo(hmmio, lpmmioinfo, wFlags) — 3 args stdcall
   ;; Hands buffered I/O back. The file pointer has to end up where the app's
