@@ -28,7 +28,7 @@ are:
 - Broken Sword `WINSWORD.EXE`:
   `8ca6e3f0c56e1f289f79e2d52ca8cd98466c5b5c2817b3d05b7f7d80425c4177`
 - Dungeon Keeper `KEEPER95.EXE`:
-  `470bc45a428ac0e180b2bd34bfbc35c09a5606390fe2e92525de0c98ad4cd8fc`
+  `4d3cd6a7866520f360288b08440e0f20379b4b39216a9576c388e42fcdf72c84`
 - Darkstone `DarkstoneDemo.exe`:
   `b43db5e1b835eb1e93688a1f3f1d9c814517be6fc8110c7fb6e024d467ee721b`
 
@@ -44,6 +44,17 @@ title/menu sequence through ordinary Win32 keys, then verifies arena
 movement, visible bomb placement, and an explosion. The selected `BMANDEMO`
 tree contains no installer executable to bypass; its launch and data hashes are
 recorded in `docs/re-notes/atomic-bomberman-demo.md`.
+
+Dungeon Keeper is installed by running the archive's original `KDDATA.EXE`
+(SHA-256 `f121c2f77583e35a258617308f609aefbd73ca249974e3cdbac7520c4cdda92a`)
+with its documented `-d` argument inside ToyVM. The guest emits 166 files and
+19,754,866 bytes; Wine-Assembly launches that output rather than the archive's
+separate pre-unpacked copy. A frozen headless CLI acceptance now crosses the
+main menu and portal into the live Eversmile level. The bundled readme
+explicitly reserves copying rights to Electronic Arts, so the playable demo
+and generated install tree remain local-only. This source entry links where
+the original distribution can be obtained; it does not redistribute it. See
+`docs/re-notes/dungeon-keeper-demo.md`.
 
 ## Baldur's Gate demos and commercial preview
 

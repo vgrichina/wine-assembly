@@ -598,6 +598,8 @@ UNIT=(
   test/test-toyvm-dos-terminate.js
   test/test-toyvm-sb-single-cycle.js
   test/test-toyvm-ioctl-status.js
+  test/test-toyvm-dos-files.js
+  test/test-toyvm-sweep-budget.js
   test/test-toyvm-sb-highspeed-autoinit.js
   test/test-toyvm-vbe.js
   test/test-toyvm-load-seg.js
@@ -661,6 +663,7 @@ E2E=(
   test/test-captain-claw-gameplay.js
   test/test-abedemo-gameplay.js
   test/test-atomic-bomberman-gameplay.js
+  test/test-dungeon-keeper-gameplay.js
   test/test-baldurs-gate-demos.js
   test/test-diablo-shareware-art.js
   test/test-diablo-shareware-gameplay.js
@@ -754,6 +757,7 @@ E2E=(
   test/test-control-cli.js
   test/test-control-stdin-cli.js
   test/test-control-stdin-frozen-cli.js
+  test/test-cli-di-mouse-control.js
   test/test-cli-capture-launch.js
   test/test-calc-about.js
   test/test-calc-drag-close.js
