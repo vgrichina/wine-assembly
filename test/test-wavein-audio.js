@@ -86,7 +86,12 @@ console.log('PASS  waveIn CALLBACK_WINDOW posts MM_WIM_DATA and MM_WIM_CLOSE');
 (async () => {
   const previousWindowForPrime = global.window;
   try {
-    global.window = { addEventListener() {}, removeEventListener() {} };
+    const sessionTypes = [];
+    global.window = {
+      addEventListener() {},
+      removeEventListener() {},
+      claimAudioSession(type) { sessionTypes.push(type); },
+    };
     let captureRequests = 0;
     let settleCapture;
     const captureRequest = new Promise(resolve => { settleCapture = resolve; });
@@ -104,6 +109,8 @@ console.log('PASS  waveIn CALLBACK_WINDOW posts MM_WIM_DATA and MM_WIM_CLOSE');
     primedSharedAudio.waveIn.primeCapture();
     assert.strictEqual(captureRequests, 1,
       'capture prime should invoke getUserMedia inside the gesture call');
+    assert.strictEqual(sessionTypes.at(-1), 'play-and-record',
+      'capture prime should select Safari play-and-record before getUserMedia settles');
     const primedHandle = primed.wave_in_open(22050, 1, 16, 0, 0, 0);
     assert.strictEqual(primed.wave_in_start(primedHandle), 0);
     assert.strictEqual(captureRequests, 1,
@@ -113,6 +120,8 @@ console.log('PASS  waveIn CALLBACK_WINDOW posts MM_WIM_DATA and MM_WIM_CLOSE');
     settleCapture(null);
     await new Promise(resolve => setImmediate(resolve));
     primed.wave_in_close(primedHandle);
+    assert.strictEqual(sessionTypes.at(-1), 'playback',
+      'closing capture should restore Safari playback mode');
   } finally {
     if (previousWindowForPrime === undefined) delete global.window;
     else global.window = previousWindowForPrime;

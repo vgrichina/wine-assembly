@@ -31,7 +31,7 @@ const { disasmAt } = require('../disasm');
 const { makeVm } = require('./vm');
 const { setCpuLevel } = require('./decode');
 const { Machine, loadExe, vgaGeometry, parseKeys, VGA_BASE } = require('./dos');
-const { DosSession } = require('./dos-loop');
+const { DosSession, dispatchesForGuestSeconds } = require('./dos-loop');
 const { asking, complaint } = require('./demo-status');
 const {
   conCells, conText, screenSurface, nonBlack, frameScore, frameHash, rgbaFrame, rgbaConsole,
@@ -171,6 +171,13 @@ async function runDos(o) {
     // regions the block cache holds, and the two are unrelated)
     jitRegions = null, regionAt = null, regionSucc = null, regionBytes = null,
     regionCodeBits = true,
+    // The LIVE region JIT (`--region-jit`): profile this run, compile its hot
+    // loop and install it into this same run. Everything above is the BENCH
+    // path, where the region comes from a previous run and is in the module
+    // before the program starts; this one is off by default and is what the
+    // page uses. `true` for the defaults, or an options object -- see
+    // tools/toyvm/region-live.js.
+    regionJit = null,
     smcCensus = false, watch = [],
     stopText = null,
     traceIo = null,
@@ -183,6 +190,8 @@ async function runDos(o) {
     // itself. Off unless a benchmark asks (bench-dos.js --cpu-time,
     // region-jit.js), so a plain run does not pay for a number nobody reads.
     cpuMeter = false,
+    // `--slice-log=FILE`: where to write the per-handback dispatch counts.
+    sliceLogFile = null,
     // Build the instrumented dispatch and print the census at exit. `hist` is
     // how many handlers to list, `histPairs` how many pairs; 0 for either
     // suppresses that table. Timings from such a run are meaningless -- three
@@ -199,6 +208,14 @@ async function runDos(o) {
     // nothing observable changing. See DosSession's note: a handback is not a
     // fixed amount of work, so the count alone stopped meaning "a while ago".
     stuckWork = 20e6,
+    // `--lattice-clock`: cut every slice, and render the audio, on multiples of
+    // the quantum rather than from the last handback (dos-loop.js `step`). This
+    // is what makes the emulated clock independent of how often the run loop
+    // hands back, and therefore what lets a region JIT absorb or add a handback
+    // without moving the picture -- but it is NOT the shipped clock, because
+    // anchoring the grid also moves a plain interpreter run's audio. Pass it to
+    // both arms of a comparison or to neither.
+    latticeClock = false,
     // The DOS command tail, verbatim. Several demos in this corpus name their
     // own silent-mode switch on the screen they refuse to start from.
     guestArgs = '',
@@ -259,6 +276,11 @@ async function runDos(o) {
     env = [],
     // Files an earlier run created, carried in. See the --pre option below.
     tempFiles = null,
+    // Where DOS puts this program, as paragraphs: the PSP, and the image
+    // 0x10 paragraphs above it. Null takes whatever program-config.js has for
+    // this executable and the machine's default otherwise -- see that file for
+    // why the address is a machine setting and why it is not free to raise.
+    pspSeg = null, loadSeg = null,
   } = o;
   setCpuLevel(cpu);
   // Before anything can finish the handler table, because the twins ARE table
@@ -266,7 +288,16 @@ async function runDos(o) {
   // and throws rather than quietly running without them.
   if (regSpec) require('./emit').enableRegSpec(true);
 
+  // The registry's answer for this executable, unless the caller named one.
+  // The CLI and the sweeps both come through here, so a program that needs a
+  // different load address gets it whether it is being photographed, diffed or
+  // run by hand -- one place, not three.
+  const cfg = require('./program-config').programConfig(exe) || {};
+  const wantPsp = pspSeg !== null ? pspSeg : (cfg.pspSeg || 0);
+  const wantLoad = loadSeg !== null ? loadSeg : (cfg.loadSeg || (wantPsp ? wantPsp + 0x10 : 0));
+
   const machine = new Machine(new Uint8Array(0), {
+    pspSeg: wantPsp, loadSeg: wantLoad,
     log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound, svga, soundPref, gus,
     dspVersion, keys, autoKeys, env, tempFiles,
     stopText,
@@ -279,6 +310,8 @@ async function runDos(o) {
     // the filesystem it gets.
     fileRoot: path.dirname(path.resolve(exe)),
   });
+  // See the afterSlice hook: the dispatch count at every handback, when asked.
+  const sliceLog = sliceLogFile ? [] : null;
   // What the card and the speaker played, as rendered chunks, when asked.
   const audioChunks = [];
   if (audioRate > 0) {
@@ -304,13 +337,16 @@ async function runDos(o) {
   machine.setTicks(0, { force: true });
   machine.syncVga();     // the VM's buffer, not the throwaway one from before
 
-  const info = loadExe(vm.mem, fs.readFileSync(exe));
+  const info = loadExe(vm.mem, fs.readFileSync(exe),
+    { loadSeg: machine.loadSeg, pspSeg: machine.pspSeg });
   // What the program was given is what is NOT free. A .COM has no header to
   // say, so the loader leaves this undefined and the machine keeps its "owns
   // everything" default.
   if (info.allocTop !== undefined) machine.allocTop = info.allocTop;
   machine.imageTop = info.minTop;
   machine.installEnvironment(path.basename(exe), guestArgs);
+  // After the environment and after allocTop: the chain names both.
+  machine.installArena();
   // IF set, because that is what DOS hands a program. The flags global starts at
   // zero, which is interrupts DISABLED -- so until a program executed an STI of
   // its own it got no timer tick, no keystroke and no sound IRQ, and a program
@@ -395,7 +431,7 @@ async function runDos(o) {
     regSpec, regionAt, regionSucc, regionBytes, regionCodeBits, volatileCode,
     traceDeadFlags: traceDeadFlags ? ((s) => log(s)) : null,
     mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit, pitClock,
-    stuckWork,
+    stuckWork, latticeClock,
     // A watch reports through the census, so asking for one turns it on.
     smcCensus: smcCensus || watch.length > 0, watch,
     // The same count, not recomputed while the page it counts has not changed.
@@ -531,9 +567,38 @@ async function runDos(o) {
           // every program that finishes in 3M reports no samples at all.
           ipSampleLog.push(dispatched, at);
         }
+        // The live JIT profiles off the same slice ends, and keeps its own
+        // sample map: its window is a stretch of THIS run rather than a
+        // fraction of a finished one.
+        if (jit) jit.sample({ left, dispatched });
+        // `--slice-log=FILE`: the cumulative dispatch count at every handback,
+        // one per line. A frame hash says two runs ended somewhere different;
+        // this says WHERE THE CUT MOVED, which is the only way to tell "the
+        // region computed something else" from "the region ended its slice one
+        // instruction along and the audio was rendered against a different
+        // grid". `diff` the two files and read the first line that differs.
+        if (sliceLog) sliceLog.push(`${dispatched} ${left} ${cs.toString(16)}:${ip.toString(16)}`);
       },
     },
   });
+  // Built after the session because it installs into it, and given the same
+  // port closures the module was made with -- the new instance imports them
+  // again, and a demo whose ports went missing simply stops hearing its own
+  // hardware.
+  const jit = regionJit
+    ? new (require('./region-live').LiveJit)({
+      session, vm, machine, repFast, cpu,
+      portIn: (p, w) => machine.portIn(p, w),
+      portOut: (p, v, w) => machine.portOut(p, v, w),
+      // In-process and blocking, which is the right choice HERE: a headless run
+      // has nothing else to do with the seconds the audit and the compile take,
+      // and the run loop is already paused between two slices. The page uses a
+      // worker instead (region-live.js `workerBackend`).
+      backend: require('./region-prepare').inlineBackend(),
+      log,
+      ...(regionJit === true ? {} : regionJit),
+    })
+    : null;
   let sliceT0 = 0n;
   let sliceCpu0 = null;
 
@@ -551,6 +616,11 @@ async function runDos(o) {
 
   while (session.dispatched < budget && !session.done) {
     session.step();
+    // Between slices, never inside one: installing swaps the wasm instance.
+    // Headless, the pipeline is simply awaited -- a one-second pause between
+    // two slices costs a batch run nothing, and the page (which cannot afford
+    // it) hands the same pipeline to a worker instead.
+    if (jit) { jit.pump(); if (jit.pending) await jit.pending; }
     // Every trip. Sampling this every 64th was a real overrun and not a small
     // one: a step is a whole slice, and a program whose loops the compiler
     // cannot resolve spends most of its wall clock in JS compiling them, so 64
@@ -613,6 +683,7 @@ async function runDos(o) {
 
   if (bestPng) keepBest();
   const surface = screenSurface(machine);
+  if (sliceLog) fs.writeFileSync(sliceLogFile, sliceLog.join('\n') + '\n');
   return {
     bestScore, bestContent, bestSurface, bestText, saidText,
     variant, exe, vm, machine, jtab,
@@ -625,12 +696,18 @@ async function runDos(o) {
     histTop: hist, histPairs,
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
+    // Not `guestSecs`, which is wall time spent inside wasm. This is time as
+    // the GUEST saw it -- the unit the machine's real-time cadences are quoted
+    // in, and the one a budget should be expressed in. See DosSession.
+    guestSeconds: session.guestSeconds(dispatched),
     guestCpuSecs: guestCpuUs / 1e6,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets, deadFlagsDropped,
     tracedBlocks, spinBlocks, specOps, rep, volatile,
     smcBreaks, smcPatched, smcFastRepairs, repairWhy, traps, icebps, smcSites, retiredPatches,
     stuckAt, blockedOn32, badSelector, ranOutOfTime,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
+    // What the live region JIT did, or null when it was never asked for.
+    jit: jit ? jit.stats() : null,
     // A program that never put the adapter in a graphics mode has no frame to
     // count, and reading A000 anyway is how ACME-SUX.EXE and AKM_DOB.EXE came
     // back with ~61,700 "pixels" each while sitting in text mode the whole run.
@@ -644,6 +721,10 @@ async function runDos(o) {
     frame: frameHash(vm.mem, surface.geom || vgaGeometry(machine.vga)),
     video: {
       mode: machine.videoMode,
+      // Every mode the run passed through, oldest first, starting at the
+      // power-on 3. What the run ENDED in cannot say whether a text screen is
+      // the program's output or the menu in front of it; this can.
+      modes: machine.videoModes.slice(),
       // The VBE mode number, not the BIOS one -- in a VESA mode $videoMode is
       // still 0x13 and the geometry below is the picture's, not the CRTC's.
       vesa: machine.vesa ? machine.vesa.mode : 0,
@@ -727,6 +808,15 @@ function parseWatch(spec) {
   return [lo, lo + (m[3] === undefined ? 1 : Number(m[3])) - 1];
 }
 
+// A paragraph address on the command line. Hex either way -- every segment
+// this machine prints is hex, and a `--psp-seg=900` that meant 900 decimal
+// would be a different machine than the one the error message describes.
+function parseSeg(s) {
+  const m = /^(?:0x)?([0-9a-f]{1,4})$/i.exec(String(s).trim());
+  if (!m) throw new Error(`not a paragraph address (hex, 1-4 digits): ${s}`);
+  return parseInt(m[1], 16);
+}
+
 function count(s, d) {
   if (s === undefined) return d;
   const m = /^(\d+(?:\.\d+)?)([kmb]?)$/i.exec(String(s).trim());
@@ -761,9 +851,32 @@ async function main() {
     hist: flag('handler-hist') ? 20 : Number(arg('handler-hist', 0)),
     histPairs: flag('handler-pairs') ? 20
       : Number(arg('handler-pairs', (flag('handler-hist') || arg('handler-hist')) ? 20 : 0)),
-    budget: count(arg('dispatches'), 200e6),
+    // `--guest-seconds=N` is the same budget in the guest's own time, and it
+    // is what the sweeps ask for: it survives a retiming of the emulated clock,
+    // where a dispatch count does not. Named explicitly, it wins over
+    // `--dispatches=`, which stays as the override for a bisect that wants a
+    // fixed amount of WORK.
+    budget: arg('guest-seconds') !== undefined
+      ? dispatchesForGuestSeconds(Number(arg('guest-seconds')), {
+        dispatchesPerTick: count(arg('dispatches-per-tick'), 550e3),
+        tickScale: Number(arg('tick-scale', 1)),
+      })
+      : count(arg('dispatches'), 200e6),
     slice: count(arg('slice'), 2e6),
     seconds: Number(arg('seconds', 0)),
+    // `--region-jit` compiles this run's own hot loop into the module it is
+    // already running (tools/toyvm/region-live.js). OFF by default. The four
+    // knobs are the profile window, how many regions one install carries and
+    // the in-isolation bar the audit holds the body to; `--region-jit-verbose`
+    // prints each stage.
+    regionJit: flag('region-jit') ? {
+      sampleAfter: count(arg('region-jit-after'), 6e6),
+      profileFor: count(arg('region-jit-window'), 6e6),
+      regions: Number(arg('region-jit-regions', 1)),
+      gateAt: Number(arg('region-jit-gate', 1)),
+      gateIters: count(arg('region-jit-gate-iters'), 4000),
+      log: flag('region-jit-verbose') ? console.log : (() => {}),
+    } : null,
     traceInt: flag('trace-int'),
     traceFault: flag('trace-fault'),
     traceV86: flag('trace-v86'),
@@ -842,6 +955,10 @@ async function main() {
     // headless twin of the page's sound: the same samples through the same
     // DMA model, so "is there anything to hear" can be answered by a file.
     audioRate: arg('audio') ? count(arg('audio-rate'), 22050) : 0,
+    // `--slice-log=FILE`: the cumulative dispatch count at every handback, one
+    // per line. `diff` two of them and the first differing line is the exact
+    // handback where the cut moved.
+    sliceLogFile: arg('slice-log'),
     // `--pit-clock` runs every guest clock off dispatchesPerTick and the PIT's
     // reload, which is what the page does; the sweep's defaults keep the timer
     // interrupt at irqEvery.
@@ -872,6 +989,15 @@ async function main() {
     clicks: argAll('click').flatMap(parseClicks),
     dumpAt: argAll('dump-at').map(parseDumpAt),
     cpu: Number(arg('cpu', 386)),
+    // --psp-seg=0xd00 / --load-seg=0xd10 -- where DOS puts the program, in
+    // hex paragraphs. Naming either one is enough: the image sits 0x10
+    // paragraphs above its PSP. Unset takes program-config.js's entry for this
+    // executable, and the default otherwise. See program-config.js for what
+    // raising it buys and what it costs.
+    pspSeg: arg('psp-seg') !== undefined ? parseSeg(arg('psp-seg'))
+      : (arg('load-seg') !== undefined ? parseSeg(arg('load-seg')) - 0x10 : null),
+    loadSeg: arg('load-seg') !== undefined ? parseSeg(arg('load-seg'))
+      : (arg('psp-seg') !== undefined ? parseSeg(arg('psp-seg')) + 0x10 : null),
     report,
     // Naming a rotation is asking for one, so --auto-keys implies --auto-key.
     autoKey: flag('auto-key') || !!arg('auto-keys', ''),
@@ -881,6 +1007,9 @@ async function main() {
     dispatchesPerTick: count(arg('dispatches-per-tick'), 550e3),
     stuckLimit: count(arg('stuck'), 200),
     stuckWork: count(arg('stuck-work'), 20e6),
+    // `--lattice-clock`: anchor the slice grid and the audio render to the
+    // absolute dispatch count. Both arms of a comparison, or neither.
+    latticeClock: flag('lattice-clock'),
     // --stop-on-text='Runtime error 200' -- end the run the instant the guest
     // prints this, so --dump and --disasm photograph the failure instead of
     // whatever reused its memory afterwards. See Machine.conWatch.
@@ -976,6 +1105,22 @@ async function main() {
   }
 
   console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`);
+  // The live JIT's verdict, in one line: where it got to, what it installed and
+  // what each stage cost. A run with `--region-jit` that says `declined` did
+  // not silently fall back -- it looked, and the reason is the whole finding.
+  if (r.jit) {
+    const j = r.jit;
+    console.log(`  region jit (${j.backend}): ${j.phase}`
+      + (j.at ? ` at ${j.at.map(x => '0x' + x.toString(16)).join(' ')}` : '')
+      + (j.declined ? ` -- ${j.declined}` : '')
+      + (j.gate ? `  gate ${j.gate.toFixed(2)}x, share ${j.share.toFixed(1)}%` : '')
+      + (j.installs ? `  ${j.installs} install(s), ${j.drops} drop(s)` : '')
+      + (j.ms.prepare !== undefined
+        ? `  [pick ${j.ms.pick.toFixed(1)}ms, snapshot ${(j.ms.snapshot || 0).toFixed(1)}ms,`
+          + ` gate ${(j.ms.gate || 0).toFixed(0)}ms, build ${(j.ms.build || 0).toFixed(0)}ms,`
+          + ` instantiate ${(j.ms.instantiate || 0).toFixed(0)}ms,`
+          + ` swap ${(j.ms.swap || 0).toFixed(1)}ms]` : ''));
+  }
   console.log(`  ${r.handbacks} handbacks, ${r.ints} interrupts`
     // Every vector the host raises, not just the timer: single-step traps and
     // stepped-over ICEBPs go through the same path and are broken out below.
@@ -1060,7 +1205,11 @@ async function main() {
   const rh = v.planar || v.cga || v.vesa ? v.height : 200;
   console.log(`  video mode ${v.vesa ? `${v.vesa.toString(16)}h VBE` : `${v.mode.toString(16)}h`} `
     + `${v.cga ? `CGA ${v.bpp}bpp ${rw}x${rh}`
-      : v.planar ? `${v.bpp === 4 ? 'EGA planar' : 'unchained'} ${rw}x${rh}` : `${rw}x${rh} linear`}`
+      : v.planar ? `${v.bpp === 4 ? 'EGA planar' : 'unchained'} ${rw}x${rh}`
+      // The depth is part of what a VBE mode IS -- 640x480 says nothing about
+      // whether the picture is 8bpp indexed or 24bpp direct colour, and those
+      // are different surfaces read different ways.
+      : `${rw}x${rh}${v.vesa && v.bpp !== 8 ? `x${v.bpp}` : ''} linear`}`
     + `${v.planar && v.start ? ` start=${v.start}` : ''}`
     + `${v.planar && v.stride !== v.width ? ` stride=${v.stride}` : ''}`
     + `${!v.planar && !v.vesa && (v.width !== 320 || v.height !== 200 || v.start)
@@ -1250,6 +1399,19 @@ async function main() {
   }
 
   if (report) {
+    // What the run bought, in the guest's own time, and every mode it spent it
+    // in. Both are here because a budget in dispatches says nothing on its own
+    // about how much of a show a program got through -- every real-time cadence
+    // in the machine is quoted against guest seconds -- and because a text
+    // screen photographed by a program that has already been in mode 13h is a
+    // menu, not the program's output.
+    console.log(`  ${r.guestSeconds.toFixed(2)} guest seconds`
+      + `, video modes ${r.video.modes.map(m => `${m.toString(16)}h`).join(' -> ')}`
+      + `${r.video.vesa ? ` (vesa ${r.video.vesa.toString(16)}h)` : ''}`);
+    console.log(`  stop: ${r.machine.exited ? `exited(${r.machine.exitCode})`
+      : r.stuckAt ? `stuck at ${r.stuckAt}`
+        : r.machine.blockedOnKey ? 'blocked in a key read'
+          : r.ranOutOfTime ? 'wall clock' : 'budget spent'}`);
     const eh = [...r.entryHist].sort((a, b) => b[1] - a[1]).slice(0, 8);
     // `jt=hit` means the address IS in the indirect-jump cache, so whatever
     // handed back at it was not an indirect jump -- which is the difference

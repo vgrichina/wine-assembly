@@ -17,10 +17,11 @@ const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || nul
 // Declaring the session 'playback' is the one thing that opts a page out of
 // it. Safari 16.4+; everywhere else the property is absent and this is a
 // no-op. Idempotent because it is called from every launch and every unlock.
-function claimAudioSession() {
+function claimAudioSession(type = 'playback') {
   try {
     const session = (typeof navigator !== 'undefined') && navigator.audioSession;
-    if (session && session.type !== 'playback') session.type = 'playback';
+    const wanted = type === 'play-and-record' ? type : 'playback';
+    if (session && session.type !== wanted) session.type = wanted;
   } catch (_) { /* a browser that has the property but refuses the value */ }
 }
 if (typeof window !== 'undefined') window.claimAudioSession = claimAudioSession;
@@ -505,7 +506,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '297';
+  static SOURCE_VERSION = '298';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the

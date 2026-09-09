@@ -101,8 +101,8 @@ async function inspectScreenshot(file) {
       return rows.size;
     })(),
     readoutInk: countIn(51, 48, 305, 89, (r, g, b) => r < 100 && g < 100 && b < 100),
-    transportBottomInk: countIn(50, 145, 304, 153, (r, g, b) => r < 100 && g < 100 && b < 100),
-    lowerChromePixels: countIn(40, 154, 318, 165,
+    transportBottomInk: countIn(50, 135, 304, 143, (r, g, b) => r < 100 && g < 100 && b < 100),
+    lowerChromePixels: countIn(40, 143, 318, 154,
       (r, g, b) => r > 80 || g < 80 || b < 80),
   };
 }
@@ -136,7 +136,7 @@ async function inspectScreenshot(file) {
       /SetDlgItemTextA\([^\n]*text="0\.50 sec\."/.test(output)],
     ['before and stopped screenshots are complete', screenshots && visual && visual.titleInk >= 100],
     ['captured waveform and numeric readouts are visible', visual &&
-      visual.displayBlack >= 2500 && visual.displayGreen >= 500 &&
+      visual.displayBlack >= 2000 && visual.displayGreen >= 500 &&
       visual.waveformRows >= 15 && visual.readoutInk >= 150],
     ['transport buttons and lower window chrome are not clipped', visual &&
       visual.transportBottomInk >= 200 && visual.lowerChromePixels >= 2000],

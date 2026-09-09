@@ -35,11 +35,31 @@
 // program whose row file is already there, so a sweep that lost a handful of
 // programs to a timeout is re-run by deleting those row files and running the
 // same xargs line again.
+//
+// THE BUDGET IS GUEST TIME, not dispatches (--guest-seconds; --dispatches is
+// kept as the override for a bisect that wants fixed WORK). A dispatch count
+// only stands in for guest time while the clock derived from it stays put, and
+// it did not: aadf7ec4 quoted the VGA frame period against guestSeconds()
+// instead of tickUnit(), so on the default two-clock path a 70Hz frame went
+// from 26,009 dispatches to 143,051 and every retrace-paced demo in the corpus
+// was suddenly photographed 5.5x earlier in its own show for the same budget.
+// Nothing about those demos changed; the ruler did. See the "2026-09 re-sweep
+// at matched guest time" section of docs/dos-corpus-blockers.md for what that
+// cost the corpus, measured program by program.
+//
+// The default is that number: the guest seconds the tool's old dispatch
+// default bought BEFORE the retiming, so the sweep photographs each program at
+// the same point in its show as the pictures already in docs/dos-corpus. For
+// this file that is 30M pre-retiming dispatches -> 16.5 guest seconds, and for
+// capture-one.sh's 300M -> 165. Both are the same arithmetic: the old budget
+// bought B/26009 frames of a paced show, the new one has to buy the same
+// number at 70 a second.
 
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { complaint } = require('./demo-status');
+const { sweepBudget, showSeconds } = require('./sweep-budget');
 
 function arg(name, fallback) {
   const hit = process.argv.slice(2).find(a => a.startsWith(`--${name}=`));
@@ -137,7 +157,24 @@ async function runOne(exe, png, o) {
     name: path.basename(exe), exe, png, surface: text ? 'console' : 'vga',
     mode: r.video.mode, width: r.video.width, height: r.video.height,
     planar: !!r.video.planar, bpp: r.video.bpp,
+    // Every mode the run passed through, oldest first. This is what tells a
+    // text screen that IS the program (a .NFO viewer, a BBS ad) from one that
+    // is the furniture in front of a program that went to mode 13h and drew
+    // nothing there yet -- a distinction no cell count can make, and the one
+    // that had STHINTRO.EXE's sound-card menu counted as text art.
+    modes: r.video.modes,
     dispatched: r.dispatched,
+    // What the budget bought in the guest's own time, and how the run ended.
+    // The budget is quoted in guest seconds now (see the header), so the row
+    // has to carry the same unit or a sweep cannot be read against the one
+    // before it.
+    guestSeconds: Math.round(r.guestSeconds * 100) / 100,
+    exited: !!r.machine.exited,
+    // The frame hash, so sweep-diff.js can say a picture MOVED rather than only
+    // that it is still non-empty. Meaningless on its own -- a blank screen
+    // hashes to a perfectly ordinary value -- which is why `pixels` is the
+    // column that decides whether anything was drawn.
+    frame: r.frame,
     // `bestContent`, not `bestScore`: the score is a banded rank whose value
     // says which KIND of frame won, and printing it as a pixel count reads as a
     // near-empty screen for a full one.
@@ -420,8 +457,17 @@ function plan(dir, out) {
 
 async function main() {
   const one = arg('one');
+  // The budget, in the guest's own time. `--dispatches=` still wins when it is
+  // named, because a bisect that wants a fixed amount of WORK has to be able to
+  // ask for one; everything else gets the guest-time default. 16.5 seconds is
+  // what this file's old 30M dispatches bought of a paced show before the VGA
+  // clock was quoted against real time -- see the header.
   const o = {
-    budget: count(arg('dispatches'), 30e6),
+    budget: sweepBudget({
+      dispatches: arg('dispatches'),
+      guestSeconds: arg('guest-seconds'),
+      defaultGuestSeconds: showSeconds(30e6),
+    }),
     cpu: Number(arg('cpu', 386)),
     timeout: Number(arg('timeout', 180)),
     jobs: Number(arg('jobs', 1)),
@@ -474,7 +520,8 @@ async function main() {
   const out = arg('out');
   if (!dir || !out) {
     console.log('usage: node tools/toyvm/shot-sweep.js --dir=DIR --out=DIR '
-      + '[--json=OUT] [--resume] [--dispatches=N] [--timeout=SECS] [--max-seconds=N] '
+      + '[--json=OUT] [--resume] [--guest-seconds=N] [--dispatches=N] '
+      + '[--timeout=SECS] [--max-seconds=N] '
       + '[--jobs=N] [--auto-key] [--args=TAIL]\n'
       + '       ... --list                       one line per program: EXE PNG ROW\n'
       + '       ... --capture=EXE --png=P --row=R  one program, for xargs\n'

@@ -48,10 +48,10 @@
     "empipe": "Yes. The music is MIDI, played by a General MIDI synthesizer built into the page, so it sounds like a 1990s software synth rather than a specific sound card. Browsers only allow audio after a click or a key press.",
     "marbles": "Yes. Sound effects go through DirectSound to the browser's Web Audio and the music is MIDI, played by a General MIDI synthesizer built into the page. Browsers only allow audio after a click or a key press.",
     "heroes2_demo": "The sound effects and MIDI music work: effects go to Web Audio and the music plays on a General MIDI synthesizer built into the page. The CD audio tracks of the full game are not available, as there is no game CD mounted.",
-    "bricks": "Not verified. Bricks plays its sounds through PlaySound, and the emulator plays only sounds stored as resources through that call; sounds loaded from a file or memory are accepted silently.",
-    "cwordzap": "Not verified. Word Zap plays its sounds through PlaySound, and the emulator plays only sounds stored as resources through that call; sounds loaded from a file or memory are accepted silently.",
-    "qblackjack": "Not verified. Blackjack plays its sounds through PlaySound, and the emulator plays only sounds stored as resources through that call; sounds loaded from a file or memory are accepted silently.",
-    "blobby_volley": "Not verified. Blobby Volley plays its sounds through PlaySound, and the emulator plays only sounds stored as resources through that call; sounds loaded from a file or memory are accepted silently.",
+    "bricks": "Bricks starts with sound switched off; the speaker icon at the left of the board (marked S) turns it on, and the setting is kept in its INI file. Its 15 sound files are included here and play through PlaySound once sound is on.",
+    "cwordzap": "Yes. Word Zap's two sounds are stored in the executable as resources and play through Web Audio. Browsers only allow audio after a click or a key press.",
+    "qblackjack": "Yes. Blackjack's three sound clips are played from memory through Web Audio. Browsers only allow audio after a click or a key press.",
+    "blobby_volley": "Yes. Blobby Volley's hit sound is played from memory through Web Audio. Browsers only allow audio after a click or a key press, so it starts with your first input.",
     "winamp": "Yes. Decoded audio goes through the wave-out API to the browser's Web Audio once a track is loaded. Browsers only allow audio after a click or a key press, so it starts with your first input."
   }
 }

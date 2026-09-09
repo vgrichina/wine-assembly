@@ -18,7 +18,7 @@ const expected = {
   curse_monkey_island_demo: ['COMI.EXE', 11],
   atomic_bomberman_demo: ['_BOMB.EXE', 151],
   broken_sword_demo: ['WINSWORD.EXE', 551],
-  dungeon_keeper_demo: ['KEEPER95.EXE', 166],
+  dungeon_keeper_demo: ['KEEPER95.EXE', 165],
   darkstone_demo: ['DarkstoneDemo.exe', 12],
 };
 
@@ -59,6 +59,9 @@ assert.deepStrictEqual(APPS.broken_sword_demo.touchControls, {},
   'the mouse-driven game exposes mobile Fit/Fill without fake game buttons');
 assert.deepStrictEqual(APPS.dungeon_keeper_demo.dlls.map(file => path.basename(file)),
   ['MSS32.DLL', 'WSND7R.DLL', 'SMACKW32.DLL']);
+assert(APPS.dungeon_keeper_demo.exe.includes(
+  'Dungeon Keeper Demo-SWonly/installed/'),
+  'Dungeon Keeper launches only the original installer output');
 assert.strictEqual(APPS.atomic_bomberman_demo.touchControls.dpad.ways, 4);
 assert.deepStrictEqual(APPS.atomic_bomberman_demo.touchControls.buttons,
   [{ vk: 0x20, label: 'Bomb', pos: 'br' }]);

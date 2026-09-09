@@ -105,6 +105,10 @@ const EMS_TOTAL_PAGES = 512;  // 8MB of expanded memory, the usual EMM386 answer
 const XMS_ENTRY_SEG = 0x00C0; // three bytes below the PSP: int 2Dh; retf
 const XMS_INT = 0x2D;
 const XMS_TOTAL_KB = 8192;
+// VBE's window-positioning far call, in the same free paragraph as the XMS
+// entry point and clear of its three bytes. See installIvt.
+const VESA_WIN_SEG = XMS_ENTRY_SEG;
+const VESA_WIN_OFF = 0x0010;
 const PSP_SEG = 0x0100;
 // The nine words DOS's INT 21h prologue pushes onto the caller's stack, in the
 // order it pushes them, plus the flags its IRET hands back. See pspSaveStack.
@@ -113,6 +117,29 @@ const LOAD_SEG = 0x0110;      // PSP is 0x100 bytes = 0x10 paragraphs
 // The environment block, in the gap between the BIOS data area and the PSP.
 // 0x0060..0x00C0 is 1.5K, which is more than any of these programs reads.
 const ENV_SEG = 0x0060;
+// How many paragraphs the environment block's own MCB claims. One less than
+// the 0x60 the gap is wide, because the paragraph at 0x00BF is the header of
+// the block that follows it -- see installArena.
+const ENV_PARAS = 0x5F;
+// The owner word a block belonging to DOS itself carries. Real DOS writes 8
+// for its own resident data and for device drivers, and 0 for a free block;
+// a program walking the chain to add up free memory tells the two apart by
+// exactly this word. Everything between the environment and the PSP is that:
+// on a real machine it is the kernel, its buffers and whatever drivers
+// CONFIG.SYS loaded, and none of it is available.
+const MCB_SYSTEM = 0x0008;
+// DOS's "list of lists", which INT 21h AH=52h hands back in ES:BX. The one
+// field of it anything here wants is the word two bytes BELOW it: the segment
+// of the first MCB in the chain. Parked in the dead space between the BIOS
+// data area (which ends at 0x0500) and the environment block.
+// The offset is not free to pick: the field a caller wants is BELOW the
+// pointer, so an offset of 0 makes `mov ax, es:[bx-2]` wrap to the top of the
+// segment and read something else entirely. Real DOS 4+ hands back offset
+// 0x26 for the same reason; this keeps that.
+const LOL_SEG = 0x0058;
+const LOL_OFF = 0x0026;
+// The first arena header. Its data is the environment block.
+const MCB_FIRST = ENV_SEG - 1;
 // Top of conventional memory. 0x9000 left 572K free between the program and
 // the ceiling, which reads as a machine with a lot of TSRs loaded -- and
 // ASMINST.EXE prints "Insufficient memory! This demo needs 600k free to run"
@@ -669,16 +696,35 @@ const CURSOR_CELLS = 40;
 // whole licence for counting rows off a `>`.
 const ARROW_HINT = (s) => /\b(arrow|cursor)\s+keys?\b/i.test(s) && /\benter\b/i.test(s);
 
-// The VBE modes we offer, as [mode number, width, height], all 256-colour and
-// all banked. These four numbers are the VESA-assigned ones every 1990s demo
-// asks for by name; a program that wants something else gets "not supported"
-// for that mode and picks another off the list.
+// The VBE modes we offer, as [mode number, width, height, bits per pixel], all
+// banked. The four 8bpp numbers are the VESA-assigned ones every 1990s demo
+// asks for by name; 0x112 is here because the corpus census (see
+// docs/toyvm-vbe.md) found CHROME.EXE asking 4F01 about it and taking its own
+// no-VESA path when the answer was "not supported".
+//
+// EVERY MODE IN THIS LIST MUST RENDER. A 4F01 that says "supported" for a depth
+// the frame reader cannot read is a silent-success stub: the program sets it,
+// draws into the bank window, and every picture downstream -- PNG, frame hash,
+// the live page -- reads the bytes at the wrong width or not at all, which
+// looks exactly like a demo that draws nothing. A mode that is not in this list
+// is refused, which is a truthful answer a program can act on.
 const VESA_MODES = [
-  [0x100, 640, 400],
-  [0x101, 640, 480],
-  [0x103, 800, 600],
-  [0x105, 1024, 768],
+  [0x100, 640, 400, 8],
+  [0x101, 640, 480, 8],
+  [0x103, 800, 600, 8],
+  [0x105, 1024, 768, 8],
+  [0x10D, 320, 200, 15],
+  [0x112, 640, 480, 24],
 ];
+
+// Bytes per pixel for a VBE depth. 15bpp is a 16-bit pixel with the top bit
+// unused, which is why this is not bpp/8.
+function vbeBytes(bpp) {
+  if (bpp === 24) return 3;
+  if (bpp === 32) return 4;
+  if (bpp === 15 || bpp === 16) return 2;
+  return 1;
+}
 
 // The BIOS video modes that are text. Only on one of these does a polled key
 // check get answered out of the menu reader.
@@ -754,6 +800,15 @@ class Machine {
     this.mem = mem;
     this.log = opts.log || (() => {});
     this.videoMode = 3;
+    // Every video mode this machine was ever put in, in the order it was asked
+    // for. `videoMode` alone is the mode at the moment the question is asked,
+    // and a run that photographs a text screen cannot be read off it: a demo
+    // sitting on its sound-card menu and a .NFO viewer are both mode 3 there.
+    // The history separates them -- a program that has already been in mode 13h
+    // is one whose text screen is furniture, whatever mode it is in now. Power
+    // -on is mode 3 and that is a fact about the BIOS, not about the program,
+    // so it is in here as the first entry and readers ignore the head.
+    this.videoModes = [3];
     // Power-on is mode 3, and the BIOS has already loaded the text-mode DAC by
     // the time a program gets the CPU: the EGA's 64 colours in entries 0-63 and
     // black above them. Leaving all 768 bytes zero is only invisible while
@@ -778,7 +833,7 @@ class Machine {
     this.vga = newVgaState();
     // The VESA mode in effect, or mode 0 for none. `bank` is which 64KB of the
     // picture the window at A000 is currently showing; see vesaBank.
-    this.vesa = { mode: 0, width: 0, height: 0, bank: 0 };
+    this.vesa = { mode: 0, width: 0, height: 0, bpp: 0, bank: 0, start: 0 };
     // Which SVGA card this machine has, if any. 'none' is a plain VGA and is
     // the default: presenting a chipset means presenting its registers, and a
     // program that finds one will drive them. See svgaSetBank.
@@ -900,7 +955,21 @@ class Machine {
     // How the last child ended, in AH=4Dh's terms: 0 normal, 1 Ctrl-C, 2
     // critical error, 3 terminate-and-stay-resident. See AH=4Dh.
     this.lastExitType = 0;
-    this.curPsp = PSP_SEG;             // whose PSP AH=51h/62h reports
+    // Where DOS puts the program. On a real machine this is not a constant: it
+    // is whatever is left after the kernel, its buffers and every driver
+    // CONFIG.SYS loaded, so the same .EXE lands at a different paragraph on
+    // two machines and a program is entitled to no opinion about which. Here
+    // it is a machine option for the same reason -- see the ACME-VIC section
+    // of docs/dos-corpus-blockers.md, where a demo stores a byte through a DS
+    // it forgot to reload and the store lands on its own code at the default
+    // load address and on DOS's data on any real one.
+    //
+    // Raising it costs free conventional memory, which is why this is
+    // per-program and not a new default: ACME-BIG.EXE wants 600K and refuses
+    // to start below it.
+    this.pspSeg = (opts.pspSeg | 0) || PSP_SEG;
+    this.loadSeg = (opts.loadSeg | 0) || (this.pspSeg + 0x10);
+    this.curPsp = this.pspSeg;         // whose PSP AH=51h/62h reports
     // Per-PSP: the caller's registers as of its last INT 21h call, the half of
     // PSP+2Eh that does not fit in a DWORD. See pspSaveStack.
     this.pspRegs = new Map();
@@ -918,6 +987,11 @@ class Machine {
     this.faults = new Map();
     this.unhandledFn = new Map();      // "vec:ah" -> count, the real work list
     this.intCount = new Map();
+    // Every VBE call the guest made, aggregated so a program bank-switching
+    // ten thousand times costs one entry: "al[:mode][:lfb]" -> {n, ok}. This
+    // is what vbe-census.js reads to answer "which modes does the corpus ask
+    // for", and it has to be a count rather than a log for that reason.
+    this.vbeCalls = new Map();
     // Which clock, if any, a program is pacing itself off. A demo that never
     // touches any of these cannot be waiting for time and is compute-bound by
     // construction; one that hammers retrace is frame-paced. Does NOT see a
@@ -1062,6 +1136,16 @@ class Machine {
   // ends. NM2.EXE, COCONTS1.EXE and SETUP.EXE each spun there for every
   // dispatch they were given -- 800M in SETUP's case, at 100% of wall inside
   // the guest, which reads exactly like a demo with a lot of work to do.
+  // Remember a mode set. Repeats are dropped -- a demo that asks for mode 13h
+  // once a frame would otherwise turn this into an unbounded log -- and so is
+  // anything past the first 32 distinct modes, which no program in the corpus
+  // comes near.
+  noteVideoMode() {
+    const h = this.videoModes;
+    if (h[h.length - 1] === this.videoMode || h.length >= 32) return;
+    h.push(this.videoMode);
+  }
+
   setVideoBda() {
     const m = this.mem;
     const cols = CON_COLS, rows = CON_ROWS;
@@ -1132,7 +1216,7 @@ class Machine {
     mem[at++] = 0x01; mem[at++] = 0x00;   // one string follows: the program path
     put(`C:\\${String(name).toUpperCase()}`);
     mem[at++] = 0;
-    const psp = PSP_SEG << 4;
+    const psp = this.pspSeg << 4;
     mem[psp + 0x2C] = ENV_SEG & 0xFF;
     mem[psp + 0x2D] = (ENV_SEG >> 8) & 0xFF;
     // The command tail, at PSP:80h: a length byte, the text, then a CR. It is
@@ -1920,8 +2004,33 @@ class Machine {
     return `${s}\r\n`;
   }
 
+  // Point the machine at a NEW instance's export table, and change nothing
+  // else. This exists because `setMemory` below is a RESET and not a rebind:
+  // it clears the text page, reinstalls the interrupt vector table, rewrites
+  // the BIOS data area and re-stamps the video ROM, all of which is right at
+  // boot and catastrophic mid-run. The live region JIT swaps the wasm instance
+  // underneath a running program (region-live.js `install`), and calling
+  // setMemory there handed the guest a fresh IVT -- so a demo that had hooked
+  // INT 08h/09h/1Ch lost its own handlers at the install and stopped making
+  // progress from that dispatch on. ACCIDENT, BRW, CONTAGIO and DRAGON all
+  // died of exactly this, and none of them ever entered the compiled region:
+  // `--trap` (a region body of `unreachable`) reproduced every one of their
+  // divergences byte for byte without trapping.
+  //
+  // The memory itself does not move -- both instances import the same
+  // WebAssembly.Memory -- so every view the machine already holds stays valid
+  // and only the export table has to be replaced.
+  setVmExports(ex) {
+    this.vmExports = ex || null;
+    return this;
+  }
+
   // `ex` is the VM's export object, and the only thing the machine ever wants
   // from it is `set_linmask` -- see openBus below.
+  //
+  // NOT a rebind: see setVmExports. Everything below re-stamps the machine into
+  // its boot state, so this is for the ONE call that happens before the guest
+  // runs.
   setMemory(mem, ex) {
     this.mem = mem;
     this.vmExports = ex || null;
@@ -2033,6 +2142,25 @@ class Machine {
     // the interrupt's IRET frame has three.
     const xms = XMS_ENTRY_SEG << 4;
     this.mem[xms] = 0xCD; this.mem[xms + 1] = XMS_INT; this.mem[xms + 2] = 0xCB;
+
+    // VBE's window-positioning function, the same way. A ModeInfoBlock carries
+    // a far pointer at offset 0x0C to a routine that moves the window, and a
+    // program is entitled to CALL it instead of going through AX=4F05 -- it is
+    // the fast path, because it skips the BIOS's own dispatch. CHROME.EXE takes
+    // exactly that path: `call far cs:[0b7c]` at 100:0afd, with the pointer it
+    // read out of the block. Leaving that pointer zero does not make the
+    // program fall back on the interrupt; it far-calls 0000:0000 and executes
+    // the interrupt vector table.
+    //
+    // It cannot be a stub byte in the F000 segment, because the run loop reads
+    // any CS of F000 as "a vector was taken" and recovers the vector from the
+    // low byte of IP. So this is real code -- push AX, ask the BIOS to do it,
+    // restore AX, far return -- which leaves every register the caller had,
+    // where the far-call entry is only obliged to preserve the ones it is
+    // not passed in.
+    const win = VESA_WIN_SEG << 4;
+    [0x50, 0xB8, 0x05, 0x4F, 0xCD, 0x10, 0x58, 0xCB]
+      .forEach((b, i) => { this.mem[win + VESA_WIN_OFF + i] = b; });
   }
 
   // The character generator, where the ROM would have it.
@@ -3359,8 +3487,9 @@ class Machine {
       // it is how AQUAPHOB.EXE's demo came out as its own setup screen in the
       // demo's new palette: the picture had moved back to the 64KB at A000
       // while the banks still held what the setup had drawn.
-      this.vesa = { mode: 0, width: 0, height: 0, bank: 0 };
+      this.vesa = { mode: 0, width: 0, height: 0, bpp: 0, bank: 0, start: 0 };
       this.videoMode = al & 0x7F;
+      this.noteVideoMode();
       this.mem[0x449] = this.videoMode;
       this.setVideoBda();      // the CRTC port follows the mode: mono vs colour
       // Setting a mode clears the display and re-chains the planes -- a demo
@@ -3591,7 +3720,24 @@ class Machine {
   //
   // AL is the function; every reply is AX=004Fh for "supported, succeeded" and
   // anything else for "not supported", which is the presence test too.
+  // The census wrapper. Records what was asked and whether it was granted --
+  // "granted" being AX=004Fh on the way out, which is the only answer a caller
+  // reads. Aggregated by (function, mode), so the cost is one Map entry per
+  // distinct question however many times it is repeated.
   vesaCall(al, r) {
+    const raw = al === 0x01 ? (r.get('cx') & 0xFFFF)
+      : al === 0x02 ? (r.get('bx') & 0xFFFF) : -1;
+    const handled = this.vesaCallImpl(al, r);
+    const key = `${al.toString(16).padStart(2, '0')}`
+      + (raw >= 0 ? `:${(raw & 0x7FFF).toString(16)}${(raw & 0x4000) ? ':lfb' : ''}` : '');
+    let e = this.vbeCalls.get(key);
+    if (!e) { e = { n: 0, ok: 0 }; this.vbeCalls.set(key, e); }
+    e.n++;
+    if ((r.get('ax') & 0xFFFF) === 0x004F) e.ok++;
+    return handled;
+  }
+
+  vesaCallImpl(al, r) {
     const m = this.mem;
     const ok = () => { r.set('ax', 0x004F); return true; };
     if (al === 0x00) {
@@ -3624,10 +3770,16 @@ class Machine {
       return ok();
     }
     if (al === 0x01) {
+      // The linear-framebuffer bit. We have no LFB -- the picture lives outside
+      // the guest's address space and is reached through the window at A000 --
+      // so a request for one is refused rather than answered with a banked mode
+      // the caller then writes to a physical address we never mapped.
+      if (r.get('cx') & 0x4000) return true;
       const mode = r.get('cx') & 0x7FFF;
       const found = VESA_MODES.find(([n]) => n === mode);
       if (!found) return true;                        // AX unchanged: not supported
-      const [, w, h] = found;
+      const [, w, h, bpp] = found;
+      const bytes = vbeBytes(bpp);
       const at = ((r.get('es') << 4) + r.get('di')) & 0xFFFFF;
       m.fill(0, at, at + 0x100);
       const w16 = (off, v) => { m[at + off] = v & 0xFF; m[at + off + 1] = (v >> 8) & 0xFF; };
@@ -3642,27 +3794,45 @@ class Machine {
       w16(0x08, 0xA000);                              // window A segment
       w16(0x0A, 0x0000);
       // The window-positioning far call. A program may use it instead of
-      // AX=4F05, so it has to be a real address -- and this one is a vector
-      // into our own stub segment, which is where every INT lands anyway.
-      w16(0x0C, 0x0000); w16(0x0E, 0x0000);
-      w16(0x10, w);                                   // bytes per scan line
+      // AX=4F05, and CHROME.EXE does, so this has to be an address that really
+      // moves the window: the eight bytes installIvt plants below the PSP.
+      w16(0x0C, VESA_WIN_OFF); w16(0x0E, VESA_WIN_SEG);
+      w16(0x10, w * bytes);                           // bytes per scan line
       w16(0x12, w); w16(0x14, h);
       m[at + 0x16] = 8; m[at + 0x17] = 16;            // character cell
       m[at + 0x18] = 1;                               // planes
-      m[at + 0x19] = 8;                               // bits per pixel
+      m[at + 0x19] = bpp;                             // bits per pixel
       m[at + 0x1A] = 1;                               // banks
-      m[at + 0x1B] = 4;                               // packed pixel
+      // Memory model: 4 is packed pixel (one index per byte, through the DAC),
+      // 6 is direct colour (the pixel carries its own RGB and the DAC is not
+      // in the path). A program that reads this byte and finds 4 on a 24bpp
+      // mode will go looking for a palette that does not exist.
+      m[at + 0x1B] = bpp > 8 ? 6 : 4;
       m[at + 0x1C] = 1;                               // bank size, 1 = 64KB units
-      m[at + 0x1D] = Math.max(1, (isa.VESA_FB_SIZE / (w * h)) | 0);
+      m[at + 0x1D] = Math.max(1, (isa.VESA_FB_SIZE / (w * h * bytes)) | 0);
+      if (bpp > 8) {
+        // The direct-colour fields, VBE 1.2 offsets 0x1F..0x26: size and least
+        // significant bit position of each channel. 15bpp is 5-5-5 with the top
+        // bit unused, 16bpp is 5-6-5, and 24bpp is 8-8-8 with blue lowest --
+        // which is what makes the byte order in memory blue, green, red.
+        const lay = bpp === 15 ? [5, 10, 5, 5, 5, 0, 1, 15]
+          : bpp === 16 ? [5, 11, 6, 5, 5, 0, 0, 0]
+            : [8, 16, 8, 8, 8, 0, 0, 0];
+        for (let i = 0; i < 8; i++) m[at + 0x1F + i] = lay[i];
+      }
       return ok();
     }
     if (al === 0x02) {
+      // Same refusal as 4F01: bit 14 asks for a linear frame buffer and there
+      // is no address the guest could write it through.
+      if (r.get('bx') & 0x4000) return true;
       const mode = r.get('bx') & 0x7FFF;
       const found = VESA_MODES.find(([n]) => n === mode);
       if (!found) return true;
-      const [, w, h] = found;
-      this.vesa = { mode, width: w, height: h, bank: 0 };
+      const [, w, h, bpp] = found;
+      this.vesa = { mode, width: w, height: h, bpp, bank: 0, start: 0 };
       this.videoMode = 0x13;             // a 256-colour graphics mode, for the BDA
+      this.noteVideoMode();
       m[0x449] = mode & 0xFF;
       resetVgaMode(this.vga, 0x13);
       this.palette.set(VGA_DAC);
@@ -3673,6 +3843,35 @@ class Machine {
     }
     if (al === 0x03) {
       r.set('bx', this.vesa.mode);
+      return ok();
+    }
+    // AX=4F07: which pixel of the picture the top left of the screen shows.
+    // A demo uses it to page-flip or to pan, and CHROME.EXE calls it with
+    // (0,0) immediately after setting its mode -- so it is not optional
+    // decoration: leaving AX unchanged there told the program its card had
+    // refused a call every VBE 1.2 card answers, and it went off the rails.
+    //
+    // This is a real offset, not an acknowledgement: the reader takes the
+    // surface's `start` from here, so a program that pans sees the picture
+    // move. A start that would run the visible window off the end of the
+    // 1MB picture is refused rather than clamped, which is the honest answer
+    // to "have you got a second page" on a card that has not.
+    if (al === 0x07) {
+      const v = this.vesa;
+      if (!v.mode) return true;
+      const bl = r.get('bx') & 0xFF;
+      const bytes = vbeBytes(v.bpp);
+      const pitch = v.width * bytes;
+      if (bl === 0x01) {
+        const start = v.start || 0;
+        r.set('dx', (start / pitch) | 0);
+        r.set('cx', ((start % pitch) / bytes) | 0);
+        return ok();
+      }
+      if (bl !== 0x00 && bl !== 0x80) return true;
+      const start = (r.get('dx') & 0xFFFF) * pitch + (r.get('cx') & 0xFFFF) * bytes;
+      if (start + v.height * pitch > isa.VESA_FB_SIZE) return true;
+      v.start = start;
       return ok();
     }
     if (al === 0x05) {
@@ -3847,10 +4046,7 @@ class Machine {
   // happens to end there -- 1673 was the last paragraph of a live block -- so
   // modelling this stops a corruption as well as a leak.
   //
-  // What is NOT modelled: the chain. Free regions carry no header, and there is
-  // no AH=52h list-of-lists to start from, so a program cannot walk from one
-  // MCB to the next. Nothing in the corpus does; if something starts, that is
-  // the next piece, not a reason to fake a chain now.
+  // The chain itself is laid down by installArena/mcbSync below.
   memLargest() {
     let best = DEFAULT_ALLOC_TOP - this.allocTop;
     for (const b of this.memFree) if (b.size > best) best = b.size;
@@ -3858,9 +4054,9 @@ class Machine {
   }
 
   // Lay down the arena header for the block whose data starts at `seg`.
-  mcbWrite(seg, owner, size) {
+  mcbWrite(seg, owner, size, last = false) {
     const at = (seg - 1) << 4;
-    this.mem[at] = 0x4D;                        // 'M' -- a block, not the last
+    this.mem[at] = last ? 0x5A : 0x4D;          // 'Z' ends the chain, 'M' does not
     this.mem[at + 1] = owner & 0xFF;
     this.mem[at + 2] = (owner >> 8) & 0xFF;
     this.mem[at + 3] = size & 0xFF;
@@ -3874,6 +4070,68 @@ class Machine {
   mcbOwner(seg) {
     const at = (seg - 1) << 4;
     return this.mem[at + 1] | (this.mem[at + 2] << 8);
+  }
+
+  // The whole arena as a chain, walkable from one header to the next the way
+  // MEM.EXE walks it: environment, then everything DOS is holding below the
+  // program, then the program, then whatever is above it.
+  //
+  // The middle rung is the one that has to be right and is easy to get wrong.
+  // With the load segment a machine option (see pspSeg) the gap between the
+  // environment block and the PSP is no longer a fixed 0x40 paragraphs -- at
+  // PSP 0x0D00 it is 49KB -- and if that gap carries no header the chain has a
+  // hole in it, while if it carries a header owned by 0 it reads as FREE and a
+  // program adding up the free blocks is told it has 49KB more than it does.
+  // Owner 8 is what a real DOS writes there: the kernel and its drivers.
+  //
+  // Above the PSP the allocator is the authority and this only fills in what
+  // the allocator does not write headers for -- the program's own block, the
+  // regions handed back to `memFree`, and the frontier -- so a block whose
+  // owner word the guest has re-stamped (BLIQ.EXE does, six times) keeps it.
+  installArena() {
+    const psp = this.pspSeg;
+    // The environment block. DOS gives it to the program, so the program is
+    // the owner: a program that frees its own environment (a TSR shrinking its
+    // footprint does) is freeing a block it holds.
+    this.mcbWrite(ENV_SEG, psp, ENV_PARAS);
+    // DOS and its drivers: everything from the end of the environment to the
+    // paragraph below the PSP. At the default load address that is 0x3F
+    // paragraphs; at 0x0D00 it is 0xC3F.
+    const sys = ENV_SEG + ENV_PARAS + 1;
+    this.mcbWrite(sys, MCB_SYSTEM, psp - 1 - sys);
+    // The list of lists, so a program has somewhere to start the walk from.
+    const lol = (LOL_SEG << 4) + LOL_OFF;
+    this.mem[lol - 2] = MCB_FIRST & 0xFF;
+    this.mem[lol - 1] = (MCB_FIRST >> 8) & 0xFF;
+    this.mcbSync();
+  }
+
+  // Re-lay the part of the chain above the PSP. Called wherever the allocator
+  // moves a boundary, which is the only way any of these numbers change.
+  mcbSync() {
+    const psp = this.pspSeg;
+    const items = [];
+    for (const [seg, size] of this.memBlocks) items.push({ seg, size, own: this.mcbOwner(seg) });
+    // A `memFree` entry is a raw region, header paragraph included; as a block
+    // it is one paragraph smaller and owned by nobody.
+    for (const b of this.memFree) items.push({ seg: b.seg + 1, size: b.size - 1, own: 0 });
+    if (this.allocTop < DEFAULT_ALLOC_TOP) {
+      items.push({ seg: this.allocTop + 1, size: DEFAULT_ALLOC_TOP - this.allocTop - 1, own: 0 });
+    }
+    items.sort((a, b) => a.seg - b.seg);
+    const chain = [];
+    let cur = psp;
+    for (const it of items) {
+      if (it.seg - 1 < cur) continue;           // overlaps what is already laid; skip it
+      if (it.seg - 1 > cur) chain.push({ seg: cur, size: it.seg - 1 - cur, own: psp });
+      chain.push(it);
+      cur = it.seg + it.size;
+    }
+    if (cur < DEFAULT_ALLOC_TOP) chain.push({ seg: cur, size: DEFAULT_ALLOC_TOP - cur, own: psp });
+    for (let i = 0; i < chain.length; i++) {
+      const c = chain[i];
+      this.mcbWrite(c.seg, c.own, c.size, i === chain.length - 1);
+    }
   }
 
   memAlloc(want) {
@@ -4367,6 +4625,16 @@ class Machine {
       // prints "[ERROR]: Can not init file manager..." on the garbage it got
       // back -- a two-line call standing between it and the demo.
       case 0x51: case 0x62: r.set('bx', this.curPsp); r.setResultCf(false); return true;
+      // Undocumented, and the only documented-by-use way to find the head of
+      // the MCB chain: the word at ES:BX-2 is the segment of the first arena
+      // header. MEM.EXE and every "how much memory is really free" routine
+      // starts here. Re-laid on the way out so the walk sees the allocator's
+      // current boundaries and not the ones it had at load time.
+      case 0x52:
+        this.mcbSync();
+        r.set('es', LOL_SEG); r.set('bx', LOL_OFF);
+        r.setResultCf(false);
+        return true;
       // Set the current PSP. The pair to AH=51h, and real: a TSR that switches
       // the PSP to do file I/O on the foreground program's behalf and switches
       // it back is doing exactly this, and answering nothing left ANGEL.EXE and
@@ -4578,7 +4846,14 @@ class Machine {
         // IOCTL. Only AL=00, "get device information", is asked often enough to
         // matter: a demo uses it to find out whether stdout is a file or the
         // console. DX bit 7 set means character device.
-        if (al === 0x00) { r.set('dx', 0x80D3); r.setResultCf(false); return true; }
+        if (al === 0x00) {
+          const bx = r.get('bx') & 0xFFFF;
+          const f = this.files.get(bx);
+          if (!f && bx > 4) { r.setResultCf(true); r.set('ax', 6); return true; }
+          r.set('dx', !f || f.device ? 0x80D3 : 0x0000);
+          r.setResultCf(false);
+          return true;
+        }
         // AL=06 "get input status" and AL=07 "get output status" answer with
         // AL=0FFh ready / 00h not ready, CF clear -- they are not optional and
         // they are how a program decides a handle it just opened is a live
@@ -4623,6 +4898,7 @@ class Machine {
         }
         r.set('ax', seg);
         r.setResultCf(false);
+        this.mcbSync();
         return true;
       }
       case 0x49: {                              // free
@@ -4641,6 +4917,7 @@ class Machine {
           this.log(`free ${seg.toString(16)} -- no such block`);
         }
         r.setResultCf(false);
+        this.mcbSync();
         return true;
       }
       case 0x4A: {                              // resize a block
@@ -4659,6 +4936,7 @@ class Machine {
             this.mcbWrite(seg, this.mcbOwner(seg), want);
             this.memRelease(seg + want, held - want);
             r.setResultCf(false);
+            this.mcbSync();
             return true;
           }
           const at = seg + held, need = want - held;
@@ -4669,6 +4947,7 @@ class Machine {
             this.memBlocks.set(seg, want);
             this.mcbWrite(seg, this.mcbOwner(seg), want);
             r.setResultCf(false);
+            this.mcbSync();
             return true;
           }
           if (at === this.allocTop && DEFAULT_ALLOC_TOP - this.allocTop >= need) {
@@ -4676,6 +4955,7 @@ class Machine {
             this.memBlocks.set(seg, want);
             this.mcbWrite(seg, this.mcbOwner(seg), want);
             r.setResultCf(false);
+            this.mcbSync();
             return true;
           }
           r.setResultCf(true); r.set('ax', 8);
@@ -4709,6 +4989,7 @@ class Machine {
           // was loaded at 184F:0, inside that heap, over the player's
           // buffers, and the player jumped into data.
           this.imageTop = seg + want;
+          this.mcbSync();
         }
         r.setResultCf(false);
         return true;
@@ -5116,6 +5397,7 @@ class Machine {
 module.exports = {
   Machine, loadExe, vgaGeometry, parseKeys,
   VGA_BASE, STUB_SEG, STUB_OFF, STUB_BYTE, LOAD_SEG, PSP_SEG,
+  ENV_SEG, ENV_PARAS, LOL_SEG, LOL_OFF, MCB_FIRST, MCB_SYSTEM, DEFAULT_ALLOC_TOP,
 };
 
 if (require.main === module) {

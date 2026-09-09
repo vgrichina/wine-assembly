@@ -12,6 +12,13 @@ node tools/toyvm/demo-status.js OUT.json [OLD.json]        # prints the moved(N)
 One row file per program, so re-taking a single flaked row is cheap and a killed
 sweep resumes losing nothing.
 
+**The budget is guest TIME, not dispatches.** `capture-one.sh` passes
+`--guest-seconds=165` (override with `GUEST_SECONDS=` for a longer show, or
+`DISPATCHES=` when the question is fixed *work* rather than fixed guest time).
+A dispatch count only buys a fixed amount of the guest's own clock while the
+clock derived from it stays put, and `aadf7ec4` moved it — see the 2026-09
+section below.
+
 **Keep the corpus out of `/tmp`.** macOS runs a periodic cleaner that deletes
 files under `/tmp` by age, and it does not care that a sweep is reading them:
 on 2026-08-30 at 00:00 it took `/tmp/demos` from 199 programs to 37 files and
@@ -30,16 +37,172 @@ it meant to, with the *measured* cause rather than a guess. Read the entry
 before starting on one — several of these have already cost a session each, and
 two of them are not bugs at all.
 
-**Where the corpus stands (2026-08-29, sweep v17):** 194 of 199 rows show what
-the program meant to show — 165 graphics, 29 text art. The five that do not are
-`001.EXE`, `002.EXE` and `rage.exe`, all three behaving correctly (below), and
-**ANGEL.EXE + its SETUP.EXE**, the one real blocker left.
+**Where the corpus stands (2026-09-09, sweep v19 — 165 guest seconds):** 186 of
+199 rows show what the program meant to show — **164 graphics**, 22 text art.
+The thirteen that do not are
 
-AQUAPHOB.EXE moved `blank` → `demo` in this sweep and is the whole difference
+| bucket | n | rows |
+|---|---|---|
+| `error` | 1 | `ANGEL.EXE` — the one real blocker left |
+| `prompt` | 4 | `BLIQ.EXE` ×2, `AMBIENT.EXE`, `BETA.EXE` |
+| `blank` | 4 | `001.EXE`, `002.EXE` (correct — launcher stubs), `BTHERE.EXE`, ANGEL's `SETUP.EXE` |
+| `failed` | 4 | `DD.EXE`, `CTSLASSE.EXE`, `COCAHOLC.EXE` (all three wedged behind their own text screen), `COUNTDWN.EXE` (host trap) |
+
+That is a smaller "showing something" number than v17's 194 and **none of the
+difference is a program that stopped drawing**: five rows moved out of `art`
+because the classifier stopped counting a setup menu as the program's output,
+and `COUNTDWN.EXE` now runs far enough to reach a trap. Both changes are
+described in the 2026-09 section immediately below, which is also where the
+budget change lives. `rage.exe`, one of v17's five, is now a `demo` — it prints
+its GUS complaint and then draws 47,069 pixels anyway.
+
+AQUAPHOB.EXE moved `blank` → `demo` in sweep v17 and was the whole difference
 between v16 and v17: nothing else moved in either direction, which is what
 prices the VESA support added for it over the other 198 programs. What the
 sweep photographs is its setup screen; the demo behind it needs a mouse click.
 See its entry.
+
+## 2026-09 re-sweep at matched guest time
+
+**What moved and why.** `aadf7ec4` made the VGA frame period real time on the
+default clock: it went from `tickUnit()*18.2/hz` — 26,009 dispatches at
+`irqEvery=100e3` and 70Hz — to `1/(hz*guestSeconds(1))`, which is 143,051.
+That is 5.5x, and it is silent: every sweep kept passing the same
+`--dispatches=` and every retrace-paced demo got 5.5x less of its own show for
+it. Measured over a 29-program sample at the sweep's old default of 8M
+dispatches, six programs drew before the retiming and nothing after it
+(`DHADREN` 20,283 → 0, `BTW` 4,456 → 0, `cd2` 9,600 → 0, `DPS` 63,991 → 0,
+`acme-sns` 98,503 → 0, `diftro` 7,578 → 0), and all six draw again once the
+budget is quoted in guest seconds.
+
+So the budget is now guest seconds everywhere (`tools/toyvm/sweep-budget.js`
+holds the policy and the arithmetic; `--dispatches=` still overrides for a
+fixed-work A/B):
+
+| where | default | = old flag |
+|---|---|---|
+| `capture-one.sh` | `--guest-seconds=165` | the old `--dispatches=300m` |
+| `shot-sweep.js` | 16.5 guest seconds | the old `--dispatches=30m` |
+| `sweep-dos.js` | 4.4 guest seconds | the old `--dispatches=8m` |
+
+Each default is the guest time its own old dispatch count used to buy — 8M /
+26,009 frames at 70 a second, and so on — not a round number picked to feel
+generous. 11 of the 19 drawing programs in the sample reproduce their
+pre-retiming pixel count *exactly* at the converted budget, which is the check
+that the conversion is the right one.
+
+**Before/after over the whole corpus** (`before` = `--dispatches=300m`,
+`after` = 165 guest seconds, both `--auto-key --sound-pref=sb
+--env=ULTRASND=220,1,1,11,7`):
+
+| bucket | before | after |
+|---|---|---|
+| `demo` | 161 | **162** |
+| `art` | 24 | 24 |
+| `error` | 1 | 1 |
+| `prompt` | 6 | **5** |
+| `blank` | 4 | 4 |
+| `failed` | 3 | 3 |
+
+One row changed bucket — `COMPCODE.EXE` `prompt` → `demo`, 0 → 63,452 px — and
+149 of the 191 shared names changed their picture without changing bucket,
+which is where the extra guest time actually went: `64KBOFW` 18,240 → 64,000,
+`BABYTRO` 6,855 → 64,000, `BIOLAN` 6,167 → 64,000, `BP-OZONE` 26,033 → 64,000,
+`DIZZY_FI` 9,237 → 63,949, `DRAIN` 19,115 → 64,000, `DREAM` 22,888 → 63,916,
+`alpha` 23,347 → 64,000, `anarchy` 17,544 → 223,964, `AUTUMN` 44,800 → 64,000,
+`ATTIC` 56,556 → 64,000, `CONDENZ` 57,965 → 64,000, `CRYSTAL2` 679 → 10,471,
+`DIESEL` 64,000 → 170,029. `sweep-diff.js` reports **0 went blank** — no
+program that drew a graphics frame before draws nothing now.
+
+(191, not 199: `sweep-diff.js` keys rows by program name, and the corpus ships
+three `ZERO-BBS.COM`, two `BLIQ.EXE` and two `TRIPLEX!.COM` from different
+productions.)
+
+**The `art` bucket now uses the run's own evidence.** A cell count cannot tell
+a `.NFO` viewer from a demo sitting on its sound-card menu, and calling the
+second one `art` counted it as a pass. `demo-status.js` now reads the mode
+history `run-dos.js` records (`video.modes`, printed by `--report`): a text
+screen belonging to a run that has *been in a graphics mode* is a `prompt`, and
+one photographed with the run wedged is `failed`. The power-on mode 3 at the
+head of the history is a fact about the BIOS and is not counted. Applied to
+this sweep it moves seven rows and no others:
+
+| row | was | now | why |
+|---|---|---|---|
+| `AMBIENT.EXE` | art | prompt | `· aNTaReS / AMBiENT - Initializing...`, already in mode 13h |
+| `BETA.EXE` | art | prompt | sound-card menu, already in mode 12h |
+| `COCAHOLC.EXE` | art | failed | sound-card menu, already in mode 13h, stuck at `0:1129` (its own entry below) |
+| `DD.EXE` | art | failed | stuck at `ffff:19c` behind its greeting |
+| `CTSLASSE.EXE` | art | failed | stuck at `860:dc8b` on "testing system preformance" |
+| `BLIQ.EXE` ×2 | blank | prompt | 4 cells, in mode 13h — was already a known blocker |
+
+**NEW work items this re-sweep exposes.** Not fixed here; each is listed with
+its stop site, and each was re-run alone before being believed.
+
+- **`COUNTDWN.EXE` — a host trap between 200M and 250M dispatches.** At the old
+  300M budget it never got there under the sweep's retry chain; at 165 guest
+  seconds it does, and the row has no picture at all. Bracketed: fine at 200M
+  (242,076 of 307,200 px in VBE 101h, `cs:ip=860:dbb3`, 19.97 guest seconds,
+  protected mode `cr0=11 base=0` 32-bit), traps by 250M with
+  `RuntimeError: unreachable` at `wasm-function[106]` reached from
+  `DosSession.step`. **Pre-existing**: the identical trap reproduces on a
+  `main` worktree at `--dispatches=250m`, so it is the budget that exposed it,
+  not the budget change that caused it. It is the one row the site cannot tile
+  (198 tiles, not 199).
+- **`AIVOPESU.EXE` — stuck at `110:3c` after 45.07 guest seconds**, with its
+  picture already drawn (63,304 px, mode 13h). Deterministic: an isolated
+  re-run reproduces the pixel count, the stop site and the guest-second mark
+  exactly.
+- **`ANSWER.EXE` — stuck at `150:e` after 99.11 guest seconds** (5,448 px, 71
+  cells, mode 13h). Same, reproduced alone.
+- **`DOPE.EXE` — stuck at `1fb:3fd` after 32.17 guest seconds** (44,115 px, 200
+  cells, mode 13h). Same, reproduced alone.
+
+  All three are `ok -> stuck` in `sweep-diff.js` and all three keep their
+  picture to the pixel — the longer run reaches a wedge the 30-guest-second one
+  stopped short of. They are three more instances of the shape `DD.EXE` and
+  `CTSLASSE.EXE` are in, and the stop sites are the place to start.
+
+### v19: the same budget over the VBE / load-segment / region-JIT tree
+
+The tables above are sweep v18, taken before `ec026aab` (the VBE modes the
+corpus asks for), `2c0fd0e9` (per-program load segment) and `98884b86` (the
+region JIT in the live loop) landed. The corpus was re-swept at the same 165
+guest seconds on top of them — that sweep, **v19**, is what
+`docs/dos-corpus/` is built from:
+
+| bucket | v18 | v19 |
+|---|---|---|
+| `demo` | 162 | **164** |
+| `art` | 24 | **22** |
+| `error` | 1 | 1 |
+| `prompt` | 5 | **4** |
+| `blank` | 4 | 4 |
+| `failed` | 3 | **4** |
+
+Three rows moved, and `sweep-diff.js` again reports **0 went blank**:
+
+| row | v18 | v19 | why |
+|---|---|---|---|
+| `CHROME.EXE` | art | **demo** | the VBE work: 0 → 97,933 px, mode history `3h → 1h → 13h` |
+| `COLORS.EXE` | art | **demo** | same: 0 → 60,344 px |
+| `COCAHOLC.EXE` | prompt | failed | same picture (0 px, its 268-cell menu), but the run now wedges at `0:1129` instead of spending the budget |
+
+`ACME-VIC.EXE` (22,802 px) and `STHINTRO.EXE` (64,000 px) are `demo` rows in
+v19, as their own entries below say they should be.
+
+**One new work item.** `COCAHOLC.EXE` stops at **`0:1129` after 1.65 guest
+seconds** (16.5M dispatches) with its sound menu on screen — reproduced alone
+at the same stop site, guest-second mark and pixel count. `0:` is not the
+program's own segment; this is the extender unwinding, which is the thing its
+entry below already says is where it dies. What is new is that there is now an
+address to start at.
+
+`BIOLAN.EXE` is the one row worth naming among the 43 that changed picture
+without changing bucket: 64,000 → 30,838 px, with a mode history of
+`3h → 13h → 3h → 13h`. It re-enters its own mode set, so the capture lands
+mid-redraw rather than on a finished frame; it is still a `demo` and still
+animating.
 
 ## Not work items
 
@@ -1161,6 +1324,17 @@ call at all, so `AX` comes back unchanged rather than `0x004F`, and the demo
 takes its own no-VESA path. **How many other rows want VBE has not been
 measured, and that number is what decides whether this is worth building.**
 
+**RESOLVED.** It has been measured — `tools/toyvm/vbe-census.js`, 199 programs
+at 150M dispatches each — and CHROME now draws its raytraced logo in
+`112h VBE 640x480x24`. Two things were needed beyond the mode: `AX=4F07`
+(display start, which CHROME calls immediately after the mode set), and a real
+far pointer at ModeInfoBlock+0x0C. CHROME moves the window by `call far` through
+that pointer rather than by `AX=4F05`; the zero we were writing there did not
+send it back to the interrupt, it sent it into the interrupt vector table.
+Mode 0x10D (320x200x15) went in at the same time and unblocks COLORS.EXE.
+The full census table, the LFB refusal and what was declined are in
+[toyvm-vbe.md](toyvm-vbe.md).
+
 **COCAHOLC.EXE — a protected-mode extender that gives up.** It answers its own
 sound menu (autoKey reads "0", and the choice makes no difference: 1, 2 and 3
 all end at the same instruction after the same 16.2M dispatches), probes DPMI
@@ -1239,6 +1413,15 @@ COLORS.EXE, SETUP.EXE and CHROME.EXE make one. VBE is a three-row lever, and
 two of those three rows have another blocker in front of it — so it stays below
 the extender and the video-BIOS ROM on the list.
 
+**CORRECTION: five, and four seconds was not a budget.** Re-measured with
+`tools/toyvm/vbe-census.js` at 150M dispatches per program: AQUAPHOB.EXE,
+CHROME.EXE, COLORS.EXE, COUNTDWN.EXE and SETUP.EXE. The two that four seconds
+missed both ask late — CHROME's query is behind a retrace-paced text scroller
+and does not happen until about 100M dispatches — which is the general lesson:
+a wall-clock cap on a loaded box undercounts *what a program does*, and the
+programs it undercounts are exactly the ones whose feature is gated behind an
+intro. Four of the five now draw; see [toyvm-vbe.md](toyvm-vbe.md).
+
 ### A row can say `error` because of how the sweep chose its picture
 
 BLAND.EXE spent a version in the `error` bucket *after* its actual bug was
@@ -1273,7 +1456,7 @@ added, and both found only by sweeping the whole corpus:
   64000 pixels. Rows now carry a `says` field with any refusal the run printed,
   whatever that frame scored, and the rungs read it alongside the kept screen.
 
-### ACME-VIC.EXE — one bug fixed, and the one behind it is the load address
+### ACME-VIC.EXE — FIXED by machine config (per-program load address)
 
 Two things stacked here, and the first hid the second completely.
 
@@ -1329,14 +1512,79 @@ Proved by moving the program above the write: at `PSP_SEG`/`LOAD_SEG` =
 entries, issues 1396 `INT 67h` calls and is still animating at 150M dispatches
 (16939 non-black pixels, frame moving).
 
-**That is not a fix that can be shipped as it stands**, and the corpus says why
-in one line: at `0x0D00` `ACME-BIG.EXE` prints *"This demo requires at least
-600k of free base memory!"* and exits 1. Free conventional memory is
-`(DEFAULT_ALLOC_TOP - PSP_SEG) * 16`, so 600K needs `PSP_SEG <= 0x0900` while
-ACME-VIC needs `LOAD_SEG > 0x0C55`. The two are mutually exclusive under a
-fixed `0x9F00` ceiling, and `RUNDEMO.EXE`'s frame changes as well
-(`08502c5c` → `eb577156`), so any move of the load address is a corpus-wide
-change that has to be measured as one — not a side effect of a demo fix.
+**3. The fix: the load address is a machine setting, per program.** Moving it
+for everyone is not available and the corpus says why in one line: at `0x0D00`
+`ACME-BIG.EXE` prints *"This demo requires at least 600k of free base memory!"*
+and exits 1. Free conventional memory is `(DEFAULT_ALLOC_TOP - PSP_SEG) * 16`,
+so 600K needs `PSP_SEG <= 0x0900` while ACME-VIC needs `LOAD_SEG > 0x0C55`.
+Mutually exclusive under a fixed `0x9F00` ceiling — and a real machine does not
+resolve that with one number either. It resolves it with a boot floppy: where
+DOS puts a program is whatever is left after the kernel, its buffers and every
+driver `CONFIG.SYS` loaded, so the same `.EXE` lands at a different paragraph on
+two machines and no program is entitled to an opinion about which. That is
+exactly why this store could go unnoticed for thirty years.
+
+So the address became a machine option, and the corpus registry names one per
+program:
+
+* `tools/toyvm/program-config.js` — the registry. One entry:
+  `acme-vic.exe: { pspSeg: 0x0D00 }`, the smallest round PSP that clears the
+  store (`LOAD` is `PSP+0x10 = 0x0D10`, and the write at `0xC54A` needs
+  `LOAD > 0xC55`). Everything else stays at the default.
+* `--psp-seg=` / `--load-seg=` on `run-dos.js`, and `pspSeg`/`loadSeg` on the
+  `Machine` and on `LiveRun`. `run-dos.js` consults the registry by executable
+  name, so the CLI and both sweeps mount the same machine without repeating it.
+* `programs-index.json` carries it to the page (`bundle-programs.js` reads the
+  same registry), `site.js` puts it on the tile as `data-live-psp`, and the
+  page's Run button hands it to `LiveRun` — so the tile runs the machine its
+  screenshot was taken on.
+
+Everything derived from the load address moves with it, and each of those is
+silent when it does not. The PSP and its environment pointer, the free-memory
+arithmetic, and — the one that is new — the **MCB chain**. The gap between the
+environment block and the PSP is now 49KB instead of 1KB, and a gap with no
+arena header leaves the chain with a hole, while one owned by 0 reads as *free*
+and tells a program it has 49KB that do not exist. `Machine.installArena` lays
+the chain down at load (environment → DOS and drivers, owner 8 → the program →
+whatever is above it, signed `Z`), `mcbSync` re-lays it wherever the allocator
+moves a boundary, and `INT 21h AH=52h` now answers with a list-of-lists whose
+preceding word is the first MCB. `test/test-toyvm-load-seg.js` is a `.COM` that
+walks that chain at two load addresses and checks the arithmetic:
+
+| | PSP `0x0100` | PSP `0x0D00` |
+|---|---|---|
+| free paragraphs | `0x8DFF` | `0x81FF` |
+| owned by DOS below the PSP | `0x3F` | `0xC3F` |
+| owned by the program | `0x105F` | `0x105F` |
+
+— free memory pays for the move paragraph for paragraph, DOS is the one
+holding it, and the four blocks tile the arena with no hole.
+
+**Measured.** ACME-VIC at `0x0D00` on the CLI (`--dispatches=Nm --pit-clock
+--auto-key`) draws three different frames: `5604db3c` at 20M, `ffbfe5a8` at
+60M, `f6a01ff0` at 150M (17181 non-black, DAC 220/256, 1404 `INT 67h` calls,
+still running). None of them is `a5f03de6`, the loader screen it used to stop
+on. On the live page (`check-live-report.js --name=ACME-VIC.EXE --motion=10`)
+it goes from *"ran 28,382,311 dispatches but painted nothing"* to a full
+64,000-pixel canvas that keeps changing; `--motion` is new, and exists because
+a lit canvas that never moves used to read here as an unqualified pass.
+
+**And it costs the corpus nothing.** Six witnesses — DADEMO3, RUNDEMO, BLIQ,
+ACME-BIG, CONTAGIO, CATWALK at `--dispatches=80m --pit-clock --auto-key
+--sound-pref=sb --env=ULTRASND=220,1,1,11,7` — are byte-identical to a `main`
+base arm in both frame hash and rendered wav, ACME-BIG's 600K check included
+(`362275f5`). The full `sweep-dos.js` over `/tmp/demos` (199 programs, both
+arms) through `sweep-diff.js`: **0 regressions, 0 went blank, 0 changed, 190
+unchanged, and one recovered — `ACME-VIC.EXE: stuck -> ok`.**
+
+One trap worth writing down, because it cost a whole sweep pair. `sweep-diff.js`
+keys rows by executable NAME, and this corpus ships two `ASYLUM.EXE` and four
+`TRIPLEX!.COM` in different directories. Diff a complete sweep against a partial
+one and the missing row is filled by its namesake from another production, which
+reads as a change with a plausible story attached (`px 0 -> 64000`). Both of
+those "changes" reproduce identically in both trees when run by path. Give a
+sweep's `--out=` a name no other session on the box is using: `/tmp/sweep-*.json`
+is not one.
 
 **How to find a write like this again.** `--watch=SEG:OFF` marks the bytes in
 the code bitmap and every store there lands in the self-modify census. Two

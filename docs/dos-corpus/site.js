@@ -87,6 +87,8 @@
       name: fig.dataset.live, src: fig.dataset.liveSrc, exe: fig.dataset.liveExe,
       args: fig.dataset.liveArgs || '',
       env: fig.dataset.liveEnv || '', card: fig.dataset.liveSound || 'full',
+      pspSeg: parseInt(fig.dataset.livePsp || '0', 16) || 0,
+      loadSeg: parseInt(fig.dataset.liveLoad || '0', 16) || 0,
     } : null);
     if (!dlg.open) dlg.showModal();
   }
@@ -148,6 +150,25 @@
     return ' - sound: ' + a.rate + 'Hz ' + a.state + ', ' + a.pulls + ' pulls'
       + (a.underruns ? ', ' + a.underruns + ' gaps' : '')
       + (src.length ? ', ' + src.join(', ') : ', nothing played yet');
+  }
+
+  // What the JIT has to say, in a few words. Nothing at all when it was never
+  // asked for -- and something even when it declined, because "the JIT is on"
+  // and "the JIT found something" are different states and only one of them
+  // changes what is running.
+  function jitLine() {
+    if (!run || !run.jitStats) return '';
+    var j = run.jitStats();
+    if (!j) return '';
+    if (j.phase === 'installed') {
+      return ' - jit: 1 region, ' + Math.round(j.share) + '% of samples, '
+        + (j.gate ? j.gate.toFixed(1) + 'x on the bench' : 'audited')
+        + (j.drops ? ', ' + j.drops + ' dropped to self-modifying code' : '');
+    }
+    if (j.phase === 'profiling') return ' - jit: profiling';
+    if (j.phase === 'declined') return ' - jit: nothing installed (' + j.declined + ')';
+    if (j.phase === 'unavailable') return ' - jit: unavailable here (' + j.declined + ')';
+    return ' - jit: ' + j.phase;
   }
 
   function showLive(what) {
@@ -217,13 +238,23 @@
   var fsBtn = document.getElementById('lb-fs');
   var closeBtn = document.getElementById('lb-close');
   var autoBtn = document.getElementById('lb-auto');
-  var prefs = { cpu: '10', sound: true, auto: true };
+  var jitBtn = document.getElementById('lb-jit');
+  // The JIT is OFF by default and stays off until somebody asks. It is the one
+  // control here that can change what is on the screen rather than how fast it
+  // gets there, and it declines rather than guesses -- but a default nobody
+  // chose is not the place to find that out.
+  var prefs = { cpu: '10', sound: true, auto: true, jit: false };
   try {
     var saved = JSON.parse(localStorage.getItem('toyvm-live') || '{}');
     if (saved.cpu !== undefined) prefs.cpu = String(saved.cpu);
     if (saved.sound !== undefined) prefs.sound = !!saved.sound;
     if (saved.auto !== undefined) prefs.auto = !!saved.auto;
+    if (saved.jit !== undefined) prefs.jit = !!saved.jit;
   } catch (e) { /* no storage: defaults */ }
+  // ...and `?jit=1` overrides the remembered answer for this load, which is how
+  // a link asks for it: an A/B is two URLs, not two visits to a menu.
+  var jitQuery = /[?&]jit=([01])/.exec(location.search);
+  if (jitQuery) prefs.jit = jitQuery[1] === '1';
   cpuSel.value = prefs.cpu;
   if (cpuSel.value !== prefs.cpu) { prefs.cpu = '10'; cpuSel.value = '10'; }
   function savePrefs() {
@@ -231,8 +262,32 @@
   }
   function showSound() { soundBtn.setAttribute('aria-pressed', prefs.sound ? 'true' : 'false'); }
   function showAuto() { autoBtn.setAttribute('aria-pressed', prefs.auto ? 'true' : 'false'); }
+  // Guarded, unlike its two neighbours, because this button is NEWER than the
+  // pages: site.css and site.js are whole-file constants and are regenerated
+  // on their own (--js-only), while demos.html is built from a sweep and only
+  // gets the button back when the corpus is next photographed. A runtime that
+  // assumed the element would throw on exactly the pages that are already
+  // deployed, and take the Run button down with it. Without the element the
+  // toggle is unreachable but `?jit=1` still works, which is what an A/B
+  // needs anyway.
+  function showJit() {
+    if (jitBtn) jitBtn.setAttribute('aria-pressed', prefs.jit ? 'true' : 'false');
+  }
   showSound();
   showAuto();
+  showJit();
+
+  // The JIT, live. On, the running program starts profiling itself and a
+  // region appears a few seconds later if one clears the audit; off, an
+  // installed region is removed and the demo goes back to being interpreted.
+  // Either way the program keeps running -- that is the whole trick, and it is
+  // also the honest way to compare the two pictures.
+  if (jitBtn) jitBtn.addEventListener('click', function () {
+    prefs.jit = !prefs.jit;
+    savePrefs();
+    showJit();
+    if (run) run.setJit(prefs.jit);
+  });
 
   // The menu answerer, on or off, live: the machine reads the flag at every
   // blocking read, so turning it off leaves the next menu to the visitor's
@@ -377,6 +432,9 @@
         // only draws without one. The tile is a screenshot taken that way.
         env: current.env ? current.env.split(';') : [],
         card: current.card,
+        // ...and the machine it was photographed on: see program-config.js.
+        pspSeg: current.pspSeg || 0,
+        loadSeg: current.loadSeg || 0,
         // The same menu answerer the sweep ran with. The tile above this canvas
         // is a screenshot taken WITH it, so without it the page promises a
         // picture and then sits on "waiting for a key". It only answers when
@@ -393,9 +451,14 @@
         audioContext: ctx,
         sound: prefs.sound,
         soundPref: prefs.sound && current.card !== 'none' ? 'sb' : 'silent',
+        // The region JIT and the script its worker runs. ABSOLUTE, because the
+        // worker is made from a Blob URL and a relative importScripts would be
+        // resolved against that -- which has no directory to be relative to.
+        jit: prefs.jit,
+        jitUrl: new URL('live/toyvm-jit-bundle.js', location.href).href,
         onStatus: function (s) {
           runState = s.state;
-          if (s.state === 'running') say('running - click the screen, then type' + soundLine(), true);
+          if (s.state === 'running') say('running - click the screen, then type' + soundLine() + jitLine(), true);
           else if (s.state === 'exited') say('the program exited');
           else if (s.state === 'waiting') say('waiting for a key - click or tap the screen and press one');
         },
@@ -407,7 +470,7 @@
       // inside, and it is a different fix from a demo that never touched the
       // card.
       statusTimer = setInterval(function () {
-        if (run && runState === 'running') say('running - click the screen, then type' + soundLine(), true);
+        if (run && runState === 'running') say('running - click the screen, then type' + soundLine() + jitLine(), true);
       }, 1000);
       // Reachable from the console, on purpose: liveRun.session.dispatched is
       // the only way to tell a demo that is drawing nothing yet from one that

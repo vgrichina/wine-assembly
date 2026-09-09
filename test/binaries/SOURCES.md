@@ -90,6 +90,12 @@ that link the 80x87 emulator. Both are recorded in `dlls/SOURCES.md`.
   ```
 - Remakes copied into `wep32-community/`: bricks (Klotski), EMPIPE (Pipe Dream), Funtris/Peaks/Pyramid/FourStones (Funpack: Tetris/TriPeaks/Tut's Tomb/Tic Tac Drop), JigSawedME, Pawn (Chess), QuickBlackjack, Rodent2000, Runenlegen (Stones), Tetravex, tworld (Chip's Challenge, needs SDL), Winarc (Pegs/Krypto/LifeGen bundle), CWordZap
 - Flash-based games in the archive (JezzBall, Maxwell's Maniac, Fuji Golf) are skipped — they need Flash Player, not a PE runtime.
+- **Bricks sound files** (`wep32-community/Bricks/bricks00.wav` … `bricks14.wav`): not in `wep32.7z`, which has only `bricks.exe` + `brk1.dll`. The game plays them with `PlaySound("bricks%02i.wav")` from the exe directory and is silent without them. They come from the author's site (`www.bricks-game.de`, the address in the exe's about strings), via the Wayback Machine:
+  ```bash
+  curl -L -A Mozilla -o sound.zip "https://web.archive.org/web/20071025093930id_/http://bricks-game.de/winbricks/sound.zip"
+  unzip sound.zip -d wep32-community/Bricks/
+  ```
+  The same site also archived `winbricks/bricks1/bricks1.zip` (a 2016 build with `bricks15/16.wav` and eleven language exes); the 2007 `sound.zip` is the set that matches the 2004 exe in the 7z.
 
 ## Plus! 98
 

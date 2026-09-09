@@ -123,11 +123,29 @@ class LiveRun {
       // machine's hardware, and a program that only draws without a card
       // gets none whatever the mute says.
       env = [], card = 'full',
+      // Where DOS puts this program, in paragraphs -- the machine setting the
+      // corpus registry carries for the one demo that needs a different one.
+      // It reaches the page through programs-index.json, so the tile and the
+      // CLI mount the same machine; see tools/toyvm/program-config.js.
+      pspSeg = 0, loadSeg = 0,
+      // The region JIT (tools/toyvm/region-live.js), off by default. On, the
+      // run profiles itself, sends the profile to a Worker that picks a hot
+      // loop, audits a compiled version of it against the interpreter and
+      // compiles a module with it, and swaps the running program onto that
+      // module. `jitUrl` is where that Worker gets its code -- the JIT bundle
+      // beside the page's own -- and without one there is no Worker to run in,
+      // so the JIT reports itself unavailable and the demo runs interpreted.
+      // `jitBackend` overrides both, which is how a test drives the whole
+      // pipeline in-process.
+      jit = false, jitUrl = null, jitBackend = null, jitOptions = {},
     } = opts;
     Object.assign(this, {
       canvas, exe, files, cpu, args, msPerFrame, slice, onStatus, onFrame, autoKey,
       variant, mips, paced, audioContext, sound, soundPref, env, card,
+      pspSeg, loadSeg,
+      jitWanted: jit, jitUrl, jitBackend, jitOptions,
     });
+    this.jit = null;
     this.running = false;
     this.session = null;
     this.raf = 0;
@@ -182,6 +200,7 @@ class LiveRun {
   async start() {
     setCpuLevel(this.cpu);
     const machine = new Machine(new Uint8Array(0), {
+      pspSeg: this.pspSeg, loadSeg: this.loadSeg,
       autoKey: this.autoKey,
       soundPref: this.soundPref,
       env: this.env,
@@ -189,10 +208,13 @@ class LiveRun {
       fileRoot: '.',              // the mounted map IS the directory
       log: () => {},
     });
-    const vm = await makeVm(this.variant || pickVariant(), {
-      portIn: (p, w) => machine.portIn(p, w),
-      portOut: (p, v, w) => machine.portOut(p, v, w),
-    });
+    // Named, because a region install instantiates a SECOND module over this
+    // memory and has to import the same two closures: a fresh pair built there
+    // would be a machine the page's peripherals are not attached to, and the
+    // failure is silent -- the demo simply stops hearing its own hardware.
+    const portIn = (p, w) => machine.portIn(p, w);
+    const portOut = (p, v, w) => machine.portOut(p, v, w);
+    const vm = await makeVm(this.variant || pickVariant(), { portIn, portOut });
     // The decoder's CPU level and the module's FLAGS shape have to move
     // together: a build that decodes 386 encodings but reports an 8086 FLAGS
     // register fails the CPU detection every one of these demos opens with.
@@ -210,13 +232,16 @@ class LiveRun {
     // parse) and threw on every .EXE. In the page `Buffer` is the bundle's
     // Uint8Array subclass; here it is Node's own.
     const image = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
-    const info = loadExe(vm.mem, image);
+    const info = loadExe(vm.mem, image,
+      { loadSeg: machine.loadSeg, pspSeg: machine.pspSeg });
     // What the program was given is what is NOT free. A .COM has no header to
     // say, so the loader leaves this undefined and the machine keeps its "owns
     // everything" default.
     if (info.allocTop !== undefined) machine.allocTop = info.allocTop;
     machine.imageTop = info.minTop;
     machine.installEnvironment(this.exe, this.args);
+    // After the environment and after allocTop: the chain names both.
+    machine.installArena();
     // IF set, as DOS hands it over -- see the same line in run-dos.js. The page
     // and the headless runner have to agree about this or a program that needs
     // a hardware interrupt behaves differently in the two.
@@ -245,7 +270,28 @@ class LiveRun {
       // a demo that idles on a "press a key" screen is exactly what it would
       // cut off.
       stuckLimit: 0,
+      // The clock the region JIT needs, and only when it was asked for at
+      // startup (`?jit=1`, or the toggle's remembered answer). Anchoring the
+      // slice grid to the absolute dispatch count is what lets an install
+      // absorb a handback without moving everything after it -- but it also
+      // changes what a plain run plays, so a page nobody asked a JIT of keeps
+      // the shipped clock exactly. Toggling the JIT on mid-run therefore gets
+      // the region without the anchored grid, which is a weaker guarantee than
+      // the headless gate and is the honest cost of not restarting the demo
+      // under the person's hands.
+      // The lattice clock is an experiment behind run-dos.js --lattice-clock:
+      // it blanks BLIQ and moves every witness wav, so the page never turns
+      // it on, JIT or not (docs/toyvm-region-live.md).
+      latticeClock: false,
+      // The JIT's profiler, and nothing else on this path: one map insert per
+      // slice while it is profiling, and an early return once it is not.
+      hooks: { afterSlice: (ev) => { if (this.jit) this.jit.sample(ev); } },
     });
+    // Kept so the JIT can be switched on later without restarting the program:
+    // a second module instantiated over this memory has to import these exact
+    // closures (see makeVm above).
+    this.ports = { portIn, portOut };
+    if (this.jitWanted) this.startJit({ portIn, portOut });
     this.attachAudio();
     this.running = true;
     this.owed = 0;
@@ -297,6 +343,53 @@ class LiveRun {
     // a gap in the sound.
     ring.prime(Math.round(rate / 4));
     if (this.sound) node.connect(ctx.destination);
+  }
+
+  // Start the region JIT over this run, if there is somewhere to compile.
+  //
+  // The backend is a WORKER or it is nothing. Preparing a region costs about
+  // two and a half seconds -- an audit that builds a second emulator, then an
+  // emit and a compile of the whole module -- and none of that is divisible
+  // into frame-sized pieces. On the page's thread it is a two-second freeze of
+  // the very demo it was meant to speed up, so where a worker cannot be built
+  // (a file:// page cannot build one at all) the JIT reports itself unavailable
+  // and the run stays interpreted, which is what it would have been anyway.
+  startJit({ portIn, portOut } = this.ports || {}) {
+    const { LiveJit, workerBackend } = require('./region-live');
+    const backend = this.jitBackend || workerBackend(this.jitUrl);
+    if (!backend) {
+      this.jitUnavailable = 'no Worker to compile in (a file:// page cannot make one)';
+      return null;
+    }
+    this.jit = new LiveJit({
+      session: this.session, vm: this.vm, machine: this.machine, portIn, portOut,
+      backend, cpu: this.cpu, log: () => {}, ...this.jitOptions,
+    });
+    return this.jit;
+  }
+
+  // Turn the JIT on or off while the program runs. Off with a region already
+  // installed UNINSTALLS it -- the point of the switch is to be able to see the
+  // interpreted picture again, and leaving the compiled loop in place would
+  // make the off position a lie.
+  setJit(on) {
+    this.jitWanted = !!on;
+    if (on && !this.jit && this.session) return this.startJit();
+    if (!on && this.jit) {
+      if (this.jit.phase === 'installed') this.jit.uninstall('switched off');
+      this.jit.stop();
+      this.jit = null;
+    }
+    return this.jit;
+  }
+
+  // What the JIT is doing, for the status line. `null` when it was never asked
+  // for; a `phase` of 'unavailable' when it was and there was nowhere to run
+  // it, which is a different answer from "found nothing worth compiling".
+  jitStats() {
+    if (this.jit) return this.jit.stats();
+    if (this.jitWanted) return { phase: 'unavailable', declined: this.jitUnavailable };
+    return null;
   }
 
   // What the sound path is doing, for the status line: null without a
@@ -377,6 +470,13 @@ class LiveRun {
         ? Math.min(this.budgetMs * 1.5, this.maxBudgetMs)
         : Math.max(this.msPerFrame, this.budgetMs - 1);
     }
+    // BETWEEN slices, never inside one: an install swaps the wasm instance out
+    // from under the run loop. `pump` never blocks -- while the worker is
+    // preparing a region it returns immediately and the guest keeps going --
+    // and once one is installed all it does is compare the region's guest bytes
+    // against memory, which is what catches a program that rewrites its own
+    // hot loop.
+    if (this.jit) this.jit.pump();
     this.paint();
     this.frames++;
     if (s.done) {
@@ -451,6 +551,10 @@ class LiveRun {
     if (this.feed) { try { this.feed.stop(); this.feed.disconnect(); } catch { /* already */ } this.feed = null; }
     if (this.node) { try { this.node.disconnect(); } catch { /* already */ } this.node = null; }
     if (this.machine) this.machine.audio.sink = null;
+    // The JIT's worker is a thread of its own and does not stop with the run
+    // loop: a demo stopped mid-preparation would leave one compiling a module
+    // for a program nobody is watching.
+    if (this.jit) { this.jit.stop(); this.jit = null; }
     this.onStatus({ state: 'stopped' });
   }
 }

@@ -61,20 +61,30 @@
 // straight back into the top. Turning it on without a fixpoint over the region
 // would produce a region that is right for one iteration.
 
+// THIS FILE IS ALSO A LIBRARY, and tools/toyvm/region-live.js is the caller
+// that made it one: the live JIT picks, builds, guards and gates a region with
+// exactly the functions below, so a live install and a bench install cannot
+// diverge into two policies. Two things follow from being loadable in a page:
+// `runDos` is required lazily (nothing in the live path runs a second whole
+// program, and pulling it in at load costs the browser bundle its evaluation),
+// and every process-shaped read below tolerates not having one.
 const fs = require('fs');
 const path = require('path');
-const { performance } = require('perf_hooks');
-const { runDos } = require('./run-dos');
 const { makeVm } = require('./vm');
 const { findHotTrace, readTrace, emitTier3, benchTiers, memHash } = require('./trace-jit');
 const { HANDLERS, TAKEN_AT, prepareTables, sexpAt } = require('./emit');
 const isa = require('./isa');
 
+// The CLI's own switches, read from wherever there is an argv to read. In the
+// page (and in region-live's worker) there is none, so every `flag()` is false
+// and every `arg()` its default -- which is the shipped policy.
+const ARGV = (typeof process !== 'undefined' && Array.isArray(process.argv))
+  ? process.argv.slice(2) : [];
 function arg(name, d) {
-  const hit = process.argv.slice(2).find(a => a.startsWith(`--${name}=`));
+  const hit = ARGV.find(a => a.startsWith(`--${name}=`));
   return hit === undefined ? d : hit.slice(name.length + 3);
 }
-const flag = (n) => process.argv.slice(2).includes(`--${n}`);
+const flag = (n) => ARGV.includes(`--${n}`);
 
 function count(s, d) {
   if (s === undefined) return d;
@@ -1006,16 +1016,25 @@ function passSpec() {
   const spec = arg('passes', 'constprop,regfold,ea,seg,inline').split(',').filter(Boolean);
   const known = ['constprop', 'regfold', 'deadflags', 'ea', 'seg', 'inline'];
   for (const p of spec) {
-    if (!known.includes(p)) {
-      console.error(`unknown pass ${p}; known: ${known.join(', ')}`);
-      process.exit(2);
-    }
+    if (!known.includes(p)) throw new Error(`unknown pass ${p}; known: ${known.join(', ')}`);
   }
   return Object.fromEntries(known.map(k => [k, spec.includes(k)]));
 }
 
 function isTransfer(op) {
   return TAKEN_AT.has(op.fn) || /^(call_rel(32)?|ret(32)?)$/.test(op.name);
+}
+
+// Does this op body observe the dispatch clock? `$steps` and `$slice_budget`
+// read it directly ($vga_status does, for port 3DAh); a call out to the host's
+// port handlers observes it too, because the host stamps every port write with
+// `sliceStart + (sliceBudget - steps)` so the audio renderer can place it on a
+// sample (Machine.audioNow). Anything here has to see the same value the
+// interpreter would have left, so the region's deferred `$steps` charge is
+// flushed in front of it -- see the call site in buildRegion.
+const CLOCK_READERS = /\$steps|\$slice_budget|\$vga_status|\$port_in|\$port_out/;
+function readsClock(body) {
+  return CLOCK_READERS.test(body || '');
 }
 
 // `why` (optional) collects ip -> which op and which role put it in the list.
@@ -1265,14 +1284,54 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
   // stitching is wrong" from "the looping protocol is wrong", which produce the
   // same wrong frame. It is slower than the interpreter by construction.
   const once = flag('once');
+  // THE SLICE MUST END WHERE THE INTERPRETER WOULD HAVE ENDED IT.
+  //
+  // `$steps` is not just a budget, it IS the emulated clock: dos-loop bills
+  // `budget - $steps` per slice, `machine.setClock` and `audioAdvance` are both
+  // derived from it, and port writes are stamped with `sliceStart + (budget -
+  // $steps)` (Machine.audioNow). So a region that ends its slice at a different
+  // guest instruction from the interpreter does not merely stop somewhere else
+  // -- it renders the same sound against a different timeline and, at a fixed
+  // dispatch budget, photographs the program at a different instant.
+  //
+  // The interpreter takes its boundary at EVERY transfer: `GO` publishes $gip
+  // for the edge it is taking and then tests `$smc || $steps < 0` (emit.js
+  // CONT), including on the inlined not-taken arm of a traced branch
+  // (`jccTraceBody`). A region used to test only at its own back edge, once per
+  // iteration, and with `$steps > 0` rather than `>= 0` -- so it ran on past
+  // block boundaries the interpreter stopped at. Measured on DREAM.EXE that is
+  // +4761 dispatches over an 80M budget and a frame 180 pixels different, and
+  // it is the whole of the "audio only" class (DHADREN, ACCIDENT, CYCLE,
+  // DRAGON): same picture, same interrupt count, a wav rendered against slices
+  // that started and ended elsewhere.
+  //
+  // So `edge()` puts the interpreter's own test on every lowered edge, in the
+  // interpreter's own order: publish $gip, test, and either leave through
+  // `$out` (where the epilogue's `leave` finds `$steps < 0` and calls
+  // `$slice_exit`, exactly as `GO` would) or do what the region wanted to do.
+  // `--no-exact-slice` restores the old one-test-per-iteration protocol; it is
+  // a bisector, and the reason to reach for it is to price this test, not to
+  // ship without it.
+  const exact = !flag('no-exact-slice');
+  const boundaryTest = `(i32.or (i32.or (global.get $smc) (global.get $halt))`
+    + ` (i32.lt_s (global.get $steps) (i32.const 0)))`;
+  const edge = (ip, act) => (!exact ? (act || '')
+    : `(global.set $gip (i32.const ${ip}))`
+      + `\n(if ${boundaryTest}\n  (then (br $out))\n  (else ${act || '(nop)'}))`);
+  // With the boundary already taken on the edge, everything downstream of it
+  // has a budget by construction, so the looping tests below are the
+  // interpreter's `>= 0` and not a second, stricter bar. Under `--once` there
+  // is no back edge at all.
   const okToLoop = once ? '(i32.const 0)'
+    : exact ? '(i32.const 1)'
     : `(i32.and (i32.gt_s (global.get $steps) (i32.const 0))`
     + ` (i32.eqz (i32.or (global.get $halt) (global.get $smc))))`;
   const backEdge = once ? ';; --once: no back edge'
     : `(br_if $again (i32.and (i32.and`
     + ` (i32.eq (global.get $gip) (i32.const ${headIp}))`
-    + ` (i32.eqz (global.get $halt)))`
-    + ` (i32.gt_s (global.get $steps) (i32.const 0))))`;
+    + ` (i32.eqz (i32.or (global.get $halt)`
+    + ` ${exact ? '(global.get $smc)' : '(i32.const 0)'})))`
+    + ` (i32.${exact ? 'ge' : 'gt'}_s (global.get $steps) (i32.const 0))))`;
   // Inner loops, by the op that opens them and the branch that closes them.
   // `try/finally` around the op so every `continue` still emits the close.
   const opensAt = new Map(), closesAt = new Map(), exitsAt = new Map();
@@ -1395,7 +1454,7 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
       if (owed) out.push(`(global.set $steps (i32.sub (global.get $steps) (i32.const ${owed})))`);
       owed = 0;
     };
-    const armOf = (k, ip) => {
+    const armOf0 = (k, ip) => {
       const e = kindOf(k, ip);
       if (e.t === 'join') return join;
       if (e.t === 'fall') return '';
@@ -1408,6 +1467,9 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
       if (e.t === 'fwd' && fwdN.has(`${k}:${ip}`)) return `(br $df_${id}_${fwdN.get(`${k}:${ip}`)})`;
       return exitTo(ip);
     };
+    // A detour's own transfers are block boundaries like any other, so they get
+    // the same edge() treatment as the main path's.
+    const armOf = (k, ip) => edge(ip, armOf0(k, ip));
     for (let k = 0; k < n; k++) {
       const idx = f.start + k, op = d.ops[k], last = k === n - 1;
       const closeF = fwds.filter(x => x.hi === k), openL = loops.filter(x => x.a === k), openF = fwds.filter(x => x.lo === k);
@@ -1417,18 +1479,26 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
       for (const x of openF.sort((p, q) => q.hi - p.hi)) out.push(`(block $df_${id}_${fwdN.get(`${x.op}:${x.ip}`)}`);
       owed++;
       const l = low[k];
+      // Same rule as the main path: an op that observes the dispatch clock is
+      // billed before it runs, not after the arm it is in.
+      if (!l && exact && readsClock(t3.bodies3[idx])) bill();
       if (!l) { out.push(resolveGoArena(t3.bodies3[idx])); }
       else {
         bill();
         out.push(l.pre);
+        // The emptiness tests are on the UNWRAPPED arm: `edge()` never returns
+        // an empty string, and "the arm's last op falls off the end of the
+        // detour" is still the thing being refused here.
         if (l.cond) {
-          const a = armOf(k, l.edges[0]), b = armOf(k, l.edges[1]);
-          if (last && a === '' || last && b === '') return null;
-          out.push(`(if ${l.test}\n  (then ${a})\n  (else ${b}))`);
+          const a0 = armOf0(k, l.edges[0]), b0 = armOf0(k, l.edges[1]);
+          if (last && a0 === '' || last && b0 === '') return null;
+          out.push(`(if ${l.test}\n  (then ${armOf(k, l.edges[0])})`
+            + `\n  (else ${armOf(k, l.edges[1])}))`);
         } else {
+          const a0 = armOf0(k, l.edges[0]);
+          if (last && a0 === '') return null;
           const a = armOf(k, l.edges[0]);
-          if (last && a === '') return null;
-          if (a) out.push(a);
+          if (a0 || exact) out.push(a);
         }
       }
       for (const x of loops.filter(x => x.b === k)) out.push(`)) ;; end detour loop ${loopN.get(`${x.a}:${x.b}`)}`);
@@ -1461,6 +1531,18 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
     pending++;
     const isLast = i === mainLen - 1;
     const branch = isTransfer(op);
+    // ...AND BY THE CLOCK. `$steps` is not only the budget: `$vga_status`
+    // answers port 3DAh from `$slice_budget - $steps`, and every port write
+    // goes out to the host, which stamps it with the same expression
+    // (Machine.audioNow) so the sample it lands on can be found when the slice
+    // is rendered. An `in`/`out` inside a region therefore reads a clock that
+    // is `pending` ops stale, and the sound comes out timed against a
+    // different instant from the interpreter's. So bill before it, INCLUDING
+    // this op: `$next` charges the step before the handler runs.
+    if (!branch && exact && readsClock(t3.bodies3[i])) {
+      parts.push(`(global.set $steps (i32.sub (global.get $steps) (i32.const ${pending})))`);
+      pending = 0;
+    }
     // $steps is only ever READ by a branch handler (it is what makes a slice
     // end), so charging it just before one is exact rather than approximate:
     // the guest sees the same budget at the same instruction as it would have
@@ -1491,7 +1573,7 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
         if (!detourMemo.has(ip)) detourMemo.set(ip, detourArm(dt.get(ip)));
         return detourMemo.get(ip);
       };
-      const act = (ip) => (closing(i, ip) !== undefined ? innerBr(closing(i, ip))
+      const act0 = (ip) => (closing(i, ip) !== undefined ? innerBr(closing(i, ip))
         : ip === cont && !isLast ? ''
         : detour(ip) !== null ? detour(ip)
         : fw && fw.has(ip) ? `(br $f_${fw.get(ip)})`
@@ -1503,8 +1585,15 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
         return { declined: `${op.name} continues to ${cont} which is neither of its edges` };
       }
       parts.push(lowered.pre);
-      const thenAct = act(lowered.thenIp), elseAct = act(lowered.elseIp);
-      parts.push(`(if ${lowered.cond}\n  (then ${thenAct})\n  (else ${elseAct}))`);
+      // The boundary goes on the EDGE, not around the branch: $gip is the edge
+      // being taken, and the interpreter publishes it before it tests.
+      const thenAct = act0(lowered.thenIp), elseAct = act0(lowered.elseIp);
+      parts.push(`(if ${lowered.cond}`
+        + `\n  (then ${edge(lowered.thenIp, thenAct)})`
+        + `\n  (else ${edge(lowered.elseIp, elseAct)}))`);
+      // Counted off the region's OWN acts. Under `exact` every edge carries a
+      // `br $out` for the spent-budget case, and counting those would report
+      // every edge as an exit.
       exits += (thenAct.includes('$out') ? 1 : 0) + (elseAct.includes('$out') ? 1 : 0);
       continue;
     }
@@ -1525,12 +1614,12 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
       }
       if (jump.ip !== cont) return { declined: `${op.name} goes to ${jump.ip}, not ${cont}` };
       parts.push(jump.pre);
-      if (closing(i, jump.ip) !== undefined) {
-        parts.push(innerBr(closing(i, jump.ip)));
-      } else if (jump.ip === headIp) {
-        parts.push(`(if ${okToLoop} (then (br $again))`
-          + ` (else (global.set $gip (i32.const ${jump.ip})) (br $out)))`);
-      }
+      // An unconditional transfer is a block boundary too -- see edge().
+      parts.push(edge(jump.ip,
+        closing(i, jump.ip) !== undefined ? innerBr(closing(i, jump.ip))
+          : jump.ip === headIp ? `(if ${okToLoop} (then (br $again))`
+            + ` (else (global.set $gip (i32.const ${jump.ip})) (br $out)))`
+            : ''));
       continue;
     }
     // Last resort before giving up on this transfer: strip the GO and leave.
@@ -1543,7 +1632,10 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
       // As the last op its fall-out IS the back edge, which is tested below and
       // reads the $gip this just published -- so a `ret` back to the head still
       // keeps the loop, exactly as the lowered conditionals do.
+      // The boundary here needs no `global.set $gip`: the stripped GO already
+      // published the computed destination.
       if (!isLast) { parts.push('(br $out)'); exits++; }
+      else if (exact) parts.push(`(br_if $out ${boundaryTest})`);
       continue;
     }
     parts.push(resolveGoArena(t3.bodies3[i]));
@@ -1681,6 +1773,87 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
 // the same linear ranges it marks as code for self-modify detection -- so the
 // guard checks exactly the bytes the region was decoded from, not a fixed
 // window around the head that could miss a patch further in.
+// The guest ips a region can leave to, and which of them are safe to hand the
+// compiler at install time. Its own function because the LIVE jit installs
+// through the same door (tools/toyvm/region-live.js): every rule below was
+// bought with a bisect, and a second copy of them in the live path would be a
+// second policy that nobody re-measures.
+function regionSuccessors(rr, pick, guarded) {
+  const succWhy = new Map();
+  const knownBlocks = (pick.block && pick.block.prog && pick.block.prog.blocks) || new Map();
+  // OVER-APPROXIMATING THE SUCCESSOR LIST IS NOT FREE, whatever the comment on
+  // it used to say. Pre-compiling an edge the program has never taken decodes
+  // bytes that are not code yet, and this corpus is full of programs that
+  // decrypt themselves: BMGLP.EXE takes 51158 self-modify breaks, and its
+  // region's one never-taken fall-through (0x281) is the whole of its
+  // divergence -- supplied, the run reports 338 FEWER breaks than the
+  // interpreter and draws a different picture; withheld, it is frame-identical.
+  // An edge that is taken later costs one handback and is decoded on demand,
+  // exactly as the interpreter would decode it. `--succ-unseen` restores the
+  // old behaviour for the A/B.
+  const allSucc = successorIps(pick.ops.concat(...(pick.forwards || []).filter(f => f.detour).map(f => f.detour.ops)), succWhy)
+    .filter(ip => flag('succ-unseen') || knownBlocks.has(ip));
+  // ...and each one carries the bytes the profiling run decoded it from, so
+  // compile.js can decline any whose code has not been written yet. Same span
+  // lookup as guardBytes; a successor with no covered span is passed as a bare
+  // ip, which is the old unchecked behaviour for that one address.
+  const succBytes = (ip) => {
+    const codeBase = parseInt(String(pick.cs), 10);
+    const start = (codeBase + ip) & 0xFFFFF;
+    const covered = (pick.block && pick.block.prog && pick.block.prog.covered) || [];
+    const span = covered.find(([s]) => s === start);
+    if (!span) return ip;
+    return { ip, lin: span[0], bytes: Array.from(rr.vm.mem.slice(span[0], span[1])) };
+  };
+  // `--succ-take=N` bisects by POSITION, which cannot separate "this address is
+  // the culprit" from "the Nth slot is". `--succ-drop=0xa74,0x9a4` removes named
+  // addresses and holds every other one still, so one variable moves.
+  const succDrop = new Set(String(arg('succ-drop', '')).split(',')
+    .filter(Boolean).map(s => Number(s.trim())));
+  // A SUCCESSOR INSIDE THE REGION'S OWN BYTES IS A SECOND COPY OF CODE THE
+  // REGION ALREADY OWNS. The region replaces the decode of its blocks;
+  // pre-compiling an address that lands in the same guest bytes puts an
+  // independent arena block over them, reached whenever an exit resolves there
+  // instead of handing back. CARRIE.EXE is the measurement: its region covers
+  // 135 bytes over six blocks, and supplying ANY ONE of the five successors
+  // that fall in its last two blocks (0xa55, 0xa5b, 0xa6e, 0xa72, 0xa74) turns
+  // a frame-identical run into a 52101-pixel divergence, with every build knob
+  // (--no-lower, --no-promote, --no-fold-ea, --no-inline-counters,
+  // --no-region-code-bits) making no difference at all. Withheld, those edges
+  // cost one handback each and the interpreter decodes them on demand, which is
+  // what the --no-succ arm already did correctly. `--succ-inside` restores them
+  // for the A/B.
+  // The test is the HULL of those spans, not the spans themselves. Three of
+  // CARRIE's five breakers (0xa5b, 0xa6e, 0xa72) are fall-through addresses
+  // that sit in the gaps BETWEEN its recorded block extents -- still the
+  // region's own territory, still bytes it was compiled from, and each one
+  // alone is enough to break the frame.
+  // ...over the blocks the region ABSORBED, not over the head. The head block
+  // is replaced one-for-one by the region entry, so the arena still owns an
+  // entry at that ip and its own edges are ordinary; it is the other blocks
+  // that the region swallowed and the arena no longer has. Scoping the hull
+  // this way also leaves a single-block region alone, which matters:
+  // acme-sns.exe is one block of 138 bytes, and withholding its own interior
+  // edges moved it from 16px (phase) to a persistent 38px.
+  const spans = flag('succ-inside') ? []
+    : (guarded || []).filter((g, i) => (pick.heads || [])[i]
+        && (pick.heads || [])[i].ip !== pick.headIp)
+      .map(g => [g.lin, g.lin + g.bytes.length]);
+  const lo = Math.min(...spans.map(s => s[0]));
+  const hi = Math.max(...spans.map(s => s[1]));
+  const insideRegion = (ip) => {
+    if (!spans.length) return false;
+    const lin = (parseInt(String(pick.cs), 10) + ip) & 0xFFFFF;
+    return lin >= lo && lin < hi;
+  };
+  const succList = allSucc.filter(ip => !succDrop.has(ip) && !insideRegion(ip))
+    .slice(0, Number(arg('succ-take', allSucc.length)));
+  // Marked by MEMBERSHIP, not by position: --succ-drop punches holes in the
+  // middle, and an index comparison here would print the wrong addresses as
+  // withheld -- which it did, and cost a bisect.
+  return { allSucc, succList, succBytes, succWhy, kept: new Set(succList) };
+}
+
 function guardBytes(rr, pick) {
   const out = [];
   for (const blk of pick.heads || []) {
@@ -1732,6 +1905,7 @@ function snapshotFor(rr, pick) {
 // --- running it -------------------------------------------------------------
 
 async function once(exe, o, extra) {
+  const { runDos } = require('./run-dos');
   // `--entries` turns on run-dos's own handback census (which cs:ip the run
   // keeps leaving wasm at, and whether that address was in the jump table).
   // That census is the first thing to read when a region is slower than the
@@ -2095,79 +2269,7 @@ async function main() {
   // decoder walks the extra addresses and the guest runs the interpreter
   // everywhere, so anything that still moves is the successors' doing, not the
   // compiled loop's.
-  const succWhy = new Map();
-  const knownBlocks = (pick.block && pick.block.prog && pick.block.prog.blocks) || new Map();
-  // OVER-APPROXIMATING THE SUCCESSOR LIST IS NOT FREE, whatever the comment on
-  // it used to say. Pre-compiling an edge the program has never taken decodes
-  // bytes that are not code yet, and this corpus is full of programs that
-  // decrypt themselves: BMGLP.EXE takes 51158 self-modify breaks, and its
-  // region's one never-taken fall-through (0x281) is the whole of its
-  // divergence -- supplied, the run reports 338 FEWER breaks than the
-  // interpreter and draws a different picture; withheld, it is frame-identical.
-  // An edge that is taken later costs one handback and is decoded on demand,
-  // exactly as the interpreter would decode it. `--succ-unseen` restores the
-  // old behaviour for the A/B.
-  const allSucc = successorIps(pick.ops.concat(...(pick.forwards || []).filter(f => f.detour).map(f => f.detour.ops)), succWhy)
-    .filter(ip => flag('succ-unseen') || knownBlocks.has(ip));
-  // ...and each one carries the bytes the profiling run decoded it from, so
-  // compile.js can decline any whose code has not been written yet. Same span
-  // lookup as guardBytes; a successor with no covered span is passed as a bare
-  // ip, which is the old unchecked behaviour for that one address.
-  const succBytes = (ip) => {
-    const codeBase = parseInt(String(pick.cs), 10);
-    const start = (codeBase + ip) & 0xFFFFF;
-    const covered = (pick.block && pick.block.prog && pick.block.prog.covered) || [];
-    const span = covered.find(([s]) => s === start);
-    if (!span) return ip;
-    return { ip, lin: span[0], bytes: Array.from(rr.vm.mem.slice(span[0], span[1])) };
-  };
-  // `--succ-take=N` bisects by POSITION, which cannot separate "this address is
-  // the culprit" from "the Nth slot is". `--succ-drop=0xa74,0x9a4` removes named
-  // addresses and holds every other one still, so one variable moves.
-  const succDrop = new Set(String(arg('succ-drop', '')).split(',')
-    .filter(Boolean).map(s => Number(s.trim())));
-  // A SUCCESSOR INSIDE THE REGION'S OWN BYTES IS A SECOND COPY OF CODE THE
-  // REGION ALREADY OWNS. The region replaces the decode of its blocks;
-  // pre-compiling an address that lands in the same guest bytes puts an
-  // independent arena block over them, reached whenever an exit resolves there
-  // instead of handing back. CARRIE.EXE is the measurement: its region covers
-  // 135 bytes over six blocks, and supplying ANY ONE of the five successors
-  // that fall in its last two blocks (0xa55, 0xa5b, 0xa6e, 0xa72, 0xa74) turns
-  // a frame-identical run into a 52101-pixel divergence, with every build knob
-  // (--no-lower, --no-promote, --no-fold-ea, --no-inline-counters,
-  // --no-region-code-bits) making no difference at all. Withheld, those edges
-  // cost one handback each and the interpreter decodes them on demand, which is
-  // what the --no-succ arm already did correctly. `--succ-inside` restores them
-  // for the A/B.
-  // The test is the HULL of those spans, not the spans themselves. Three of
-  // CARRIE's five breakers (0xa5b, 0xa6e, 0xa72) are fall-through addresses
-  // that sit in the gaps BETWEEN its recorded block extents -- still the
-  // region's own territory, still bytes it was compiled from, and each one
-  // alone is enough to break the frame.
-  // ...over the blocks the region ABSORBED, not over the head. The head block
-  // is replaced one-for-one by the region entry, so the arena still owns an
-  // entry at that ip and its own edges are ordinary; it is the other blocks
-  // that the region swallowed and the arena no longer has. Scoping the hull
-  // this way also leaves a single-block region alone, which matters:
-  // acme-sns.exe is one block of 138 bytes, and withholding its own interior
-  // edges moved it from 16px (phase) to a persistent 38px.
-  const spans = flag('succ-inside') ? []
-    : (guarded || []).filter((g, i) => (pick.heads || [])[i]
-        && (pick.heads || [])[i].ip !== pick.headIp)
-      .map(g => [g.lin, g.lin + g.bytes.length]);
-  const lo = Math.min(...spans.map(s => s[0]));
-  const hi = Math.max(...spans.map(s => s[1]));
-  const insideRegion = (ip) => {
-    if (!spans.length) return false;
-    const lin = (parseInt(String(pick.cs), 10) + ip) & 0xFFFFF;
-    return lin >= lo && lin < hi;
-  };
-  const succList = allSucc.filter(ip => !succDrop.has(ip) && !insideRegion(ip))
-    .slice(0, Number(arg('succ-take', allSucc.length)));
-  // Marked by MEMBERSHIP, not by position: --succ-drop punches holes in the
-  // middle, and an index comparison here would print the wrong addresses as
-  // withheld -- which it did, and cost a bisect.
-  const kept = new Set(succList);
+  const { allSucc, succList, succBytes, succWhy, kept } = regionSuccessors(rr, pick, guarded);
   console.log(`  successors: ${allSucc.map(x =>
     (kept.has(x) ? '' : '-') + '0x' + x.toString(16)).join(' ')}`
     + (succList.length < allSucc.length
@@ -2463,7 +2565,11 @@ async function main() {
   }
   if (!same && !flag('no-rematch') && baseRun.dispatched !== jitRun.dispatched) {
     const { readFrame } = require('./run-dos');
-    const px = (run) => readFrame(run.r.vm.mem, run.r.surface.geom).pixels;
+    const { frameBytes } = require('./framebuffer');
+    // frameBytes, not `.pixels`: a direct-colour VBE frame has no index plane
+    // and reaching for that field would compare two undefineds and call every
+    // frame identical.
+    const px = (run) => frameBytes(readFrame(run.r.vm.mem, run.r.surface.geom));
     const nd = (a, b) => { let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++; return n; };
     // ONE SAMPLE OF THE DRIFT IS NOT THE FLOOR. How much a demo repaints in a
     // given number of dispatches is wildly uneven -- a dissolve advances in
@@ -2572,6 +2678,9 @@ async function main() {
   if (!same) process.exitCode = 4;
 }
 
-module.exports = { pickRegion, buildRegion };
+module.exports = {
+  pickRegion, buildRegion, guardBytes, regionSuccessors, snapshotFor, successorIps,
+  passSpec, isTransfer,
+};
 
 if (require.main === module) main().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
