@@ -754,7 +754,8 @@
   "/tmp/demos/1995-b-beta/BETA.EXE": {
     "src": "programs/1995-b-beta.js",
     "exe": "beta.exe",
-    "args": ""
+    "args": "",
+    "env": "ULTRASND=240,1,1,11,7"
   },
   "/tmp/demos/1995-b-biolan/BIOLAN.EXE": {
     "src": "programs/1995-b-biolan.js",

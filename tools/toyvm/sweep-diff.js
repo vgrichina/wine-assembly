@@ -34,11 +34,21 @@
 //                non-empty. Expected for the paced programs; the reason is
 //                the author's to give, one line each.
 //   recovered    failing before, fine now. Worth naming, not worth trusting.
+//   bucket       what demo-status.js makes of the row moved: demo/art/error/
+//                prompt/blank/failed. The column the corpus is counted in, and
+//                the one a reader of docs/dos-corpus-blockers.md is looking
+//                for. Only a picture sweep (shot-sweep.js) carries the screen
+//                text a bucket needs; a sweep-dos.js pair simply prints none.
+//
+// The "went blank" discharge above now has a tool: budget in GUEST SECONDS
+// (`--guest-seconds=`, the default for both sweeps) and a retiming of the
+// emulated clock stops moving the photograph at all. See sweep-budget.js.
 //
 // The two JSONs must come from the same corpus; a program in one and not the
 // other is reported rather than silently dropped.
 
 const fs = require('fs');
+const { classify } = require('./demo-status');
 
 function load(p) {
   const j = JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -48,9 +58,16 @@ function load(p) {
 }
 
 // What a row says happened, in the two words that decide a verdict.
+//
+// Two kinds of row reach this. A sweep-dos.js row carries `shells`, whose
+// `reason` is the run's verdict (crash / timeout / arms-disagree / ...). A
+// shot-sweep.js row has no shells at all -- it is one run, for a picture --
+// and says the same thing with `failed`. Reading only the first shape made
+// every picture-sweep row `no-data`, which silently disabled the REGRESSIONS
+// and `recovered` columns on exactly the sweep the site is built from.
 function status(r) {
-  if (!r.shells) return 'no-data';
-  if (!r.shells.ok) return r.shells.reason;          // crash / timeout / arms-disagree / ...
+  if (r.failed) return String(r.failed);             // shot-sweep: timeout / no png / ...
+  if (r.shells && !r.shells.ok) return r.shells.reason;
   if (r.stuckAt) return 'stuck';
   return 'ok';
 }
@@ -75,10 +92,26 @@ function main() {
   const names = [...new Set([...A.keys(), ...B.keys()])].sort();
 
   const missing = [], regressions = [], blank = [], changed = [], recovered = [], same = [];
+  const buckets = [];
   for (const n of names) {
     const x = A.get(n), y = B.get(n);
     if (!x || !y) { missing.push(`${n}: only in ${x ? 'BEFORE' : 'AFTER'}`); continue; }
     const sx = status(x), sy = status(y);
+
+    // What the row is counted as. Reported for every program whose bucket
+    // moved, whatever else the row did -- a program can keep its status and
+    // its picture and still stop being counted as a pass, which is the whole
+    // point of the bucket.
+    const bx = classify(x), by = classify(y);
+    if (bx !== by) {
+      const px = x.pixels || 0, py = y.pixels || 0;
+      const cx = x.cells || 0, cy = y.cells || 0;
+      const why = py > px ? 'drew more' : py < px ? 'drew less'
+        : cy !== cx ? `cells ${cx} -> ${cy}` : 'same picture, reclassified';
+      buckets.push(`${n}: ${bx} -> ${by} (${why}; px ${px} -> ${py}`
+        + `${y.stuckAt ? `, stuck at ${y.stuckAt}` : ''}`
+        + `${y.failed ? `, ${y.failed}` : ''})`);
+    }
 
     if (sx === 'ok' && sy !== 'ok') {
       regressions.push(`${n}: ${sx} -> ${sy}`);
@@ -105,6 +138,7 @@ function main() {
   section('WENT BLANK: drew pixels before, none now (explain or block)', blank);
   section('changed (frame hash and/or dispatches moved, still drawing)', changed);
   section('recovered', recovered);
+  section('bucket moved (demo-status.js)', buckets);
   if (missing.length) section('only in one sweep', missing);
   console.log(`\nunchanged: ${same.length}`);
   process.exit(regressions.length || blank.length ? 1 : 0);

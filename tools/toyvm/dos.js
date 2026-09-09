@@ -800,6 +800,15 @@ class Machine {
     this.mem = mem;
     this.log = opts.log || (() => {});
     this.videoMode = 3;
+    // Every video mode this machine was ever put in, in the order it was asked
+    // for. `videoMode` alone is the mode at the moment the question is asked,
+    // and a run that photographs a text screen cannot be read off it: a demo
+    // sitting on its sound-card menu and a .NFO viewer are both mode 3 there.
+    // The history separates them -- a program that has already been in mode 13h
+    // is one whose text screen is furniture, whatever mode it is in now. Power
+    // -on is mode 3 and that is a fact about the BIOS, not about the program,
+    // so it is in here as the first entry and readers ignore the head.
+    this.videoModes = [3];
     // Power-on is mode 3, and the BIOS has already loaded the text-mode DAC by
     // the time a program gets the CPU: the EGA's 64 colours in entries 0-63 and
     // black above them. Leaving all 768 bytes zero is only invisible while
@@ -1127,6 +1136,16 @@ class Machine {
   // ends. NM2.EXE, COCONTS1.EXE and SETUP.EXE each spun there for every
   // dispatch they were given -- 800M in SETUP's case, at 100% of wall inside
   // the guest, which reads exactly like a demo with a lot of work to do.
+  // Remember a mode set. Repeats are dropped -- a demo that asks for mode 13h
+  // once a frame would otherwise turn this into an unbounded log -- and so is
+  // anything past the first 32 distinct modes, which no program in the corpus
+  // comes near.
+  noteVideoMode() {
+    const h = this.videoModes;
+    if (h[h.length - 1] === this.videoMode || h.length >= 32) return;
+    h.push(this.videoMode);
+  }
+
   setVideoBda() {
     const m = this.mem;
     const cols = CON_COLS, rows = CON_ROWS;
@@ -3445,6 +3464,7 @@ class Machine {
       // while the banks still held what the setup had drawn.
       this.vesa = { mode: 0, width: 0, height: 0, bpp: 0, bank: 0, start: 0 };
       this.videoMode = al & 0x7F;
+      this.noteVideoMode();
       this.mem[0x449] = this.videoMode;
       this.setVideoBda();      // the CRTC port follows the mode: mono vs colour
       // Setting a mode clears the display and re-chains the planes -- a demo
@@ -3787,6 +3807,7 @@ class Machine {
       const [, w, h, bpp] = found;
       this.vesa = { mode, width: w, height: h, bpp, bank: 0, start: 0 };
       this.videoMode = 0x13;             // a 256-colour graphics mode, for the BDA
+      this.noteVideoMode();
       m[0x449] = mode & 0xFF;
       resetVgaMode(this.vga, 0x13);
       this.palette.set(VGA_DAC);

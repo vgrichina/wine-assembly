@@ -952,6 +952,31 @@ class CodeCache {
 // sitting in, or compile-and-run one slice. It never loops, which is what lets
 // a browser run a program across animation frames without the loop and the
 // frame budget having to know about each other.
+// One BIOS tick, in seconds: 65536 pulses of the 1.193182MHz PIT input.
+const TICK_SECONDS = 65536 / 1193182;
+
+// Guest seconds in `n` dispatches, on a clock described by
+// { dispatchesPerTick, tickScale }. A free function rather than only a method
+// because the budget a sweep hands a run has to be worked out BEFORE there is
+// a session to ask -- see dispatchesForGuestSeconds below, which is this
+// expression solved for n and must not drift from it.
+function guestSeconds(n, { dispatchesPerTick = 550e3, tickScale = 1 } = {}) {
+  return n / dispatchesPerTick * (tickScale || 1) * TICK_SECONDS;
+}
+
+// ...and the inverse: how many dispatches are worth `sec` guest seconds.
+//
+// This is the unit a corpus sweep should be budgeting in. A dispatch count is
+// not a fixed amount of the guest's own time by itself -- it is one only while
+// the clock derived from it stays put -- and every real-time cadence in the VM
+// (the VGA frame period above all) is quoted against guestSeconds(). Budget in
+// dispatches and a retiming of the emulated clock silently rephotographs the
+// whole corpus at a different point in every show.
+function dispatchesForGuestSeconds(sec, clock = {}) {
+  const { dispatchesPerTick = 550e3, tickScale = 1 } = clock;
+  return Math.round(sec * dispatchesPerTick / ((tickScale || 1) * TICK_SECONDS));
+}
+
 class DosSession {
   constructor(vm, machine, opts = {}) {
     const {
@@ -1116,7 +1141,7 @@ class DosSession {
 
   // Guest seconds in `n` dispatches.
   guestSeconds(n) {
-    return n / this.dispatchesPerTick * (this.tickScale || 1) * (65536 / 1193182);
+    return guestSeconds(n, this);
   }
 
   // The guest is inside the stub segment: a vector sent it to a byte the
@@ -1792,4 +1817,6 @@ class DosSession {
   }
 }
 
-module.exports = { DosSession, CodeCache };
+module.exports = {
+  DosSession, CodeCache, TICK_SECONDS, guestSeconds, dispatchesForGuestSeconds,
+};

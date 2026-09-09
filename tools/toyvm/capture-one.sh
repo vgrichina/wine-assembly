@@ -41,15 +41,27 @@ set -u
 # programs that notice a shorter child are the ones with the most to draw. A
 # retry that costs the run its slowest programs is not a better sweep.
 : "${SECS:=1500}"
-# 300M, not 30M. A dispatch budget is a budget of GUEST WORK, and at 30M five
-# programs in this corpus had simply not got to their first frame yet -- they
-# were reported blank while working perfectly. BRIAN.EXE draws its picture at
-# 140M dispatches, DEFECT!.COM and CEN!FB.EXE fill the screen, DIZZY_FI.EXE
-# reaches a third of one. Nothing is spent on a program that finishes early;
-# the wall bound below is what actually caps the sweep.
-: "${DISPATCHES:=300m}"
+# 165 GUEST SECONDS, and the unit is the point. This was 300M dispatches, and
+# 300M was itself ten times the 30M at which five programs had not reached
+# their first frame (BRIAN.EXE draws at 140M, DEFECT!.COM and CEN!FB.EXE fill
+# the screen, DIZZY_FI.EXE reaches a third of one). A dispatch count is only a
+# fixed amount of the guest's own time while the clock derived from it stays
+# put, and aadf7ec4 moved it: the VGA frame period went from 26,009 dispatches
+# to 143,051 on the default clock, so the same 300M buys 5.5x less of a paced
+# show than the pictures in docs/dos-corpus were taken with. 165 is the guest
+# time that old 300M used to buy -- 300e6 / 26009 frames, at 70 a second.
+# Nothing is spent on a program that finishes early; the wall bound above is
+# what actually caps the sweep.
+: "${GUEST_SECONDS:=165}"
 : "${EXTRA:=--auto-key}"
 CHILD=$((SECS / 10))
+# DISPATCHES= still overrides, for a run that wants fixed WORK rather than
+# fixed guest time -- an A/B of the interpreter against itself, say.
+if [ -n "${DISPATCHES:-}" ]; then
+  BUDGET="--dispatches=$DISPATCHES"
+else
+  BUDGET="--guest-seconds=$GUEST_SECONDS"
+fi
 exec timeout -s KILL "$SECS" node "$(dirname "$0")/shot-sweep.js" \
-  --capture="$1" --png="$2" --row="$3" --dispatches="$DISPATCHES" \
+  --capture="$1" --png="$2" --row="$3" "$BUDGET" \
   --timeout="$CHILD" $EXTRA

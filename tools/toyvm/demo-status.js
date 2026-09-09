@@ -20,13 +20,24 @@
 //            ad, an ANSI logo. Big, and says nothing about a missing anything.
 //   error    a text screen whose words are a complaint. These are the work
 //            list, and the message is the specification.
-//   prompt   stopped on a blocking key read, still waiting
+//   prompt   asking rather than showing: a blocking key read, a sound-card
+//            menu, a setup screen. Also any text screen belonging to a run
+//            that has been in a GRAPHICS mode -- see sawGraphics.
 //   blank    nothing on either surface
-//   failed   no picture at all: a trap, a timeout, a dead child
+//   failed   no picture at all: a trap, a timeout, a dead child, or a run that
+//            wedged behind the screen that was photographed
 //
 // The classifier is deliberately conservative about `error`: a screen only
 // counts as one if it matches a complaint pattern, so a demo whose text
 // happens to contain the word "memory" is art, not a failure.
+//
+// It is NOT conservative about `art`, and the difference is the point. `art`
+// counts as a pass -- it is added to `demo` in the "showing something they
+// meant to" line -- so calling a setup menu art hides a work item behind a
+// number that says the corpus is fine. A cell count cannot tell those apart at
+// all (a BBS ad is 1580 cells, DINO's device grid several hundred), so the
+// rules below use the RUN's own evidence instead: which video modes it passed
+// through, and whether it was still running when the picture was taken.
 
 const fs = require('fs');
 
@@ -68,6 +79,30 @@ function complaint(screen) {
 // cells; a refusal is under a hundred and a title screen is several hundred.
 const FULL_SCREEN = 400;
 
+// The BIOS text modes. A run that was only ever in these never put the adapter
+// in a graphics mode, whatever it did with the console.
+const TEXT_MODES = new Set([0, 1, 2, 3, 7]);
+
+// Did this run ever put the adapter in a graphics mode?
+//
+// This is the question a cell count cannot answer and the one that decides
+// `art`. A .NFO viewer and a demo sitting on its sound-card setup menu are
+// both "a text screen with a few hundred cells", and they are opposite
+// outcomes: the first is the whole program, the second is the furniture in
+// front of one that has already asked for mode 13h and drawn nothing there.
+// STHINTRO.EXE was counted as text art for a version on exactly that
+// confusion, with its run already over behind the menu.
+//
+// `modes` is the run's own mode history (run-dos.js, `video.modes`), starting
+// with the power-on 3 -- so the head is a fact about the BIOS, not about the
+// program, and only the rest is evidence. A row from a sweep too old to carry
+// the field says nothing either way and the cell-count rules stand.
+function sawGraphics(r) {
+  const modes = r.modes;
+  if (!Array.isArray(modes)) return false;
+  return modes.slice(1).some((m) => !TEXT_MODES.has(m));
+}
+
 function classify(r) {
   if (r.failed) return 'failed';
   const px = r.pixels || 0, cells = r.cells || 0;
@@ -77,6 +112,23 @@ function classify(r) {
   if (!cells && !px) return r.blockedOnKey ? 'prompt' : 'blank';
   if (cells) {
     if (complaint(screen)) return 'error';
+    // A text screen the program is no longer running behind is not its output.
+    // The run walked into a wall after printing it -- STHINTRO's menu was
+    // photographed with the loader spinning at 0000:0000 -- and that is a work
+    // item however full the screen is.
+    //
+    // Scoped to a screen WITH something on it on purpose. A blank row already
+    // claims nothing, so a stuck one hides no work item and stays `blank`,
+    // where the corpus notes have been calling it that for versions; it is
+    // only the screen that looks like a result that has to be told apart.
+    if (r.stuckAt) return 'failed';
+    // ...and neither is a text screen belonging to a program that has been in
+    // a graphics mode. Whatever is on the console there, the program's own
+    // output is the frame it has not finished drawing yet: a menu, a warning,
+    // a loader's progress line. Ranked as `prompt` -- asking, not showing --
+    // because that is what the bucket is for and because the ones that are
+    // genuinely waiting for a key are the same rows.
+    if (sawGraphics(r)) return 'prompt';
     // Waiting is not the finding when the program has already drawn its
     // screen. manhatan.exe is a full-page ANSI advertisement that ends on
     // "press a key" -- the key it is waiting for is the last thing about it
@@ -89,7 +141,11 @@ function classify(r) {
   return r.blockedOnKey ? 'prompt' : 'blank';
 }
 
-const reason = (r) => complaint(r.screen || '');
+// Why a row is in the bucket it is in, in a few words. A stuck address is a
+// reason in its own right: it is the difference between "this program printed
+// a menu" and "this program printed a menu and then died".
+const reason = (r) => complaint(r.screen || '')
+  || (r.stuckAt ? `stuck at ${r.stuckAt}` : '');
 
 const ORDER = ['demo', 'art', 'error', 'prompt', 'blank', 'failed'];
 
@@ -164,4 +220,4 @@ if (require.main === module) main();
 // program does after it.
 const asking = (screen) => PROMPT_ONLY.test(screen || '') || !!complaint(screen || '');
 
-module.exports = { classify, complaint, asking, read, ORDER };
+module.exports = { classify, complaint, asking, sawGraphics, read, ORDER };

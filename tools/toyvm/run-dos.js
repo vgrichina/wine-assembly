@@ -31,7 +31,7 @@ const { disasmAt } = require('../disasm');
 const { makeVm } = require('./vm');
 const { setCpuLevel } = require('./decode');
 const { Machine, loadExe, vgaGeometry, parseKeys, VGA_BASE } = require('./dos');
-const { DosSession } = require('./dos-loop');
+const { DosSession, dispatchesForGuestSeconds } = require('./dos-loop');
 const { asking, complaint } = require('./demo-status');
 const {
   conCells, conText, screenSurface, nonBlack, frameScore, frameHash, rgbaFrame, rgbaConsole,
@@ -676,6 +676,10 @@ async function runDos(o) {
     histTop: hist, histPairs,
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
+    // Not `guestSecs`, which is wall time spent inside wasm. This is time as
+    // the GUEST saw it -- the unit the machine's real-time cadences are quoted
+    // in, and the one a budget should be expressed in. See DosSession.
+    guestSeconds: session.guestSeconds(dispatched),
     guestCpuSecs: guestCpuUs / 1e6,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets, deadFlagsDropped,
     tracedBlocks, spinBlocks, specOps, rep, volatile,
@@ -697,6 +701,10 @@ async function runDos(o) {
     frame: frameHash(vm.mem, surface.geom || vgaGeometry(machine.vga)),
     video: {
       mode: machine.videoMode,
+      // Every mode the run passed through, oldest first, starting at the
+      // power-on 3. What the run ENDED in cannot say whether a text screen is
+      // the program's output or the menu in front of it; this can.
+      modes: machine.videoModes.slice(),
       // The VBE mode number, not the BIOS one -- in a VESA mode $videoMode is
       // still 0x13 and the geometry below is the picture's, not the CRTC's.
       vesa: machine.vesa ? machine.vesa.mode : 0,
@@ -823,7 +831,17 @@ async function main() {
     hist: flag('handler-hist') ? 20 : Number(arg('handler-hist', 0)),
     histPairs: flag('handler-pairs') ? 20
       : Number(arg('handler-pairs', (flag('handler-hist') || arg('handler-hist')) ? 20 : 0)),
-    budget: count(arg('dispatches'), 200e6),
+    // `--guest-seconds=N` is the same budget in the guest's own time, and it
+    // is what the sweeps ask for: it survives a retiming of the emulated clock,
+    // where a dispatch count does not. Named explicitly, it wins over
+    // `--dispatches=`, which stays as the override for a bisect that wants a
+    // fixed amount of WORK.
+    budget: arg('guest-seconds') !== undefined
+      ? dispatchesForGuestSeconds(Number(arg('guest-seconds')), {
+        dispatchesPerTick: count(arg('dispatches-per-tick'), 550e3),
+        tickScale: Number(arg('tick-scale', 1)),
+      })
+      : count(arg('dispatches'), 200e6),
     slice: count(arg('slice'), 2e6),
     seconds: Number(arg('seconds', 0)),
     // `--region-jit` compiles this run's own hot loop into the module it is
@@ -1354,6 +1372,19 @@ async function main() {
   }
 
   if (report) {
+    // What the run bought, in the guest's own time, and every mode it spent it
+    // in. Both are here because a budget in dispatches says nothing on its own
+    // about how much of a show a program got through -- every real-time cadence
+    // in the machine is quoted against guest seconds -- and because a text
+    // screen photographed by a program that has already been in mode 13h is a
+    // menu, not the program's output.
+    console.log(`  ${r.guestSeconds.toFixed(2)} guest seconds`
+      + `, video modes ${r.video.modes.map(m => `${m.toString(16)}h`).join(' -> ')}`
+      + `${r.video.vesa ? ` (vesa ${r.video.vesa.toString(16)}h)` : ''}`);
+    console.log(`  stop: ${r.machine.exited ? `exited(${r.machine.exitCode})`
+      : r.stuckAt ? `stuck at ${r.stuckAt}`
+        : r.machine.blockedOnKey ? 'blocked in a key read'
+          : r.ranOutOfTime ? 'wall clock' : 'budget spent'}`);
     const eh = [...r.entryHist].sort((a, b) => b[1] - a[1]).slice(0, 8);
     // `jt=hit` means the address IS in the indirect-jump cache, so whatever
     // handed back at it was not an indirect jump -- which is the difference
