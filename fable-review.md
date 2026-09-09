@@ -346,7 +346,7 @@ the way `aw-census.js` should have been.
 | 5 | **PARTIAL** | Shared `$guest_strdup` now serves DirectPlay, scalable fonts, DDE, atoms, clipboard formats, ICM, OpenDialog and ListView ownership copies (`fbf03c8a`, `9d3db910`, `f351d065`). `$com_addref`/`$com_release` remain open; the current A/W census still records 14 divergent pairs and one both-stub pair. |
 | 6 | **PARTIAL** | The copied CLI client is now `test/control-session.js` (`35a05fff`), but no shared `test/static-server.js` exists. |
 | 7 | **OPEN** | `api_table.json` has no `stub` or `test_call` fields; the generated-dispatch arc has not started. |
-| 8 | **PARTIAL** | The obsolete hash-cache fallback description is corrected (`2b82fe43`). `readSyncObjectName` remains in both hosts, the PNG helpers and silent-stub changelog remain distributed, and 09a/09c3 are currently 20,471 / 18,575 lines. |
+| 8 | **PARTIAL** | The obsolete hash-cache fallback description is corrected (`2b82fe43`), and all 58 dated silent-handler transitions now live in `docs/silent-handler-inventory.md` instead of executable gate code (`fd88ad47`). `readSyncObjectName` remains in both hosts, the PNG helpers remain distributed, and 09a/09c3 are currently 20,471 / 18,575 lines. |
 
 ---
 
