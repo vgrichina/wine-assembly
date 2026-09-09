@@ -573,34 +573,24 @@
 
   ;; IDirect3DDevice_AddViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice_AddViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Retain exactly one reference while the viewport belongs to the device.
-    (global.set $eax
-      (call $d3dim_device_add_viewport (local.get $arg0) (local.get $arg1)))
-
-
-
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (call $handle_IDirect3DDevice2_AddViewport
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
 
   ;; IDirect3DDevice_DeleteViewport — 2 args (incl. this)
-  ;; Clears the device-backref that AddViewport wrote to the viewport entry
-  ;; at +8, so subsequent SetCurrentViewport/EndScene don't dereference a
-  ;; stale device pointer if the viewport survives the detach.
   (func $handle_IDirect3DDevice_DeleteViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax
-      (call $d3dim_device_delete_viewport (local.get $arg0) (local.get $arg1)))
-
-
-
-
-
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (call $handle_IDirect3DDevice2_DeleteViewport
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
 
   ;; IDirect3DDevice_NextViewport — 4 args (incl. this)
   (func $handle_IDirect3DDevice_NextViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax
-      (call $d3dim_device_next_viewport
-        (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+    (call $handle_IDirect3DDevice2_NextViewport
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
 
   ;; Test a screen-space point against one transformed execute-buffer
   ;; triangle.  D3DRM calls Pick after PROCESSVERTICES has produced TL
@@ -915,25 +905,24 @@
 
   ;; IDirect3DDevice2_AddViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice2_AddViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax
-      (call $d3dim_device_add_viewport (local.get $arg0) (local.get $arg1)))
-
-
-
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (call $handle_IDirect3DDevice3_AddViewport
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
 
   ;; IDirect3DDevice2_DeleteViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice2_DeleteViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax
-      (call $d3dim_device_delete_viewport (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (call $handle_IDirect3DDevice3_DeleteViewport
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
 
   ;; IDirect3DDevice2_NextViewport — 4 args (incl. this)
   (func $handle_IDirect3DDevice2_NextViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax
-      (call $d3dim_device_next_viewport
-        (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+    (call $handle_IDirect3DDevice3_NextViewport
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
 
   ;; IDirect3DDevice2_EnumTextureFormats — 3 args (incl. this)
   (func $handle_IDirect3DDevice2_EnumTextureFormats (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -967,8 +956,10 @@
 
   ;; IDirect3DDevice2_SetCurrentViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice2_SetCurrentViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $d3dim_set_current_viewport (local.get $arg0) (local.get $arg1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (call $handle_IDirect3DDevice3_SetCurrentViewport
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
 
   ;; IDirect3DDevice2_GetCurrentViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice2_GetCurrentViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

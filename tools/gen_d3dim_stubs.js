@@ -30,12 +30,13 @@ function popExpr(nargs) {
   return `(global.set $esp (i32.add (global.get $esp) (i32.const ${n})))`;
 }
 
-function emit(name, nargs, body) {
+function emit(name, nargs, body, calleePops = false) {
   const sig = `(func $handle_${name} (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)`;
   out.push('  ;; ' + name + ' — ' + nargs + ' args (incl. this)');
   out.push('  ' + sig);
   for (const line of body) out.push('    ' + line);
-  out.push('    ' + popExpr(nargs) + ')');
+  if (calleePops) out.push('  )');
+  else out.push('    ' + popExpr(nargs) + ')');
   out.push('');
 }
 
@@ -54,6 +55,16 @@ const qiFamily = {
 function bodyFor(method, prefix) {
   const tag = method.body || method.ret || 'OK';
   const fullName = prefix + '_' + method.name;
+  // Versioned COM interfaces keep the same host-handler ABI. Delegate older
+  // signatures through the newest implemented wrapper so one place owns both
+  // the behavior and stdcall pop. The emitter must not pop a second time.
+  if (method.delegate) {
+    return [
+      `(call $handle_${method.delegate}`,
+      '  (local.get $arg0) (local.get $arg1) (local.get $arg2)',
+      '  (local.get $arg3) (local.get $arg4) (local.get $name_ptr))',
+    ];
+  }
   // Special-case QueryInterface across all interfaces.
   if (method.name === 'QueryInterface') {
     const fam = qiFamily[prefix] || 0;
@@ -258,7 +269,7 @@ function bodyFor(method, prefix) {
 for (const iface of interfaces) {
   out.push(`  ;; ── ${iface.prefix} — ${iface.methods.length} methods ─────────────`);
   for (const m of iface.methods) {
-    emit(iface.prefix + '_' + m.name, m.nargs, bodyFor(m, iface.prefix));
+    emit(iface.prefix + '_' + m.name, m.nargs, bodyFor(m, iface.prefix), !!m.delegate);
   }
   out.push('');
 }
