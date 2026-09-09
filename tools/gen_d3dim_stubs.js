@@ -269,6 +269,8 @@ function bodyFor(method, prefix) {
 for (const iface of interfaces) {
   out.push(`  ;; ── ${iface.prefix} — ${iface.methods.length} methods ─────────────`);
   for (const m of iface.methods) {
+    // api_table handler aliases enter a shared implementation directly.
+    if (m.handler) continue;
     emit(iface.prefix + '_' + m.name, m.nargs, bodyFor(m, iface.prefix), !!m.delegate);
   }
   out.push('');

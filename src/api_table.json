@@ -10983,14 +10983,16 @@
     "name": "IDirect3D2_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 672506361
+    "hash": 672506361,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1277,
     "name": "IDirect3D2_Release",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1671751854
+    "hash": 1671751854,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1278,
@@ -11062,14 +11064,16 @@
     "name": "IDirect3D7_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 923110660
+    "hash": 923110660,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1286,
     "name": "IDirect3D7_Release",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 4271079589
+    "hash": 4271079589,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1287,
@@ -11134,7 +11138,8 @@
     "name": "IDirect3DDevice_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 2483714589
+    "hash": 2483714589,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1294,
@@ -11304,7 +11309,8 @@
     "name": "IDirect3DDevice2_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1084069219
+    "hash": 1084069219,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1316,
@@ -11551,7 +11557,8 @@
     "name": "IDirect3DDevice7_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 630277814
+    "hash": 630277814,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1349,
@@ -11910,7 +11917,8 @@
     "name": "IDirect3DViewport_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 2465759709
+    "hash": 2465759709,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1398,
@@ -12038,7 +12046,8 @@
     "name": "IDirect3DViewport2_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1616480675
+    "hash": 1616480675,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1414,
@@ -12180,14 +12189,16 @@
     "name": "IDirect3DMaterial_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 270765996
+    "hash": 270765996,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1432,
     "name": "IDirect3DMaterial_Release",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1420259853
+    "hash": 1420259853,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1433,
@@ -12259,14 +12270,16 @@
     "name": "IDirect3DMaterial2_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 282021700
+    "hash": 282021700,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1441,
     "name": "IDirect3DMaterial2_Release",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 892185061
+    "hash": 892185061,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1442,
@@ -12317,7 +12330,8 @@
     "name": "IDirect3DExecuteBuffer_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1551145276
+    "hash": 1551145276,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1447,
@@ -12403,7 +12417,8 @@
     "name": "IDirect3DVertexBuffer_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 383961227
+    "hash": 383961227,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1457,
@@ -12475,7 +12490,8 @@
     "name": "IDirect3DVertexBuffer7_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 453563804
+    "hash": 453563804,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1465,
@@ -12554,7 +12570,8 @@
     "name": "IDirect3DTexture_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3837249682
+    "hash": 3837249682,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1474,
@@ -12626,7 +12643,8 @@
     "name": "IDirect3DTexture2_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1653531570
+    "hash": 1653531570,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1482,

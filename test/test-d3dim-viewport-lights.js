@@ -7,6 +7,7 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+const apiTable = require('../src/api_table.json');
 
 const extraWat = String.raw`
   (func (export "test_d3dim_light_init")
@@ -109,23 +110,12 @@ const extraWat = String.raw`
         (i32.const 0) (i32.const 0))))
     (global.get $eax))
   (func (export "test_d3dim_device_add_ref")
-    (param $revision i32) (param $device i32) (result i32)
+    (param $api_id i32) (param $device i32) (result i32)
     (global.set $esp (i32.const 0x00300000))
-    (if (i32.eq (local.get $revision) (i32.const 1))
-      (then (call $handle_IDirect3DDevice_AddRef
-        (local.get $device) (i32.const 0) (i32.const 0) (i32.const 0)
-        (i32.const 0) (i32.const 0)))
-      (else (if (i32.eq (local.get $revision) (i32.const 2))
-        (then (call $handle_IDirect3DDevice2_AddRef
-          (local.get $device) (i32.const 0) (i32.const 0) (i32.const 0)
-          (i32.const 0) (i32.const 0)))
-        (else (if (i32.eq (local.get $revision) (i32.const 3))
-          (then (call $handle_dx_com_addref
-            (local.get $device) (i32.const 0) (i32.const 0) (i32.const 0)
-            (i32.const 0) (i32.const 0)))
-          (else (call $handle_IDirect3DDevice7_AddRef
-            (local.get $device) (i32.const 0) (i32.const 0) (i32.const 0)
-            (i32.const 0) (i32.const 0))))))))
+    (call $dispatch_api_table
+      (local.get $api_id) (local.get $device)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0))
     (global.get $eax))
   (func (export "test_d3dim_device_release")
     (param $revision i32) (param $device i32) (result i32)
@@ -303,6 +293,11 @@ const D3DERR_NOCURRENTVIEWPORT = 0x88760307;
 const D3DNEXT_NEXT = 1;
 const D3DNEXT_HEAD = 2;
 const D3DNEXT_TAIL = 4;
+const deviceAddRefIds = new Map([1, 2, 3, 7].map(revision => {
+  const suffix = revision === 1 ? '' : revision;
+  const name = `IDirect3DDevice${suffix}_AddRef`;
+  return [revision, apiTable.find(entry => entry.name === name).id];
+}));
 
 (async () => {
   const { exports: wat } = await bootRenderHarness({ extraWat, fonts: 'none' });
@@ -577,8 +572,9 @@ const D3DNEXT_TAIL = 4;
     assert.strictEqual(wat.test_d3dim_viewport_release(3, listed), 1,
       'caller release leaves the device list reference');
 
-    assert.strictEqual(wat.test_d3dim_device_add_ref(releaseRevision, device), 2,
-      `Device${releaseRevision} AddRef shares the underlying object count`);
+    assert.strictEqual(
+      wat.test_d3dim_device_add_ref(deviceAddRefIds.get(releaseRevision), device), 2,
+      `Device${releaseRevision} AddRef dispatch shares the underlying object count`);
     assert.strictEqual(wat.test_d3dim_device_release(releaseRevision, device), 1,
       'a nonfinal device Release preserves attachment state');
     assert.strictEqual(wat.test_d3dim_object_type(device), 20);

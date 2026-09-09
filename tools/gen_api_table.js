@@ -1477,10 +1477,18 @@ const { interfaces: d3dimIfaces } = require('./d3dim-methods');
 for (const iface of d3dimIfaces) {
   for (const m of iface.methods) {
     const fullName = iface.prefix + '_' + m.name;
-    if (!seen.has(fullName)) {
+    const current = existing.find(api => api.name === fullName);
+    if (current) {
+      // The shared D3DIM description is authoritative for dispatch aliases so
+      // regenerating the table cannot resurrect a removed named wrapper.
+      if (m.handler) current.handler = m.handler;
+      else delete current.handler;
+    } else {
       // Use 5 here to match the existing IDirect3D{,3,Device3,Viewport3,...}
       // convention — handlers are wired with 5-arg + name_ptr signature.
-      existing.push({ id: existing.length, name: fullName, nargs: 5, convention: 'stdcall', hash: 0 });
+      const api = { id: existing.length, name: fullName, nargs: 5, convention: 'stdcall', hash: 0 };
+      if (m.handler) api.handler = m.handler;
+      existing.push(api);
       seen.add(fullName);
     }
   }
