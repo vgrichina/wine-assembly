@@ -305,6 +305,21 @@ function runPostExtract(candidate, destination) {
         text = text.split(replacement.from).join(replacement.to);
       }
       fs.writeFileSync(file, text);
+    } else if (step.type === 'installDeusExDemo') {
+      assertSafeRelative(step.installer, `${candidate.id}.postExtract[${index}].installer`);
+      assertSafeRelative(step.into, `${candidate.id}.postExtract[${index}].into`);
+      const result = spawnSync(process.execPath, [
+        path.join(ROOT, 'tools', 'install-deus-ex-demo.js'),
+        `--installer=${path.join(destination, step.installer)}`,
+        `--output=${path.join(destination, step.into)}`,
+      ], {
+        cwd: ROOT,
+        stdio: 'inherit',
+      });
+      if (result.error) throw result.error;
+      if (result.status !== 0) {
+        throw new Error(`authentic Deus Ex installer failed with exit ${result.status}`);
+      }
     } else if (step.type === 'prepareInfinityFullInstall') {
       for (const field of ['key', 'data', 'into', 'outputKey']) {
         assertSafeRelative(step[field], `${candidate.id}.postExtract[${index}].${field}`);

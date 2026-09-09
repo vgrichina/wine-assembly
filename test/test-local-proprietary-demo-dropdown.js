@@ -41,16 +41,20 @@ for (const id of proprietaryLocalIds) {
 
 const deus = APPS.deus_ex_demo;
 assert.strictEqual(deus.exe,
-  'test/binaries/candidates/deus-ex-demo/System/DeusEx.exe');
+  'test/binaries/candidates/deus-ex-demo/installed/system/deusex.exe');
 assert.strictEqual(deus.args, '-windowed');
 assert.strictEqual(deus.dlls.length, 13);
 for (const suffix of [
-  '/System/DeusEx.ini', '/Maps/Entry.dx', '/Maps/00_Training.dx',
-  '/Help/Logo.bmp', '/Textures/DXFonts.utx', '/System/DeusExUI.u',
+  '/system/deusex.ini', '/maps/entry.dx', '/maps/00_training.dx',
+  '/help/logo.bmp', '/textures/dxfonts.utx', '/system/deusexui.u',
 ]) {
   assert(deus.files.some(file => urlOf(file).endsWith(suffix)),
     `Deus Ex manifest includes ${suffix}`);
 }
+const deusEngine = deus.files.find(file => urlOf(file).endsWith('/system/engine.u'));
+assert.deepStrictEqual(deusEngine && deusEngine.vfsPaths,
+  ['c:\\Engine.u', 'c:\\System\\Engine.u'],
+  'UE1 system packages are visible at both startup and configured lookup paths');
 assert(deus.files.some(file => file.vfsPath === 'c:\\Maps\\Entry.dx'),
   'Deus Ex keeps the UE1 sibling Maps directory');
 
@@ -192,6 +196,10 @@ const manifest = JSON.parse(fs.readFileSync(
   path.join(root, 'test/candidate-corpus/manifest.json'), 'utf8'));
 const deusRecipe = manifest.candidates.find(candidate => candidate.id === 'deus-ex-demo');
 assert(deusRecipe && deusRecipe.localOnly, 'Deus Ex fetch recipe remains local-only');
+assert(deusRecipe.packages.every(pkg => pkg.type === 'file'),
+  'Deus Ex keeps the original installer intact instead of host-extracting it');
+assert(deusRecipe.postExtract.some(step => step.type === 'installDeusExDemo'),
+  'fresh Deus Ex fixtures run the authentic installer in Wine Assembly');
 assert.strictEqual(deusRecipe.postExtract.filter(step => step.type === 'replaceText').length, 2,
   'fresh Deus Ex fixtures prepare both runtime INIs for the software renderer');
 const icewindRecipe = manifest.candidates.find(candidate => candidate.id === 'icewind-dale-demo');

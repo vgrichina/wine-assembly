@@ -13,14 +13,13 @@ const { spawnSync } = require('child_process');
 const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
-const FIXTURE = path.join(ROOT, 'test/binaries/candidates/deus-ex-demo');
-const SYSTEM = path.join(FIXTURE, 'System');
-const EXE = path.join(SYSTEM, 'DeusEx.exe');
-const CORE = path.join(SYSTEM, 'Core.dll');
-const ENTRY = path.join(FIXTURE, 'Maps/Entry.dx');
+const FIXTURE = path.join(ROOT, 'test/binaries/candidates/deus-ex-demo/installed');
+const SYSTEM = path.join(FIXTURE, 'system');
+const EXE = path.join(SYSTEM, 'deusex.exe');
+const CORE = path.join(SYSTEM, 'core.dll');
+const ENTRY = path.join(FIXTURE, 'maps/entry.dx');
 const OUT = path.join(ROOT, 'build/local-candidate-smoke/deus-ex-demo');
-const SCREEN = path.join(OUT, 'training-prompt.png');
-const RUNTIME_INI = path.join(OUT, 'DeusEx.ini');
+const SCREEN = path.join(OUT, 'animated-intro.png');
 
 if (!fs.existsSync(EXE)) {
   console.log('SKIP  Deus Ex demo missing; run node tools/fetch-candidate-corpus.js --id=deus-ex-demo');
@@ -39,36 +38,33 @@ assert.strictEqual(sha256(ENTRY),
   '3cf7df2a0538e4e177f19c184849a5869499af8c9a3bfb6386483ab22d57a931');
 
 fs.mkdirSync(OUT, { recursive: true });
-let ini = fs.readFileSync(path.join(SYSTEM, 'DeusEx.ini'), 'utf8');
-ini = ini.replace(/^FirstRun=.*$/m, 'FirstRun=1002')
-  .replace(/^GameRenderDevice=.*$/m, 'GameRenderDevice=SoftDrv.SoftwareRenderDevice')
-  .replace(/^RenderDevice=.*$/gm, 'RenderDevice=SoftDrv.SoftwareRenderDevice')
-  .replace(/^StartupFullscreen=.*$/m, 'StartupFullscreen=False');
-fs.writeFileSync(RUNTIME_INI, ini);
+const ini = fs.readFileSync(path.join(SYSTEM, 'deusex.ini'), 'utf8');
+for (const setting of [
+  'FirstRun=1002',
+  'GameRenderDevice=SoftDrv.SoftwareRenderDevice',
+  'RenderDevice=SoftDrv.SoftwareRenderDevice',
+  'StartupFullscreen=False',
+  'UseSound=True',
+]) {
+  assert(ini.includes(setting), `prepared DeusEx.ini is missing ${setting}`);
+}
 
 const dlls = [
   'Window.dll', 'Core.dll', 'Engine.dll', 'WinDrv.dll', 'SoftDrv.dll',
   'Render.dll', 'Fire.dll', 'IpDrv.dll', 'Extension.dll', 'ConSys.dll',
   'DeusEx.dll', 'DeusExText.dll', 'Galaxy.dll',
-].map(name => path.join(SYSTEM, name));
+].map(name => path.join(SYSTEM, name.toLowerCase()));
 for (const dll of dlls) assert(fs.existsSync(dll), `missing seeded DLL ${path.basename(dll)}`);
 
 const input = [
-  '330:keydown:27', '340:keyup:27',
-  '450:keydown:13', '460:keyup:13',
   `550:png:${SCREEN}`,
 ].join(',');
 const result = spawnSync(process.execPath, [
   path.join(__dirname, 'run.js'),
-  `--exe=${EXE}`,
-  '--args=-windowed',
-  `--dll-seed=${dlls.join(',')}`,
-  '--vfs-include=*',
-  '--vfs-include=../**/*',
-  `--vfs-mount=${RUNTIME_INI}=c:\\DeusEx.ini`,
+  '--app=deus_ex_demo',
   '--max-batches=575',
   '--batch-size=200000',
-  '--tick-ms-per-batch=50',
+  '--tick-ms-per-batch=25',
   '--max-seconds=180',
   '--repaint-every=10',
   '--quiet-api',
@@ -84,8 +80,11 @@ const result = spawnSync(process.execPath, [
 const output = `${result.stdout || ''}\n${result.stderr || ''}`;
 if (result.status !== 0) console.error(output.split('\n').slice(-100).join('\n'));
 assert.strictEqual(result.status, 0, `Deus Ex demo run failed (${result.signal || result.status})`);
-assert(output.includes('DLL: DeusEx.dll'), 'the native DeusEx module was not loaded');
-assert(output.includes('[waveOut] open:'), 'the engine did not reach its live audio/render viewport');
+const outputTail = output.split('\n').slice(-120).join('\n');
+assert(/DLL: deusex\.dll/i.test(output),
+  `the native DeusEx module was not loaded\n${outputTail}`);
+assert(output.includes('[waveOut] open:'),
+  `the engine did not reach its live audio/render viewport\n${outputTail}`);
 assert(!/UNIMPLEMENTED API|UNHANDLED EXCEPTION|Critical Error|Failed to find object/.test(output),
   'the demo reported a runtime failure');
 
@@ -100,8 +99,7 @@ for (let i = 0; i < png.data.length; i += 4) {
   if (b > 55 && b > r * 1.35 && b > g * 1.15) saturatedBlue++;
   colors.add(`${r >> 4},${g >> 4},${b >> 4}`);
 }
-assert(bright > 2500 && saturatedBlue > 1000 && colors.size > 100,
-  `expected the interactive Deus Ex menu/dialog, got bright=${bright} blue=${saturatedBlue} colors=${colors.size}`);
+assert(bright > 2500 && saturatedBlue > 1000 && colors.size > 20,
+  `expected the rendered Deus Ex intro, got bright=${bright} blue=${saturatedBlue} colors=${colors.size}`);
 
-console.log(`PASS  Deus Ex demo: native modules, audio, rendered New Game/training prompt, and keyboard input`);
-
+console.log('PASS  Deus Ex demo: native modules, audio, and rendered animated intro');

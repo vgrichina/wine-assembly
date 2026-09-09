@@ -922,7 +922,7 @@
       "kind": "game",
       "version": "1.002f demo",
       "executables": [
-        "System/DeusEx.exe"
+        "installed/system/deusex.exe"
       ],
       "sourcePage": "https://archive.org/details/DeusExDemo",
       "license": "proprietary commercial demo; private/domestic use only and no redistribution grant; local ignored testing only",
@@ -931,50 +931,56 @@
         {
           "url": "https://archive.org/download/DeusExDemo/DeusExDemo.exe",
           "sha1": "750fbda4f77977e5d03d931cd68c273e9968e914",
-          "type": "archive"
+          "type": "file",
+          "destination": "DeusExDemo.exe"
         }
       ],
       "postExtract": [
         {
+          "type": "installDeusExDemo",
+          "installer": "DeusExDemo.exe",
+          "into": "installed"
+        },
+        {
           "type": "replaceText",
-          "file": "System/DeusEx.ini",
+          "file": "installed/system/deusex.ini",
           "replacements": [
             {
-              "from": "FirstRun=0",
+              "from": "FirstRun=0\r",
               "to": "FirstRun=1002"
             },
             {
-              "from": "GameRenderDevice=GlideDrv.GlideRenderDevice",
+              "from": "GameRenderDevice=GlideDrv.GlideRenderDevice\r",
               "to": "GameRenderDevice=SoftDrv.SoftwareRenderDevice"
             },
             {
-              "from": "RenderDevice=GlideDrv.GlideRenderDevice",
+              "from": "RenderDevice=GlideDrv.GlideRenderDevice\r",
               "to": "RenderDevice=SoftDrv.SoftwareRenderDevice"
             },
             {
-              "from": "StartupFullscreen=True",
+              "from": "StartupFullscreen=True\r",
               "to": "StartupFullscreen=False"
             }
           ]
         },
         {
           "type": "replaceText",
-          "file": "System/Default.ini",
+          "file": "installed/system/default.ini",
           "replacements": [
             {
-              "from": "FirstRun=0",
+              "from": "FirstRun=0\r",
               "to": "FirstRun=1002"
             },
             {
-              "from": "GameRenderDevice=GlideDrv.GlideRenderDevice",
+              "from": "GameRenderDevice=GlideDrv.GlideRenderDevice\r",
               "to": "GameRenderDevice=SoftDrv.SoftwareRenderDevice"
             },
             {
-              "from": "RenderDevice=GlideDrv.GlideRenderDevice",
+              "from": "RenderDevice=GlideDrv.GlideRenderDevice\r",
               "to": "RenderDevice=SoftDrv.SoftwareRenderDevice"
             },
             {
-              "from": "StartupFullscreen=True",
+              "from": "StartupFullscreen=True\r",
               "to": "StartupFullscreen=False"
             }
           ]
