@@ -188,7 +188,7 @@
   (region.declare $MM_TIMER_NEXT_ID (size 0x00000004)
     (owner "01-header.wat:2930"))
   (region.declare $MCI_DEVICE_TABLE (size 0x00000100) (align 0x00000100)
-    (owner "09a3-handlers-audio.wat:972"))
+    (owner "09a3-handlers-audio.wat:963"))
   (region.declare $OWNER_TABLE (size 0x00000400) (align 0x00000100)
     (owner "09c0-window-table.wat:985"))
   ;; The reserved page just below GUEST_BASE. Four undeclared string blocks
