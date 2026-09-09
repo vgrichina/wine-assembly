@@ -769,6 +769,39 @@ this harness can drive to (`tetrinet` exits after 32 batches, `gta2_demo` after
 4), so the peek half is covered by `test/test-clock-spin-park.js` and by the
 detector's own reset rules rather than by an app measurement.
 
+### Alpha Centauri: sample the integer clock, not the browser clock
+
+Alpha's live gameplay turn calls the shared `timeGetTime`/`GetTickCount` host
+clock millions of times. The guest receives an integer millisecond, but the old
+path paid for `performance.now()` on every call, including all calls that landed
+inside the same millisecond. A CPU profile attributed 8.9% to the unfortunately
+named `_audioSchedulerNow`; this was clock polling, not audio mixing.
+
+The browser now samples the wall clock unconditionally at every run-slice
+boundary, then reuses that sample for four guest clock calls inside the slice.
+This distinction is the safety property: a game reading time once per rendered
+frame crosses a slice boundary and still gets a fresh sample every frame, while
+a tight polling loop avoids three redundant browser calls. The stride is an
+instance property for A/B work; four is the conservative default.
+
+Measured 2026-09-08 with the same scripted complete Alpha gameplay turn and
+Chrome CPU sampling profile:
+
+| within-slice stride | turn wall | sampled `_audioSchedulerNow` self | page rAF callbacks | changed screen samples | clock parks |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 17.58s | 4525ms (25.42%) | 278 | 64 | 118 |
+| **4** | **17.35s** | **424ms (2.42%)** | 416 | 165 | 66 |
+| 16 | 17.23s | 127ms (0.73%) | 454 | 137 | 71 |
+| 64 | 17.28s | below the top-30 cutoff (<0.7%) | 400 | 138 | 58 |
+
+The stride-1 clock percentage is a load-sensitive outlier (earlier identical
+profiles measured 8.9%), so this is not a claim that stride four makes Alpha
+ten times faster. The stable findings are narrower: all four arms completed the
+same turn without a crash; strides 4--64 did not reduce the coarse animation
+signal; and the wall turn stayed within 0.36s. There was no practical gain past
+16 and no reason to make the whole corpus absorb a 64-call cadence. Stride four
+takes most of the cheap win with the smallest timing change.
+
 ## Unresolved
 
 These did not reach a classifiable state headlessly and are recorded as

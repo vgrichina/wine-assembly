@@ -80,6 +80,37 @@ const WineAssembly = context.WineAssembly;
 // exist throws here rather than on somebody's app launch.
 assert.strictEqual(typeof WineAssembly.MAX_PARK_SLEEP_MS, 'number');
 assert.strictEqual(typeof WineAssembly.AUDIO_IDLE_SUSPEND_MS, 'number');
+assert.strictEqual(WineAssembly.GUEST_TICK_POLL_STRIDE, 4,
+  'the browser default reuses one wall sample for four within-slice calls');
+
+// --------------------------------------------------------- guest tick stride
+
+{
+  const wine = new WineAssembly();
+  const state = wine._guestTickState();
+  let reads = 0;
+  wine._audioSchedulerNow = () => { reads++; return nowMs; };
+  wine.guestTickPollStride = 4;
+  wine._beginGuestTickBatch();
+  assert.strictEqual(reads, 1, 'a slice boundary refreshes wall time');
+  nowMs += 1;
+  assert.deepStrictEqual([
+    wine._guestTickMs(), wine._guestTickMs(), wine._guestTickMs(),
+  ], [0, 0, 0], 'the first N-1 calls reuse the slice-boundary sample');
+  assert.strictEqual(reads, 1, 'reused guest ticks do not read performance.now');
+  assert.strictEqual(wine._guestTickMs(), 1, 'the stride boundary refreshes guest time');
+  assert.strictEqual(reads, 2, 'the stride boundary performs exactly one new wall read');
+
+  nowMs += 9;
+  wine._beginGuestTickBatch();
+  assert.strictEqual(reads, 3, 'the next run slice refreshes even before N calls');
+  assert.strictEqual(state.batchMs, 10, 'a sparse caller sees current time each slice');
+
+  wine.guestTickPollStride = 1;
+  nowMs += 1;
+  assert.strictEqual(wine._guestTickMs(), 11, 'stride one preserves exact per-call refresh');
+  assert.strictEqual(reads, 4, 'stride one reads the wall on every guest call');
+}
 
 // ---------------------------------------------------------------- scheduling
 

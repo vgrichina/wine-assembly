@@ -505,7 +505,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '296';
+  static SOURCE_VERSION = '297';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -513,6 +513,11 @@ class WineAssembly {
   // turning a hang into 20Hz polling.
   static MAX_PARK_SLEEP_MS = 50;
   static CLOCK_SPIN_PARK_MS = 1;
+  // Browser performance.now() is much more expensive than the integer-ms
+  // result the guest receives. Reuse each within-slice sample for four calls;
+  // every run-slice boundary still refreshes unconditionally, so a sparse
+  // once-per-frame caller never inherits this coarser polling cadence.
+  static GUEST_TICK_POLL_STRIDE = 4;
   // How long an AudioContext may sit 'running' with nothing playing before it
   // is suspended. A running context holds the audio hardware awake.
   static AUDIO_IDLE_SUSPEND_MS = 10000;
@@ -643,6 +648,7 @@ class WineAssembly {
     this.moduleMap = [];
     this._wasmModule = null;
     this.stepsPerSlice = 100000;
+    this.guestTickPollStride = WineAssembly.GUEST_TICK_POLL_STRIDE;
     // Browser-shell may tune cooperative scheduling when a game replaces its
     // renderer in-process. The GL bridge reports context lifetime without
     // making the generic host depend on an app name.
@@ -814,15 +820,20 @@ class WineAssembly {
       st.callsInBatch = (Number.isFinite(st.callsInBatch) ? st.callsInBatch : 0) + 1;
       return tick;
     }
-    const now = this._audioSchedulerNow();
-    if (!Number.isFinite(st.wallStartMs) || st.wallStartMs <= 0) st.wallStartMs = now;
-    const elapsed = Math.max(0, Math.floor(now - st.wallStartMs));
+    const calls = (Number.isFinite(st.callsInBatch) ? st.callsInBatch : 0) + 1;
+    st.callsInBatch = calls;
+    const stride = Math.max(1, this.guestTickPollStride | 0);
+    let elapsed = Number.isFinite(st.batchMs) ? st.batchMs : 0;
+    if ((calls % stride) === 0) {
+      const now = this._audioSchedulerNow();
+      if (!Number.isFinite(st.wallStartMs) || st.wallStartMs <= 0) st.wallStartMs = now;
+      elapsed = Math.max(0, Math.floor(now - st.wallStartMs));
+    }
     const batchMs = Math.max(Number.isFinite(st.batchMs) ? st.batchMs : 0, elapsed);
     const last = Number.isFinite(st.lastReturnedMs) ? st.lastReturnedMs : 0;
     const tick = Math.max(batchMs, last) & 0x7FFFFFFF;
     st.batchMs = tick;
     st.lastReturnedMs = tick;
-    st.callsInBatch = (Number.isFinite(st.callsInBatch) ? st.callsInBatch : 0) + 1;
     return tick;
   }
 
