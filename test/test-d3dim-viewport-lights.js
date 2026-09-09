@@ -120,7 +120,7 @@ const extraWat = String.raw`
           (local.get $device) (i32.const 0) (i32.const 0) (i32.const 0)
           (i32.const 0) (i32.const 0)))
         (else (if (i32.eq (local.get $revision) (i32.const 3))
-          (then (call $handle_IDirect3DDevice3_AddRef
+          (then (call $handle_dx_com_addref
             (local.get $device) (i32.const 0) (i32.const 0) (i32.const 0)
             (i32.const 0) (i32.const 0)))
           (else (call $handle_IDirect3DDevice7_AddRef

@@ -151,7 +151,11 @@ function handlerCall(api) {
     const slot = parseInt(daSlot[2], 10);
     return `      (call $handle_IDirectAnimationDA${iface}_DirectSlot (i32.const ${slot}) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
   }
-  return `      (call $handle_${api.name} (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
+  const handler = api.handler || api.name;
+  if (!/^[A-Za-z0-9_?@$]+$/.test(handler)) {
+    fatal(`API ${api.name} has invalid handler alias ${JSON.stringify(handler)}`);
+  }
+  return `      (call $handle_${handler} (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
 }
 
 out.push('  ;; ============================================================');

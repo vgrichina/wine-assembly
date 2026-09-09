@@ -1498,7 +1498,8 @@ for (const iface of d3d9Ifaces) {
   }
 }
 
-// Reassign IDs and recompute hashes; preserve args/ret/any other metadata.
+// Reassign IDs and recompute hashes; preserve dispatch/testing metadata that
+// belongs to the API row rather than the name/hash generator.
 const table = existing.map((api, id) => {
   const out = {
     id,
@@ -1509,6 +1510,7 @@ const table = existing.map((api, id) => {
   };
   if (api.args) out.args = api.args;
   if (api.ret) out.ret = api.ret;
+  if (api.handler) out.handler = api.handler;
   return out;
 });
 

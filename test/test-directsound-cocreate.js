@@ -5,6 +5,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
+const apiTable = require('../src/api_table.json');
 
 const extraWat = String.raw`
   (func (export "test_cocreate")
@@ -17,6 +18,15 @@ const extraWat = String.raw`
     (global.get $eax))
 
   (func (export "test_esp") (result i32) (global.get $esp))
+
+  (func (export "test_dispatch_one")
+      (param $api_id i32) (param $this i32) (result i32)
+    (global.set $esp (i32.const 0x30000))
+    (call $dispatch_api_table
+      (local.get $api_id) (local.get $this)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0))
+    (global.get $eax))
 
   (func (export "test_set_cooperative_level")
       (param $this i32) (param $hwnd i32) (param $level i32) (result i32)
@@ -82,6 +92,19 @@ const extraWat = String.raw`
   assert.strictEqual(hostCreates, 1, 'unrelated CLSIDs still use the host COM path');
   assert.strictEqual(wat.guest_read32(out) >>> 0, 0,
     'failed fallback creation clears the output interface');
+
+  const addRefId = apiTable.find(entry => entry.name === 'IDirectSound_AddRef').id;
+  const releaseId = apiTable.find(entry => entry.name === 'IDirectSound_Release').id;
+  assert.strictEqual(wat.test_dispatch_one(addRefId, sound) >>> 0, 2,
+    'generated dispatch routes IDirectSound AddRef through the shared DX lifetime core');
+  assert.strictEqual(wat.test_esp() >>> 0, 0x30008,
+    'shared AddRef consumes return address and this');
+  assert.strictEqual(wat.test_dispatch_one(releaseId, sound) >>> 0, 1,
+    'shared Release preserves the caller-owned reference');
+  assert.strictEqual(wat.test_dispatch_one(releaseId, sound) >>> 0, 0,
+    'final shared Release retires the DirectSound object');
+  assert.strictEqual(wat.test_esp() >>> 0, 0x30008,
+    'shared Release consumes return address and this');
 
   console.log('PASS DirectSound CoCreateInstance returns the native 11-slot interface');
 })().catch(error => {

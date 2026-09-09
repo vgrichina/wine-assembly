@@ -8600,14 +8600,16 @@
     "name": "IDirectDraw_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1374612392
+    "hash": 1374612392,
+    "handler": "dx_com_addref"
   },
   {
     "id": 980,
     "name": "IDirectDraw_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 785119249
+    "hash": 785119249,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 981,
@@ -8777,7 +8779,8 @@
     "name": "IDirectDrawSurface_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1847147359
+    "hash": 1847147359,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1003,
@@ -9045,7 +9048,8 @@
     "name": "IDirectDrawPalette_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1191545803
+    "hash": 1191545803,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1039,
@@ -9110,14 +9114,16 @@
     "name": "IDirectSound_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1246140317
+    "hash": 1246140317,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1046,
     "name": "IDirectSound_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2250429370
+    "hash": 2250429370,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1047,
@@ -9203,7 +9209,8 @@
     "name": "IDirectSoundBuffer_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1419211727
+    "hash": 1419211727,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1057,
@@ -9366,14 +9373,16 @@
     "name": "IDirectInput_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3955393024
+    "hash": 3955393024,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1078,
     "name": "IDirectInput_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1111425289
+    "hash": 1111425289,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1079,
@@ -9438,14 +9447,16 @@
     "name": "IDirectInputDevice_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 373543406
+    "hash": 373543406,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1086,
     "name": "IDirectInputDevice_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3117308099
+    "hash": 3117308099,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1087,
@@ -9878,7 +9889,8 @@
     "name": "IDirectDrawFactory_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2604191108
+    "hash": 2604191108,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1142,
@@ -9947,7 +9959,8 @@
     "name": "IDirect3DDevice3_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1058265586
+    "hash": 1058265586,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1148,
@@ -10257,7 +10270,8 @@
     "name": "IDirect3DViewport3_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3120826162
+    "hash": 3120826162,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1190,
@@ -10420,7 +10434,8 @@
     "name": "IDirect3DLight_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3830084039
+    "hash": 3830084039,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1211,
@@ -10478,14 +10493,16 @@
     "name": "IDirect3DMaterial3_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3939031253
+    "hash": 3939031253,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1217,
     "name": "IDirect3DMaterial3_Release",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1932170706
+    "hash": 1932170706,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1218,
@@ -10794,7 +10811,8 @@
     "name": "IDirectDrawClipper_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2611172029
+    "hash": 2611172029,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1257,
@@ -21093,14 +21111,16 @@
     "name": "IDirectX7_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2099146441
+    "hash": 2099146441,
+    "handler": "dx_com_addref"
   },
   {
     "id": 2528,
     "name": "IDirectX7_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 79737662
+    "hash": 79737662,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 2529,
@@ -21149,14 +21169,16 @@
     "name": "IVBDirectDraw7_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 4082026317
+    "hash": 4082026317,
+    "handler": "dx_com_addref"
   },
   {
     "id": 2536,
     "name": "IVBDirectDraw7_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1537838826
+    "hash": 1537838826,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 2537,
@@ -21359,7 +21381,8 @@
     "name": "IVBDirectDrawClipper_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3028910389
+    "hash": 3028910389,
+    "handler": "dx_com_addref"
   },
   {
     "id": 2566,
@@ -21429,14 +21452,16 @@
     "name": "IVBDirectSound_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1039230581
+    "hash": 1039230581,
+    "handler": "dx_com_addref"
   },
   {
     "id": 2576,
     "name": "IVBDirectSound_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3519550514
+    "hash": 3519550514,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 2577,
