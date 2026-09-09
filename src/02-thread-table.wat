@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 444 funcref)
+  (table $handlers 447 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -502,4 +502,7 @@
     $th_mw3_grid_filter_run   ;; 441: MW3 in-place 16-bit terrain/grid filter row
     $th_lar                   ;; 442: LAR r16/32,r/m16 (selector access rights)
     $th_colorkey8_run         ;; 443: byte color-key replacement row
+    $th_add_edx_eax2_disp     ;; 444: ADD EDX,[EAX*2+disp32]
+    $th_add_ebp_eax2_disp     ;; 445: ADD EBP,[EAX*2+disp32]
+    $th_add_esi_eax2_disp     ;; 446: ADD ESI,[EAX*2+disp32]
   )

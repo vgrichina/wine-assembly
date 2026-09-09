@@ -156,6 +156,15 @@ experiments to repeat. Optimizing canvas presentation, growing the decode
 cache, or special-casing only the 25-record search likewise has little support
 in this profile.
 
+A subsequent exact handler census found three frequent instances of
+`ADD {EDX,EBP,ESI}, [EAX*2+disp32]`. Dedicated handlers 444--446 fuse the SIB
+address calculation, dword load, addition, flags, and register write for only
+those three forms. A deterministic handler microbenchmark improved by about
+64%, but a complete Alpha turn improved by only about 0.57%, within the run's
+noise. The narrow fusion is a safe dispatch/memory-access reduction and a
+useful template for further measured pairs, but this individual site is not a
+material gameplay-FPS lever.
+
 An adaptive clock-spin park was accepted as a CPU-courtesy measure, not as an
 FPS fix. A call site must first produce eight identical clock reads with the
 same return address/stack and no meaningful API work; after that proof, the

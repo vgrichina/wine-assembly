@@ -2473,6 +2473,30 @@
       (then (call $te (i32.const 128) (i32.or (i32.shl (local.get $alu_op) (i32.const 8))
           (i32.or (i32.shl (local.get $reg) (i32.const 4)) (global.get $mr_base))))
         (call $te_raw (global.get $mr_disp)) (return)))
+    ;; Alpha Centauri's hottest palette/conversion loops use these exact
+    ;; base-free SIB ADDs. Keep every prefixed/segmented/16-bit/general SIB
+    ;; form on the ordinary path; handlers 444-446 consume only the disp.
+    (if (i32.and
+          (i32.and
+            (i32.eqz (global.get $code16))
+            (i32.eqz (local.get $alu_op)))
+          (i32.and
+            (i32.eq (global.get $mr_base) (i32.const -1))
+            (i32.and
+              (i32.eqz (global.get $mr_index))
+              (i32.and
+                (i32.eq (global.get $mr_scale) (i32.const 1))
+                (i32.or
+                  (i32.or (i32.eq (local.get $reg) (i32.const 2))
+                          (i32.eq (local.get $reg) (i32.const 5)))
+                  (i32.eq (local.get $reg) (i32.const 6)))))))
+      (then
+        (if (i32.eq (local.get $reg) (i32.const 2))
+          (then (call $te (i32.const 444) (global.get $mr_disp)))
+          (else (if (i32.eq (local.get $reg) (i32.const 5))
+            (then (call $te (i32.const 445) (global.get $mr_disp)))
+            (else (call $te (i32.const 446) (global.get $mr_disp))))))
+        (return)))
     (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 48) (i32.or (i32.shl (local.get $alu_op) (i32.const 4)) (local.get $reg)))
     (call $te_raw (local.get $a)))
