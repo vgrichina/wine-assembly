@@ -1,4 +1,0 @@
-{
-  "comment": "Regions whose (owner \"file:line\") does not point at a line mentioning them. Ratchet baseline for check-region-decls.js --check-owners: a region NOT listed here must have a correct owner. Removing a name after fixing its owner is always welcome; adding one means a new declaration shipped with a wrong owner and should be fixed instead.",
-  "stale": []
-}

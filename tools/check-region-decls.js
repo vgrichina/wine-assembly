@@ -47,8 +47,7 @@
 //   node tools/check-region-decls.js            # lenient (mid-edit inspection)
 //   node tools/check-region-decls.js --list     # print the declared map
 //   node tools/check-region-decls.js --file=X   # check a fixture instead of src/00-regions.wat
-//   node tools/check-region-decls.js --check-owners    # ratchet on (owner "file:line")
-//   node tools/check-region-decls.js --record-owners   # re-cut that ratchet's baseline
+//   node tools/check-region-decls.js --check-owners    # validate (owner "file:$symbol")
 'use strict';
 
 const fs = require('fs');
@@ -61,7 +60,6 @@ const DECLS = '00-regions.wat';
 const STRICT = process.argv.includes('--strict');
 const LIST = process.argv.includes('--list');
 const CHECK_OWNERS = process.argv.includes('--check-owners');
-const RECORD_OWNERS = process.argv.includes('--record-owners');
 
 const hex = (n) => `0x${(n >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
 
@@ -209,10 +207,9 @@ function collectDeclarations(overrideFile, shake) {
     const w = values.get('within');
     d.within = w && /^\$[A-Za-z0-9_]+$/.test(w) ? w.slice(1) : null;
     if (w && d.within === null) d.parseErrors.push(`(within ${w}) is not a $NAME`);
-    // Carried so --check-owners can ask whether the source location still names
-    // this region. Kept as the raw quoted text: some owners are deliberately not
-    // a file:line ("01-header.wat: (string.pool ...)"), and mangling those into a
-    // line number here would invent a target that was never claimed.
+    // Carried so --check-owners can resolve the stable file:$symbol source owner.
+    // The raw quotes are retained because this reader validates declaration
+    // grammar independently of the compiler.
     d.owner = values.get('owner') || null;
     // A SPAN is not in this list. Every importer — the mirror gate, the JS
     // generator, the census — means "a region that owns bytes", and a span owns
@@ -228,78 +225,161 @@ function collectDeclarations(overrideFile, shake) {
 }
 
 // ---------------------------------------------------------------------------
-// --check-owners: does the (owner "file:line") still point at this region?
+// --check-owners: does (owner "file:$symbol") still own this region?
 //
-// Every declaration carries an (owner "…") naming the source location that
-// USES the region. That string is a comment as far as the compiler is
-// concerned: nothing has ever checked it, and after two waves of moving code
-// around, most of them are off by tens or hundreds of lines. A wrong owner is
-// worse than none — it sends the next reader to a line that has nothing to do
-// with the region and looks authoritative doing it.
+// The original representation named an exact source line. Its matcher was
+// eventually made exact and its 155-entry stale baseline drained, but exact
+// line numbers made every unrelated insertion above an owner a mandatory edit
+// to 00-regions.wat. A source symbol is the stable identity the line number was
+// trying to approximate.
 //
-// This started as a RATCHET over 155 already-stale owners, so the number could
-// not grow while they were re-derived. THAT DRAIN IS DONE: every owner now
-// names a line that mentions its region, check-region-decls.owners.json holds
-// an EMPTY list, and this mode is a flat refusal rather than a whitelist. The
-// baseline file stays because it is the honest way to record an exception if
-// one is ever argued for — but an entry in it is now a review question, not a
-// bookkeeping step, and the file keying on region NAME (so a whitelisted region
-// that later moves stays whitelisted) is harmless only while it is empty. Keep
-// it empty. --record-owners re-cuts it; running that to silence a failure is
-// laundering a wrong owner, and the diff will say so.
-//
-// The test requires the region's name on the EXACT named line. It does not
-// demand any particular expression — the owner points at a use site whose
-// spelling is not this tool's business — but the line number itself must be
-// right. This used to be a ±3 window ("this location still knows about this
-// region"), and that window silently absorbed drift: an edit that shifted a
-// file by exactly 3 lines passed the gate while the owner pointed at the
-// wrong line, and 12 owners were found drifted when the window was removed
-// (2026-09-01, after the 09c3 bulk-memory lane shortened its file by 22 lines
-// and the gate flagged only 2 of its 6 moved owners). The window survives
-// only as a diagnostic: when the exact line misses but a nearby line hits,
-// the failure message names the corrected line so the fix is a copy-paste.
-//
-// Not covered: spans (collectDeclarations drops them before this sees them,
-// for the reasons in its comment) and owners that are deliberately not a
-// file:line — "01-header.wat: (string.pool …)" names a mechanism, not a
-// location, and there is nothing to grep. Both are reported as SKIP so the
-// counts add up rather than silently shrinking.
-const OWNERS_BASELINE = path.join(__dirname, 'check-region-decls.owners.json');
-const OWNER_WINDOW = 3;
+// For WAT, a named top-level form must still reference the region. This catches
+// both halves of semantic drift: deleting/renaming the owning function, and
+// moving the region access out of it while leaving the function behind.
+// Globals and compiler forms such as `(string.pool $NAME)` are top-level named
+// forms too. Test-only regions may name a repository-relative non-WAT source;
+// those require exact occurrences of both the anchor and region symbols.
+
+const WAT_SYMBOL_CHARS = 'A-Za-z0-9_.\\-';
+
+function symbolPattern(symbol) {
+  const escaped = symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`${escaped}(?![${WAT_SYMBOL_CHARS}])`);
+}
+
+function watCodeOnly(source) {
+  const out = source.split('');
+  let state = 'code';
+  let blockDepth = 0;
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    const n = source[i + 1];
+    if (state === 'line-comment') {
+      if (c === '\n') state = 'code';
+      else out[i] = ' ';
+      continue;
+    }
+    if (state === 'string') {
+      out[i] = ' ';
+      if (c === '\\' && i + 1 < source.length) {
+        i++;
+        out[i] = source[i] === '\n' ? '\n' : ' ';
+      }
+      else if (c === '"') state = 'code';
+      continue;
+    }
+    if (state === 'block-comment') {
+      out[i] = c === '\n' ? '\n' : ' ';
+      if (c === '(' && n === ';') { blockDepth++; out[++i] = ' '; }
+      else if (c === ';' && n === ')') {
+        blockDepth--;
+        out[++i] = ' ';
+        if (blockDepth === 0) state = 'code';
+      }
+      continue;
+    }
+    if (c === ';' && n === ';') {
+      state = 'line-comment';
+      out[i] = out[++i] = ' ';
+    } else if (c === '(' && n === ';') {
+      state = 'block-comment';
+      blockDepth = 1;
+      out[i] = out[++i] = ' ';
+    } else if (c === '"') {
+      state = 'string';
+      out[i] = ' ';
+    }
+  }
+  return out.join('');
+}
+
+// Return complete depth-zero WAT forms while ignoring strings and both comment
+// kinds. Source files are module fragments, so depth zero is their top level.
+function watTopLevelForms(source) {
+  const code = watCodeOnly(source);
+  const forms = [];
+  let depth = 0;
+  let start = -1;
+  let line = 1;
+  let startLine = 1;
+
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    if (c === '\n') line++;
+    if (c === '(') {
+      if (depth === 0) { start = i; startLine = line; }
+      depth++;
+      continue;
+    }
+    if (c !== ')' || depth === 0) continue;
+    depth--;
+    if (depth !== 0) continue;
+    const text = source.slice(start, i + 1);
+    const formCode = code.slice(start, i + 1);
+    const header = /^\(\s*([^\s()]+)(?:\s+(\$[A-Za-z0-9_.\-]+))?/.exec(formCode);
+    forms.push({
+      start,
+      end: i + 1,
+      line: startLine,
+      head: header ? header[1] : null,
+      symbol: header ? header[2] || null : null,
+      text,
+      code: formCode,
+    });
+    start = -1;
+  }
+  return forms;
+}
+
+function resolveOwnerFile(fileText) {
+  if (path.isAbsolute(fileText) || fileText.split('/').includes('..')) return null;
+  const relative = fileText.includes('/') ? fileText : path.join('src', fileText);
+  const resolved = path.resolve(ROOT, relative);
+  if (resolved !== ROOT && !resolved.startsWith(`${ROOT}${path.sep}`)) return null;
+  return { relative, resolved };
+}
 
 function ownerVerdict(d) {
   if (!d.owner) return { state: 'missing' };
   // The clause value arrives with its quotes still on.
   const text = d.owner.trim().replace(/^"|"$/g, '').trim();
-  const m = /^([A-Za-z0-9_.\-]+\.wat):(\d+)$/.exec(text);
-  if (!m) return { state: 'skip', why: 'owner is not a file:line' };
-  const file = path.join(SRC, m[1]);
-  if (!fs.existsSync(file)) return { state: 'stale', why: `${m[1]} does not exist` };
-  const lines = fs.readFileSync(file, 'utf8').split('\n');
-  const at = Number(m[2]);
-  if (at > lines.length) {
-    return { state: 'stale', why: `${m[1]} has only ${lines.length} lines` };
+  const m = /^([A-Za-z0-9_.\/-]+):(\$[A-Za-z0-9_.\-]+)$/.exec(text);
+  if (!m) {
+    return { state: 'stale', why: 'owner must be file:$symbol (line-number owners are unsupported)' };
   }
-  if ((lines[at - 1] || '').includes(d.name)) return { state: 'ok' };
-  // Exact line missed. Search the old ±window purely to make the failure
-  // self-repairing: if a nearby line mentions the region, name it.
-  const lo = Math.max(1, at - OWNER_WINDOW);
-  const hi = Math.min(lines.length, at + OWNER_WINDOW);
-  const rel = lines.slice(lo - 1, hi).findIndex(l => l.includes(d.name));
-  return rel >= 0
-    ? { state: 'stale', why: `${m[1]}:${at} does not mention $${d.name} — drifted; actual line is ${m[1]}:${lo + rel}` }
-    : { state: 'stale', why: `${m[1]}:${lo}-${hi} does not mention $${d.name}` };
+  const target = resolveOwnerFile(m[1]);
+  if (!target) return { state: 'stale', why: `${m[1]} is not a safe repository-relative source path` };
+  if (!fs.existsSync(target.resolved)) return { state: 'stale', why: `${target.relative} does not exist` };
+
+  const source = fs.readFileSync(target.resolved, 'utf8');
+  const anchorRe = symbolPattern(m[2]);
+  const regionRe = symbolPattern(`$${d.name}`);
+
+  if (!target.resolved.endsWith('.wat')) {
+    if (!anchorRe.test(source)) {
+      return { state: 'stale', why: `${target.relative} does not define or mention ${m[2]}` };
+    }
+    return regionRe.test(source)
+      ? { state: 'ok' }
+      : { state: 'stale', why: `${target.relative} mentions ${m[2]} but not $${d.name}` };
+  }
+
+  const forms = watTopLevelForms(source);
+  const definitions = forms.filter(f => f.symbol === m[2]);
+  if (!definitions.length) {
+    return { state: 'stale', why: `${target.relative} does not define top-level ${m[2]}` };
+  }
+  return definitions.some(definition => regionRe.test(definition.code))
+    ? { state: 'ok' }
+    : { state: 'stale', why: `${target.relative} ${m[2]} no longer references $${d.name}` };
 }
 
 function checkOwners(list) {
   const stale = [];
-  const skipped = [];
   let ok = 0;
   for (const d of list) {
     const v = ownerVerdict(d);
     if (v.state === 'ok') { ok++; continue; }
-    if (v.state === 'skip') { skipped.push(`${d.name}: ${v.why}`); continue; }
     if (v.state === 'missing') {
       stale.push({ name: d.name, why: 'has no (owner "…")', where: `${d.file}:${d.line}` });
       continue;
@@ -308,66 +388,28 @@ function checkOwners(list) {
   }
   stale.sort((a, b) => a.name.localeCompare(b.name));
 
-  if (RECORD_OWNERS) {
-    fs.writeFileSync(OWNERS_BASELINE, `${JSON.stringify({
-      comment: 'Regions whose (owner "file:line") does not point at a line ' +
-        'mentioning them. Baseline for check-region-decls.js --check-owners. ' +
-        'THIS LIST SHOULD BE EMPTY: the original 155 stale owners were all ' +
-        're-derived, so the gate is a flat refusal and every region must have ' +
-        'a correct owner. A name appearing here means a declaration shipped ' +
-        'with a wrong owner and should be fixed instead of listed.',
-      stale: stale.map(s => s.name),
-    }, null, 2)}\n`);
-    console.log(`check-region-decls: recorded ${stale.length} stale owner(s) ` +
-      `in ${path.relative(ROOT, OWNERS_BASELINE)}`);
-    return 0;
-  }
-
-  let baseline;
-  try {
-    baseline = new Set(JSON.parse(fs.readFileSync(OWNERS_BASELINE, 'utf8')).stale);
-  } catch (err) {
-    console.error(`check-region-decls: cannot read ${path.relative(ROOT, OWNERS_BASELINE)}: ` +
-      `${err.message}\n  regenerate it with --record-owners`);
-    return 1;
-  }
-
-  const fresh = stale.filter(s => !baseline.has(s.name));
-  const fixed = [...baseline].filter(n => !stale.some(s => s.name === n)).sort();
-
-  for (const s of fresh) {
+  for (const s of stale) {
     console.error(`check-region-decls: $${s.name} (${s.where}) ${s.why}`);
   }
-  if (fresh.length) {
-    console.error(`check-region-decls: ${fresh.length} region(s) have an ` +
-      `(owner "…") that does not name them.\n` +
-      `  Point the owner at a line that uses the region — its accessor, its ` +
-      `init, or the (global $NAME …) that defines its base.\n` +
-      `  ${baseline.size === 0
-        ? `${path.relative(ROOT, OWNERS_BASELINE)} is empty by design (all 155 ` +
-          'originally-stale owners were re-derived); there is no whitelist to ' +
-          'add to.'
-        : `Do NOT add these to ${path.relative(ROOT, OWNERS_BASELINE)}.`}`);
+  if (stale.length) {
+    console.error(`check-region-decls: ${stale.length} region owner(s) are invalid.\n` +
+      `  Name a stable owner as (owner "file:$symbol"); a WAT symbol's ` +
+      `top-level form must reference the region.`);
     return 1;
   }
-  console.log(`check-region-decls: owners ok — ${ok} verified, ` +
-    `${stale.length} stale (baseline), ${skipped.length} not a file:line`);
-  if (fixed.length) {
-    console.log(`check-region-decls: ${fixed.length} baseline owner(s) now ` +
-      `correct — drop them with --record-owners: ${fixed.join(', ')}`);
-  }
+  console.log(`check-region-decls: owners ok — ${ok} symbol owners verified`);
   return 0;
 }
 
 // Importable: tools/region-census.js reads the same declaration set, so the
 // odometer and the gate can never disagree about what a region is.
-module.exports = { collectDeclarations, collectGlobals, ownerVerdict };
+module.exports = { collectDeclarations, collectGlobals, ownerVerdict, watTopLevelForms };
 if (require.main !== module) return;
 
 const globals = collectGlobals();
 const decls = collectDeclarations();
 
-if (CHECK_OWNERS || RECORD_OWNERS) {
+if (CHECK_OWNERS) {
   process.exit(checkOwners(decls));
 }
 
