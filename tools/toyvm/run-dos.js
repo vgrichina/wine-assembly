@@ -190,6 +190,8 @@ async function runDos(o) {
     // itself. Off unless a benchmark asks (bench-dos.js --cpu-time,
     // region-jit.js), so a plain run does not pay for a number nobody reads.
     cpuMeter = false,
+    // `--slice-log=FILE`: where to write the per-handback dispatch counts.
+    sliceLogFile = null,
     // Build the instrumented dispatch and print the census at exit. `hist` is
     // how many handlers to list, `histPairs` how many pairs; 0 for either
     // suppresses that table. Timings from such a run are meaningless -- three
@@ -206,6 +208,14 @@ async function runDos(o) {
     // nothing observable changing. See DosSession's note: a handback is not a
     // fixed amount of work, so the count alone stopped meaning "a while ago".
     stuckWork = 20e6,
+    // `--lattice-clock`: cut every slice, and render the audio, on multiples of
+    // the quantum rather than from the last handback (dos-loop.js `step`). This
+    // is what makes the emulated clock independent of how often the run loop
+    // hands back, and therefore what lets a region JIT absorb or add a handback
+    // without moving the picture -- but it is NOT the shipped clock, because
+    // anchoring the grid also moves a plain interpreter run's audio. Pass it to
+    // both arms of a comparison or to neither.
+    latticeClock = false,
     // The DOS command tail, verbatim. Several demos in this corpus name their
     // own silent-mode switch on the screen they refuse to start from.
     guestArgs = '',
@@ -300,6 +310,8 @@ async function runDos(o) {
     // the filesystem it gets.
     fileRoot: path.dirname(path.resolve(exe)),
   });
+  // See the afterSlice hook: the dispatch count at every handback, when asked.
+  const sliceLog = sliceLogFile ? [] : null;
   // What the card and the speaker played, as rendered chunks, when asked.
   const audioChunks = [];
   if (audioRate > 0) {
@@ -419,7 +431,7 @@ async function runDos(o) {
     regSpec, regionAt, regionSucc, regionBytes, regionCodeBits, volatileCode,
     traceDeadFlags: traceDeadFlags ? ((s) => log(s)) : null,
     mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit, pitClock,
-    stuckWork,
+    stuckWork, latticeClock,
     // A watch reports through the census, so asking for one turns it on.
     smcCensus: smcCensus || watch.length > 0, watch,
     // The same count, not recomputed while the page it counts has not changed.
@@ -559,6 +571,13 @@ async function runDos(o) {
         // sample map: its window is a stretch of THIS run rather than a
         // fraction of a finished one.
         if (jit) jit.sample({ left, dispatched });
+        // `--slice-log=FILE`: the cumulative dispatch count at every handback,
+        // one per line. A frame hash says two runs ended somewhere different;
+        // this says WHERE THE CUT MOVED, which is the only way to tell "the
+        // region computed something else" from "the region ended its slice one
+        // instruction along and the audio was rendered against a different
+        // grid". `diff` the two files and read the first line that differs.
+        if (sliceLog) sliceLog.push(`${dispatched} ${left} ${cs.toString(16)}:${ip.toString(16)}`);
       },
     },
   });
@@ -664,6 +683,7 @@ async function runDos(o) {
 
   if (bestPng) keepBest();
   const surface = screenSurface(machine);
+  if (sliceLog) fs.writeFileSync(sliceLogFile, sliceLog.join('\n') + '\n');
   return {
     bestScore, bestContent, bestSurface, bestText, saidText,
     variant, exe, vm, machine, jtab,
@@ -935,6 +955,10 @@ async function main() {
     // headless twin of the page's sound: the same samples through the same
     // DMA model, so "is there anything to hear" can be answered by a file.
     audioRate: arg('audio') ? count(arg('audio-rate'), 22050) : 0,
+    // `--slice-log=FILE`: the cumulative dispatch count at every handback, one
+    // per line. `diff` two of them and the first differing line is the exact
+    // handback where the cut moved.
+    sliceLogFile: arg('slice-log'),
     // `--pit-clock` runs every guest clock off dispatchesPerTick and the PIT's
     // reload, which is what the page does; the sweep's defaults keep the timer
     // interrupt at irqEvery.
@@ -983,6 +1007,9 @@ async function main() {
     dispatchesPerTick: count(arg('dispatches-per-tick'), 550e3),
     stuckLimit: count(arg('stuck'), 200),
     stuckWork: count(arg('stuck-work'), 20e6),
+    // `--lattice-clock`: anchor the slice grid and the audio render to the
+    // absolute dispatch count. Both arms of a comparison, or neither.
+    latticeClock: flag('lattice-clock'),
     // --stop-on-text='Runtime error 200' -- end the run the instant the guest
     // prints this, so --dump and --disasm photograph the failure instead of
     // whatever reused its memory afterwards. See Machine.conWatch.

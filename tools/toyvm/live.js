@@ -270,6 +270,19 @@ class LiveRun {
       // a demo that idles on a "press a key" screen is exactly what it would
       // cut off.
       stuckLimit: 0,
+      // The clock the region JIT needs, and only when it was asked for at
+      // startup (`?jit=1`, or the toggle's remembered answer). Anchoring the
+      // slice grid to the absolute dispatch count is what lets an install
+      // absorb a handback without moving everything after it -- but it also
+      // changes what a plain run plays, so a page nobody asked a JIT of keeps
+      // the shipped clock exactly. Toggling the JIT on mid-run therefore gets
+      // the region without the anchored grid, which is a weaker guarantee than
+      // the headless gate and is the honest cost of not restarting the demo
+      // under the person's hands.
+      // The lattice clock is an experiment behind run-dos.js --lattice-clock:
+      // it blanks BLIQ and moves every witness wav, so the page never turns
+      // it on, JIT or not (docs/toyvm-region-live.md).
+      latticeClock: false,
       // The JIT's profiler, and nothing else on this path: one map insert per
       // slice while it is profiling, and an early return once it is not.
       hooks: { afterSlice: (ev) => { if (this.jit) this.jit.sample(ev); } },

@@ -22,11 +22,43 @@
 // so an agreement between two arms that are both wrong cannot pass.
 
 const assert = require('assert');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { runDos } = require('../tools/toyvm/run-dos');
+const { wavBytes } = require('../tools/toyvm/audio');
 const { inlineBackend } = require('../tools/toyvm/region-prepare');
+
+// A tiny assembler with labels. The first program below is laid out by hand
+// with its addresses in the comments, which is readable exactly as long as
+// nothing is ever inserted into it; the second one has three forward branches
+// whose displacements would have to be recomputed by hand on every edit, so it
+// gets this instead. `.COM`, so everything is relative to 0x100.
+function asm() {
+  const b = [], labels = new Map(), fixups = [];
+  const at = () => 0x100 + b.length;
+  return {
+    w: (...x) => { b.push(...x); },
+    label(n) { labels.set(n, at()); },
+    rel8(n) { fixups.push({ i: b.length, n, size: 1 }); b.push(0); },
+    rel16(n) { fixups.push({ i: b.length, n, size: 2 }); b.push(0, 0); },
+    abs16(n) { fixups.push({ i: b.length, n, size: 2, abs: true }); b.push(0, 0); },
+    at,
+    done() {
+      for (const f of fixups) {
+        const target = labels.get(f.n);
+        assert.ok(target !== undefined, `no such label: ${f.n}`);
+        const v = f.abs ? target : target - (0x100 + f.i + f.size);
+        if (f.size === 1) {
+          assert.ok(v >= -128 && v <= 127, `${f.n} is out of rel8 range (${v})`);
+          b[f.i] = v & 0xFF;
+        } else { b[f.i] = v & 0xFF; b[f.i + 1] = (v >> 8) & 0xFF; }
+      }
+      return Buffer.from(b);
+    },
+  };
+}
 
 // An ODD iteration count, and a rep count that is not a multiple of 4. Both
 // matter: `dx ^= XOR` is its own inverse, so an even inner count returns dx to
@@ -123,6 +155,113 @@ function expected() {
   return { bx, si, dx };
 }
 
+// ---------------------------------------------------------------------------
+// THE EXIT THE AUDIT NEVER TAKES.
+//
+// The snapshot gate runs the region's ops 4000 times from a state the program
+// really reached and compares registers and memory with the interpreter. 4000
+// iterations of a loop whose behaviour changes on iteration 20,000 prove
+// nothing about iteration 20,000 -- the audit is a check on the LOWERING of the
+// ops it saw run, not a proof about every path through them. So this program
+// has a second exit that the audit window cannot reach: a comparison against a
+// counter that is only equal once, five outer reps in.
+//
+// If the region compiled that exit wrong -- a missing side exit, a successor
+// that resumes at the wrong ip, a flag the lowering never had to get right
+// because the audit never branched on it -- `bp` and the printed digits differ
+// from the interpreter, and nothing about the first 4000 iterations would have
+// said so.
+const SX_INNER = 0x0FFF;   // iterations of the hot loop per outer rep
+// Enough reps that the profile window (2M dispatches in, 4M wide) lands well
+// inside the loop and the install has millions of iterations left to be wrong
+// over. Roughly 12M iterations, ~75M dispatches.
+const SX_REPS = 3000;
+const SX_ADD = 5;
+const SX_XOR = 0x3C3C;
+// `si` counts across ALL reps and wraps at 16 bits, so this is equal once every
+// 65,536 iterations: five times the audit window before the first one, ~187
+// times over the run, and never on a rep boundary -- the state it exits from is
+// mid-loop with a different `di` each time.
+const SX_RARE = 0x5001;
+
+function sideExitProgram() {
+  const a = asm();
+  const { w } = a;
+  const lo = (n) => n & 0xFF, hi = (n) => (n >> 8) & 0xFF;
+  w(0xB9, lo(SX_REPS), hi(SX_REPS));       // mov cx,SX_REPS
+  w(0x31, 0xDB);                           // xor bx,bx
+  w(0x31, 0xF6);                           // xor si,si
+  w(0x31, 0xED);                           // xor bp,bp
+  a.label('outer');
+  w(0x31, 0xFF);                           // xor di,di
+  w(0x31, 0xD2);                           // xor dx,dx
+  w(0xE8); a.rel16('hot');                 // call hot
+  w(0x01, 0xD3);                           // add bx,dx
+  w(0xE2); a.rel8('outer');                // loop outer
+  // bx and bp, as eight hex digits, so a wrong answer is visible on the screen
+  // and not only in a register nobody prints.
+  w(0x89, 0xD8);                           // mov ax,bx
+  w(0xE8); a.rel16('hex');                 // call hex
+  w(0x89, 0xE8);                           // mov ax,bp
+  w(0xE8); a.rel16('hex');                 // call hex
+  w(0xB8, 0x00, 0x4C);                     // mov ax,4C00h
+  w(0xCD, 0x21);                           // int 21h
+  // ax as four hex digits through INT 21h/2. Clobbers ax, cx and dx, all dead
+  // at both call sites.
+  a.label('hex');
+  w(0x89, 0xC7);                           // mov di,ax
+  w(0xB9, 0x04, 0x00);                     // mov cx,4
+  a.label('hexloop');
+  w(0xC1, 0xC7, 0x04);                     // rol di,4
+  w(0x89, 0xF8);                           // mov ax,di
+  w(0x24, 0x0F);                           // and al,0Fh
+  w(0x04, 0x30);                           // add al,'0'
+  w(0x3C, 0x39);                           // cmp al,'9'
+  w(0x76, 0x02);                           // jbe +2
+  w(0x04, 0x07);                           // add al,7
+  w(0x88, 0xC2);                           // mov dl,al
+  w(0xB4, 0x02);                           // mov ah,2
+  w(0xCD, 0x21);                           // int 21h
+  w(0xE2); a.rel8('hexloop');              // loop hexloop
+  w(0xC3);                                 // ret
+  // The hot loop. Same shape as the one above -- head is the block head, the
+  // conditionals leave, the bottom `jmp` closes it -- with ONE MORE EXIT.
+  a.label('hot');
+  w(0x83, 0xC2, SX_ADD);                   // add dx,SX_ADD
+  w(0x81, 0xF2, lo(SX_XOR), hi(SX_XOR));   // xor dx,SX_XOR
+  w(0x46);                                 // inc si
+  w(0x47);                                 // inc di
+  w(0x81, 0xFF, lo(SX_INNER), hi(SX_INNER));  // cmp di,SX_INNER
+  w(0x74); a.rel8('sxdone');               // jz sxdone      <- the common exit
+  w(0x81, 0xFE, lo(SX_RARE), hi(SX_RARE)); // cmp si,SX_RARE
+  w(0x74); a.rel8('rare');                 // jz rare        <- taken ONCE, at 20481
+  w(0xEB); a.rel8('hot');                  // jmp hot
+  a.label('rare');
+  w(0x45);                                 // inc bp
+  w(0xC3);                                 // ret
+  a.label('sxdone');
+  w(0xC3);                                 // ret
+  return a.done();
+}
+
+// The same arithmetic in JavaScript, for the same reason as `expected()`.
+function sideExitExpected() {
+  let bx = 0, si = 0, bp = 0;
+  for (let r = 0; r < SX_REPS; r++) {
+    let dx = 0, di = 0;
+    for (;;) {
+      dx = (dx + SX_ADD) & 0xFFFF;
+      dx = (dx ^ SX_XOR) & 0xFFFF;
+      si = (si + 1) & 0xFFFF;
+      di = (di + 1) & 0xFFFF;
+      if (di === SX_INNER) break;
+      if (si === SX_RARE) { bp = (bp + 1) & 0xFFFF; break; }
+    }
+    bx = (bx + dx) & 0xFFFF;
+  }
+  return { bx, si, bp };
+}
+
 async function run(com, jit) {
   const r = await runDos({
     exe: com,
@@ -131,6 +270,18 @@ async function run(com, jit) {
     // rate: at the 2M default this whole program is a handful of samples and
     // the pick is a coin toss between two blocks.
     slice: 5e4,
+    // THE CLOCK THAT SHIPS, in both arms. `latticeClock` is left off here on
+    // purpose: the guarantee worth testing is that an install is invisible on
+    // the clock people actually run, not on an experimental one. See
+    // run-dos.js `latticeClock` and docs/toyvm-region-live.md.
+    // THE AUDIO CLOCK, RENDERED. Nothing here makes a sound, but the render is
+    // still a measurement of when the run loop handed back: the sample grid is
+    // a function of the dispatch count and the Sound Blaster's DMA is fetched
+    // at the instant a slice's audio is rendered. A region that ends its slice
+    // somewhere the interpreter would not, or an install that costs the run a
+    // handback it would not otherwise take, moves that instant -- and this is
+    // where it shows, byte for byte, without needing a demo that plays music.
+    audioRate: 22050,
     log: () => {},
     regionJit: jit ? {
       sampleAfter: 2e6, profileFor: 4e6, minOps: 2,
@@ -146,8 +297,10 @@ async function run(com, jit) {
   });
   const regs = r.vm.getAll();
   return {
-    bx: regs.bx, si: regs.si, dx: regs.dx,
+    bx: regs.bx, si: regs.si, dx: regs.dx, bp: regs.bp,
     frame: r.frame, cells: r.text.cells, written: r.machine.con.written,
+    wav: crypto.createHash('sha256')
+      .update(Buffer.from(wavBytes(r.audioChunks, r.audioRate))).digest('hex').slice(0, 16),
     dispatched: r.dispatched, jit: r.jit,
   };
 }
@@ -212,7 +365,47 @@ async function main() {
     `the dispatch clock moved by ${drift} across ${j.installs} install(s): `
     + `${on.dispatched} with the JIT vs ${off.dispatched} without`);
 
+  // --- and now the exit the audit never took ------------------------------
+  const sxCom = path.join(dir, 'SIDEEXIT.COM');
+  fs.writeFileSync(sxCom, sideExitProgram());
+  const sxWant = sideExitExpected();
+  assert.ok(sxWant.bp > 0,
+    `the rare exit is never reached (bp ${sxWant.bp}) -- SX_RARE must be hit `
+    + 'while si wraps, or this program says nothing about a side exit');
+  const sxOff = await run(sxCom, false);
+  const sxOn = await run(sxCom, true);
+  assert.strictEqual(sxOff.bx, sxWant.bx, `interpreter bx: got ${sxOff.bx}, want ${sxWant.bx}`);
+  assert.strictEqual(sxOff.bp, sxWant.bp, `interpreter bp: got ${sxOff.bp}, want ${sxWant.bp}`);
+  assert.strictEqual(sxOff.si, sxWant.si, `interpreter si: got ${sxOff.si}, want ${sxWant.si}`);
+  const sj = sxOn.jit;
+  assert.ok(sj && sj.installs >= 1,
+    `no region was installed over the side-exit loop (phase ${sj && sj.phase}`
+    + `${sj && sj.declined ? `: ${sj.declined}` : ''}) -- without an install this `
+    + 'program tests nothing');
+  // bp is the whole point: it counts the exits the 4000-iteration audit window
+  // never reached, and it is carried in a register the swap has to move.
+  for (const k of ['bx', 'si', 'bp']) {
+    assert.strictEqual(sxOn[k], sxOff[k],
+      `${k} differs with the JIT on over the late side exit: ${sxOn[k]} vs ${sxOff[k]}`);
+  }
+  assert.strictEqual(sxOn.frame, sxOff.frame, 'the frame hash differs over the late side exit');
+  assert.strictEqual(sxOn.cells, sxOff.cells, 'the text screen differs over the late side exit');
+  // The audio clock, byte for byte. See `run`.
+  assert.strictEqual(sxOn.wav, sxOff.wav,
+    `the rendered audio differs with the JIT on (${sxOn.wav} vs ${sxOff.wav}): the `
+    + 'region ended a slice somewhere the interpreter would not, or the install '
+    + 'cost the run a handback');
+  assert.strictEqual(on.wav, off.wav,
+    `the rendered audio differs with the JIT on (${on.wav} vs ${off.wav})`);
+  const sxDrift = Math.abs(sxOn.dispatched - sxOff.dispatched);
+  assert.ok(sxDrift <= sj.installs + sj.drops,
+    `the dispatch clock moved by ${sxDrift} across ${sj.installs} install(s) and `
+    + `${sj.drops} drop(s): ${sxOn.dispatched} with the JIT vs ${sxOff.dispatched} without`);
+
   fs.rmSync(dir, { recursive: true, force: true });
+  console.log(`PASS test-toyvm-region-live: side exit bp=${sxWant.bp} bx=0x${sxWant.bx.toString(16)}`
+    + ` identical over ${sj.installs} install(s), wav ${sxOn.wav}, `
+    + `${sxDrift} dispatch(es) apart`);
   console.log(`PASS test-toyvm-region-live: bx=0x${want.bx.toString(16)} si=${want.si} `
     + `identical interpreted and jitted; ${j.installs} install(s), ${j.drops} drop(s), `
     + `region at 0x${(j.at && j.at[0] || 0).toString(16)}, `

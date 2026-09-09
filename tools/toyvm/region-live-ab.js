@@ -63,14 +63,38 @@ function baseOpts(exe, budget) {
   return {
     exe, budget, pitClock: true, autoKey: true, soundPref: 'sb',
     env: ['ULTRASND=220,1,1,11,7'], audioRate: Number(arg('audio-rate', 22050)),
+    // Bisectors, passed to BOTH arms so they stay a comparison. `--no-spin`
+    // is the one that matters here: the interpreter folds a self-loop over
+    // nothing into a spin op that hands back once per slice, and a region
+    // installed over such a loop replaces that fold -- so the handback cadence
+    // moves, and with it every clock derived from it.
+    spinLoops: !flag('no-spin'),
+    // THE SHIPPED CLOCK BY DEFAULT, and `--lattice-clock` (BOTH arms, never
+    // one) for the experiment. Anchoring the slice grid to the absolute
+    // dispatch count is what would let a region absorb or add a handback
+    // without moving every later boundary -- but it is not a free rewrite: it
+    // changes the guest's own path on at least one program in this corpus
+    // (BLIQ.EXE, see docs/toyvm-region-live.md), so a gate run on it would be
+    // grading the JIT against a clock nobody runs. The headline gate is
+    // therefore taken on the clock that ships.
+    latticeClock: flag('lattice-clock'),
     log: () => {},
   };
 }
 
 async function once(exe, budget, jit) {
+  // `--slice-log-dir=DIR`: one file per arm holding the cumulative dispatch
+  // count at every handback. A frame hash says two runs ended somewhere
+  // different; these say WHERE THE CUT MOVED, which is what separates "the
+  // region computed something else" from "the region ended its slice one
+  // instruction along and the audio was rendered against a different grid".
+  const sliceDir = arg('slice-log-dir');
   const r = await runDos({
     ...baseOpts(exe, budget),
     cpuMeter: true,
+    sliceLogFile: sliceDir
+      ? path.join(sliceDir, `${path.basename(exe)}.${jit ? 'on' : 'off'}.slices`)
+      : null,
     regionJit: jit ? {
       sampleAfter: count(arg('region-jit-after'), 6e6),
       profileFor: count(arg('region-jit-window'), 6e6),

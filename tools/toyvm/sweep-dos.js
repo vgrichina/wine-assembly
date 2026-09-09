@@ -98,6 +98,14 @@ async function runOne(exe, o) {
         const v = variants[(i + rep) % variants.length];
         const r = await runDos({
           exe, variant: v, budget: o.budget, cpu: o.cpu, log: quiet, autoKey: true,
+          // Independent of --region-jit ON PURPOSE: an on/off pair that means
+          // anything has to hold the clock still in BOTH arms, so pass
+          // --lattice-clock to both runs of the pair. See run-dos.js.
+          latticeClock: o.latticeClock,
+          regionJit: o.regionJit ? {
+            sampleAfter: Math.floor(o.budget / 4), profileFor: Math.floor(o.budget / 4),
+            gateAt: 0, log: quiet,
+          } : null,
         });
         // Two checks, and they catch different things. ACROSS variants: four
         // shells that did not execute the same instructions cannot be compared,
@@ -175,7 +183,9 @@ function child(exe, o) {
     const args = [__filename, `--one=${exe}`, `--dispatches=${o.budget}`,
       `--reps=${o.reps}`, `--iters=${o.iters}`, `--cpu=${o.cpu}`,
       `--sample-after=${o.sampleAfter}`, `--sample-from=${o.sampleFrom}`,
-      `--min-ops=${o.minOps}`, `--variants=${o.variants.join(',')}`];
+      `--min-ops=${o.minOps}`, `--variants=${o.variants.join(',')}`,
+      ...(o.regionJit ? ['--region-jit'] : []),
+      ...(o.latticeClock ? ['--lattice-clock'] : [])];
     const p = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     p.stdout.on('data', (d) => { out += d; });
@@ -402,6 +412,22 @@ async function main() {
     cpu: Number(arg('cpu', 386)),
     timeout: Number(arg('timeout', 180)),
     variants: arg('variants', VARIANTS.join(',')).split(',').filter(Boolean),
+    // `--region-jit`: run the four interpreter shells with the LIVE region JIT
+    // installed, so a corpus-wide on/off pair can be diffed with sweep-diff.js.
+    // The profile window is a fraction of the budget rather than the run-loop
+    // default (6M in, 6M wide), which at this sweep's 8M budget would never
+    // finish profiling and would grade every program on a JIT that never
+    // engaged. The gate's SPEED bar is dropped for the same reason it is
+    // dropped in region-live-ab.js -- it is a measurement, and a busy box turns
+    // it into "installed nothing, compared nothing". Its agreement half still
+    // runs.
+    regionJit: flag('region-jit'),
+    // `--lattice-clock`: anchor the slice grid and the audio render to the
+    // absolute dispatch count (run-dos.js). Independent of --region-jit so an
+    // on/off sweep pair can set it on BOTH arms; without that the two arms run
+    // different clocks and every time-paced program in the corpus reports a
+    // difference the JIT did not cause.
+    latticeClock: flag('lattice-clock'),
   };
 
   const one = arg('one');

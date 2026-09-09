@@ -69,6 +69,7 @@
 // See that file's header for what a literal require of it costs.
 const { makeVm } = require('./vm');
 const { STATE, MACHINE_STATE, FPU_STATE } = require('./emit');
+const isa = require('./isa');
 
 const now = () => (typeof performance !== 'undefined' && performance.now
   ? performance.now() : Number(process.hrtime.bigint() / 1000n) / 1000);
@@ -344,7 +345,15 @@ class LiveJit {
     vm.rebind(next);
     // The machine caches the export table it pokes registers through, and the
     // VGA period is programmed once per change -- both have to be told.
-    if (this.machine) this.machine.setMemory(vm.mem, vm.exports);
+    //
+    // `setVmExports`, NOT `setMemory`: the latter is the boot-time reset (it
+    // reinstalls the IVT, clears the text page and rewrites the BIOS data
+    // area), and calling it here took the guest's own interrupt handlers away
+    // at the install. That was the whole of the "stops making progress" class
+    // -- ACCIDENT, BRW, CONTAGIO and DRAGON -- and none of those four ever
+    // executed a single region op: with `--trap` (a region body of
+    // `unreachable`) each reproduced its divergence exactly and never trapped.
+    if (this.machine) this.machine.setVmExports(vm.exports);
     if (vm.exports.set_rep_fast) vm.exports.set_rep_fast(this.repFast ? 1 : 0);
     this.session.vgaHz = 0;
 
@@ -353,15 +362,100 @@ class LiveJit {
     cache.regionSucc = new Map(prepared.picks.map(p => [p.key, p.succ]));
     cache.regionBytes = new Map(prepared.picks.map(p => [p.key, p.guard]));
     cache.regionCodeBits = true;
-    // Every block in the arena was compiled against the old table, and the head
-    // of each region has to be compiled again to become one word. Flushing is
-    // what a wide self-modify break already does, so the run loop is known to
-    // survive it.
-    cache.flush();
-    this.guards = prepared.picks.flatMap(p => p.guard);
+    // ONLY THE REGION'S OWN BYTES. This used to flush the whole cache, on the
+    // argument that every block in the arena was compiled against the old
+    // handler table. It was not: a region is an EXTRA entry appended to that
+    // table, so every index already in the arena still names the same handler
+    // in the new module, and the arena lives in the shared memory both
+    // instances import. The only block that has to be compiled again is the
+    // region's head, which has to come back as one word.
+    //
+    // Flushing was not merely wasteful, it was VISIBLE. Every live block then
+    // had to be re-compiled, and a block is compiled through a host round trip
+    // -- so the install added one handback per block in the working set, the
+    // run loop's slice boundaries moved, and everything derived from them moved
+    // with them: DRAGON.EXE came out with 6 more handbacks over 7244 and CYCLE
+    // with 15 over 651,113, both with the frame, the pixel count, the interrupt
+    // tally and the total dispatch count IDENTICAL and only the rendered audio
+    // different. `invalidateRange` is the same narrow drop a self-modifying
+    // store takes -- with two adjustments below, because an install is not a
+    // guest store and must not cost the run a handback either.
+    //
+    // Every block head that is about to be dropped, recorded BEFORE the drop:
+    // `invalidateRange` takes whole compiled PROGRAMS, not single blocks, so
+    // the region's head takes its neighbours with it -- on CYCLE.EXE the head
+    // at 682:cba shares a program with the block at 682:2bf, and it was 2bf
+    // the guest re-entered first.
+    const doomed = new Map();
+    const doomedProgs = new Set();
+    for (const g of this.guards0(prepared)) {
+      for (let p = g.lin >>> 4; p <= (g.lin + g.bytes.length - 1) >>> 4; p++) {
+        for (const prog of (cache.byPara.get(p) || [])) {
+          if (!prog.live) continue;
+          doomedProgs.add(prog);
+          for (const [bip] of prog.blocks) doomed.set(`${prog.cs}:${bip}`, [prog.cs, bip]);
+        }
+      }
+    }
+    // AND THE SHADOW RETURN STACK IS NOT EMPTIED, IT IS CHECKED.
+    // `invalidateRange` clears `$rtop` outright, which is right for a guest
+    // store (the arena addresses under it may name code the guest has just
+    // rewritten) and wrong here, because it costs the run a handback it would
+    // not otherwise have taken: the next `ret` misses, the slice exits early,
+    // and its unspent remainder shifts EVERY later slice boundary for the rest
+    // of the program. On CYCLE.EXE that one miss put all 650,000 following
+    // boundaries 33,909 dispatches early, and since the Sound Blaster's DMA is
+    // fetched when a slice's audio is rendered, the card read the guest's
+    // double buffer at a different instant of guest time from then on -- an
+    // identical frame, identical pixels, identical interrupts and a different
+    // wav. So look instead: an entry is stale only if its arena address falls
+    // inside a program this install is dropping, and the stack keeps whatever
+    // prefix is below the lowest such frame.
+    const rtop0 = vm.raw('rtop');
+    const stack = new Int32Array(vm.mem.buffer, isa.RSTACK_BASE, rtop0 * 3);
+    let keep = rtop0;
+    for (let i = 0; i < rtop0; i++) {
+      const a = stack[i * 3 + 1];
+      for (const prog of doomedProgs) {
+        if (a >= prog.arenaBase && a < prog.arenaBase + prog.words.length * 4) { keep = Math.min(keep, i); break; }
+      }
+    }
+    // ...but only when the drop really was narrow. `invalidateRange` falls back
+    // to a whole-cache `flush()` for a wide range or under `--smc-flush`, and a
+    // flush leaves no arena address anywhere valid.
+    const narrow = !cache.smcFlush
+      && this.guards0(prepared).every(g => ((g.lin + g.bytes.length - 1) >>> 4) - (g.lin >>> 4) <= 512);
+    for (const g of this.guards0(prepared)) cache.invalidateRange(g.lin, g.lin + g.bytes.length - 1);
+    vm.set('rtop', narrow ? keep : 0);
+    // ...AND COMPILE IT BACK HERE, NOT WHEN THE GUEST TRIPS OVER IT. A block
+    // the cache does not hold is a HANDBACK: $jlook misses, the slice exits,
+    // and the host compiles it before the next `run()`. So leaving the head
+    // dropped costs the run one extra handback -- once -- and the slice it
+    // interrupts is cut short, which moves EVERY LATER SLICE BOUNDARY by the
+    // unspent remainder for the rest of the program. Measured on CYCLE.EXE:
+    // the install's own handback landed 1856 dispatches into a 35,765-dispatch
+    // quantum and every one of the following 650,000 boundaries sat 33,909
+    // dispatches earlier than the interpreter's. Frame, pixels, interrupts and
+    // the total dispatch count were all identical -- but the Sound Blaster's
+    // DMA is fetched when the audio for a slice is rendered, so the card read
+    // the guest's double buffer at a different instant of guest time and the
+    // wav differed from sample 99,584 on. Compiling the head here is the same
+    // work the handback would have done, done on the host's turn instead.
+    const vmx = vm.exports;
+    const curCs = vm.get('cs') & 0xFFFF;
+    const codeBase = vmx.get_csb(), linmask = vmx.get_linmask(), d32 = vmx.get_d32() !== 0;
+    for (const [cs, bip] of doomed.values()) {
+      // Only what this CS's base still describes: a block compiled under
+      // another selector would be decoded here at the wrong linear address.
+      if ((cs & 0xFFFF) !== curCs) continue;
+      cache.entryFor(cs & 0xFFFF, bip, codeBase, linmask, d32);
+    }
+    this.guards = this.guards0(prepared);
     this.installedAt = prepared.picks.map(p => p.headIp);
     this.ms.swap = now() - ts;
   }
+
+  guards0(prepared) { return prepared.picks.flatMap(p => p.guard); }
 
   // Give the backend back. A worker outlives the page's run otherwise, and a
   // demo that is stopped mid-preparation would leave one compiling a module for
@@ -396,12 +490,35 @@ class LiveJit {
 // a deferred lazy-flag rule and retire it, so the arithmetic bits survive the
 // move. A raw copy of $flags would carry a word that had not been computed yet.
 function carryState(from, to) {
+  const machine = () => {
+    for (const g of MACHINE_STATE) {
+      if (from[`mget_${g}`] && to[`mset_${g}`]) to[`mset_${g}`](from[`mget_${g}`]());
+    }
+  };
+  // THE ORDER IS THE WHOLE OF THIS FUNCTION, AND IT USED TO BE WRONG.
+  //
+  // A segment register is not stored, it is RESOLVED: `set_es` goes through
+  // $sset, which calls $segbase, which reads $cr0, $vm86, $gdtb, $gdtl and
+  // $ldtb -- every one of them in MACHINE_STATE. Carrying STATE first therefore
+  // resolved each of the six selectors on an instance still holding its
+  // DEFAULTS: cr0 without PE, an empty GDT. $segbase's out-of-limit rule then
+  // reads the selector as a real-mode paragraph, so a protected-mode program
+  // came out of the swap with all six shadow bases at `selector << 4` and every
+  // segmented access landing somewhere it never asked for. That was CONTAGIO
+  // (a DOS extender) and BRW, both of which stopped dead at the install --
+  // and, like the IVT bug above them, neither ever executed a region op:
+  // `--trap` reproduced both divergences without trapping.
+  //
+  // So: the machine first, so the descriptor tables are there to resolve
+  // against; then the architectural state; then the machine AGAIN, because
+  // $sset publishes two MACHINE_STATE globals of its own ($d32 from CS's D bit,
+  // $spm from SS's B bit) and the V86 case needs the value the old instance
+  // actually held rather than the one a descriptor walk re-derives.
+  machine();
   for (const g of STATE) {
     if (from[`get_${g}`] && to[`set_${g}`]) to[`set_${g}`](from[`get_${g}`]());
   }
-  for (const g of MACHINE_STATE) {
-    if (from[`mget_${g}`] && to[`mset_${g}`]) to[`mset_${g}`](from[`mget_${g}`]());
-  }
+  machine();
   if (from.fget_st && to.fset_st) {
     for (let i = 0; i < 8; i++) to.fset_st(i, from.fget_st(i));
     for (const g of FPU_STATE) to[`fset_${g}`](from[`fget_${g}`]());

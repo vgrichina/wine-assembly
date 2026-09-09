@@ -1025,6 +1025,18 @@ function isTransfer(op) {
   return TAKEN_AT.has(op.fn) || /^(call_rel(32)?|ret(32)?)$/.test(op.name);
 }
 
+// Does this op body observe the dispatch clock? `$steps` and `$slice_budget`
+// read it directly ($vga_status does, for port 3DAh); a call out to the host's
+// port handlers observes it too, because the host stamps every port write with
+// `sliceStart + (sliceBudget - steps)` so the audio renderer can place it on a
+// sample (Machine.audioNow). Anything here has to see the same value the
+// interpreter would have left, so the region's deferred `$steps` charge is
+// flushed in front of it -- see the call site in buildRegion.
+const CLOCK_READERS = /\$steps|\$slice_budget|\$vga_status|\$port_in|\$port_out/;
+function readsClock(body) {
+  return CLOCK_READERS.test(body || '');
+}
+
 // `why` (optional) collects ip -> which op and which role put it in the list.
 // A successor that turns out to be a bad address is a decode of code that is
 // not code, and the only way to argue about it is to know which branch named it.
@@ -1272,14 +1284,54 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
   // stitching is wrong" from "the looping protocol is wrong", which produce the
   // same wrong frame. It is slower than the interpreter by construction.
   const once = flag('once');
+  // THE SLICE MUST END WHERE THE INTERPRETER WOULD HAVE ENDED IT.
+  //
+  // `$steps` is not just a budget, it IS the emulated clock: dos-loop bills
+  // `budget - $steps` per slice, `machine.setClock` and `audioAdvance` are both
+  // derived from it, and port writes are stamped with `sliceStart + (budget -
+  // $steps)` (Machine.audioNow). So a region that ends its slice at a different
+  // guest instruction from the interpreter does not merely stop somewhere else
+  // -- it renders the same sound against a different timeline and, at a fixed
+  // dispatch budget, photographs the program at a different instant.
+  //
+  // The interpreter takes its boundary at EVERY transfer: `GO` publishes $gip
+  // for the edge it is taking and then tests `$smc || $steps < 0` (emit.js
+  // CONT), including on the inlined not-taken arm of a traced branch
+  // (`jccTraceBody`). A region used to test only at its own back edge, once per
+  // iteration, and with `$steps > 0` rather than `>= 0` -- so it ran on past
+  // block boundaries the interpreter stopped at. Measured on DREAM.EXE that is
+  // +4761 dispatches over an 80M budget and a frame 180 pixels different, and
+  // it is the whole of the "audio only" class (DHADREN, ACCIDENT, CYCLE,
+  // DRAGON): same picture, same interrupt count, a wav rendered against slices
+  // that started and ended elsewhere.
+  //
+  // So `edge()` puts the interpreter's own test on every lowered edge, in the
+  // interpreter's own order: publish $gip, test, and either leave through
+  // `$out` (where the epilogue's `leave` finds `$steps < 0` and calls
+  // `$slice_exit`, exactly as `GO` would) or do what the region wanted to do.
+  // `--no-exact-slice` restores the old one-test-per-iteration protocol; it is
+  // a bisector, and the reason to reach for it is to price this test, not to
+  // ship without it.
+  const exact = !flag('no-exact-slice');
+  const boundaryTest = `(i32.or (i32.or (global.get $smc) (global.get $halt))`
+    + ` (i32.lt_s (global.get $steps) (i32.const 0)))`;
+  const edge = (ip, act) => (!exact ? (act || '')
+    : `(global.set $gip (i32.const ${ip}))`
+      + `\n(if ${boundaryTest}\n  (then (br $out))\n  (else ${act || '(nop)'}))`);
+  // With the boundary already taken on the edge, everything downstream of it
+  // has a budget by construction, so the looping tests below are the
+  // interpreter's `>= 0` and not a second, stricter bar. Under `--once` there
+  // is no back edge at all.
   const okToLoop = once ? '(i32.const 0)'
+    : exact ? '(i32.const 1)'
     : `(i32.and (i32.gt_s (global.get $steps) (i32.const 0))`
     + ` (i32.eqz (i32.or (global.get $halt) (global.get $smc))))`;
   const backEdge = once ? ';; --once: no back edge'
     : `(br_if $again (i32.and (i32.and`
     + ` (i32.eq (global.get $gip) (i32.const ${headIp}))`
-    + ` (i32.eqz (global.get $halt)))`
-    + ` (i32.gt_s (global.get $steps) (i32.const 0))))`;
+    + ` (i32.eqz (i32.or (global.get $halt)`
+    + ` ${exact ? '(global.get $smc)' : '(i32.const 0)'})))`
+    + ` (i32.${exact ? 'ge' : 'gt'}_s (global.get $steps) (i32.const 0))))`;
   // Inner loops, by the op that opens them and the branch that closes them.
   // `try/finally` around the op so every `continue` still emits the close.
   const opensAt = new Map(), closesAt = new Map(), exitsAt = new Map();
@@ -1402,7 +1454,7 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
       if (owed) out.push(`(global.set $steps (i32.sub (global.get $steps) (i32.const ${owed})))`);
       owed = 0;
     };
-    const armOf = (k, ip) => {
+    const armOf0 = (k, ip) => {
       const e = kindOf(k, ip);
       if (e.t === 'join') return join;
       if (e.t === 'fall') return '';
@@ -1415,6 +1467,9 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
       if (e.t === 'fwd' && fwdN.has(`${k}:${ip}`)) return `(br $df_${id}_${fwdN.get(`${k}:${ip}`)})`;
       return exitTo(ip);
     };
+    // A detour's own transfers are block boundaries like any other, so they get
+    // the same edge() treatment as the main path's.
+    const armOf = (k, ip) => edge(ip, armOf0(k, ip));
     for (let k = 0; k < n; k++) {
       const idx = f.start + k, op = d.ops[k], last = k === n - 1;
       const closeF = fwds.filter(x => x.hi === k), openL = loops.filter(x => x.a === k), openF = fwds.filter(x => x.lo === k);
@@ -1424,18 +1479,26 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
       for (const x of openF.sort((p, q) => q.hi - p.hi)) out.push(`(block $df_${id}_${fwdN.get(`${x.op}:${x.ip}`)}`);
       owed++;
       const l = low[k];
+      // Same rule as the main path: an op that observes the dispatch clock is
+      // billed before it runs, not after the arm it is in.
+      if (!l && exact && readsClock(t3.bodies3[idx])) bill();
       if (!l) { out.push(resolveGoArena(t3.bodies3[idx])); }
       else {
         bill();
         out.push(l.pre);
+        // The emptiness tests are on the UNWRAPPED arm: `edge()` never returns
+        // an empty string, and "the arm's last op falls off the end of the
+        // detour" is still the thing being refused here.
         if (l.cond) {
-          const a = armOf(k, l.edges[0]), b = armOf(k, l.edges[1]);
-          if (last && a === '' || last && b === '') return null;
-          out.push(`(if ${l.test}\n  (then ${a})\n  (else ${b}))`);
+          const a0 = armOf0(k, l.edges[0]), b0 = armOf0(k, l.edges[1]);
+          if (last && a0 === '' || last && b0 === '') return null;
+          out.push(`(if ${l.test}\n  (then ${armOf(k, l.edges[0])})`
+            + `\n  (else ${armOf(k, l.edges[1])}))`);
         } else {
+          const a0 = armOf0(k, l.edges[0]);
+          if (last && a0 === '') return null;
           const a = armOf(k, l.edges[0]);
-          if (last && a === '') return null;
-          if (a) out.push(a);
+          if (a0 || exact) out.push(a);
         }
       }
       for (const x of loops.filter(x => x.b === k)) out.push(`)) ;; end detour loop ${loopN.get(`${x.a}:${x.b}`)}`);
@@ -1468,6 +1531,18 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
     pending++;
     const isLast = i === mainLen - 1;
     const branch = isTransfer(op);
+    // ...AND BY THE CLOCK. `$steps` is not only the budget: `$vga_status`
+    // answers port 3DAh from `$slice_budget - $steps`, and every port write
+    // goes out to the host, which stamps it with the same expression
+    // (Machine.audioNow) so the sample it lands on can be found when the slice
+    // is rendered. An `in`/`out` inside a region therefore reads a clock that
+    // is `pending` ops stale, and the sound comes out timed against a
+    // different instant from the interpreter's. So bill before it, INCLUDING
+    // this op: `$next` charges the step before the handler runs.
+    if (!branch && exact && readsClock(t3.bodies3[i])) {
+      parts.push(`(global.set $steps (i32.sub (global.get $steps) (i32.const ${pending})))`);
+      pending = 0;
+    }
     // $steps is only ever READ by a branch handler (it is what makes a slice
     // end), so charging it just before one is exact rather than approximate:
     // the guest sees the same budget at the same instruction as it would have
@@ -1498,7 +1573,7 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
         if (!detourMemo.has(ip)) detourMemo.set(ip, detourArm(dt.get(ip)));
         return detourMemo.get(ip);
       };
-      const act = (ip) => (closing(i, ip) !== undefined ? innerBr(closing(i, ip))
+      const act0 = (ip) => (closing(i, ip) !== undefined ? innerBr(closing(i, ip))
         : ip === cont && !isLast ? ''
         : detour(ip) !== null ? detour(ip)
         : fw && fw.has(ip) ? `(br $f_${fw.get(ip)})`
@@ -1510,8 +1585,15 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
         return { declined: `${op.name} continues to ${cont} which is neither of its edges` };
       }
       parts.push(lowered.pre);
-      const thenAct = act(lowered.thenIp), elseAct = act(lowered.elseIp);
-      parts.push(`(if ${lowered.cond}\n  (then ${thenAct})\n  (else ${elseAct}))`);
+      // The boundary goes on the EDGE, not around the branch: $gip is the edge
+      // being taken, and the interpreter publishes it before it tests.
+      const thenAct = act0(lowered.thenIp), elseAct = act0(lowered.elseIp);
+      parts.push(`(if ${lowered.cond}`
+        + `\n  (then ${edge(lowered.thenIp, thenAct)})`
+        + `\n  (else ${edge(lowered.elseIp, elseAct)}))`);
+      // Counted off the region's OWN acts. Under `exact` every edge carries a
+      // `br $out` for the spent-budget case, and counting those would report
+      // every edge as an exit.
       exits += (thenAct.includes('$out') ? 1 : 0) + (elseAct.includes('$out') ? 1 : 0);
       continue;
     }
@@ -1532,12 +1614,12 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
       }
       if (jump.ip !== cont) return { declined: `${op.name} goes to ${jump.ip}, not ${cont}` };
       parts.push(jump.pre);
-      if (closing(i, jump.ip) !== undefined) {
-        parts.push(innerBr(closing(i, jump.ip)));
-      } else if (jump.ip === headIp) {
-        parts.push(`(if ${okToLoop} (then (br $again))`
-          + ` (else (global.set $gip (i32.const ${jump.ip})) (br $out)))`);
-      }
+      // An unconditional transfer is a block boundary too -- see edge().
+      parts.push(edge(jump.ip,
+        closing(i, jump.ip) !== undefined ? innerBr(closing(i, jump.ip))
+          : jump.ip === headIp ? `(if ${okToLoop} (then (br $again))`
+            + ` (else (global.set $gip (i32.const ${jump.ip})) (br $out)))`
+            : ''));
       continue;
     }
     // Last resort before giving up on this transfer: strip the GO and leave.
@@ -1550,7 +1632,10 @@ function buildRegion(rawOps, nexts, headIp, name, closed = true, inner = [], for
       // As the last op its fall-out IS the back edge, which is tested below and
       // reads the $gip this just published -- so a `ret` back to the head still
       // keeps the loop, exactly as the lowered conditionals do.
+      // The boundary here needs no `global.set $gip`: the stripped GO already
+      // published the computed destination.
       if (!isLast) { parts.push('(br $out)'); exits++; }
+      else if (exact) parts.push(`(br_if $out ${boundaryTest})`);
       continue;
     }
     parts.push(resolveGoArena(t3.bodies3[i]));

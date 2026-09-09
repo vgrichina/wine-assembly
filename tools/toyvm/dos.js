@@ -2004,8 +2004,33 @@ class Machine {
     return `${s}\r\n`;
   }
 
+  // Point the machine at a NEW instance's export table, and change nothing
+  // else. This exists because `setMemory` below is a RESET and not a rebind:
+  // it clears the text page, reinstalls the interrupt vector table, rewrites
+  // the BIOS data area and re-stamps the video ROM, all of which is right at
+  // boot and catastrophic mid-run. The live region JIT swaps the wasm instance
+  // underneath a running program (region-live.js `install`), and calling
+  // setMemory there handed the guest a fresh IVT -- so a demo that had hooked
+  // INT 08h/09h/1Ch lost its own handlers at the install and stopped making
+  // progress from that dispatch on. ACCIDENT, BRW, CONTAGIO and DRAGON all
+  // died of exactly this, and none of them ever entered the compiled region:
+  // `--trap` (a region body of `unreachable`) reproduced every one of their
+  // divergences byte for byte without trapping.
+  //
+  // The memory itself does not move -- both instances import the same
+  // WebAssembly.Memory -- so every view the machine already holds stays valid
+  // and only the export table has to be replaced.
+  setVmExports(ex) {
+    this.vmExports = ex || null;
+    return this;
+  }
+
   // `ex` is the VM's export object, and the only thing the machine ever wants
   // from it is `set_linmask` -- see openBus below.
+  //
+  // NOT a rebind: see setVmExports. Everything below re-stamps the machine into
+  // its boot state, so this is for the ONE call that happens before the guest
+  // runs.
   setMemory(mem, ex) {
     this.mem = mem;
     this.vmExports = ex || null;

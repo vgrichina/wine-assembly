@@ -31,6 +31,17 @@ const { buildModule } = require('./vm');
 const now = () => (typeof performance !== 'undefined' && performance.now
   ? performance.now() : Number(process.hrtime.bigint() / 1000n) / 1000);
 
+// `--region-dump=DIR`: the wasm body of every region this install builds, as
+// text, one file per region. region-jit's own `--dump` covers the BENCH path
+// and cannot see a live install at all, and "is the protocol I just changed
+// actually in the module the guest is running" is not a question a frame hash
+// can answer. Node only -- the worker has no filesystem and no argv.
+function dumpDir() {
+  if (typeof process === 'undefined' || !Array.isArray(process.argv)) return null;
+  const hit = process.argv.find(a => a.startsWith('--region-dump='));
+  return hit ? hit.slice('--region-dump='.length) : null;
+}
+
 // Pick, build, guard, audit and compile, from nothing but plain data.
 async function prepareRegions(bundle) {
   const t0 = now();
@@ -135,6 +146,15 @@ async function prepareRegions(bundle) {
     };
   }
 
+  const dir = dumpDir();
+  if (dir) {
+    const fs = require('fs'), path = require('path');
+    fs.mkdirSync(dir, { recursive: true });
+    for (const p of out) {
+      const f = path.join(dir, `region-0x${p.headIp.toString(16)}.wat`);
+      fs.writeFileSync(f, `(func $${p.region.name} ${p.region.locals}\n${p.region.body}\n)\n`);
+    }
+  }
   const built = await buildModule(bundle.variant, { regions: out.map(p => p.region) });
   return {
     picks: out, bytes: built.bytes, gate: { agree: true, ratio },
