@@ -35,13 +35,29 @@ internal storage. With both calls implemented, the exact ISO runs for the
 full 180-second probe without an unimplemented-API crash (104,697 API calls,
 2,721 batches) and creates the main 640x480 DirectDraw surface.
 
-The diagnostic v4 profile used the documented `DisableOpeningMovie=1`
-fallback in `Alpha Centauri.ini`. Without it the 30 MB opening WVE can appear
-as a logo followed by a permanent black screen. The Firaxis splash still
-renders, then the game advances to its menu.
+The 30 MB `D:\movies\opening.wve` exposed two independent emulator bugs. ISO
+files are fetched lazily in the browser, but `mmioRead` originally treated the
+provider's pending result as EOF instead of parking and retrying the Win32
+call. The proof was the first four-byte read returning zero followed by the
+player's `mmioSeek(-4, SEEK_CUR)` still starting from position zero. `mmioRead`
+now uses the same pending-I/O retry contract as `ReadFile`; after resumption the
+player reads the WVE header and then progresses contiguously through the file.
 
-Focused coverage lives in `test/test-wat-font-resource.js` and
-`test/test-wat-mmio.js`.
+Once reads worked, the movie animated with severely corrupted horizontal
+bands. This was already present in both raw 640x480 RGB565 DirectDraw surfaces,
+so it was not a browser palette or presentation error. The EA TQI bit reader
+uses `SHLD eax, edx, cl` at one cached instruction address with a changing bit
+offset. The decoder had incorrectly sampled ECX while compiling the block and
+embedded that first count in the threaded instruction. Every later execution
+therefore reused a stale shift width and produced bad transform coefficients.
+The CL forms of SHLD/SHRD now carry an out-of-byte-range marker in decoded code
+and read `CL & 31` in the execution handler. The original ISO now shows a
+coherent, animated Firaxis opening in Chrome; `DisableOpeningMovie=1` remains a
+useful diagnostic shortcut, but is no longer required for startup.
+
+Focused coverage lives in `test/test-wat-font-resource.js`,
+`test/test-wat-mmio.js`, and the cached-block SHLD/SHRD cases in
+`test/test-x86-ops.js`.
 
 ## Menu and Quick Start gameplay
 

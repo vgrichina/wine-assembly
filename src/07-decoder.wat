@@ -4778,7 +4778,10 @@
               (call $decode_modrm)
               (if (i32.eq (local.get $op) (i32.const 0xA4))
                 (then (local.set $imm (call $d_fetch8)))
-                (else (local.set $imm (i32.and (global.get $ecx) (i32.const 31)))))
+                ;; CL is an execution-time operand. Decoded blocks are cached,
+                ;; so baking the decoder's current ECX here made every later
+                ;; execution reuse the first count seen at this EIP.
+                (else (local.set $imm (i32.const 0x100))))
               (if (local.get $prefix_66)
                 (then ;; 16-bit SHLD
                   (if (i32.eq (global.get $mr_mod) (i32.const 3))
@@ -4804,7 +4807,7 @@
               (call $decode_modrm)
               (if (i32.eq (local.get $op) (i32.const 0xAC))
                 (then (local.set $imm (call $d_fetch8)))
-                (else (local.set $imm (i32.and (global.get $ecx) (i32.const 31)))))
+                (else (local.set $imm (i32.const 0x100))))
               (if (local.get $prefix_66)
                 (then ;; 16-bit SHRD
                   (if (i32.eq (global.get $mr_mod) (i32.const 3))

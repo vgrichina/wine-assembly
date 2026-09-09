@@ -15,8 +15,41 @@ const { bootRenderHarness } = require('./render-helper');
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
   (func (export "test_mmio_esp") (result i32) (global.get $esp))
+  (func (export "test_mmio_lazy_read")
+        (param $handle i32) (param $buf i32) (param $count i32) (result i32)
+    (call $handle_mmioRead
+      (local.get $handle) (local.get $buf) (local.get $count)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_mmio_set_call_state") (param $esp_value i32) (param $thunk i32)
+    (global.set $esp (local.get $esp_value))
+    (global.set $current_thunk_eip (local.get $thunk))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0)))
   `;
-  const { exports: wat, memory } = await bootRenderHarness({ extraWat });
+  let wat;
+  let lazyReads = 0;
+  const lazyPayload = Uint8Array.from([0x53, 0x4d, 0x41, 0x43]);
+  const { exports, memory } = await bootRenderHarness({
+    extraWat,
+    extraHostOverrides: {
+      fs_read_file(handle, buffer, requested, count) {
+        if (handle !== 0x70000120) return 0;
+        assert.strictEqual(requested, lazyPayload.length);
+        lazyReads++;
+        if (lazyReads === 1) return 0;
+        for (let i = 0; i < lazyPayload.length; i++) {
+          wat.guest_write8(buffer + i, lazyPayload[i]);
+        }
+        wat.guest_write32(count, lazyPayload.length);
+        return 1;
+      },
+      fs_read_pending() {
+        return lazyReads === 1 ? 1 : 0;
+      },
+    },
+  });
+  wat = exports;
   const setBuffer = (handle, buffer, size, flags = 0) =>
     wat.test_call_mmioSetBuffer(handle, buffer, size, flags);
   const imageBase = wat.get_image_base() >>> 0;
@@ -73,7 +106,33 @@ const { bootRenderHarness } = require('./render-helper');
   assert.strictEqual(setBuffer(0x70000107, 0, 256, 1), 5,
     'reserved flags must be zero');
 
-  console.log('PASS: mmio FOURCC conversion and buffer management');
+  const lazyBuffer = wat.guest_alloc(lazyPayload.length) >>> 0;
+  const lazyEsp = 0x30000;
+  const lazyThunk = 0x0badf00d;
+  wat.test_mmio_set_call_state(lazyEsp, lazyThunk);
+  assert.strictEqual(wat.test_mmio_lazy_read(0x70000120, lazyBuffer, lazyPayload.length), 0,
+    'a pending provider read does not masquerade as bytes read');
+  assert.strictEqual(wat.get_yield_reason(), 12,
+    'a pending mmioRead parks on IO_WAIT');
+  assert.strictEqual(wat.test_mmio_esp() >>> 0, lazyEsp,
+    'the mmioRead stdcall frame remains intact while parked');
+  assert.strictEqual(wat.get_eip() >>> 0, lazyThunk,
+    'the pending read retries from the original API thunk');
+
+  wat.test_mmio_set_call_state(lazyEsp, lazyThunk);
+  assert.strictEqual(
+    wat.test_mmio_lazy_read(0x70000120, lazyBuffer, lazyPayload.length),
+    lazyPayload.length,
+    'the resumed mmioRead reports the resident provider bytes');
+  assert.strictEqual(wat.test_mmio_esp() >>> 0, lazyEsp + 16,
+    'the successful retry pops the stdcall frame once');
+  assert.deepStrictEqual(
+    Array.from(lazyPayload, (_, i) => wat.guest_read8(lazyBuffer + i)),
+    Array.from(lazyPayload),
+    'the resumed provider bytes reach the movie buffer');
+  assert.strictEqual(lazyReads, 2, 'one pending mmioRead is retried exactly once');
+
+  console.log('PASS: mmio FOURCC conversion, buffer management, and lazy-read retry');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);

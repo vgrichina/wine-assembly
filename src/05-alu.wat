@@ -2046,8 +2046,12 @@
 
   ;; 258: SHLD r16, r16, count (op=dst<<4|src, count next word)
   (func $th_shld16 (param $op i32)
-    (local $count i32) (local $dst i32) (local $src i32) (local $d i32) (local $s i32) (local $r i32)
-    (local.set $count (i32.and (call $read_thread_word) (i32.const 31)))
+    (local $count i32) (local $encoded_count i32) (local $dst i32) (local $src i32) (local $d i32) (local $s i32) (local $r i32)
+    (local.set $encoded_count (call $read_thread_word))
+    (local.set $count (i32.and
+      (select (global.get $ecx) (local.get $encoded_count)
+        (i32.eq (local.get $encoded_count) (i32.const 0x100)))
+      (i32.const 31)))
     (local.set $d (i32.shr_u (local.get $op) (i32.const 4)))
     (local.set $s (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $dst (i32.and (call $get_reg (local.get $d)) (i32.const 0xFFFF)))
@@ -2061,8 +2065,12 @@
     (return_call $next))
   ;; 259: SHRD r16, r16, count
   (func $th_shrd16 (param $op i32)
-    (local $count i32) (local $dst i32) (local $src i32) (local $d i32) (local $s i32) (local $r i32)
-    (local.set $count (i32.and (call $read_thread_word) (i32.const 31)))
+    (local $count i32) (local $encoded_count i32) (local $dst i32) (local $src i32) (local $d i32) (local $s i32) (local $r i32)
+    (local.set $encoded_count (call $read_thread_word))
+    (local.set $count (i32.and
+      (select (global.get $ecx) (local.get $encoded_count)
+        (i32.eq (local.get $encoded_count) (i32.const 0x100)))
+      (i32.const 31)))
     (local.set $d (i32.shr_u (local.get $op) (i32.const 4)))
     (local.set $s (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $dst (i32.and (call $get_reg (local.get $d)) (i32.const 0xFFFF)))
@@ -2076,9 +2084,13 @@
     (return_call $next))
   ;; 260: SHLD [mem], r16, count (op=src, addr+count in words)
   (func $th_shld16_m (param $op i32)
-    (local $addr i32) (local $count i32) (local $dst i32) (local $src i32) (local $r i32)
+    (local $addr i32) (local $count i32) (local $encoded_count i32) (local $dst i32) (local $src i32) (local $r i32)
     (local.set $addr (call $read_addr))
-    (local.set $count (i32.and (call $read_thread_word) (i32.const 31)))
+    (local.set $encoded_count (call $read_thread_word))
+    (local.set $count (i32.and
+      (select (global.get $ecx) (local.get $encoded_count)
+        (i32.eq (local.get $encoded_count) (i32.const 0x100)))
+      (i32.const 31)))
     (local.set $dst (call $gl16 (local.get $addr)))
     (local.set $src (i32.and (call $get_reg (local.get $op)) (i32.const 0xFFFF)))
     (if (i32.and (i32.gt_u (local.get $count) (i32.const 0)) (i32.le_u (local.get $count) (i32.const 16))) (then
@@ -2090,9 +2102,13 @@
     (return_call $next))
   ;; 261: SHRD [mem], r16, count
   (func $th_shrd16_m (param $op i32)
-    (local $addr i32) (local $count i32) (local $dst i32) (local $src i32) (local $r i32)
+    (local $addr i32) (local $count i32) (local $encoded_count i32) (local $dst i32) (local $src i32) (local $r i32)
     (local.set $addr (call $read_addr))
-    (local.set $count (i32.and (call $read_thread_word) (i32.const 31)))
+    (local.set $encoded_count (call $read_thread_word))
+    (local.set $count (i32.and
+      (select (global.get $ecx) (local.get $encoded_count)
+        (i32.eq (local.get $encoded_count) (i32.const 0x100)))
+      (i32.const 31)))
     (local.set $dst (call $gl16 (local.get $addr)))
     (local.set $src (i32.and (call $get_reg (local.get $op)) (i32.const 0xFFFF)))
     (if (i32.and (i32.gt_u (local.get $count) (i32.const 0)) (i32.le_u (local.get $count) (i32.const 16))) (then
@@ -2803,9 +2819,13 @@
 
   ;; 223: SHLD [mem], src, count. op=src, addr in next word, count in word after.
   (func $th_shld_m (param $op i32)
-    (local $addr i32) (local $count i32) (local $dst i32) (local $src i32) (local $r i32)
+    (local $addr i32) (local $count i32) (local $encoded_count i32) (local $dst i32) (local $src i32) (local $r i32)
     (local.set $addr (call $read_addr))
-    (local.set $count (i32.and (call $read_thread_word) (i32.const 31)))
+    (local.set $encoded_count (call $read_thread_word))
+    (local.set $count (i32.and
+      (select (global.get $ecx) (local.get $encoded_count)
+        (i32.eq (local.get $encoded_count) (i32.const 0x100)))
+      (i32.const 31)))
     (local.set $dst (call $gl32 (local.get $addr)))
     (local.set $src (call $get_reg (local.get $op)))
     (if (local.get $count) (then
@@ -2818,9 +2838,13 @@
 
   ;; 224: SHRD [mem], src, count. Same encoding as SHLD_m.
   (func $th_shrd_m (param $op i32)
-    (local $addr i32) (local $count i32) (local $dst i32) (local $src i32) (local $r i32)
+    (local $addr i32) (local $count i32) (local $encoded_count i32) (local $dst i32) (local $src i32) (local $r i32)
     (local.set $addr (call $read_addr))
-    (local.set $count (i32.and (call $read_thread_word) (i32.const 31)))
+    (local.set $encoded_count (call $read_thread_word))
+    (local.set $count (i32.and
+      (select (global.get $ecx) (local.get $encoded_count)
+        (i32.eq (local.get $encoded_count) (i32.const 0x100)))
+      (i32.const 31)))
     (local.set $dst (call $gl32 (local.get $addr)))
     (local.set $src (call $get_reg (local.get $op)))
     (if (local.get $count) (then
@@ -2907,8 +2931,12 @@
 
   ;; --- SHLD/SHRD ---
   (func $th_shld (param $op i32)
-    (local $count i32) (local $dst i32) (local $src i32) (local $d i32) (local $s i32) (local $r i32)
-    (local.set $count (i32.and (call $read_thread_word) (i32.const 31)))
+    (local $count i32) (local $encoded_count i32) (local $dst i32) (local $src i32) (local $d i32) (local $s i32) (local $r i32)
+    (local.set $encoded_count (call $read_thread_word))
+    (local.set $count (i32.and
+      (select (global.get $ecx) (local.get $encoded_count)
+        (i32.eq (local.get $encoded_count) (i32.const 0x100)))
+      (i32.const 31)))
     (local.set $d (i32.shr_u (local.get $op) (i32.const 4)))
     (local.set $s (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $dst (call $get_reg (local.get $d)))
@@ -2921,8 +2949,12 @@
         (i32.and (i32.shr_u (local.get $dst) (i32.sub (i32.const 32) (local.get $count))) (i32.const 1)))))
     (return_call $next))
   (func $th_shrd (param $op i32)
-    (local $count i32) (local $dst i32) (local $src i32) (local $d i32) (local $s i32) (local $r i32)
-    (local.set $count (i32.and (call $read_thread_word) (i32.const 31)))
+    (local $count i32) (local $encoded_count i32) (local $dst i32) (local $src i32) (local $d i32) (local $s i32) (local $r i32)
+    (local.set $encoded_count (call $read_thread_word))
+    (local.set $count (i32.and
+      (select (global.get $ecx) (local.get $encoded_count)
+        (i32.eq (local.get $encoded_count) (i32.const 0x100)))
+      (i32.const 31)))
     (local.set $d (i32.shr_u (local.get $op) (i32.const 4)))
     (local.set $s (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $dst (call $get_reg (local.get $d)))
