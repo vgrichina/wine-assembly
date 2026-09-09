@@ -1161,6 +1161,17 @@ call at all, so `AX` comes back unchanged rather than `0x004F`, and the demo
 takes its own no-VESA path. **How many other rows want VBE has not been
 measured, and that number is what decides whether this is worth building.**
 
+**RESOLVED.** It has been measured — `tools/toyvm/vbe-census.js`, 199 programs
+at 150M dispatches each — and CHROME now draws its raytraced logo in
+`112h VBE 640x480x24`. Two things were needed beyond the mode: `AX=4F07`
+(display start, which CHROME calls immediately after the mode set), and a real
+far pointer at ModeInfoBlock+0x0C. CHROME moves the window by `call far` through
+that pointer rather than by `AX=4F05`; the zero we were writing there did not
+send it back to the interrupt, it sent it into the interrupt vector table.
+Mode 0x10D (320x200x15) went in at the same time and unblocks COLORS.EXE.
+The full census table, the LFB refusal and what was declined are in
+[toyvm-vbe.md](toyvm-vbe.md).
+
 **COCAHOLC.EXE — a protected-mode extender that gives up.** It answers its own
 sound menu (autoKey reads "0", and the choice makes no difference: 1, 2 and 3
 all end at the same instruction after the same 16.2M dispatches), probes DPMI
@@ -1238,6 +1249,15 @@ seconds with `--trace-int` and its `int 10h AX=4Fxx` calls counted, and only
 COLORS.EXE, SETUP.EXE and CHROME.EXE make one. VBE is a three-row lever, and
 two of those three rows have another blocker in front of it — so it stays below
 the extender and the video-BIOS ROM on the list.
+
+**CORRECTION: five, and four seconds was not a budget.** Re-measured with
+`tools/toyvm/vbe-census.js` at 150M dispatches per program: AQUAPHOB.EXE,
+CHROME.EXE, COLORS.EXE, COUNTDWN.EXE and SETUP.EXE. The two that four seconds
+missed both ask late — CHROME's query is behind a retrace-paced text scroller
+and does not happen until about 100M dispatches — which is the general lesson:
+a wall-clock cap on a loaded box undercounts *what a program does*, and the
+programs it undercounts are exactly the ones whose feature is gated behind an
+intro. Four of the five now draw; see [toyvm-vbe.md](toyvm-vbe.md).
 
 ### A row can say `error` because of how the sweep chose its picture
 

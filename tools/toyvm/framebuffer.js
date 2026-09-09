@@ -28,6 +28,61 @@ const CGA_TEXT = [
   [63, 21, 21], [63, 21, 63], [63, 63, 21], [63, 63, 63],
 ];
 
+// --- direct colour ----------------------------------------------------------
+// A VBE mode above 8 bits per pixel carries the colour in the pixel itself and
+// looks nothing up: 15bpp is 5-5-5 in a word with the top bit unused, 16bpp is
+// 5-6-5, and 24bpp is three bytes in BLUE, GREEN, RED order -- the order the
+// VESA spec gives and the one every DOS program writes. There is no palette in
+// any of them, so a frame read out of one cannot be a byte per pixel: readFrame
+// hands back `rgb`, three bytes each, and `direct` says which of the two fields
+// the caller is looking at.
+//
+// Everything that scores, hashes or paints a frame therefore has to ask. That
+// is why frameBytes() exists rather than each caller reaching for `.pixels` --
+// a caller that forgets gets `undefined` and, before this, quietly measured a
+// 24bpp screen as blank.
+const DIRECT_BPP = new Set([15, 16, 24, 32]);
+function bppBytes(bpp) {
+  if (bpp === 24) return 3;
+  if (bpp === 32) return 4;
+  if (bpp === 15 || bpp === 16) return 2;
+  return 1;
+}
+
+// The bytes a frame is made of, whichever kind it is. Hashing and counting are
+// both "is this the same picture" questions and neither cares which.
+function frameBytes(f) { return f.direct ? f.rgb : f.pixels; }
+
+// 5- and 6-bit channels widened to 8 the way a DAC does, so a 15bpp white is
+// 255 and not 248.
+const C5 = Uint8Array.from({ length: 32 }, (_, i) => Math.round(i * 255 / 31));
+const C6 = Uint8Array.from({ length: 64 }, (_, i) => Math.round(i * 255 / 63));
+
+function readDirect(mem, g) {
+  const { width, height, bpp } = g;
+  const bytes = bppBytes(bpp);
+  const stride = g.stride || width * bytes;
+  const base = g.base === undefined ? VGA_BASE : g.base;
+  const rgb = new Uint8Array(width * height * 3);
+  for (let y = 0; y < height; y++) {
+    let at = base + (g.start || 0) + y * stride;
+    let o = y * width * 3;
+    for (let x = 0; x < width; x++, at += bytes, o += 3) {
+      if (bpp === 24 || bpp === 32) {
+        rgb[o] = mem[at + 2]; rgb[o + 1] = mem[at + 1]; rgb[o + 2] = mem[at];
+      } else {
+        const w = mem[at] | (mem[at + 1] << 8);
+        if (bpp === 16) {
+          rgb[o] = C5[(w >> 11) & 31]; rgb[o + 1] = C6[(w >> 5) & 63]; rgb[o + 2] = C5[w & 31];
+        } else {
+          rgb[o] = C5[(w >> 10) & 31]; rgb[o + 1] = C5[(w >> 5) & 31]; rgb[o + 2] = C5[w & 31];
+        }
+      }
+    }
+  }
+  return { width, height, rgb, direct: true };
+}
+
 function attrRgb(a, fg) {
   const i = fg ? (a & 0x0F) : ((a >> 4) & 0x07);
   const c = CGA_TEXT[i];
@@ -85,12 +140,22 @@ function screenSurface(machine) {
   // the bank the guest drew last is still sitting in the window.
   if (machine.vesa && machine.vesa.mode) {
     machine.vesaFlush();
-    const { width, height } = machine.vesa;
+    const { width, height, bpp } = machine.vesa;
+    // `stride` is BYTES, not pixels, and that is the whole difference a
+    // direct-colour mode makes to the reader: 640 pixels of 24bpp is a
+    // 1920-byte scan line, and reading it at 640 produces a third of a picture
+    // sheared across the frame.
+    const bytes = bppBytes(bpp || 8);
     return {
       text: false,
       geom: {
-        width, height, stride: width, start: 0, planar: false, bpp: 8,
-        base: isa.VESA_FB,
+        width, height, stride: width * bytes,
+        // Where in the picture the screen starts, as AX=4F07 last left it.
+        // A program that page-flips through that call is showing a different
+        // part of the same memory, and reading from 0 would photograph the
+        // page it is drawing into rather than the one on screen.
+        start: machine.vesa.start || 0, planar: false,
+        bpp: bpp || 8, base: isa.VESA_FB,
       },
     };
   }
@@ -162,6 +227,7 @@ function readFrame(mem, video = LINEAR) {
   // 64KB of the bank window and wrote a 320x200 PNG of it.
   const g = video && (video.planar || video.base !== undefined)
     ? { ...LINEAR, ...video } : LINEAR;
+  if (DIRECT_BPP.has(g.bpp)) return readDirect(mem, g);
   const { width, height, stride, start, planar } = g;
   const out = new Uint8Array(width * height);
   if (!planar) {
@@ -169,7 +235,10 @@ function readFrame(mem, video = LINEAR) {
     // outside the guest's address space. Everything else is the 64KB at A000,
     // and the cap is what keeps a CRTC that claims more than that from reading
     // past it.
-    const base = g.base === undefined ? VGA_BASE : g.base;
+    // A VESA surface is the only one with a `base`, and it is also the only
+    // one whose `start` is a byte offset the guest chose (AX=4F07). Everything
+    // else is the 64KB at A000 read from its own beginning.
+    const base = (g.base === undefined ? VGA_BASE : g.base + (g.start || 0));
     const n = g.base === undefined ? Math.min(width * height, 0x10000) : width * height;
     out.set(mem.subarray(base, base + n));
     return { width, height, pixels: out };
@@ -209,15 +278,26 @@ function readFrame(mem, video = LINEAR) {
 // Is anything at all lit? nonBlack's question without the counting, so it can
 // stop at the first hit instead of walking the whole frame every time.
 function anyLit(mem, video) {
-  const { pixels } = readFrame(mem, video);
-  for (let i = 0; i < pixels.length; i++) if (pixels[i]) return true;
+  const f = readFrame(mem, video);
+  const b = frameBytes(f);
+  for (let i = 0; i < b.length; i++) if (b[i]) return true;
   return false;
 }
 
+// A lit pixel is a non-zero one, and in a direct-colour frame that is three
+// bytes rather than an index -- a pixel whose red is zero and whose blue is not
+// is still lit, so the test is over the triple and the count is in PIXELS,
+// which is what every caller reports.
 function nonBlack(mem, video) {
-  const { pixels } = readFrame(mem, video);
+  const f = readFrame(mem, video);
   let n = 0;
-  for (let i = 0; i < pixels.length; i++) if (pixels[i]) n++;
+  if (f.direct) {
+    for (let i = 0; i < f.rgb.length; i += 3) {
+      if (f.rgb[i] || f.rgb[i + 1] || f.rgb[i + 2]) n++;
+    }
+    return n;
+  }
+  for (let i = 0; i < f.pixels.length; i++) if (f.pixels[i]) n++;
   return n;
 }
 
@@ -256,14 +336,28 @@ function nonBlack(mem, video) {
 // `count` is the honest pixel total in every band. Callers that report a
 // number to a human want that one; only the ordering wants `score`.
 function frameScore(mem, video) {
-  const { pixels } = readFrame(mem, video);
-  const seen = new Uint8Array(256);
+  const f = readFrame(mem, video);
   let n = 0, distinct = 0;
-  for (let i = 0; i < pixels.length; i++) {
-    const c = pixels[i] & 0xFF;
-    if (!c) continue;
-    n++;
-    if (!seen[c]) { seen[c] = 1; distinct++; }
+  if (f.direct) {
+    // The same two bands over a direct-colour frame. `distinct` stops at two
+    // because that is the only question the band asks -- a Set over 307200
+    // 24-bit colours would be the most expensive thing in a keepBest sample,
+    // and every answer past "more than one" is thrown away.
+    let first = -1;
+    for (let i = 0; i < f.rgb.length; i += 3) {
+      const c = (f.rgb[i] << 16) | (f.rgb[i + 1] << 8) | f.rgb[i + 2];
+      if (!c) continue;
+      n++;
+      if (first < 0) { first = c; distinct = 1; } else if (distinct < 2 && c !== first) distinct = 2;
+    }
+  } else {
+    const seen = new Uint8Array(256);
+    for (let i = 0; i < f.pixels.length; i++) {
+      const c = f.pixels[i] & 0xFF;
+      if (!c) continue;
+      n++;
+      if (!seen[c]) { seen[c] = 1; distinct++; }
+    }
   }
   return { count: n, distinct, score: n === 0 ? 0 : (distinct >= 2 ? 2e6 + n : 1e6 + n) };
 }
@@ -271,10 +365,14 @@ function frameScore(mem, video) {
 // A cheap content signature over the frame buffer. Two variants that disagree
 // here executed different code, and no timing comparison between them means
 // anything -- so the bench checks it before it reports a ratio.
+// The VBE picture is hashed the same way and by the same call: readFrame is
+// what decides which surface and which depth, so a 24bpp screen is covered here
+// exactly as mode 13h is, and a build that renders it differently fails the
+// corpus diff rather than passing on a hash of a surface nobody looked at.
 function frameHash(mem, video) {
-  const { pixels } = readFrame(mem, video);
+  const b = frameBytes(readFrame(mem, video));
   let h = 0x811c9dc5;
-  for (let i = 0; i < pixels.length; i++) h = Math.imul(h ^ pixels[i], 0x01000193);
+  for (let i = 0; i < b.length; i++) h = Math.imul(h ^ b[i], 0x01000193);
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
@@ -283,9 +381,19 @@ function frameHash(mem, video) {
 // that repaints every frame reuse one buffer -- a canvas ImageData's own array,
 // typically -- rather than allocating a screen per frame.
 function rgbaFrame(mem, palette, video, into) {
-  const { width, height, pixels } = readFrame(mem, video);
+  const f = readFrame(mem, video);
+  const { width, height, pixels } = f;
   const out = into && into.length >= width * height * 4 ? into
     : new Uint8ClampedArray(width * height * 4);
+  if (f.direct) {
+    // No palette in a direct-colour mode: the pixel IS the colour, already at
+    // 8 bits a channel from readDirect.
+    for (let i = 0; i < width * height; i++) {
+      const s = i * 3, o = i * 4;
+      out[o] = f.rgb[s]; out[o + 1] = f.rgb[s + 1]; out[o + 2] = f.rgb[s + 2]; out[o + 3] = 255;
+    }
+    return { width, height, rgba: out };
+  }
   for (let i = 0; i < width * height; i++) {
     const c = pixels[i], o = i * 4;
     out[o] = Math.round(palette[c * 3] * 255 / 63);
@@ -326,5 +434,5 @@ function rgbaConsole(con, font, into) {
 
 module.exports = {
   LINEAR, CGA_TEXT, attrRgb, conCells, conText, screenSurface,
-  readFrame, nonBlack, frameScore, frameHash, rgbaFrame, rgbaConsole,
+  readFrame, frameBytes, bppBytes, nonBlack, frameScore, frameHash, rgbaFrame, rgbaConsole,
 };

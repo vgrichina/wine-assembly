@@ -1060,7 +1060,11 @@ async function main() {
   const rh = v.planar || v.cga || v.vesa ? v.height : 200;
   console.log(`  video mode ${v.vesa ? `${v.vesa.toString(16)}h VBE` : `${v.mode.toString(16)}h`} `
     + `${v.cga ? `CGA ${v.bpp}bpp ${rw}x${rh}`
-      : v.planar ? `${v.bpp === 4 ? 'EGA planar' : 'unchained'} ${rw}x${rh}` : `${rw}x${rh} linear`}`
+      : v.planar ? `${v.bpp === 4 ? 'EGA planar' : 'unchained'} ${rw}x${rh}`
+      // The depth is part of what a VBE mode IS -- 640x480 says nothing about
+      // whether the picture is 8bpp indexed or 24bpp direct colour, and those
+      // are different surfaces read different ways.
+      : `${rw}x${rh}${v.vesa && v.bpp !== 8 ? `x${v.bpp}` : ''} linear`}`
     + `${v.planar && v.start ? ` start=${v.start}` : ''}`
     + `${v.planar && v.stride !== v.width ? ` stride=${v.stride}` : ''}`
     + `${!v.planar && !v.vesa && (v.width !== 320 || v.height !== 200 || v.start)

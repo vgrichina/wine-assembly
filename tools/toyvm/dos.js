@@ -105,6 +105,10 @@ const EMS_TOTAL_PAGES = 512;  // 8MB of expanded memory, the usual EMM386 answer
 const XMS_ENTRY_SEG = 0x00C0; // three bytes below the PSP: int 2Dh; retf
 const XMS_INT = 0x2D;
 const XMS_TOTAL_KB = 8192;
+// VBE's window-positioning far call, in the same free paragraph as the XMS
+// entry point and clear of its three bytes. See installIvt.
+const VESA_WIN_SEG = XMS_ENTRY_SEG;
+const VESA_WIN_OFF = 0x0010;
 const PSP_SEG = 0x0100;
 // The nine words DOS's INT 21h prologue pushes onto the caller's stack, in the
 // order it pushes them, plus the flags its IRET hands back. See pspSaveStack.
@@ -669,16 +673,35 @@ const CURSOR_CELLS = 40;
 // whole licence for counting rows off a `>`.
 const ARROW_HINT = (s) => /\b(arrow|cursor)\s+keys?\b/i.test(s) && /\benter\b/i.test(s);
 
-// The VBE modes we offer, as [mode number, width, height], all 256-colour and
-// all banked. These four numbers are the VESA-assigned ones every 1990s demo
-// asks for by name; a program that wants something else gets "not supported"
-// for that mode and picks another off the list.
+// The VBE modes we offer, as [mode number, width, height, bits per pixel], all
+// banked. The four 8bpp numbers are the VESA-assigned ones every 1990s demo
+// asks for by name; 0x112 is here because the corpus census (see
+// docs/toyvm-vbe.md) found CHROME.EXE asking 4F01 about it and taking its own
+// no-VESA path when the answer was "not supported".
+//
+// EVERY MODE IN THIS LIST MUST RENDER. A 4F01 that says "supported" for a depth
+// the frame reader cannot read is a silent-success stub: the program sets it,
+// draws into the bank window, and every picture downstream -- PNG, frame hash,
+// the live page -- reads the bytes at the wrong width or not at all, which
+// looks exactly like a demo that draws nothing. A mode that is not in this list
+// is refused, which is a truthful answer a program can act on.
 const VESA_MODES = [
-  [0x100, 640, 400],
-  [0x101, 640, 480],
-  [0x103, 800, 600],
-  [0x105, 1024, 768],
+  [0x100, 640, 400, 8],
+  [0x101, 640, 480, 8],
+  [0x103, 800, 600, 8],
+  [0x105, 1024, 768, 8],
+  [0x10D, 320, 200, 15],
+  [0x112, 640, 480, 24],
 ];
+
+// Bytes per pixel for a VBE depth. 15bpp is a 16-bit pixel with the top bit
+// unused, which is why this is not bpp/8.
+function vbeBytes(bpp) {
+  if (bpp === 24) return 3;
+  if (bpp === 32) return 4;
+  if (bpp === 15 || bpp === 16) return 2;
+  return 1;
+}
 
 // The BIOS video modes that are text. Only on one of these does a polled key
 // check get answered out of the menu reader.
@@ -778,7 +801,7 @@ class Machine {
     this.vga = newVgaState();
     // The VESA mode in effect, or mode 0 for none. `bank` is which 64KB of the
     // picture the window at A000 is currently showing; see vesaBank.
-    this.vesa = { mode: 0, width: 0, height: 0, bank: 0 };
+    this.vesa = { mode: 0, width: 0, height: 0, bpp: 0, bank: 0, start: 0 };
     // Which SVGA card this machine has, if any. 'none' is a plain VGA and is
     // the default: presenting a chipset means presenting its registers, and a
     // program that finds one will drive them. See svgaSetBank.
@@ -918,6 +941,11 @@ class Machine {
     this.faults = new Map();
     this.unhandledFn = new Map();      // "vec:ah" -> count, the real work list
     this.intCount = new Map();
+    // Every VBE call the guest made, aggregated so a program bank-switching
+    // ten thousand times costs one entry: "al[:mode][:lfb]" -> {n, ok}. This
+    // is what vbe-census.js reads to answer "which modes does the corpus ask
+    // for", and it has to be a count rather than a log for that reason.
+    this.vbeCalls = new Map();
     // Which clock, if any, a program is pacing itself off. A demo that never
     // touches any of these cannot be waiting for time and is compute-bound by
     // construction; one that hammers retrace is frame-paced. Does NOT see a
@@ -2033,6 +2061,25 @@ class Machine {
     // the interrupt's IRET frame has three.
     const xms = XMS_ENTRY_SEG << 4;
     this.mem[xms] = 0xCD; this.mem[xms + 1] = XMS_INT; this.mem[xms + 2] = 0xCB;
+
+    // VBE's window-positioning function, the same way. A ModeInfoBlock carries
+    // a far pointer at offset 0x0C to a routine that moves the window, and a
+    // program is entitled to CALL it instead of going through AX=4F05 -- it is
+    // the fast path, because it skips the BIOS's own dispatch. CHROME.EXE takes
+    // exactly that path: `call far cs:[0b7c]` at 100:0afd, with the pointer it
+    // read out of the block. Leaving that pointer zero does not make the
+    // program fall back on the interrupt; it far-calls 0000:0000 and executes
+    // the interrupt vector table.
+    //
+    // It cannot be a stub byte in the F000 segment, because the run loop reads
+    // any CS of F000 as "a vector was taken" and recovers the vector from the
+    // low byte of IP. So this is real code -- push AX, ask the BIOS to do it,
+    // restore AX, far return -- which leaves every register the caller had,
+    // where the far-call entry is only obliged to preserve the ones it is
+    // not passed in.
+    const win = VESA_WIN_SEG << 4;
+    [0x50, 0xB8, 0x05, 0x4F, 0xCD, 0x10, 0x58, 0xCB]
+      .forEach((b, i) => { this.mem[win + VESA_WIN_OFF + i] = b; });
   }
 
   // The character generator, where the ROM would have it.
@@ -3359,7 +3406,7 @@ class Machine {
       // it is how AQUAPHOB.EXE's demo came out as its own setup screen in the
       // demo's new palette: the picture had moved back to the 64KB at A000
       // while the banks still held what the setup had drawn.
-      this.vesa = { mode: 0, width: 0, height: 0, bank: 0 };
+      this.vesa = { mode: 0, width: 0, height: 0, bpp: 0, bank: 0, start: 0 };
       this.videoMode = al & 0x7F;
       this.mem[0x449] = this.videoMode;
       this.setVideoBda();      // the CRTC port follows the mode: mono vs colour
@@ -3591,7 +3638,24 @@ class Machine {
   //
   // AL is the function; every reply is AX=004Fh for "supported, succeeded" and
   // anything else for "not supported", which is the presence test too.
+  // The census wrapper. Records what was asked and whether it was granted --
+  // "granted" being AX=004Fh on the way out, which is the only answer a caller
+  // reads. Aggregated by (function, mode), so the cost is one Map entry per
+  // distinct question however many times it is repeated.
   vesaCall(al, r) {
+    const raw = al === 0x01 ? (r.get('cx') & 0xFFFF)
+      : al === 0x02 ? (r.get('bx') & 0xFFFF) : -1;
+    const handled = this.vesaCallImpl(al, r);
+    const key = `${al.toString(16).padStart(2, '0')}`
+      + (raw >= 0 ? `:${(raw & 0x7FFF).toString(16)}${(raw & 0x4000) ? ':lfb' : ''}` : '');
+    let e = this.vbeCalls.get(key);
+    if (!e) { e = { n: 0, ok: 0 }; this.vbeCalls.set(key, e); }
+    e.n++;
+    if ((r.get('ax') & 0xFFFF) === 0x004F) e.ok++;
+    return handled;
+  }
+
+  vesaCallImpl(al, r) {
     const m = this.mem;
     const ok = () => { r.set('ax', 0x004F); return true; };
     if (al === 0x00) {
@@ -3624,10 +3688,16 @@ class Machine {
       return ok();
     }
     if (al === 0x01) {
+      // The linear-framebuffer bit. We have no LFB -- the picture lives outside
+      // the guest's address space and is reached through the window at A000 --
+      // so a request for one is refused rather than answered with a banked mode
+      // the caller then writes to a physical address we never mapped.
+      if (r.get('cx') & 0x4000) return true;
       const mode = r.get('cx') & 0x7FFF;
       const found = VESA_MODES.find(([n]) => n === mode);
       if (!found) return true;                        // AX unchanged: not supported
-      const [, w, h] = found;
+      const [, w, h, bpp] = found;
+      const bytes = vbeBytes(bpp);
       const at = ((r.get('es') << 4) + r.get('di')) & 0xFFFFF;
       m.fill(0, at, at + 0x100);
       const w16 = (off, v) => { m[at + off] = v & 0xFF; m[at + off + 1] = (v >> 8) & 0xFF; };
@@ -3642,26 +3712,43 @@ class Machine {
       w16(0x08, 0xA000);                              // window A segment
       w16(0x0A, 0x0000);
       // The window-positioning far call. A program may use it instead of
-      // AX=4F05, so it has to be a real address -- and this one is a vector
-      // into our own stub segment, which is where every INT lands anyway.
-      w16(0x0C, 0x0000); w16(0x0E, 0x0000);
-      w16(0x10, w);                                   // bytes per scan line
+      // AX=4F05, and CHROME.EXE does, so this has to be an address that really
+      // moves the window: the eight bytes installIvt plants below the PSP.
+      w16(0x0C, VESA_WIN_OFF); w16(0x0E, VESA_WIN_SEG);
+      w16(0x10, w * bytes);                           // bytes per scan line
       w16(0x12, w); w16(0x14, h);
       m[at + 0x16] = 8; m[at + 0x17] = 16;            // character cell
       m[at + 0x18] = 1;                               // planes
-      m[at + 0x19] = 8;                               // bits per pixel
+      m[at + 0x19] = bpp;                             // bits per pixel
       m[at + 0x1A] = 1;                               // banks
-      m[at + 0x1B] = 4;                               // packed pixel
+      // Memory model: 4 is packed pixel (one index per byte, through the DAC),
+      // 6 is direct colour (the pixel carries its own RGB and the DAC is not
+      // in the path). A program that reads this byte and finds 4 on a 24bpp
+      // mode will go looking for a palette that does not exist.
+      m[at + 0x1B] = bpp > 8 ? 6 : 4;
       m[at + 0x1C] = 1;                               // bank size, 1 = 64KB units
-      m[at + 0x1D] = Math.max(1, (isa.VESA_FB_SIZE / (w * h)) | 0);
+      m[at + 0x1D] = Math.max(1, (isa.VESA_FB_SIZE / (w * h * bytes)) | 0);
+      if (bpp > 8) {
+        // The direct-colour fields, VBE 1.2 offsets 0x1F..0x26: size and least
+        // significant bit position of each channel. 15bpp is 5-5-5 with the top
+        // bit unused, 16bpp is 5-6-5, and 24bpp is 8-8-8 with blue lowest --
+        // which is what makes the byte order in memory blue, green, red.
+        const lay = bpp === 15 ? [5, 10, 5, 5, 5, 0, 1, 15]
+          : bpp === 16 ? [5, 11, 6, 5, 5, 0, 0, 0]
+            : [8, 16, 8, 8, 8, 0, 0, 0];
+        for (let i = 0; i < 8; i++) m[at + 0x1F + i] = lay[i];
+      }
       return ok();
     }
     if (al === 0x02) {
+      // Same refusal as 4F01: bit 14 asks for a linear frame buffer and there
+      // is no address the guest could write it through.
+      if (r.get('bx') & 0x4000) return true;
       const mode = r.get('bx') & 0x7FFF;
       const found = VESA_MODES.find(([n]) => n === mode);
       if (!found) return true;
-      const [, w, h] = found;
-      this.vesa = { mode, width: w, height: h, bank: 0 };
+      const [, w, h, bpp] = found;
+      this.vesa = { mode, width: w, height: h, bpp, bank: 0, start: 0 };
       this.videoMode = 0x13;             // a 256-colour graphics mode, for the BDA
       m[0x449] = mode & 0xFF;
       resetVgaMode(this.vga, 0x13);
@@ -3673,6 +3760,35 @@ class Machine {
     }
     if (al === 0x03) {
       r.set('bx', this.vesa.mode);
+      return ok();
+    }
+    // AX=4F07: which pixel of the picture the top left of the screen shows.
+    // A demo uses it to page-flip or to pan, and CHROME.EXE calls it with
+    // (0,0) immediately after setting its mode -- so it is not optional
+    // decoration: leaving AX unchanged there told the program its card had
+    // refused a call every VBE 1.2 card answers, and it went off the rails.
+    //
+    // This is a real offset, not an acknowledgement: the reader takes the
+    // surface's `start` from here, so a program that pans sees the picture
+    // move. A start that would run the visible window off the end of the
+    // 1MB picture is refused rather than clamped, which is the honest answer
+    // to "have you got a second page" on a card that has not.
+    if (al === 0x07) {
+      const v = this.vesa;
+      if (!v.mode) return true;
+      const bl = r.get('bx') & 0xFF;
+      const bytes = vbeBytes(v.bpp);
+      const pitch = v.width * bytes;
+      if (bl === 0x01) {
+        const start = v.start || 0;
+        r.set('dx', (start / pitch) | 0);
+        r.set('cx', ((start % pitch) / bytes) | 0);
+        return ok();
+      }
+      if (bl !== 0x00 && bl !== 0x80) return true;
+      const start = (r.get('dx') & 0xFFFF) * pitch + (r.get('cx') & 0xFFFF) * bytes;
+      if (start + v.height * pitch > isa.VESA_FB_SIZE) return true;
+      v.start = start;
       return ok();
     }
     if (al === 0x05) {

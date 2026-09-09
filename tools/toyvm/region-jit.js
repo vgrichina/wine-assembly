@@ -2463,7 +2463,11 @@ async function main() {
   }
   if (!same && !flag('no-rematch') && baseRun.dispatched !== jitRun.dispatched) {
     const { readFrame } = require('./run-dos');
-    const px = (run) => readFrame(run.r.vm.mem, run.r.surface.geom).pixels;
+    const { frameBytes } = require('./framebuffer');
+    // frameBytes, not `.pixels`: a direct-colour VBE frame has no index plane
+    // and reaching for that field would compare two undefineds and call every
+    // frame identical.
+    const px = (run) => frameBytes(readFrame(run.r.vm.mem, run.r.surface.geom));
     const nd = (a, b) => { let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++; return n; };
     // ONE SAMPLE OF THE DRIFT IS NOT THE FLOOR. How much a demo repaints in a
     // given number of dispatches is wildly uneven -- a dissolve advances in
