@@ -585,4 +585,58 @@ TouchControls.destroy();
   TouchControls.destroy();
 }
 
+// 15. A mouse-backed action button presses at the guest cursor, not at the
+// HTML button's page coordinate, and teardown cannot leave it held.
+{
+  const mouse = [];
+  const mouseRenderer = {
+    canvas: { width: 640, height: 480,
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 640, height: 480 }) },
+    _mouseX: 321, _mouseY: 222,
+    handleKeyDown() {}, handleKeyUp() {},
+    handleMouseDown: (x, y, button) => mouse.push(['down', x, y, button]),
+    handleMouseUp: (x, y, button) => mouse.push(['up', x, y, button]),
+  };
+  TouchControls.install({ document: global.document, renderer: mouseRenderer });
+  TouchControls.setLayout({
+    buttons: [{ mouseButton: 0, label: 'Jump', pos: 'br' }],
+  });
+  const jump = TouchControls._widgets.find(el => el.className === 'tc-btn');
+  jump.dispatch('touchstart', touchEvent([touch(80, 600, 440)]));
+  jump.dispatch('touchend', touchEvent([touch(80, 600, 440)]));
+  assert.deepStrictEqual(mouse, [
+    ['down', 321, 222, 0], ['up', 321, 222, 0],
+  ], 'mouse action uses the current guest cursor for a paired press');
+  jump.dispatch('touchstart', touchEvent([touch(81, 600, 440)]));
+  TouchControls.destroy();
+  assert.deepStrictEqual(mouse.slice(-2), [
+    ['down', 321, 222, 0], ['up', 321, 222, 0],
+  ], 'destroy releases a held mouse action');
+}
+
+// Keep the release-facing Blobby layout and the verified local keyboard-game
+// layouts attached when candidates are repacked or promoted.
+{
+  const { APPS } = require('../lib/apps');
+  const actionApps = [
+    'blobby_volley', 'cave_story', 'generally', 'little_fighter_2',
+    'icy_tower', 'elasto_mania', 'atomic_bomberman_demo', 'jazz2_demo',
+    'quake2_demo', 'gta2_demo', 'halflife_uplink', 'deus_ex_demo', 'abedemo',
+  ];
+  for (const id of actionApps) {
+    assert(APPS[id] && APPS[id].touchControls,
+      `${id} should expose phone gameplay controls`);
+  }
+  assert.deepStrictEqual(APPS.blobby_volley.touchControls.buttons,
+    [{ mouseButton: 0, label: 'Jump', pos: 'br' }],
+    'public Blobby should expose its shipped mouse-control jump action');
+  assert.deepStrictEqual(APPS.quake2_demo.touchControls.dpad.vks,
+    { up: 0x57, down: 0x53, left: 0x41, right: 0x44 },
+    'Quake II phone movement should use its bundled WASD bindings');
+  assert.strictEqual(APPS.halflife_uplink.mobileTouch, 'trackpad',
+    'Half-Life should combine its WASD pad with deterministic trackpad look');
+  assert.strictEqual(APPS.deus_ex_demo.mobileTouch, 'trackpad',
+    'Deus Ex should combine its WASD pad with deterministic trackpad look');
+}
+
 console.log('PASS  touch controls hold, pair and release guest keys');

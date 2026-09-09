@@ -23,7 +23,9 @@ assert(html.includes("canvas.addEventListener('touchstart'"), 'canvas should han
 assert(html.includes("window.addEventListener('touchmove', windowTouchMove, { capture: true, passive: false })"), 'touchmove should be captured and non-passive');
 assert(html.includes("window.addEventListener('touchend', windowTouchEnd, { capture: true, passive: false })"), 'touchend should be captured and non-passive');
 assert(html.includes("window.addEventListener('touchcancel', windowTouchCancel, { capture: true, passive: false })"), 'touchcancel should be captured and non-passive');
-assert(html.includes('renderer.handleMouseDown(cx, cy, 0)'), 'touchstart should map to left-button mouse down');
+assert(html.includes('const LONG_PRESS_MS = 550'), 'touch should expose a deliberate long-press threshold');
+assert(html.includes('renderer.handleMouseDown(p.x, p.y, 2)'), 'long-press should map to right-button mouse down');
+assert(html.includes("pinchMode = 'wheel'"), 'parallel two-finger motion should classify as wheel scrolling');
 assert(html.includes('renderer.handleMouseMove(x, y)'), 'touchmove should map to mouse move');
 assert(html.includes('renderer.handleMouseUp(p.x, p.y, 0)'), 'touchend/cancel should release left-button mouse up');
 assert(html.includes("mobileTouch: app.mobileTouch || 'auto'"),
@@ -70,6 +72,7 @@ const canvas = {
   focus() {}, setAttribute() {}, requestPointerLock() {},
   addEventListener(type, fn) { canvasListeners.set(type, fn); },
 };
+let pendingInputTimer = null;
 global.window = {
   addEventListener(type, fn) {
     const entries = listeners.get(type) || [];
@@ -107,7 +110,11 @@ try {
     handleMouseMove() {}, handleMenuHover() {},
     handleRelativeMouseMove: (x, y) => relativeMoves.push({ x, y }),
   };
-  browserInput.wireCanvasInput(canvas, renderer, { runningApps, debugMode: true });
+  browserInput.wireCanvasInput(canvas, renderer, {
+    runningApps, debugMode: true,
+    setTimeout(fn) { pendingInputTimer = fn; return 77; },
+    clearTimeout(id) { if (id === 77) pendingInputTimer = null; },
+  });
   const event = {
     clientX: 320, clientY: 240, button: 0, ctrlKey: false, shiftKey: false,
     preventDefault() {}, stopPropagation() {},
@@ -170,8 +177,8 @@ try {
   const f2 = finger(2, 140, 100);
   touchStart(tev([f1], [f1]));
   touchStart(tev([f1, f2], [f2]));
-  assert.strictEqual(releases.length, 1,
-    'the second finger retires the guest button the first one pressed');
+  assert.strictEqual(releases.length, 0,
+    'a second finger claims the delayed direct touch before a left click leaks');
 
   const pinchMoves = listeners.get('touchmove') || [];
   // Fingers apart past the threshold: fill the screen.
@@ -192,13 +199,47 @@ try {
   const pinchEnds = listeners.get('touchend') || [];
   pinchEnds.at(-1)(tev([f1], [finger(2, 300, 100)]));
   pinchEnds.at(-1)(tev([], [f1]));
-  // A fresh single touch is an ordinary click again.
+  // A fresh single touch is an ordinary click again. Direct touch delays the
+  // pair until release so the same stationary gesture can become right-click.
   const downs = [];
   renderer.handleMouseDown = (x, y, b) => downs.push([x, y, b]);
   touchStart(tev([finger(4, 100, 100)], [finger(4, 100, 100)]));
-  assert.strictEqual(downs.length, 1,
-    'once the pinch is over the canvas takes single touches as clicks again');
+  assert.strictEqual(downs.length, 0, 'direct touch waits for tap versus hold');
   (listeners.get('touchend') || []).at(-1)(tev([], [finger(4, 100, 100)]));
+  assert.deepStrictEqual(downs.at(-1), [100, 100, 0],
+    'once the pinch is over a released single touch clicks normally');
+
+  // A stationary hold is a clean right click: no preceding or trailing left
+  // click, in both direct and trackpad modes.
+  const hold = finger(40, 150, 160);
+  const downsBeforeHold = downs.length;
+  const releasesBeforeHold = releases.length;
+  touchStart(tev([hold], [hold]));
+  assert.strictEqual(typeof pendingInputTimer, 'function', 'long press arms its timer');
+  pendingInputTimer();
+  assert.deepStrictEqual(downs.slice(downsBeforeHold), [[150, 160, 2]],
+    'long press presses only the right mouse button');
+  assert.deepStrictEqual(releases.slice(releasesBeforeHold),
+    [{ x: 150, y: 160, button: 2 }], 'long press releases right mouse exactly once');
+  (listeners.get('touchend') || []).at(-1)(tev([], [hold]));
+  assert.strictEqual(downs.length, downsBeforeHold + 1,
+    'lifting after a long press must not leak a left click');
+
+  // Two fingers moving together scroll; changing their separation remains
+  // the pre-existing Fit/Fill pinch.
+  const wheels = [];
+  renderer.handleWheel = (x, y, deltaY) => wheels.push({ x, y, deltaY });
+  const s1 = finger(41, 100, 100), s2 = finger(42, 150, 100);
+  touchStart(tev([s1], [s1]));
+  touchStart(tev([s1, s2], [s2]));
+  const twoFingerMoves = listeners.get('touchmove') || [];
+  // Model touch hardware reporting the fingers in separate samples: the first
+  // intermediate span changes, but centroid translation still dominates it.
+  twoFingerMoves.at(-1)(tev([finger(41, 100, 140), s2]));
+  twoFingerMoves.at(-1)(tev([finger(41, 100, 140), finger(42, 150, 140)]));
+  assert.deepStrictEqual(wheels, [{ x: 125, y: 140, deltaY: 1 }],
+    'parallel two-finger motion emits one wheel notch at the gesture centre');
+  (listeners.get('touchend') || []).at(-1)(tev([], [finger(41, 100, 140), finger(42, 150, 140)]));
 
   // A relative-mouse guest turns the phone surface into a trackpad. A drag
   // sends deltas without holding button 0 (mouse-look must not also fire),
@@ -249,9 +290,11 @@ try {
   runningApps[0].mobileTouch = 'direct';
   const direct = finger(8, 50, 60);
   touchStart(tev([direct], [direct]));
+  assert.notDeepStrictEqual(downs.at(-1), [50, 60, 0],
+    'a direct override still waits to distinguish long press');
+  (listeners.get('touchend') || []).at(-1)(tev([], [direct]));
   assert.deepStrictEqual(downs.at(-1), [50, 60, 0],
     'mobileTouch=direct overrides a latched relative-mouse heuristic');
-  (listeners.get('touchend') || []).at(-1)(tev([], [direct]));
   delete global.window.TouchControls;
 
   // --- the manual keyboard -------------------------------------------------
