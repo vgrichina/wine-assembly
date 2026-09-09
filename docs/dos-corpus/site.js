@@ -87,6 +87,8 @@
       name: fig.dataset.live, src: fig.dataset.liveSrc, exe: fig.dataset.liveExe,
       args: fig.dataset.liveArgs || '',
       env: fig.dataset.liveEnv || '', card: fig.dataset.liveSound || 'full',
+      pspSeg: parseInt(fig.dataset.livePsp || '0', 16) || 0,
+      loadSeg: parseInt(fig.dataset.liveLoad || '0', 16) || 0,
     } : null);
     if (!dlg.open) dlg.showModal();
   }
@@ -377,6 +379,9 @@
         // only draws without one. The tile is a screenshot taken that way.
         env: current.env ? current.env.split(';') : [],
         card: current.card,
+        // ...and the machine it was photographed on: see program-config.js.
+        pspSeg: current.pspSeg || 0,
+        loadSeg: current.loadSeg || 0,
         // The same menu answerer the sweep ran with. The tile above this canvas
         // is a screenshot taken WITH it, so without it the page promises a
         // picture and then sits on "waiting for a key". It only answers when

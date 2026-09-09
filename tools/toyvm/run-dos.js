@@ -259,6 +259,11 @@ async function runDos(o) {
     env = [],
     // Files an earlier run created, carried in. See the --pre option below.
     tempFiles = null,
+    // Where DOS puts this program, as paragraphs: the PSP, and the image
+    // 0x10 paragraphs above it. Null takes whatever program-config.js has for
+    // this executable and the machine's default otherwise -- see that file for
+    // why the address is a machine setting and why it is not free to raise.
+    pspSeg = null, loadSeg = null,
   } = o;
   setCpuLevel(cpu);
   // Before anything can finish the handler table, because the twins ARE table
@@ -266,7 +271,16 @@ async function runDos(o) {
   // and throws rather than quietly running without them.
   if (regSpec) require('./emit').enableRegSpec(true);
 
+  // The registry's answer for this executable, unless the caller named one.
+  // The CLI and the sweeps both come through here, so a program that needs a
+  // different load address gets it whether it is being photographed, diffed or
+  // run by hand -- one place, not three.
+  const cfg = require('./program-config').programConfig(exe) || {};
+  const wantPsp = pspSeg !== null ? pspSeg : (cfg.pspSeg || 0);
+  const wantLoad = loadSeg !== null ? loadSeg : (cfg.loadSeg || (wantPsp ? wantPsp + 0x10 : 0));
+
   const machine = new Machine(new Uint8Array(0), {
+    pspSeg: wantPsp, loadSeg: wantLoad,
     log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound, svga, soundPref, gus,
     dspVersion, keys, autoKeys, env, tempFiles,
     stopText,
@@ -304,13 +318,16 @@ async function runDos(o) {
   machine.setTicks(0, { force: true });
   machine.syncVga();     // the VM's buffer, not the throwaway one from before
 
-  const info = loadExe(vm.mem, fs.readFileSync(exe));
+  const info = loadExe(vm.mem, fs.readFileSync(exe),
+    { loadSeg: machine.loadSeg, pspSeg: machine.pspSeg });
   // What the program was given is what is NOT free. A .COM has no header to
   // say, so the loader leaves this undefined and the machine keeps its "owns
   // everything" default.
   if (info.allocTop !== undefined) machine.allocTop = info.allocTop;
   machine.imageTop = info.minTop;
   machine.installEnvironment(path.basename(exe), guestArgs);
+  // After the environment and after allocTop: the chain names both.
+  machine.installArena();
   // IF set, because that is what DOS hands a program. The flags global starts at
   // zero, which is interrupts DISABLED -- so until a program executed an STI of
   // its own it got no timer tick, no keystroke and no sound IRQ, and a program
@@ -727,6 +744,15 @@ function parseWatch(spec) {
   return [lo, lo + (m[3] === undefined ? 1 : Number(m[3])) - 1];
 }
 
+// A paragraph address on the command line. Hex either way -- every segment
+// this machine prints is hex, and a `--psp-seg=900` that meant 900 decimal
+// would be a different machine than the one the error message describes.
+function parseSeg(s) {
+  const m = /^(?:0x)?([0-9a-f]{1,4})$/i.exec(String(s).trim());
+  if (!m) throw new Error(`not a paragraph address (hex, 1-4 digits): ${s}`);
+  return parseInt(m[1], 16);
+}
+
 function count(s, d) {
   if (s === undefined) return d;
   const m = /^(\d+(?:\.\d+)?)([kmb]?)$/i.exec(String(s).trim());
@@ -872,6 +898,15 @@ async function main() {
     clicks: argAll('click').flatMap(parseClicks),
     dumpAt: argAll('dump-at').map(parseDumpAt),
     cpu: Number(arg('cpu', 386)),
+    // --psp-seg=0xd00 / --load-seg=0xd10 -- where DOS puts the program, in
+    // hex paragraphs. Naming either one is enough: the image sits 0x10
+    // paragraphs above its PSP. Unset takes program-config.js's entry for this
+    // executable, and the default otherwise. See program-config.js for what
+    // raising it buys and what it costs.
+    pspSeg: arg('psp-seg') !== undefined ? parseSeg(arg('psp-seg'))
+      : (arg('load-seg') !== undefined ? parseSeg(arg('load-seg')) - 0x10 : null),
+    loadSeg: arg('load-seg') !== undefined ? parseSeg(arg('load-seg'))
+      : (arg('psp-seg') !== undefined ? parseSeg(arg('psp-seg')) + 0x10 : null),
     report,
     // Naming a rotation is asking for one, so --auto-keys implies --auto-key.
     autoKey: flag('auto-key') || !!arg('auto-keys', ''),

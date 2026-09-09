@@ -8,6 +8,7 @@
 //   node tools/toyvm/check-live-report.js --name=BOB.COM        # just one
 //   node tools/toyvm/check-live-report.js --from=100 --count=50 # a slice
 //   node tools/toyvm/check-live-report.js --seconds=8 --headful --json=out.json
+//   node tools/toyvm/check-live-report.js --name=ACME-VIC.EXE --motion=8  # and does it MOVE
 //
 // docs/dos-corpus/demos.html ships the whole corpus as bytes, and every tile
 // gets a Run button that loads half a megabyte of generated VM and runs the
@@ -74,6 +75,11 @@ async function main() {
   const seconds = Number(arg('seconds', 6));
   const from = Number(arg('from', 0));
   const count = Number(arg('count', 1e9));
+  // --motion[=N]: after the first lit frame, watch for N more seconds and
+  // require the picture to change. Off by default because it costs N seconds
+  // per tile on a 199-tile run; reach for it when the question is whether a
+  // demo is running or merely lit. See runOne.
+  const motionSecs = flag('motion') ? 6 : Number(arg('motion', 0));
   const jsonOut = arg('json');
 
   const server = await serve(dir);
@@ -121,7 +127,7 @@ async function main() {
   const results = [];
   for (const t of wanted) {
     errors.length = 0;
-    const r = await runOne(page, t, seconds);
+    const r = await runOne(page, t, seconds, motionSecs);
     const verdict = r.ok ? 'ok' : 'FAILED';
     console.log(`  ${t.name.padEnd(16)} ${verdict.padEnd(7)} ${r.note}`
       + (errors.length ? `\n      console: ${errors.slice(0, 3).join(' | ')}` : ''));
@@ -139,7 +145,16 @@ async function main() {
 // The canvas is read as a pixel histogram rather than a hash because the
 // question is "is anything on it", and a hash cannot tell an all-black surface
 // from a painted one.
-async function runOne(page, tile, seconds) {
+//
+// `motionSecs` asks the other half of the question. A lit canvas is not a
+// running demo: a program that gets as far as its loader screen and then
+// wanders into a jump table paints a full 64,000 pixels and then paints them
+// forever, which reads here as an unqualified pass. ACME-VIC.EXE was exactly
+// that for as long as it was loaded at the default address. So with --motion
+// the sample keeps going after the first lit frame and carries a checksum
+// alongside the count: two different checksums are a machine still running,
+// one repeated checksum is a picture of a machine that stopped.
+async function runOne(page, tile, seconds, motionSecs = 0) {
   const opened = await page.evaluate((id) => {
     const fig = document.querySelector(`figure[data-live-id="${CSS.escape(id)}"]`);
     if (!fig) return false;
@@ -157,30 +172,43 @@ async function runOne(page, tile, seconds) {
   await page.evaluate(() => document.getElementById('lb-play').click());
   // Poll rather than sleep: a bundle that fails to load says so immediately and
   // there is no reason to hold the whole budget for it.
-  const deadline = Date.now() + seconds * 1000;
+  const deadline = Date.now() + (seconds + motionSecs) * 1000;
   let lit = 0, dispatched = 0, status = '';
+  let motionUntil = 0;
+  const distinct = new Set();
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 400));
     const s = await page.evaluate(() => {
       const c = document.getElementById('lb-canvas');
       const note = document.getElementById('lb-status');
-      let lit = 0;
+      let lit = 0, sum = 0;
       if (c && !c.hidden) {
         const g = c.getContext('2d');
         const d = g.getImageData(0, 0, c.width, c.height).data;
         for (let i = 0; i < d.length; i += 4) {
           if (d[i] || d[i + 1] || d[i + 2]) lit++;
+          // A cheap order-sensitive checksum: enough to tell one frame from
+          // the next, and it costs one pass we were already making.
+          sum = (sum * 31 + d[i] + d[i + 1] * 3 + d[i + 2] * 7) & 0x7FFFFFFF;
         }
       }
       return {
-        lit,
+        lit, sum,
         dispatched: (self.liveRun && self.liveRun.session
           && self.liveRun.session.dispatched) || 0,
         status: note ? note.textContent : '',
       };
     });
     lit = s.lit; dispatched = s.dispatched; status = s.status;
-    if (lit > 0) break;
+    if (lit > 0) {
+      if (!motionSecs) break;
+      // Keep sampling for the motion window, then stop whether or not the
+      // frame ever changed -- "it did not move" is an answer, not a timeout.
+      if (!motionUntil) motionUntil = Date.now() + motionSecs * 1000;
+      distinct.add(s.sum);
+      if (Date.now() >= motionUntil) break;
+      continue;
+    }
     // A blank-as-swept tile is done as soon as the VM is demonstrably running;
     // waiting the whole budget for pixels the sweep never saw is not a check.
     if (tile.kind === 'blank' && dispatched > 1e6) break;
@@ -194,8 +222,18 @@ async function runOne(page, tile, seconds) {
   // Dispatches but no pixels is a real state, not a pass: it is what a demo
   // that is still unpacking looks like, and also what a broken video path
   // looks like. Say which one the numbers support instead of picking.
-  const px = `${lit.toLocaleString()} lit px, ${dispatched.toLocaleString()} dispatches`;
-  if (lit > 0) return { ok: true, lit, dispatched, note: px };
+  const moved = distinct.size;
+  const px = `${lit.toLocaleString()} lit px, ${dispatched.toLocaleString()} dispatches`
+    + (motionSecs ? `, ${moved} distinct frame(s) over ${motionSecs}s` : '');
+  if (lit > 0) {
+    // Asked for motion and got none: a lit canvas that never changes is a
+    // photograph, and calling it a pass is how a demo that stopped stays
+    // green. Not asked for, not judged.
+    if (motionSecs && moved < 2) {
+      return { ok: false, lit, dispatched, moved, note: `${px} -- the frame never changed` };
+    }
+    return { ok: true, lit, dispatched, moved, note: px };
+  }
   if (dispatched > 0) {
     if (tile.kind === 'blank') return { ok: true, lit, dispatched, note: `${px} (blank as swept)` };
     return { ok: false, lit, dispatched, note: `ran ${dispatched.toLocaleString()} dispatches but painted nothing (status: ${status || 'none'})` };

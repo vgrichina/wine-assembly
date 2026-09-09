@@ -117,6 +117,29 @@ const LOAD_SEG = 0x0110;      // PSP is 0x100 bytes = 0x10 paragraphs
 // The environment block, in the gap between the BIOS data area and the PSP.
 // 0x0060..0x00C0 is 1.5K, which is more than any of these programs reads.
 const ENV_SEG = 0x0060;
+// How many paragraphs the environment block's own MCB claims. One less than
+// the 0x60 the gap is wide, because the paragraph at 0x00BF is the header of
+// the block that follows it -- see installArena.
+const ENV_PARAS = 0x5F;
+// The owner word a block belonging to DOS itself carries. Real DOS writes 8
+// for its own resident data and for device drivers, and 0 for a free block;
+// a program walking the chain to add up free memory tells the two apart by
+// exactly this word. Everything between the environment and the PSP is that:
+// on a real machine it is the kernel, its buffers and whatever drivers
+// CONFIG.SYS loaded, and none of it is available.
+const MCB_SYSTEM = 0x0008;
+// DOS's "list of lists", which INT 21h AH=52h hands back in ES:BX. The one
+// field of it anything here wants is the word two bytes BELOW it: the segment
+// of the first MCB in the chain. Parked in the dead space between the BIOS
+// data area (which ends at 0x0500) and the environment block.
+// The offset is not free to pick: the field a caller wants is BELOW the
+// pointer, so an offset of 0 makes `mov ax, es:[bx-2]` wrap to the top of the
+// segment and read something else entirely. Real DOS 4+ hands back offset
+// 0x26 for the same reason; this keeps that.
+const LOL_SEG = 0x0058;
+const LOL_OFF = 0x0026;
+// The first arena header. Its data is the environment block.
+const MCB_FIRST = ENV_SEG - 1;
 // Top of conventional memory. 0x9000 left 572K free between the program and
 // the ceiling, which reads as a machine with a lot of TSRs loaded -- and
 // ASMINST.EXE prints "Insufficient memory! This demo needs 600k free to run"
@@ -923,7 +946,21 @@ class Machine {
     // How the last child ended, in AH=4Dh's terms: 0 normal, 1 Ctrl-C, 2
     // critical error, 3 terminate-and-stay-resident. See AH=4Dh.
     this.lastExitType = 0;
-    this.curPsp = PSP_SEG;             // whose PSP AH=51h/62h reports
+    // Where DOS puts the program. On a real machine this is not a constant: it
+    // is whatever is left after the kernel, its buffers and every driver
+    // CONFIG.SYS loaded, so the same .EXE lands at a different paragraph on
+    // two machines and a program is entitled to no opinion about which. Here
+    // it is a machine option for the same reason -- see the ACME-VIC section
+    // of docs/dos-corpus-blockers.md, where a demo stores a byte through a DS
+    // it forgot to reload and the store lands on its own code at the default
+    // load address and on DOS's data on any real one.
+    //
+    // Raising it costs free conventional memory, which is why this is
+    // per-program and not a new default: ACME-BIG.EXE wants 600K and refuses
+    // to start below it.
+    this.pspSeg = (opts.pspSeg | 0) || PSP_SEG;
+    this.loadSeg = (opts.loadSeg | 0) || (this.pspSeg + 0x10);
+    this.curPsp = this.pspSeg;         // whose PSP AH=51h/62h reports
     // Per-PSP: the caller's registers as of its last INT 21h call, the half of
     // PSP+2Eh that does not fit in a DWORD. See pspSaveStack.
     this.pspRegs = new Map();
@@ -1160,7 +1197,7 @@ class Machine {
     mem[at++] = 0x01; mem[at++] = 0x00;   // one string follows: the program path
     put(`C:\\${String(name).toUpperCase()}`);
     mem[at++] = 0;
-    const psp = PSP_SEG << 4;
+    const psp = this.pspSeg << 4;
     mem[psp + 0x2C] = ENV_SEG & 0xFF;
     mem[psp + 0x2D] = (ENV_SEG >> 8) & 0xFF;
     // The command tail, at PSP:80h: a length byte, the text, then a CR. It is
@@ -3963,10 +4000,7 @@ class Machine {
   // happens to end there -- 1673 was the last paragraph of a live block -- so
   // modelling this stops a corruption as well as a leak.
   //
-  // What is NOT modelled: the chain. Free regions carry no header, and there is
-  // no AH=52h list-of-lists to start from, so a program cannot walk from one
-  // MCB to the next. Nothing in the corpus does; if something starts, that is
-  // the next piece, not a reason to fake a chain now.
+  // The chain itself is laid down by installArena/mcbSync below.
   memLargest() {
     let best = DEFAULT_ALLOC_TOP - this.allocTop;
     for (const b of this.memFree) if (b.size > best) best = b.size;
@@ -3974,9 +4008,9 @@ class Machine {
   }
 
   // Lay down the arena header for the block whose data starts at `seg`.
-  mcbWrite(seg, owner, size) {
+  mcbWrite(seg, owner, size, last = false) {
     const at = (seg - 1) << 4;
-    this.mem[at] = 0x4D;                        // 'M' -- a block, not the last
+    this.mem[at] = last ? 0x5A : 0x4D;          // 'Z' ends the chain, 'M' does not
     this.mem[at + 1] = owner & 0xFF;
     this.mem[at + 2] = (owner >> 8) & 0xFF;
     this.mem[at + 3] = size & 0xFF;
@@ -3990,6 +4024,68 @@ class Machine {
   mcbOwner(seg) {
     const at = (seg - 1) << 4;
     return this.mem[at + 1] | (this.mem[at + 2] << 8);
+  }
+
+  // The whole arena as a chain, walkable from one header to the next the way
+  // MEM.EXE walks it: environment, then everything DOS is holding below the
+  // program, then the program, then whatever is above it.
+  //
+  // The middle rung is the one that has to be right and is easy to get wrong.
+  // With the load segment a machine option (see pspSeg) the gap between the
+  // environment block and the PSP is no longer a fixed 0x40 paragraphs -- at
+  // PSP 0x0D00 it is 49KB -- and if that gap carries no header the chain has a
+  // hole in it, while if it carries a header owned by 0 it reads as FREE and a
+  // program adding up the free blocks is told it has 49KB more than it does.
+  // Owner 8 is what a real DOS writes there: the kernel and its drivers.
+  //
+  // Above the PSP the allocator is the authority and this only fills in what
+  // the allocator does not write headers for -- the program's own block, the
+  // regions handed back to `memFree`, and the frontier -- so a block whose
+  // owner word the guest has re-stamped (BLIQ.EXE does, six times) keeps it.
+  installArena() {
+    const psp = this.pspSeg;
+    // The environment block. DOS gives it to the program, so the program is
+    // the owner: a program that frees its own environment (a TSR shrinking its
+    // footprint does) is freeing a block it holds.
+    this.mcbWrite(ENV_SEG, psp, ENV_PARAS);
+    // DOS and its drivers: everything from the end of the environment to the
+    // paragraph below the PSP. At the default load address that is 0x3F
+    // paragraphs; at 0x0D00 it is 0xC3F.
+    const sys = ENV_SEG + ENV_PARAS + 1;
+    this.mcbWrite(sys, MCB_SYSTEM, psp - 1 - sys);
+    // The list of lists, so a program has somewhere to start the walk from.
+    const lol = (LOL_SEG << 4) + LOL_OFF;
+    this.mem[lol - 2] = MCB_FIRST & 0xFF;
+    this.mem[lol - 1] = (MCB_FIRST >> 8) & 0xFF;
+    this.mcbSync();
+  }
+
+  // Re-lay the part of the chain above the PSP. Called wherever the allocator
+  // moves a boundary, which is the only way any of these numbers change.
+  mcbSync() {
+    const psp = this.pspSeg;
+    const items = [];
+    for (const [seg, size] of this.memBlocks) items.push({ seg, size, own: this.mcbOwner(seg) });
+    // A `memFree` entry is a raw region, header paragraph included; as a block
+    // it is one paragraph smaller and owned by nobody.
+    for (const b of this.memFree) items.push({ seg: b.seg + 1, size: b.size - 1, own: 0 });
+    if (this.allocTop < DEFAULT_ALLOC_TOP) {
+      items.push({ seg: this.allocTop + 1, size: DEFAULT_ALLOC_TOP - this.allocTop - 1, own: 0 });
+    }
+    items.sort((a, b) => a.seg - b.seg);
+    const chain = [];
+    let cur = psp;
+    for (const it of items) {
+      if (it.seg - 1 < cur) continue;           // overlaps what is already laid; skip it
+      if (it.seg - 1 > cur) chain.push({ seg: cur, size: it.seg - 1 - cur, own: psp });
+      chain.push(it);
+      cur = it.seg + it.size;
+    }
+    if (cur < DEFAULT_ALLOC_TOP) chain.push({ seg: cur, size: DEFAULT_ALLOC_TOP - cur, own: psp });
+    for (let i = 0; i < chain.length; i++) {
+      const c = chain[i];
+      this.mcbWrite(c.seg, c.own, c.size, i === chain.length - 1);
+    }
   }
 
   memAlloc(want) {
@@ -4483,6 +4579,16 @@ class Machine {
       // prints "[ERROR]: Can not init file manager..." on the garbage it got
       // back -- a two-line call standing between it and the demo.
       case 0x51: case 0x62: r.set('bx', this.curPsp); r.setResultCf(false); return true;
+      // Undocumented, and the only documented-by-use way to find the head of
+      // the MCB chain: the word at ES:BX-2 is the segment of the first arena
+      // header. MEM.EXE and every "how much memory is really free" routine
+      // starts here. Re-laid on the way out so the walk sees the allocator's
+      // current boundaries and not the ones it had at load time.
+      case 0x52:
+        this.mcbSync();
+        r.set('es', LOL_SEG); r.set('bx', LOL_OFF);
+        r.setResultCf(false);
+        return true;
       // Set the current PSP. The pair to AH=51h, and real: a TSR that switches
       // the PSP to do file I/O on the foreground program's behalf and switches
       // it back is doing exactly this, and answering nothing left ANGEL.EXE and
@@ -4739,6 +4845,7 @@ class Machine {
         }
         r.set('ax', seg);
         r.setResultCf(false);
+        this.mcbSync();
         return true;
       }
       case 0x49: {                              // free
@@ -4757,6 +4864,7 @@ class Machine {
           this.log(`free ${seg.toString(16)} -- no such block`);
         }
         r.setResultCf(false);
+        this.mcbSync();
         return true;
       }
       case 0x4A: {                              // resize a block
@@ -4775,6 +4883,7 @@ class Machine {
             this.mcbWrite(seg, this.mcbOwner(seg), want);
             this.memRelease(seg + want, held - want);
             r.setResultCf(false);
+            this.mcbSync();
             return true;
           }
           const at = seg + held, need = want - held;
@@ -4785,6 +4894,7 @@ class Machine {
             this.memBlocks.set(seg, want);
             this.mcbWrite(seg, this.mcbOwner(seg), want);
             r.setResultCf(false);
+            this.mcbSync();
             return true;
           }
           if (at === this.allocTop && DEFAULT_ALLOC_TOP - this.allocTop >= need) {
@@ -4792,6 +4902,7 @@ class Machine {
             this.memBlocks.set(seg, want);
             this.mcbWrite(seg, this.mcbOwner(seg), want);
             r.setResultCf(false);
+            this.mcbSync();
             return true;
           }
           r.setResultCf(true); r.set('ax', 8);
@@ -4825,6 +4936,7 @@ class Machine {
           // was loaded at 184F:0, inside that heap, over the player's
           // buffers, and the player jumped into data.
           this.imageTop = seg + want;
+          this.mcbSync();
         }
         r.setResultCf(false);
         return true;
@@ -5232,6 +5344,7 @@ class Machine {
 module.exports = {
   Machine, loadExe, vgaGeometry, parseKeys,
   VGA_BASE, STUB_SEG, STUB_OFF, STUB_BYTE, LOAD_SEG, PSP_SEG,
+  ENV_SEG, ENV_PARAS, LOL_SEG, LOL_OFF, MCB_FIRST, MCB_SYSTEM, DEFAULT_ALLOC_TOP,
 };
 
 if (require.main === module) {

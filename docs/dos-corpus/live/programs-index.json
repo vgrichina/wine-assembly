@@ -593,7 +593,8 @@
   "/tmp/demos/1995-a-acme-vic/ACME-VIC.EXE": {
     "src": "programs/1995-a-acme-vic.js",
     "exe": "acme-vic.exe",
-    "args": ""
+    "args": "",
+    "pspSeg": 3328
   },
   "/tmp/demos/1995-a-acme_big/ACME-BIG.EXE": {
     "src": "programs/1995-a-acme-big.js",

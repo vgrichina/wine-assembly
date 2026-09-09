@@ -114,14 +114,22 @@ function main() {
   // with no sound card at all for the few that draw only on one (DTM2.EXE,
   // BIOLAN.EXE, CYTOPYGE.EXE). The sweep records "gus"; the page needs the
   // variable itself, and it is the same string the sweep's retry set.
+  // ...and the one setting that is not a sweep finding but a property of the
+  // machine: where DOS puts the program. It lives in program-config.js, the
+  // CLI reads it there, and it has to reach the page too or the tile runs a
+  // different machine than the screenshot above it was taken on.
+  const { programConfig } = require('./program-config');
   const index = {};
   for (const r of rows) {
+    const cfg = programConfig(r.exe) || {};
     index[r.exe] = {
       src: `programs/${slugOf(path.basename(path.dirname(r.exe)))}.js`,
       exe: path.basename(r.exe).toLowerCase(),
       args: r.args || '',
       ...(r.env ? { env: r.env === 'gus' ? 'ULTRASND=240,1,1,11,7' : String(r.env) } : {}),
       ...(r.sound && r.sound !== 'full' ? { sound: r.sound } : {}),
+      ...(cfg.pspSeg ? { pspSeg: cfg.pspSeg } : {}),
+      ...(cfg.loadSeg ? { loadSeg: cfg.loadSeg } : {}),
     };
   }
   fs.writeFileSync(path.join(out, 'programs-index.json'), `${JSON.stringify(index, null, 2)}\n`);

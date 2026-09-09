@@ -123,10 +123,16 @@ class LiveRun {
       // machine's hardware, and a program that only draws without a card
       // gets none whatever the mute says.
       env = [], card = 'full',
+      // Where DOS puts this program, in paragraphs -- the machine setting the
+      // corpus registry carries for the one demo that needs a different one.
+      // It reaches the page through programs-index.json, so the tile and the
+      // CLI mount the same machine; see tools/toyvm/program-config.js.
+      pspSeg = 0, loadSeg = 0,
     } = opts;
     Object.assign(this, {
       canvas, exe, files, cpu, args, msPerFrame, slice, onStatus, onFrame, autoKey,
       variant, mips, paced, audioContext, sound, soundPref, env, card,
+      pspSeg, loadSeg,
     });
     this.running = false;
     this.session = null;
@@ -182,6 +188,7 @@ class LiveRun {
   async start() {
     setCpuLevel(this.cpu);
     const machine = new Machine(new Uint8Array(0), {
+      pspSeg: this.pspSeg, loadSeg: this.loadSeg,
       autoKey: this.autoKey,
       soundPref: this.soundPref,
       env: this.env,
@@ -210,13 +217,16 @@ class LiveRun {
     // parse) and threw on every .EXE. In the page `Buffer` is the bundle's
     // Uint8Array subclass; here it is Node's own.
     const image = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
-    const info = loadExe(vm.mem, image);
+    const info = loadExe(vm.mem, image,
+      { loadSeg: machine.loadSeg, pspSeg: machine.pspSeg });
     // What the program was given is what is NOT free. A .COM has no header to
     // say, so the loader leaves this undefined and the machine keeps its "owns
     // everything" default.
     if (info.allocTop !== undefined) machine.allocTop = info.allocTop;
     machine.imageTop = info.minTop;
     machine.installEnvironment(this.exe, this.args);
+    // After the environment and after allocTop: the chain names both.
+    machine.installArena();
     // IF set, as DOS hands it over -- see the same line in run-dos.js. The page
     // and the headless runner have to agree about this or a program that needs
     // a hardware interrupt behaves differently in the two.

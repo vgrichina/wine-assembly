@@ -1293,7 +1293,7 @@ added, and both found only by sweeping the whole corpus:
   64000 pixels. Rows now carry a `says` field with any refusal the run printed,
   whatever that frame scored, and the rungs read it alongside the kept screen.
 
-### ACME-VIC.EXE — one bug fixed, and the one behind it is the load address
+### ACME-VIC.EXE — FIXED by machine config (per-program load address)
 
 Two things stacked here, and the first hid the second completely.
 
@@ -1349,14 +1349,79 @@ Proved by moving the program above the write: at `PSP_SEG`/`LOAD_SEG` =
 entries, issues 1396 `INT 67h` calls and is still animating at 150M dispatches
 (16939 non-black pixels, frame moving).
 
-**That is not a fix that can be shipped as it stands**, and the corpus says why
-in one line: at `0x0D00` `ACME-BIG.EXE` prints *"This demo requires at least
-600k of free base memory!"* and exits 1. Free conventional memory is
-`(DEFAULT_ALLOC_TOP - PSP_SEG) * 16`, so 600K needs `PSP_SEG <= 0x0900` while
-ACME-VIC needs `LOAD_SEG > 0x0C55`. The two are mutually exclusive under a
-fixed `0x9F00` ceiling, and `RUNDEMO.EXE`'s frame changes as well
-(`08502c5c` → `eb577156`), so any move of the load address is a corpus-wide
-change that has to be measured as one — not a side effect of a demo fix.
+**3. The fix: the load address is a machine setting, per program.** Moving it
+for everyone is not available and the corpus says why in one line: at `0x0D00`
+`ACME-BIG.EXE` prints *"This demo requires at least 600k of free base memory!"*
+and exits 1. Free conventional memory is `(DEFAULT_ALLOC_TOP - PSP_SEG) * 16`,
+so 600K needs `PSP_SEG <= 0x0900` while ACME-VIC needs `LOAD_SEG > 0x0C55`.
+Mutually exclusive under a fixed `0x9F00` ceiling — and a real machine does not
+resolve that with one number either. It resolves it with a boot floppy: where
+DOS puts a program is whatever is left after the kernel, its buffers and every
+driver `CONFIG.SYS` loaded, so the same `.EXE` lands at a different paragraph on
+two machines and no program is entitled to an opinion about which. That is
+exactly why this store could go unnoticed for thirty years.
+
+So the address became a machine option, and the corpus registry names one per
+program:
+
+* `tools/toyvm/program-config.js` — the registry. One entry:
+  `acme-vic.exe: { pspSeg: 0x0D00 }`, the smallest round PSP that clears the
+  store (`LOAD` is `PSP+0x10 = 0x0D10`, and the write at `0xC54A` needs
+  `LOAD > 0xC55`). Everything else stays at the default.
+* `--psp-seg=` / `--load-seg=` on `run-dos.js`, and `pspSeg`/`loadSeg` on the
+  `Machine` and on `LiveRun`. `run-dos.js` consults the registry by executable
+  name, so the CLI and both sweeps mount the same machine without repeating it.
+* `programs-index.json` carries it to the page (`bundle-programs.js` reads the
+  same registry), `site.js` puts it on the tile as `data-live-psp`, and the
+  page's Run button hands it to `LiveRun` — so the tile runs the machine its
+  screenshot was taken on.
+
+Everything derived from the load address moves with it, and each of those is
+silent when it does not. The PSP and its environment pointer, the free-memory
+arithmetic, and — the one that is new — the **MCB chain**. The gap between the
+environment block and the PSP is now 49KB instead of 1KB, and a gap with no
+arena header leaves the chain with a hole, while one owned by 0 reads as *free*
+and tells a program it has 49KB that do not exist. `Machine.installArena` lays
+the chain down at load (environment → DOS and drivers, owner 8 → the program →
+whatever is above it, signed `Z`), `mcbSync` re-lays it wherever the allocator
+moves a boundary, and `INT 21h AH=52h` now answers with a list-of-lists whose
+preceding word is the first MCB. `test/test-toyvm-load-seg.js` is a `.COM` that
+walks that chain at two load addresses and checks the arithmetic:
+
+| | PSP `0x0100` | PSP `0x0D00` |
+|---|---|---|
+| free paragraphs | `0x8DFF` | `0x81FF` |
+| owned by DOS below the PSP | `0x3F` | `0xC3F` |
+| owned by the program | `0x105F` | `0x105F` |
+
+— free memory pays for the move paragraph for paragraph, DOS is the one
+holding it, and the four blocks tile the arena with no hole.
+
+**Measured.** ACME-VIC at `0x0D00` on the CLI (`--dispatches=Nm --pit-clock
+--auto-key`) draws three different frames: `5604db3c` at 20M, `ffbfe5a8` at
+60M, `f6a01ff0` at 150M (17181 non-black, DAC 220/256, 1404 `INT 67h` calls,
+still running). None of them is `a5f03de6`, the loader screen it used to stop
+on. On the live page (`check-live-report.js --name=ACME-VIC.EXE --motion=10`)
+it goes from *"ran 28,382,311 dispatches but painted nothing"* to a full
+64,000-pixel canvas that keeps changing; `--motion` is new, and exists because
+a lit canvas that never moves used to read here as an unqualified pass.
+
+**And it costs the corpus nothing.** Six witnesses — DADEMO3, RUNDEMO, BLIQ,
+ACME-BIG, CONTAGIO, CATWALK at `--dispatches=80m --pit-clock --auto-key
+--sound-pref=sb --env=ULTRASND=220,1,1,11,7` — are byte-identical to a `main`
+base arm in both frame hash and rendered wav, ACME-BIG's 600K check included
+(`362275f5`). The full `sweep-dos.js` over `/tmp/demos` (199 programs, both
+arms) through `sweep-diff.js`: **0 regressions, 0 went blank, 0 changed, 190
+unchanged, and one recovered — `ACME-VIC.EXE: stuck -> ok`.**
+
+One trap worth writing down, because it cost a whole sweep pair. `sweep-diff.js`
+keys rows by executable NAME, and this corpus ships two `ASYLUM.EXE` and four
+`TRIPLEX!.COM` in different directories. Diff a complete sweep against a partial
+one and the missing row is filled by its namesake from another production, which
+reads as a change with a plausible story attached (`px 0 -> 64000`). Both of
+those "changes" reproduce identically in both trees when run by path. Give a
+sweep's `--out=` a name no other session on the box is using: `/tmp/sweep-*.json`
+is not one.
 
 **How to find a write like this again.** `--watch=SEG:OFF` marks the bytes in
 the code bitmap and every store there lands in the self-modify census. Two
