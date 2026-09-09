@@ -14,6 +14,7 @@ const { g2w, g2wSpan } = require('../lib/mem-utils');
 const MAP_STATE = RegionMap.BASE.VIRTUAL_MAP_STATE;
 const MAP_TABLE = RegionMap.BASE.VIRTUAL_MAP_TABLE;
 const PAGE_TABLE = RegionMap.BASE.GUEST_PAGE_TABLE;
+const VIRTUAL_BACKING = RegionMap.BASE.VIRTUAL_BACKING_BASE;
 
 const extraWat = String.raw`
   (func (export "test_virtual_reset")
@@ -170,13 +171,17 @@ async function main() {
   // by non-adjacent WASM pages; the allocation metadata cannot prove that.
   const spanGuest = 0x70000000;
   const spanPte = PAGE_TABLE + (spanGuest >>> 10);
-  Atomics.store(new Uint32Array(memory.buffer), spanPte >>> 2, 0x08000804);
-  Atomics.store(new Uint32Array(memory.buffer), (spanPte >>> 2) + 1, 0x08002804);
-  assert.strictEqual(g2w(spanGuest + 0xff0, main.get_image_base(), memory), 0x08000ff0,
+  Atomics.store(new Uint32Array(memory.buffer), spanPte >>> 2,
+    (VIRTUAL_BACKING | 0x804) >>> 0);
+  Atomics.store(new Uint32Array(memory.buffer), (spanPte >>> 2) + 1,
+    ((VIRTUAL_BACKING + 0x2000) | 0x804) >>> 0);
+  assert.strictEqual(g2w(spanGuest + 0xff0, main.get_image_base(), memory),
+    VIRTUAL_BACKING + 0xff0,
     'JS scalar translation must decode packed backing and page offset');
   assert.strictEqual(g2wSpan(spanGuest + 0xff0, 0x40, main.get_image_base(), memory), 0x10,
     'JS span translation must stop before a non-contiguous backing page');
-  Atomics.store(new Uint32Array(memory.buffer), (spanPte >>> 2) + 1, 0x08001804);
+  Atomics.store(new Uint32Array(memory.buffer), (spanPte >>> 2) + 1,
+    ((VIRTUAL_BACKING + 0x1000) | 0x804) >>> 0);
   assert.strictEqual(g2wSpan(spanGuest + 0xff0, 0x40, main.get_image_base(), memory), 0x40,
     'JS span translation may cross an adjacent packed backing page');
   Atomics.store(new Uint32Array(memory.buffer), spanPte >>> 2, 0);
@@ -203,7 +208,7 @@ async function main() {
   state.setUint32(MAP_STATE, 1, true);
   state.setUint32(MAP_TABLE, upperGuest, true);
   state.setUint32(MAP_TABLE + 4, 0x1000, true);
-  state.setUint32(MAP_TABLE + 8, 0x08000000, true);
+  state.setUint32(MAP_TABLE + 8, VIRTUAL_BACKING, true);
   assert.strictEqual(g2w(upperGuest, main.get_image_base(), memory), 0xf0,
     'JS translation must treat a cleared PTE as authoritative over stale metadata');
 
