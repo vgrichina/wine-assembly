@@ -4846,7 +4846,14 @@ class Machine {
         // IOCTL. Only AL=00, "get device information", is asked often enough to
         // matter: a demo uses it to find out whether stdout is a file or the
         // console. DX bit 7 set means character device.
-        if (al === 0x00) { r.set('dx', 0x80D3); r.setResultCf(false); return true; }
+        if (al === 0x00) {
+          const bx = r.get('bx') & 0xFFFF;
+          const f = this.files.get(bx);
+          if (!f && bx > 4) { r.setResultCf(true); r.set('ax', 6); return true; }
+          r.set('dx', !f || f.device ? 0x80D3 : 0x0000);
+          r.setResultCf(false);
+          return true;
+        }
         // AL=06 "get input status" and AL=07 "get output status" answer with
         // AL=0FFh ready / 00h not ready, CF clear -- they are not optional and
         // they are how a program decides a handle it just opened is a live

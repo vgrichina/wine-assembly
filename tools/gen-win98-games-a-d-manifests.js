@@ -26,7 +26,7 @@ const GAMES = [
   },
   {
     id: 'dungeon_keeper_demo',
-    root: 'Dungeon Keeper Demo-SWonly/Rozbaleny',
+    root: 'Dungeon Keeper Demo-SWonly/installed',
     exe: 'KEEPER95.EXE',
   },
   {

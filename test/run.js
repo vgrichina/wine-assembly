@@ -1140,6 +1140,8 @@ async function main() {
   //   B:keydown:VK          — call renderer.handleKeyDown(VK)
   //   B:di-keydown:VK       — set DirectInput/GetAsyncKeyState key-down state without WM_KEYDOWN
   //   B:di-keyup:VK         — clear DirectInput/GetAsyncKeyState key-down state without WM_KEYUP
+  //   B:di-mousedown[:BTN]   — press DirectInput mouse button 1 or 2 without moving the cursor
+  //   B:di-mouseup[:BTN]     — release DirectInput mouse button 1 or 2 without moving the cursor
   //   B:click:X:Y           — handleMouseDown+Up at canvas (X,Y)
   //   B:mousedown:X:Y       — handleMouseDown at canvas (X,Y)
   //   B:mouseup:X:Y         — handleMouseUp at canvas (X,Y)
@@ -1525,6 +1527,12 @@ async function main() {
       } else if (kind === 'keypress' || kind === 'keydown' || kind === 'keyup' ||
                  kind === 'di-keydown' || kind === 'di-keyup') {
         scheduledInput.push({ batch, action: kind, code: parseInt(parts[2]) });
+      } else if (kind === 'di-mousedown' || kind === 'di-mouseup') {
+        const button = parts[2] === undefined ? 1 : parseInt(parts[2]);
+        if (button !== 1 && button !== 2) {
+          throw new Error(`${kind} button must be 1 or 2`);
+        }
+        scheduledInput.push({ batch, action: kind, button });
       } else if (kind === 'ime-start') {
         scheduledInput.push({ batch, action: 'ime-start' });
       } else if (kind === 'ime-update' || kind === 'ime-commit') {
@@ -7613,6 +7621,22 @@ async function main() {
         // changes just as they do for renderer.handleKeyDown/handleKeyUp.
         if (renderer._signalDirectInputDevice) renderer._signalDirectInputDevice(1);
         logs.push(`[input] ${ev.action} vk=${ev.code} at batch ${batch}`);
+      } else if ((ev.action === 'di-mousedown' || ev.action === 'di-mouseup') && renderer) {
+        const mask = ev.button === 2 ? 0x0002 : 0x0001;
+        const vk = ev.button === 2 ? 0x02 : 0x01;
+        const down = ev.action === 'di-mousedown';
+        const wasDown = !!((renderer._mouseButtonsMask || 0) & mask);
+        renderer._mouseButtonsMask = down
+          ? ((renderer._mouseButtonsMask || 0) | mask)
+          : ((renderer._mouseButtonsMask || 0) & ~mask);
+        if (!renderer._asyncPressedKeys) renderer._asyncPressedKeys = Object.create(null);
+        if (down) renderer._asyncPressedKeys[vk] = true;
+        if (wasDown !== down && renderer._queueDirectInputMouseButton) {
+          renderer._queueDirectInputMouseButton(
+            renderer._pointerInputMemory || renderer.wasmMemory, mask, down);
+        }
+        if (renderer._signalDirectInputDevice) renderer._signalDirectInputDevice(2);
+        logs.push(`[input] ${ev.action} button=${ev.button} at batch ${batch}`);
       } else if (ev.action === 'sleep-ms') {
         if (ev.ms > 0) await new Promise(resolve => setTimeout(resolve, ev.ms));
         logs.push(`[input] sleep-ms ${ev.ms} at batch ${batch}`);
