@@ -598,6 +598,9 @@ UNIT=(
   test/test-toyvm-sb-single-cycle.js
   test/test-toyvm-ioctl-status.js
   test/test-toyvm-sb-highspeed-autoinit.js
+  test/test-toyvm-vbe.js
+  test/test-toyvm-load-seg.js
+  test/test-toyvm-region-live.js
   test/test-user-default-ui-language.js
   test/test-virtual-query-user-boundary.js
   test/test-wave-in-dev-caps.js
