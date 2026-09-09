@@ -5904,12 +5904,11 @@
 
   ;; Final release of any type-20 device interface detaches every viewport the
   ;; device retained, including the independent current-viewport reference.
-  (func $d3dim_device_release (param $this i32) (result i32)
-    (local $entry i32) (local $rc i32) (local $state i32)
+  (func $d3dim_device_release_entry (param $entry i32) (result i32)
+    (local $rc i32) (local $state i32)
     (local $current i32) (local $i i32) (local $vp_entry i32) (local $vp_slot i32)
     (local $owner i32) (local $node_head i32) (local $node i32)
     (local $node_next i32) (local $steps i32)
-    (local.set $entry (call $dx_from_this (local.get $this)))
     (local.set $owner (call $d3dim_primary_guest (local.get $entry)))
     (local.set $rc
       (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
@@ -5917,7 +5916,7 @@
       (then
         (store.field DxObject refcount (local.get $entry) (local.get $rc))
         (return (local.get $rc))))
-    (local.set $state (call $d3ddev_state (local.get $this)))
+    (local.set $state (i32.load offset=16 (local.get $entry)))
     (call $lock_acquire (global.get $LOCK_DX))
     (if (local.get $state)
       (then
@@ -5996,3 +5995,6 @@
     (if (local.get $state) (then (call $heap_free (local.get $state))))
     (call $dx_free (local.get $entry))
     (i32.const 0))
+
+  (func $d3dim_device_release (param $this i32) (result i32)
+    (call $d3dim_device_release_entry (call $dx_from_this (local.get $this))))

@@ -17,6 +17,8 @@
 //   'CRASH'   — $crash_unimplemented. The default: an unimplemented D3D9
 //               method that silently returned 0 would hand the app a NULL
 //               resource or stale output buffer and fail somewhere unrelated.
+// A handler alias dispatches to an existing shared implementation and
+// suppresses generation of a redundant named WAT wrapper.
 
 'use strict';
 
@@ -24,8 +26,8 @@ const interfaces = [
   // ── IDirect3D9 — the object Direct3DCreate9 returns ────────────────
   { prefix: 'IDirect3D9', methods: [
     { name: 'QueryInterface',              nargs: 3, ret: 'CRASH' },
-    { name: 'AddRef',                      nargs: 1, ret: 'ADDREF' },
-    { name: 'Release',                     nargs: 1, ret: 'RELEASE' },
+    { name: 'AddRef',                      nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
+    { name: 'Release',                     nargs: 1, ret: 'RELEASE', handler: 'dx_com_release_basic' },
     { name: 'RegisterSoftwareDevice',      nargs: 2, ret: 'OK' },
     { name: 'GetAdapterCount',             nargs: 1, ret: 'OK' },
     { name: 'GetAdapterIdentifier',        nargs: 4, ret: 'CRASH' },
@@ -45,8 +47,8 @@ const interfaces = [
   // ── IDirect3DDevice9 — 119 slots ───────────────────────────────────
   { prefix: 'IDirect3DDevice9', methods: [
     { name: 'QueryInterface',            nargs: 3, ret: 'CRASH' },
-    { name: 'AddRef',                    nargs: 1, ret: 'ADDREF' },
-    { name: 'Release',                   nargs: 1, ret: 'RELEASE' },
+    { name: 'AddRef',                    nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
+    { name: 'Release',                   nargs: 1, body: 'RELEASE_DEVICE9' },
     { name: 'TestCooperativeLevel',      nargs: 1, ret: 'OK' },
     { name: 'GetAvailableTextureMem',    nargs: 1, ret: 'OK' },
     { name: 'EvictManagedResources',     nargs: 1, ret: 'OK' },
@@ -169,8 +171,8 @@ const interfaces = [
   // ── IDirect3DTexture9 — IUnknown + Resource9 + BaseTexture9 + own ──
   { prefix: 'IDirect3DTexture9', methods: [
     { name: 'QueryInterface',        nargs: 3, ret: 'CRASH' },
-    { name: 'AddRef',                nargs: 1, ret: 'ADDREF' },
-    { name: 'Release',               nargs: 1, ret: 'RELEASE' },
+    { name: 'AddRef',                nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
+    { name: 'Release',               nargs: 1, ret: 'RELEASE', handler: 'dx_com_release_basic' },
     { name: 'GetDevice',             nargs: 2 },
     { name: 'SetPrivateData',        nargs: 5, ret: 'OK' },
     { name: 'GetPrivateData',        nargs: 4 },
@@ -195,8 +197,8 @@ const interfaces = [
   // ── IDirect3DSurface9 ──────────────────────────────────────────────
   { prefix: 'IDirect3DSurface9', methods: [
     { name: 'QueryInterface',  nargs: 3, ret: 'CRASH' },
-    { name: 'AddRef',          nargs: 1, ret: 'ADDREF' },
-    { name: 'Release',         nargs: 1, ret: 'RELEASE' },
+    { name: 'AddRef',          nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
+    { name: 'Release',         nargs: 1, ret: 'RELEASE', handler: 'IDirectDrawSurface_Release' },
     { name: 'GetDevice',       nargs: 2 },
     { name: 'SetPrivateData',  nargs: 5, ret: 'OK' },
     { name: 'GetPrivateData',  nargs: 4 },
@@ -216,8 +218,8 @@ const interfaces = [
   // ── IDirect3DSwapChain9 ────────────────────────────────────────────
   { prefix: 'IDirect3DSwapChain9', methods: [
     { name: 'QueryInterface',       nargs: 3 },
-    { name: 'AddRef',               nargs: 1, ret: 'ADDREF' },
-    { name: 'Release',              nargs: 1, ret: 'RELEASE' },
+    { name: 'AddRef',               nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
+    { name: 'Release',              nargs: 1, ret: 'RELEASE', handler: 'IDirect3DDevice9_Release' },
     { name: 'Present',              nargs: 6 },
     { name: 'GetFrontBufferData',   nargs: 2 },
     { name: 'GetBackBuffer',        nargs: 4 },

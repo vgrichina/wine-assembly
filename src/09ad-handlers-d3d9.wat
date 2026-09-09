@@ -20,25 +20,6 @@
     (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3D9_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3D9_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  ;; IDirect3D9_Release — 1 args (incl. this)
-  (func $handle_IDirect3D9_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
-      (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
   ;; IDirect3D9_RegisterSoftwareDevice — 2 args (incl. this)
   (func $handle_IDirect3D9_RegisterSoftwareDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
@@ -79,7 +60,7 @@
   ;; works on D3D9 surfaces unchanged. Entry fields match
   ;; $handle_IDirectDraw_CreateSurface: +12 w, +14 h, +16 bpp, +18 pitch,
   ;; +20 DIB (WASM addr), +24 vidmem bytes, +28 flags (1=primary, 4=offscreen).
-  ;; Returns the COM object, or 0 when the heap or the object table is full.
+  ;; Returns the COM object, or 0 when the DIB arena or object table is full.
   (func $d3d9_create_surface (param $w i32) (param $h i32) (param $bpp i32) (param $flags i32) (result i32)
     (local $pitch i32) (local $size i32) (local $dib_guest i32) (local $dib_wa i32)
     (local $obj i32) (local $entry i32)
@@ -87,12 +68,14 @@
       (i32.add (i32.mul (local.get $w) (i32.div_u (local.get $bpp) (i32.const 8))) (i32.const 3))
       (i32.const 0xFFFFFFFC)))
     (local.set $size (i32.mul (local.get $pitch) (local.get $h)))
-    (local.set $dib_guest (call $heap_alloc (local.get $size)))
+    (local.set $dib_guest (call $dib_alloc (local.get $size)))
     ;; g2w(0) is the base of the guest image; never zero a surface from there.
     (if (i32.eqz (local.get $dib_guest)) (then (return (i32.const 0))))
     (local.set $dib_wa (call $g2w (local.get $dib_guest))) (call $zero_memory (local.get $dib_wa) (local.get $size))
     (local.set $obj (call $dx_create_com_obj (i32.const 2) (global.get $DX_VTBL_DDSURF2)))
-    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $obj)) (then
+      (call $dib_free_wasm (local.get $dib_wa))
+      (return (i32.const 0))))
     (local.set $entry (call $dx_from_this (local.get $obj)))
     (store.field DxObject width (local.get $entry) (local.get $w))
     (store.field DxObject height (local.get $entry) (local.get $h))
@@ -224,6 +207,27 @@
     (call $d3dim_create_device (local.get $arg0) (local.get $surf)
       (local.get $ppDev) (global.get $DX_VTBL_D3DDEV9)))
 
+  ;; Device9 and its implicit SwapChain9 interface share one type-20 COM
+  ;; identity. The device owns the initial reference returned by
+  ;; $d3d9_create_surface; drop it only when the shared device count reaches
+  ;; zero, after the common device state has finished using the render target.
+  (func $d3d9_device_release (param $this i32) (result i32)
+    (local $entry i32) (local $rt i32) (local $rt_slot i32) (local $rc i32)
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (local.set $rt_slot (load.field DxObject misc0 (local.get $entry)))
+    (local.set $rt (i32.add (global.get $DX_OBJECTS)
+      (i32.mul (local.get $rt_slot) (global.get $DX_ENTRY_SIZE))))
+    (local.set $rc (call $d3dim_device_release_entry (local.get $entry)))
+    (if (i32.ne (local.get $rc) (i32.const 0))
+      (then (return (local.get $rc))))
+    (if (i32.and
+          (i32.ne (local.get $rt) (i32.const 0))
+          (i32.eq (load.field DxObject type (local.get $rt)) (i32.const 2)))
+      (then
+        (drop (call $dx_surface_release
+          (call $d3dim_primary_guest (local.get $rt))))))
+    (i32.const 0))
+
 
   ;; ── IDirect3DDevice9 — 119 methods ─────────────
   ;; IDirect3DDevice9_QueryInterface — 3 args (incl. this)
@@ -231,23 +235,9 @@
     (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3DDevice9_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3DDevice9_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
   ;; IDirect3DDevice9_Release — 1 args (incl. this)
   (func $handle_IDirect3DDevice9_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
-      (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
+    (global.set $eax (call $d3d9_device_release (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DDevice9_TestCooperativeLevel — 1 args (incl. this)
@@ -918,25 +908,6 @@
     (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3DTexture9_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3DTexture9_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  ;; IDirect3DTexture9_Release — 1 args (incl. this)
-  (func $handle_IDirect3DTexture9_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
-      (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
   ;; IDirect3DTexture9_GetDevice — 2 args (incl. this)
   (func $handle_IDirect3DTexture9_GetDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
@@ -1038,25 +1009,6 @@
   (func $handle_IDirect3DSurface9_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-
-  ;; IDirect3DSurface9_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3DSurface9_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  ;; IDirect3DSurface9_Release — 1 args (incl. this)
-  (func $handle_IDirect3DSurface9_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
-      (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DSurface9_GetDevice — 2 args (incl. this)
   (func $handle_IDirect3DSurface9_GetDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1161,25 +1113,6 @@
     (store.field.memarg DxObject refcount (local.get $entry) (i32.add (load.field.memarg DxObject refcount (local.get $entry)) (i32.const 1)))
     (call $gs32 (local.get $arg2) (local.get $arg0))
     (global.set $eax (i32.const 0)))
-
-  (func $handle_IDirect3DSwapChain9_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field.memarg DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field.memarg DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  (func $handle_IDirect3DSwapChain9_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field.memarg DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
-      (else
-        (store.field.memarg DxObject refcount (local.get $entry) (local.get $rc))
-        (global.set $eax (local.get $rc))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirect3DSwapChain9_Present (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $rt i32)

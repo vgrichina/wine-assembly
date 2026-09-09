@@ -3490,10 +3490,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
 
-  (func $handle_IDirectDrawSurface_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; One teardown path serves every COM view of a type-2 surface, including
+  ;; IDirect3DSurface9. It returns the remaining reference count without
+  ;; owning a handler stack frame, so device teardown can release its implicit
+  ;; render-target reference directly.
+  (func $dx_surface_release (param $this i32) (result i32)
     (local $entry i32) (local $rc i32) (local $surf_bytes i32) (local $dib_wa i32)
     (call $d3dim_worker_fence)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $entry (call $dx_from_this (local.get $this)))
     (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
     (store.field DxObject refcount (local.get $entry) (local.get $rc))
     (if (i32.le_s (local.get $rc) (i32.const 0))
@@ -3507,7 +3511,10 @@
         (if (i32.eqz (i32.and (load.field DxObject flags (local.get $entry)) (i32.const 0x200)))
           (then (call $dib_free_wasm (local.get $dib_wa))))
         (call $dx_free (local.get $entry))))
-    (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
+    (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
+
+  (func $handle_IDirectDrawSurface_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $dx_surface_release (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; AddAttachedSurface — retain the parent relationship on the child in the

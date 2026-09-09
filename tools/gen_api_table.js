@@ -1499,8 +1499,14 @@ const { interfaces: d3d9Ifaces } = require('./d3d9-methods');
 for (const iface of d3d9Ifaces) {
   for (const m of iface.methods) {
     const fullName = iface.prefix + '_' + m.name;
-    if (!seen.has(fullName)) {
-      existing.push({ id: existing.length, name: fullName, nargs: 5, convention: 'stdcall', hash: 0 });
+    const current = existing.find(api => api.name === fullName);
+    if (current) {
+      if (m.handler) current.handler = m.handler;
+      else delete current.handler;
+    } else {
+      const api = { id: existing.length, name: fullName, nargs: 5, convention: 'stdcall', hash: 0 };
+      if (m.handler) api.handler = m.handler;
+      existing.push(api);
       seen.add(fullName);
     }
   }
