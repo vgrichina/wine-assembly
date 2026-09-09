@@ -5598,14 +5598,41 @@ ${isa.SEG.map(r => `(global $${r}b (mut i32) (i32.const 0))`).join('\n')}
 // these across too, or it computes the same instruction against a different
 // machine. That was worth a whole reserved bit of the flags word (0xF246 vs
 // 0x7246) and scored the run a mismatch with no hint as to which field moved.
+// `idtb`/`idtl` are here for the live install and had no accessor at all before
+// it: `lidt` writes them (see the lgdt/lidt pair in the decoder) and $fault
+// reads them to find a gate, so an instance swap that left them at zero would
+// take the next interrupt through the real-mode vector table instead of the
+// guest's own IDT -- silently, and only in a protected-mode program.
 const MACHINE_STATE = ['f_res', 'f_def', 'shmask', 'linmask', 'cr0', 'vm86',
-  'gdtb', 'gdtl', 'd32', 'spm', 'ldt', 'ldtb', 'tr'];
+  'gdtb', 'gdtl', 'idtb', 'idtl', 'd32', 'spm', 'ldt', 'ldtb', 'tr'];
 
 // Emitted into BOTH modules, under names of their own so they cannot collide
 // with the hand-written get_cr0/get_linmask exports that already exist.
 const machineAccessors = () => MACHINE_STATE.map(g => `
 (func (export "mget_${g}") (result i32) (global.get $${g}))
 (func (export "mset_${g}") (param $v i32) (global.set $${g} (local.get $v)))`).join('');
+
+// The x87 register file, which is neither in STATE (it is not i32) nor in
+// MACHINE_STATE (it is not a setting). Nothing needed it until a LIVE region
+// install started moving a running program from one instance of the module to
+// another: registers, flags and machine settings are carried by the two lists
+// above, and without these eight f64s and their tags a demo that was mid-way
+// through an FPU calculation would resume from an empty stack. Indexed rather
+// than eight named pairs because the caller wants a loop, and a wasm global
+// cannot be indexed at all -- so the index is a compare chain. Eight compares
+// run twice per region install and never anywhere else.
+const FPU_STATE = ['ftop', 'ftag', 'fsw', 'fcw'];
+const fpuAccessors = () => `
+(func (export "fget_st") (param $i i32) (result f64)
+  ${[...Array(8).keys()].map(i =>
+    `(if (i32.eq (local.get $i) (i32.const ${i})) (then (return (global.get $st${i}))))`).join('\n  ')}
+  (f64.const 0))
+(func (export "fset_st") (param $i i32) (param $v f64)
+  ${[...Array(8).keys()].map(i =>
+    `(if (i32.eq (local.get $i) (i32.const ${i})) (then (global.set $st${i} (local.get $v))))`).join('\n  ')})
+${FPU_STATE.map(g => `
+(func (export "fget_${g}") (result i32) (global.get $${g}))
+(func (export "fset_${g}") (param $v i32) (global.set $${g} (local.get $v)))`).join('')}`;
 
 // The host's window onto guest state, emitted from ONE place because there is a
 // second module that needs the identical set: trace-jit.js compiles a trace into
@@ -5719,6 +5746,7 @@ ${EXTRA_GLOBALS}
 (type $void (func))
 ${accessors}
 ${machineAccessors()}
+${fpuAccessors()}
 `;
 }
 
@@ -6003,7 +6031,7 @@ module.exports = {
   // The $ea br_table's arms, so a JIT tier can fold the call once its index is
   // a constant instead of keeping a second copy that drifts.
   EA_ARMS,
-  MACHINE_STATE,
+  MACHINE_STATE, FPU_STATE,
   machineAccessors,
   stateAccessors,
   // A handler index -> the same handler without its flag write, and what every

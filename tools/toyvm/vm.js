@@ -48,9 +48,16 @@ async function buildModule(variant, opts = {}) {
 }
 
 async function makeVm(variant, opts = {}) {
-  const { wat, bytes } = await buildModule(variant,
-    { hist: !!opts.hist, lazyFlags: opts.lazyFlags !== false, fuseCond: opts.fuseCond !== false,
-      regions: opts.regions || null });
+  // `opts.bytes` skips the build entirely and instantiates a module somebody
+  // else compiled. That is how a LIVE region install avoids paying for the
+  // whole VM twice: region-live.js's backend has already emitted and compiled
+  // exactly this module -- possibly in a worker, where its ~1s does not touch
+  // the page's thread -- and only the instance has to be made here.
+  const { wat, bytes } = opts.bytes
+    ? { wat: opts.wat || '', bytes: opts.bytes }
+    : await buildModule(variant,
+      { hist: !!opts.hist, lazyFlags: opts.lazyFlags !== false, fuseCond: opts.fuseCond !== false,
+        regions: opts.regions || null });
   // WHERE THE REGIONS LANDED IN THE TABLE. Regions are appended after the
   // ordinary handlers, so their index is HANDLERS.length + n -- but only as
   // measured against the table THIS module was built with. HANDLERS is rebuilt
@@ -61,7 +68,14 @@ async function makeVm(variant, opts = {}) {
   // ran while the run around it looked healthy.
   const regionBase = require('./emit').HANDLERS.length;
   const module = await WebAssembly.compile(bytes);
-  const memory = new WebAssembly.Memory({ initial: isa.MEM_PAGES, maximum: isa.MEM_PAGES });
+  // `opts.memory` reuses a Memory somebody else already owns. That is what a
+  // LIVE region install needs: the guest's RAM, its arena of threaded code and
+  // its shadow stack all live in linear memory, so a second module built around
+  // a compiled region has to be instantiated over the SAME memory or the
+  // program it is meant to speed up is left behind in the old one. Only the
+  // wasm GLOBALS are per-instance, and region-live.js carries those across.
+  const memory = opts.memory
+    || new WebAssembly.Memory({ initial: isa.MEM_PAGES, maximum: isa.MEM_PAGES });
   // Ports are a host concern: the VM has no peripherals, and the few a demo
   // actually touches (VGA DAC, retrace) are modelled in tools/toyvm/dos.js.
   // The default reads 0xFF, which is what an empty ISA bus returns.
@@ -83,7 +97,10 @@ async function makeVm(variant, opts = {}) {
     },
   };
   const instance = await WebAssembly.instantiate(module, { host: { memory, ...ports } });
-  const ex = instance.exports;
+  // `let`, and every accessor below re-reads it, because a live region install
+  // swaps this vm onto a SECOND instance of a module built with the compiled
+  // loop in its table (see rebind).
+  let ex = instance.exports;
   const mem = new Uint8Array(memory.buffer);
 
   // Two of these are not 16-bit quantities and never were: the instruction
@@ -100,7 +117,7 @@ async function makeVm(variant, opts = {}) {
   // every read was 9.8% of a CYCLE profile (40k handbacks a guest second).
   // Names outside the export table (`smc`, `steps`, ...) resolve lazily so
   // the set of readable globals is still whatever the module exports.
-  const getters = Object.create(null), setters = Object.create(null), raws = Object.create(null);
+  let getters = Object.create(null), setters = Object.create(null), raws = Object.create(null);
   const getter = (r) => getters[r] || (getters[r] = WIDE.has(r)
     ? (() => { const f = ex[`get_${r}`]; return () => f() >>> 0; })()
     : (() => { const f = ex[`get_${r}`]; return () => f() & 0xFFFF; })());
@@ -113,9 +130,27 @@ async function makeVm(variant, opts = {}) {
   // counters and the register file is 32 bits wide -- both need the whole word.
   const raw = (r) => (raws[r] || (raws[r] = ex[`get_${r}`]))();
 
-  return {
-    variant, wat, bytes, exports: ex, mem, regionBase,
+  const self = {
+    variant, wat, bytes, exports: ex, mem, memory, regionBase,
     get, set, raw,
+    // Point this vm at a different instance, built over the SAME memory. Only
+    // the wasm globals are lost by the move and the caller carries those (see
+    // region-live.js `carryState`); everything the emulator holds -- the arena,
+    // the shadow stack, the guest's RAM -- is in the memory both instances
+    // import. The memoized accessor closures capture the old export table, so
+    // they are thrown away rather than updated: a stale `get_ax` reads a
+    // register that stopped moving, which is the quietest possible bug.
+    rebind({ exports, regionBase: rb, wat: newWat, bytes: newBytes }) {
+      ex = exports;
+      getters = Object.create(null);
+      setters = Object.create(null);
+      raws = Object.create(null);
+      self.exports = exports;
+      if (rb !== undefined) self.regionBase = rb;
+      if (newWat !== undefined) self.wat = newWat;
+      if (newBytes !== undefined) self.bytes = newBytes;
+      return self;
+    },
     getAll() {
       const o = {};
       for (const r of REGS) o[r === 'gip' ? 'ip' : r] = get(r);
@@ -145,6 +180,7 @@ async function makeVm(variant, opts = {}) {
       return true;
     },
   };
+  return self;
 }
 
 module.exports = { makeVm, buildModule, REGS };

@@ -38,7 +38,10 @@ const path = require('path');
 const isa = require('./isa');
 const { HANDLERS, EA_ARMS, TAKEN_AT } = require('./emit');
 const { effectsOf } = require('./handler-effects');
-const { runDos } = require('./run-dos');
+// Required where it is used, not here: region-live.js loads this file inside a
+// page (and inside a compile worker) to reach emitTier3 and benchTiers, and
+// neither of those runs a whole program.
+// (`require('./run-dos')` lives in findHotTrace)
 
 function arg(name, fallback) {
   const hit = process.argv.slice(2).find(a => a.startsWith(`--${name}=`));
@@ -57,10 +60,21 @@ function count(s, d) {
 // $ip is sampled whenever a slice's budget expires, which is a true arena
 // program counter. Map each sample back to the block that contains it.
 async function findHotTrace(exe, { budget, slice, cpu, sampleAfter = 0, sampleFrom = 0 }) {
-  const r = await runDos({
+  const r = await require('./run-dos').runDos({
     exe, budget, slice, cpu, sample: true, sampleAfter, autoKey: true, log: () => {},
   });
+  return { r, ...rankSamples(r, sampleFrom) };
+}
 
+// The half of findHotTrace that is not about running a program: turn a set of
+// ARENA-address samples into a ranking of the BLOCKS they landed in. Split out
+// because tools/toyvm/region-live.js profiles a program that is already
+// running -- there is no second run to make -- and a live picker that ranked
+// blocks by its own rule would be a second policy nobody could compare.
+//
+// `r` is anything carrying the four things this reads: `ipSamples`,
+// `ipSampleLog`, `dispatched` and `regions` (the block cache, cs -> programs).
+function rankSamples(r, sampleFrom = 0) {
   // `sampleFrom` is a fraction of the run this program ACTUALLY did, applied
   // after the fact. sampleFrom=0.5 profiles the second half, which is what it
   // takes to see past a startup depacker in a corpus where programs differ in
@@ -121,7 +135,7 @@ async function findHotTrace(exe, { budget, slice, cpu, sampleAfter = 0, sampleFr
   // exist when the run stops, so a self-modifying program can retire millions
   // of dispatches and leave nothing for a sample to land in.
   const why = { samples: [...samples.values()].reduce((a, b) => a + b, 0), heads: heads.length };
-  return { r, ranked, total, why };
+  return { ranked, total, why };
 }
 
 // Walk arena words from a block head into (handler, operands) pairs. Stops at
@@ -1802,7 +1816,7 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
 
 module.exports = {
   jitTiers, benchTiers,
-  findHotTrace, readTrace, foldOperands, emitTier1, emitTier2,
+  findHotTrace, rankSamples, readTrace, foldOperands, emitTier1, emitTier2,
   foldRegisterFile, killDeadFlags, moduleWat, memHash, straightLineProgram,
   emitTier3, foldEa, promoteRegs, inlineCounters,
 };

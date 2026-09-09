@@ -171,6 +171,13 @@ async function runDos(o) {
     // regions the block cache holds, and the two are unrelated)
     jitRegions = null, regionAt = null, regionSucc = null, regionBytes = null,
     regionCodeBits = true,
+    // The LIVE region JIT (`--region-jit`): profile this run, compile its hot
+    // loop and install it into this same run. Everything above is the BENCH
+    // path, where the region comes from a previous run and is in the module
+    // before the program starts; this one is off by default and is what the
+    // page uses. `true` for the defaults, or an options object -- see
+    // tools/toyvm/region-live.js.
+    regionJit = null,
     smcCensus = false, watch = [],
     stopText = null,
     traceIo = null,
@@ -548,9 +555,31 @@ async function runDos(o) {
           // every program that finishes in 3M reports no samples at all.
           ipSampleLog.push(dispatched, at);
         }
+        // The live JIT profiles off the same slice ends, and keeps its own
+        // sample map: its window is a stretch of THIS run rather than a
+        // fraction of a finished one.
+        if (jit) jit.sample({ left, dispatched });
       },
     },
   });
+  // Built after the session because it installs into it, and given the same
+  // port closures the module was made with -- the new instance imports them
+  // again, and a demo whose ports went missing simply stops hearing its own
+  // hardware.
+  const jit = regionJit
+    ? new (require('./region-live').LiveJit)({
+      session, vm, machine, repFast, cpu,
+      portIn: (p, w) => machine.portIn(p, w),
+      portOut: (p, v, w) => machine.portOut(p, v, w),
+      // In-process and blocking, which is the right choice HERE: a headless run
+      // has nothing else to do with the seconds the audit and the compile take,
+      // and the run loop is already paused between two slices. The page uses a
+      // worker instead (region-live.js `workerBackend`).
+      backend: require('./region-prepare').inlineBackend(),
+      log,
+      ...(regionJit === true ? {} : regionJit),
+    })
+    : null;
   let sliceT0 = 0n;
   let sliceCpu0 = null;
 
@@ -568,6 +597,11 @@ async function runDos(o) {
 
   while (session.dispatched < budget && !session.done) {
     session.step();
+    // Between slices, never inside one: installing swaps the wasm instance.
+    // Headless, the pipeline is simply awaited -- a one-second pause between
+    // two slices costs a batch run nothing, and the page (which cannot afford
+    // it) hands the same pipeline to a worker instead.
+    if (jit) { jit.pump(); if (jit.pending) await jit.pending; }
     // Every trip. Sampling this every 64th was a real overrun and not a small
     // one: a step is a whole slice, and a program whose loops the compiler
     // cannot resolve spends most of its wall clock in JS compiling them, so 64
@@ -648,6 +682,8 @@ async function runDos(o) {
     smcBreaks, smcPatched, smcFastRepairs, repairWhy, traps, icebps, smcSites, retiredPatches,
     stuckAt, blockedOn32, badSelector, ranOutOfTime,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
+    // What the live region JIT did, or null when it was never asked for.
+    jit: jit ? jit.stats() : null,
     // A program that never put the adapter in a graphics mode has no frame to
     // count, and reading A000 anyway is how ACME-SUX.EXE and AKM_DOB.EXE came
     // back with ~61,700 "pixels" each while sitting in text mode the whole run.
@@ -790,6 +826,19 @@ async function main() {
     budget: count(arg('dispatches'), 200e6),
     slice: count(arg('slice'), 2e6),
     seconds: Number(arg('seconds', 0)),
+    // `--region-jit` compiles this run's own hot loop into the module it is
+    // already running (tools/toyvm/region-live.js). OFF by default. The four
+    // knobs are the profile window, how many regions one install carries and
+    // the in-isolation bar the audit holds the body to; `--region-jit-verbose`
+    // prints each stage.
+    regionJit: flag('region-jit') ? {
+      sampleAfter: count(arg('region-jit-after'), 6e6),
+      profileFor: count(arg('region-jit-window'), 6e6),
+      regions: Number(arg('region-jit-regions', 1)),
+      gateAt: Number(arg('region-jit-gate', 1)),
+      gateIters: count(arg('region-jit-gate-iters'), 4000),
+      log: flag('region-jit-verbose') ? console.log : (() => {}),
+    } : null,
     traceInt: flag('trace-int'),
     traceFault: flag('trace-fault'),
     traceV86: flag('trace-v86'),
@@ -1011,6 +1060,22 @@ async function main() {
   }
 
   console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`);
+  // The live JIT's verdict, in one line: where it got to, what it installed and
+  // what each stage cost. A run with `--region-jit` that says `declined` did
+  // not silently fall back -- it looked, and the reason is the whole finding.
+  if (r.jit) {
+    const j = r.jit;
+    console.log(`  region jit (${j.backend}): ${j.phase}`
+      + (j.at ? ` at ${j.at.map(x => '0x' + x.toString(16)).join(' ')}` : '')
+      + (j.declined ? ` -- ${j.declined}` : '')
+      + (j.gate ? `  gate ${j.gate.toFixed(2)}x, share ${j.share.toFixed(1)}%` : '')
+      + (j.installs ? `  ${j.installs} install(s), ${j.drops} drop(s)` : '')
+      + (j.ms.prepare !== undefined
+        ? `  [pick ${j.ms.pick.toFixed(1)}ms, snapshot ${(j.ms.snapshot || 0).toFixed(1)}ms,`
+          + ` gate ${(j.ms.gate || 0).toFixed(0)}ms, build ${(j.ms.build || 0).toFixed(0)}ms,`
+          + ` instantiate ${(j.ms.instantiate || 0).toFixed(0)}ms,`
+          + ` swap ${(j.ms.swap || 0).toFixed(1)}ms]` : ''));
+  }
   console.log(`  ${r.handbacks} handbacks, ${r.ints} interrupts`
     // Every vector the host raises, not just the timer: single-step traps and
     // stepped-over ICEBPs go through the same path and are broken out below.
