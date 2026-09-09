@@ -10,8 +10,10 @@ const { createHostImports } = require('../lib/host-imports');
 // map declared in src/00-regions.wat. (The bare 0x2000/0x3000/0x4000/0x5000
 // below are allocation SIZES, not the regions the census reads them as.)
 const RegionMap = require('../lib/region-map.generated.js');
+const { g2w, g2wSpan } = require('../lib/mem-utils');
 const MAP_STATE = RegionMap.BASE.VIRTUAL_MAP_STATE;
 const MAP_TABLE = RegionMap.BASE.VIRTUAL_MAP_TABLE;
+const PAGE_TABLE = RegionMap.BASE.GUEST_PAGE_TABLE;
 
 const extraWat = String.raw`
   (func (export "test_virtual_reset")
@@ -157,8 +159,28 @@ async function main() {
     'packed translation must resolve the main instance mapping');
   assert.strictEqual(worker.guest_to_wasm(graphicsBase) >>> 0, graphicsBacking >>> 0,
     'packed translations published by one instance must be visible to workers');
+  assert.strictEqual(g2w(graphicsBase + 0x321, main.get_image_base(), memory),
+    graphicsBacking + 0x321,
+    'the JS host translator must consume the same packed PTE publication');
   assert.strictEqual(main.get_guest_page_table_size(), 0x400000,
     'packed translation must cover all 4GB with one flat PTE array');
+
+  // Host-side bulk views may span pages only while the packed backings remain
+  // affine. This synthetic pair deliberately has adjacent guest pages backed
+  // by non-adjacent WASM pages; the allocation metadata cannot prove that.
+  const spanGuest = 0x70000000;
+  const spanPte = PAGE_TABLE + (spanGuest >>> 10);
+  Atomics.store(new Uint32Array(memory.buffer), spanPte >>> 2, 0x08000804);
+  Atomics.store(new Uint32Array(memory.buffer), (spanPte >>> 2) + 1, 0x08002804);
+  assert.strictEqual(g2w(spanGuest + 0xff0, main.get_image_base(), memory), 0x08000ff0,
+    'JS scalar translation must decode packed backing and page offset');
+  assert.strictEqual(g2wSpan(spanGuest + 0xff0, 0x40, main.get_image_base(), memory), 0x10,
+    'JS span translation must stop before a non-contiguous backing page');
+  Atomics.store(new Uint32Array(memory.buffer), (spanPte >>> 2) + 1, 0x08001804);
+  assert.strictEqual(g2wSpan(spanGuest + 0xff0, 0x40, main.get_image_base(), memory), 0x40,
+    'JS span translation may cross an adjacent packed backing page');
+  Atomics.store(new Uint32Array(memory.buffer), spanPte >>> 2, 0);
+  Atomics.store(new Uint32Array(memory.buffer), (spanPte >>> 2) + 1, 0);
 
   // The former two-level directory covered only addresses below 2GB. The flat
   // index is deliberately unsigned and covers the upper half as well, even
@@ -175,6 +197,15 @@ async function main() {
     'an upper-half packed mapping must remain releasable');
   assert.strictEqual(worker.guest_to_wasm(upperGuest) >>> 0, 0xf0,
     'upper-half PTE release must become visible across instances');
+  // Leave a deliberately stale map record behind. A cleared PTE is the sole
+  // translation authority, so neither WAT nor its JS host twin may resurrect
+  // the released backing through allocation metadata.
+  state.setUint32(MAP_STATE, 1, true);
+  state.setUint32(MAP_TABLE, upperGuest, true);
+  state.setUint32(MAP_TABLE + 4, 0x1000, true);
+  state.setUint32(MAP_TABLE + 8, 0x08000000, true);
+  assert.strictEqual(g2w(upperGuest, main.get_image_base(), memory), 0xf0,
+    'JS translation must treat a cleared PTE as authoritative over stale metadata');
 
   // A cleared PTE is authoritative. In particular, do not resurrect released
   // backing by consulting the allocation metadata table after MEM_RELEASE.

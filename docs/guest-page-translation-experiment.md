@@ -33,8 +33,10 @@ There is no runtime legacy fallback. A zero PTE is an authoritative miss and
 goes directly to the normal unmapped-access result. The old four-entry range
 cache, byte-page cache, record walk, enable flag, CLI/browser toggle, and Worker
 inheritance plumbing have been removed. `VIRTUAL_MAP_TABLE` remains necessary
-as allocation, release, and `VirtualQuery` metadata; translation never scans
-it.
+as allocation, release, and `VirtualQuery` metadata; neither WAT execution nor
+the JavaScript host-boundary `g2w`/`g2wSpan` helpers scan it. Both translators
+now consume the same packed PTE publication and treat a zero entry as an
+authoritative miss.
 
 ## Synthetic results
 
