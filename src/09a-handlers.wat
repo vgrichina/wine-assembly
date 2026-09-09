@@ -803,23 +803,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; 6: GetLocalTime(lpSystemTime) — fills SYSTEMTIME with simulated time
+  ;; 6: GetLocalTime(lpSystemTime) — host wall clock in the local time zone.
   (func $handle_GetLocalTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $secs i32)
-    (local.set $wa (call $g2w (local.get $arg0)))
-    (local.set $secs (i32.div_u (call $host_get_ticks) (i32.const 1000)))
-    (i32.store16 (local.get $wa) (i32.const 2000))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 1))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 4)) (i32.const 6))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 6)) (i32.const 1))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 8))
-      (i32.rem_u (i32.div_u (local.get $secs) (i32.const 3600)) (i32.const 24)))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 10))
-      (i32.rem_u (i32.div_u (local.get $secs) (i32.const 60)) (i32.const 60)))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 12))
-      (i32.rem_u (local.get $secs) (i32.const 60)))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 14))
-      (i32.rem_u (call $host_get_ticks) (i32.const 1000)))
+    (drop (call $host_wall_clock (call $g2w (local.get $arg0)) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -14777,14 +14763,9 @@ HookEx — no next hook in chain, return 0
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 514: GetSystemTimeAsFileTime(lpFileTime) — writes 8-byte FILETIME
+  ;; 514: GetSystemTimeAsFileTime(lpFileTime) — exact UTC wall-clock FILETIME.
   (func $handle_GetSystemTimeAsFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg0)))
-    ;; Base: 2000-01-01 = 0x01BF53EB256D4000, add ticks*10000 (100ns units)
-    (i32.store (local.get $wa)
-      (i32.add (i32.const 0x256D4000) (i32.mul (call $host_get_ticks) (i32.const 10000))))
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x01BF53EB))
+    (drop (call $host_wall_clock (call $g2w (local.get $arg0)) (i32.const 2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -14793,23 +14774,9 @@ HookEx — no next hook in chain, return 0
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 516: GetSystemTime(lpSystemTime) — fills SYSTEMTIME with simulated time
+  ;; 516: GetSystemTime(lpSystemTime) — host wall clock in UTC.
   (func $handle_GetSystemTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $secs i32)
-    (local.set $wa (call $g2w (local.get $arg0)))
-    (local.set $secs (i32.div_u (call $host_get_ticks) (i32.const 1000)))
-    (i32.store16 (local.get $wa) (i32.const 2000))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 1))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 4)) (i32.const 6))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 6)) (i32.const 1))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 8))
-      (i32.rem_u (i32.div_u (local.get $secs) (i32.const 3600)) (i32.const 24)))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 10))
-      (i32.rem_u (i32.div_u (local.get $secs) (i32.const 60)) (i32.const 60)))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 12))
-      (i32.rem_u (local.get $secs) (i32.const 60)))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 14))
-      (i32.rem_u (call $host_get_ticks) (i32.const 1000)))
+    (drop (call $host_wall_clock (call $g2w (local.get $arg0)) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 

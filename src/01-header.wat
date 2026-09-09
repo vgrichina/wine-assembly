@@ -37,6 +37,11 @@
   ;; synthesise — test/run.js derives get_ticks from the batch counter. Use
   ;; this only to bound a wait on something outside this instance.
   (import "host" "real_time_ms" (func $host_real_time_ms (result i32)))
+  ;; Snapshot the host wall clock into a caller-provided WASM buffer.
+  ;; kind: 0=UTC SYSTEMTIME, 1=local SYSTEMTIME, 2=UTC FILETIME.
+  ;; The i32 result keeps Worker RPC synchronous so the shared-memory write is
+  ;; visible before the guest resumes.
+  (import "host" "wall_clock" (func $host_wall_clock (param i32 i32) (result i32)))
   (import "host" "yield" (func $host_yield (param i32)))
   ;; One bounded inline turn for the worker threads, for the case where the
   ;; main instance cannot yield: inside a synchronous wndproc the interpreter

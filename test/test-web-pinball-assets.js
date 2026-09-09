@@ -336,9 +336,9 @@ assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API source
 assert(webApp.includes('lib/storage.js?v=170'), 'web host should cache-bust storage after renderer-aware registry delivery');
 assert(webApp.includes('lib/filesystem.js?v=174'), 'web host should cache-bust persisted Win32 file timestamps');
 assert(webApp.includes('lib/gdi-surface.js?v=2'), 'web host should load the canonical GDI surface module');
-assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=215'),
+assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=216'),
   'web host should load the GDI surface module before host imports');
-assert(webApp.includes('lib/host-imports.js?v=215'), 'web host should cache-bust the current host imports');
+assert(webApp.includes('lib/host-imports.js?v=216'), 'web host should cache-bust the current host imports');
 assert(/lib\/touch-cursor\.js\?v=\d+/.test(webApp), 'web host should cache-bust custom touch cursor rendering');
 assert(webApp.includes('lib/thread-manager.js?v=188'), 'web host should cache-bust DLL thread-notification routing');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');

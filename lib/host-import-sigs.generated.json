@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 235,
+  "count": 236,
   "sigs": {
     "log": {
       "params": [
@@ -114,6 +114,15 @@
     },
     "real_time_ms": {
       "params": [],
+      "results": [
+        "i32"
+      ]
+    },
+    "wall_clock": {
+      "params": [
+        "i32",
+        "i32"
+      ],
       "results": [
         "i32"
       ]
