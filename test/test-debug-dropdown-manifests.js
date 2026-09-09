@@ -16,6 +16,7 @@ const {
   categorizeCatalog,
   searchCatalog,
 } = require(path.join(ROOT, 'lib', 'debug-app-picker.js'));
+const { hasPageScript } = require('./browser-runtime-scripts');
 const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const browserShell = fs.readFileSync(path.join(ROOT, 'lib', 'browser-shell.js'), 'utf8');
 const guestExports = fs.readFileSync(path.join(ROOT, 'src', '13-exports.wat'), 'utf8');
@@ -23,10 +24,10 @@ const select = html.match(/<select id="app-select">([\s\S]*?)<\/select>/);
 assert(select, 'index.html has no #app-select');
 assert(html.includes('id="app-picker"') && html.includes('class="app-picker-popup"'),
   'debug toolbar must expose the searchable app-picker shell');
-assert(html.includes('lib/debug-app-picker.js?v=2'),
-  'debug app picker must be loaded with an explicit browser cache token');
-assert(html.includes('lib/browser-shell.js?v=42'),
-  'browser shell must be cache-busted after removing the packed-page A/B seam');
+assert(hasPageScript('lib/debug-app-picker.js'),
+  'debug app picker must be in the centrally versioned browser graph');
+assert(hasPageScript('lib/browser-shell.js'),
+  'browser shell must be in the centrally versioned browser graph');
 assert(!browserShell.includes('guest-page-translation') &&
   !guestExports.includes('set_guest_page_translation'),
   'packed translation is unconditional and must not retain a browser runtime toggle');

@@ -4,6 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { APPS, DESKTOP_APPS, LOCAL_CANDIDATE_APPS, DEBUG_ONLY_APPS } = require('../lib/apps');
+const { hasPageScript } = require('./browser-runtime-scripts');
 
 const root = path.join(__dirname, '..');
 const debugIds = new Set(DEBUG_ONLY_APPS.map(([id]) => id));
@@ -258,8 +259,8 @@ assert.strictEqual(captainClawReg.get('Skip Logo Movies'), 1);
 
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const browserShell = fs.readFileSync(path.join(root, 'lib/browser-shell.js'), 'utf8');
-assert(/<script src="lib\/apps\.js\?v=24"><\/script>/.test(html),
-  'the browser fetches the playable Jardinains asset manifest');
+assert(hasPageScript('lib/apps.js'),
+  'the browser loads the playable app registry through the central source version');
 assert(/case 'quake2_demo':\s*return 10000;/.test(browserShell),
   'Quake II OpenGL startup uses the proven cooperative browser slice');
 assert(/<option value=["']jazz2_demo["']>Jazz Jackrabbit 2 Demo<\/option>/.test(html),

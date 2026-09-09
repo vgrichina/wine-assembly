@@ -185,6 +185,8 @@ class FakeRenderWorker {
 
 let defaultWorkerUrl = null;
 const savedWorker = global.Worker;
+const savedSourceVersion = global.WINE_SOURCE_VERSION;
+global.WINE_SOURCE_VERSION = 'worker test/1';
 global.Worker = class extends FakeRenderWorker {
   constructor(url) {
     super();
@@ -198,11 +200,13 @@ const defaultD3d = new D3D.Encoder({
 defaultD3d.stop();
 if (savedWorker === undefined) delete global.Worker;
 else global.Worker = savedWorker;
+if (savedSourceVersion === undefined) delete global.WINE_SOURCE_VERSION;
+else global.WINE_SOURCE_VERSION = savedSourceVersion;
 const guestWorkerSource = fs.readFileSync(path.join(ROOT, 'lib', 'guest-worker.js'), 'utf8');
-const renderWorkerUrl = /workerUrl:\s*'(d3d-render-worker\.js\?v=\d+)'/.exec(guestWorkerSource);
-assert(renderWorkerUrl, 'guest-worker declares its versioned D3D render-worker URL');
-assert.strictEqual(defaultWorkerUrl, renderWorkerUrl[1],
-  'the standalone Encoder default and guest-worker must load the same render-worker version');
+assert.strictEqual(defaultWorkerUrl, 'd3d-render-worker.js?v=worker%20test%2F1',
+  'the standalone Encoder default must encode the shared source version');
+assert(guestWorkerSource.includes("workerUrl: versionedWorkerUrl('d3d-render-worker.js')"),
+  'guest-worker must pass its inherited source version to the D3D render worker');
 
 const d3d = new D3D.Encoder({
   memory: d3dMemory, module: {}, sigs: {}, capacity: 8192, bufferCount: 2,

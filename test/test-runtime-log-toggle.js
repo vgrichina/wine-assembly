@@ -6,6 +6,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const { hasPageScript } = require('./browser-runtime-scripts');
 
 const ROOT = path.join(__dirname, '..');
 const hostSource = fs.readFileSync(path.join(ROOT, 'host.js'), 'utf8');
@@ -51,9 +52,9 @@ assert(indexSource.includes('onchange="setRuntimeLogging(this.checked)"'), 'the 
 assert(indexSource.includes("const RUNTIME_LOG_KEY = 'wine-assembly:runtime-log'"), 'the runtime log preference has a stable storage key');
 assert(indexSource.includes("localStorage.setItem(RUNTIME_LOG_KEY, on ? '1' : '0')"), 'the runtime log preference persists');
 assert(indexSource.includes('window.WINE_RUNTIME_LOGGING = initialRuntimeLogging'), 'future app instances inherit the saved logging preference');
-const sourceVersion = hostSource.match(/static SOURCE_VERSION = '([^']+)'/);
-assert(sourceVersion, 'the browser host declares an artifact source version');
-assert(indexSource.includes(`host.js?v=${sourceVersion[1]}`),
-  'the page and browser host use the same cache-bust version');
+assert(hasPageScript('host.js'), 'the browser graph centrally versions host.js');
+assert(indexSource.includes("window.WINE_SOURCE_VERSION = String(window.WINE_BUILD || 'dev')") &&
+  hostSource.includes("static SOURCE_VERSION = String(globalThis.WINE_SOURCE_VERSION || 'dev')"),
+  'the page and browser host consume the same build-info cache identity');
 
 console.log('PASS  runtime logging checkbox gates console and DOM output immediately');

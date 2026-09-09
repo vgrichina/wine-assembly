@@ -5,17 +5,14 @@
 // may repaint between them, so the compositor must keep seeing the last
 // SwapBuffers snapshot instead of the WebGL canvas currently being mutated.
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
 const { WebGLBackend } = require('../lib/gpu-backend');
+const { hasPageScript, hasWorkerScript } = require('./browser-runtime-scripts');
 
-const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const guestWorker = fs.readFileSync(path.join(__dirname, '..', 'lib', 'guest-worker.js'), 'utf8');
-assert(html.includes('lib/gpu-backend.js?v=5') &&
-  html.includes('lib/gl-command-stream.js?v=8') &&
-  html.includes('lib/gl-compat.js?v=10') &&
-  guestWorker.includes("importScripts('gl-command-stream.js?v=8')"),
-  'the browser entrypoint cache-busts the GPU backend, command stream, and GL frontend');
+assert(hasPageScript('lib/gpu-backend.js') &&
+  hasPageScript('lib/gl-command-stream.js') &&
+  hasPageScript('lib/gl-compat.js') &&
+  hasWorkerScript('gl-command-stream.js'),
+  'the centrally versioned graph includes the GPU backend, command stream, and GL frontend');
 
 const copies = [];
 const presentationContext = {

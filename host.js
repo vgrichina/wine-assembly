@@ -505,7 +505,11 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '296';
+  static SOURCE_VERSION = String(globalThis.WINE_SOURCE_VERSION || 'dev');
+  static versionedUrl(source) {
+    const separator = source.includes('?') ? '&' : '?';
+    return source + separator + 'v=' + encodeURIComponent(WineAssembly.SOURCE_VERSION);
+  }
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -1695,7 +1699,7 @@ class WineAssembly {
     const wasmReady = WineAssembly.getWasmModule();
     const apiTableReady = !this.apiTable ? (async () => {
       try {
-        const r = await fetch(`src/api_table.json?v=${WineAssembly.SOURCE_VERSION}`);
+        const r = await fetch(WineAssembly.versionedUrl('src/api_table.json'));
         this.apiTable = await r.json();
       } catch (e) {
         console.warn('[host] failed to load api_table.json:', e);
@@ -1963,7 +1967,7 @@ class WineAssembly {
             ? 'build/wine-assembly.wasm'
             : 'build/wine-assembly.compat.wasm';
           try {
-            const response = await fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions);
+            const response = await fetch(WineAssembly.versionedUrl(artifact), fetchOptions);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return await WebAssembly.compile(await response.arrayBuffer());
           } catch (error) {
@@ -1990,6 +1994,7 @@ class WineAssembly {
           // bytes and has to be checked; see below.
           const built = await window.watxLauncher.compileDetailed({ tailCalls }, {
             version: WineAssembly.SOURCE_VERSION,
+            workerUrl: WineAssembly.versionedUrl('lib/watx-compile-worker.js'),
             noStore: debugFetch,
             // Diagnostic/low-memory escape hatch: compile cooperatively on the
             // page thread, yielding between compiler stages and function
@@ -2150,7 +2155,7 @@ class WineAssembly {
       return;
     }
     try {
-      const res = await fetch('lib/host-import-sigs.generated.json?v=10');
+      const res = await fetch(WineAssembly.versionedUrl('lib/host-import-sigs.generated.json'));
       if (!res.ok) throw new Error(`sigs HTTP ${res.status}`);
       const sigs = (await res.json()).sigs;
       const self = this;
@@ -2159,7 +2164,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=31',
+        workerUrl: WineAssembly.versionedUrl('lib/guest-worker.js'),
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
@@ -2380,7 +2385,7 @@ class WineAssembly {
     if (!fontMounts) return;
     let manifest;
     try {
-      const response = await fetch('fonts/substitutions.json?v=1');
+      const response = await fetch(WineAssembly.versionedUrl('fonts/substitutions.json'));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       manifest = await response.json();
     } catch (err) {
