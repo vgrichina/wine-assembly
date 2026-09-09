@@ -10,7 +10,9 @@ const { createHostImports } = require('../lib/host-imports');
 // map declared in src/00-regions.wat. (The bare 0x2000/0x3000/0x4000/0x5000
 // below are allocation SIZES, not the regions the census reads them as.)
 const RegionMap = require('../lib/region-map.generated.js');
-const { g2w, g2wSpan } = require('../lib/mem-utils');
+const {
+  decodeMfcCString, g2w, g2wSpan, walkStackFrame,
+} = require('../lib/mem-utils');
 const MAP_STATE = RegionMap.BASE.VIRTUAL_MAP_STATE;
 const MAP_TABLE = RegionMap.BASE.VIRTUAL_MAP_TABLE;
 const PAGE_TABLE = RegionMap.BASE.GUEST_PAGE_TABLE;
@@ -163,6 +165,29 @@ async function main() {
   assert.strictEqual(g2w(graphicsBase + 0x321, main.get_image_base(), memory),
     graphicsBacking + 0x321,
     'the JS host translator must consume the same packed PTE publication');
+
+  // The higher-level diagnostic helpers must use that same translator rather
+  // than silently falling back to image-relative arithmetic. Sparse stacks
+  // and strings are legitimate once the low guest heap spills upward.
+  const sparseString = graphicsBase + 0x500;
+  const sparseStringWa = graphicsBacking + 0x500;
+  const bytes = new Uint8Array(memory.buffer);
+  bytes.set([2, 0x44, 0x58, 0], sparseStringWa); // refcount + "DX"
+  assert.deepStrictEqual(
+    decodeMfcCString(memory.buffer, sparseString, main.get_image_base()),
+    { refcount: 2, text: 'DX', len: 2 },
+    'CString diagnostics must translate sparse guest pointers through packed PTEs');
+
+  const sparseStack = graphicsBase + 0x1000;
+  const sparseCode = graphicsBase + 0x2006;
+  new DataView(memory.buffer).setUint32(graphicsBacking + 0x1000, sparseCode, true);
+  bytes[graphicsBacking + 0x2001] = 0xE8; // candidate return is after E8 rel32
+  assert.deepStrictEqual(
+    walkStackFrame(memory.buffer, sparseStack, main.get_image_base(), {
+      depth: 1, codeLo: sparseCode, codeHi: sparseCode + 1,
+    }),
+    [{ off: 0, val: sparseCode, tag: '*R' }],
+    'stack diagnostics must translate sparse stack and return-code pointers through packed PTEs');
   assert.strictEqual(main.get_guest_page_table_size(), 0x400000,
     'packed translation must cover all 4GB with one flat PTE array');
 

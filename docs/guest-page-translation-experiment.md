@@ -36,7 +36,9 @@ inheritance plumbing have been removed. `VIRTUAL_MAP_TABLE` remains necessary
 as allocation, release, and `VirtualQuery` metadata; neither WAT execution nor
 the JavaScript host-boundary `g2w`/`g2wSpan` helpers scan it. Both translators
 now consume the same packed PTE publication and treat a zero entry as an
-authoritative miss.
+authoritative miss. The JavaScript stack walker and diagnostic CString decoder
+also call that shared helper instead of reimplementing image-relative
+translation, so their DLL/sparse pointers follow the same address policy.
 
 ## Synthetic results
 
