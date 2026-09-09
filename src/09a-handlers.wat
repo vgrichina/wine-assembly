@@ -432,6 +432,13 @@
     (local $cnt i32) (local $head i32) (local $slot i32) (local $queue i32)
     (local.set $queue (call $thread_msg_queue_addr (global.get $current_thread_id)))
     (if (i32.eqz (local.get $queue)) (then (return (i32.const 0))))
+    ;; Count is the producer's publication word. Avoid taking the process-wide
+    ;; window lock for the overwhelmingly common empty poll; a producer racing
+    ;; this hint may make this one nonblocking read report empty, then the next
+    ;; poll observes it. A nonzero hint still goes through the locked,
+    ;; authoritative count below.
+    (if (i32.eqz (i32.load (local.get $queue)))
+      (then (return (i32.const 0))))
     (call $lock_wnd_acquire)
     (local.set $cnt (i32.load (local.get $queue)))
     (if (i32.eqz (local.get $cnt))

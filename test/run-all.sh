@@ -262,6 +262,7 @@ UNIT=(
   test/test-page-chunk-sizing.js
   test/test-wat-winsock.js
   test/test-vlan-wire.js
+  test/test-vlan-idle-pump.js
   test/test-large-dll-staging.js
   test/test-wat-gdi-state.js
   test/test-wat-gdi-text.js
