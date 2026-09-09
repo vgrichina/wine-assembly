@@ -38,6 +38,13 @@ and Threads modes: Guybrush movement, an Atomic Bomberman arena with movement
 and bomb placement, Broken Sword's playable café scene, Dungeon Keeper's live
 dungeon level, and Darkstone's controllable town view.
 
+Atomic Bomberman's browser route is now a durable functional gate rather than
+only a manual audit. `test/test-atomic-bomberman-gameplay.js` crosses the
+title/menu sequence through ordinary Win32 keys, then verifies arena
+movement, visible bomb placement, and an explosion. The selected `BMANDEMO`
+tree contains no installer executable to bypass; its launch and data hashes are
+recorded in `docs/re-notes/atomic-bomberman-demo.md`.
+
 ## Baldur's Gate demos and commercial preview
 
 Verified 2026-08-29. Three different Windows promotional builds are preserved

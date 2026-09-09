@@ -656,6 +656,7 @@ E2E=(
   test/test-caesar3-gameplay.js
   test/test-captain-claw-gameplay.js
   test/test-abedemo-gameplay.js
+  test/test-atomic-bomberman-gameplay.js
   test/test-baldurs-gate-demos.js
   test/test-diablo-shareware-art.js
   test/test-diablo-shareware-gameplay.js
