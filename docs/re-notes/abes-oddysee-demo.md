@@ -187,9 +187,27 @@ This is functional evidence for normal input on the installed payload, not
 a resolution of the larger-batch failure. Batch size changes both guest
 work per clock advance and scheduler boundaries; the underlying difference
 is not yet isolated. The existing automated one-million-block gameplay test
-still fails and must not be presented as passing. Installer auto-launch,
-registry promotion to installer-produced files, and a reusable acceptance
-test for this verified route remain to be completed.
+still fails and must not be presented as passing. Installer auto-launch and
+registry promotion to installer-produced files remain to be completed.
+
+The opt-in frozen acceptance route uses the same normal keyboard sequence:
+
+```bash
+ABE_INSTALLED_DIR="/private/tmp/abe-original-complete/program files/abe's oddysee demo" \
+  node test/test-abedemo-gameplay.js --frozen-route
+```
+
+This runs the CLI directly with its own deadline and quits over stdio.
+Captures go to `build/abedemo-frozen-gameplay/` and the log to
+`build/abedemo-frozen-gameplay.log`. For compatibility
+with the existing scorer, `loading.png` holds the entry menu on this route;
+the legacy route captures the loading card. Both require a distinct rich
+level frame, Abe's cyan sprite, rightward movement, and movement through
+release. The frozen route also asserts every parked batch boundary. Omit
+`--frozen-route` to reproduce the still-failing large-batch regression.
+The installed-payload run passes: entry-to-level changed share 0.773,
+right-key 0.030, post-release 0.032, and the same sprite centroids recorded
+above. The automated before/after captures were also visually inspected.
 
 ### Historical larger-batch route
 

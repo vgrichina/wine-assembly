@@ -13,24 +13,29 @@
 //
 // `node test/test-abedemo-gameplay.js <dir>` skips the long run and re-scores
 // existing loading/before/moving/after captures while thresholds are tuned.
+// --frozen-route uses the verified smaller-batch stdio sequence. The default
+// retains the historical larger-batch route, which currently fails at the menu.
 
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { PNG } = require('pngjs');
+const { startControlSession } = require('./control-session');
 
 const ROOT = path.join(__dirname, '..');
 const INSTALLED_DIR = process.env.ABE_INSTALLED_DIR;
 const EXE = INSTALLED_DIR ? path.join(path.resolve(INSTALLED_DIR), 'abedemo.exe')
   : path.join(ROOT, 'test/binaries/shareware/abe/ex/AbeDemo.exe');
 const RUN = path.join(__dirname, 'run.js');
-const OUTDIR = path.join(ROOT, 'build/abedemo-gameplay');
-const LOG = path.join(ROOT, 'build/abedemo-gameplay.log');
-const ANALYZE_ONLY = process.argv[2];
+const FROZEN_ROUTE = process.argv.includes('--frozen-route');
+const RUN_NAME = FROZEN_ROUTE ? 'abedemo-frozen-gameplay' : 'abedemo-gameplay';
+const OUTDIR = path.join(ROOT, 'build', RUN_NAME);
+const LOG = path.join(ROOT, 'build', `${RUN_NAME}.log`);
+const ANALYZE_ONLY = process.argv.slice(2).find(arg => !arg.startsWith('--'));
 const DIR = ANALYZE_ONLY || OUTDIR;
 
-if (!fs.existsSync(EXE)) {
+if (!ANALYZE_ONLY && !fs.existsSync(EXE)) {
   assert(!INSTALLED_DIR, `installer-produced executable is missing: ${EXE}`);
   console.log('SKIP  Abe Oddysee demo payload is absent');
   process.exit(0);
@@ -38,14 +43,54 @@ if (!fs.existsSync(EXE)) {
 
 const shot = name => path.join(DIR, `${name}.png`);
 
-if (!ANALYZE_ONLY) {
+async function runFrozen() {
+  fs.mkdirSync(OUTDIR, { recursive: true });
+  const session = startControlSession([
+    RUN,
+    ...(INSTALLED_DIR ? [`--exe=${EXE}`, '--vfs-include=*.lvl,*.ddv,readme.txt']
+      : ['--app=abedemo']),
+    '--no-build', '--no-threads', '--max-seconds=180', '--batch-size=100000',
+    '--quiet-api', '--quiet-blocks', '--no-close', '--control-stdin', '--frozen',
+  ], { cwd: ROOT });
+  async function step(n, batch) {
+    const reply = await session.step(n);
+    assert.strictEqual(reply.batch, batch, 'frozen route stopped before its boundary');
+    assert.strictEqual(reply.frozen, true);
+  }
+  const capture = name => session.send({ action: 'png', path: shot(name) });
+  try {
+    await step(50, 50);
+    await session.send('keydown:13'); await step(1, 51);
+    await session.send('keyup:13'); await step(1, 52);
+    await session.send('keydown:27'); await step(2, 54);
+    await session.send('keyup:27'); await step(150, 204);
+    // The entry frame is the menu on this route, not the legacy loading card.
+    await capture('loading');
+    await session.send('keydown:13'); await step(1, 205);
+    await session.send('keyup:13'); await step(100, 305);
+    await session.send('keydown:27'); await step(2, 307);
+    await session.send('keyup:27'); await step(30, 337);
+    await capture('before');
+    await session.send('keydown:39'); await step(3, 340);
+    await capture('moving');
+    await step(3, 343);
+    await session.send('keyup:39'); await step(2, 345);
+    await capture('after');
+  } finally {
+    const code = await session.quit({ ignoreReplyError: true });
+    fs.writeFileSync(LOG, session.output());
+    assert.strictEqual(code, 0, `frozen CLI failed; read ${LOG}`);
+    assert(!/\[max-seconds\]/.test(session.output()), `CLI deadline reached; read ${LOG}`);
+  }
+}
+
+if (!ANALYZE_ONLY && !FROZEN_ROUTE) {
   fs.mkdirSync(OUTDIR, { recursive: true });
 
-  // At a one-million-block slice the intro/menu timeline is deterministic:
-  // menu by 390, BEGIN selected by Down, accepted by Enter, and the loading
-  // card at 570. Escape at 600 skips the skippable story movie and exposes the
-  // level by 610. Keydown/up deliberately goes only through renderer input;
-  // renderer-input mirrors it into DirectInput state just like browser keys.
+  // Historical larger-batch regression: this schedule used to reach the level
+  // but currently remains in the menu. Keep it independently reproducible;
+  // the passing frozen route does not prove that delivery fault is repaired.
+  // Keydown/up deliberately goes only through normal renderer input.
   const input = [
     '405:keydown:40', '407:keyup:40',       // Gamespeak -> Begin
     '420:keydown:13', '422:keyup:13',       // select Begin
@@ -140,58 +185,70 @@ function abeCyan(png) {
   return { count, x: sumX / Math.max(1, count), y: sumY / Math.max(1, count) };
 }
 
-const loading = readPng('loading');
-const before = readPng('before');
-const moving = readPng('moving');
-const after = readPng('after');
-for (const png of [loading, before, moving, after]) {
-  assert.strictEqual(png.width, 640);
-  assert.strictEqual(png.height, 480);
+function verifyGameplay() {
+  const loading = readPng('loading');
+  const before = readPng('before');
+  const moving = readPng('moving');
+  const after = readPng('after');
+  for (const png of [loading, before, moving, after]) {
+    assert.strictEqual(png.width, 640);
+    assert.strictEqual(png.height, 480);
+  }
+
+  const loadingStats = colorStats(loading);
+  const gameplayStats = colorStats(before);
+  const beforeAbe = abeCyan(before);
+  const movingAbe = abeCyan(moving);
+  const afterAbe = abeCyan(after);
+  const movement = changedShare(before, moving, 0, 48, 640, 430);
+  const followThrough = changedShare(moving, after, 0, 48, 640, 430);
+  const loadingToLevel = changedShare(loading, before, 0, 0, 640, 480);
+
+  console.log('  loading:', loadingStats);
+  console.log('  gameplay:', gameplayStats);
+  console.log('  Abe before:', beforeAbe);
+  console.log('  Abe moving:', movingAbe);
+  console.log('  Abe after:', afterAbe);
+  console.log('  loading -> level changed:', loadingToLevel.toFixed(3));
+  console.log('  right-key frame changed:', movement.toFixed(3));
+  console.log('  post-release frame changed:', followThrough.toFixed(3));
+
+  assert(loadingStats.colors > 500 && loadingStats.nonBlack > 180000,
+    FROZEN_ROUTE ? 'the entry menu did not render' : 'the batch-570 frame is not Abe\'s rendered loading card');
+  assert(gameplayStats.colors > 800 && gameplayStats.nonBlack > 100000,
+    'the run did not reach a richly rendered RuptureFarms gameplay frame');
+  assert(loadingToLevel > 0.45,
+    'the loading card never transitioned into the level');
+  assert(beforeAbe.count > 300,
+    `the gameplay frame does not contain Abe's cyan sprite (${beforeAbe.count}px)`);
+  assert(movement > 0.01,
+    `the level did not advance while Right was held (${movement.toFixed(3)} changed)`);
+  assert(movingAbe.x > beforeAbe.x + 2,
+    `Abe did not move right (${beforeAbe.x.toFixed(1)} -> ${movingAbe.x.toFixed(1)})`);
+  assert(afterAbe.count > 300 && afterAbe.x > movingAbe.x + 5 && followThrough > 0.01,
+    `Abe's live run did not continue through key release `
+    + `(${movingAbe.x.toFixed(1)} -> ${afterAbe.x.toFixed(1)}, `
+    + `${followThrough.toFixed(3)} changed)`);
+
+  if (!ANALYZE_ONLY) {
+    const log = fs.readFileSync(LOG, 'utf8');
+    assert(FROZEN_ROUTE ? /"batch":345,"ran":2/.test(log) : /\[input\] stop at batch 630/.test(log),
+      'gameplay input schedule did not finish');
+    assert(!/\[input\] png FAILED/.test(log), 'a gameplay capture failed');
+    if (!FROZEN_ROUTE) assert(/PostThreadMessageA\(0x00000002/.test(log),
+      'Abe did not target its loader thread id');
+    assert(!/UNIMPLEMENTED API|RuntimeError|unreachable/.test(log),
+      `the run trapped; read ${LOG}`);
+  }
+
+  console.log('PASS  Abe Oddysee selects BEGIN, loads RuptureFarms, and walks right');
 }
 
-const loadingStats = colorStats(loading);
-const gameplayStats = colorStats(before);
-const beforeAbe = abeCyan(before);
-const movingAbe = abeCyan(moving);
-const afterAbe = abeCyan(after);
-const movement = changedShare(before, moving, 0, 48, 640, 430);
-const followThrough = changedShare(moving, after, 0, 48, 640, 430);
-const loadingToLevel = changedShare(loading, before, 0, 0, 640, 480);
-
-console.log('  loading:', loadingStats);
-console.log('  gameplay:', gameplayStats);
-console.log('  Abe before:', beforeAbe);
-console.log('  Abe moving:', movingAbe);
-console.log('  Abe after:', afterAbe);
-console.log('  loading -> level changed:', loadingToLevel.toFixed(3));
-console.log('  right-key frame changed:', movement.toFixed(3));
-console.log('  post-release frame changed:', followThrough.toFixed(3));
-
-assert(loadingStats.colors > 500 && loadingStats.nonBlack > 180000,
-  'the batch-570 frame is not Abe\'s rendered loading card');
-assert(gameplayStats.colors > 800 && gameplayStats.nonBlack > 100000,
-  'the run did not reach a richly rendered RuptureFarms gameplay frame');
-assert(loadingToLevel > 0.45,
-  'the loading card never transitioned into the level');
-assert(beforeAbe.count > 300,
-  `the gameplay frame does not contain Abe's cyan sprite (${beforeAbe.count}px)`);
-assert(movement > 0.01,
-  `the level did not advance while Right was held (${movement.toFixed(3)} changed)`);
-assert(movingAbe.x > beforeAbe.x + 2,
-  `Abe did not move right (${beforeAbe.x.toFixed(1)} -> ${movingAbe.x.toFixed(1)})`);
-assert(afterAbe.count > 300 && afterAbe.x > movingAbe.x + 5 && followThrough > 0.01,
-  `Abe's live run did not continue through key release `
-  + `(${movingAbe.x.toFixed(1)} -> ${afterAbe.x.toFixed(1)}, `
-  + `${followThrough.toFixed(3)} changed)`);
-
-if (!ANALYZE_ONLY) {
-  const log = fs.readFileSync(LOG, 'utf8');
-  assert(/\[input\] stop at batch 630/.test(log), 'gameplay input schedule did not finish');
-  assert(!/\[input\] png FAILED/.test(log), 'a gameplay capture failed');
-  assert(/PostThreadMessageA\(0x00000002/.test(log),
-    'Abe did not target its loader thread id');
-  assert(!/UNIMPLEMENTED API|RuntimeError|unreachable/.test(log),
-    `the run trapped; read ${LOG}`);
+if (FROZEN_ROUTE && !ANALYZE_ONLY) {
+  runFrozen().then(verifyGameplay).catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+} else {
+  verifyGameplay();
 }
-
-console.log('PASS  Abe Oddysee selects BEGIN, loads RuptureFarms, and walks right');
