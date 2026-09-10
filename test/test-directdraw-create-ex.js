@@ -16,6 +16,8 @@ const extraWat = String.raw`
       (i32.const 0) (i32.const 0))
     (global.get $eax))
   (func (export "test_ddrawex_esp") (result i32) (global.get $esp))
+  (func (export "test_ddrawex_release") (param $obj i32) (result i32)
+    (call $dx_com_release_basic (local.get $obj)))
   (func (export "test_ddraw_set_display_mode_esp") (param $obj i32) (result i32)
     (global.set $esp (i32.const 0x30000))
     (call $handle_IDirectDraw_SetDisplayMode
@@ -58,13 +60,30 @@ const extraWat = String.raw`
     'DirectDrawCreateEx pops its return address and four stdcall arguments');
   assert.strictEqual(wat.test_ddraw_set_display_mode_esp(object) >>> 0, 0x3001c,
     'IDirectDraw7 SetDisplayMode should pop its return address and five stdcall arguments');
+  assert.strictEqual(wat.test_ddrawex_release(object), 0,
+    'created IDirectDraw7 should release its caller-owned reference');
 
   wat.guest_write32(out, 0xdeadbeef);
-  wat.guest_write32(iid, 0x12345678);
-  assert.strictEqual(wat.test_ddrawex_call(out, iid, 0) >>> 0, 0x80004002,
-    'unsupported interfaces should return E_NOINTERFACE');
+  wat.guest_write32(iid, 0x15E65EC0);
+  wat.guest_write32(iid + 4, 0);
+  wat.guest_write32(iid + 8, 0);
+  wat.guest_write32(iid + 12, 0);
+  assert.strictEqual(wat.test_ddrawex_call(out, iid, 0) >>> 0, 0x80070057,
+    'same-Data1 IID mismatch should return DDERR_INVALIDPARAMS');
   assert.strictEqual(wat.guest_read32(out) >>> 0, 0,
     'failed creation should clear the output interface');
+
+  // The documented DirectDrawCreateEx contract accepts only IID_IDirectDraw7,
+  // even though the resulting object can expose older interfaces through QI.
+  wat.guest_write32(out, 0xdeadbeef);
+  wat.guest_write32(iid, 0x6C14DB80);
+  wat.guest_write32(iid + 4, 0x11CE7B44);
+  wat.guest_write32(iid + 8, 0xAA001FA2);
+  wat.guest_write32(iid + 12, 0x11CF27C0);
+  assert.strictEqual(wat.test_ddrawex_call(out, iid, 0) >>> 0, 0x80070057,
+    'IID_IDirectDraw should return DDERR_INVALIDPARAMS');
+  assert.strictEqual(wat.guest_read32(out) >>> 0, 0,
+    'wrong-version failure should clear the output interface');
 
   wat.guest_write32(out, 0xdeadbeef);
   assert.strictEqual(wat.test_ddrawex_call(out, iid, 1) >>> 0, 0x80040110,

@@ -1497,10 +1497,10 @@
 
   ;; DirectDrawCreateEx(lpGUID, lplpDD, riid, pUnkOuter) → HRESULT
   ;; DirectX 7 callers request IDirectDraw7 directly rather than creating the
-  ;; v1 interface and calling QueryInterface. The emulator's extended DDraw
-  ;; wrapper serves IDirectDraw2/4/7, matching the existing QI path.
+  ;; v1 interface and calling QueryInterface. Unlike QueryInterface, the
+  ;; documented factory contract accepts only IID_IDirectDraw7.
   (func $handle_DirectDrawCreateEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $iid_dword i32) (local $vtbl i32) (local $obj_guest i32)
+    (local $iid_wa i32) (local $obj_guest i32)
     (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
     (if (local.get $arg3)
       (then
@@ -1512,25 +1512,18 @@
         (global.set $eax (i32.const 0x80070057)) ;; E_INVALIDARG
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
-    (local.set $iid_dword (call $gl32 (local.get $arg2)))
-    (if (i32.or
-          (i32.eqz (local.get $iid_dword))
-          (i32.eq (local.get $iid_dword) (i32.const 0x6C14DB80)))
-      (then (local.set $vtbl (global.get $DX_VTBL_DDRAW)))
-      (else
-        (if (i32.eq (local.get $iid_dword) (i32.const 0xB3A6F3E0))
-          (then (local.set $vtbl (global.get $DX_VTBL_DDRAW2)))
-          (else
-            (if (i32.eq (local.get $iid_dword) (i32.const 0x9C59509A))
-              (then (local.set $vtbl (call $dx_get_ddraw4_vtbl)))
-              (else
-                (if (i32.eq (local.get $iid_dword) (i32.const 0x15E65EC0))
-                  (then (local.set $vtbl (call $dx_get_ddraw7_vtbl)))
-                  (else
-                    (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
-                    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-                    (return)))))))))
-    (local.set $obj_guest (call $dx_create_com_obj (i32.const 1) (local.get $vtbl)))
+    ;; Translate the caller's REFIID once, then compare all four GUID words.
+    ;; IID_IDirectDraw7 {15E65EC0-3B9C-11D2-B92F-00609797EA5B}.
+    (local.set $iid_wa (call $g2w (local.get $arg2)))
+    (if (i32.eqz (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0x15E65EC0) (i32.const 0x11D23B9C)
+          (i32.const 0x60002FB9) (i32.const 0x5BEA9797)))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DDERR_INVALIDPARAMS
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $obj_guest
+      (call $dx_create_com_obj (i32.const 1) (call $dx_get_ddraw7_vtbl)))
     (if (i32.eqz (local.get $obj_guest))
       (then
         (global.set $eax (i32.const 0x80004005)) ;; E_FAIL
