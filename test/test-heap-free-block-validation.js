@@ -17,10 +17,17 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "set_free_list") (param i32) (global.set $free_list (local.get 0)))
   (func (export "test_set_heap_arena") (param $base i32) (param $ptr i32)
     (global.set $image_base (i32.const 0))
     (global.set $heap_base (local.get $base))
     (global.set $heap_ptr (local.get $ptr))
+    (global.set $heap_end (i32.add (local.get $ptr) (i32.const 0x10000)))
+    (i32.atomic.store (global.get $HEAP_SHARED) (global.get $heap_end))
+    (call $zero_memory (global.get $HEAP_ARENAS) (global.get $HEAP_ARENAS_SIZE))
+    (global.set $heap_arena_record (call $heap_arena_register
+      (local.get $base) (global.get $heap_end)))
+    (i32.atomic.store offset=8 (global.get $heap_arena_record) (local.get $ptr))
     (global.set $free_list (i32.const 0)))
 `;
 

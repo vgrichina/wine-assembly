@@ -2594,8 +2594,12 @@
   (global $heap_base (mut i32) (i32.const 0))
   (global $heap_ptr (mut i32) (i32.const 0))   ;; 0 = no arena reserved yet
   (global $heap_end (mut i32) (i32.const 0))   ;; exclusive end of this arena
+  (global $heap_arena_record (mut i32) (i32.const 0))
+  (global $HEAP_ARENAS i32 (region.addr $HEAP_ARENAS 0))
+  (global $HEAP_ARENAS_SIZE i32 (region.size $HEAP_ARENAS))
   (global $heap_sparse_ptr (mut i32) (i32.const 0))
   (global $heap_sparse_end (mut i32) (i32.const 0))
+  (global $heap_sparse_record (mut i32) (i32.const 0))
   ;; Four recent successful sparse guest translations. Storm's decompressor
   ;; stays in slot 0; generated video converters alternate palette/input/output
   ;; ranges and need the extra slots to avoid rescanning hundreds of append-only
@@ -2873,11 +2877,13 @@
   (global $movewindow_pending_hwnd (mut i32) (i32.const 0)) ;; non-main hwnd awaiting WM_SIZE from MoveWindow
   (global $movewindow_pending_size (mut i32) (i32.const 0)) ;; packed client cx|cy<<16 for that hwnd
   ;; Posted message queue: up to 64 messages, each = (hwnd, msg, wParam, lParam) = 16 bytes
-  ;; Stored at fixed WASM address 0x400..0x800 (well below guest memory).
+  ;; Storage is partitioned by thread in LOCAL_POST_QUEUES, like the counters.
   ;; Bumped from 8 to 64 so calc.exe's 30-button owner-draw WM_DRAWITEM burst
   ;; (posted from button_wndproc WM_PAINT to the x86 SciCalc parent) doesn't
   ;; overflow during the first render frame.
   (global $post_queue_count (mut i32) (i32.const 0))
+  (global $LOCAL_POST_QUEUES i32 (region.addr $LOCAL_POST_QUEUES 0))
+  (global $LOCAL_POST_QUEUES_SIZE i32 (region.size $LOCAL_POST_QUEUES))
   (global $pq_read_off (mut i32) (i32.const 0))      ;; Read offset for post_queue_dequeue
   (global $msg_phase    (mut i32) (i32.const 0))    ;; Message loop phase
   (global $freelib_last_handle (mut i32) (i32.const 0)) ;; Last FreeLibrary'd handle (for loop detection)

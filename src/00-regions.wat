@@ -575,3 +575,12 @@
   ;; this declaration; those three sites now spell it (region.end $DIRECT_WINDOW).
   (region.declare-span $DIRECT_WINDOW (base 0x00000000) (end 0x08000000)
     (owner "03-registers.wat:81,177,179 — $g2w / $g2w_affine_span direct-window limit"))
+
+  ;; Append new allocations to preserve existing canonical placements. Moving
+  ;; these to the front exposed a Win16 Rodent runtime-DLL startup failure;
+  ;; the browser Worker regression covers that layout-sensitive path.
+  ;; Ownership is independent of the allocator's chosen addresses.
+  (region.declare $LOCAL_POST_QUEUES (size 0x00002000) (align 0x00000010)
+    (owner "10-helpers.wat:$post_queue_base"))
+  (region.declare $HEAP_ARENAS (size 0x00004010) (align 0x00000010)
+    (owner "10-helpers.wat:$heap_arena_register"))

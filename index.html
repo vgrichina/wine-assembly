@@ -1480,7 +1480,7 @@ Resource-aware Win98 emulator
   <script src="build-info.js"></script>
   <!-- The generated region map must load before any lib script: filesystem.js
        reads the RegionMap global at script-evaluation time, not call time. -->
-  <script src="lib/region-map.generated.js?v=298"></script>
+  <script src="lib/region-map.generated.js?v=299"></script>
   <script src="lib/mem-utils.js?v=169"></script>
   <script src="lib/dib.js?v=168"></script>
   <script src="lib/gdi-surface.js?v=2"></script>
@@ -1508,9 +1508,9 @@ Resource-aware Win98 emulator
        and posts the failing state to /ios-report, because the machine this
        breaks on is the one machine with no debugger. -->
   <script src="lib/phone-diag.js?v=2"></script>
-  <script src="lib/vfs-persistence.js?v=2"></script>
-  <script src="lib/overlay-store.js?v=1"></script>
-  <script src="lib/vfs-overlay.js?v=1"></script>
+  <script src="lib/vfs-persistence.js?v=3"></script>
+  <script src="lib/overlay-store.js?v=2"></script>
+  <script src="lib/vfs-overlay.js?v=2"></script>
   <!-- Byte providers for lazily mounted media; must precede filesystem.js,
        which resolves window.byteProvider when a container mounts. -->
   <script src="lib/byte-provider.js?v=1"></script>
@@ -1526,7 +1526,7 @@ Resource-aware Win98 emulator
   <script src="lib/media-import-ui.js?v=10"></script>
   <!-- Start > Shut Down..., and the exit_windows host import's landing. -->
   <script src="lib/shutdown.js?v=10"></script>
-  <script src="lib/browser-shell.js?v=41"></script>
+  <script src="lib/browser-shell.js?v=42"></script>
   <script src="lib/pe.js?v=1"></script>
   <script src="lib/process-boot.js?v=6"></script>
   <script src="lib/app-profiles.js?v=3"></script>
@@ -1547,15 +1547,15 @@ Resource-aware Win98 emulator
   <script src="lib/host-imports.js?v=215"></script>
   <script src="lib/compile-wat.js?v=169"></script>
   <script src="lib/watx-launcher.js?v=3"></script>
-  <script src="lib/thread-manager.js?v=188"></script>
+  <script src="lib/thread-manager.js?v=189"></script>
   <script src="lib/vlan-wire.js?v=1"></script>
   <script src="lib/vlan-rtc.js?v=1"></script>
   <script src="lib/vlan-lobby.js?v=1"></script>
   <script src="lib/guest-rpc.js?v=8"></script>
   <script src="lib/guest-thread-host.js?v=11"></script>
-  <script src="host.js?v=298"></script>
+  <script src="host.js?v=299"></script>
   <script src="lib/recorder.js?v=172"></script>
-  <script src="lib/perf-hud.js?v=3"></script>
+  <script src="lib/perf-hud.js?v=4"></script>
   <script>
 
     async function approveBrowserFullscreen(event) {

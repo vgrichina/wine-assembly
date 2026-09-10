@@ -800,14 +800,14 @@
         ;; Check post queue next
         (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
           (then
-            (local.set $arg0 (i32.load (i32.const 0x400)))        ;; hwnd
-            (local.set $arg1 (i32.load (i32.const 0x404)))        ;; msg
-            (local.set $arg2 (i32.load (i32.const 0x408)))        ;; wParam
-            (local.set $arg3 (i32.load (i32.const 0x40c)))        ;; lParam
+            (local.set $arg0 (i32.load (call $post_queue_base)))        ;; hwnd
+            (local.set $arg1 (i32.load offset=4 (call $post_queue_base))) ;; msg
+            (local.set $arg2 (i32.load offset=8 (call $post_queue_base))) ;; wParam
+            (local.set $arg3 (i32.load offset=12 (call $post_queue_base))) ;; lParam
             ;; Shift queue
             (global.set $post_queue_count (i32.sub (global.get $post_queue_count) (i32.const 1)))
             (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
-              (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
+              (then (call $memcpy (call $post_queue_base) (i32.add (call $post_queue_base) (i32.const 16))
                 (i32.mul (global.get $post_queue_count) (i32.const 16)))))
             ;; Dispatch by hwnd wndproc — WAT-native controls handle directly
             (local.set $arg4 (call $wnd_table_get (local.get $arg0)))

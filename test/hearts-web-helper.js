@@ -135,22 +135,13 @@ const wireStats = () => runningApps.map(a => ({
 }));
 
 // Hearts deals from its File menu. A menu command is a message either way, and
-// the CLI harness posts it into the same queue at 0x400 for the same reason:
+// the CLI harness posts it into the same thread's queue for the same reason:
 // the dealer's window may well be covered by the time it is wanted.
 const postCommand = ({ index, id }) => {
   const app = runningApps[index];
   if (!app) return false;
   const e = app.wine.instance.exports;
-  const count = e.get_post_queue_count ? e.get_post_queue_count() : 0;
-  if (count >= 8) return false;
-  const dv = new DataView(app.wine.memory.buffer);
-  const off = 0x400 + count * 16;
-  dv.setUint32(off, e.get_main_hwnd(), true);
-  dv.setUint32(off + 4, 0x111, true);          // WM_COMMAND
-  dv.setUint32(off + 8, id, true);
-  dv.setUint32(off + 12, 0, true);
-  e.set_post_queue_count(count + 1);
-  return true;
+  return !!e.post_message_q(e.get_main_hwnd(), 0x111, id, 0);
 };
 
 async function installHelpers(page) {

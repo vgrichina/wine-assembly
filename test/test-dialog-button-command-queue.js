@@ -110,10 +110,10 @@ function u32(value) {
   assert.strictEqual(e.get_post_queue_count(), 1,
     'custom dialog command is queued for DispatchMessage');
   assert.deepStrictEqual([
-    view.getUint32(0x400, true),
-    view.getUint32(0x404, true),
-    view.getUint32(0x408, true),
-    view.getUint32(0x40c, true),
+    e.post_queue_peek(0, 0),
+    e.post_queue_peek(0, 1),
+    e.post_queue_peek(0, 2),
+    e.post_queue_peek(0, 3),
   ], [customParent, 0x0111, 1016, custom],
   'queued message retains the parent, command id, and BUTTON hwnd');
 
@@ -125,10 +125,10 @@ function u32(value) {
   assert.strictEqual(e.get_post_queue_count(), 1,
     'modeless IDOK stays on the main pump for wizard navigation');
   assert.deepStrictEqual([
-    view.getUint32(0x400, true),
-    view.getUint32(0x404, true),
-    view.getUint32(0x408, true),
-    view.getUint32(0x40c, true),
+    e.post_queue_peek(0, 0),
+    e.post_queue_peek(0, 1),
+    e.post_queue_peek(0, 2),
+    e.post_queue_peek(0, 3),
   ], [okParent, 0x0111, 1, ok],
   'queued modeless IDOK retains the parent and button HWND');
 
@@ -140,10 +140,10 @@ function u32(value) {
   assert.strictEqual(e.get_post_queue_count(), 1,
     'native installer IDOK stays on the main pump for nested license pages');
   assert.deepStrictEqual([
-    view.getUint32(0x400, true),
-    view.getUint32(0x404, true),
-    view.getUint32(0x408, true),
-    view.getUint32(0x40c, true),
+    e.post_queue_peek(0, 0),
+    e.post_queue_peek(0, 1),
+    e.post_queue_peek(0, 2),
+    e.post_queue_peek(0, 3),
   ], [nativeOkParent, 0x0111, 1, nativeOk],
   'queued native installer IDOK retains the parent and button HWND');
 
@@ -157,10 +157,10 @@ function u32(value) {
   assert.strictEqual(e.get_post_queue_count(), 1,
     'an owned guest form queues its custom BUTTON command');
   assert.deepStrictEqual([
-    view.getUint32(0x400, true),
-    view.getUint32(0x404, true),
-    view.getUint32(0x408, true),
-    view.getUint32(0x40c, true),
+    e.post_queue_peek(0, 0),
+    e.post_queue_peek(0, 1),
+    e.post_queue_peek(0, 2),
+    e.post_queue_peek(0, 3),
   ], [owned, 0xBD11, 0x1009, owned],
   'owned guest form receives reflected CN_COMMAND on the main message pump');
 
@@ -174,10 +174,10 @@ function u32(value) {
   assert.strictEqual(e.get_post_queue_count(), 1,
     'self-ID button under an unowned guest panel queues its reflection');
   assert.deepStrictEqual([
-    view.getUint32(0x400, true),
-    view.getUint32(0x404, true),
-    view.getUint32(0x408, true),
-    view.getUint32(0x40c, true),
+    e.post_queue_peek(0, 0),
+    e.post_queue_peek(0, 1),
+    e.post_queue_peek(0, 2),
+    e.post_queue_peek(0, 3),
   ], [nested, 0xBD11, nestedId, nested],
   'nested VCL panel receives reflected CN_COMMAND on the main message pump');
 
