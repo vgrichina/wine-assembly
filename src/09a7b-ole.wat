@@ -1354,6 +1354,23 @@
         (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 8))) (i32.const 0x000000C0))
         (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 12))) (i32.const 0x46000000)))))
 
+  ;; Enumerator interfaces implemented by one WAT object expose only IUnknown
+  ;; and their own enumerator IID. QueryInterface must clear a rejected output
+  ;; and successful queries own one additional reference.
+  (func $ole_enum_query_interface (param $obj i32) (param $iid i32)
+        (param $out i32) (param $enum_data1 i32) (result i32)
+    (if (i32.eqz (local.get $out))
+      (then (return (i32.const 0x80004003)))) ;; E_POINTER
+    (call $gs32 (local.get $out) (i32.const 0))
+    (if (i32.or
+          (call $ole_iid_is_com (local.get $iid) (i32.const 0))
+          (call $ole_iid_is_com (local.get $iid) (local.get $enum_data1)))
+      (then
+        (call $gs32 (local.get $out) (local.get $obj))
+        (drop (call $ole_obj_addref (local.get $obj)))
+        (return (i32.const 0))))
+    (i32.const 0x80004002)) ;; E_NOINTERFACE
+
   ;; File-moniker comparisons follow Win32 filename semantics for the stable
   ;; value subset implemented here: ASCII case-insensitive and slash-neutral,
   ;; while preserving all other UTF-16 code units verbatim.
@@ -4820,9 +4837,8 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IEnumSTATSTG_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2)
-      (then (call $gs32 (local.get $arg2) (local.get $arg0)) (drop (call $ole_obj_addref (local.get $arg0))) (global.set $eax (i32.const 0)))
-      (else (global.set $eax (i32.const 0x80004003))))
+    (global.set $eax (call $ole_enum_query_interface
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0x0000000D))) ;; IEnumSTATSTG
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IEnumSTATSTG_Next (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $ole_stat_enum_next (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
@@ -6824,9 +6840,16 @@
     (global.set $eax (i32.const 0x80040003)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IEnumFORMATETC_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2)
-      (then (call $gs32 (local.get $arg2) (local.get $arg0)) (drop (call $ole_obj_addref (local.get $arg0))) (global.set $eax (i32.const 0)))
-      (else (global.set $eax (i32.const 0x80004003))))
+    (local $kind i32)
+    (local.set $kind (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
+    (global.set $eax (call $ole_enum_query_interface
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (select
+        (i32.const 0x00000105) ;; IEnumSTATDATA (cache/advise snapshots)
+        (i32.const 0x00000103) ;; IEnumFORMATETC
+        (i32.or
+          (i32.eq (local.get $kind) (i32.const 8))
+          (i32.eq (local.get $kind) (i32.const 10))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IEnumFORMATETC_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $ole_enum_release_api (local.get $arg0) (i32.const 8)))
