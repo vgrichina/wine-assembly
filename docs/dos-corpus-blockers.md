@@ -1612,3 +1612,39 @@ INT service is named by vector and AX rather than showing up as the anonymous
 `f000:1NN` stub, and a store followed by an `int n` in the same slice prints
 `(slice from CS:IP)` — the block that actually wrote it. That annotation is
 what turned `f000:121 wrote c54a-c54a` into `110:c554`.
+
+### COCAHOLC.EXE — FIXED by reading the IDT the right way (`12aad90c`)
+
+The "extender that gives up" entry above and the "reading the IDT was tried and
+reverted" paragraph are both superseded. COCAHOLC never gave up: it set mode
+13h, played its soundtrack and rasterized for 60M dispatches into an offscreen
+buffer at linear `0x110000`, and the copy from there to `A000` (module offset
+`0x39EB`) runs when a counter its INT 08h handler increments catches up with one
+its main loop increments. The handler never ran. It is installed with DPMI
+`0205` — an IDT gate — and `hookedVector` answered "not hooked" off the
+real-mode table for the whole run.
+
+What the reverted attempt got wrong was the *predicate*, not the table.
+"The gate is present" is true of vector 8 (`#DF`) and 0Ah (`#TS`) under every
+extender. What marks a hook is that the gate's **selector** moved away from the
+one the extender first wrote. ACME-BIG is the case that fixes the rule: its
+extender swaps vector 8 between two entries of its own five-byte exception-stub
+table (`8:7ef` → `8:808`), and reading that as a hook delivered 829 spurious
+ticks and silenced its GUS output (73 voice starts → 1). Comparing selectors
+rather than whole gates leaves it alone. `hookedVector` now falls through to
+the IDT only when the real-mode vector is still the stub and the CPU is in
+protected mode; `test/test-toyvm-pm-timer-vector.js` pins both halves.
+
+Two more things from the same dig: a PIT reload of 0 means 65536 (ACME-BIG
+writes `out 40h,0` twice to ask for the plain 18.2Hz tick, and read literally
+that was a tick every 200 dispatches), and `--watch` takes eight hex digits on
+either side, because `11000:0` was the only way to name that buffer.
+
+Evidence: COCAHOLC at 60M is 63992 of 64000 pixels, a skull with red cola-can
+eyes. Six witnesses unchanged at 80M. The 191-row 8M sweep against the pre-fix
+run: 190 unchanged, 0 regressions, 0 went blank, QUARTZ recovered from a
+timeout. Re-photographed site (`4745cfe3`): 188 of 199 showing what they meant
+to, COCAHOLC and COMPCODE both `prompt` → `demo`.
+
+Still open on the same gap: SB and keyboard IRQs through the IDT need the
+program's PIC remap base, which is not tracked (DINO, AQUAPHOB, daretro, ACT1).
