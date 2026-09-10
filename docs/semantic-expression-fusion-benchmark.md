@@ -211,3 +211,37 @@ predictable straight-line host expression. Previous Wine-Assembly experiments
 found straight local regions crossing direct-memory regions after roughly 4-8
 repetitions and a useful safepoint neighborhood around `K=16`; ToyVM should test
 those values independently rather than treating them as constants.
+
+## Wine-Assembly calibration (2026-09-10)
+
+The first production prototype now supplies three opt-in lowering arms:
+
+```text
+H448  straight  FLD mem; arithmetic mem; arithmetic mem; FSTP mem
+H449  tree      FLD mem; FLD mem; arithmetic-pop; FSTP mem
+H450  island    arbitrary contiguous H188/H189/H190 stream, canonical helpers
+```
+
+On Node/V8, 200,000 real decoded guest iterations with nine rotated rounds gave:
+
+```text
+shape       scalar median   fused median   local speedup
+pipeline       23.50 ms       16.68 ms         1.41x
+tree           26.50 ms       18.13 ms         1.46x
+Alpha island   53.71 ms       40.21 ms         1.34x
+```
+
+The Alpha Centauri movie's actual hot x87 sequence is not either four-op leaf.
+It is two longer islands separated by integer work. H450 executes 412,060 times
+over the fixed movie window and removes 2,472,360 threaded handler dispatches:
+57,814,507 total handlers become 55,342,147, a 4.28% count reduction. All 20
+anchored 640x480 frame hashes remain identical.
+
+That did not produce a resolvable whole-movie gain on the loaded benchmark host:
+the fixed-frame ratio was 0.982x while the fixed-wall arm happened to produce
+four extra frames, a contradictory result inside machine noise. The profile
+explains the ceiling: x87 is about 5.7% of the handler stream and the integer
+Smacker decoder dominates. Treat H450 as evidence that generic micro-op islands
+are viable and exact, not as evidence that they solve Alpha's frame rate. The
+next useful experiment is direct semantic lowering of proven trees/islands, then
+the same expression machinery applied to the dominant integer decode regions.

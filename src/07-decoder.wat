@@ -5398,6 +5398,9 @@
     ;; Loop-idiom matcher runs on the ops just emitted, before the block is
     ;; published. See src/07b-loop-match.wat.
     (call $loop_match_block (local.get $start_eip) (local.get $tstart))
+    (call $x87_fuse_block)
+    (call $x87_tree4_fuse_block)
+    (call $x87_island_fuse_block)
     (call $publish_block (local.get $start_eip) (local.get $tstart) (global.get $d_pc))
   )
 

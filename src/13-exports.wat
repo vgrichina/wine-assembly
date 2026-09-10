@@ -3451,6 +3451,22 @@
     (global.set $store_span_enabled (local.get $flag))
     (call $clear_cache))
 
+  (func (export "set_x87_pipeline4_fusion") (param $flag i32)
+    (global.set $x87_pipeline4_emit_enabled (local.get $flag))
+    (call $clear_cache))
+  (func (export "get_x87_pipeline4_matches") (result i32)
+    (global.get $x87_pipeline4_matches))
+  (func (export "get_x87_pipeline4_runs") (result i32)
+    (global.get $x87_pipeline4_runs))
+  (func (export "get_x87_tree4_matches") (result i32)
+    (global.get $x87_tree4_matches))
+  (func (export "get_x87_tree4_runs") (result i32)
+    (global.get $x87_tree4_runs))
+  (func (export "get_x87_island_matches") (result i32)
+    (global.get $x87_island_matches))
+  (func (export "get_x87_island_runs") (result i32)
+    (global.get $x87_island_runs))
+
   ;; The unrolled-rectangle fold ($th_rect_run). Same rules: before the first
   ;; decode, and on every per-thread instance.
   (func (export "set_rect_run") (param $flag i32)

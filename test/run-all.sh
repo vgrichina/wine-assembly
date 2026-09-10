@@ -53,6 +53,7 @@ UNIT=(
   test/test-store32-base-span.js
   test/test-store32-span-fixed-work.js
   test/test-x87-region-census.js
+  test/test-x87-pipeline4-fusion.js
   test/test-lar-opcode.js
   test/test-win16-lfs-opcode.js
   test/test-lut-run-generalized.js

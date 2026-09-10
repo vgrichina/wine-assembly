@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 448 funcref)
+  (table $handlers 451 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -506,4 +506,7 @@
     $th_add_ebp_eax2_disp     ;; 445: ADD EBP,[EAX*2+disp32]
     $th_add_esi_eax2_disp     ;; 446: ADD ESI,[EAX*2+disp32]
     $th_store32_base_span     ;; 447: contiguous MOV [base+disp],same-r32 span
+    $th_x87_pipeline4         ;; 448: balanced FLD + arithmetic + arithmetic + FSTP
+    $th_x87_tree4             ;; 449: balanced FLD + FLD + arithmetic-pop + FSTP
+    $th_x87_island            ;; 450: contiguous x87 micro-op island
   )
