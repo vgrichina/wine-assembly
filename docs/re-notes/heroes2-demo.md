@@ -10,6 +10,105 @@ Most of the fusions in `src/06b-core-handlers.wat` and `src/07-decoder.wat`
 name it in their comments. These notes say what the cited addresses actually
 *do*, so the next person does not disassemble them again.
 
+## Idle menu CPU / interleaved clock contexts (2026-09-10, local fix)
+
+Production298 main menu measured107% renderer CPU (one core); isolated303
+with the Rodent/modal/blocked-helper fixes still108%. The actual player-turn
+adventure map is22.5%, screenshot-verified after NEW GAME / STANDARD / OKAY.
+Do not exclude the menu: the user explicitly wants it fixed too.
+
+An uninstrumented10s menu sample had clock parks44 ->44 and peek parks0 ->0.
+Subsequent500ms API tracing counted39,201 GetTickCount,3,709 PeekMessageA,
+159 TranslateMessage/DispatchMessage pairs,107 each QueryPerformanceCounter /
+SuspendThread / ResumeThread, but only2 DirectDrawSurface_Blt and2 Lock/Unlock
+pairs. Counts are from instrumented execution, not an unperturbed rate.
+
+The hottest block family is the clock wrapper `0x45c9fa`:
+`call [0x52b4ec]` calls GetTickCount; return PC `0x45ca06`. Its timed idle
+service `0x45dbb0` tests deadlines at globals0x519548(+13ms),0x51954c
+(+110ms in some modes) and0x519544(+30ms). Most visits take no-work branches.
+
+Root cause is **alternating stack contexts**, not a clock API missing from
+the detector. Actual trace at0x45ca06 shows this repeated cycle within the
+same guest millisecond (ESP quoted after the API has returned):
+
+```
+ESP074ffca8: callers45dbd7,45dc0f,45dcb4          counts1,2,3
+ESP074ffca0: callers45dbd7,45dc0f,45dcb4,467f37   counts1,2,3,4
+ESP074ffcd8: callers45dbd7,45dc0f,45dcb4          counts1,2,3
+ESP074ffcb8: caller45c1e2                       count1
+repeat
+```
+
+The old `$clock_spin_step` remembers only the immediately previous return-PC/ESP
+pair, so each depth change resets its count; none reaches K=8. The common
+wrapper makes the API return PC identical, but the ESP guard still resets it.
+Local304 retains four bounded per-instance MRU contexts, keyed by return-PC/ESP.
+Each context independently needs K reads of the same clock value with no real
+API activity. The active scalar state has three alternate i64-packed histories;
+eviction only loses proof. The one-park-per-millisecond latch remains shared
+across contexts. No guest addresses, Heroes policy, shared regions or clock
+delay defaults changed. `test-clock-spin-contexts.js` covers interleaving without
+pooled counts, eviction, time/activity changes, intact ABI and independent WASM
+instances sharing memory; existing 43 clock-park tests also pass.
+
+Headless renderer CPU falls from108% to13.68% in the menu and22.51% to7.36%
+on the actual map. Menu parks now grow1111 ->3459 in10s (235 wakes/s).
+Visible/headful Chrome at load3.42 measures **16.15% renderer** vs **0.005%**
+on a blank page in the same browser. This is a major improvement, **not final
+idle acceptance**. Residual profiling shows scheduling, palette presentation
+and guest execution, rather than a single saturated loop. An experimental
+per-page8ms clock-park delay gives12.08% headful renderer; not applied to source
+because longer delays need cadence/input evidence and are not a complete fix.
+
+A headful production298 confirmation gives105.59% renderer and zero new clock
+parks in10s (host load7.73, so use as saturation evidence, not a precise speedup
+ratio). Local304 repeats at14.99%, 2334 parks/10s. A separate3s DX census sees
+15 palette updates, all changing RGB after the initial sample, and11 each
+Lock/Unlock/Blt,26 presents. The palette changes19 entries (214..221,
+231..241); therefore an identical-palette fast path would not fix this menu.
+The menu has subtle real animation despite looking static. Do not freeze its
+palette or drop writes based on sampled pixels to reduce the CPU number.
+
+Settled headful confirmation (`wa-idle-heroes-settled304`):60s warmup,30s sample,
+host load2.43, renderer15.59%, GPU2.45%,7037 parks (234.5/s), no page errors.
+Thus residual cost is not startup compilation. Subsequent3s profile: idle83.4%,
+unattributed native/program7.7%, WASM3.6%, presentation0.8%; remaining small
+shares include scheduler timing, hidden checks and GDI conversion. Next analysis
+should attribute host phases/native program time, not retune the proven detector
+or pretend a quiet-menu acceptance threshold has been met.
+
+## Host/audio isolation (local304, 2026-09-10)
+
+Diagnostic-only per-page substitutions, not product changes:
+
+- Suppress `hostCtx.sharedGdi.presentBestDxOffscreen`: renderer12.69% over20s.
+  Existing host-phase instrumentation accounts for556.5ms total (2.78% wall):
+  main319.8ms, presentation107.5ms (other GDI still runs), other129.2ms.
+  This rules out DirectDraw upload as the bulk of residual process CPU.
+- Suspend the AudioContext and prevent diagnostic-page auto-resume, keeping
+  normal presentation: renderer6.66%, audio utility0.0024%, versus settled
+  audible baseline15.59%. The menu remains running and clock parks continue.
+  Thus roughly9 percentage points are attributable to the audio path, not an
+  unparked guest loop. Do not label the entire audible-menu cost as idle spin.
+
+Raw `wa-heroes-host-ablation304` and `wa-heroes-audio-ablation304`; audio/canvas
+substitutions exist only in the temporary audit harness. Normal music and
+animation remain enabled in source. User expressly prohibits production deploys.
+
+Actual player-turn map headful verification (`wa-idle-heroes-map-headful304`):
+NEW GAME / STANDARD / OKAY, screenshot-confirmed castle/hero adventure map.
+20s sample renderer10.37%,GPU2.59%,audio utility0.74%,4441 clock parks, no errors.
+No diagnostic audio/presentation suppression. This replaces headless-only
+evidence for the map and preserves real music/animation work.
+
+Evidence harness `/private/tmp/audit-idle-games.js`; JSON/PNG directories
+`/private/tmp/wa-idle-heroes-menu`, `wa-idle-heroes-clock-sites`, and
+`wa-idle-heroes-map`. The clock-site trace records160 samples including ESP,
+outer caller, returned clock and detector count. Post-fix evidence:
+`wa-idle-heroes-headful304`, `wa-idle-heroes-residual304`, `wa-idle-heroes-park8`.
+These changes are local only, not deployed.
+
 ## Modules and address arithmetic
 
 `H2DEMOW.EXE` is not relocated: `imageBase = 0x400000` and it loads there, so

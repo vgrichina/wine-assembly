@@ -4744,15 +4744,19 @@
       (then (call $win16_class_word (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 130))
       (then (call $win16_class_word (i32.const 1)) (return (i32.const 1))))
-    ;; USER.112 WaitMessage — "sleep until something arrives". A task pumping
-    ;; its own loop cannot be slept here: its stack is its own and the host
-    ;; delivers input between batches, so the honest equivalent is to give the
-    ;; host its turn and come straight back. The caller loops on GetMessage
-    ;; either way, which is what it would do on Windows after waking.
+    ;; USER.112 WaitMessage. Finish the Pascal far return before parking: the
+    ;; Win32 message-wait resume path would pop a stdcall frame from this
+    ;; 16-bit task's stack. Queue park 15 only clears the yield on wake; it
+    ;; does not touch EIP/ESP. The host sleeps to input or the next timer
+    ;; (bounded by its idle cap), then the caller rechecks its message pump.
+    ;; A plain yield_flag with reason 0 immediately reschedules via
+    ;; MessageChannel and made VBRUN100's idle pump consume a whole CPU core.
     (if (i32.eq (local.get $ordinal) (i32.const 112))
       (then
-        (global.set $yield_flag (i32.const 1))
         (call $win16_local_identity (i32.const 0) (i32.const 1))
+        (global.set $yield_reason (i32.const 15))
+        (global.set $yield_flag (i32.const 1))
+        (global.set $steps (i32.const 0))
         (return (i32.const 1))))
     ;; USER.156 GetSystemMenu(hWnd, bRevert) -> the window's system menu, which
     ;; is the same one for every window here. A task takes it to grey out

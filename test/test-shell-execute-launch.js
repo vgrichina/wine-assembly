@@ -36,6 +36,26 @@ function makeShell(opts = {}) {
   return { shell, launched, logs, realLaunch };
 }
 
+// A page navigation must not leave its 512MB guest for Safari's page cache to
+// retain. Unlike an ordinary close, this release cannot wait for setTimeout.
+{
+  const { shell } = makeShell();
+  const calls = [];
+  const guest = {
+    stop(options) { calls.push(options); },
+  };
+  shell.runningApps.push({ wine: guest, name: 'wordpad' });
+  shell.releaseForPageHide();
+  assert.deepStrictEqual(calls, [{ repaint: false, releaseNow: true }],
+    'pagehide requests synchronous guest-memory release without repainting');
+  assert.strictEqual(shell.runningApps.length, 0,
+    'pagehide clears the process list after detaching its guests');
+  const shellSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'browser-shell.js'), 'utf8');
+  assert.match(shellSource, /if \(wine\) guests\.add\(wine\)/,
+    'pagehide also owns the host currently booting before runningApps registration');
+  console.log('ok: pagehide synchronously releases running and booting guest memory');
+}
+
 // 1. exe name -> app key, three ways.
 {
   const { shell } = makeShell();

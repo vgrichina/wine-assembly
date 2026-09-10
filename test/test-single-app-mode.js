@@ -347,15 +347,16 @@ function win(x, y, w, h, extra) {
     'the middle of the screen is the middle of the crop');
 }
 
-// The bottom band is reserved in zoom mode too, so the controls still sit in
-// clear space rather than over the picture.
+// Fill is literal even with controls: it covers the whole output and lets the
+// translucent overlay sit above the crop. Only Fit reserves clear space.
 {
   const renderer = makeRenderer(390, 844, 390, 844);
   renderer.setViewMode('zoom');
   renderer.touchOverlay = { getOccupiedFraction: () => 200 / 844 };
   const v = renderer._computeSingleAppZoom([win(0, 0, 320, 400)]).viewport;
-  assert.strictEqual(v.bottomInset, 200, 'zoom mode reserves the band as well');
-  assert.strictEqual(v.dstH, 644, 'and fills only what is left');
+  assert.strictEqual(v.bottomInset, 0, 'Fill does not shorten the output for controls');
+  assert.strictEqual(v.dstW, 390, 'Fill covers the full output width');
+  assert.strictEqual(v.dstH, 844, 'Fill covers the full output height');
   assert.strictEqual(v.dstY, 0, 'starting at the top');
 }
 
@@ -368,4 +369,42 @@ function win(x, y, w, h, extra) {
     'headless rendering should not enter the zoom path');
 }
 
+// A square board keeps its complete one-tile perimeter in either orientation.
+for (const [width, height, area, side] of [
+  [390, 664, { x: 0, y: 0, w: 1, h: 460 / 664 }, 390],
+  [844, 390, { x: 204 / 844, y: 0, w: 436 / 844, h: 1 }, 390],
+]) {
+  const renderer = makeRenderer(844, 664, width, height);
+  renderer.mobileCrop = { x: 3 / 282, y: 78 / 357, w: 276 / 282, h: 276 / 357, contain: true };
+  renderer.touchOverlay = { getBoardArea: () => area };
+  renderer.setViewMode('zoom');
+  const v = renderer._computeSingleAppZoom([win(56, 108, 282, 357)]).viewport;
+  assert.deepStrictEqual([v.cropX, v.cropY, v.cropW, v.cropH], [59, 186, 276, 276]);
+  assert.deepStrictEqual([v.dstW, v.dstH], [side, side], 'board remains square with all wall pixels visible');
+  assert(v.dstX >= Math.round(area.x * width));
+  assert(v.dstY + v.dstH <= Math.round(area.h * height));
+}
+
 console.log('PASS  single-app mode: phone detection, chrome, and window zoom');
+
+{
+  const renderer = makeRenderer(844, 664, 390, 664);
+  renderer.mobileCrop = { x: 3 / 282, y: 78 / 357, w: 276 / 282, h: 276 / 357, contain: true, portraitTrimX: 12 };
+  renderer.touchOverlay = { getBoardArea: () => ({ x: 0, y: 0, w: 1, h: 460 / 664 }) };
+  const windows = [win(56, 108, 282, 357)];
+  renderer.setViewMode('zoom');
+  const board = renderer._computeSingleAppZoom(windows).viewport;
+  assert.deepStrictEqual([board.cropX, board.cropY, board.cropW, board.cropH], [71, 186, 252, 276]);
+  renderer.setViewMode('fit');
+  renderer.beginViewPinch();
+  renderer.updateViewPinch(Math.sqrt(1.5));
+  const middle = renderer._computeSingleAppZoom(windows).viewport;
+  assert(middle.cropW > board.cropW && middle.cropW < 282, 'pinch produces an intermediate crop');
+  renderer.updateViewPinch(1.4);
+  renderer.endViewPinch();
+  assert.strictEqual(renderer.viewMode, 'zoom', 'release snaps to the nearer board view');
+  renderer.beginViewPinch();
+  renderer.updateViewPinch(0.7);
+  renderer.endViewPinch(true);
+  assert.strictEqual(renderer.viewMode, 'zoom', 'cancel restores the starting view');
+}

@@ -1138,7 +1138,7 @@
     "\07WINHELP\ab\20"
     "\0fGETMODULEHANDLE\2f\10"
     "\11GETMODULEFILENAME\31\10"
-    "\14GETPRIVATEPROFILEINT\7f\10\10LOADLIBRARYEX32W\01\12\0eFREELIBRARY32W\02\12\11GETPROCADDRESS32W\03\12\10GETVDMPOINTER32W\04\12\0bCALLPROC32W\05\12"
+    "\14GETPRIVATEPROFILEINT\7f\10\19WRITEPRIVATEPROFILESTRING\81\10\10LOADLIBRARYEX32W\01\12\0eFREELIBRARY32W\02\12\11GETPROCADDRESS32W\03\12\10GETVDMPOINTER32W\04\12\0bCALLPROC32W\05\12"
     "\00")
   (data (region.addr $RESERVED_PAGE_STRINGS 0x160) "Hearts$\00MSHearts\00Hearts\00\00")
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
@@ -3123,8 +3123,8 @@
   ;;   * no meaningful Win32 work happened in between ($spin_nonpoll_seq did
   ;;     not change) -- empty PeekMessage polls are neutral, while a delivered
   ;;     message and rendering API calls both break the run;
-  ;;   * the same return address, so it is one call site, not a pump;
-  ;;   * the same ESP, so it is the same stack depth and not a recursion.
+  ;;   * the same return address within each independently tracked context;
+  ;;   * the same ESP per context: counts never mix different stack depths.
   ;;
   ;; Everything here is per-instance state, which is what makes it per-thread:
   ;; a worker instantiates its own module over the shared memory, so a decode
@@ -3137,6 +3137,18 @@
   (global $clock_spin_seq (mut i32) (i32.const 0))
   (global $clock_spin_ret (mut i32) (i32.const 0))
   (global $clock_spin_esp (mut i32) (i32.const 0))
+  ;; Three alternate contexts plus the current scalar context form a bounded
+  ;; four-entry MRU. Keys pack return PC/ESP; history packs activity epoch/value.
+  ;; Per-instance globals require no shared-memory allocation.
+  (global $clock_spin_key0 (mut i64) (i64.const 0))
+  (global $clock_spin_key1 (mut i64) (i64.const 0))
+  (global $clock_spin_key2 (mut i64) (i64.const 0))
+  (global $clock_spin_history0 (mut i64) (i64.const 0))
+  (global $clock_spin_history1 (mut i64) (i64.const 0))
+  (global $clock_spin_history2 (mut i64) (i64.const 0))
+  (global $clock_spin_count0 (mut i32) (i32.const 0))
+  (global $clock_spin_count1 (mut i32) (i32.const 0))
+  (global $clock_spin_count2 (mut i32) (i32.const 0))
   ;; The value a park was already taken for. One park per distinct millisecond,
   ;; ever: if the host hands the guest back with the clock still reading the
   ;; same thing, spinning is the honest answer until it moves. Without this the

@@ -156,7 +156,19 @@ Client origin is (24,44), i.e. `client = screen - (24,44)`.
 The window is 648x508, so on a 640x480 screen the right-hand button strip is
 clipped. Use `--screen=800x600` to see all of it.
 
-## Ruled out
+## Local idle CPU verification (2026-09-10)
+
+This is a non-realtime Klotski puzzle, not a breakout game. Headful Chrome,
+1280x900 desktop, local source304: click start(240,450), hold220ms. The actual
+board uses0.93% renderer CPU over15s, with main slices4 ->4 and yield7.
+Then the drag route above, with220ms between moves, visibly moves the bottom
+right block left:1838 changed board pixels and `MOVES: 1`. Subsequent15s
+renderer CPU0.84%, main slices9 ->9, yield7, no page errors. Host loads18.15
+and15.65 mean these are no-spin evidence, not precise quiet-machine timings.
+Raw screenshots/JSON: `/private/tmp/wa-idle-bricks-board304` and
+`/private/tmp/wa-idle-bricks-drag304`. No runtime change or deployment.
+
+## Ruled-out input hypotheses
 
 - *"Clicks on the icon column are being dropped by the renderer."* No: the
   messages arrive with correct client coords and the app's own handler enters

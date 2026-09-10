@@ -70,6 +70,9 @@ UNIT=(
   test/test-win16-civ2-apis.js
   test/test-win16-temp-file.js
   test/test-win16-version.js
+  test/test-win16-wait-message.js
+  test/test-cooperative-idle-deadline.js
+  test/test-clock-spin-contexts.js
   test/test-win16-lazy-file-read.js
   test/test-win16-destroy-icon.js
   test/test-fs-prefix.js
@@ -677,6 +680,7 @@ UNIT=(
 
 E2E=(
   test/test-web-overlay-store.js
+  test/test-darkstone-gameplay.js
   test/test-win16-wep-gameplay.js
   test/test-win16-vb-gameplay.js
   test/test-rodent2000-gameplay.js

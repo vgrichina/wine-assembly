@@ -1,0 +1,38 @@
+'use strict';
+const assert = require('assert');
+const { ThreadManager } = require('../lib/thread-manager');
+const tm = Object.create(ThreadManager.prototype);
+Object.assign(tm, { threads: new Map(), _pendingThreads: [], _now: () => 1000,
+  _waitNow: () => 1000,
+  _lastCooperativeRunHadWork: false, _hasPendingMessage: () => false });
+const thread = { state: 'active', waitPolls: 1, waitStartedAt: 995,
+  instance: { exports: { get_yield_reason: () => 1, get_wait_timeout: () => 0xFFFFFFFF } } };
+tm.threads.set(1, thread);
+assert.strictEqual(tm.parkedThreadDelay(50), 50, 'an observed infinite event wait sleeps');
+thread.instance.exports.get_wait_timeout = () => 12;
+assert.strictEqual(tm.parkedThreadDelay(50), 7, 'bounded wait deadline');
+thread.waitStartedAt = 980;
+assert.strictEqual(tm.parkedThreadDelay(50), 0, 'expired wait must run');
+thread.instance.exports.get_yield_reason = () => 7;
+thread.instance.exports.next_timer_due_ms = () => 9;
+assert.strictEqual(tm.parkedThreadDelay(50), 9, 'message-wait timer deadline');
+tm._hasPendingMessage = () => true;
+assert.strictEqual(tm.parkedThreadDelay(50), 0, 'pending message is runnable');
+tm._hasPendingMessage = () => false;
+thread.sleepUntil = 1017;
+assert.strictEqual(tm.parkedThreadDelay(50), 17, 'sleep deadline');
+tm._now = () => 900000;
+assert.strictEqual(tm.parkedThreadDelay(50), 17, 'sleep uses the guest wait clock, not profiling time');
+thread.sleepUntil = 0;
+thread.waitStartedAt = 995;
+thread.instance.exports.get_yield_reason = () => 1;
+assert.strictEqual(tm.parkedThreadDelay(50), 7, 'bounded waits use the guest wait clock');
+tm._lastCooperativeRunHadWork = true;
+assert.strictEqual(tm.parkedThreadDelay(50), 0, 'a productive turn may have signaled another thread');
+tm._lastCooperativeRunHadWork = false;
+tm._pendingThreads.push({});
+assert.strictEqual(tm.parkedThreadDelay(50), 0, 'pending spawn prevents sleeping');
+tm._pendingThreads = [];
+tm.workerBackend = true;
+assert.strictEqual(tm.parkedThreadDelay(50), 0, 'true Worker backend is not inferred idle');
+console.log('PASS cooperative idle deadlines preserve pending work and wait timeouts');

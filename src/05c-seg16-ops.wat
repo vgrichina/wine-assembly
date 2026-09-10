@@ -221,6 +221,36 @@
     (call $load_eflags (local.get $f))
     (return_call $next))
 
+  ;; 447: VERR r/m16. VBRUN100 uses the memory form while unwinding a VB
+  ;; window: `0f 00 /4` asks whether a selector names a readable descriptor
+  ;; and reports only through ZF. Every mapped NE code descriptor we expose is
+  ;; readable (the same 0xB type synthesized by LAR), and data/arena selectors
+  ;; are readable as well, so validity is exactly a non-empty selector-table
+  ;; entry. Outside a Win16 task, retain the flat model's non-null-selector
+  ;; answer.
+  ;;
+  ;; op = source register in bits 0-3, or bit 8 plus a read_addr word.
+  (func $th_verr (param $op i32)
+    (local $sel i32) (local $valid i32) (local $f i32)
+    (if (i32.and (local.get $op) (i32.const 0x100))
+      (then (local.set $sel (call $gl16 (call $read_addr))))
+      (else (local.set $sel
+        (call $get_reg16 (i32.and (local.get $op) (i32.const 7))))))
+    (if (global.get $code16)
+      (then
+        (local.set $valid
+          (i32.ne
+            (call $win16_seg_base
+              (call $win16_sel_to_index (local.get $sel)))
+            (i32.const 0))))
+      (else (local.set $valid (i32.ne (local.get $sel) (i32.const 0)))))
+    ;; VERR defines ZF only; preserve all other materialized arithmetic flags.
+    (local.set $f (i32.and (call $build_eflags) (i32.const 0xFFFFFFBF)))
+    (if (local.get $valid)
+      (then (local.set $f (i32.or (local.get $f) (i32.const 0x40)))))
+    (call $load_eflags (local.get $f))
+    (return_call $next))
+
   ;; ---- Near returns ----
   ;;
   ;; The pushed word is IP, so the linear address comes back from the current

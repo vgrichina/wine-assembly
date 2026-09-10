@@ -12278,14 +12278,65 @@ HookEx — no next hook in chain, return 0
     (call $gl32 (global.get $esp)))
 
   ;; One step of the clock debounce. Returns 1 when this read is the Kth in a
-  ;; row that is indistinguishable from the last one -- same millisecond, same
-  ;; call site, same stack depth, and no meaningful API work in between. An
+  ;; context that is indistinguishable from its last read -- same millisecond,
+  ;; call site, stack depth, and no meaningful API work in between. An
   ;; empty PeekMessage is neutral; a successful one is work and resets the run.
   ;; Anything different resets the run to 1, so the state is always about the
-  ;; CONSECUTIVE reads and never accumulates across a frame.
+  ;; consecutive reads WITHIN A CONTEXT and never across real API work.
+  ;; Select this exact call-site/stack context without merging its evidence
+  ;; with other callers. Heroes II alternates four depths through one clock
+  ;; wrapper; a single last-context slot reset after 3/4/3/1 reads forever.
+  ;; Different values or real API activity still invalidate a cached count
+  ;; when clock_spin_step compares its tags. Eviction only loses evidence.
+  (func $clock_spin_select_context (param $ret i32)
+    (local $key i64) (local $old_key i64)
+    (local $old i64) (local $chosen i64) (local $chosen_count i32)
+    (if (i32.and
+          (i32.eq (local.get $ret) (global.get $clock_spin_ret))
+          (i32.eq (global.get $esp) (global.get $clock_spin_esp)))
+      (then (return)))
+    (local.set $key (i64.or
+      (i64.shl (i64.extend_i32_u (local.get $ret)) (i64.const 32))
+      (i64.extend_i32_u (global.get $esp))))
+    (local.set $old_key (i64.or
+      (i64.shl (i64.extend_i32_u (global.get $clock_spin_ret)) (i64.const 32))
+      (i64.extend_i32_u (global.get $clock_spin_esp))))
+    (local.set $old (i64.or
+      (i64.shl (i64.extend_i32_u (global.get $clock_spin_seq)) (i64.const 32))
+      (i64.extend_i32_u (global.get $clock_spin_value))))
+    (if (i64.eq (local.get $key) (global.get $clock_spin_key0))
+      (then
+        (local.set $chosen (global.get $clock_spin_history0))
+        (local.set $chosen_count (global.get $clock_spin_count0)))
+      (else
+        (if (i64.eq (local.get $key) (global.get $clock_spin_key1))
+          (then
+            (local.set $chosen (global.get $clock_spin_history1))
+            (local.set $chosen_count (global.get $clock_spin_count1)))
+          (else
+            (if (i64.eq (local.get $key) (global.get $clock_spin_key2))
+              (then
+                (local.set $chosen (global.get $clock_spin_history2))
+                (local.set $chosen_count (global.get $clock_spin_count2))))
+            (global.set $clock_spin_key2 (global.get $clock_spin_key1))
+            (global.set $clock_spin_count2 (global.get $clock_spin_count1))
+            (global.set $clock_spin_history2 (global.get $clock_spin_history1))))
+        (global.set $clock_spin_key1 (global.get $clock_spin_key0))
+        (global.set $clock_spin_count1 (global.get $clock_spin_count0))
+        (global.set $clock_spin_history1 (global.get $clock_spin_history0))))
+    (global.set $clock_spin_key0 (local.get $old_key))
+    (global.set $clock_spin_count0 (global.get $clock_spin_count))
+    (global.set $clock_spin_history0 (local.get $old))
+    (global.set $clock_spin_value (i32.wrap_i64 (local.get $chosen)))
+    (global.set $clock_spin_seq (i32.wrap_i64 (i64.shr_u (local.get $chosen) (i64.const 32))))
+    (global.set $clock_spin_count (local.get $chosen_count))
+    (global.set $clock_spin_ret (local.get $ret))
+    (global.set $clock_spin_esp (global.get $esp)))
+
   (func $clock_spin_step (param $value i32) (result i32)
     (local $ret i32) (local $threshold i32)
     (local.set $ret (call $spin_call_site))
+    (call $clock_spin_select_context (local.get $ret))
     (if (i32.and
           (i32.and
             (i32.eq (local.get $value) (global.get $clock_spin_value))

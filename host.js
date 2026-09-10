@@ -523,7 +523,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '299';
+  static SOURCE_VERSION = '305';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -2983,7 +2983,16 @@ class WineAssembly {
     // run is over -- --png, --dump, the hit counts and the MMX tally at exit
     // -- and it gets its memory back by exiting the process, so it has
     // nothing to gain here and everything to lose.
-    if (typeof window !== 'undefined' && !this._releaseTimer) {
+    // pagehide freezes Safari's page before a zero-delay timer is guaranteed
+    // to run. A cached old page would then retain this 512MB while the new
+    // document tries to allocate its own and fail at WebAssembly.Memory.
+    // releaseNow is reserved for that outside-the-guest-call lifecycle edge;
+    // ordinary stops must keep the deferred path above.
+    if (typeof window !== 'undefined' && options.releaseNow) {
+      if (this._releaseTimer) clearTimeout(this._releaseTimer);
+      this._releaseTimer = null;
+      this._releaseGuestMemory();
+    } else if (typeof window !== 'undefined' && !this._releaseTimer) {
       this._releaseTimer = setTimeout(() => {
         this._releaseTimer = null;
         if (this._stopped) this._releaseGuestMemory();
@@ -3770,16 +3779,30 @@ class WineAssembly {
     const tm = this.threadManager;
     // A worker with runnable code is the other half of this step. It is not
     // idle just because the main thread is.
-    if (tm && tm.hasActiveThreads && tm.hasActiveThreads()) return 0;
+    let threadDelay = Infinity;
+    if (tm && tm.hasActiveThreads && tm.hasActiveThreads()) {
+      threadDelay = tm.parkedThreadDelay
+        ? tm.parkedThreadDelay(WineAssembly.MAX_PARK_SLEEP_MS) : 0;
+      if (!(threadDelay > 0)) return 0;
+    }
     const ex = this.instance && this.instance.exports;
     if (!ex) return 0;
     const now = this._audioSchedulerNow();
     // A click or keypress lands as a queued input event that the very next
     // slice consumes. Do not sleep through the tail of an interaction.
     const wake = this.renderer && this.renderer._recentMessageWakeAt;
-    if (wake && (now - wake) < 120) return 0;
-    let best = Infinity;
-    if (tm && tm._mainSleepUntil) best = Math.min(best, tm._mainSleepUntil - now);
+    // An explicit queue/clock park is fresh evidence that the guest has
+    // finished this turn and is waiting again. Recent input must not turn
+    // that park into another 120ms of busy polling; new input still invokes
+    // _wakeStep immediately, cancelling the sleep.
+    if (spin <= 0 && wake && (now - wake) < 120) return 0;
+    let best = threadDelay;
+    // Sleep deadlines are recorded on ThreadManager's guest wait clock;
+    // recent input above is timestamped on the host profiling clock.
+    if (tm && tm._mainSleepUntil) {
+      const waitNow = tm._waitNow ? tm._waitNow() : now;
+      best = Math.min(best, tm._mainSleepUntil - waitNow);
+    }
     let yr = 0;
     try { yr = ex.get_yield_reason ? (ex.get_yield_reason() >>> 0) : 0; } catch (_) { return 0; }
     if (yr === 1) {
@@ -4128,7 +4151,9 @@ class WineAssembly {
           // (14) or on an empty message queue (15), and the handler parked
           // instead of answering "not yet" for the thousandth time. EIP is on
           // the thunk and the frame is intact, so clearing the yield re-enters
-          // the same call.
+          // the same call. Win16 WaitMessage also uses queue park 15, but
+          // completes its Pascal far return before parking; clear_yield is
+          // stack-neutral and resumes that caller without a Win32 frame pop.
           //
           // Deliberately NOT an early return with its own timer, the way the
           // vblank park is: this is a plain parked main thread, and the drive

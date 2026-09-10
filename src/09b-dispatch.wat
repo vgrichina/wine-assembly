@@ -948,8 +948,9 @@
             (global.set $eip (local.get $arg4))
             (global.set $steps (i32.const 0))
             (return)))
-        ;; No input — yield to host and come back
+        ;; No work: queue park, not an immediately rescheduled reason-0 yield.
         (global.set $yield_flag (i32.const 1))
+        (global.set $yield_reason (i32.const 15))
         (global.set $eip (global.get $dlg_loop_thunk))
         (global.set $steps (i32.const 0))
         (return)))

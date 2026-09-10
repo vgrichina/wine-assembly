@@ -172,6 +172,26 @@ function parkedHost(options = {}) {
   return wine;
 }
 
+// Live helper threads can be blocked rather than runnable.
+{
+  const wine = parkedHost({ yieldReason: 7, activeThreads: true });
+  wine.threadManager.parkedThreadDelay = () => 13;
+  assert.strictEqual(wine._parkedSleepMs(), 13,
+    'live but blocked helper threads sleep to their earliest deadline');
+  wine.threadManager.parkedThreadDelay = () => 0;
+  assert.strictEqual(wine._parkedSleepMs(), 0, 'runnable helpers prevent sleep');
+}
+
+// Serviced input does not override fresh evidence that the guest is waiting.
+{
+  const wine = parkedHost({ recentWakeAt: nowMs - 1 });
+  wine._spinParkSleepMs = 17;
+  assert.strictEqual(wine._parkedSleepMs(), 17,
+    'a fresh park sleeps even immediately after input has been serviced');
+  assert.strictEqual(wine._parkedSleepMs(), 0,
+    'the override is single-use; ordinary recent-input behavior is retained');
+}
+
 // A GetMessage park with no timer at all: nothing but an external event can
 // wake it, and those wake the loop explicitly. Poll at the cap.
 assert.strictEqual(parkedHost({ yieldReason: 7 })._parkedSleepMs(),
@@ -196,6 +216,12 @@ assert.strictEqual(parkedHost({ yieldReason: 1, waitTimeout: 0xFFFFFFFF })._park
 // Sleep(n) on the main thread.
 assert.strictEqual(parkedHost({ mainSleepUntil: nowMs + 8 })._parkedSleepMs(), 8,
   'a main-thread Sleep sleeps the rest of its interval');
+{
+  const wine = parkedHost({ mainSleepUntil: 1008 });
+  wine.threadManager._waitNow = () => 1000;
+  assert.strictEqual(wine._parkedSleepMs(), 8,
+    'main Sleep deadline uses its guest wait clock, not the input/profiling clock');
+}
 
 // A worker with runnable code is the other half of this step. The machine is
 // not idle just because the main thread is.

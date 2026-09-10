@@ -282,7 +282,7 @@
     (owner "01-header.wat:$WND_OWN_DC_TABLE"))
   (region.declare $WND_HINSTANCE_TABLE (size 0x00000400) (align 0x00000100)
     (owner "01-header.wat:$WND_HINSTANCE_TABLE"))
-  (region.declare $WIN16_BUILTIN_NAMES (size 0x00000240) (align 0x00001000)
+  (region.declare $WIN16_BUILTIN_NAMES (size 0x00000250) (align 0x00001000)
     (owner "09e-win16-api.wat:$WIN16_BUILTIN_NAMES"))
   (region.declare $WND_THREAD_TABLE (size 0x00000400) (align 0x00000100)
     (owner "01-header.wat:$WND_THREAD_TABLE"))
