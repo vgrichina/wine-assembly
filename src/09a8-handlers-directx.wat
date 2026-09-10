@@ -6272,27 +6272,90 @@
     (global.set $eax (i32.const 0x80070002)) ;; DIERR_DEVICENOTREG
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
+  ;; Complete DirectInput device interface classifier. Device7/8 identities
+  ;; are recognized so callers get an honest E_NOINTERFACE until their extra
+  ;; vtable methods exist, rather than a successful pointer to a short table.
+  (func $dinput_device_iid_kind_wa (param $iid_wa i32) (result i32)
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0) (i32.const 0)
+          (i32.const 0x000000C0) (i32.const 0x46000000))
+      (then (return (i32.const 1)))) ;; IUnknown
+    (if (i32.or
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x5944E680) (i32.const 0x11CFC92E)
+            (i32.const 0x4544C7BF) (i32.const 0x00005453))
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x5944E681) (i32.const 0x11CFC92E)
+            (i32.const 0x4544C7BF) (i32.const 0x00005453)))
+      (then (return (i32.const 2)))) ;; IDirectInputDeviceA/W
+    (if (i32.or
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x5944E682) (i32.const 0x11CFC92E)
+            (i32.const 0x4544C7BF) (i32.const 0x00005453))
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x5944E683) (i32.const 0x11CFC92E)
+            (i32.const 0x4544C7BF) (i32.const 0x00005453)))
+      (then (return (i32.const 3)))) ;; IDirectInputDevice2A/W
+    (if (i32.or
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x57D7C6BC) (i32.const 0x11D32356)
+            (i32.const 0xC0009D8E) (i32.const 0xAE44684F))
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x57D7C6BD) (i32.const 0x11D32356)
+            (i32.const 0xC0009D8E) (i32.const 0xAE44684F)))
+      (then (return (i32.const 4)))) ;; IDirectInputDevice7A/W
+    (if (i32.or
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x54D41080) (i32.const 0x4833DC15)
+            (i32.const 0x8F741BA4) (i32.const 0x7981A373))
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x54D41081) (i32.const 0x4833DC15)
+            (i32.const 0x8F741BA4) (i32.const 0x7981A373)))
+      (then (return (i32.const 5)))) ;; IDirectInputDevice8A/W
+    (i32.const 0))
+
   ;; IDirectInput7::CreateDeviceEx(this, rguid, riid, ppvOut, punkOuter)
-  ;; Same device object as CreateDevice — the IDirectInputDevice2 vtable
-  ;; covers the v2/v7 method range — with the riid slot ignored because
-  ;; every IID_IDirectInputDevice* variant maps to it.
+  ;; Device1/2 are the complete ABI range implemented here. Device7 adds two
+  ;; methods beyond that table, so do not manufacture a plausible wrong face.
   (func $handle_IDirectInput7_CreateDeviceEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32) (local $entry i32) (local $guid_first i32)
+    (local $iid_wa i32) (local $kind i32) (local $vtbl i32)
+    (local $obj i32) (local $entry i32) (local $parent_entry i32)
+    (local $guid_first i32)
     (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
-    (if (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg3)))
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2)))
+          (i32.eqz (local.get $arg3)))
       (then
         (global.set $eax (i32.const 0x80070057)) ;; E_INVALIDARG
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
-    (local.set $obj (call $dx_create_com_obj (i32.const 7) (global.get $DX_VTBL_DIDEV2)))
+    (if (local.get $arg4)
+      (then
+        (global.set $eax (i32.const 0x80040110)) ;; CLASS_E_NOAGGREGATION
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    ;; Translate riid exactly once and accept only implemented complete faces.
+    (local.set $iid_wa (call $g2w (local.get $arg2)))
+    (local.set $kind (call $dinput_device_iid_kind_wa (local.get $iid_wa)))
+    (if (i32.or (i32.lt_u (local.get $kind) (i32.const 2))
+                (i32.gt_u (local.get $kind) (i32.const 3)))
+      (then
+        (global.set $eax (i32.const 0x80004002)) ;; DIERR_NOINTERFACE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (local.set $vtbl
+      (select (global.get $DX_VTBL_DIDEV2) (global.get $DX_VTBL_DIDEV)
+        (i32.eq (local.get $kind) (i32.const 3))))
+    (local.set $obj (call $dx_create_com_obj (i32.const 7) (local.get $vtbl)))
     (if (i32.eqz (local.get $obj))
       (then
         (global.set $eax (i32.const 0x80004005))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
     (local.set $entry (call $dx_from_this (local.get $obj)))
+    (local.set $parent_entry (call $dx_from_this (local.get $arg0)))
     (i32.store offset=16 (local.get $entry)
-      (load.field.memarg DxObject misc0 (call $dx_from_this (local.get $arg0))))
+      (load.field.memarg DxObject misc0 (local.get $parent_entry)))
     (local.set $guid_first (call $gl32 (local.get $arg1)))
     (store.field DxObject misc0 (local.get $entry) (i32.const 0))
     (if (i32.eq (local.get $guid_first) (i32.const 0x6F1D2B61))
@@ -6603,13 +6666,69 @@
   ;; ════════════════════════════════════════════════════════════
 
   (func $handle_IDirectInputDevice_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (call $gs32 (local.get $arg2) (local.get $arg0))
-    ;; QI must AddRef even when returning the same 'this' — otherwise a paired
-    ;; Release on the original frees the DX_OBJECTS slot while the caller still
-    ;; holds the QI'd pointer (MCM triggers exactly this pattern).
+    (local $iid_wa i32) (local $kind i32) (local $entry i32)
+    (local $version i32) (local $slot i32) (local $obj i32)
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Translate riid exactly once and compare the complete device IID.
+    (local.set $iid_wa (call $g2w (local.get $arg1)))
+    (local.set $kind (call $dinput_device_iid_kind_wa (local.get $iid_wa)))
     (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $version (i32.load offset=16 (local.get $entry)))
+    (if (i32.eqz (local.get $version))
+      (then (local.set $version (i32.const 0x0700))))
+    ;; This emulator currently has complete Device1/2 vtables. Reject the
+    ;; recognized Device7/8 identities until their appended methods exist.
+    (if (i32.or
+          (i32.eqz (local.get $kind))
+          (i32.or
+            (i32.gt_u (local.get $kind) (i32.const 3))
+            (i32.and (i32.eq (local.get $kind) (i32.const 3))
+              (i32.lt_u (local.get $version) (i32.const 0x0500)))))
+      (then
+        (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $slot (call $dx_slot_of (local.get $entry)))
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then
+        (local.set $obj
+          (i32.add
+            (i32.sub
+              (i32.add (global.get $COM_WRAPPERS)
+                (i32.mul (local.get $slot) (i32.const 8)))
+              (global.get $GUEST_BASE))
+            (global.get $image_base)))))
+    (if (i32.eq (local.get $kind) (i32.const 2))
+      (then (local.set $obj (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (global.get $DX_VTBL_DIDEV)))))
+    (if (i32.eq (local.get $kind) (i32.const 3))
+      (then (local.set $obj (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (global.get $DX_VTBL_DIDEV2)))))
+    (if (i32.eqz (local.get $obj))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; QI must AddRef even when returning the same object identity — MCM pairs
+    ;; Release on the original while retaining the queried Device2 pointer.
+    (store.field DxObject refcount (local.get $entry)
+      (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (call $gs32 (local.get $arg2) (local.get $obj))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
