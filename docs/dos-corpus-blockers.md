@@ -149,6 +149,25 @@ its stop site, and each was re-run alone before being believed.
   `main` worktree at `--dispatches=250m`, so it is the budget that exposed it,
   not the budget change that caused it. It is the one row the site cannot tile
   (198 tiles, not 199).
+
+  **FIXED.** A remembered operand-repair plan outlived the arena it pointed
+  into. `CodeCache.entryFor`'s recycle branch cleared every map that could
+  reach a compiled program but left `this.plans` populated and every dropped
+  program still marked `live` — and the plan's fast path guards on nothing
+  else before writing `arena[(prog.arenaBase >> 2) + q]`. COUNTDWN's blitter at
+  linear `0x1cd41` keeps two loop counters inside its own instruction stream
+  (`mov [0x1cd58],eax` patches the imm32 of the `add edi,0x273` two
+  instructions below it), so that one site's plan fires ~99,000 times per run;
+  after a recycle those writes land in whatever has since been compiled over
+  those arena words. Marking the recycled programs dead and clearing the plan
+  map with the rest is the fix (`test/test-toyvm-arena-recycle.js` is the
+  case in 450 bytes of .COM). Measured after: the task's own command line at
+  `--dispatches=260m` runs clean, `frame=356b0cf7`, 243,287 non-black pixels of
+  307,200; `--dispatches=1700m` spends the whole budget (169.77 guest seconds,
+  17 recycles) where the same command on `main` derails at 542.3M dispatches
+  and is stopped by the stuck detector at `860:e800018c` — the corrupt word
+  there was an address rather than a handler index, which is the same bug
+  arriving without the `unreachable`.
 - **`AIVOPESU.EXE` — stuck at `110:3c` after 45.07 guest seconds**, with its
   picture already drawn (63,304 px, mode 13h). Deterministic: an isolated
   re-run reproduces the pixel count, the stop site and the guest-second mark
