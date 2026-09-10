@@ -133,8 +133,8 @@ assert(/GuestWorkerMemUtils\.guestToWasm\(\s*prev,\s*ex,\s*memory,\s*imageBase/.
 const threadManager = source('lib/thread-manager.js');
 assert(/_threadMemUtils\.guestToWasm\(\s*prev,\s*exports,\s*this\.memory,\s*imageBase/.test(threadManager),
   'lib/thread-manager.js wait-return translation must use shared mem-utils');
-equal(one(threadManager, /\bconst\s+g2wOff\s*=\s*(0x[0-9a-f]+|[0-9]+)\s*-\s*e\.get_image_base/i,
-  'g2wOff in lib/thread-manager.js'), guestBase, 'lib/thread-manager.js g2wOff');
+assert(/_threadMemUtils\.guestToWasm\(\s*espNow,\s*e,\s*this\.memory,\s*e\.get_image_base/.test(threadManager),
+  'lib/thread-manager.js EIP=0 stack dump must use shared mem-utils');
 equal(one(threadManager, /csWa\s*-\s*(0x[0-9a-f]+|[0-9]+)\s*\+\s*\(e\.get_image_base/i,
   'critical-section guest offset in lib/thread-manager.js'), guestBase,
   'lib/thread-manager.js critical-section guest offset');

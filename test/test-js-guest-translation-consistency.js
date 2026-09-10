@@ -53,6 +53,8 @@ for (const relative of runtimeSources) {
     `${relative} must not revive the legacy sparse-map record walk`);
   assert(!/(?:addr|pointer|ptr|esp|ebp|slot|prev)\s*-\s*imageBase\s*\+\s*(?:[_A-Za-z0-9.]+\.)?GUEST_BASE/.test(source),
     `${relative} must not carry a private affine guest-pointer formula`);
+  assert(!/\bg2wOff\b/.test(source),
+    `${relative} must not hide a private affine guest-pointer formula behind an offset`);
 }
 
 assert(hasPageScript('lib/mem-utils.js'),
