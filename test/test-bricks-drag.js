@@ -1,9 +1,18 @@
 #!/usr/bin/env node
-// Bricks/Klotski drag regression.
+// Bricks/Klotski drag + shortcut-key regression.
 //
 // Bricks calls ClipCursor while dragging and advances a piece only when the
 // cursor reaches the clipped edge. The renderer must clamp mousemove coords to
 // that rect; otherwise the cursor crosses past the edge and no brick moves.
+//
+// The S/N/V/E/J glyphs down the left column are NOT buttons -- the wndproc's
+// WM_LBUTTONDOWN arm (0x413010) hit-tests only the board grid, so a click on
+// them is correctly ignored. Each glyph is the legend for a Shift+<letter>
+// accelerator: the WM_KEYDOWN arm gates on GetKeyState(VK_SHIFT) at 0x412e84
+// and switches VK 'C'..'V' through the table at 0x413600, where 'S' reaches
+// `xor byte [0x415735], 1` at 0x412f86 -- the sound flag. So the toggle is a
+// test of the modifier state reaching GetKeyState, not of mouse routing; the
+// third scenario below pins that, the byte, and the icon's own repaint.
 
 const fs = require('fs');
 const path = require('path');
@@ -119,6 +128,70 @@ function countDiff(a, b, rect) {
   return diff;
 }
 
+// Shift+S sound toggle. Reuses the same boot click, then presses the
+// accelerator and reads the guest's own flag byte either side of it.
+const SOUND_FLAG = 0x415735;
+const soundBefore = path.join(OUT, 'bricks_sound_before.png');
+const soundAfter = path.join(OUT, 'bricks_sound_after.png');
+
+function runSoundToggle() {
+  for (const p of [soundBefore, soundAfter]) {
+    try { fs.unlinkSync(p); } catch (_) {}
+  }
+
+  const inputSpec = [
+    '50:mousedown:240:450',
+    '51:mouseup:240:450',
+    `85:png:${soundBefore}`,
+    `90:dump-mem:0x${SOUND_FLAG.toString(16)}:1`,
+    '95:keydown:16',   // VK_SHIFT down first: the handler reads GetKeyState(VK_SHIFT)
+    '96:keydown:83',   // 'S'
+    '100:keyup:83',
+    '101:keyup:16',
+    `115:dump-mem:0x${SOUND_FLAG.toString(16)}:1`,
+    `120:png:${soundAfter}`,
+    '130:stop',
+  ].join(',');
+
+  const args = [
+    RUN,
+    `--exe=${EXE}`,
+    '--no-close',
+    `--input=${inputSpec}`,
+    '--max-batches=150',
+    '--batch-size=1000',
+    '--quiet-api',
+    '--quiet-blocks',
+  ];
+
+  console.log('$ node', args.map(a => a.replace(ROOT, '.')).join(' '));
+
+  let out = '';
+  let exitCode = 0;
+  try {
+    out = execFileSync('node', args, {
+      cwd: ROOT,
+      encoding: 'utf-8',
+      timeout: 20000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 32 * 1024 * 1024,
+    });
+  } catch (e) {
+    out = (e.stdout || '').toString() + (e.stderr || '').toString();
+    exitCode = e.status ?? 1;
+    console.log(`(run.js exited non-zero status=${exitCode} - output captured)`);
+  }
+
+  // `  0x00415735  01                     .`  -- the byte column of each dump.
+  const needle = new RegExp(`^\\s*0x0*${SOUND_FLAG.toString(16)}\\s+([0-9a-f]{2})`, 'i');
+  const bytes = [];
+  for (const line of out.split('\n')) {
+    const m = line.match(needle);
+    if (m) bytes.push(m[1].toLowerCase());
+  }
+  return { out, exitCode, bytes };
+}
+
 (async () => {
   const results = [];
   for (const scenario of scenarios) {
@@ -145,6 +218,29 @@ function countDiff(a, b, rect) {
     checks.push({ name: `${r.name} no crash marker`, pass: !/STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED API:/.test(r.out) });
   }
 
+  const sound = runSoundToggle();
+  for (const line of sound.out.split('\n')) {
+    if (/\[input\]|STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED/.test(line)) console.log('  ' + line);
+  }
+  const soundBeforeSize = fs.existsSync(soundBefore) ? fs.statSync(soundBefore).size : 0;
+  const soundAfterSize = fs.existsSync(soundAfter) ? fs.statSync(soundAfter).size : 0;
+  let iconDiff = 0;
+  let boardUnchanged = -1;
+  if (soundBeforeSize && soundAfterSize) {
+    const a = await readPixels(soundBefore);
+    const b = await readPixels(soundAfter);
+    // The speaker glyph sits at screen (29,178) 17x17; give it a margin.
+    iconDiff = countDiff(a, b, { x0: 20, y0: 168, x1: 60, y1: 208 });
+    boardUnchanged = countDiff(a, b, { x0: 185, y0: 145, x1: 330, y1: 335 });
+  }
+  checks.push({ name: 'sound bounded run exited cleanly', pass: sound.exitCode === 0 });
+  checks.push({ name: 'sound flag read twice', pass: sound.bytes.length === 2 });
+  checks.push({ name: 'sound flag starts off (00)', pass: sound.bytes[0] === '00' });
+  checks.push({ name: 'Shift+S flipped sound flag to 01', pass: sound.bytes[1] === '01' });
+  checks.push({ name: 'speaker icon repainted', pass: iconDiff > 40 });
+  checks.push({ name: 'board untouched by Shift+S', pass: boardUnchanged === 0 });
+  checks.push({ name: 'sound no crash marker', pass: !/STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED API:/.test(sound.out) });
+
   let failed = 0;
   for (const c of checks) {
     console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
@@ -154,6 +250,7 @@ function countDiff(a, b, rect) {
     console.log(`${r.name}: before=${r.beforePng} size=${r.beforeSize}`);
     console.log(`${r.name}: after=${r.afterPng} size=${r.afterSize} boardDiff=${r.boardDiff}`);
   }
+  console.log(`sound: flag ${sound.bytes.join(' -> ') || '(no dump)'} iconDiff=${iconDiff} boardDiff=${boardUnchanged}`);
   console.log(`${checks.length - failed}/${checks.length} checks passed`);
   process.exit(failed ? 1 : 0);
 })().catch(err => {

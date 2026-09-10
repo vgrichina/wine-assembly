@@ -45,6 +45,7 @@ finish one, add what you learned.
 | App | File |
 |---|---|
 | Abe's Oddysee demo | [abes-oddysee-demo.md](abes-oddysee-demo.md) |
+| Bricks I | [bricks.md](bricks.md) |
 | DX-Ball | [dxball.md](dxball.md) |
 | Diablo II Shareware demo | [diablo2-demo.md](diablo2-demo.md) |
 | Diablo Shareware | [diablo-shareware.md](diablo-shareware.md) |
