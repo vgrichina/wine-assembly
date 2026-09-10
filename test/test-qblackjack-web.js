@@ -9,9 +9,9 @@
 
 const assert = require('assert');
 const fs = require('fs');
-const http = require('http');
 const path = require('path');
 const puppeteer = require('puppeteer');
+const { startStaticServer } = require('./static-server');
 
 const ROOT = path.join(__dirname, '..');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -22,40 +22,10 @@ if (!fs.existsSync(CHROME)) {
   process.exit(0);
 }
 
-function startStaticServer() {
-  const root = fs.realpathSync(ROOT);
-  const server = http.createServer((request, response) => {
-    let pathname;
-    try { pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname); }
-    catch (_) { response.writeHead(400); response.end(); return; }
-    if (pathname === '/') pathname = '/index.html';
-    const file = path.normalize(path.join(root, pathname));
-    if (file !== root && !file.startsWith(root + path.sep)) {
-      response.writeHead(403); response.end(); return;
-    }
-    fs.readFile(file, (error, data) => {
-      if (error) { response.writeHead(error.code === 'ENOENT' ? 404 : 500); response.end(); return; }
-      const types = {
-        '.css': 'text/css', '.html': 'text/html', '.js': 'text/javascript',
-        '.json': 'application/json', '.wasm': 'application/wasm',
-      };
-      response.writeHead(200, {
-        'Content-Type': types[path.extname(file).toLowerCase()] || 'application/octet-stream',
-        'Cache-Control': 'no-store',
-      });
-      response.end(data);
-    });
-  });
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve(server));
-  });
-}
-
 async function main() {
   const expected = EXE_PATCHES['quickblackjack.exe'];
   assert(expected && expected.length === 3, 'expected three QuickBlackjack patches in the profile table');
-  const server = await startStaticServer();
+  const server = await startStaticServer({ root: ROOT });
   const browser = await puppeteer.launch({
     executablePath: CHROME,
     headless: true,
