@@ -1,5 +1,64 @@
 # Project review — 2026-09-09
 
+## Execution update — isolated review-fixes candidate
+
+The original review below is historical evidence, not the status of this candidate. Implementation is based on `b04298f9` in `/private/tmp/wa-codex-review-fixes`; unrelated dirty main-tree changes are excluded. No deployment is part of this work.
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| EXECUTION TLDR                         THREE IMPLEMENTATION LANES                                         |
++----------------------------------+----------------------------------+------------------------------------+
+| RUNTIME                          | PERSISTENCE                      | MEASUREMENT / RESPONSIVENESS       |
+| #1 FIXED: thread-owned queues     | #2 IMPLEMENTED: OPFS locking     | #8 FIXED: actual retired blocks    |
+| #4 FIXED: cross-thread heap frees | #3 FIXED: immutable Node blobs   | #10 MITIGATED: adaptive quanta     |
+| #5 FIXED: truthful full errors    | #6 FIXED: retain failed retries  |     8ms elapsed check between runs |
+|                                  | #7 FIXED: deadline includes body |     native calls still cannot yield|
+|                                  | OPFS browser gate still pending |                                    |
++----------------------------------+----------------------------------+------------------------------------+
+| NEXT: LAZY OVERLAY LOADING (#9)                       NEXT: SHARED MESSAGE-RING SLOT REUSE                 |
+| [file APIs can park] -> [snapshot ownership]          [reserve slot] -> [reset old ring] -> [publish ID]     |
+|         -> [lazy payloads] -> [dirty ranges]          Old shared-ring posts can outlive the old thread.   |
++----------------------------------------------------------------------------------------------------------+
+| BEFORE MAIN/RELEASE: reconcile active edits -> rebuild -> browser/device latency + large-save validation   |
++----------------------------------------------------------------------------------------------------------+
+```
+
+Implemented fixes have regression coverage for failures, not just successful round trips. Runtime coverage includes two real Node workers sharing memory, concurrent queues, and 1,024 combined low/sparse cross-thread free/reuse transfers. Overlay coverage injects publication failures and interleaves independent same-scope stores. Save tests cover retry after quota/deletion failure and stalled response bodies. Browser scheduling tests preserve early yields, debug halts, zero-work accounting, and frozen deterministic stepping.
+
+Queue ownership also covers the browser's idle helper instance: host callbacks and native cross-thread posts use the target window's shared guest queue; shadow posts with no known window owner fail instead of touching a real worker's private queue. The helper has a distinct recursive-lock identity even when its metadata uses guest slot 8.
+
+Deliberate limits and follow-ups:
+
+- **#9 remains open.** Lazy writable overlay files require parking/retry support in internal CRT `fopen`/`freopen`/`_open`, `OpenFile`, and multimedia opens, not just `CreateFileA/W`. Browser VFS snapshots and chain-launch closures also need explicit provider lifetime ownership. The speculative lazy implementation was withdrawn to avoid breaking those paths. Coherent eager OPFS snapshots remain supported (individual unreadable files are reported and may be skipped); whole-file payload allocation/checkpoint copying remains.
+- **#10 is a mitigation, not hard preemption.** Normal cooperative runs check elapsed time between small adaptive WASM calls. A single block/native handler can still exceed the deadline. Frozen stepping intentionally retains its deterministic requested budget. No new throughput or input-latency benchmark is claimed.
+- **Separate shared-ring lifetime issue:** local queues are fixed, but the distinct cross-thread ring can retain old messages when a thread ID/slot is recycled. A full-source probe confirmed this. Reset/generation handling belongs before publishing the replacement ID; resetting during worker initialization could discard valid new posts. This follow-up is not hidden by the local-queue test.
+- Heap metadata is bounded to 1,024 reserved arenas. Private free-list transfer fixes valid cross-thread frees, but does not implement process-wide coalescing or reclaim an exited instance's private free list.
+- Node publication protects prior committed data on ordinary write/rename failure; it does not claim multi-process writer coordination or power-loss durability without fsync. Durable browser overlays require Web Locks; unsupported environments fall back visibly to session storage.
+- Failed localStorage operations remain pending until another mutation or manual flush; there is no background retry loop. Sync deadlines cover each HTTP request and its consumed response body, not the entire multi-request synchronization workflow.
+- **Existing Win16 layout sensitivity:** placing the two new declarations first relocated existing regions and made Rodent display “Wrong version of run-time DLL.” An exact-baseline browser comparison and a placement-only candidate A/B isolated this regression. Appending the declarations restores the board without reverting the heap/queue fixes. This avoids the regression; it does not establish that arbitrary region relocation is safe or identify the underlying guest-pointer assumption.
+
+### Candidate validation and integration boundary
+
+Focused checks passed: runtime ownership/real-worker stress, heap partition and malformed-header validation, filtered PeekMessage, GetMessage teardown, modal button queues, 19 overlay cases, installer checkpoint/restart/SIGTERM round trip, 34 lazy-VFS cases, localStorage retry and two-app warning ownership, Heroes II saves, save-bundle/sync (112 checks), cooperative deadlines/timers/parking, thread scheduling, and HUD accounting/reset/input tests.
+
+The final canonical and compatibility builds pass with layout hash `8566329207cd7d8f`, 185 verified symbolic owners, 901 accounted-for tests, and no data-segment overlaps. All 183 pre-existing region bases are unchanged. The full 901-test suite and device performance/memory benchmarks have not been run.
+
+The unchanged candidate's full `test/test-worker-guest.js` matrix passed on rerun: Notepad/Calculator parity, Win16 Rodent and Rodent2000 gameplay, Winamp real threads, and COM load/unpark. **An earlier run failed Winamp's worker-slice threshold (4 versus >10); the rerun passed with 3 workers and 62,190 slices.** This remains intermittent evidence, not a demonstrated heap regression or a throughput comparison. Initial diagnostic WASM variants were not actually loaded, so their apparent causal results were discarded; no speculative allocator marker change was landed.
+
+After the final shadow queue/lock ownership correction (`79c5da95`), the canonical build and exact full browser matrix passed again, including Winamp with 3 workers and 16,686 slices. The expanded full-source ownership regression passed shadow-to-main and shadow-to-real-thread-8 delivery, preservation of private queue bytes, native cross-owner routing, distinct recursive lock identities, and the existing real-worker heap/queue stress. Lock tests (10/10), window-table tests (4/4), and the modal dialog timer/posted-command regression also passed.
+
+The new `test/test-web-overlay-store.js` is registered and ready to verify real two-tab OPFS persistence across reloads. **That check did not run successfully:** Chrome launch was blocked by the sandbox and escalation was not granted. The 19 passing overlay cases use the OPFS model and real Node storage; they are not a substitute for that browser gate.
+
+Source fixes are committed on `codex/review-fixes-20260909`: `b057dcb9` (persistence), `e0b655aa` (runtime/performance), and `79c5da95` (host callback ownership), following symbolic-owner reuse `69ea0584`. They are not silently applied over active shared-main work. A read-only patch check against main found integration conflicts in `src/00-regions.wat` and `lib/region-map.generated.js`; reconcile live region changes and regenerate the mirror when merging, preserving other agents' work. This report is also published at the shared repository root; that documentation commit does not integrate the source branch.
+
+### Cross-check with `fable-review.md`
+
+The symbolic region-owner repair already existed as `25af708a` in the Fable-related isolated lane. It was reused as `69ea0584`, resolving declarations against this candidate's layout rather than reimplementing it. The gate now validates symbolic owners, including the two new queue/heap metadata regions.
+
+Fable's earlier overlay checkpoints (`2878b7ed`) and retry work (`986f6717`) were already in the baseline; they did not cover the independent OPFS stores, Node torn publication, or the separate localStorage persistence module identified here. Its broader scheduling concerns overlap #10, but are not evidence that this particular cooperative deadline or measurement bug was fixed. Its separately prepared single-source cache-key and derived-test-tier changes are not pulled into this candidate. Existing review claims were cross-checked against code/commits, not accepted as proof of current behavior.
+
+## Original review (pre-fix baseline)
+
 ```text
 +--------------------------------------------------------------------------------------------------------------+
 | WINE-ASSEMBLY REVIEW   /   10 FINDINGS   /   7 REPRODUCED FAILURES                                           |
