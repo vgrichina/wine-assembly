@@ -66,6 +66,11 @@ const STYLE = `
     th { background: #ebe7dc; }
     img { max-width: 100%; height: auto; }
     footer { margin-top: 48px; padding-top: 14px; border-top: 1px solid #d8d2c4; font-size: 13px; color: #555; }
+    .dateline { margin: -0.6em 0 1.6em; font-size: 13px; color: #666; }
+    .pager { display: flex; justify-content: space-between; gap: 16px; margin-top: 40px; padding-top: 14px; border-top: 1px solid #d8d2c4; }
+    .pager a { flex: 1; text-decoration: none; }
+    .pager a small { display: block; color: #666; font-size: 12px; }
+    .pager .next { text-align: right; }
     .docs-index li { margin: 0.35em 0; }
     .docs-index small { color: #666; display: block; }
     pre.mermaid { background: #fff; color: #222; border: 1px solid #d8d2c4; text-align: center; overflow-x: auto; padding: 10px 6px; }
@@ -490,12 +495,46 @@ function appsIndexMd(apps) {
 // work", "how are real DLLs loaded"), written to be found by a search for
 // that question rather than read top to bottom like the story. README.md
 // there is the hand-kept index and becomes articles/index.html.
+// Articles in reading order: the order articles/README.md lists them, which
+// is the order the Design hub shows and the prev/next chain follows. An
+// article the README does not mention comes last, alphabetically.
 function listArticles() {
   const dir = path.join(ROOT, 'articles');
   if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir).sort()
-    .filter(f => f.endsWith('.md') && f !== 'README.md')
-    .map(f => ({ rel: `articles/${f}`, urlPath: `articles/${f.replace(/\.md$/, '.html')}` }));
+  const files = fs.readdirSync(dir).sort().filter(f => f.endsWith('.md') && f !== 'README.md');
+  const order = [];
+  const titles = {};
+  const readme = path.join(dir, 'README.md');
+  if (fs.existsSync(readme)) {
+    for (const m of fs.readFileSync(readme, 'utf-8').matchAll(/^- \[([^\]]+)\]\(\/articles\/([^)#]+\.md)\)/gm)) {
+      order.push(m[2]);
+      titles[m[2]] = m[1];
+    }
+  }
+  const rank = f => { const i = order.indexOf(f); return i < 0 ? order.length : i; };
+  return files.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+    .map(f => ({ rel: `articles/${f}`, urlPath: `articles/${f.replace(/\.md$/, '.html')}`, listTitle: titles[f] || null }));
+}
+
+// The dateline under an article's H1 and the prev/next pager at its foot,
+// both as HTML inside the markdown (marked passes block HTML through).
+function articleDateline(dates) {
+  const parts = [];
+  if (dates.published) parts.push(`Published ${dates.published}`);
+  if (dates.modified && dates.modified !== dates.published) parts.push(`updated ${dates.modified}`);
+  parts.push(`<a href="/design/">How Wine-Assembly works</a>`);
+  return `<p class="dateline">${parts.join(' · ')}</p>`;
+}
+function articlePager(prev, next) {
+  const link = (a, cls, label) => a
+    ? `<a class="${cls}" href="/${a.urlPath}"><small>${label}</small>${esc(a.listTitle || a.title)}</a>`
+    : `<span class="${cls}"></span>`;
+  return `\n\n<nav class="pager" aria-label="Articles in order">${link(prev, 'prev', 'Previous')}${link(next, 'next', 'Next')}</nav>\n`;
+}
+// Insert HTML right after the H1 line (and after a description comment if
+// one follows it), so the dateline sits under the title.
+function insertAfterH1(md, html) {
+  return md.replace(/^(# [^\n]*\n(?:<!--[\s\S]*?-->\n)?)/, `$1\n${html}\n`);
 }
 
 function listDocs() {
@@ -533,21 +572,25 @@ function generatePages() {
   });
   urls.push({ loc: `${SITE}/story.html`, lastmod: storyDates.modified, priority: '0.8', changefreq: 'monthly' });
 
-  // Articles.
-  for (const a of listArticles()) {
+  // Articles, in reading order, each with a dateline and a prev/next pager.
+  const articles = listArticles().map(a => {
     const md = fs.readFileSync(path.join(ROOT, a.rel), 'utf-8');
     const meta = extractMeta(md);
-    const dates = { published: gitDate(a.rel, 'first'), modified: gitDate(a.rel) };
+    return { ...a, md, title: meta.title, description: meta.description,
+      dates: { published: gitDate(a.rel, 'first'), modified: gitDate(a.rel) } };
+  });
+  articles.forEach((a, i) => {
+    const md = insertAfterH1(a.md, articleDateline(a.dates)) + articlePager(articles[i - 1], articles[i + 1]);
     pages.push({
       name: a.urlPath,
       content: pageHtml({
-        md, title: meta.title, description: meta.description,
+        md, title: a.title, description: a.description,
         urlPath: a.urlPath, sourceRel: a.rel,
-        dates,
+        dates: a.dates,
       }),
     });
-    urls.push({ loc: `${SITE}/${a.urlPath}`, lastmod: dates.modified, priority: '0.8', changefreq: 'monthly' });
-  }
+    urls.push({ loc: `${SITE}/${a.urlPath}`, lastmod: a.dates.modified, priority: '0.8', changefreq: 'monthly' });
+  });
   // Per-app pages for the desktop set.
   const apps = loadDesktopApps();
   const blurbDates = { published: gitDate(APP_BLURBS_REL, 'first'), modified: gitDate(APP_BLURBS_REL) };
@@ -680,6 +723,13 @@ function generatePages() {
     `The articles below each answer one question about how that is built and are the place to start; ` +
     `the design docs and per-application reverse-engineering notes after them are the working record ` +
     `the articles are drawn from. [The story](/story.html) tells it in order.\n\n` +
+    `## Start here\n\n` +
+    `Five pages that cover the whole idea, in the order they build on each other:\n\n` +
+    `1. [How to write an x86 interpreter in raw WebAssembly Text](/articles/x86-interpreter-in-webassembly-text.html), the machine everything else runs on.\n` +
+    `2. [Implementing the Win32 API in WebAssembly](/articles/win32-api-in-webassembly.html), the operating system the program thinks it is talking to.\n` +
+    `3. [A software GDI in WebAssembly](/articles/software-gdi-in-webassembly.html), how pixels get from the program to the canvas.\n` +
+    `4. [Wine-Assembly vs v86](/articles/wine-assembly-vs-v86.html), what this approach gives up and gains against booting a real Windows 98.\n` +
+    `5. [Building an emulator with AI coding agents](/articles/building-an-emulator-with-ai-coding-agents.html), how it was actually written.\n\n` +
     `## Articles\n\n` + articlesBody.trim() + `\n\n` +
     `## Design docs and reverse-engineering notes\n\n` + docsIntro + `\n\n` + docsSections.replace(/^## /gm, '### ');
   pages.push({
