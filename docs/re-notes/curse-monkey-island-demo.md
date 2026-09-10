@@ -43,3 +43,12 @@ that resource with dimensions 240x197 and `LR_CREATEDIBSECTION`, followed
 by a successful `BitBlt` into the dialog at `(0,3)`. A static child occupies
 the same rectangle. Trace control paints and DC targeting before deciding
 whether loading, rasterization, or a later repaint loses the artwork.
+
+The resource header is a 40-byte BITMAPINFOHEADER: 320x240, 8bpp,
+BI_RGB, 76800 pixel bytes (raw PE offset `0x2cefc`). The overlapping
+dialog-102 static is control 1003, style `0x50000012`, not SS_BITMAP.
+`--trace-ctrl` confirms it paints at screen `(199,77)` with extent 240x197.
+The LoadImage result selected into the source DC is nonzero (`0x410005`).
+These observations narrow the next probe to actual bitmap pixels and
+destination/repaint behavior; a successful BitBlt return alone does not
+prove visible rendering. The bounded 80-step probe exits cleanly.
