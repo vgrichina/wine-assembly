@@ -414,7 +414,7 @@
     (global.set $eax (call $ole_enum_skip (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  (func $handle_IEnumMoniker_Reset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (func $handle_ole_enum_reset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $gs32 (i32.add (local.get $arg0) (i32.const 20)) (i32.const 0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
@@ -867,11 +867,6 @@
     (global.set $eax (call $ole_string_enum_next
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
-
-  (func $handle_IEnumString_Reset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gs32 (i32.add (local.get $arg0) (i32.const 20)) (i32.const 0))
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IEnumString_Clone (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $clone i32)
@@ -6884,9 +6879,6 @@
       (else (global.set $eax (call $ole_format_enum_next
         (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
-  (func $handle_IEnumFORMATETC_Reset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gs32 (i32.add (local.get $arg0) (i32.const 20)) (i32.const 0))
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_IEnumFORMATETC_Clone (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $clone i32) (local $kind i32) (local $ret i32) (local $ctx i32)
     (if (i32.eqz (local.get $arg1))

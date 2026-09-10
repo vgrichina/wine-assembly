@@ -17755,7 +17755,8 @@
     "name": "IEnumFORMATETC_Reset",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1283670508
+    "hash": 1283670508,
+    "handler": "ole_enum_reset"
   },
   {
     "id": 2156,
@@ -19044,7 +19045,8 @@
     "name": "IEnumString_Reset",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 44143156
+    "hash": 44143156,
+    "handler": "ole_enum_reset"
   },
   {
     "id": 2319,
@@ -19112,7 +19114,8 @@
     "name": "IEnumMoniker_Reset",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 560147418
+    "hash": 560147418,
+    "handler": "ole_enum_reset"
   },
   {
     "id": 2326,

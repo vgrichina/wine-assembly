@@ -25,6 +25,18 @@ for (const name of enumSkipApis) {
 }
 assert.strictEqual((oleSource.match(/\(func \$handle_ole_enum_skip\b/g) || []).length, 1,
   'OLE snapshot enumerators must have one Skip dispatch body');
+const enumResetApis = ['IEnumMoniker_Reset', 'IEnumString_Reset', 'IEnumFORMATETC_Reset'];
+for (const name of enumResetApis) {
+  assert.strictEqual(apiTable.find(api => api.name === name)?.handler, 'ole_enum_reset',
+    `${name} must dispatch through the shared enum cursor reset handler`);
+  assert(!hasOleHandler(name), `${name} must not regain a private handler`);
+}
+assert.strictEqual((oleSource.match(/\(func \$handle_ole_enum_reset\b/g) || []).length, 1,
+  'OLE snapshot enumerators must have one Reset dispatch body');
+assert.notStrictEqual(apiTable.find(api => api.name === 'IEnumSTATSTG_Reset')?.handler,
+  'ole_enum_reset', 'IEnumSTATSTG_Reset must retain its null-validating reset helper');
+assert(hasOleHandler('IEnumSTATSTG_Reset'),
+  'IEnumSTATSTG_Reset must retain its semantically distinct handler');
 
 const genericAddRefInterfaces = [
   'IRunningObjectTable', 'IEnumMoniker', 'IBindCtx', 'IEnumString',
