@@ -21,7 +21,9 @@ const { spawnSync } = require('child_process');
 const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
-const EXE = path.join(ROOT, 'test/binaries/shareware/abe/ex/AbeDemo.exe');
+const INSTALLED_DIR = process.env.ABE_INSTALLED_DIR;
+const EXE = INSTALLED_DIR ? path.join(path.resolve(INSTALLED_DIR), 'abedemo.exe')
+  : path.join(ROOT, 'test/binaries/shareware/abe/ex/AbeDemo.exe');
 const RUN = path.join(__dirname, 'run.js');
 const OUTDIR = path.join(ROOT, 'build/abedemo-gameplay');
 const LOG = path.join(ROOT, 'build/abedemo-gameplay.log');
@@ -29,6 +31,7 @@ const ANALYZE_ONLY = process.argv[2];
 const DIR = ANALYZE_ONLY || OUTDIR;
 
 if (!fs.existsSync(EXE)) {
+  assert(!INSTALLED_DIR, `installer-produced executable is missing: ${EXE}`);
   console.log('SKIP  Abe Oddysee demo payload is absent');
   process.exit(0);
 }
@@ -60,28 +63,28 @@ if (!ANALYZE_ONLY) {
     '630:stop',
   );
 
-  const timeoutBin = fs.existsSync('/opt/homebrew/bin/timeout')
-    ? '/opt/homebrew/bin/timeout' : 'timeout';
   const args = [
-    // Measured 2026-08-31 at load ~3.5: the whole run finishes in well under
-    // two minutes, so both budgets fit inside run-all.sh's 300s runner cap
-    // (tools/check-test-timeouts.js). An 840s/900s pair could never be honoured
-    // by the runner anyway -- it kills the test at the cap first.
-    '-s', 'KILL', '290', 'node', RUN,
-    '--app=abedemo', '--batch-size=1000000', '--max-batches=631',
+    RUN,
+    ...(INSTALLED_DIR ? [`--exe=${EXE}`, '--vfs-include=*.lvl,*.ddv,readme.txt']
+      : ['--app=abedemo']),
+    '--no-build', '--no-threads', '--max-seconds=240',
+    '--batch-size=1000000', '--max-batches=631',
     '--quiet-api', '--quiet-blocks', '--no-close', '--dx-surfaces',
     '--trace-api=CreateThread,PostThreadMessageA',
     `--input=${input.join(',')}`,
   ];
-  console.log('$', timeoutBin, args.join(' '));
-  const result = spawnSync(timeoutBin, args, {
-    cwd: ROOT, encoding: 'utf8', timeout: 300000, maxBuffer: 32 * 1024 * 1024,
+  console.log('$', process.execPath, args.join(' '));
+  const result = spawnSync(process.execPath, args, {
+    cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
   });
   const output = (result.stdout || '') + (result.stderr || '');
   fs.writeFileSync(LOG, output);
-  if (result.status !== 0) {
+  if (result.error) throw result.error;
+  if (result.status !== 0 || /\[max-seconds\]/.test(output)) {
     console.error(output.split('\n').slice(-60).join('\n'));
-    throw new Error(result.signal
+    throw new Error(/\[max-seconds\]/.test(output)
+      ? `Abe gameplay reached the CLI deadline; read ${LOG}`
+      : result.signal
       ? `Abe gameplay run ended by ${result.signal}; check host load and ${LOG}`
       : `Abe gameplay run exited ${result.status}; read ${LOG}`);
   }
@@ -183,6 +186,8 @@ assert(afterAbe.count > 300 && afterAbe.x > movingAbe.x + 5 && followThrough > 0
 
 if (!ANALYZE_ONLY) {
   const log = fs.readFileSync(LOG, 'utf8');
+  assert(/\[input\] stop at batch 630/.test(log), 'gameplay input schedule did not finish');
+  assert(!/\[input\] png FAILED/.test(log), 'a gameplay capture failed');
   assert(/PostThreadMessageA\(0x00000002/.test(log),
     'Abe did not target its loader thread id');
   assert(!/UNIMPLEMENTED API|RuntimeError|unreachable/.test(log),

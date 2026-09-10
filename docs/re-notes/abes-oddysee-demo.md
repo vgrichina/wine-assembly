@@ -92,6 +92,30 @@ published and are not equal.
 
 ## Deterministic gameplay route
 
+### Current-source acceptance recheck
+
+On source `1554ebe1` with the `ee965802` build, the installer-produced tree
+loads the animated main menu but does not pass the old gameplay schedule.
+The strong acceptance correctly rejects all four captures as menu-only:
+loading-to-level changed share is 0.009 and the supposed Abe sprite has
+only 135 pixels. Replacing Enter with X at batch 420 produces the same
+result, so that attempted input change was discarded. A separate frozen
+probe captures the menu at 570, holds Enter for ten batches, releases it,
+and captures at 680; this also remains in the menu. Do not promote the
+installer tree as gameplay-verified yet or weaken the image assertions.
+
+The test now launches Node directly with `--no-build --max-seconds=240`,
+without an external SIGKILL wrapper. Build separately first. Set
+`ABE_INSTALLED_DIR` to the guest-produced directory to mount only its
+executable, LVLs, DDVs, and readme, rather than the registered reference
+payload. An explicitly missing directory is a failure, not a skip.
+The renderer logs keyboard events delivered to focus HWND `0x10001`, and
+the loader worker receives numeric thread ID 2 normally. The next probe
+must distinguish guest key-state polling from menu-state/timing behavior;
+the earlier large-image and thread-ID faults are not reproduced here.
+
+The route below records the earlier passing build, not current proof.
+
 At `--batch-size=1000000`, the registered route reaches the main menu near
 batch 390. These normal keyboard events reach gameplay:
 
