@@ -1634,39 +1634,57 @@
     (store.field DxObject flags (local.get $entry)
       (i32.or (load.field DxObject flags (local.get $entry)) (local.get $bit))))
 
-  (func $shell_link_query_interface (param $this i32) (param $iid i32)
+  (func $shell_link_query_interface_wa (param $this i32) (param $iid_wa i32)
       (param $out i32) (result i32)
-    (local $d1 i32) (local $entry i32) (local $wrapper i32)
+    (local $entry i32) (local $wrapper i32)
     (if (i32.eqz (local.get $out))
       (then (return (i32.const 0x80004003)))) ;; E_POINTER
     (call $gs32 (local.get $out) (i32.const 0))
-    (if (i32.eqz (local.get $iid))
+    (if (i32.eqz (local.get $iid_wa))
       (then (return (i32.const 0x80004003))))
     (call $shell_link_init_vtables)
-    (if (i32.or
-          (i32.ne (call $gl32 (i32.add (local.get $iid) (i32.const 4))) (i32.const 0))
-          (i32.or
-            (i32.ne (call $gl32 (i32.add (local.get $iid) (i32.const 8))) (i32.const 0x000000C0))
-            (i32.ne (call $gl32 (i32.add (local.get $iid) (i32.const 12))) (i32.const 0x46000000))))
-      (then (return (i32.const 0x80004002))))
-    (local.set $d1 (call $gl32 (local.get $iid)))
     (local.set $entry (call $dx_from_this (local.get $this)))
-    (if (i32.eq (local.get $d1) (i32.const 0x0000010B)) ;; IID_IPersistFile
+    ;; IPersistFile inherits IPersist and its wrapper begins with the complete
+    ;; IPersist vtable, so both identities resolve to the same interface.
+    (if (i32.or
+          ;; IID_IPersistFile {0000010B-0000-0000-C000-000000000046}.
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x0000010B) (i32.const 0)
+            (i32.const 0x000000C0) (i32.const 0x46000000))
+          ;; IID_IPersist {0000010C-0000-0000-C000-000000000046}.
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x0000010C) (i32.const 0)
+            (i32.const 0x000000C0) (i32.const 0x46000000)))
       (then
         (local.set $wrapper (call $dx_get_wrapper_for_vtbl
           (call $dx_slot_of (local.get $entry)) (global.get $PERSIST_FILE_VTBL))))
       (else
-        (if (i32.or (i32.eqz (local.get $d1))
-                    (i32.eq (local.get $d1) (i32.const 0x000214EE))) ;; IUnknown/IShellLinkA
+        ;; IUnknown or IID_IShellLinkA
+        ;; {000214EE-0000-0000-C000-000000000046}.
+        (if (i32.or
+              (call $guid_words_equal (local.get $iid_wa)
+                (i32.const 0) (i32.const 0)
+                (i32.const 0x000000C0) (i32.const 0x46000000))
+              (call $guid_words_equal (local.get $iid_wa)
+                (i32.const 0x000214EE) (i32.const 0)
+                (i32.const 0x000000C0) (i32.const 0x46000000)))
           (then
             (local.set $wrapper (call $dx_get_wrapper_for_vtbl
               (call $dx_slot_of (local.get $entry)) (global.get $SHELL_LINK_VTBL)))))))
     (if (i32.eqz (local.get $wrapper))
       (then (return (i32.const 0x80004002)))) ;; E_NOINTERFACE
-    (store.field DxObject refcount (local.get $entry)
-      (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (drop (call $dx_com_addref (local.get $this)))
     (call $gs32 (local.get $out) (local.get $wrapper))
     (i32.const 0))
+
+  (func $shell_link_query_interface (param $this i32) (param $iid i32)
+      (param $out i32) (result i32)
+    (local $iid_wa i32)
+    ;; Translate riid exactly once, then compare all four GUID words in-place.
+    (if (local.get $iid)
+      (then (local.set $iid_wa (call $g2w (local.get $iid)))))
+    (call $shell_link_query_interface_wa
+      (local.get $this) (local.get $iid_wa) (local.get $out)))
 
   (func $shell_link_empty_a (param $buffer i32) (param $chars i32)
     (if (i32.and (local.get $buffer) (local.get $chars))
@@ -1847,7 +1865,7 @@
     (if (local.get $clsid_wa)
       (then (local.set $clsid_d1 (i32.load (local.get $clsid_wa)))))
 
-    ;; The five Win98-era multimedia classes below have complete local
+    ;; The six Win98-era classes below have complete local
     ;; QueryInterface contracts. Classify by full CLSID, manufacture one
     ;; factory-owned reference, query the requested interface, then release
     ;; that temporary reference on both success and failure.
@@ -1876,7 +1894,12 @@
       (if (call $guid_words_equal (local.get $clsid_wa)
             (i32.const 0x47D4D946) (i32.const 0x11CF62E8)
             (i32.const 0x4544BC93) (i32.const 0x00005453))
-        (then (local.set $local_class (i32.const 5))))))
+        (then (local.set $local_class (i32.const 5))))
+      ;; CLSID_ShellLink {00021401-0000-0000-C000-000000000046}.
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0x00021401) (i32.const 0)
+            (i32.const 0x000000C0) (i32.const 0x46000000))
+        (then (local.set $local_class (i32.const 6))))))
 
     (if (local.get $local_class) (then
       (if (i32.eqz (local.get $arg4))
@@ -1906,6 +1929,11 @@
       (if (i32.eq (local.get $local_class) (i32.const 5))
         (then (local.set $obj_guest (call $dx_create_com_obj
           (i32.const 4) (global.get $DX_VTBL_DSOUND)))))
+      (if (i32.eq (local.get $local_class) (i32.const 6))
+        (then
+          (call $shell_link_init_vtables)
+          (local.set $obj_guest (call $dx_create_com_obj
+            (i32.const 36) (global.get $SHELL_LINK_VTBL)))))
       (if (i32.eqz (local.get $obj_guest))
         (then
           (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
@@ -1932,30 +1960,14 @@
           (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)
           (i32.const 0x279AFA83) (i32.const 0x11CE4981)
           (i32.const 0x200021A5) (i32.const 0x60E50BAF)))))
+      (if (i32.eq (local.get $local_class) (i32.const 6))
+        (then (local.set $hr (call $shell_link_query_interface_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)))))
       (drop (call $dx_com_release_basic (local.get $obj_guest)))
       (global.set $eax (local.get $hr))
       (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
       (return)))
 
-    ;; CLSID_ShellLink {00021401-0000-0000-C000-000000000046}. Inno Setup
-    ;; requests IShellLinkA, configures it, then queries IPersistFile.
-    (if (i32.eq (local.get $clsid_d1) (i32.const 0x00021401))
-      (then
-        (if (i32.or (local.get $arg1) (i32.eqz (local.get $arg4)))
-          (then
-            (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
-            (global.set $eax (select (i32.const 0x80040110) (i32.const 0x80004003)
-              (i32.ne (local.get $arg4) (i32.const 0))))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)))
-        (call $shell_link_init_vtables)
-        (local.set $obj_guest (call $dx_create_com_obj
-          (i32.const 36) (global.get $SHELL_LINK_VTBL)))
-        (call $gs32 (local.get $arg4) (local.get $obj_guest))
-        (global.set $eax (select (i32.const 0) (i32.const 0x8007000E)
-          (i32.ne (local.get $obj_guest) (i32.const 0))))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
     ;; CLSID_DirectX7 {E1211353-8E94-11D1-8808-00C04FC2C602}, the VB6
     ;; DX7VB automation bootstrap. Its first direct method manufactures the
     ;; existing IDirectDraw7-compatible wrapper.
