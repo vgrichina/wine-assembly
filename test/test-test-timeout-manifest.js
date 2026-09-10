@@ -5,7 +5,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { findTimeouts, listedTests } = require('../tools/check-test-timeouts');
+const { findTimeouts } = require('../tools/check-test-timeouts');
 
 assert.deepStrictEqual(findTimeouts(`
   spawnSync('node', [], { timeout: 300000 });
@@ -27,14 +27,6 @@ assert.deepStrictEqual(violations.map(item => [item.kind, item.value]), [
   ['timeout', 600000],
   ['--max-seconds', 301],
 ]);
-
-assert.deepStrictEqual(listedTests(`
-UNIT=(
-  test/test-z.js
-  test/test-a.js
-  test/test-a.js
-)
-`), ['test/test-a.js', 'test/test-z.js']);
 
 const manifest = fs.readFileSync(path.join(__dirname, '..', 'tools', 'check-test-manifest.sh'), 'utf8');
 assert.match(manifest, /node tools\/check-test-timeouts\.js/,

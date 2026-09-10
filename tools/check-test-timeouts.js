@@ -4,6 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { validateTiers } = require('./test-tiers');
 
 const ROOT = path.join(__dirname, '..');
 const RUNNER = path.join(ROOT, 'test', 'run-all.sh');
@@ -66,17 +67,16 @@ function findTimeouts(source, capSeconds) {
   return violations;
 }
 
-function listedTests(runnerSource) {
-  return [...new Set([...runnerSource.matchAll(
-    /^\s*(test\/(?:test-[A-Za-z0-9._-]+|[A-Za-z0-9._-]+\.test)\.js)\s*$/gm)].map(match => match[1]))].sort();
-}
-
 function main() {
   const runnerSource = fs.readFileSync(RUNNER, 'utf8');
   const capMatch = runnerSource.match(/^DEFAULT_TEST_TIMEOUT=(\d+)$/m);
   if (!capMatch) throw new Error('test/run-all.sh must declare DEFAULT_TEST_TIMEOUT');
   const capSeconds = Number(capMatch[1]);
-  const tests = listedTests(runnerSource);
+  const tierResult = validateTiers(ROOT);
+  if (tierResult.errors.length) {
+    throw new Error(`test tier validation failed: ${tierResult.errors.join('; ')}`);
+  }
+  const tests = tierResult.actual;
   const all = [];
   for (const relative of tests) {
     const file = path.join(ROOT, relative);
@@ -95,4 +95,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { findTimeouts, listedTests, stripComments };
+module.exports = { findTimeouts, stripComments };
