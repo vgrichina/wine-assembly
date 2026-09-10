@@ -55,6 +55,15 @@ guarded by the 640x480 backing size, so Alpha's later resized menu and gameplay
 surfaces return to ordinary full-surface presentation without a game-state
 heuristic or pixel scan.
 
+At true EOF the player has one final synchronization condition: its non-looping
+DirectSound voice must stop. A browser AudioContext created before user input
+can remain suspended, so its AudioBufferSourceNode never delivers `onended`.
+The host previously treated the mere presence of that stale source object as
+"playing" forever. Non-looping snapshot voices now retire from the same guest
+clock used by their play cursor even when `onended` is unavailable. A complete
+raw-ISO browser run reached the full-size main menu at guest time 342.9 seconds
+without Escape or any other injected input.
+
 Once reads worked, the movie animated with severely corrupted horizontal
 bands. This was already present in both raw 640x480 RGB565 DirectDraw surfaces,
 so it was not a browser palette or presentation error. The EA TQI bit reader
