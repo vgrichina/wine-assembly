@@ -77,7 +77,7 @@
       display: flex; align-items: center; gap: 4px;
       margin: 3px; padding: 2px 3px; height: 18px;
       background: linear-gradient(90deg, #000080, #1084d0); color: #fff; font-weight: bold;
-      cursor: default; user-select: none;
+      cursor: default; user-select: none; touch-action: none;
     }
     #readme-window .readme-titleico { font-size: 13px; line-height: 1; }
     #readme-window .readme-close {
@@ -2633,6 +2633,39 @@ Resource-aware Win98 emulator
       if (e) e.preventDefault();
       openReadme();
     }
+    // Drag by the title bar, mouse or finger, kept inside the desktop area so
+    // the bar can never be parked where it cannot be grabbed again.
+    (function wireReadmeDrag() {
+      const w = document.getElementById('readme-window');
+      const bar = w && w.querySelector('.readme-titlebar');
+      if (!bar) return;
+      let drag = null;
+      bar.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || e.target.closest('.readme-close')) return;
+        const r = w.getBoundingClientRect();
+        drag = { id: e.pointerId, dx: e.clientX - r.left, dy: e.clientY - r.top };
+        bar.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      });
+      bar.addEventListener('pointermove', (e) => {
+        if (!drag || e.pointerId !== drag.id) return;
+        const host = w.offsetParent || w.parentElement;
+        const hr = host.getBoundingClientRect();
+        const maxX = Math.max(0, hr.width - w.offsetWidth);
+        const maxY = Math.max(0, hr.height - bar.offsetHeight - 8);
+        const x = Math.min(maxX, Math.max(0, e.clientX - drag.dx - hr.left));
+        const y = Math.min(maxY, Math.max(0, e.clientY - drag.dy - hr.top));
+        w.style.left = Math.round(x) + 'px';
+        w.style.top = Math.round(y) + 'px';
+      });
+      const end = (e) => {
+        if (!drag || e.pointerId !== drag.id) return;
+        drag = null;
+        try { bar.releasePointerCapture(e.pointerId); } catch (_) { /* already released */ }
+      };
+      bar.addEventListener('pointerup', end);
+      bar.addEventListener('pointercancel', end);
+    })();
     // The desktop watermark. Two lines, the way Windows put its build number
     // in the corner: what this is, and exactly which build of it.
     function showBuildStamp() {
