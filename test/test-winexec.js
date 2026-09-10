@@ -58,6 +58,19 @@ function checkParsing() {
     'c:\\games\\child.exe',
     'a relative WinExec program is searched from the caller VFS directory');
   assert.strictEqual(resolveShellLaunchPath('child.exe', null, true), 'child.exe');
+  const cwd = { _resolvePath: p => `c:\\games\\${p}` };
+  assert.strictEqual(resolveShellLaunchPath('child', cwd, true), 'c:\\games\\child.exe',
+    'WinExec supplies the default executable extension');
+  assert.strictEqual(resolveShellLaunchPath('c:\\games\\child', cwd, true), 'c:\\games\\child.exe',
+    'absolute WinExec paths also receive the default extension');
+  assert.strictEqual(resolveShellLaunchPath('v1.0\\child', cwd, true), 'c:\\games\\v1.0\\child.exe',
+    'dots in directory components are not file extensions');
+  assert.strictEqual(resolveShellLaunchPath('child.com', cwd, true), 'c:\\games\\child.com');
+  assert.strictEqual(resolveShellLaunchPath('child.', cwd, true), 'c:\\games\\child.');
+  assert.strictEqual(resolveShellLaunchPath('child', cwd, false), 'child',
+    'ShellExecute document names are not changed by WinExec extension rules');
+  assert.strictEqual(resolveShellLaunchPath('child', null, true), 'child.exe');
+  assert.strictEqual(resolveShellLaunchPath('', cwd, true), '', 'empty commands remain invalid');
 }
 
 async function main() {

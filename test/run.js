@@ -26,7 +26,7 @@ const { APPS, resolveCopySuperops } = require('../lib/apps');
 const { CliVideoRecorder } = require('../lib/cli-recorder');
 const { renderTinySynthNotes } = require('../lib/tinysynth-offline');
 const { createBatchClock } = require('../lib/batch-clock');
-const { parseShellLaunchCommand } = require('../host.js');
+const { parseShellLaunchCommand, resolveShellLaunchPath } = require('../host.js');
 // Fixed memory-map addresses, from the map declared in src/00-regions.wat.
 const RegionMap = require('../lib/region-map.generated.js');
 let PNG;
@@ -2993,7 +2993,8 @@ async function main() {
     // Use the browser's parser so capture/replay sees exactly what a live
     // ShellExecute handoff sees.
     const parsedCommand = parseShellLaunchCommand(file, params, operation);
-    const executable = parsedCommand.file.trim();
+    const executable = resolveShellLaunchPath(
+      parsedCommand.file.trim(), ctx.vfs, parsedCommand.isWinExec);
     const inlineArgs = parsedCommand.params.trim();
     const guestExe = ctx.vfs._resolvePath ? ctx.vfs._resolvePath(executable)
       : (ctx.vfs._normPath ? ctx.vfs._normPath(executable) : executable.toLowerCase());

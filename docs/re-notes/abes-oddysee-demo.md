@@ -60,6 +60,30 @@ acceptance is the automatic handoff, gameplay from this installer-produced
 tree, promotion of that tree into the registered app, and the synchronous
 input-path abandonment above. The original large-PE blocker is not current.
 
+### Automatic launch request
+
+Dismissing the success notice with `dlg-cmd:1` causes the unchanged installer
+to call `WinExec("abedemo", 1)`, with no file extension. Before the fix,
+`resolveShellLaunchPath` only applied the current directory; both the browser
+launch lookup and CLI capture therefore missed `abedemo.exe`.
+
+The shared resolver now supplies `.exe` for an extensionless WinExec basename,
+including absolute paths and paths with dotted directory names. Explicit
+extensions, trailing dots, empty commands, and non-WinExec document opens
+are preserved. CLI capture uses that same resolver instead of independently
+resolving only the directory. Microsoft's [WinExec reference](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-winexec)
+also illustrates executable-stem resolution in its `Program.exe` example.
+The new stem regression fails before the change and passes afterward;
+existing WinExec ABI/VFS and shell launch tests pass too.
+
+Repeating the real installer to batch 5080, dismissing success, stepping 50,
+then quitting with `--capture-launch=/private/tmp/abe-handoff-fixed` produces
+`launch.json` for `c:\\program files\\abe's oddysee demo\\abedemo.exe`.
+All nine captured game files are byte-identical to the first guest-produced
+tree (54625942 bytes total). No host archive extraction was used. This proves
+the automatic launch request and captured payload, not a live browser child
+reaching gameplay; browser handoff verification and registry promotion remain.
+
 ## Loader-thread deadlock
 
 Before the CreateThread contract correction, the demo created its window and
