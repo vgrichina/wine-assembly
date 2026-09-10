@@ -479,6 +479,72 @@ async function testSyncSignedOut(exported) {
   }
 }
 
+// Responses may arrive immediately while their bodies never finish. Drive the
+// request timer explicitly so this regression is deterministic even on a busy
+// host, and check cleanup on success and every failure path.
+async function testSyncDeadline() {
+  const originalSetTimeout = global.setTimeout;
+  const originalClearTimeout = global.clearTimeout;
+  const timers = new Map();
+  let nextTimer = 0;
+  global.setTimeout = callback => { timers.set(++nextTimer, callback); return nextTimer; };
+  global.clearTimeout = timer => { timers.delete(timer); };
+  const expire = () => {
+    ok(timers.size === 1, 'the request deadline stays active while reading the body');
+    for (const callback of Array.from(timers.values())) callback();
+  };
+  try {
+    for (const [method, useText] of [['pull', true], ['metadata', true], ['getUser', true], ['getUser', false]]) {
+      let signal;
+      const body = () => {
+        queueMicrotask(expire);
+        return new Promise(() => {}); // Deliberately ignores abort like a custom transport.
+      };
+      let caught;
+      try {
+        await saveSync[method]({ appId: APP_ID, timeoutMs: 17,
+          fetchImpl: async (_, init) => {
+            signal = init.signal;
+            return { status: 200, ok: true, text: useText ? body : undefined, arrayBuffer: body };
+          } });
+      } catch (error) { caught = error; }
+      ok(caught && caught.name === 'TimeoutError', `${method}: a stalled body times out`);
+      ok(signal.aborted, `${method}: timeout aborts the transport`);
+      eq(timers.size, 0, `${method}: timeout clears its timer`);
+    }
+    for (const kind of ['success', 'fetch-failure', 'body-failure', 'abort', 'json-failure', 'http-failure', 'signed-out']) {
+      let signal;
+      let caught;
+      let result;
+      const failure = new Error(kind);
+      if (kind === 'abort') failure.name = 'AbortError';
+      try {
+        result = await saveSync.getUser({ fetchImpl: async (_, init) => {
+          signal = init.signal;
+          if (kind === 'fetch-failure') throw failure;
+          return {
+            status: kind === 'http-failure' ? 500 : kind === 'signed-out' ? 401 : 200,
+            ok: kind !== 'http-failure' && kind !== 'signed-out',
+            text: async () => {
+              if (kind === 'body-failure' || kind === 'abort') throw failure;
+              return kind === 'json-failure' ? '{' : '{"username":"tester"}';
+            },
+          };
+        } });
+      } catch (error) { caught = error; }
+      if (kind === 'success') eq(result.username, 'tester', 'completed bodies parse normally');
+      else if (kind === 'signed-out') eq(result, null, 'signed-out status needs no body');
+      else ok(caught, `${kind}: propagates the failure`);
+      if (kind === 'fetch-failure' || kind === 'body-failure' || kind === 'abort') eq(caught, failure, 'transport errors keep their identity');
+      eq(timers.size, 0, `${kind}: completion clears the deadline`);
+      ok(!signal.aborted, `${kind}: no timer remains to abort a completed request`);
+    }
+  } finally {
+    global.setTimeout = originalSetTimeout;
+    global.clearTimeout = originalClearTimeout;
+  }
+}
+
 // ---------------------------------------------------------------- the CLI
 
 function testCli(exported) {
@@ -524,6 +590,7 @@ async function main() {
   testMergeMode(exported);
   testTamper(exported);
   testUrls();
+  await testSyncDeadline();
   await testSync(exported);
   await testSyncSignedOut(exported);
   testCli(exported);
