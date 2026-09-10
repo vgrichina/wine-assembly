@@ -374,6 +374,20 @@ assert.strictEqual(mainSleepTm.checkMainYield(), false,
   'main-thread Sleep resumes when the full timeout has elapsed');
 assert.strictEqual(mainSleepTm._mainSleepUntil, 0);
 
+let waitClock = 100, wallClock = 9000, splitSleepPending = 1;
+const splitClockTm = makeThreadManager({ now: () => wallClock, waitNow: () => waitClock });
+splitClockTm.mainInstance.exports = {
+  get_sleep_yielded: () => { const v = splitSleepPending; splitSleepPending = 0; return v; },
+  get_sleep_timeout: () => 16,
+  get_yield_reason: () => 0,
+};
+assert.strictEqual(splitClockTm.checkMainYield(), true);
+assert.strictEqual(splitClockTm._mainSleepUntil, 116, 'Sleep deadline uses guest wait time');
+wallClock += 60000;
+assert.strictEqual(splitClockTm.checkMainYield(), true, 'wall time cannot expire a frozen Sleep');
+waitClock = 116;
+assert.strictEqual(splitClockTm.checkMainYield(), false, 'guest steps expire Sleep without wall delay');
+
 function createSyncObjects(traceThread) {
   const syncTm = makeThreadManager({ traceThread });
   const emitted = [];
@@ -483,8 +497,25 @@ vblankTm.runSlice(100);
 assert.strictEqual(vblankRuns, 1,
   'the following cooperative slice re-enters and resumes the parked thread');
 
+let workerGuestNow = 200, workerWallNow = 1000, workerSleepPending = 0, splitWorkerRuns = 0;
+const splitWorkerTm = makeThreadManager({ now: () => workerWallNow, waitNow: () => workerGuestNow });
+const splitWorker = makeRunnableThread(1, () => { splitWorkerRuns++; workerSleepPending = 1; });
+splitWorker.instance.exports.get_sleep_yielded = () => {
+  const v = workerSleepPending; workerSleepPending = 0; return v;
+};
+splitWorker.instance.exports.get_sleep_timeout = () => 16;
+splitWorkerTm.threads.set(0xe1000, splitWorker);
+splitWorkerTm.runSlice(100);
+assert.strictEqual(splitWorker.sleepUntil, 216, 'worker Sleep uses guest time');
+workerWallNow += 60000;
+splitWorkerTm.runSlice(100);
+assert.strictEqual(splitWorkerRuns, 1, 'worker stays asleep while frozen guest time is unchanged');
+workerGuestNow = 216;
+splitWorkerTm.runSlice(100);
+assert.strictEqual(splitWorkerRuns, 2, 'worker wakes when stepped guest time reaches its deadline');
+
 let now = 0;
-const budgetTm = makeThreadManager();
+const budgetTm = makeThreadManager({ waitNow: () => 123 });
 budgetTm._now = () => now;
 let budgetRuns = 0;
 budgetTm.threads.set(0xe1000, makeRunnableThread(1, steps => {
@@ -664,7 +695,7 @@ assert.deepStrictEqual(workerWaitTm.resolveMainWorkerWait(workerWait), {
 }, 'isolated main wait completes as soon as its worker signals');
 
 let cappedWaitNow = 1000;
-const cappedWaitTm = makeThreadManager({ now: () => cappedWaitNow });
+const cappedWaitTm = makeThreadManager({ now: () => 9000, waitNow: () => cappedWaitNow });
 const cappedWaitEvent = cappedWaitTm.createEvent(0, 0);
 cappedWaitTm.threads.set(0xe1014, makeRunnableThread(1, () => {}));
 const cappedWait = { ...workerWait, waitHandle: cappedWaitEvent };

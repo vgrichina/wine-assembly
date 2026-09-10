@@ -1920,6 +1920,7 @@ class WineAssembly {
       getVfs: () => (self._helpCtx && self._helpCtx.vfs) || null,
       hasMessage: () => !!(self.renderer && self.renderer.inputQueue && self.renderer.inputQueue.length),
       now: () => self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now(),
+      waitNow: () => self._guestAudioClockMs(self.hostCtx && self.hostCtx.sharedAudio),
       resolveThreadSendExternalYield: async (link, r) => {
         if (r.yield === 3) await self._handleComDllLoadThreaded(link);
         else if (r.yield === 5) await self._handleLoadLibraryThreaded(link);
