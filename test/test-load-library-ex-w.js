@@ -20,6 +20,13 @@ const extraWat = String.raw`
     (global.set $image_base (i32.const 0x00400000))
     (i32.and (i32.ne (local.get $name) (i32.const 0))
       (call $wide_ascii_eq (call $g2w (local.get $name)) (i32.const 0x36D))))
+  (func (export "test_co_load_library") (param $name i32) (param $auto_free i32) (result i32)
+    (global.set $image_base (i32.const 0x00400000))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_CoLoadLibrary
+      (local.get $name) (local.get $auto_free) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_init_image_base")
     (global.set $image_base (i32.const 0x00400000)))
 `;
@@ -43,8 +50,12 @@ const extraWat = String.raw`
     'Unicode wrapper preserves the optional-uxtheme unavailable result');
   assert.strictEqual(wat.get_esp(), 0x00300010,
     'three-argument stdcall pops return address plus all arguments');
+  assert.strictEqual(wat.test_co_load_library(name, 1), 0,
+    'CoLoadLibrary preserves the Unicode loader result');
+  assert.strictEqual(wat.get_esp(), 0x0030000c,
+    'CoLoadLibrary consumes its return address and both arguments');
 
-  console.log('PASS LoadLibraryExW delegates Unicode lookup and consumes three arguments');
+  console.log('PASS Unicode library wrappers delegate lookup and consume their arguments');
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

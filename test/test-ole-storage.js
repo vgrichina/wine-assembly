@@ -14,6 +14,18 @@ const extraWat = String.raw`
     (call $handle_StgCreateDocfile (local.get $name) (local.get $mode)
       (i32.const 0) (local.get $out) (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_call_CoMarshalInterThreadInterfaceInStream")
+        (param $iid i32) (param $iface i32) (param $out i32) (result i32)
+    (call $handle_CoMarshalInterThreadInterfaceInStream
+      (local.get $iid) (local.get $iface) (local.get $out)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_CoGetInterfaceAndReleaseStream")
+        (param $stream i32) (param $iid i32) (param $out i32) (result i32)
+    (call $handle_CoGetInterfaceAndReleaseStream
+      (local.get $stream) (local.get $iid) (local.get $out)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_call_CoGetClassObject")
         (param $clsid i32) (param $ctx i32) (param $reserved i32)
         (param $iid i32) (param $out i32) (result i32)
@@ -136,6 +148,26 @@ async function main() {
   let comArgs = null;
   let comShouldYield = false;
   let testExports = null;
+  let namedFileCreate = null;
+  let namedFilePath = '';
+  let namedFileWrite = null;
+  imports.host.fs_create_file = (...args) => {
+    namedFileCreate = args;
+    const view = new DataView(memory.buffer);
+    for (let offset = args[0]; ; offset += 2) {
+      const code = view.getUint16(offset, true);
+      if (!code) break;
+      namedFilePath += String.fromCharCode(code);
+    }
+    return 0x456;
+  };
+  imports.host.fs_write_file = (handle, buffer, size, written) => {
+    const writtenWa = written - testExports.get_image_base() + testExports.get_guest_base();
+    new DataView(memory.buffer).setUint32(writtenWa, size, true);
+    namedFileWrite = { handle, buffer, size };
+    return 1;
+  };
+  imports.host.fs_close_handle = () => 1;
   imports.host.com_create_instance = (...args) => {
     comArgs = args;
     if (comShouldYield) return 0x800401f0;
@@ -234,11 +266,48 @@ async function main() {
       if (anonymous) e.test_ole_release(anonymous);
       return ok;
     })());
+  const namedOut = alloc(4);
+  const namedPath = writeWide('C:\\BW2StgCreate.cfb');
+  const namedHr = e.test_call_StgCreateDocfile(namedPath, 0x00001012, namedOut);
+  check('StgCreateDocfile creates a functional named compound file',
+    namedHr === 0 &&
+    (() => {
+      const named = dv.getUint32(wa(namedOut), true);
+      const ok = named !== 0 && dv.getUint32(wa(named) + 8, true) === 2 &&
+        namedFilePath === 'C:\\BW2StgCreate.cfb' && namedFileCreate?.[1] === 0x40000000 &&
+        namedFileCreate?.[2] === 2 && namedFileCreate?.[4] === 1 &&
+        namedFileWrite?.handle === 0x456 && namedFileWrite.size >= 512 &&
+        Array.from(u8.slice(wa(namedFileWrite.buffer), wa(namedFileWrite.buffer) + 8)).join(',') ===
+          '208,207,17,224,161,177,26,225';
+      if (named) e.test_ole_release(named);
+      return ok;
+    })(), `hr=0x${(namedHr >>> 0).toString(16)} create=${JSON.stringify(namedFileCreate)} write=${JSON.stringify(namedFileWrite)}`);
   check('StgCreateDocfile rejects a missing output pointer',
     (e.test_call_StgCreateDocfile(0, 0x04000012, 0) >>> 0) === 0x80004003);
 
   const lockbytes = e.test_ole_create_lockbytes(0, 1) >>> 0;
   const storage = e.test_ole_create_storage(lockbytes) >>> 0;
+  const marshalIid = writeBytes(new Uint8Array(16));
+  const marshalOut = alloc(4);
+  const interfaceOut = alloc(4);
+  const storageRefsBeforeMarshal = dv.getUint32(wa(storage) + 4, true);
+  e.set_esp(savedEsp);
+  const marshalHr = e.test_call_CoMarshalInterThreadInterfaceInStream(
+    marshalIid, storage, marshalOut);
+  const marshaledStream = dv.getUint32(wa(marshalOut), true);
+  check('CoMarshalInterThreadInterfaceInStream retains a one-shot local interface stream',
+    marshalHr === 0 && marshaledStream !== 0 &&
+    dv.getUint32(wa(marshaledStream) + 8, true) === 21 &&
+    dv.getUint32(wa(storage) + 4, true) === storageRefsBeforeMarshal + 1);
+  e.set_esp(savedEsp);
+  const unmarshalHr = e.test_call_CoGetInterfaceAndReleaseStream(
+    marshaledStream, marshalIid, interfaceOut);
+  const unmarshaledInterface = dv.getUint32(wa(interfaceOut), true);
+  check('CoGetInterfaceAndReleaseStream transfers the retained interface reference',
+    unmarshalHr === 0 && unmarshaledInterface === storage &&
+    dv.getUint32(wa(storage) + 4, true) === storageRefsBeforeMarshal + 1);
+  if (unmarshaledInterface) e.test_ole_release(unmarshaledInterface);
+  e.set_esp(savedEsp);
   const name = writeWide('ObjectData');
   const stream = e.test_ole_create_stream(storage, name) >>> 0;
   check('creates distinct ILockBytes, IStorage and IStream objects',

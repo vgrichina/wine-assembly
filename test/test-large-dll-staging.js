@@ -164,14 +164,14 @@ async function main() {
 
   const smallDll = makeMinimalDll(0x400);
   const capacity = e.get_dll_capacity() >>> 0;
-  assert.strictEqual(capacity, 16, 'WAT should publish the fixed DLL table capacity');
+  assert.strictEqual(capacity, 32, 'WAT should publish the fixed DLL table capacity');
   while ((e.get_dll_count() >>> 0) < capacity) loadDll(e, memory.buffer, smallDll);
   const rsrcTable = e.get_dll_table() + capacity * 32;
   const rsrcBytes = capacity * 8;
   const rsrcBefore = Buffer.from(new Uint8Array(memory.buffer, rsrcTable, rsrcBytes));
   assert.throws(() => loadDll(e, memory.buffer, smallDll),
-    /DLL table capacity 16 exhausted/,
-    'the 17th DLL should fail before staging or table writes');
+    /DLL table capacity 32 exhausted/,
+    'the 33rd DLL should fail before staging or table writes');
   assert.strictEqual(e.get_dll_count() >>> 0, capacity,
     'a rejected DLL must not advance the table count');
   assert.deepStrictEqual(Buffer.from(new Uint8Array(memory.buffer, rsrcTable, rsrcBytes)), rsrcBefore,

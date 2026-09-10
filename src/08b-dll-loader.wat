@@ -1,7 +1,7 @@
   ;; ============================================================
   ;; DLL LOADER — Load PE DLLs into guest address space
   ;; ============================================================
-  ;; DLL_TABLE layout at DLL_TABLE global: 32 bytes per DLL, max 16 DLLs = 512 bytes
+  ;; DLL_TABLE layout at DLL_TABLE global: 32 bytes per DLL, max 32 DLLs = 1024 bytes
   ;; +0:  load_addr (guest)
   ;; +4:  size_of_image
   ;; +8:  export_dir_rva
@@ -473,6 +473,11 @@
         (if (i32.eq (local.get $ordinal) (i32.const 8))  (then (return (call $lookup_api_id "VariantInit"))))
         (if (i32.eq (local.get $ordinal) (i32.const 9))  (then (return (call $lookup_api_id "VariantClear"))))
         (if (i32.eq (local.get $ordinal) (i32.const 10)) (then (return (call $lookup_api_id "VariantCopy"))))
+        ;; InstallShield 11 imports the binary-BSTR helpers by ordinal. Keep
+        ;; these in the guest resolver as well as the host fallback so loaded
+        ;; DLL imports cannot depend on which resolver path reached them.
+        (if (i32.eq (local.get $ordinal) (i32.const 149)) (then (return (call $lookup_api_id "SysStringByteLen"))))
+        (if (i32.eq (local.get $ordinal) (i32.const 150)) (then (return (call $lookup_api_id "SysAllocStringByteLen"))))
         (if (i32.eq (local.get $ordinal) (i32.const 420)) (then (return (call $lookup_api_id "OleCreateFontIndirect"))))
       ))
     (i32.const -1))

@@ -9,11 +9,14 @@ const { bootRenderHarness } = require('./render-helper');
 const extraWat = String.raw`
   (func (export "test_clear_showwindow_thunks")
     (global.set $createwnd_move_thunk (i32.const 0))
-    (global.set $createwnd_size_thunk (i32.const 0)))
+    (global.set $createwnd_size_thunk (i32.const 0))
+    (global.set $enum_child_thunk (i32.const 0)))
   (func (export "test_get_createwnd_move_thunk") (result i32)
     (global.get $createwnd_move_thunk))
   (func (export "test_get_createwnd_size_thunk") (result i32)
     (global.get $createwnd_size_thunk))
+  (func (export "test_get_enum_child_thunk") (result i32)
+    (global.get $enum_child_thunk))
 `;
 
 (async () => {
@@ -24,8 +27,9 @@ const extraWat = String.raw`
 
   const move = wat.test_get_createwnd_move_thunk() >>> 0;
   const size = wat.test_get_createwnd_size_thunk() >>> 0;
-  assert(move && size && move !== size,
-    'main instance has distinct WM_MOVE and WM_SIZE continuation thunks');
+  const enumChild = wat.test_get_enum_child_thunk() >>> 0;
+  assert(move && size && enumChild && move !== size && size !== enumChild,
+    'main instance has distinct window and EnumChildWindows continuation thunks');
 
   wat.test_clear_showwindow_thunks();
   assert.strictEqual(wat.test_get_createwnd_move_thunk() >>> 0, 0);
@@ -36,7 +40,9 @@ const extraWat = String.raw`
     'worker thunk sync restores CACA0024 as the WM_MOVE continuation');
   assert.strictEqual(wat.test_get_createwnd_size_thunk() >>> 0, size,
     'worker thunk sync restores CACA0031 as the WM_SIZE continuation');
-  console.log('PASS worker ShowWindow continuation thunk sync');
+  assert.strictEqual(wat.test_get_enum_child_thunk() >>> 0, enumChild,
+    'worker thunk sync restores CACA002B as the EnumChildWindows continuation');
+  console.log('PASS worker window continuation thunk sync');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

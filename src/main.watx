@@ -58,6 +58,7 @@
 (include "09aa-handlers-d3dim.wat")
 (include "09ab-handlers-d3dim-core.wat")
 (include "09ad-handlers-d3d9.wat")
+(include "09ae-d3d9-resources.wat")
 (include "09b-dispatch.wat")
 (include "09b2-dispatch-table.generated.wat")
 (include "09c-help.wat")

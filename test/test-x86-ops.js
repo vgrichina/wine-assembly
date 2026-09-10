@@ -11,12 +11,12 @@ const RegionMap = require('../lib/region-map.generated.js');
 async function main() {
   // Build if needed
   const ROOT = path.join(__dirname, '..');
-  const WASM_PATH = path.join(ROOT, 'build', 'wine-assembly.wasm');
+  const WASM_PATH = process.env.WINE_ASSEMBLY_WASM || path.join(ROOT, 'build', 'wine-assembly.wasm');
   const srcDir = path.join(ROOT, 'src');
   let wasmTime = 0;
   try { wasmTime = fs.statSync(WASM_PATH).mtimeMs; } catch (_) {}
   const watFiles = fs.readdirSync(srcDir).filter(f => f.endsWith('.wat'));
-  if (watFiles.some(f => fs.statSync(path.join(srcDir, f)).mtimeMs > wasmTime)) {
+  if (!process.env.WINE_ASSEMBLY_WASM && watFiles.some(f => fs.statSync(path.join(srcDir, f)).mtimeMs > wasmTime)) {
     console.log('Building...');
     require('child_process').execSync('bash tools/build.sh', { cwd: ROOT, stdio: 'inherit' });
   }

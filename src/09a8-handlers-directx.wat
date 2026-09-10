@@ -1448,6 +1448,13 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
+  ;; DirectXSetup(hwnd, rootPath, flags) -> DSETUPERR_SUCCESS. The emulator
+  ;; already provides the DirectX runtime, so legacy redistributables must not
+  ;; replace its system DLLs before continuing the application installer.
+  (func $handle_DirectXSetup (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
   ;; DirectDrawCreate(lpGUID, lplpDD, pUnkOuter) → HRESULT
   (func $handle_DirectDrawCreate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $obj_guest i32)

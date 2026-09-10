@@ -138,6 +138,48 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; In-process inter-thread marshaling. The interpreted processes share one
+  ;; linear memory, so a one-shot stream only needs to retain and transfer the
+  ;; interface pointer; no proxy wire format is required.
+  (func $handle_CoMarshalInterThreadInterfaceInStream (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $stream i32)
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
+    (if (i32.or (i32.eqz (local.get $arg0))
+          (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2))))
+      (then (global.set $eax (i32.const 0x80004003))) ;; E_POINTER
+      (else
+        (local.set $stream (call $ole_create_marshaled_stream (local.get $arg1)))
+        (if (local.get $stream)
+          (then
+            (call $gs32 (local.get $arg2) (local.get $stream))
+            (global.set $eax (i32.const 0)))
+          (else (global.set $eax (i32.const 0x8007000E)))))) ;; E_OUTOFMEMORY
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  (func $handle_CoGetInterfaceAndReleaseStream (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $iface i32)
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
+    (if (i32.or (i32.eqz (local.get $arg0))
+          (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2))))
+      (then (global.set $eax (i32.const 0x80004003))) ;; E_POINTER
+      (else
+        (if (i32.ne (call $gl32 (i32.add (local.get $arg0) (i32.const 8))) (i32.const 21))
+          (then (global.set $eax (i32.const 0x80070057))) ;; E_INVALIDARG
+          (else
+            (local.set $iface (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))
+            (if (local.get $iface)
+              (then
+                ;; Clearing ownership before Release transfers the retained
+                ;; interface reference to the caller exactly once.
+                (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
+                (call $gs32 (local.get $arg2) (local.get $iface))
+                (global.set $eax (i32.const 0)))
+              (else (global.set $eax (i32.const 0x80070057))))
+            (drop (call $ole_obj_release (local.get $arg0)))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; GetRunningObjectTable(reserved, pprot)
   (func $handle_GetRunningObjectTable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $obj i32)
@@ -937,6 +979,70 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; MkParseDisplayName(pbc, displayName, eaten, ppmk) recognizes the file
+  ;; display names consumed by the Win9x InstallShield runtime. The full OLE
+  ;; parser also delegates class/item/composite syntaxes; keep this path
+  ;; deliberately bounded to the independently owned file-moniker value that
+  ;; the emulator can already bind, compare, persist, and release correctly.
+  (func $handle_MkParseDisplayName (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $len i32) (local $obj i32)
+    (drop (local.get $arg0))
+    (drop (local.get $arg4))
+    (drop (local.get $name_ptr))
+    (if (i32.or (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg3)))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (call $gs32 (local.get $arg3) (i32.const 0))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x800401E4)) ;; MK_E_SYNTAX
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $len (call $guest_wcslen (local.get $arg1)))
+    (if (i32.eqz (local.get $len))
+      (then
+        (global.set $eax (i32.const 0x800401E4)) ;; MK_E_SYNTAX
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $obj (call $ole_create_file_moniker (local.get $arg1)))
+    (if (i32.eqz (local.get $obj))
+      (then (global.set $eax (i32.const 0x8007000E))) ;; E_OUTOFMEMORY
+      (else
+        (call $gs32 (local.get $arg2) (local.get $len))
+        (call $gs32 (local.get $arg3) (local.get $obj))
+        (global.set $eax (i32.const 0)))) ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; Proxy registration requires interpreting the proxy table and publishing
+  ;; its registry entries. Process-local COM does not make these effects optional.
+  (func $handle_NdrDllRegisterProxy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; Proxy unregistration has no implementation yet; fail explicitly.
+  (func $handle_NdrDllUnregisterProxy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; CoLoadLibrary(lpszLibName, bAutoFree) uses the ordinary Unicode module
+  ;; loader. Loaded images are process-lifetime mappings here; bAutoFree only
+  ;; affects CoUninitialize bookkeeping that has no distinct observable
+  ;; mapping lifetime in the emulator.
+  (func $handle_CoLoadLibrary (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $stack i32)
+    (local.set $stack (global.get $esp))
+    (call $handle_LoadLibraryW
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    ;; LoadLibraryW consumes its return address and name argument. Consume the
+    ;; additional bAutoFree word without disturbing a pending DLL-load yield.
+    (global.set $esp (i32.add (local.get $stack) (i32.const 12)))
+  )
+
   ;; IMoniker / IPersistStream for process-local file moniker values.
   (func $handle_IMoniker_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.eqz (local.get $arg2))
@@ -1309,40 +1415,57 @@
 
   ;; StgCreateDocfile(pwcsName, grfMode, reserved, ppstgOpen)
   (func $handle_StgCreateDocfile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $lockbytes i32) (local $storage i32)
+    (local $lockbytes i32) (local $storage i32) (local $path i32) (local $hr i32)
     (if (i32.eqz (local.get $arg3))
       (then
         (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
     (call $gs32 (local.get $arg3) (i32.const 0))
-    ;; A NULL name is the documented anonymous temporary-docfile form. The
-    ;; existing heap-backed ILockBytes/IStorage implementation is sufficient:
-    ;; interpreted apps see a normal root storage without requiring a host
-    ;; filesystem file, and DELETEONRELEASE ownership follows the object graph.
-    (if (i32.eqz (local.get $arg0))
+    (local.set $lockbytes (call $ole_create_lockbytes (i32.const 0) (i32.const 1)))
+    (if (local.get $lockbytes)
       (then
-        (local.set $lockbytes (call $ole_create_lockbytes (i32.const 0) (i32.const 1)))
-        (if (local.get $lockbytes)
-          (then (local.set $storage (call $ole_create_storage (local.get $lockbytes)))))
-        (if (local.get $lockbytes) (then (drop (call $ole_obj_release (local.get $lockbytes)))))
-        (if (local.get $storage)
+        ;; A named root owns a private copy of its path. IStorage::Commit uses
+        ;; this to replace the VFS file with the freshly serialized CFB image.
+        (if (local.get $arg0)
           (then
-            (call $gs32 (local.get $arg3) (local.get $storage))
-            (global.set $eax (i32.const 0)))
-          (else (global.set $eax (i32.const 0x8007000E)))) ;; E_OUTOFMEMORY
-        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-        (return)))
-    ;; Named docfiles still require host-file persistence not provided here.
-    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
+            (local.set $path (call $ole_wide_dup (local.get $arg0)))
+            (if (local.get $path)
+              (then (call $gs32 (i32.add (local.get $lockbytes) (i32.const 40)) (local.get $path)))
+              (else
+                (drop (call $ole_obj_release (local.get $lockbytes)))
+                (local.set $lockbytes (i32.const 0))))))
+        (if (local.get $lockbytes)
+          (then (local.set $storage (call $ole_create_storage (local.get $lockbytes)))))))
+    (if (local.get $storage)
+      (then
+        ;; Named STGM_CREATE must publish a valid empty compound file before
+        ;; returning, even if the caller never explicitly commits it.
+        (if (local.get $arg0)
+          (then
+            (local.set $hr (call $ole_cfb_serialize (local.get $storage) (local.get $lockbytes)))
+            (if (i32.eqz (local.get $hr))
+              (then (local.set $hr (call $ole_lockbytes_flush_file (local.get $lockbytes)))))))
+        (if (i32.eqz (local.get $hr))
+          (then (call $gs32 (local.get $arg3) (local.get $storage)))
+          (else
+            (drop (call $ole_obj_release (local.get $storage)))
+            (local.set $storage (i32.const 0))))))
+    (if (local.get $lockbytes) (then (drop (call $ole_obj_release (local.get $lockbytes)))))
+    (global.set $eax
+      (if (result i32) (local.get $storage)
+        (then (i32.const 0))
+        (else (select (local.get $hr) (i32.const 0x8007000E)
+          (i32.ne (local.get $hr) (i32.const 0))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; Heap-backed OLE object layout used by ILockBytes/IStorage/IStream.
   ;;
-  ;; ILockBytes (40 bytes):
+  ;; ILockBytes (44 bytes):
   ;;   +0 vtable, +4 refcount, +8 kind=1, +12 data, +16 size, +20 capacity,
-  ;;   +24 delete-on-release, +28 root storage, +32 owns-data
+  ;;   +24 delete-on-release, +28 root storage, +32 owns-data,
+  ;;   +36 shared seek position, +40 optional owned wide VFS path
   ;; IStorage (64 bytes):
   ;;   +0 vtable, +4 refcount, +8 kind=2, +12 lockbytes, +16 first stream,
   ;;   +20 CLSID (16 bytes), +36 first child storage, +40 name, +44 parent,
@@ -1353,6 +1476,8 @@
   ;;   +44 canonical root stream (clones only; retained, shared backing bytes),
   ;;   +48 committed byte snapshot, +52 snapshot size, +56 region lock list.
   ;; Stream lock (20 bytes): offset, length, flags, owner interface, next.
+  ;; Marshaled interface stream (16 bytes, kind=21): vtable/ref/kind,
+  ;; retained interface pointer. It is consumed atomically by CoGetInterface.
   ;; IEnumSTATSTG (28 bytes, kind=7):
   ;;   +0 vtable, +4 refcount, +8 kind, +12 snapshot entries, +16 count,
   ;;   +20 cursor, +24 owns snapshot. Entry (48 bytes): object, name, type,
@@ -2638,9 +2763,9 @@
 
   (func $ole_create_lockbytes (param $hglobal i32) (param $delete_on_release i32) (result i32)
     (local $obj i32) (local $size i32)
-    (local.set $obj (call $heap_alloc (i32.const 40)))
+    (local.set $obj (call $heap_alloc (i32.const 44)))
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
-    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 40))
+    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 44))
     (call $gs32 (local.get $obj) (global.get $DX_VTBL_OLE_LOCKBYTES))
     (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
     (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 1))
@@ -2651,6 +2776,20 @@
         (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (local.get $size))
         (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (local.get $size))))
     (call $gs32 (i32.add (local.get $obj) (i32.const 24)) (local.get $delete_on_release))
+    (local.get $obj))
+
+  (func $ole_create_marshaled_stream (param $iface i32) (result i32)
+    (local $obj i32)
+    (if (i32.eqz (local.get $iface)) (then (return (i32.const 0))))
+    (local.set $obj (call $heap_alloc (i32.const 16)))
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 16))
+    (call $gs32 (local.get $obj) (global.get $DX_VTBL_OLE_STREAM))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 21))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $iface))
+    (if (call $ole_interface_is_local (local.get $iface))
+      (then (drop (call $ole_addref_local_interface (local.get $iface)))))
     (local.get $obj))
 
   (func $ole_create_storage (param $lockbytes i32) (result i32)
@@ -3129,6 +3268,8 @@
     (if (local.get $lockbytes)
       (then
         (local.set $hr (call $ole_cfb_serialize (local.get $storage) (local.get $lockbytes)))
+        (if (i32.eqz (local.get $hr))
+          (then (local.set $hr (call $ole_lockbytes_flush_file (local.get $lockbytes)))))
         (if (local.get $hr)
           (then (drop (call $ole_obj_release (local.get $snapshot))) (return (local.get $hr))))))
     (local.set $old (call $gl32 (i32.add (local.get $storage) (i32.const 52))))
@@ -3923,6 +4064,42 @@
     (call $heap_free (local.get $meta))
     (i32.const 0))
 
+  ;; Persist a memory-backed ILockBytes image when StgCreateDocfile associated
+  ;; it with a named VFS path. Anonymous/HGLOBAL-backed instances are no-ops.
+  (func $ole_lockbytes_flush_file (param $lockbytes i32) (result i32)
+    (local $path i32) (local $handle i32) (local $size i32)
+    (local $data i32) (local $written i32)
+    (if (i32.eqz (local.get $lockbytes)) (then (return (i32.const 0x80004003))))
+    (local.set $path (call $gl32 (i32.add (local.get $lockbytes) (i32.const 40))))
+    (if (i32.eqz (local.get $path)) (then (return (i32.const 0))))
+    (local.set $handle (call $host_fs_create_file
+      (call $g2w (local.get $path))
+      (i32.const 0x40000000) ;; GENERIC_WRITE
+      (i32.const 2)          ;; CREATE_ALWAYS
+      (i32.const 0x80)       ;; FILE_ATTRIBUTE_NORMAL
+      (i32.const 1)))        ;; UTF-16
+    (if (i32.eq (local.get $handle) (i32.const -1))
+      (then (return (i32.const 0x80030005)))) ;; STG_E_ACCESSDENIED
+    (local.set $size (call $gl32 (i32.add (local.get $lockbytes) (i32.const 16))))
+    (local.set $data (call $gl32 (i32.add (local.get $lockbytes) (i32.const 12))))
+    (local.set $written (call $heap_alloc (i32.const 4)))
+    (if (i32.eqz (local.get $written))
+      (then
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (return (i32.const 0x8007000E))))
+    (call $gs32 (local.get $written) (i32.const 0))
+    (if (i32.or
+          (i32.eqz (call $host_fs_write_file
+            (local.get $handle) (local.get $data) (local.get $size) (local.get $written)))
+          (i32.ne (call $gl32 (local.get $written)) (local.get $size)))
+      (then
+        (call $heap_free (local.get $written))
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (return (i32.const 0x8003001D)))) ;; STG_E_WRITEFAULT
+    (call $heap_free (local.get $written))
+    (drop (call $host_fs_close_handle (local.get $handle)))
+    (i32.const 0))
+
   (func $ole_cfb_sector_wa (param $base_wa i32) (param $total i32) (param $id i32) (result i32)
     (if (i32.ge_u (local.get $id) (local.get $total)) (then (return (i32.const 0))))
     (i32.add (local.get $base_wa)
@@ -4251,7 +4428,9 @@
         (if (i32.and (i32.ne (local.get $data) (i32.const 0))
               (i32.or (call $gl32 (i32.add (local.get $obj) (i32.const 24)))
                       (call $gl32 (i32.add (local.get $obj) (i32.const 32)))))
-          (then (call $heap_free (local.get $data))))))
+          (then (call $heap_free (local.get $data))))
+        (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 40))))
+        (if (local.get $data) (then (call $heap_free (local.get $data))))))
     (if (i32.eq (local.get $kind) (i32.const 2))
       (then
         (local.set $child (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
@@ -4464,6 +4643,12 @@
           (local.set $child (i32.add (local.get $child) (i32.const 1)))
           (br $enummoniker_entries)))
         (if (local.get $data) (then (call $heap_free (local.get $data))))))
+    (if (i32.eq (local.get $kind) (i32.const 21))
+      (then
+        (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+        (if (i32.and (i32.ne (local.get $data) (i32.const 0))
+                    (call $ole_interface_is_local (local.get $data)))
+          (then (drop (call $ole_release_local_interface (local.get $data)))))))
     (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 28))))
     (if (i32.and
           (i32.ne (local.get $data) (i32.const 0))

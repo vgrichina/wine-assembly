@@ -127,6 +127,7 @@ UNIT=(
   test/test-icon-extract.js
   test/test-heroes2-desktop-save.js
   test/test-wide-api.js
+  test/test-getversionex-alias.js
   test/test-oem-to-char-buff.js
   test/test-ver-find-file.js
   test/test-static-dx-version.js
@@ -193,6 +194,8 @@ UNIT=(
   test/test-directsound3d-web-audio.js
   test/test-directsound3d-listener.js
   test/test-directsound-ordinals.js
+  test/test-oleaut32-ordinals.js
+  test/test-bstr-byte-length.js
   test/test-directsound-cocreate.js
   test/test-directsound-buffer-format.js
   test/test-wave-out-get-id.js
@@ -533,6 +536,23 @@ UNIT=(
   test/test-created-dialog-main-promotion.js
   test/test-cw-usedefault-adjusted.js
   test/test-d3d9-fixed-function-shaders.js
+  test/test-d3d9-adapter.js
+  test/test-d3d9-backend-web.js
+  test/test-d3d9-buffers.js
+  test/test-d3d9-constants.js
+  test/test-d3d9-method-signatures.js
+  test/test-d3d9-pipeline-web.js
+  test/test-d3d9-shader-objects.js
+  test/test-d3d9-shader-web.js
+  test/test-d3d9-shader.js
+  test/test-d3d9-textures.js
+  test/test-d3d9-stateblocks.js
+  test/test-read-file-ex.js
+  test/test-directx-setup.js
+  test/test-global-memory-status-ex.js
+  test/test-sse-scalar.js
+  test/test-system-data-files.js
+  test/test-system-power-status.js
   test/test-d3d9-shader-unsupported.js
   test/test-d3d9-swap-chain.js
   test/test-crt-mb-cur-max-handler.js

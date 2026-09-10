@@ -4,7 +4,8 @@ const { execSync } = require('child_process');
 const { createHostImports } = require('../lib/host-imports');
 const { loadDlls, callDllMain, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
 const { inputEventHwnd } = require('../lib/host-window');
-const { resolveDllGraph, mountLoadedDllFiles, stageAndLoadPe, setExeName, setExeDrive, setExtraCmdline,
+const { SYSTEM_DATA_FILES, resolveDllGraph, mountLoadedDllFiles, mountSystemDataFiles,
+  stageAndLoadPe, setExeName, setExeDrive, setExtraCmdline,
   setEnvironmentVariable, handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
 const {
   applyExeCompatibilityPatches: applyProfilePatches,
@@ -25,6 +26,7 @@ const { APPS, resolveCopySuperops } = require('../lib/apps');
 const { CliVideoRecorder } = require('../lib/cli-recorder');
 const { renderTinySynthNotes } = require('../lib/tinysynth-offline');
 const { createBatchClock } = require('../lib/batch-clock');
+const { parseShellLaunchCommand } = require('../host.js');
 // Fixed memory-map addresses, from the map declared in src/00-regions.wat.
 const RegionMap = require('../lib/region-map.generated.js');
 let PNG;
@@ -2036,7 +2038,12 @@ async function main() {
   const base = createHostImports(ctx);
   if (ctx.vfs) {
     ctx.vfs.dirs.add('c:\\windows');
+    ctx.vfs.dirs.add('c:\\windows\\system');
     ctx.vfs.dirs.add('c:\\windows\\fonts');
+    mountSystemDataFiles(ctx.vfs, SYSTEM_DATA_FILES.map(file => ({
+      ...file,
+      bytes: new Uint8Array(fs.readFileSync(path.join(ROOT, file.url))),
+    })));
     for (const name of BUNDLED_BITMAP_FONTS) {
       const bundledFon = path.join(ROOT, 'fonts', name);
       if (!fs.existsSync(bundledFon)) {
@@ -2976,22 +2983,18 @@ async function main() {
   h.shell_execute = (hwnd, opWa, fileWa, paramsWa, dirWa, nShow) => {
     const file = fileWa ? readStr(fileWa) : '';
     const params = paramsWa ? readStr(paramsWa) : '';
+    const operation = opWa ? readStr(opWa) : 'open';
     const directory = dirWa ? readStr(dirWa) : '';
     const result = baseShellExecute(hwnd, opWa, fileWa, paramsWa, dirWa, nShow);
     if (!CAPTURE_LAUNCH || !ctx.vfs || capturedLaunch) return result;
 
-    // Inno's loader passes its executable and /SL arguments together in
-    // lpFile, quoted exactly as a command line. Ordinary ShellExecute callers
-    // put the executable in lpFile and arguments in lpParameters.
-    let executable = file.trim();
-    let inlineArgs = '';
-    if (executable.startsWith('"')) {
-      const close = executable.indexOf('"', 1);
-      if (close > 1) {
-        inlineArgs = executable.slice(close + 1).trim();
-        executable = executable.slice(1, close);
-      }
-    }
+    // Inno and InstallShield both put command lines in lpFile, but disagree
+    // about whether the closing quote follows argv[0] or the final argument.
+    // Use the browser's parser so capture/replay sees exactly what a live
+    // ShellExecute handoff sees.
+    const parsedCommand = parseShellLaunchCommand(file, params, operation);
+    const executable = parsedCommand.file.trim();
+    const inlineArgs = parsedCommand.params.trim();
     const guestExe = ctx.vfs._resolvePath ? ctx.vfs._resolvePath(executable)
       : (ctx.vfs._normPath ? ctx.vfs._normPath(executable) : executable.toLowerCase());
     if (!ctx.vfs.files.has(guestExe)) return result;
@@ -3004,7 +3007,7 @@ async function main() {
       : null;
     capturedLaunch = {
       guestExe,
-      args: [inlineArgs, params.trim()].filter(Boolean).join(' '),
+      args: inlineArgs,
       directory: directory || (ctx.vfs.getCurrentDirectory
         ? ctx.vfs.getCurrentDirectory() : ctx.vfs.cwd || ''),
       materialize,
@@ -4260,15 +4263,6 @@ async function main() {
         `${media.candidate.autorun ? ' (AUTORUN.INF)' : ''}`);
     }
 
-    if (GUEST_CWD) {
-      const rooted = /^[a-z]:[\\/]/i.test(GUEST_CWD) ? GUEST_CWD : `c:\\${GUEST_CWD}`;
-      const cwd = path.win32.normalize(rooted.replace(/\//g, '\\'));
-      if (!ctx.vfs.setCurrentDirectory(cwd)) {
-        throw new Error(`--cwd directory is not present in the guest VFS: ${GUEST_CWD}`);
-      }
-      console.log(`[vfs] working directory: ${ctx.vfs.getCurrentDirectory()}`);
-    }
-
     // The writable C:\ overlay (docs/design-byo-media.md ⑤). Attached after
     // every base mount and before the guest runs, because the replay order is
     // base mounts → overlay files/dirs → whiteouts: a file the guest deleted
@@ -4286,6 +4280,18 @@ async function main() {
         (vfsOverlay.errors.length ? `, ${vfsOverlay.errors.length} error(s)` : ''));
       for (const error of vfsOverlay.errors) console.log(`[overlay] ${error.message}`);
       nextOverlayFlushAt = Date.now() + OVERLAY_FLUSH_MS;
+    }
+
+    // Apply an explicit process cwd only after every mount, including the
+    // persisted writable overlay. Installer children commonly live solely in
+    // that overlay and must be directly resumable on a later CLI invocation.
+    if (GUEST_CWD) {
+      const rooted = /^[a-z]:[\\/]/i.test(GUEST_CWD) ? GUEST_CWD : `c:\\${GUEST_CWD}`;
+      const cwd = path.win32.normalize(rooted.replace(/\//g, '\\'));
+      if (!ctx.vfs.setCurrentDirectory(cwd)) {
+        throw new Error(`--cwd directory is not present in the guest VFS: ${GUEST_CWD}`);
+      }
+      console.log(`[vfs] working directory: ${ctx.vfs.getCurrentDirectory()}`);
     }
 
     // A --reg-import snapshot stands in for the browser's localStorage: it is
@@ -8068,6 +8074,16 @@ async function main() {
     // breakpoints can perturb hot generated-code paths before we need data.
     if (traceAtAddr && !breakAddrs.length && batch === TRACE_AT_START_BATCH && instance.exports.set_bp) {
       instance.exports.set_bp(traceAtAddr);
+      // Cooperative threads own separate WASM instances.  They inherit the
+      // main instance's breakpoint globals when spawned, but a delayed
+      // --trace-at is commonly armed after those instances already exist.
+      // Keep the diagnostic honest by arming every live instance here.
+      if (threadManager && threadManager.threads) {
+        for (const thread of threadManager.threads.values()) {
+          const te = thread && thread.instance && thread.instance.exports;
+          if (te && te.set_bp) te.set_bp(traceAtAddr);
+        }
+      }
     }
     // --trace-esp: arm range once
     if (traceEspOn && batch === 0 && instance.exports.set_trace_esp) {
@@ -8753,6 +8769,27 @@ if (VERBOSE) {
         if (stuckCount > STUCK_AFTER) {
           console.log(`STUCK at EIP=${hex(eip)} after ${stuckCount} batches`);
           if (instance.exports.get_dbg_prev_eip) console.log(`  dbg_prev_eip=${hex(instance.exports.get_dbg_prev_eip())}`);
+          // A NULL indirect-call target is usually a missing COM vtable slot.
+          // Preserve both levels of the pointer chain in the terminal dump;
+          // registers alone show the object but hide which method was NULL.
+          if (eip === 0) {
+            try {
+              const dv = new DataView(memory.buffer);
+              for (const [name, ptr] of [
+                ['eax', instance.exports.get_eax()],
+                ['ecx', instance.exports.get_ecx()],
+                ['esi', instance.exports.get_esi()],
+                ['edi', instance.exports.get_edi()],
+              ]) {
+                if (!ptr) continue;
+                const words = [];
+                for (let i = 0; i < 6; i++) {
+                  words.push(hex(dv.getUint32(g2w((ptr + i * 4) >>> 0), true)));
+                }
+                console.log(`  ${name}[${hex(ptr)}]: ${words.join(' ')}`);
+              }
+            } catch (_) {}
+          }
           dumpStack();
           break;
         }

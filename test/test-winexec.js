@@ -33,6 +33,26 @@ function checkParsing() {
     parseShellLaunchCommand('Program Files\\Tool.exe', '', 'open'),
     { file: 'Program Files\\Tool.exe', params: '', isWinExec: false },
     'ShellExecute keeps its separately supplied unquoted lpFile intact');
+  assert.deepStrictEqual(
+    parseShellLaunchCommand('C:\\Program Files\\Tool.exe', '', 'open'),
+    { file: 'C:\\Program Files\\Tool.exe', params: '', isWinExec: false },
+    'ShellExecute keeps an absolute unquoted long path intact');
+  assert.deepStrictEqual(
+    parseShellLaunchCommand('C:\\Black and White Setup.exe -deleter', '', 'open'),
+    {
+      file: 'C:\\Black and White Setup.exe',
+      params: '-deleter',
+      isWinExec: false,
+    },
+    'ShellExecute splits an InstallShield unquoted whole command at its executable suffix');
+  assert.deepStrictEqual(
+    parseShellLaunchCommand('"C:\\Black and White Setup.exe -deleter"', '', 'open'),
+    {
+      file: 'C:\\Black and White Setup.exe',
+      params: '-deleter',
+      isWinExec: false,
+    },
+    'ShellExecute accepts InstallShield legacy whole-command quoting');
   assert.strictEqual(
     resolveShellLaunchPath('child.exe', { _resolvePath: p => `c:\\games\\${p}` }, true),
     'c:\\games\\child.exe',

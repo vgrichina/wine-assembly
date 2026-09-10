@@ -204,8 +204,19 @@ const digest = crypto.createHash('sha256')
 // top-level z-order instead of returning this process's main HWND.
 // 2026-09-05: 438 -> 437. The Win98 Shell32 ArrangeWindows ordinal now tiles
 // eligible renderer windows instead of returning an unconditional zero.
-const EXPECTED_COUNT = 437;
-const EXPECTED_SHA256 = '030f24c394c47127bf27f3dadd1152325bb01217a33f83b28aab227fa7c5251f';
+// 2026-09-09: 437 -> 423. Seventeen D3D9 quiet setters/resource methods now
+// implement/delegate behavior or fail explicitly. Three legitimate additions:
+// fixed system UI locale, DirectXSetup's already-installed runtime result,
+// and buffer PreLoad (residency hint; Draw synchronously uploads canonical bytes).
+// Texture/Surface GetType constants now report their actual resource kinds.
+// Speculative DLL/proxy registration successes were removed, not blessed here.
+// 2026-09-09: 423 -> 411. BeginStateBlock now allocates real selective state.
+// Eleven existing quiet state setters now reject unsupported recording via
+// a shared guard. Their old non-recording stubs are NOT claimed implemented.
+// 2026-09-09: 411 -> 410. SetGammaRamp retains the per-device API ramp;
+// unsupported display gamma remains unadvertised. Get/default/copy tested.
+const EXPECTED_COUNT = 410;
+const EXPECTED_SHA256 = '3350d7943ac1ce520932f258e4c86d166b2d4587103ee1a4da781b657ccdef4c';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

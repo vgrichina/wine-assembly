@@ -56,11 +56,23 @@ function parseShellLaunchCommand(rawFile, explicitParams, operation) {
     if (quoted) {
       file = quoted[1];
       parsedParams = quoted[2] || '';
+      // InstallShield 11 passes one quoted lpFile containing both the EXE and
+      // its arguments ("C:\\Setup Name.exe -deleter") instead of quoting
+      // argv[0] alone. The Win9x shell accepts that legacy shape. Split only
+      // when an executable suffix is followed by whitespace, so an ordinary
+      // quoted path containing spaces remains intact.
+      if (!parsedParams) {
+        const embedded = /^(.*\.(?:exe|com|bat|cmd))\s+([\s\S]+)$/i.exec(file);
+        if (embedded) {
+          file = embedded[1];
+          parsedParams = embedded[2];
+        }
+      }
     } else {
-      const absolute = /^([a-z]:\\\S+)(?:\s+(.*))?$/i.exec(s);
-      if (absolute) {
-        file = absolute[1];
-        parsedParams = absolute[2] || '';
+      const embedded = /^(.*\.(?:exe|com|bat|cmd))\s+([\s\S]+)$/i.exec(s);
+      if (embedded) {
+        file = embedded[1];
+        parsedParams = embedded[2];
       }
     }
   }

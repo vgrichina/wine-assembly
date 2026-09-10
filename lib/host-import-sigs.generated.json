@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 235,
+  "count": 237,
   "sigs": {
     "log": {
       "params": [
@@ -1052,6 +1052,18 @@
         "i32"
       ]
     },
+    "ini_get_section": {
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
     "ini_get_int": {
       "params": [
         "i32",
@@ -1217,6 +1229,19 @@
     },
     "fs_read_file": {
       "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "fs_read_file_at": {
+      "params": [
+        "i32",
+        "i32",
         "i32",
         "i32",
         "i32",
