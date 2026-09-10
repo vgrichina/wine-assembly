@@ -85,7 +85,12 @@ function parseShellLaunchCommand(rawFile, explicitParams, operation) {
 }
 
 function resolveShellLaunchPath(file, vfs, isWinExec) {
-  if (!isWinExec || /^[a-z]:\\/i.test(file) || !vfs ||
+  if (!isWinExec || !file) return file;
+  // WinExec accepts an executable stem; only the final path component
+  // determines whether an extension was supplied (including a trailing dot).
+  const leaf = file.split(/[\\/]/).pop();
+  if (leaf && !leaf.includes('.')) file += '.exe';
+  if (/^[a-z]:[\\/]/i.test(file) || !vfs ||
       typeof vfs._resolvePath !== 'function') return file;
   return vfs._resolvePath(file);
 }
