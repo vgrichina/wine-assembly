@@ -1392,11 +1392,8 @@
   ;; IDirectMusic root object. GTA2 and its InstallShield DxCheck helper only
   ;; use this interface as an availability/version probe: create it, accept
   ;; IUnknown/IDirectMusic QueryInterface, then release it.
-  (func $guid_equals_words (param $guid i32) (param $d0 i32)
+  (func $guid_words_equal (param $wa i32) (param $d0 i32)
         (param $d1 i32) (param $d2 i32) (param $d3 i32) (result i32)
-    (local $wa i32)
-    (if (i32.eqz (local.get $guid)) (then (return (i32.const 0))))
-    (local.set $wa (call $g2w (local.get $guid)))
     (i32.and
       (i32.and
         (i32.eq (i32.load (local.get $wa)) (local.get $d0))
@@ -1405,19 +1402,14 @@
         (i32.eq (i32.load offset=8 (local.get $wa)) (local.get $d2))
         (i32.eq (i32.load offset=12 (local.get $wa)) (local.get $d3)))))
 
-  (func $dx_query_interface_single (param $obj i32) (param $iid i32)
-        (param $out i32) (param $d0 i32) (param $d1 i32)
-        (param $d2 i32) (param $d3 i32) (result i32)
+  ;; Complete a QueryInterface after the caller has translated and classified
+  ;; the IID. Keeping output/lifetime mechanics here lets interfaces with
+  ;; different identity sets share the COM contract without re-reading riid.
+  (func $dx_query_interface_result (param $obj i32) (param $out i32)
+        (param $supported i32) (result i32)
     (local $entry i32)
-    (if (i32.eqz (local.get $out))
-      (then (return (i32.const 0x80004003)))) ;; E_POINTER
     (call $gs32 (local.get $out) (i32.const 0))
-    (if (i32.eqz
-          (i32.or
-            (call $guid_equals_words (local.get $iid)
-              (i32.const 0) (i32.const 0) (i32.const 0x000000C0) (i32.const 0x46000000))
-            (call $guid_equals_words (local.get $iid)
-              (local.get $d0) (local.get $d1) (local.get $d2) (local.get $d3))))
+    (if (i32.eqz (local.get $supported))
       (then (return (i32.const 0x80004002)))) ;; E_NOINTERFACE
     (local.set $entry (call $dx_from_this (local.get $obj)))
     (if (i32.eqz (local.get $entry))
@@ -1426,6 +1418,26 @@
       (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
     (call $gs32 (local.get $out) (local.get $obj))
     (i32.const 0))
+
+  (func $dx_query_interface_single (param $obj i32) (param $iid i32)
+        (param $out i32) (param $d0 i32) (param $d1 i32)
+        (param $d2 i32) (param $d3 i32) (result i32)
+    (local $iid_wa i32)
+    (if (i32.eqz (local.get $out))
+      (then (return (i32.const 0x80004003)))) ;; E_POINTER
+    (if (i32.eqz (local.get $iid))
+      (then
+        (return (call $dx_query_interface_result
+          (local.get $obj) (local.get $out) (i32.const 0)))))
+    ;; Translate riid exactly once, then compare all four GUID words in-place.
+    (local.set $iid_wa (call $g2w (local.get $iid)))
+    (call $dx_query_interface_result
+      (local.get $obj) (local.get $out)
+      (i32.or
+        (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0) (i32.const 0) (i32.const 0x000000C0) (i32.const 0x46000000))
+        (call $guid_words_equal (local.get $iid_wa)
+          (local.get $d0) (local.get $d1) (local.get $d2) (local.get $d3)))))
 
   (func $handle_IDirectMusic_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; IID_IDirectMusic {6536115A-7B2D-11D2-BA18-0000F875AC12}.
@@ -1462,9 +1474,12 @@
     (global.set $esp (i32.add (global.get $esp) (local.get $stack_bytes))))
 
   (func $handle_IAMMultiMediaStream_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_IDirectMusic_QueryInterface
+    ;; IID_IAMMultiMediaStream {BEBE595C-9A6F-11D0-8FDE-00C04FD9189D}.
+    (global.set $eax (call $dx_query_interface_single
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+      (i32.const 0xBEBE595C) (i32.const 0x11D09A6F)
+      (i32.const 0xC000DE8F) (i32.const 0x9D18D94F)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IAMMultiMediaStream_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_IDirectMusic_AddRef
@@ -1550,9 +1565,12 @@
   ;; IDirectDrawGammaControl is a view onto an existing surface slot. GTA2
   ;; snapshots the current ramp and installs its own during video startup.
   (func $handle_IDirectDrawGammaControl_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_IDirectMusic_QueryInterface
+    ;; IID_IDirectDrawGammaControl {69C11C3E-B46B-11D1-AD7A-00C04FC29B4E}.
+    (global.set $eax (call $dx_query_interface_single
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+      (i32.const 0x69C11C3E) (i32.const 0x11D1B46B)
+      (i32.const 0xC0007AAD) (i32.const 0x4E9BC24F)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectDrawGammaControl_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_IDirectMusic_AddRef

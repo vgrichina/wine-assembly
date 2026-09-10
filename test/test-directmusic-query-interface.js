@@ -9,6 +9,16 @@ const extraWat = String.raw`
     (call $dx_create_com_obj
       (i32.const 35) (call $init_com_vtable (i32.const 3076) (i32.const 3))))
 
+  (func (export "test_create_amstream") (result i32)
+    (call $dx_create_com_obj
+      (i32.const 36)
+      (call $init_com_vtable
+        (global.get $API_ID_IAMMultiMediaStream_BASE) (i32.const 19))))
+
+  (func (export "test_create_gamma_control") (result i32)
+    (call $dx_create_com_obj
+      (i32.const 2) (call $init_com_vtable (i32.const 3079) (i32.const 5))))
+
   (func (export "test_directmusic_refcount") (param $obj i32) (result i32)
     (load.field DxObject refcount (call $dx_from_this (local.get $obj))))
 
@@ -16,6 +26,22 @@ const extraWat = String.raw`
         (param $obj i32) (param $iid i32) (param $out i32) (result i32)
     (global.set $esp (i32.const 0x00300000))
     (call $handle_IDirectMusic_QueryInterface
+      (local.get $obj) (local.get $iid) (local.get $out)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+
+  (func (export "test_call_IAMMultiMediaStream_QueryInterface")
+        (param $obj i32) (param $iid i32) (param $out i32) (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_IAMMultiMediaStream_QueryInterface
+      (local.get $obj) (local.get $iid) (local.get $out)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+
+  (func (export "test_call_IDirectDrawGammaControl_QueryInterface")
+        (param $obj i32) (param $iid i32) (param $out i32) (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_IDirectDrawGammaControl_QueryInterface
       (local.get $obj) (local.get $iid) (local.get $out)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
@@ -60,6 +86,8 @@ async function main() {
 
   const iunknown = writeGuid([0, 0, 0x000000c0, 0x46000000]);
   const idirectmusic = writeGuid([0x6536115a, 0x11d27b2d, 0x000018ba, 0x12ac75f8]);
+  const iamstream = writeGuid([0xbebe595c, 0x11d09a6f, 0xc000de8f, 0x9d18d94f]);
+  const gammaControl = writeGuid([0x69c11c3e, 0x11d1b46b, 0xc0007aad, 0x4e9bc24f]);
   const wrongSuffix = writeGuid([0x6536115a, 0, 0, 0]);
   const unsupported = writeGuid([0x6536115b, 0x11d27b2d, 0x000018ba, 0x12ac75f8]);
   const out = alloc(4);
@@ -94,6 +122,28 @@ async function main() {
     e.test_call_IDirectMusic_Release(obj) === 1);
   check('final caller release destroys the DirectMusic object',
     e.test_call_IDirectMusic_Release(obj) === 0);
+
+  const stream = e.test_create_amstream() >>> 0;
+  check('IAMMultiMediaStream accepts its own IID after the shared-helper split',
+    e.test_call_IAMMultiMediaStream_QueryInterface(stream, iamstream, out) === 0 &&
+    dv.getUint32(wa(out), true) === stream && e.test_directmusic_refcount(stream) === 2);
+  check('IAMMultiMediaStream rejects the unrelated IDirectMusic IID',
+    (e.test_call_IAMMultiMediaStream_QueryInterface(stream, idirectmusic, out) >>> 0) === 0x80004002 &&
+    dv.getUint32(wa(out), true) === 0 && e.test_directmusic_refcount(stream) === 2);
+  check('IAMMultiMediaStream references balance to destruction',
+    e.test_call_IDirectMusic_Release(stream) === 1 &&
+    e.test_call_IDirectMusic_Release(stream) === 0);
+
+  const gamma = e.test_create_gamma_control() >>> 0;
+  check('IDirectDrawGammaControl accepts its own IID after the shared-helper split',
+    e.test_call_IDirectDrawGammaControl_QueryInterface(gamma, gammaControl, out) === 0 &&
+    dv.getUint32(wa(out), true) === gamma && e.test_directmusic_refcount(gamma) === 2);
+  check('IDirectDrawGammaControl rejects the unrelated IDirectMusic IID',
+    (e.test_call_IDirectDrawGammaControl_QueryInterface(gamma, idirectmusic, out) >>> 0) === 0x80004002 &&
+    dv.getUint32(wa(out), true) === 0 && e.test_directmusic_refcount(gamma) === 2);
+  check('IDirectDrawGammaControl references balance to destruction',
+    e.test_call_IDirectMusic_Release(gamma) === 1 &&
+    e.test_call_IDirectMusic_Release(gamma) === 0);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) process.exit(1);

@@ -7567,13 +7567,52 @@
     (global.set $eax (i32.const 1))
     (call $dp_enum_continue))
 
+  ;; Query the two bounded ANSI DirectPlay families that this runtime exposes.
+  ;; family 0: IDirectPlay2A/3A (47-slot vtable); family 1:
+  ;; IDirectPlayLobbyA/Lobby2A (15-slot vtable). Unicode and later generations
+  ;; need different string semantics or additional slots, so fail honestly.
+  (func $dplay_query_interface (param $obj i32) (param $iid i32)
+        (param $out i32) (param $family i32) (result i32)
+    (local $iid_wa i32) (local $supported i32)
+    (if (i32.eqz (local.get $out))
+      (then (return (i32.const 0x80004003)))) ;; E_POINTER
+    (if (local.get $iid)
+      (then
+        ;; One guest-to-WASM translation covers every candidate GUID.
+        (local.set $iid_wa (call $g2w (local.get $iid)))
+        (local.set $supported
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0) (i32.const 0)
+            (i32.const 0x000000C0) (i32.const 0x46000000)))
+        (if (i32.eqz (local.get $family))
+          (then
+            ;; IID_IDirectPlay2A {9D460580-A822-11CF-960C-0080C7534E82}.
+            (local.set $supported (i32.or (local.get $supported)
+              (call $guid_words_equal (local.get $iid_wa)
+                (i32.const 0x9D460580) (i32.const 0x11CFA822)
+                (i32.const 0x80000C96) (i32.const 0x824E53C7))))
+            ;; IID_IDirectPlay3A {133EFE41-32DC-11D0-9CFB-00A0C90A43CB}.
+            (local.set $supported (i32.or (local.get $supported)
+              (call $guid_words_equal (local.get $iid_wa)
+                (i32.const 0x133EFE41) (i32.const 0x11D032DC)
+                (i32.const 0xA000FB9C) (i32.const 0xCB430AC9)))))
+          (else
+            ;; IID_IDirectPlayLobbyA {26C66A70-B367-11CF-A024-00AA006157AC}.
+            (local.set $supported (i32.or (local.get $supported)
+              (call $guid_words_equal (local.get $iid_wa)
+                (i32.const 0x26C66A70) (i32.const 0x11CFB367)
+                (i32.const 0xAA0024A0) (i32.const 0xAC576100))))
+            ;; IID_IDirectPlayLobby2A {1BB4AF80-A303-11D0-9C4F-00A0C905425E}.
+            (local.set $supported (i32.or (local.get $supported)
+              (call $guid_words_equal (local.get $iid_wa)
+                (i32.const 0x1BB4AF80) (i32.const 0x11D0A303)
+                (i32.const 0xA0004F9C) (i32.const 0x5E4205C9))))))))
+    (call $dx_query_interface_result
+      (local.get $obj) (local.get $out) (local.get $supported)))
+
   (func $handle_IDirectPlay3_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (local.get $arg0))))
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (if (local.get $entry)
-      (then (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $dplay_query_interface
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectPlay3_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -7906,12 +7945,8 @@
   ;; that create a lobby object during startup; no actual launched-from-lobby
   ;; state or transport providers are exposed.
   (func $handle_IDirectPlayLobby2_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (local.get $arg0))))
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (if (local.get $entry)
-      (then (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $dplay_query_interface
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectPlayLobby2_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
