@@ -3447,6 +3447,10 @@
   (func (export "set_sib_fusion") (param $flag i32)
     (global.set $sib_fusion_enabled (local.get $flag)))
 
+  (func (export "set_store_span_fusion") (param $flag i32)
+    (global.set $store_span_enabled (local.get $flag))
+    (call $clear_cache))
+
   ;; The unrolled-rectangle fold ($th_rect_run). Same rules: before the first
   ;; decode, and on every per-thread instance.
   (func (export "set_rect_run") (param $flag i32)

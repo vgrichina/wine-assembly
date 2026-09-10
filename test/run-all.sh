@@ -50,6 +50,7 @@ UNIT=(
   test/test-check-parens.js
   test/test-boot-cursor.js
   test/test-x86-ops.js
+  test/test-store32-base-span.js
   test/test-lar-opcode.js
   test/test-win16-lfs-opcode.js
   test/test-lut-run-generalized.js
