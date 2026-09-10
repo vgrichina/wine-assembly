@@ -862,8 +862,14 @@ const argAll = (name) => process.argv.slice(2)
 // `SEG:OFF` or `SEG:OFF:LEN` -> the [lo, hi] linear byte range it names. Both
 // halves of the address are hex, because every address a run prints is; the
 // length is decimal and defaults to one byte, matching --dump.
+//
+// Up to eight hex digits either side rather than four: with the address bus
+// open (an XMS handle taken), a protected-mode program addresses well past
+// 1MB, and the buffer a demo actually draws into lives there. `11000:0` is
+// then the only way to name linear 0x110000, since no real-mode paragraph
+// reaches it.
 function parseWatch(spec) {
-  const m = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})(?::(\d+))?$/i.exec(spec.trim());
+  const m = /^([0-9a-f]{1,8}):([0-9a-f]{1,8})(?::(\d+))?$/i.exec(spec.trim());
   if (!m) throw new Error(`not a watch address (want SEG:OFF[:LEN]): ${spec}`);
   const lo = (parseInt(m[1], 16) << 4) + parseInt(m[2], 16);
   return [lo, lo + (m[3] === undefined ? 1 : Number(m[3])) - 1];
