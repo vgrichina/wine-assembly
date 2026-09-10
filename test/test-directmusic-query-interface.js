@@ -22,6 +22,26 @@ const extraWat = String.raw`
   (func (export "test_directmusic_refcount") (param $obj i32) (result i32)
     (load.field DxObject refcount (call $dx_from_this (local.get $obj))))
 
+  (func (export "test_dx_live_count") (result i32)
+    (local $i i32) (local $count i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $DX_MAX)))
+      (if (i32.load (i32.add (global.get $DX_OBJECTS)
+            (i32.mul (local.get $i) (i32.const 32))))
+        (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $count))
+
+  (func (export "test_cocreate")
+      (param $clsid i32) (param $outer i32) (param $iid i32) (param $out i32)
+      (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_CoCreateInstance
+      (local.get $clsid) (local.get $outer) (i32.const 1)
+      (local.get $iid) (local.get $out) (i32.const 0))
+    (global.get $eax))
+
   (func (export "test_call_IDirectMusic_QueryInterface")
         (param $obj i32) (param $iid i32) (param $out i32) (result i32)
     (global.set $esp (i32.const 0x00300000))
@@ -85,6 +105,9 @@ async function main() {
   };
 
   const iunknown = writeGuid([0, 0, 0x000000c0, 0x46000000]);
+  const clsidDirectMusic = writeGuid([0x636b9f10, 0x11d10c7d, 0x2000b295, 0x2174dcaf]);
+  const clsidDirectMusicWrongSuffix = writeGuid([0x636b9f10, 0, 0, 0]);
+  const clsidAMStream = writeGuid([0x49c47ce5, 0x11d09ba4, 0xc0001282, 0x452cc34f]);
   const idirectmusic = writeGuid([0x6536115a, 0x11d27b2d, 0x000018ba, 0x12ac75f8]);
   const iamstream = writeGuid([0xbebe595c, 0x11d09a6f, 0xc000de8f, 0x9d18d94f]);
   const gammaControl = writeGuid([0x69c11c3e, 0x11d1b46b, 0xc0007aad, 0x4e9bc24f]);
@@ -144,6 +167,38 @@ async function main() {
   check('IDirectDrawGammaControl references balance to destruction',
     e.test_call_IDirectMusic_Release(gamma) === 1 &&
     e.test_call_IDirectMusic_Release(gamma) === 0);
+
+  const liveBeforeFactories = e.test_dx_live_count();
+  check('CoCreateInstance validates the complete DirectMusic CLSID',
+    e.test_cocreate(clsidDirectMusicWrongSuffix, 0, idirectmusic, out) !== 0 &&
+    dv.getUint32(wa(out), true) === 0 && e.test_dx_live_count() === liveBeforeFactories);
+  check('CoCreateInstance rejects an unsupported DirectMusic IID without leaking',
+    (e.test_cocreate(clsidDirectMusic, 0, unsupported, out) >>> 0) === 0x80004002 &&
+    dv.getUint32(wa(out), true) === 0 && e.test_dx_live_count() === liveBeforeFactories);
+  check('CoCreateInstance rejects DirectMusic aggregation and clears output',
+    (e.test_cocreate(clsidDirectMusic, 1, idirectmusic, out) >>> 0) === 0x80040110 &&
+    dv.getUint32(wa(out), true) === 0 && e.test_dx_live_count() === liveBeforeFactories);
+  check('CoCreateInstance reports E_POINTER for a null DirectMusic output',
+    (e.test_cocreate(clsidDirectMusic, 0, idirectmusic, 0) >>> 0) === 0x80004003 &&
+    e.test_dx_live_count() === liveBeforeFactories);
+  check('CoCreateInstance returns DirectMusic with one caller-owned reference',
+    e.test_cocreate(clsidDirectMusic, 0, idirectmusic, out) === 0 &&
+    (dv.getUint32(wa(out), true) >>> 0) !== 0 &&
+    e.test_directmusic_refcount(dv.getUint32(wa(out), true)) === 1);
+  check('the CoCreateInstance DirectMusic reference releases to destruction',
+    e.test_call_IDirectMusic_Release(dv.getUint32(wa(out), true)) === 0 &&
+    e.test_dx_live_count() === liveBeforeFactories);
+
+  check('CoCreateInstance rejects a cross-class AM-stream IID without leaking',
+    (e.test_cocreate(clsidAMStream, 0, idirectmusic, out) >>> 0) === 0x80004002 &&
+    dv.getUint32(wa(out), true) === 0 && e.test_dx_live_count() === liveBeforeFactories);
+  check('CoCreateInstance returns IAMMultiMediaStream with one caller reference',
+    e.test_cocreate(clsidAMStream, 0, iamstream, out) === 0 &&
+    (dv.getUint32(wa(out), true) >>> 0) !== 0 &&
+    e.test_directmusic_refcount(dv.getUint32(wa(out), true)) === 1);
+  check('the CoCreateInstance AM-stream reference releases to destruction',
+    e.test_call_IDirectMusic_Release(dv.getUint32(wa(out), true)) === 0 &&
+    e.test_dx_live_count() === liveBeforeFactories);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) process.exit(1);

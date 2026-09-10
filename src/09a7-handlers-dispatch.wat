@@ -1419,18 +1419,15 @@
     (call $gs32 (local.get $out) (local.get $obj))
     (i32.const 0))
 
-  (func $dx_query_interface_single (param $obj i32) (param $iid i32)
+  (func $dx_query_interface_single_wa (param $obj i32) (param $iid_wa i32)
         (param $out i32) (param $d0 i32) (param $d1 i32)
         (param $d2 i32) (param $d3 i32) (result i32)
-    (local $iid_wa i32)
     (if (i32.eqz (local.get $out))
       (then (return (i32.const 0x80004003)))) ;; E_POINTER
-    (if (i32.eqz (local.get $iid))
+    (if (i32.eqz (local.get $iid_wa))
       (then
         (return (call $dx_query_interface_result
           (local.get $obj) (local.get $out) (i32.const 0)))))
-    ;; Translate riid exactly once, then compare all four GUID words in-place.
-    (local.set $iid_wa (call $g2w (local.get $iid)))
     (call $dx_query_interface_result
       (local.get $obj) (local.get $out)
       (i32.or
@@ -1438,6 +1435,17 @@
           (i32.const 0) (i32.const 0) (i32.const 0x000000C0) (i32.const 0x46000000))
         (call $guid_words_equal (local.get $iid_wa)
           (local.get $d0) (local.get $d1) (local.get $d2) (local.get $d3)))))
+
+  (func $dx_query_interface_single (param $obj i32) (param $iid i32)
+        (param $out i32) (param $d0 i32) (param $d1 i32)
+        (param $d2 i32) (param $d3 i32) (result i32)
+    (local $iid_wa i32)
+    ;; Translate riid exactly once, then compare all four GUID words in-place.
+    (if (local.get $iid)
+      (then (local.set $iid_wa (call $g2w (local.get $iid)))))
+    (call $dx_query_interface_single_wa
+      (local.get $obj) (local.get $iid_wa) (local.get $out)
+      (local.get $d0) (local.get $d1) (local.get $d2) (local.get $d3)))
 
   (func $handle_IDirectMusic_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; IID_IDirectMusic {6536115A-7B2D-11D2-BA18-0000F875AC12}.
@@ -1826,10 +1834,96 @@
   ;; 769: CoCreateInstance(rclsid, pUnkOuter, dwClsContext, riid, ppv) — 5 args stdcall
   (func $handle_CoCreateInstance (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $hr i32) (local $clsid_d1 i32) (local $obj_guest i32)
+    (local $clsid_wa i32) (local $iid_wa i32) (local $local_class i32)
     ;; Short-circuit CLSID_DirectDrawFactory {4FD2A832-86C8-11D0-8FCA-00C04FD9189D}
     ;; from ddrawex.dll. Used by CORBIS/FASHION/HORROR/WOTRAVEL screensavers; we
     ;; manufacture an IDirectDrawFactory directly so the guest never needs the DLL.
-    (local.set $clsid_d1 (call $gl32 (local.get $arg0)))
+    ;; Translate each input GUID once. The host fallback below receives these
+    ;; same addresses; local classes compare all 128 bits in-place.
+    (if (local.get $arg0)
+      (then (local.set $clsid_wa (call $g2w (local.get $arg0)))))
+    (if (local.get $arg3)
+      (then (local.set $iid_wa (call $g2w (local.get $arg3)))))
+    (if (local.get $clsid_wa)
+      (then (local.set $clsid_d1 (i32.load (local.get $clsid_wa)))))
+
+    ;; The four Win98-era multimedia classes below have complete local
+    ;; QueryInterface contracts. Classify by full CLSID, manufacture one
+    ;; factory-owned reference, query the requested interface, then release
+    ;; that temporary reference on both success and failure.
+    ;; CLSID_DirectPlay {D1EB6D20-8923-11D0-9D97-00A0C90A43CB}.
+    (if (local.get $clsid_wa) (then
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0xD1EB6D20) (i32.const 0x11D08923)
+            (i32.const 0xA000979D) (i32.const 0xCB430AC9))
+        (then (local.set $local_class (i32.const 1))))
+      ;; CLSID_DirectMusic {636B9F10-0C7D-11D1-95B2-0020AFDC7421}.
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0x636B9F10) (i32.const 0x11D10C7D)
+            (i32.const 0x2000B295) (i32.const 0x2174DCAF))
+        (then (local.set $local_class (i32.const 2))))
+      ;; CLSID_AMMultiMediaStream {49C47CE5-9BA4-11D0-8212-00C04FC32C45}.
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0x49C47CE5) (i32.const 0x11D09BA4)
+            (i32.const 0xC0001282) (i32.const 0x452CC34F))
+        (then (local.set $local_class (i32.const 3))))
+      ;; CLSID_DirectPlayLobby {2FE8F810-B2A5-11D0-A787-0000F803ABFC}.
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0x2FE8F810) (i32.const 0x11D0B2A5)
+            (i32.const 0x000087A7) (i32.const 0xFCAB03F8))
+        (then (local.set $local_class (i32.const 4))))))
+
+    (if (local.get $local_class) (then
+      (if (i32.eqz (local.get $arg4))
+        (then
+          (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+          (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+          (return)))
+      (call $gs32 (local.get $arg4) (i32.const 0))
+      (if (local.get $arg1)
+        (then
+          (global.set $eax (i32.const 0x80040110)) ;; CLASS_E_NOAGGREGATION
+          (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+          (return)))
+      (if (i32.eq (local.get $local_class) (i32.const 1))
+        (then (local.set $obj_guest
+          (call $dx_create_com_obj (i32.const 26) (global.get $DX_VTBL_DPLAY3)))))
+      (if (i32.eq (local.get $local_class) (i32.const 2))
+        (then (local.set $obj_guest (call $dx_create_com_obj
+          (i32.const 35) (call $init_com_vtable (i32.const 3076) (i32.const 3))))))
+      (if (i32.eq (local.get $local_class) (i32.const 3))
+        (then (local.set $obj_guest (call $dx_create_com_obj
+          (i32.const 36) (call $init_com_vtable
+            (global.get $API_ID_IAMMultiMediaStream_BASE) (i32.const 19))))))
+      (if (i32.eq (local.get $local_class) (i32.const 4))
+        (then (local.set $obj_guest (call $dx_create_com_obj
+          (i32.const 27) (global.get $DX_VTBL_DPLAYLOBBY2)))))
+      (if (i32.eqz (local.get $obj_guest))
+        (then
+          (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
+          (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+          (return)))
+      (if (i32.eq (local.get $local_class) (i32.const 1))
+        (then (local.set $hr (call $dplay_query_interface_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4) (i32.const 0)))))
+      (if (i32.eq (local.get $local_class) (i32.const 2))
+        (then (local.set $hr (call $dx_query_interface_single_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)
+          (i32.const 0x6536115A) (i32.const 0x11D27B2D)
+          (i32.const 0x000018BA) (i32.const 0x12AC75F8)))))
+      (if (i32.eq (local.get $local_class) (i32.const 3))
+        (then (local.set $hr (call $dx_query_interface_single_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)
+          (i32.const 0xBEBE595C) (i32.const 0x11D09A6F)
+          (i32.const 0xC000DE8F) (i32.const 0x9D18D94F)))))
+      (if (i32.eq (local.get $local_class) (i32.const 4))
+        (then (local.set $hr (call $dplay_query_interface_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4) (i32.const 1)))))
+      (drop (call $dx_com_release_basic (local.get $obj_guest)))
+      (global.set $eax (local.get $hr))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+      (return)))
+
     ;; CLSID_ShellLink {00021401-0000-0000-C000-000000000046}. Inno Setup
     ;; requests IShellLinkA, configures it, then queries IPersistFile.
     (if (i32.eq (local.get $clsid_d1) (i32.const 0x00021401))
@@ -1899,70 +1993,6 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
-    ;; CLSID_DirectPlay {D1EB6D20-8923-11D0-9D97-00A0C90A43CB}. Bellhop
-    ;; asks for IID_IDirectPlay3A and treats E_NOINTERFACE as fatal even
-    ;; though it only needs local/no-network DirectPlay setup.
-    (if (i32.eq (local.get $clsid_d1) (i32.const 0xD1EB6D20))
-      (then
-        (local.set $obj_guest (call $dx_create_com_obj (i32.const 26) (global.get $DX_VTBL_DPLAY3)))
-        (if (i32.eqz (local.get $obj_guest))
-          (then
-            (call $gs32 (local.get $arg4) (i32.const 0))
-            (global.set $eax (i32.const 0x80004005))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)))
-        (call $gs32 (local.get $arg4) (local.get $obj_guest))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    ;; CLSID_DirectMusic {636B9F10-0C7D-11D1-95B2-0020AFDC7421}.
-    ;; The first three append-only API IDs form the minimal IUnknown vtable.
-    (if (i32.eq (local.get $clsid_d1) (i32.const 0x636B9F10))
-      (then
-        (local.set $obj_guest (call $dx_create_com_obj
-          (i32.const 35) (call $init_com_vtable (i32.const 3076) (i32.const 3))))
-        (if (i32.eqz (local.get $obj_guest))
-          (then
-            (call $gs32 (local.get $arg4) (i32.const 0))
-            (global.set $eax (i32.const 0x80004005))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)))
-        (call $gs32 (local.get $arg4) (local.get $obj_guest))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    ;; CLSID_AMMultiMediaStream {49C47CE5-9BA4-11D0-8212-00C04FC32C45}.
-    (if (i32.eq (local.get $clsid_d1) (i32.const 0x49C47CE5))
-      (then
-        (local.set $obj_guest (call $dx_create_com_obj
-          (i32.const 36) (call $init_com_vtable
-            (global.get $API_ID_IAMMultiMediaStream_BASE) (i32.const 19))))
-        (if (i32.eqz (local.get $obj_guest))
-          (then
-            (call $gs32 (local.get $arg4) (i32.const 0))
-            (global.set $eax (i32.const 0x80004005))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)))
-        (call $gs32 (local.get $arg4) (local.get $obj_guest))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    ;; CLSID_DirectPlayLobby {2FE8F810-B2A5-11D0-A787-0000F803ABFC}.
-    ;; Bellhop requests IID_IDirectPlayLobby2A and aborts startup if the
-    ;; lobby object cannot be created.
-    (if (i32.eq (local.get $clsid_d1) (i32.const 0x2FE8F810))
-      (then
-        (local.set $obj_guest (call $dx_create_com_obj (i32.const 27) (global.get $DX_VTBL_DPLAYLOBBY2)))
-        (if (i32.eqz (local.get $obj_guest))
-          (then
-            (call $gs32 (local.get $arg4) (i32.const 0))
-            (global.set $eax (i32.const 0x80004005))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)))
-        (call $gs32 (local.get $arg4) (local.get $obj_guest))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
     ;; Minimal DirectAnimation Automation placeholders for the Plus!98 MFC
     ;; screensavers. CLSIDFromProgID below writes private sentinel CLSIDs for
     ;; DAView/DAStatics; these objects expose IDispatch enough for tracing and
@@ -1994,10 +2024,10 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
     (local.set $hr (call $host_com_create_instance
-      (call $g2w (local.get $arg0))   ;; rclsid → WASM addr
+      (local.get $clsid_wa)           ;; rclsid → WASM addr
       (local.get $arg1)               ;; pUnkOuter (guest addr, usually NULL)
       (local.get $arg2)               ;; dwClsContext
-      (call $g2w (local.get $arg3))   ;; riid → WASM addr
+      (local.get $iid_wa)             ;; riid → WASM addr
       (local.get $arg4)))             ;; ppv (guest addr)
     ;; Check if we need async DLL load (host returns 0x800401F0 = CO_E_DLLNOTFOUND)
     (if (i32.eq (local.get $hr) (i32.const 0x800401F0))

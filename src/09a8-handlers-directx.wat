@@ -7571,15 +7571,13 @@
   ;; family 0: IDirectPlay2A/3A (47-slot vtable); family 1:
   ;; IDirectPlayLobbyA/Lobby2A (15-slot vtable). Unicode and later generations
   ;; need different string semantics or additional slots, so fail honestly.
-  (func $dplay_query_interface (param $obj i32) (param $iid i32)
+  (func $dplay_query_interface_wa (param $obj i32) (param $iid_wa i32)
         (param $out i32) (param $family i32) (result i32)
-    (local $iid_wa i32) (local $supported i32)
+    (local $supported i32)
     (if (i32.eqz (local.get $out))
       (then (return (i32.const 0x80004003)))) ;; E_POINTER
-    (if (local.get $iid)
+    (if (local.get $iid_wa)
       (then
-        ;; One guest-to-WASM translation covers every candidate GUID.
-        (local.set $iid_wa (call $g2w (local.get $iid)))
         (local.set $supported
           (call $guid_words_equal (local.get $iid_wa)
             (i32.const 0) (i32.const 0)
@@ -7609,6 +7607,16 @@
                 (i32.const 0xA0004F9C) (i32.const 0x5E4205C9))))))))
     (call $dx_query_interface_result
       (local.get $obj) (local.get $out) (local.get $supported)))
+
+  (func $dplay_query_interface (param $obj i32) (param $iid i32)
+        (param $out i32) (param $family i32) (result i32)
+    (local $iid_wa i32)
+    ;; One guest-to-WASM translation covers every candidate GUID.
+    (if (local.get $iid)
+      (then (local.set $iid_wa (call $g2w (local.get $iid)))))
+    (call $dplay_query_interface_wa
+      (local.get $obj) (local.get $iid_wa)
+      (local.get $out) (local.get $family)))
 
   (func $handle_IDirectPlay3_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $dplay_query_interface

@@ -14,6 +14,26 @@ const extraWat = String.raw`
   (func (export "test_dx_refcount") (param $obj i32) (result i32)
     (load.field DxObject refcount (call $dx_from_this (local.get $obj))))
 
+  (func (export "test_dx_live_count") (result i32)
+    (local $i i32) (local $count i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $DX_MAX)))
+      (if (i32.load (i32.add (global.get $DX_OBJECTS)
+            (i32.mul (local.get $i) (i32.const 32))))
+        (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $count))
+
+  (func (export "test_cocreate")
+      (param $clsid i32) (param $outer i32) (param $iid i32) (param $out i32)
+      (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_CoCreateInstance
+      (local.get $clsid) (local.get $outer) (i32.const 1)
+      (local.get $iid) (local.get $out) (i32.const 0))
+    (global.get $eax))
+
   (func (export "test_call_directplay3_qi")
       (param $obj i32) (param $iid i32) (param $out i32) (result i32)
     (global.set $esp (i32.const 0x00300000))
@@ -76,6 +96,9 @@ async function main() {
   };
 
   const iunknown = writeGuid([0, 0, 0x000000c0, 0x46000000]);
+  const clsidDirectPlay = writeGuid([0xd1eb6d20, 0x11d08923, 0xa000979d, 0xcb430ac9]);
+  const clsidDirectPlayWrongSuffix = writeGuid([0xd1eb6d20, 0, 0, 0]);
+  const clsidLobby = writeGuid([0x2fe8f810, 0x11d0b2a5, 0x000087a7, 0xfcab03f8]);
   const dplay2a = writeGuid([0x9d460580, 0x11cfa822, 0x80000c96, 0x824e53c7]);
   const dplay3a = writeGuid([0x133efe41, 0x11d032dc, 0xa000fb9c, 0xcb430ac9]);
   const dplay3w = writeGuid([0x133efe40, 0x11d032dc, 0xa000fb9c, 0xcb430ac9]);
@@ -136,6 +159,35 @@ async function main() {
     e.test_call_lobby2_qi(lobby, iunknown, out) === 0 && e.test_dx_refcount(lobby) === 2);
   check('Lobby2 references balance to destruction',
     e.test_call_lobby2_release(lobby) === 1 && e.test_call_lobby2_release(lobby) === 0);
+
+  const liveBeforeFactories = e.test_dx_live_count();
+  check('CoCreateInstance validates the complete DirectPlay CLSID',
+    e.test_cocreate(clsidDirectPlayWrongSuffix, 0, dplay3a, out) !== 0 &&
+    dv.getUint32(wa(out), true) === 0 && e.test_dx_live_count() === liveBeforeFactories);
+  check('CoCreateInstance rejects the Unicode DirectPlay sibling without leaking',
+    (e.test_cocreate(clsidDirectPlay, 0, dplay3w, out) >>> 0) === 0x80004002 &&
+    dv.getUint32(wa(out), true) === 0 && e.test_dx_live_count() === liveBeforeFactories);
+  check('CoCreateInstance rejects DirectPlay aggregation and clears output',
+    (e.test_cocreate(clsidDirectPlay, 1, dplay3a, out) >>> 0) === 0x80040110 &&
+    dv.getUint32(wa(out), true) === 0 && e.test_dx_live_count() === liveBeforeFactories);
+  check('CoCreateInstance returns DirectPlay3A with one caller-owned reference',
+    e.test_cocreate(clsidDirectPlay, 0, dplay3a, out) === 0 &&
+    (dv.getUint32(wa(out), true) >>> 0) !== 0 &&
+    e.test_dx_refcount(dv.getUint32(wa(out), true)) === 1);
+  check('the CoCreateInstance DirectPlay reference releases to destruction',
+    e.test_call_directplay3_release(dv.getUint32(wa(out), true)) === 0 &&
+    e.test_dx_live_count() === liveBeforeFactories);
+
+  check('CoCreateInstance rejects a cross-family lobby IID without leaking',
+    (e.test_cocreate(clsidLobby, 0, dplay3a, out) >>> 0) === 0x80004002 &&
+    dv.getUint32(wa(out), true) === 0 && e.test_dx_live_count() === liveBeforeFactories);
+  check('CoCreateInstance returns Lobby2A with one caller-owned reference',
+    e.test_cocreate(clsidLobby, 0, lobby2a, out) === 0 &&
+    (dv.getUint32(wa(out), true) >>> 0) !== 0 &&
+    e.test_dx_refcount(dv.getUint32(wa(out), true)) === 1);
+  check('the CoCreateInstance lobby reference releases to destruction',
+    e.test_call_lobby2_release(dv.getUint32(wa(out), true)) === 0 &&
+    e.test_dx_live_count() === liveBeforeFactories);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) process.exit(1);
