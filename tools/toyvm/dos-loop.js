@@ -812,6 +812,26 @@ class CodeCache {
     // subgraph has ever needed here, so recycling early costs a re-decode that
     // was coming anyway and buys the guarantee that a compile is worth caching.
     if (this.arenaEnd - this.arenaNext < isa.THREAD_SIZE >> 2) {
+      // Every program here is about to have its arena words handed out to
+      // different code, so each one is dead -- and saying so is not
+      // bookkeeping, it is the only thing that stops a REMEMBERED OPERAND
+      // PLAN from writing through it afterwards. A plan holds prog objects
+      // and patches `arena[(prog.arenaBase >> 2) + q]` directly, guarding
+      // only on `prog.live`; clearing the maps below makes a program
+      // unreachable through every other path but leaves it reachable through
+      // `this.plans`, still marked live, still naming an arena address that
+      // now belongs to somebody else. COUNTDWN.EXE is what that costs. Its
+      // blitter keeps two loop counters inside its own instruction stream
+      // (`mov [0x1cd58],eax` into the imm32 of the `add edi,imm32` two
+      // instructions below it), so the plan for that site fires tens of
+      // thousands of times; after the fifth recycle one of those writes
+      // landed in a live block of some other routine, and the run handed
+      // back at 860:273 -- the patched immediate itself, executed as a guest
+      // address -- and wandered the IVT until the stuck detector stopped it
+      // 2M dispatches later. A wrong handler index in that word instead of a
+      // wrong address is the same bug arriving as a wasm `unreachable`.
+      for (const list of this.regions.values()) for (const prog of list) prog.live = false;
+      this.plans.clear();
       this.regions.clear();
       this.blockIndex.clear();
       this.byPara.clear();

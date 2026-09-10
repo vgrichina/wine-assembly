@@ -7,6 +7,7 @@
 //   node tools/toyvm/run-dos.js mars.exe --png=/tmp/mars.png --dispatches=200m
 //   node tools/toyvm/run-dos.js mars.exe --variant=switch --mouse=6:0 --shots=/tmp/m
 //   node tools/toyvm/run-dos.js mars.exe --trace-int --report
+//   node tools/toyvm/run-dos.js x.exe --trace-entry=1013400-1013560   # a window
 //   node tools/toyvm/run-dos.js DASH.EXE --chain4    # pretend it never unchained
 //
 // The point of this is not emulation for its own sake -- it is to get the
@@ -113,6 +114,19 @@ function parseDumpAt(spec) {
   };
 }
 
+// --trace-entry=N | --trace-entry=FROM-TO -- which HANDBACKS to print entry
+// lines for. A bare N is the first N, which is the right window for a program
+// that derails on its way in; a range is the only way to see one that derails
+// on its way out. COUNTDWN.EXE runs a million handbacks before it leaves its
+// own code, and printing them all is 60MB of log to find four lines in.
+function parseTraceEntry(spec) {
+  if (spec === undefined || spec === null || spec === '') return null;
+  const s = String(spec);
+  const m = /^([0-9.]+[kmb]?)-([0-9.]+[kmb]?)$/i.exec(s);
+  if (m) return { from: count(m[1]), to: count(m[2]) };
+  return { from: 0, to: count(s) };
+}
+
 const ld32 = (mem, at) =>
   (mem[at] | (mem[at + 1] << 8) | (mem[at + 2] << 16) | (mem[at + 3] << 24)) >>> 0;
 
@@ -158,6 +172,7 @@ function writePng(file, mem, palette, video) {
 async function runDos(o) {
   const {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6, seconds = 0,
+    // A number (the first N handbacks) or a { from, to } handback window.
     traceInt = false, traceFault = false, traceEntry = 0, traceV86 = false,
     noCache = false, smcFlush = false, wasmDecode = true, fuse = true,
     lazyFlags = true, fuseCond = true, deadFlags = true, crossFlags = true,
@@ -282,6 +297,12 @@ async function runDos(o) {
     // why the address is a machine setting and why it is not free to raise.
     pspSeg = null, loadSeg = null,
   } = o;
+  // One shape for the entry window whichever way it arrived: a bare number
+  // from an importer means "the first N handbacks", a { from, to } is a
+  // window, and null is off.
+  const entryWindow = typeof traceEntry === 'number'
+    ? (traceEntry ? { from: 0, to: traceEntry } : null)
+    : (traceEntry || null);
   setCpuLevel(cpu);
   // Before anything can finish the handler table, because the twins ARE table
   // entries. Asking for them once the table is built is a caller ordering bug
@@ -450,7 +471,7 @@ async function runDos(o) {
           + `${ax === before[0] ? '' : ` -> ax=${ax.toString(16)}`}`
           + `${ok ? '' : '   UNHANDLED'}`);
       },
-      onEntry: (!report && !traceEntry && !traceV86) ? undefined : (cs, ip, handbacks, dispatched) => {
+      onEntry: (!report && !entryWindow && !traceV86) ? undefined : (cs, ip, handbacks, dispatched) => {
         // Every crossing of the virtual-8086 boundary, in both directions, with
         // the vector that caused the one going in and the ring-0 stack pointer
         // it landed on. A V86 guest and its monitor are two programs sharing a
@@ -486,7 +507,7 @@ async function runDos(o) {
         // descriptor and the number itself says nothing about where the code
         // is, so a trace of bare selectors cannot tell a legitimate jump from
         // one through a descriptor that does not exist.
-        if (traceEntry && handbacks < traceEntry) {
+        if (entryWindow && handbacks >= entryWindow.from && handbacks < entryWindow.to) {
           const pe = vm.exports.get_cr0() & 1;
           // The registers as well as the address. An extender's protected-mode
           // INT 21h dispatcher is one long compare ladder on AH, and which rung
@@ -880,7 +901,7 @@ async function main() {
     traceInt: flag('trace-int'),
     traceFault: flag('trace-fault'),
     traceV86: flag('trace-v86'),
-    traceEntry: flag('trace-entry') ? 40 : count(arg('trace-entry'), 0),
+    traceEntry: flag('trace-entry') ? { from: 0, to: 40 } : parseTraceEntry(arg('trace-entry')),
     noCache: flag('no-cache'),
     smcFlush: flag('smc-flush'),
     // The wasm decoder is on by default. Its A/B partner: what it decodes is
