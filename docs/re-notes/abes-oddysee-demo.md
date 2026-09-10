@@ -350,6 +350,26 @@ closes its browser/server at completion. Remaining Abe issues are the legacy
 large-batch CLI input failure and the synchronous Unzip helper route, not
 original-package extraction, registered gameplay, or live child handoff.
 
+### Real mouse Unzip verification (2026-09-10)
+
+Repeated the full browser installer-to-gameplay probe at `945aae84`, replacing
+the posted Unzip command with `page.mouse.click`. The target is control ID 1
+(`0x1000a`); its exported screen rectangle is scaled through the actual
+`#screen` canvas DOM rectangle. No direct WM_COMMAND is sent for Unzip.
+The short initial and success notice dismissals still use `send_message`.
+
+The original installer again reports nine files at step 5080, exits normally,
+and launches its real VFS child. That child reaches RuptureFarms at step 1406
+and responds to Right through 1414. The success and before/after screenshots
+listed above were replaced by this run and visually inspected. The bounded
+probe exits 0 and closes Chrome and its temporary server.
+
+This narrows the remaining helper issue: despite its name, CLI
+`dlg-input-click` constructs WM_COMMAND with the child HWND, not mouse
+down/up events. Its synchronous abandonment is not evidence that clicking
+the original installer's Unzip button fails. No renderer changes, guest
+patches, host extraction, or scheduler overrides were needed for this test.
+
 ### Historical larger-batch route (CLI)
 
 At `--batch-size=1000000`, the registered route reaches the main menu near

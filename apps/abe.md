@@ -7,13 +7,14 @@
 | `test/binaries/shareware/abe/Abes_Oddysee_demo/ABEODD.EXE` | 32MB | Original WinZip self-extractor; completes inside the emulator. |
 | `test/binaries/shareware/abe/installed/abedemo.exe` | 914KB | Guest-installer output. **Registered gameplay target.** |
 
-**Current status (2026-09-09):** `node tools/install-abe-demo.js` produces and
+**Current status (2026-09-10):** `node tools/install-abe-demo.js` produces and
 hash-verifies all nine original files. The frozen gameplay route reaches
 RuptureFarms and walks right through normal keyboard input; screenshots
 inspected. The original installer also completes in a headless browser,
 automatically launches its VFS child, and that child reaches gameplay and
-walks right. The old large-batch CLI test still fails at the menu, and the
-synchronous Unzip helper remains unsafe (use the guest queue). See the
+walks right. A real browser mouse click on Unzip also passes this full route.
+The old large-batch CLI test still fails at the menu, and the synthetic
+`dlg-input-click` command helper remains unsafe (use the guest queue). See the
 [current installer and input notes](../docs/re-notes/abes-oddysee-demo.md).
 
 **Image base:** 0x00400000
