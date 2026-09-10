@@ -53,20 +53,20 @@ assert.strictEqual(shell.selectedRunSlice('jazz2_demo', false), 1000,
 
 const fs = require('fs');
 const path = require('path');
+const { hasPageScript } = require('./browser-runtime-scripts');
 const hostSource = fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8');
-const indexSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const shellSource = fs.readFileSync(path.join(__dirname, '..', 'lib/browser-shell.js'), 'utf8');
 assert(hostSource.includes('const activeStepsPerSlice = Math.max(1, (self.stepsPerSlice | 0) || stepsPerSlice);'),
   'the cooperative host must honor browser-shell slices below 1k');
 assert(hostSource.includes('const configuredSteps = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);'),
   'the guest-Worker backend should retain its 1k messaging floor');
-assert(/lib\/browser-shell\.js\?v=\d+/.test(indexSource),
-  'the page cache-busts the Uplink slice policy');
+assert(hasPageScript('lib/browser-shell.js'),
+  'the page centrally versions the Uplink slice policy');
 assert(shellSource.includes("if (Number(change.data) === 2) applyRendererSlice('opengl');"),
   'Uplink keeps the setup quantum until a real DirectDraw frame selects Software');
 assert(!shellSource.includes("applyRendererSlice(Number(change.data) === 2 ? 'opengl' : 'software')"),
   'the registry write must not throttle Software before renderer restart completes');
-assert(/host\.js\?v=\d+/.test(indexSource),
-  'the page cache-busts cooperative slice enforcement');
+assert(hasPageScript('host.js'),
+  'the page centrally versions cooperative slice enforcement');
 
 console.log('PASS browser run-slice policy distinguishes Jazz Worker and cooperative backends');

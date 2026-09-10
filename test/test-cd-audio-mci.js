@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { mountCue, parseCue, SECTOR_BYTES } = require('../lib/cdrom');
 const { createAudioHost } = require('../lib/host-audio');
+const { hasPageScript } = require('./browser-runtime-scripts');
 
 const cue = `
 FILE "data.bin" BINARY
@@ -50,12 +51,11 @@ assert.deepStrictEqual(sharedLoads, [], 'shared BIN should remain lazy while rea
 
 const root = path.join(__dirname, '..');
 const browserShellSource = fs.readFileSync(path.join(root, 'lib/browser-shell.js'), 'utf8');
-const indexSource = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 assert(browserShellSource.includes('if (app.cdAudio)'));
 assert(browserShellSource.includes('loadTrack: name => WineAssembly.fetchAssetBytes'));
-assert(/<script src="lib\/cdrom\.js\?v=\d+"><\/script>/.test(indexSource));
-assert(/<script src="lib\/browser-shell\.js\?v=\d+"><\/script>/.test(indexSource));
-assert(/<script src="lib\/host-audio\.js\?v=\d+"><\/script>/.test(indexSource));
+assert(hasPageScript('lib/cdrom.js'));
+assert(hasPageScript('lib/browser-shell.js'));
+assert(hasPageScript('lib/host-audio.js'));
 
 const sizes = {
   'data.bin': SECTOR_BYTES,

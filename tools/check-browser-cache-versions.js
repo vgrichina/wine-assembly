@@ -35,6 +35,16 @@ function readRuntimeFiles(root = ROOT) {
   return files;
 }
 
+function readTestFiles(root = ROOT) {
+  const files = new Map();
+  for (const entry of fs.readdirSync(path.join(root, 'test'), { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.js')) continue;
+    const name = `test/${entry.name}`;
+    files.set(name, fs.readFileSync(path.join(root, name), 'utf8'));
+  }
+  return files;
+}
+
 function collectVersionRefs(files) {
   const refs = [];
   const quotedVersion = /(['"`])([^'"`\s]+\.js)\?v=(\d+)\1/g;
@@ -63,12 +73,22 @@ function collectScriptList(text, name) {
   return [...match[1].matchAll(/(['"])([^'"]+\.js)\1/g)].map(item => item[2]);
 }
 
-function validateCacheVersions(files) {
+function validateCacheVersions(files, testFiles = new Map()) {
   const errors = [];
   const refs = collectVersionRefs(files);
   for (const ref of refs) {
     errors.push(`${ref.sourceFile}:${ref.line} hand-writes ${ref.asset}?v=${ref.version}; ` +
       'browser code must inherit the one WINE_SOURCE_VERSION');
+  }
+  for (const [sourceFile, text] of testFiles) {
+    // Match both a literal foo.js?v=9 and a regex spelling such as
+    // foo\.js\?v=(\d+). Non-JS asset fixtures and inherited non-numeric
+    // worker keys remain legitimate.
+    const numericJsVersion = /\.js(?:\\)?\?v=(?:\(?\\d|\d)/g;
+    for (let numeric; (numeric = numericJsVersion.exec(text));) {
+      errors.push(`${sourceFile}:${lineAt(text, numeric.index)} re-states a numeric JavaScript ` +
+        'cache key; assert membership in the shared source-version graph instead');
+    }
   }
 
   const indexText = files.get('index.html') || '';
@@ -199,11 +219,16 @@ function selfTest() {
   assert.match(changed('index.html', ', "host.js"', ''), /host\.js exactly once/);
   assert.match(changed('lib/guest-worker.js', 'WORKER_SCRIPTS.map(versionedWorkerUrl)',
     'WORKER_SCRIPTS'), /dependencies must inherit/);
+  const badAssertion = new Map([
+    ['test/test-old-cache-key.js', String.raw`assert(/host\.js\?v=(\d+)/);`],
+  ]);
+  assert.match(validateCacheVersions(good, badAssertion).errors.join('\n'),
+    /test-old-cache-key[\s\S]*re-states a numeric JavaScript cache key/);
 }
 
 function main() {
   if (process.argv.includes('--self-test')) selfTest();
-  const result = validateCacheVersions(readRuntimeFiles());
+  const result = validateCacheVersions(readRuntimeFiles(), readTestFiles());
   if (result.errors.length) {
     for (const error of result.errors) console.error(`browser cache version: ${error}`);
     process.exitCode = 1;
@@ -216,5 +241,6 @@ function main() {
 if (require.main === module) main();
 
 module.exports = {
-  collectScriptList, collectVersionRefs, normalizeAsset, validateCacheVersions,
+  collectScriptList, collectVersionRefs, normalizeAsset, readTestFiles,
+  validateCacheVersions,
 };
