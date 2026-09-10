@@ -1,7 +1,19 @@
 # Production desktop idle CPU audit
 
 Goal: all non-realtime games on the production desktop should use little CPU
-while idle. **Not complete; fixes below are local, not deployed.**
+while idle. **Local acceptance complete; merged, not deployed.**
+
+2026-09-10 final status: user authorized the shared merge and explicitly
+accepted synthesis CPU around15%. Main fast-forwarded to4a341973. Existing
+tracked edits were restored with conflict reconciliation; recovery autostash
+6eb880b3 is retained, and unrelated work remains unstaged. Post-merge paired
+build passes (canonical1073704/compat1074165, layout e5ea7699f58899e4), as do
+browser park/cooperative deadlines, clock43/context, Win16 WaitMessage,
+dialog timer/posted/host input, touch and single-app regressions. No unresolved
+merge conflicts. Historical open checklists below describe earlier stages;
+the shared merge is no longer blocked. Quiet-box precision and realtime
+Marbles investigations are optional follow-ups, not outstanding turn-based
+idle fixes. Production remains untouched as requested.
 
 User clarification: **do not deploy to production**. The production desktop
 inventory defines which games to fix; implementation and acceptance stay local.
