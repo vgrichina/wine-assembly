@@ -194,6 +194,13 @@ async function runDos(o) {
     // page uses. `true` for the defaults, or an options object -- see
     // tools/toyvm/region-live.js.
     regionJit = null,
+    // `--tree-fold`: the decode-time expression-tree fold
+    // (tools/toyvm/tree-fold.js). OFF by default. `true` for the defaults, or
+    // an options object. Like the region JIT it installs into the running
+    // module, and unlike it, it is meant to be INVISIBLE -- it charges the
+    // dispatches it removes, so the two arms must reach the same frame at the
+    // same step count and any difference is a bug.
+    treeFold = null,
     smcCensus = false, watch = [],
     stopText = null,
     traceIo = null,
@@ -458,9 +465,44 @@ async function runDos(o) {
     return cellsCount;
   };
 
+  // The tree fold's driver, built BEFORE the session because the code cache
+  // takes it at construction, and handed the session immediately after because
+  // installing has to reach into that cache. Both this and the region JIT
+  // append handlers to the same table through `opts.regions`, so they cannot
+  // both be on: whichever built last would own the ordinals the other's arena
+  // words were written against.
+  let foldOpts = treeFold;
+  if (foldOpts && regionJit) {
+    // ...unless the fold came from TOYVM_TREE_FOLD rather than the command
+    // line, in which case the run asked for a region JIT and something else
+    // asked for the fold everywhere. The explicit request wins; a suite-wide
+    // environment switch must not fail a test that was written about regions.
+    if (foldOpts.fromEnv) foldOpts = null;
+    else throw new Error('--tree-fold and --region-jit both append to the handler table; pick one');
+  }
+  const folder = foldOpts
+    ? new (require('./tree-fold').TreeFolder)({
+      session: null, vm, machine, repFast,
+      // The module options the RUNNING instance was emitted with, for the same
+      // reason region-live.js needs them: the rebuild has to be told everything
+      // the first build was, or the swap lands the guest on a machine where the
+      // handler indices its arena is full of mean something else.
+      build: { hist: hist > 0 || histPairs > 0, ipHist: blockHits, lazyFlags, fuseCond },
+      portIn: (p, w) => machine.portIn(p, w),
+      portOut: (p, v, w) => machine.portOut(p, v, w),
+      log,
+      ...(foldOpts === true ? {} : foldOpts),
+    })
+    : null;
+
   const session = new DosSession(vm, machine, {
     slice, noCache, smcFlush, wasmDecode, fuse, deadFlags, crossFlags, traceBlocks, spinLoops,
     regSpec, regionAt, regionSucc, regionBytes, regionCodeBits, volatileCode,
+    // The driver IS the hook object: compile.js reads `at`/`arity`/`base`/
+    // `minOps` off it and calls `want`/`note` on it. One object rather than a
+    // copied-out interface, so a counter the compiler bumps is the counter the
+    // report prints.
+    treeFold: folder,
     traceDeadFlags: traceDeadFlags ? ((s) => log(s)) : null,
     mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit, pitClock,
     stuckWork, latticeClock,
@@ -640,6 +682,7 @@ async function runDos(o) {
       },
     },
   });
+  if (folder) folder.session = session;
   // Built after the session because it installs into it, and given the same
   // port closures the module was made with -- the new instance imports them
   // again, and a demo whose ports went missing simply stops hearing its own
@@ -688,6 +731,9 @@ async function runDos(o) {
     // two slices costs a batch run nothing, and the page (which cannot afford
     // it) hands the same pipeline to a worker instead.
     if (jit) { jit.pump(); if (jit.pending) await jit.pending; }
+    // Same seam, same reason: `pump` builds a module and moves the guest onto
+    // it, which cannot happen while a slice is in wasm.
+    if (folder) { folder.tick(); if (folder.needsInstall()) await folder.pump(); }
     // Every trip. Sampling this every 64th was a real overrun and not a small
     // one: a step is a whole slice, and a program whose loops the compiler
     // cannot resolve spends most of its wall clock in JS compiling them, so 64
@@ -745,7 +791,7 @@ async function runDos(o) {
   const {
     dispatched, handbacks, ints, irqs, smcBreaks, smcPatched, smcFastRepairs, repairWhy, traps, icebps, stuckAt, blockedOn32, badSelector,
     compiles, compiledWords, arenaResets, unimplemented, regions, jtab, smcSites, retiredPatches,
-    deadFlagsDropped, tracedBlocks, spinBlocks, specOps, rep, volatile,
+    deadFlagsDropped, tracedBlocks, spinBlocks, specOps, treeFolds, rep, volatile,
   } = session.stats();
 
   if (bestPng) keepBest();
@@ -775,7 +821,11 @@ async function runDos(o) {
     guestSeconds: session.guestSeconds(dispatched),
     guestCpuSecs: guestCpuUs / 1e6,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets, deadFlagsDropped,
-    tracedBlocks, spinBlocks, specOps, rep, volatile,
+    tracedBlocks, spinBlocks, specOps, treeFolds, rep, volatile,
+    // Everything the tree fold did, or null when it was off. Kept whole rather
+    // than flattened so a harness can read the decline histogram without
+    // parsing the printed line.
+    tree: folder ? folder.stats() : null,
     smcBreaks, smcPatched, smcFastRepairs, repairWhy, traps, icebps, smcSites, retiredPatches,
     stuckAt, blockedOn32, badSelector, ranOutOfTime,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
@@ -863,7 +913,15 @@ function arg(name, fallback) {
   const hit = process.argv.slice(2).find(a => a.startsWith(`--${name}=`));
   return hit === undefined ? fallback : hit.slice(name.length + 3);
 }
-const flag = (n) => process.argv.slice(2).includes(`--${n}`);
+// `TOYVM_TREE_FOLD=1` turns `--tree-fold` on for a process that was not given
+// it. It exists for ONE job: running the whole existing test suite with the
+// fold on. Those tests shell out to this script with argument lists of their
+// own, so without an environment override the "does anything already written
+// still pass with the flag on" gate could only be met by editing twenty-two
+// test files to pass a flag they have no opinion about. Nothing else should
+// reach for it -- a run that wants the fold should say so on its command line.
+const flag = (n) => process.argv.slice(2).includes(`--${n}`)
+  || (n === 'tree-fold' && process.env.TOYVM_TREE_FOLD === '1');
 // Repeatable, and comma-separated within one flag, so several regions can be
 // asked for in one run without repeating the option four times.
 const argAll = (name) => process.argv.slice(2)
@@ -956,6 +1014,27 @@ async function main() {
       gateAt: Number(arg('region-jit-gate', 1)),
       gateIters: count(arg('region-jit-gate-iters'), 4000),
       log: flag('region-jit-verbose') ? console.log : (() => {}),
+    } : null,
+    // `--tree-fold` folds a block's straight-line arithmetic into one generated
+    // handler (tools/toyvm/tree-fold.js). OFF by default. `--tree-fold-min=N`
+    // is the run length it takes to be worth one (4, the census's own
+    // threshold); the two caps bound how much wasm a run will generate and how
+    // many times it will stop to rebuild the module.
+    treeFold: flag('tree-fold') ? {
+      minOps: Number(arg('tree-fold-min', 4)),
+      maxTrees: count(arg('tree-fold-max'), 256),
+      // Four installs, not forty. Every install builds a module and moves the
+      // guest onto a COLD instance, so the wasm engine re-tiers 1700 handlers
+      // from scratch each time -- measured on ACCIDENT at 8M dispatches, 18
+      // installs ran the guest at 8.1M dispatches/s against a 15.6M baseline,
+      // and the same run capped at 2 installs ran at 18.0M. The install policy
+      // is not a tuning knob here, it is the difference between the fold
+      // winning and losing.
+      maxInstalls: count(arg('tree-fold-installs'), 4),
+      batchMin: Number(arg('tree-fold-batch', 64)),
+      batchWait: Number(arg('tree-fold-wait', 400)),
+      fromEnv: !process.argv.slice(2).includes('--tree-fold'),
+      log: flag('tree-fold-verbose') ? console.log : (() => {}),
     } : null,
     traceInt: flag('trace-int'),
     traceFault: flag('trace-fault'),
@@ -1250,7 +1329,28 @@ async function main() {
     + `${r.spinBlocks ? `, ${r.spinBlocks} spin loops` : ''}`
     // ...and how many ops had their register index pinned to a literal. Also
     // step-neutral: the same handler runs, reaching the same register.
-    + `${r.specOps ? `, ${r.specOps} regs pinned` : ''})`
+    + `${r.specOps ? `, ${r.specOps} regs pinned` : ''}`
+    // ...and how many straight-line runs were folded into one generated
+    // handler. Also step-neutral by construction: the fold charges the
+    // dispatches it removed (docs/toyvm-tree-fold.md).
+    + `${r.treeFolds ? `, ${r.treeFolds} tree folds` : ''})`
+    // The fold's own ledger: what it built, what it cost to install, and the
+    // work list -- why the runs it did NOT take were declined.
+    + (r.tree
+      ? `\n  tree fold: ${r.tree.trees} handler(s) over ${r.tree.installs} install(s), `
+        + `${r.tree.folds} substitution(s) covering ${r.tree.foldedOps} guest ops, `
+        + `${(r.tree.watBytes / 1024).toFixed(1)}KB of WAT`
+        + `${r.tree.capped ? ' (capped)' : ''}`
+        + `, ${r.tree.ms.instantiate.toFixed(0)}ms building + ${r.tree.ms.swap.toFixed(0)}ms swapping`
+        + (r.tree.why.size
+          ? `\n  tree declines: ` + [...r.tree.why].sort((a, b) => b[1] - a[1])
+            .map(([k, n]) => `${k} ${n}`).join(', ')
+          : '')
+        + (r.tree.declinedTrees.size
+          ? `\n  tree lowering declines: ` + [...r.tree.declinedTrees]
+            .map(([k, n]) => `${k} ${n}`).join(', ')
+          : '')
+      : '')
     // A handful of these is a packed program unpacking itself and is expected.
     // Thousands, against a compile count that keeps climbing, is recompile
     // thrash: a program storing data into a paragraph a region happens to have

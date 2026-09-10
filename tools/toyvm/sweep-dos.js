@@ -106,6 +106,11 @@ async function runOne(exe, o) {
             sampleAfter: Math.floor(o.budget / 4), profileFor: Math.floor(o.budget / 4),
             gateAt: 0, log: quiet,
           } : null,
+          // `--tree-fold`, corpus-wide, for the same reason: the fold is
+          // supposed to be INVISIBLE (it charges the dispatches it removes), so
+          // an off/on pair through sweep-diff.js is its correctness gate and
+          // not a measurement. See docs/toyvm-tree-fold.md.
+          treeFold: o.treeFold ? { log: quiet } : null,
         });
         // Two checks, and they catch different things. ACROSS variants: four
         // shells that did not execute the same instructions cannot be compared,
@@ -185,6 +190,7 @@ function child(exe, o) {
       `--sample-after=${o.sampleAfter}`, `--sample-from=${o.sampleFrom}`,
       `--min-ops=${o.minOps}`, `--variants=${o.variants.join(',')}`,
       ...(o.regionJit ? ['--region-jit'] : []),
+      ...(o.treeFold ? ['--tree-fold'] : []),
       ...(o.latticeClock ? ['--lattice-clock'] : [])];
     const p = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
@@ -422,6 +428,11 @@ async function main() {
     // it into "installed nothing, compared nothing". Its agreement half still
     // runs.
     regionJit: flag('region-jit'),
+    // `--tree-fold`: run every shell with the expression-tree fold on, so a
+    // corpus-wide off/on pair can be diffed. Independent of --region-jit for
+    // the same reason as --lattice-clock, except that these two are mutually
+    // exclusive at the run level (both append to the handler table).
+    treeFold: flag('tree-fold'),
     // `--lattice-clock`: anchor the slice grid and the audio render to the
     // absolute dispatch count (run-dos.js). Independent of --region-jit so an
     // on/off sweep pair can set it on BOTH arms; without that the two arms run

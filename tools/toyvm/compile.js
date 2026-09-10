@@ -19,6 +19,7 @@ const isa = require('./isa');
 const { decodeOne, H } = require('./decode');
 const { ARITY, FUSE, TRACE, SPIN, PSPIN, SPEC, applyExtract, NOFLAG, FLAG_EFFECTS,
   prepareTables, HANDLERS } = require('./emit');
+const { eligibleRuns, treeKey, blockWidth: treeBlockWidth } = require('./tree-fold');
 
 // Per-handler facts the compile loop asks for on every program. HANDLERS
 // grows in prepareTables (flagless twins, register specializations), so these
@@ -802,6 +803,72 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     }
   }
 
+  // The expression-tree fold, LAST, after every pass that swaps a handler --
+  // it captures the ops that are actually in the arena, twins and all, so
+  // anything that rewrites one afterwards would be rewriting a word the tree
+  // has already inlined. See tools/toyvm/tree-fold.js for the whole design and
+  // docs/toyvm-tree-fold.md for what it buys.
+  //
+  // THE ARENA DOES NOT CHANGE SHAPE. Unlike fusion, which splices the second
+  // op's word out, this overwrites the run's FIRST word with the tree's handler
+  // index and leaves every other word of the run exactly where it is, as
+  // operands the tree steps over. Word count, block boundaries, fixup indices
+  // and the arena-recycle point are therefore all identical to an unfolded
+  // compile -- which is what lets `--tree-fold` be checked as a transformation
+  // (same frames, same wav) rather than measured as a retiming.
+  //
+  // After regSpec on purpose, and the cost is that the two do not compose: a
+  // specialized twin is not in the census's decomposition table, so it
+  // classifies as an unsupported op and ends the run. `--reg-spec` is opt-in
+  // and off by default; making them compose means teaching the census's table
+  // about SPEC, which is that file's business and not this one's.
+  let treeFolds = 0;
+  if (opts.treeFold && !opts.oneInsn) {
+    const tf = opts.treeFold;
+    const fixupAt = new Set(fixups.map(f => f.wordIndex));
+    for (let b = 0; b < blockStarts.length; b++) {
+      const start = blockStarts[b];
+      const end = b + 1 < blockStarts.length ? blockStarts[b + 1] : words.length;
+      const at = opsOf(start, end);
+      if (!at) continue;                     // arity and arena disagree: touch nothing
+      const ops = at.map((p) => {
+        const args = [];
+        for (let k = 1; k <= ARITY[words[p]]; k++) args.push(words[p + k]);
+        return { fn: words[p], args, at: p };
+      });
+      const runs = eligibleRuns(ops, treeBlockWidth(ops), { minOps: tf.minOps, why: tf.why });
+      const lin = (codeBase + blockIps[b]) & mask;
+      for (const run of runs) {
+        const last = run[run.length - 1];
+        const from = run[0].at, to = last.at + 1 + ARITY[last.fn];
+        // A fixup inside the run would point at a word the tree now owns, and
+        // resolving it would write an arena address into the tree's operands.
+        // Nothing foldable emits one, so this is a guard rather than a case.
+        let hasFixup = false;
+        for (let w = from; w < to; w++) if (fixupAt.has(w)) hasFixup = true;
+        if (hasFixup) { tf.note('fixup inside the run'); continue; }
+        const key = treeKey(run);
+        const ord = tf.at.get(key);
+        if (ord === undefined) { tf.want(key, run, lin); continue; }
+        if (tf.arity.get(key) !== to - from - 1) {
+          // The same ops and operands laid out over a different number of words
+          // is not something the arena can produce, so this can only mean the
+          // key stopped identifying the run. Decline rather than mis-step $ip.
+          tf.note('arity disagrees with the installed tree');
+          continue;
+        }
+        words[from] = tf.base + ord;
+        // Every interior op's word is an operand now. Leaving its ip in the map
+        // would tell repairProg and region-jit that an instruction lives at a
+        // word that is no longer an opcode.
+        for (let i = 1; i < run.length; i++) wordIp.delete(run[i].at);
+        treeFolds++;
+        tf.folds++;
+        tf.foldedOps += run.length;
+      }
+    }
+  }
+
   // Hand the bitmap back the way it was found. Clearing the bits this compile
   // set, rather than the whole 8KB, because the next compile is usually a few
   // blocks and the wipe would dominate it.
@@ -869,6 +936,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     tracedBlocks,
     spinBlocks,
     specOps,
+    treeFolds,
     arenaBase,
     byteLength: words.length * 4,
   };

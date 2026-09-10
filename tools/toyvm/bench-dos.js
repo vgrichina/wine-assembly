@@ -73,6 +73,11 @@ async function main() {
     notrace: { traceBlocks: false },
     nospin: { spinLoops: false },
     regspec: { regSpec: true },
+    // `--variants=tailcall,tailcall+treefold`. The one arm switch that builds
+    // a wasm module mid-run, so its `build` time lands in wall clock and not in
+    // the guest slice -- read `--cpu-time`'s guest CPU for what the fold is
+    // worth, and expect the folded arm's wall clock to carry the installs.
+    treefold: { treeFold: true },
     nowasmdecode: { wasmDecode: false },
     nocache: { noCache: true },
   };
@@ -148,10 +153,28 @@ async function main() {
     const name = path.basename(exe);
     if (failed) { console.log(`\n${name}  SKIPPED -- ${failed}`); continue; }
 
-    const sigs = new Set([...seen.values()].map(s => s.sig));
+    // Two arms agree when they drew the same picture at the same dispatch
+    // count. `--dispatch-drift=N` relaxes the second half only, and exists for
+    // arms that INSTALL something mid-run: an install hands the guest back to
+    // the host a handful of extra times, and a handback ends its slice early,
+    // so the unspent remainder shifts where the LAST slice of the budget cuts.
+    // Region-live measured the same signature on 35 corpus rows (1-9
+    // dispatches out of 8,000,000, frame hash and pixel count identical). The
+    // frame is never relaxed: a different picture is a different computation
+    // whatever the counts say.
+    const drift = Number(arg('dispatch-drift', 0));
+    const frames = new Set([...seen.values()].map(s => s.r.frame));
+    const disp = [...seen.values()].map(s => s.r.dispatched);
+    const sigs = (frames.size === 1 && Math.max(...disp) - Math.min(...disp) <= drift)
+      ? new Set(['ok'])
+      : new Set([...seen.values()].map(s => s.sig));
     const any = [...seen.values()][0].r;
     console.log(`\n${name}  ${(any.dispatched / 1e6).toFixed(1)}M dispatches, `
       + `${any.handbacks} handbacks, ${any.pixels} px lit, frame=${any.frame}`);
+    if (drift && sigs.size === 1 && new Set(disp).size > 1) {
+      console.log(`  (dispatch drift ${Math.max(...disp) - Math.min(...disp)} `
+        + `within --dispatch-drift=${drift}; frame identical)`);
+    }
     if (sigs.size > 1) {
       console.log('  ARMS DISAGREE -- not comparable:');
       for (const [v, s] of seen) console.log(`    ${v.padEnd(10)} ${s.sig}`);

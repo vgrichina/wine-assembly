@@ -95,7 +95,7 @@ function twinOf(h, x) {
 class CodeCache {
   constructor(vm, { noCache = false, smcFlush = false, watch = [],
                     wasmDecode = true, fuse = true, deadFlags = true, crossFlags = true,
-                    traceBlocks = true, spinLoops = true, regSpec = false,
+                    traceBlocks = true, spinLoops = true, regSpec = false, treeFold = null,
                     traceDeadFlags = null, regionAt = null, regionSucc = null,
                     regionBytes = null, regionCodeBits = true,
                     volatileCode = true } = {}) {
@@ -178,6 +178,14 @@ class CodeCache {
     this.spinLoops = spinLoops;
     this.spinBlocks = 0;
     this.regSpec = regSpec;
+    // The expression-tree fold's driver (tools/toyvm/tree-fold.js), or null.
+    // Null is `--tree-fold` off, and off is the default: installing a fold
+    // means building a wasm module, which is not a cost a run should pay
+    // without asking. The fold charges the dispatches it removes, so the two
+    // arms are meant to be indistinguishable frame for frame -- see
+    // docs/toyvm-tree-fold.md.
+    this.treeFold = treeFold;
+    this.treeFolds = 0;
     this.specOps = 0;
     this.traceDeadFlags = traceDeadFlags;
     // guest ip -> handler index of a JIT-compiled loop region installed there.
@@ -867,6 +875,11 @@ class CodeCache {
       fuse: this.fuse, deadFlags: this.deadFlags, crossFlags: this.crossFlags,
       traceBlocks: this.traceBlocks, spinLoops: this.spinLoops,
       regSpec: this.regSpec,
+      // Only the CACHED compile folds. stepOne's is one instruction and cannot
+      // hold a run of four; volatileEntry's is code the guest is actively
+      // rewriting, so a handler generated from those bytes is a module build
+      // thrown away before it runs twice.
+      treeFold: this.treeFold,
       traceDeadFlags: this.traceDeadFlags,
       regionAt: this.regionAt,
       regionSucc: this.regionSucc,
@@ -901,6 +914,7 @@ class CodeCache {
     this.tracedBlocks += prog.tracedBlocks || 0;
     this.spinBlocks += prog.spinBlocks || 0;
     this.specOps += prog.specOps || 0;
+    this.treeFolds += prog.treeFolds || 0;
     new Int32Array(vm.mem.buffer, prog.arenaBase, prog.words.length).set(prog.words);
     this.arenaNext += prog.words.length * 4;
     this.compiles++;
@@ -1016,6 +1030,7 @@ class DosSession {
       slice = 2e6, noCache = false, smcFlush = false, mouse = [0, 0],
       wasmDecode = true, fuse = true, deadFlags = true, crossFlags = true,
       traceBlocks = true, spinLoops = true, regSpec = false, traceDeadFlags = null,
+      treeFold = null,
       // Stop caching code the guest keeps rewriting (CodeCache.noteSmc).
       // `--no-volatile` is the A/B partner.
       volatileCode = true,
@@ -1080,7 +1095,7 @@ class DosSession {
     this.hooks = hooks;
     this.cache = new CodeCache(vm,
       { noCache, smcFlush, watch, wasmDecode, fuse, deadFlags, crossFlags,
-        traceBlocks, spinLoops, regSpec, traceDeadFlags,
+        traceBlocks, spinLoops, regSpec, traceDeadFlags, treeFold,
         regionAt: opts.regionAt || null, regionSucc: opts.regionSucc || null,
         regionBytes: opts.regionBytes || null,
         regionCodeBits: opts.regionCodeBits !== false, volatileCode });
@@ -1937,6 +1952,7 @@ class DosSession {
       tracedBlocks: this.cache.tracedBlocks,
       spinBlocks: this.cache.spinBlocks,
       specOps: this.cache.specOps,
+      treeFolds: this.cache.treeFolds,
       arenaResets: this.cache.arenaResets, unimplemented: this.cache.unimplemented,
       regions: this.cache.regions, jtab: this.cache.jtab,
       // Volatile code: [paragraphs volatile now, uncached compiles, promotions,
