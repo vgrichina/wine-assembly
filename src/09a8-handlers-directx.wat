@@ -8520,22 +8520,11 @@
 
   ;; QueryInterface(this, riid, ppv) — 3 args
   (func $handle_IDirectDrawFactory_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $iid_dword i32) (local $obj i32)
-    (local.set $iid_dword (call $gl32 (local.get $arg1)))
-    ;; Accept IUnknown (NULL/zero) and IDirectDrawFactory {4FD2A823-...}
-    (if (i32.or (i32.eqz (local.get $iid_dword))
-                (i32.eq (local.get $iid_dword) (i32.const 0x4FD2A823)))
-      (then
-        (call $gs32 (local.get $arg2) (local.get $arg0))
-        ;; AddRef
-        (local.set $obj (call $dx_from_this (local.get $arg0)))
-        (i32.store (i32.add (local.get $obj) (i32.const 4))
-          (i32.add (i32.load (i32.add (local.get $obj) (i32.const 4))) (i32.const 1)))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-        (return)))
-    (call $gs32 (local.get $arg2) (i32.const 0))
-    (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
+    ;; IID_IDirectDrawFactory {4FD2A823-86C8-11D0-8FCA-00C04FD9189D}.
+    (global.set $eax (call $dx_query_interface_single
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0x4FD2A823) (i32.const 0x11D086C8)
+      (i32.const 0xC000CA8F) (i32.const 0x9D18D94F)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; AddRef(this) — 1 arg
