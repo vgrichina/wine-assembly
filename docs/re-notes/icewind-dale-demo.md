@@ -5,12 +5,114 @@ from Archive item `icewind_dale_eng_demo`. Its README expressly prohibits
 copying/electronic distribution, so the extracted fixture stays ignored and
 must not be deployed or rehosted.
 
-Fetch and test (the fetch recipe requires `unshield`):
+Legacy fetch and test (the fetch recipe requires `unshield`; this is not
+evidence that the original installer works):
 
 ```sh
 node tools/fetch-candidate-corpus.js --id=icewind-dale-demo
 node test/test-icewind-dale-demo.js
 ```
+
+## Original installer investigation
+
+The original `Setup.exe` successfully emits its InstallShield 5.5 engine
+through guest execution. Replay that emitted engine, not a host-extracted
+cabinet. The following frozen CLI route uses an isolated build and leaves
+the legacy gameplay fixture untouched:
+
+```sh
+node test/run.js \
+  --exe=test/binaries/candidates/icewind-dale-demo/icewind_dale_eng_demo/Setup.exe \
+  '--vfs-include=**/*' --no-build --no-threads --quiet-api --quiet-blocks \
+  --no-close --screen=800x600 --batch-size=100000 --tick-ms-per-batch=100 \
+  --max-seconds=180 --control-stdin --frozen \
+  --capture-launch=/private/tmp/iwd-original-bootstrap
+```
+
+Step 100 batches, then quit cleanly and wait for the capture to finish.
+`launch.json` identifies the guest-produced
+`windows/temp/_istmp1.dir/_ins5576._mp` (557,056 bytes), with its original
+`zdatai51.dll` and `_wutl951.dll`. The 96-file capture includes the original
+cabinet and CD2 source tree; those source files are copied, not decompressed
+by the host.
+
+```sh
+node test/run.js \
+  --exe=/private/tmp/iwd-original-bootstrap/windows/temp/_istmp1.dir/_ins5576._mp \
+  '--exe-guest-path=C:\WINDOWS\TEMP\_ISTMP1.DIR\_INS5576._MP' \
+  --vfs-tree=/private/tmp/iwd-original-bootstrap '--cwd=C:\' \
+  --dll-seed=/private/tmp/iwd-original-bootstrap/windows/temp/_istmp1.dir/zdatai51.dll,/private/tmp/iwd-original-bootstrap/windows/temp/_istmp1.dir/_wutl951.dll \
+  --no-build --no-threads --quiet-api --quiet-blocks --no-close \
+  --screen=800x600 --batch-size=100000 --tick-ms-per-batch=100 \
+  --max-seconds=300 --control-stdin --frozen \
+  --save-vfs=/private/tmp/iwd-original-installed-vfs
+```
+
+At batch 300 the Welcome screen is visible. Send
+`{"cmd":"dlg-input-click:1"}` and step 50 for the License screen; its Yes
+button is ID 6. Accept that button and step 50 for Recommended setup.
+Thereafter click ID 1 and step 50 at each of Setup Type, CPU Speed,
+Destination, and Program Folder. The unchanged defaults install to
+`C:\Program Files\Black Isle\Icewind Dale Demo`. At batch 750 the native
+install progress window is visible; at batch 1750 it shows 11%, with
+`iddemo.exe` (6,283,264 bytes), `dialog.tlk` (2,942,485 bytes), override
+resources, characters, and the first area archive actually written by the
+guest. At batch 3750 the progress is 18%; at batch 5750 it is 24%, with
+284 files totaling 117,868,153 bytes under the destination (including the
+in-progress archive). These screens and file sizes were inspected on the isolated
+`6cada250` runtime. This is partial installation evidence, not yet a
+completed-install or fresh-installed gameplay pass.
+
+The 300-second internal execution guard stopped normally at batch 7177
+inside the guest cabinet DLL (`EIP=0x007b4d3f`), and the VFS export completed
+with process exit 0. This exit is a test deadline, not Setup Complete.
+The destination contains 284 files totaling 142,198,393 bytes. Read-only
+comparison against the legacy reference found 280 byte-identical files;
+`Data/chranim.bif` is still partial (52,695,040 of 69,527,564 bytes), and
+the original 316-byte `icewind.ini` differs from the legacy patched INI.
+The other two files are installer-created `uninst.isu` and `readme.txt`.
+The installed EXE SHA-256 is
+`b94816d10029cb99c0315f175330c917be2fff298394e853e2764973d8d13af4`.
+
+### Longer execution and interrupted-install replay
+
+A fresh replay with `--max-seconds=1800` reached inspected progress screens
+at batches 8750 (34%), 9750 (37%), 10750 (40%), 12750 (47%), 14750 (53%),
+16750 (59%), 18750 (65%), and 20750 (79%). The internal deadline stopped
+at batch 21190, `EIP=0x007b4edd`, still inside cabinet decompression.
+It exited cleanly and exported `/private/tmp/iwd-original-complete-vfs`;
+despite that directory name, this is **not a complete installation**.
+Its destination has 302 files totaling 407,579,613 bytes, with 298
+byte-identical to the legacy reference. The incomplete file is now
+`Data/sndspell.bif` (21,606,400 of 22,416,309 bytes). The other differences
+remain the unpatched INI and installer-created README/uninstall log.
+No payload bytes were supplied by a host decompressor.
+
+Directly replaying the engine from that export exits with guest code 4
+before its wizard: `_ins0432.ini` and `_isenv31.ini` have been consumed.
+Running the original `Setup.exe` again with the exported VFS succeeds and
+emits a fresh engine under `_ISTMP2.DIR`, preserving the installed files.
+This capture is `/private/tmp/iwd-rebootstrap` (426 files). Its engine
+reaches the same wizard, but selecting Program Folder produces
+`unInstaller setup failed to initialize. You may not be able to uninstall
+this product.` Dismiss the native message box with `dlg-cmd:1`; unlike the
+guest wizard buttons, `dlg-input-click:1` alone did not dismiss it.
+This interrupted-install route is not a clean-install acceptance.
+
+It also does **not** resume decompression: after 1000 additional copy steps
+the wizard shows 11%, and the previously complete `Data/ar1000.bif` has
+been replaced with an 8,632,320-byte partial file. The original partial
+`sndspell.bif` is untouched. This probe was quit explicitly; its separate
+`/private/tmp/iwd-original-reinstall-vfs` export must not replace the earlier
+output. A subsequent completion attempt needs one uninterrupted run with
+sufficient internal execution allowance, not repeated partial-VFS replay.
+
+Next: require the actual completion screen and verify the complete output before
+changing the fetch recipe or registry. Then test gameplay using the original
+installed INI/KEY and CD2 layout. Do not reuse this partial directory as an
+installed fixture or assume the legacy KEY/CBF modifications remain necessary.
+
+## Legacy fixture preparation
 
 The package is an outer ZIP containing an InstallShield cabinet and CD-resident
 data. The fetch recipe extracts the `Recommended compressed` group and merges
