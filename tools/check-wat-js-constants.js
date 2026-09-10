@@ -122,21 +122,17 @@ equal(jsConst('lib/dll-loader.js', 'WIN16_DYNAMIC_BASE'), win16DynamicBase,
   'lib/dll-loader.js WIN16_DYNAMIC_BASE');
 
 // The Worker and cooperative scheduler each translate saved guest addresses.
-// These patterns deliberately name every copy: if the surrounding code moves,
-// the gate asks the editor to re-establish the invariant instead of silently
-// dropping coverage.
+// They now consume the shared direct/DIB/packed-page helper, so this gate must
+// reject a private affine formula rather than requiring one to exist.
 const guestWorker = source('lib/guest-worker.js');
-equal(one(guestWorker, /msg\.imageBase\s*\|\s*0\)\s*\+\s*(0x[0-9a-f]+|[0-9]+)/i,
-  'message g2w offset in lib/guest-worker.js'), guestBase,
-  'lib/guest-worker.js message g2w offset');
-equal(one(guestWorker, /prev\s*-\s*imageBase\s*\+\s*(0x[0-9a-f]+|[0-9]+)/i,
-  'stack g2w offset in lib/guest-worker.js'), guestBase,
-  'lib/guest-worker.js stack g2w offset');
+assert(/GuestWorkerMemUtils\.guestToWasm\(\s*ga,\s*ex,\s*memory,\s*msg\.imageBase/.test(guestWorker),
+  'lib/guest-worker.js thread-stack translation must use shared mem-utils');
+assert(/GuestWorkerMemUtils\.guestToWasm\(\s*prev,\s*ex,\s*memory,\s*imageBase/.test(guestWorker),
+  'lib/guest-worker.js wait-return translation must use shared mem-utils');
 
 const threadManager = source('lib/thread-manager.js');
-equal(one(threadManager, /prev\s*-\s*imageBase\s*\+\s*(0x[0-9a-f]+|[0-9]+)/i,
-  'stack g2w offset in lib/thread-manager.js'), guestBase,
-  'lib/thread-manager.js stack g2w offset');
+assert(/_threadMemUtils\.guestToWasm\(\s*prev,\s*exports,\s*this\.memory,\s*imageBase/.test(threadManager),
+  'lib/thread-manager.js wait-return translation must use shared mem-utils');
 equal(one(threadManager, /\bconst\s+g2wOff\s*=\s*(0x[0-9a-f]+|[0-9]+)\s*-\s*e\.get_image_base/i,
   'g2wOff in lib/thread-manager.js'), guestBase, 'lib/thread-manager.js g2wOff');
 equal(one(threadManager, /csWa\s*-\s*(0x[0-9a-f]+|[0-9]+)\s*\+\s*\(e\.get_image_base/i,

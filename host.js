@@ -2099,9 +2099,8 @@ class WineAssembly {
   _guestToWasmAddress(addr) {
     const ex = this.instance && this.instance.exports;
     if (!ex || !this.memory || !this.memory.buffer || !ex.get_image_base) return -1;
-    const imageBase = ex.get_image_base() >>> 0;
-    const guestBase = ex.get_guest_base ? (ex.get_guest_base() >>> 0) : 0x12000;
-    return (((addr >>> 0) - imageBase + guestBase) >>> 0);
+    return HostMemUtils.guestToWasm(
+      addr, ex, this.memory, ex.get_image_base() >>> 0);
   }
 
   // The patch table is lib/app-profiles.js, shared with the CLI harness — it

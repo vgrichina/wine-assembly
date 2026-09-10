@@ -11,7 +11,7 @@ const { createHostImports } = require('../lib/host-imports');
 // below are allocation SIZES, not the regions the census reads them as.)
 const RegionMap = require('../lib/region-map.generated.js');
 const {
-  decodeMfcCString, g2w, g2wSpan, walkStackFrame,
+  decodeMfcCString, g2w, g2wSpan, guestToWasm, walkStackFrame,
 } = require('../lib/mem-utils');
 const MAP_STATE = RegionMap.BASE.VIRTUAL_MAP_STATE;
 const MAP_TABLE = RegionMap.BASE.VIRTUAL_MAP_TABLE;
@@ -165,6 +165,13 @@ async function main() {
   assert.strictEqual(g2w(graphicsBase + 0x321, main.get_image_base(), memory),
     graphicsBacking + 0x321,
     'the JS host translator must consume the same packed PTE publication');
+  assert.strictEqual(guestToWasm(graphicsBase + 0x321, main, memory),
+    graphicsBacking + 0x321,
+    'the shared host entry point must prefer the instance translator');
+  assert.strictEqual(guestToWasm(graphicsBase + 0x321,
+    { get_image_base: () => main.get_image_base() }, memory),
+    graphicsBacking + 0x321,
+    'a host without the WAT export must use the same packed PTE');
 
   // The higher-level diagnostic helpers must use that same translator rather
   // than silently falling back to image-relative arithmetic. Sparse stacks
@@ -236,6 +243,9 @@ async function main() {
   state.setUint32(MAP_TABLE + 8, VIRTUAL_BACKING, true);
   assert.strictEqual(g2w(upperGuest, main.get_image_base(), memory), 0xf0,
     'JS translation must treat a cleared PTE as authoritative over stale metadata');
+  assert.strictEqual(guestToWasm(upperGuest,
+    { get_image_base: () => main.get_image_base() }, memory), 0xf0,
+    'the shared host entry point must not revive a cleared PTE through metadata');
 
   // A cleared PTE is authoritative. In particular, do not resurrect released
   // backing by consulting the allocation metadata table after MEM_RELEASE.
