@@ -29,14 +29,14 @@ are:
   `8ca6e3f0c56e1f289f79e2d52ca8cd98466c5b5c2817b3d05b7f7d80425c4177`
 - Dungeon Keeper `KEEPER95.EXE`:
   `4d3cd6a7866520f360288b08440e0f20379b4b39216a9576c388e42fcdf72c84`
-- Darkstone `DarkstoneDemo.exe`:
+- Darkstone installed `darkstonedemo.exe`:
   `b43db5e1b835eb1e93688a1f3f1d9c814517be6fc8110c7fb6e024d467ee721b`
 
-The archive and extracted binaries remain local-only. Browser runs using the
-generated companion manifests reached interactive gameplay in both cooperative
-and Threads modes: Guybrush movement, an Atomic Bomberman arena with movement
-and bomb placement, Broken Sword's playable café scene, Dungeon Keeper's live
-dungeon level, and Darkstone's controllable town view.
+The archive and extracted binaries remain local-only. The source links identify
+the preserved original distributions; they are not permission to republish the
+playable files. Focused compatibility work has reached Guybrush movement, an
+Atomic Bomberman arena with movement and bomb placement, Broken Sword's
+playable café scene, Dungeon Keeper's live dungeon level, and Darkstone's town.
 
 Atomic Bomberman's browser route is now a durable functional gate rather than
 only a manual audit. `test/test-atomic-bomberman-gameplay.js` crosses the
@@ -55,6 +55,21 @@ explicitly reserves copying rights to Electronic Arts, so the playable demo
 and generated install tree remain local-only. This source entry links where
 the original distribution can be obtained; it does not redistribute it. See
 `docs/re-notes/dungeon-keeper-demo.md`.
+
+Darkstone is installed by running the archive's original `Setup.exe` (SHA-256
+`a6d2f8b9173fd43f03aabff0b8cc3fadbd0b15224bcbe5f562a32158a297b502`)
+inside Wine-Assembly. That bootstrap emits the original InstallShield engine,
+which writes a 14-file, 33,471,003-byte playable tree under
+`C:\\Program Files\\DelphineSoft\\Darkstone Demo`. The registered app mounts
+that guest-produced `installed/` tree rather than the separately unpacked
+`data/` directory. The bundled readme identifies this as demo 1.0 and requires
+Windows 95 or 98, but gives no explicit redistribution grant, so both the
+package and installed output remain local-only. The frozen headless functional
+gate creates `CODEX`, places the champion on the party slab, waits past the
+loading screen for the live town HUD, and verifies camera input. Demo 1.0
+enters Town directly after party confirmation; it does not show the retail
+manual's difficulty menu.
+See `docs/re-notes/darkstone-demo.md`.
 
 ## Baldur's Gate demos and commercial preview
 

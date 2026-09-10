@@ -31,8 +31,8 @@ const GAMES = [
   },
   {
     id: 'darkstone_demo',
-    root: 'DarkstoneDemo-D3D/data',
-    exe: 'DarkstoneDemo.exe',
+    root: 'DarkstoneDemo-D3D/installed',
+    exe: 'darkstonedemo.exe',
   },
 ];
 

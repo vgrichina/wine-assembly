@@ -19,7 +19,7 @@ const expected = {
   atomic_bomberman_demo: ['_BOMB.EXE', 151],
   broken_sword_demo: ['WINSWORD.EXE', 551],
   dungeon_keeper_demo: ['KEEPER95.EXE', 165],
-  darkstone_demo: ['DarkstoneDemo.exe', 12],
+  darkstone_demo: ['darkstonedemo.exe', 13],
 };
 
 for (const [id, [exeName, companionCount]] of Object.entries(expected)) {
@@ -62,6 +62,8 @@ assert.deepStrictEqual(APPS.dungeon_keeper_demo.dlls.map(file => path.basename(f
 assert(APPS.dungeon_keeper_demo.exe.includes(
   'Dungeon Keeper Demo-SWonly/installed/'),
   'Dungeon Keeper launches only the original installer output');
+assert(APPS.darkstone_demo.exe.includes('DarkstoneDemo-D3D/installed/'),
+  'Darkstone launches only the original installer output');
 assert.strictEqual(APPS.atomic_bomberman_demo.touchControls.dpad.ways, 4);
 assert.deepStrictEqual(APPS.atomic_bomberman_demo.touchControls.buttons,
   [{ vk: 0x20, label: 'Bomb', pos: 'br' }]);
