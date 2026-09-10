@@ -1847,7 +1847,7 @@
     (if (local.get $clsid_wa)
       (then (local.set $clsid_d1 (i32.load (local.get $clsid_wa)))))
 
-    ;; The four Win98-era multimedia classes below have complete local
+    ;; The five Win98-era multimedia classes below have complete local
     ;; QueryInterface contracts. Classify by full CLSID, manufacture one
     ;; factory-owned reference, query the requested interface, then release
     ;; that temporary reference on both success and failure.
@@ -1871,7 +1871,12 @@
       (if (call $guid_words_equal (local.get $clsid_wa)
             (i32.const 0x2FE8F810) (i32.const 0x11D0B2A5)
             (i32.const 0x000087A7) (i32.const 0xFCAB03F8))
-        (then (local.set $local_class (i32.const 4))))))
+        (then (local.set $local_class (i32.const 4))))
+      ;; CLSID_DirectSound {47D4D946-62E8-11CF-93BC-444553540000}.
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0x47D4D946) (i32.const 0x11CF62E8)
+            (i32.const 0x4544BC93) (i32.const 0x00005453))
+        (then (local.set $local_class (i32.const 5))))))
 
     (if (local.get $local_class) (then
       (if (i32.eqz (local.get $arg4))
@@ -1898,6 +1903,9 @@
       (if (i32.eq (local.get $local_class) (i32.const 4))
         (then (local.set $obj_guest (call $dx_create_com_obj
           (i32.const 27) (global.get $DX_VTBL_DPLAYLOBBY2)))))
+      (if (i32.eq (local.get $local_class) (i32.const 5))
+        (then (local.set $obj_guest (call $dx_create_com_obj
+          (i32.const 4) (global.get $DX_VTBL_DSOUND)))))
       (if (i32.eqz (local.get $obj_guest))
         (then
           (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
@@ -1919,6 +1927,11 @@
       (if (i32.eq (local.get $local_class) (i32.const 4))
         (then (local.set $hr (call $dplay_query_interface_wa
           (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4) (i32.const 1)))))
+      (if (i32.eq (local.get $local_class) (i32.const 5))
+        (then (local.set $hr (call $dx_query_interface_single_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)
+          (i32.const 0x279AFA83) (i32.const 0x11CE4981)
+          (i32.const 0x200021A5) (i32.const 0x60E50BAF)))))
       (drop (call $dx_com_release_basic (local.get $obj_guest)))
       (global.set $eax (local.get $hr))
       (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
@@ -1938,26 +1951,6 @@
         (call $shell_link_init_vtables)
         (local.set $obj_guest (call $dx_create_com_obj
           (i32.const 36) (global.get $SHELL_LINK_VTBL)))
-        (call $gs32 (local.get $arg4) (local.get $obj_guest))
-        (global.set $eax (select (i32.const 0) (i32.const 0x8007000E)
-          (i32.ne (local.get $obj_guest) (i32.const 0))))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    ;; CLSID_DirectSound {47D4D946-62E8-11CF-93BC-444553540000}.
-    ;; The Win98-era SMAC demo creates IID_IDirectSound through COM rather
-    ;; than calling DirectSoundCreate, but both entry points own the same
-    ;; native interface and object state.
-    (if (i32.eq (local.get $clsid_d1) (i32.const 0x47D4D946))
-      (then
-        (if (i32.or (local.get $arg1) (i32.eqz (local.get $arg4)))
-          (then
-            (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
-            (global.set $eax (select (i32.const 0x80040110) (i32.const 0x80004003)
-              (i32.ne (local.get $arg4) (i32.const 0))))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)))
-        (local.set $obj_guest (call $dx_create_com_obj
-          (i32.const 4) (global.get $DX_VTBL_DSOUND)))
         (call $gs32 (local.get $arg4) (local.get $obj_guest))
         (global.set $eax (select (i32.const 0) (i32.const 0x8007000E)
           (i32.ne (local.get $obj_guest) (i32.const 0))))

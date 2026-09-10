@@ -5126,8 +5126,11 @@
   ;; ════════════════════════════════════════════════════════════
 
   (func $handle_IDirectSound_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gs32 (local.get $arg2) (local.get $arg0))
-    (global.set $eax (i32.const 0))
+    ;; IID_IDirectSound {279AFA83-4981-11CE-A521-0020AF0BE560}.
+    (global.set $eax (call $dx_query_interface_single
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0x279AFA83) (i32.const 0x11CE4981)
+      (i32.const 0x200021A5) (i32.const 0x60E50BAF)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
 
