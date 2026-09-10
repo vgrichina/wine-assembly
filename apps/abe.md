@@ -13,8 +13,9 @@ RuptureFarms and walks right through normal keyboard input; screenshots
 inspected. The original installer also completes in a headless browser,
 automatically launches its VFS child, and that child reaches gameplay and
 walks right. A real browser mouse click on Unzip also passes this full route.
-The old large-batch CLI test still fails at the menu, and the synthetic
-`dlg-input-click` command helper remains unsafe (use the guest queue). See the
+The synthetic `dlg-input-click` route now also completes installation after
+fixing the modal pump's guest callback continuation. The old large-batch CLI
+gameplay test still fails at the menu. See the
 [current installer and input notes](../docs/re-notes/abes-oddysee-demo.md).
 
 **Image base:** 0x00400000

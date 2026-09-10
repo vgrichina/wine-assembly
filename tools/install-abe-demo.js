@@ -72,9 +72,9 @@ async function install({ installer, output, screenshot }) {
         'original startup notice did not appear');
       await session.send('dlg-cmd:1');
       await step(50);
-      // Queue Unzip on the guest pump; a synchronous guest call can abandon
-      // this long-running command before all nine files have been written.
-      await session.send('dlg-post-cmd:1');
+      // Deliver the button notification through host input. The modal pump
+      // retains its guest callback stack while the long extraction yields.
+      await session.send('dlg-input-click:1');
       for (let i = 0; i < 5; i++) {
         await step(1000);
         console.log(`Abe installer: ${(i + 1) * 1000} extraction steps`);

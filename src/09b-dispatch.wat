@@ -854,13 +854,20 @@
               (then
                 ;; Host specified a target hwnd — dispatch by its wndproc
                 (local.set $arg4 (call $wnd_table_get (local.get $arg0)))
-                (if (i32.ge_u (local.get $arg4) (i32.const 0xFFFF0000))
+                ;; Dialog markers retain guest code, just as on the posted
+                ;; path above. Long input callbacks must keep their stack
+                ;; across scheduler slices rather than nesting a sync send.
+                (if (i32.eq (local.get $arg4) (global.get $WNDPROC_DIALOG))
                   (then
-                    (drop (call $wat_wndproc_dispatch
-                      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-                    (global.set $eip (global.get $dlg_loop_thunk))
-                    (global.set $steps (i32.const 0))
-                    (return)))
+                    (local.set $arg4 (call $dialog_proc_get (local.get $arg0))))
+                  (else
+                    (if (i32.ge_u (local.get $arg4) (i32.const 0xFFFF0000))
+                      (then
+                        (drop (call $wat_wndproc_dispatch
+                          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+                        (global.set $eip (global.get $dlg_loop_thunk))
+                        (global.set $steps (i32.const 0))
+                        (return)))))
                 (if (i32.eqz (local.get $arg4))
                   (then (local.set $arg4 (global.get $dlg_proc))))
                 (if (i32.lt_u (local.get $arg4) (global.get $image_base))

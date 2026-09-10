@@ -41,6 +41,9 @@ const extraWat = String.raw`
       (local.get $wparam) (local.get $lparam)))
     (global.set $esp (local.get $stack))
     (global.set $eip (global.get $dlg_loop_thunk)))
+
+  (func (export "test_clear_post_queue")
+    (global.set $post_queue_count (i32.const 0)))
 `;
 
 function u32(value) {
@@ -49,9 +52,17 @@ function u32(value) {
 
 (async () => {
   let now = 0;
+  let input = 0;
+  let inputHwnd = 0;
+  let inputLparam = 0;
   const { exports: e, memory } = await bootRenderHarness({
     extraWat,
-    extraHostOverrides: { get_ticks: () => now },
+    extraHostOverrides: {
+      get_ticks: () => now,
+      check_input: () => { const value = input; input = 0; return value; },
+      check_input_hwnd: () => inputHwnd,
+      check_input_lparam: () => inputLparam,
+    },
   });
   const fixture = fs.readFileSync(path.join(ROOT, 'test', 'binaries', 'calc.exe'));
   new Uint8Array(memory.buffer).set(fixture, e.get_staging());
@@ -109,7 +120,29 @@ function u32(value) {
   assert.strictEqual(e.get_sync_msg_depth(), 0,
     'queued dialog command does not enter the recursive synchronous sender');
 
-  console.log('PASS  DialogBox modal pump dispatches timers and posted commands');
+  new Uint8Array(memory.buffer, seenWa, 16).fill(0);
+  e.test_start_dialog_post(commandHwnd, proc, stack, 0, 0, 0);
+  e.test_clear_post_queue();
+  inputHwnd = commandHwnd;
+  inputLparam = 0x10004;
+  input = (1 << 16) | 0x0111;
+  e.run(1);
+  assert.strictEqual(e.get_eip() >>> 0, proc,
+    'targeted host input enters the retained DLGPROC on the guest continuation');
+  assert.strictEqual(e.get_esp() >>> 0, stack - 20,
+    'host input leaves the callback frame live across scheduler slices');
+  assert.strictEqual(view.getUint32(seenWa, true), 0,
+    'host input must not synchronously execute the callback inside the modal pump');
+  assert.strictEqual(e.get_sync_msg_depth(), 0,
+    'host input must not enter the recursive synchronous sender');
+  e.run(100000);
+  assert.deepStrictEqual(Array.from({ length: 4 }, (_, i) =>
+    view.getUint32(seenWa + i * 4, true)), [commandHwnd, 0x0111, 1, 0x10004],
+  'resumed input callback preserves HWND, message, IDOK and BUTTON HWND');
+  assert.strictEqual(e.get_esp() >>> 0, stack,
+    'resumed input callback restores its caller stack');
+
+  console.log('PASS  DialogBox modal pump dispatches timers, posted commands and host input');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);
