@@ -66,6 +66,16 @@ async function main() {
     if (e.get_eip() !== 0) {
       console.log(`  WARNING: code at +0x${(codeOffset-256).toString(16)} did not return (EIP=0x${e.get_eip().toString(16)})`);
     }
+    return codeAddr;
+  }
+
+  function rerunCachedCode(codeAddr, setup) {
+    const stackTop = imageBase + 0xD00000;
+    e.set_esp(stackTop);
+    dv.setUint32(g2w(stackTop), 0, true);
+    if (setup) setup();
+    e.set_eip(codeAddr);
+    e.run(100000);
   }
 
   let pass = 0, fail = 0;
@@ -300,6 +310,27 @@ async function main() {
   runCode([0x0F, 0xA4, 0xD0, 0x01], () => { e.set_eax(0x80000000); e.set_edx(0x00000001); });
   // shld eax, edx, 1: eax = (0x80000000<<1) | (0x00000001>>31) = 0 | 0 = 0
   test('SHLD eax,edx,1', e.get_eax(), 0x00000000);
+
+  // The CL forms must read CL when the cached block executes, not when it is
+  // first decoded. Alpha Centauri's TQI bit reader revisits one SHLD EIP with
+  // a different bit offset on nearly every call.
+  const shldClCode = runCode([0x0F, 0xA5, 0xD0], () => {
+    e.set_eax(0x12345678); e.set_edx(0x9ABCDEF0); e.set_ecx(4);
+  });
+  test('SHLD eax,edx,cl first cached count', e.get_eax(), 0x23456789);
+  rerunCachedCode(shldClCode, () => {
+    e.set_eax(0x12345678); e.set_edx(0x9ABCDEF0); e.set_ecx(8);
+  });
+  test('SHLD eax,edx,cl rereads changed CL', e.get_eax(), 0x3456789A);
+
+  const shrdClCode = runCode([0x0F, 0xAD, 0xD0], () => {
+    e.set_eax(0x12345678); e.set_edx(0x9ABCDEF0); e.set_ecx(4);
+  });
+  test('SHRD eax,edx,cl first cached count', e.get_eax(), 0x01234567);
+  rerunCachedCode(shrdClCode, () => {
+    e.set_eax(0x12345678); e.set_edx(0x9ABCDEF0); e.set_ecx(8);
+  });
+  test('SHRD eax,edx,cl rereads changed CL', e.get_eax(), 0xF0123456);
 
   // Group-2 immediate shifts on absolute memory use a different threaded-op
   // layout from [base+disp]. WinHelp's drive scan depends on this exact word

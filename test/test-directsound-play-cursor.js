@@ -124,7 +124,30 @@ try {
   globalThis.AudioContext = oldAudioContext;
 }
 
-// 3. The WAT side: the write cursor is a different number from the play
+// 3. A suspended AudioContext never fires source.onended. A one-shot must
+// still retire against the guest clock or a movie waits forever on its final
+// frame while a stale source object says it is playing.
+globalThis.AudioContext = audioContextClass(undefined, undefined);
+try {
+  let clockMs = 100;
+  const memory = new ArrayBuffer(128 * 1024);
+  const ctx = { getMemory: () => memory, audioClockMs: () => clockMs };
+  const { host } = createHostImports(ctx);
+  const id = host.voice_open(RATE, 1, 8);
+  host.voice_play_ring(id, 0x1000, RATE, 0, 0);
+  assert.strictEqual(host.voice_is_playing(id), 1,
+    'a new one-shot reports playing while its guest-clock duration remains');
+  clockMs += 999;
+  assert.strictEqual(host.voice_is_playing(id), 1,
+    'the one-shot remains live immediately before its duration');
+  clockMs += 1;
+  assert.strictEqual(host.voice_is_playing(id), 0,
+    'guest-clock expiry retires a stale browser source without onended');
+} finally {
+  globalThis.AudioContext = oldAudioContext;
+}
+
+// 4. The WAT side: the write cursor is a different number from the play
 //    cursor, derived from the buffer's own format, and stays inside the ring.
 {
   const wat = fs.readFileSync(

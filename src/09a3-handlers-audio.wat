@@ -730,17 +730,26 @@
   ;; 807: mmioRead(hmmio, pch, cch) — 3 args stdcall
   ;; Reads cch bytes into buffer pch. Returns number of bytes read.
   (func $handle_mmioRead (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $bytes_read_ga i32) (local $bytes_read_wa i32)
+    (local $bytes_read_ga i32) (local $bytes_read_wa i32) (local $ok i32) (local $lazy i32)
     (local.set $bytes_read_ga (i32.sub (global.get $esp) (i32.const 4)))
     (local.set $bytes_read_wa (call $g2w (local.get $bytes_read_ga)))
     (i32.store (local.get $bytes_read_wa) (i32.const 0))
-    (drop (call $host_fs_read_file
+    (local.set $ok (call $host_fs_read_file
       (local.get $arg0)    ;; handle
       (local.get $arg1)    ;; buffer (guest address)
       (local.get $arg2)    ;; count
       (local.get $bytes_read_ga)))
     (global.set $eax (i32.load (local.get $bytes_read_wa)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    ;; ISO-backed files are filled asynchronously. A zero BOOL can therefore
+    ;; mean "retry after the provider chunk arrives", not EOF. Preserve the
+    ;; complete stdcall frame and re-enter this thunk exactly as ReadFile does;
+    ;; otherwise movie players see a zero-byte header and abandon the stream.
+    (if (i32.eqz (local.get $ok))
+      (then
+        (local.set $lazy (call $host_fs_read_pending))
+        (if (i32.eq (local.get $lazy) (i32.const 1))
+          (then (call $io_block (i32.const 16))))))
   )
 
   ;; 808: mmioAscend(hmmio, lpck, wFlags) — 3 args stdcall
@@ -899,10 +908,22 @@
 
   ;; mmioAdvance(hmmio, lpmmioinfo, fuAdvance) — 3 args stdcall
   (func $handle_mmioAdvance (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $result i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
     (if (i32.eqz (local.get $arg1))
       (then (global.set $eax (i32.const 5)) (return)))                ;; MMSYSERR_INVALPARAM
-    (global.set $eax (call $mmio_refill (local.get $arg0) (local.get $arg1))))
+    (local.set $result (call $mmio_refill (local.get $arg0) (local.get $arg1)))
+    (global.set $eax (local.get $result))
+    ;; Buffered ISO input has the same asynchronous provider boundary as
+    ;; mmioRead. A successful MMIO refill with no resident bytes may mean the
+    ;; provider is fetching the next extent, not end-of-file. Retry the whole
+    ;; API thunk after IO_WAIT so a transient empty buffer cannot terminate a
+    ;; movie at the first lazy chunk boundary.
+    (if (i32.and
+          (i32.eqz (local.get $result))
+          (i32.eq (call $host_fs_read_pending) (i32.const 1)))
+      (then (call $io_block (i32.const 16))))
+  )
 
   ;; mmioSetInfo(hmmio, lpmmioinfo, wFlags) — 3 args stdcall
   ;; Hands buffered I/O back. The file pointer has to end up where the app's

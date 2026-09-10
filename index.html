@@ -59,7 +59,55 @@
     /* Crawlable summary of what this page is. The desktop below is built by
        script, so without this the served HTML says nothing but "Start". Kept
        off-screen rather than display:none so it still counts as content. */
-    #site-intro { position: absolute; left: -10000px; top: 0; width: 1px; height: 1px; overflow: hidden; }
+    /* Read Me window: an HTML Win98 window over the desktop, above the icons
+       (z-index 1) and the no-debug screen canvas (z-index 2), below the fixed
+       dialogs. Hidden with the same body classes that hide the desktop icons. */
+    #readme-window {
+      position: absolute; left: 112px; top: 28px; z-index: 3;
+      width: min(560px, calc(100% - 128px));
+      max-height: calc(100% - 56px);
+      display: flex; flex-direction: column;
+      background: #c0c0c0; color: #000;
+      border: 1px solid; border-color: #dfdfdf #000 #000 #dfdfdf;
+      box-shadow: inset 1px 1px #fff, inset -1px -1px #808080, 2px 2px 0 rgba(0,0,0,.3);
+      font-family: "MS Sans Serif", Tahoma, Arial, sans-serif; font-size: 12px;
+    }
+    #readme-window[hidden] { display: none; }
+    #readme-window .readme-titlebar {
+      display: flex; align-items: center; gap: 4px;
+      margin: 3px; padding: 2px 3px; height: 18px;
+      background: linear-gradient(90deg, #000080, #1084d0); color: #fff; font-weight: bold;
+      cursor: default; user-select: none; touch-action: none;
+    }
+    #readme-window .readme-titleico { font-size: 13px; line-height: 1; }
+    #readme-window .readme-close {
+      margin-left: auto; width: 16px; height: 14px; padding: 0;
+      font: bold 9px/12px Tahoma, Arial, sans-serif; color: #000;
+      background: #c0c0c0; border: 1px solid; border-color: #fff #000 #000 #fff;
+      box-shadow: inset -1px -1px #808080; cursor: default;
+    }
+    #readme-window .readme-body {
+      overflow: auto; margin: 0 3px 3px; padding: 10px 12px 8px;
+      background: #fff; border: 2px inset #dfdfdf; line-height: 1.45;
+    }
+    #readme-window h1 { font-size: 14px; margin: 0 0 8px; }
+    #readme-window p { margin: 0 0 8px; }
+    #readme-window ul { margin: 0 0 8px; padding-left: 18px; }
+    #readme-window li { margin-bottom: 3px; }
+    #readme-window a { color: #000080; }
+    #readme-window .readme-buttons { text-align: right; padding-top: 2px; }
+    #readme-window .readme-ok {
+      min-width: 75px; height: 23px; font: 12px "MS Sans Serif", Tahoma, Arial, sans-serif;
+      background: #c0c0c0; border: 1px solid; border-color: #fff #000 #000 #fff;
+      box-shadow: inset -1px -1px #808080; cursor: default;
+    }
+    @media (max-width: 700px) {
+      #readme-window { left: 8px; top: 8px; width: calc(100% - 16px); max-height: calc(100% - 16px); }
+    }
+    body.single-app #readme-window,
+    body.app-running #readme-window,
+    body.exclusive-fullscreen #readme-window,
+    body.page-fullscreen #readme-window { display: none !important; }
     @font-face {
       font-family: "W95FA";
       src: url("fonts/w95fa.woff2") format("woff2"),
@@ -1039,21 +1087,6 @@
   </style>
 </head>
 <body>
-  <header id="site-intro">
-    <h1>Wine-Assembly: run real Windows 98 apps and games in your browser</h1>
-    <p>Wine-Assembly is a Windows 98 emulator that runs the original, unmodified .exe files in a browser tab:
-      3D Pinball Space Cadet, SkiFree, Solitaire, FreeCell, Minesweeper, Notepad, Paint, Calculator, Winamp,
-      the Windows Entertainment Pack, DirectDraw and Direct3D games, and 16-bit Windows 3.1 programs.
-      There is no operating-system image and no source port. An x86 interpreter and a reimplementation of the
-      Win32 API are written directly in WebAssembly Text, and the guest program's machine code runs on them.
-      Pick an application on the desktop and double-click it to launch.</p>
-    <ul>
-      <li><a href="apps/">Every program on the desktop, with a page each: Pinball, Solitaire, Winamp, Paint, SkiFree and more</a></li>
-      <li><a href="story.html">How Wine-Assembly was built</a></li>
-      <li><a href="design/">How it works: articles on the x86 interpreter, lazy flags, real DLLs, software GDI, DirectX and Win16, plus the design docs and reverse-engineering notes</a></li>
-      <li><a href="https://github.com/vgrichina/wine-assembly">Source code on GitHub (MIT)</a></li>
-    </ul>
-  </header>
   <div id="compile-status">Compiling WAT source...</div>
   <button id="debug-peek" onclick="toggleDebugPanels()">Debug</button>
   <div id="shell">
@@ -1389,6 +1422,38 @@
     <div id="content">
       <div id="screen-wrap">
         <div id="desktop-icons"></div>
+        <!-- The Read Me window: the page's own text, shown the way Windows 98
+             showed Welcome. It is plain HTML, not a guest window, so it is
+             page content a crawler and a screen reader both get; it opens on
+             a first visit and afterwards from its desktop icon or Start. -->
+        <section id="readme-window" role="dialog" aria-labelledby="readme-title" hidden>
+          <div class="readme-titlebar">
+            <span class="readme-titleico" aria-hidden="true">&#128196;</span>
+            <span id="readme-title">Read Me - Wine-Assembly</span>
+            <button type="button" class="readme-close" aria-label="Close" onclick="closeReadme()">&#x2715;</button>
+          </div>
+          <div class="readme-body">
+            <h1>Wine-Assembly: run real Windows 98 apps and games in your browser</h1>
+            <p>Wine-Assembly is a Windows 98 emulator that runs the original, unmodified .exe files in a browser tab:
+              3D Pinball Space Cadet, SkiFree, Solitaire, FreeCell, Minesweeper, Notepad, Paint, Calculator, Winamp,
+              the Windows Entertainment Pack, DirectDraw and Direct3D games, and 16-bit Windows 3.1 programs.</p>
+            <p>There is no operating-system image and no source port. An x86 interpreter and a reimplementation of the
+              Win32 API are written directly in WebAssembly Text, and the guest program's machine code runs on them.
+              Nothing is installed and nothing leaves your browser; a program's settings and scores stay in this
+              browser's local storage.</p>
+            <p>Double-click an icon on the desktop to launch a program. On a phone, one tap opens it and games that
+              need keys get on-screen controls.</p>
+            <ul>
+              <li><a href="apps/">Every program on the desktop, with a page each: Pinball, Solitaire, Winamp, Paint, SkiFree and more</a></li>
+              <li><a href="design/">How it works: articles on the x86 interpreter, lazy flags, real DLLs, software GDI, DirectX and Win16, plus the design docs and reverse-engineering notes</a></li>
+              <li><a href="story.html">How Wine-Assembly was built</a></li>
+              <li><a href="https://github.com/vgrichina/wine-assembly">Source code on GitHub (MIT)</a></li>
+            </ul>
+            <div class="readme-buttons">
+              <button type="button" class="readme-ok" onclick="closeReadme()">OK</button>
+            </div>
+          </div>
+        </section>
         <div id="build-stamp" aria-hidden="true"></div>
         <div id="screen-canvas-stack">
           <canvas id="screen-present" aria-hidden="true"></canvas>
@@ -1417,6 +1482,7 @@ Resource-aware Win98 emulator
   <div id="start-menu">
     <div class="banner">Wine&nbsp;Assembly</div>
     <div class="items">
+      <a class="item" href="#" onclick="openReadmeFromStart(event)"><span class="ico">&#128196;</span>Read Me</a>
       <a class="item" href="apps/"><span class="ico">&#127918;</span>Apps</a>
       <a class="item" href="design/"><span class="ico">&#128208;</span>Design</a>
       <a class="item" href="story.html"><span class="ico">&#128218;</span>The Story</a>
@@ -1490,9 +1556,9 @@ Resource-aware Win98 emulator
   <script src="lib/presentation-filter.js?v=6"></script>
   <script src="lib/renderer.js?v=197"></script>
   <script src="lib/dll-registry.js?v=2"></script>
-  <script src="lib/apps.js?v=24"></script>
+  <script src="lib/apps.js?v=25"></script>
   <script src="lib/debug-app-picker.js?v=2"></script>
-  <script src="lib/browser-input.js?v=16"></script>
+  <script src="lib/browser-input.js?v=17"></script>
   <script src="lib/mobile-keyboard.js?v=3"></script>
   <!-- Touch devices have no pointer, so every cursor shape the guest sets is
        invisible there and a busy app looks like a dead one. Draws the cursor
@@ -1502,7 +1568,7 @@ Resource-aware Win98 emulator
        can produce a click and nothing else, so Pinball's flippers and
        SkiFree's arrows are otherwise unreachable. Appears only on a coarse
        pointer and only for apps that declare `touchControls` in lib/apps.js. -->
-  <script src="lib/touch-controls.js?v=3"></script>
+  <script src="lib/touch-controls.js?v=4"></script>
   <!-- Inert unless ?diag is on the URL. It watches the one invariant a phone
        desktop has -- a tap at the first icon's centre lands on that icon --
        and posts the failing state to /ios-report, because the machine this
@@ -2526,7 +2592,80 @@ Resource-aware Win98 emulator
         }
       });
       grid.appendChild(sources);
+      // Read Me: the page's own text in a window, same non-app pattern as
+      // Sources (no guest instance behind it).
+      const readme = document.createElement('div');
+      readme.className = 'desktop-icon';
+      readme.dataset.app = 'readme';
+      readme.innerHTML = '<div class="icon-img">📄</div><div class="icon-label">Read Me</div>';
+      let readmeLastClick = 0;
+      readme.addEventListener('click', () => {
+        for (const e of grid.querySelectorAll('.desktop-icon.selected')) e.classList.remove('selected');
+        readme.classList.add('selected');
+        const now = Date.now();
+        if (SINGLE_APP_MODE || now - readmeLastClick < 500) {
+          openReadme();
+          readmeLastClick = 0;
+        } else {
+          readmeLastClick = now;
+        }
+      });
+      grid.appendChild(readme);
+      // First visit to the plain desktop: open it, the way Windows 98 opened
+      // Welcome. A launch URL (?app=) or single-app mode goes straight to the
+      // program; after one close it stays closed on this browser.
+      let readmeSeen = false;
+      try { readmeSeen = localStorage.getItem('wa.readme.seen') === '1'; } catch (e) { readmeSeen = true; }
+      if (!readmeSeen && !SINGLE_APP_MODE && !new URLSearchParams(location.search).has('app')) openReadme();
     }
+    function openReadme() {
+      const w = document.getElementById('readme-window');
+      if (!w) return;
+      w.hidden = false;
+      closeStartMenu();
+    }
+    function closeReadme() {
+      const w = document.getElementById('readme-window');
+      if (w) w.hidden = true;
+      try { localStorage.setItem('wa.readme.seen', '1'); } catch (e) { /* private mode: it simply opens again next time */ }
+    }
+    function openReadmeFromStart(e) {
+      if (e) e.preventDefault();
+      openReadme();
+    }
+    // Drag by the title bar, mouse or finger, kept inside the desktop area so
+    // the bar can never be parked where it cannot be grabbed again.
+    (function wireReadmeDrag() {
+      const w = document.getElementById('readme-window');
+      const bar = w && w.querySelector('.readme-titlebar');
+      if (!bar) return;
+      let drag = null;
+      bar.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || e.target.closest('.readme-close')) return;
+        const r = w.getBoundingClientRect();
+        drag = { id: e.pointerId, dx: e.clientX - r.left, dy: e.clientY - r.top };
+        bar.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      });
+      bar.addEventListener('pointermove', (e) => {
+        if (!drag || e.pointerId !== drag.id) return;
+        const host = w.offsetParent || w.parentElement;
+        const hr = host.getBoundingClientRect();
+        const maxX = Math.max(0, hr.width - w.offsetWidth);
+        const maxY = Math.max(0, hr.height - bar.offsetHeight - 8);
+        const x = Math.min(maxX, Math.max(0, e.clientX - drag.dx - hr.left));
+        const y = Math.min(maxY, Math.max(0, e.clientY - drag.dy - hr.top));
+        w.style.left = Math.round(x) + 'px';
+        w.style.top = Math.round(y) + 'px';
+      });
+      const end = (e) => {
+        if (!drag || e.pointerId !== drag.id) return;
+        drag = null;
+        try { bar.releasePointerCapture(e.pointerId); } catch (_) { /* already released */ }
+      };
+      bar.addEventListener('pointerup', end);
+      bar.addEventListener('pointercancel', end);
+    })();
     // The desktop watermark. Two lines, the way Windows put its build number
     // in the corner: what this is, and exactly which build of it.
     function showBuildStamp() {

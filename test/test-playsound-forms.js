@@ -66,6 +66,7 @@ const SND_ASYNC = 0x0001;
 const SND_NODEFAULT = 0x0002;
 const SND_MEMORY = 0x0004;
 const SND_LOOP = 0x0008;
+const SND_NOSTOP = 0x0010;
 const SND_PURGE = 0x0040;
 const SND_ALIAS = 0x00010000;
 const SND_FILENAME = 0x00020000;
@@ -104,13 +105,29 @@ async function main() {
   // Every host play_sound lands here with the bytes it was handed, so a test
   // can assert on content rather than on the fact a call happened.
   const played = [];
+  const loops = [];
+  // Stopping is observed on the same seam: the host now hands back a voice id
+  // for the sound it started, and the WAT policy aims voice_close at it. A
+  // fake voice manager here is enough to see which id got stopped and when.
+  const stopped = [];
+  let nextVoice = 0x0B9000;
+  let liveVoice = 0;
   const harness = await bootRenderHarness({
     extraWat,
     fonts: 'none',
     extraHostOverrides: {
-      play_sound: (wasmPtr, length) => {
+      play_sound: (wasmPtr, length, loop) => {
         played.push(new Uint8Array(harness.memory.buffer, wasmPtr >>> 0, length >>> 0).slice());
+        loops.push(loop >>> 0);
+        liveVoice = ++nextVoice;
+        return liveVoice;
       },
+      voice_close: (id) => {
+        stopped.push(id >>> 0);
+        if ((id >>> 0) === liveVoice) liveVoice = 0;
+        return 0;
+      },
+      voice_is_playing: (id) => (((id >>> 0) === liveVoice) ? 1 : 0),
     },
   });
   const e = harness.exports;
@@ -249,12 +266,18 @@ async function main() {
     e.ps_last_eax() === 1 && played.length === 1,
     `eax=${e.ps_last_eax()} calls=${played.length}`);
 
-  // --- SND_LOOP has no host loop, so it plays once and says so --------------
+  // --- SND_LOOP reaches the host voice as a loop, not as a one-shot ---------
   played.length = 0;
+  loops.length = 0;
   e.ps_play_sound_a(putString('c:\\windows\\media\\ding.wav'), SND_FILENAME | SND_LOOP);
-  check('PlaySoundA(SND_LOOP) plays the sound once rather than refusing',
-    e.ps_last_eax() === 1 && played.length === 1,
-    `eax=${e.ps_last_eax()} calls=${played.length}`);
+  check('PlaySoundA(SND_LOOP) plays the sound looping',
+    e.ps_last_eax() === 1 && played.length === 1 && loops[0] === 1,
+    `eax=${e.ps_last_eax()} calls=${played.length} loop=${loops[0]}`);
+  played.length = 0;
+  loops.length = 0;
+  e.ps_play_sound_a(putString('c:\\windows\\media\\ding.wav'), SND_FILENAME);
+  check('PlaySoundA without SND_LOOP asks the host for a one-shot',
+    played.length === 1 && loops[0] === 0, `loop=${loops[0]}`);
 
   // --- forms that must NOT claim success ------------------------------------
   played.length = 0;
@@ -264,15 +287,64 @@ async function main() {
     `eax=${e.ps_last_eax()} calls=${played.length}`);
 
   // --- stop requests -------------------------------------------------------
-  played.length = 0;
-  e.ps_play_sound_a(0, SND_ASYNC);
-  check('PlaySoundA(NULL) is a stop request and succeeds',
-    e.ps_last_eax() === 1 && played.length === 0,
-    `eax=${e.ps_last_eax()} calls=${played.length}`);
-  e.ps_play_sound_a(putString('c:\\windows\\media\\ding.wav'), SND_PURGE);
-  check('PlaySoundA(SND_PURGE) is a stop request and plays nothing',
-    e.ps_last_eax() === 1 && played.length === 0,
-    `eax=${e.ps_last_eax()} calls=${played.length}`);
+  // PlaySound owns one sound per process: starting a second one stops the
+  // first. Before the host handed back a voice this could only be claimed.
+  const ding = putString('c:\\windows\\media\\ding.wav');
+  played.length = 0; stopped.length = 0;
+  e.ps_play_sound_a(ding, SND_FILENAME | SND_ASYNC);
+  const firstVoice = liveVoice;
+  stopped.length = 0;
+  e.ps_play_sound_a(ding, SND_FILENAME | SND_ASYNC);
+  check('a second PlaySound stops the sound the first one started',
+    played.length === 2 && stopped.length === 1 && stopped[0] === firstVoice,
+    `plays=${played.length} stops=[${stopped.join(',')}] first=${firstVoice}`);
+
+  // SND_NOSTOP is the caller saying it would rather have nothing than
+  // interrupt: Windows returns FALSE and plays nothing while the device is
+  // busy with a sound this process started.
+  played.length = 0; stopped.length = 0;
+  e.ps_play_sound_a(ding, SND_FILENAME | SND_NOSTOP);
+  check('PlaySoundA(SND_NOSTOP) refuses rather than stopping the live sound',
+    e.ps_last_eax() === 0 && played.length === 0 && stopped.length === 0,
+    `eax=${e.ps_last_eax()} plays=${played.length} stops=${stopped.length}`);
+
+  // PlaySound(NULL, 0, 0): the documented "stop everything" call.
+  played.length = 0; stopped.length = 0;
+  const beforeNull = liveVoice;
+  e.ps_play_sound_a(0, SND_SYNC);
+  check('PlaySoundA(NULL) stops the sound that was playing',
+    e.ps_last_eax() === 1 && played.length === 0 &&
+      stopped.length === 1 && stopped[0] === beforeNull && liveVoice === 0,
+    `eax=${e.ps_last_eax()} stops=[${stopped.join(',')}] before=${beforeNull}`);
+
+  // Nothing playing: still TRUE, but with nothing to aim a stop at the host
+  // must not be asked to close a voice that is already gone.
+  played.length = 0; stopped.length = 0;
+  e.ps_play_sound_a(0, SND_SYNC);
+  check('PlaySoundA(NULL) with nothing playing succeeds without a host stop',
+    e.ps_last_eax() === 1 && stopped.length === 0,
+    `eax=${e.ps_last_eax()} stops=${stopped.length}`);
+
+  // SND_PURGE names the same stop, with a sound name that must be ignored.
+  played.length = 0; stopped.length = 0;
+  e.ps_play_sound_a(ding, SND_FILENAME | SND_ASYNC);
+  const beforePurge = liveVoice;
+  stopped.length = 0;
+  e.ps_play_sound_a(ding, SND_PURGE);
+  check('PlaySoundA(SND_PURGE) stops the live sound and plays nothing',
+    e.ps_last_eax() === 1 && played.length === 1 &&
+      stopped.length === 1 && stopped[0] === beforePurge,
+    `eax=${e.ps_last_eax()} plays=${played.length} stops=[${stopped.join(',')}]`);
+
+  // sndPlaySound(NULL, 0) is the 16-bit spelling of the same stop.
+  played.length = 0; stopped.length = 0;
+  e.ps_snd_play_sound_a(ding, SND_ASYNC);
+  const beforeSnd = liveVoice;
+  stopped.length = 0;
+  e.ps_snd_play_sound_a(0, 0);
+  check('sndPlaySoundA(NULL, 0) stops the sound it started',
+    e.ps_last_eax() === 1 && stopped.length === 1 && stopped[0] === beforeSnd,
+    `eax=${e.ps_last_eax()} stops=[${stopped.join(',')}] before=${beforeSnd}`);
 
   console.log('');
   const failed = checks.filter(p => !p).length;

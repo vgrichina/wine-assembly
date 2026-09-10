@@ -34,9 +34,14 @@ assert.strictEqual(new Set(dropdownIds).size, dropdownIds.length,
   'debug dropdown app IDs must be unique');
 for (const id of dropdownIds) assert(APPS[id], `debug dropdown app ${id} is not registered`);
 
+for (const id of ['heaven7', 'cashcow', 'bakkslide7', 'ptct']) {
+  assert(!DESKTOP_APPS.some(([listed]) => listed === id),
+    `${id} must stay off the production desktop`);
+}
+
 assert(dropdownIds.includes('heaven7'), 'web dropdown must list Heaven Seven');
-assert(DESKTOP_APPS.some(([id]) => id === 'heaven7'),
-  'Heaven Seven must be available in the hosted app picker');
+assert(LOCAL_CANDIDATE_APPS.some(([id]) => id === 'heaven7'),
+  'Heaven Seven must remain available as a local candidate');
 assert.strictEqual(APPS.heaven7.exe,
   'binaries/demoscene/heaven-seven/HEAVEN7W.EXE',
   'Heaven Seven must launch the tested final Windows executable');
@@ -49,8 +54,8 @@ assert.strictEqual(crypto.createHash('sha256').update(fs.readFileSync(heaven7Exe
   '3171d7bbe7faf70d5f3a6f6e24292e33a5007316156734a63b42cdf2f8805453',
   'Heaven Seven executable must match the archived final Windows build');
 assert(dropdownIds.includes('cashcow'), 'web dropdown must list Cashcow');
-assert(DESKTOP_APPS.some(([id]) => id === 'cashcow'),
-  'Cashcow must be available in the hosted app picker');
+assert(LOCAL_CANDIDATE_APPS.some(([id]) => id === 'cashcow'),
+  'Cashcow must remain available as a local candidate');
 assert.strictEqual(APPS.cashcow.exe,
   'binaries/demoscene/cashcow/CASHCOW.EXE',
   'Cashcow must launch the tested Windows executable');
@@ -63,8 +68,8 @@ assert.strictEqual(crypto.createHash('sha256').update(fs.readFileSync(cashcowExe
   '4c77dabf9bce091b16df267bfc230f0d9b063da1b23b77148348b20d4c151ea2',
   'Cashcow executable must match the archived Aardbei group build');
 assert(dropdownIds.includes('bakkslide7'), 'web dropdown must list Bakkslide 7');
-assert(DESKTOP_APPS.some(([id]) => id === 'bakkslide7'),
-  'Bakkslide 7 must be available in the hosted app picker');
+assert(LOCAL_CANDIDATE_APPS.some(([id]) => id === 'bakkslide7'),
+  'Bakkslide 7 must remain available as a local candidate');
 assert.strictEqual(APPS.bakkslide7.exe,
   'binaries/demoscene/bakkslide7/BAKKSLIDE7.EXE',
   'Bakkslide 7 must launch the tested Win32 port');
@@ -84,8 +89,8 @@ assert.strictEqual(crypto.createHash('sha256').update(fs.readFileSync(bakkslideE
   '4b7303a5e94728d5f1ad8cb6e6d5dddfb105eb33a14bec556a6d1a4758ebf4b9',
   'Bakkslide 7 executable must match the archived Win32 port');
 assert(dropdownIds.includes('ptct'), 'web dropdown must list Please the Cookie Thing');
-assert(DESKTOP_APPS.some(([id]) => id === 'ptct'),
-  'Please the Cookie Thing must be available in the hosted app picker');
+assert(LOCAL_CANDIDATE_APPS.some(([id]) => id === 'ptct'),
+  'Please the Cookie Thing must remain available as a local candidate');
 assert.strictEqual(APPS.ptct.exe, 'binaries/demoscene/ptct/PTCT.exe',
   'Please the Cookie Thing must launch the tested OpenGL executable');
 assert.strictEqual(APPS.ptct.dismissStartupDialog.command, 1,

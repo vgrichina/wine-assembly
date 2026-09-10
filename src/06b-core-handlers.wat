@@ -416,6 +416,51 @@
       (call $get_reg (local.get $op)))
     (return_call $next))
 
+  ;; 444-446: Alpha Centauri's palette/conversion loops repeatedly use the
+  ;; exact base-free SIB form `add reg,[eax*2+disp32]`. A complete-turn SIB
+  ;; census attributes 6.89M operations (2.39% of all guest dispatches) to
+  ;; these three destinations. Specializing the complete operation removes
+  ;; the synthetic EA dispatch, two thread operands, the ea_temp round trip,
+  ;; generic SIB register selection, and the generic ALU branch table.
+  ;;
+  ;; The one explicit step preserves the synthetic EA dispatch's scheduling
+  ;; cost, as H420 does. The operand is the displacement itself.
+  (func $th_add_edx_eax2_disp (param $disp i32)
+    (local $a i32) (local $b i32) (local $r i32)
+    (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+    (if (global.get $handler_hist_enabled)
+      (then (call $sib_consumer_hist_record (i32.const 48) (i32.const 2) (i32.const 0x10F))))
+    (local.set $a (global.get $edx))
+    (local.set $b (call $gl32 (i32.add (i32.shl (global.get $eax) (i32.const 1)) (local.get $disp))))
+    (local.set $r (i32.add (local.get $a) (local.get $b)))
+    (global.set $edx (local.get $r))
+    (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
+    (return_call $next))
+
+  (func $th_add_ebp_eax2_disp (param $disp i32)
+    (local $a i32) (local $b i32) (local $r i32)
+    (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+    (if (global.get $handler_hist_enabled)
+      (then (call $sib_consumer_hist_record (i32.const 48) (i32.const 5) (i32.const 0x10F))))
+    (local.set $a (global.get $ebp))
+    (local.set $b (call $gl32 (i32.add (i32.shl (global.get $eax) (i32.const 1)) (local.get $disp))))
+    (local.set $r (i32.add (local.get $a) (local.get $b)))
+    (global.set $ebp (local.get $r))
+    (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
+    (return_call $next))
+
+  (func $th_add_esi_eax2_disp (param $disp i32)
+    (local $a i32) (local $b i32) (local $r i32)
+    (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+    (if (global.get $handler_hist_enabled)
+      (then (call $sib_consumer_hist_record (i32.const 48) (i32.const 6) (i32.const 0x10F))))
+    (local.set $a (global.get $esi))
+    (local.set $b (call $gl32 (i32.add (i32.shl (global.get $eax) (i32.const 1)) (local.get $disp))))
+    (local.set $r (i32.add (local.get $a) (local.get $b)))
+    (global.set $esi (local.get $r))
+    (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
+    (return_call $next))
+
   ;; 421: the whole copied dword —
   ;;
   ;;   mov  r32, [base+disp]                 ; H345 when base is esi

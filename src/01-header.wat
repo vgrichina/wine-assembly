@@ -649,8 +649,8 @@
   ;; Audio host imports
   (import "host" "message_beep" (func $host_message_beep (param i32)))
   ;; message_beep(uType) — play system sound (0=default, 0x10=error, 0x30=warning, 0x40=info)
-  (import "host" "play_sound" (func $host_play_sound (param i32 i32)))
-  ;; play_sound(wasm_ptr, length) — play WAV data from WASM memory
+  (import "host" "play_sound" (func $host_play_sound (param i32 i32 i32) (result i32)))
+  ;; play_sound(wasm_ptr, length, loop) → voice id (0 = nothing started); the host keeps the voice so voice_close can stop it again — PlaySound(NULL)/SND_PURGE need a handle to aim at. loop != 0 repeats the image (SND_LOOP).
   (import "host" "mci_open" (func $host_mci_open (param i32 i32 i32) (result i32)))
   ;; mci_open(device_type_or_wa, element_name_wa, flags) → opaque host device id
   (import "host" "mci_open_w" (func $host_mci_open_w (param i32 i32 i32) (result i32)))
@@ -2881,6 +2881,7 @@
   (global $pq_read_off (mut i32) (i32.const 0))      ;; Read offset for post_queue_dequeue
   (global $msg_phase    (mut i32) (i32.const 0))    ;; Message loop phase
   (global $freelib_last_handle (mut i32) (i32.const 0)) ;; Last FreeLibrary'd handle (for loop detection)
+  (global $sound_voice (mut i32) (i32.const 0))     ;; Host voice of the sound PlaySound/sndPlaySound started, 0 = none
   (global $quit_flag    (mut i32) (i32.const 0))    ;; Set by PostQuitMessage
   (global $yield_flag   (mut i32) (i32.const 0))    ;; Set by GetMessageA when no input; cleared by run()
   (global $sleep_yielded (mut i32) (i32.const 0))  ;; Set by Sleep handler; NOT cleared by run() — JS reads+clears
