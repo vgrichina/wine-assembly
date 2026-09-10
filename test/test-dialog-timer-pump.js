@@ -80,6 +80,12 @@ function u32(value) {
   const timerId = 0x465;
   e.test_start_dialog_pump(hwnd, proc, stack);
   e.test_timer_set(hwnd, timerId, 25, 0);
+  const pump = e.get_eip();
+  e.run(100000);
+  assert.strictEqual(e.get_yield_reason(), 15, 'idle modal pump sleeps instead of busy yielding');
+  assert.strictEqual(e.get_eip(), pump, 'park retains its continuation thunk');
+  assert.strictEqual(e.get_esp(), stack, 'park preserves the modal API frame');
+  e.clear_yield();
   now = 25;
   e.run(100000);
 

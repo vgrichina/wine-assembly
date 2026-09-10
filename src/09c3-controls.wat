@@ -17469,6 +17469,7 @@
             (global.set $steps (i32.const 0))
             (return (i32.const 1))))))
     (global.set $yield_flag (i32.const 1))
+    (global.set $yield_reason (i32.const 15)) ;; drained paints: sleep until input
     (i32.const 1))
 
   (func $modal_finish_local (param $result i32)

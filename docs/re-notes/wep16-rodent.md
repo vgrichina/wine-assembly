@@ -11,6 +11,38 @@ the original remains the desktop edition and the remake is separately
 selectable as `rodent2000`. See [rodent2000.md](rodent2000.md) for the remake's
 OLE picture startup fix and gameplay command.
 
+## Idle CPU: Win16 WaitMessage busy loop (2026-09-10)
+
+Browser block tracing found a repeating 34-block pump, ending at
+`0x001e0395`, with USER ordinal 112 (`WaitMessage`) as the last API on
+successive slices. The handler set only `yield_flag`, leaving reason 0:
+the host immediately posted another MessageChannel slice instead of sleeping.
+This was an explicit wait misimplemented as polling, not a missing clock-spin
+heuristic. Absolute PCs describe this particular NE load, not a stable module map.
+
+The handler now completes its Pascal CS:IP return and sets queue park 15.
+The host's stack-neutral clear-yield resumes the caller, with input waking
+the sleep immediately and timers bounding its duration (still capped at 50ms).
+Do not use the Win32 message-wait resume here: its stdcall pop corrupts the
+16-bit stack. `test-win16-wait-message.js` checks the return PC and exact stack
+cleanup before and after wake.
+
+The first browser rerun fixed idle but left playing at ~83% of one core:
+`_parkedSleepMs` suppressed sleep for 120ms after every input event, even when
+the guest had just explicitly parked again. Fresh spin/queue parks now bypass
+that grace period; new input still cancels the sleep via `_wakeStep`.
+`test-browser-park-sleep.js` pins this single-use exception.
+
+Apple M1, headless Chrome 152, visible 390x664 phone viewport, 15-second
+renderer-process CPU deltas: before idle 101.1%, paused 101.9%, playing
+102.2–102.8%; after both fixes idle 0.66%, paused 0.60%, playing 2.22–2.56%.
+Gameplay uses real F2/F3 transitions and arrow pulses every 150ms;
+screenshots verify a changed board and the actual paused message. These are
+desktop Chrome measurements, not iPhone battery measurements. Host load was
+above the quiet-box threshold, so percentages are indicative, not a fine-grained
+benchmark. Raw before/final results and screenshots are under
+`/private/tmp/rodent-cpu-*`; source/cache version 302 on the isolated LAN build.
+
 ## Reaching gameplay headlessly
 
 ### Phone board presentation (2026-09-10)

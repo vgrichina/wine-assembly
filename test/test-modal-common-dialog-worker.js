@@ -41,6 +41,10 @@ const extraWat = String.raw`
   assert.strictEqual(ui.modal_dialog_hwnd() >>> 0, hwnd,
     'renderer shadow observes the Worker modal through shared memory');
 
+  assert.strictEqual(guest.test_modal_pump(), 1, 'open modal remains in its pump');
+  assert.strictEqual(guest.get_yield_reason(), 15, 'idle native modal uses queue sleep');
+  guest.clear_yield();
+
   ui.test_modal_done(1);
   assert.strictEqual(ui.modal_dialog_hwnd() >>> 0, hwnd,
     'shadow only signals completion; the owning Worker performs teardown');
