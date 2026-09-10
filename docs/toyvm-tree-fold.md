@@ -472,6 +472,181 @@ The `unsupported op` tail is long and thin: `cdq`, `cwd`, `cbw`, `cwde`,
 lowering table each, and none of them is worth adding until a census says a
 folded run actually ends on one.
 
+## The hotness gate (`--tree-fold-hot=N`)
+
+The static fold above compiles a tree for **every** foldable run it meets at
+decode time. That is why its cost is flat and unrelated to trees executed:
+CYCLE built 14 handlers for 3 tree entries, ACCIDENT built 167 handlers
+(437.5KB of WAT, the install cap) to remove 1.84% of its dispatches, and both
+paid the whole build + re-tier bill anyway. `--tree-fold-hot=N` makes the fold
+pay only for blocks the guest actually re-enters.
+
+### The signal
+
+region-jit decides hotness by sampling `$ip` at slice expiry (`region-live.js`,
+`sampleAfter`/`profileFor` both 6e6). That is free, but at a 2e6-dispatch slice
+it takes about **ten samples per 20M dispatches** — nowhere near enough to rank
+individual blocks. The gate therefore uses the exact counter we already have:
+`--block-hits`, one u32 per arena word at `isa.IPHIST_BASE`, bumped at the top
+of `$next` (`emit.js` `ipHistBump`). It is per-block-entry and exact.
+
+Its per-dispatch cost is what makes it usable only as a *window*. Interleaved
+against plain, the `blockhits` arm reads +3.1% min / −1.7% paired across the six
+programs — i.e. inside this box's noise, but certainly not free forever. So the
+gate profiles on a `--block-hits` build and then **takes the profiler away**:
+the fold's own instance swap installs a build with `ipHist` off, which is a
+transition it was already making.
+
+### Three phases
+
+1. **`warm`** — the guest runs on the profiling build. `compile.js` still calls
+   `tf.want(key, run, lin, addr)` for every foldable run, but `want` only
+   *records a candidate*: the run, the guest linear addresses it covers, and the
+   arena addresses to read counters from. Nothing is built.
+2. **window close** at `warmFrom + warmFor` dispatches (`--tree-fold-warm`,
+   default 10e6). Every candidate's counters are read; a candidate whose hottest
+   arena address has fewer than N entries is dropped as `cold (<N entries)`. The
+   survivors publish their **guest addresses** into `hotLins`, and their blocks
+   are dropped so the next compile of them can want a tree.
+3. **`closed`** — the install fires (always, even with zero survivors, so the
+   profiler comes out on programs where nothing is hot), and from then on `want`
+   accepts a run only if `hotLins` has its guest address; everything else is
+   declined as `cold block (outside the hot set)`.
+
+**The verdict keys on guest addresses, not arena words.** The first design
+promoted the captured *run* and then substituted almost nothing — ACCIDENT built
+88 handlers for 3 substitutions, BRW 1 tree for 0. A run is a list of arena
+words, and fusion, the cross-block dead-flag pass and trace formation all emit
+different words for the same guest bytes depending on compile context, so
+`treeKey` no longer matched after the drop-and-recompile. Keying on the guest
+address and letting the recompile hand its own run to the install fixed it:
+ACCIDENT went 167 handlers/437.5KB → 2/4.3KB, BRW 96/185.8KB → 10/19.0KB with
+98 substitutions.
+
+The window has to be placed where the hot code exists. BRW's blitter is not
+compiled until ~6-10M dispatches in, so `--tree-fold-warm` defaults to 10e6, not
+the 2e6 the first version used.
+
+The arena keeps the shape the design requires: an install that lands on a block
+already executing is handback-neutral by the same recipe region-live installs
+use (`dropWanting()` recompiles dropped heads on the host's turn and repairs the
+shadow return stack rather than cutting it), and the run's first word still
+becomes the tree ordinal with every later word left in place as an operand the
+handler steps over.
+
+### Load-independent counts, 20M dispatches
+
+The bill (handlers built, WAT bytes) against the yield (dispatches removed):
+
+| program | static: trees / WAT / trips removed | gated N=64: trees / WAT / trips removed |
+|---|---|---|
+| BRW | 96 / 185.8KB / 3,362,656 (16.81%) | 10 / 19.0KB / 2,716,552 (13.58%) |
+| ACCIDENT | 167 / 437.5KB / 367,325 (1.84%) | 2 / 4.3KB / 82,659 (0.41%) |
+| DHADREN | — / — / 128,350 (0.64%) | 0 / 0.0KB / 0 (0.00%) |
+| B-STEEL | — / — / 42,549 (0.21%) | 1 / 2.4KB / 0 (0.00%) |
+| DTM2 (control) | — / — / 0 | 3 / 6.9KB / 0 (0.00%) |
+| CYCLE | 14 / — / 18 (0.00%) | 0 / 0.0KB / 0 (0.00%) |
+
+The gate's own ledger, from the `tree gate:` line:
+
+| program | hot blocks | promoted | cold | hottest candidate |
+|---|---|---|---|---|
+| BRW | 11 | 9 | 87 | 47,158 entries |
+| ACCIDENT | 106 | 88 | 264 | 23,543 |
+| DHADREN | 0 | 0 | 22 | **2** |
+| B-STEEL | 1 | 1 | 6 | 44,271 |
+| DTM2 | 4 | 6 | 14 | 2,285 |
+| CYCLE | 4 | 4 | 10 | 26,930 |
+
+DHADREN is the row that explains the static arm's −13.1%: its hottest foldable
+candidate is entered **twice**. Every tree the static fold built for it was
+build cost against a block that never ran again. The gate builds nothing there,
+and DHADREN goes from −6.4% min / −9.5% paired (static) to +0.8% / +2.3%.
+
+BRW keeps 81% of the static arm's yield (13.58% of dispatches removed against
+16.81%) for 10% of its code size.
+
+### Three-arm timing, interleaved `--reps=5`, `--cpu-time`, 20M dispatches
+
+Baseline is plain `tailcall`. Positive is faster.
+
+| program | `--tree-fold` (static) | `--tree-fold --tree-fold-hot=64` | `--block-hits` (control) |
+|---|---|---|---|
+| BRW | +0.4% min / +0.4% paired | **+23.9% / +18.3%** | +1.1% / +2.4% |
+| ACCIDENT | +27.2% / −19.2% | +12.1% / −17.1% | +24.8% / −2.5% |
+| DHADREN | −6.4% / −9.5% | +0.8% / +2.3% | +0.7% / −0.3% |
+| B-STEEL | −6.8% / −11.0% | +3.3% / +1.5% | +2.4% / −0.2% |
+| DTM2 (control) | +2.2% / +3.6% | −3.9% / −6.1% | −6.4% / −7.1% |
+| CYCLE | +2.9% / +2.9% | +2.0% / −6.6% | −1.4% / −1.9% |
+| **geomean** | **+2.7% min / −5.9% paired** | **+6.0% min / −1.9% paired** | +3.1% / −1.7% |
+
+**Read the counts, not the percentages.** This box sits at load 20-40 and the
+timing says so: the unchanged static arm read −3.8% geomean in the run in the
+previous section and +2.7% here, and the `blockhits` control — which cannot be
+faster than plain, it only adds a store per dispatch — reads +3.1% min. Both
+numbers are noise. The defensible timing claim is the *shape*: the gate takes
+the static fold's roughly −5% paired loss back to about parity, it is the only
+arm that wins on BRW under both statistics, and it stops the three programs the
+static fold regressed from regressing.
+
+### Corpus and witnesses
+
+Corpus sweep, 191 programs at 8M dispatches, `tailcall` off against
+`--tree-fold --tree-fold-hot=64`: **191 unchanged, 0 regressions, 0 went blank,
+0 frame hashes moved, 0 bucket moves.** (The static fold's own sweep was 190/191
+with one explained mover; the gate is clean outright, because on most of the
+corpus it now builds nothing at all.)
+
+Six 80M audio witnesses, plain against `--tree-fold --tree-fold-hot=64`. **All
+six frame hashes are identical between the arms and match the recorded values**
+(DADEMO3 36128ac7, RUNDEMO 08502c5c, BLIQ a12d718a, ACME-BIG 362275f5,
+CONTAGIO 163af616, CATWALK 19cfa368). Four of the six wavs are byte-identical
+too; **BLIQ and CONTAGIO differ**.
+
+That difference is the install schedule, not a wrong value. An install is an
+instance swap — a handback at a point the plain arm does not have one — and a
+handback cuts its slice short and shifts every later slice boundary, which is
+what the audio clock is paced by. Re-running the two at several different
+install schedules shows exactly that signature:
+
+| arm | BLIQ wav | CONTAGIO wav |
+|---|---|---|
+| plain | e1c772ec7df8ae65 | f3424ccf29b4370b |
+| gated, `--tree-fold-warm=10m` (default) | f5ea24a87bd7f09b | 54de3b4f52b71831 |
+| gated, `--tree-fold-warm=20m` | **e1c772ec7df8ae65** (= plain) | 3791bac9f82f4142 |
+| gated, `--tree-fold-warm=40m` | 948d3e7f2170d4c8 | 48757026068a60eb |
+| gated, `--tree-fold-batch=1` | **e1c772ec7df8ae65** (= plain) | 54de3b4f52b71831 |
+
+A wrong value would be one stable wrong answer. This is a different answer per
+schedule, with two schedules landing back on plain byte for byte, and the frame
+hash pinned at `a12d718a` / `163af616` through all of it. It is the same
+audio-timing sensitivity region-live installs already have, and it is the reason
+the fold's install policy batches and waits.
+
+### Verdict
+
+`--tree-fold` stays **default OFF**, and so does the gate. The gate is a strict
+improvement on the static fold — it removes the flat build cost, keeps most of
+the yield on the one program that has one, and turns three regressions into
+non-events — but the gated arm is not >= plain on every program (DTM2, the
+control, reads −3.9%/−6.1%, and CYCLE −6.6% paired), and the whole-corpus
+argument for turning it on is still one program wide. Flipping the default is
+the user's call regardless.
+
+### Remaining declines, gated
+
+BRW, N=64: partial-reg 22009, too short 19603, terminator 10169, flag consumer
+9172, muldiv 2620, alias 2589, stack 1608, `cold block (outside the hot set)`
+606, `cold (<64 entries)` 87.
+
+ACCIDENT, N=64: stack 3708, too short 3606, terminator 2986, partial-reg 1924,
+call 1316, segment 648, flag consumer 592, alias 445, ret 431, io 311, muldiv
+275, `cold (<64 entries)` 264.
+
+The two gate buckets are a rounding error next to `partial-reg`, `too short`,
+`terminator`, `stack` and `flag consumer` — the gate is not what is limiting
+coverage, the eligibility rules are, and the work list below is unchanged by it.
+
 ## What is next
 
 The decline histogram is the work list, and the three relaxations it points at,
