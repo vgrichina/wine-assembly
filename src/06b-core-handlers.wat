@@ -1209,7 +1209,7 @@
   ;; word: signed starting displacement.
   (func $th_store32_base_span (param $op i32)
     (local $src i32) (local $base i32) (local $n i32) (local $disp i32)
-    (local $ga i32) (local $wa i32) (local $end_wa i32)
+    (local $ga i32) (local $wa i32)
     (local $len i32) (local $v i32) (local $i i32)
     (local.set $src (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $base (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
@@ -1220,27 +1220,20 @@
     (local.set $len (i32.shl (local.get $n) (i32.const 2)))
 
     ;; memory.fill repeats a byte, so only zero has dword-store semantics here.
-    ;; Staying inside one guest page makes the endpoint continuity test a
-    ;; sufficient mapping proof: one page has one affine g2w translation.
+    ;; $g2w_affine_span rejects wrapped ends, holes, and mapping boundaries;
+    ;; only then is one bulk write equivalent to the original dword stores.
     (if (i32.and
           (i32.eqz (local.get $v))
           (i32.le_u
             (i32.add (i32.and (local.get $ga) (i32.const 0xFFF)) (local.get $len))
             (i32.const 4096)))
       (then
-        (local.set $wa (call $g2w (local.get $ga)))
+        (local.set $wa (call $g2w_affine_span (local.get $ga) (local.get $len)))
         (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
           (then
-            (local.set $end_wa
-              (call $g2w
-                (i32.add (local.get $ga) (i32.sub (local.get $len) (i32.const 1)))))
-            (if (i32.eq
-                  (local.get $end_wa)
-                  (i32.add (local.get $wa) (i32.sub (local.get $len) (i32.const 1))))
-              (then
-                (call $invalidate_code_write (local.get $ga) (local.get $len))
-                (memory.fill (local.get $wa) (i32.const 0) (local.get $len))
-                (return_call $next)))))))
+            (call $invalidate_code_write (local.get $ga) (local.get $len))
+            (memory.fill (local.get $wa) (i32.const 0) (local.get $len))
+            (return_call $next)))))
 
     (block $done (loop $store
       (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
