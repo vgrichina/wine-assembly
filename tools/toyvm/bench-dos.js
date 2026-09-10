@@ -78,6 +78,19 @@ async function main() {
     // the guest slice -- read `--cpu-time`'s guest CPU for what the fold is
     // worth, and expect the folded arm's wall clock to carry the installs.
     treefold: { treeFold: true },
+    // The `--block-hits` census on its own, as an arm. It is not a feature
+    // anyone runs for its own sake -- it is what the tree fold's HOTNESS GATE
+    // profiles with, and the gate's whole cost model turns on how much one
+    // load/add/store per dispatch costs. Measuring it as an arm is the only way
+    // to say how much of a gated arm's number is the gate and how much is the
+    // profiler it ran on for the length of its window.
+    blockhits: { blockHits: true },
+    // The gated fold. `--tree-fold-hot=N` on the command line; here the
+    // threshold is the arm name's own suffix so one bench command can put
+    // several of them side by side (`treefoldhot`, `treefoldhot256`).
+    treefoldhot: { treeFold: { hot: 64 } },
+    treefoldhot16: { treeFold: { hot: 16 } },
+    treefoldhot256: { treeFold: { hot: 256 } },
     nowasmdecode: { wasmDecode: false },
     nocache: { noCache: true },
   };

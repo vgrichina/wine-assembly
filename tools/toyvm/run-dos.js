@@ -356,11 +356,21 @@ async function runDos(o) {
     machine.audio.rate = audioRate;
     machine.audio.sink = (buf) => audioChunks.push(Float32Array.from(buf));
   }
+  // The hotness gate profiles with `--block-hits`, so the FIRST module has to
+  // be built with the counters in it -- and only the first. That is the whole
+  // reason the gate is affordable: the profiler costs a load/add/store per
+  // dispatch (22% on BRW, measured), and the install that puts the trees in
+  // takes it back out again. See docs/toyvm-tree-fold.md, "The hotness gate".
+  const foldHot = treeFold && treeFold !== true && treeFold.hot > 0 ? treeFold.hot : 0;
+  if (foldHot && variant !== 'tailcall') {
+    throw new Error(`--tree-fold-hot profiles with --block-hits, which only the tailcall `
+      + `shell emits, not ${variant}`);
+  }
   const vm = await makeVm(variant, {
     portIn: (p, w) => machine.portIn(p, w),
     portOut: (p, v, w) => machine.portOut(p, v, w),
     hist: hist > 0 || histPairs > 0,
-    ipHist: blockHits,
+    ipHist: blockHits || foldHot > 0,
     lazyFlags, fuseCond, regions: jitRegions,
   });
   // The decoder's CPU level and the module's FLAGS shape have to move together:
@@ -487,10 +497,17 @@ async function runDos(o) {
       // reason region-live.js needs them: the rebuild has to be told everything
       // the first build was, or the swap lands the guest on a machine where the
       // handler indices its arena is full of mean something else.
+      // NOTE the `ipHist: blockHits` -- NOT `blockHits || foldHot`. The rebuild
+      // is where the gate's profiler goes away: the guest lands on a module
+      // with the trees in it and the per-dispatch counter gone.
       build: { hist: hist > 0 || histPairs > 0, ipHist: blockHits, lazyFlags, fuseCond },
       portIn: (p, w) => machine.portIn(p, w),
       portOut: (p, v, w) => machine.portOut(p, v, w),
       log,
+      // The counter table itself, as a view over the shared memory. It survives
+      // the instance swap because the memory does, but the gate stops reading
+      // it at the window close anyway.
+      hits: new Uint32Array(vm.mem.buffer, isa.IPHIST_BASE, isa.IPHIST_SIZE >> 2),
       ...(foldOpts === true ? {} : foldOpts),
     })
     : null;
@@ -733,7 +750,7 @@ async function runDos(o) {
     if (jit) { jit.pump(); if (jit.pending) await jit.pending; }
     // Same seam, same reason: `pump` builds a module and moves the guest onto
     // it, which cannot happen while a slice is in wasm.
-    if (folder) { folder.tick(); if (folder.needsInstall()) await folder.pump(); }
+    if (folder) { folder.tick(session.dispatched); if (folder.needsInstall()) await folder.pump(); }
     // Every trip. Sampling this every 64th was a real overrun and not a small
     // one: a step is a whole slice, and a program whose loops the compiler
     // cannot resolve spends most of its wall clock in JS compiling them, so 64
@@ -806,6 +823,17 @@ async function runDos(o) {
     // this instance is alive.
     hist: (hist > 0 || histPairs > 0)
       ? require('./handler-hist').readHist(vm.mem) : null,
+    // How often each GENERATED tree handler ran. `readHist` stops at
+    // HANDLERS.length by construction -- it decodes names out of the static
+    // table -- so the appended handlers are invisible to it and have to be read
+    // straight out of the counter array. This is the load-independent half of
+    // what the fold is worth: a tree that stands for `ops` guest instructions
+    // and ran `n` times removed `n * (ops - 1)` trips through $next, which is a
+    // COUNT and not a timing, and is the number to quote on a loaded box.
+    treeEntries: (folder && folder.trees.length && (hist > 0 || histPairs > 0))
+      ? [...new Uint32Array(vm.mem.buffer,
+        isa.HIST_BASE + folder.base * 4, folder.trees.length)]
+      : null,
     // Copied out, not aliased: the caller reads this after the instance is
     // done with and a view into a memory somebody else may reuse is a census
     // that changes under the reader.
@@ -1033,6 +1061,24 @@ async function main() {
       maxInstalls: count(arg('tree-fold-installs'), 4),
       batchMin: Number(arg('tree-fold-batch', 64)),
       batchWait: Number(arg('tree-fold-wait', 400)),
+      // `--tree-fold-hot=N`: the HOTNESS GATE. 0 (the default) is the static
+      // fold -- every eligible run gets a handler whether it is ever entered
+      // again or not, which is what made CYCLE build 14 handlers for 3 entries
+      // and what makes the flat install charge land on programs that were never
+      // going to earn it. With N > 0 the run is nominated at compile time,
+      // judged at the end of the profile window on the `--block-hits` count of
+      // the arena word it starts at, and folded only if it reached N.
+      hot: Number(arg('tree-fold-hot', 0)),
+      // `--tree-fold-warm=N`: the dispatch count the profile window CLOSES at.
+      // One number, not region-live's `sampleAfter`/`profileFor` pair, because
+      // this profiler is not a sampler: the counters are bumped from dispatch
+      // zero whatever the window says, so a late START would buy nothing and
+      // only the CLOSE is a real decision. Late enough that a depacked program
+      // has reached its own hot loop (BRW's blitter is not compiled until ~4M
+      // and a window closing at 2M finds one tree instead of nine); early
+      // enough that the profiling build is not most of the run.
+      warmFrom: 0,
+      warmFor: count(arg('tree-fold-warm'), 10e6),
       fromEnv: !process.argv.slice(2).includes('--tree-fold'),
       log: flag('tree-fold-verbose') ? console.log : (() => {}),
     } : null,
@@ -1341,7 +1387,31 @@ async function main() {
         + `${r.tree.folds} substitution(s) covering ${r.tree.foldedOps} guest ops, `
         + `${(r.tree.watBytes / 1024).toFixed(1)}KB of WAT`
         + `${r.tree.capped ? ' (capped)' : ''}`
+        // The gate's own ledger. `hottest` is the load-bearing number when a
+        // program folds nothing: it says whether the threshold was too high or
+        // the program simply has no foldable run it enters twice.
+        + (r.tree.hot
+          ? `\n  tree gate: hot>=${r.tree.hot}, ${r.tree.hotLins} hot block(s), ${r.tree.hotPromoted} promoted, `
+            + `${r.tree.coldSkipped} cold, ${r.tree.deadSkipped} hot-but-dead, `
+            + `hottest candidate ${r.tree.hottest} entries`
+          : '')
         + `, ${r.tree.ms.instantiate.toFixed(0)}ms building + ${r.tree.ms.swap.toFixed(0)}ms swapping`
+        // The drop is what turns an installed handler into a substituted one.
+        // Sites that named nothing live are trees built for a block that had
+        // already been thrown away, and without this they read as a fold that
+        // silently did nothing.
+        + `\n  tree drops: ${r.tree.dropSites} site(s) -> ${r.tree.dropProgs} program(s), `
+        + `${r.tree.dropBlocks} block(s) recompiled`
+        + (r.treeEntries ? (() => {
+          let hits = 0, removed = 0;
+          for (let i = 0; i < r.treeEntries.length; i++) {
+            hits += r.treeEntries[i];
+            removed += r.treeEntries[i] * ((r.tree.treeOps[i] || 1) - 1);
+          }
+          return `\n  tree entries: ${hits} tree dispatch(es), `
+            + `${removed} $next trip(s) removed `
+            + `(${(100 * removed / r.dispatched).toFixed(2)}% of the dispatches retired)`;
+        })() : '')
         + (r.tree.why.size
           ? `\n  tree declines: ` + [...r.tree.why].sort((a, b) => b[1] - a[1])
             .map(([k, n]) => `${k} ${n}`).join(', ')

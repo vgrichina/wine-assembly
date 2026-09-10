@@ -133,10 +133,15 @@ function printAndExit(a) {
 // the snapshot and the print. The outer counter lives in memory rather than a
 // register so no case has to give one up, and so that re-entering the body
 // after an install exercises the FOLDED handler rather than only compiling it.
-function program(body, tail = []) {
+// `pre` is a straight-line run laid down BEFORE the loop, so it executes
+// exactly once: the hotness gate's cold case, in the same program as its hot
+// one. `iter` overrides the trip count, which the gate cases raise so the
+// profile window has room to close while the program is still running.
+function program(body, { tail = [], pre = null, iter = ITER } = {}) {
   return asm((a) => {
     const { w, label, rel8 } = a;
-    w(0xC7, 0x06, COUNTER & 0xFF, COUNTER >> 8, ITER & 0xFF, ITER >> 8);
+    if (pre) { pre(a); w(0x90); }
+    w(0xC7, 0x06, COUNTER & 0xFF, COUNTER >> 8, iter & 0xFF, iter >> 8);
     // ...and a `nop` after it, for the same reason as the ones in `snapshot`.
     // `mov word [mem],imm16` is itself a foldable store, and the first trip
     // through the loop falls into the body from here -- so without this it
@@ -315,5 +320,107 @@ for (const [name, c] of Object.entries(CASES)) {
 
   summary.push(`${name} ${a} ${c.folds ? `${n} fold(s)/${trees(on)} tree(s)` : 'no fold'}`);
 }
+// --- the hotness gate ------------------------------------------------------
+//
+// `--tree-fold-hot=N` compiles a run only after the arena word it starts at has
+// been dispatched N times, so a block the program enters once never costs a
+// handler. One program answers all three questions the gate has to answer,
+// because it contains BOTH shapes:
+//
+//   pre    five straight-line ops before the loop -- entered exactly ONCE
+//   body   the `dot` run inside a 60,000-trip loop -- entered 60,000 times
+//
+// and it is run at three settings:
+//
+//   hot=64      the loop is folded, the once-only run is refused as cold
+//   hot=50000   NOTHING is folded: at the window's close the loop has been
+//               entered ~20,000 times, which is under the bar. This is the
+//               case that separates a gate from a delay -- a fold that merely
+//               waited would still fire here, eventually.
+//   plain       the baseline the other two must reproduce exactly
+//
+// The window is closed at 300,000 dispatches (`--tree-fold-warm`) while the
+// program has ~600,000 still to run, so the third question -- is the picture
+// the same on either side of the install -- is asked of a program that spends
+// most of its life AFTER the swap. The printed snapshot is seven words of
+// registers and flags, and it has to be identical in all three.
+const GATE_ITER = 60000;
+const GATE_WARM = 300000;
+const GATE_COM = path.join(dir, 'GATE.COM');
+fs.writeFileSync(GATE_COM, program(CASES.dot.body, {
+  iter: GATE_ITER,
+  // Five foldable full-width ops, run once. Long enough to be a candidate --
+  // under four it would be declined as `too short` and would never reach the
+  // gate at all, which would make this case prove nothing.
+  pre: ({ w }) => {
+    w(0xB8, 0x11, 0x11);       // mov ax,1111h
+    w(0xBB, 0x22, 0x22);       // mov bx,2222h
+    w(0x01, 0xD8);             // add ax,bx
+    w(0xC1, 0xE0, 0x02);       // shl ax,2
+    w(0x31, 0xD8);             // xor ax,bx
+  },
+}));
+
+const gatePlain = run(GATE_COM, []);
+// `--tree-fold-batch=1` for the same reason the six cases above pass it: the
+// SECOND install -- the one that carries the trees the hot blocks recompiled
+// into -- otherwise waits for a batch to fill or for the batch to stop growing,
+// and this program only takes about forty-five slices in total. On the corpus
+// that wait is a hundred handbacks out of thousands; here it is longer than the
+// program.
+const gateHot = run(GATE_COM,
+  ['--tree-fold', '--tree-fold-hot=64', `--tree-fold-warm=${GATE_WARM}`, '--tree-fold-batch=1']);
+const gateCold = run(GATE_COM,
+  ['--tree-fold', '--tree-fold-hot=50000', `--tree-fold-warm=${GATE_WARM}`, '--tree-fold-batch=1']);
+
+for (const [n, log] of [['plain', gatePlain], ['hot=64', gateHot], ['hot=50000', gateCold]]) {
+  assert.ok(/exited=true/.test(log), `gate ${n}: did not exit:\n${log}`);
+}
+const gateBar = (log) => +(/(\d+) hot block\(s\)/.exec(log) || [0, -1])[1];
+const gateCounts = (log) => ({
+  hot: gateBar(log),
+  folds: folds(log),
+  trees: trees(log),
+  cold: +(/(\d+) cold,/.exec(log) || [0, -1])[1],
+});
+
+// 1. A COLD BLOCK NEVER FOLDS. At hot=64 the loop is over the bar and the
+//    once-only run is not, so the gate has to report at least one refusal --
+//    a gate that promoted everything would fold and pass every other check
+//    here while being no gate at all.
+const g64 = gateCounts(gateHot);
+assert.ok(g64.folds > 0, `gate hot=64: nothing folded:\n${gateHot}`);
+assert.ok(g64.trees > 0, `gate hot=64: folded but generated no handler:\n${gateHot}`);
+assert.ok(g64.cold > 0, `gate hot=64: no candidate was refused as cold, so the `
+  + `once-per-run block was folded too:\n${gateHot}`);
+
+// 2. A BLOCK FOLDS ONLY AFTER N ENTRIES. Same program, same window, a bar the
+//    loop has not cleared by the time the window closes: nothing at all.
+const gHi = gateCounts(gateCold);
+assert.strictEqual(gHi.folds, 0,
+  `gate hot=50000: folded ${gHi.folds} run(s) below the threshold:\n${gateCold}`);
+assert.strictEqual(gHi.hot, 0,
+  `gate hot=50000: promoted ${gHi.hot} block(s) below the threshold:\n${gateCold}`);
+
+// 3. THE INSTALL IS INVISIBLE. Most of this program runs after the swap, and
+//    all three arms have to print the same seven words.
+const gp = screen(gatePlain);
+assert.ok(gp.length === 28, `gate: expected seven words, got "${gp}"`);
+assert.strictEqual(screen(gateHot), gp,
+  `gate hot=64: the fold computed something else\n  plain  ${gp}\n  folded ${screen(gateHot)}`);
+assert.strictEqual(screen(gateCold), gp,
+  `gate hot=50000: the gated arm computed something else\n  plain  ${gp}\n  gated  ${screen(gateCold)}`);
+
+// ...and the dispatch clock with it. The fold charges the dispatches it
+// removes and the arena keeps its shape, so a gated run retires exactly the
+// dispatches a plain one does -- the install is a host-side event and must not
+// show up on the guest's clock.
+const disp = (log) => +(/([\d.]+)M dispatches/.exec(log) || [0, -1])[1];
+assert.strictEqual(disp(gateHot), disp(gatePlain),
+  `gate hot=64: ${disp(gateHot)}M dispatches against ${disp(gatePlain)}M plain:\n${gateHot}`);
+
+summary.push(`gate ${gp} hot=64:${g64.folds} fold(s)/${g64.trees} tree(s)/${g64.cold} cold, `
+  + `hot=50000: no fold`);
+
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(`PASS test-toyvm-tree-fold: ${summary.join('; ')}`);

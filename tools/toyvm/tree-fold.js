@@ -298,11 +298,29 @@ class TreeFolder {
     session, vm, machine, portIn, portOut, build = {}, repFast = true,
     maxTrees = 256, maxInstalls = 4, minOps = MIN_OPS, log = () => {},
     batchMin = 64, batchWait = 400,
+    // The hotness gate. `hot = 0` is the static fold: every eligible run gets
+    // a handler whether it ever runs again or not. `hot = N` compiles a run
+    // only after the arena word it starts at has been dispatched N times.
+    hot = 0, warmFrom = 0, warmFor = 10e6, hits = null,
   }) {
     Object.assign(this, {
       session, vm, machine, portIn, portOut, build, repFast,
       maxTrees, maxInstalls, minOps, log, batchMin, batchWait,
+      hot, warmFrom, warmFor, hits,
     });
+    // True while the guest is running on the `--block-hits` build the gate
+    // profiles with. Cleared by the first install, which is what takes it away.
+    this.profilerLive = hot > 0;
+    // Gated mode has three phases and this is the one state variable for them:
+    // 'warm' (candidates accumulating, the profiling instance running),
+    // 'closed' (the hot set has been promoted, nothing new is taken).
+    this.phase = hot > 0 ? 'warm' : 'static';
+    this.candidates = new Map();      // key -> {run, lins:Set, addrs:Set}
+    this.hotLins = new Set();         // guest linear addresses the window found hot
+    this.hotPromoted = 0;
+    this.coldSkipped = 0;
+    this.deadSkipped = 0;
+    this.hottest = 0;                 // the highest hit count any candidate had
     this.sinceWant = 0;
     this.trees = [];                  // the `{name, locals, body}` list, in table order
     this.treeOps = [];                // guest ops each of those stands for
@@ -318,6 +336,7 @@ class TreeFolder {
     this.watBytes = 0;
     this.ms = { build: 0, instantiate: 0, swap: 0 };
     this.capped = false;
+    this.dropSites = 0; this.dropProgs = 0; this.dropBlocks = 0;
   }
 
   // Where this module's extra handlers start in the table. Read off the VM
@@ -328,11 +347,51 @@ class TreeFolder {
   get base() { return this.vm.regionBase || 0; }
 
   // Called from compile.js when a run is eligible and its handler does not
-  // exist yet. `lin` is a byte inside the block, which is all the drop needs.
-  want(key, run, lin) {
+  // exist yet. `lin` is a byte inside the block, which is all the drop needs;
+  // `addr` is the ABSOLUTE arena address of the run's FIRST word, which is what
+  // the hotness gate counts.
+  //
+  // In gated mode this is not a request, it is a NOMINATION. The block has just
+  // been compiled, so its counter is zero by construction and asking now would
+  // decline everything; the count is read at the end of the profile window
+  // instead (`closeWindow`), by which time the arena word has been bumped once
+  // per execution of the run.
+  want(key, run, lin, addr) {
     if (this.at.has(key) || this.wantedKeys.has(key)) {
       if (lin !== undefined) this.pendingSites.set(lin, true);
       return;
+    }
+    if (this.phase === 'warm') {
+      let c = this.candidates.get(key);
+      if (!c) {
+        if (this.candidates.size >= this.maxTrees * 8) { this.capped = true; return; }
+        c = { run, lins: new Set(), addrs: new Set() };
+        this.candidates.set(key, c);
+      }
+      if (lin !== undefined) c.lins.add(lin);
+      if (addr !== undefined) c.addrs.add(addr);
+      return;
+    }
+    // Past the window the counters are frozen, so a block compiled afterwards
+    // cannot be judged on its own count -- but the WINDOW's verdict is still
+    // good, because it was about a guest address and guest addresses do not
+    // move. `hotLins` is that verdict, and it is what makes the gate survive a
+    // recompile.
+    //
+    // It has to. A run captured during the window is a list of ARENA WORDS, and
+    // those are not stable: fusion, the cross-block dead-flag pass and trace
+    // formation all emit different words for the same guest bytes depending on
+    // what was compiled alongside them. Promoting the captured run and stopping
+    // there built 88 handlers for ACCIDENT and substituted THREE, because by
+    // the time the module was ready the blocks had been recompiled into
+    // something whose `treeKey` no longer matched. Keying the verdict on the
+    // guest address instead lets every later compile of a hot block fold
+    // whatever run it now has.
+    if (this.phase === 'closed') {
+      if (lin === undefined || !this.hotLins.has(lin)) {
+        this.note('cold block (outside the hot set)');
+        return;
+      }
     }
     if (this.trees.length + this.wantedKeys.size >= this.maxTrees
         || this.installs >= this.maxInstalls) {
@@ -342,6 +401,78 @@ class TreeFolder {
     this.wantedKeys.set(key, run);
     this.sinceWant = 0;
     if (lin !== undefined) this.pendingSites.set(lin, true);
+  }
+
+  // How many times the arena word at `addr` was dispatched, out of the
+  // `--block-hits` table the profiling instance has been filling.
+  //
+  // The index is masked exactly the way emit.js's `ipHistBump` masks it, so a
+  // stray address reads a wrong counter rather than throwing -- and the mask is
+  // also why this is a HEURISTIC and not a measurement: the arena recycles and
+  // the counters do not, so a word that lands on a recycled address inherits
+  // the count of whatever used to live there. It over-counts, never under, so
+  // the failure mode is folding something cold rather than missing something
+  // hot.
+  hitsAt(addr) {
+    if (!this.hits) return 0;
+    return this.hits[((addr - isa.THREAD_BASE) & (isa.THREAD_SIZE - 4)) >>> 2] >>> 0;
+  }
+
+  // The end of the profile window: every candidate is judged on the count its
+  // run actually reached, the hot ones become wants, and the phase closes so
+  // the install that follows can drop the profiling build.
+  closeWindow() {
+    const byPara = this.session && this.session.cache ? this.session.cache.byPara : null;
+    // Is any block this run was seen in still compiled? A hot count is a
+    // statement about the PAST and the install is in the future, and on this
+    // corpus the two come apart hard: ACCIDENT at a 10M window promoted 88
+    // trees on their hit counts and substituted THREE, because the other 85
+    // blocks had been thrown away by a self-patch or an arena recycle between
+    // the count and the build. A handler generated for a block that no longer
+    // exists is 3KB of wasm and a slice of build time spent on nothing, and
+    // without this filter it is indistinguishable from a fold that is silently
+    // failing to apply.
+    const live = (c) => {
+      if (!byPara) return true;
+      for (const lin of c.lins) {
+        for (const prog of (byPara.get(lin >>> 4) || [])) if (prog.live) return true;
+      }
+      return false;
+    };
+    for (const [key, c] of this.candidates) {
+      let n = 0;
+      for (const a of c.addrs) n = Math.max(n, this.hitsAt(a));
+      if (n > this.hottest) this.hottest = n;
+      if (n < this.hot) { this.coldSkipped++; this.note(`cold (<${this.hot} entries)`); continue; }
+      // THE VERDICT IS A SET OF GUEST ADDRESSES, NOT A SET OF RUNS, and the
+      // captured run is deliberately thrown away here.
+      //
+      // Promoting it looked like a free head start and was the opposite:
+      // ACCIDENT built 88 handlers off its captured runs and substituted THREE.
+      // A run is a list of ARENA WORDS, and those are not stable across a
+      // recompile -- fusion, the cross-block dead-flag pass and trace formation
+      // all emit different words for the same guest bytes depending on what was
+      // compiled beside them -- so a run measured at 4M is usually not the run
+      // the block has at 10M, and its `treeKey` no longer matches anything.
+      //
+      // So the close publishes the addresses and drops their blocks. They
+      // recompile on the host's turn, `want()` sees them again with the run
+      // they have NOW, and the next install carries trees that are current by
+      // construction. Two installs instead of one, and every handler built is a
+      // handler that is used.
+      for (const lin of c.lins) { this.hotLins.add(lin); this.pendingSites.set(lin, true); }
+      if (!live(c)) { this.deadSkipped++; this.note('hot but no longer compiled'); continue; }
+      this.hotPromoted++;
+    }
+    // The hot set is finite and fully known now, so there is nothing left to
+    // wait for: the second install only has to let the drop's recompiles land.
+    this.batchWait = Math.min(this.batchWait, 100);
+    this.candidates.clear();
+    this.phase = 'closed';
+    this.sinceWant = this.batchWait;   // install at the next seam, whatever the batch size
+    this.log(`[tree] profile window closed: ${this.hotPromoted} hot, ${this.coldSkipped} cold, `
+      + `${this.deadSkipped} hot-but-dead `
+      + `(threshold ${this.hot}, hottest candidate ${this.hottest} entries)`);
   }
 
   note(b, n = 1) { this.why.set(b, (this.why.get(b) || 0) + n); }
@@ -358,9 +489,23 @@ class TreeFolder {
   // So a batch goes in when it is big enough to be worth a build, or when it
   // has stopped growing -- the second half matters because a program that only
   // ever finds three foldable blocks would otherwise never install any of them.
-  tick() { if (this.wantedKeys.size) this.sinceWant++; }
+  //
+  // In gated mode the batch is not the trigger at all -- the profile window is.
+  // `dispatched` is the guest clock the window is measured on, so this is where
+  // it is closed.
+  tick(dispatched = 0) {
+    if (this.phase === 'warm' && dispatched >= this.warmFrom + this.warmFor) this.closeWindow();
+    if (this.wantedKeys.size) this.sinceWant++;
+  }
 
   needsInstall() {
+    // The profiling build has to come OUT whether or not anything qualified.
+    // `--block-hits` is one load/add/store per dispatch and measured 22% on
+    // BRW, so a gated run that found nothing hot -- which is the whole point of
+    // the gate, and is what DTM2 and CYCLE do -- would otherwise pay for a
+    // profiler it is no longer reading, forever, and read as the gate costing
+    // what the profiler costs.
+    if (this.profilerLive && this.phase === 'closed') return true;
     if (!this.wantedKeys.size) return false;
     return this.wantedKeys.size >= this.batchMin || this.sinceWant >= this.batchWait;
   }
@@ -382,7 +527,11 @@ class TreeFolder {
     }
     this.wantedKeys.clear();
     this.sinceWant = 0;
-    if (!built.length) { this.pendingSites.clear(); return false; }
+    // ...but a profiler-drop install carries no trees and still has to happen.
+    if (!built.length && !(this.profilerLive && this.phase === 'closed')) {
+      this.pendingSites.clear();
+      return false;
+    }
     for (const b of built) {
       // How many guest ops this handler stands for, kept in table order. It is
       // the only way to turn a dispatch census back into "dispatches removed":
@@ -432,6 +581,7 @@ class TreeFolder {
       }
     }
     this.dropWanting();
+    this.profilerLive = false;
     this.ms.swap += now() - t1;
     this.log(`[tree] install ${this.installs + 1}: ${this.trees.length} tree(s) in the table, `
       + `${(this.watBytes / 1024).toFixed(1)}KB of WAT`);
@@ -449,6 +599,7 @@ class TreeFolder {
     this.pendingSites.clear();
     if (!sites.length) return;
 
+    this.dropSites += sites.length;
     const doomed = new Map();
     const doomedProgs = new Set();
     for (const lin of sites) {
@@ -458,6 +609,13 @@ class TreeFolder {
         for (const [bip] of prog.blocks) doomed.set(`${prog.cs}:${bip}`, [prog.cs, bip]);
       }
     }
+    // How many of the sites still named a LIVE program. A promoted tree whose
+    // block has since been thrown away (self-patch, arena recycle) drops
+    // nothing, is never recompiled, and so is never substituted -- which is a
+    // tree built for nothing and looks exactly like a broken fold unless this
+    // is counted.
+    this.dropProgs += doomedProgs.size;
+    this.dropBlocks += doomed.size;
     const rtop0 = vm.raw('rtop');
     const stack = new Int32Array(vm.mem.buffer, isa.RSTACK_BASE, rtop0 * 3);
     const doomedSpans = [...doomedProgs]
@@ -498,6 +656,10 @@ class TreeFolder {
     return {
       installs: this.installs, trees: this.trees.length, folds: this.folds,
       base: this.base, treeOps: [...this.treeOps],
+      hot: this.hot, phase: this.phase,
+      hotPromoted: this.hotPromoted, coldSkipped: this.coldSkipped,
+      deadSkipped: this.deadSkipped, hottest: this.hottest, hotLins: this.hotLins.size,
+      dropSites: this.dropSites, dropProgs: this.dropProgs, dropBlocks: this.dropBlocks,
       foldedOps: this.foldedOps, watBytes: this.watBytes, capped: this.capped,
       why: this.why, declinedTrees: this.declinedTrees, ms: { ...this.ms },
     };

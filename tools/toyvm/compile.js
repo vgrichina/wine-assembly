@@ -849,7 +849,12 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
         if (hasFixup) { tf.note('fixup inside the run'); continue; }
         const key = treeKey(run);
         const ord = tf.at.get(key);
-        if (ord === undefined) { tf.want(key, run, lin); continue; }
+        // The ABSOLUTE arena address of the run's first word is the hotness
+        // gate's counter key: `--block-hits` bumps one u32 per arena word in
+        // $next, so that word's counter is exactly "how many times this run
+        // executed". The `from` word is the one the tree will later overwrite,
+        // which is the same word -- so the count is read where the fold lands.
+        if (ord === undefined) { tf.want(key, run, lin, arenaBase + from * 4); continue; }
         if (tf.arity.get(key) !== to - from - 1) {
           // The same ops and operands laid out over a different number of words
           // is not something the arena can produce, so this can only mean the
