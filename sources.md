@@ -25,7 +25,7 @@ are:
   `b55524231edacc7d184c22c762d25193d616adc55d0141785fb21b8890d352b9`
 - Atomic Bomberman `_BOMB.EXE`:
   `0ff14a352d6626660ceb66ea0e6743cd33c457e754cfd5705120bacae0530638`
-- Broken Sword `WINSWORD.EXE`:
+- Broken Sword installed `winsword.exe`:
   `8ca6e3f0c56e1f289f79e2d52ca8cd98466c5b5c2817b3d05b7f7d80425c4177`
 - Dungeon Keeper `KEEPER95.EXE`:
   `4d3cd6a7866520f360288b08440e0f20379b4b39216a9576c388e42fcdf72c84`
@@ -44,6 +44,18 @@ title/menu sequence through ordinary Win32 keys, then verifies arena
 movement, visible bomb placement, and an explosion. The selected `BMANDEMO`
 tree contains no installer executable to bypass; its launch and data hashes are
 recorded in `docs/re-notes/atomic-bomberman-demo.md`.
+
+Broken Sword is installed by running the archive's original `SETUP.EXE`
+(SHA-256 `091ad0e2e8f1f49f6c2cb69067c7c0b7c7d75f3255ab227b6ef17152bb6f40ae`)
+inside Wine-Assembly. Its DirectX bootstrap launches `GAMECFIG.EXE` (SHA-256
+`2f67c74ce3ce737383c6481e5e50ac47de682f670383f8d385d9d6abfe4da439`),
+which runs the original full-screen installer and writes a 17-file,
+26,815,476-byte tree under `C:\\Sword`. The registered app launches that
+guest-produced `installed/` tree and mounts the original distribution's movie,
+speech, and music directories as its requested CD media. The source link above
+identifies the original playable demo distribution; neither its package nor
+the generated local install tree is republished here. See
+`docs/re-notes/broken-sword-demo.md`.
 
 Dungeon Keeper is installed by running the archive's original `KDDATA.EXE`
 (SHA-256 `f121c2f77583e35a258617308f609aefbd73ca249974e3cdbac7520c4cdda92a`)

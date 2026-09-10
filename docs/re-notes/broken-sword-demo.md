@@ -2,18 +2,27 @@
 
 ## Binary and launch layout
 
-- Executable: `Broken_Sword_demo-SW/WINSWORD.EXE`
+- Original installer: `Broken_Sword_demo-SW/SETUP.EXE`
+- Installer SHA-256: `091ad0e2e8f1f49f6c2cb69067c7c0b7c7d75f3255ab227b6ef17152bb6f40ae`
+- Installed executable: `Broken_Sword_demo-SW/installed/winsword.exe`
 - SHA-256: `8ca6e3f0c56e1f289f79e2d52ca8cd98466c5b5c2817b3d05b7f7d80425c4177`
-- Native video decoder: `SMACKW32.DLL`
+- Native video decoder: `installed/smackw32.dll`
 - High-quality opening movie: `SMACKSHI/INTRO.SMK` (13,298,480 bytes)
 - Low-quality opening movie: `SMACKSLO/INTRO.SMK` (10,717,968 bytes)
 
-The browser manifest contains 551 files totaling about 158 MB. The launcher
-fetches all of them before starting the guest. In single-app/full-page mode the
-canvas is black during this load, while the progress text remains outside the
-game canvas; on a local Chrome run it was still fully black 12 seconds after
-launch and showed a decoded frame by 40 seconds. This interval is asset loading
-and initial Smacker decode, not a dead DirectDraw surface.
+`tools/install-broken-sword-demo.js` runs the original `SETUP.EXE`, accepts its
+DirectX check, follows the launched `GAMECFIG.EXE` into the full-screen
+`INSTALL.EXE`, and drives that guest installer to completion. It produces 17
+files and 26,815,476 bytes under `C:\\Sword`; the app launches that exact output,
+not the pre-installed files beside the setup program.
+
+The installed `sword.inf` deliberately keeps movie, speech, and music on the
+original demo CD. The browser manifest therefore contains 16 installed
+companions plus 47 files from only `MUSIC`, `SMACKSHI`, and `SPEECH`. It omits
+the setup program, DirectX redistributable, low-resolution movie, and other
+installation-only files. In single-app/full-page mode the canvas remains black
+during asset loading and initial Smacker decode; that interval is not a dead
+DirectDraw surface.
 
 ## Opening movie evidence
 

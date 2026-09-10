@@ -17,7 +17,7 @@ const debugIds = new Set(DEBUG_ONLY_APPS.map(([id]) => id));
 const expected = {
   curse_monkey_island_demo: ['COMI.EXE', 11],
   atomic_bomberman_demo: ['_BOMB.EXE', 151],
-  broken_sword_demo: ['WINSWORD.EXE', 551],
+  broken_sword_demo: ['winsword.exe', 63],
   dungeon_keeper_demo: ['KEEPER95.EXE', 165],
   darkstone_demo: ['darkstonedemo.exe', 13],
 };
@@ -52,9 +52,20 @@ for (const [id, [exeName, companionCount]] of Object.entries(expected)) {
 }
 
 assert.deepStrictEqual(APPS.broken_sword_demo.dlls.map(file => path.basename(file)),
-  ['SMACKW32.DLL']);
+  ['smackw32.dll']);
 assert.strictEqual(APPS.broken_sword_demo.startupInput, undefined,
   'the working opening movie is not skipped automatically');
+assert(APPS.broken_sword_demo.exe.includes('Broken_Sword_demo-SW/installed/'),
+  'Broken Sword launches only the original installer output');
+const brokenSwordManifest = JSON.parse(fs.readFileSync(
+  path.join(root, APPS.broken_sword_demo.localFileManifest), 'utf8'));
+assert(brokenSwordManifest.files.some(file => file.url === '../SMACKSHI/INTRO.SMK'),
+  'Broken Sword keeps the installed high-resolution movie media mounted');
+assert(brokenSwordManifest.files.some(file => file.url.startsWith('../MUSIC/')) &&
+  brokenSwordManifest.files.some(file => file.url.startsWith('../SPEECH/')),
+  'Broken Sword keeps the installed demo music and speech media mounted');
+assert(!brokenSwordManifest.files.some(file => /\.\.\/(DIRECTX|INSTALL)\//.test(file.url)),
+  'Broken Sword does not mount installer or DirectX payloads for gameplay');
 assert.deepStrictEqual(APPS.broken_sword_demo.touchControls, {},
   'the mouse-driven game exposes mobile Fit/Fill without fake game buttons');
 assert.deepStrictEqual(APPS.dungeon_keeper_demo.dlls.map(file => path.basename(file)),

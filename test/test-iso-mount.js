@@ -352,6 +352,14 @@ async function main() {
       'the fixed disk keeps 512-byte sectors');
     assert.strictEqual(dv.getUint32(at(spcGA), true), 8,
       'the fixed disk keeps 8 sectors per cluster');
+    const freeBytes = dv.getUint32(at(spcGA), true) *
+      dv.getUint32(at(bpsGA), true) * dv.getUint32(at(freeGA), true);
+    const totalBytes = dv.getUint32(at(spcGA), true) *
+      dv.getUint32(at(bpsGA), true) * dv.getUint32(at(totalGA), true);
+    assert(freeBytes > 43 * 1024 * 1024,
+      'the fixed disk has enough room for period game installers');
+    assert(freeBytes <= 0x7fffffff && totalBytes <= 0x7fffffff,
+      'legacy geometry products stay positive in signed 32-bit arithmetic');
   });
 
   console.log(`${passed} passed, ${failed} failed`);

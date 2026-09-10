@@ -14220,7 +14220,9 @@ HookEx — no next hook in chain, return 0
   ;; era CD checks read exactly these numbers (Diablo XOR-folds BytesPerSector
   ;; with the drive type and the filesystem name and compares the fold against
   ;; a constant, so 512-byte sectors here read as "not a CD"). Anything else is
-  ;; the fixed disk: ~2GB free of ~4GB at 8 sectors/cluster, 512 bytes/sector.
+  ;; the fixed disk: just under 1GB free of just under 2GB at 8 sectors/cluster,
+  ;; 512 bytes/sector. Keep both byte products below INT32_MAX: some Win95-era
+  ;; installers multiply this legacy geometry with signed 32-bit arithmetic.
   (func $disk_free_space (param $root i32) (param $spc i32) (param $bps i32)
                          (param $free i32) (param $total i32) (param $wide i32)
     (local $root_wa i32)
@@ -14240,8 +14242,8 @@ HookEx — no next hook in chain, return 0
       (else
         (if (local.get $spc) (then (call $gs32 (local.get $spc) (i32.const 8))))
         (if (local.get $bps) (then (call $gs32 (local.get $bps) (i32.const 512))))
-        (if (local.get $free) (then (call $gs32 (local.get $free) (i32.const 524288))))
-        (if (local.get $total) (then (call $gs32 (local.get $total) (i32.const 1048576)))))))
+        (if (local.get $free) (then (call $gs32 (local.get $free) (i32.const 262143))))
+        (if (local.get $total) (then (call $gs32 (local.get $total) (i32.const 524287)))))))
 
   (func $handle_GetDiskFreeSpaceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $disk_free_space (local.get $arg0) (local.get $arg1) (local.get $arg2)

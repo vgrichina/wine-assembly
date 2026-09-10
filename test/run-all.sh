@@ -533,6 +533,7 @@ UNIT=(
   test/test-created-dialog-main-promotion.js
   test/test-cw-usedefault-adjusted.js
   test/test-d3d9-fixed-function-shaders.js
+  test/test-directx-setup.js
   test/test-d3d9-shader-unsupported.js
   test/test-d3d9-swap-chain.js
   test/test-crt-mb-cur-max-handler.js
@@ -611,6 +612,9 @@ UNIT=(
   test/test-toyvm-vbe.js
   test/test-toyvm-load-seg.js
   test/test-toyvm-region-live.js
+  test/test-toyvm-region-install-clock.js
+  test/test-toyvm-dos-poll-key.js
+  test/test-toyvm-ip-width.js
   test/test-user-default-ui-language.js
   test/test-virtual-query-user-boundary.js
   test/test-wave-in-dev-caps.js
@@ -673,6 +677,7 @@ E2E=(
   test/test-atomic-bomberman-gameplay.js
   test/test-dungeon-keeper-gameplay.js
   test/test-darkstone-gameplay.js
+  test/test-broken-sword-gameplay.js
   test/test-baldurs-gate-demos.js
   test/test-diablo-shareware-art.js
   test/test-diablo-shareware-gameplay.js

@@ -27427,5 +27427,27 @@
       }
     ],
     "ret": "DWORD"
+  },
+  {
+    "id": 3302,
+    "name": "DirectXSetup",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3829672745,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "rootPath",
+        "type": "LPSTR"
+      },
+      {
+        "name": "flags",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "INT"
   }
 ]

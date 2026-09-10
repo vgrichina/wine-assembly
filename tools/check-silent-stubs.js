@@ -204,8 +204,10 @@ const digest = crypto.createHash('sha256')
 // top-level z-order instead of returning this process's main HWND.
 // 2026-09-05: 438 -> 437. The Win98 Shell32 ArrangeWindows ordinal now tiles
 // eligible renderer windows instead of returning an unconditional zero.
-const EXPECTED_COUNT = 437;
-const EXPECTED_SHA256 = '030f24c394c47127bf27f3dadd1152325bb01217a33f83b28aab227fa7c5251f';
+// 2026-09-09: 437 -> 438. DirectXSetup reports that the emulator-provided
+// runtime is already installed, so legacy redistributables do not replace it.
+const EXPECTED_COUNT = 438;
+const EXPECTED_SHA256 = 'fff60a3b3efcbc70d943a604ee747a8b4b9a9d1fced7cd13feffdd71a0653232';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

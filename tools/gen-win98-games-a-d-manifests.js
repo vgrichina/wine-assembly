@@ -21,8 +21,9 @@ const GAMES = [
   },
   {
     id: 'broken_sword_demo',
-    root: 'Broken_Sword_demo-SW',
-    exe: 'WINSWORD.EXE',
+    root: 'Broken_Sword_demo-SW/installed',
+    exe: 'winsword.exe',
+    media: ['MUSIC', 'SMACKSHI', 'SPEECH'],
   },
   {
     id: 'dungeon_keeper_demo',
@@ -56,6 +57,16 @@ function manifestFor(game, directory) {
     url: relative.split(path.sep).join('/'),
     vfsPath: 'c:\\' + relative.split(path.sep).join('\\'),
   }));
+  for (const mediaRoot of game.media || []) {
+    const mediaDirectory = path.join(directory, '..', mediaRoot);
+    for (const relative of walk(mediaDirectory)) {
+      const mediaPath = path.join(mediaRoot, relative);
+      files.push({
+        url: '../' + mediaPath.split(path.sep).join('/'),
+        vfsPath: 'c:\\' + mediaPath.split(path.sep).join('\\'),
+      });
+    }
+  }
   return `${JSON.stringify({ schemaVersion: 1, files }, null, 2)}\n`;
 }
 

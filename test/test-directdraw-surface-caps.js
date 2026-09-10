@@ -84,6 +84,24 @@ const extraWat = String.raw`
   assert.strictEqual(wat.guest_read32(queryDesc + 104) >>> 0, 0x601c,
     'back buffer must inherit 3DDEVICE and VIDEOMEMORY while replacing PRIMARY');
 
+  const defaultDesc = 0x410300;
+  const defaultPrimaryOut = 0x410400;
+  const defaultAttachedOut = 0x410404;
+  wat.guest_write32(defaultDesc, 108);
+  wat.guest_write32(defaultDesc + 4, 0x21); // DDSD_CAPS|BACKBUFFERCOUNT
+  wat.guest_write32(defaultDesc + 20, 1);
+  wat.guest_write32(defaultDesc + 104, 0x218); // PRIMARY|FLIP|COMPLEX
+  assert.strictEqual(wat.test_dx_caps_create(defaultDesc, defaultPrimaryOut) >>> 0, 0);
+  const defaultPrimary = wat.guest_read32(defaultPrimaryOut) >>> 0;
+  wat.guest_write32(attachedCaps, 0x4004); // BACKBUFFER|VIDEOMEMORY
+  assert.strictEqual(
+    wat.test_dx_caps_get_attached(defaultPrimary, attachedCaps, defaultAttachedOut) >>> 0, 0,
+    'an internally allocated flip-chain back buffer reports video memory');
+  const defaultAttached = wat.guest_read32(defaultAttachedOut) >>> 0;
+  assert.strictEqual(wat.test_dx_caps_desc(defaultAttached, queryDesc) >>> 0, 0);
+  assert.strictEqual(wat.guest_read32(queryDesc + 104) >>> 0, 0x401c,
+    'default back-buffer caps include actual VIDEOMEMORY placement');
+
   const externalDesc = 0x411000;
   const externalOut = 0x411100;
   const externalPixels = 0x412000;

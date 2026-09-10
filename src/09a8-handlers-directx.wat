@@ -1448,6 +1448,13 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
+  ;; DirectXSetup(hwnd, rootPath, flags) -> DSETUPERR_SUCCESS. The emulator
+  ;; already provides the DirectX runtime, so legacy redistributables must not
+  ;; replace its system DLLs before continuing the application installer.
+  (func $handle_DirectXSetup (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
   ;; DirectDrawCreate(lpGUID, lplpDD, pUnkOuter) → HRESULT
   (func $handle_DirectDrawCreate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $obj_guest i32)
@@ -1999,7 +2006,9 @@
           (i32.store (call $dx_surf_meta_ptr (local.get $back_entry))
             (i32.or
               (i32.and (local.get $caps) (i32.const -513)) ;; ~DDSCAPS_PRIMARYSURFACE
-              (i32.const 0x4)))                           ;; DDSCAPS_BACKBUFFER
+              ;; Emulator-owned flip-chain storage is video memory even when
+              ;; the caller omitted the optional placement hint.
+              (i32.const 0x4004))) ;; DDSCAPS_VIDEOMEMORY|DDSCAPS_BACKBUFFER
           (store.field DxObject width (local.get $back_entry) (local.get $w))
           (store.field DxObject height (local.get $back_entry) (local.get $h))
           (store.field DxObject bpp (local.get $back_entry) (local.get $bpp))

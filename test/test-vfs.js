@@ -32,6 +32,16 @@ test('standard Win98 shell folders exist before an installer runs', () => {
   assert(vfs.dirs.has('c:\\windows\\desktop'));
 });
 
+test('GetFileAttributes rejects an empty path instead of resolving the CWD', () => {
+  const vfs = makeVFS({});
+  assert.strictEqual(vfs.getFileAttributes('') >>> 0, 0xFFFFFFFF,
+    'an empty ANSI or Unicode filename is invalid');
+  assert.strictEqual(vfs.getFileAttributes(null) >>> 0, 0xFFFFFFFF,
+    'a missing filename is invalid');
+  assert.strictEqual(vfs.getFileAttributes('.'), 0x10,
+    'an explicit current-directory path remains valid');
+});
+
 function watch(vfs, handle, path, subtree, filter) {
   const state = { signaled: false, signals: 0, resets: 0, closes: 0 };
   assert(vfs.registerChangeNotification(handle, path, subtree, filter, {
