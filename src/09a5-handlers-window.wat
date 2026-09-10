@@ -1538,6 +1538,28 @@
     (global.set $steps (i32.const 0)))
 
   ;; 73: GetMessageA
+  ;; The host input FIFO is shared, but a window's messages belong to its
+  ;; creating thread. A loader's GetMessage must not steal keyboard input.
+  (func $input_route_to_owner (param $packed i32) (result i32)
+    (local $hwnd i32) (local $owner i32)
+    (if (i32.eqz (local.get $packed)) (then (return (i32.const 0))))
+    (local.set $hwnd (global.get $pending_input_hwnd))
+    (if (i32.eqz (local.get $hwnd))
+      (then (local.set $hwnd (global.get $main_hwnd))))
+    (local.set $owner (call $wnd_get_thread (local.get $hwnd)))
+    (if (i32.and (i32.ne (local.get $owner) (i32.const 0))
+                 (i32.ne (local.get $owner) (global.get $current_thread_id)))
+      (then
+        ;; Retain the event if the owner's queue is full; retry next poll.
+        (global.set $pending_input_packed
+          (select (i32.const 0) (local.get $packed)
+            (call $post_queue_push (local.get $hwnd)
+              (i32.and (local.get $packed) (i32.const 0xFFFF))
+              (i32.shr_u (local.get $packed) (i32.const 16))
+              (global.get $pending_input_lparam))))
+        (return (i32.const 0))))
+    (local.get $packed))
+
   (func $handle_GetMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $msg_ptr i32) (local $packed i32) (local $nc_rect i32)
     (local $ret i32) (local $msg i32)
@@ -1628,6 +1650,7 @@
           (then
             (global.set $pending_input_hwnd (call $host_check_input_hwnd))
             (global.set $pending_input_lparam (call $host_check_input_lparam))))))
+    (local.set $packed (call $input_route_to_owner (local.get $packed)))
     (if (i32.ne (local.get $packed) (i32.const 0))
     (then
     (local.set $msg (i32.and (local.get $packed) (i32.const 0xFFFF)))
@@ -2011,6 +2034,7 @@
             ;; A PeekMessage filter scans without deleting messages it skips.
             ;; Cache first and consume only after this event is admitted.
             (global.set $pending_input_packed (local.get $packed))))))
+    (local.set $packed (call $input_route_to_owner (local.get $packed)))
     (if (i32.ne (local.get $packed) (i32.const 0))
       (then
         (local.set $msg (i32.and (local.get $packed) (i32.const 0xFFFF)))

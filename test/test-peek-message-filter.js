@@ -6,6 +6,25 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_input_owner") (param $tid i32)
+    (global.set $current_thread_id (local.get $tid)))
+  (func (export "test_input_window")
+    (call $wnd_table_set (i32.const 0x3333) (i32.const 0x12345678)))
+  (func (export "test_read_owner_queue") (param $msg i32) (result i32)
+    (local $tid i32) (local $result i32)
+    (local.set $tid (global.get $current_thread_id))
+    (global.set $current_thread_id (i32.const 1))
+    (local.set $result (call $shared_post_queue_read (local.get $msg) (i32.const 1)))
+    (global.set $current_thread_id (local.get $tid))
+    (local.get $result))
+  (func (export "test_call_GetMessageA") (param $msg i32)
+    (local $saved_esp i32) (local $saved_eip i32)
+    (local.set $saved_esp (global.get $esp))
+    (local.set $saved_eip (global.get $eip))
+    (call $handle_GetMessageA (local.get $msg) (i32.const -1)
+      (i32.const 0x400) (i32.const 0x400) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.set $eip (local.get $saved_eip)))
   (func (export "test_call_PeekMessageA")
     (param $msg i32) (param $hwnd i32) (param $min i32)
     (param $max i32) (param $remove i32) (result i32)
@@ -132,6 +151,45 @@ const extraWat = String.raw`
     'the selected timer can be removed by its exact message range');
   assert.strictEqual(e.test_call_PeekMessageA(0x3000, 0, 0x0113, 0x0113, 1), 0,
     'the consumed timer is not returned forever at the same tick');
+
+  e.test_input_window();
+  for (const method of ['get', 'peek']) {
+    e.test_input_owner(2);
+    hardware.push(0x000D0100);
+    new Uint8Array(msg.buffer, msg.byteOffset, 28).fill(0);
+    if (method === 'get') e.test_call_GetMessageA(0x3000);
+    else assert.strictEqual(e.test_call_PeekMessageA(0x3000, 0, 0, 0, 1), 0);
+    assert.notStrictEqual(msg.getUint32(4, true), 0x0100,
+      `${method}: another thread must not receive the window's hardware input`);
+    e.test_input_owner(1);
+    assert.strictEqual(e.test_call_PeekMessageA(0x3000, 0, 0, 0, 1), 1,
+      `${method}: input consumed by another thread reaches its owner`);
+    assert.strictEqual(msg.getUint32(0, true), 0x3333);
+    assert.strictEqual(msg.getUint32(4, true), 0x0100);
+    assert.strictEqual(msg.getUint32(8, true), 13);
+    assert.strictEqual(msg.getUint32(12, true), 0x0014000A);
+  }
+
+  e.test_input_owner(2);
+  let filled = 0;
+  while (filled < 1024 && e.post_message_q(0x3333, 0x0400, filled, 0)) filled++;
+  assert(filled > 0 && filled < 1024, 'owner queue has a finite capacity');
+  hardware.push(0x000D0100);
+  e.test_call_GetMessageA(0x3000);
+  // Free a shared queue slot without consuming the worker's private pending input.
+  assert.strictEqual(e.test_read_owner_queue(0x3000), 1);
+  assert.strictEqual(msg.getUint32(8, true), 0);
+  e.test_call_GetMessageA(0x3000);
+  e.test_input_owner(1);
+  for (let i = 1; i < filled; i++) {
+    assert.strictEqual(e.test_call_PeekMessageA(0x3000, 0, 0, 0, 1), 1);
+    assert.strictEqual(msg.getUint32(4, true), 0x0400);
+    assert.strictEqual(msg.getUint32(8, true), i);
+  }
+  assert.strictEqual(e.test_call_PeekMessageA(0x3000, 0, 0, 0, 1), 1);
+  assert.strictEqual(msg.getUint32(4, true), 0x0100,
+    'a full owner queue retains and retries the hardware event without loss');
+  assert.strictEqual(e.test_call_PeekMessageA(0x3000, 0, 0, 0, 1), 0);
 
   e.test_seed_paint(0x4444);
   assert.strictEqual(e.test_call_PeekMessageA(0x3000, 0, 0x0401, 0x0401, 1), 0,
