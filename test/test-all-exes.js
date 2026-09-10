@@ -282,7 +282,7 @@ const TEST_CASES = [
   { exe: 'test/binaries/plus98/SPIDER.EXE', name: 'Spider (Plus!98)' },
   { exe: 'test/binaries/plus98/MARBLES.EXE', name: 'LoseYourMarbles (DX)' },
   // Shareware / demos — DirectX titles
-  { exe: 'test/binaries/shareware/abe/ex/AbeDemo.exe', name: 'Abe Oddysee demo (DX)',
+  { exe: 'test/binaries/shareware/abe/installed/abedemo.exe', name: 'Abe Oddysee demo (DX)',
     // Needs enough timer/load-loop budget for the title/copyright pixels to
     // appear on the 1024x512 offscreen DDraw surface.
     maxBatches: 1000, extraArgs: ['--quiet-blocks'], timeoutMs: 30000 },

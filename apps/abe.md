@@ -4,8 +4,15 @@
 
 | File | Size | Description |
 |------|------|-------------|
-| `test/binaries/shareware/abe/Abes_Oddysee_demo/ABEODD.EXE` | 32MB | Self-extracting archive (includes `_winzip_` section). **Cannot load** — overflows WASM memory layout. |
-| `test/binaries/shareware/abe/ex/AbeDemo.exe` | 914KB | Extracted game binary. **Primary test target.** |
+| `test/binaries/shareware/abe/Abes_Oddysee_demo/ABEODD.EXE` | 32MB | Original WinZip self-extractor; completes inside the emulator. |
+| `test/binaries/shareware/abe/installed/abedemo.exe` | 914KB | Guest-installer output. **Registered gameplay target.** |
+
+**Current status (2026-09-09):** `node tools/install-abe-demo.js` produces and
+hash-verifies all nine original files. The frozen gameplay route reaches
+RuptureFarms and walks right through normal keyboard input; screenshots
+inspected. The old large-batch test still fails at the menu. Browser
+installer-to-child handoff is not yet verified. See the
+[current installer and input notes](../docs/re-notes/abes-oddysee-demo.md).
 
 **Image base:** 0x00400000
 **Window:** 640×480, title "Oddworld Abe's Oddysee 2.0"
@@ -13,7 +20,7 @@
 ### PE file offset note
 `.text` section: RVA=0x1000, file offset=0x400. Delta = 0xC00. To read bytes at VA X: `fileOffset = X - 0x400000 - 0x1000 + 0x400 = X - 0x400C00`.
 
-**Status (2026-06-14):** `AbeDemo.exe` initializes DDraw/DSound, creates its audio/thread timer loop, loads `s1.lvl`, and no longer hits the old timer-dispatch EIP=0 crash. The focused all-EXE smoke now uses 1000 batches and captures the title/copyright frame from the 1024x512 16bpp offscreen DirectDraw surface. The original 32MB self-extracting `ABEODD.EXE` is still blocked by the fixed WASM memory layout.
+**Historical status (2026-06-14, superseded above):** `AbeDemo.exe` initializes DDraw/DSound, creates its audio/thread timer loop, loads `s1.lvl`, and no longer hits the old timer-dispatch EIP=0 crash. The focused all-EXE smoke used 1000 batches and captured the title/copyright frame from the 1024x512 16bpp offscreen DirectDraw surface. The original self-extractor was then blocked by the fixed WASM memory layout.
 
 ## What works
 
