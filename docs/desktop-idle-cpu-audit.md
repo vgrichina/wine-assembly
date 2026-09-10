@@ -204,6 +204,18 @@ explains why real-time synthesis must be distinguished from idle guest polling.
 
 ### Remaining work
 
+Additional visible local304 checks (details in each game's RE notes):
+
+- Funtris Game/New starts a visibly falling tetromino,1.68% renderer over10s.
+  Its sleeping helper fix does not freeze gameplay. Active play is realtime.
+- CWordZap Start + ready click + Pause produces a real paused board with a
+  Resume button; pixel-identical across15s,1.40% renderer and302 queue parks.
+- EmPipe Next + Pause produces a static actual pipe board. Normal audible
+  repeat9.77% renderer; AudioContext-only diagnostic0.70%. Both delay censuses
+  return50ms on every call (about20 wakes/s), so music is the main residual,
+  not a busy guest loop. One earlier host-phase-instrumented excessive-wakeup
+  result remains unexplained; do not call it a reproduced runtime leak.
+
 Bricks headful local304 follow-up: actual started Klotski board **0.93%**
 renderer, then **0.84% after a real drag**,15s samples. Main slice counters
 remain4 ->4 and9 ->9 respectively, message wait7, no page errors. The drag
