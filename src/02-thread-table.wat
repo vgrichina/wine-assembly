@@ -507,7 +507,7 @@
     $th_add_esi_eax2_disp     ;; 446: ADD ESI,[EAX*2+disp32]
     $th_verr                  ;; 447: VERR r/m16 (selector readability -> ZF)
     $th_store32_base_span     ;; 448: contiguous MOV [base+disp],same-r32 span
-    $th_x87_pipeline4         ;; 449: balanced FLD + arithmetic + arithmetic + FSTP
+    $th_x87_pipeline4         ;; 449: bounded straight-line x87 expression region
     $th_x87_tree4             ;; 450: balanced FLD + FLD + arithmetic-pop + FSTP
     $th_x87_island            ;; 451: contiguous x87 micro-op island
     $th_x87_affine_prepare    ;; 452: compiled affine x87 prefix

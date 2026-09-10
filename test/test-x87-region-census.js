@@ -2,8 +2,11 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { decodeX87 } = require('../lib/x87-semantics');
-const { decodeLinear, collectRegions, aggregate } = require('../tools/x87-region-census');
+const { decodeLinear, collectRegions, aggregate, expandInputs } = require('../tools/x87-region-census');
 
 function x(hex, bits = 32) { return decodeX87(Buffer.from(hex, 'hex'), 0, { bits }); }
 
@@ -79,5 +82,19 @@ const summary = aggregate([{ bytes: bytes.length, instructionCount: instructions
 assert.strictEqual(summary.accepted, 1);
 assert.strictEqual(summary.distributions.loopBackedges, 1);
 assert.strictEqual(summary.distributions.maxLiveDepth['1'], 1);
+assert.deepStrictEqual(summary.acceptedShapes, [{ shape: 'fld;fstp', count: 1 }]);
+
+// Corpus convenience links must not recurse forever or make a checkout depend
+// on an optional external target.
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'x87-census-'));
+try {
+  const fixture = path.join(temp, 'fixture.exe');
+  fs.writeFileSync(fixture, Buffer.alloc(0));
+  fs.symlinkSync(temp, path.join(temp, 'self'));
+  fs.symlinkSync(path.join(temp, 'missing'), path.join(temp, 'optional'));
+  assert.deepStrictEqual(expandInputs([temp]), [fixture]);
+} finally {
+  fs.rmSync(temp, { recursive: true, force: true });
+}
 
 console.log('x87 semantic metadata and decode-only region census tests passed');

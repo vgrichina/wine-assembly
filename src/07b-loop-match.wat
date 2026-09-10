@@ -418,6 +418,24 @@
       (then (return (local.get $op))))
     (i32.const -1))
 
+  (func $x87_pipeline_load_desc (param $desc i32) (result i32)
+    (i32.and
+      (i32.or
+        (i32.eq (i32.shr_u (local.get $desc) (i32.const 8)) (i32.const 1))
+        (i32.eq (i32.shr_u (local.get $desc) (i32.const 8)) (i32.const 5)))
+      (i32.eq
+        (i32.and (i32.shr_u (local.get $desc) (i32.const 4)) (i32.const 0xF))
+        (i32.const 0))))
+
+  (func $x87_pipeline_storepop_desc (param $desc i32) (result i32)
+    (i32.and
+      (i32.or
+        (i32.eq (i32.shr_u (local.get $desc) (i32.const 8)) (i32.const 1))
+        (i32.eq (i32.shr_u (local.get $desc) (i32.const 8)) (i32.const 5)))
+      (i32.eq
+        (i32.and (i32.shr_u (local.get $desc) (i32.const 4)) (i32.const 0xF))
+        (i32.const 3))))
+
   ;; Replace every proven contiguous
   ;;
   ;;   FLD mem; FADD/FMUL/FSUB/FDIV mem; same; FSTP mem
@@ -505,6 +523,124 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan))))
 
+  ;; The same straight-line emitter also covers the common shorter semantic
+  ;; regions found by the corpus census:
+  ;;
+  ;;   FLD mem; FSTP mem
+  ;;   FLD mem; arithmetic mem; FSTP mem
+  ;;   FLD mem; FCHS|FABS; FSTP mem
+  ;;
+  ;; Bits 26..27 select 2-op copy, 3-op memory arithmetic, or 3-op unary.
+  ;; The descriptor keeps address and width parameters, so these are semantic
+  ;; families rather than instruction-byte templates.
+  (func $x87_short_fuse_block
+    (local $i i32) (local $n i32) (local $p0 i32) (local $p1 i32) (local $p2 i32)
+    (local $d0 i32) (local $d1 i32) (local $d2 i32)
+    (local $a1 i32) (local $rop i32) (local $packed i32)
+    (if (global.get $op_index_poison) (then (return)))
+    (local.set $n (global.get $op_index_n))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $p0 (call $loop_op_at (local.get $i)))
+      (local.set $d0 (call $x87_mem_desc (local.get $p0)))
+      (if (call $x87_pipeline_load_desc (local.get $d0))
+        (then
+          ;; Prefer a three-op region before considering the two-op copy.
+          (if (i32.le_u (i32.add (local.get $i) (i32.const 3)) (local.get $n))
+            (then
+              (local.set $p1 (call $loop_op_at (i32.add (local.get $i) (i32.const 1))))
+              (local.set $p2 (call $loop_op_at (i32.add (local.get $i) (i32.const 2))))
+              (local.set $d2 (call $x87_mem_desc (local.get $p2)))
+              (if (call $x87_pipeline_storepop_desc (local.get $d2))
+                (then
+                  ;; Memory arithmetic: every record is 12 bytes.
+                  (if (i32.and
+                        (i32.eq (local.get $p1) (i32.add (local.get $p0) (i32.const 12)))
+                        (i32.eq (local.get $p2) (i32.add (local.get $p1) (i32.const 12))))
+                    (then
+                      (local.set $d1 (call $x87_mem_desc (local.get $p1)))
+                      (local.set $a1 (call $x87_pipeline_arith_op (local.get $d1)))
+                      (if (i32.ge_s (local.get $a1) (i32.const 0))
+                        (then
+                          (local.set $packed (i32.and (local.get $d0) (i32.const 0xF)))
+                          (local.set $packed (i32.or (local.get $packed)
+                            (i32.shl (i32.and (local.get $d1) (i32.const 0xF)) (i32.const 4))))
+                          (local.set $packed (i32.or (local.get $packed)
+                            (i32.shl (i32.and (local.get $d2) (i32.const 0xF)) (i32.const 12))))
+                          (local.set $packed (i32.or (local.get $packed)
+                            (i32.shl (local.get $a1) (i32.const 16))))
+                          (local.set $packed (i32.or (local.get $packed)
+                            (i32.shl (i32.eq (i32.shr_u (local.get $d0) (i32.const 8)) (i32.const 5)) (i32.const 22))))
+                          (local.set $packed (i32.or (local.get $packed)
+                            (i32.shl (i32.eq (i32.shr_u (local.get $d1) (i32.const 8)) (i32.const 4)) (i32.const 23))))
+                          (local.set $packed (i32.or (local.get $packed)
+                            (i32.shl (i32.eq (i32.shr_u (local.get $d2) (i32.const 8)) (i32.const 5)) (i32.const 25))))
+                          (local.set $packed (i32.or (local.get $packed) (i32.shl (i32.const 1) (i32.const 26))))
+                          (global.set $x87_pipeline4_matches
+                            (i32.add (global.get $x87_pipeline4_matches) (i32.const 1)))
+                          (if (global.get $x87_pipeline4_emit_enabled)
+                            (then
+                              (store.field LoopOp handler (local.get $p0) (i32.const 449))
+                              (store.field.memarg LoopOp operand (local.get $p0) (local.get $packed))))
+                          (local.set $i (i32.add (local.get $i) (i32.const 3)))
+                          (br $scan)))))
+                  ;; Unary register op: D9 E0/E1, and an 8-byte middle record.
+                  (local.set $rop (load.field.memarg LoopOp operand (local.get $p1)))
+                  (if (i32.and
+                        (i32.and
+                          (i32.eq (local.get $p1) (i32.add (local.get $p0) (i32.const 12)))
+                          (i32.eq (local.get $p2) (i32.add (local.get $p1) (i32.const 8))))
+                        (i32.and
+                          (i32.eq (load.field LoopOp handler (local.get $p1)) (i32.const 189))
+                          (i32.or (i32.eq (local.get $rop) (i32.const 0x140))
+                                  (i32.eq (local.get $rop) (i32.const 0x141)))))
+                    (then
+                      (local.set $packed (i32.and (local.get $d0) (i32.const 0xF)))
+                      (local.set $packed (i32.or (local.get $packed)
+                        (i32.shl (i32.and (local.get $d2) (i32.const 0xF)) (i32.const 12))))
+                      (local.set $packed (i32.or (local.get $packed)
+                        (i32.shl (i32.and (local.get $rop) (i32.const 1)) (i32.const 16))))
+                      (local.set $packed (i32.or (local.get $packed)
+                        (i32.shl (i32.eq (i32.shr_u (local.get $d0) (i32.const 8)) (i32.const 5)) (i32.const 22))))
+                      (local.set $packed (i32.or (local.get $packed)
+                        (i32.shl (i32.eq (i32.shr_u (local.get $d2) (i32.const 8)) (i32.const 5)) (i32.const 25))))
+                      (local.set $packed (i32.or (local.get $packed) (i32.shl (i32.const 3) (i32.const 26))))
+                      (global.set $x87_pipeline4_matches
+                        (i32.add (global.get $x87_pipeline4_matches) (i32.const 1)))
+                      (if (global.get $x87_pipeline4_emit_enabled)
+                        (then
+                          (store.field LoopOp handler (local.get $p0) (i32.const 449))
+                          (store.field.memarg LoopOp operand (local.get $p0) (local.get $packed))))
+                      (local.set $i (i32.add (local.get $i) (i32.const 3)))
+                      (br $scan)))))))
+          ;; Two memory records: a typed load/store conversion or exact copy.
+          (if (i32.le_u (i32.add (local.get $i) (i32.const 2)) (local.get $n))
+            (then
+              (local.set $p1 (call $loop_op_at (i32.add (local.get $i) (i32.const 1))))
+              (if (i32.eq (local.get $p1) (i32.add (local.get $p0) (i32.const 12)))
+                (then
+                  (local.set $d1 (call $x87_mem_desc (local.get $p1)))
+                  (if (call $x87_pipeline_storepop_desc (local.get $d1))
+                    (then
+                      (local.set $packed (i32.and (local.get $d0) (i32.const 0xF)))
+                      (local.set $packed (i32.or (local.get $packed)
+                        (i32.shl (i32.and (local.get $d1) (i32.const 0xF)) (i32.const 12))))
+                      (local.set $packed (i32.or (local.get $packed)
+                        (i32.shl (i32.eq (i32.shr_u (local.get $d0) (i32.const 8)) (i32.const 5)) (i32.const 22))))
+                      (local.set $packed (i32.or (local.get $packed)
+                        (i32.shl (i32.eq (i32.shr_u (local.get $d1) (i32.const 8)) (i32.const 5)) (i32.const 25))))
+                      (local.set $packed (i32.or (local.get $packed) (i32.shl (i32.const 2) (i32.const 26))))
+                      (global.set $x87_pipeline4_matches
+                        (i32.add (global.get $x87_pipeline4_matches) (i32.const 1)))
+                      (if (global.get $x87_pipeline4_emit_enabled)
+                        (then
+                          (store.field LoopOp handler (local.get $p0) (i32.const 449))
+                          (store.field.memarg LoopOp operand (local.get $p0) (local.get $packed))))
+                      (local.set $i (i32.add (local.get $i) (i32.const 2)))
+                      (br $scan)))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
+
   (func $x87_pipeline_addr (param $base i32) (param $word i32) (result i32)
     (if (result i32) (i32.eq (local.get $base) (i32.const 8))
       (then (local.get $word))
@@ -515,34 +651,54 @@
       (then (f64.load (call $g2w (local.get $addr))))
       (else (f64.promote_f32 (f32.load (call $g2w (local.get $addr)))))))
 
-  ;; 449: one balanced expression pipeline. The decoder proved the original
-  ;; four operations and packed their address bases, arithmetic operators and
-  ;; float widths. Preserve the original left-to-right operation order and
-  ;; use $fpu_arith so divide-by-zero/status behavior remains canonical.
+  ;; 449: a bounded straight-line expression pipeline. Mode 0 is the original
+  ;; four-op/two-arithmetic form; modes 1/2/3 are memory-arithmetic, copy, and
+  ;; unary three-op regions. Preserve source evaluation order and use
+  ;; $fpu_arith so divide-by-zero/status behavior remains canonical.
   (func $th_x87_pipeline4 (param $op i32)
     (local $tp i32) (local $a0 i32) (local $a1 i32)
-    (local $a2 i32) (local $a3 i32) (local $wa i32)
+    (local $a2 i32) (local $a3 i32) (local $wa i32) (local $mode i32)
     (local $v f64) (local $rhs f64)
     (local.set $tp (global.get $ip))
+    (local.set $mode (i32.and (i32.shr_u (local.get $op) (i32.const 26)) (i32.const 3)))
     ;; Each original memory op is a normal 8-byte handler record plus one raw
     ;; address/displacement word. $ip initially points at the first raw word.
     (local.set $a0
       (call $x87_pipeline_addr
         (i32.and (local.get $op) (i32.const 0xF))
         (i32.load (local.get $tp))))
-    (local.set $a1
-      (call $x87_pipeline_addr
-        (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
-        (i32.load offset=12 (local.get $tp))))
-    (local.set $a2
-      (call $x87_pipeline_addr
-        (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF))
-        (i32.load offset=24 (local.get $tp))))
-    (local.set $a3
-      (call $x87_pipeline_addr
-        (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF))
-        (i32.load offset=36 (local.get $tp))))
-    (global.set $ip (i32.add (local.get $tp) (i32.const 40)))
+    (if (i32.eqz (local.get $mode))
+      (then
+        (local.set $a1 (call $x87_pipeline_addr
+          (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
+          (i32.load offset=12 (local.get $tp))))
+        (local.set $a2 (call $x87_pipeline_addr
+          (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF))
+          (i32.load offset=24 (local.get $tp))))
+        (local.set $a3 (call $x87_pipeline_addr
+          (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF))
+          (i32.load offset=36 (local.get $tp))))
+        (global.set $ip (i32.add (local.get $tp) (i32.const 40))))
+      (else (if (i32.eq (local.get $mode) (i32.const 1))
+        (then
+          (local.set $a1 (call $x87_pipeline_addr
+            (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
+            (i32.load offset=12 (local.get $tp))))
+          (local.set $a3 (call $x87_pipeline_addr
+            (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF))
+            (i32.load offset=24 (local.get $tp))))
+          (global.set $ip (i32.add (local.get $tp) (i32.const 28))))
+        (else (if (i32.eq (local.get $mode) (i32.const 2))
+          (then
+            (local.set $a3 (call $x87_pipeline_addr
+              (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF))
+              (i32.load offset=12 (local.get $tp))))
+            (global.set $ip (i32.add (local.get $tp) (i32.const 16))))
+          (else
+            (local.set $a3 (call $x87_pipeline_addr
+              (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF))
+              (i32.load offset=20 (local.get $tp))))
+            (global.set $ip (i32.add (local.get $tp) (i32.const 24)))))))))
 
     ;; FLD reads memory before it mutates TOP. Delay materializing ST(0) until
     ;; the final store: no instruction inside this proven region observes it.
@@ -554,18 +710,27 @@
     (if (call $fpu_is_valid (i32.const 0))
       (then (call $fpu_set_exc (i32.const 0x41))))
 
-    (local.set $rhs
-      (call $x87_pipeline_load (local.get $a1)
-        (i32.and (i32.shr_u (local.get $op) (i32.const 23)) (i32.const 1))))
-    (local.set $v
-      (call $fpu_arith (local.get $v) (local.get $rhs)
-        (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 7))))
-    (local.set $rhs
-      (call $x87_pipeline_load (local.get $a2)
-        (i32.and (i32.shr_u (local.get $op) (i32.const 24)) (i32.const 1))))
-    (local.set $v
-      (call $fpu_arith (local.get $v) (local.get $rhs)
-        (i32.and (i32.shr_u (local.get $op) (i32.const 19)) (i32.const 7))))
+    (if (i32.le_u (local.get $mode) (i32.const 1))
+      (then
+        (local.set $rhs
+          (call $x87_pipeline_load (local.get $a1)
+            (i32.and (i32.shr_u (local.get $op) (i32.const 23)) (i32.const 1))))
+        (local.set $v
+          (call $fpu_arith (local.get $v) (local.get $rhs)
+            (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 7))))))
+    (if (i32.eqz (local.get $mode))
+      (then
+        (local.set $rhs
+          (call $x87_pipeline_load (local.get $a2)
+            (i32.and (i32.shr_u (local.get $op) (i32.const 24)) (i32.const 1))))
+        (local.set $v
+          (call $fpu_arith (local.get $v) (local.get $rhs)
+            (i32.and (i32.shr_u (local.get $op) (i32.const 19)) (i32.const 7))))))
+    (if (i32.eq (local.get $mode) (i32.const 3))
+      (then
+        (if (i32.eqz (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 1)))
+          (then (local.set $v (f64.neg (local.get $v))))
+          (else (local.set $v (f64.abs (local.get $v)))))))
 
     ;; Evaluate the output translation before FSTP mutates the stack, exactly
     ;; like the scalar store handler's Wasm operand evaluation order.

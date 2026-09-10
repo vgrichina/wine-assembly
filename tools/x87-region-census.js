@@ -170,14 +170,18 @@ function scanPE(file, options = {}) {
 function aggregate(files) {
   const result = { files: files.length, bytes: 0, instructions: 0, regions: 0, accepted: 0,
     x87Instructions: 0, scanMode: 'linear-code-section-sweep',
+    acceptedShapes: [],
     distributions: { x87Count: {}, instructionCount: {}, maxLiveDepth: {}, memoryShapes: {}, terminalBarrier: {}, rejectionReason: {}, loopBackedges: 0 },
     acceptedDistributions: { x87Count: {}, instructionCount: {}, maxLiveDepth: {}, memoryShapes: {} } };
+  const acceptedShapes = {};
   const bump = (obj, key, n = 1) => { obj[key] = (obj[key] || 0) + n; };
   for (const file of files) {
     result.bytes += file.bytes; result.instructions += file.instructionCount; result.regions += file.regions.length;
     for (const r of file.regions) {
       if (r.accepted) {
         result.accepted++;
+        const shape = r.x87Names.join(';');
+        acceptedShapes[shape] = (acceptedShapes[shape] || 0) + 1;
         bump(result.acceptedDistributions.x87Count, r.x87Count);
         bump(result.acceptedDistributions.instructionCount, r.instructionCount);
         bump(result.acceptedDistributions.maxLiveDepth, r.stack.maxLiveDepth);
@@ -193,13 +197,27 @@ function aggregate(files) {
       result.distributions.loopBackedges += r.loopBackedges.length;
     }
   }
+  result.acceptedShapes = Object.entries(acceptedShapes)
+    .map(([shape, count]) => ({ shape, count }))
+    .sort((a, b) => b.count - a.count || a.shape.localeCompare(b.shape))
+    .slice(0, 50);
   return result;
 }
 
 function expandInputs(inputs) {
   const out = [];
   const visit = p => {
-    const st = fs.statSync(p);
+    // Corpus directories contain convenience symlinks, including a historical
+    // self-link at test/binaries/binaries and optional links to downloads that
+    // may not exist on every checkout. A census must not recurse through or
+    // fail on either kind.
+    let st;
+    try { st = fs.lstatSync(p); }
+    catch (error) {
+      if (error.code === 'ENOENT') return;
+      throw error;
+    }
+    if (st.isSymbolicLink()) return;
     if (st.isDirectory()) for (const name of fs.readdirSync(p)) visit(path.join(p, name));
     else if (/\.(?:exe|dll|ocx|cpl|drv|scr)$/i.test(p)) out.push(p);
   };

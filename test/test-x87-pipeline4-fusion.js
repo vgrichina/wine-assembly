@@ -2,7 +2,8 @@
 'use strict';
 
 // Differential oracle for the opt-in semantic x87 pipeline. Every case runs
-// once through the ordinary H188/H190 handlers and once through H448, then
+// once through the ordinary H188/H190/H189 handlers and once through H449,
+// then
 // compares the stored result, the complete FNSAVE image, GPRs and lazy flags.
 
 const assert = require('assert');
@@ -79,6 +80,58 @@ async function runArm(testCase, mode) {
 }
 
 const cases = [
+  {
+    name: 'typed f32-to-f64 copy', outputBytes: 8, handler: 449,
+    initialize(dv, g2w, data, output) {
+      dv.setFloat32(g2w(data), -13.625, true);
+      dv.setBigUint64(g2w(output), 0xDEADBEEFCAFEBABEn, true);
+    },
+    code: () => [
+      0xD9, 0x46, 0x00, // fld  dword [esi]
+      0xDD, 0x5F, 0x00, // fstp qword [edi]
+      0x40,             // prove the fused record resumes at the next op
+    ],
+  },
+  {
+    name: 'single mixed-width reverse divide', outputBytes: 4, handler: 449,
+    initialize(dv, g2w, data, output) {
+      dv.setFloat64(g2w(data), 4.0, true);
+      dv.setFloat32(g2w(data + 8), 18.0, true);
+      dv.setUint32(g2w(output), 0xDEADBEEF, true);
+    },
+    code: () => [
+      0xDD, 0x46, 0x00, // fld   qword [esi]
+      0xD8, 0x7E, 0x08, // fdivr dword [esi+8]: 18 / 4
+      0xD9, 0x5F, 0x00, // fstp  dword [edi]
+      0x40,
+    ],
+  },
+  {
+    name: 'absolute-address unary negate', outputBytes: 8, handler: 449,
+    initialize(dv, g2w, data, output) {
+      dv.setFloat32(g2w(data), 6.75, true);
+      dv.setBigUint64(g2w(output), 0xDEADBEEFCAFEBABEn, true);
+    },
+    code: ({ data, output }) => [
+      0xD9, 0x05, ...le32(data), // fld dword [absolute]
+      0xD9, 0xE0,               // fchs
+      0xDD, 0x1D, ...le32(output), // fstp qword [absolute]
+      0x40,
+    ],
+  },
+  {
+    name: 'base-address unary absolute', outputBytes: 4, handler: 449,
+    initialize(dv, g2w, data, output) {
+      dv.setFloat64(g2w(data), -22.125, true);
+      dv.setUint32(g2w(output), 0xDEADBEEF, true);
+    },
+    code: () => [
+      0xDD, 0x46, 0x00, // fld qword [esi]
+      0xD9, 0xE1,       // fabs
+      0xD9, 0x5F, 0x00, // fstp dword [edi]
+      0x40,
+    ],
+  },
   {
     name: 'base f32 multiply-add', outputBytes: 4, handler: 449,
     initialize(dv, g2w, data, output) {

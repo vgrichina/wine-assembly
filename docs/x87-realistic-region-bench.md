@@ -144,3 +144,47 @@ count of at least 4-8 before installing a local-stack region. Where a reusable
 semantic motif is proven across binaries, a fused dispatcher is a viable
 lower-cost intermediate step. Start with a safepoint interval near 16 and keep
 it adjustable.
+
+## Production bounded-region follow-up
+
+The first production generalization deliberately uses a finite semantic
+emitter catalog instead of adding a second per-op VM. The decoder now proves
+and rewrites these address/width-parameterized families to H449:
+
+```text
+FLD mem ; FSTP mem
+FLD mem ; FADD|FMUL|FSUB|FSUBR|FDIV|FDIVR mem ; FSTP mem
+FLD mem ; FCHS|FABS ; FSTP mem
+FLD mem ; arithmetic mem ; arithmetic mem ; FSTP mem
+```
+
+The emitted handler keeps the expression value in one `f64` local. Stack push,
+unary stack mutation, intermediate `fpu_get`/`fpu_set`, and all interior
+threaded dispatches disappear. It materializes the architectural x87 stack at
+the final store/pop boundary. The matcher currently accepts independently
+mixed f32/f64 operands and absolute or simple base+displacement addresses; SIB
+address-generation records remain outside this first catalog.
+
+A decode-only census of Jazz Jackrabbit 2 and Half-Life Uplink found 281
+accepted balanced regions. The leading shapes included 38 `fld;fstp`, 14
+`fld;fchs;fstp`, six existing four-op arithmetic pipelines, and ten three-op
+memory-arithmetic regions. Address-shape filtering means these counts are an
+opportunity ceiling, not a claim that every occurrence is emitted by H449.
+
+Production-loop medians on Node/V8, 200,000 guest iterations and nine rotated
+rounds (2026-09-10), were:
+
+| semantic family | scalar | H449 | speedup |
+|---|---:|---:|---:|
+| typed copy | 17.52 ms | 13.86 ms | 1.26x |
+| one memory arithmetic op | 20.88 ms | 14.13 ms | 1.48x |
+| unary sign op | 20.29 ms | 13.13 ms | 1.55x |
+| two memory arithmetic ops | 22.71 ms | 16.76 ms | 1.35x |
+
+`test/test-x87-pipeline4-fusion.js` compares 11 scalar/fused cases, including
+mixed widths, absolute and base addressing, reverse divide, both unary ops,
+the complete `FNSAVE` image, GPR/lazy-flag state, and the resume instruction
+immediately after each rewritten region. The result supports extending the
+straight semantic catalog while retaining scalar fallback at every unproved
+shape. SIB-aware address lowering and larger decode-time stack-renamed regions
+remain the next separate steps.

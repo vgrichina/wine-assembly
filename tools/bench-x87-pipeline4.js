@@ -15,8 +15,8 @@ const ROOT = path.join(__dirname, '..');
 const ITERATIONS = +(process.env.X87_PIPELINE_ITERS || 200000);
 const ROUNDS = +(process.env.X87_PIPELINE_ROUNDS || 9);
 const SHAPE = process.env.X87_PIPELINE_SHAPE || 'pipeline';
-if (!['pipeline', 'tree', 'island'].includes(SHAPE)) {
-  throw new Error('X87_PIPELINE_SHAPE must be pipeline, tree, or island');
+if (!['pipeline', 'copy', 'arith', 'unary', 'tree', 'island'].includes(SHAPE)) {
+  throw new Error('X87_PIPELINE_SHAPE must be pipeline, copy, arith, unary, tree, or island');
 }
 const FUSED_HANDLER = SHAPE === 'island' ? 451 : (SHAPE === 'tree' ? 450 : 449);
 const FUSED_PER_ITERATION = SHAPE === 'island' ? 2 : 1;
@@ -75,6 +75,20 @@ async function boot() {
     0xD9, 0x46, 0x00, // fld [esi]
     0xD9, 0x46, 0x04, // fld [esi+4]
     0xDE, 0xC1,       // faddp st(1),st(0)
+    0xD9, 0x5F, 0x00, // fstp [edi]
+    0x49,
+  ] : SHAPE === 'copy' ? [
+    0xD9, 0x46, 0x00, // fld [esi]
+    0xD9, 0x5F, 0x00, // fstp [edi]
+    0x49,
+  ] : SHAPE === 'arith' ? [
+    0xD9, 0x46, 0x00, // fld [esi]
+    0xD8, 0x4E, 0x04, // fmul [esi+4]
+    0xD9, 0x5F, 0x00, // fstp [edi]
+    0x49,
+  ] : SHAPE === 'unary' ? [
+    0xD9, 0x46, 0x00, // fld [esi]
+    0xD9, 0xE0,       // fchs
     0xD9, 0x5F, 0x00, // fstp [edi]
     0x49,
   ] : [
