@@ -12,6 +12,31 @@ payload; do not equate that with a completed original-installer workflow.
 
 ## Original self-extractor recheck (2026-09-09)
 
+Run the original installer reproducibly (build first; the command does not
+build or use a host archive extractor):
+
+```bash
+node tools/install-abe-demo.js --screenshot=/private/tmp/abe-install-success.png
+ABE_INSTALLED_DIR="$PWD/test/binaries/shareware/abe/installed" \
+  node test/test-abedemo-gameplay.js --frozen-route
+```
+
+`--installer=PATH` and `--output=DIR` override the original package and export
+destination. Existing output directories are refused rather than replaced.
+The command verifies the original package hash, the guest success notice,
+the automatic launch path/working directory, and all nine output hashes
+before copying the guest-produced tree. It runs frozen with a CLI-internal
+180-second deadline and no build timeout. Failures retain the temporary
+capture and log for diagnosis. This does not yet change the registered app's
+older fixture path or verify a live browser child process.
+
+Verified the command with `--output=/private/tmp/abe-tool-installed`:
+all nine files and the launch request pass validation, the success screenshot
+was inspected, and `--frozen-route` on that fresh output passes gameplay and
+rightward movement (cyan X 204.15 -> 219.21 -> 267.63). The resulting gameplay
+capture was visually inspected. Existing-output and wrong-original rejection
+checks also pass without starting the CLI.
+
 The unchanged `Abes_Oddysee_demo/ABEODD.EXE` has SHA-256
 `179a2d7c0bab674cb28167d0a37ec74570fd2d6b589094d045a400633f2a33ab`.
 On source `ee965802`, PE loading stages 8 MiB and prehydrates 23831040
