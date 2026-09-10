@@ -35,6 +35,16 @@ function readRuntimeFiles(root = ROOT) {
   return files;
 }
 
+function readTestFiles(root = ROOT) {
+  const files = new Map();
+  for (const entry of fs.readdirSync(path.join(root, 'test'), { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.js')) continue;
+    const name = `test/${entry.name}`;
+    files.set(name, fs.readFileSync(path.join(root, name), 'utf8'));
+  }
+  return files;
+}
+
 function collectVersionRefs(files) {
   const refs = [];
   const quotedVersion = /(['"`])([^'"`\s]+\.js)\?v=(\d+)\1/g;
@@ -54,82 +64,117 @@ function collectVersionRefs(files) {
   return refs;
 }
 
-function validateCacheVersions(files) {
+function collectScriptList(text, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(
+    `\\b${escaped}\\s*=\\s*Object\\.freeze\\(\\s*\\[([\\s\\S]*?)\\]\\s*\\)`,
+  ).exec(text || '');
+  if (!match) return [];
+  return [...match[1].matchAll(/(['"])([^'"]+\.js)\1/g)].map(item => item[2]);
+}
+
+function validateCacheVersions(files, testFiles = new Map()) {
   const errors = [];
   const refs = collectVersionRefs(files);
-  const byAsset = new Map();
   for (const ref of refs) {
-    if (!byAsset.has(ref.asset)) byAsset.set(ref.asset, []);
-    byAsset.get(ref.asset).push(ref);
+    errors.push(`${ref.sourceFile}:${ref.line} hand-writes ${ref.asset}?v=${ref.version}; ` +
+      'browser code must inherit the one WINE_SOURCE_VERSION');
   }
-
-  for (const [asset, assetRefs] of byAsset) {
-    const versions = [...new Set(assetRefs.map(ref => ref.version))];
-    if (versions.length <= 1) continue;
-    const locations = assetRefs
-      .map(ref => `${ref.sourceFile}:${ref.line}=v${ref.version}`)
-      .join(', ');
-    errors.push(`${asset} has disagreeing cache versions: ${locations}`);
+  for (const [sourceFile, text] of testFiles) {
+    // Match both a literal foo.js?v=9 and a regex spelling such as
+    // foo\.js\?v=(\d+). Non-JS asset fixtures and inherited non-numeric
+    // worker keys remain legitimate.
+    const numericJsVersion = /\.js(?:\\)?\?v=(?:\(?\\d|\d)/g;
+    for (let numeric; (numeric = numericJsVersion.exec(text));) {
+      errors.push(`${sourceFile}:${lineAt(text, numeric.index)} re-states a numeric JavaScript ` +
+        'cache key; assert membership in the shared source-version graph instead');
+    }
   }
 
   const indexText = files.get('index.html') || '';
   const scriptTag = /<script\b[^>]*\bsrc\s*=\s*(['"])([^'"]+)\1/gi;
   let match;
+  const staticScripts = [];
   while ((match = scriptTag.exec(indexText)) !== null) {
     const rawUrl = match[2];
     const asset = normalizeAsset('index.html', rawUrl);
-    if (!asset || !asset.endsWith('.js') || asset === 'build-info.js') continue;
-    if (!/[?&]v=\d+(?:&|$)/.test(rawUrl)) {
-      errors.push(`index.html:${lineAt(indexText, match.index)} loads ${asset} without a numeric ?v=`);
-    }
+    if (!asset || !asset.endsWith('.js')) continue;
+    staticScripts.push({ asset, line: lineAt(indexText, match.index) });
+  }
+  if (staticScripts.length !== 1 || staticScripts[0].asset !== 'build-info.js') {
+    errors.push('index.html must load exactly one static bootstrap script (build-info.js); ' +
+      `found ${staticScripts.map(item => item.asset).join(', ') || 'none'}`);
   }
 
-  for (const sourceFile of ['lib/guest-worker.js']) {
-    const text = files.get(sourceFile) || '';
-    const importCall = /\bimportScripts\s*\(([^)]*)\)/g;
-    while ((match = importCall.exec(text)) !== null) {
-      const args = match[1];
-      const scriptArg = /(['"])([^'"]+\.js(?:\?[^'"]*)?)\1/g;
-      let argMatch;
-      while ((argMatch = scriptArg.exec(args)) !== null) {
-        const asset = normalizeAsset(sourceFile, argMatch[2]);
-        if (!asset || /[?&]v=\d+(?:&|$)/.test(argMatch[2])) continue;
-        errors.push(`${sourceFile}:${lineAt(text, match.index)} imports ${asset} without a numeric ?v=`);
-      }
-    }
+  const indexScripts = collectScriptList(indexText, 'WINE_RUNTIME_SCRIPTS');
+  if (!indexScripts.length) errors.push('index.html has no WINE_RUNTIME_SCRIPTS source list');
+  if (new Set(indexScripts).size !== indexScripts.length) {
+    errors.push('WINE_RUNTIME_SCRIPTS contains a duplicate source');
+  }
+  if (indexScripts[0] !== 'lib/region-map.generated.js') {
+    errors.push('WINE_RUNTIME_SCRIPTS must load lib/region-map.generated.js first');
+  }
+  if (indexScripts.filter(source => source === 'host.js').length !== 1) {
+    errors.push('WINE_RUNTIME_SCRIPTS must contain host.js exactly once');
+  }
+  if (!indexText.includes("window.WINE_SOURCE_VERSION = String(window.WINE_BUILD || 'dev')")) {
+    errors.push('index.html must derive WINE_SOURCE_VERSION from build-info.js WINE_BUILD');
+  }
+  if (!/wineVersionedUrl[\s\S]*encodeURIComponent\(window\.WINE_SOURCE_VERSION\)/.test(indexText) ||
+      !indexText.includes('window.wineLoadVersionedScripts(WINE_RUNTIME_SCRIPTS)')) {
+    errors.push('index.html runtime list is not loaded through the shared encoded source version');
+  }
+
+  let sourceAssignments = 0;
+  for (const text of files.values()) {
+    sourceAssignments += (text.match(/(?:window\.)?WINE_SOURCE_VERSION\s*=/g) || []).length;
+  }
+  if (sourceAssignments !== 1) {
+    errors.push(`runtime graph must assign WINE_SOURCE_VERSION exactly once (found ${sourceAssignments})`);
   }
 
   const hostText = files.get('host.js') || '';
-  const sourceMatch = hostText.match(/static\s+SOURCE_VERSION\s*=\s*['"](\d+)['"]/);
-  const hostRefs = byAsset.get('host.js') || [];
-  if (!sourceMatch) {
-    errors.push('host.js does not declare a numeric static SOURCE_VERSION');
-  } else if (hostRefs.length !== 1) {
-    errors.push(`index/runtime loader graph must contain exactly one versioned host.js reference (found ${hostRefs.length})`);
-  } else if (hostRefs[0].version !== sourceMatch[1]) {
-    errors.push(`host.js SOURCE_VERSION=v${sourceMatch[1]} disagrees with ${hostRefs[0].sourceFile}:${hostRefs[0].line}=v${hostRefs[0].version}`);
+  if (!hostText.includes("static SOURCE_VERSION = String(globalThis.WINE_SOURCE_VERSION || 'dev')")) {
+    errors.push('host.js SOURCE_VERSION must consume the page-owned WINE_SOURCE_VERSION');
+  }
+  for (const asset of [
+    'src/api_table.json', 'build/wine-assembly.wasm',
+    'lib/host-import-sigs.generated.json', 'lib/guest-worker.js',
+    'lib/watx-compile-worker.js',
+    'fonts/substitutions.json',
+  ]) {
+    if (!hostText.includes(`WineAssembly.versionedUrl('${asset}')`) &&
+        !(asset === 'build/wine-assembly.wasm' &&
+          hostText.includes('WineAssembly.versionedUrl(artifact)'))) {
+      errors.push(`host.js does not route ${asset} through WineAssembly.versionedUrl`);
+    }
   }
 
-  // The generated map and the wasm artifact are one ABI split across two
-  // files. Tie every browser copy of the mirror to the same release key as the
-  // wasm fetch so a cache can never combine generations (the runtime hash
-  // check catches that combination, but by then no application can launch).
-  const regionMapRefs = byAsset.get('lib/region-map.generated.js') || [];
-  if (sourceMatch && regionMapRefs.length !== 2) {
-    errors.push(`browser runtime must contain exactly two versioned lib/region-map.generated.js references (found ${regionMapRefs.length})`);
-  } else if (sourceMatch) {
-    for (const ref of regionMapRefs) {
-      if (ref.version !== sourceMatch[1]) {
-        errors.push(`lib/region-map.generated.js cache key must match SOURCE_VERSION=v${sourceMatch[1]}: ${ref.sourceFile}:${ref.line}=v${ref.version}`);
-      }
-    }
+  const workerText = files.get('lib/guest-worker.js') || '';
+  const workerScripts = collectScriptList(workerText, 'WORKER_SCRIPTS');
+  if (!workerScripts.length || workerScripts[0] !== 'region-map.generated.js') {
+    errors.push('guest-worker WORKER_SCRIPTS must exist and load region-map.generated.js first');
+  }
+  if (!workerText.includes("new URL(self.location.href).searchParams.get('v')") ||
+      !workerText.includes('importScripts(...WORKER_SCRIPTS.map(versionedWorkerUrl))')) {
+    errors.push('guest-worker dependencies must inherit the cache key from its own URL');
+  }
+  if (!workerText.includes("workerUrl: versionedWorkerUrl('d3d-render-worker.js')")) {
+    errors.push('guest-worker must pass its inherited key to d3d-render-worker.js');
+  }
+
+  const d3dText = files.get('lib/d3d-command-stream.js') || '';
+  if (!/new Worker\(options\.workerUrl \|\| versionedWorkerUrl\([\s\S]*?'d3d-render-worker\.js'/.test(d3dText)) {
+    errors.push('d3d-command-stream default worker URL must consume the shared source version');
   }
 
   return {
     errors,
     refs,
-    assets: byAsset.size,
-    sourceVersion: sourceMatch ? sourceMatch[1] : null,
+    indexScripts,
+    workerScripts,
+    assets: new Set([...indexScripts, ...workerScripts]).size,
+    sourceVersion: 'build-info/WINE_BUILD',
   };
 }
 
@@ -137,14 +182,28 @@ function selfTest() {
   const good = new Map([
     ['index.html', [
       '<script src="build-info.js"></script>',
-      '<script src="lib/region-map.generated.js?v=9"></script>',
-      '<script src="lib/shared.js?v=7"></script>',
-      '<script src="lib/dll-loader.js?v=4"></script>',
-      '<script src="host.js?v=9"></script>',
+      "window.WINE_SOURCE_VERSION = String(window.WINE_BUILD || 'dev');",
+      'function wineVersionedUrl() { encodeURIComponent(window.WINE_SOURCE_VERSION); }',
+      'const WINE_RUNTIME_SCRIPTS = Object.freeze(["lib/region-map.generated.js", "host.js"]);',
+      'window.wineLoadVersionedScripts(WINE_RUNTIME_SCRIPTS);',
     ].join('\n')],
-    ['host.js', "class Host { static SOURCE_VERSION = '9'; }\nconst worker = 'lib/guest-worker.js?v=3';"],
-    ['lib/guest-worker.js', "importScripts('region-map.generated.js?v=9', 'shared.js?v=7', 'dll-loader.js?v=4');\nconst workerUrl = 'render.js?v=2';"],
-    ['lib/d3d-command-stream.js', "new Worker(options.workerUrl || 'render.js?v=2');"],
+    ['host.js', [
+      "static SOURCE_VERSION = String(globalThis.WINE_SOURCE_VERSION || 'dev');",
+      "WineAssembly.versionedUrl('src/api_table.json');",
+      "WineAssembly.versionedUrl('build/wine-assembly.wasm');",
+      "WineAssembly.versionedUrl('lib/host-import-sigs.generated.json');",
+      "WineAssembly.versionedUrl('lib/guest-worker.js');",
+      "WineAssembly.versionedUrl('lib/watx-compile-worker.js');",
+      "WineAssembly.versionedUrl('fonts/substitutions.json');",
+    ].join('\n')],
+    ['lib/guest-worker.js', [
+      "new URL(self.location.href).searchParams.get('v');",
+      'const WORKER_SCRIPTS = Object.freeze(["region-map.generated.js"]);',
+      'importScripts(...WORKER_SCRIPTS.map(versionedWorkerUrl));',
+      "workerUrl: versionedWorkerUrl('d3d-render-worker.js')",
+    ].join('\n')],
+    ['lib/d3d-command-stream.js',
+      "new Worker(options.workerUrl || versionedWorkerUrl('d3d-render-worker.js', root.WINE_SOURCE_VERSION));"],
   ]);
   assert.deepStrictEqual(validateCacheVersions(good).errors, []);
 
@@ -153,26 +212,35 @@ function selfTest() {
     files.set(name, files.get(name).replace(from, to));
     return validateCacheVersions(files).errors.join('\n');
   };
-  assert.match(changed('lib/guest-worker.js', 'shared.js?v=7', 'shared.js?v=8'), /disagreeing cache versions/);
-  assert.match(changed('host.js', "SOURCE_VERSION = '9'", "SOURCE_VERSION = '8'"), /SOURCE_VERSION=v8.*=v9/);
-  assert.match(changed('lib/guest-worker.js', 'region-map.generated.js?v=9', 'region-map.generated.js?v=8'), /region-map\.generated\.js.*disagreeing cache versions/);
-  assert.match(changed('index.html', 'region-map.generated.js?v=9', 'region-map.generated.js?v=8'), /region-map\.generated\.js.*disagreeing cache versions/);
-  assert.match(changed('lib/guest-worker.js', 'dll-loader.js?v=4', 'dll-loader.js'), /imports lib\/dll-loader\.js without/);
-  assert.match(changed('index.html', 'lib/shared.js?v=7', 'lib/shared.js'), /loads lib\/shared\.js without/);
-  assert.match(changed('lib/d3d-command-stream.js', 'render.js?v=2', 'render.js?v=3'), /disagreeing cache versions/);
+  assert.match(changed('index.html', '<script src="build-info.js"></script>',
+    '<script src="host.js?v=9"></script>'), /hand-writes[\s\S]*exactly one static bootstrap/);
+  assert.match(changed('index.html', "window.WINE_BUILD || 'dev'", "'9'"),
+    /derive WINE_SOURCE_VERSION/);
+  assert.match(changed('index.html', ', "host.js"', ''), /host\.js exactly once/);
+  assert.match(changed('lib/guest-worker.js', 'WORKER_SCRIPTS.map(versionedWorkerUrl)',
+    'WORKER_SCRIPTS'), /dependencies must inherit/);
+  const badAssertion = new Map([
+    ['test/test-old-cache-key.js', String.raw`assert(/host\.js\?v=(\d+)/);`],
+  ]);
+  assert.match(validateCacheVersions(good, badAssertion).errors.join('\n'),
+    /test-old-cache-key[\s\S]*re-states a numeric JavaScript cache key/);
 }
 
 function main() {
   if (process.argv.includes('--self-test')) selfTest();
-  const result = validateCacheVersions(readRuntimeFiles());
+  const result = validateCacheVersions(readRuntimeFiles(), readTestFiles());
   if (result.errors.length) {
     for (const error of result.errors) console.error(`browser cache version: ${error}`);
     process.exitCode = 1;
     return;
   }
-  console.log(`Browser cache versions: ${result.refs.length} references, ${result.assets} assets, host/source v${result.sourceVersion}`);
+  console.log(`Browser cache versions: one ${result.sourceVersion} authority, ` +
+    `${result.indexScripts.length} page scripts, ${result.workerScripts.length} worker scripts`);
 }
 
 if (require.main === module) main();
 
-module.exports = { collectVersionRefs, normalizeAsset, validateCacheVersions };
+module.exports = {
+  collectScriptList, collectVersionRefs, normalizeAsset, readTestFiles,
+  validateCacheVersions,
+};

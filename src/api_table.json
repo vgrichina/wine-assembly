@@ -8600,14 +8600,16 @@
     "name": "IDirectDraw_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1374612392
+    "hash": 1374612392,
+    "handler": "dx_com_addref"
   },
   {
     "id": 980,
     "name": "IDirectDraw_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 785119249
+    "hash": 785119249,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 981,
@@ -8777,7 +8779,8 @@
     "name": "IDirectDrawSurface_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1847147359
+    "hash": 1847147359,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1003,
@@ -9045,7 +9048,8 @@
     "name": "IDirectDrawPalette_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1191545803
+    "hash": 1191545803,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1039,
@@ -9110,14 +9114,16 @@
     "name": "IDirectSound_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1246140317
+    "hash": 1246140317,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1046,
     "name": "IDirectSound_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2250429370
+    "hash": 2250429370,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1047,
@@ -9203,7 +9209,8 @@
     "name": "IDirectSoundBuffer_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1419211727
+    "hash": 1419211727,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1057,
@@ -9366,14 +9373,16 @@
     "name": "IDirectInput_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3955393024
+    "hash": 3955393024,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1078,
     "name": "IDirectInput_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1111425289
+    "hash": 1111425289,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1079,
@@ -9438,14 +9447,16 @@
     "name": "IDirectInputDevice_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 373543406
+    "hash": 373543406,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1086,
     "name": "IDirectInputDevice_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3117308099
+    "hash": 3117308099,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1087,
@@ -9878,7 +9889,8 @@
     "name": "IDirectDrawFactory_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2604191108
+    "hash": 2604191108,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1142,
@@ -9947,7 +9959,8 @@
     "name": "IDirect3DDevice3_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1058265586
+    "hash": 1058265586,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1148,
@@ -10257,7 +10270,8 @@
     "name": "IDirect3DViewport3_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3120826162
+    "hash": 3120826162,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1190,
@@ -10420,7 +10434,8 @@
     "name": "IDirect3DLight_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3830084039
+    "hash": 3830084039,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1211,
@@ -10478,14 +10493,16 @@
     "name": "IDirect3DMaterial3_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3939031253
+    "hash": 3939031253,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1217,
     "name": "IDirect3DMaterial3_Release",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1932170706
+    "hash": 1932170706,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1218,
@@ -10794,7 +10811,8 @@
     "name": "IDirectDrawClipper_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2611172029
+    "hash": 2611172029,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1257,
@@ -10965,14 +10983,16 @@
     "name": "IDirect3D2_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 672506361
+    "hash": 672506361,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1277,
     "name": "IDirect3D2_Release",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1671751854
+    "hash": 1671751854,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1278,
@@ -11044,14 +11064,16 @@
     "name": "IDirect3D7_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 923110660
+    "hash": 923110660,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1286,
     "name": "IDirect3D7_Release",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 4271079589
+    "hash": 4271079589,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1287,
@@ -11116,7 +11138,8 @@
     "name": "IDirect3DDevice_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 2483714589
+    "hash": 2483714589,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1294,
@@ -11286,7 +11309,8 @@
     "name": "IDirect3DDevice2_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1084069219
+    "hash": 1084069219,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1316,
@@ -11533,7 +11557,8 @@
     "name": "IDirect3DDevice7_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 630277814
+    "hash": 630277814,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1349,
@@ -11892,7 +11917,8 @@
     "name": "IDirect3DViewport_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 2465759709
+    "hash": 2465759709,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1398,
@@ -12020,7 +12046,8 @@
     "name": "IDirect3DViewport2_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1616480675
+    "hash": 1616480675,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1414,
@@ -12162,14 +12189,16 @@
     "name": "IDirect3DMaterial_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 270765996
+    "hash": 270765996,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1432,
     "name": "IDirect3DMaterial_Release",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1420259853
+    "hash": 1420259853,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1433,
@@ -12241,14 +12270,16 @@
     "name": "IDirect3DMaterial2_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 282021700
+    "hash": 282021700,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1441,
     "name": "IDirect3DMaterial2_Release",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 892185061
+    "hash": 892185061,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1442,
@@ -12299,7 +12330,8 @@
     "name": "IDirect3DExecuteBuffer_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1551145276
+    "hash": 1551145276,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1447,
@@ -12385,7 +12417,8 @@
     "name": "IDirect3DVertexBuffer_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 383961227
+    "hash": 383961227,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1457,
@@ -12457,7 +12490,8 @@
     "name": "IDirect3DVertexBuffer7_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 453563804
+    "hash": 453563804,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1465,
@@ -12536,7 +12570,8 @@
     "name": "IDirect3DTexture_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3837249682
+    "hash": 3837249682,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1474,
@@ -12608,7 +12643,8 @@
     "name": "IDirect3DTexture2_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1653531570
+    "hash": 1653531570,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1482,
@@ -16888,14 +16924,16 @@
     "name": "IRunningObjectTable_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 150836797
+    "hash": 150836797,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2061,
     "name": "IRunningObjectTable_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 875859866
+    "hash": 875859866,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2062,
@@ -17154,14 +17192,16 @@
     "name": "ILockBytes_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 104124279
+    "hash": 104124279,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2094,
     "name": "ILockBytes_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3844332864
+    "hash": 3844332864,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2095,
@@ -17240,14 +17280,16 @@
     "name": "IStream_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1665549629
+    "hash": 1665549629,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2104,
     "name": "IStream_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1419775130
+    "hash": 1419775130,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2105,
@@ -17354,14 +17396,16 @@
     "name": "IStorage_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 954046898
+    "hash": 954046898,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2118,
     "name": "IStorage_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 224916079
+    "hash": 224916079,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2119,
@@ -17539,7 +17583,8 @@
     "name": "IDataObject_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2718493816
+    "hash": 2718493816,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2140,
@@ -17680,7 +17725,8 @@
     "name": "IEnumFORMATETC_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1750762885
+    "hash": 1750762885,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2152,
@@ -17701,14 +17747,16 @@
     "name": "IEnumFORMATETC_Skip",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 2205645134
+    "hash": 2205645134,
+    "handler": "ole_enum_skip"
   },
   {
     "id": 2155,
     "name": "IEnumFORMATETC_Reset",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1283670508
+    "hash": 1283670508,
+    "handler": "ole_enum_reset"
   },
   {
     "id": 2156,
@@ -17780,7 +17828,8 @@
     "name": "IOleObject_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3442842106
+    "hash": 3442842106,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2164,
@@ -18268,14 +18317,16 @@
     "name": "IEnumSTATSTG_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 933605526
+    "hash": 933605526,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2223,
     "name": "IEnumSTATSTG_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 631326731
+    "hash": 631326731,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2224,
@@ -18676,14 +18727,16 @@
     "name": "IMoniker_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3573117802
+    "hash": 3573117802,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2279,
     "name": "IMoniker_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2903007495
+    "hash": 2903007495,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2280,
@@ -18853,7 +18906,8 @@
     "name": "IBindCtx_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3459565413
+    "hash": 3459565413,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2302,
@@ -18960,14 +19014,16 @@
     "name": "IEnumString_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2120706077
+    "hash": 2120706077,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2315,
     "name": "IEnumString_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 365628730
+    "hash": 365628730,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2316,
@@ -18981,14 +19037,16 @@
     "name": "IEnumString_Skip",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 3143660358
+    "hash": 3143660358,
+    "handler": "ole_enum_skip"
   },
   {
     "id": 2318,
     "name": "IEnumString_Reset",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 44143156
+    "hash": 44143156,
+    "handler": "ole_enum_reset"
   },
   {
     "id": 2319,
@@ -19025,14 +19083,16 @@
     "name": "IEnumMoniker_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2163112815
+    "hash": 2163112815,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2322,
     "name": "IEnumMoniker_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 577913464
+    "hash": 577913464,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2323,
@@ -19046,14 +19106,16 @@
     "name": "IEnumMoniker_Skip",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 1060851840
+    "hash": 1060851840,
+    "handler": "ole_enum_skip"
   },
   {
     "id": 2325,
     "name": "IEnumMoniker_Reset",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 560147418
+    "hash": 560147418,
+    "handler": "ole_enum_reset"
   },
   {
     "id": 2326,
@@ -20045,14 +20107,16 @@
     "name": "IFont_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 876750262
+    "hash": 876750262,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2424,
     "name": "IFont_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 714956395
+    "hash": 714956395,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2425,
@@ -21093,14 +21157,16 @@
     "name": "IDirectX7_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2099146441
+    "hash": 2099146441,
+    "handler": "dx_com_addref"
   },
   {
     "id": 2528,
     "name": "IDirectX7_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 79737662
+    "hash": 79737662,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 2529,
@@ -21149,14 +21215,16 @@
     "name": "IVBDirectDraw7_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 4082026317
+    "hash": 4082026317,
+    "handler": "dx_com_addref"
   },
   {
     "id": 2536,
     "name": "IVBDirectDraw7_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1537838826
+    "hash": 1537838826,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 2537,
@@ -21359,7 +21427,8 @@
     "name": "IVBDirectDrawClipper_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3028910389
+    "hash": 3028910389,
+    "handler": "dx_com_addref"
   },
   {
     "id": 2566,
@@ -21429,14 +21498,16 @@
     "name": "IVBDirectSound_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1039230581
+    "hash": 1039230581,
+    "handler": "dx_com_addref"
   },
   {
     "id": 2576,
     "name": "IVBDirectSound_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3519550514
+    "hash": 3519550514,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 2577,
@@ -22413,14 +22484,16 @@
     "name": "IDirect3D9_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 137887662
+    "hash": 137887662,
+    "handler": "dx_com_addref"
   },
   {
     "id": 2678,
     "name": "IDirect3D9_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 4135574659
+    "hash": 4135574659,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 2679,
@@ -22532,7 +22605,8 @@
     "name": "IDirect3DDevice9_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2986226940
+    "hash": 2986226940,
+    "handler": "dx_com_addref"
   },
   {
     "id": 2695,
@@ -25171,14 +25245,16 @@
     "name": "IDirect3DSwapChain9_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1858424074
+    "hash": 1858424074,
+    "handler": "dx_com_addref"
   },
   {
     "id": 3021,
     "name": "IDirect3DSwapChain9_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2547755239
+    "hash": 2547755239,
+    "handler": "IDirect3DDevice9_Release"
   },
   {
     "id": 3022,

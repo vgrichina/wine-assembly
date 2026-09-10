@@ -71,9 +71,9 @@ quiet.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 const digest = crypto.createHash('sha256')
   .update(quiet.map(entry => `${entry.name}:${entry.body}`).join('\n'))
   .digest('hex');
-// This is a ratchet, not approval of the old entries. Any addition or mutation
-// changes the digest and stops the build; deleting/fixing an entry deliberately
-// lowers the count and updates the digest after review.
+// The inventory is a ratchet, not approval of its existing entries. Historical
+// count changes and their behavior rationale live in
+// docs/silent-handler-inventory.md; executable policy and the pin stay here.
 // 2026-08-31: 506 -> 505. Commit 34b4f08f ("Fix Win98 installer chain
 // launches") gave handle_CreateProcessA a real implementation, so it left the
 // quiet inventory. Ratchet only; nothing was added.
@@ -215,8 +215,8 @@ const digest = crypto.createHash('sha256')
 // a shared guard. Their old non-recording stubs are NOT claimed implemented.
 // 2026-09-09: 411 -> 410. SetGammaRamp retains the per-device API ramp;
 // unsupported display gamma remains unadvertised. Get/default/copy tested.
-const EXPECTED_COUNT = 410;
-const EXPECTED_SHA256 = '3350d7943ac1ce520932f258e4c86d166b2d4587103ee1a4da781b657ccdef4c';
+const EXPECTED_COUNT = 405;
+const EXPECTED_SHA256 = '0d9e8f43b3d441426b6418018dfbc607ffeba2de52cd666bb502f27307485e3c';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

@@ -42,17 +42,14 @@
       (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
     (global.set $heap_sparse_ptr (i32.const 0))
     (global.set $heap_sparse_end (i32.const 0))
-    (global.set $g2w_sparse_size (i32.const 0))
-    (global.set $g2w_sparse_size1 (i32.const 0))
-    (global.set $g2w_sparse_size2 (i32.const 0))
-    (global.set $g2w_sparse_size3 (i32.const 0))
-    (global.set $g2w_gl8_page (i32.const -1))
     ;; VirtualAlloc(NULL, MEM_RESERVE) uses sparse high guest addresses. Commits
     ;; get backing memory through $virtual_map_commit instead of consuming the
     ;; low HeapAlloc arena.
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
     (call $zero_memory (global.get $VIRTUAL_MAP_STATE)
       (i32.add (global.get $VIRTUAL_MAP_STATE_SIZE) (global.get $VIRTUAL_MAP_TABLE_SIZE)))
+    (call $zero_memory (global.get $GUEST_PAGE_TABLE)
+      (global.get $GUEST_PAGE_TABLE_SIZE))
     (i32.store (region.addr $VIRTUAL_MAP_STATE 4)
       (global.get $VIRTUAL_BACKING_BASE))
 

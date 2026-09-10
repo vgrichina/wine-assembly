@@ -240,13 +240,15 @@ version (`8b114034`, 09a3:891) binds through `$mmio_slot_for` — fixed before
 it landed, noted here because it is the shape the redundancy above produces:
 a record exists, a handler is written without it.
 
-**Carried from earlier passes, re-verified open:** `readSyncObjectName`
-still twice (`host.js:1584`, `run.js:3259`); `debug-app-picker.js:10-14`
-still keeps app-id lists outside `apps.js`; the PNG inspectors are now
-**seven** (`png-pixel.js` joined on 08-29); `04-cache.wat:433` still
-describes a fallback into the deleted hash cache; the 16 `$th_jcc_*`
-differing only in the condition (P2 4.6) are unchanged; item 18 (split
-09a/09c3) is unaddressed and 09a grew 3,400 lines in five days.
+**Carried from earlier passes, current audit:** `readSyncObjectName` is still
+twice (`host.js:1584`, `run.js:3259`); `debug-app-picker.js:10-14` still keeps
+app-id lists outside `apps.js`; the PNG inspectors are now **seven**
+(`png-pixel.js` joined on 08-29); the 16 `$th_jcc_*` differing only in the
+condition (P2 4.6) are unchanged; item 18 (split 09a/09c3) is unaddressed and
+09a grew 3,400 lines in five days. The stale `04-cache.wat` description of a
+fallback into the deleted hash cache was corrected in `2b82fe43`: an
+unpublishable freshly decoded block executes from its emit scratch and is
+decoded again on a later entry; there is no second cache lookup.
 
 ## P5-4 — The test corpus copies its harness
 
@@ -332,6 +334,19 @@ the way `aw-census.js` should have been.
    `gen_dispatch.js` (~2,900 lines of `src/` become table rows).
 8. Carried: split 09a/09c3 (now 38k lines between them), `readSyncObjectName`,
    PNG inspectors, `04-cache.wat:433`, silent-stub changelog to `docs/`.
+
+## Pass-5 current status — 2026-09-08
+
+| # | status | current evidence |
+|---|---|---|
+| 1 | **DONE** | All 185 region/span clauses now name stable `file:$symbol` owners (`25af708a`). The build resolves the actual top-level WAT form and requires an exact region use in code; comments, strings and `_SIZE` prefixes do not count. Legacy line anchors and the empty stale-owner baseline are gone. |
+| 2 | **DONE** | One deploy identity from `build-info.js` / `WINE_BUILD` now versions the parser-ordered 59-script page graph, host JSON/WASM/font/compiler-worker fetches, the guest Worker's seven imported scripts, and its nested D3D render Worker (`cc575d53`). Local no-store servers use the stable `dev` identity. The structural build gate rejects handwritten numeric runtime keys or a second authority; focused tests, a real threaded-browser matrix, and the canonical/compat build pass. |
+| 3 | **DONE** | `tools/test-tiers.js` discovers every `test/test-*.js` and `test/*.test.js`, derives UNIT/E2E from conservative filename conventions, and carries only 50 validated compatibility exceptions plus six explicit SMOKE identities (`3b1d7667`). The migration preserves the exact former tiers for all 892 pre-existing tests, removes 894 handwritten runner rows (including two duplicates), and auto-registers the new regression for 893 total. One manifest/timeout authority now rejects stale or redundant exceptions, reasonless quarantines, and incomplete placement. |
+| 4 | **DONE** | A/W drift is a name-based build ratchet (`76883d22`). Exact WAT duplication is alpha-normalized across function, parameter and local names and gated at the 197-group / 928-member baseline (`d6b08cdd`); the live census is now 177 / 815. Removals pass, while a new duplicated member or higher group count fails. Near-pair scoring remains an interactive report so it does not add ~35 seconds to every build. |
+| 5 | **PARTIAL** | Shared `$guest_strdup` serves DirectPlay, scalable fonts, DDE, atoms, clipboard formats, ICM, OpenDialog and ListView ownership copies (`fbf03c8a`, `9d3db910`, `f351d065`). Mixer control details, CRT byte comparison, legacy D3D child creation and viewport ownership/enumeration, console titles, MCI strings, identity queries, clipboard-format registration, character lowercasing, fixed directory queries, `LoadLibraryEx`, `ImageList_LoadImage`, `PlaySound` and Win32 calendar time now share their common cores (`e138f4b8` through `c0155d2d`). Device1 viewport wrappers converge through Device2 on the canonical Device3 implementation without duplicating stack cleanup. Generated handler aliases route 17 generic DirectX entry-point `AddRef`s and eight basic `Release`s through `$dx_com_addref` / `$dx_com_release_basic`, deleting 25 named wrappers (`69df8983`). The D3DIM generator/spec carries the same aliases for all 14 generic `AddRef`s and its four basic `Release`s, deleting another 18 wrappers while leaving device, viewport, execute-buffer, vertex-buffer and texture final-release teardown specialized (`c68ed9b9`). D3D9 now aliases all five `AddRef`s plus four generic/shared-specialized `Release`s, deleting nine wrappers; its Device9/SwapChain9 final-release path drops the implicit render target, and Surface9 reuses type-2 surface teardown and recyclable DIB storage instead of leaking it (`34bdf023`). The image-list and sound merges replace false success with tested bitmap/WAV type, path, resource, geometry and lifetime behavior; the time merge replaces the duplicated 2000-plus-uptime result with tested local/UTC wall-clock fields and exact 64-bit `FILETIME`. `_lread` now owns the one legacy host-read path, `_hread` owns their shared signed-count check, and `mmioRead` delegates to it; besides deleting the three-member twin, this restores the documented EOF `0` / failure `-1` distinction and preserves lazy-provider retry across Win32 and Win16 (`4d5ba5f3`). Legacy `GetTextExtentPointA/W` now delegate to the canonical `Point32A/W` handlers, preserving the measured ANSI/wide proportional-glyph results while deleting the second pair of measurement bodies; the A/W census recognizes only matching downstream encoding families as shared and rejects mismatched families (`9cecf7de`). The documented Win16-compatibility `GetCharWidthA/W` entry points likewise delegate to their more-accurate `GetCharWidth32A/W` successors; public raster/scalable paths and the 224-record Windows 98 font-metrics fixture preserve the measured widths (`dd98db03`). `IEnumMoniker`, `IEnumString` and `IEnumFORMATETC` now route `Skip` through one generated handler alias and one shared saturating count/cursor implementation, deleting three private handlers and two helper copies while retaining each interface's public S_OK/S_FALSE, reset and clone tests (`7853e26f`); their identical Reset operations likewise use one alias, while `IEnumSTATSTG` keeps its distinct null-validating reset path (`2cfd2e35`). Thirteen direct-object OLE `AddRef`s and nine basic `Release`s now use two generated handler aliases, deleting 22 named wrappers; the four owned/static release paths and every offset/root-adjusted interface remain specialized and are structurally pinned (`ba6a54ad`). The byte-identical `IEnumSTATSTG` / `IEnumFORMATETC` `QueryInterface` bodies now share one contract core that validates the complete COM IID, clears rejected outputs, AddRefs successful results, and preserves the distinct `IEnumFORMATETC` versus `IEnumSTATDATA` identity selected by the shared vtable's object kind (`4fead7c8`). The former false-success `IDirectMusic::QueryInterface` now accepts only the complete `IUnknown` / `IDirectMusic` GUIDs, returns `E_POINTER` for a null output, clears unsupported output with `E_NOINTERFACE`, and AddRefs only successful results (`2123613a`). The same single-translation/full-GUID core now preserves the distinct `IAMMultiMediaStream` and `IDirectDrawGammaControl` identities and validates the two bounded ANSI DirectPlay families: DirectPlay3 accepts only `IUnknown` / `IDirectPlay2A` / `IDirectPlay3A`, Lobby2 accepts only `IUnknown` / `IDirectPlayLobbyA` / `IDirectPlayLobby2A`, and unsupported Unicode/newer/cross-family queries fail without gaining a reference; the genuine Microsoft Bellhop sample reaches its connection dialog through the live 3A/Lobby2A requests (`7c819b82`). Their four local `CoCreateInstance` branches now translate each input GUID once, require the complete class identity, reject aggregation/null output, validate the requested interface through those same cores, and release the temporary factory reference on both success and failure; focused live-object counts prove rejected requests do not leak and Bellhop still reaches the same connection dialog (`80a859f7`). `IDirectSound::QueryInterface` and its local factory now apply the same complete-identity and single-translation contract, expose only `IUnknown` / `IDirectSound`, reject aggregation/null output, and balance the factory reference; focused live-object counts prove rejected requests do not leak (`96eb1493`). Shell Link queries and creation now validate complete Microsoft GUIDs once, preserve the controlling `IUnknown`, expose inherited `IPersist` through the ABI-compatible `IPersistFile` wrapper, return the requested interface rather than blindly returning `IShellLinkA`, and balance every accepted or rejected factory reference (`3a32f8d0`). The DirectX7 VB6 automation object and factory likewise validate the complete class and `IUnknown` / `IDispatch` / `IDirectX7` identities, reject the optional `IPersistStreamInit` probe and aggregation without leaking, and transfer exactly one caller reference (`57cad772`). `IDirectDrawFactory` and its local class factory now use that same complete-GUID contract, accept only `IUnknown` / `IDirectDrawFactory`, reject null output, unsupported IID, and aggregation without leaking, and transfer exactly one caller-owned reference (`4ef17e3b`). `DirectDrawCreateEx` now follows the narrower documented DirectX 7 contract: it accepts only the complete `IID_IDirectDraw7`, rejects older or forged IIDs with `DDERR_INVALIDPARAMS`, and returns the 30-slot interface with one caller-owned reference (`63c44b5b`). `IDirectDraw::QueryInterface` validates the complete Win98 DirectDraw 1/2/4/7 and Direct3D 1/2/3/7 identities after one translation, preserves each versioned vtable, returns one controlling `IUnknown` across auxiliary wrappers, and balances shared-interface AddRefs and distinct Direct3D children (`70dd35a8`). DirectInput root queries and both legacy/8 creation entry points now validate complete A/W identities once, keep the legacy and DirectInput 8 class generations separate, select the matching base/extended wrapper ABI, AddRef only successful queries, and leave every rejection leak-free (`167f4445`); this removes one more exact duplicate group/member pair. DirectInput device queries and `CreateDeviceEx` likewise validate complete Device1/2 A/W requests, preserve controlling identity and wrapper ABI, and reject Device7/8 until their longer vtable tails exist rather than returning a plausible pointer that jumps into unrelated thunks (`685045d4`). DirectSoundBuffer queries now translate the IID once, validate complete `IUnknown` / `IDirectSoundBuffer` / 3D-buffer / 3D-listener identities, preserve one controlling identity across distinct 3D wrappers, and reject every other probe without gaining a reference or opening a voice (`f966fcce`). The A/W census is drained to the three intentional encoded front doors (`GetCommandLine`, `wsprintf`, `wvsprintf`) plus the existing `IsBadStringPtr` both-stub pair. Remaining non-lifetime byte-identical twins remain open. |
+| 6 | **DONE** | The copied CLI client is `test/control-session.js` (`35a05fff`). One traversal- and symlink-safe `test/static-server.js` now serves all 39 browser-test consumers (`93ee1a34`, `7b45245a`, `a3ee4d48`), with explicit hooks for MIME overrides, cache policy, COOP/COEP, path rewrites and protocol routes. A recursive ratchet allows `http.createServer` only in that helper; its real-HTTP policy/path tests, the iOS custom-route browser test and the canonical/compat build pass. |
+| 7 | **OPEN** | `api_table.json` has no `stub` or `test_call` fields; the generated-dispatch arc has not started. |
+| 8 | **PARTIAL** | The obsolete hash-cache fallback description is corrected (`2b82fe43`), and all 58 dated silent-handler transitions now live in `docs/silent-handler-inventory.md` instead of executable gate code (`fd88ad47`). The seven PNG inspector commands now share one decoder/pixel/histogram/crop implementation while retaining their historical CLI names and `png-crop-desktop` exports; structural and functional coverage exercises every entry point (`af3b4eec`). Browser and CLI named event/mutex imports share one bounded `lib/mem-utils.js` decoder and translate each guest pointer once (`5d524a8b`). All production JS-owned guest-pointer translators now converge on `guestToWasm`: the normal path uses the WAT export, the fallback uses direct/DIB/packed-PTE translation, and the renderer's legacy allocation-record scan is gone (`b3e6d430`). The debug picker no longer carries `OTHER_APP_IDS` / `OTHER_GAME_IDS`: the affected `APPS` entries own their picker-section metadata, and a regression requires exact coverage of the real `Other` optgroup (`fff0188e`). The 09a/09c3 split remains open at roughly 39,000 lines. |
 
 ---
 
@@ -3499,33 +3514,51 @@ a few unrelated commits from a parallel session are interleaved in the log.*
   `$host_get_window_client_size` — both read the real rect, which is why the
   mirror was dead (`18dd07b`).
 
-**Still open**
+**Final closure audit**
 
-- §3.7 named accessors for the *remaining* per-class state structs. The
-  offsets mean different things per class, so this is a per-class job, not one
-  rename, and ButtonState is the first class done (`ad9b3de`): text ptr/len,
-  flags, ctrl_id, image type/handle and the embedded owner-draw
-  DRAWITEMSTRUCT, with the wndproc, the three sibling-default walkers,
-  `$ctrl_get/set_check_state` and the three JS-facing exports all reading
-  through them. StaticState (shared with SysLink), ProgressState and
-  TrackBarState followed in `92217e4`, then the three big ones: ListBoxState
-  (`4682d5a`), ComboBoxState (`da4a7ac`) and ListViewState (`f3d2f45`). Only
-  EditState is left, and it is held by a parallel session that owns
-  `$edit_wndproc`.
-  The table-level half is finished: the CONTROL_TABLE row is `$ctrl_slot_addr`
+- §3.7's per-class state migration is finished. ButtonState was the first
+  class named (`ad9b3de`), followed by StaticState (shared with SysLink),
+  ProgressState and TrackBarState (`92217e4`), then ListBoxState (`4682d5a`),
+  ComboBoxState (`da4a7ac`) and ListViewState (`f3d2f45`). The later typed
+  ControlState migration introduced EditState with the other variant layouts
+  (`f6ae1917`) and converted the remaining raw state accesses in
+  `cfb48609`, `493dae80` and `68461381`; the current `state_w`/`sw` raw-offset
+  census is zero.
+  The table-level half is also finished: the CONTROL_TABLE row is `$ctrl_slot_addr`
   plus documented field offsets, GetDlgCtrlID and the exported `ctrl_get_id`
   stopped re-implementing `$ctrl_table_get_id` (`f0ac4b6`), and the six
   Set/Get Scroll{Pos,Range,Info} handlers that still open-coded both scroll
   strides — 24 for the legacy record, 16 for the SCROLLINFO fields — now call
   `$scroll_bar_addr` / `$scroll_aux_bar_addr` (`1675bea`), and PAINT_SCRATCH is
   now a ring rather than one shared rect (`2c4ef73`).
-- §3.8's remaining bullets and §4.3, the dual-ownership and JS-authority arcs
-  — window rect owned by CONTROL_GEOM for children and by the JS host for
-  top-levels, the EDIT/LISTVIEW/WinHelp scroll state stored twice. These are
-  real second owners, unlike the geometry globals, and multi-session. One of
-  them is closed: show state (`1ba6a38`), which was the worst of the set
-  because the second owner was not merely redundant — the guest-facing half
-  did not exist at all, so IsIconic and IsZoomed answered with a constant.
+- §3.8's window-rect/JS-authority arc is a **scope boundary, not duplicate
+  ownership**. Top-level placement must be global because renderer windows are
+  shared across guest processes and browser title-bar/resize drags originate
+  there. Child geometry stays in the owning process's CONTROL_GEOM because WAT
+  controls paint into their parent and deliberately have no renderer record.
+  The `get_window_rect` host boundary already routes renderer-known children
+  back through their owning WAT geometry exports while using the global record
+  for top-level and foreign windows. Consolidating either way would discard
+  one of those domains. What was genuinely wrong at the seam is now fixed:
+  GetWindowRect no longer turns an invalid/destroyed HWND into the 640x480
+  desktop rectangle and TRUE. One shared validity predicate covers local WAT,
+  permanent desktop and foreign renderer HWNDs for both IsWindow and
+  GetWindowRect, with a focused regression for all four paths.
+
+  Show state remains closed (`1ba6a38`); unlike rectangle scope, it really was
+  duplicated, and the guest-facing half did not exist at all, so IsIconic and
+  IsZoomed answered with a constant.
+
+  The EDIT/LISTVIEW/WinHelp scroll item is **not a duplicate-owner cleanup**.
+  Microsoft documents `SetScrollPos` as changing the scroll box, while
+  `LVM_GETTOPINDEX` returns the topmost visible content item. Calling
+  SetScrollPos directly must therefore be able to move the thumb without
+  scrolling ListView content; the control later projects its viewport back
+  into the standard scrollbar repository when it handles a real scroll.
+  A focused ListView regression now pins that divergence and subsequent
+  resynchronization. The same content-vs-chrome distinction applies to EDIT
+  and WinHelp, so merging either state pair would make the architecture neater
+  and Win98 behavior less accurate.
 
 **Declined, with reasons**
 

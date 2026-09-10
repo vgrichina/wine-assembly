@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const { mountLoadedDllFiles, stageAndLoadPe, readGuestCString,
   handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
+const { hasPageScript, indexSource } = require('./browser-runtime-scripts');
 
 function syntheticLargePe() {
   const bytes = Buffer.alloc(0x300);
@@ -86,14 +87,12 @@ function fakeGuest(name, { nameGetter }) {
 }
 
 (async () => {
-  const pageSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   const hostSource = fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8');
-  assert.match(pageSource, /lib\/process-boot\.js\?v=6/,
-    'the browser must not reuse the loader that parsed oversized NE files as PE');
-  const sourceVersion = hostSource.match(/static SOURCE_VERSION = '(\d+)'/);
-  assert(sourceVersion, 'the browser host declares a numeric artifact source version');
-  assert(pageSource.includes(`host.js?v=${sourceVersion[1]}`),
-    'the page host cache key agrees with the artifact source version');
+  assert(hasPageScript('lib/process-boot.js'),
+    'the centrally versioned browser graph must include the shared loader');
+  assert(indexSource.includes("window.WINE_SOURCE_VERSION = String(window.WINE_BUILD || 'dev')") &&
+    hostSource.includes("static SOURCE_VERSION = String(globalThis.WINE_SOURCE_VERSION || 'dev')"),
+    'the page and browser host must consume the same build-info source version');
 
   const peBytes = syntheticLargePe();
   const peMemory = new ArrayBuffer(0x5000);

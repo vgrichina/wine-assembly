@@ -430,13 +430,20 @@
   ;; that is already there. A reader that misses a just-published entry simply
   ;; behaves as it did a microsecond earlier.
   (func $virtual_map_commit (param $guest i32) (param $size i32) (result i32)
+    (call $virtual_map_commit_protect
+      (local.get $guest) (local.get $size) (i32.const 0x40)))
+
+  (func $virtual_map_commit_protect
+      (param $guest i32) (param $size i32) (param $protect i32) (result i32)
     (local $r i32)
     (call $lock_acquire (global.get $LOCK_VIRTUAL_MAP))
-    (local.set $r (call $virtual_map_commit_locked (local.get $guest) (local.get $size)))
+    (local.set $r (call $virtual_map_commit_locked
+      (local.get $guest) (local.get $size) (local.get $protect)))
     (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
     (local.get $r))
 
-  (func $virtual_map_commit_locked (param $guest i32) (param $size i32) (result i32)
+  (func $virtual_map_commit_locked
+      (param $guest i32) (param $size i32) (param $protect i32) (result i32)
     (local $count i32) (local $backing_ptr i32) (local $guest_end i32)
     (local $i i32) (local $rec i32) (local $base i32) (local $map_size i32)
     (local $backing i32) (local $map_end i32) (local $backing_end i32)
@@ -474,8 +481,9 @@
               (i32.lt_u (local.get $guest) (local.get $map_end)))
             (i32.gt_u (local.get $guest_end) (local.get $map_end)))
         (then
-          (local.set $extended (call $virtual_map_commit
-            (local.get $map_end) (i32.sub (local.get $guest_end) (local.get $map_end))))
+          (local.set $extended (call $virtual_map_commit_protect
+            (local.get $map_end) (i32.sub (local.get $guest_end) (local.get $map_end))
+            (local.get $protect)))
           (return (select (local.get $guest) (i32.const 0)
             (i32.ne (local.get $extended) (i32.const 0))))))
       (if (i32.and
@@ -487,6 +495,13 @@
                 (i32.add (global.get $VIRTUAL_BACKING_BASE) (global.get $VIRTUAL_BACKING_BASE_SIZE)))
             (then (return (i32.const 0))))
           (call $zero_memory (local.get $backing_ptr) (local.get $size))
+          ;; Publish translations before the larger record size. A reader can
+          ;; therefore never see a committed byte whose PTE names no backing.
+          ;; Publication failure rejects the commit before metadata is visible.
+          (if (i32.eqz (call $guest_page_publish_range
+                (local.get $guest) (local.get $size) (local.get $backing_ptr)
+                (local.get $protect)))
+            (then (return (i32.const 0))))
           ;; Published last, atomically: a reader that sees the larger size is
           ;; guaranteed the backing behind it exists and is zeroed.
           (i32.atomic.store (i32.add (local.get $rec) (i32.const 4))
@@ -507,8 +522,14 @@
     (i32.store (local.get $rec) (local.get $guest))
     (i32.store (i32.add (local.get $rec) (i32.const 4)) (local.get $size))
     (i32.store (i32.add (local.get $rec) (i32.const 8)) (local.get $backing_ptr))
-    (i32.store (i32.add (local.get $rec) (i32.const 12)) (i32.const 0))
+    ;; AllocationProtect for the reservation. Per-page current protection lives
+    ;; in the PTE and may later diverge through VirtualProtect.
+    (i32.store (i32.add (local.get $rec) (i32.const 12)) (local.get $protect))
     (call $zero_memory (local.get $backing_ptr) (local.get $size))
+    (if (i32.eqz (call $guest_page_publish_range
+          (local.get $guest) (local.get $size) (local.get $backing_ptr)
+          (local.get $protect)))
+      (then (return (i32.const 0))))
     ;; The record is complete and its backing zeroed before the count that makes
     ;; it visible. Reversing these two lines is the whole bug this ordering
     ;; avoids: $g2w would map a guest address onto a record still being filled.
@@ -668,8 +689,8 @@
     (local.get $cursor))
 
   ;; Remove an exact sparse mapping on VirtualFree(..., MEM_RELEASE). Compact
-  ;; the live prefix so g2w's linear scan and MAX_VIRTUAL_MAPS bound keep their
-  ;; existing representation. Backing is a bump arena, therefore only the
+  ;; the live metadata prefix so MAX_VIRTUAL_MAPS retains its bound. Backing is
+  ;; a bump arena, therefore only the
   ;; most recently committed extent can be reclaimed without a free list; all
   ;; other releases still recover their map-table slot immediately.
   (func $virtual_map_release (param $guest i32) (result i32)
@@ -687,6 +708,10 @@
         (then
           (local.set $size (i32.load (i32.add (local.get $rec) (i32.const 4))))
           (local.set $backing (i32.load (i32.add (local.get $rec) (i32.const 8))))
+          ;; Retire translations before the record disappears or its
+          ;; backing becomes reusable. Page-table readers then see either the
+          ;; old valid PTE or an unmapped page, never a recycled alias.
+          (call $guest_page_clear_range (local.get $guest) (local.get $size))
           (local.set $backing_ptr
             (i32.load (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))))
           (if (i32.eq
@@ -714,6 +739,49 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
+
+  ;; Apply VirtualProtect only when the page-rounded range lies wholly inside
+  ;; one committed sparse map. Hold the map lock across both PTE passes so a
+  ;; concurrent release cannot turn an all-or-nothing update into a partial one.
+  ;; Return -1 on failure, otherwise the first page's previous PAGE_* value.
+  (func $virtual_map_protect
+      (param $guest i32) (param $size i32) (param $protect i32) (result i32)
+    (local $page_base i32) (local $raw_end i32) (local $page_end i32)
+    (local $count i32) (local $i i32) (local $rec i32)
+    (local $map_base i32) (local $map_size i32) (local $old i32)
+    (local.set $old (i32.const -1))
+    (local.set $page_base
+      (i32.and (local.get $guest) (i32.const 0xFFFFF000)))
+    (local.set $raw_end (i32.add (local.get $guest) (local.get $size)))
+    (if (i32.or
+          (i32.le_u (local.get $raw_end) (local.get $guest))
+          (i32.gt_u (local.get $raw_end) (i32.const 0xFFFFF000)))
+      (then (return (local.get $old))))
+    (local.set $page_end
+      (i32.and (i32.add (local.get $raw_end) (i32.const 0xFFF))
+        (i32.const 0xFFFFF000)))
+    (call $lock_acquire (global.get $LOCK_VIRTUAL_MAP))
+    (local.set $count (i32.atomic.load (global.get $VIRTUAL_MAP_STATE)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec
+        (i32.add (global.get $VIRTUAL_MAP_TABLE)
+          (i32.shl (local.get $i) (i32.const 4))))
+      (local.set $map_base (i32.load (local.get $rec)))
+      (local.set $map_size (i32.load (i32.add (local.get $rec) (i32.const 4))))
+      (if (i32.and
+            (i32.ge_u (local.get $page_base) (local.get $map_base))
+            (i32.le_u (local.get $page_end)
+              (i32.add (local.get $map_base) (local.get $map_size))))
+        (then
+          (local.set $old (call $guest_page_protect_range
+            (local.get $guest) (local.get $size) (local.get $protect)))
+          (br $done)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
+    (local.get $old))
 
   ;; HeapAlloc starts in the low direct guest window for compatibility, then
   ;; spills to sparse high guest chunks when that window reaches emulator-private
@@ -3680,8 +3748,8 @@
               (then (i32.const 1))
               (else (i32.const 0))))))
       (if (i32.ne
-            (call $gl8 (i32.add (local.get $gp) (local.get $i)))
-            (call $clipboard_rtf_name_char (local.get $i)))
+            (call $tolower (call $gl8 (i32.add (local.get $gp) (local.get $i))))
+            (call $tolower (call $clipboard_rtf_name_char (local.get $i))))
         (then (return (i32.const 0))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -3739,10 +3807,8 @@
         (global.set $clipboard_fmt_counter
           (i32.add (global.get $clipboard_fmt_counter) (i32.const 1)))
         (return (i32.add (i32.const 0xC000) (global.get $clipboard_fmt_counter)))))
-    (local.set $copy (call $heap_alloc
-      (i32.add (call $guest_strlen (local.get $name_g)) (i32.const 1))))
+    (local.set $copy (call $guest_strdup (local.get $name_g)))
     (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
-    (call $guest_strcpy (local.get $copy) (local.get $name_g))
     (global.set $clipboard_fmt_counter
       (i32.add (global.get $clipboard_fmt_counter) (i32.const 1)))
     (i32.store (local.get $e) (local.get $copy))
@@ -3764,25 +3830,28 @@
       (br $scan)))
     (i32.const 0))
 
-  (func $clipboard_register_format_a (param $name_g i32) (result i32)
-    (local $id i32)
-    (local.set $id (call $clipfmt_intern (local.get $name_g)))
+  (func $clipboard_register_format (param $name_g i32) (param $wide i32) (result i32)
+    (local $ansi_g i32) (local $id i32)
+    (if (i32.eqz (local.get $name_g)) (then (return (i32.const 0))))
+    (if (local.get $wide)
+      (then
+        (local.set $ansi_g (call $clipfmt_wide_to_ansi (local.get $name_g)))
+        (if (i32.eqz (local.get $ansi_g)) (then (return (i32.const 0)))))
+      (else (local.set $ansi_g (local.get $name_g))))
+    (local.set $id (call $clipfmt_intern (local.get $ansi_g)))
     ;; The RTF payload has its own storage and its own id global; keep that
     ;; global pointing at the interned value so both agree.
     (if (i32.and (i32.ne (local.get $id) (i32.const 0))
-                 (call $guest_str_is_rich_text_format_a (local.get $name_g)))
+                 (call $guest_str_is_rich_text_format_a (local.get $ansi_g)))
       (then (global.set $clipboard_rtf_format_id (local.get $id))))
+    (if (local.get $wide) (then (call $heap_free (local.get $ansi_g))))
     (local.get $id))
 
+  (func $clipboard_register_format_a (param $name_g i32) (result i32)
+    (call $clipboard_register_format (local.get $name_g) (i32.const 0)))
+
   (func $clipboard_register_format_w (param $name_g i32) (result i32)
-    (local $ansi i32) (local $id i32)
-    ;; Intern through the same ANSI table: a W registration and an A
-    ;; registration of the same name must produce the same id.
-    (local.set $ansi (call $clipfmt_wide_to_ansi (local.get $name_g)))
-    (if (i32.eqz (local.get $ansi)) (then (return (i32.const 0))))
-    (local.set $id (call $clipboard_register_format_a (local.get $ansi)))
-    (call $heap_free (local.get $ansi))
-    (local.get $id))
+    (call $clipboard_register_format (local.get $name_g) (i32.const 1)))
 
   ;; NUL-terminated UTF-16 to a freshly allocated ANSI copy. Format names are
   ;; ASCII in every app we have met; a character above 0xFF becomes '?'.
@@ -5965,3 +6034,15 @@
         (if (call $str_eq (local.get $name_wa) "SHBrowseForFolder")
           (then (return (call $lookup_api_id "SHBrowseForFolderA"))))))
     (i32.const -1))
+
+  ;; Own an ANSI guest string beyond the caller's buffer lifetime. Both the
+  ;; source and result are guest addresses; HeapAlloc failure and NULL input
+  ;; preserve the ordinary Win32 NULL result.
+  (func $guest_strdup (param $src i32) (result i32)
+    (local $copy i32) (local $len i32)
+    (if (i32.eqz (local.get $src)) (then (return (i32.const 0))))
+    (local.set $len (call $guest_strlen (local.get $src)))
+    (local.set $copy (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (if (local.get $copy)
+      (then (call $guest_strcpy (local.get $copy) (local.get $src))))
+    (local.get $copy))

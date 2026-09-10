@@ -210,6 +210,12 @@ const extraWat = String.raw`
     wat.guest_write8(ptr + text.length, 0);
     return ptr;
   };
+  const allocWide = text => {
+    const ptr = wat.guest_alloc((text.length + 1) * 2) >>> 0;
+    for (let i = 0; i < text.length; i++) wat.guest_write16(ptr + i * 2, text.charCodeAt(i));
+    wat.guest_write16(ptr + text.length * 2, 0);
+    return ptr;
+  };
   const info = () => wat.guest_alloc(22) >>> 0;
   const coord = (x, y) => (x & 0xffff) | ((y & 0xffff) << 16);
   const read16 = ptr => wat.guest_read8(ptr) | (wat.guest_read8(ptr + 1) << 8);
@@ -252,10 +258,21 @@ const extraWat = String.raw`
   assert.strictEqual(wat.test_get_console_title_a(titleBuffer, 32), 7);
   assert.deepStrictEqual(Array.from({ length: 8 }, (_, i) => wat.guest_read8(titleBuffer + i)),
     [...Buffer.from('Console'), 0], 'initial ANSI console title');
+  assert.strictEqual(wat.test_set_console_title_a(0), 0,
+    'SetConsoleTitleA accepted a NULL title');
+  assert.strictEqual(wat.test_last_error(), 87,
+    'NULL SetConsoleTitleA did not set ERROR_INVALID_PARAMETER');
+  assert.strictEqual(wat.test_get_console_title_a(titleBuffer, 32), 7,
+    'failed SetConsoleTitleA changed the current title');
   assert.strictEqual(wat.test_set_console_title_a(allocText('Far Manager')), 1);
   assert.strictEqual(wat.test_get_console_title_a(titleBuffer, 5), 4);
   assert.deepStrictEqual(Array.from({ length: 5 }, (_, i) => wat.guest_read8(titleBuffer + i)),
     [...Buffer.from('Far '), 0], 'ANSI title read is bounded and terminated');
+  wat.guest_write8(titleBuffer, 0x7f);
+  assert.strictEqual(wat.test_get_console_title_a(titleBuffer, 1), 0,
+    'one-byte ANSI title buffer returned a character');
+  assert.strictEqual(wat.guest_read8(titleBuffer), 0,
+    'one-byte ANSI title buffer was not terminated');
   assert.ok(hostTitles.length > 0, 'ANSI title change did not reach browser window');
   const consoleWindow = Object.values(renderer.windows).find(win =>
     (win.style >>> 0) === 0x10cf0000);
@@ -266,14 +283,33 @@ const extraWat = String.raw`
   assert.deepStrictEqual([consoleWindow.clientRect.w, consoleWindow.clientRect.h], [640, 300],
     '80x25 console client was clipped by non-client chrome');
 
-  const wideTitle = wat.guest_alloc(32) >>> 0;
-  for (const [i, ch] of [...'Wide Far'].entries()) wat.guest_write16(wideTitle + i * 2, ch.charCodeAt(0));
-  wat.guest_write16(wideTitle + 16, 0);
-  assert.strictEqual(wat.test_set_console_title_w(wideTitle), 1);
+  assert.strictEqual(wat.test_set_console_title_w(allocWide('Wide Far')), 1);
   const wideOut = wat.guest_alloc(32) >>> 0;
   assert.strictEqual(wat.test_get_console_title_w(wideOut, 16), 8);
   assert.deepStrictEqual(Array.from({ length: 9 }, (_, i) => read16(wideOut + i * 2)),
     [...'Wide Far'].map(ch => ch.charCodeAt(0)).concat(0), 'wide title round-trip');
+  wat.guest_write16(wideOut, 0x7f7f);
+  assert.strictEqual(wat.test_get_console_title_w(wideOut, 1), 0,
+    'one-character wide title buffer returned a character');
+  assert.strictEqual(read16(wideOut), 0,
+    'one-character wide title buffer was not terminated');
+  assert.strictEqual(wat.test_set_console_title_w(0), 0,
+    'SetConsoleTitleW accepted a NULL title');
+  assert.strictEqual(wat.test_last_error(), 87,
+    'NULL SetConsoleTitleW did not set ERROR_INVALID_PARAMETER');
+  assert.strictEqual(wat.test_get_console_title_w(wideOut, 16), 8,
+    'failed SetConsoleTitleW changed the current title');
+
+  assert.strictEqual(wat.test_set_console_title_a(allocText('')), 1,
+    'SetConsoleTitleA rejected an empty title');
+  assert.strictEqual(wat.test_get_console_title_a(titleBuffer, 32), 0,
+    'empty ANSI console title was mistaken for uninitialized state');
+  assert.strictEqual(wat.guest_read8(titleBuffer), 0,
+    'empty ANSI console title was not terminated');
+  assert.strictEqual(wat.test_get_console_title_w(wideOut, 16), 0,
+    'empty console title was not shared with GetConsoleTitleW');
+  assert.strictEqual(read16(wideOut), 0,
+    'empty wide console title was not terminated');
 
   const first = wat.test_create_console_buffer(1, 0) >>> 0;
   const second = wat.test_create_console_buffer(1, 0) >>> 0;

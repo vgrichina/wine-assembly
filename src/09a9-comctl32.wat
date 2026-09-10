@@ -354,7 +354,7 @@
 
   ;; ImageList_Destroy(himl) — 1 arg, returns BOOL
   (func $handle_ImageList_Destroy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $sw i32) (local $icons i32) (local $count i32)
+    (local $sw i32) (local $icons i32) (local $count i32) (local $bitmap i32)
     (global.set $eax (i32.const 0))
     ;; The lists returned by SHGFI_SYSICONINDEX are shared system resources;
     ;; applications must not destroy them.  Refuse the operation so the stable
@@ -383,71 +383,115 @@
                 (local.set $count (i32.load offset=12 (local.get $sw)))
                 (call $image_list_destroy_icon_array
                   (local.get $icons) (local.get $count))))
+            ;; ImageList_LoadImage owns the bitmap strip it loaded. Lists that
+            ;; have converted their cells to retained icons clear this field,
+            ;; so the two representations cannot release the same pixels.
+            (local.set $bitmap (i32.load offset=16 (local.get $sw)))
+            (i32.store offset=16 (local.get $sw) (i32.const 0))
+            (if (local.get $bitmap)
+              (then (drop (call $gdi_object_delete_full (local.get $bitmap)))))
             (call $heap_free (local.get $arg0))
             (global.set $eax (i32.const 1))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; ImageList_LoadImageA(hi, lpbmp, cx, cGrow, crMask, uType, uFlags) — 7 args
-  (func $handle_ImageList_LoadImageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; ImageList_LoadImageA/W share all behavior except the width of lpbmp.
+  ;; uType must be IMAGE_BITMAP. uFlags lives beyond the dispatcher's five
+  ;; register-like arguments and is supplied explicitly by the two wrappers.
+  (func $image_list_load_image
+      (param $hi i32) (param $name i32) (param $cx_arg i32)
+      (param $c_grow i32) (param $mask_color i32) (param $image_type i32)
+      (param $load_flags i32) (param $wide i32) (result i32)
     (local $buf i32) (local $buf_wa i32) (local $cx i32)
-    (local $bmp i32) (local $bmp_w i32) (local $count i32)
-    ;; LoadImage returns an image-list wrapper around a bitmap strip when host
-    ;; resource loading can resolve the bitmap. If not, still return a valid
-    ;; empty image list so callers can proceed.
-    (local.set $cx (local.get $arg2))
-    (if (i32.le_s (local.get $cx) (i32.const 0))
-      (then (local.set $cx (i32.const 16))))
-    (local.set $bmp (call $host_gdi_load_bitmap (local.get $arg0) (local.get $arg1)))
-    (if (local.get $bmp)
+    (local $bmp i32) (local $bmp_w i32) (local $bmp_h i32)
+    (local $count i32) (local $path i32) (local $path_owned i32)
+    (drop (local.get $c_grow))
+    ;; The common-controls contract is bitmap-only. Icons and cursors belong
+    ;; to LoadImage; accepting them here creates a list with invalid geometry.
+    (if (i32.ne (local.get $image_type) (i32.const 0))
+      (then (return (i32.const 0))))
+    (if (i32.ne
+          (i32.and (local.get $load_flags) (i32.const 0x10)) ;; LR_LOADFROMFILE
+          (i32.const 0))
       (then
-        (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bmp)))
-        (if (i32.gt_s (local.get $bmp_w) (i32.const 0))
+        ;; A file load requires a string, never MAKEINTRESOURCE. Convert W
+        ;; paths through a call-owned buffer before entering the VFS, whose
+        ;; Win9x paths are represented as ANSI; a shared scratch path would let
+        ;; two guest threads corrupt one another's filename.
+        (if (i32.le_u (local.get $name) (i32.const 0xFFFF))
+          (then (return (i32.const 0))))
+        (local.set $path (local.get $name))
+        (if (local.get $wide)
           (then
-            (local.set $count (i32.div_u (local.get $bmp_w) (local.get $cx)))
-            (if (i32.eqz (local.get $count))
-              (then (local.set $count (i32.const 1))))))))
-    (local.set $buf (call $heap_alloc (i32.const 36)))
-    (local.set $buf_wa (call $g2w (local.get $buf)))
-    (call $zero_memory (local.get $buf_wa) (i32.const 36))
-    (i32.store (local.get $buf_wa) (local.get $cx))           ;; cx
-    (i32.store offset=4 (local.get $buf_wa) (local.get $cx))  ;; cy=cx
-    (i32.store offset=8 (local.get $buf_wa) (i32.const -1))   ;; CLR_NONE
-    (i32.store offset=12 (local.get $buf_wa) (local.get $count))
-    (i32.store offset=16 (local.get $buf_wa) (local.get $bmp))
-    (i32.store offset=20 (local.get $buf_wa) (local.get $arg4))
-    (i32.store offset=32 (local.get $buf_wa) (i32.const 0x4c4d4948))
-    (global.set $eax (local.get $buf))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; stdcall, 7 args
-  )
-
-  ;; ImageList_LoadImageW — same as A, 7 args
-  (func $handle_ImageList_LoadImageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32) (local $buf_wa i32) (local $cx i32)
-    (local $bmp i32) (local $bmp_w i32) (local $count i32)
-    (local.set $cx (local.get $arg2))
-    (if (i32.le_s (local.get $cx) (i32.const 0))
-      (then (local.set $cx (i32.const 16))))
-    (local.set $bmp (call $host_gdi_load_bitmap (local.get $arg0) (local.get $arg1)))
-    (if (local.get $bmp)
+            (if (i32.ge_u (call $guest_wcslen (local.get $name)) (i32.const 260))
+              (then (return (i32.const 0))))
+            (local.set $path_owned (call $heap_alloc (i32.const 260)))
+            (if (i32.eqz (local.get $path_owned))
+              (then (return (i32.const 0))))
+            (drop (call $wide_to_ansi
+              (local.get $name) (local.get $path_owned) (i32.const 260)))
+            (local.set $path (local.get $path_owned))))
+        (local.set $bmp (call $load_image_bitmap_file (call $g2w (local.get $path))))
+        (if (local.get $path_owned)
+          (then (call $heap_free (local.get $path_owned)))))
+      (else
+        (local.set $bmp (call $gdi_bitmap_load_resource
+          (local.get $hi) (local.get $name) (local.get $wide)))))
+    ;; ImageList_LoadImage returns NULL when LoadImage cannot resolve a real
+    ;; bitmap. A fabricated empty HIMAGELIST hides missing resources and leaves
+    ;; callers believing image index zero exists.
+    (if (i32.eqz (local.get $bmp)) (then (return (i32.const 0))))
+    (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bmp)))
+    (local.set $bmp_h (call $host_gdi_get_object_h (local.get $bmp)))
+    (if (i32.or
+          (i32.le_s (local.get $bmp_w) (i32.const 0))
+          (i32.or (i32.le_s (local.get $bmp_h) (i32.const 0))
+            (i32.lt_s (local.get $cx_arg) (i32.const 0))))
       (then
-        (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bmp)))
-        (if (i32.gt_s (local.get $bmp_w) (i32.const 0))
-          (then
-            (local.set $count (i32.div_u (local.get $bmp_w) (local.get $cx)))
-            (if (i32.eqz (local.get $count))
-              (then (local.set $count (i32.const 1))))))))
+        (drop (call $gdi_object_delete_full (local.get $bmp)))
+        (return (i32.const 0))))
+    (local.set $cx (local.get $cx_arg))
+    ;; With no cell width, the complete bitmap is one image. Never invent a
+    ;; 16px width: the resource dimensions are the contract's source of truth.
+    (if (i32.eqz (local.get $cx))
+      (then (local.set $cx (local.get $bmp_w))))
+    (local.set $count (i32.div_u (local.get $bmp_w) (local.get $cx)))
+    (if (i32.eqz (local.get $count)) (then (local.set $count (i32.const 1))))
     (local.set $buf (call $heap_alloc (i32.const 36)))
+    (if (i32.eqz (local.get $buf))
+      (then
+        (drop (call $gdi_object_delete_full (local.get $bmp)))
+        (return (i32.const 0))))
     (local.set $buf_wa (call $g2w (local.get $buf)))
     (call $zero_memory (local.get $buf_wa) (i32.const 36))
     (i32.store (local.get $buf_wa) (local.get $cx))
-    (i32.store offset=4 (local.get $buf_wa) (local.get $cx))
-    (i32.store offset=8 (local.get $buf_wa) (i32.const -1))
+    (i32.store offset=4 (local.get $buf_wa) (local.get $bmp_h))
+    (i32.store offset=8 (local.get $buf_wa) (i32.const -1)) ;; CLR_NONE
     (i32.store offset=12 (local.get $buf_wa) (local.get $count))
     (i32.store offset=16 (local.get $buf_wa) (local.get $bmp))
-    (i32.store offset=20 (local.get $buf_wa) (local.get $arg4))
+    (i32.store offset=20 (local.get $buf_wa) (local.get $mask_color))
     (i32.store offset=32 (local.get $buf_wa) (i32.const 0x4c4d4948))
-    (global.set $eax (local.get $buf))
+    (local.get $buf))
+
+  ;; ImageList_LoadImageA(hi, lpbmp, cx, cGrow, crMask, uType, uFlags) — 7 args
+  (func $handle_ImageList_LoadImageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $image_list_load_image
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
+      (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+  )
+
+  ;; ImageList_LoadImageW — same core with a UTF-16 resource/path name.
+  (func $handle_ImageList_LoadImageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $image_list_load_image
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
+      (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
 

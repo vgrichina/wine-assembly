@@ -14,6 +14,19 @@ const extraWat = String.raw`
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
 
+  (func (export "test_get_window_rect")
+      (param $hwnd i32) (param $rect i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetWindowRect
+      (local.get $hwnd) (local.get $rect) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_last_error") (result i32)
+    (global.get $last_error))
+
   (func (export "test_register_window") (param $hwnd i32)
     (call $wnd_table_set (local.get $hwnd) (i32.const 0x401000)))
 
@@ -23,11 +36,13 @@ const extraWat = String.raw`
 
 (async () => {
   const rendererHwnd = 0x70001;
+  const rectCalls = [];
   const { exports: e } = await bootRenderHarness({
     extraWat,
     extraHostOverrides: {
       get_window_info: (hwnd, prop) =>
         ((hwnd >>> 0) === rendererHwnd && prop === 4 ? 1 : 0),
+      get_window_rect: (hwnd, rect) => rectCalls.push([hwnd >>> 0, rect >>> 0]),
     },
   });
 
@@ -41,13 +56,36 @@ const extraWat = String.raw`
   assert.strictEqual(e.test_is_window(rendererHwnd), 1,
     'a window owned by another process remains valid through the renderer');
 
+  const rect = 0x00402000;
+  assert.strictEqual(e.test_get_window_rect(0x12345, rect), 0,
+    'GetWindowRect rejects an unallocated HWND instead of returning the desktop');
+  assert.strictEqual(e.test_last_error(), 1400,
+    'invalid GetWindowRect sets ERROR_INVALID_WINDOW_HANDLE');
+  assert.deepStrictEqual(rectCalls, [],
+    'invalid GetWindowRect never reaches the renderer desktop fallback');
+  assert.strictEqual(e.test_get_window_rect(0x10000, rect), 1,
+    'GetWindowRect accepts the permanent desktop HWND');
+  assert.strictEqual(e.test_get_window_rect(rendererHwnd, rect), 1,
+    'GetWindowRect accepts a renderer-owned foreign window');
+  assert.deepStrictEqual(rectCalls.map(call => call[0]), [0x10000, rendererHwnd],
+    'desktop and foreign geometry are routed through the shared renderer');
+
   const hwnd = 0x12345;
   e.test_register_window(hwnd);
   assert.strictEqual(e.test_is_window(hwnd), 1,
     'a registered WND_RECORDS entry is a live window');
+  assert.strictEqual(e.test_get_window_rect(hwnd, rect), 1,
+    'GetWindowRect accepts a local WND_RECORDS window');
+  assert.strictEqual(rectCalls.at(-1)[0], hwnd,
+    'local geometry reaches the host boundary only after WAT validation');
   e.test_remove_window(hwnd);
   assert.strictEqual(e.test_is_window(hwnd), 0,
     'a destroyed window handle is no longer valid');
+  const callsBeforeDestroyed = rectCalls.length;
+  assert.strictEqual(e.test_get_window_rect(hwnd, rect), 0,
+    'GetWindowRect rejects a destroyed HWND');
+  assert.strictEqual(rectCalls.length, callsBeforeDestroyed,
+    'destroyed geometry cannot fall through to the renderer desktop rectangle');
 
   console.log('PASS  IsWindow recognizes local and renderer-owned live windows');
 })().catch(error => {

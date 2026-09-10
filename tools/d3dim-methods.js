@@ -8,9 +8,11 @@
 
 'use strict';
 
-// Each entry: { prefix, methods: [ { name, nargs, ret? } ] }
+// Each entry: { prefix, methods: [ { name, nargs, ret?, handler? } ] }
 // ret defaults to 'D3D_OK' (0). 'NOOP_VOID' returns nothing-meaningful (eax=0).
 // 'TRUE' returns 1, 'NOTIMPL' returns 0x80004001.
+// handler aliases dispatch directly to an existing shared implementation and
+// suppress generation of a redundant named WAT wrapper.
 //
 // Interface lists below are canonical DX5/6/7 orderings (Wine + DXSDK consensus).
 // IDs allocated via gen_api_table.js (existing.length-based, contiguous per interface).
@@ -19,8 +21,8 @@ const interfaces = [
   // ── IDirect3D2 ──────────────────────────────────────────────────────
   { prefix: 'IDirect3D2', methods: [
     { name: 'QueryInterface', nargs: 3 },
-    { name: 'AddRef',         nargs: 1, ret: 'ADDREF' },
-    { name: 'Release',        nargs: 1, ret: 'RELEASE' },
+    { name: 'AddRef',         nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
+    { name: 'Release',        nargs: 1, ret: 'RELEASE', handler: 'dx_com_release_basic' },
     { name: 'EnumDevices',    nargs: 3 },
     { name: 'CreateLight',    nargs: 3, body: 'CREATE_LIGHT' },
     { name: 'CreateMaterial', nargs: 3, body: 'CREATE_MATERIAL' },
@@ -32,8 +34,8 @@ const interfaces = [
   // ── IDirect3D7 ──────────────────────────────────────────────────────
   { prefix: 'IDirect3D7', methods: [
     { name: 'QueryInterface',           nargs: 3 },
-    { name: 'AddRef',                   nargs: 1, ret: 'ADDREF' },
-    { name: 'Release',                  nargs: 1, ret: 'RELEASE' },
+    { name: 'AddRef',                   nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
+    { name: 'Release',                  nargs: 1, ret: 'RELEASE', handler: 'dx_com_release_basic' },
     { name: 'EnumDevices',              nargs: 3 },
     { name: 'CreateDevice',             nargs: 4, body: 'CREATE_DEVICE7' },
     { name: 'CreateVertexBuffer',       nargs: 4, body: 'CREATE_VB7' },
@@ -44,17 +46,17 @@ const interfaces = [
   // ── IDirect3DDevice (v1) ────────────────────────────────────────────
   { prefix: 'IDirect3DDevice', methods: [
     { name: 'QueryInterface',     nargs: 3 },
-    { name: 'AddRef',             nargs: 1, ret: 'ADDREF' },
-    { name: 'Release',            nargs: 1, ret: 'RELEASE' },
+    { name: 'AddRef',             nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
+    { name: 'Release',            nargs: 1, body: 'RELEASE_DEVICE' },
     { name: 'Initialize',         nargs: 4 },
     { name: 'GetCaps',            nargs: 3 },
     { name: 'SwapTextureHandles', nargs: 3 },
     { name: 'CreateExecuteBuffer', nargs: 4, body: 'CREATE_EXEC' },
     { name: 'GetStats',           nargs: 2 },
     { name: 'Execute',            nargs: 4 },
-    { name: 'AddViewport',        nargs: 2 },
-    { name: 'DeleteViewport',     nargs: 2 },
-    { name: 'NextViewport',       nargs: 4 },
+    { name: 'AddViewport',        nargs: 2, delegate: 'IDirect3DDevice2_AddViewport' },
+    { name: 'DeleteViewport',     nargs: 2, delegate: 'IDirect3DDevice2_DeleteViewport' },
+    { name: 'NextViewport',       nargs: 4, delegate: 'IDirect3DDevice2_NextViewport' },
     { name: 'Pick',               nargs: 5 },
     { name: 'GetPickRecords',     nargs: 3 },
     { name: 'EnumTextureFormats', nargs: 3 },
@@ -70,19 +72,19 @@ const interfaces = [
   // ── IDirect3DDevice2 ────────────────────────────────────────────────
   { prefix: 'IDirect3DDevice2', methods: [
     { name: 'QueryInterface',          nargs: 3 },
-    { name: 'AddRef',                  nargs: 1, ret: 'ADDREF' },
-    { name: 'Release',                 nargs: 1, ret: 'RELEASE' },
+    { name: 'AddRef',                  nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
+    { name: 'Release',                 nargs: 1, body: 'RELEASE_DEVICE' },
     { name: 'GetCaps',                 nargs: 3 },
     { name: 'SwapTextureHandles',      nargs: 3 },
     { name: 'GetStats',                nargs: 2 },
-    { name: 'AddViewport',             nargs: 2 },
-    { name: 'DeleteViewport',          nargs: 2 },
-    { name: 'NextViewport',            nargs: 4 },
+    { name: 'AddViewport',             nargs: 2, delegate: 'IDirect3DDevice3_AddViewport' },
+    { name: 'DeleteViewport',          nargs: 2, delegate: 'IDirect3DDevice3_DeleteViewport' },
+    { name: 'NextViewport',            nargs: 4, delegate: 'IDirect3DDevice3_NextViewport' },
     { name: 'EnumTextureFormats',      nargs: 3 },
     { name: 'BeginScene',              nargs: 1, body: 'BEGIN_SCENE' },
     { name: 'EndScene',                nargs: 1, body: 'END_SCENE' },
     { name: 'GetDirect3D',             nargs: 2 },
-    { name: 'SetCurrentViewport',      nargs: 2, body: 'SET_VP_DEV' },
+    { name: 'SetCurrentViewport',      nargs: 2, delegate: 'IDirect3DDevice3_SetCurrentViewport' },
     { name: 'GetCurrentViewport',      nargs: 2, body: 'GET_VP_DEV' },
     { name: 'SetRenderTarget',         nargs: 3 },
     { name: 'GetRenderTarget',         nargs: 2 },
@@ -107,8 +109,8 @@ const interfaces = [
   // ── IDirect3DDevice7 ────────────────────────────────────────────────
   { prefix: 'IDirect3DDevice7', methods: [
     { name: 'QueryInterface',                nargs: 3 },
-    { name: 'AddRef',                        nargs: 1, ret: 'ADDREF' },
-    { name: 'Release',                       nargs: 1, ret: 'RELEASE' },
+    { name: 'AddRef',                        nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
+    { name: 'Release',                       nargs: 1, body: 'RELEASE_DEVICE' },
     { name: 'GetCaps',                       nargs: 2 },
     { name: 'EnumTextureFormats',            nargs: 3 },
     { name: 'BeginScene',                    nargs: 1, body: 'BEGIN_SCENE' },
@@ -160,7 +162,7 @@ const interfaces = [
   // ── IDirect3DViewport (v1) ──────────────────────────────────────────
   { prefix: 'IDirect3DViewport', methods: [
     { name: 'QueryInterface',       nargs: 3 },
-    { name: 'AddRef',               nargs: 1, ret: 'ADDREF' },
+    { name: 'AddRef',               nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
     { name: 'Release',              nargs: 1, ret: 'RELEASE' },
     { name: 'Initialize',           nargs: 2 },
     { name: 'GetViewport',          nargs: 2, body: 'VP_GET' },
@@ -180,7 +182,7 @@ const interfaces = [
   // ── IDirect3DViewport2 ──────────────────────────────────────────────
   { prefix: 'IDirect3DViewport2', methods: [
     { name: 'QueryInterface',       nargs: 3 },
-    { name: 'AddRef',               nargs: 1, ret: 'ADDREF' },
+    { name: 'AddRef',               nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
     { name: 'Release',              nargs: 1, ret: 'RELEASE' },
     { name: 'Initialize',           nargs: 2 },
     { name: 'GetViewport',          nargs: 2, body: 'VP_GET' },
@@ -202,8 +204,8 @@ const interfaces = [
   // ── IDirect3DMaterial (v1) ──────────────────────────────────────────
   { prefix: 'IDirect3DMaterial', methods: [
     { name: 'QueryInterface', nargs: 3 },
-    { name: 'AddRef',         nargs: 1, ret: 'ADDREF' },
-    { name: 'Release',        nargs: 1, ret: 'RELEASE' },
+    { name: 'AddRef',         nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
+    { name: 'Release',        nargs: 1, ret: 'RELEASE', handler: 'dx_com_release_basic' },
     { name: 'Initialize',     nargs: 2 },
     { name: 'SetMaterial',    nargs: 2 },
     { name: 'GetMaterial',    nargs: 2 },
@@ -215,8 +217,8 @@ const interfaces = [
   // ── IDirect3DMaterial2 ──────────────────────────────────────────────
   { prefix: 'IDirect3DMaterial2', methods: [
     { name: 'QueryInterface', nargs: 3 },
-    { name: 'AddRef',         nargs: 1, ret: 'ADDREF' },
-    { name: 'Release',        nargs: 1, ret: 'RELEASE' },
+    { name: 'AddRef',         nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
+    { name: 'Release',        nargs: 1, ret: 'RELEASE', handler: 'dx_com_release_basic' },
     { name: 'SetMaterial',    nargs: 2 },
     { name: 'GetMaterial',    nargs: 2 },
     { name: 'GetHandle',      nargs: 3, body: 'MAT_HANDLE' },
@@ -225,7 +227,7 @@ const interfaces = [
   // ── IDirect3DExecuteBuffer ──────────────────────────────────────────
   { prefix: 'IDirect3DExecuteBuffer', methods: [
     { name: 'QueryInterface',  nargs: 3 },
-    { name: 'AddRef',          nargs: 1, ret: 'ADDREF' },
+    { name: 'AddRef',          nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
     { name: 'Release',         nargs: 1, ret: 'RELEASE' },
     { name: 'Initialize',      nargs: 3 },
     { name: 'Lock',            nargs: 2, body: 'EXEC_LOCK' },
@@ -239,7 +241,7 @@ const interfaces = [
   // ── IDirect3DVertexBuffer ───────────────────────────────────────────
   { prefix: 'IDirect3DVertexBuffer', methods: [
     { name: 'QueryInterface',      nargs: 3 },
-    { name: 'AddRef',              nargs: 1, ret: 'ADDREF' },
+    { name: 'AddRef',              nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
     { name: 'Release',             nargs: 1, ret: 'RELEASE' },
     { name: 'Lock',                nargs: 4, body: 'VB_LOCK' },
     { name: 'Unlock',              nargs: 1 },
@@ -251,7 +253,7 @@ const interfaces = [
   // ── IDirect3DVertexBuffer7 ──────────────────────────────────────────
   { prefix: 'IDirect3DVertexBuffer7', methods: [
     { name: 'QueryInterface',         nargs: 3 },
-    { name: 'AddRef',                 nargs: 1, ret: 'ADDREF' },
+    { name: 'AddRef',                 nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
     { name: 'Release',                nargs: 1, ret: 'RELEASE' },
     { name: 'Lock',                   nargs: 4, body: 'VB_LOCK' },
     { name: 'Unlock',                 nargs: 1 },
@@ -264,7 +266,7 @@ const interfaces = [
   // ── IDirect3DTexture (v1) ───────────────────────────────────────────
   { prefix: 'IDirect3DTexture', methods: [
     { name: 'QueryInterface',  nargs: 3 },
-    { name: 'AddRef',          nargs: 1, ret: 'ADDREF' },
+    { name: 'AddRef',          nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
     { name: 'Release',         nargs: 1, ret: 'RELEASE' },
     { name: 'Initialize',      nargs: 3 },
     { name: 'GetHandle',       nargs: 3, body: 'TEX_HANDLE' },
@@ -276,7 +278,7 @@ const interfaces = [
   // ── IDirect3DTexture2 ───────────────────────────────────────────────
   { prefix: 'IDirect3DTexture2', methods: [
     { name: 'QueryInterface',  nargs: 3 },
-    { name: 'AddRef',          nargs: 1, ret: 'ADDREF' },
+    { name: 'AddRef',          nargs: 1, ret: 'ADDREF', handler: 'dx_com_addref' },
     { name: 'Release',         nargs: 1, ret: 'RELEASE' },
     { name: 'GetHandle',       nargs: 3, body: 'TEX_HANDLE' },
     { name: 'PaletteChanged',  nargs: 3 },

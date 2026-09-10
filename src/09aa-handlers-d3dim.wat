@@ -189,26 +189,26 @@
     (local.get $hr))
 
   (func $d3dim_viewport_release_lights (param $this i32)
-    (local $head_addr i32) (local $light i32) (local $entry i32)
-    (local $next i32) (local $count i32)
+    ;; Viewport::Release enters here without holding LOCK_DX.  Device teardown
+    ;; and current-viewport replacement already hold it, so the list walker is
+    ;; split into the locked core appended in 09ab and this locking wrapper.
     (if (i32.eqz (local.get $this)) (then (return)))
-    (local.set $head_addr (call $d3dim_viewport_light_head_addr (local.get $this)))
     (call $lock_acquire (global.get $LOCK_DX))
-    (local.set $light (i32.load (local.get $head_addr)))
-    (i32.store (local.get $head_addr) (i32.const 0))
-    (block $done (loop $release
-      (br_if $done (i32.eqz (local.get $light)))
-      (br_if $done (i32.ge_u (local.get $count) (i32.const 8)))
-      (local.set $entry (call $dx_from_this (local.get $light)))
-      (local.set $next (load.field DxObject misc1 (local.get $entry)))
-      (i32.store (i32.add (local.get $entry) (i32.const 12)) (i32.const 0))
-      (i32.store (i32.add (local.get $entry) (i32.const 16)) (i32.const 0))
-      (store.field DxObject misc1 (local.get $entry) (i32.const 0))
-      (store.field DxObject misc2 (local.get $entry) (i32.const 0))
-      (call $d3dim_light_release_locked (local.get $entry))
-      (local.set $light (local.get $next))
-      (local.set $count (i32.add (local.get $count) (i32.const 1)))
-      (br $release)))
+    (call $d3dim_viewport_release_lights_locked (local.get $this))
+    ;; Do not make the locked core acquire recursively: the DX lock is shared
+    ;; between real Worker instances, and device destruction needs to drop two
+    ;; viewport references while keeping owner/current state atomic.
+    ;;
+    ;; Keeping this wrapper also leaves every Viewport1/2/3 Release handler on
+    ;; one path. A viewport that owns lights can therefore be destroyed either
+    ;; directly or as the last consequence of device cleanup without leaking
+    ;; the light-list references.
+    ;;
+    ;; The locked helper keeps the list's eight-entry bound before walking it,
+    ;; matching AddLight and NextLight's bounded state model.
+    ;;
+    ;;
+    ;;
     (call $lock_release (global.get $LOCK_DX)))
 
   ;; ── IDirect3D2 — 9 methods ─────────────
@@ -216,25 +216,6 @@
   (func $handle_IDirect3D2_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $d3dim_qi (i32.const 1) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-
-  ;; IDirect3D2_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3D2_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  ;; IDirect3D2_Release — 1 args (incl. this)
-  (func $handle_IDirect3D2_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
-      (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3D2_EnumDevices(this, lpEnumDevicesCallback, lpUserArg) — 3 args
   ;; Delegates to shared HAL-device enumerator (same callback contract as v1/v3).
@@ -250,12 +231,9 @@
 
   ;; IDirect3D2_CreateLight — 3 args (incl. this)
   (func $handle_IDirect3D2_CreateLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 24) (global.get $DX_VTBL_D3DLIGHT)))
-    (if (i32.eqz (local.get $obj)) (then (global.set $eax (i32.const 0x80004005))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (call $gs32 (local.get $arg1) (local.get $obj))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_create_child
+      (local.get $arg1) (local.get $arg2)
+      (i32.const 24) (global.get $DX_VTBL_D3DLIGHT)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3D2_CreateMaterial — 3 args (incl. this)
@@ -270,12 +248,9 @@
 
   ;; IDirect3D2_CreateViewport — 3 args (incl. this)
   (func $handle_IDirect3D2_CreateViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 23) (global.get $DX_VTBL_D3DVP3)))
-    (if (i32.eqz (local.get $obj)) (then (global.set $eax (i32.const 0x80004005))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (call $gs32 (local.get $arg1) (local.get $obj))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_create_child
+      (local.get $arg1) (local.get $arg2)
+      (i32.const 23) (global.get $DX_VTBL_D3DVP3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3D2_FindDevice — 3 args (incl. this)
@@ -295,25 +270,6 @@
   (func $handle_IDirect3D7_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $d3dim_qi (i32.const 1) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-
-  ;; IDirect3D7_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3D7_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  ;; IDirect3D7_Release — 1 args (incl. this)
-  (func $handle_IDirect3D7_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
-      (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3D7_EnumDevices — 3 args (incl. this)
   (func $handle_IDirect3D7_EnumDevices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -359,23 +315,13 @@
     (global.set $eax (call $d3dim_qi (i32.const 2) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3DDevice_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3DDevice_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
   ;; IDirect3DDevice_Release — 1 args (incl. this)
   (func $handle_IDirect3DDevice_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
-      (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
+    ;; All QI revisions share one type-20 device and attachment lifetime.
+    (global.set $eax (call $d3dim_device_release (local.get $arg0)))
+
+
+
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DDevice_Initialize — 4 args (incl. this)
@@ -580,31 +526,24 @@
 
   ;; IDirect3DDevice_AddViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice_AddViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $vp_entry i32)
-    (if (local.get $arg1) (then
-      (local.set $vp_entry (call $dx_from_this (local.get $arg1)))
-      (if (local.get $vp_entry)
-        (then (i32.store (i32.add (local.get $vp_entry) (i32.const 8)) (local.get $arg0))))))
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (call $handle_IDirect3DDevice2_AddViewport
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
 
   ;; IDirect3DDevice_DeleteViewport — 2 args (incl. this)
-  ;; Clears the device-backref that AddViewport wrote to the viewport entry
-  ;; at +8, so subsequent SetCurrentViewport/EndScene don't dereference a
-  ;; stale device pointer if the viewport survives the detach.
   (func $handle_IDirect3DDevice_DeleteViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $vp_entry i32)
-    (if (local.get $arg1) (then
-      (local.set $vp_entry (call $dx_from_this (local.get $arg1)))
-      (if (local.get $vp_entry)
-        (then (i32.store (i32.add (local.get $vp_entry) (i32.const 8)) (i32.const 0))))))
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (call $handle_IDirect3DDevice2_DeleteViewport
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
 
   ;; IDirect3DDevice_NextViewport — 4 args (incl. this)
   (func $handle_IDirect3DDevice_NextViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+    (call $handle_IDirect3DDevice2_NextViewport
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
 
   ;; Test a screen-space point against one transformed execute-buffer
   ;; triangle.  D3DRM calls Pick after PROCESSVERTICES has produced TL
@@ -881,23 +820,14 @@
     (global.set $eax (call $d3dim_qi (i32.const 2) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3DDevice2_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3DDevice2_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
   ;; IDirect3DDevice2_Release — 1 args (incl. this)
   (func $handle_IDirect3DDevice2_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
-      (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
+    ;; All QI revisions share one type-20 device and attachment lifetime.
+    (global.set $eax (call $d3dim_device_release (local.get $arg0)))
+
+
+
+
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DDevice2_GetCaps — 3 args (incl. this): (this, lpHWDesc, lpHELDesc)
@@ -919,23 +849,24 @@
 
   ;; IDirect3DDevice2_AddViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice2_AddViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $vp_entry i32)
-    (if (local.get $arg1) (then
-      (local.set $vp_entry (call $dx_from_this (local.get $arg1)))
-      (if (local.get $vp_entry)
-        (then (i32.store (i32.add (local.get $vp_entry) (i32.const 8)) (local.get $arg0))))))
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (call $handle_IDirect3DDevice3_AddViewport
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
 
   ;; IDirect3DDevice2_DeleteViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice2_DeleteViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (call $handle_IDirect3DDevice3_DeleteViewport
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
 
   ;; IDirect3DDevice2_NextViewport — 4 args (incl. this)
   (func $handle_IDirect3DDevice2_NextViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+    (call $handle_IDirect3DDevice3_NextViewport
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
 
   ;; IDirect3DDevice2_EnumTextureFormats — 3 args (incl. this)
   (func $handle_IDirect3DDevice2_EnumTextureFormats (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -969,8 +900,10 @@
 
   ;; IDirect3DDevice2_SetCurrentViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice2_SetCurrentViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $d3dim_set_current_viewport (local.get $arg0) (local.get $arg1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (call $handle_IDirect3DDevice3_SetCurrentViewport
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
 
   ;; IDirect3DDevice2_GetCurrentViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice2_GetCurrentViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1102,23 +1035,14 @@
     (global.set $eax (call $d3dim_qi (i32.const 2) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3DDevice7_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3DDevice7_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
   ;; IDirect3DDevice7_Release — 1 args (incl. this)
   (func $handle_IDirect3DDevice7_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
-      (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
+    ;; Device7 can be the last QI reference to the same legacy device object.
+    (global.set $eax (call $d3dim_device_release (local.get $arg0)))
+
+
+
+
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DDevice7_GetCaps — 2 args (incl. this)
@@ -1435,15 +1359,6 @@
     (global.set $eax (call $d3dim_qi (i32.const 3) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3DViewport_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3DViewport_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
   ;; IDirect3DViewport_Release — 1 args (incl. this)
   (func $handle_IDirect3DViewport_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $rc i32)
@@ -1533,15 +1448,6 @@
   (func $handle_IDirect3DViewport2_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $d3dim_qi (i32.const 3) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-
-  ;; IDirect3DViewport2_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3DViewport2_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DViewport2_Release — 1 args (incl. this)
   (func $handle_IDirect3DViewport2_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1643,25 +1549,6 @@
     (global.set $eax (call $d3dim_qi (i32.const 4) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3DMaterial_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3DMaterial_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  ;; IDirect3DMaterial_Release — 1 args (incl. this)
-  (func $handle_IDirect3DMaterial_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
-      (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
   ;; IDirect3DMaterial_Initialize — 2 args (incl. this)
   (func $handle_IDirect3DMaterial_Initialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
@@ -1699,25 +1586,6 @@
     (global.set $eax (call $d3dim_qi (i32.const 4) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3DMaterial2_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3DMaterial2_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  ;; IDirect3DMaterial2_Release — 1 args (incl. this)
-  (func $handle_IDirect3DMaterial2_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
-      (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (global.set $eax (local.get $rc))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
   ;; IDirect3DMaterial2_SetMaterial — 2 args (incl. this)
   (func $handle_IDirect3DMaterial2_SetMaterial (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $d3dim_material_set (local.get $arg0) (local.get $arg1))
@@ -1739,15 +1607,6 @@
   (func $handle_IDirect3DExecuteBuffer_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $d3dim_qi (i32.const 0) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-
-  ;; IDirect3DExecuteBuffer_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3DExecuteBuffer_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DExecuteBuffer_Release — 1 args (incl. this)
   (func $handle_IDirect3DExecuteBuffer_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1852,15 +1711,6 @@
     (global.set $eax (call $d3dim_qi (i32.const 6) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3DVertexBuffer_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3DVertexBuffer_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
   ;; IDirect3DVertexBuffer_Release — 1 args (incl. this)
   (func $handle_IDirect3DVertexBuffer_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $rc i32)
@@ -1902,15 +1752,6 @@
   (func $handle_IDirect3DVertexBuffer7_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $d3dim_qi (i32.const 6) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-
-  ;; IDirect3DVertexBuffer7_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3DVertexBuffer7_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DVertexBuffer7_Release — 1 args (incl. this)
   (func $handle_IDirect3DVertexBuffer7_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1959,15 +1800,6 @@
     (global.set $eax (call $d3dim_qi (i32.const 5) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; IDirect3DTexture_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3DTexture_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
   ;; IDirect3DTexture_Release — 1 args (incl. this)
   (func $handle_IDirect3DTexture_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $rc i32)
@@ -2015,15 +1847,6 @@
   (func $handle_IDirect3DTexture2_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $d3dim_qi (i32.const 5) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-
-  ;; IDirect3DTexture2_AddRef — 1 args (incl. this)
-  (func $handle_IDirect3DTexture2_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DTexture2_Release — 1 args (incl. this)
   (func $handle_IDirect3DTexture2_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

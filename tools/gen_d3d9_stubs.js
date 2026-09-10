@@ -64,6 +64,8 @@ function bodyFor(method) {
         '  (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))',
         '  (else (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc)) (global.set $eax (local.get $rc))))',
       ];
+    case 'RELEASE_DEVICE9':
+      return ['(global.set $eax (call $d3d9_device_release (local.get $arg0)))'];
     case 'CRASH':
     default:
       return ['(call $crash_unimplemented (local.get $name_ptr))'];
@@ -73,6 +75,7 @@ function bodyFor(method) {
 for (const iface of interfaces) {
   out.push(`  ;; ── ${iface.prefix} — ${iface.methods.length} methods ─────────────`);
   for (const m of iface.methods) {
+    if (m.handler) continue;
     emit(iface.prefix + '_' + m.name, m.nargs, bodyFor(m));
   }
   out.push('');

@@ -17,7 +17,8 @@ const end = source.indexOf('// Schedule the next guest slice.', start);
 assert(start >= 0 && end > start, 'host.js should contain the browser Worker run loop');
 
 const loop = source.slice(start, end);
-const rendezvous = loop.indexOf('await Promise.all([self.guestWorker.slice(steps, sync), runThreads()])');
+const rendezvous = loop.search(
+  /await Promise\.all\(\[self\.guestWorker\.slice\(steps, mainSync\), runThreads\(\)\]\)/);
 const present = loop.indexOf('self._presentDxIfDirty()', rendezvous);
 const composite = loop.indexOf('self.renderer.flushRepaint(true)', rendezvous);
 

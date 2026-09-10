@@ -1753,9 +1753,11 @@
       (then (return (i32.const 0))))
     (local.get $part))
 
-  ;; Publish a control-owned vertical viewport through the standard Win32
-  ;; scrollbar APIs. Common controls keep their row state privately, but
-  ;; GetScrollPos/GetScrollRange/GetScrollInfo still read these shared tables.
+  ;; Project a control-owned vertical viewport into the standard Win32
+  ;; scrollbar APIs. This is deliberately one-way: SetScrollPos changes the
+  ;; scroll box but does not scroll a window's contents, so a common control's
+  ;; content position remains private and may temporarily differ. The control
+  ;; calls this helper after it actually scrolls to resynchronize the chrome.
   (func $scroll_publish_vertical_info (param $hwnd i32) (param $pos i32)
       (param $total i32) (param $visible i32)
     (local $slot i32) (local $base i32) (local $aux i32)

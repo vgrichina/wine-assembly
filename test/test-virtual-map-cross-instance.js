@@ -10,14 +10,21 @@ const { createHostImports } = require('../lib/host-imports');
 // map declared in src/00-regions.wat. (The bare 0x2000/0x3000/0x4000/0x5000
 // below are allocation SIZES, not the regions the census reads them as.)
 const RegionMap = require('../lib/region-map.generated.js');
+const {
+  decodeMfcCString, g2w, g2wSpan, guestToWasm, walkStackFrame,
+} = require('../lib/mem-utils');
 const MAP_STATE = RegionMap.BASE.VIRTUAL_MAP_STATE;
 const MAP_TABLE = RegionMap.BASE.VIRTUAL_MAP_TABLE;
+const PAGE_TABLE = RegionMap.BASE.GUEST_PAGE_TABLE;
+const VIRTUAL_BACKING = RegionMap.BASE.VIRTUAL_BACKING_BASE;
 
 const extraWat = String.raw`
   (func (export "test_virtual_reset")
     (call $zero_memory (global.get $VIRTUAL_MAP_STATE)
       (i32.add (global.get $VIRTUAL_MAP_STATE_SIZE)
         (global.get $VIRTUAL_MAP_TABLE_SIZE)))
+    (call $zero_memory (global.get $GUEST_PAGE_TABLE)
+      (global.get $GUEST_PAGE_TABLE_SIZE))
     (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))
       (global.get $VIRTUAL_BACKING_BASE))
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
@@ -149,6 +156,113 @@ async function main() {
     'the coalesced sparse map should begin at the worker heap reservation');
   assert.strictEqual(state.getUint32(MAP_TABLE + 4, true), graphicsSize + 0x00100000,
     'the coalesced sparse map should cover each reservation exactly once');
+  const graphicsBacking = state.getUint32(MAP_TABLE + 8, true) +
+    (graphicsBase - heapBlock);
+  assert.strictEqual(main.guest_to_wasm(graphicsBase) >>> 0, graphicsBacking >>> 0,
+    'packed translation must resolve the main instance mapping');
+  assert.strictEqual(worker.guest_to_wasm(graphicsBase) >>> 0, graphicsBacking >>> 0,
+    'packed translations published by one instance must be visible to workers');
+  assert.strictEqual(g2w(graphicsBase + 0x321, main.get_image_base(), memory),
+    graphicsBacking + 0x321,
+    'the JS host translator must consume the same packed PTE publication');
+  assert.strictEqual(guestToWasm(graphicsBase + 0x321, main, memory),
+    graphicsBacking + 0x321,
+    'the shared host entry point must prefer the instance translator');
+  assert.strictEqual(guestToWasm(graphicsBase + 0x321,
+    { get_image_base: () => main.get_image_base() }, memory),
+    graphicsBacking + 0x321,
+    'a host without the WAT export must use the same packed PTE');
+
+  // The higher-level diagnostic helpers must use that same translator rather
+  // than silently falling back to image-relative arithmetic. Sparse stacks
+  // and strings are legitimate once the low guest heap spills upward.
+  const sparseString = graphicsBase + 0x500;
+  const sparseStringWa = graphicsBacking + 0x500;
+  const bytes = new Uint8Array(memory.buffer);
+  bytes.set([2, 0x44, 0x58, 0], sparseStringWa); // refcount + "DX"
+  assert.deepStrictEqual(
+    decodeMfcCString(memory.buffer, sparseString, main.get_image_base()),
+    { refcount: 2, text: 'DX', len: 2 },
+    'CString diagnostics must translate sparse guest pointers through packed PTEs');
+
+  const sparseStack = graphicsBase + 0x1000;
+  const sparseCode = graphicsBase + 0x2006;
+  new DataView(memory.buffer).setUint32(graphicsBacking + 0x1000, sparseCode, true);
+  bytes[graphicsBacking + 0x2001] = 0xE8; // candidate return is after E8 rel32
+  assert.deepStrictEqual(
+    walkStackFrame(memory.buffer, sparseStack, main.get_image_base(), {
+      depth: 1, codeLo: sparseCode, codeHi: sparseCode + 1,
+    }),
+    [{ off: 0, val: sparseCode, tag: '*R' }],
+    'stack diagnostics must translate sparse stack and return-code pointers through packed PTEs');
+  assert.strictEqual(main.get_guest_page_table_size(), 0x400000,
+    'packed translation must cover all 4GB with one flat PTE array');
+
+  // Host-side bulk views may span pages only while the packed backings remain
+  // affine. This synthetic pair deliberately has adjacent guest pages backed
+  // by non-adjacent WASM pages; the allocation metadata cannot prove that.
+  const spanGuest = 0x70000000;
+  const spanPte = PAGE_TABLE + (spanGuest >>> 10);
+  Atomics.store(new Uint32Array(memory.buffer), spanPte >>> 2,
+    (VIRTUAL_BACKING | 0x804) >>> 0);
+  Atomics.store(new Uint32Array(memory.buffer), (spanPte >>> 2) + 1,
+    ((VIRTUAL_BACKING + 0x2000) | 0x804) >>> 0);
+  assert.strictEqual(g2w(spanGuest + 0xff0, main.get_image_base(), memory),
+    VIRTUAL_BACKING + 0xff0,
+    'JS scalar translation must decode packed backing and page offset');
+  assert.strictEqual(g2wSpan(spanGuest + 0xff0, 0x40, main.get_image_base(), memory), 0x10,
+    'JS span translation must stop before a non-contiguous backing page');
+  Atomics.store(new Uint32Array(memory.buffer), (spanPte >>> 2) + 1,
+    ((VIRTUAL_BACKING + 0x1000) | 0x804) >>> 0);
+  assert.strictEqual(g2wSpan(spanGuest + 0xff0, 0x40, main.get_image_base(), memory), 0x40,
+    'JS span translation may cross an adjacent packed backing page');
+  Atomics.store(new Uint32Array(memory.buffer), spanPte >>> 2, 0);
+  Atomics.store(new Uint32Array(memory.buffer), (spanPte >>> 2) + 1, 0);
+
+  // The former two-level directory covered only addresses below 2GB. The flat
+  // index is deliberately unsigned and covers the upper half as well, even
+  // though ordinary Win98 VirtualAlloc(NULL, ...) currently chooses lower
+  // addresses from its own arena.
+  main.test_virtual_reset();
+  const upperGuest = 0x90001000;
+  assert.strictEqual(main.test_virtual_commit(upperGuest, 0x1000) >>> 0, upperGuest,
+    'a high-bit guest address must fit the complete flat page table');
+  main.test_virtual_write32(upperGuest + 0xabc, 0x89abcdef);
+  assert.strictEqual(worker.test_virtual_read32(upperGuest + 0xabc) >>> 0, 0x89abcdef,
+    'workers must translate packed PTEs in the upper half of guest space');
+  assert.strictEqual(main.test_virtual_free(upperGuest) >>> 0, 1,
+    'an upper-half packed mapping must remain releasable');
+  assert.strictEqual(worker.guest_to_wasm(upperGuest) >>> 0, 0xf0,
+    'upper-half PTE release must become visible across instances');
+  // Leave a deliberately stale map record behind. A cleared PTE is the sole
+  // translation authority, so neither WAT nor its JS host twin may resurrect
+  // the released backing through allocation metadata.
+  state.setUint32(MAP_STATE, 1, true);
+  state.setUint32(MAP_TABLE, upperGuest, true);
+  state.setUint32(MAP_TABLE + 4, 0x1000, true);
+  state.setUint32(MAP_TABLE + 8, VIRTUAL_BACKING, true);
+  assert.strictEqual(g2w(upperGuest, main.get_image_base(), memory), 0xf0,
+    'JS translation must treat a cleared PTE as authoritative over stale metadata');
+  assert.strictEqual(guestToWasm(upperGuest,
+    { get_image_base: () => main.get_image_base() }, memory), 0xf0,
+    'the shared host entry point must not revive a cleared PTE through metadata');
+
+  // A cleared PTE is authoritative. In particular, do not resurrect released
+  // backing by consulting the allocation metadata table after MEM_RELEASE.
+  main.test_virtual_reset();
+  const released = main.test_virtual_alloc_commit(0x2000) >>> 0;
+  const releasedBacking = main.guest_to_wasm(released) >>> 0;
+  assert.notStrictEqual(releasedBacking, 0xf0,
+    'freshly committed page must have packed backing');
+  main.test_virtual_write32(released, 0x7b);
+  assert.strictEqual(main.guest_read8(released), 0x7b,
+    'byte read must observe the live sparse mapping');
+  assert.strictEqual(main.test_virtual_free(released) >>> 0, 1,
+    'packed mapping should remain releasable');
+  assert.strictEqual(main.guest_to_wasm(released) >>> 0, 0xf0,
+    'released packed mapping must become unmapped immediately');
+  assert.strictEqual(main.guest_read8(released), 0,
+    'byte reads must not retain a per-instance translation after release');
 
   // Storm's image preload performs more than 2048 short-lived reserve/commit
   // cycles. Returning success from VirtualFree without removing mappings made

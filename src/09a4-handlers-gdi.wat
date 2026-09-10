@@ -529,12 +529,9 @@
 
   ;; GetCharWidthA(hdc, first, last, widths) — fill INT widths for a range.
   (func $handle_GetCharWidthA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_font_char_widths
+    (call $handle_GetCharWidth32A
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (if (result i32) (local.get $arg3)
-        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))
-      (i32.const 0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; GetOutlineTextMetricsA/W(hdc, cbData, lpOTM) — outline metrics unavailable.
@@ -551,15 +548,9 @@
 
   ;; 165: GetTextExtentPointA — font-aware text measurement via host
   (func $handle_GetTextExtentPointA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $packed i32)
-    (local.set $packed (call $host_get_text_metrics (local.get $arg0))) ;; get height from hdc font
-    (call $gs32 (local.get $arg3)
-      (call $host_measure_text (local.get $arg0) (call $g2w (local.get $arg1))
-        (local.get $arg2) (i32.const 0))) ;; cx
-    (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
-      (i32.and (local.get $packed) (i32.const 0xFFFF)))                                            ;; cy
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
+    (call $handle_GetTextExtentPoint32A
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 166: GetTextCharset(hdc) — charset of the selected realized font.
@@ -1379,15 +1370,6 @@
   ;; guest-heap copies because both callers commonly pass stack buffers.
   (global $scalable_font_resources (mut i32) (i32.const 0))
 
-  (func $scalable_font_path_copy (param $path i32) (result i32)
-    (local $copy i32) (local $len i32)
-    (if (i32.eqz (local.get $path)) (then (return (i32.const 0))))
-    (local.set $len (call $guest_strlen (local.get $path)))
-    (local.set $copy (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
-    (if (local.get $copy)
-      (then (call $guest_strcpy (local.get $copy) (local.get $path))))
-    (local.get $copy))
-
   (func $scalable_font_source_for (param $resource i32) (result i32)
     (local $node i32)
     (if (i32.eqz (local.get $resource)) (then (return (i32.const 0))))
@@ -1425,8 +1407,8 @@
       ;; face; it does not enumerate it until AddFontResource is called.
       (br_if $done (i32.lt_s (call $tt_face_open (local.get $source)) (i32.const 0)))
 
-      (local.set $resource_copy (call $scalable_font_path_copy (local.get $arg1)))
-      (local.set $source_copy (call $scalable_font_path_copy (local.get $source)))
+      (local.set $resource_copy (call $guest_strdup (local.get $arg1)))
+      (local.set $source_copy (call $guest_strdup (local.get $source)))
       (br_if $done (i32.or (i32.eqz (local.get $resource_copy))
                            (i32.eqz (local.get $source_copy))))
       (local.set $node (call $heap_alloc (i32.const 16)))
@@ -1659,11 +1641,10 @@
         (if (i32.or (i32.eqz (local.get $length)) (i32.ge_u (local.get $length) (i32.const 65536)))
           (then (global.set $eax (i32.const 0)))
           (else
-            (local.set $copy_g (call $heap_alloc (i32.add (local.get $length) (i32.const 1))))
+            (local.set $copy_g (call $guest_strdup (local.get $arg1)))
             (if (i32.eqz (local.get $copy_g))
               (then (global.set $eax (i32.const 0)))
               (else
-                (call $guest_strcpy (local.get $copy_g) (local.get $arg1))
                 (local.set $meta (call $gdi_dc_meta_entry (local.get $arg0) (i32.const 1)))
                 (if (i32.eqz (local.get $meta))
                   (then (call $heap_free (local.get $copy_g)) (global.set $eax (i32.const 0)))
@@ -2401,15 +2382,9 @@
 
   ;; 445: GetTextExtentPointW — font-aware wide text measurement
   (func $handle_GetTextExtentPointW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $packed i32)
-    (local.set $packed (call $host_get_text_metrics (local.get $arg0)))
-    (call $gs32 (local.get $arg3)
-      (call $host_measure_text (local.get $arg0) (call $g2w (local.get $arg1))
-        (local.get $arg2) (i32.const 1)))
-    (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
-      (i32.and (local.get $packed) (i32.const 0xFFFF)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (call $handle_GetTextExtentPoint32W
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 446: CreateICW — STUB: unimplemented

@@ -12,7 +12,8 @@
 // body is, and what the relationship between them actually is:
 //
 //   DELEGATES   one calls the other. This is the shape we want.
-//   SHARED      both call a common $..._impl / helper. Also fine.
+//   SHARED      both call a common helper, or matching FooA/FooW entry points
+//               in one downstream family. Also fine; that pair is audited too.
 //   STUB        one is a fail-fast crash or a constant return while its twin
 //               has a real body. This is a live bug: the stubbed spelling
 //               answers wrong where the other spelling works.
@@ -86,6 +87,14 @@ function classify(a, w) {
   // incidental helper in common does not; require the callee to be doing real
   // work for both, which in practice means it is the only substantial call.
   if (shared.length && (shared.length >= 2 || a.lines <= 12 || w.lines <= 12)) return 'SHARED';
+
+  // A legacy pair can converge through the matching encodings of a newer API
+  // family: FooA -> BarA and FooW -> BarW. This is still one audited path, not
+  // independent implementations; BarA/W appears as its own census pair and
+  // cannot drift without the ratchet naming it there.
+  const pairedFamily = [...ca].some(call =>
+    call.endsWith('A') && cw.has(call.slice(0, -1) + 'W'));
+  if (pairedFamily) return 'SHARED';
 
   // A short body is not a stub when it delegates: the lstr* A handlers are
   // four lines each because $guest_strlen and friends do the work, and their

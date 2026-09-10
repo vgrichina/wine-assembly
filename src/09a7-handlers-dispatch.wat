@@ -35,7 +35,8 @@
     (drop (local.get $arg3))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
-    (global.set $eax (call $clipboard_register_format_a (local.get $arg0)))
+    (global.set $eax
+      (call $clipboard_register_format (local.get $arg0) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; stdcall 1 param
   )
 
@@ -1391,13 +1392,67 @@
   ;; IDirectMusic root object. GTA2 and its InstallShield DxCheck helper only
   ;; use this interface as an availability/version probe: create it, accept
   ;; IUnknown/IDirectMusic QueryInterface, then release it.
-  (func $handle_IDirectMusic_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (func $guid_words_equal (param $wa i32) (param $d0 i32)
+        (param $d1 i32) (param $d2 i32) (param $d3 i32) (result i32)
+    (i32.and
+      (i32.and
+        (i32.eq (i32.load (local.get $wa)) (local.get $d0))
+        (i32.eq (i32.load offset=4 (local.get $wa)) (local.get $d1)))
+      (i32.and
+        (i32.eq (i32.load offset=8 (local.get $wa)) (local.get $d2))
+        (i32.eq (i32.load offset=12 (local.get $wa)) (local.get $d3)))))
+
+  ;; Complete a QueryInterface after the caller has translated and classified
+  ;; the IID. Keeping output/lifetime mechanics here lets interfaces with
+  ;; different identity sets share the COM contract without re-reading riid.
+  (func $dx_query_interface_result (param $obj i32) (param $out i32)
+        (param $supported i32) (result i32)
     (local $entry i32)
-    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (local.get $arg0))))
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (if (local.get $entry)
-      (then (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))))
-    (global.set $eax (i32.const 0))
+    (call $gs32 (local.get $out) (i32.const 0))
+    (if (i32.eqz (local.get $supported))
+      (then (return (i32.const 0x80004002)))) ;; E_NOINTERFACE
+    (local.set $entry (call $dx_from_this (local.get $obj)))
+    (if (i32.eqz (local.get $entry))
+      (then (return (i32.const 0x80004002))))
+    (store.field DxObject refcount (local.get $entry)
+      (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (call $gs32 (local.get $out) (local.get $obj))
+    (i32.const 0))
+
+  (func $dx_query_interface_single_wa (param $obj i32) (param $iid_wa i32)
+        (param $out i32) (param $d0 i32) (param $d1 i32)
+        (param $d2 i32) (param $d3 i32) (result i32)
+    (if (i32.eqz (local.get $out))
+      (then (return (i32.const 0x80004003)))) ;; E_POINTER
+    (if (i32.eqz (local.get $iid_wa))
+      (then
+        (return (call $dx_query_interface_result
+          (local.get $obj) (local.get $out) (i32.const 0)))))
+    (call $dx_query_interface_result
+      (local.get $obj) (local.get $out)
+      (i32.or
+        (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0) (i32.const 0) (i32.const 0x000000C0) (i32.const 0x46000000))
+        (call $guid_words_equal (local.get $iid_wa)
+          (local.get $d0) (local.get $d1) (local.get $d2) (local.get $d3)))))
+
+  (func $dx_query_interface_single (param $obj i32) (param $iid i32)
+        (param $out i32) (param $d0 i32) (param $d1 i32)
+        (param $d2 i32) (param $d3 i32) (result i32)
+    (local $iid_wa i32)
+    ;; Translate riid exactly once, then compare all four GUID words in-place.
+    (if (local.get $iid)
+      (then (local.set $iid_wa (call $g2w (local.get $iid)))))
+    (call $dx_query_interface_single_wa
+      (local.get $obj) (local.get $iid_wa) (local.get $out)
+      (local.get $d0) (local.get $d1) (local.get $d2) (local.get $d3)))
+
+  (func $handle_IDirectMusic_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; IID_IDirectMusic {6536115A-7B2D-11D2-BA18-0000F875AC12}.
+    (global.set $eax (call $dx_query_interface_single
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0x6536115A) (i32.const 0x11D27B2D)
+      (i32.const 0x000018BA) (i32.const 0x12AC75F8)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectMusic_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1427,9 +1482,12 @@
     (global.set $esp (i32.add (global.get $esp) (local.get $stack_bytes))))
 
   (func $handle_IAMMultiMediaStream_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_IDirectMusic_QueryInterface
+    ;; IID_IAMMultiMediaStream {BEBE595C-9A6F-11D0-8FDE-00C04FD9189D}.
+    (global.set $eax (call $dx_query_interface_single
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+      (i32.const 0xBEBE595C) (i32.const 0x11D09A6F)
+      (i32.const 0xC000DE8F) (i32.const 0x9D18D94F)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IAMMultiMediaStream_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_IDirectMusic_AddRef
@@ -1515,9 +1573,12 @@
   ;; IDirectDrawGammaControl is a view onto an existing surface slot. GTA2
   ;; snapshots the current ramp and installs its own during video startup.
   (func $handle_IDirectDrawGammaControl_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_IDirectMusic_QueryInterface
+    ;; IID_IDirectDrawGammaControl {69C11C3E-B46B-11D1-AD7A-00C04FC29B4E}.
+    (global.set $eax (call $dx_query_interface_single
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+      (i32.const 0x69C11C3E) (i32.const 0x11D1B46B)
+      (i32.const 0xC0007AAD) (i32.const 0x4E9BC24F)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectDrawGammaControl_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_IDirectMusic_AddRef
@@ -1573,39 +1634,57 @@
     (store.field DxObject flags (local.get $entry)
       (i32.or (load.field DxObject flags (local.get $entry)) (local.get $bit))))
 
-  (func $shell_link_query_interface (param $this i32) (param $iid i32)
+  (func $shell_link_query_interface_wa (param $this i32) (param $iid_wa i32)
       (param $out i32) (result i32)
-    (local $d1 i32) (local $entry i32) (local $wrapper i32)
+    (local $entry i32) (local $wrapper i32)
     (if (i32.eqz (local.get $out))
       (then (return (i32.const 0x80004003)))) ;; E_POINTER
     (call $gs32 (local.get $out) (i32.const 0))
-    (if (i32.eqz (local.get $iid))
+    (if (i32.eqz (local.get $iid_wa))
       (then (return (i32.const 0x80004003))))
     (call $shell_link_init_vtables)
-    (if (i32.or
-          (i32.ne (call $gl32 (i32.add (local.get $iid) (i32.const 4))) (i32.const 0))
-          (i32.or
-            (i32.ne (call $gl32 (i32.add (local.get $iid) (i32.const 8))) (i32.const 0x000000C0))
-            (i32.ne (call $gl32 (i32.add (local.get $iid) (i32.const 12))) (i32.const 0x46000000))))
-      (then (return (i32.const 0x80004002))))
-    (local.set $d1 (call $gl32 (local.get $iid)))
     (local.set $entry (call $dx_from_this (local.get $this)))
-    (if (i32.eq (local.get $d1) (i32.const 0x0000010B)) ;; IID_IPersistFile
+    ;; IPersistFile inherits IPersist and its wrapper begins with the complete
+    ;; IPersist vtable, so both identities resolve to the same interface.
+    (if (i32.or
+          ;; IID_IPersistFile {0000010B-0000-0000-C000-000000000046}.
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x0000010B) (i32.const 0)
+            (i32.const 0x000000C0) (i32.const 0x46000000))
+          ;; IID_IPersist {0000010C-0000-0000-C000-000000000046}.
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x0000010C) (i32.const 0)
+            (i32.const 0x000000C0) (i32.const 0x46000000)))
       (then
         (local.set $wrapper (call $dx_get_wrapper_for_vtbl
           (call $dx_slot_of (local.get $entry)) (global.get $PERSIST_FILE_VTBL))))
       (else
-        (if (i32.or (i32.eqz (local.get $d1))
-                    (i32.eq (local.get $d1) (i32.const 0x000214EE))) ;; IUnknown/IShellLinkA
+        ;; IUnknown or IID_IShellLinkA
+        ;; {000214EE-0000-0000-C000-000000000046}.
+        (if (i32.or
+              (call $guid_words_equal (local.get $iid_wa)
+                (i32.const 0) (i32.const 0)
+                (i32.const 0x000000C0) (i32.const 0x46000000))
+              (call $guid_words_equal (local.get $iid_wa)
+                (i32.const 0x000214EE) (i32.const 0)
+                (i32.const 0x000000C0) (i32.const 0x46000000)))
           (then
             (local.set $wrapper (call $dx_get_wrapper_for_vtbl
               (call $dx_slot_of (local.get $entry)) (global.get $SHELL_LINK_VTBL)))))))
     (if (i32.eqz (local.get $wrapper))
       (then (return (i32.const 0x80004002)))) ;; E_NOINTERFACE
-    (store.field DxObject refcount (local.get $entry)
-      (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (drop (call $dx_com_addref (local.get $this)))
     (call $gs32 (local.get $out) (local.get $wrapper))
     (i32.const 0))
+
+  (func $shell_link_query_interface (param $this i32) (param $iid i32)
+      (param $out i32) (result i32)
+    (local $iid_wa i32)
+    ;; Translate riid exactly once, then compare all four GUID words in-place.
+    (if (local.get $iid)
+      (then (local.set $iid_wa (call $g2w (local.get $iid)))))
+    (call $shell_link_query_interface_wa
+      (local.get $this) (local.get $iid_wa) (local.get $out)))
 
   (func $shell_link_empty_a (param $buffer i32) (param $chars i32)
     (if (i32.and (local.get $buffer) (local.get $chars))
@@ -1773,143 +1852,146 @@
   ;; 769: CoCreateInstance(rclsid, pUnkOuter, dwClsContext, riid, ppv) — 5 args stdcall
   (func $handle_CoCreateInstance (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $hr i32) (local $clsid_d1 i32) (local $obj_guest i32)
+    (local $clsid_wa i32) (local $iid_wa i32) (local $local_class i32)
     ;; Short-circuit CLSID_DirectDrawFactory {4FD2A832-86C8-11D0-8FCA-00C04FD9189D}
     ;; from ddrawex.dll. Used by CORBIS/FASHION/HORROR/WOTRAVEL screensavers; we
     ;; manufacture an IDirectDrawFactory directly so the guest never needs the DLL.
-    (local.set $clsid_d1 (call $gl32 (local.get $arg0)))
-    ;; CLSID_ShellLink {00021401-0000-0000-C000-000000000046}. Inno Setup
-    ;; requests IShellLinkA, configures it, then queries IPersistFile.
-    (if (i32.eq (local.get $clsid_d1) (i32.const 0x00021401))
-      (then
-        (if (i32.or (local.get $arg1) (i32.eqz (local.get $arg4)))
-          (then
-            (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
-            (global.set $eax (select (i32.const 0x80040110) (i32.const 0x80004003)
-              (i32.ne (local.get $arg4) (i32.const 0))))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)))
-        (call $shell_link_init_vtables)
-        (local.set $obj_guest (call $dx_create_com_obj
-          (i32.const 36) (global.get $SHELL_LINK_VTBL)))
-        (call $gs32 (local.get $arg4) (local.get $obj_guest))
-        (global.set $eax (select (i32.const 0) (i32.const 0x8007000E)
-          (i32.ne (local.get $obj_guest) (i32.const 0))))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    ;; CLSID_DirectSound {47D4D946-62E8-11CF-93BC-444553540000}.
-    ;; The Win98-era SMAC demo creates IID_IDirectSound through COM rather
-    ;; than calling DirectSoundCreate, but both entry points own the same
-    ;; native interface and object state.
-    (if (i32.eq (local.get $clsid_d1) (i32.const 0x47D4D946))
-      (then
-        (if (i32.or (local.get $arg1) (i32.eqz (local.get $arg4)))
-          (then
-            (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
-            (global.set $eax (select (i32.const 0x80040110) (i32.const 0x80004003)
-              (i32.ne (local.get $arg4) (i32.const 0))))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)))
-        (local.set $obj_guest (call $dx_create_com_obj
-          (i32.const 4) (global.get $DX_VTBL_DSOUND)))
-        (call $gs32 (local.get $arg4) (local.get $obj_guest))
-        (global.set $eax (select (i32.const 0) (i32.const 0x8007000E)
-          (i32.ne (local.get $obj_guest) (i32.const 0))))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    ;; CLSID_DirectX7 {E1211353-8E94-11D1-8808-00C04FC2C602}, the VB6
-    ;; DX7VB automation bootstrap. Its first direct method manufactures the
-    ;; existing IDirectDraw7-compatible wrapper.
-    (if (i32.eq (local.get $clsid_d1) (i32.const 0xE1211353))
-      (then
-        (local.set $obj_guest (call $dx_create_com_obj
-          (i32.const 32) (call $init_com_vtable (i32.const 2526) (i32.const 7))))
-        (if (i32.eqz (local.get $obj_guest))
-          (then
-            (call $gs32 (local.get $arg4) (i32.const 0))
-            (global.set $eax (i32.const 0x80004005))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)))
-        (call $gs32 (local.get $arg4) (local.get $obj_guest))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    (if (i32.eq (local.get $clsid_d1) (i32.const 0x4FD2A832))
-      (then
-        (local.set $obj_guest (call $dx_create_com_obj (i32.const 10) (global.get $DX_VTBL_DDFACTORY)))
-        (if (i32.eqz (local.get $obj_guest))
-          (then
-            (call $gs32 (local.get $arg4) (i32.const 0))
-            (global.set $eax (i32.const 0x80004005))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)))
-        (call $gs32 (local.get $arg4) (local.get $obj_guest))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    ;; CLSID_DirectPlay {D1EB6D20-8923-11D0-9D97-00A0C90A43CB}. Bellhop
-    ;; asks for IID_IDirectPlay3A and treats E_NOINTERFACE as fatal even
-    ;; though it only needs local/no-network DirectPlay setup.
-    (if (i32.eq (local.get $clsid_d1) (i32.const 0xD1EB6D20))
-      (then
-        (local.set $obj_guest (call $dx_create_com_obj (i32.const 26) (global.get $DX_VTBL_DPLAY3)))
-        (if (i32.eqz (local.get $obj_guest))
-          (then
-            (call $gs32 (local.get $arg4) (i32.const 0))
-            (global.set $eax (i32.const 0x80004005))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)))
-        (call $gs32 (local.get $arg4) (local.get $obj_guest))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    ;; CLSID_DirectMusic {636B9F10-0C7D-11D1-95B2-0020AFDC7421}.
-    ;; The first three append-only API IDs form the minimal IUnknown vtable.
-    (if (i32.eq (local.get $clsid_d1) (i32.const 0x636B9F10))
-      (then
-        (local.set $obj_guest (call $dx_create_com_obj
-          (i32.const 35) (call $init_com_vtable (i32.const 3076) (i32.const 3))))
-        (if (i32.eqz (local.get $obj_guest))
-          (then
-            (call $gs32 (local.get $arg4) (i32.const 0))
-            (global.set $eax (i32.const 0x80004005))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)))
-        (call $gs32 (local.get $arg4) (local.get $obj_guest))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    ;; CLSID_AMMultiMediaStream {49C47CE5-9BA4-11D0-8212-00C04FC32C45}.
-    (if (i32.eq (local.get $clsid_d1) (i32.const 0x49C47CE5))
-      (then
-        (local.set $obj_guest (call $dx_create_com_obj
+    ;; Translate each input GUID once. The host fallback below receives these
+    ;; same addresses; local classes compare all 128 bits in-place.
+    (if (local.get $arg0)
+      (then (local.set $clsid_wa (call $g2w (local.get $arg0)))))
+    (if (local.get $arg3)
+      (then (local.set $iid_wa (call $g2w (local.get $arg3)))))
+    (if (local.get $clsid_wa)
+      (then (local.set $clsid_d1 (i32.load (local.get $clsid_wa)))))
+
+    ;; The eight Win98-era classes below have complete local
+    ;; QueryInterface contracts. Classify by full CLSID, manufacture one
+    ;; factory-owned reference, query the requested interface, then release
+    ;; that temporary reference on both success and failure.
+    ;; CLSID_DirectPlay {D1EB6D20-8923-11D0-9D97-00A0C90A43CB}.
+    (if (local.get $clsid_wa) (then
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0xD1EB6D20) (i32.const 0x11D08923)
+            (i32.const 0xA000979D) (i32.const 0xCB430AC9))
+        (then (local.set $local_class (i32.const 1))))
+      ;; CLSID_DirectMusic {636B9F10-0C7D-11D1-95B2-0020AFDC7421}.
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0x636B9F10) (i32.const 0x11D10C7D)
+            (i32.const 0x2000B295) (i32.const 0x2174DCAF))
+        (then (local.set $local_class (i32.const 2))))
+      ;; CLSID_AMMultiMediaStream {49C47CE5-9BA4-11D0-8212-00C04FC32C45}.
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0x49C47CE5) (i32.const 0x11D09BA4)
+            (i32.const 0xC0001282) (i32.const 0x452CC34F))
+        (then (local.set $local_class (i32.const 3))))
+      ;; CLSID_DirectPlayLobby {2FE8F810-B2A5-11D0-A787-0000F803ABFC}.
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0x2FE8F810) (i32.const 0x11D0B2A5)
+            (i32.const 0x000087A7) (i32.const 0xFCAB03F8))
+        (then (local.set $local_class (i32.const 4))))
+      ;; CLSID_DirectSound {47D4D946-62E8-11CF-93BC-444553540000}.
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0x47D4D946) (i32.const 0x11CF62E8)
+            (i32.const 0x4544BC93) (i32.const 0x00005453))
+        (then (local.set $local_class (i32.const 5))))
+      ;; CLSID_ShellLink {00021401-0000-0000-C000-000000000046}.
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0x00021401) (i32.const 0)
+            (i32.const 0x000000C0) (i32.const 0x46000000))
+        (then (local.set $local_class (i32.const 6))))
+      ;; CLSID_DirectX7 {E1211353-8E94-11D1-8808-00C04FC2C602}.
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0xE1211353) (i32.const 0x11D18E94)
+            (i32.const 0xC0000888) (i32.const 0x02C6C24F))
+        (then (local.set $local_class (i32.const 7))))
+      ;; CLSID_DirectDrawFactory {4FD2A832-86C8-11D0-8FCA-00C04FD9189D}.
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0x4FD2A832) (i32.const 0x11D086C8)
+            (i32.const 0xC000CA8F) (i32.const 0x9D18D94F))
+        (then (local.set $local_class (i32.const 8))))))
+
+    (if (local.get $local_class) (then
+      (if (i32.eqz (local.get $arg4))
+        (then
+          (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+          (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+          (return)))
+      (call $gs32 (local.get $arg4) (i32.const 0))
+      (if (local.get $arg1)
+        (then
+          (global.set $eax (i32.const 0x80040110)) ;; CLASS_E_NOAGGREGATION
+          (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+          (return)))
+      (if (i32.eq (local.get $local_class) (i32.const 1))
+        (then (local.set $obj_guest
+          (call $dx_create_com_obj (i32.const 26) (global.get $DX_VTBL_DPLAY3)))))
+      (if (i32.eq (local.get $local_class) (i32.const 2))
+        (then (local.set $obj_guest (call $dx_create_com_obj
+          (i32.const 35) (call $init_com_vtable (i32.const 3076) (i32.const 3))))))
+      (if (i32.eq (local.get $local_class) (i32.const 3))
+        (then (local.set $obj_guest (call $dx_create_com_obj
           (i32.const 36) (call $init_com_vtable
-            (global.get $API_ID_IAMMultiMediaStream_BASE) (i32.const 19))))
-        (if (i32.eqz (local.get $obj_guest))
-          (then
-            (call $gs32 (local.get $arg4) (i32.const 0))
-            (global.set $eax (i32.const 0x80004005))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)))
-        (call $gs32 (local.get $arg4) (local.get $obj_guest))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    ;; CLSID_DirectPlayLobby {2FE8F810-B2A5-11D0-A787-0000F803ABFC}.
-    ;; Bellhop requests IID_IDirectPlayLobby2A and aborts startup if the
-    ;; lobby object cannot be created.
-    (if (i32.eq (local.get $clsid_d1) (i32.const 0x2FE8F810))
-      (then
-        (local.set $obj_guest (call $dx_create_com_obj (i32.const 27) (global.get $DX_VTBL_DPLAYLOBBY2)))
-        (if (i32.eqz (local.get $obj_guest))
-          (then
-            (call $gs32 (local.get $arg4) (i32.const 0))
-            (global.set $eax (i32.const 0x80004005))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)))
-        (call $gs32 (local.get $arg4) (local.get $obj_guest))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
+            (global.get $API_ID_IAMMultiMediaStream_BASE) (i32.const 19))))))
+      (if (i32.eq (local.get $local_class) (i32.const 4))
+        (then (local.set $obj_guest (call $dx_create_com_obj
+          (i32.const 27) (global.get $DX_VTBL_DPLAYLOBBY2)))))
+      (if (i32.eq (local.get $local_class) (i32.const 5))
+        (then (local.set $obj_guest (call $dx_create_com_obj
+          (i32.const 4) (global.get $DX_VTBL_DSOUND)))))
+      (if (i32.eq (local.get $local_class) (i32.const 6))
+        (then
+          (call $shell_link_init_vtables)
+          (local.set $obj_guest (call $dx_create_com_obj
+            (i32.const 36) (global.get $SHELL_LINK_VTBL)))))
+      (if (i32.eq (local.get $local_class) (i32.const 7))
+        (then (local.set $obj_guest (call $dx_create_com_obj
+          (i32.const 32) (call $init_com_vtable (i32.const 2526) (i32.const 7))))))
+      (if (i32.eq (local.get $local_class) (i32.const 8))
+        (then (local.set $obj_guest (call $dx_create_com_obj
+          (i32.const 10) (global.get $DX_VTBL_DDFACTORY)))))
+      (if (i32.eqz (local.get $obj_guest))
+        (then
+          (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
+          (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+          (return)))
+      (if (i32.eq (local.get $local_class) (i32.const 1))
+        (then (local.set $hr (call $dplay_query_interface_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4) (i32.const 0)))))
+      (if (i32.eq (local.get $local_class) (i32.const 2))
+        (then (local.set $hr (call $dx_query_interface_single_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)
+          (i32.const 0x6536115A) (i32.const 0x11D27B2D)
+          (i32.const 0x000018BA) (i32.const 0x12AC75F8)))))
+      (if (i32.eq (local.get $local_class) (i32.const 3))
+        (then (local.set $hr (call $dx_query_interface_single_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)
+          (i32.const 0xBEBE595C) (i32.const 0x11D09A6F)
+          (i32.const 0xC000DE8F) (i32.const 0x9D18D94F)))))
+      (if (i32.eq (local.get $local_class) (i32.const 4))
+        (then (local.set $hr (call $dplay_query_interface_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4) (i32.const 1)))))
+      (if (i32.eq (local.get $local_class) (i32.const 5))
+        (then (local.set $hr (call $dx_query_interface_single_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)
+          (i32.const 0x279AFA83) (i32.const 0x11CE4981)
+          (i32.const 0x200021A5) (i32.const 0x60E50BAF)))))
+      (if (i32.eq (local.get $local_class) (i32.const 6))
+        (then (local.set $hr (call $shell_link_query_interface_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)))))
+      (if (i32.eq (local.get $local_class) (i32.const 7))
+        (then (local.set $hr (call $directx7_query_interface_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)))))
+      (if (i32.eq (local.get $local_class) (i32.const 8))
+        (then (local.set $hr (call $dx_query_interface_single_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)
+          (i32.const 0x4FD2A823) (i32.const 0x11D086C8)
+          (i32.const 0xC000CA8F) (i32.const 0x9D18D94F)))))
+      (drop (call $dx_com_release_basic (local.get $obj_guest)))
+      (global.set $eax (local.get $hr))
+      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+      (return)))
+
     ;; Minimal DirectAnimation Automation placeholders for the Plus!98 MFC
     ;; screensavers. CLSIDFromProgID below writes private sentinel CLSIDs for
     ;; DAView/DAStatics; these objects expose IDispatch enough for tracing and
@@ -1941,10 +2023,10 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
     (local.set $hr (call $host_com_create_instance
-      (call $g2w (local.get $arg0))   ;; rclsid → WASM addr
+      (local.get $clsid_wa)           ;; rclsid → WASM addr
       (local.get $arg1)               ;; pUnkOuter (guest addr, usually NULL)
       (local.get $arg2)               ;; dwClsContext
-      (call $g2w (local.get $arg3))   ;; riid → WASM addr
+      (local.get $iid_wa)             ;; riid → WASM addr
       (local.get $arg4)))             ;; ppv (guest addr)
     ;; Check if we need async DLL load (host returns 0x800401F0 = CO_E_DLLNOTFOUND)
     (if (i32.eq (local.get $hr) (i32.const 0x800401F0))
@@ -2746,10 +2828,8 @@
       (local.set $e (i32.add (local.get $table) (i32.mul (local.get $i) (i32.const 8))))
       (if (i32.eqz (i32.load (local.get $e)))
         (then
-          (local.set $copy (call $heap_alloc
-            (i32.add (call $guest_strlen (local.get $name)) (i32.const 1))))
+          (local.set $copy (call $guest_strdup (local.get $name)))
           (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
-          (call $guest_strcpy (local.get $copy) (local.get $name))
           (i32.store (local.get $e) (local.get $copy))
           (i32.store offset=4 (local.get $e) (i32.const 1))
           (return (i32.add (global.get $ATOM_FIRST) (local.get $i)))))
@@ -3296,105 +3376,84 @@
     ;; wProcessorRevision=0 → already zero
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; GetUserNameA(lpBuffer, pcbBuffer) — write "user\0" then update *pcbBuffer = 5
+  ;; GetUserName reports its size including the NUL on both success and
+  ;; insufficient-buffer failure. A/W differ only in the destination width.
+  (func $get_user_name (param $buf_g i32) (param $size_g i32)
+        (param $wide i32) (result i32)
+    (local $buf_wa i32) (local $size_wa i32)
+    (if (i32.eqz (local.get $size_g))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (return (i32.const 0))))
+    (local.set $size_wa (call $g2w (local.get $size_g)))
+    (if (i32.or (i32.eqz (local.get $buf_g))
+                (i32.lt_u (i32.load (local.get $size_wa)) (i32.const 5)))
+      (then
+        (i32.store (local.get $size_wa) (i32.const 5))
+        (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
+        (return (i32.const 0))))
+    (local.set $buf_wa (call $g2w (local.get $buf_g)))
+    (if (local.get $wide)
+      (then
+        (i32.store16 offset=0 (local.get $buf_wa) (i32.const 117)) ;; 'u'
+        (i32.store16 offset=2 (local.get $buf_wa) (i32.const 115)) ;; 's'
+        (i32.store16 offset=4 (local.get $buf_wa) (i32.const 101)) ;; 'e'
+        (i32.store16 offset=6 (local.get $buf_wa) (i32.const 114)) ;; 'r'
+        (i32.store16 offset=8 (local.get $buf_wa) (i32.const 0)))
+      (else
+        (i32.store8 offset=0 (local.get $buf_wa) (i32.const 117)) ;; 'u'
+        (i32.store8 offset=1 (local.get $buf_wa) (i32.const 115)) ;; 's'
+        (i32.store8 offset=2 (local.get $buf_wa) (i32.const 101)) ;; 'e'
+        (i32.store8 offset=3 (local.get $buf_wa) (i32.const 114)) ;; 'r'
+        (i32.store8 offset=4 (local.get $buf_wa) (i32.const 0))))
+    (i32.store (local.get $size_wa) (i32.const 5))
+    (global.set $last_error (i32.const 0))
+    (i32.const 1))
+
   (func $handle_GetUserNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wbuf i32) (local $wlen i32)
-    (if (i32.eqz (local.get $arg1))
-      (then
-        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-        (return)))
-    (local.set $wlen (call $g2w (local.get $arg1)))
-    (if (i32.or (i32.eqz (local.get $arg0))
-                (i32.lt_u (i32.load (local.get $wlen)) (i32.const 5)))
-      (then
-        (i32.store (local.get $wlen) (i32.const 5))
-        (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
-        (global.set $eax (i32.const 0)))
-      (else
-        (local.set $wbuf (call $g2w (local.get $arg0)))
-        (i32.store8 offset=0 (local.get $wbuf) (i32.const 117)) ;; 'u'
-        (i32.store8 offset=1 (local.get $wbuf) (i32.const 115)) ;; 's'
-        (i32.store8 offset=2 (local.get $wbuf) (i32.const 101)) ;; 'e'
-        (i32.store8 offset=3 (local.get $wbuf) (i32.const 114)) ;; 'r'
-        (i32.store8 offset=4 (local.get $wbuf) (i32.const 0))
-        (i32.store (local.get $wlen) (i32.const 5))
-        (global.set $last_error (i32.const 0))
-        (global.set $eax (i32.const 1))))
+    (global.set $eax (call $get_user_name (local.get $arg0) (local.get $arg1) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; GetUserNameW(lpBuffer, pcbBuffer) — UTF-16 counterpart.  Unlike
-  ;; GetComputerName, this API reports the terminating NUL in *pcbBuffer on
-  ;; both success and insufficient-buffer failure.
   (func $handle_GetUserNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wbuf i32) (local $wlen i32)
-    (local.set $wlen (call $g2w (local.get $arg1)))
-    (if (i32.or (i32.eqz (local.get $arg0))
-                (i32.lt_u (i32.load (local.get $wlen)) (i32.const 5)))
-      (then
-        (i32.store (local.get $wlen) (i32.const 5))
-        (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
-        (global.set $eax (i32.const 0)))
-      (else
-        (local.set $wbuf (call $g2w (local.get $arg0)))
-        (i32.store16 offset=0 (local.get $wbuf) (i32.const 117)) ;; 'u'
-        (i32.store16 offset=2 (local.get $wbuf) (i32.const 115)) ;; 's'
-        (i32.store16 offset=4 (local.get $wbuf) (i32.const 101)) ;; 'e'
-        (i32.store16 offset=6 (local.get $wbuf) (i32.const 114)) ;; 'r'
-        (i32.store16 offset=8 (local.get $wbuf) (i32.const 0))
-        (i32.store (local.get $wlen) (i32.const 5))
-        (global.set $last_error (i32.const 0))
-        (global.set $eax (i32.const 1))))
+    (global.set $eax (call $get_user_name (local.get $arg0) (local.get $arg1) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; GetComputerNameA(lpBuffer, pcbBuffer) — write "PC\0" then update *pcbBuffer = 2
-  (func $handle_GetComputerNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wbuf i32) (local $wlen i32)
-    (if (i32.eqz (local.get $arg1))
+  ;; GetComputerName reports the required size including NUL on overflow,
+  ;; but the copied character count excluding NUL on success.
+  (func $get_computer_name (param $buf_g i32) (param $size_g i32)
+        (param $wide i32) (result i32)
+    (local $buf_wa i32) (local $size_wa i32)
+    (if (i32.eqz (local.get $size_g))
       (then
         (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-        (return)))
-    (local.set $wlen (call $g2w (local.get $arg1)))
-    (if (i32.or (i32.eqz (local.get $arg0))
-                (i32.lt_u (i32.load (local.get $wlen)) (i32.const 3)))
+        (return (i32.const 0))))
+    (local.set $size_wa (call $g2w (local.get $size_g)))
+    (if (i32.or (i32.eqz (local.get $buf_g))
+                (i32.lt_u (i32.load (local.get $size_wa)) (i32.const 3)))
       (then
-        (i32.store (local.get $wlen) (i32.const 3))
+        (i32.store (local.get $size_wa) (i32.const 3))
         (global.set $last_error (i32.const 111)) ;; ERROR_BUFFER_OVERFLOW
-        (global.set $eax (i32.const 0)))
+        (return (i32.const 0))))
+    (local.set $buf_wa (call $g2w (local.get $buf_g)))
+    (if (local.get $wide)
+      (then
+        (i32.store16 offset=0 (local.get $buf_wa) (i32.const 80)) ;; 'P'
+        (i32.store16 offset=2 (local.get $buf_wa) (i32.const 67)) ;; 'C'
+        (i32.store16 offset=4 (local.get $buf_wa) (i32.const 0)))
       (else
-        (local.set $wbuf (call $g2w (local.get $arg0)))
-        (i32.store8 offset=0 (local.get $wbuf) (i32.const 80))  ;; 'P'
-        (i32.store8 offset=1 (local.get $wbuf) (i32.const 67))  ;; 'C'
-        (i32.store8 offset=2 (local.get $wbuf) (i32.const 0))
-        (i32.store (local.get $wlen) (i32.const 2))
-        (global.set $last_error (i32.const 0))
-        (global.set $eax (i32.const 1))))
+        (i32.store8 offset=0 (local.get $buf_wa) (i32.const 80)) ;; 'P'
+        (i32.store8 offset=1 (local.get $buf_wa) (i32.const 67)) ;; 'C'
+        (i32.store8 offset=2 (local.get $buf_wa) (i32.const 0))))
+    (i32.store (local.get $size_wa) (i32.const 2))
+    (global.set $last_error (i32.const 0))
+    (i32.const 1))
+
+  (func $handle_GetComputerNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $get_computer_name (local.get $arg0) (local.get $arg1) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; GetComputerNameW(lpBuffer, pcbBuffer) — the Unicode machine name uses
-  ;; the same deterministic identity as GetComputerNameA.  pcbBuffer is an
-  ;; in/out WCHAR count: failure reports the required count including NUL,
-  ;; while success reports the two characters excluding it.
   (func $handle_GetComputerNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wbuf i32) (local $wlen i32)
-    (local.set $wlen (call $g2w (local.get $arg1)))
-    (if (i32.or (i32.eqz (local.get $arg0))
-                (i32.lt_u (i32.load (local.get $wlen)) (i32.const 3)))
-      (then
-        (i32.store (local.get $wlen) (i32.const 3))
-        (global.set $last_error (i32.const 111)) ;; ERROR_BUFFER_OVERFLOW
-        (global.set $eax (i32.const 0)))
-      (else
-        (local.set $wbuf (call $g2w (local.get $arg0)))
-        (i32.store16 offset=0 (local.get $wbuf) (i32.const 80)) ;; 'P'
-        (i32.store16 offset=2 (local.get $wbuf) (i32.const 67)) ;; 'C'
-        (i32.store16 offset=4 (local.get $wbuf) (i32.const 0))
-        (i32.store (local.get $wlen) (i32.const 2))
-        (global.set $last_error (i32.const 0))
-        (global.set $eax (i32.const 1))))
+    (global.set $eax (call $get_computer_name (local.get $arg0) (local.get $arg1) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; DirectPlayCreate(lpGUIDSP, lplpDP, pUnk) — the pre-COM entry point into
@@ -3584,49 +3643,65 @@
     (call $gs32 (global.get $esp) (global.get $ddenum_ret_thunk))
     (global.set $eip (local.get $arg0))
     (global.set $steps (i32.const 0)))
+  ;; Both entry points share one host MCI parser. cchReturn is a character
+  ;; count, so W uses an equally-sized ANSI staging buffer and widens the
+  ;; bounded result at the API boundary.
+  (func $mci_send_string (param $cmd_g i32) (param $ret_g i32)
+        (param $ret_chars i32) (param $wide i32) (result i32)
+    (local $cmd_work_g i32) (local $cmd_wa i32) (local $cmd_len i32)
+    (local $ret_work_g i32) (local $ret_wa i32) (local $err i32)
+    (if (local.get $cmd_g)
+      (then
+        (if (local.get $wide)
+          (then
+            (local.set $cmd_len (call $guest_wcslen (local.get $cmd_g)))
+            (local.set $cmd_work_g
+              (call $heap_alloc (i32.add (local.get $cmd_len) (i32.const 1))))
+            (if (i32.eqz (local.get $cmd_work_g))
+              (then (return (i32.const 0x109)))) ;; MCIERR_OUT_OF_MEMORY
+            (drop (call $wide_to_ansi (local.get $cmd_g) (local.get $cmd_work_g)
+              (i32.add (local.get $cmd_len) (i32.const 1)))))
+          (else (local.set $cmd_work_g (local.get $cmd_g))))
+        (local.set $cmd_wa (call $g2w (local.get $cmd_work_g)))))
+    (if (i32.and (i32.ne (local.get $ret_g) (i32.const 0))
+                 (i32.ne (local.get $ret_chars) (i32.const 0)))
+      (then
+        (if (local.get $wide)
+          (then
+            (local.set $ret_work_g (call $heap_alloc (local.get $ret_chars)))
+            (if (i32.eqz (local.get $ret_work_g))
+              (then
+                (if (local.get $cmd_work_g) (then (call $heap_free (local.get $cmd_work_g))))
+                (return (i32.const 0x109))))) ;; MCIERR_OUT_OF_MEMORY
+          (else (local.set $ret_work_g (local.get $ret_g))))
+        (local.set $ret_wa (call $g2w (local.get $ret_work_g)))
+        (i32.store8 (local.get $ret_wa) (i32.const 0))))
+    (local.set $err
+      (call $host_mci_string (local.get $cmd_wa) (local.get $ret_wa)
+        (local.get $ret_chars)))
+    (if (i32.and (i32.ne (local.get $wide) (i32.const 0))
+                 (i32.ne (local.get $ret_work_g) (i32.const 0)))
+      (then
+        (drop (call $ansi_to_wide (local.get $ret_work_g) (local.get $ret_g)
+          (local.get $ret_chars)))
+        (call $heap_free (local.get $ret_work_g))))
+    (if (i32.and (i32.ne (local.get $wide) (i32.const 0))
+                 (i32.ne (local.get $cmd_work_g) (i32.const 0)))
+      (then (call $heap_free (local.get $cmd_work_g))))
+    (local.get $err))
+
   ;; mciSendStringA(cmd, retbuf, retlen, hCallback) → MCIERR (0 = no error)
   (func $handle_mciSendStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_wa i32)
-    (if (local.get $arg1) (then (local.set $ret_wa (call $g2w (local.get $arg1)))))
-    ;; Clear return buffer if provided, then let the host parse/execute the
-    ;; command string. The host owns MCI aliases and MIDI sequencing.
-    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.ne (local.get $arg2) (i32.const 0)))
-      (then (i32.store8 (local.get $ret_wa) (i32.const 0))))
     (global.set $eax
-      (call $host_mci_string
-        (if (result i32) (local.get $arg0) (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
-        (local.get $ret_wa)
-        (local.get $arg2)))
+      (call $mci_send_string (local.get $arg0) (local.get $arg1)
+        (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  ;; mciSendStringW(cmd, retbuf, retlen, hCallback) — use the same host MCI
-  ;; parser as A, converting its command and optional result at the boundary.
+  ;; mciSendStringW(cmd, retbuf, retlen, hCallback) → MCIERR
   (func $handle_mciSendStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cmd_g i32) (local $ret_g i32) (local $ret_wa i32) (local $cmd_len i32) (local $err i32)
-    (if (local.get $arg0)
-      (then
-        (local.set $cmd_len (call $guest_wcslen (local.get $arg0)))
-        (local.set $cmd_g (call $heap_alloc (i32.add (local.get $cmd_len) (i32.const 1))))
-        (drop (call $wide_to_ansi (local.get $arg0) (local.get $cmd_g)
-                (i32.add (local.get $cmd_len) (i32.const 1))))))
-    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0))
-                 (i32.ne (local.get $arg2) (i32.const 0)))
-      (then
-        (local.set $ret_g (call $heap_alloc (local.get $arg2)))
-        (local.set $ret_wa (call $g2w (local.get $ret_g))) (call $zero_memory (local.get $ret_wa) (local.get $arg2))))
-    (local.set $err
-      (call $host_mci_string
-        (if (result i32) (local.get $cmd_g)
-          (then (call $g2w (local.get $cmd_g))) (else (i32.const 0)))
-        (if (result i32) (local.get $ret_g)
-          (then (local.get $ret_wa)) (else (i32.const 0)))
-        (local.get $arg2)))
-    (if (local.get $ret_g)
-      (then
-        (drop (call $ansi_to_wide (local.get $ret_g) (local.get $arg1) (local.get $arg2)))
-        (call $heap_free (local.get $ret_g))))
-    (if (local.get $cmd_g) (then (call $heap_free (local.get $cmd_g))))
-    (global.set $eax (local.get $err))
+    (global.set $eax
+      (call $mci_send_string (local.get $arg0) (local.get $arg1)
+        (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 862: GlobalMemoryStatus(lpBuffer) — fill MEMORYSTATUS struct

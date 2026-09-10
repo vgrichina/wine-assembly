@@ -82,49 +82,40 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 781: _mbsnbcmp(s1, s2, n) — cdecl, compare n bytes (ASCII memcmp)
-  (func $handle__mbsnbcmp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa1 i32) (local $wa2 i32) (local $n i32) (local $b1 i32) (local $b2 i32)
-    (local.set $wa1 (call $g2w (local.get $arg0)))
-    (local.set $wa2 (call $g2w (local.get $arg1)))
-    (local.set $n (local.get $arg2))
+  ;; Compare at most n unsigned bytes. The CRT's current locale is deliberately
+  ;; single-byte (__mb_cur_max == 1), so _mbsnbcmp has strncmp semantics here:
+  ;; unlike memcmp it stops after the shared terminating NUL.
+  (func $crt_compare_bytes
+      (param $s1 i32) (param $s2 i32) (param $n i32)
+      (param $stop_at_nul i32) (result i32)
+    (local $wa1 i32) (local $wa2 i32) (local $b1 i32) (local $b2 i32)
+    (local.set $wa1 (call $g2w (local.get $s1)))
+    (local.set $wa2 (call $g2w (local.get $s2)))
     (block $done (loop $cmp
       (br_if $done (i32.eqz (local.get $n)))
       (local.set $b1 (i32.load8_u (local.get $wa1)))
       (local.set $b2 (i32.load8_u (local.get $wa2)))
       (if (i32.ne (local.get $b1) (local.get $b2))
-        (then
-          (global.set $eax (i32.sub (local.get $b1) (local.get $b2)))
-          (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-          (return)))
+        (then (return (i32.sub (local.get $b1) (local.get $b2)))))
+      (if (i32.and (local.get $stop_at_nul) (i32.eqz (local.get $b1)))
+        (then (return (i32.const 0))))
       (local.set $wa1 (i32.add (local.get $wa1) (i32.const 1)))
       (local.set $wa2 (i32.add (local.get $wa2) (i32.const 1)))
       (local.set $n (i32.sub (local.get $n) (i32.const 1)))
       (br $cmp)))
-    (global.set $eax (i32.const 0))
+    (i32.const 0))
+
+  ;; 781: _mbsnbcmp(s1, s2, n) — cdecl, current single-byte locale.
+  (func $handle__mbsnbcmp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $crt_compare_bytes
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; memcmp(s1, s2, n) — cdecl, compare raw bytes as unsigned chars.
   (func $handle_memcmp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa1 i32) (local $wa2 i32) (local $n i32) (local $b1 i32) (local $b2 i32)
-    (local.set $wa1 (call $g2w (local.get $arg0)))
-    (local.set $wa2 (call $g2w (local.get $arg1)))
-    (local.set $n (local.get $arg2))
-    (block $done (loop $cmp
-      (br_if $done (i32.eqz (local.get $n)))
-      (local.set $b1 (i32.load8_u (local.get $wa1)))
-      (local.set $b2 (i32.load8_u (local.get $wa2)))
-      (if (i32.ne (local.get $b1) (local.get $b2))
-        (then
-          (global.set $eax (i32.sub (local.get $b1) (local.get $b2)))
-          (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-          (return)))
-      (local.set $wa1 (i32.add (local.get $wa1) (i32.const 1)))
-      (local.set $wa2 (i32.add (local.get $wa2) (i32.const 1)))
-      (local.set $n (i32.sub (local.get $n) (i32.const 1)))
-      (br $cmp)))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $crt_compare_bytes
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 

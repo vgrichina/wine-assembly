@@ -79,14 +79,24 @@ async function main() {
 
   const rtfNameA = writeAscii('Rich Text Format');
   const rtfNameW = writeWide('Rich Text Format');
+  const rtfMixedCaseW = writeWide('rIcH tExT fOrMaT');
   const htmlNameA = writeAscii('HTML Format');
-  const fmtW = e.clipboard_register_format_w(rtfNameW) >>> 0;
+  const fmtMixedCaseW = e.clipboard_register_format_w(rtfMixedCaseW) >>> 0;
+  const fmtFirstLookup = e.clipboard_get_rtf_format_id() >>> 0;
   const fmtA = e.clipboard_register_format_a(rtfNameA) >>> 0;
+  const fmtW = e.clipboard_register_format_w(rtfNameW) >>> 0;
   const fmtAgain = e.clipboard_get_rtf_format_id() >>> 0;
   const htmlFmt = e.clipboard_register_format_a(htmlNameA) >>> 0;
 
   check('RegisterClipboardFormatW returns registered RTF id', fmtW >= 0xc000, `0x${fmtW.toString(16)}`);
   check('RegisterClipboardFormatA reuses a W-first RTF id', fmtA === fmtW, `A=0x${fmtA.toString(16)} W=0x${fmtW.toString(16)}`);
+  check('RegisterClipboardFormat compares mixed-case A/W names case-insensitively',
+    fmtMixedCaseW === fmtA, `mixed=0x${fmtMixedCaseW.toString(16)} A=0x${fmtA.toString(16)}`);
+  check('a mixed-case W-first RTF registration updates the shared RTF identity',
+    fmtFirstLookup === fmtMixedCaseW,
+    `lookup=0x${fmtFirstLookup.toString(16)} mixed=0x${fmtMixedCaseW.toString(16)}`);
+  check('RegisterClipboardFormatA/W reject a NULL format name',
+    e.clipboard_register_format_a(0) === 0 && e.clipboard_register_format_w(0) === 0);
   check('RTF id remains stable after repeated lookup', fmtAgain === fmtA, `again=0x${fmtAgain.toString(16)}`);
   check('other registered formats receive a distinct id', htmlFmt !== fmtA && htmlFmt >= 0xc000, `html=0x${htmlFmt.toString(16)}`);
   check('empty clipboard has no advertised formats', e.clipboard_count_formats() === 0);

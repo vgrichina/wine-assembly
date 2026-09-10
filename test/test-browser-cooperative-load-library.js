@@ -8,11 +8,11 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { hasPageScript } = require('./browser-runtime-scripts');
 
 const root = path.join(__dirname, '..');
 const host = fs.readFileSync(path.join(root, 'host.js'), 'utf8');
 const manager = fs.readFileSync(path.join(root, 'lib', 'thread-manager.js'), 'utf8');
-const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 
 const helper = host.match(
   /async handleCooperativeThreadLoadLibraries\(\) \{([\s\S]*?)\n  \}\n\n  \/\/ Finish/);
@@ -43,11 +43,9 @@ assert(workerSlice[0].includes("r.yield === 3 || r.yield === 5"),
 assert(workerSlice[0].includes('await this._resolveThreadSendExternalYield(thread.link, r);'),
   'ordinary Worker slices use the same host callback as nested SendMessage yields');
 
-const cache = html.match(/<script src="host\.js\?v=(\d+)"/);
-assert(cache && Number(cache[1]) >= 262,
-  'the page cache-busts cooperative thread LoadLibrary servicing');
-const managerCache = html.match(/<script src="lib\/thread-manager\.js\?v=(\d+)"/);
-assert(managerCache && Number(managerCache[1]) >= 186,
-  'the page cache-busts real-Worker LoadLibrary servicing');
+assert(hasPageScript('host.js'),
+  'the page centrally versions cooperative thread LoadLibrary servicing');
+assert(hasPageScript('lib/thread-manager.js'),
+  'the page centrally versions real-Worker LoadLibrary servicing');
 
 console.log('PASS browser services cooperative and real-Worker CreateThread LoadLibrary yields');

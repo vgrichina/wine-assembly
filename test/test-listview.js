@@ -103,8 +103,19 @@ const CUSTOM_TEXT = 0x000020A0;
 const CUSTOM_TEXT_BK = 0x0000D0F0;
 const IMAGE_MASK = 0x00C0C0C0;
 
+const extraWat = String.raw`
+  (func (export "test_set_scroll_pos")
+      (param $hwnd i32) (param $bar i32) (param $pos i32) (result i32)
+    (global.set $esp (i32.const 0x00500000))
+    (call $handle_SetScrollPos
+      (local.get $hwnd) (local.get $bar) (local.get $pos) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+`;
+
 async function main() {
-  const wasmBytes = compileSrcWasm();
+  const wasmBytes = compileSrcWasm((filename, source) =>
+    filename === '13-exports.wat' ? `${source}\n${extraWat}\n` : source);
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   // The control's own painting is checked by reading the pixels it produces,
   // and a surface needs a renderer to hang off.
@@ -633,6 +644,21 @@ async function main() {
       e.standard_scroll_min(lv, 1) === 0 &&
       e.standard_scroll_max(lv, 1) === 11 &&
       e.standard_scroll_page(lv, 1) === 4);
+  check('SetScrollPos returns the prior ListView thumb position',
+    e.test_set_scroll_pos(lv, 1, 7) === 3);
+  check('SetScrollPos moves only the ListView scrollbar thumb',
+    e.standard_scroll_pos(lv, 1) === 7);
+  check('SetScrollPos does not scroll ListView content',
+    e.send_message(lv, LVM_GETTOPINDEX, 0, 0) === 3 &&
+      e.listview_get_top_index(lv) === 3);
+  check('a real ListView scroll resynchronizes content and thumb',
+    e.send_message(lv, LVM_SCROLL, 0, 16) === 1 &&
+      e.send_message(lv, LVM_GETTOPINDEX, 0, 0) === 4 &&
+      e.standard_scroll_pos(lv, 1) === 4);
+  check('ListView scrolling back keeps content and thumb synchronized',
+    e.send_message(lv, LVM_SCROLL, 0, -16) === 1 &&
+      e.send_message(lv, LVM_GETTOPINDEX, 0, 0) === 3 &&
+      e.standard_scroll_pos(lv, 1) === 3);
   const pos5 = getPoint(LVM_GETITEMPOSITION, 5);
   check('LVM_GETITEMPOSITION returns scrolled report y', pos5.ok === 1 && pos5.x === 0 && pos5.y === 50, JSON.stringify(pos5));
   check('LVM_SETITEMPOSITION is accepted as report no-op', e.send_message(lv, LVM_SETITEMPOSITION, 5, makeLParam(33, 44)) === 1);

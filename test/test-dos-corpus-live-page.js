@@ -22,7 +22,7 @@
 // the shape of the code rather than here.
 
 const assert = require('assert');
-const http = require('http');
+const { startStaticServer: startSharedStaticServer } = require('./static-server');
 const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer');
@@ -39,18 +39,7 @@ const TYPES = {
 };
 
 function serve(dir) {
-  return new Promise((ok) => {
-    const server = http.createServer((req, res) => {
-      const rel = decodeURIComponent(req.url.split('?')[0]).replace(/^\/+/, '') || 'index.html';
-      const file = path.join(dir, rel);
-      if (!file.startsWith(dir) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
-        res.writeHead(404); res.end('no'); return;
-      }
-      res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
-      res.end(fs.readFileSync(file));
-    });
-    server.listen(0, '127.0.0.1', () => ok(server));
-  });
+  return startSharedStaticServer({ root: dir, mimeTypes: TYPES, cacheControl: false });
 }
 
 async function main() {

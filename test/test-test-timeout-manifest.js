@@ -5,8 +5,9 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { findTimeouts, listedTests } = require('../tools/check-test-timeouts');
+const { findTimeouts } = require('../tools/check-test-timeouts');
 const { validateOverrides, loadTimeoutOverrides, parseGlobalTimeout } = require('../tools/test-timeouts');
+const { validateTiers } = require('../tools/test-tiers');
 const { spawnSync } = require('child_process');
 const os = require('os');
 
@@ -31,21 +32,15 @@ assert.deepStrictEqual(violations.map(item => [item.kind, item.value]), [
   ['--max-seconds', 301],
 ]);
 
-assert.deepStrictEqual(listedTests(`
-UNIT=(
-  test/test-z.js
-  test/test-a.js
-  test/test-a.js
-)
-`), ['test/test-a.js', 'test/test-z.js']);
-
 const manifest = fs.readFileSync(path.join(__dirname, '..', 'tools', 'check-test-manifest.sh'), 'utf8');
 assert.match(manifest, /node tools\/check-test-timeouts\.js/,
   'timeout audit is not part of the manifest gate');
 
 const root = path.join(__dirname, '..');
 const runner = fs.readFileSync(path.join(root, 'test/run-all.sh'), 'utf8');
-const overrides = loadTimeoutOverrides({ tests: new Set(listedTests(runner)) });
+const tierResult = validateTiers(root);
+assert.deepStrictEqual(tierResult.errors, []);
+const overrides = loadTimeoutOverrides({ tests: new Set(tierResult.actual) });
 const darkstone = 'test/test-darkstone-gameplay.js';
 assert.strictEqual(overrides.get(darkstone).seconds, 660);
 assert.deepStrictEqual(findTimeouts(fs.readFileSync(path.join(root, darkstone), 'utf8'), 660), []);
@@ -74,7 +69,7 @@ for (const value of ['', '-1', '1.5', 'Infinity', ' 300', '2147483648']) {
 
 // Execute the runner's real argument/default-selection code without launching
 // a test tier. This covers Bash precedence and the map-loading interface too.
-const argsSource = runner.slice(runner.indexOf('TIER=all'), runner.indexOf('\nUNIT=('));
+const argsSource = runner.slice(runner.indexOf('TIER=all'), runner.indexOf('\n# Tier membership'));
 const capsSource = runner.slice(runner.indexOf('DEFAULT_TEST_TIMEOUT='), runner.indexOf('\nSKIP_EXIT_STATUS='));
 assert(argsSource.includes('TEST_TIMEOUT_EXPLICIT'));
 assert(capsSource.includes('test_timeout_for()'));

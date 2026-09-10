@@ -30,12 +30,13 @@ function popExpr(nargs) {
   return `(global.set $esp (i32.add (global.get $esp) (i32.const ${n})))`;
 }
 
-function emit(name, nargs, body) {
+function emit(name, nargs, body, calleePops = false) {
   const sig = `(func $handle_${name} (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)`;
   out.push('  ;; ' + name + ' — ' + nargs + ' args (incl. this)');
   out.push('  ' + sig);
   for (const line of body) out.push('    ' + line);
-  out.push('    ' + popExpr(nargs) + ')');
+  if (calleePops) out.push('  )');
+  else out.push('    ' + popExpr(nargs) + ')');
   out.push('');
 }
 
@@ -54,6 +55,16 @@ const qiFamily = {
 function bodyFor(method, prefix) {
   const tag = method.body || method.ret || 'OK';
   const fullName = prefix + '_' + method.name;
+  // Versioned COM interfaces keep the same host-handler ABI. Delegate older
+  // signatures through the newest implemented wrapper so one place owns both
+  // the behavior and stdcall pop. The emitter must not pop a second time.
+  if (method.delegate) {
+    return [
+      `(call $handle_${method.delegate}`,
+      '  (local.get $arg0) (local.get $arg1) (local.get $arg2)',
+      '  (local.get $arg3) (local.get $arg4) (local.get $name_ptr))',
+    ];
+  }
   // Special-case QueryInterface across all interfaces.
   if (method.name === 'QueryInterface') {
     const fam = qiFamily[prefix] || 0;
@@ -82,15 +93,29 @@ function bodyFor(method, prefix) {
         '  (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))',
         '  (else (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc)) (global.set $eax (local.get $rc))))',
       ];
-    case 'CREATE_LIGHT':
-      // arg1 = lplpDirect3DLight, arg2 = pUnkOuter — mirror IDirect3D3_CreateLight
+    case 'RELEASE_DEVICE':
       return [
-        '(local $obj i32)',
-        '(local.set $obj (call $dx_create_com_obj (i32.const 24) (global.get $DX_VTBL_D3DLIGHT)))',
-        '(if (i32.eqz (local.get $obj)) (then (global.set $eax (i32.const 0x80004005))',
-        `  ${popExpr(method.nargs)} (return)))`,
-        '(call $gs32 (local.get $arg1) (local.get $obj))',
-        '(global.set $eax (i32.const 0))',
+        '(global.set $eax (call $d3dim_device_release (local.get $arg0)))',
+      ];
+    case 'ADD_VIEWPORT':
+      return [
+        '(global.set $eax (call $d3dim_device_add_viewport (local.get $arg0) (local.get $arg1)))',
+      ];
+    case 'DELETE_VIEWPORT':
+      return [
+        '(global.set $eax (call $d3dim_device_delete_viewport (local.get $arg0) (local.get $arg1)))',
+      ];
+    case 'NEXT_VIEWPORT':
+      return [
+        '(global.set $eax',
+        '  (call $d3dim_device_next_viewport',
+        '    (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))',
+      ];
+    case 'CREATE_LIGHT':
+      return [
+        '(global.set $eax (call $d3dim_create_child',
+        '  (local.get $arg1) (local.get $arg2)',
+        '  (i32.const 24) (global.get $DX_VTBL_D3DLIGHT)))',
       ];
     case 'CREATE_MATERIAL':
       return [
@@ -103,12 +128,9 @@ function bodyFor(method, prefix) {
       ];
     case 'CREATE_VIEWPORT':
       return [
-        '(local $obj i32)',
-        '(local.set $obj (call $dx_create_com_obj (i32.const 23) (global.get $DX_VTBL_D3DVP3)))',
-        '(if (i32.eqz (local.get $obj)) (then (global.set $eax (i32.const 0x80004005))',
-        `  ${popExpr(method.nargs)} (return)))`,
-        '(call $gs32 (local.get $arg1) (local.get $obj))',
-        '(global.set $eax (i32.const 0))',
+        '(global.set $eax (call $d3dim_create_child',
+        '  (local.get $arg1) (local.get $arg2)',
+        '  (i32.const 23) (global.get $DX_VTBL_D3DVP3)))',
       ];
     case 'CREATE_DEVICE2':
       // IDirect3D2::CreateDevice(this, refclsid, lpDDSurface, lplpD3DDevice) — 4 args
@@ -247,7 +269,9 @@ function bodyFor(method, prefix) {
 for (const iface of interfaces) {
   out.push(`  ;; ── ${iface.prefix} — ${iface.methods.length} methods ─────────────`);
   for (const m of iface.methods) {
-    emit(iface.prefix + '_' + m.name, m.nargs, bodyFor(m, iface.prefix));
+    // api_table handler aliases enter a shared implementation directly.
+    if (m.handler) continue;
+    emit(iface.prefix + '_' + m.name, m.nargs, bodyFor(m, iface.prefix), !!m.delegate);
   }
   out.push('');
 }

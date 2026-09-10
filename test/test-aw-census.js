@@ -7,7 +7,7 @@
 
 const assert = require('assert');
 const {
-  collectPairs, issueSet, compareBaseline, checkBaseline,
+  classify, collectPairs, issueSet, compareBaseline, checkBaseline,
 } = require('../tools/aw-census.js');
 
 let checks = 0;
@@ -38,5 +38,19 @@ check(improvement.added.DIVERGENT.length === 0,
   'removing an independent pair is an allowed ratchet improvement');
 check(improvement.fixed.DIVERGENT.join(',') === 'Fixed',
   'the improvement is named so the baseline can be trimmed');
+
+const handler = (name, call) => ({
+  name,
+  lines: 5,
+  body: [`  (func $handle_${name}`, `    (call $${call})`, '  )'],
+});
+check(classify(
+  handler('LegacyA', 'handle_CanonicalA'),
+  handler('LegacyW', 'handle_CanonicalW')) === 'SHARED',
+'matching downstream A/W delegates count as one audited family');
+check(classify(
+  handler('LegacyA', 'handle_FirstA'),
+  handler('LegacyW', 'handle_SecondW')) === 'DIVERGENT',
+'different downstream families remain divergent');
 
 console.log(`PASS  A/W census ratchet (${checks} checks, ${pairs.length} live pairs)`);

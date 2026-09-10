@@ -1477,10 +1477,18 @@ const { interfaces: d3dimIfaces } = require('./d3dim-methods');
 for (const iface of d3dimIfaces) {
   for (const m of iface.methods) {
     const fullName = iface.prefix + '_' + m.name;
-    if (!seen.has(fullName)) {
+    const current = existing.find(api => api.name === fullName);
+    if (current) {
+      // The shared D3DIM description is authoritative for dispatch aliases so
+      // regenerating the table cannot resurrect a removed named wrapper.
+      if (m.handler) current.handler = m.handler;
+      else delete current.handler;
+    } else {
       // Use 5 here to match the existing IDirect3D{,3,Device3,Viewport3,...}
       // convention — handlers are wired with 5-arg + name_ptr signature.
-      existing.push({ id: existing.length, name: fullName, nargs: 5, convention: 'stdcall', hash: 0 });
+      const api = { id: existing.length, name: fullName, nargs: 5, convention: 'stdcall', hash: 0 };
+      if (m.handler) api.handler = m.handler;
+      existing.push(api);
       seen.add(fullName);
     }
   }
@@ -1491,18 +1499,22 @@ const { interfaces: d3d9Ifaces } = require('./d3d9-methods');
 for (const iface of d3d9Ifaces) {
   for (const m of iface.methods) {
     const fullName = iface.prefix + '_' + m.name;
-    if (!seen.has(fullName)) {
-      existing.push({ id: existing.length, name: fullName, nargs: m.nargs, convention: 'stdcall', hash: 0 });
-      seen.add(fullName);
+    const current = existing.find(api => api.name === fullName);
+    if (current) {
+      current.nargs = m.nargs;
+      if (m.handler) current.handler = m.handler;
+      else delete current.handler;
     } else {
-      // Five WAT locals are an internal dispatch convention, not the guest
-      // method's stdcall arity. Remaining parameters are read from its stack.
-      existing.find(api => api.name === fullName).nargs = m.nargs;
+      const api = { id: existing.length, name: fullName, nargs: m.nargs, convention: 'stdcall', hash: 0 };
+      if (m.handler) api.handler = m.handler;
+      existing.push(api);
+      seen.add(fullName);
     }
   }
 }
 
-// Reassign IDs and recompute hashes; preserve args/ret/any other metadata.
+// Reassign IDs and recompute hashes; preserve dispatch/testing metadata that
+// belongs to the API row rather than the name/hash generator.
 const table = existing.map((api, id) => {
   const out = {
     id,
@@ -1513,6 +1525,7 @@ const table = existing.map((api, id) => {
   };
   if (api.args) out.args = api.args;
   if (api.ret) out.ret = api.ret;
+  if (api.handler) out.handler = api.handler;
   return out;
 });
 

@@ -1,19 +1,16 @@
 {
-  "recorded": "2026-09-01",
+  "recorded": "2026-09-10",
   "note": "Per-file counts of raw literals inside declared regions. This is a RATCHET: counts may fall, never rise. `converted` regions must stay at 0.",
-  "total": 68,
+  "total": 62,
   "converted": [],
   "byFile": {
     "src/09a-handlers.wat": 7,
     "test/test-cross-thread-send.js": 7,
     "test/watx-compiler-alloc.test.js": 4,
-    "lib/renderer-input.js": 3,
-    "lib/thread-manager.js": 3,
     "src/10-helpers.wat": 3,
     "test/test-enable-window.js": 3,
     "test/test-winhelp-wat-parser.js": 3,
     "lib/api-format.js": 2,
-    "lib/guest-worker.js": 2,
     "lib/mem-utils.js": 2,
     "src/09c3-controls.wat": 2,
     "test/run.js": 2,
@@ -23,6 +20,8 @@
     "test/test-wat-memory-map.js": 2,
     "lib/filesystem.js": 1,
     "lib/pe.js": 1,
+    "lib/renderer-input.js": 1,
+    "lib/thread-manager.js": 1,
     "src/09a7-handlers-dispatch.wat": 1,
     "src/09e-win16-api.wat": 1,
     "test/pe-dump.js": 1,
@@ -40,8 +39,7 @@
     "test/vlan-node.js": 1
   },
   "handRolledByFile": {
-    "src/10-helpers.wat": 10,
-    "src/09a-handlers.wat": 4,
+    "src/10-helpers.wat": 9,
     "src/09a5-handlers-window.wat": 2,
     "src/08b-dll-loader.wat": 1
   },

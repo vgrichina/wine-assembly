@@ -6,11 +6,11 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const { hasPageScript } = require('./browser-runtime-scripts');
 
 const ROOT = path.join(__dirname, '..');
 const hostSource = fs.readFileSync(path.join(ROOT, 'host.js'), 'utf8');
 const shellSource = fs.readFileSync(path.join(ROOT, 'lib', 'browser-shell.js'), 'utf8');
-const indexSource = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const apps = require(path.join(ROOT, 'lib', 'apps.js')).APPS;
 const context = { console };
 vm.runInNewContext(hostSource + '\n;globalThis.WineAssembly = WineAssembly;', context);
@@ -72,9 +72,9 @@ assert(shellSource.includes('wine.asyncMultimediaTimer = !!app.asyncMultimediaTi
   'the browser launcher passes the per-app timer policy to WineAssembly');
 assert(hostSource.includes('self._pumpMultimediaTimer();'),
   'the browser run loop pumps the opted-in timer after each main slice');
-assert(/lib\/apps\.js\?v=\d+/.test(indexSource),
-  'the browser cache-busts per-app launch metadata');
-assert(/lib\/browser-shell\.js\?v=\d+/.test(indexSource),
-  'the browser cache-busts per-app timer policy wiring');
+assert(hasPageScript('lib/apps.js'),
+  'the browser centrally versions per-app launch metadata');
+assert(hasPageScript('lib/browser-shell.js'),
+  'the browser centrally versions per-app timer policy wiring');
 
 console.log('PASS  browser multimedia timer delivery is isolated and per-app');

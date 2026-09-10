@@ -38,8 +38,8 @@ assert(host.includes('this.renderer._guestWorkerWasms.add(this.instance);'),
   'Worker-backed renderer ownership token should be marked');
 assert(input.includes('if (this._keyboardOwnerRunsInGuestWorker())'),
   'Worker-backed keyboard events should bypass direct calls into the idle instance');
-assert(/workerUrl: 'lib\/guest-worker\.js\?v=\d+'/.test(host),
-  'guest Worker script should carry a numeric cache key');
+assert(host.includes("workerUrl: WineAssembly.versionedUrl('lib/guest-worker.js')"),
+  'guest Worker script should inherit the page source-version key');
 assert(/\(func \$menu_post[\s\S]*?\$shared_post_queue_enqueue[\s\S]*?\n\s*\)/.test(menus),
   'browser-side menu commands must enter the shared owning-thread queue');
 

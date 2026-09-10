@@ -2,18 +2,7 @@
   "comment": "Known independent or stubbed ANSI/Wide handler pairs. The build allows entries to disappear but rejects a new name in any issue class. Run node tools/aw-census.js --record only after reviewing every change.",
   "STUB": [],
   "DIVERGENT": [
-    "CharLower",
-    "CharLowerBuff",
     "GetCommandLine",
-    "GetComputerName",
-    "GetConsoleTitle",
-    "GetSystemDirectory",
-    "GetUserName",
-    "GetWindowsDirectory",
-    "LoadLibraryEx",
-    "RegisterClipboardFormat",
-    "SetConsoleTitle",
-    "mciSendString",
     "wsprintf",
     "wvsprintf"
   ],

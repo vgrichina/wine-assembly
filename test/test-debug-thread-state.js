@@ -12,6 +12,7 @@ const {
   collectSnapshotAsync,
   formatSnapshot,
 } = require('../lib/debug-thread-state');
+const { hasPageScript } = require('./browser-runtime-scripts');
 
 const ROOT = path.join(__dirname, '..');
 const index = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
@@ -180,8 +181,8 @@ assert(index.includes('id="thread-state-btn" onclick="openThreadState()"'),
   'debug toolbar should expose the live thread-state popup');
 assert(index.includes('threadStateViewer.beginLaunch(select && select.value)'),
   'launch should snapshot storage before app startup can mutate it');
-assert(index.includes('lib/debug-thread-state.js?v=7'),
-  'page should load the popup implementation with a cache key');
+assert(hasPageScript('lib/debug-thread-state.js'),
+  'page should load the popup implementation through the central source version');
 assert(index.includes('body.no-debug.exclusive-fullscreen #toolbar'),
   'only non-debug full-page mode should hide the toolbar');
 assert(index.includes('body:not(.no-debug).exclusive-fullscreen #screen-wrap'),
