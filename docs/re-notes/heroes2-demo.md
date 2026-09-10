@@ -70,6 +70,14 @@ Lock/Unlock/Blt,26 presents. The palette changes19 entries (214..221,
 The menu has subtle real animation despite looking static. Do not freeze its
 palette or drop writes based on sampled pixels to reduce the CPU number.
 
+Settled headful confirmation (`wa-idle-heroes-settled304`):60s warmup,30s sample,
+host load2.43, renderer15.59%, GPU2.45%,7037 parks (234.5/s), no page errors.
+Thus residual cost is not startup compilation. Subsequent3s profile: idle83.4%,
+unattributed native/program7.7%, WASM3.6%, presentation0.8%; remaining small
+shares include scheduler timing, hidden checks and GDI conversion. Next analysis
+should attribute host phases/native program time, not retune the proven detector
+or pretend a quiet-menu acceptance threshold has been met.
+
 Evidence harness `/private/tmp/audit-idle-games.js`; JSON/PNG directories
 `/private/tmp/wa-idle-heroes-menu`, `wa-idle-heroes-clock-sites`, and
 `wa-idle-heroes-map`. The clock-site trace records160 samples including ESP,

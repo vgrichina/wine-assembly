@@ -99,6 +99,41 @@ Do not substitute Game/New (40001) for Start! (40005): New resets the board.
 Clicking a hole in the board rather than the column entry also does not prove
 a move. Earlier no-stone screenshots were rejected as gameplay acceptance.
 
+Headful FreeCell game16371 and Taipei game10112 were screenshot-verified as
+actual populated boards, not launch/splash screens. Renderer samples0.58% and
+0.71%, respectively, but host load9.68/19.42 means these establish absence of
+a core spin, not precise final performance. Raw `wa-idle-dealt-headful304`.
+
+Marbles actual one-player board reached using existing playability readiness
+predicates: wait for menu pixel guest(300,105), held Play click at page(500,650),
+wait for skill-panel pixel guest(100,300), then Enter held500ms. Fixed5s startup
+delays were insufficient; earlier clicks landed in intro transitions and their
+results were rejected. Actual board has two competing marble grids and continues
+simulating without input (32.07% renderer, host loaded12+). This is active
+realtime gameplay, not static turn-based idle acceptance. Practice/paused state
+still needs checking. Raw `wa-idle-marbles-board304`, screenshot inspected.
+
+Implementation checkpoint: isolated commit `1ce2532e`, after phone UI/runtime
+commit `f298b7f9`. No main merge or production deployment. `BERRRY_KEY` is not
+available in this session's process environment; publishing requires an
+authenticated deployment path. This is not a blocker to remaining local work.
+
+Three-app headful check (`wa-idle-three-apps304`): populated FreeCell, Four
+Stones and Blackjack's opening dialog run together. Across20s, main slice
+counters FreeCell5 ->5 and Four Stones6 ->6 remain parked; Blackjack319 ->712
+is about20 queue-park wakes/s, not an immediate loop. All three remain running,
+document visible, no page errors; combined renderer1.45%. Host load10.56 means
+repeat on a quiet box for exact CPU acceptance, but no shared core spin appears.
+
+Heroes settled headful run:60s warmup followed by30s measurement at host load2.43
+still15.59% renderer,7037 clock parks. Startup compilation is ruled out as the
+residual explanation. Profile: WASM3.6% wall time, native/program7.7%, remaining
+host scheduling/presentation costs. Evidence `wa-idle-heroes-settled304`.
+
+Marbles `p` key did **not** produce a verified paused screen; its resulting
+19.53% sample must not be recorded as paused acceptance. Actual pause binding
+remains to be established (guest pause routine0x41a975, thunk0x401370).
+
 Extended production sweep: Bricks menu0.46%, EmPipe8.34%, Funtris102.18%,
 CWordZap2.16%, Heroes II menu107.04%. Funtris has a sleeping helper (not a
 runnable one); the same local scheduler fix reduces it to **0.76%** and EmPipe
@@ -118,4 +153,4 @@ park-sleep, cooperative-deadline and Worker scheduler tests pass.
 - Headful measurements with visible pages and a blank-page CPU floor.
 - Integrate/commit scoped work without foreign changes; check production has
   not changed, deploy paired artifacts/cache graph, then remeasure production.
-- Multiple open non-realtime games must not revive a shared scheduler spin.
+- Repeat the passing local three-app shared-scheduler check on production.
