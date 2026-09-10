@@ -42,19 +42,48 @@ the blue-suit centroid moves from x=414.38 to x=324.69, well outside a cursor
 or idle-animation-only change.
 
 `node tools/run-fallout-gameplay.js` records this route using the registered
-manifest, frozen stdio control, an internal 180-second guard and no build or
+manifest, frozen stdio control, an internal 240-second guard and no build or
 external timeout wrapper. It captures menu, character, demo notice and
 before/after map frames under `build/fallout-gameplay`, checks the blue player
 in the open-ground region and requires a substantial leftward move. It quits
 the CLI and retains `run.log` on both success and failure.
 
+## Relative Cursor And Inventory (2026-09-10)
+
+Fallout draws its own movement cursor from DirectInput motion. In
+`lib/renderer-input.js`, the first absolute `handleMouseMove` for a memory
+instance establishes the previous point without emitting a delta. Thus one
+absolute move followed by a click is not proof that a software cursor moved
+to the requested point. The CLI's existing `relmousemove` supplies motion
+directly; no runtime patch is necessary to move Fallout's cursor.
+
+The cursor update must be observed before the next click. The extended driver
+waits for the red hex at the destination, rather than assuming five slices
+were sufficient. A live session then walked Max Stone back to his original
+position, from x about 318 to blue-suit centroid 414.32. Its ordinary I key
+opened the populated inventory, with weapons/ammunition, the character view,
+empty equipment slots and Max Stone's statistics. Both
+`/private/tmp/fallout-debug-back.png` and `fallout-debug-inventory.png` were
+visually inspected.
+
+Two lower-screen destinations, approximately (420,280) and (220,280), did not
+produce movement. Waiting for the cursor, allowing the first walk to finish,
+and comparing short/long presses did not change that. The built-in
+`--trace-mouse-state` confirms the game polls both press/release edges at the
+new coordinates. Returning to the known walkable initial position (420,240)
+does work, ruling out a general second-command failure. Do not label the
+lower destinations walkable, or declare a pathfinding defect, without checking
+the demo's actual map/collision data or a reference run.
+
+The extended driver passes without tracing: sprite centroids
+414.38 -> 324.69 -> 414.32, followed by the inventory statistics-panel gate.
+Its `right.png` and `inventory.png` captures were visually inspected. The
+CLI exits 0; no runtime changes or input-state patches are used.
+
 ## Still To Verify
 
-- General mouse positioning: absolute clicks at non-center coordinates did
-  not move the game's drawn cursor to those coordinates. Button input does
-  reach the game and initiates movement to its current hex. Test its relative
-  input path before assuming that the button itself is broken.
-- Inventory/equipment, conversation, combat and browser input acceptance.
+- Equipment dragging, conversation, combat and browser input acceptance.
+- The lower-screen destination behavior described above.
 - Native audio and the built-in F12 BMP screenshot path.
 
 The first-area images establish actual movement, not complete demo acceptance.
