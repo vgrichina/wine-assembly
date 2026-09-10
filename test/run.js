@@ -18,7 +18,11 @@ const {
 const { seedExeImage, win16FileCandidates, residentWin16Module } = require('../lib/vfs-seed');
 const { expandIncludePatterns, guestPathInTree } = require('../lib/vfs-host-files');
 const { saveVfsToHost } = require('../lib/vfs-export');
-const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
+const {
+  decodeMfcCString,
+  g2w: translateGuest,
+  readSyncObjectName,
+} = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
 const { APPS, resolveCopySuperops } = require('../lib/apps');
@@ -3296,26 +3300,17 @@ async function main() {
   h.exit_thread = (exitCode) => threadManager.exitThread(exitCode);
   h.get_exit_code_thread = (handle) => threadManager.getExitCodeThread(handle);
   h.terminate_thread = (handle, exitCode) => threadManager.terminateThread(handle, exitCode);
-  const readSyncObjectName = (nameWa, wide) => {
-    if (!nameWa) return '';
-    const dv = new DataView(memory.buffer);
-    let name = '';
-    for (let i = 0; i < 512; i++) {
-      const ch = (wide & 1)
-        ? dv.getUint16(nameWa + i * 2, true)
-        : dv.getUint8(nameWa + i);
-      if (!ch) break;
-      name += String.fromCharCode(ch);
-    }
-    return name;
-  };
   const win32ThreadId = () => ((ctx.threadId | 0) + 1) | 0;
-  h.create_event = (manualReset, initialState, nameWa, wide) => (wide & 2)
-    ? threadManager.createMutex(initialState, readSyncObjectName(nameWa, wide), win32ThreadId())
-    : threadManager.createEvent(manualReset, initialState, readSyncObjectName(nameWa, wide));
-  h.open_event = (nameWa, wide) => (wide & 2)
-    ? threadManager.openMutex(readSyncObjectName(nameWa, wide))
-    : threadManager.openEvent(readSyncObjectName(nameWa, wide));
+  h.create_event = (manualReset, initialState, nameWa, wide) => {
+    const name = readSyncObjectName(memory, nameWa, wide);
+    return (wide & 2)
+      ? threadManager.createMutex(initialState, name, win32ThreadId())
+      : threadManager.createEvent(manualReset, initialState, name);
+  };
+  h.open_event = (nameWa, wide) => {
+    const name = readSyncObjectName(memory, nameWa, wide);
+    return (wide & 2) ? threadManager.openMutex(name) : threadManager.openEvent(name);
+  };
   h.set_event = (handle) => ((handle >>> 0) & 0x80000000)
     ? threadManager.releaseMutex((handle >>> 0) & 0x7fffffff, win32ThreadId())
     : threadManager.setEvent(handle);

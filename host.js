@@ -5,6 +5,8 @@
 // load_pe, the exe-name/cmdline pokes, and the DLL dependency walk.
 // lib/process-boot.js is a classic script loaded ahead of this one.
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
+const HostMemUtils = (typeof window !== 'undefined' && window.memUtils) ||
+  (typeof require !== 'undefined' ? require('./lib/mem-utils') : null);
 
 // iOS decides whether a page may be heard at all, and WebAudio alone does not
 // get a say. A page that only ever makes sound through an AudioContext lands
@@ -1586,32 +1588,19 @@ class WineAssembly {
     h.get_exit_code_thread = (handle) => self.threadManager ? self.threadManager.getExitCodeThread(handle) : 0x103;
     h.terminate_thread = (handle, exitCode) => self.threadManager
       ? self.threadManager.terminateThread(handle, exitCode) : 0;
-    const readSyncObjectName = (nameWa, wide) => {
-      if (!nameWa) return '';
-      if (!(wide & 1)) return self.readString(nameWa);
-      const memoryBuffer = self.memory && (self.memory.buffer || self.memory);
-      if (!(memoryBuffer instanceof ArrayBuffer) &&
-          !(typeof SharedArrayBuffer !== 'undefined' && memoryBuffer instanceof SharedArrayBuffer)) return '';
-      const dv = new DataView(memoryBuffer);
-      let name = '';
-      for (let i = 0; i < 512; i++) {
-        const ch = dv.getUint16(nameWa + i * 2, true);
-        if (!ch) break;
-        name += String.fromCharCode(ch);
-      }
-      return name;
-    };
+    const readSyncName = (nameWa, flags) =>
+      HostMemUtils ? HostMemUtils.readSyncObjectName(self.memory, nameWa, flags) : '';
     const win32ThreadId = () => ((ctx.threadId | 0) + 1) | 0;
     h.create_event = (m, i, nameWa, wide) => {
       if (!self.threadManager) return 0;
-      const name = readSyncObjectName(nameWa, wide);
+      const name = readSyncName(nameWa, wide);
       return (wide & 2)
         ? self.threadManager.createMutex(i, name, win32ThreadId())
         : self.threadManager.createEvent(m, i, name);
     };
     h.open_event = (nameWa, wide) => {
       if (!self.threadManager) return 0;
-      const name = readSyncObjectName(nameWa, wide);
+      const name = readSyncName(nameWa, wide);
       return (wide & 2) ? self.threadManager.openMutex(name) : self.threadManager.openEvent(name);
     };
     h.set_event = (handle) => {
