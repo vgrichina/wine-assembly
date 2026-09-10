@@ -217,6 +217,11 @@ async function runDos(o) {
     // suppresses that table. Timings from such a run are meaningless -- three
     // extra memory ops per dispatch -- and the summary says so.
     hist = 0, histPairs = 0,
+    // `blockHits` builds the per-ARENA-ADDRESS counter table instead (isa
+    // IPHIST_BASE). Same warning as `hist`: one extra load/add/store per
+    // dispatch, so a timing from such a run means nothing and the counts are
+    // exact. Read back into `r.blockHits` as a Uint32Array over the arena.
+    blockHits = false,
     tickScale = 1, sample = false, sampleAfter = 0, forceChained = false,
     // How many handbacks at one address with nothing new on screen before the
     // run is called hung. 0 turns the detector off, which is what to reach for
@@ -348,6 +353,7 @@ async function runDos(o) {
     portIn: (p, w) => machine.portIn(p, w),
     portOut: (p, v, w) => machine.portOut(p, v, w),
     hist: hist > 0 || histPairs > 0,
+    ipHist: blockHits,
     lazyFlags, fuseCond, regions: jitRegions,
   });
   // The decoder's CPU level and the module's FLAGS shape have to move together:
@@ -648,7 +654,7 @@ async function runDos(o) {
       // `lazyFlags`/`fuseCond` change what a handler MEANS. Rebuilding on the
       // defaults happened to agree with a default run and would have swapped
       // `--no-lazy` or `--handler-hist` onto a different machine mid-flight.
-      build: { hist: hist > 0 || histPairs > 0, lazyFlags, fuseCond },
+      build: { hist: hist > 0 || histPairs > 0, ipHist: blockHits, lazyFlags, fuseCond },
       portIn: (p, w) => machine.portIn(p, w),
       portOut: (p, v, w) => machine.portOut(p, v, w),
       // In-process and blocking, which is the right choice HERE: a headless run
@@ -754,6 +760,12 @@ async function runDos(o) {
     // this instance is alive.
     hist: (hist > 0 || histPairs > 0)
       ? require('./handler-hist').readHist(vm.mem) : null,
+    // Copied out, not aliased: the caller reads this after the instance is
+    // done with and a view into a memory somebody else may reuse is a census
+    // that changes under the reader.
+    blockHits: blockHits
+      ? new Uint32Array(new Uint32Array(vm.mem.buffer,
+        isa.IPHIST_BASE, isa.IPHIST_SIZE >> 2)) : null,
     histTop: hist, histPairs,
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
@@ -915,6 +927,7 @@ async function main() {
     // `--handler-pairs[=N]` adds the pair table, which is the one worth
     // reading -- it defaults on whenever the histogram is asked for, because a
     // flat census on its own has already been the wrong answer twice.
+    blockHits: flag('block-hits'),
     hist: flag('handler-hist') ? 20 : Number(arg('handler-hist', 0)),
     histPairs: flag('handler-pairs') ? 20
       : Number(arg('handler-pairs', (flag('handler-hist') || arg('handler-hist')) ? 20 : 0)),

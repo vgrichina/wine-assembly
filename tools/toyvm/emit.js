@@ -5785,6 +5785,20 @@ function histBump() {
   return `${one(flat)}\n${one(pair)}\n(global.set $hprev (local.get $fn))`;
 }
 
+// The per-ARENA-ADDRESS twin of histBump, for `--block-hits`. Emitted at the
+// top of $next while $ip still points AT the opcode word, so the counter it
+// bumps belongs to the op about to run rather than to its successor.
+//
+// The arena offset is masked rather than trusted: $ip is always inside the
+// arena in a healthy run, but a census build that faulted on a stray one would
+// destroy the run it is measuring instead of reporting an odd address.
+function ipHistBump() {
+  const addr = `(i32.add (i32.const ${isa.IPHIST_BASE})
+    (i32.and (i32.sub (global.get $ip) (i32.const ${isa.THREAD_BASE}))
+             (i32.const ${isa.THREAD_SIZE - 4})))`;
+  return `(i32.store ${addr} (i32.add (i32.load ${addr}) (i32.const 1)))`;
+}
+
 // A JIT-compiled loop region, injected as extra handler(s) at the END of the
 // table so every existing index keeps its meaning. Each is `{ name, locals,
 // body }` and is emitted exactly like a handler -- same signature, same
@@ -5814,12 +5828,14 @@ function emitTailcall(opts = {}) {
   s += `(table $h ${tableSize(opts)} funcref)\n`;
   s += `(elem (i32.const 0) ${elemNames(opts)})\n`;
   const hist = opts.hist ? histBump() : '';
+  const iph = opts.ipHist ? ipHistBump() : '';
   s += `
 (func $next
   (local $fn i32)
   (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
   (if (global.get $halt) (then (return)))
   (local.set $fn (i32.load (global.get $ip)))
+  ${iph}
   (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
   ${hist}
   (return_call_indirect $h (type $void) (local.get $fn)))
@@ -5987,6 +6003,9 @@ function emit(variant, opts = {}) {
   if (!fn) throw new Error(`unknown variant: ${variant} (have ${Object.keys(VARIANTS).join(', ')})`);
   if (opts.hist && variant !== 'tailcall') {
     throw new Error(`--handler-hist is only implemented for the tailcall shell, not ${variant}`);
+  }
+  if (opts.ipHist && variant !== 'tailcall') {
+    throw new Error(`--block-hits is only implemented for the tailcall shell, not ${variant}`);
   }
   return checkNesting(fn(opts));
 }

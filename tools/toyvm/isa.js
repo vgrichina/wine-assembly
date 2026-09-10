@@ -252,7 +252,23 @@ const DEC_SCRATCH_WORDS = 0x10000;
 // input.
 const DEC_INSNS = DEC_SCRATCH + DEC_SCRATCH_WORDS * 4;
 const DEC_INSNS_MAX = 0x4000;
-const DEC_END = DEC_INSNS + DEC_INSNS_MAX * 8;
+
+// One u32 per ARENA WORD, bumped in $next by the `--block-hits` build only.
+// This is the per-block-entry census `--handler-hist` cannot give: that table
+// is indexed by handler NUMBER, so it says how many `mov_rr16` dispatches the
+// run retired and nothing about which block they were in. Indexed by arena
+// BYTE offset (arena words are 4 bytes and so are counters, so the mapping is
+// 1:1 and the table is exactly THREAD_SIZE), which makes the counter for a
+// block head the block's entry count and the counters across a block's words
+// its retired-op profile.
+//
+// It is reserved unconditionally so MEM_PAGES does not depend on a debug flag
+// -- a memory whose size changes with a census switch would make the census
+// build a different machine from the one being measured. 1MB against the
+// ~16MB the pair table already reserves.
+const IPHIST_BASE = DEC_INSNS + DEC_INSNS_MAX * 8;
+const IPHIST_SIZE = THREAD_SIZE;
+const DEC_END = IPHIST_BASE + IPHIST_SIZE;
 
 const MEM_PAGES = ((DEC_END + 0xFFFF) & ~0xFFFF) >> 16;
 
@@ -292,5 +308,6 @@ module.exports = {
   CODE_BITMAP, CODE_BITMAP_SIZE,
   DEC_TAB, DEC_TAB_SIZE, DEC_FIXUPS, DEC_FIXUPS_MAX, DEC_FIXUP_WORDS,
   DEC_HEADS, DEC_HEADS_SIZE, DEC_SCRATCH, DEC_SCRATCH_WORDS, DEC_INSNS, DEC_INSNS_MAX, DEC_END,
+  IPHIST_BASE, IPHIST_SIZE,
   EA, EA_DEFAULT_SEG, EA_A32,
 };
