@@ -39,6 +39,14 @@ now consume the same packed PTE publication and treat a zero entry as an
 authoritative miss. The JavaScript stack walker and diagnostic CString decoder
 also call that shared helper instead of reimplementing image-relative
 translation, so their DLL/sparse pointers follow the same address policy.
+`lib/mem-utils.js` now also owns the single `guestToWasm` host entry point.
+The browser host, renderer input, DLL/profile loaders, filesystem diagnostics,
+OpenGL bridge, common host imports, cooperative scheduler and guest Worker all
+call it instead of carrying private affine formulas; the renderer's last
+allocation-record scan is gone. The helper prefers the instance's WAT export,
+so this consolidation adds no branch to the interpreter's instruction hot
+path. Its JavaScript fallback is used only while a host/mock lacks that export
+and follows the same direct, DIB, packed-PTE and authoritative-miss order.
 
 ## Synthetic results
 
