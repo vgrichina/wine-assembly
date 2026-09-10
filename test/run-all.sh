@@ -698,6 +698,7 @@ E2E=(
   test/test-dungeon-keeper-gameplay.js
   test/test-darkstone-gameplay.js
   test/test-broken-sword-gameplay.js
+  test/test-comi-gameplay.js
   test/test-baldurs-gate-demos.js
   test/test-diablo-shareware-art.js
   test/test-diablo-shareware-gameplay.js
