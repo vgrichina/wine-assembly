@@ -29,6 +29,17 @@ Screenshots are written to `COMI_SCREENSHOT_DIR` or the temporary directory
 `wine-assembly-comi-gameplay`. The test pins the original executable hash;
 its palette assertion is specific to that demo and scene.
 
-Inventory and verb-coin interaction remain outside this regression. The
-README documents right-click inventory and a held left-click verb coin;
-those require additional interactive acceptance before claiming coverage.
+The regression also right-clicks to open the inventory chest, closes it,
+then holds the left button over the small pirate to open the verb coin.
+Both captures were visually inspected. Region-specific brown chest and
+gold coin pixel thresholds assert those controls appeared; selecting a
+verb and completing the demo's puzzle remain unverified.
+
+## Launcher artwork investigation
+
+The blank panel is not evidence of an absent bitmap resource. `CURSE.EXE`
+contains bitmap resource 184, and its launch trace calls `LoadImageA` for
+that resource with dimensions 240x197 and `LR_CREATEDIBSECTION`, followed
+by a successful `BitBlt` into the dialog at `(0,3)`. A static child occupies
+the same rectangle. Trace control paints and DC targeting before deciding
+whether loading, rasterization, or a later repaint loses the artwork.

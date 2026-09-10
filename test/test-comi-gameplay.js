@@ -31,6 +31,19 @@ function shirtPosition(filename) {
   return sumX / count;
 }
 
+function controlPixels(filename, kind) {
+  const p = PNG.sync.read(fs.readFileSync(filename));
+  let count = 0;
+  const bounds = kind === 'inventory' ? [100, 170, 540, 420] : [215, 200, 335, 320];
+  for (let y = bounds[1]; y < bounds[3]; y++) for (let x = bounds[0]; x < bounds[2]; x++) {
+    const i = (y * p.width + x) * 4;
+    const r = p.data[i], g = p.data[i + 1], b = p.data[i + 2];
+    if (kind === 'inventory' ? r > 70 && r > g * 1.5 && g > b * 1.3 :
+      r > 170 && g > 140 && b < 150) count++;
+  }
+  return count;
+}
+
 (async () => {
   if (!fs.existsSync(game)) {
     console.log('SKIP  local Curse of Monkey Island demo is absent');
@@ -60,9 +73,26 @@ function shirtPosition(filename) {
     await s.send({ action: 'png', path: after });
     const xAfter = shirtPosition(after);
     assert(xBefore - xAfter > 60, `Guybrush did not walk left (${xBefore} -> ${xAfter})`);
+    await s.send('rclick:500:350');
+    await step(30);
+    const inventory = path.join(shots, 'inventory.png');
+    await s.send({ action: 'png', path: inventory });
+    assert(controlPixels(inventory, 'inventory') > 90000, 'inventory chest did not open');
+    await s.send('rclick:500:350');
+    await step(20);
+    await s.send('mousemove:275:300');
+    await step(5);
+    await s.send('mousedown:275:300');
+    await step(30);
+    const coin = path.join(shots, 'verb-coin.png');
+    await s.send({ action: 'png', path: coin });
+    assert(controlPixels(coin, 'coin') > 2500, 'held left click did not open the verb coin');
+    await s.send('mouseup:275:300');
+    await step(5);
     assert.strictEqual(await s.quit(), 0);
     assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError:/.test(s.output()), s.output().slice(-8000));
     console.log(`PASS  COMI player click moves Guybrush left (${Math.round(xBefore)} -> ${Math.round(xAfter)})`);
+    console.log('PASS  inventory chest and held-click verb coin');
     console.log(`Screenshots: ${shots}`);
   } catch (error) {
     await s.quit({ ignoreReplyError: true });
