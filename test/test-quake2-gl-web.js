@@ -6,7 +6,7 @@
 // normal renderer keyboard input.
 const assert = require('assert');
 const fs = require('fs');
-const http = require('http');
+const { startStaticServer: startSharedStaticServer } = require('./static-server');
 const os = require('os');
 const path = require('path');
 const puppeteer = require('puppeteer');
@@ -23,30 +23,7 @@ if (!fs.existsSync(CHROME) || !fs.existsSync(EXE)) {
 }
 
 function server() {
-  return new Promise((resolve, reject) => {
-    const root = fs.realpathSync(ROOT);
-    const value = http.createServer((req, res) => {
-      let name;
-      try { name = decodeURIComponent(new URL(req.url, 'http://localhost').pathname); }
-      catch (_) { res.writeHead(400); res.end(); return; }
-      if (name === '/') name = '/index.html';
-      const file = path.normalize(path.join(root, name));
-      if (file !== root && !file.startsWith(root + path.sep)) {
-        res.writeHead(403); res.end(); return;
-      }
-      fs.readFile(file, (error, bytes) => {
-        if (error) { res.writeHead(404); res.end(); return; }
-        const ext = path.extname(file);
-        const type = ext === '.js' ? 'text/javascript' : ext === '.wasm'
-          ? 'application/wasm' : ext === '.json' ? 'application/json'
-            : ext === '.html' ? 'text/html' : 'application/octet-stream';
-        res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
-        res.end(bytes);
-      });
-    });
-    value.once('error', reject);
-    value.listen(0, '127.0.0.1', () => resolve(value));
-  });
+  return startSharedStaticServer({ root: ROOT });
 }
 
 async function frame(page) {
