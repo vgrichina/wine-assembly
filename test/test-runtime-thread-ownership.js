@@ -34,6 +34,20 @@ const extra = String.raw`
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
   (func (export "test_purge") (param i32) (call $post_queue_purge_hwnd (local.get 0)))
+  (func (export "test_lock_identity") (result i32)
+    (local $owner i32)
+    (call $lock_wnd_acquire)
+    (local.set $owner (i32.atomic.load (global.get $LOCK_WND)))
+    (call $lock_wnd_release)
+    (local.get $owner))
+  (func (export "test_shadow_lock_recursion") (result i32)
+    (call $lock_wnd_acquire)
+    (call $lock_wnd_acquire)
+    (call $lock_wnd_release)
+    (if (i32.ne (i32.atomic.load (global.get $LOCK_WND)) (call $lock_owner_id))
+      (then (unreachable)))
+    (call $lock_wnd_release)
+    (i32.eqz (i32.atomic.load (global.get $LOCK_WND))))
   (func (export "test_sparse_only")
     (call $heap_reserve_below (call $w2g (region.end $GUEST_HEAP_BASE))))
   (func (export "test_arena_capacity") (result i32)
@@ -83,6 +97,47 @@ for (const [e, ids] of [[a, [0x401, 0x403]], [b, [0x501, 0x502, 0x503]]]) {
   assert.strictEqual(e.post_queue_depth(), 0);
 }
 console.log('PASS two public PostMessage/GetMessage/filtered PeekMessage queues stay isolated');
+
+// A real worker can occupy slot7 while the browser's idle bridge has the same
+// metadata slot. Host callbacks must neither overwrite its local bytes nor
+// mistake its lock for a recursive acquisition by the bridge.
+const guest8 = new WebAssembly.Instance(module_, imports).exports;
+const shadow = new WebAssembly.Instance(module_, imports).exports;
+guest8.init_thread(7, 0x400000, 0, 0, 0, 0, 0);
+shadow.set_host_shadow(1);
+shadow.init_thread(7, 0x400000, 0, 0, 0, 0, 0);
+const mainWindow = 0x10001, workerWindow = 0x80001;
+a.wnd_table_set(mainWindow, 0x401000);
+guest8.wnd_table_set(workerWindow, 0x401000);
+assert.strictEqual(a.get_window_thread(mainWindow), 1);
+assert.strictEqual(a.get_window_thread(workerWindow), 8);
+assert.strictEqual(guest8.test_lock_identity(), 8);
+assert.strictEqual(shadow.test_lock_identity() >>> 0, 0x80000008);
+assert.strictEqual(shadow.test_shadow_lock_recursion(), 1, 'shadow recursive lock releases correctly');
+assert.strictEqual(guest8.test_lock_identity(), 8, 'guest can acquire after shadow releases');
+assert.strictEqual(guest8.post_message_q(0, 0x921, 11, 22), 1);
+const workerLocal = queued(guest8);
+assert.strictEqual(shadow.post_message_q(mainWindow, 0x922, 33, 44), 1);
+assert.strictEqual(shadow.post_message_q(workerWindow, 0x923, 55, 66), 1);
+assert.strictEqual(shadow.post_message_q(0, 0x924, 0, 0), 0);
+assert.strictEqual(shadow.post_message_q(0xBAD, 0x925, 0, 0), 0);
+assert.strictEqual(shadow.post_queue_depth(), 0);
+assert.deepStrictEqual(queued(guest8), workerLocal, 'shadow never mutates a real slot7 local queue');
+assert.strictEqual(a.test_shared_post_read(0x403000, 1), 1);
+assert.deepStrictEqual(msg(), [mainWindow, 0x922, 33, 44]);
+assert.strictEqual(guest8.test_shared_post_read(0x403000, 1), 1);
+assert.deepStrictEqual(msg(), [workerWindow, 0x923, 55, 66]);
+assert.strictEqual(a.test_shared_post_read(0x403000, 1), 0);
+assert.strictEqual(guest8.test_shared_post_read(0x403000, 1), 0);
+assert.strictEqual(b.post_message_q(mainWindow, 0x926, 77, 88), 1,
+  'native internal posts route to a different owning thread');
+assert.strictEqual(b.post_queue_depth(), 0);
+assert.strictEqual(a.test_shared_post_read(0x403000, 1), 1);
+assert.deepStrictEqual(msg(), [mainWindow, 0x926, 77, 88]);
+assert.strictEqual(a.post_message_q(mainWindow, 0x927, 99, 100), 1);
+assert.deepStrictEqual(queued(a), [[mainWindow, 0x927, 99, 100]], 'native same-thread posts stay private');
+a.set_post_queue_count(0);
+console.log('PASS shadow and native cross-owner routing, same-slot byte isolation, distinct recursive lock ownership');
 
 for (const e of [a, b]) {
   e.test_post(123, 0x601, 1, 2);

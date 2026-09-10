@@ -2227,6 +2227,9 @@ class WineAssembly {
 
     let entry;
     if (this.guestWorker) {
+      // Host callbacks use this idle instance over the Worker's memory. Its
+      // queue and lock ownership must remain distinct from every guest slot.
+      this.instance.exports.set_host_shadow(1);
       entry = await this.guestWorker.loadPe(
         exeBytes, exeName, this.processId, {
           extraArgs: this._extraArgs || '',

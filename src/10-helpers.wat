@@ -319,9 +319,14 @@
   ;; Recursive by owner id, so a critical section that reaches another function
   ;; taking the same lock deadlocks nothing. That is defence rather than a
   ;; feature: nothing here nests deliberately.
+  (func $lock_owner_id (result i32)
+    ;; A shadow bridge can run concurrently with the guest using its metadata
+    ;; slot. Distinguish their lock identities so they cannot falsely recurse.
+    (i32.or (global.get $current_thread_id)
+      (select (i32.const 0x80000000) (i32.const 0) (global.get $host_shadow))))
   (func $lock_acquire (param $lock i32)
     (local $me i32) (local $spins i32)
-    (local.set $me (global.get $current_thread_id))
+    (local.set $me (call $lock_owner_id))
     (if (i32.eq (i32.atomic.load (local.get $lock)) (local.get $me))
       (then
         (i32.store (i32.add (local.get $lock) (i32.const 4))
@@ -4786,7 +4791,20 @@
   (func $post_queue_push
         (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32)
         (result i32)
-    (local $slot i32)
+    (local $slot i32) (local $owner i32)
+    (if (local.get $hwnd)
+      (then (local.set $owner (call $wnd_get_thread (local.get $hwnd)))))
+    ;; Host callbacks and native helpers bypass PostMessageA. They still must
+    ;; deliver to the owning guest, never to an idle shadow's private count.
+    (if (global.get $host_shadow)
+      (then
+        (if (i32.eqz (local.get $owner)) (then (return (i32.const 0))))
+        (return (call $shared_post_queue_enqueue
+          (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    (if (i32.and (i32.ne (local.get $owner) (i32.const 0))
+                 (i32.ne (local.get $owner) (global.get $current_thread_id)))
+      (then (return (call $shared_post_queue_enqueue
+        (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     (if (i32.ge_u (global.get $post_queue_count) (i32.const 64))
       (then (return (i32.const 0))))
     (local.set $slot (i32.add (call $post_queue_base)

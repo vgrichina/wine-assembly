@@ -612,6 +612,8 @@
   (func (export "get_window_thread") (param $hwnd i32) (result i32)
     (call $wnd_get_thread (local.get $hwnd)))
   (func (export "set_current_thread_id") (param i32) (global.set $current_thread_id (local.get 0)))
+  (func (export "set_host_shadow") (param i32)
+    (global.set $host_shadow (i32.ne (local.get 0) (i32.const 0))))
   (func (export "get_image_base") (result i32) (global.get $image_base))
   ;; Read-only host bridge for guest pointers embedded in GPU command
   ;; arguments. Unlike image-relative arithmetic, $g2w also resolves sparse
@@ -872,13 +874,13 @@
     (call $lock_acquire (local.get $lock))
     (call $lock_release (local.get $lock))
     ;; Still held by us after the inner release, or the nesting is not counted.
-    (if (i32.ne (i32.atomic.load (local.get $lock)) (global.get $current_thread_id))
+    (if (i32.ne (i32.atomic.load (local.get $lock)) (call $lock_owner_id))
       (then (call $lock_release (local.get $lock)) (return (i32.const 0))))
     (call $lock_release (local.get $lock))
     ;; Released means "not ours any more", not "zero": another thread may have
     ;; taken it between the release and this load, and asserting zero here made
     ;; the check fail for whichever thread happened to lose that footrace.
-    (i32.ne (i32.atomic.load (local.get $lock)) (global.get $current_thread_id)))
+    (i32.ne (i32.atomic.load (local.get $lock)) (call $lock_owner_id)))
   (func (export "test_dx_alloc") (param $type i32) (result i32)
     (call $dx_alloc (local.get $type)))
   (func (export "test_vsock_alloc") (result i32) (call $vsock_alloc))

@@ -2882,6 +2882,9 @@
   ;; (posted from button_wndproc WM_PAINT to the x86 SciCalc parent) doesn't
   ;; overflow during the first render frame.
   (global $post_queue_count (mut i32) (i32.const 0))
+  ;; The browser's idle host bridge is not a guest thread, even when its
+  ;; metadata uses the same slot number as a real worker.
+  (global $host_shadow (mut i32) (i32.const 0))
   (global $LOCAL_POST_QUEUES i32 (region.addr $LOCAL_POST_QUEUES 0))
   (global $LOCAL_POST_QUEUES_SIZE i32 (region.size $LOCAL_POST_QUEUES))
   (global $pq_read_off (mut i32) (i32.const 0))      ;; Read offset for post_queue_dequeue
