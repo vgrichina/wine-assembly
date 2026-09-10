@@ -65,6 +65,21 @@
   (global $loop_colorkey8_matches (mut i32) (i32.const 0))
   (global $loop_colorkey8_runs (mut i32) (i32.const 0))
   (global $loop_colorkey8_bytes (mut i64) (i64.const 0))
+  ;; Generic balanced x87 expression pipeline. Kept opt-in while the first
+  ;; production calibration establishes whole-emulator benefit; the matcher
+  ;; still counts candidates with execution disabled.
+  (global $x87_pipeline4_emit_enabled (mut i32) (i32.const 0))
+  (global $x87_pipeline4_matches (mut i32) (i32.const 0))
+  (global $x87_pipeline4_runs (mut i32) (i32.const 0))
+  (global $x87_tree4_matches (mut i32) (i32.const 0))
+  (global $x87_tree4_runs (mut i32) (i32.const 0))
+  (global $x87_island_matches (mut i32) (i32.const 0))
+  (global $x87_island_runs (mut i32) (i32.const 0))
+  (global $x87_affine_emit_enabled (mut i32) (i32.const 0))
+  (global $x87_affine_prepare_matches (mut i32) (i32.const 0))
+  (global $x87_affine_prepare_runs (mut i32) (i32.const 0))
+  (global $x87_affine_finish_matches (mut i32) (i32.const 0))
+  (global $x87_affine_finish_runs (mut i32) (i32.const 0))
   ;; LUT_RUN and COPY_RUN have independent gates. The role-proved LUT lowering
   ;; is on by default; COPY remains off while its historical Storm divergence
   ;; is investigated. set_loop_emit still controls both for compatibility.
@@ -368,6 +383,681 @@
     (i32.load
       (i32.add (global.get $OP_INDEX)
         (i32.shl (local.get $i) (i32.const 2)))))
+
+  ;; Normalize H188/H190 into group|operation|address-shape fields. The low
+  ;; nibble is a base register, or 8 for a decoder-resolved absolute address.
+  ;; A SIB_SENTINEL depends on a separate preceding EA handler and therefore
+  ;; cannot be part of this first contiguous semantic family.
+  (func $x87_mem_desc (param $p i32) (result i32)
+    (local $fn i32) (local $op i32)
+    (local.set $fn (load.field LoopOp handler (local.get $p)))
+    (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
+    (if (i32.eq (local.get $fn) (i32.const 190))
+      (then (return (i32.and (local.get $op) (i32.const 0xFFF)))))
+    (if (i32.eq (local.get $fn) (i32.const 188))
+      (then
+        (if (i32.eq (i32.load offset=8 (local.get $p)) (global.get $SIB_SENTINEL))
+          (then (return (i32.const -1))))
+        (return
+          (i32.or
+            (i32.shl (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 8))
+            (i32.or
+              (i32.shl (i32.and (local.get $op) (i32.const 0xF)) (i32.const 4))
+              (i32.const 8))))))
+    (i32.const -1))
+
+  (func $x87_pipeline_arith_op (param $desc i32) (result i32)
+    (local $group i32) (local $op i32)
+    (local.set $group (i32.and (i32.shr_u (local.get $desc) (i32.const 8)) (i32.const 0xF)))
+    (local.set $op (i32.and (i32.shr_u (local.get $desc) (i32.const 4)) (i32.const 0xF)))
+    (if (i32.and
+          (i32.or (i32.eqz (local.get $group)) (i32.eq (local.get $group) (i32.const 4)))
+          (i32.or
+            (i32.or (i32.eqz (local.get $op)) (i32.eq (local.get $op) (i32.const 1)))
+            (i32.ge_u (local.get $op) (i32.const 4))))
+      (then (return (local.get $op))))
+    (i32.const -1))
+
+  ;; Replace every proven contiguous
+  ;;
+  ;;   FLD mem; FADD/FMUL/FSUB/FDIV mem; same; FSTP mem
+  ;;
+  ;; with one semantic handler. The original 48-byte threaded payload remains
+  ;; in place; only its first handler/operand are rewritten, so no later op
+  ;; address or block ownership changes. The fused handler consumes the four
+  ;; raw address words and advances directly to the following op.
+  (func $x87_fuse_block
+    (local $i i32) (local $n i32)
+    (local $p0 i32) (local $p1 i32) (local $p2 i32) (local $p3 i32)
+    (local $d0 i32) (local $d1 i32) (local $d2 i32) (local $d3 i32)
+    (local $a1 i32) (local $a2 i32) (local $packed i32)
+    (if (global.get $op_index_poison) (then (return)))
+    (local.set $n (global.get $op_index_n))
+    (block $done (loop $scan
+      (br_if $done (i32.gt_u (i32.add (local.get $i) (i32.const 4)) (local.get $n)))
+      (local.set $p0 (call $loop_op_at (local.get $i)))
+      (local.set $p1 (call $loop_op_at (i32.add (local.get $i) (i32.const 1))))
+      (local.set $p2 (call $loop_op_at (i32.add (local.get $i) (i32.const 2))))
+      (local.set $p3 (call $loop_op_at (i32.add (local.get $i) (i32.const 3))))
+      (if (i32.and
+            (i32.eq (local.get $p1) (i32.add (local.get $p0) (i32.const 12)))
+            (i32.and
+              (i32.eq (local.get $p2) (i32.add (local.get $p1) (i32.const 12)))
+              (i32.eq (local.get $p3) (i32.add (local.get $p2) (i32.const 12)))))
+        (then
+          (local.set $d0 (call $x87_mem_desc (local.get $p0)))
+          (local.set $d1 (call $x87_mem_desc (local.get $p1)))
+          (local.set $d2 (call $x87_mem_desc (local.get $p2)))
+          (local.set $d3 (call $x87_mem_desc (local.get $p3)))
+          (local.set $a1 (call $x87_pipeline_arith_op (local.get $d1)))
+          (local.set $a2 (call $x87_pipeline_arith_op (local.get $d2)))
+          (if (i32.and
+                (i32.and
+                  (i32.or
+                    (i32.eq (i32.shr_u (local.get $d0) (i32.const 8)) (i32.const 1))
+                    (i32.eq (i32.shr_u (local.get $d0) (i32.const 8)) (i32.const 5)))
+                  (i32.eq (i32.and (i32.shr_u (local.get $d0) (i32.const 4)) (i32.const 0xF)) (i32.const 0)))
+                (i32.and
+                  (i32.and (i32.ge_s (local.get $a1) (i32.const 0))
+                           (i32.ge_s (local.get $a2) (i32.const 0)))
+                  (i32.and
+                    (i32.or
+                      (i32.eq (i32.shr_u (local.get $d3) (i32.const 8)) (i32.const 1))
+                      (i32.eq (i32.shr_u (local.get $d3) (i32.const 8)) (i32.const 5)))
+                    (i32.eq (i32.and (i32.shr_u (local.get $d3) (i32.const 4)) (i32.const 0xF)) (i32.const 3)))))
+            (then
+              (global.set $x87_pipeline4_matches
+                (i32.add (global.get $x87_pipeline4_matches) (i32.const 1)))
+              (if (global.get $x87_pipeline4_emit_enabled)
+                (then
+                  (local.set $packed
+                    (i32.or
+                      (i32.and (local.get $d0) (i32.const 0xF))
+                      (i32.or
+                        (i32.shl (i32.and (local.get $d1) (i32.const 0xF)) (i32.const 4))
+                        (i32.or
+                          (i32.shl (i32.and (local.get $d2) (i32.const 0xF)) (i32.const 8))
+                          (i32.or
+                            (i32.shl (i32.and (local.get $d3) (i32.const 0xF)) (i32.const 12))
+                            (i32.or
+                              (i32.shl (local.get $a1) (i32.const 16))
+                              (i32.or
+                                (i32.shl (local.get $a2) (i32.const 19))
+                                (i32.or
+                                  (i32.shl
+                                    (i32.eq (i32.shr_u (local.get $d0) (i32.const 8)) (i32.const 5))
+                                    (i32.const 22))
+                                  (i32.or
+                                    (i32.shl
+                                      (i32.eq (i32.shr_u (local.get $d1) (i32.const 8)) (i32.const 4))
+                                      (i32.const 23))
+                                    (i32.or
+                                      (i32.shl
+                                        (i32.eq (i32.shr_u (local.get $d2) (i32.const 8)) (i32.const 4))
+                                        (i32.const 24))
+                                      (i32.shl
+                                        (i32.eq (i32.shr_u (local.get $d3) (i32.const 8)) (i32.const 5))
+                                        (i32.const 25))))))))))))
+                  (store.field LoopOp handler (local.get $p0) (i32.const 449))
+                  (store.field.memarg LoopOp operand (local.get $p0) (local.get $packed))
+                  (local.set $i (i32.add (local.get $i) (i32.const 4)))
+                  (br $scan)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
+
+  (func $x87_pipeline_addr (param $base i32) (param $word i32) (result i32)
+    (if (result i32) (i32.eq (local.get $base) (i32.const 8))
+      (then (local.get $word))
+      (else (i32.add (call $get_reg (local.get $base)) (local.get $word)))))
+
+  (func $x87_pipeline_load (param $addr i32) (param $wide i32) (result f64)
+    (if (result f64) (local.get $wide)
+      (then (f64.load (call $g2w (local.get $addr))))
+      (else (f64.promote_f32 (f32.load (call $g2w (local.get $addr)))))))
+
+  ;; 449: one balanced expression pipeline. The decoder proved the original
+  ;; four operations and packed their address bases, arithmetic operators and
+  ;; float widths. Preserve the original left-to-right operation order and
+  ;; use $fpu_arith so divide-by-zero/status behavior remains canonical.
+  (func $th_x87_pipeline4 (param $op i32)
+    (local $tp i32) (local $a0 i32) (local $a1 i32)
+    (local $a2 i32) (local $a3 i32) (local $wa i32)
+    (local $v f64) (local $rhs f64)
+    (local.set $tp (global.get $ip))
+    ;; Each original memory op is a normal 8-byte handler record plus one raw
+    ;; address/displacement word. $ip initially points at the first raw word.
+    (local.set $a0
+      (call $x87_pipeline_addr
+        (i32.and (local.get $op) (i32.const 0xF))
+        (i32.load (local.get $tp))))
+    (local.set $a1
+      (call $x87_pipeline_addr
+        (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
+        (i32.load offset=12 (local.get $tp))))
+    (local.set $a2
+      (call $x87_pipeline_addr
+        (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF))
+        (i32.load offset=24 (local.get $tp))))
+    (local.set $a3
+      (call $x87_pipeline_addr
+        (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF))
+        (i32.load offset=36 (local.get $tp))))
+    (global.set $ip (i32.add (local.get $tp) (i32.const 40)))
+
+    ;; FLD reads memory before it mutates TOP. Delay materializing ST(0) until
+    ;; the final store: no instruction inside this proven region observes it.
+    (local.set $v
+      (call $x87_pipeline_load (local.get $a0)
+        (i32.and (i32.shr_u (local.get $op) (i32.const 22)) (i32.const 1))))
+    (global.set $fpu_top
+      (i32.and (i32.sub (global.get $fpu_top) (i32.const 1)) (i32.const 7)))
+    (if (call $fpu_is_valid (i32.const 0))
+      (then (call $fpu_set_exc (i32.const 0x41))))
+
+    (local.set $rhs
+      (call $x87_pipeline_load (local.get $a1)
+        (i32.and (i32.shr_u (local.get $op) (i32.const 23)) (i32.const 1))))
+    (local.set $v
+      (call $fpu_arith (local.get $v) (local.get $rhs)
+        (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 7))))
+    (local.set $rhs
+      (call $x87_pipeline_load (local.get $a2)
+        (i32.and (i32.shr_u (local.get $op) (i32.const 24)) (i32.const 1))))
+    (local.set $v
+      (call $fpu_arith (local.get $v) (local.get $rhs)
+        (i32.and (i32.shr_u (local.get $op) (i32.const 19)) (i32.const 7))))
+
+    ;; Evaluate the output translation before FSTP mutates the stack, exactly
+    ;; like the scalar store handler's Wasm operand evaluation order.
+    (local.set $wa (call $g2w (local.get $a3)))
+    (call $fpu_set (i32.const 0) (local.get $v))
+    (if (i32.and (i32.shr_u (local.get $op) (i32.const 25)) (i32.const 1))
+      (then (f64.store (local.get $wa) (call $fpu_pop)))
+      (else (f32.store (local.get $wa) (f32.demote_f64 (call $fpu_pop)))))
+    (global.set $x87_pipeline4_runs
+      (i32.add (global.get $x87_pipeline4_runs) (i32.const 1)))
+    (return_call $next))
+
+  ;; Recognize the balanced binary-tree leaf used by Alpha's TQI algebra and
+  ;; by ordinary compiler output generally:
+  ;;
+  ;;   FLD a; FLD b; FADDP/FMULP/FSUBP/FDIVP ST(1),ST(0); FSTP d
+  ;;
+  ;; Both inputs and the output may independently be f32/f64 and absolute or
+  ;; simple-base addressed. rm must be ST(1): larger indices consume preexisting
+  ;; stack state and are not a closed expression tree.
+  (func $x87_tree4_fuse_block
+    (local $i i32) (local $n i32)
+    (local $p0 i32) (local $p1 i32) (local $p2 i32) (local $p3 i32)
+    (local $d0 i32) (local $d1 i32) (local $d3 i32)
+    (local $rop i32) (local $arith i32) (local $packed i32)
+    (if (global.get $op_index_poison) (then (return)))
+    (local.set $n (global.get $op_index_n))
+    (block $done (loop $scan
+      (br_if $done (i32.gt_u (i32.add (local.get $i) (i32.const 4)) (local.get $n)))
+      (local.set $p0 (call $loop_op_at (local.get $i)))
+      (local.set $p1 (call $loop_op_at (i32.add (local.get $i) (i32.const 1))))
+      (local.set $p2 (call $loop_op_at (i32.add (local.get $i) (i32.const 2))))
+      (local.set $p3 (call $loop_op_at (i32.add (local.get $i) (i32.const 3))))
+      (if (i32.and
+            (i32.eq (local.get $p1) (i32.add (local.get $p0) (i32.const 12)))
+            (i32.and
+              (i32.eq (local.get $p2) (i32.add (local.get $p1) (i32.const 12)))
+              (i32.eq (local.get $p3) (i32.add (local.get $p2) (i32.const 8)))))
+        (then
+          (local.set $d0 (call $x87_mem_desc (local.get $p0)))
+          (local.set $d1 (call $x87_mem_desc (local.get $p1)))
+          (local.set $d3 (call $x87_mem_desc (local.get $p3)))
+          (local.set $rop (load.field.memarg LoopOp operand (local.get $p2)))
+          (local.set $arith
+            (i32.and (i32.shr_u (local.get $rop) (i32.const 4)) (i32.const 0xF)))
+          (if (i32.and
+                (i32.and
+                  (i32.and
+                    (i32.or
+                      (i32.eq (i32.shr_u (local.get $d0) (i32.const 8)) (i32.const 1))
+                      (i32.eq (i32.shr_u (local.get $d0) (i32.const 8)) (i32.const 5)))
+                    (i32.eq (i32.and (i32.shr_u (local.get $d0) (i32.const 4)) (i32.const 0xF)) (i32.const 0)))
+                  (i32.and
+                    (i32.or
+                      (i32.eq (i32.shr_u (local.get $d1) (i32.const 8)) (i32.const 1))
+                      (i32.eq (i32.shr_u (local.get $d1) (i32.const 8)) (i32.const 5)))
+                    (i32.eq (i32.and (i32.shr_u (local.get $d1) (i32.const 4)) (i32.const 0xF)) (i32.const 0))))
+                (i32.and
+                  (i32.and
+                    (i32.eq (load.field LoopOp handler (local.get $p2)) (i32.const 189))
+                    (i32.and
+                      (i32.eq (i32.shr_u (local.get $rop) (i32.const 8)) (i32.const 6))
+                      (i32.eq (i32.and (local.get $rop) (i32.const 0xF)) (i32.const 1))))
+                  (i32.and
+                    (i32.or
+                      (i32.or (i32.eqz (local.get $arith)) (i32.eq (local.get $arith) (i32.const 1)))
+                      (i32.ge_u (local.get $arith) (i32.const 4)))
+                    (i32.and
+                      (i32.or
+                        (i32.eq (i32.shr_u (local.get $d3) (i32.const 8)) (i32.const 1))
+                        (i32.eq (i32.shr_u (local.get $d3) (i32.const 8)) (i32.const 5)))
+                      (i32.eq (i32.and (i32.shr_u (local.get $d3) (i32.const 4)) (i32.const 0xF)) (i32.const 3))))))
+            (then
+              (global.set $x87_tree4_matches
+                (i32.add (global.get $x87_tree4_matches) (i32.const 1)))
+              (if (global.get $x87_pipeline4_emit_enabled)
+                (then
+                  (local.set $packed
+                    (i32.or
+                      (i32.and (local.get $d0) (i32.const 0xF))
+                      (i32.or
+                        (i32.shl (i32.and (local.get $d1) (i32.const 0xF)) (i32.const 4))
+                        (i32.or
+                          (i32.shl (i32.and (local.get $d3) (i32.const 0xF)) (i32.const 8))
+                          (i32.or
+                            (i32.shl (local.get $arith) (i32.const 12))
+                            (i32.or
+                              (i32.shl
+                                (i32.eq (i32.shr_u (local.get $d0) (i32.const 8)) (i32.const 5))
+                                (i32.const 15))
+                              (i32.or
+                                (i32.shl
+                                  (i32.eq (i32.shr_u (local.get $d1) (i32.const 8)) (i32.const 5))
+                                  (i32.const 16))
+                                (i32.shl
+                                  (i32.eq (i32.shr_u (local.get $d3) (i32.const 8)) (i32.const 5))
+                                  (i32.const 17)))))))))
+                  (store.field LoopOp handler (local.get $p0) (i32.const 450))
+                  (store.field.memarg LoopOp operand (local.get $p0) (local.get $packed))
+                  (local.set $i (i32.add (local.get $i) (i32.const 4)))
+                  (br $scan)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
+
+  (func $x87_tree_arith (param $older f64) (param $top f64)
+                        (param $op i32) (result f64)
+    (if (i32.or (i32.eqz (local.get $op)) (i32.eq (local.get $op) (i32.const 1)))
+      (then (return (call $fpu_arith (local.get $older) (local.get $top) (local.get $op)))))
+    (if (i32.or (i32.eq (local.get $op) (i32.const 4))
+                (i32.eq (local.get $op) (i32.const 6)))
+      (then (return (call $fpu_arith (local.get $top) (local.get $older) (local.get $op)))))
+    ;; FSUBP/FDIVP use the older ST(1) as the left operand. Normalize their
+    ;; opcode to the non-reversed $fpu_arith operation.
+    (call $fpu_arith (local.get $older) (local.get $top)
+      (i32.sub (local.get $op) (i32.const 1))))
+
+  ;; 450: balanced binary expression tree leaf.
+  (func $th_x87_tree4 (param $op i32)
+    (local $tp i32) (local $a0 i32) (local $a1 i32) (local $a3 i32)
+    (local $older f64) (local $top f64) (local $v f64) (local $wa i32)
+    (local.set $tp (global.get $ip))
+    (local.set $a0
+      (call $x87_pipeline_addr
+        (i32.and (local.get $op) (i32.const 0xF))
+        (i32.load (local.get $tp))))
+    (local.set $a1
+      (call $x87_pipeline_addr
+        (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
+        (i32.load offset=12 (local.get $tp))))
+    (local.set $a3
+      (call $x87_pipeline_addr
+        (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF))
+        (i32.load offset=32 (local.get $tp))))
+    (global.set $ip (i32.add (local.get $tp) (i32.const 36)))
+
+    ;; First FLD: read before changing TOP. Its physical payload is replaced by
+    ;; the arithmetic result before exit, so it need not be materialized now.
+    (local.set $older
+      (call $x87_pipeline_load (local.get $a0)
+        (i32.and (i32.shr_u (local.get $op) (i32.const 15)) (i32.const 1))))
+    (global.set $fpu_top
+      (i32.and (i32.sub (global.get $fpu_top) (i32.const 1)) (i32.const 7)))
+    (if (call $fpu_is_valid (i32.const 0))
+      (then (call $fpu_set_exc (i32.const 0x41))))
+
+    ;; Second FLD's payload remains in its physical (ultimately empty) slot and
+    ;; is observable through FNSAVE, so materialize it exactly once.
+    (local.set $top
+      (call $x87_pipeline_load (local.get $a1)
+        (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 1))))
+    (global.set $fpu_top
+      (i32.and (i32.sub (global.get $fpu_top) (i32.const 1)) (i32.const 7)))
+    (if (call $fpu_is_valid (i32.const 0))
+      (then (call $fpu_set_exc (i32.const 0x41))))
+    (call $fpu_set (i32.const 0) (local.get $top))
+
+    (local.set $v
+      (call $x87_tree_arith (local.get $older) (local.get $top)
+        (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 7))))
+    (call $fpu_set (i32.const 1) (local.get $v))
+    (call $fpu_mark_empty (i32.const 0))
+    (global.set $fpu_top
+      (i32.and (i32.add (global.get $fpu_top) (i32.const 1)) (i32.const 7)))
+
+    (local.set $wa (call $g2w (local.get $a3)))
+    (if (i32.and (i32.shr_u (local.get $op) (i32.const 17)) (i32.const 1))
+      (then (f64.store (local.get $wa) (local.get $v)))
+      (else (f32.store (local.get $wa) (f32.demote_f64 (local.get $v)))))
+    (call $fpu_mark_empty (i32.const 0))
+    (global.set $fpu_top
+      (i32.and (i32.add (global.get $fpu_top) (i32.const 1)) (i32.const 7)))
+    (global.set $x87_tree4_runs
+      (i32.add (global.get $x87_tree4_runs) (i32.const 1)))
+    (return_call $next))
+
+  ;; Compile the recurring two-output affine expression emitted by the Smacker
+  ;; decoder. These recognizers operate on semantics plus address shape, not
+  ;; absolute guest addresses. FLD ST(i) becomes a symbolic reference and FXCH
+  ;; becomes a compile-time stack permutation; neither survives in H451/H452.
+  (func $x87_affine_prepare_desc (param $i i32) (result i32)
+    (local $p0 i32) (local $p1 i32) (local $p2 i32) (local $p3 i32)
+    (local $p4 i32) (local $p5 i32) (local $p6 i32) (local $p7 i32) (local $p8 i32)
+    (local $d0 i32) (local $d1 i32) (local $d3 i32) (local $d6 i32) (local $d8 i32)
+    (if (i32.gt_u (i32.add (local.get $i) (i32.const 9)) (global.get $op_index_n))
+      (then (return (i32.const -1))))
+    (local.set $p0 (call $loop_op_at (local.get $i)))
+    (local.set $p1 (call $loop_op_at (i32.add (local.get $i) (i32.const 1))))
+    (local.set $p2 (call $loop_op_at (i32.add (local.get $i) (i32.const 2))))
+    (local.set $p3 (call $loop_op_at (i32.add (local.get $i) (i32.const 3))))
+    (local.set $p4 (call $loop_op_at (i32.add (local.get $i) (i32.const 4))))
+    (local.set $p5 (call $loop_op_at (i32.add (local.get $i) (i32.const 5))))
+    (local.set $p6 (call $loop_op_at (i32.add (local.get $i) (i32.const 6))))
+    (local.set $p7 (call $loop_op_at (i32.add (local.get $i) (i32.const 7))))
+    (local.set $p8 (call $loop_op_at (i32.add (local.get $i) (i32.const 8))))
+    (if (i32.ne (local.get $p1) (i32.add (local.get $p0) (i32.const 12))) (then (return (i32.const -1))))
+    (if (i32.ne (local.get $p2) (i32.add (local.get $p1) (i32.const 12))) (then (return (i32.const -1))))
+    (if (i32.ne (local.get $p3) (i32.add (local.get $p2) (i32.const 8))) (then (return (i32.const -1))))
+    (if (i32.ne (local.get $p4) (i32.add (local.get $p3) (i32.const 12))) (then (return (i32.const -1))))
+    (if (i32.ne (local.get $p5) (i32.add (local.get $p4) (i32.const 8))) (then (return (i32.const -1))))
+    (if (i32.ne (local.get $p6) (i32.add (local.get $p5) (i32.const 8))) (then (return (i32.const -1))))
+    (if (i32.ne (local.get $p7) (i32.add (local.get $p6) (i32.const 12))) (then (return (i32.const -1))))
+    (if (i32.ne (local.get $p8) (i32.add (local.get $p7) (i32.const 8))) (then (return (i32.const -1))))
+    (local.set $d0 (call $x87_mem_desc (local.get $p0)))
+    (local.set $d1 (call $x87_mem_desc (local.get $p1)))
+    (local.set $d3 (call $x87_mem_desc (local.get $p3)))
+    (local.set $d6 (call $x87_mem_desc (local.get $p6)))
+    (local.set $d8 (call $x87_mem_desc (local.get $p8)))
+    (if (i32.ne (i32.and (local.get $d0) (i32.const 0xFF0)) (i32.const 0x300)) (then (return (i32.const -1))))
+    (if (i32.ne (i32.and (local.get $d1) (i32.const 0xFF0)) (i32.const 0x300)) (then (return (i32.const -1))))
+    (if (i32.ne (i32.and (local.get $d3) (i32.const 0xFF0)) (i32.const 0x010)) (then (return (i32.const -1))))
+    (if (i32.ne (i32.and (local.get $d6) (i32.const 0xFF0)) (i32.const 0x010)) (then (return (i32.const -1))))
+    (if (i32.ne (i32.and (local.get $d8) (i32.const 0xFF0)) (i32.const 0x010)) (then (return (i32.const -1))))
+    (if (i32.or
+          (i32.ne (load.field LoopOp handler (local.get $p2)) (i32.const 189))
+          (i32.ne (load.field.memarg LoopOp operand (local.get $p2)) (i32.const 0x100)))
+      (then (return (i32.const -1))))
+    (if (i32.or
+          (i32.ne (load.field LoopOp handler (local.get $p4)) (i32.const 189))
+          (i32.ne (load.field.memarg LoopOp operand (local.get $p4)) (i32.const 0x112)))
+      (then (return (i32.const -1))))
+    (if (i32.or
+          (i32.ne (load.field LoopOp handler (local.get $p5)) (i32.const 189))
+          (i32.ne (load.field.memarg LoopOp operand (local.get $p5)) (i32.const 0x401)))
+      (then (return (i32.const -1))))
+    (if (i32.or
+          (i32.ne (load.field LoopOp handler (local.get $p7)) (i32.const 189))
+          (i32.ne (load.field.memarg LoopOp operand (local.get $p7)) (i32.const 0x111)))
+      (then (return (i32.const -1))))
+    (i32.or
+      (i32.and (local.get $d0) (i32.const 0xF))
+      (i32.or
+        (i32.shl (i32.and (local.get $d1) (i32.const 0xF)) (i32.const 4))
+        (i32.or
+          (i32.shl (i32.and (local.get $d3) (i32.const 0xF)) (i32.const 8))
+          (i32.or
+            (i32.shl (i32.and (local.get $d6) (i32.const 0xF)) (i32.const 12))
+            (i32.shl (i32.and (local.get $d8) (i32.const 0xF)) (i32.const 16)))))))
+
+  (func $x87_affine_finish_desc (param $i i32) (result i32)
+    (local $p0 i32) (local $p1 i32) (local $p2 i32) (local $p3 i32) (local $p4 i32)
+    (local $d2 i32) (local $d4 i32)
+    (if (i32.gt_u (i32.add (local.get $i) (i32.const 5)) (global.get $op_index_n))
+      (then (return (i32.const -1))))
+    (local.set $p0 (call $loop_op_at (local.get $i)))
+    (local.set $p1 (call $loop_op_at (i32.add (local.get $i) (i32.const 1))))
+    (local.set $p2 (call $loop_op_at (i32.add (local.get $i) (i32.const 2))))
+    (local.set $p3 (call $loop_op_at (i32.add (local.get $i) (i32.const 3))))
+    (local.set $p4 (call $loop_op_at (i32.add (local.get $i) (i32.const 4))))
+    (if (i32.ne (local.get $p1) (i32.add (local.get $p0) (i32.const 8))) (then (return (i32.const -1))))
+    (if (i32.ne (local.get $p2) (i32.add (local.get $p1) (i32.const 8))) (then (return (i32.const -1))))
+    (if (i32.ne (local.get $p3) (i32.add (local.get $p2) (i32.const 12))) (then (return (i32.const -1))))
+    (if (i32.ne (local.get $p4) (i32.add (local.get $p3) (i32.const 8))) (then (return (i32.const -1))))
+    (if (i32.or
+          (i32.ne (load.field LoopOp handler (local.get $p0)) (i32.const 189))
+          (i32.ne (load.field.memarg LoopOp operand (local.get $p0)) (i32.const 0x401)))
+      (then (return (i32.const -1))))
+    (if (i32.or
+          (i32.ne (load.field LoopOp handler (local.get $p1)) (i32.const 189))
+          (i32.ne (load.field.memarg LoopOp operand (local.get $p1)) (i32.const 0x652)))
+      (then (return (i32.const -1))))
+    (if (i32.or
+          (i32.ne (load.field LoopOp handler (local.get $p3)) (i32.const 189))
+          (i32.ne (load.field.memarg LoopOp operand (local.get $p3)) (i32.const 0x111)))
+      (then (return (i32.const -1))))
+    (local.set $d2 (call $x87_mem_desc (local.get $p2)))
+    (local.set $d4 (call $x87_mem_desc (local.get $p4)))
+    (if (i32.ne (i32.and (local.get $d2) (i32.const 0xFF0)) (i32.const 0x000)) (then (return (i32.const -1))))
+    (if (i32.ne (i32.and (local.get $d4) (i32.const 0xFF0)) (i32.const 0x000)) (then (return (i32.const -1))))
+    (i32.or
+      (i32.and (local.get $d2) (i32.const 0xF))
+      (i32.shl (i32.and (local.get $d4) (i32.const 0xF)) (i32.const 4))))
+
+  (func $x87_affine_fuse_block
+    (local $i i32) (local $packed i32) (local $p i32)
+    (if (global.get $op_index_poison) (then (return)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $op_index_n)))
+      (local.set $packed (call $x87_affine_prepare_desc (local.get $i)))
+      (if (i32.ge_s (local.get $packed) (i32.const 0))
+        (then
+          (global.set $x87_affine_prepare_matches
+            (i32.add (global.get $x87_affine_prepare_matches) (i32.const 1)))
+          (if (global.get $x87_affine_emit_enabled)
+            (then
+              (local.set $p (call $loop_op_at (local.get $i)))
+              (store.field LoopOp handler (local.get $p) (i32.const 452))
+              (store.field.memarg LoopOp operand (local.get $p) (local.get $packed))))
+          (local.set $i (i32.add (local.get $i) (i32.const 9)))
+          (br $scan)))
+      (local.set $packed (call $x87_affine_finish_desc (local.get $i)))
+      (if (i32.ge_s (local.get $packed) (i32.const 0))
+        (then
+          (global.set $x87_affine_finish_matches
+            (i32.add (global.get $x87_affine_finish_matches) (i32.const 1)))
+          (if (global.get $x87_affine_emit_enabled)
+            (then
+              (local.set $p (call $loop_op_at (local.get $i)))
+              (store.field LoopOp handler (local.get $p) (i32.const 453))
+              (store.field.memarg LoopOp operand (local.get $p) (local.get $packed))))
+          (local.set $i (i32.add (local.get $i) (i32.const 5)))
+          (br $scan)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
+
+  ;; H451: direct semantic evaluation of the affine prefix. The three pushes
+  ;; retain exact overflow/status behavior; symbolic FLD-ST and FXCH compile to
+  ;; local renaming. Materialize at each following memory boundary so faults
+  ;; would observe the same architectural stack as the scalar sequence.
+  (func $th_x87_affine_prepare (param $op i32)
+    (local $tp i32) (local $a0 i32) (local $a1 i32) (local $a3 i32)
+    (local $a6 i32) (local $a8 i32)
+    (local $x f64) (local $y f64) (local $sum f64)
+    (local $t0 f64) (local $t1 f64) (local $t2 f64) (local $c f64)
+    (local.set $tp (global.get $ip))
+    (local.set $a0 (call $x87_pipeline_addr (i32.and (local.get $op) (i32.const 0xF)) (i32.load (local.get $tp))))
+    (local.set $a1 (call $x87_pipeline_addr (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)) (i32.load offset=12 (local.get $tp))))
+    (local.set $a3 (call $x87_pipeline_addr (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)) (i32.load offset=32 (local.get $tp))))
+    (local.set $a6 (call $x87_pipeline_addr (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF)) (i32.load offset=60 (local.get $tp))))
+    (local.set $a8 (call $x87_pipeline_addr (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xF)) (i32.load offset=80 (local.get $tp))))
+    ;; $ip already passed H451's 8-byte handler/operand record. The matched
+    ;; prefix occupies 92 bytes in total, so 84 bytes remain to consume.
+    (global.set $ip (i32.add (local.get $tp) (i32.const 84)))
+    (local.set $x (f64.convert_i32_s (call $gl32 (local.get $a0))))
+    (call $fpu_push (local.get $x))
+    (local.set $y (f64.convert_i32_s (call $gl32 (local.get $a1))))
+    (call $fpu_push (local.get $y))
+    (call $fpu_push (local.get $y))
+    (local.set $c (f64.promote_f32 (f32.load (call $g2w (local.get $a3)))))
+    (local.set $t0 (f64.mul (local.get $y) (local.get $c)))
+    (local.set $sum (f64.add (local.get $y) (local.get $x)))
+    (call $fpu_set (i32.const 0) (local.get $x))
+    (call $fpu_set (i32.const 1) (local.get $sum))
+    (call $fpu_set (i32.const 2) (local.get $t0))
+    (local.set $c (f64.promote_f32 (f32.load (call $g2w (local.get $a6)))))
+    (local.set $t1 (f64.mul (local.get $x) (local.get $c)))
+    (call $fpu_set (i32.const 0) (local.get $sum))
+    (call $fpu_set (i32.const 1) (local.get $t1))
+    (call $fpu_set (i32.const 2) (local.get $t0))
+    (local.set $c (f64.promote_f32 (f32.load (call $g2w (local.get $a8)))))
+    (local.set $t2 (f64.mul (local.get $sum) (local.get $c)))
+    (call $fpu_set (i32.const 0) (local.get $t2))
+    (global.set $x87_affine_prepare_runs
+      (i32.add (global.get $x87_affine_prepare_runs) (i32.const 1)))
+    (return_call $next))
+
+  ;; H452: direct semantic suffix. The pop remains architecturally visible;
+  ;; FXCH is only a local permutation, materialized before the next load.
+  (func $th_x87_affine_finish (param $op i32)
+    (local $tp i32) (local $a2 i32) (local $a4 i32)
+    (local $top f64) (local $mid f64) (local $old f64)
+    (local $r0 f64) (local $r1 f64) (local $bias f64)
+    (local.set $tp (global.get $ip))
+    (local.set $a2 (call $x87_pipeline_addr (i32.and (local.get $op) (i32.const 0xF)) (i32.load offset=16 (local.get $tp))))
+    (local.set $a4 (call $x87_pipeline_addr (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)) (i32.load offset=36 (local.get $tp))))
+    ;; As above, $next already consumed the first 8 bytes of this 48-byte
+    ;; region; advance over only the remaining 40 bytes.
+    (global.set $ip (i32.add (local.get $tp) (i32.const 40)))
+    (local.set $top (call $fpu_get (i32.const 0)))
+    (local.set $mid (call $fpu_get (i32.const 1)))
+    (local.set $old (call $fpu_get (i32.const 2)))
+    (local.set $r1 (f64.add (local.get $mid) (local.get $top)))
+    (local.set $r0 (f64.sub (local.get $old) (local.get $top)))
+    (if (i32.eqz (call $fpu_is_valid (i32.const 0)))
+      (then (call $fpu_set_exc (i32.const 0x41))))
+    (call $fpu_mark_empty (i32.const 0))
+    (global.set $fpu_top
+      (i32.and (i32.add (global.get $fpu_top) (i32.const 1)) (i32.const 7)))
+    (call $fpu_set (i32.const 0) (local.get $r1))
+    (call $fpu_set (i32.const 1) (local.get $r0))
+    (local.set $bias (f64.promote_f32 (f32.load (call $g2w (local.get $a2)))))
+    (local.set $r1 (f64.add (local.get $r1) (local.get $bias)))
+    (call $fpu_set (i32.const 0) (local.get $r1))
+    ;; Compiled FXCH ST(1): swap symbolic names, then expose the exact state at
+    ;; the following memory boundary without invoking the generic FXCH helper.
+    (call $fpu_set (i32.const 0) (local.get $r0))
+    (call $fpu_set (i32.const 1) (local.get $r1))
+    (local.set $bias (f64.promote_f32 (f32.load (call $g2w (local.get $a4)))))
+    (local.set $r0 (f64.add (local.get $r0) (local.get $bias)))
+    (call $fpu_set (i32.const 0) (local.get $r0))
+    (global.set $x87_affine_finish_runs
+      (i32.add (global.get $x87_affine_finish_runs) (i32.const 1)))
+    (return_call $next))
+
+  ;; Collapse a maximal contiguous run of ordinary x87 memory/register ops
+  ;; into one dispatch while continuing to use the canonical semantic helpers.
+  ;; The original threaded records remain in place and are the micro-op stream;
+  ;; only the first handler/operand pair is replaced. Packed operand:
+  ;;   bits 0..11 original operand, 12..19 original handler, 20..27 op count.
+  ;; Runs containing an EA_TEMP-dependent H188 are accepted only when it is the
+  ;; first op: a later SIB form would require an intervening EA producer.
+  (func $x87_island_fuse_block
+    (local $i i32) (local $j i32) (local $n i32) (local $p i32)
+    (local $fn i32) (local $count i32) (local $first_op i32)
+    (if (global.get $op_index_poison) (then (return)))
+    (local.set $n (global.get $op_index_n))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $p (call $loop_op_at (local.get $i)))
+      (local.set $fn (load.field LoopOp handler (local.get $p)))
+      (if (i32.or
+            (i32.eq (local.get $fn) (i32.const 188))
+            (i32.or (i32.eq (local.get $fn) (i32.const 189))
+                    (i32.eq (local.get $fn) (i32.const 190))))
+        (then
+          (local.set $j (local.get $i))
+          (local.set $count (i32.const 0))
+          (block $run_done (loop $run
+            (br_if $run_done (i32.ge_u (local.get $j) (local.get $n)))
+            (local.set $p (call $loop_op_at (local.get $j)))
+            (local.set $fn (load.field LoopOp handler (local.get $p)))
+            (br_if $run_done
+              (i32.eqz
+                (i32.or
+                  (i32.eq (local.get $fn) (i32.const 188))
+                  (i32.or (i32.eq (local.get $fn) (i32.const 189))
+                          (i32.eq (local.get $fn) (i32.const 190))))))
+            (if (i32.and
+                  (i32.and (i32.ne (local.get $j) (local.get $i))
+                           (i32.eq (local.get $fn) (i32.const 188)))
+                  (i32.eq (i32.load offset=8 (local.get $p)) (global.get $SIB_SENTINEL)))
+              (then (br $run_done)))
+            (local.set $count (i32.add (local.get $count) (i32.const 1)))
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br_if $run_done (i32.ge_u (local.get $count) (i32.const 255)))
+            (br $run)))
+          (if (i32.ge_u (local.get $count) (i32.const 3))
+            (then
+              (local.set $p (call $loop_op_at (local.get $i)))
+              (local.set $fn (load.field LoopOp handler (local.get $p)))
+              (local.set $first_op (load.field.memarg LoopOp operand (local.get $p)))
+              (global.set $x87_island_matches
+                (i32.add (global.get $x87_island_matches) (i32.const 1)))
+              (if (global.get $x87_pipeline4_emit_enabled)
+                (then
+                  (store.field LoopOp handler (local.get $p) (i32.const 451))
+                  (store.field.memarg LoopOp operand (local.get $p)
+                    (i32.or
+                      (i32.and (local.get $first_op) (i32.const 0xFFF))
+                      (i32.or
+                        (i32.shl (local.get $fn) (i32.const 12))
+                        (i32.shl (local.get $count) (i32.const 20)))))))
+              (local.set $i (local.get $j))
+              (br $scan)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
+
+  ;; Generic x87 micro-op inner loop. This eliminates threaded dispatch and
+  ;; keeps the canonical stack/tag/status semantics in $fpu_exec_mem/reg.
+  (func $th_x87_island (param $packed i32)
+    (local $cursor i32) (local $fn i32) (local $op i32)
+    (local $count i32) (local $i i32) (local $addr i32)
+    (local.set $cursor (global.get $ip))
+    (local.set $fn (i32.and (i32.shr_u (local.get $packed) (i32.const 12)) (i32.const 0xFF)))
+    (local.set $op (i32.and (local.get $packed) (i32.const 0xFFF)))
+    (local.set $count (i32.and (i32.shr_u (local.get $packed) (i32.const 20)) (i32.const 0xFF)))
+    (block $done (loop $each
+      (if (i32.eq (local.get $fn) (i32.const 188))
+        (then
+          (local.set $addr (i32.load (local.get $cursor)))
+          (local.set $cursor (i32.add (local.get $cursor) (i32.const 4)))
+          (if (i32.eq (local.get $addr) (global.get $SIB_SENTINEL))
+            (then (local.set $addr (global.get $ea_temp))))
+          (call $fpu_exec_mem
+            (i32.shr_u (local.get $op) (i32.const 4))
+            (i32.and (local.get $op) (i32.const 0xF))
+            (local.get $addr)))
+        (else (if (i32.eq (local.get $fn) (i32.const 190))
+          (then
+            (local.set $addr
+              (i32.add
+                (call $get_reg (i32.and (local.get $op) (i32.const 0xF)))
+                (i32.load (local.get $cursor))))
+            (local.set $cursor (i32.add (local.get $cursor) (i32.const 4)))
+            (call $fpu_exec_mem
+              (i32.shr_u (local.get $op) (i32.const 8))
+              (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
+              (local.get $addr)))
+          (else
+            (call $fpu_exec_reg
+              (i32.shr_u (local.get $op) (i32.const 8))
+              (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
+              (i32.and (local.get $op) (i32.const 0xF)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $fn (i32.load (local.get $cursor)))
+      (local.set $op (i32.load offset=4 (local.get $cursor)))
+      (local.set $cursor (i32.add (local.get $cursor) (i32.const 8)))
+      (br $each)))
+    (global.set $ip (local.get $cursor))
+    (global.set $x87_island_runs
+      (i32.add (global.get $x87_island_runs) (i32.const 1)))
+    (return_call $next))
 
   ;; Does this block end in a conditional branch back to its own entry?
   (func $loop_is_selfloop (param $start_eip i32) (result i32)

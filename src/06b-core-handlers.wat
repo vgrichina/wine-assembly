@@ -1195,6 +1195,55 @@
       (br $l)))
     (return_call $next))
 
+  ;; 448: a straight-line span of contiguous dword stores from one register.
+  ;; The decoder proved that every instruction is exactly
+  ;; `mov [base+disp+4*i],src`, so the base and source are sampled once just as
+  ;; the original instructions would sample them.  A zero source over one
+  ;; physically contiguous guest page is the common compiler-generated array
+  ;; clear: translate and invalidate the full range once, then use Wasm bulk
+  ;; memory.  Page-crossing, sparse/discontinuous and nonzero cases retain the
+  ;; ordinary per-dword helper, including its partial-write and code-retirement
+  ;; semantics.
+  ;;
+  ;; op: src in bits 0..3, base in bits 4..7, count in bits 8..31.
+  ;; word: signed starting displacement.
+  (func $th_store32_base_span (param $op i32)
+    (local $src i32) (local $base i32) (local $n i32) (local $disp i32)
+    (local $ga i32) (local $wa i32)
+    (local $len i32) (local $v i32) (local $i i32)
+    (local.set $src (i32.and (local.get $op) (i32.const 0xF)))
+    (local.set $base (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+    (local.set $n (i32.shr_u (local.get $op) (i32.const 8)))
+    (local.set $disp (call $read_thread_word))
+    (local.set $ga (i32.add (call $get_reg (local.get $base)) (local.get $disp)))
+    (local.set $v (call $get_reg (local.get $src)))
+    (local.set $len (i32.shl (local.get $n) (i32.const 2)))
+
+    ;; memory.fill repeats a byte, so only zero has dword-store semantics here.
+    ;; $g2w_affine_span rejects wrapped ends, holes, and mapping boundaries;
+    ;; only then is one bulk write equivalent to the original dword stores.
+    (if (i32.and
+          (i32.eqz (local.get $v))
+          (i32.le_u
+            (i32.add (i32.and (local.get $ga) (i32.const 0xFFF)) (local.get $len))
+            (i32.const 4096)))
+      (then
+        (local.set $wa (call $g2w_affine_span (local.get $ga) (local.get $len)))
+        (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
+          (then
+            (call $invalidate_code_write (local.get $ga) (local.get $len))
+            (memory.fill (local.get $wa) (i32.const 0) (local.get $len))
+            (return_call $next)))))
+
+    (block $done (loop $store
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (call $gs32
+        (i32.add (local.get $ga) (i32.shl (local.get $i) (i32.const 2)))
+        (local.get $v))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $store)))
+    (return_call $next))
+
   (func $th_load32_abs_run (param $op i32)
     (local $n i32) (local $i i32) (local $addr i32)
     (local.set $n (i32.and (local.get $op) (i32.const 0xF)))

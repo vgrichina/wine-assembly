@@ -30,6 +30,9 @@
   ;; needs a rebuild to switch off cannot be A/B'd on one box in one sitting.
   ;; Decode-time only, so the flag itself costs nothing on the hot path.
   (global $sib_fusion_enabled (mut i32) (i32.const 1))
+  ;; Generic straight-line repeated-store span fold.  Decode-time switch is
+  ;; only for same-process A/B measurements; changing it clears decoded code.
+  (global $store_span_enabled (mut i32) (i32.const 1))
   ;; Where $sib_store_at leaves the operands of the store it just matched. Not
   ;; return values because there are three of them and one is the length.
   (global $fuse_info (mut i32) (i32.const 0))
@@ -1909,6 +1912,88 @@
       (then (return (call $sign_ext8 (call $gl8 (i32.add (local.get $p) (i32.const 2)))))))
     (call $gl32 (i32.add (local.get $p) (i32.const 2))))
 
+  ;; One unprefixed `mov [base+disp],src` in the same flat base-only forms as
+  ;; $base_mov_at.  Returns the instruction length and leaves its displacement
+  ;; in $fuse_disp.  Prefixes, indexed SIBs, absolute forms and 16-bit tasks
+  ;; decline, so the span handler never has to reproduce segment semantics.
+  (func $base_store_at (param $p i32) (param $base i32) (param $src i32) (result i32)
+    (local $modrm i32) (local $mod i32) (local $sib i32) (local $len i32)
+    (if (i32.ne (call $gl8 (local.get $p)) (i32.const 0x89))
+      (then (return (i32.const 0))))
+    (local.set $modrm (call $gl8 (i32.add (local.get $p) (i32.const 1))))
+    (if (i32.ne (i32.and (local.get $modrm) (i32.const 7)) (local.get $base))
+      (then (return (i32.const 0))))
+    (if (i32.ne
+          (i32.and (i32.shr_u (local.get $modrm) (i32.const 3)) (i32.const 7))
+          (local.get $src))
+      (then (return (i32.const 0))))
+    (local.set $mod (i32.shr_u (local.get $modrm) (i32.const 6)))
+    (if (i32.eq (local.get $mod) (i32.const 3)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $base) (i32.const 4))
+      (then
+        (local.set $sib (call $gl8 (i32.add (local.get $p) (i32.const 2))))
+        (if (i32.ne (local.get $sib) (i32.const 0x24))
+          (then (return (i32.const 0))))))
+    (if (i32.and (i32.eqz (local.get $mod)) (i32.eq (local.get $base) (i32.const 5)))
+      (then (return (i32.const 0))))
+    (local.set $len
+      (if (result i32) (i32.eqz (local.get $mod))
+        (then (select (i32.const 3) (i32.const 2)
+                      (i32.eq (local.get $base) (i32.const 4))))
+        (else (if (result i32) (i32.eq (local.get $mod) (i32.const 1))
+                (then (select (i32.const 4) (i32.const 3)
+                              (i32.eq (local.get $base) (i32.const 4))))
+                (else (select (i32.const 7) (i32.const 6)
+                              (i32.eq (local.get $base) (i32.const 4))))))))
+    (global.set $fuse_disp (call $base_mov_disp (local.get $p) (local.get $len)))
+    (local.get $len))
+
+  ;; Fold four or more contiguous stores through one base register.  This is
+  ;; structural rather than address-specific: compilers emit the same shape
+  ;; for zeroing fixed local arrays and for spilling repeated values.  Keep the
+  ;; lookahead inside the current code page so cache ownership/invalidation
+  ;; still describes every byte consumed by this decoded block.
+  (func $try_emit_store32_span (param $src i32) (param $disp0 i32)
+                               (param $insn_start i32) (result i32)
+    (local $base i32) (local $p i32) (local $next i32) (local $n i32)
+    (local $len i32) (local $expected i32) (local $page_end i32)
+    (if (i32.eqz (global.get $store_span_enabled))
+      (then (return (i32.const 0))))
+    (if (i32.or (global.get $code16) (global.get $d_addr16))
+      (then (return (i32.const 0))))
+    (local.set $base (global.get $mr_base))
+    (local.set $p (global.get $d_pc))
+    (local.set $page_end
+      (i32.add (i32.and (local.get $insn_start) (i32.const 0xFFFFF000)) (i32.const 4096)))
+    ;; The ordinary decoder permits one instruction to straddle the boundary,
+    ;; then terminates the block.  Such a first store cannot own following
+    ;; bytes in the next page, so decline before looking ahead there.
+    (if (i32.gt_u (local.get $p) (local.get $page_end))
+      (then (return (i32.const 0))))
+    (local.set $n (i32.const 1))
+    (local.set $expected (i32.add (local.get $disp0) (i32.const 4)))
+    (block $stop (loop $scan
+      (br_if $stop (i32.ge_u (local.get $n) (i32.const 0xFFFFFF)))
+      (local.set $len
+        (call $base_store_at (local.get $p) (local.get $base) (local.get $src)))
+      (br_if $stop (i32.eqz (local.get $len)))
+      (local.set $next (i32.add (local.get $p) (local.get $len)))
+      (br_if $stop (i32.gt_u (local.get $next) (local.get $page_end)))
+      (br_if $stop (i32.ne (global.get $fuse_disp) (local.get $expected)))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (local.set $expected (i32.add (local.get $expected) (i32.const 4)))
+      (local.set $p (local.get $next))
+      (br $scan)))
+    (if (i32.lt_u (local.get $n) (i32.const 4))
+      (then (return (i32.const 0))))
+    (call $te (i32.const 448)
+      (i32.or (local.get $src)
+        (i32.or (i32.shl (local.get $base) (i32.const 4))
+                (i32.shl (local.get $n) (i32.const 8)))))
+    (call $te_raw (local.get $disp0))
+    (global.set $d_pc (local.get $p))
+    (i32.const 1))
+
   ;; Fold a run of up to four `mov r32,[base+disp]` over one base register into
   ;; handler 408. Called with the first one already decoded (its destination in
   ;; $dst, its already-segment-adjusted displacement in $disp0); returns 1 once
@@ -2301,10 +2386,14 @@
     (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 20) (local.get $dst)) (call $te_raw (local.get $a)))
 
-  (func $emit_store32 (param $src i32) (local $a i32)
+  (func $emit_store32 (param $src i32) (param $insn_start i32) (local $a i32)
     (call $apply_seg_override)
     (if (call $mr_simple_base)
-      (then (call $te (i32.add (i32.const 347) (global.get $mr_base)) (local.get $src))
+      (then
+            (if (call $try_emit_store32_span
+                  (local.get $src) (global.get $mr_disp) (local.get $insn_start))
+              (then (return)))
+            (call $te (i32.add (i32.const 347) (global.get $mr_base)) (local.get $src))
             (call $te_raw (global.get $mr_disp)) (return)))
     (if (call $mr_absolute)
       (then
@@ -3581,7 +3670,7 @@
               (if (i32.eq (local.get $op) (i32.const 0x89))
                 (then (if (local.get $prefix_66)
                   (then (call $emit_store16 (global.get $mr_reg)))
-                  (else (call $emit_store32 (global.get $mr_reg)))))
+                  (else (call $emit_store32 (global.get $mr_reg) (local.get $insn_start)))))
                 (else (call $emit_store8 (global.get $mr_reg))))))
           (br $decode)))
 
@@ -5328,6 +5417,10 @@
     ;; Loop-idiom matcher runs on the ops just emitted, before the block is
     ;; published. See src/07b-loop-match.wat.
     (call $loop_match_block (local.get $start_eip) (local.get $tstart))
+    (call $x87_fuse_block)
+    (call $x87_tree4_fuse_block)
+    (call $x87_affine_fuse_block)
+    (call $x87_island_fuse_block)
     (call $publish_block (local.get $start_eip) (local.get $tstart) (global.get $d_pc))
   )
 
