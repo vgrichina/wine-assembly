@@ -1,0 +1,7 @@
+[
+  {
+    "test": "test/test-darkstone-gameplay.js",
+    "seconds": 660,
+    "reason": "Authentic installer payload, menu, character creation and responsive town acceptance use a 600-second guest guard; allow 60 seconds for loading and cleanup."
+  }
+]

@@ -4,6 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { loadTimeoutOverrides } = require('./test-timeouts');
 
 const ROOT = path.join(__dirname, '..');
 const RUNNER = path.join(ROOT, 'test', 'run-all.sh');
@@ -77,12 +78,14 @@ function main() {
   if (!capMatch) throw new Error('test/run-all.sh must declare DEFAULT_TEST_TIMEOUT');
   const capSeconds = Number(capMatch[1]);
   const tests = listedTests(runnerSource);
+  const overrides = loadTimeoutOverrides({ tests: new Set(tests) });
   const all = [];
   for (const relative of tests) {
     const file = path.join(ROOT, relative);
     if (!fs.existsSync(file)) continue; // stale rows are reported by the manifest gate
-    for (const violation of findTimeouts(fs.readFileSync(file, 'utf8'), capSeconds)) {
-      all.push(`${relative}:${violation.line}: ${violation.kind} ${violation.value} exceeds ${capSeconds}s runner cap`);
+    const cap = overrides.has(relative) ? overrides.get(relative).seconds : capSeconds;
+    for (const violation of findTimeouts(fs.readFileSync(file, 'utf8'), cap)) {
+      all.push(`${relative}:${violation.line}: ${violation.kind} ${violation.value} exceeds ${cap}s runner cap`);
     }
   }
   if (all.length) {
@@ -90,7 +93,7 @@ function main() {
     for (const line of all) console.error(`  ${line}`);
     process.exit(1);
   }
-  console.log(`check-test-timeouts: OK (${tests.length} listed tests, runner cap ${capSeconds}s)`);
+  console.log(`check-test-timeouts: OK (${tests.length} listed tests, default ${capSeconds}s, ${overrides.size} explicit overrides)`);
 }
 
 if (require.main === module) main();

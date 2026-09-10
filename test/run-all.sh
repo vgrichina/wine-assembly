@@ -21,17 +21,19 @@ cd "$(dirname "$0")/.."
 
 # Args in any order: the tier name, plus -jN / --jobs=N / --heap=MB.
 TIER=all
+TEST_TIMEOUT_EXPLICIT=0
+if [ -n "${TEST_TIMEOUT:-}" ]; then TEST_TIMEOUT_EXPLICIT=1; fi
 for a in "$@"; do
   case "$a" in
     -j*)        JOBS="${a#-j}" ;;
     --jobs=*)   JOBS="${a#--jobs=}" ;;
     --heap=*)   TEST_HEAP_MB="${a#--heap=}" ;;
-    --timeout=*) TEST_TIMEOUT="${a#--timeout=}" ;;
+    --timeout=*) TEST_TIMEOUT="${a#--timeout=}"; TEST_TIMEOUT_EXPLICIT=1 ;;
     -h|--help)
       echo "usage: test/run-all.sh [all|unit|quick|e2e|smoke] [-jN|--jobs=N] [--heap=MB] [--timeout=SEC]"
       echo "  -jN / --jobs=N   tests to run at once (default: CPU count; env JOBS also works)"
       echo "  --heap=MB        per-child JS heap cap (default 2048; env TEST_HEAP_MB)"
-      echo "  --timeout=SEC    kill a test that runs longer (default 300; env TEST_TIMEOUT, 0 disables)"
+      echo "  --timeout=SEC    override all test caps (default 300 plus documented per-test exceptions; env TEST_TIMEOUT, 0 disables)"
       exit 0 ;;
     -*)         echo "unknown option: $a" >&2; exit 2 ;;
     *)          TIER="$a" ;;
@@ -1008,10 +1010,35 @@ TEST_HEAP_MB="${TEST_HEAP_MB:-2048}"
 # a single hung child holds its slot forever and the summary never prints.
 # Every child now gets a wall-clock cap and is reported as TIMEOUT, which
 # counts as a failure -- a suite that stalls is a suite nobody waits for.
-# The cap is deliberately far above what any test needs (the slowest gameplay
-# test measures 8.5s) so it catches hangs, not slow machines.
+# Longer gameplay checks have documented exceptions shared with the budget gate.
+# Explicit CLI/environment caps remain authoritative; empty env uses defaults.
 DEFAULT_TEST_TIMEOUT=300
-TEST_TIMEOUT="${TEST_TIMEOUT:-$DEFAULT_TEST_TIMEOUT}"
+if [ "$TEST_TIMEOUT_EXPLICIT" -eq 1 ]; then
+  TEST_TIMEOUT=$(node tools/test-timeouts.js --validate-global "$TEST_TIMEOUT") || exit 2
+fi
+timeout_override_rows=$(node tools/test-timeouts.js) || exit 2
+timeout_override_paths=() timeout_override_seconds=()
+while IFS=$'\t' read -r timeout_path timeout_seconds; do
+  [ -n "$timeout_path" ] || continue
+  timeout_override_paths+=("$timeout_path")
+  timeout_override_seconds+=("$timeout_seconds")
+done <<< "$timeout_override_rows"
+
+test_timeout_for() {
+  if [ "$TEST_TIMEOUT_EXPLICIT" -eq 1 ]; then
+    printf '%s\n' "$TEST_TIMEOUT"
+    return
+  fi
+  local timeout_i=0
+  while [ "$timeout_i" -lt "${#timeout_override_paths[@]}" ]; do
+    if [ "${timeout_override_paths[$timeout_i]}" = "$1" ]; then
+      printf '%s\n' "${timeout_override_seconds[$timeout_i]}"
+      return
+    fi
+    timeout_i=$((timeout_i + 1))
+  done
+  printf '%s\n' "$DEFAULT_TEST_TIMEOUT"
+}
 SKIP_EXIT_STATUS=77
 
 # bash 3.2 (what macOS ships) has no `wait -n`, so slots are polled.
@@ -1025,7 +1052,7 @@ run_tier() {
   echo "=== $tier_name (${#files[@]} files, ${JOBS} at a time) ==="
   local start_tier=$SECONDS
 
-  local slot_pid=() slot_name=() slot_log=() slot_start=()
+  local slot_pid=() slot_name=() slot_log=() slot_start=() slot_timeout=()
   local i=0
   while [ $i -lt "$JOBS" ]; do slot_pid[$i]=""; i=$((i + 1)); done
 
@@ -1044,6 +1071,7 @@ run_tier() {
         slot_name[$i]="$name"
         slot_log[$i]="$log_dir/$name.log"
         slot_start[$i]=$SECONDS
+        slot_timeout[$i]=$(test_timeout_for "$f")
         NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=$TEST_HEAP_MB" \
           WA_TEST_SKIP_EXIT="$SKIP_EXIT_STATUS" \
           node --require "$PWD/test/skip-exit.js" "$f" >"${slot_log[$i]}" 2>&1 &
@@ -1062,13 +1090,13 @@ run_tier() {
       # hung test frees its slot instead of holding it for the whole run. The
       # test process usually has a test/run.js child of its own; kill that
       # first, or it keeps running with nobody left to read its output.
-      if [ -n "$pid" ] && [ "$TEST_TIMEOUT" -gt 0 ] \
-         && [ $((SECONDS - ${slot_start[$i]})) -ge "$TEST_TIMEOUT" ] \
+      if [ -n "$pid" ] && [ "${slot_timeout[$i]}" -gt 0 ] \
+         && [ $((SECONDS - ${slot_start[$i]})) -ge "${slot_timeout[$i]}" ] \
          && kill -0 "$pid" 2>/dev/null; then
         pkill -9 -P "$pid" 2>/dev/null
         kill -9 "$pid" 2>/dev/null
         wait "$pid" 2>/dev/null || true
-        echo "run-all: killed after ${TEST_TIMEOUT}s wall clock" >>"${slot_log[$i]}"
+        echo "run-all: killed after ${slot_timeout[$i]}s wall clock" >>"${slot_log[$i]}"
         printf "TIME  %-40s  %3ds  %s\n" "${slot_name[$i]}" "$((SECONDS - ${slot_start[$i]}))" "${slot_log[$i]}"
         failed=$((failed + 1))
         fail_list+=("${slot_name[$i]} (timeout)")

@@ -176,7 +176,7 @@ async function main() {
     '--batch-size=500000',
     '--tick-ms-per-batch=250',
     '--max-batches=1000000',
-    '--max-seconds=240',
+    '--max-seconds=600',
     '--repaint-every=2',
     '--quiet-api',
     '--quiet-blocks',
