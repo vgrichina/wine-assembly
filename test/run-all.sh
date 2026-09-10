@@ -39,6 +39,9 @@ for a in "$@"; do
 done
 
 UNIT=(
+  test/test-runtime-thread-ownership.js
+  test/test-browser-cooperative-budget.js
+  test/test-perf-block-accounting.js
   test/test-skip-exit.js
   test/test-test-timeout-manifest.js
   test/test-check-parens.js
@@ -645,6 +648,7 @@ UNIT=(
 )
 
 E2E=(
+  test/test-web-overlay-store.js
   test/test-win16-wep-gameplay.js
   test/test-win16-vb-gameplay.js
   test/test-rodent2000-gameplay.js
@@ -664,6 +668,7 @@ E2E=(
   test/test-abedemo-gameplay.js
   test/test-atomic-bomberman-gameplay.js
   test/test-dungeon-keeper-gameplay.js
+  test/test-darkstone-gameplay.js
   test/test-baldurs-gate-demos.js
   test/test-diablo-shareware-art.js
   test/test-diablo-shareware-gameplay.js

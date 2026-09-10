@@ -5623,14 +5623,13 @@ async function main() {
             we.send_message(found, 0x0202, 0, 0);
             logs.push(`[input] find-click: id=0x${ev.ctrlId.toString(16)} hwnd=0x${found.toString(16)} at batch ${batch}`);
             {
-              const dv = new DataView(memory.buffer);
               const entries = [];
-              for (let i = 0; i < 8; i++) {
-                const h = dv.getUint32(0x400 + i*16, true);
-                const m = dv.getUint32(0x400 + i*16 + 4, true);
+              for (let i = 0; i < we.post_queue_depth(); i++) {
+                const h = we.post_queue_peek(i, 0);
+                const m = we.post_queue_peek(i, 1);
                 if (!h && !m) continue;
-                const wp = dv.getUint32(0x400 + i*16 + 8, true);
-                const lp = dv.getUint32(0x400 + i*16 + 12, true);
+                const wp = we.post_queue_peek(i, 2);
+                const lp = we.post_queue_peek(i, 3);
                 entries.push(`[${i}] h=0x${h.toString(16)} m=0x${m.toString(16)} wp=0x${wp.toString(16)} lp=0x${lp.toString(16)}`);
               }
               logs.push(`[input] post_queue after find-click: ${entries.length ? entries.join(' | ') : '(empty)'}`);
@@ -7882,45 +7881,29 @@ async function main() {
         const verifyStr = Array.from(mem8.slice(g2w(nameGA), g2w(nameGA) + nameLen)).map(c => String.fromCharCode(c)).join('');
         const verifyPtr = we.guest_read32(ptrGA);
         logs.push(`[winamp-play] nameGA=0x${nameGA.toString(16)} ptrGA=0x${ptrGA.toString(16)} str="${verifyStr}" [ptrGA]=0x${verifyPtr.toString(16)}`);
-        const dv = new DataView(memory.buffer);
         const mainHwnd = we.get_main_hwnd();
         // Restore original WndProc so IPC reaches Winamp's handler
         const origWndproc = we.get_wndproc();
         if (we.wnd_table_set) {
           we.wnd_table_set(mainHwnd, origWndproc);
         }
-        const postCount = we.get_post_queue_count ? we.get_post_queue_count() : 0;
         const ipcMsgs = [
           { hwnd: mainHwnd, msg: 0x400, wParam: 0, lParam: 101 },       // IPC_DELETE
           { hwnd: mainHwnd, msg: 0x400, wParam: ptrGA, lParam: 100 },    // IPC_PLAYFILE (wParam -> ptr -> string)
           // IPC_PLAYFILE auto-plays; don't send IPC_STARTPLAY here — it would Stop() the
           // just-started decode threads and restart, wasting decoded audio.
         ];
-        for (let i = 0; i < ipcMsgs.length && postCount + i < 8; i++) {
-          const off = 0x400 + (postCount + i) * 16;
-          dv.setUint32(off, ipcMsgs[i].hwnd, true);
-          dv.setUint32(off + 4, ipcMsgs[i].msg, true);
-          dv.setUint32(off + 8, ipcMsgs[i].wParam, true);
-          dv.setUint32(off + 12, ipcMsgs[i].lParam, true);
-        }
-        if (we.set_post_queue_count) {
-          we.set_post_queue_count(postCount + Math.min(ipcMsgs.length, 8 - postCount));
+        for (const msg of ipcMsgs) {
+          if (!we.post_message_q(msg.hwnd, msg.msg, msg.wParam, msg.lParam))
+            throw new Error('winamp-play: post queue full');
         }
         logs.push(`[input] winamp-play: "${ev.filename}" at GA=0x${nameGA.toString(16)} batch ${batch}`);
       } else if (ev.action === 'winamp-start') {
         // Post IPC_STARTPLAY to the main Winamp window
         const we = instance.exports;
         const mainHwnd = we.get_main_hwnd();
-        const postCount = we.get_post_queue_count ? we.get_post_queue_count() : 0;
-        if (postCount < 8) {
-          const dv = new DataView(memory.buffer);
-          const off = 0x400 + postCount * 16;
-          dv.setUint32(off, mainHwnd, true);
-          dv.setUint32(off + 4, 0x400, true);     // WM_USER
-          dv.setUint32(off + 8, 0, true);          // wParam=0
-          dv.setUint32(off + 12, 102, true);       // lParam=102 (IPC_STARTPLAY)
-          we.set_post_queue_count(postCount + 1);
-        }
+        if (!we.post_message_q(mainHwnd, 0x400, 0, 102))
+          throw new Error('winamp-start: post queue full');
         logs.push(`[input] winamp-start at batch ${batch}`);
       } else if (ev.action === 'post-cmd') {
         const we = instance.exports;
@@ -7939,16 +7922,8 @@ async function main() {
             if (hasMenu) { mainHwnd = parseInt(hs, 10) || mainHwnd; break; }
           }
         }
-        const postCount = we.get_post_queue_count ? we.get_post_queue_count() : 0;
-        if (postCount < 8) {
-          const dv = new DataView(memory.buffer);
-          const off = 0x400 + postCount * 16;
-          dv.setUint32(off, mainHwnd, true);
-          dv.setUint32(off + 4, 0x111, true);     // WM_COMMAND
-          dv.setUint32(off + 8, ev.wParam, true);
-          dv.setUint32(off + 12, 0, true);
-          we.set_post_queue_count(postCount + 1);
-        }
+        if (!we.post_message_q(mainHwnd, 0x111, ev.wParam, 0))
+          throw new Error('post-cmd: post queue full');
         logs.push(`[input] post-cmd wParam=0x${ev.wParam.toString(16)} at batch ${batch}`);
       } else if (ev.action === 'poke') {
         const wa = g2w(ev.addr);

@@ -1680,7 +1680,7 @@
     (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
     (then
     ;; Dequeue first message (shift queue down)
-    (local.set $tmp (i32.const 0x400))
+    (local.set $tmp (call $post_queue_base))
     (local.set $msg (i32.load offset=4 (local.get $tmp)))
     (call $gs32 (local.get $msg_ptr) (i32.load (local.get $tmp)))                        ;; hwnd
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (local.get $msg))           ;; msg
@@ -1689,7 +1689,7 @@
     ;; Shift remaining messages down
     (global.set $post_queue_count (i32.sub (global.get $post_queue_count) (i32.const 1)))
     (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
-    (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
+    (then (call $memcpy (call $post_queue_base) (i32.add (call $post_queue_base) (i32.const 16))
     (i32.mul (global.get $post_queue_count) (i32.const 16)))))
     ;; GetMessage returns zero for WM_QUIT even when it arrived through a
     ;; posted-message queue rather than PostQuitMessage's process-local flag.
@@ -2077,12 +2077,12 @@
             (local.set $tmp (global.get $pending_input_hwnd))
             (if (i32.eqz (local.get $tmp))
               (then (local.set $tmp (global.get $main_hwnd))))
-            (drop (call $post_queue_push
+            (if (call $post_queue_push
               (local.get $tmp)
               (i32.and (local.get $packed) (i32.const 0xFFFF))
               (i32.shr_u (local.get $packed) (i32.const 16))
-              (global.get $pending_input_lparam)))
-            (global.set $pending_input_packed (i32.const 0))
+              (global.get $pending_input_lparam))
+              (then (global.set $pending_input_packed (i32.const 0))))
           )
         )
       )
@@ -2100,7 +2100,7 @@
             (br_if $post_scan_done
               (i32.ge_u (local.get $qidx) (global.get $post_queue_count)))
             (local.set $qaddr
-              (i32.add (i32.const 0x400)
+              (i32.add (call $post_queue_base)
                 (i32.mul (local.get $qidx) (i32.const 16))))
             (local.set $qmsg (i32.load offset=4 (local.get $qaddr)))
             (br_if $post_scan_done
@@ -2122,7 +2122,7 @@
         (if (i32.lt_u (local.get $qidx) (global.get $post_queue_count))
           (then
             (local.set $qaddr
-              (i32.add (i32.const 0x400)
+              (i32.add (call $post_queue_base)
                 (i32.mul (local.get $qidx) (i32.const 16))))
             (call $gs32 (local.get $arg0) (i32.load (local.get $qaddr)))
             (call $gs32 (i32.add (local.get $arg0) (i32.const 4))
@@ -3157,13 +3157,16 @@
       (then
         (global.set $eax (call $shared_post_queue_enqueue
           (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+        (if (i32.eqz (global.get $eax))
+          (then (global.set $last_error (i32.const 1816)))) ;; ERROR_NOT_ENOUGH_QUOTA
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
     ;; One funnel for the queue, so every posted message is visible to
     ;; --trace-win16 and there is one place that knows the layout.
-    (drop (call $post_queue_push
+    (global.set $eax (call $post_queue_push
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-    (global.set $eax (i32.const 1))
+    (if (i32.eqz (global.get $eax))
+      (then (global.set $last_error (i32.const 1816)))) ;; ERROR_NOT_ENOUGH_QUOTA
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 

@@ -135,20 +135,13 @@ async function runApp(page, port, app) {
   }, { timeout: 60000 }, app.key, app.title);
 
   if (app.deal) {
-    // Straight into the post queue at 0x400, the way test/run.js --input
+    // Straight into the thread's post queue, the way test/run.js --input
     // post-cmd does it: a menu command needs no menu interaction to arrive.
     await page.evaluate((key, cmd) => {
       const wine = runningApps.find(item => item && item.name === key).wine;
       const we = wine.instance.exports;
-      const count = we.get_post_queue_count();
-      if (count >= 8) throw new Error('post queue full');
-      const dv = new DataView(wine.memory.buffer);
-      const off = 0x400 + count * 16;
-      dv.setUint32(off, we.get_main_hwnd(), true);
-      dv.setUint32(off + 4, 0x111, true);          // WM_COMMAND
-      dv.setUint32(off + 8, cmd, true);
-      dv.setUint32(off + 12, 0, true);
-      we.set_post_queue_count(count + 1);
+      if (!we.post_message_q(we.get_main_hwnd(), 0x111, cmd, 0))
+        throw new Error('post queue full');
     }, app.key, app.deal);
     await page.waitForFunction((key, target) => {
       const item = runningApps.find(a => a && a.name === key);

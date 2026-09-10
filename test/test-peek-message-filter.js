@@ -44,7 +44,7 @@ const extraWat = String.raw`
       get_ticks: () => now,
     },
   });
-  const queue = new DataView(memory.buffer, 0x400, 64);
+  const queue = new DataView(memory.buffer, e.get_post_queue_base(), 64);
   const msgWa = e.get_guest_base() + 0x3000;
   const msg = new DataView(memory.buffer, msgWa, 28);
 

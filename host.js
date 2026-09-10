@@ -506,7 +506,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '298';
+  static SOURCE_VERSION = '299';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -2171,7 +2171,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=31',
+        workerUrl: 'lib/guest-worker.js?v=32',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
@@ -2227,6 +2227,9 @@ class WineAssembly {
 
     let entry;
     if (this.guestWorker) {
+      // Host callbacks use this idle instance over the Worker's memory. Its
+      // queue and lock ownership must remain distinct from every guest slot.
+      this.instance.exports.set_host_shadow(1);
       entry = await this.guestWorker.loadPe(
         exeBytes, exeName, this.processId, {
           extraArgs: this._extraArgs || '',
@@ -3209,7 +3212,8 @@ class WineAssembly {
         // Only a slice that actually spent its block budget is a useful speed
         // sample. Waits and INPUT_WAKE return early and must not distort the
         // next normal budget.
-        const ranBlocks = r.blocks | 0;
+        // A trap may leave the previous completed run's counter in the VM.
+        const ranBlocks = r.trapped ? 0 : r.blocks | 0;
         const ranMs = Number(r.ms) || 0;
         if (!inputBurstSlice && ranBlocks >= steps * 0.75 && ranMs > 0) {
           const measured = Math.round((ranBlocks * 12 / ranMs) / 1000) * 1000;
@@ -3230,7 +3234,8 @@ class WineAssembly {
         // thing worth knowing when a threaded app goes quiet.
         self.workerThreadsRun = threadsRun | 0;
         if (perf) {
-          perf.countSteps(ranBlocks > 0 ? ranBlocks : steps);
+          perf.countBlocks(Math.max(0, ranBlocks) +
+            (self.threadManager ? self.threadManager.lastWorkerSliceBlocks || 0 : 0));
           // Off-thread time is reported as thread time, not main time: it did
           // not block this thread, and calling it 'guest' here would make the
           // HUD's phase shares mean something different than in the other mode.
@@ -3860,6 +3865,43 @@ class WineAssembly {
     if (fn && this.running) this._scheduleStep(fn, 0);
   }
 
+  // Cooperatively yield at complete block boundaries. Each call remains
+  // non-preemptible (including a native guest API), so use small measured
+  // quanta and check elapsed host time between them. A guest yield/debug halt
+  // must return to the existing host state machine, never be resumed here.
+  _runCooperativeSlice(maxBlocks) {
+    const ex = this.instance.exports;
+    const now = () => this._audioSchedulerNow();
+    const start = now();
+    let blocks = 0;
+    let remaining = Math.max(1, maxBlocks | 0);
+    let hitDeadline = false;
+    do {
+      const quantum = this._frozen ? remaining : Math.min(remaining,
+        Math.max(1, this._cooperativeQuantumBlocks || 128));
+      const before = now();
+      ex.run(quantum);
+      const ran = ex.get_last_run_blocks ? Math.max(0, ex.get_last_run_blocks()) : 0;
+      const elapsed = Math.max(0, now() - before);
+      blocks += ran;
+      remaining -= ran;
+      if (!this._frozen && ran >= quantum && elapsed > 0) {
+        // Target roughly 1ms per quantum; limit growth after a cheap phase.
+        this._cooperativeQuantumBlocks = Math.max(1,
+          Math.min(2048, quantum * 2, Math.floor(ran / elapsed)));
+      }
+      if (!ran || remaining <= 0 || !ex.get_last_run_halt ||
+          ex.get_last_run_halt() !== 1 ||
+          (ex.get_yield_reason && ex.get_yield_reason()) ||
+          (ex.get_eip && !ex.get_eip())) break;
+      if (!this._frozen && now() - start >= 8) {
+        hitDeadline = true;
+        break;
+      }
+    } while (remaining > 0);
+    return { blocks, hitDeadline, elapsedMs: Math.max(0, now() - start) };
+  }
+
   run(stepsPerSlice = 100000) {
     this.stepsPerSlice = stepsPerSlice;
     if (this.guestWorker) return this._runThreaded(stepsPerSlice);
@@ -3935,9 +3977,12 @@ class WineAssembly {
           const runStart = self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : 0;
           const pageProfile = (typeof window !== 'undefined' && window.__aoeProfile) || null;
           const pageProfileStart = pageProfile && typeof performance !== 'undefined' ? performance.now() : 0;
-          if (perf) perf.countSteps(activeStepsPerSlice);
           const perfMainStart = perf ? performance.now() : 0;
-          self.instance.exports.run(activeStepsPerSlice);
+          const mainStats = self._runCooperativeSlice(activeStepsPerSlice);
+          if (perf) {
+            perf.countBlocks(mainStats.blocks);
+            perf.markThrottled(mainStats.hitDeadline);
+          }
           // Browser waveOut completion is driven by AudioContext timeouts.
           // CALLBACK_FUNCTION clients cannot enter guest code from that
           // timeout: doing so would overwrite whichever x86 frame a slice is
@@ -3968,12 +4013,12 @@ class WineAssembly {
           }
           if (pageProfileStart && pageProfile && pageProfile.add) {
             const dt = performance.now() - pageProfileStart;
-            pageProfile.add('main.runSlice', dt, { steps: activeStepsPerSlice });
-            if (pageProfile.frame) pageProfile.frame('main.runSlice', { dtMs: dt, steps: activeStepsPerSlice });
+            pageProfile.add('main.runSlice', dt, { blocks: mainStats.blocks });
+            if (pageProfile.frame) pageProfile.frame('main.runSlice', { dtMs: dt, blocks: mainStats.blocks });
           }
           if (runStart && self.renderer && self.renderer._profileMark) {
             self.renderer._profileMark('wasm-run-slice', {
-              steps: activeStepsPerSlice,
+              blocks: mainStats.blocks,
               ms: self.renderer._profileNow() - runStart,
             });
           }
@@ -4125,7 +4170,7 @@ class WineAssembly {
                 maxTotalSteps: recentInputWake ? (64 * 1024 * 1024) : (2 * 1024 * 1024),
                 serviceLoadLibraries: () => self.handleCooperativeThreadLoadLibraries(),
               });
-              if (perf && wakeStats) perf.countSteps(wakeStats.steps | 0);
+              if (perf && wakeStats) perf.countBlocks(wakeStats.blocks || 0);
             }
             // Recent input used to zero the worker budget outright, so the
             // main thread could deliver the message without competition.
@@ -4163,12 +4208,12 @@ class WineAssembly {
                 // by its own idle loop. That distinction is invisible from
                 // the page's frame rate, which stays a perfect 60 either way.
                 if (perf && threadStats) {
-                  perf.countSteps(threadStats.steps | 0);
+                  perf.countBlocks(threadStats.blocks || 0);
                   perf.markThrottled(!!threadStats.hitDeadline);
                 }
               } else {
                 const sliceStats = self.threadManager.runSlice(threadBudget);
-                if (perf && sliceStats) perf.countSteps(sliceStats.steps | 0);
+                if (perf && sliceStats) perf.countBlocks(sliceStats.blocks || 0);
               }
             }
             if (perf) perf.mark('workers', performance.now() - perfThreadStart);

@@ -55,7 +55,7 @@ const extraWat = String.raw`
   const { exports: e, memory } = await bootRenderHarness({ extraWat });
   const guestMsg = 0x3000;
   const msg = new DataView(memory.buffer, e.get_guest_base() + guestMsg, 16);
-  const queue = new DataView(memory.buffer, 0x400, 16);
+  const queue = new DataView(memory.buffer, e.get_post_queue_base(), 16);
 
   queue.setUint32(0, 0x1234, true);
   queue.setUint32(4, 0x0401, true);

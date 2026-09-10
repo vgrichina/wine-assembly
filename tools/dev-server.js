@@ -450,7 +450,7 @@ async function handlePerf(req, res, opts) {
   console.log(
     `${t} ${String(batch.session || '?').slice(0, 6)} `
     + `present ${String(guestFps).padStart(3)}/s  page ${String(Math.round(snap.fps || 0)).padStart(2)}  `
-    + `steps ${((snap.stepsPerSec || 0) / 1e6).toFixed(1)}M/s  `
+    + `blocks ${((snap.blocksPerSec || 0) / 1e6).toFixed(1)}M/s  `
     + `step p50 ${pct(totals, 50).toFixed(1)} p99 ${pct(totals, 99).toFixed(1)}ms  `
     + `guest ${share(1)}% thr ${share(2)}% paint ${share(3)}%  `
     + `throttled ${Math.round((throttled / Math.max(1, steps.length)) * 100)}%  `

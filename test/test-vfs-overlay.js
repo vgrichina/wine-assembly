@@ -116,6 +116,137 @@ class FakeOpfsFileHandle {
   }
 }
 
+// Web Locks model: independent store instances share an origin lock manager.
+class FakeLocks {
+  constructor() { this.names = new Map(); }
+  request(name, options, callback) {
+    let state = this.names.get(name);
+    if (!state) this.names.set(name, state = { active: [], queue: [] });
+    return new Promise((resolve, reject) => {
+      const job = { options, callback, resolve, reject };
+      const available = () => !state.active.length ||
+        (options.mode === 'shared' && state.active.every(j => j.options.mode === 'shared'));
+      if (options.ifAvailable && (!available() || state.queue.length)) {
+        Promise.resolve().then(() => callback(null)).then(resolve, reject);
+        return;
+      }
+      state.queue.push(job);
+      const drain = () => {
+        while (state.queue.length) {
+          const next = state.queue[0];
+          if (state.active.length && (next.options.mode !== 'shared' ||
+              state.active.some(j => j.options.mode !== 'shared'))) return;
+          state.queue.shift();
+          state.active.push(next);
+          Promise.resolve().then(() => next.callback({ name })).then(next.resolve, next.reject)
+            .finally(() => { state.active.splice(state.active.indexOf(next), 1); drain(); });
+        }
+      };
+      drain();
+    });
+  }
+}
+const locks = new FakeLocks();
+
+test('OPFS writers serialize fresh indexes and reclaim obsolete immutable blobs', async () => {
+  const root = new FakeOpfsDirectoryHandle();
+  const a = opfsStore('writers', { root, locks });
+  const b = opfsStore('writers', { root, locks });
+  const file = (path, data) => ({ path, kind: 'file', data: bytes(data) });
+  await Promise.all([a.list(), b.list()]);
+  await Promise.all([a.writeBatch([file('a', 'AAA')]), b.writeBatch([file('b', 'BBB')])]);
+  assert.strictEqual(text(await a.read('a')), 'AAA');
+  assert.strictEqual(text(await b.read('b')), 'BBB');
+  assert.strictEqual((await a.list()).length, 2);
+  await b.writeBatch([file('a', 'NEW')]);
+  await opfsStore('writers', { root, locks }).list();
+  assert.strictEqual(text(await a.read('a')), 'NEW');
+  await b.list();
+  const blobDir = [...root.dirs.get('wine-assembly').dirs.get('overlays').dirs.values()][0].dirs.get('blobs');
+  assert.strictEqual(blobDir.files.size, 2, 'obsolete blobs are reclaimed after commit');
+  await assert.rejects(opfsStore('unsafe', { root, locks: {} }).list(), /Web Locks/);
+});
+
+test('OPFS failed index publication preserves data and recovers without orphan collisions', async () => {
+  const root = new FakeOpfsDirectoryHandle();
+  const store = opfsStore('failure', { root, locks });
+  const file = data => ({ path: 'save', kind: 'file', data: bytes(data) });
+  await store.writeBatch([file('OLD')]);
+  const original = FakeOpfsFileHandle.prototype.createWritable;
+  FakeOpfsFileHandle.prototype.createWritable = async function () {
+    const writable = await original.call(this);
+    if (this.name === 'index.json') writable.close = async () => { throw new Error('index failure'); };
+    return writable;
+  };
+  try {
+    await assert.rejects(store.writeBatch([file('NEW-LONG')]), /index failure/);
+    await assert.rejects(store.remove('save'), /index failure/);
+  } finally { FakeOpfsFileHandle.prototype.createWritable = original; }
+  assert.strictEqual(text(await store.read('save')), 'OLD');
+  assert.strictEqual(text(await opfsStore('failure', { root, locks }).read('save')), 'OLD');
+  await store.writeBatch([file('RETRY')]);
+  assert.strictEqual(text(await store.read('save')), 'RETRY');
+});
+
+test('OPFS hydration captures one index and holds writers until snapshot reads complete', async () => {
+  const root = new FakeOpfsDirectoryHandle();
+  const a = opfsStore('snapshot', { root, locks });
+  const b = opfsStore('snapshot', { root, locks });
+  await a.writeBatch([
+    { path: 'c:\\a', kind: 'file', data: bytes('OLD-A') },
+    { path: 'c:\\b', kind: 'file', data: bytes('OLD-B') },
+  ]);
+  let unblock, started;
+  const gate = new Promise(resolve => { unblock = resolve; });
+  const entered = new Promise(resolve => { started = resolve; });
+  let indexReads = 0, blocked = false;
+  const original = FakeOpfsFileHandle.prototype.getFile;
+  FakeOpfsFileHandle.prototype.getFile = async function () {
+    if (this.name === 'index.json') indexReads++;
+    if (this.name.endsWith('.bin') && !blocked) {
+      blocked = true; started(); await gate;
+    }
+    return original.call(this);
+  };
+  try {
+    const vfs = new VirtualFS();
+    const hydrate = VfsOverlay.attach(vfs, { store: a }).hydrate();
+    await entered;
+    let written = false;
+    const writer = b.writeBatch([{ path: 'c:\\b', kind: 'file', data: bytes('NEW-B') }])
+      .then(() => { written = true; });
+    await Promise.resolve();
+    assert.strictEqual(written, false);
+    assert.strictEqual(indexReads, 1, 'hydration reads the index once for all files');
+    unblock();
+    await hydrate;
+    await writer;
+    assert.strictEqual(text(vfs.files.get('c:\\a').data), 'OLD-A');
+    assert.strictEqual(text(vfs.files.get('c:\\b').data), 'OLD-B');
+    assert.strictEqual(text(await a.read('c:\\b')), 'NEW-B');
+  } finally { unblock(); FakeOpfsFileHandle.prototype.getFile = original; }
+});
+
+
+test('Node failed replacement and deletion keep the old committed bytes', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-overlay-atomic-'));
+  const store = nodeDirStore(dir);
+  const file = data => ({ path: 'save', kind: 'file', data: bytes(data) });
+  try {
+    await store.writeBatch([file('OLD')]);
+    const rename = fs.renameSync;
+    fs.renameSync = () => { throw new Error('index rename failure'); };
+    try {
+      await assert.rejects(store.writeBatch([file('NEW-LONG')]), /index rename failure/);
+      await assert.rejects(store.remove('save'), /index rename failure/);
+    } finally { fs.renameSync = rename; }
+    assert.strictEqual(text(await store.read('save')), 'OLD');
+    assert.strictEqual(text(await nodeDirStore(dir).read('save')), 'OLD');
+    await store.writeBatch([file('RETRY')]);
+    assert.strictEqual(text(await store.read('save')), 'RETRY');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 class FakeOpfsDirectoryHandle {
   constructor() {
     this.dirs = new Map();
@@ -312,7 +443,7 @@ test('the browser OPFS store survives reload byte-exactly and isolates imports',
   const first = new VirtualFS();
   first.files.set('c:\\old.txt', { data: bytes('base'), attrs: 0x20 });
   const overlay = VfsOverlay.attach(first, {
-    store: opfsStore('kept-disc-a', { root }),
+    store: opfsStore('kept-disc-a', { root, locks }),
   });
   writeGuestFile(first, 'C:\\installed\\game.exe', 'MZ\0browser overlay');
   assert.ok(first.deleteFile('C:\\old.txt'));
@@ -324,7 +455,7 @@ test('the browser OPFS store survives reload byte-exactly and isolates imports',
   const second = new VirtualFS();
   second.files.set('c:\\old.txt', { data: bytes('base'), attrs: 0x20 });
   const replay = VfsOverlay.attach(second, {
-    store: opfsStore('kept-disc-a', { root }),
+    store: opfsStore('kept-disc-a', { root, locks }),
   });
   const hydrated = await replay.hydrate();
   assert.deepStrictEqual(
@@ -334,13 +465,13 @@ test('the browser OPFS store survives reload byte-exactly and isolates imports',
     'MZ\0browser overlay');
   assert.ok(!second.files.has('c:\\old.txt'), 'the OPFS whiteout resurrected after reload');
 
-  const other = opfsStore('kept-disc-b', { root });
+  const other = opfsStore('kept-disc-b', { root, locks });
   assert.deepStrictEqual(await other.list(), [],
     'one imported disc must not see another import\'s writable C: journal');
-  assert.strictEqual(await removeOpfsScope('kept-disc-a', { root }), true);
-  assert.deepStrictEqual(await opfsStore('kept-disc-a', { root }).list(), [],
+  assert.strictEqual(await removeOpfsScope('kept-disc-a', { root, locks }), true);
+  assert.deepStrictEqual(await opfsStore('kept-disc-a', { root, locks }).list(), [],
     'removing a kept import must remove its otherwise-unreachable C: journal');
-  assert.strictEqual(await removeOpfsScope('missing-disc', { root }), false);
+  assert.strictEqual(await removeOpfsScope('missing-disc', { root, locks }), false);
 });
 
 test('overlay metadata keeps safe-integer sizes instead of wrapping at 2GB', () => {

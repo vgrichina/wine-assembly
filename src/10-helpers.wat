@@ -319,9 +319,14 @@
   ;; Recursive by owner id, so a critical section that reaches another function
   ;; taking the same lock deadlocks nothing. That is defence rather than a
   ;; feature: nothing here nests deliberately.
+  (func $lock_owner_id (result i32)
+    ;; A shadow bridge can run concurrently with the guest using its metadata
+    ;; slot. Distinguish their lock identities so they cannot falsely recurse.
+    (i32.or (global.get $current_thread_id)
+      (select (i32.const 0x80000000) (i32.const 0) (global.get $host_shadow))))
   (func $lock_acquire (param $lock i32)
     (local $me i32) (local $spins i32)
-    (local.set $me (global.get $current_thread_id))
+    (local.set $me (call $lock_owner_id))
     (if (i32.eq (i32.atomic.load (local.get $lock)) (local.get $me))
       (then
         (i32.store (i32.add (local.get $lock) (i32.const 4))
@@ -521,6 +526,7 @@
     (global.set $heap_base (local.get $base))
     (global.set $heap_ptr (i32.const 0))
     (global.set $heap_end (i32.const 0))
+    (global.set $heap_arena_record (i32.const 0))
     (i32.store (global.get $HEAP_SHARED) (local.get $base))
     (i32.store (i32.add (global.get $HEAP_SHARED) (i32.const 4)) (local.get $base)))
 
@@ -554,6 +560,50 @@
         ;; the image — but drop it anyway rather than reason about that here.
         (global.set $heap_ptr (i32.const 0))
         (global.set $heap_end (i32.const 0)))))
+
+  ;; Register a reserved arena before publishing any allocations from it. Each
+  ;; record has one writer (the reserving instance); frees only read it. The
+  ;; allocated end, unlike the process reservation cursor, excludes unused tail
+  ;; bytes and DLL gaps. Records remain valid when that instance changes chunks.
+  (func $heap_arena_register (param $base i32) (param $end i32) (result i32)
+    (local $count i32) (local $rec i32)
+    (block $claimed (loop $retry
+      (local.set $count (i32.atomic.load (global.get $HEAP_ARENAS)))
+      (if (i32.ge_u (local.get $count) (i32.const 1024))
+        (then (return (i32.const 0))))
+      (br_if $claimed (i32.eq (local.get $count)
+        (i32.atomic.rmw.cmpxchg (global.get $HEAP_ARENAS) (local.get $count)
+          (i32.add (local.get $count) (i32.const 1)))))
+      (br $retry)))
+    (local.set $rec (i32.add (global.get $HEAP_ARENAS)
+      (i32.add (i32.const 16) (i32.mul (local.get $count) (i32.const 16)))))
+    (i32.store offset=4 (local.get $rec) (local.get $end))
+    (i32.atomic.store offset=8 (local.get $rec) (local.get $base))
+    ;; Publishing base last makes a partially registered record invisible.
+    (i32.atomic.store (local.get $rec) (local.get $base))
+    (local.get $rec))
+
+  ;; Find the authoritative allocated extent containing this header. Never map
+  ;; or read an untrusted guest pointer until this succeeds.
+  (func $heap_arena_find (param $block i32) (result i32)
+    (local $count i32) (local $i i32) (local $rec i32) (local $base i32)
+    (if (i32.and (local.get $block) (i32.const 7))
+      (then (return (i32.const 0))))
+    (local.set $count (i32.atomic.load (global.get $HEAP_ARENAS)))
+    (if (i32.gt_u (local.get $count) (i32.const 1024))
+      (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec (i32.add (global.get $HEAP_ARENAS)
+        (i32.add (i32.const 16) (i32.mul (local.get $i) (i32.const 16)))))
+      (local.set $base (i32.atomic.load (local.get $rec)))
+      (if (local.get $base) (then
+        (if (i32.and (i32.ge_u (local.get $block) (local.get $base))
+              (i32.lt_u (local.get $block) (i32.atomic.load offset=8 (local.get $rec))))
+          (then (return (local.get $rec))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
 
   ;; Reserve this instance's next private chunk of the low guest heap window.
   ;; The cursor is shared; the arena handed back is exclusively ours, so the
@@ -609,6 +659,10 @@
           (i32.atomic.rmw.cmpxchg (local.get $state) (local.get $cursor)
             (i32.add (local.get $cursor) (local.get $chunk)))))
       (br $retry)))
+    (global.set $heap_arena_record (call $heap_arena_register
+      (local.get $cursor) (i32.add (local.get $cursor) (local.get $chunk))))
+    (if (i32.eqz (global.get $heap_arena_record))
+      (then (return (i32.const 0))))
     (global.set $heap_ptr (local.get $cursor))
     (global.set $heap_end (i32.add (local.get $cursor) (local.get $chunk)))
     (local.get $cursor))
@@ -686,11 +740,16 @@
         (if (i32.eqz (local.get $new_top)) (then (return (i32.const 0))))
         (if (i32.eqz (call $virtual_map_commit (local.get $new_top) (local.get $chunk)))
           (then (return (i32.const 0))))
+        (global.set $heap_sparse_record (call $heap_arena_register
+          (local.get $new_top) (i32.add (local.get $new_top) (local.get $chunk))))
+        (if (i32.eqz (global.get $heap_sparse_record))
+          (then (return (i32.const 0))))
         (global.set $heap_sparse_ptr (local.get $new_top))
         (global.set $heap_sparse_end (i32.add (local.get $new_top) (local.get $chunk)))))
     (local.set $ptr (global.get $heap_sparse_ptr))
     (global.set $heap_sparse_ptr (i32.add (global.get $heap_sparse_ptr) (local.get $need)))
     (i32.store (call $g2w (local.get $ptr)) (local.get $need))
+    (i32.atomic.store offset=8 (global.get $heap_sparse_record) (global.get $heap_sparse_ptr))
     (local.get $ptr))
 
   ;; Is this free-list entry's own header self-consistent? Same extent rules
@@ -698,7 +757,7 @@
   ;; because a guest that overruns a live block rewrites the header of the free
   ;; block behind it after the link happened. Returns 1 for "do not serve this".
   (func $heap_block_bad (param $cur i32) (param $bsz i32) (result i32)
-    (local $end i32)
+    (local $end i32) (local $rec i32)
     ;; Header must be an aligned allocation extent, never smaller than a block.
     (if (i32.or
           (i32.lt_u (local.get $bsz) (i32.const 16))
@@ -706,22 +765,11 @@
       (then (return (i32.const 1))))
     (local.set $end (i32.add (local.get $cur) (local.get $bsz)))
     (if (i32.lt_u (local.get $end) (local.get $cur)) (then (return (i32.const 1))))
-    (if (i32.lt_u (local.get $cur) (global.get $heap_ptr))
-      (then
-        ;; Direct arena: the block has to start inside it and end at or before
-        ;; the bump pointer, which is the high-water mark of everything handed
-        ;; out so far.
-        (return
-          (i32.or
-            (i32.lt_u (local.get $cur) (global.get $heap_base))
-            (i32.gt_u (local.get $end) (global.get $heap_ptr))))))
-    ;; Sparse arena: same bounded range $heap_free uses, so a stale high handle
-    ;; or FOURCC that got linked cannot be split and returned.
+    (local.set $rec (call $heap_arena_find (local.get $cur)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 1))))
     (i32.or
-      (i32.eqz (global.get $heap_sparse_ptr))
-      (i32.or
-        (i32.lt_u (local.get $cur) (global.get $virtual_alloc_top))
-        (i32.gt_u (local.get $end) (global.get $heap_sparse_ptr)))))
+      (i32.gt_u (local.get $end) (i32.atomic.load offset=8 (local.get $rec)))
+      (i32.gt_u (local.get $end) (i32.load offset=4 (local.get $rec)))))
 
   ;; Free-list allocator. Each allocated block has a 4-byte size header at ptr-4.
   ;; Free blocks: [size:4][next_guest_ptr:4][...]. Min block = 16 bytes.
@@ -743,6 +791,13 @@
     (local.set $cur (global.get $free_list))
     (block $found (block $scan (loop $fl
       (br_if $scan (i32.eqz (local.get $cur)))
+      ;; Validate the link before reading its header through g2w.
+      (if (i32.eqz (call $heap_arena_find (local.get $cur)))
+        (then
+          (if (local.get $prev_w)
+            (then (i32.store offset=4 (local.get $prev_w) (i32.const 0)))
+            (else (global.set $free_list (i32.const 0))))
+          (br $scan)))
       (local.set $cur_w (call $g2w (local.get $cur)))
       (local.set $bsz (i32.load (local.get $cur_w)))
       ;; A free block has to fit inside the arena it claims to live in. Serving
@@ -806,67 +861,22 @@
               (if (local.get $ptr) (then (br $found)) (else (return (i32.const 0))))))))
       (local.set $ptr (global.get $heap_ptr))
       (i32.store (call $g2w (local.get $ptr)) (local.get $need))
-      (global.set $heap_ptr (i32.add (global.get $heap_ptr) (local.get $need))))
+      (global.set $heap_ptr (i32.add (global.get $heap_ptr) (local.get $need)))
+      (i32.atomic.store offset=8 (global.get $heap_arena_record) (global.get $heap_ptr)))
     ;; Return guest pointer past the size header
     (i32.add (local.get $ptr) (i32.const 4)))
 
   ;; heap_free: return block to free list
   (func $heap_free (param $guest_ptr i32)
-    (local $block i32) (local $w i32) (local $size i32) (local $end i32)
-    (local $direct i32)
+    (local $block i32) (local $w i32) (local $size i32)
     (if (i32.eqz (local.get $guest_ptr)) (then (return)))
-    ;; Only free blocks owned by this allocator. $heap_base is per-instance and
-    ;; only the PE-loading instance sets it, so a zero here would let a worker
-    ;; admit foreign blocks and then reissue them; read the shared copy when
-    ;; this instance has none.
-    (if (i32.eqz (global.get $heap_base))
-      (then (global.set $heap_base
-        (i32.load (i32.add (global.get $HEAP_SHARED) (i32.const 4))))))
-    (if (i32.eqz (global.get $heap_base)) (then (return)))
-    ;; The old lower-bound-only check accepted every high foreign value as a
-    ;; heap pointer. A stale per-window title slot containing the bytes "ACTR"
-    ;; therefore installed 0x52544341 as the free-list head, and the next small
-    ;; allocation walked arbitrary guest memory forever.
-    (if (i32.lt_u (local.get $guest_ptr)
-          (i32.add (global.get $heap_base) (i32.const 4)))
-      (then (return)))
-    ;; Upper bound of the low window is the process-wide chunk cursor, not this
-    ;; instance's own bump pointer: another instance's arena sits above ours and
-    ;; blocks it handed out are still this allocator's to take back.
-    (local.set $direct (call $heap_low_watermark))
-    (if (i32.lt_u (local.get $direct) (global.get $heap_ptr))
-      (then (local.set $direct (global.get $heap_ptr))))
-    (local.set $direct
-      (i32.lt_u (local.get $guest_ptr) (local.get $direct)))
-    (if (i32.eqz (local.get $direct))
-      (then
-        ;; Sparse heap blocks live in the high reserved arena. This bounded
-        ;; range also rejects arbitrary high handles/FOURCCs without disabling
-        ;; frees from the current sparse chunk.
-        (if (i32.or
-              (i32.eqz (global.get $heap_sparse_ptr))
-              (i32.or
-                (i32.lt_u (local.get $guest_ptr) (global.get $virtual_alloc_top))
-                (i32.ge_u (local.get $guest_ptr) (global.get $heap_sparse_ptr))))
-          (then (return)))))
-    ;; Block starts 4 bytes before the user pointer
     (local.set $block (i32.sub (local.get $guest_ptr) (i32.const 4)))
+    (if (i32.eqz (call $heap_arena_find (local.get $block))) (then (return)))
     (local.set $w (call $g2w (local.get $block)))
-    ;; Every block header is an aligned allocation extent. Validate it before
-    ;; linking the block so even an in-range stale pointer cannot corrupt the
-    ;; list or manufacture a cycle.
     (local.set $size (i32.load (local.get $w)))
-    (if (i32.or
-          (i32.lt_u (local.get $size) (i32.const 16))
-          (i32.ne (i32.and (local.get $size) (i32.const 7)) (i32.const 0)))
-      (then (return)))
-    (local.set $end (i32.add (local.get $block) (local.get $size)))
-    (if (i32.lt_u (local.get $end) (local.get $block)) (then (return)))
-    (if (local.get $direct)
-      (then
-        (if (i32.gt_u (local.get $end) (global.get $heap_ptr)) (then (return))))
-      (else
-        (if (i32.gt_u (local.get $end) (global.get $heap_sparse_ptr)) (then (return)))))
+    (if (call $heap_block_bad (local.get $block) (local.get $size)) (then (return)))
+    ;; Ownership transfers to the freeing instance. The producer's bump cursor
+    ;; already passed this block; its private free list never contained it.
     ;; Prepend to free list: store next = old head
     (i32.store (i32.add (local.get $w) (i32.const 4)) (global.get $free_list))
     (global.set $free_list (local.get $block)))
@@ -4769,15 +4779,35 @@
           (local.get $cr_l) (local.get $cr_t)
           (local.get $cr_r) (local.get $cr_b) (i32.const 4))))))
 
-  ;; $post_queue_push(hwnd, msg, wParam, lParam): append to the ring at 0x400.
+  ;; Every WASM instance owns its count and its corresponding thread partition.
+  (func $post_queue_base (result i32)
+    (if (i32.ge_u (i32.sub (global.get $current_thread_id) (i32.const 1)) (i32.const 8))
+      (then (unreachable)))
+    (i32.add (global.get $LOCAL_POST_QUEUES)
+      (i32.mul (i32.sub (global.get $current_thread_id) (i32.const 1)) (i32.const 1024))))
+
+  ;; $post_queue_push(hwnd, msg, wParam, lParam): append to this thread's queue.
   ;; Same layout as PostMessageA. Returns 1 on success, 0 if full.
   (func $post_queue_push
         (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32)
         (result i32)
-    (local $slot i32)
+    (local $slot i32) (local $owner i32)
+    (if (local.get $hwnd)
+      (then (local.set $owner (call $wnd_get_thread (local.get $hwnd)))))
+    ;; Host callbacks and native helpers bypass PostMessageA. They still must
+    ;; deliver to the owning guest, never to an idle shadow's private count.
+    (if (global.get $host_shadow)
+      (then
+        (if (i32.eqz (local.get $owner)) (then (return (i32.const 0))))
+        (return (call $shared_post_queue_enqueue
+          (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    (if (i32.and (i32.ne (local.get $owner) (i32.const 0))
+                 (i32.ne (local.get $owner) (global.get $current_thread_id)))
+      (then (return (call $shared_post_queue_enqueue
+        (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     (if (i32.ge_u (global.get $post_queue_count) (i32.const 64))
       (then (return (i32.const 0))))
-    (local.set $slot (i32.add (i32.const 0x400)
+    (local.set $slot (i32.add (call $post_queue_base)
       (i32.mul (global.get $post_queue_count) (i32.const 16))))
     (i32.store          (local.get $slot) (local.get $hwnd))
     (i32.store offset=4  (local.get $slot) (local.get $msg))
@@ -4808,7 +4838,7 @@
     (if (i32.eqz (local.get $hwnd)) (then (return)))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $post_queue_count)))
-      (local.set $slot (i32.add (i32.const 0x400)
+      (local.set $slot (i32.add (call $post_queue_base)
         (i32.mul (local.get $i) (i32.const 16))))
       (if (i32.eq (i32.load (local.get $slot)) (local.get $hwnd))
         (then

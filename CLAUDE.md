@@ -97,7 +97,7 @@ The browser run loop is a `setTimeout(step, 0)` chain in `host.js`: each step ru
 
 Turn on **FPS graph** in the `?debug` toolbar (or load `?debug&perf` to start it enabled). The overlay draws, per step, a stacked bar of `guest` / `threads` / `paint` / `other` against 16.7ms and 33ms guides, plus the rAF frame-interval line underneath. A tall bar is literally a step the browser could not interrupt; its color says who to blame.
 
-**`PRESENT/s`, application FPS, and `page fps` are different measurements.** The page may composite at 60 while the emulated machine advances slowly. `PRESENT/s` counts explicit DirectDraw/OpenGL presents, falling back to dirty canonical-surface flushes for GDI-only programs; an application may present more than once per logical animation frame, so its own FPS counter is authoritative for gameplay speed. `M steps/s` reports x86 throughput. Always name the metric when quoting it.
+**`PRESENT/s`, application FPS, and `page fps` are different measurements.** The page may composite at 60 while the emulated machine advances slowly. `PRESENT/s` counts explicit DirectDraw/OpenGL presents, falling back to dirty canonical-surface flushes for GDI-only programs; an application may present more than once per logical animation frame, so its own FPS counter is authoritative for gameplay speed. `M blocks/s` reports actual retired basic blocks, not requested budgets or x86 instructions. Blocks have variable cost. Always name the metric when quoting it.
 
 `throttled%` is the share of steps where the worker budget (`maxWallMs` in `host.js`) expired with work still pending. **A high number is not automatically the bug** — measured on Blobby: 100% throttled, but quadrupling the budget *lowered* guest fps from 29 to 17 and produced 240 long tasks. It means the game loop always has work, not that the scheduler is starving it. The ceiling there is interpreter throughput, so look at what costs instructions, not at the budget.
 
@@ -111,6 +111,11 @@ node tools/dev-server.js --perf-log=/tmp/perf.ndjson
 04:24:15 ssnalq game  59fps  page 60  steps 28.0M/s  step p50 2.3 p99 3.6ms  guest 3% thr 94%  throttled 0%    ▁▂▂▁▂▂
 04:24:19 ssnalq game  29fps  page 60  steps 10.5M/s  step p50 14.8 p99 21.2ms  guest 0% thr 99%  throttled 100% ▅▅▅▆▆▇
 ```
+
+The example above is historical: its `steps` values were requested-budget counters,
+not measured instruction throughput. Current output labels actual work `blocks`.
+Throttling now also includes the main cooperative slice's elapsed-time cutoff;
+individual WASM calls/native handlers remain non-preemptible.
 
 `?perf-stream=URL` aims it elsewhere; the sink accepts cross-origin posts so the page can be served from another port.
 
@@ -287,7 +292,7 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 1. **WM_QUIT** — if `$quit_flag` is set
 2. **Pending child WM_CREATE** — queued during CreateWindowExA for child controls
 3. **Pending child WM_SIZE** — follows child WM_CREATE
-4. **Post queue** (`$post_queue_count`, memory at 0x400) — drained FIFO, 64-slot ring of {hwnd, msg, wParam, lParam} 16-byte entries. PostMessageA and TranslateAcceleratorA write here.
+4. **Post queue** (`$post_queue_count`, per-thread `$LOCAL_POST_QUEUES` partition) — drained FIFO, 64 slots of {hwnd, msg, wParam, lParam} 16-byte entries per thread. PostMessageA and TranslateAcceleratorA write here. Host diagnostics use the exported queue base, not a fixed address.
 5. **Pending main WM_SIZE** (`$pending_wm_size`) — set by CreateWindowExA, consumed after post queue drain
 6. **Startup phases** — sequential one-shot messages: WM_ACTIVATEAPP → WM_ACTIVATE → WM_SETFOCUS → WM_ERASEBKGND
 7. **Host input poll** — `$host_check_input()` returns packed `(wParam<<16)|(msg&0xFFFF)`, with hwnd/lParam via separate imports

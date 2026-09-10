@@ -612,6 +612,8 @@
   (func (export "get_window_thread") (param $hwnd i32) (result i32)
     (call $wnd_get_thread (local.get $hwnd)))
   (func (export "set_current_thread_id") (param i32) (global.set $current_thread_id (local.get 0)))
+  (func (export "set_host_shadow") (param i32)
+    (global.set $host_shadow (i32.ne (local.get 0) (i32.const 0))))
   (func (export "get_image_base") (result i32) (global.get $image_base))
   ;; Read-only host bridge for guest pointers embedded in GPU command
   ;; arguments. Unlike image-relative arithmetic, $g2w also resolves sparse
@@ -872,13 +874,13 @@
     (call $lock_acquire (local.get $lock))
     (call $lock_release (local.get $lock))
     ;; Still held by us after the inner release, or the nesting is not counted.
-    (if (i32.ne (i32.atomic.load (local.get $lock)) (global.get $current_thread_id))
+    (if (i32.ne (i32.atomic.load (local.get $lock)) (call $lock_owner_id))
       (then (call $lock_release (local.get $lock)) (return (i32.const 0))))
     (call $lock_release (local.get $lock))
     ;; Released means "not ours any more", not "zero": another thread may have
     ;; taken it between the release and this load, and asserting zero here made
     ;; the check fail for whichever thread happened to lose that footrace.
-    (i32.ne (i32.atomic.load (local.get $lock)) (global.get $current_thread_id)))
+    (i32.ne (i32.atomic.load (local.get $lock)) (call $lock_owner_id)))
   (func (export "test_dx_alloc") (param $type i32) (result i32)
     (call $dx_alloc (local.get $type)))
   (func (export "test_vsock_alloc") (result i32) (call $vsock_alloc))
@@ -2440,15 +2442,16 @@
   (func (export "paint_invalidate_visible_tree") (param $hwnd i32)
     (call $paint_mark_visible_tree (local.get $hwnd)))
   ;; The posted-message queue, for looking at rather than guessing about. It
-  ;; lives at WASM 0x400, below GUEST_BASE, so --dump cannot reach it: that
-  ;; address goes through g2w and lands somewhere else entirely. `field` is
+  ;; lives in this thread's LOCAL_POST_QUEUES partition. `field` is
   ;; 0 hwnd, 1 message, 2 wParam, 3 lParam.
   (func (export "post_queue_depth") (result i32)
     (global.get $post_queue_count))
+  (func (export "get_post_queue_base") (result i32) (call $post_queue_base))
   (func (export "post_queue_peek") (param $i i32) (param $field i32) (result i32)
     (if (i32.ge_u (local.get $i) (global.get $post_queue_count))
       (then (return (i32.const 0))))
-    (i32.load (i32.add (i32.add (i32.const 0x400)
+    (if (i32.ge_u (local.get $field) (i32.const 4)) (then (return (i32.const 0))))
+    (i32.load (i32.add (i32.add (call $post_queue_base)
                                 (i32.mul (local.get $i) (i32.const 16)))
                        (i32.shl (local.get $field) (i32.const 2)))))
 
@@ -2773,12 +2776,16 @@
     ;; after load, so that one is read across directly.
     (global.set $heap_ptr (i32.const 0))
     (global.set $heap_end (i32.const 0))
+    (global.set $heap_arena_record (i32.const 0))
+    (global.set $heap_sparse_record (i32.const 0))
     (global.set $heap_base
       (i32.load (region.addr $HEAP_SHARED 4)))
     (global.set $heap_sparse_ptr (i32.const 0))
     (global.set $heap_sparse_end (i32.const 0))
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
     (global.set $current_thread_id (i32.add (local.get $tid) (i32.const 1)))
+    (global.set $post_queue_count (i32.const 0))
+    (global.set $pq_read_off (i32.const 0))
     (global.set $code_start (local.get $code_s))
     (global.set $code_end (local.get $code_e))
     (global.set $thunk_guest_base (local.get $thunk_gs))
