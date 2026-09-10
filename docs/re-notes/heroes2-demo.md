@@ -96,6 +96,12 @@ Raw `wa-heroes-host-ablation304` and `wa-heroes-audio-ablation304`; audio/canvas
 substitutions exist only in the temporary audit harness. Normal music and
 animation remain enabled in source. User expressly prohibits production deploys.
 
+Actual player-turn map headful verification (`wa-idle-heroes-map-headful304`):
+NEW GAME / STANDARD / OKAY, screenshot-confirmed castle/hero adventure map.
+20s sample renderer10.37%,GPU2.59%,audio utility0.74%,4441 clock parks, no errors.
+No diagnostic audio/presentation suppression. This replaces headless-only
+evidence for the map and preserves real music/animation work.
+
 Evidence harness `/private/tmp/audit-idle-games.js`; JSON/PNG directories
 `/private/tmp/wa-idle-heroes-menu`, `wa-idle-heroes-clock-sites`, and
 `wa-idle-heroes-map`. The clock-site trace records160 samples including ESP,

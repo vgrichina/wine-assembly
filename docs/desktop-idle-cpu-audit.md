@@ -173,11 +173,35 @@ Golf's higher result is **not** an unparked main loop:52 guest runs over10s,
 with message wait7 and timer deadlines between runs. Profile timer/presentation
 cost and repeat under low host load before accepting the5.32% as persistent.
 
+Follow-up `wa-idle-golf-settled304`:30s warmup,20s sample gives **1.00%**
+renderer, main slices125 ->205, no errors. Host phases total57.5ms/20s, of
+which guest work7.9ms, present30.8ms and other18.8ms. Thus the5.32% outlier is
+not persistent. Load5.44;3s CPU profile is96.7% idle and0.1% WASM.
+
+After-input checks (both headful,15s samples):
+
+- **Minesweeper0.94%**, `wa-idle-mines-revealed304`: click first tile at(100,145)
+  held180ms. A1 is revealed; counter advances004 ->019, screenshots inspected.
+  The earlier(100,130) edge click did not reveal a tile and was rejected.
+- **Blackjack1.75%**, `wa-idle-blackjack-dealt304`: Close notice(760,360), Play
+  menu(168,30), Minimum Bet(222,52), then OK(286,855),180ms holds. The5-unit
+  bet is on the table, player7+8 totals15, dealer shows3; helper strategy
+  window is visible. Main returns to yield7, slices134 ->164 over15s,
+  no errors. This verifies real deal input after the modal idle fix.
+
+Heroes actual player-turn map, headful (`wa-idle-heroes-map-headful304`):
+NEW GAME / STANDARD / OKAY through real mouse input, screenshot inspected.
+Renderer10.37%, GPU2.59%, audio utility0.74%,4441 clock parks over20s;
+no page errors, map remains running. Music and palette animation remain enabled.
+This completes the map-state verification, not a claim of sub-percent CPU for
+the audible animated game. The separate menu audio-isolation evidence above
+explains why real-time synthesis must be distinguished from idle guest polling.
+
 ### Remaining work
 
-- Inspect remaining puzzle games and Heroes II actual player-turn map.
-- Quiet-box Golf timer/repaint check; Minesweeper after its first reveal.
-- Verify Blackjack can leave its notice and deal a game; trace remaining hot paths.
+- Classify remaining realtime puzzle practice/paused states; Heroes actual
+  player-turn map is now verified headfully above.
+- Golf, Minesweeper after reveal, and Blackjack after deal pass locally above.
 - Verify additional sleeping-helper games after input; Four Stones passes locally.
 - Finish real-game/after-input checks, not only launch states.
 - Headful measurements with visible pages and a blank-page CPU floor.
