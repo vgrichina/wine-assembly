@@ -1,25 +1,25 @@
 # Project review — 2026-09-09
 
-## Execution update — isolated review-fixes candidate
+## Execution update — review integration
 
-The original review below is historical evidence, not the status of this candidate. Implementation is based on `b04298f9` in `/private/tmp/wa-codex-review-fixes`; unrelated dirty main-tree changes are excluded. No deployment is part of this work.
+The original review below is historical evidence, not the current status. The implementation began at `b04298f9` in `/private/tmp/wa-codex-review-fixes` and was reconciled with committed main in `/private/tmp/wa-review-integration`. Unrelated uncommitted main-tree work is excluded from the integration commits and preserved in the shared worktree. No deployment is part of this work.
 
 ```text
 +----------------------------------------------------------------------------------------------------------+
 | EXECUTION TLDR                         THREE IMPLEMENTATION LANES                                         |
 +----------------------------------+----------------------------------+------------------------------------+
 | RUNTIME                          | PERSISTENCE                      | MEASUREMENT / RESPONSIVENESS       |
-| #1 FIXED: thread-owned queues     | #2 IMPLEMENTED: OPFS locking     | #8 FIXED: actual retired blocks    |
+| #1 FIXED: thread-owned queues     | #2 FIXED: scope-locked OPFS       | #8 FIXED: actual retired blocks    |
 | #4 FIXED: cross-thread heap frees | #3 FIXED: immutable Node blobs   | #10 MITIGATED: adaptive quanta     |
 | #5 FIXED: truthful full errors    | #6 FIXED: retain failed retries  |     8ms elapsed check between runs |
 |                                  | #7 FIXED: deadline includes body |     native calls still cannot yield|
-|                                  | OPFS browser gate still pending |                                    |
+|                                  | Real-browser OPFS gate: PASS     |                                    |
 +----------------------------------+----------------------------------+------------------------------------+
 | NEXT: LAZY OVERLAY LOADING (#9)                       NEXT: SHARED MESSAGE-RING SLOT REUSE                 |
 | [file APIs can park] -> [snapshot ownership]          [reserve slot] -> [reset old ring] -> [publish ID]     |
 |         -> [lazy payloads] -> [dirty ranges]          Old shared-ring posts can outlive the old thread.   |
 +----------------------------------------------------------------------------------------------------------+
-| BEFORE MAIN/RELEASE: reconcile active edits -> rebuild -> browser/device latency + large-save validation   |
+| BEFORE RELEASE: close remaining lifetime issues -> device latency + large-save validation                 |
 +----------------------------------------------------------------------------------------------------------+
 ```
 
@@ -41,15 +41,20 @@ Deliberate limits and follow-ups:
 
 Focused checks passed: runtime ownership/real-worker stress, heap partition and malformed-header validation, filtered PeekMessage, GetMessage teardown, modal button queues, 19 overlay cases, installer checkpoint/restart/SIGTERM round trip, 34 lazy-VFS cases, localStorage retry and two-app warning ownership, Heroes II saves, save-bundle/sync (112 checks), cooperative deadlines/timers/parking, thread scheduling, and HUD accounting/reset/input tests.
 
-The final canonical and compatibility builds pass with layout hash `8566329207cd7d8f`, 185 verified symbolic owners, 901 accounted-for tests, and no data-segment overlaps. All 183 pre-existing region bases are unchanged. The full 901-test suite and device performance/memory benchmarks have not been run.
+The integrated canonical and compatibility builds pass with layout hash `8566329207cd7d8f`, 185 verified symbolic owners, and no data-segment overlaps. After adding the readiness regression, the manifest/timeout gates account for 903 tests. All 183 pre-existing region bases are unchanged in the committed integration. The full suite and device performance/memory benchmarks have not been run. The shared worktree separately retains the other lane's four expanded DLL tables; its regenerated map hash is `6d4e64cdb4dcbf79`, not the committed build's hash.
 
 The unchanged candidate's full `test/test-worker-guest.js` matrix passed on rerun: Notepad/Calculator parity, Win16 Rodent and Rodent2000 gameplay, Winamp real threads, and COM load/unpark. **An earlier run failed Winamp's worker-slice threshold (4 versus >10); the rerun passed with 3 workers and 62,190 slices.** This remains intermittent evidence, not a demonstrated heap regression or a throughput comparison. Initial diagnostic WASM variants were not actually loaded, so their apparent causal results were discarded; no speculative allocator marker change was landed.
 
 After the final shadow queue/lock ownership correction (`79c5da95`), the canonical build and exact full browser matrix passed again, including Winamp with 3 workers and 16,686 slices. The expanded full-source ownership regression passed shadow-to-main and shadow-to-real-thread-8 delivery, preservation of private queue bytes, native cross-owner routing, distinct recursive lock identities, and the existing real-worker heap/queue stress. Lock tests (10/10), window-table tests (4/4), and the modal dialog timer/posted-command regression also passed.
 
-The new `test/test-web-overlay-store.js` is registered and ready to verify real two-tab OPFS persistence across reloads. **That check did not run successfully:** Chrome launch was blocked by the sandbox and escalation was not granted. The 19 passing overlay cases use the OPFS model and real Node storage; they are not a substitute for that browser gate.
+**Real-browser OPFS validation now passes.** With permission, `test/test-web-overlay-store.js` ran in Chrome and exited zero: independent two-tab and same-tab stores preserved all 26 files across reloads and byte-exact snapshot/read checks, followed by scoped cleanup. The tested storage source is byte-identical in the integrated branch. This closes the earlier sandbox-blocked validation gap; it is additional to the 19 model/Node cases.
 
-Source fixes are committed on `codex/review-fixes-20260909`: `b057dcb9` (persistence), `e0b655aa` (runtime/performance), and `79c5da95` (host callback ownership), following symbolic-owner reuse `69ea0584`. They are not silently applied over active shared-main work. A read-only patch check against main found integration conflicts in `src/00-regions.wat` and `lib/region-map.generated.js`; reconcile live region changes and regenerate the mirror when merging, preserving other agents' work. This report is also published at the shared repository root; that documentation commit does not integrate the source branch.
+Source history: `b057dcb9` (persistence), `e0b655aa` (runtime/performance), and `79c5da95` (host callback ownership), following symbolic-owner reuse `69ea0584`. Integration merge `0f3a50aa` resolves the symbolic-owner conflict; subsequent merges preserve main's newer article/tool commits. Main application preserves the uncommitted DLL-table expansion and regenerates its separate map rather than copying the committed map over it. The unrelated staged `stdole2.tlb` is excluded from the integration commits.
+
+Integration validation exposed two test-budget issues:
+
+- **Winamp:** the original fixed 12-second observation passed once and failed once (two workers/four slices). Verified-artifact diagnostics captured a 9.54-second main-worker slice with continuously increasing host-call service counts before a third worker started. That supports timing sensitivity, not proof that every historical failure recovers. `43fe8ff4` retains the original first 12 samples and all six assertions, adds a 60-second readiness observation limit, and logs progress. Two subsequent full browser matrices passed (readiness after 3.014s and 1.010s); neither needed the extension. A virtual-clock regression separately proves slow readiness after 16s and a finite failure for a permanently stalled guest. No speculative heap change was made.
+- **Darkstone:** its newly committed gameplay test was absent from the manual manifest and requested 600 seconds inside a 300-second runner cap. An attempted 240-second child guard stopped an actively progressing run after reaching the menu, so it was reverted. `d9a80582` restores the original 600-second guard and adds a documented 660-second per-test runner exception. All other tests retain 300 seconds; explicit environment/CLI caps, including zero, take precedence. Schema, stale/duplicate entries, cap selection, and watchdog logging are regression-tested. Full gameplay revalidation passed in approximately 6m41s: character creation, persisted party selection, town, and camera response (405,468 changed pixels), with all assertions unchanged. This is functional acceptance, not a performance benchmark.
 
 ### Cross-check with `fable-review.md`
 
