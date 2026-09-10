@@ -21,6 +21,12 @@ const extraWat = String.raw`
     (global.get $eax))
   (func (export "test_isequalguid_esp") (result i32)
     (global.get $esp))
+  (func (export "test_call_UuidCreate") (param $uuid i32) (result i32)
+    (global.set $esp (i32.const 0x30000))
+    (call $handle_UuidCreate
+      (local.get $uuid) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
 `;
 
 (async () => {
@@ -41,8 +47,16 @@ const extraWat = String.raw`
     'identical pointers compare equal');
   assert.strictEqual(wat.test_call_IsEqualGUID(a, 0), 0,
     'a null and non-null GUID compare unequal without dereferencing null');
+  assert.strictEqual(wat.test_call_UuidCreate(a), 0,
+    'UuidCreate fills a UUID and reports RPC_S_OK');
+  assert.strictEqual(wat.test_isequalguid_esp() >>> 0, 0x30008,
+    'UuidCreate pops its return address and one stdcall argument');
+  assert.strictEqual(wat.test_call_UuidCreate(b), 0,
+    'a second UuidCreate call succeeds');
+  assert.strictEqual(wat.test_call_IsEqualGUID(a, b), 0,
+    'successive deterministic UUID values are distinct');
 
-  console.log('PASS  IsEqualGUID compares all 16 bytes and preserves stdcall ABI');
+  console.log('PASS  GUID helpers compare and create complete values with stdcall ABI');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

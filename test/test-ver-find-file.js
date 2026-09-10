@@ -63,6 +63,7 @@ async function main() {
 
   const { instance } = await WebAssembly.instantiate(wasm, imports);
   const e = instance.exports;
+  hostCtx.exports = e;
   const exe = fs.readFileSync(path.join(ROOT, 'test', 'binaries', 'calc.exe'));
   new Uint8Array(memory.buffer).set(exe, e.get_staging());
   assert(e.load_pe(exe.length), 'fixture PE initializes API dispatch');
@@ -170,6 +171,58 @@ async function main() {
     [0x4d, 0x5a, 0x90, 0x00], 'destination keeps the staged payload bytes');
   assert.strictEqual(readAscii(tempFile), '', 'direct install reports no leftover temporary file');
   assert.strictEqual(read32(tempLength), 1, 'temporary filename length includes the NUL');
+
+  const expanded = Buffer.from('MZ\x90\x00InstallShield setup.dll payload', 'latin1');
+  const compressed = [
+    0x53, 0x5a, 0x44, 0x44, 0x88, 0xf0, 0x27, 0x33, 0x41, 0,
+    ...u32(expanded.length),
+  ];
+  for (let pos = 0; pos < expanded.length;) {
+    compressed.push(0xff);
+    for (let bit = 0; bit < 8 && pos < expanded.length; bit++, pos++) {
+      compressed.push(expanded[pos]);
+    }
+  }
+  hostCtx.vfs.files.set('c:\\source\\setup.dl_1.tmp', {
+    data: Uint8Array.from(compressed), attrs: 0x20,
+  });
+  const compressedSource = writeAscii('setup.dl_1.tmp');
+  const expandedDest = writeAscii('setup.dll');
+  write32(tempLength, 32);
+  assert.strictEqual(callVerInstallFile([
+    0, compressedSource, expandedDest, sourceDir, appDir, appDir,
+    tempFile, tempLength,
+  ]), 0, 'VerInstallFileA expands an SZDD mode-A source');
+  assert.deepStrictEqual(
+    Buffer.from(hostCtx.vfs.files.get('c:\\app\\setup.dll').data), expanded,
+    'expanded destination contains the declared uncompressed bytes');
+  assert(!hostCtx.vfs.files.has('c:\\source\\setup.dl_1.tmp'),
+    'successful SZDD expansion removes the compressed source');
+
+  // Back-references may cross the decoder's 4 KiB output staging boundary.
+  // Fill 4,090 bytes literally, then copy an 18-byte match so this exercises
+  // both the LZSS path and an in-token flush.
+  const boundaryExpanded = Buffer.alloc(4108, 0x41);
+  const boundaryCompressed = [
+    0x53, 0x5a, 0x44, 0x44, 0x88, 0xf0, 0x27, 0x33, 0x41, 0,
+    ...u32(boundaryExpanded.length),
+  ];
+  for (let group = 0; group < 511; group++) {
+    boundaryCompressed.push(0xff, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41);
+  }
+  boundaryCompressed.push(0x03, 0x41, 0x41, 0x00, 0x0f);
+  hostCtx.vfs.files.set('c:\\source\\boundary.dl_', {
+    data: Uint8Array.from(boundaryCompressed), attrs: 0x20,
+  });
+  const boundarySource = writeAscii('boundary.dl_');
+  const boundaryDest = writeAscii('boundary.dll');
+  assert.strictEqual(callVerInstallFile([
+    0, boundarySource, boundaryDest, sourceDir, appDir, appDir,
+    tempFile, tempLength,
+  ]), 0, 'VerInstallFileA expands a boundary-crossing SZDD match');
+  assert.deepStrictEqual(
+    Buffer.from(hostCtx.vfs.files.get('c:\\app\\boundary.dll').data), boundaryExpanded,
+    'a back-reference crossing the staging boundary remains lossless');
 
   console.log('test-ver-find-file: PASS');
 }

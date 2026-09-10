@@ -315,6 +315,26 @@ assert.deepStrictEqual(
   'win.ini should enumerate the media extensions backed by emulator MCI devices'
 );
 
+setIniValue('bw2.ini', 'Startup', 'Alpha', 'one');
+setIniValue('bw2.ini', 'Startup', 'Beta', 'two');
+writeGuestString(iniSectionGA, 'startup');
+writeGuestString(iniFileGA, 'BW2.INI');
+assert.strictEqual(storage.ini_get_section(
+  g2w(iniSectionGA, IMAGE_BASE), outGA, 128,
+  g2w(iniFileGA, IMAGE_BASE), 0
+), 'Alpha=one\0Beta=two\0'.length,
+'GetPrivateProfileSection should report all key=value characters except the final NUL');
+assert.deepStrictEqual(readGuestMultiString(outGA, false), ['Alpha=one', 'Beta=two'],
+  'GetPrivateProfileSection should preserve key spelling and values');
+mem.fill(0xcc, g2w(outGA, IMAGE_BASE), g2w(outGA, IMAGE_BASE) + 8);
+assert.strictEqual(storage.ini_get_section(
+  g2w(iniSectionGA, IMAGE_BASE), outGA, 8,
+  g2w(iniFileGA, IMAGE_BASE), 0
+), 6, 'a truncated private-profile section should return nSize - 2');
+assert.strictEqual(mem[g2w(outGA, IMAGE_BASE) + 6], 0);
+assert.strictEqual(mem[g2w(outGA, IMAGE_BASE) + 7], 0,
+  'a truncated private-profile section should remain double-NUL terminated');
+
 // COM formats GUIDs with lowercase hex while setup manifests commonly use
 // uppercase. The activation lookup must use the same case-insensitive key
 // semantics as RegOpenKeyEx.

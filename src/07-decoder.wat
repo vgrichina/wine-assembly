@@ -4990,6 +4990,28 @@
               (br $decode)))
 
           ;; ---- SSE base ----
+          ;; UCOMISS/COMISS: scalar compare to integer condition flags. Only the
+          ;; unprefixed single-precision form belongs to this handler.
+          (if (i32.and
+                (i32.and (i32.eqz (local.get $prefix_66))
+                         (i32.eqz (local.get $prefix_rep)))
+                (i32.or (i32.eq (local.get $op) (i32.const 0x2e))
+                        (i32.eq (local.get $op) (i32.const 0x2f))))
+            (then
+              (call $decode_modrm)
+              (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                (then (call $te (i32.const 432)
+                  (i32.or (i32.const 0xC00)
+                    (i32.or (i32.shl (global.get $mr_reg) (i32.const 4))
+                            (global.get $mr_val)))))
+                (else
+                  (call $apply_seg_override)
+                  (local.set $a (call $emit_sib_or_abs))
+                  (call $te (i32.const 433)
+                    (i32.or (i32.const 0xC00)
+                            (i32.shl (global.get $mr_reg) (i32.const 4))))
+                  (call $te_raw (local.get $a))))
+              (br $decode)))
           ;; SDL2's Win32 video bootstrap is built with baseline SSE and uses
           ;; these exact bitwise/move forms before it has created a window.
           ;; F3 0F10/11 are scalar MOVSS; 0F14 is UNPCKLPS; 0F16/17 are the
@@ -5007,7 +5029,15 @@
                         (i32.eq (local.get $op) (i32.const 0x10))
                         (i32.or
                           (i32.eq (local.get $op) (i32.const 0x11))
-                          (i32.eq (local.get $op) (i32.const 0x2c)))))))
+                          (i32.or
+                            (i32.eq (local.get $op) (i32.const 0x2c))
+                            (i32.or
+                              (i32.eq (local.get $op) (i32.const 0x58))
+                              (i32.or
+                                (i32.eq (local.get $op) (i32.const 0x59))
+                                (i32.or
+                                  (i32.eq (local.get $op) (i32.const 0x5c))
+                                  (i32.eq (local.get $op) (i32.const 0x5e)))))))))))
                 (i32.or
                   (i32.or
                     (i32.or
@@ -5030,7 +5060,11 @@
                           (i32.eq (local.get $op) (i32.const 0x58))
                           (i32.or
                             (i32.eq (local.get $op) (i32.const 0x59))
-                            (i32.eq (local.get $op) (i32.const 0xC6)))))))))
+                            (i32.or
+                              (i32.eq (local.get $op) (i32.const 0xC6))
+                              (i32.or
+                                (i32.eq (local.get $op) (i32.const 0x5c))
+                                (i32.eq (local.get $op) (i32.const 0x5e)))))))))))
             (then
               (call $decode_modrm)
               (local.set $imm (i32.const 0))
@@ -5038,7 +5072,15 @@
                 (then
                   (local.set $imm
                     (select (i32.const 6) (i32.const 2)
-                      (i32.eq (local.get $op) (i32.const 0x2c)))))
+                      (i32.eq (local.get $op) (i32.const 0x2c))))
+                  (if (i32.eq (local.get $op) (i32.const 0x58))
+                    (then (local.set $imm (i32.const 10))))
+                  (if (i32.eq (local.get $op) (i32.const 0x59))
+                    (then (local.set $imm (i32.const 11))))
+                  (if (i32.eq (local.get $op) (i32.const 0x5e))
+                    (then (local.set $imm (i32.const 13))))
+                  (if (i32.eq (local.get $op) (i32.const 0x5c))
+                    (then (local.set $imm (i32.const 14)))))
                 (else
                   (if (i32.eq (local.get $op) (i32.const 0x57))
                     (then (local.set $imm (i32.const 1))))
@@ -5046,6 +5088,10 @@
                     (then (local.set $imm (i32.const 8))))
                   (if (i32.eq (local.get $op) (i32.const 0x59))
                     (then (local.set $imm (i32.const 9))))
+                  (if (i32.eq (local.get $op) (i32.const 0x5e))
+                    (then (local.set $imm (i32.const 15))))
+                  (if (i32.eq (local.get $op) (i32.const 0x5c))
+                    (then (local.set $imm (i32.const 16))))
                   (if (i32.eq (local.get $op) (i32.const 0x14))
                     (then (local.set $imm (i32.const 3))))
                   (if (i32.or (i32.eq (local.get $op) (i32.const 0x16))

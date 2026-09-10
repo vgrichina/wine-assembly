@@ -142,9 +142,46 @@
       (then (return (i32.const 0x80000000))))
     (i32.trunc_sat_f32_s (local.get $v)))
 
+  ;; Scalar unordered comparison sets independent ZF/PF/CF values. Do not
+  ;; synthesize an integer subtraction: its parity/sign flags are different.
+  ;; MXCSR exception reporting is not yet modeled by this SSE subset.
+  (func $sse_compare_flags (param $a f32) (param $b f32)
+    (local $flags i32)
+    (local.set $flags (i32.const 0x45))
+    (if (f32.gt (local.get $a) (local.get $b))
+      (then (local.set $flags (i32.const 0))))
+    (if (f32.lt (local.get $a) (local.get $b))
+      (then (local.set $flags (i32.const 1))))
+    (if (f32.eq (local.get $a) (local.get $b))
+      (then (local.set $flags (i32.const 0x40))))
+    (call $load_eflags
+      (i32.or (i32.and (call $build_eflags) (i32.const 0xFFFFF72A))
+              (local.get $flags))))
+
+  (func $sse_scalar_arithmetic (param $sub i32) (param $d v128) (param $s f32) (result v128)
+    (local $a f32) (local $r f32)
+    (local.set $a (f32x4.extract_lane 0 (local.get $d)))
+    (if (i32.eq (local.get $sub) (i32.const 10))
+      (then (local.set $r (f32.add (local.get $a) (local.get $s)))))
+    (if (i32.eq (local.get $sub) (i32.const 11))
+      (then (local.set $r (f32.mul (local.get $a) (local.get $s)))))
+    (if (i32.eq (local.get $sub) (i32.const 13))
+      (then (local.set $r (f32.div (local.get $a) (local.get $s)))))
+    (if (i32.eq (local.get $sub) (i32.const 14))
+      (then (local.set $r (f32.sub (local.get $a) (local.get $s)))))
+    (f32x4.replace_lane 0 (local.get $d) (local.get $r)))
+
+  (func $sse_is_scalar_arithmetic (param $sub i32) (result i32)
+    (i32.or
+      (i32.or (i32.eq (local.get $sub) (i32.const 10)) (i32.eq (local.get $sub) (i32.const 11)))
+      (i32.or (i32.eq (local.get $sub) (i32.const 13)) (i32.eq (local.get $sub) (i32.const 14)))))
+
   ;; sub=0 is a 128-bit move; sub=1 is XORPS; sub=2 is MOVSS; sub=3 is
   ;; UNPCKLPS; sub=4 is MOVLHPS (register source); sub=7 is SHUFPS, with its
-  ;; imm8 in operand bits 16..23; sub=8/9 are ADDPS/MULPS.
+  ;; imm8 in operand bits 16..23; sub=8/9 are ADDPS/MULPS;
+  ;; sub=10/11 are ADDSS/MULSS (preserve destination upper 96 bits);
+  ;; sub=12 is UCOMISS/COMISS (no destination write); sub=13/14 DIVSS/SUBSS;
+  ;; sub=15/16 DIVPS/SUBPS.
   (func $th_sse_rr (param $op i32)
     (local $sub i32) (local $dst i32) (local $src i32)
     (local $d v128) (local $s v128) (local $v v128)
@@ -154,6 +191,11 @@
     (local.set $src (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $d (call $xmm_get (local.get $dst)))
     (local.set $s (call $xmm_get (local.get $src)))
+    (if (i32.eq (local.get $sub) (i32.const 12))
+      (then
+        (call $sse_compare_flags (f32x4.extract_lane 0 (local.get $d))
+                          (f32x4.extract_lane 0 (local.get $s)))
+        (return_call $next)))
     (if (i32.eq (local.get $sub) (i32.const 5))
       (then
         (call $mmx_set (local.get $dst)
@@ -177,6 +219,13 @@
       (then (local.set $v (f32x4.add (local.get $d) (local.get $s)))))
     (if (i32.eq (local.get $sub) (i32.const 9))
       (then (local.set $v (f32x4.mul (local.get $d) (local.get $s)))))
+    (if (call $sse_is_scalar_arithmetic (local.get $sub))
+      (then (local.set $v (call $sse_scalar_arithmetic (local.get $sub)
+        (local.get $d) (f32x4.extract_lane 0 (local.get $s))))))
+    (if (i32.eq (local.get $sub) (i32.const 15))
+      (then (local.set $v (f32x4.div (local.get $d) (local.get $s)))))
+    (if (i32.eq (local.get $sub) (i32.const 16))
+      (then (local.set $v (f32x4.sub (local.get $d) (local.get $s)))))
     (if (i32.eq (local.get $sub) (i32.const 2))
       (then (local.set $v (i32x4.replace_lane 0
         (local.get $d) (i32x4.extract_lane 0 (local.get $s))))))
@@ -209,6 +258,19 @@
     (local.set $dst (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
     (local.set $addr (call $read_addr))
     (local.set $d (call $xmm_get (local.get $dst)))
+    ;; Scalar memory arithmetic must read only four bytes. In particular the
+    ;; neighboring twelve bytes may live on an unmapped page.
+    (if (i32.eq (local.get $sub) (i32.const 12))
+      (then
+        (call $sse_compare_flags (f32x4.extract_lane 0 (local.get $d))
+          (f32.reinterpret_i32 (call $gl32 (local.get $addr))))
+        (return_call $next)))
+    (if (call $sse_is_scalar_arithmetic (local.get $sub))
+      (then
+        (local.set $v (call $sse_scalar_arithmetic (local.get $sub) (local.get $d)
+          (f32.reinterpret_i32 (call $gl32 (local.get $addr)))))
+        (call $xmm_set (local.get $dst) (local.get $v))
+        (return_call $next)))
     (if (i32.eq (local.get $sub) (i32.const 5))
       (then
         (call $mmx_set (local.get $dst)
@@ -246,6 +308,10 @@
           (then (local.set $v (f32x4.add (local.get $d) (local.get $s)))))
         (if (i32.eq (local.get $sub) (i32.const 9))
           (then (local.set $v (f32x4.mul (local.get $d) (local.get $s)))))
+        (if (i32.eq (local.get $sub) (i32.const 15))
+          (then (local.set $v (f32x4.div (local.get $d) (local.get $s)))))
+        (if (i32.eq (local.get $sub) (i32.const 16))
+          (then (local.set $v (f32x4.sub (local.get $d) (local.get $s)))))
         (if (i32.eq (local.get $sub) (i32.const 3))
           (then (local.set $v
             (i32x4.replace_lane 3

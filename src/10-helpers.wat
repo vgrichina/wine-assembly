@@ -1308,7 +1308,21 @@
   ;;   +512  token storage
   ;;   +1024 argv pointers                 +1532 empty envp
   ;; Extra arguments are split on spaces/tabs except inside double quotes.
-  (func $store_fake_argv_a (param $cmd i32) (param $path_len i32)
+  (func $exe_path_needs_quotes (result i32)
+    (local $i i32) (local $ch i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $exe_name_len)))
+      (local.set $ch
+        (i32.load8_u (i32.add (global.get $exe_name_wa) (local.get $i))))
+      (if (i32.or
+            (i32.eq (local.get $ch) (i32.const 0x20))
+            (i32.eq (local.get $ch) (i32.const 0x09)))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $store_fake_argv_a (param $cmd i32) (param $path_len i32) (param $path_off i32)
     (local $dst i32) (local $argv i32) (local $argc i32)
     (local $i i32) (local $ch i32) (local $quoted i32)
     (local.set $dst (i32.add (local.get $cmd) (i32.const 512)))
@@ -1317,7 +1331,8 @@
     (call $gs32 (local.get $argv) (local.get $dst))
     (block $path_done (loop $path_copy
       (br_if $path_done (i32.ge_u (local.get $i) (local.get $path_len)))
-      (call $gs8 (local.get $dst) (call $gl8 (i32.add (local.get $cmd) (local.get $i))))
+      (call $gs8 (local.get $dst) (call $gl8
+        (i32.add (local.get $cmd) (i32.add (local.get $path_off) (local.get $i)))))
       (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $path_copy)))
@@ -1391,19 +1406,35 @@
     (i32.const 0))
 
   (func $store_fake_cmdline
-    (local $ptr i32) (local $dst i32) (local $len i32) (local $extra i32)
+    (local $ptr i32) (local $dst i32) (local $len i32) (local $path_len i32)
+    (local $extra i32) (local $quoted i32)
     (local.set $ptr (call $heap_alloc (i32.const 1536)))
     (global.set $fake_cmdline_addr (local.get $ptr))
     (global.set $msvcrt_acmdln_ptr (local.get $ptr))
-    ;; Write "<drive>:\<exe_name>" — full path matching GetModuleFileNameA
+    ;; Write the full path matching GetModuleFileNameA. Windows quotes argv[0]
+    ;; in the raw command line when it contains whitespace; installers parse
+    ;; this string themselves and otherwise mistake the remainder for args.
     (local.set $dst (call $g2w (local.get $ptr)))
+    (local.set $quoted (call $exe_path_needs_quotes))
+    (if (local.get $quoted)
+      (then
+        (i32.store8 (local.get $dst) (i32.const 0x22))
+        (local.set $dst (i32.add (local.get $dst) (i32.const 1)))))
     (i32.store8 (local.get $dst) (global.get $exe_drive))
     (i32.store8 (i32.add (local.get $dst) (i32.const 1)) (i32.const 0x3A))  ;; ':'
     (i32.store8 (i32.add (local.get $dst) (i32.const 2)) (i32.const 0x5C))  ;; '\'
     (local.set $len (global.get $exe_name_len))
     (memory.copy (i32.add (local.get $dst) (i32.const 3))
       (global.get $exe_name_wa) (local.get $len))
-    (local.set $len (i32.add (local.get $len) (i32.const 3)))
+    (local.set $path_len (i32.add (local.get $len) (i32.const 3)))
+    (local.set $len (local.get $path_len))
+    (if (local.get $quoted)
+      (then
+        (i32.store8 (i32.add (local.get $dst) (local.get $len)) (i32.const 0x22))
+        (local.set $len (i32.add (local.get $len) (i32.const 2)))))
+    ;; $dst was advanced past the opening quote for the path copy. Raw-line
+    ;; offsets below are relative to the allocation itself.
+    (local.set $dst (call $g2w (local.get $ptr)))
     ;; If extra args were set via $set_extra_cmdline, append " <args>".
     (local.set $extra (global.get $extra_cmdline_len))
     (if (i32.gt_u (local.get $extra) (i32.const 0))
@@ -1414,10 +1445,9 @@
           (global.get $EXTRA_CMDLINE_BUFFER) (local.get $extra))
         (local.set $len (i32.add (local.get $len) (local.get $extra)))))
     (i32.store8 (i32.add (local.get $dst) (local.get $len)) (i32.const 0))
-    (call $store_fake_argv_a (local.get $ptr)
-      (i32.add (global.get $exe_name_len) (i32.const 3))))
+    (call $store_fake_argv_a (local.get $ptr) (local.get $path_len) (local.get $quoted)))
 
-  (func $store_fake_argv_w (param $cmd i32) (param $path_len i32)
+  (func $store_fake_argv_w (param $cmd i32) (param $path_len i32) (param $path_off i32)
     (local $dst i32) (local $argv i32) (local $argc i32)
     (local $i i32) (local $ch i32) (local $quoted i32)
     (local.set $dst (i32.add (local.get $cmd) (i32.const 1024)))
@@ -1427,7 +1457,8 @@
       (br_if $path_done (i32.ge_u (local.get $i) (local.get $path_len)))
       (call $gs16
         (local.get $dst)
-        (call $gl16 (i32.add (local.get $cmd) (i32.shl (local.get $i) (i32.const 1)))))
+        (call $gl16 (i32.add (local.get $cmd)
+          (i32.shl (i32.add (local.get $path_off) (local.get $i)) (i32.const 1)))))
       (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $path_copy)))
@@ -1481,22 +1512,33 @@
     (call $gs32 (i32.add (local.get $cmd) (i32.const 2040)) (i32.const 0)))
 
   (func $store_fake_wcmdline
-    (local $ptr i32) (local $i i32) (local $len i32) (local $extra i32)
+    (local $ptr i32) (local $i i32) (local $len i32) (local $path_len i32)
+    (local $extra i32) (local $quoted i32) (local $base i32)
     (local.set $ptr (call $heap_alloc (i32.const 2048)))
     (global.set $msvcrt_wcmdln_ptr (local.get $ptr))
-    ;; Write L"<drive>:\<exe_name>" and mirror set_extra_cmdline as UTF-16.
-    (call $gs16 (local.get $ptr) (global.get $exe_drive))
-    (call $gs16 (i32.add (local.get $ptr) (i32.const 2)) (i32.const 0x3A))  ;; ':'
-    (call $gs16 (i32.add (local.get $ptr) (i32.const 4)) (i32.const 0x5C))  ;; '\'
+    ;; Mirror the ANSI command line, including argv[0] quotes, as UTF-16.
+    (local.set $quoted (call $exe_path_needs_quotes))
+    (if (local.get $quoted)
+      (then (call $gs16 (local.get $ptr) (i32.const 0x22))))
+    (local.set $base (i32.add (local.get $ptr) (i32.shl (local.get $quoted) (i32.const 1))))
+    (call $gs16 (local.get $base) (global.get $exe_drive))
+    (call $gs16 (i32.add (local.get $base) (i32.const 2)) (i32.const 0x3A))  ;; ':'
+    (call $gs16 (i32.add (local.get $base) (i32.const 4)) (i32.const 0x5C))  ;; '\'
     (local.set $len (global.get $exe_name_len))
     (block $done (loop $copy
       (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
       (call $gs16
-        (i32.add (local.get $ptr) (i32.shl (i32.add (local.get $i) (i32.const 3)) (i32.const 1)))
+        (i32.add (local.get $base) (i32.shl (i32.add (local.get $i) (i32.const 3)) (i32.const 1)))
         (i32.load8_u (i32.add (global.get $exe_name_wa) (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy)))
-    (local.set $len (i32.add (local.get $len) (i32.const 3)))
+    (local.set $path_len (i32.add (local.get $len) (i32.const 3)))
+    (local.set $len (local.get $path_len))
+    (if (local.get $quoted)
+      (then
+        (call $gs16 (i32.add (local.get $base) (i32.shl (local.get $len) (i32.const 1)))
+          (i32.const 0x22))
+        (local.set $len (i32.add (local.get $len) (i32.const 2)))))
     (local.set $extra (global.get $extra_cmdline_len))
     (if (i32.gt_u (local.get $extra) (i32.const 0))
       (then
@@ -1514,8 +1556,7 @@
     (call $gs16 (i32.add (local.get $ptr) (i32.shl (local.get $len) (i32.const 1))) (i32.const 0))
     ;; Scratch records used by __p__wcmdln and __wgetmainargs.
     (call $gs32 (i32.add (local.get $ptr) (i32.const 768)) (local.get $ptr))
-    (call $store_fake_argv_w (local.get $ptr)
-      (i32.add (global.get $exe_name_len) (i32.const 3))))
+    (call $store_fake_argv_w (local.get $ptr) (local.get $path_len) (local.get $quoted)))
   (func $guest_strlen (param $gp i32) (result i32)
     (local $len i32)
     (block $d (loop $l

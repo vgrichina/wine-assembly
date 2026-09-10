@@ -30,7 +30,7 @@ const extraWat = String.raw`
     (global.get $eax))
 `;
 
-const checkCommandLine = async (extraText, expectedArgv, expectedRaw) => {
+const checkCommandLine = async (extraText, expectedArgv, expectedRaw, exeName = 'app.exe') => {
   const { exports: e } = await bootRenderHarness({ extraWat, fonts: 'none' });
 
   const memory = new Uint8Array(e.memory.buffer);
@@ -43,9 +43,13 @@ const checkCommandLine = async (extraText, expectedArgv, expectedRaw) => {
     return result;
   };
 
+  const staging = e.get_staging() >>> 0;
+  const exe = Buffer.from(exeName, 'ascii');
+  memory.set(exe, staging);
+  e.set_exe_name(staging, exe.length);
   const extra = Buffer.from(extraText, 'ascii');
-  memory.set(extra, 0x500);
-  e.set_extra_cmdline(0x500, extra.length);
+  memory.set(extra, staging);
+  e.set_extra_cmdline(staging, extra.length);
 
   const first = e.test_get_command_line_a() >>> 0;
   const afterFirst = e.get_heap_ptr() >>> 0;
@@ -88,6 +92,11 @@ const checkCommandLine = async (extraText, expectedArgv, expectedRaw) => {
   await checkCommandLine('-c c:\\queen.ini --path=c:\\ queen',
     ['C:\\app.exe', '-c', 'c:\\queen.ini', '--path=c:\\', 'queen'],
     'C:\\app.exe -c c:\\queen.ini --path=c:\\ queen');
+
+  await checkCommandLine('-deleter',
+    ['C:\\Black and White Setup.exe', '-deleter'],
+    '"C:\\Black and White Setup.exe" -deleter',
+    'Black and White Setup.exe');
 
   console.log('PASS GetCommandLineA, _acmdln, and argv share one stable command-line source');
 })().catch(error => {

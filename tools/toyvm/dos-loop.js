@@ -1169,7 +1169,12 @@ class DosSession {
   timerInterval() {
     if (!this.pitClock) return this.irqEvery;
     const pit = this.machine.pit;
-    const reload = pit && pit.latch ? pit.latch[0] : 0x10000;
+    // A reload of zero is the PIT's way of writing 65536 -- the counter is
+    // sixteen bits and the full period has no other spelling, which is why a
+    // program that wants the plain 18.2Hz BIOS tick writes `out 40h,0` twice
+    // (ACME-BIG.EXE does, right before it latches channel 0 to calibrate
+    // itself). Read literally it asks for a tick every 200 dispatches.
+    const reload = (pit && pit.latch ? pit.latch[0] : 0) || 0x10000;
     return Math.max(200, Math.round(this.dispatchesPerTick * reload / 65536));
   }
 

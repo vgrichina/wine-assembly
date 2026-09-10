@@ -1492,8 +1492,12 @@ for (const iface of d3d9Ifaces) {
   for (const m of iface.methods) {
     const fullName = iface.prefix + '_' + m.name;
     if (!seen.has(fullName)) {
-      existing.push({ id: existing.length, name: fullName, nargs: 5, convention: 'stdcall', hash: 0 });
+      existing.push({ id: existing.length, name: fullName, nargs: m.nargs, convention: 'stdcall', hash: 0 });
       seen.add(fullName);
+    } else {
+      // Five WAT locals are an internal dispatch convention, not the guest
+      // method's stdcall arity. Remaining parameters are read from its stack.
+      existing.find(api => api.name === fullName).nargs = m.nargs;
     }
   }
 }

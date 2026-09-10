@@ -2264,10 +2264,86 @@ class Machine {
   // as "the guest hooked the timer" sent a double fault every tick, and cd2.exe,
   // daretro.exe and AMBIENT.EXE each lost a full screen of picture to a printed
   // "Exception fault." Where a pmode program remaps its PIC to is not something
-  // we track, and until it is there is nothing here to read.
+  // we track. What CAN be read is whether the gate still says what it said when
+  // the extender built the table -- see pmHookedVector below.
   hookedVector(v) {
     const at = v << 2;
-    return (this.mem[at + 2] | (this.mem[at + 3] << 8)) !== STUB_SEG;
+    if ((this.mem[at + 2] | (this.mem[at + 3] << 8)) !== STUB_SEG) return true;
+    return this.pmHookedVector(v);
+  }
+
+  // The protected-mode half of the same question.
+  //
+  // A program running under its own extender installs a hardware-interrupt
+  // handler with DPMI 0205 (set protected-mode interrupt vector). That writes
+  // an IDT gate and leaves the real-mode vector table alone, so the test above
+  // sees our stub and answers "not hooked" forever. COCAHOLC.EXE's entire frame
+  // clock is an INT 08h handler installed exactly that way: it saves the
+  // real-mode vector, reprograms PIT channel 0 to 0x5C52 (50.5Hz), hooks 08h in
+  // protected mode, and from then on renders one frame per tick and copies it
+  // to A000 at the end of it. With no tick ever delivered it rasterized into
+  // its own offscreen buffer at linear 0x110000 for the whole run and never
+  // once reached the copy -- 0 non-black pixels, and no write to A0000 at all.
+  //
+  // What must NOT be done is to read the gate and call a present one hooked:
+  // in protected mode 8 is #DF and 0Ah is #TS, so an extender has a present
+  // gate at every number this is asked about, and raising a timer tick into a
+  // double-fault handler is what cost cd2.exe, daretro.exe and AMBIENT.EXE a
+  // screen of picture the last time this was tried.
+  //
+  // Nor is "the gate moved" enough on its own. ACME-BIG.EXE's extender swaps
+  // its own vector-8 gate from a provisional entry (8:7ef) to its real
+  // exception-stub table (8:808, which disassembles to `push eax; mov al,8;
+  // jmp common` -- one five-byte stub per vector, 9 and 0Ah right behind it).
+  // That is the extender tidying up, not the guest asking for a tick, and
+  // delivering IRQ0 into it dropped the demo from 73 GUS voice starts to 1 and
+  // rendered eight seconds of silence.
+  //
+  // What separates the two is the SELECTOR. An extender's exception stubs live
+  // in the extender's own code selector -- the one the gate already named --
+  // whereas a handler installed with DPMI 0205 names the selector the guest
+  // gave it. COCAHOLC's gate 8 goes 8:a2a -> 250:3411, and 0x250 is the code
+  // selector its intro module allocated for itself thirty million dispatches
+  // earlier. So: present gate, selector changed since this IDT came into view.
+  //
+  // The cost of that strictness is a flat-model program that shares selector 8
+  // with its extender and hooks IRQ0 through it: unreadable from here, and left
+  // exactly where it was before this existed rather than guessed at.
+  //
+  // The snapshot is per (base, limit): a LIDT that names a different table is a
+  // different machine, and re-arming there costs one missed hook at worst.
+  pmHookedVector(v) {
+    const ex = this.vmExports;
+    if (!ex || !ex.mget_idtb || !ex.get_cr0 || !(ex.get_cr0() & 1)) return false;
+    if (ex.get_vm86 && ex.get_vm86()) return false;
+    const base = ex.mget_idtb() >>> 0, limit = ex.mget_idtl() & 0xFFFF;
+    if ((v << 3) + 7 > limit) return false;
+    const at = base + (v << 3);
+    if (at + 8 > this.mem.length) return false;
+    const m = this.mem;
+    // Where this vector goes: the gate's selector, or -1 for a gate whose
+    // present bit is clear (a real state, and not the same as any target).
+    const sel = (m[at + 5] & 0x80) ? (m[at + 2] | (m[at + 3] << 8)) : -1;
+    const gate = `${sel}:${(((m[at + 7] << 24) | (m[at + 6] << 16)
+      | (m[at + 1] << 8) | m[at]) >>> 0).toString(16)}`;
+    let snap = this.idtSnap;
+    if (!snap || snap.base !== base || snap.limit !== limit) {
+      snap = this.idtSnap = { base, limit, sel: new Map(), gate: new Map() };
+    }
+    if (!snap.sel.has(v)) {
+      snap.sel.set(v, sel); snap.gate.set(v, gate); return false;
+    }
+    if (snap.sel.get(v) === sel || sel < 0) return false;
+    // Once per vector, under --trace-int: which gate moved and where it went.
+    // "It draws now" and "it draws now because THIS vector was taken over" are
+    // different claims, and only this one can be checked against a disassembly.
+    if (!snap.told) snap.told = new Set();
+    if (!snap.told.has(v)) {
+      snap.told.add(v);
+      this.log(`pmode vector ${v.toString(16)}h hooked:`
+        + ` gate ${snap.gate.get(v)} -> ${gate}`);
+    }
+    return true;
   }
 
   // Which vector a timer tick should be delivered through, or 0 for none.

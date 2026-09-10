@@ -55,15 +55,16 @@ const { exeDriveForPath, setExeDrive } = require('../lib/process-boot');
   assert.strictEqual(Buffer.from(u8.subarray(wa(nested), end)).toString('ascii'),
     'D:\\System\\setup.exe');
 
-  u8.set(Buffer.from('setup.exe', 'ascii'), staging);
-  e.set_exe_name(staging, 9);
+  u8.set(Buffer.from('Black and White Setup.exe', 'ascii'), staging);
+  e.set_exe_name(staging, 25);
 
   const wide = e.test_call_GetCommandLineW();
   let command = '';
   for (let p = wa(wide); dv.getUint16(p, true); p += 2) {
     command += String.fromCharCode(dv.getUint16(p, true));
   }
-  assert.strictEqual(command, 'D:\\setup.exe');
+  assert.strictEqual(command, '"D:\\Black and White Setup.exe"',
+    'wide command lines quote an executable path containing spaces');
 
   e.set_exe_drive('?'.charCodeAt(0));
   const fallback = e.guest_alloc(260);

@@ -2062,6 +2062,30 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; SysAllocStringByteLen(psz: LPCSTR, len: UINT) creates a BSTR whose payload
+  ;; is an exact byte slice. It is deliberately not an ANSI-to-UTF16 conversion:
+  ;; callers use the byte form for binary/odd-length automation strings too.
+  (func $handle_SysAllocStringByteLen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $alloc i32) (local $bstr i32)
+    (local.set $alloc (call $heap_alloc (i32.add (local.get $arg1) (i32.const 6))))
+    (if (i32.eqz (local.get $alloc))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $bstr (i32.add (local.get $alloc) (i32.const 4)))
+    (call $gs32 (local.get $alloc) (local.get $arg1))
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+                  (i32.ne (local.get $arg1) (i32.const 0)))
+      (then (memory.copy
+        (call $g2w (local.get $bstr))
+        (call $g2w (local.get $arg0))
+        (local.get $arg1))))
+    (call $gs16 (i32.add (local.get $bstr) (local.get $arg1)) (i32.const 0))
+    (global.set $eax (local.get $bstr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
   ;; SysFreeString(bstr: BSTR). No-op on NULL.
   (func $handle_SysFreeString (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg0)
@@ -2077,6 +2101,18 @@
     (global.set $eax (i32.shr_u
       (call $gl32 (i32.sub (local.get $arg0) (i32.const 4)))
       (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; SysStringByteLen(bstr: BSTR) returns the stored byte count unchanged.
+  (func $handle_SysStringByteLen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; `select` eagerly evaluates both values in Wasm, so it cannot guard the
+    ;; length-prefix read for a NULL BSTR.
+    (if (i32.eqz (local.get $arg0))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (global.set $eax
+          (call $gl32 (i32.sub (local.get $arg0) (i32.const 4))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -2142,6 +2178,24 @@
       (then (call $gs32 (local.get $arg1) (i32.const 0))))
     (global.set $eax (i32.const 0x80029C4A))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; Real OLEAUT32 provides these automation helpers. Without that DLL, keep
+  ;; unsupported behavior explicit rather than forging registration/results.
+  (func $handle_LoadRegTypeLib (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr))
+  )
+
+  (func $handle_QueryPathOfRegTypeLib (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr))
+  )
+
+  (func $handle_RegisterTypeLib (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr))
+  )
+
+  (func $handle_DispGetIDsOfNames (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr))
   )
 
   ;; 770: CoTaskMemAlloc(cb) — 1 arg stdcall, allocate from heap

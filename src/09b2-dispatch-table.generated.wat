@@ -7,6 +7,10 @@
   (global $API_ID_IAMMultiMediaStream_BASE i32 (i32.const 3219))
   (global $API_ID_IShellLinkA_BASE i32 (i32.const 3265))
   (global $API_ID_IPersistFile_BASE i32 (i32.const 3286))
+  (global $API_ID_IDirect3DShader9_BASE i32 (i32.const 3323))
+  (global $API_ID_IDirect3DBuffer9_BASE i32 (i32.const 3329))
+  (global $API_ID_IDirect3DVertexDeclaration9_BASE i32 (i32.const 3343))
+  (global $API_ID_IDirect3DStateBlock9_BASE i32 (i32.const 3348))
 
   ;; ============================================================
   ;; API BR_TABLE DISPATCH — GENERATED, do not edit
@@ -64,9 +68,13 @@
       (then
         (call $dispatch_api_table_page_11 (i32.sub (local.get $api_id) (i32.const 2816)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
-    (if (i32.lt_u (local.get $api_id) (i32.const 3303))
+    (if (i32.lt_u (local.get $api_id) (i32.const 3328))
       (then
         (call $dispatch_api_table_page_12 (i32.sub (local.get $api_id) (i32.const 3072)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+        (return)))
+    (if (i32.lt_u (local.get $api_id) (i32.const 3355))
+      (then
+        (call $dispatch_api_table_page_13 (i32.sub (local.get $api_id) (i32.const 3328)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
     (call $handle_fallback (local.get $name_ptr) (local.get $api_id))
   )
@@ -12456,8 +12464,33 @@
   )
 
   (func $dispatch_api_table_page_12 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; api ids 3072..3302
+    ;; api ids 3072..3327
     (block $fallback
+    (block $api_255
+    (block $api_254
+    (block $api_253
+    (block $api_252
+    (block $api_251
+    (block $api_250
+    (block $api_249
+    (block $api_248
+    (block $api_247
+    (block $api_246
+    (block $api_245
+    (block $api_244
+    (block $api_243
+    (block $api_242
+    (block $api_241
+    (block $api_240
+    (block $api_239
+    (block $api_238
+    (block $api_237
+    (block $api_236
+    (block $api_235
+    (block $api_234
+    (block $api_233
+    (block $api_232
+    (block $api_231
     (block $api_230
     (block $api_229
     (block $api_228
@@ -12689,7 +12722,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $api_137 $api_138 $api_139 $api_140 $api_141 $api_142 $api_143 $api_144 $api_145 $api_146 $api_147 $api_148 $api_149 $api_150 $api_151 $api_152 $api_153 $api_154 $api_155 $api_156 $api_157 $api_158 $api_159 $api_160 $api_161 $api_162 $api_163 $api_164 $api_165 $api_166 $api_167 $api_168 $api_169 $api_170 $api_171 $api_172 $api_173 $api_174 $api_175 $api_176 $api_177 $api_178 $api_179 $api_180 $api_181 $api_182 $api_183 $api_184 $api_185 $api_186 $api_187 $api_188 $api_189 $api_190 $api_191 $api_192 $api_193 $api_194 $api_195 $api_196 $api_197 $api_198 $api_199 $api_200 $api_201 $api_202 $api_203 $api_204 $api_205 $api_206 $api_207 $api_208 $api_209 $api_210 $api_211 $api_212 $api_213 $api_214 $api_215 $api_216 $api_217 $api_218 $api_219 $api_220 $api_221 $api_222 $api_223 $api_224 $api_225 $api_226 $api_227 $api_228 $api_229 $api_230 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $api_137 $api_138 $api_139 $api_140 $api_141 $api_142 $api_143 $api_144 $api_145 $api_146 $api_147 $api_148 $api_149 $api_150 $api_151 $api_152 $api_153 $api_154 $api_155 $api_156 $api_157 $api_158 $api_159 $api_160 $api_161 $api_162 $api_163 $api_164 $api_165 $api_166 $api_167 $api_168 $api_169 $api_170 $api_171 $api_172 $api_173 $api_174 $api_175 $api_176 $api_177 $api_178 $api_179 $api_180 $api_181 $api_182 $api_183 $api_184 $api_185 $api_186 $api_187 $api_188 $api_189 $api_190 $api_191 $api_192 $api_193 $api_194 $api_195 $api_196 $api_197 $api_198 $api_199 $api_200 $api_201 $api_202 $api_203 $api_204 $api_205 $api_206 $api_207 $api_208 $api_209 $api_210 $api_211 $api_212 $api_213 $api_214 $api_215 $api_216 $api_217 $api_218 $api_219 $api_220 $api_221 $api_222 $api_223 $api_224 $api_225 $api_226 $api_227 $api_228 $api_229 $api_230 $api_231 $api_232 $api_233 $api_234 $api_235 $api_236 $api_237 $api_238 $api_239 $api_240 $api_241 $api_242 $api_243 $api_244 $api_245 $api_246 $api_247 $api_248 $api_249 $api_250 $api_251 $api_252 $api_253 $api_254 $api_255 $fallback (local.get $api_id))
     ) ;; 3072: FindFirstChangeNotificationA
       (call $handle_FindFirstChangeNotificationA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -13380,11 +13413,202 @@
     ) ;; 3301: mmioStringToFOURCCA
       (call $handle_mmioStringToFOURCCA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
-    ) ;; 3302: DirectXSetup
-      (call $handle_DirectXSetup (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    ) ;; 3302: MkParseDisplayName
+      (call $handle_MkParseDisplayName (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3303: NdrDllRegisterProxy
+      (call $handle_NdrDllRegisterProxy (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3304: CoLoadLibrary
+      (call $handle_CoLoadLibrary (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3305: UuidCreate
+      (call $handle_UuidCreate (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3306: GetPrivateProfileSectionA
+      (call $handle_GetPrivateProfileSectionA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3307: CoMarshalInterThreadInterfaceInStream
+      (call $handle_CoMarshalInterThreadInterfaceInStream (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3308: CoGetInterfaceAndReleaseStream
+      (call $handle_CoGetInterfaceAndReleaseStream (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3309: GetVersionEx
+      (call $handle_GetVersionEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3310: GetSystemWindowsDirectoryA
+      (call $handle_GetSystemWindowsDirectoryA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3311: GetSystemDefaultUILanguage
+      (call $handle_GetSystemDefaultUILanguage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3312: lstrlen
+      (call $handle_lstrlen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3313: DllRegisterServer
+      (call $handle_DllRegisterServer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3314: NdrDllUnregisterProxy
+      (call $handle_NdrDllUnregisterProxy (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3315: SysAllocStringByteLen
+      (call $handle_SysAllocStringByteLen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3316: SysStringByteLen
+      (call $handle_SysStringByteLen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3317: LoadRegTypeLib
+      (call $handle_LoadRegTypeLib (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3318: QueryPathOfRegTypeLib
+      (call $handle_QueryPathOfRegTypeLib (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3319: RegisterTypeLib
+      (call $handle_RegisterTypeLib (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3320: DispGetIDsOfNames
+      (call $handle_DispGetIDsOfNames (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3321: GetSystemPowerStatus
+      (call $handle_GetSystemPowerStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3322: GlobalMemoryStatusEx
+      (call $handle_GlobalMemoryStatusEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3323: IDirect3DShader9_QueryInterface
+      (call $handle_IDirect3DShader9_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3324: IDirect3DShader9_AddRef
+      (call $handle_IDirect3DShader9_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3325: IDirect3DShader9_Release
+      (call $handle_IDirect3DShader9_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3326: IDirect3DShader9_GetDevice
+      (call $handle_IDirect3DShader9_GetDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3327: IDirect3DShader9_GetFunction
+      (call $handle_IDirect3DShader9_GetFunction (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 3072)))
+  )
+
+  (func $dispatch_api_table_page_13 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; api ids 3328..3354
+    (block $fallback
+    (block $api_26
+    (block $api_25
+    (block $api_24
+    (block $api_23
+    (block $api_22
+    (block $api_21
+    (block $api_20
+    (block $api_19
+    (block $api_18
+    (block $api_17
+    (block $api_16
+    (block $api_15
+    (block $api_14
+    (block $api_13
+    (block $api_12
+    (block $api_11
+    (block $api_10
+    (block $api_9
+    (block $api_8
+    (block $api_7
+    (block $api_6
+    (block $api_5
+    (block $api_4
+    (block $api_3
+    (block $api_2
+    (block $api_1
+    (block $api_0
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $fallback (local.get $api_id))
+    ) ;; 3328: DirectXSetup
+      (call $handle_DirectXSetup (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3329: IDirect3DBuffer9_QueryInterface
+      (call $handle_IDirect3DBuffer9_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3330: IDirect3DBuffer9_AddRef
+      (call $handle_IDirect3DBuffer9_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3331: IDirect3DBuffer9_Release
+      (call $handle_IDirect3DBuffer9_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3332: IDirect3DBuffer9_GetDevice
+      (call $handle_IDirect3DBuffer9_GetDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3333: IDirect3DBuffer9_SetPrivateData
+      (call $handle_IDirect3DBuffer9_SetPrivateData (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3334: IDirect3DBuffer9_GetPrivateData
+      (call $handle_IDirect3DBuffer9_GetPrivateData (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3335: IDirect3DBuffer9_FreePrivateData
+      (call $handle_IDirect3DBuffer9_FreePrivateData (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3336: IDirect3DBuffer9_SetPriority
+      (call $handle_IDirect3DBuffer9_SetPriority (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3337: IDirect3DBuffer9_GetPriority
+      (call $handle_IDirect3DBuffer9_GetPriority (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3338: IDirect3DBuffer9_PreLoad
+      (call $handle_IDirect3DBuffer9_PreLoad (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3339: IDirect3DBuffer9_GetType
+      (call $handle_IDirect3DBuffer9_GetType (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3340: IDirect3DBuffer9_Lock
+      (call $handle_IDirect3DBuffer9_Lock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3341: IDirect3DBuffer9_Unlock
+      (call $handle_IDirect3DBuffer9_Unlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3342: IDirect3DBuffer9_GetDesc
+      (call $handle_IDirect3DBuffer9_GetDesc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3343: IDirect3DVertexDeclaration9_QueryInterface
+      (call $handle_IDirect3DVertexDeclaration9_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3344: IDirect3DVertexDeclaration9_AddRef
+      (call $handle_IDirect3DVertexDeclaration9_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3345: IDirect3DVertexDeclaration9_Release
+      (call $handle_IDirect3DVertexDeclaration9_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3346: IDirect3DVertexDeclaration9_GetDevice
+      (call $handle_IDirect3DVertexDeclaration9_GetDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3347: IDirect3DVertexDeclaration9_GetDeclaration
+      (call $handle_IDirect3DVertexDeclaration9_GetDeclaration (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3348: IDirect3DStateBlock9_QueryInterface
+      (call $handle_IDirect3DStateBlock9_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3349: IDirect3DStateBlock9_AddRef
+      (call $handle_IDirect3DStateBlock9_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3350: IDirect3DStateBlock9_Release
+      (call $handle_IDirect3DStateBlock9_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3351: IDirect3DStateBlock9_GetDevice
+      (call $handle_IDirect3DStateBlock9_GetDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3352: IDirect3DStateBlock9_Capture
+      (call $handle_IDirect3DStateBlock9_Capture (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3353: IDirect3DStateBlock9_Apply
+      (call $handle_IDirect3DStateBlock9_Apply (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3354: ReadFileEx
+      (call $handle_ReadFileEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; fallback
+    (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 3328)))
   )
 
   ;; ============================================================

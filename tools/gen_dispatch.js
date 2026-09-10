@@ -42,6 +42,10 @@ const namedApiIds = [
   ['IAMMultiMediaStream_QueryInterface', 'API_ID_IAMMultiMediaStream_BASE'],
   ['IShellLinkA_QueryInterface', 'API_ID_IShellLinkA_BASE'],
   ['IPersistFile_QueryInterface', 'API_ID_IPersistFile_BASE'],
+  ['IDirect3DShader9_QueryInterface', 'API_ID_IDirect3DShader9_BASE'],
+  ['IDirect3DBuffer9_QueryInterface', 'API_ID_IDirect3DBuffer9_BASE'],
+  ['IDirect3DVertexDeclaration9_QueryInterface', 'API_ID_IDirect3DVertexDeclaration9_BASE'],
+  ['IDirect3DStateBlock9_QueryInterface', 'API_ID_IDirect3DStateBlock9_BASE'],
 ];
 
 out.push('  ;; Named API ids consumed by hand-written dispatch fast paths.');

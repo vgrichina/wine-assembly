@@ -685,6 +685,8 @@
   ;; INI file host imports — backed by localStorage
   (import "host" "ini_get_string" (func $host_ini_get_string (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; ini_get_string(appNameWA, keyNameWA, defaultWA, bufGA, bufSize, fileNameWA, isWide) → chars written
+  (import "host" "ini_get_section" (func $host_ini_get_section (param i32 i32 i32 i32 i32) (result i32)))
+  ;; ini_get_section(appNameWA, bufGA, bufSize, fileNameWA, isWide) → chars written
   (import "host" "ini_get_int" (func $host_ini_get_int (param i32 i32 i32 i32 i32) (result i32)))
   ;; ini_get_int(appNameWA, keyNameWA, nDefault, fileNameWA, isWide) → int value
   (import "host" "ini_write_string" (func $host_ini_write_string (param i32 i32 i32 i32 i32) (result i32)))
@@ -715,6 +717,7 @@
   (import "host" "fs_create_legacy_file" (func $host_fs_create_legacy_file (param i32 i32 i32 i32 i32) (result i32)))
   ;; fs_create_legacy_file(...) → 16-bit HFILE for _lopen/_lcreat
   (import "host" "fs_read_file" (func $host_fs_read_file (param i32 i32 i32 i32) (result i32)))
+  (import "host" "fs_read_file_at" (func $host_fs_read_file_at (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; fs_read_file(handle, bufGA, nToRead, nReadGA) → BOOL
   (import "host" "fs_read_pending" (func $host_fs_read_pending (result i32)))
   ;; fs_read_pending() → 1 when the fs_read_file that just returned 0 is
@@ -2765,9 +2768,9 @@
   (global $qsort_thunk     (mut i32) (i32.const 0))
   ;; DLL loader state
   (global $dll_count (mut i32) (i32.const 0))
-  (global $DLL_TABLE_CAPACITY i32 (i32.const 16))
-  (global $DLL_TABLE i32 (region.addr $DLL_TABLE 0))  ;; 32 bytes x 16 DLLs = 512 bytes
-  ;; Parallel to DLL_TABLE: per-DLL resource dir (rsrc_rva, rsrc_size). 8 bytes x 16 = 128B.
+  (global $DLL_TABLE_CAPACITY i32 (i32.const 32))
+  (global $DLL_TABLE i32 (region.addr $DLL_TABLE 0))  ;; 32 bytes x 32 DLLs = 1024 bytes
+  ;; Parallel to DLL_TABLE: per-DLL resource dir (rsrc_rva, rsrc_size). 8 bytes x 32 = 256B.
   (global $DLL_RSRC_TABLE i32 (region.addr $DLL_RSRC_TABLE 0))
   ;; Full path used to load each module, as a guest string pointer. Keeping it
   ;; parallel avoids changing the long-established 32-byte DLL table ABI.
@@ -3349,6 +3352,10 @@
   ;; integer IDs or UTF-16 strings in the PE directory; the latter are copied
   ;; to a temporary ANSI guest buffer for each ENUMRESNAMEPROC callback.
   (global $enum_rsrc_thunk   (mut i32) (i32.const 0))
+  ;; ReadFileEx completion queue belongs to this guest-thread instance.
+  (global $io_apc_head (mut i32) (i32.const 0))
+  (global $io_apc_tail (mut i32) (i32.const 0))
+  (global $io_apc_thunk (mut i32) (i32.const 0)) ;; CACA0032
   (global $enum_rsrc_module  (mut i32) (i32.const 0))
   (global $enum_rsrc_type    (mut i32) (i32.const 0))
   (global $enum_rsrc_cb      (mut i32) (i32.const 0))

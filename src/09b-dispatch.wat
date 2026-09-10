@@ -1099,6 +1099,9 @@
         (call $enum_rsrc_continue)
         (return)))
 
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0032))
+      (then (call $io_apc_continue) (return)))
+
     ;; D3D EnumZBufferFormats continuation — callback returned, finish enumeration
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000D))
       (then

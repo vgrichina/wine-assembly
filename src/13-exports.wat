@@ -2669,6 +2669,8 @@
         (then (global.set $child_create_nccreate_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA002A))
         (then (global.set $setfocus_ret_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA002B))
+        (then (global.set $enum_child_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0030))
         (then (global.set $enum_rsrc_thunk (local.get $guest))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))

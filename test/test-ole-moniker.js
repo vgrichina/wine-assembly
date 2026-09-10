@@ -117,6 +117,23 @@ async function main() {
   const created = createMoniker(originalPath);
   check('CreateFileMoniker returns an object with caller ownership', created.hr === 0 && created.object !== 0);
 
+  const parsedEaten = alloc(4);
+  const parsedOut = alloc(4);
+  write(parsedEaten, 0xcccccccc);
+  write(parsedOut, 0xcccccccc);
+  check('MkParseDisplayName consumes a file display name into an owned moniker',
+    callApi('MkParseDisplayName', 0, writeWide(originalPath), parsedEaten, parsedOut) === 0 &&
+    read(parsedEaten) === originalPath.length && read(parsedOut) !== 0);
+  const parsedObject = read(parsedOut);
+  write(parsedEaten, 0xcccccccc);
+  write(parsedOut, 0xcccccccc);
+  check('MkParseDisplayName rejects empty syntax without publishing outputs',
+    callApi('MkParseDisplayName', 0, writeWide(''), parsedEaten, parsedOut) === 0x800401e4 &&
+    read(parsedEaten) === 0 && read(parsedOut) === 0);
+  check('MkParseDisplayName validates both output pointers',
+    callApi('MkParseDisplayName', 0, writeWide(originalPath), 0, parsedOut) === 0x80004003 &&
+    callApi('MkParseDisplayName', 0, writeWide(originalPath), parsedEaten, 0) === 0x80004003);
+
   const vtable = read(created.object);
   check('file moniker exposes all 23 inherited IMoniker slots',
     vtable !== 0 && Array.from({ length: 23 }, (_, index) => read(vtable + index * 4)).every(Boolean));
@@ -288,9 +305,15 @@ async function main() {
   assert.strictEqual(callMethod(loaded, 2), 0);
   assert.strictEqual(callMethod(unicodeMoniker, 2), 0);
   assert.strictEqual(callMethod(guestLoaded, 2), 0);
+  assert.strictEqual(callMethod(parsedObject, 2), 0);
   assert.strictEqual(e.test_ole_release(localStream), 0);
   assert.strictEqual(e.test_ole_release(guestStream), 0);
   assert.strictEqual(e.test_ole_release(malformedStream), 0);
+
+  for (const name of ['NdrDllRegisterProxy','NdrDllUnregisterProxy','DllRegisterServer']) {
+    assert.throws(() => callApi(name, 1, 2, 3), WebAssembly.RuntimeError,
+      `${name} must not claim unimplemented registry side effects succeeded`);
+  }
 
   console.log(`\n${checks}/${checks} checks passed`);
 }
