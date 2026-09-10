@@ -37,6 +37,7 @@ async function buildModule(variant, opts = {}) {
     ? `-r${crypto.createHash('sha256').update(opts.regions.map(r => r.body).join('|'))
       .digest('hex').slice(0, 12)}` : '';
   const suffix = (opts.hist ? '-hist' : '')
+    + (opts.ipHist ? '-iphist' : '')
     + (opts.lazyFlags === false ? '-eager' : '')
     + (opts.fuseCond === false ? '-genericcond' : '') + regionKey;
   const file = `toyvm-${variant}${suffix}.wat`;
@@ -56,7 +57,8 @@ async function makeVm(variant, opts = {}) {
   const { wat, bytes } = opts.bytes
     ? { wat: opts.wat || '', bytes: opts.bytes }
     : await buildModule(variant,
-      { hist: !!opts.hist, lazyFlags: opts.lazyFlags !== false, fuseCond: opts.fuseCond !== false,
+      { hist: !!opts.hist, ipHist: !!opts.ipHist,
+        lazyFlags: opts.lazyFlags !== false, fuseCond: opts.fuseCond !== false,
         regions: opts.regions || null });
   // WHERE THE REGIONS LANDED IN THE TABLE. Regions are appended after the
   // ordinary handlers, so their index is HANDLERS.length + n -- but only as

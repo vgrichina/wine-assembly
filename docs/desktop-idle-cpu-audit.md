@@ -279,3 +279,11 @@ cost, with the clock-context park fix retained.
 
 Shared-main merge still awaits a safe window: active dirty host/index/touch/
 renderer edits belong to other work and were not stashed or overwritten.
+
+Follow-up integration includes committed main2cadff13, notably the newer
+retained modal host-input callback path. It merges without conflict with the
+idle pump. Source306 canonical1067255/compat1067712 build passes with the same
+layout hash. Dialog timer/posted/host-input, renderer modal routing,
+cross-instance common modal, browser park and cooperative deadline tests pass.
+The shared checkout still has overlapping uncommitted changes; it is not
+safe to replace or stash them while their owners are working.

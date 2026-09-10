@@ -47,8 +47,8 @@ initial notice after 30 steps. `dlg-cmd:1` and 50 more steps dismiss the
 notice and show the extraction dialog with its original default destination.
 Both screens were captured and visually inspected.
 
-Do not drive Unzip with `dlg-input-click:1`: this route calls the dialog
-procedure synchronously and abandons WM_COMMAND at `0x00403bd1` after 64
+Before the modal host-input fix below, `dlg-input-click:1` called the dialog
+procedure synchronously and abandoned WM_COMMAND at `0x00403bd1` after 64
 rounds. The first level is then only 8617984 bytes, versus 10663936 expected.
 Increasing the test's batch count cannot recover that abandoned invocation.
 
@@ -82,8 +82,8 @@ The export is under `program files/abe's oddysee demo/`. This run stopped
 at the success notice, before dismissing it to allow automatic game launch;
 `--capture-launch` therefore correctly reported no child launch. Later probes
 below verify the launch request and installed gameplay; the registered app
-now uses those files. The synchronous input-path abandonment above remains
-open. The original large-PE blocker is not current.
+now uses those files. The synchronous input-path abandonment was subsequently
+fixed below. The original large-PE blocker is not current.
 
 ### Automatic launch request
 
@@ -369,6 +369,37 @@ This narrows the remaining helper issue: despite its name, CLI
 down/up events. Its synchronous abandonment is not evidence that clicking
 the original installer's Unzip button fails. No renderer changes, guest
 patches, host extraction, or scheduler overrides were needed for this test.
+
+### Modal host-input continuation fix (2026-09-10)
+
+The remaining synthetic command failure was in the modal pump, not the CLI
+helper. In `src/09b-dispatch.wat`, the posted-message path already recognizes
+`WNDPROC_DIALOG` and enters its retained DLGPROC using a guest callback frame.
+The targeted host-input path instead treated that marker as a built-in WAT
+control, entering `wat_wndproc_dispatch` and its recursive synchronous sender.
+Long installer commands could exhaust that sender's bounded rounds and lose
+their in-flight callback. Host input now uses the same retained-procedure
+continuation as posted messages; actual built-in controls keep their old path.
+
+`test/test-dialog-timer-pump.js` fails before the fix and passes after it:
+one `run(1)` leaves EIP at the guest callback and ESP at the live four-argument
+frame, without executing it synchronously. Resuming preserves all four
+notification arguments and restores the stack. Existing timer and posted
+command assertions remain covered.
+
+`tools/install-abe-demo.js` now exercises `dlg-input-click:1` for Unzip. A fresh
+run completes all 5000 extraction steps, reports nine files, and captures the
+original `WinExec` launch request. All nine SHA-256 hashes and the total
+54625942 bytes match. Output: `/private/tmp/abe-input-fixed-installed`;
+visually inspected success: `/private/tmp/abe-input-fixed-success.png`.
+Running `test/test-abedemo-gameplay.js --frozen-route` with `ABE_INSTALLED_DIR`
+pointing to that fresh output also passes: BEGIN, RuptureFarms and Right
+movement (Abe's detected x position 204.15 -> 219.21 -> 267.63). Before/after
+gameplay screenshots were visually inspected. The full canonical and
+compatibility builds and dialog button-queue regressions pass.
+This closes the synthetic
+Unzip input-route failure, not the separate historical large-batch game input
+failure. Arbitrary synchronous `dlg-cmd` calls are not made resumable by this fix.
 
 ### Historical larger-batch route (CLI)
 
