@@ -80,9 +80,62 @@ The extended driver passes without tracing: sprite centroids
 Its `right.png` and `inventory.png` captures were visually inspected. The
 CLI exits 0; no runtime changes or input-state patches are used.
 
+## Browser Equipment And Combat (2026-09-10)
+
+An isolated headless Chrome run at `55b945cb` launches the registered
+`fallout_demo` through the actual page shell. Threads is off, Frozen is on,
+the slice budget is 100000 blocks and `WineFrozen.step(n, 10)` supplies guest
+time. Only Puppeteer keyboard/mouse events drive gameplay; no guest bytes,
+input state, or scheduler clocks are patched. Pointer Lock remains false:
+ordinary browser moves after the first point generate the needed DI deltas.
+
+The page viewport is 1000x760, with `#screen` at (10,192), size 660x530.
+The 640x480 game is fitted inside it with vertical bars above/below. Coordinates
+below are browser client pixels for this viewport, not native game pixels.
+
+Verified route:
+
+1. Step 1500; N down/10/up/200 reaches character selection at 1710.
+2. T down/10/up/400; Enter down/10/up/1000 reaches the map at 3130.
+3. Move to (340,457), left down/10/up/200: walk left, captured at 3340.
+4. Move to (443,457), step 100, left down/10/up/500: return to the initial
+   area at 3950. I down/10/up/150 opens inventory at 4110.
+5. Move to (170,267), step 100, left down/20; move to (295,535), step 100,
+   left up/150: MP9 is in Item 1 at 4480. The stats show damage 5-12,
+   range 25, and 30/30 rounds of 10mm JHP. The weapon leaves the carried list.
+6. Move to (170,267), step 50, left down/20; move to (295,430), step 50,
+   left up/100: armor is equipped at 4700. The character model changes and
+   armor class becomes 27.
+7. Escape down/10/up/150 starts closing inventory. An attempted Done click
+   (550,555), after 100 move steps, down/10/up/300, did not immediately clear
+   the inventory. Another 2000 steps reaches the equipped map at 7270.
+8. Move to weapon button (360,655), step 100, left down/10/up/100. Move to
+   the townsman at (270,370), step 100: targeting shows 43% at 7580.
+9. Left down/10/up/500 fires at 8090. The native message reports hitting a
+   wooden wall instead of the townsman for 8 hit points, and combat turn
+   controls appear. This verifies a combat action, not a defeated enemy.
+
+The temporary bounded stdin probe is `/private/tmp/fallout-browser-check.js
+--isolate`; its log is `/private/tmp/fallout-browser-check.log`. It exits 0,
+closes its browser/server, and reports no RuntimeError, unimplemented API or
+abandoned callback. Visually inspected frames include
+`/private/tmp/fallout-browser-{map,walk,return,inventory,equipped,armored,after-wait,target,combat}.png`.
+
+The apparent inventory-close stall was investigated through the existing
+`tools/ctl.js -s SESSION --hub=URL eval ...` against the live browser.
+EIP `0x075000d0` is the `timeGetTime` thunk (API 826), returning to
+`0x004873cd`. The helper at `0x004873c4` returns whether the clock differs
+from saved value `0x0062f7a8`; `0x00487420` counts those changes, and its
+caller returns to UI animation code at `0x0043e2c8`. Guest time and saved time
+both advanced; there were no sleeping threads, wait handles or synchronous
+message depth. More steps completed the transition, so the sampled thunk
+alone is not evidence of a hung clock or missing assets. Its exact transition
+duration has not been characterized.
+
 ## Still To Verify
 
-- Equipment dragging, conversation, combat and browser input acceptance.
+- Conversation and a complete enemy turn/continued combat sequence.
+- Worker-backend and mobile input acceptance.
 - The lower-screen destination behavior described above.
 - Native audio and the built-in F12 BMP screenshot path.
 
