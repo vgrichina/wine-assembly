@@ -42,6 +42,7 @@ done
 
 UNIT=(
   test/test-runtime-thread-ownership.js
+  test/test-worker-guest-readiness.js
   test/test-browser-cooperative-budget.js
   test/test-perf-block-accounting.js
   test/test-skip-exit.js

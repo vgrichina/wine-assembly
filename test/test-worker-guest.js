@@ -333,9 +333,21 @@ async function guestThreadsProbe(browser, port) {
   // Sampled while playback is live: by the end of the clip every thread has
   // exited and a snapshot taken then cannot tell "ran and finished" from "never
   // started".
+  // Keep the original 12 samples. A main slice can spend seconds servicing
+  // RPCs before child scheduling resumes; allow bounded readiness recovery
+  // without clicking Play again or relaxing any assertion.
+  const sampleStarted = Date.now();
+  const sampleDeadline = sampleStarted + 60000;
+  let readyAtMs = null;
+  let firstProgress = null;
+  let lastProgress = null;
+  const isReady = p => p.backend === 'worker' && p.spawned >= 2
+    && p.workers >= 2 && (p.slices || 0) > 10;
   let peak = { workers: 0, spawned: 0, active: 0, backend: null };
-  for (let i = 0; i < 12; i++) {
-    await wait(1000);
+  for (let i = 0; Date.now() < sampleDeadline
+      && (i < 12 || !isReady(peak)); i++) {
+    await wait(Math.max(0, Math.min(1000, sampleDeadline - Date.now())));
+    if (Date.now() >= sampleDeadline) break;
     const s = await page.evaluate(() => {
       const wine = (typeof runningApps !== 'undefined' && runningApps[0]) ? runningApps[0].wine : null;
       const tm = wine && wine.threadManager;
@@ -348,13 +360,26 @@ async function guestThreadsProbe(browser, port) {
         slices: tm ? [...tm.threads.values()].reduce(
           (n, t) => n + (t.link && t.link.sliceStats ? t.link.sliceStats.slices : 0), 0) : 0,
         alive: typeof runningApps !== 'undefined' ? runningApps.length : 0,
+        progress: {
+          mainPending: gw && gw.link ? gw.link._pending.size : 0,
+          mainSlices: gw && gw.link ? gw.link.sliceStats.slices : 0,
+          rpcServed: gw && gw.link && gw.link.broker
+            ? gw.link.broker.stats().served : 0,
+        },
       };
     });
     if (s.spawned > peak.spawned) peak = Object.assign({}, s);
     if (s.slices > (peak.slices || 0)) peak.slices = s.slices;
     peak.alive = s.alive;
     peak.backend = s.backend || peak.backend;
+    lastProgress = { elapsedMs: Date.now() - sampleStarted, ...s.progress };
+    if (!firstProgress) firstProgress = lastProgress;
+    if (readyAtMs === null && isReady(peak)) readyAtMs = lastProgress.elapsedMs;
   }
+  console.log('Winamp worker readiness:', JSON.stringify({
+    readyAtMs, elapsedMs: Date.now() - sampleStarted,
+    ...(readyAtMs === null ? { firstProgress, lastProgress } : {}),
+  }));
   fs.mkdirSync(OUT, { recursive: true });
   await page.screenshot({ path: path.join(OUT, 'winamp-guest-threads.png') });
   await page.close();
