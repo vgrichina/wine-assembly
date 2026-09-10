@@ -72,11 +72,25 @@ const extraWat = String.raw`
   assert.strictEqual(wat.get_esp(), 0x00300010,
     'ANSI three-argument stdcall pops return address plus all arguments');
 
-  const { exports: yielding } = await bootRenderHarness({
+  let yieldingMemory = null;
+  let requestedName = '';
+  const { exports: yielding, memory } = await bootRenderHarness({
     extraWat,
     fonts: 'none',
-    extraHostOverrides: { has_dll_file: () => 1 },
+    extraHostOverrides: {
+      has_dll_file: nameWA => {
+        assert(yieldingMemory, 'host lookup runs after the harness is ready');
+        const bytes = new Uint8Array(yieldingMemory.buffer);
+        requestedName = '';
+        for (let i = nameWA >>> 0; i < bytes.length && bytes[i]; i++) {
+          requestedName += String.fromCharCode(bytes[i]);
+        }
+        return requestedName === 'plugin.dll' ? 1 : 0;
+      },
+    },
   });
+  yieldingMemory = memory;
+  yielding.test_init_image_base();
   const dynamicName = 0x00402800;
   const dynamicValue = 'plugin.dll';
   for (let i = 0; i <= dynamicValue.length; i++) {
@@ -85,6 +99,8 @@ const extraWat = String.raw`
     yielding.guest_write8(dynamicName + i * 2 + 1, code >>> 8);
   }
   yielding.test_load_library_ex_w(dynamicName, 0, 0);
+  assert.strictEqual(requestedName, dynamicValue,
+    'Unicode module name is staged at the guest alias visible to the host');
   assert.strictEqual(yielding.get_yield_reason(), 5,
     'Unicode dynamic DLL lookup preserves the loader yield reason');
   assert.strictEqual(yielding.get_yield_flag(), 1,
