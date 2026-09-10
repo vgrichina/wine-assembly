@@ -289,6 +289,35 @@ clock while preserving bounded worker execution. Live browser movement and
 original-installer child handoff remain unverified. The temporary browser
 and server were closed after each probe.
 
+### Browser wait-clock fix and gameplay (2026-09-10)
+
+ThreadManager now accepts a separate `waitNow` clock for main/worker Sleep
+and timed waits; its default delegates to the existing `now` clock so CLI
+callers keep their behavior. The browser supplies its stepped guest audio
+clock. Execution-budget deadlines, elapsed-time profiling, and audio-hot
+priority remain on the original wall clock. No game-specific override is
+needed. The focused split-clock test fails before the fix (Sleep deadline
+9016 instead of 116) and passes afterward. It covers main and cooperative
+worker Sleep, timed isolated-main waits, and a frozen wait clock alongside
+a still-enforced wall execution budget. ThreadManager, cooperative browser
+budget, and all 48 Worker scheduler tests pass.
+
+Actual headless Chrome, registered installed payload, cooperative mode,
+100000 blocks/slice, 200ms/frozen step, no tracing or scheduler override:
+
+1. Step 1050: animated menu, zero pending resource loads.
+2. Focus `#screen`; Enter down 2 steps, up 200 steps (1252).
+3. Escape down 2 steps, up 100 steps (1354): story movie.
+4. Escape down 2 steps, up 50 steps (1406): live RuptureFarms.
+5. Right down 6 steps, up 2 steps (1414): Abe walks right.
+
+`/private/tmp/abe-browser-before.png` and `abe-browser-after.png` were
+visually inspected: the first room renders and Abe's pose/position responds
+to normal browser keyboard input. The browser and temporary server close
+cleanly. This establishes direct registered browser gameplay, not yet the
+original installer's live browser child handoff. The larger-batch CLI input
+regression also remains open.
+
 ### Historical larger-batch route (CLI)
 
 At `--batch-size=1000000`, the registered route reaches the main menu near
