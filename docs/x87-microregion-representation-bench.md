@@ -1,5 +1,10 @@
 # x87 micro-region stack representation shootout
 
+> This ceiling experiment omits finite-trip materialization and realistic
+> dispatcher pressure. See `docs/x87-realistic-region-bench.md` for the
+> corrected break-even study; its conclusions supersede direct extrapolation
+> from the ratios below.
+
 This experiment asks a narrow question: once the decoder has proved a balanced
 x87 region, how should that region carry `ST(i)` values around its loop?
 It does not modify the emulator.  The reusable generator/runner is
