@@ -149,7 +149,34 @@ park-sleep, cooperative-deadline and Worker scheduler tests pass.
 
 ## Completion checklist (still open)
 
+### Visible local304 inventory sweep
+
+`/private/tmp/wa-idle-cards-headful304`,10s per game, separate visible Chrome
+processes; all ten screenshots inspected in `wa-idle-cards-all.png`, no page
+errors and all guests remain running in message wait7. Host load ranged6..23,
+so these rule out core spins but are not precise quiet-box performance claims.
+
+| Game | Renderer core % | Main slices during sample |
+|---|---:|---|
+| Solitaire | 1.02 | 23 ->63 |
+| Cruel | 0.65 | 29 ->69 |
+| Golf | 5.32 | 21 ->73; timer/repaint follow-up |
+| Pegged | 0.48 | 1 ->1 |
+| TicTactics | 0.85 | 13 ->33 |
+| Reversi | 0.50 | 1 ->1 |
+| Minesweeper | 0.74 | 6 ->16; board still unopened |
+| Spider | 0.49 | 2 ->2 |
+| Peaks | 0.63 | 4 ->4 |
+| Pyramid | 1.67 | 12 ->22 |
+
+Golf's higher result is **not** an unparked main loop:52 guest runs over10s,
+with message wait7 and timer deadlines between runs. Profile timer/presentation
+cost and repeat under low host load before accepting the5.32% as persistent.
+
+### Remaining work
+
 - Inspect remaining puzzle games and Heroes II actual player-turn map.
+- Quiet-box Golf timer/repaint check; Minesweeper after its first reveal.
 - Verify Blackjack can leave its notice and deal a game; trace remaining hot paths.
 - Verify additional sleeping-helper games after input; Four Stones passes locally.
 - Finish real-game/after-input checks, not only launch states.
