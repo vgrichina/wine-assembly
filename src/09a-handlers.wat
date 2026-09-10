@@ -2523,22 +2523,40 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg + ret
   )
 
-  ;; 24: _lread — STUB: unimplemented
+  ;; 24: _lread
   (func $handle__lread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; _lread(hFile, lpBuffer, uBytes) — 3 args stdcall
-    ;; host_fs_read_file(handle, bufferWA, nBytes, lpBytesRead_WA) -> bool
-    ;; We use a scratch area on the stack for bytesRead
+    ;; This is the one implementation shared by _hread and mmioRead below.
+    ;; A successful zero-byte read is EOF; a host failure is HFILE_ERROR (-1).
+    ;; Provider-backed files park and retry this same thunk instead of turning
+    ;; a not-yet-resident chunk into false EOF.
     (local $bytes_read_ga i32) (local $bytes_read_wa i32)
+    (local $read_ok i32) (local $pending i32)
     (local.set $bytes_read_ga (i32.sub (global.get $esp) (i32.const 4)))
     (local.set $bytes_read_wa (call $g2w (local.get $bytes_read_ga)))
     (i32.store (local.get $bytes_read_wa) (i32.const 0))
-    (drop (call $host_fs_read_file
+    (local.set $read_ok (call $host_fs_read_file
       (local.get $arg0)
       (local.get $arg1)
       (local.get $arg2)
       (local.get $bytes_read_ga)))
-    (global.set $eax (i32.load (local.get $bytes_read_wa)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args + ret
+    (if (local.get $read_ok)
+      (then (global.set $eax (i32.load (local.get $bytes_read_wa))))
+      (else
+        (local.set $pending (call $host_fs_read_pending))
+        (if (i32.eq (local.get $pending) (i32.const 1))
+          (then
+            ;; The Win16 bridge owns its Pascal frame and parks it after the
+            ;; temporary 32-bit frame has been restored. Redirecting that
+            ;; scratch frame here would make $win16_call32_end trap.
+            (if (global.get $win16_in_call32)
+              (then (global.set $eax (i32.const 0)))
+              (else (call $io_block (i32.const 16)))))
+          (else
+            (global.set $eax (i32.const -1))
+            (if (local.get $pending)
+              (then (global.set $last_error (i32.const 30)))))))) ;; ERROR_READ_FAULT
   )
 
   ;; VkKeyScanA(CHAR ch) → SHORT. The low byte is the virtual-key code and
@@ -2703,19 +2721,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 938: _hread — identical to _lread
+  ;; 938: _hread — the LONG-count spelling of _lread.
   (func $handle__hread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $bytes_read_ga i32) (local $bytes_read_wa i32)
-    (local.set $bytes_read_ga (i32.sub (global.get $esp) (i32.const 4)))
-    (local.set $bytes_read_wa (call $g2w (local.get $bytes_read_ga)))
-    (i32.store (local.get $bytes_read_wa) (i32.const 0))
-    (drop (call $host_fs_read_file
-      (local.get $arg0)
-      (local.get $arg1)
-      (local.get $arg2)
-      (local.get $bytes_read_ga)))
-    (global.set $eax (i32.load (local.get $bytes_read_wa)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (if (i32.lt_s (local.get $arg2) (i32.const 0))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $handle__lread
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 25: Sleep — STUB: unimplemented

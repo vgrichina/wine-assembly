@@ -728,19 +728,12 @@
   )
 
   ;; 807: mmioRead(hmmio, pch, cch) — 3 args stdcall
-  ;; Reads cch bytes into buffer pch. Returns number of bytes read.
+  ;; Its signed-count and return contracts match _hread: EOF is zero, a read
+  ;; failure is -1, and provider-backed reads park rather than inventing EOF.
   (func $handle_mmioRead (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $bytes_read_ga i32) (local $bytes_read_wa i32)
-    (local.set $bytes_read_ga (i32.sub (global.get $esp) (i32.const 4)))
-    (local.set $bytes_read_wa (call $g2w (local.get $bytes_read_ga)))
-    (i32.store (local.get $bytes_read_wa) (i32.const 0))
-    (drop (call $host_fs_read_file
-      (local.get $arg0)    ;; handle
-      (local.get $arg1)    ;; buffer (guest address)
-      (local.get $arg2)    ;; count
-      (local.get $bytes_read_ga)))
-    (global.set $eax (i32.load (local.get $bytes_read_wa)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (call $handle__hread
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 808: mmioAscend(hmmio, lpck, wFlags) — 3 args stdcall
