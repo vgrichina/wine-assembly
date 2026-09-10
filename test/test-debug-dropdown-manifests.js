@@ -18,6 +18,7 @@ const {
 } = require(path.join(ROOT, 'lib', 'debug-app-picker.js'));
 const { hasPageScript } = require('./browser-runtime-scripts');
 const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+const pickerSource = fs.readFileSync(path.join(ROOT, 'lib', 'debug-app-picker.js'), 'utf8');
 const browserShell = fs.readFileSync(path.join(ROOT, 'lib', 'browser-shell.js'), 'utf8');
 const guestExports = fs.readFileSync(path.join(ROOT, 'src', '13-exports.wat'), 'utf8');
 const select = html.match(/<select id="app-select">([\s\S]*?)<\/select>/);
@@ -37,6 +38,24 @@ const dropdownIds = [...select[1].matchAll(/<option value="([^"]+)"/g)]
 assert.strictEqual(new Set(dropdownIds).size, dropdownIds.length,
   'debug dropdown app IDs must be unique');
 for (const id of dropdownIds) assert(APPS[id], `debug dropdown app ${id} is not registered`);
+
+const otherGroup = select[1].match(/<optgroup label="Other">([\s\S]*?)<\/optgroup>/);
+assert(otherGroup, 'debug dropdown has no Other group');
+const otherIds = [...otherGroup[1].matchAll(/<option value="([^"]+)"/g)]
+  .map(match => match[1])
+  .sort();
+const metadataIds = Object.entries(APPS)
+  .filter(([, app]) => app.debugPickerSection)
+  .map(([id, app]) => {
+    assert(['other-apps', 'other-games'].includes(app.debugPickerSection),
+      `${id} has an unknown debug picker section`);
+    return id;
+  })
+  .sort();
+assert.deepStrictEqual(metadataIds, otherIds,
+  'the APPS registry must classify every Other option exactly once');
+assert(!/OTHER_(?:APP|GAME)_IDS/.test(pickerSource),
+  'the debug picker must not carry a second app-ID list');
 
 assert(dropdownIds.includes('heaven7'), 'web dropdown must list Heaven Seven');
 assert(DESKTOP_APPS.some(([id]) => id === 'heaven7'),
