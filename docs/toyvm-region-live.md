@@ -13,8 +13,13 @@
                                         guest bytes change ◄────────────┘
                                         ⇒ uninstall, flush, re-profile
 
-  STILL SHIPS OFF. `--region-jit` (run-dos.js) and `?jit=1` / the page toggle
-  all still default to OFF -- but for a different reason than before. The
+  THE PAGE SHIPS IT ON (2026-09-09). The demos page toggle defaults to ON and
+  `?jit=0` turns it off for one load; `--region-jit` on run-dos.js stays an
+  explicit flag so every CLI harness (sweep-dos.js, region-live-ab.js, the
+  witness A/Bs) keeps an interpreter-only arm by default. What let it default:
+  the 191-program sweep, JIT on vs off, 0 rows with a different frame or pixel
+  count (16 moved their dispatch count by single digits), and an off-vs-off
+  control that is bit-identical apart from QUARTZ's timeout flake. The
   20-program gate is 20/20 byte-identical on frame, pixels, interrupts and
   rendered audio at 12M and 19/20 at 80M (where it was 12/20): DREAM still
   drifts one IRQ boundary by 80M on the shipped clock, and the clock that fixes
@@ -424,11 +429,11 @@ were re-measured individually with `region-live-ab.js`.
 
 ## What is NOT done
 
-* **The 191-program corpus sweep has not been re-run since BMGLP was fixed.**
-  Both rows that differed are individually SAME again at 8M and 80M, but a
-  re-sweep is what would let the flag default ON, and until it runs
-  `--region-jit` and `?jit=1` stay OFF. The 20-program gate is 20/20 at 12M and
-  19/20 at 80M (DREAM, on the shipped clock — see "At 80M dispatches").
+* **The 191-program sweep was re-run after the BMGLP fix and is clean** (see
+  the top of this file), which is what let the page default ON. `--region-jit`
+  stays explicit on the CLI. The 20-program gate is 20/20 at 12M and 19/20 at
+  80M (DREAM, on the shipped clock — see "At 80M dispatches"), so a full-budget
+  run is still not a passing gate for that one row.
 * **The audit still has no way to say "I never took that exit".** It reports
   DISAGREES, INCONCLUSIVE (arms took different branches) or a ratio; an exit the
   seeded 4000 iterations never reach is silently counted as audited. This is a

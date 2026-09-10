@@ -239,11 +239,13 @@
   var closeBtn = document.getElementById('lb-close');
   var autoBtn = document.getElementById('lb-auto');
   var jitBtn = document.getElementById('lb-jit');
-  // The JIT is OFF by default and stays off until somebody asks. It is the one
-  // control here that can change what is on the screen rather than how fast it
-  // gets there, and it declines rather than guesses -- but a default nobody
-  // chose is not the place to find that out.
-  var prefs = { cpu: '10', sound: true, auto: true, jit: false };
+  // The JIT is ON by default since the 191-program sweep came back clean
+  // (2026-09-09: JIT on vs off, 0 frame or pixel-count changes on any row,
+  // off-vs-off control bit-identical; docs/toyvm-region-live.md). It is still
+  // the one control here that can change what is on the screen rather than
+  // how fast it gets there, and it declines rather than guesses -- so the
+  // toggle and `?jit=0` remain the way to get the interpreter's picture back.
+  var prefs = { cpu: '10', sound: true, auto: true, jit: true };
   try {
     var saved = JSON.parse(localStorage.getItem('toyvm-live') || '{}');
     if (saved.cpu !== undefined) prefs.cpu = String(saved.cpu);
