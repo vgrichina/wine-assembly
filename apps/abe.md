@@ -10,8 +10,10 @@
 **Current status (2026-09-09):** `node tools/install-abe-demo.js` produces and
 hash-verifies all nine original files. The frozen gameplay route reaches
 RuptureFarms and walks right through normal keyboard input; screenshots
-inspected. The old large-batch test still fails at the menu. Browser
-installer-to-child handoff is not yet verified. See the
+inspected. The original installer also completes in a headless browser,
+automatically launches its VFS child, and that child reaches gameplay and
+walks right. The old large-batch CLI test still fails at the menu, and the
+synchronous Unzip helper remains unsafe (use the guest queue). See the
 [current installer and input notes](../docs/re-notes/abes-oddysee-demo.md).
 
 **Image base:** 0x00400000

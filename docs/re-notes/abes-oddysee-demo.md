@@ -27,8 +27,8 @@ The command verifies the original package hash, the guest success notice,
 the automatic launch path/working directory, and all nine output hashes
 before copying the guest-produced tree. It runs frozen with a CLI-internal
 180-second deadline and no build timeout. Failures retain the temporary
-capture and log for diagnosis. A live browser child process still needs
-verification; the CLI capture is only evidence of the launch request.
+capture and log for diagnosis. The CLI capture alone only proves the launch
+request; the separate live browser handoff is verified below.
 
 Verified the command with `--output=/private/tmp/abe-tool-installed`:
 all nine files and the launch request pass validation, the success screenshot
@@ -82,8 +82,8 @@ The export is under `program files/abe's oddysee demo/`. This run stopped
 at the success notice, before dismissing it to allow automatic game launch;
 `--capture-launch` therefore correctly reported no child launch. Later probes
 below verify the launch request and installed gameplay; the registered app
-now uses those files. Live browser handoff and the synchronous input-path
-abandonment above remain open. The original large-PE blocker is not current.
+now uses those files. The synchronous input-path abandonment above remains
+open. The original large-PE blocker is not current.
 
 ### Automatic launch request
 
@@ -107,7 +107,7 @@ then quitting with `--capture-launch=/private/tmp/abe-handoff-fixed` produces
 All nine captured game files are byte-identical to the first guest-produced
 tree (54625942 bytes total). No host archive extraction was used. This proves
 the automatic launch request and captured payload, not a live browser child
-reaching gameplay; live browser handoff verification remains open.
+reaching gameplay; the later live browser handoff check below supplies that evidence.
 
 ## Loader-thread deadlock
 
@@ -236,8 +236,8 @@ This is functional evidence for normal input on the installed payload, not
 a resolution of the larger-batch failure. Batch size changes both guest
 work per clock advance and scheduler boundaries; the underlying difference
 is not yet isolated. The existing automated one-million-block gameplay test
-still fails and must not be presented as passing. Live browser installer
-auto-launch remains to be verified; registry promotion is now complete.
+still fails and must not be presented as passing. Registry promotion and
+live browser installer auto-launch are now verified separately below.
 
 The opt-in frozen acceptance route uses the same normal keyboard sequence:
 
@@ -317,6 +317,38 @@ to normal browser keyboard input. The browser and temporary server close
 cleanly. This establishes direct registered browser gameplay, not yet the
 original installer's live browser child handoff. The larger-batch CLI input
 regression also remains open.
+
+### Original installer through live browser gameplay (2026-09-10)
+
+On source `a5a648bc`, a fresh headless Chrome page registers a temporary
+installer entry pointing only to the original `ABEODD.EXE`, not the installed
+game fixture. With frozen cooperative 100000-block slices and 200ms ticks,
+the same 30/50/5000-step dialog route reaches the authentic nine-files-success
+notice. Unzip is delivered with queued WM_COMMAND; this does not claim the
+known synchronous helper abandonment is fixed.
+
+Dismissing success invokes the real `WinExec("abedemo")`. The installer
+exits after two more steps, and the asynchronous browser shell creates
+`vfs:c:\\program files\\abe's oddysee demo\\abedemo.exe`. This is a fresh guest
+with HWND `0x20001`, adopting the caller's filesystem (58 entries). No
+registered game files are fetched as substitutes. The probe must allow the
+parent to exit before its requested step count; requiring ten completed
+parent steps incorrectly aborts before observing the child.
+
+The child then follows the browser gameplay sequence above: level at its
+step 1406 and normal Right input through 1414. Both child gameplay images
+were visually inspected, including Abe's changed pose and rightward position:
+
+- `/private/tmp/abe-browser-installer-success.png`
+- `/private/tmp/abe-browser-installed-before.png`
+- `/private/tmp/abe-browser-installed-after.png`
+
+The bounded probe is `/private/tmp/abe-browser-installer.js --isolate`; its
+trace is `/private/tmp/abe-browser-installer.log`. It uses the actual page
+shell and keyboard input, no guest byte patches or scheduler overrides, and
+closes its browser/server at completion. Remaining Abe issues are the legacy
+large-batch CLI input failure and the synchronous Unzip helper route, not
+original-package extraction, registered gameplay, or live child handoff.
 
 ### Historical larger-batch route (CLI)
 
