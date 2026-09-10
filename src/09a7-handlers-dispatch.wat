@@ -1392,13 +1392,47 @@
   ;; IDirectMusic root object. GTA2 and its InstallShield DxCheck helper only
   ;; use this interface as an availability/version probe: create it, accept
   ;; IUnknown/IDirectMusic QueryInterface, then release it.
-  (func $handle_IDirectMusic_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (func $guid_equals_words (param $guid i32) (param $d0 i32)
+        (param $d1 i32) (param $d2 i32) (param $d3 i32) (result i32)
+    (local $wa i32)
+    (if (i32.eqz (local.get $guid)) (then (return (i32.const 0))))
+    (local.set $wa (call $g2w (local.get $guid)))
+    (i32.and
+      (i32.and
+        (i32.eq (i32.load (local.get $wa)) (local.get $d0))
+        (i32.eq (i32.load offset=4 (local.get $wa)) (local.get $d1)))
+      (i32.and
+        (i32.eq (i32.load offset=8 (local.get $wa)) (local.get $d2))
+        (i32.eq (i32.load offset=12 (local.get $wa)) (local.get $d3)))))
+
+  (func $dx_query_interface_single (param $obj i32) (param $iid i32)
+        (param $out i32) (param $d0 i32) (param $d1 i32)
+        (param $d2 i32) (param $d3 i32) (result i32)
     (local $entry i32)
-    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (local.get $arg0))))
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (if (local.get $entry)
-      (then (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))))
-    (global.set $eax (i32.const 0))
+    (if (i32.eqz (local.get $out))
+      (then (return (i32.const 0x80004003)))) ;; E_POINTER
+    (call $gs32 (local.get $out) (i32.const 0))
+    (if (i32.eqz
+          (i32.or
+            (call $guid_equals_words (local.get $iid)
+              (i32.const 0) (i32.const 0) (i32.const 0x000000C0) (i32.const 0x46000000))
+            (call $guid_equals_words (local.get $iid)
+              (local.get $d0) (local.get $d1) (local.get $d2) (local.get $d3))))
+      (then (return (i32.const 0x80004002)))) ;; E_NOINTERFACE
+    (local.set $entry (call $dx_from_this (local.get $obj)))
+    (if (i32.eqz (local.get $entry))
+      (then (return (i32.const 0x80004002))))
+    (store.field DxObject refcount (local.get $entry)
+      (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (call $gs32 (local.get $out) (local.get $obj))
+    (i32.const 0))
+
+  (func $handle_IDirectMusic_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; IID_IDirectMusic {6536115A-7B2D-11D2-BA18-0000F875AC12}.
+    (global.set $eax (call $dx_query_interface_single
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0x6536115A) (i32.const 0x11D27B2D)
+      (i32.const 0x000018BA) (i32.const 0x12AC75F8)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectMusic_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
