@@ -6,9 +6,59 @@ The registered `abedemo` payload launches
 `test/binaries/shareware/abe/ex/AbeDemo.exe` and explicitly mounts its four DDV
 movies plus `c1.lvl`, `r1.lvl`, and `s1.lvl`. The executable is a 914,432-byte
 PE32 extracted from the separate 32,219,648-byte `ABEODD.EXE` self-extractor.
-The latter still needs the memory-map/large-image architecture work recorded in
-`docs/non-gdi-work-plan.md`; gameplay uses the extracted payload and does not
-pretend the self-extractor already runs.
+The old large-image blocker is superseded by the original-installer probe
+below. The registered gameplay fixture still uses the earlier extracted
+payload; do not equate that with a completed original-installer workflow.
+
+## Original self-extractor recheck (2026-09-09)
+
+The unchanged `Abes_Oddysee_demo/ABEODD.EXE` has SHA-256
+`179a2d7c0bab674cb28167d0a37ec74570fd2d6b589094d045a400633f2a33ab`.
+On source `ee965802`, PE loading stages 8 MiB and prehydrates 23831040
+section-tail bytes. The real WinZip Self-Extractor opens successfully.
+
+A frozen CLI session with `--batch-size=100000 --no-threads` reaches the
+initial notice after 30 steps. `dlg-cmd:1` and 50 more steps dismiss the
+notice and show the extraction dialog with its original default destination.
+Both screens were captured and visually inspected.
+
+Do not drive Unzip with `dlg-input-click:1`: this route calls the dialog
+procedure synchronously and abandons WM_COMMAND at `0x00403bd1` after 64
+rounds. The first level is then only 8617984 bytes, versus 10663936 expected.
+Increasing the test's batch count cannot recover that abandoned invocation.
+
+`dlg-post-cmd:1` instead queues the command for the guest message loop. After
+1000 steps it has emitted the complete `s1.lvl`, whose SHA-256 matches the
+reference payload (`74249ff3841325b91f412090ac9aa04bae63ced82b9bf752ddb442111d6293ed`),
+and has begun `c1.lvl`, without an abandoned-call diagnostic. Export these
+guest-produced files with `--save-vfs`, not a host archive extractor.
+Continuing to 5000 extraction steps reaches the original "9 file(s) unzipped
+successfully" dialog, which was captured and visually inspected. All nine
+guest-produced files match the previous reference payload byte-for-byte:
+three LVLs, four DDVs, `abedemo.exe`, and `readme.txt`, totaling 54625942 bytes.
+The installed executable SHA-256 is
+`21a5a8ddd021293f091c9bcee41cb729c52c73f6b79bfed0ecf18cce6176c343`.
+
+The successful probe used `--max-seconds=180 --no-build --no-close
+--quiet-api --quiet-blocks --control-stdin --frozen`, exported with
+`--save-vfs=/private/tmp/abe-original-complete`, and drove:
+
+```text
+step 30
+dlg-cmd:1
+step 50
+dlg-post-cmd:1
+step 1000 (five times, checking for the success notice between steps)
+png /private/tmp/abe-original-complete.png
+quit
+```
+
+The export is under `program files/abe's oddysee demo/`. This run stopped
+at the success notice, before dismissing it to allow automatic game launch;
+`--capture-launch` therefore correctly reported no child launch. Remaining
+acceptance is the automatic handoff, gameplay from this installer-produced
+tree, promotion of that tree into the registered app, and the synchronous
+input-path abandonment above. The original large-PE blocker is not current.
 
 ## Loader-thread deadlock
 
