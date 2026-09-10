@@ -144,6 +144,55 @@ test, teardown-quit test, and canonical/compat build pass. However, the full
 Abe normal-keyboard test still fails identically after that fix. Further
 delivery tracing is required; do not claim this queue fix resolves Abe.
 
+### Verified smaller-batch normal keyboard route
+
+On source `de50ad22`, the original-installer output reaches RuptureFarms
+and walks right without tracing, posted messages, or guest-memory writes.
+Launch the installed `abedemo.exe` with these CLI options:
+
+```text
+--vfs-include=*.lvl,*.ddv,readme.txt
+--no-build --no-threads --quiet-api --quiet-blocks --no-close
+--max-seconds=180 --batch-size=100000 --control-stdin --frozen
+```
+
+Use stdio `step` commands and normal `keydown`/`keyup` commands in this
+order (batch numbers are the parked boundary before issuing each command):
+
+| Batch | Action |
+| --- | --- |
+| 0 | step 50 |
+| 50 | Enter down; step 1 |
+| 51 | Enter up; step 1 |
+| 52 | Escape down; step 2 |
+| 54 | Escape up; step 150 |
+| 204 | Enter down; step 1 |
+| 205 | Enter up; step 100 |
+| 305 | Escape down; step 2 |
+| 307 | Escape up; step 30 |
+| 337 | capture before; Right down; step 3 |
+| 340 | capture moving; step 3 |
+| 343 | Right up; step 2 |
+| 345 | capture after; quit |
+
+Visually inspected `/private/tmp/abe-small-level-check.png`,
+`/private/tmp/abe-small-moving.png`, and `/private/tmp/abe-small-after.png`:
+all show the live first room, with Abe walking right. The existing gameplay
+test's bounded cyan-pixel detector measures 1148/1361/1189 sprite pixels and
+X centroids 204.15 -> 219.21 -> 267.63. The CLI exits normally after quit.
+An earlier identical untraced route through batch 305 showed the story movie,
+so this result does not require API tracing to alter execution.
+
+This is functional evidence for normal input on the installed payload, not
+a resolution of the larger-batch failure. Batch size changes both guest
+work per clock advance and scheduler boundaries; the underlying difference
+is not yet isolated. The existing automated one-million-block gameplay test
+still fails and must not be presented as passing. Installer auto-launch,
+registry promotion to installer-produced files, and a reusable acceptance
+test for this verified route remain to be completed.
+
+### Historical larger-batch route
+
 At `--batch-size=1000000`, the registered route reaches the main menu near
 batch 390. These normal keyboard events reach gameplay:
 
