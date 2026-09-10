@@ -214,13 +214,23 @@ those values independently rather than treating them as constants.
 
 ## Wine-Assembly calibration (2026-09-10)
 
-The first production prototype now supplies three opt-in lowering arms:
+The production prototype now supplies five opt-in lowering arms:
 
 ```text
 H448  straight  FLD mem; arithmetic mem; arithmetic mem; FSTP mem
 H449  tree      FLD mem; FLD mem; arithmetic-pop; FSTP mem
 H450  island    arbitrary contiguous H188/H189/H190 stream, canonical helpers
+H451  affine-a  FILD; FILD; FLD ST0; MUL; FXCH; ADD; MUL; FXCH; MUL
+H452  affine-b  ADD; FSUBP; ADD mem; FXCH; ADD mem
 ```
+
+H451/H452 are the first semantic-compiler arm rather than another dispatch
+fold. The decoder recognizes instruction semantics and address shapes, tracks
+the x87 stack symbolically, and emits a straight-line Wasm expression.
+`FLD ST0` becomes another reference to the same local and `FXCH` becomes a
+compile-time rename, so neither operation executes at runtime. Architectural
+stack state is materialized at ordered memory boundaries and at region exit;
+the original memory/fault order and arithmetic association are retained.
 
 On Node/V8, 200,000 real decoded guest iterations with nine rotated rounds gave:
 
@@ -230,6 +240,20 @@ pipeline       23.50 ms       16.68 ms         1.41x
 tree           26.50 ms       18.13 ms         1.46x
 Alpha island   53.71 ms       40.21 ms         1.34x
 ```
+
+With the actual Alpha affine sequence as one iteration, a later three-arm run
+of 200,000 iterations and nine rotated rounds measured:
+
+```text
+scalar opcode handlers       147.77 ms   1.00x
+H450 canonical-helper island 105.13 ms   1.41x
+H451/H452 semantic compiler   69.71 ms   2.12x scalar, 1.51x H450
+```
+
+The differential test compares output bytes, the complete FNSAVE image, GPRs
+and lazy flags across all three arms. It also puts observable integer
+instructions immediately after both compiled regions, guarding the threaded
+instruction-pointer resumption boundary that a NOP could not test.
 
 The Alpha Centauri movie's actual hot x87 sequence is not either four-op leaf.
 It is two longer islands separated by integer work. H450 executes 412,060 times
@@ -242,6 +266,21 @@ the fixed-frame ratio was 0.982x while the fixed-wall arm happened to produce
 four extra frames, a contradictory result inside machine noise. The profile
 explains the ceiling: x87 is about 5.7% of the handler stream and the integer
 Smacker decoder dominates. Treat H450 as evidence that generic micro-op islands
-are viable and exact, not as evidence that they solve Alpha's frame rate. The
-next useful experiment is direct semantic lowering of proven trees/islands, then
-the same expression machinery applied to the dominant integer decode regions.
+are viable and exact, not as evidence that they solve Alpha's frame rate.
+
+The first direct semantic experiment is now implemented. In a separate real
+Alpha histogram window, H451 and H452 each ran 206,720 times. Each pair lowers
+14 x87 instructions to two semantic handlers, removing 12 dispatches per pair,
+or 2,480,640 dispatches in that sample, while also eliminating the H450 inner
+micro-op branch/helper work. A no-histogram browser run completed with all 20
+anchored 640x480 frame hashes identical to the scalar oracle. Host load varied
+from 28 to 124 during these runs, so their wall-time/FPS values are explicitly
+not performance evidence; the rotated in-process microbenchmark is the usable
+local speed measurement.
+
+The remaining high-value step is to generalize the recognizer from these two
+affine templates into a bounded expression-region builder: symbolic stack and
+register SSA, ordered memory nodes, exact barriers/side exits, then a small
+catalog of straight-line emitters. The same IR can cover flag-dead integer
+Smacker expressions, which dominate Alpha's profile and therefore have a much
+higher whole-app ceiling than further x87-only tuning.

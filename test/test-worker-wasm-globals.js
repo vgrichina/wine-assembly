@@ -45,7 +45,7 @@ for (const setter of [
   'set_trace_eip_range', 'set_count', 'set_loop_trace', 'set_loop_emit',
   'set_loop_lut_emit', 'set_loop_copy_emit', 'set_loop_aoe_fill_emit',
   'set_loop_aoe_span_emit', 'set_sib_fusion', 'set_store_span_fusion',
-  'set_x87_pipeline4_fusion', 'set_rect_run',
+  'set_x87_pipeline4_fusion', 'set_x87_affine_fusion', 'set_rect_run',
   'set_case_chain', 'set_rle_run',
 ]) {
   assert(setters.includes(setter), `${setter} is missing from inherited WASM globals`);
@@ -63,6 +63,7 @@ record('set_loop_aoe_span_emit', 0);
 record('set_sib_fusion', 0);
 record('set_store_span_fusion', 0);
 record('set_x87_pipeline4_fusion', 0);
+record('set_x87_affine_fusion', 0);
 record('set_rect_run', 0);
 record('set_case_chain', 0);
 record('set_rle_run', 0);

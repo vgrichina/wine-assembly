@@ -3466,6 +3466,17 @@
     (global.get $x87_island_matches))
   (func (export "get_x87_island_runs") (result i32)
     (global.get $x87_island_runs))
+  (func (export "set_x87_affine_fusion") (param $flag i32)
+    (global.set $x87_affine_emit_enabled (local.get $flag))
+    (call $clear_cache))
+  (func (export "get_x87_affine_prepare_matches") (result i32)
+    (global.get $x87_affine_prepare_matches))
+  (func (export "get_x87_affine_prepare_runs") (result i32)
+    (global.get $x87_affine_prepare_runs))
+  (func (export "get_x87_affine_finish_matches") (result i32)
+    (global.get $x87_affine_finish_matches))
+  (func (export "get_x87_affine_finish_runs") (result i32)
+    (global.get $x87_affine_finish_runs))
 
   ;; The unrolled-rectangle fold ($th_rect_run). Same rules: before the first
   ;; decode, and on every per-thread instance.

@@ -19,7 +19,7 @@ function le32(v) {
   return [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255];
 }
 
-async function runArm(testCase, enabled) {
+async function runArm(testCase, mode) {
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const ctx = { exports: null, getMemory: () => memory.buffer };
   const host = createHostImports(ctx).host;
@@ -49,7 +49,8 @@ async function runArm(testCase, enabled) {
   mem.set([...body, 0xDD, 0xB7, ...le32(0x100), 0xC3], g2w(code));
   dv.setUint32(g2w(stack), 0, true);
 
-  e.set_x87_pipeline4_fusion(enabled ? 1 : 0);
+  e.set_x87_pipeline4_fusion(mode >= 1 ? 1 : 0);
+  e.set_x87_affine_fusion(mode >= 2 ? 1 : 0);
   e.reset_handler_hist();
   e.set_handler_hist_enabled(1);
   e.set_eax(0x12345678); e.set_ecx(0x24681357); e.set_edx(0x10203040);
@@ -70,6 +71,8 @@ async function runArm(testCase, enabled) {
     fusedRuns: hist[448] >>> 0,
     treeRuns: hist[449] >>> 0,
     islandRuns: hist[450] >>> 0,
+    affinePrepareRuns: hist[451] >>> 0,
+    affineFinishRuns: hist[452] >>> 0,
     matches: e.get_x87_pipeline4_matches() >>> 0,
     treeMatches: e.get_x87_tree4_matches() >>> 0,
   };
@@ -150,7 +153,8 @@ const cases = [
     ],
   },
   {
-    name: 'Alpha affine x87 islands', outputBytes: 16, handler: 450, expectedRuns: 3,
+    name: 'Alpha affine x87 islands', outputBytes: 16, handler: 450,
+    expectedRuns: 3, semantic: true,
     initialize(dv, g2w, data, output) {
       dv.setInt32(g2w(data), 13, true);
       dv.setInt32(g2w(data + 4), -5, true);
@@ -171,13 +175,13 @@ const cases = [
       0xD8, 0x0D, ...le32(data + 12),
       0xD9, 0xC9,                   // fxch st(1)
       0xD8, 0x0D, ...le32(data + 16),
-      0x90,                         // integer island boundary
+      0x40,                         // inc eax: observable integer island boundary
       0xDC, 0xC1,
       0xDE, 0xEA,                   // fsubp st(2),st(0)
       0xD8, 0x05, ...le32(data + 20),
       0xD9, 0xC9,
       0xD8, 0x05, ...le32(data + 20),
-      0x90,
+      0x40,                         // prove H452 resumes at the following op
       0xDD, 0x1D, ...le32(output),
       0xDD, 0x1D, ...le32(output + 8),
     ],
@@ -205,6 +209,7 @@ const cases = [
   for (const testCase of cases) {
     const scalar = await runArm(testCase, false);
     const fused = await runArm(testCase, true);
+    const semantic = testCase.semantic ? await runArm(testCase, 2) : null;
     assert.deepStrictEqual(fused.output, scalar.output, `${testCase.name}: result differs`);
     assert.deepStrictEqual(fused.fsave, scalar.fsave, `${testCase.name}: FNSAVE state differs`);
     assert.deepStrictEqual(fused.registers, scalar.registers, `${testCase.name}: GPRs differ`);
@@ -212,6 +217,8 @@ const cases = [
     assert.strictEqual(scalar.fusedRuns, 0, `${testCase.name}: disabled arm fused`);
     assert.strictEqual(scalar.treeRuns, 0, `${testCase.name}: disabled arm tree-fused`);
     assert.strictEqual(scalar.islandRuns, 0, `${testCase.name}: disabled arm island-fused`);
+    assert.strictEqual(scalar.affinePrepareRuns, 0, `${testCase.name}: disabled arm compiled prefix`);
+    assert.strictEqual(scalar.affineFinishRuns, 0, `${testCase.name}: disabled arm compiled suffix`);
     assert.strictEqual(fused.fusedRuns, testCase.handler === 448 ? 1 : 0,
       `${testCase.name}: unexpected pipeline execution count`);
     assert.strictEqual(fused.treeRuns, testCase.handler === 449 ? 1 : 0,
@@ -228,6 +235,22 @@ const cases = [
       assert(fused.treeMatches >= 1, `${testCase.name}: tree matcher did not identify shape`);
     } else {
       assert(fused.islandRuns >= 1, `${testCase.name}: island matcher did not execute shape`);
+    }
+    if (semantic) {
+      assert.deepStrictEqual(semantic.output, scalar.output,
+        `${testCase.name}: semantic result differs`);
+      assert.deepStrictEqual(semantic.fsave, scalar.fsave,
+        `${testCase.name}: semantic FNSAVE state differs`);
+      assert.deepStrictEqual(semantic.registers, scalar.registers,
+        `${testCase.name}: semantic GPRs differ`);
+      assert.deepStrictEqual(semantic.flags, scalar.flags,
+        `${testCase.name}: semantic lazy flags differ`);
+      assert.strictEqual(semantic.affinePrepareRuns, 1,
+        `${testCase.name}: semantic prefix did not execute once`);
+      assert.strictEqual(semantic.affineFinishRuns, 1,
+        `${testCase.name}: semantic suffix did not execute once`);
+      assert.strictEqual(semantic.islandRuns, 1,
+        `${testCase.name}: only the final store/save island should remain`);
     }
   }
   console.log(`x87 pipeline4 fusion: PASS (${cases.length} differential cases)`);

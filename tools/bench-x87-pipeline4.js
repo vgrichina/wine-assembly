@@ -90,8 +90,9 @@ async function boot() {
   codeBytes.push(...le32(loopOffset - afterDisp), 0xC3);
   mem.set(codeBytes, g2w(code));
 
-  function run(enabled) {
-    e.set_x87_pipeline4_fusion(enabled ? 1 : 0);
+  function run(mode) {
+    e.set_x87_pipeline4_fusion(mode >= 1 ? 1 : 0);
+    e.set_x87_affine_fusion(mode >= 2 ? 1 : 0);
     e.reset_handler_hist();
     e.set_handler_hist_enabled(1);
     dv.setUint32(g2w(stack), 0, true);
@@ -109,7 +110,8 @@ async function boot() {
     const result = SHAPE === 'island'
       ? [dv.getFloat64(g2w(output), true), dv.getFloat64(g2w(output + 8), true)]
       : dv.getFloat32(g2w(output), true);
-    return { elapsed, calls, fused: hist[FUSED_HANDLER] >>> 0, result };
+    return { elapsed, calls, fused: hist[FUSED_HANDLER] >>> 0,
+      affinePrepare: hist[451] >>> 0, affineFinish: hist[452] >>> 0, result };
   }
   return { run };
 }
@@ -121,15 +123,21 @@ function median(values) {
 
 (async () => {
   const h = await boot();
-  h.run(false); h.run(true);
-  const samples = { scalar: [], fused: [] };
-  let lastScalar, lastFused;
+  h.run(0); h.run(1);
+  if (SHAPE === 'island') h.run(2);
+  const samples = { scalar: [], fused: [], semantic: [] };
+  let lastScalar, lastFused, lastSemantic;
   for (let i = 0; i < ROUNDS; i++) {
-    const firstFused = i & 1;
-    for (const enabled of firstFused ? [true, false] : [false, true]) {
-      const result = h.run(enabled);
-      samples[enabled ? 'fused' : 'scalar'].push(result.elapsed);
-      if (enabled) lastFused = result; else lastScalar = result;
+    const modes = SHAPE === 'island'
+      ? [[0, 1, 2], [1, 2, 0], [2, 0, 1]][i % 3]
+      : (i & 1 ? [1, 0] : [0, 1]);
+    for (const mode of modes) {
+      const result = h.run(mode);
+      const key = mode === 0 ? 'scalar' : (mode === 1 ? 'fused' : 'semantic');
+      samples[key].push(result.elapsed);
+      if (mode === 0) lastScalar = result;
+      else if (mode === 1) lastFused = result;
+      else lastSemantic = result;
     }
   }
   assert.deepStrictEqual(lastFused.result, lastScalar.result);
@@ -137,9 +145,19 @@ function median(values) {
   assert.strictEqual(lastFused.fused, ITERATIONS * FUSED_PER_ITERATION);
   const scalarMs = median(samples.scalar);
   const fusedMs = median(samples.fused);
-  console.log(JSON.stringify({ shape: SHAPE, handler: FUSED_HANDLER,
+  const output = { shape: SHAPE, handler: FUSED_HANDLER,
     iterations: ITERATIONS, rounds: ROUNDS,
     scalarMs, fusedMs, ratio: fusedMs / scalarMs,
     speedup: scalarMs / fusedMs, scalarCalls: lastScalar.calls,
-    fusedCalls: lastFused.calls, result: lastFused.result }, null, 2));
+    fusedCalls: lastFused.calls, result: lastFused.result };
+  if (SHAPE === 'island') {
+    assert.deepStrictEqual(lastSemantic.result, lastScalar.result);
+    assert.strictEqual(lastSemantic.fused, 0);
+    assert.strictEqual(lastSemantic.affinePrepare, ITERATIONS);
+    assert.strictEqual(lastSemantic.affineFinish, ITERATIONS);
+    const semanticMs = median(samples.semantic);
+    Object.assign(output, { semanticMs, semanticVsScalar: scalarMs / semanticMs,
+      semanticVsIsland: fusedMs / semanticMs, semanticCalls: lastSemantic.calls });
+  }
+  console.log(JSON.stringify(output, null, 2));
 })().catch(error => { console.error(error); process.exit(1); });

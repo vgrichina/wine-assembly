@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 451 funcref)
+  (table $handlers 453 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -509,4 +509,6 @@
     $th_x87_pipeline4         ;; 448: balanced FLD + arithmetic + arithmetic + FSTP
     $th_x87_tree4             ;; 449: balanced FLD + FLD + arithmetic-pop + FSTP
     $th_x87_island            ;; 450: contiguous x87 micro-op island
+    $th_x87_affine_prepare    ;; 451: compiled affine x87 prefix
+    $th_x87_affine_finish     ;; 452: compiled affine x87 suffix
   )

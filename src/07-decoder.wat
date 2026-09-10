@@ -5400,6 +5400,7 @@
     (call $loop_match_block (local.get $start_eip) (local.get $tstart))
     (call $x87_fuse_block)
     (call $x87_tree4_fuse_block)
+    (call $x87_affine_fuse_block)
     (call $x87_island_fuse_block)
     (call $publish_block (local.get $start_eip) (local.get $tstart) (global.get $d_pc))
   )
