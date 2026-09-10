@@ -1271,29 +1271,44 @@
   ;; DX7VB's DirectX7 coclass is a dual interface used by VB6 games before
   ;; they ever call DDRAW.DLL directly. Keep the Automation prefix complete,
   ;; then bridge its first direct method to our IDirectDraw7-compatible object.
+  (func $directx7_query_interface_wa (param $obj i32) (param $iid_wa i32)
+      (param $out i32) (result i32)
+    (if (i32.eqz (local.get $out))
+      (then (return (i32.const 0x80004003)))) ;; E_POINTER
+    (if (i32.eqz (local.get $iid_wa))
+      (then
+        (call $gs32 (local.get $out) (i32.const 0))
+        (return (i32.const 0x80004003))))
+    ;; IUnknown, IDispatch, or IID_IDirectX7
+    ;; {FAFA3599-8B72-11D2-90B2-00C04FC2C602}. In particular, reject the
+    ;; VB runtime's optional IPersistStreamInit probe; returning this vtable
+    ;; for that interface makes it invoke a nonexistent persistence method.
+    (call $dx_query_interface_result
+      (local.get $obj) (local.get $out)
+      (i32.or
+        (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0) (i32.const 0)
+          (i32.const 0x000000C0) (i32.const 0x46000000))
+        (i32.or
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x00020400) (i32.const 0)
+            (i32.const 0x000000C0) (i32.const 0x46000000))
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0xFAFA3599) (i32.const 0x11D28B72)
+            (i32.const 0xC000B290) (i32.const 0x02C6C24F))))))
+
+  (func $directx7_query_interface (param $obj i32) (param $iid i32)
+      (param $out i32) (result i32)
+    (local $iid_wa i32)
+    ;; Translate riid exactly once, then compare all four GUID words in-place.
+    (if (local.get $iid)
+      (then (local.set $iid_wa (call $g2w (local.get $iid)))))
+    (call $directx7_query_interface_wa
+      (local.get $obj) (local.get $iid_wa) (local.get $out)))
+
   (func $handle_IDirectX7_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $iid_d1 i32) (local $entry i32)
-    (if (i32.eqz (local.get $arg2))
-      (then (global.set $eax (i32.const 0x80004003)))
-      (else
-        (local.set $iid_d1 (call $gl32 (local.get $arg1)))
-        ;; IUnknown, IDispatch, IID_IDirectX7
-        ;; {FAFA3599-8B72-11D2-90B2-00C04FC2C602}. In particular, reject the
-        ;; VB runtime's optional IPersistStreamInit probe; returning this dual
-        ;; vtable for that interface makes it invoke nonexistent slot 8.
-        (if (i32.or
-              (i32.eqz (local.get $iid_d1))
-              (i32.or
-                (i32.eq (local.get $iid_d1) (i32.const 0x00020400))
-                (i32.eq (local.get $iid_d1) (i32.const 0xFAFA3599))))
-          (then
-            (call $gs32 (local.get $arg2) (local.get $arg0))
-            (local.set $entry (call $dx_from_this (local.get $arg0)))
-            (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-            (global.set $eax (i32.const 0)))
-          (else
-            (call $gs32 (local.get $arg2) (i32.const 0))
-            (global.set $eax (i32.const 0x80004002))))))
+    (global.set $eax (call $directx7_query_interface
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IDirectX7_DirectSlot003 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x80004001))

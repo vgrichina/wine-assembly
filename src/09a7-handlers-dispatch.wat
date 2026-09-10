@@ -1865,7 +1865,7 @@
     (if (local.get $clsid_wa)
       (then (local.set $clsid_d1 (i32.load (local.get $clsid_wa)))))
 
-    ;; The six Win98-era classes below have complete local
+    ;; The seven Win98-era classes below have complete local
     ;; QueryInterface contracts. Classify by full CLSID, manufacture one
     ;; factory-owned reference, query the requested interface, then release
     ;; that temporary reference on both success and failure.
@@ -1899,7 +1899,12 @@
       (if (call $guid_words_equal (local.get $clsid_wa)
             (i32.const 0x00021401) (i32.const 0)
             (i32.const 0x000000C0) (i32.const 0x46000000))
-        (then (local.set $local_class (i32.const 6))))))
+        (then (local.set $local_class (i32.const 6))))
+      ;; CLSID_DirectX7 {E1211353-8E94-11D1-8808-00C04FC2C602}.
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0xE1211353) (i32.const 0x11D18E94)
+            (i32.const 0xC0000888) (i32.const 0x02C6C24F))
+        (then (local.set $local_class (i32.const 7))))))
 
     (if (local.get $local_class) (then
       (if (i32.eqz (local.get $arg4))
@@ -1934,6 +1939,9 @@
           (call $shell_link_init_vtables)
           (local.set $obj_guest (call $dx_create_com_obj
             (i32.const 36) (global.get $SHELL_LINK_VTBL)))))
+      (if (i32.eq (local.get $local_class) (i32.const 7))
+        (then (local.set $obj_guest (call $dx_create_com_obj
+          (i32.const 32) (call $init_com_vtable (i32.const 2526) (i32.const 7))))))
       (if (i32.eqz (local.get $obj_guest))
         (then
           (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
@@ -1963,28 +1971,14 @@
       (if (i32.eq (local.get $local_class) (i32.const 6))
         (then (local.set $hr (call $shell_link_query_interface_wa
           (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)))))
+      (if (i32.eq (local.get $local_class) (i32.const 7))
+        (then (local.set $hr (call $directx7_query_interface_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)))))
       (drop (call $dx_com_release_basic (local.get $obj_guest)))
       (global.set $eax (local.get $hr))
       (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
       (return)))
 
-    ;; CLSID_DirectX7 {E1211353-8E94-11D1-8808-00C04FC2C602}, the VB6
-    ;; DX7VB automation bootstrap. Its first direct method manufactures the
-    ;; existing IDirectDraw7-compatible wrapper.
-    (if (i32.eq (local.get $clsid_d1) (i32.const 0xE1211353))
-      (then
-        (local.set $obj_guest (call $dx_create_com_obj
-          (i32.const 32) (call $init_com_vtable (i32.const 2526) (i32.const 7))))
-        (if (i32.eqz (local.get $obj_guest))
-          (then
-            (call $gs32 (local.get $arg4) (i32.const 0))
-            (global.set $eax (i32.const 0x80004005))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)))
-        (call $gs32 (local.get $arg4) (local.get $obj_guest))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
     (if (i32.eq (local.get $clsid_d1) (i32.const 0x4FD2A832))
       (then
         (local.set $obj_guest (call $dx_create_com_obj (i32.const 10) (global.get $DX_VTBL_DDFACTORY)))
