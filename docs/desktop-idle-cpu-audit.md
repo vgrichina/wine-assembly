@@ -3,6 +3,10 @@
 Goal: all non-realtime games on the production desktop should use little CPU
 while idle. **Not complete; fixes below are local, not deployed.**
 
+User clarification: **do not deploy to production**. The production desktop
+inventory defines which games to fix; implementation and acceptance stay local.
+No credentials are needed, and publishing is not a completion requirement.
+
 Inventory fetched from production `lib/apps.js` on 2026-09-10. Production
 `host.js` reports source version 298. Work is isolated in
 `/private/tmp/wa-rodent-phone`; shared main has unrelated concurrent changes.
@@ -16,7 +20,7 @@ not total-machine utilization. Raw files include browser/GPU/utility costs,
 load averages, guest state and screenshots. These first-pass measurements are
 headless Chrome on Apple M1 and the host is loaded: use them to identify core
 spins, not to claim sub-percent performance precision or real iPhone battery.
-Final acceptance still needs headful verification and production remeasurement.
+Final acceptance still needs headful local verification across that inventory.
 
 The initial screenshot is part of the evidence: an empty launch/splash screen
 does not establish that a dealt game board sleeps. Start-game commands come
@@ -29,12 +33,12 @@ Temporary harness: `/private/tmp/audit-idle-games.js`; raw production baseline:
 
 | Game | Renderer core % | Observed state / follow-up |
 |---|---:|---|
-| FreeCell | 0.65 | Empty launch; started local board 0.60%, verify final production deal |
+| FreeCell | 0.65 | Empty launch; populated local board verified below |
 | Solitaire | 0.60 | Dealt board |
 | Cruel | 0.78 | Dealt board |
 | Golf | 1.41 | Dealt board |
 | Pegged | 0.65 | Board |
-| Taipei | 0.57 | Splash; started local board 0.59%, verify final production game |
+| Taipei | 0.57 | Splash; populated local board verified below |
 | TicTactics | 0.61 | Board |
 | Reversi | 0.54 | Board |
 | Minesweeper | 0.57 | Unopened board; also verify running game timer |
@@ -114,9 +118,8 @@ realtime gameplay, not static turn-based idle acceptance. Practice/paused state
 still needs checking. Raw `wa-idle-marbles-board304`, screenshot inspected.
 
 Implementation checkpoint: isolated commit `1ce2532e`, after phone UI/runtime
-commit `f298b7f9`. No main merge or production deployment. `BERRRY_KEY` is not
-available in this session's process environment; publishing requires an
-authenticated deployment path. This is not a blocker to remaining local work.
+commit `f298b7f9`. No main merge or production deployment. The subsequent user
+clarification prohibits deployment; the earlier credential request is withdrawn.
 
 Three-app headful check (`wa-idle-three-apps304`): populated FreeCell, Four
 Stones and Blackjack's opening dialog run together. Across20s, main slice
@@ -151,6 +154,6 @@ park-sleep, cooperative-deadline and Worker scheduler tests pass.
 - Verify additional sleeping-helper games after input; Four Stones passes locally.
 - Finish real-game/after-input checks, not only launch states.
 - Headful measurements with visible pages and a blank-page CPU floor.
-- Integrate/commit scoped work without foreign changes; check production has
-  not changed, deploy paired artifacts/cache graph, then remeasure production.
-- Repeat the passing local three-app shared-scheduler check on production.
+- Integrate/commit scoped work without foreign changes; keep paired local
+  artifacts and cache graph coherent. Do not deploy.
+- Repeat the passing local three-app shared-scheduler check on a quiet box.

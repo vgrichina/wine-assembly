@@ -78,6 +78,24 @@ shares include scheduler timing, hidden checks and GDI conversion. Next analysis
 should attribute host phases/native program time, not retune the proven detector
 or pretend a quiet-menu acceptance threshold has been met.
 
+## Host/audio isolation (local304, 2026-09-10)
+
+Diagnostic-only per-page substitutions, not product changes:
+
+- Suppress `hostCtx.sharedGdi.presentBestDxOffscreen`: renderer12.69% over20s.
+  Existing host-phase instrumentation accounts for556.5ms total (2.78% wall):
+  main319.8ms, presentation107.5ms (other GDI still runs), other129.2ms.
+  This rules out DirectDraw upload as the bulk of residual process CPU.
+- Suspend the AudioContext and prevent diagnostic-page auto-resume, keeping
+  normal presentation: renderer6.66%, audio utility0.0024%, versus settled
+  audible baseline15.59%. The menu remains running and clock parks continue.
+  Thus roughly9 percentage points are attributable to the audio path, not an
+  unparked guest loop. Do not label the entire audible-menu cost as idle spin.
+
+Raw `wa-heroes-host-ablation304` and `wa-heroes-audio-ablation304`; audio/canvas
+substitutions exist only in the temporary audit harness. Normal music and
+animation remain enabled in source. User expressly prohibits production deploys.
+
 Evidence harness `/private/tmp/audit-idle-games.js`; JSON/PNG directories
 `/private/tmp/wa-idle-heroes-menu`, `wa-idle-heroes-clock-sites`, and
 `wa-idle-heroes-map`. The clock-site trace records160 samples including ESP,
