@@ -26,7 +26,7 @@ const { startControlSession } = require('./control-session');
 const ROOT = path.join(__dirname, '..');
 const INSTALLED_DIR = process.env.ABE_INSTALLED_DIR;
 const EXE = INSTALLED_DIR ? path.join(path.resolve(INSTALLED_DIR), 'abedemo.exe')
-  : path.join(ROOT, 'test/binaries/shareware/abe/ex/AbeDemo.exe');
+  : path.join(ROOT, 'test/binaries/shareware/abe/installed/abedemo.exe');
 const RUN = path.join(__dirname, 'run.js');
 const FROZEN_ROUTE = process.argv.includes('--frozen-route');
 const RUN_NAME = FROZEN_ROUTE ? 'abedemo-frozen-gameplay' : 'abedemo-gameplay';
@@ -37,7 +37,7 @@ const DIR = ANALYZE_ONLY || OUTDIR;
 
 if (!ANALYZE_ONLY && !fs.existsSync(EXE)) {
   assert(!INSTALLED_DIR, `installer-produced executable is missing: ${EXE}`);
-  console.log('SKIP  Abe Oddysee demo payload is absent');
+  console.log('SKIP  Abe payload is absent; run node tools/install-abe-demo.js');
   process.exit(0);
 }
 

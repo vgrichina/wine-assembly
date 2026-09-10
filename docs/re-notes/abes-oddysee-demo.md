@@ -3,12 +3,12 @@
 ## Package and registered launch
 
 The registered `abedemo` payload launches
-`test/binaries/shareware/abe/ex/AbeDemo.exe` and explicitly mounts its four DDV
-movies plus `c1.lvl`, `r1.lvl`, and `s1.lvl`. The executable is a 914,432-byte
-PE32 extracted from the separate 32,219,648-byte `ABEODD.EXE` self-extractor.
-The old large-image blocker is superseded by the original-installer probe
-below. The registered gameplay fixture still uses the earlier extracted
-payload; do not equate that with a completed original-installer workflow.
+`test/binaries/shareware/abe/installed/abedemo.exe` and explicitly mounts its
+four DDV movies plus `c1.lvl`, `r1.lvl`, `s1.lvl`, and `readme.txt`. These nine
+files are produced by `tools/install-abe-demo.js` running the unchanged
+32,219,648-byte `ABEODD.EXE` inside the emulator. The 914,432-byte PE32 and
+all companions are hash-verified before export. The older `abe/ex` fixture
+is retained locally but is no longer the registered launch or smoke target.
 
 ## Original self-extractor recheck (2026-09-09)
 
@@ -27,8 +27,8 @@ The command verifies the original package hash, the guest success notice,
 the automatic launch path/working directory, and all nine output hashes
 before copying the guest-produced tree. It runs frozen with a CLI-internal
 180-second deadline and no build timeout. Failures retain the temporary
-capture and log for diagnosis. This does not yet change the registered app's
-older fixture path or verify a live browser child process.
+capture and log for diagnosis. A live browser child process still needs
+verification; the CLI capture is only evidence of the launch request.
 
 Verified the command with `--output=/private/tmp/abe-tool-installed`:
 all nine files and the launch request pass validation, the success screenshot
@@ -80,10 +80,10 @@ quit
 
 The export is under `program files/abe's oddysee demo/`. This run stopped
 at the success notice, before dismissing it to allow automatic game launch;
-`--capture-launch` therefore correctly reported no child launch. Remaining
-acceptance is the automatic handoff, gameplay from this installer-produced
-tree, promotion of that tree into the registered app, and the synchronous
-input-path abandonment above. The original large-PE blocker is not current.
+`--capture-launch` therefore correctly reported no child launch. Later probes
+below verify the launch request and installed gameplay; the registered app
+now uses those files. Live browser handoff and the synchronous input-path
+abandonment above remain open. The original large-PE blocker is not current.
 
 ### Automatic launch request
 
@@ -107,7 +107,7 @@ then quitting with `--capture-launch=/private/tmp/abe-handoff-fixed` produces
 All nine captured game files are byte-identical to the first guest-produced
 tree (54625942 bytes total). No host archive extraction was used. This proves
 the automatic launch request and captured payload, not a live browser child
-reaching gameplay; browser handoff verification and registry promotion remain.
+reaching gameplay; live browser handoff verification remains open.
 
 ## Loader-thread deadlock
 
@@ -236,8 +236,8 @@ This is functional evidence for normal input on the installed payload, not
 a resolution of the larger-batch failure. Batch size changes both guest
 work per clock advance and scheduler boundaries; the underlying difference
 is not yet isolated. The existing automated one-million-block gameplay test
-still fails and must not be presented as passing. Installer auto-launch and
-registry promotion to installer-produced files remain to be completed.
+still fails and must not be presented as passing. Live browser installer
+auto-launch remains to be verified; registry promotion is now complete.
 
 The opt-in frozen acceptance route uses the same normal keyboard sequence:
 
