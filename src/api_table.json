@@ -16924,14 +16924,16 @@
     "name": "IRunningObjectTable_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 150836797
+    "hash": 150836797,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2061,
     "name": "IRunningObjectTable_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 875859866
+    "hash": 875859866,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2062,
@@ -17190,14 +17192,16 @@
     "name": "ILockBytes_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 104124279
+    "hash": 104124279,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2094,
     "name": "ILockBytes_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3844332864
+    "hash": 3844332864,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2095,
@@ -17276,14 +17280,16 @@
     "name": "IStream_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1665549629
+    "hash": 1665549629,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2104,
     "name": "IStream_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1419775130
+    "hash": 1419775130,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2105,
@@ -17390,14 +17396,16 @@
     "name": "IStorage_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 954046898
+    "hash": 954046898,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2118,
     "name": "IStorage_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 224916079
+    "hash": 224916079,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2119,
@@ -17575,7 +17583,8 @@
     "name": "IDataObject_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2718493816
+    "hash": 2718493816,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2140,
@@ -17716,7 +17725,8 @@
     "name": "IEnumFORMATETC_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1750762885
+    "hash": 1750762885,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2152,
@@ -17817,7 +17827,8 @@
     "name": "IOleObject_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3442842106
+    "hash": 3442842106,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2164,
@@ -18305,14 +18316,16 @@
     "name": "IEnumSTATSTG_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 933605526
+    "hash": 933605526,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2223,
     "name": "IEnumSTATSTG_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 631326731
+    "hash": 631326731,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2224,
@@ -18713,14 +18726,16 @@
     "name": "IMoniker_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3573117802
+    "hash": 3573117802,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2279,
     "name": "IMoniker_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2903007495
+    "hash": 2903007495,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2280,
@@ -18890,7 +18905,8 @@
     "name": "IBindCtx_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3459565413
+    "hash": 3459565413,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2302,
@@ -18997,14 +19013,16 @@
     "name": "IEnumString_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2120706077
+    "hash": 2120706077,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2315,
     "name": "IEnumString_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 365628730
+    "hash": 365628730,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2316,
@@ -19063,14 +19081,16 @@
     "name": "IEnumMoniker_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2163112815
+    "hash": 2163112815,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2322,
     "name": "IEnumMoniker_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 577913464
+    "hash": 577913464,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2323,
@@ -20084,14 +20104,16 @@
     "name": "IFont_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 876750262
+    "hash": 876750262,
+    "handler": "ole_obj_addref"
   },
   {
     "id": 2424,
     "name": "IFont_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 714956395
+    "hash": 714956395,
+    "handler": "ole_obj_release"
   },
   {
     "id": 2425,
