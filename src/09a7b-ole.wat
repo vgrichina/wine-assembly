@@ -414,8 +414,10 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  (func $handle_IEnumMoniker_Skip (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_moniker_enum_skip (local.get $arg0) (local.get $arg1)))
+  ;; Shared dispatch target for the snapshot enumerators whose Skip operation
+  ;; is exactly cursor arithmetic over the common count/cursor fields.
+  (func $handle_ole_enum_skip (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_enum_skip (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IEnumMoniker_Reset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -883,10 +885,6 @@
     (global.set $eax (call $ole_string_enum_next
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
-
-  (func $handle_IEnumString_Skip (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_string_enum_skip (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IEnumString_Reset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $gs32 (i32.add (local.get $arg0) (i32.const 20)) (i32.const 0))
@@ -1865,7 +1863,11 @@
     (if (local.get $fetched_out) (then (call $gs32 (local.get $fetched_out) (local.get $fetched))))
     (select (i32.const 0) (i32.const 1) (i32.eq (local.get $fetched) (local.get $requested))))
 
-  (func $ole_moniker_enum_skip (param $obj i32) (param $requested i32) (result i32)
+  ;; The local IEnumMoniker/IEnumString/IEnumFORMATETC-style records all keep
+  ;; count at +16 and cursor at +20. Skip has no element-specific ownership
+  ;; work, so one implementation preserves COM's S_OK/S_FALSE contract for
+  ;; every such snapshot instead of letting interface copies drift.
+  (func $ole_enum_skip (param $obj i32) (param $requested i32) (result i32)
     (local $count i32) (local $cursor i32) (local $remaining i32) (local $take i32)
     (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
     (local.set $cursor (call $gl32 (i32.add (local.get $obj) (i32.const 20))))
@@ -2567,16 +2569,6 @@
       (br $copy_values)))
     (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (i32.add (local.get $cursor) (local.get $take)))
     (if (local.get $fetched_out) (then (call $gs32 (local.get $fetched_out) (local.get $take))))
-    (select (i32.const 0) (i32.const 1) (i32.eq (local.get $take) (local.get $requested))))
-
-  (func $ole_string_enum_skip (param $obj i32) (param $requested i32) (result i32)
-    (local $count i32) (local $cursor i32) (local $take i32)
-    (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
-    (local.set $cursor (call $gl32 (i32.add (local.get $obj) (i32.const 20))))
-    (local.set $take
-      (select (local.get $requested) (i32.sub (local.get $count) (local.get $cursor))
-        (i32.le_u (local.get $requested) (i32.sub (local.get $count) (local.get $cursor)))))
-    (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (i32.add (local.get $cursor) (local.get $take)))
     (select (i32.const 0) (i32.const 1) (i32.eq (local.get $take) (local.get $requested))))
 
   (func $ole_stream_root (param $obj i32) (result i32)
@@ -6713,15 +6705,6 @@
     (if (local.get $fetched_out) (then (call $gs32 (local.get $fetched_out) (local.get $fetched))))
     (select (i32.const 0) (i32.const 1) (i32.eq (local.get $fetched) (local.get $requested))))
 
-  (func $ole_format_enum_skip (param $obj i32) (param $requested i32) (result i32)
-    (local $count i32) (local $cursor i32) (local $remaining i32) (local $take i32)
-    (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
-    (local.set $cursor (call $gl32 (i32.add (local.get $obj) (i32.const 20))))
-    (local.set $remaining (select (i32.sub (local.get $count) (local.get $cursor)) (i32.const 0) (i32.lt_u (local.get $cursor) (local.get $count))))
-    (local.set $take (select (local.get $requested) (local.get $remaining) (i32.lt_u (local.get $requested) (local.get $remaining))))
-    (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (i32.add (local.get $cursor) (local.get $take)))
-    (select (i32.const 0) (i32.const 1) (i32.eq (local.get $take) (local.get $requested))))
-
   (func $ole_clone_format_enum (param $source i32) (result i32)
     (local $obj i32) (local $source_data i32) (local $data i32) (local $count i32) (local $i i32) (local $hr i32)
     (local.set $count (call $gl32 (i32.add (local.get $source) (i32.const 16))))
@@ -6957,9 +6940,6 @@
       (else (global.set $eax (call $ole_format_enum_next
         (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
-  (func $handle_IEnumFORMATETC_Skip (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_format_enum_skip (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IEnumFORMATETC_Reset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $gs32 (i32.add (local.get $arg0) (i32.const 20)) (i32.const 0))
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))

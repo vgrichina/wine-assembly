@@ -17737,7 +17737,8 @@
     "name": "IEnumFORMATETC_Skip",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 2205645134
+    "hash": 2205645134,
+    "handler": "ole_enum_skip"
   },
   {
     "id": 2155,
@@ -19017,7 +19018,8 @@
     "name": "IEnumString_Skip",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 3143660358
+    "hash": 3143660358,
+    "handler": "ole_enum_skip"
   },
   {
     "id": 2318,
@@ -19082,7 +19084,8 @@
     "name": "IEnumMoniker_Skip",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 1060851840
+    "hash": 1060851840,
+    "handler": "ole_enum_skip"
   },
   {
     "id": 2325,

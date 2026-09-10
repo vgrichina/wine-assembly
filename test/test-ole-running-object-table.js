@@ -14,6 +14,16 @@ const apiTable = require('../src/api_table.json');
 const RegionMap = require('../lib/region-map.generated.js');
 
 const ROOT = path.join(__dirname, '..');
+const oleSource = fs.readFileSync(path.join(ROOT, 'src', '09a7b-ole.wat'), 'utf8');
+const enumSkipApis = ['IEnumMoniker_Skip', 'IEnumString_Skip', 'IEnumFORMATETC_Skip'];
+for (const name of enumSkipApis) {
+  assert.strictEqual(apiTable.find(api => api.name === name)?.handler, 'ole_enum_skip',
+    `${name} must dispatch through the shared enum cursor implementation`);
+  assert(!oleSource.includes(`(func $handle_${name}`),
+    `${name} must not regain a private handler body`);
+}
+assert.strictEqual((oleSource.match(/\(func \$handle_ole_enum_skip\b/g) || []).length, 1,
+  'OLE snapshot enumerators must have one Skip dispatch body');
 
 async function main() {
   const wasm = compileSrcWasm();

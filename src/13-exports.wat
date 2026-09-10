@@ -4661,7 +4661,7 @@
   (func (export "test_ole_format_enum_next") (param $obj i32) (param $requested i32) (param $formats i32) (param $fetched i32) (result i32)
     (call $ole_format_enum_next (local.get $obj) (local.get $requested) (local.get $formats) (local.get $fetched)))
   (func (export "test_ole_format_enum_skip") (param $obj i32) (param $requested i32) (result i32)
-    (call $ole_format_enum_skip (local.get $obj) (local.get $requested)))
+    (call $ole_enum_skip (local.get $obj) (local.get $requested)))
   (func (export "test_ole_format_enum_reset") (param $obj i32)
     (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (i32.const 0)))
   (func (export "test_ole_clone_format_enum") (param $obj i32) (result i32)
