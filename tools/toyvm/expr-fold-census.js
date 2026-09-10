@@ -57,7 +57,7 @@ const fs = require('fs');
 const path = require('path');
 const isa = require('./isa');
 const {
-  HANDLERS, ARITY, prepareTables, FUSE, TRACE, SPIN, PSPIN, NOFLAG,
+  HANDLERS, ARITY, prepareTables, FUSE, TRACE, SPIN, PSPIN, NOFLAG, TAKEN_AT,
 } = require('./emit');
 const effects = require('./handler-effects');
 
@@ -175,12 +175,18 @@ function classify(name, width, args, eff) {
   if (JCC_RE.test(name) || /^(loop|loop32|loopz|loopnz|loopz32|loopnz32|jcxz|jcxz32)$/.test(name)) {
     return { cls: 'branch', fold: false };
   }
-  if (SETCC_RE.test(name)) return { cls: 'flags', fold: false };
+  // `setcc` is a flag READ with a register destination: under `--relax=flags`,
+  // where each flag field has a known last writer inside the block, it is the
+  // condition expression assigned to a register and folds like any other value.
+  if (SETCC_RE.test(name)) return { cls: 'flags', fold: false, relax: 'flags' };
+  // These do not. `lahf`/`pushf` want the whole architectural word including
+  // the fields nothing in the block wrote, and the BCD group reads AF, which
+  // the lazy-flag record does not carry as a value.
   if (/^(lahf|sahf|pushf|popf|pushf32|popf32|clc|stc|cmc|cld|std|cli|sti|salc|daa|das|aaa|aas|aam|aad)$/.test(name)) {
     return { cls: 'flags', fold: false };
   }
-  if (stem === 'adc' || stem === 'sbb') return { cls: 'adc-sbb', fold: false };
-  if (stem === 'cmp' || stem === 'test') return { cls: 'cmp-test', fold: false };
+  if (stem === 'adc' || stem === 'sbb') return { cls: 'adc-sbb', fold: false, relax: 'flags' };
+  if (stem === 'cmp' || stem === 'test') return { cls: 'cmp-test', fold: false, relax: 'flags' };
   if (SHIFT_CARRY.has(stem)) return { cls: 'flags', fold: false };
 
   // Anything the effect table cannot read is not foldable whatever its name
@@ -195,30 +201,147 @@ function classify(name, width, args, eff) {
   // means modelling the overlap.
   const narrow = w > 0 && w < width;
 
-  let foldable = false;
-  if (ALU_FOLD.has(stem) && form) foldable = w === width;
-  else if (UNARY_FOLD.has(stem) && (form === 'r' || form === 'm')) foldable = w === width;
-  else if (stem === 'lea') foldable = w === width;
-  else if (stem === 'imul2' || stem === 'imul3') foldable = w === width;
+  // Whether the OPCODE is in the fold set at all, kept apart from whether its
+  // width matches the block's. The two questions used to be one expression and
+  // that made the partial relaxation unreachable: every narrow op fell out with
+  // `foldable === false` and nothing downstream could tell an 8-bit `mov` (an
+  // insert/extract, and the whole point of `--relax=partial`) from an 8-bit
+  // `rol` (not in the set at any width).
+  let inSet = false;
+  if (ALU_FOLD.has(stem) && form) inSet = true;
+  else if (UNARY_FOLD.has(stem) && (form === 'r' || form === 'm')) inSet = true;
+  else if (stem === 'lea') inSet = true;
+  else if (stem === 'imul2' || stem === 'imul3') inSet = true;
   else if (/^(movzx|movsx)(8|16)$/.test(stem)) {
     // The source width is in the stem, not in `src`: `movzx16_rr32` matches the
     // generic name regex first, so the widening pair has to re-read it here.
     // Getting that wrong filed every 16->32 widening under `other`.
+    // A widening op is never `narrow`: its DESTINATION is the block's width.
     const from = Number(/(8|16)$/.exec(stem)[1]);
-    foldable = w === width && from < width;
+    inSet = from < width;
   }
   else if (SHIFT_FOLD.has(stem)) {
     // decode.js passes -1 as the operand sentinel for "read the count from CL".
     const byCl = args && args.length && args[args.length - 1] === -1;
     if (byCl) return { cls: 'shift-cl', fold: false };
-    foldable = w === width;
+    inSet = true;
   } else if (SHIFT_ROT.has(stem)) return { cls: 'other', fold: false };
 
-  if (foldable && narrow) return { cls: 'partial-reg', fold: false };
+  const foldable = inSet && w === width;
+
+  // A narrow op is foldable ONLY under `--relax=partial`, where AL/AH/AX are
+  // modelled as an insert into and an extract out of the full-width local. It
+  // still has to be an op whose dataflow this classifier can read: an 8-bit
+  // `sh0` (rol) is narrow and is not in the fold set either way, so it stays a
+  // hard `partial-reg` with no relaxation offered.
+  if (narrow) {
+    return inSet && !unreadable
+      ? { cls: 'partial-reg', fold: false, relax: 'partial', stem, narrowWidth: w }
+      : { cls: 'partial-reg', fold: false, narrowWidth: w };
+  }
   if (foldable && unreadable) return { cls: 'other', fold: false };
   if (foldable) return { cls: 'fold', fold: true, stem };
-  if (narrow) return { cls: 'partial-reg', fold: false };
   return { cls: 'other', fold: false };
+}
+
+// --- the relaxations ---------------------------------------------------------
+
+// The exact census declines on three things it could in principle model. Each
+// is a real piece of compiler work, and the question this file exists to answer
+// is which of them is worth doing. So each is a MODE: the same op stream,
+// re-classified, with the runs rebuilt.
+//
+//   alias    a store followed by a load is not a barrier when the two
+//            addresses are provably disjoint (see provablyDisjoint below)
+//   partial  AL/AH/AX-style narrow writes and 8-bit loads/stores modelled as
+//            an insert into / extract out of the full-width local
+//   flags    flags as VALUES with a per-field last writer inside the block:
+//            cmp/test, setcc, adc/sbb fold; pushf/popf/lahf/sahf, shifts by
+//            CL and rcl/rcr stay barriers because they want the architectural
+//            word or a carry this analysis does not carry as a value
+//
+// `exact` and `all` bracket them, and every mode is computed from ONE run:
+// re-classifying is a pure pass over the arena, so a mode sweep costs nothing
+// but CPU and cannot drift between arms the way four separate runs would.
+const RELAXATIONS = ['alias', 'partial', 'flags'];
+const MODES = [
+  ['exact', new Set()],
+  ['alias', new Set(['alias'])],
+  ['partial', new Set(['partial'])],
+  ['flags', new Set(['flags'])],
+  ['all', new Set(RELAXATIONS)],
+];
+
+// The memory operand of one compiled op, in the terms the alias rule needs:
+// which segment REGISTER the access goes through, which base/index registers
+// feed the offset, the constant displacement, and the width touched.
+//
+// Two shapes exist. Almost every memory op reaches `$ea(mode, disp)` and
+// handler-effects.js already resolved both arguments back to arena words, so
+// the packed mode word is readable here and decode.js's packEa layout (kind
+// 0-3, segment 4-6, ModRM reg 8-10, and the A32 base/index/scale above that)
+// says what is in it. The `moffs` pair is the exception: `mov ax,[imm16]`
+// carries (offset, segment index) as its own two operands and never builds an
+// EA at all.
+function addrOf(name, eff, words, wordIdx) {
+  const mo = /^mov_(acc_moffs|moffs_acc)(8|16|32)$/.exec(name);
+  if (mo) {
+    return {
+      seg: words[wordIdx + 2] & 7, regs: '', disp: words[wordIdx + 1] >>> 0,
+      width: Number(mo[2]),
+    };
+  }
+  if (!eff || eff.address.length !== 1) return null;
+  const width = (eff.memRead[0] || eff.memWrite[0] || {}).width || 0;
+  if (!width) return null;
+  let mode, disp;
+  try {
+    mode = effects.at(eff.address[0].mode, words, wordIdx);
+    disp = effects.at(eff.address[0].disp, words, wordIdx);
+  } catch { return null; }
+  const kind = mode & 15;
+  const seg = (mode >> 4) & 7;
+  // `regs` is the non-constant part of the address as a STRING, so two operands
+  // compare equal exactly when the same registers feed both. A 16-bit EA kind
+  // names its registers by itself (kind 7 is [bx], kind 0 is [bx+si]); kind 8
+  // and a based-and-indexless A32 are pure constants and get the empty string,
+  // which is what lets two absolute addresses be compared.
+  let regs;
+  if (kind === isa.EA.A32) {
+    const A = isa.EA_A32;
+    const nb = !!(mode & A.NO_BASE);
+    const ni = !!(mode & A.NO_INDEX);
+    regs = nb && ni ? '' : `b${nb ? '-' : (mode >> A.BASE_SHIFT) & 7}`
+      + `i${ni ? '-' : (mode >> A.INDEX_SHIFT) & 7}s${(mode >> A.SCALE_SHIFT) & 3}`;
+  } else regs = kind === isa.EA.DISP ? '' : `k${kind}`;
+  return { seg, regs, disp: disp >>> 0, width };
+}
+
+// Can a fold prove this store and this load do not overlap?
+//
+// THE ASSUMPTIONS, stated because they are the whole content of the rule:
+//
+//  * Two accesses through DIFFERENT SEGMENT REGISTERS are assumed to alias.
+//    In real mode a segment register holds a paragraph number, DS and ES are
+//    routinely aimed at overlapping windows, and neither value is a compile-
+//    time constant to the decoder -- so `ds:[1000]` and `es:[2000]` can be the
+//    same byte and this rule says nothing about them. (A fold that also
+//    watched segment loads could sometimes do better; that is a different,
+//    bigger analysis and is not modelled.)
+//  * Two accesses through the SAME segment register and the same base/index
+//    registers differ by exactly their displacements, whatever the registers
+//    hold, so a size-aware comparison of the two constants decides it. That
+//    covers both cases in the brief: two different constant offsets, and one
+//    base register at two non-overlapping displacements.
+//  * Everything else -- different base registers, an unreadable operand, a
+//    string op, a stack access -- is assumed to alias.
+function provablyDisjoint(a, b) {
+  if (!a || !b) return false;
+  if (a.seg !== b.seg) return false;
+  if (a.regs !== b.regs) return false;
+  const aw = a.width >> 3;
+  const bw = b.width >> 3;
+  return (a.disp + aw <= b.disp) || (b.disp + bw <= a.disp);
 }
 
 // --- walking one program's live blocks ---------------------------------------
@@ -277,6 +400,163 @@ function walkBlock(blk, hits) {
   return ops;
 }
 
+// --- how a block ENDS --------------------------------------------------------
+
+// Three shapes, because they are three different things to a fold.
+//
+//   self-loop        the terminator's TAKEN edge goes back to this block's own
+//                    head. `loop`, `jcxz`, a `dec`/`jnz` pair and a `cmp`/`jcc`
+//                    pair all land here -- what matters is where the edge goes,
+//                    not which instruction spelled it. A fold over such a block
+//                    whose whole body folds is not one dispatch instead of n:
+//                    it is one dispatch instead of n PER TURN, which is the
+//                    only shape where the ceiling multiplies.
+//   interior-branch  a conditional whose taken edge goes somewhere else. The
+//                    fold's saving is the block's straight line, once.
+//   plain-exit       everything else: `jmp`, `ret`, `call`, `int`, a block that
+//                    simply runs off its end into the next.
+//
+// The taken edge is read out of `TAKEN_AT`, which emit.js maintains for every
+// branch handler INCLUDING the fused, traced and spin-collapsed twins -- so a
+// loop the compiler already collapsed is still recognisable as one here. The
+// operand it names is the taken edge's GUEST ip (the arena word sits one slot
+// in front), which is what compares against the block's own `bip`.
+const COUNTER_LOOP = /^(loop|loopz|loopnz)(32)?(_.*)?$|^jcxz(32)?(_.*)?$/;
+const COUNTER_DEC = /^(inc|dec)_[rm](8|16|32)(_nf)?_j/;
+const COUNTER_CMP = /^(cmp|test)_[a-z0-9]+_j|_(cmp|test)/;
+
+function terminatorOf(blk, ops) {
+  const last = ops[ops.length - 1];
+  const takenAt = TAKEN_AT.get(last.fn);
+  const bodyOps = ops.length - 1;
+  if (takenAt === undefined) return { cls: 'plain-exit', style: '-', bodyOps, name: last.name };
+  const selfLoop = last.args[takenAt] === blk.bip;
+  if (!selfLoop) {
+    // A bare `jmp` has a TAKEN_AT entry and exactly one successor: it is an
+    // unconditional transfer, not a branch that chose.
+    const cls = /^jmp/.test(last.name) ? 'plain-exit' : 'interior-branch';
+    return { cls, style: '-', bodyOps, name: last.name };
+  }
+  let style;
+  if (COUNTER_LOOP.test(last.name)) style = 'loop';
+  else if (COUNTER_DEC.test(last.name)) style = 'dec/jnz';
+  else if (COUNTER_CMP.test(last.name)) style = 'cmp/jcc';
+  else {
+    // A bare Jcc closing the loop: the counter is whatever wrote the flags,
+    // which is an op earlier in this block. Look for it rather than guessing.
+    const names = ops.slice(0, -1).map(o => o.base.join(' ')).join(' ');
+    if (/\b(cmp|test)_/.test(names)) style = 'cmp/jcc';
+    else if (/\b(inc|dec)_/.test(names)) style = 'dec/jnz';
+    else style = 'other';
+  }
+  return { cls: 'self-loop', style, bodyOps, name: last.name };
+}
+
+// --- one relaxation mode's run accounting ------------------------------------
+
+// Re-walks every block's flat op stream under one set of relaxations and
+// produces the numbers a mode row is made of. Split out of census() so that
+// exact/alias/partial/flags/all are demonstrably the SAME pass with the same
+// weights, differing only in `relax`.
+function foldPass(blocks, retired, relax) {
+  const bump = (m, k, n) => m.set(k, (m.get(k) || 0) + n);
+  const barrier = new Map();
+  const barrierByName = new Map();
+  const foldByStem = new Map();
+  const perBlock = new Map();
+  const fullBody = new Set();
+  const runLen = new Map();           // longest-run length -> block entries
+  let foldable = 0, foldIncDec = 0, highByte = 0, partialTaken = 0;
+  let removed = 0, ge4 = 0;
+
+  const folds = (f) => f.c.fold || (f.c.relax && relax.has(f.c.relax));
+
+  for (const b of blocks) {
+    let bFold = 0, bFoldOps = 0, best = 0, run = 0, aliasSplits = 0;
+    let runHits = 0, headHits = 0;
+    // Stores seen since the last barrier, as address descriptors. In exact
+    // mode a single `null` stands for "a store happened", which nothing can be
+    // disjoint from; that IS the exact rule.
+    let pending = [];
+    let bodyAllFold = true;
+
+    const closeRun = () => {
+      best = Math.max(best, run);
+      // What the fold removes: a run of n ops becomes one dispatch, so every
+      // op in it past the first stops being dispatched. Hit-weighted, because
+      // ops inside one block do not all retire the same number of times.
+      if (run > 1) removed += runHits - headHits;
+      run = 0; runHits = 0; headHits = 0; pending = [];
+    };
+
+    for (const f of b._flat) {
+      if (folds(f)) {
+        if (f.load && pending.length) {
+          // A load after a store. Exact mode splits unconditionally; the alias
+          // relaxation splits only if some pending store might overlap it.
+          const mayAlias = relax.has('alias')
+            ? pending.some(s => !provablyDisjoint(s, f.addr))
+            : true;
+          if (mayAlias) { closeRun(); aliasSplits++; }
+        }
+        bFold += f.hits; bFoldOps++;
+        foldable += f.hits;
+        bump(foldByStem, f.c.stem || f.name, f.hits);
+        if (/^(inc|dec)/.test(f.name)) foldIncDec += f.hits;
+        if (f.c.relax === 'partial' && relax.has('partial')) {
+          partialTaken += f.hits;
+          if (f.highByte) highByte += f.hits;
+        }
+        if (f.store) pending.push(relax.has('alias') ? f.addr : null);
+        if (run === 0) headHits = f.hits;
+        run++; runHits += f.hits;
+      } else {
+        closeRun();
+        bump(barrier, f.c.cls, f.hits);
+        if (!barrierByName.has(f.c.cls)) barrierByName.set(f.c.cls, new Map());
+        bump(barrierByName.get(f.c.cls), f.name, f.hits);
+        // A block's BODY is everything but the terminator's own branch. A
+        // `cmp` fused into the terminator is body: it computes a value the
+        // branch consumes, and a fold that models flags folds it.
+        if (!(f.isTerm && f.c.cls === 'branch')) bodyAllFold = false;
+      }
+    }
+    closeRun();
+
+    if (bodyAllFold && b._flat.length > 1) fullBody.add(b);
+    if (bFoldOps >= 4) ge4 += b.retired;
+    if (b.entries > 0) bump(runLen, best, b.entries);
+    perBlock.set(b, {
+      foldOps: bFoldOps, foldRetired: bFold, longest: best, aliasSplits,
+    });
+  }
+
+  // Percentiles of the longest run, weighted by block ENTRIES: "how long is the
+  // run the machine walks into", not "how long is the longest run in the arena".
+  const runs = [...runLen.entries()].sort((a, b) => a[0] - b[0]);
+  const wTot = runs.reduce((a, b) => a + b[1], 0);
+  const pct = (p) => {
+    let acc = 0;
+    for (const [v, w] of runs) { acc += w; if (acc >= wTot * p) return v; }
+    return runs.length ? runs[runs.length - 1][0] : 0;
+  };
+
+  return {
+    foldable, foldShare: retired ? foldable / retired : 0,
+    foldIncDec,
+    ge4, ge4Share: retired ? ge4 / retired : 0,
+    runP50: pct(0.5), runP90: pct(0.9),
+    runMax: runs.length ? runs[runs.length - 1][0] : 0,
+    // The distribution behind those percentiles, as entry-weighted shares.
+    runDist: runs.map(([v, w]) => [v, wTot ? w / wTot : 0]),
+    removed,
+    partialTaken, highByte,
+    highByteShare: partialTaken ? highByte / partialTaken : 0,
+    barrier: [...barrier.entries()].sort((a, b) => b[1] - a[1]),
+    barrierByName, foldByStem, perBlock, fullBody,
+  };
+}
+
 // --- per-program census ------------------------------------------------------
 
 async function census(exe, opts) {
@@ -298,24 +578,20 @@ async function census(exe, opts) {
   for (let i = 0; i < hits.length; i++) arenaTotal += hits[i];
 
   const blocks = [];
-  let retired = 0, foldable = 0, foldIncDec = 0, loadsTot = 0, storesTot = 0;
+  let retired = 0, loadsTot = 0, storesTot = 0;
   let attributed = 0;
-  const barrier = new Map();
-  // The same histogram one level finer: class -> handler name -> ops blocked.
-  // This is the classifier's own work list. Every gap found while building it
-  // showed up here first as a fat row under `other`.
-  const barrierByName = new Map();
-  const foldByStem = new Map();
   const bump = (m, k, n) => m.set(k, (m.get(k) || 0) + n);
 
+  // PHASE ONE: build every block's flat guest-op stream, once. Nothing here
+  // depends on the relaxation mode -- classification carries the mode-neutral
+  // `relax` tag and the addresses, and the modes are applied in phase two.
   for (const blk of liveBlocks(r)) {
     const ops = walkBlock(blk, hits);
     if (!ops.length) continue;
     const width = blockWidth(ops);
     const entries = ops[0].hits;
 
-    let bRetired = 0, bFold = 0, bFoldOps = 0, bLoads = 0, bStores = 0;
-    let run = 0, best = 0, sawStore = false, aliasSplits = 0;
+    let bRetired = 0, bLoads = 0, bStores = 0;
     const liveOut = new Set();
 
     // THE UNIT IS A GUEST OP, NOT A COMPILED WORD. A fused word stands for two
@@ -338,6 +614,18 @@ async function census(exe, opts) {
           try { liveOut.add(effects.at(e, blk.prog.words, o.word)); } catch { liveOut.add(-1); }
         }
       }
+      // The address this op touches, for the alias relaxation, and whether an
+      // 8-bit write lands in a HIGH byte -- AH/CH/DH/BH are register indices
+      // 4-7 in the 8-bit file, and a high-byte write is the LUT idiom the
+      // partial relaxation exists for.
+      const addr = addrOf(o.name, eff0, blk.prog.words, o.word);
+      let highByte = false;
+      if (eff0) {
+        for (const e of eff0.regWrite) {
+          if (e.width !== 8) continue;
+          try { if (effects.at(e, blk.prog.words, o.word) >= 4) highByte = true; } catch { /* unresolved */ }
+        }
+      }
       const n = o.base.length;
       bRetired += o.hits * n;
       o.classes = [];
@@ -350,36 +638,20 @@ async function census(exe, opts) {
           // reported as its own class rather than as a failure. One anywhere
           // else in the block is an ordinary flag write and a real barrier.
           const feedsEnd = (k < n - 1) || (i === ops.length - 1);
-          c = { cls: feedsEnd ? 'terminator-flags' : 'flags', fold: false };
+          c = { cls: feedsEnd ? 'terminator-flags' : 'flags', fold: false, relax: 'flags' };
         }
         o.classes.push(c);
         // Memory effects belong to the compiled word; attribute them to the
         // constituent that is not the branch, which is the one that has them.
-        flat.push({ c, hits: o.hits, name: nm, load: k === 0 ? nLoad : 0, store: k === 0 ? nStore : 0 });
+        flat.push({
+          c, hits: o.hits, name: nm,
+          load: k === 0 ? nLoad : 0, store: k === 0 ? nStore : 0,
+          addr: k === 0 ? addr : null,
+          highByte: k === 0 ? highByte : false,
+          isTerm: i === ops.length - 1,
+        });
       }
     }
-
-    for (const f of flat) {
-      if (f.c.fold) {
-        // A store, then a load this classifier cannot prove does not alias it,
-        // ends the run. It proves nothing about addresses, so every load after
-        // a store inside one run splits it.
-        if (sawStore && f.load) { best = Math.max(best, run); run = 0; aliasSplits++; sawStore = false; }
-        bFold += f.hits; bFoldOps++;
-        foldable += f.hits;
-        bump(foldByStem, f.c.stem || f.name, f.hits);
-        if (/^(inc|dec)/.test(f.name)) foldIncDec += f.hits;
-        if (f.store) sawStore = true;
-        run++;
-      } else {
-        best = Math.max(best, run);
-        run = 0; sawStore = false;
-        bump(barrier, f.c.cls, f.hits);
-        if (!barrierByName.has(f.c.cls)) barrierByName.set(f.c.cls, new Map());
-        bump(barrierByName.get(f.c.cls), f.name, f.hits);
-      }
-    }
-    best = Math.max(best, run);
 
     retired += bRetired;
     loadsTot += bLoads;
@@ -387,30 +659,45 @@ async function census(exe, opts) {
     blocks.push({
       cs: blk.cs, bip: blk.bip, addr: blk.addr, width,
       entries, ops: flat.length, retired: bRetired,
-      foldOps: bFoldOps,
-      foldRetired: bFold,
-      longest: best, aliasSplits,
       liveOut: liveOut.size,
       loads: bLoads, stores: bStores,
-      _ops: ops, _prog: blk.prog,
+      term: terminatorOf(blk, ops),
+      _flat: flat, _ops: ops, _prog: blk.prog,
     });
   }
 
+  // PHASE TWO: the run accounting, once per mode. Everything a mode can change
+  // is here; the op stream above is the same stream in all five.
+  const modes = {};
+  for (const [mode, relax] of MODES) modes[mode] = foldPass(blocks, retired, relax);
+  // `--relax=` names an arbitrary subset. The five above are the sweep; if the
+  // subset asked for is not one of them, compute it too and let it drive the
+  // per-block listing, so the eyeball dump shows the mode being argued about.
+  const key = opts.relax.length ? opts.relax.join('+') : 'exact';
+  if (!modes[key]) modes[key] = foldPass(blocks, retired, new Set(opts.relax));
+  const exact = modes.exact;
+  const { foldable, foldIncDec, barrier, barrierByName, foldByStem } = exact;
+
+  // Blocks carry their EXACT-mode per-block numbers, which is what the top-N
+  // listing and the JSON have always reported.
+  for (const b of blocks) Object.assign(b, modes[key].perBlock.get(b));
   blocks.sort((a, b) => b.retired - a.retired);
 
-  // Hit-weighted percentiles of the longest run, weighted by block ENTRIES:
-  // "how long is the run the machine walks into", not "how long is the longest
-  // run in the arena".
-  const runs = blocks.map(b => [b.longest, b.entries]).filter(x => x[1] > 0)
-    .sort((a, b) => a[0] - b[0]);
-  const wTot = runs.reduce((a, b) => a + b[1], 0);
-  const pct = (p) => {
-    let acc = 0;
-    for (const [v, w] of runs) { acc += w; if (acc >= wTot * p) return v; }
-    return runs.length ? runs[runs.length - 1][0] : 0;
-  };
-
-  const ge4 = blocks.filter(b => b.foldOps >= 4).reduce((a, b) => a + b.retired, 0);
+  // --- terminator census, hit-weighted -------------------------------------
+  const termShare = new Map();
+  const counterStyle = new Map();
+  let selfLoopFullyFoldable = 0;
+  const selfLoopFullByMode = {};
+  for (const mode of Object.keys(modes)) selfLoopFullByMode[mode] = 0;
+  for (const b of blocks) {
+    bump(termShare, b.term.cls, b.retired);
+    if (b.term.cls !== 'self-loop') continue;
+    bump(counterStyle, b.term.style, b.retired);
+    for (const mode of Object.keys(modes)) {
+      if (modes[mode].fullBody.has(b)) selfLoopFullByMode[mode] += b.retired;
+    }
+  }
+  selfLoopFullyFoldable = selfLoopFullByMode.exact;
 
   return {
     exe: path.basename(exe),
@@ -426,14 +713,48 @@ async function census(exe, opts) {
     foldShare: retired ? foldable / retired : 0,
     foldIncDec,
     incDecShare: retired ? foldIncDec / retired : 0,
-    ge4Share: retired ? ge4 / retired : 0,
-    runP50: pct(0.5), runP90: pct(0.9),
-    runMax: blocks.reduce((a, b) => Math.max(a, b.longest), 0),
+    ge4Share: exact.ge4Share,
+    runP50: exact.runP50, runP90: exact.runP90, runMax: exact.runMax,
     loads: loadsTot, stores: storesTot,
-    barrier: [...barrier.entries()].sort((a, b) => b[1] - a[1]),
+    barrier,
     barrierByName: Object.fromEntries([...barrierByName.entries()].map(
       ([k, m]) => [k, [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6)])),
     foldByStem: [...foldByStem.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12),
+    // The relaxation sweep. Each entry is the same shape as `exact`, minus the
+    // per-block map, which only the top-N listing needs.
+    modeOrder: Object.keys(modes),
+    relaxKey: key,
+    relaxSet: opts.relax,
+    modes: Object.fromEntries(Object.keys(modes).map((m) => {
+      const { perBlock, fullBody, barrierByName: bn, foldByStem: fs, ...rest } = modes[m];
+      return [m, {
+        ...rest,
+        removedShare: retired ? rest.removed / retired : 0,
+        selfLoopFullShare: retired ? selfLoopFullByMode[m] / retired : 0,
+        foldByStem: [...fs.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12),
+      }];
+    })),
+    // The terminator census: hit-weighted share of retired ops per class, the
+    // counter style of the self-loops, and the collapsible-loop mass.
+    terminators: {
+      byClass: [...termShare.entries()].sort((a, b) => b[1] - a[1])
+        .map(([k, n]) => [k, n, retired ? n / retired : 0]),
+      counterStyle: [...counterStyle.entries()].sort((a, b) => b[1] - a[1])
+        .map(([k, n]) => [k, n, retired ? n / retired : 0]),
+      collapsibleShare: retired ? selfLoopFullyFoldable / retired : 0,
+      collapsibleByMode: Object.fromEntries(Object.keys(modes).map((m) =>
+        [m, retired ? selfLoopFullByMode[m] / retired : 0])),
+      // Self-loop blocks by body foldable count, the population a collapsing
+      // fold would be built for.
+      topSelfLoops: blocks.filter(b => b.term.cls === 'self-loop')
+        .slice(0, 8)
+        .map(b => ({
+          cs: b.cs, bip: b.bip, style: b.term.style, entries: b.entries,
+          retired: b.retired, bodyOps: b.term.bodyOps, foldOps: b.foldOps,
+          longest: b.longest, full: modes.exact.fullBody.has(b),
+          fullAll: modes.all.fullBody.has(b),
+        })),
+    },
     top: blocks.slice(0, Math.max(opts.top, opts.show)),
   };
 }
@@ -469,15 +790,64 @@ function report(c, opts) {
   L.push('  foldable ops by opcode:');
   L.push(`    ${c.foldByStem.map(([k, n]) => `${k} ${pc(n / c.retired)}`).join('  ')}`);
 
-  L.push(`  top ${opts.top} blocks by retired ops:`);
-  L.push('       cs:ip      w   entries       ops   fold  longest  liveout  loads  stores   retired');
+  // --- how blocks end -------------------------------------------------------
+  L.push('  terminator class, by retired ops (hit-weighted):');
+  for (const [k, n, s] of c.terminators.byClass) {
+    L.push(`    ${k.padEnd(18)}${String(n.toLocaleString()).padStart(14)}   ${pc(s)}`);
+  }
+  if (c.terminators.counterStyle.length) {
+    L.push(`    self-loop counter style: ${c.terminators.counterStyle
+      .map(([k, , s]) => `${k} ${pc(s)}`).join('  ')}`);
+  }
+  L.push(`    COLLAPSIBLE LOOP MASS (self-loop blocks whose whole body folds): `
+    + `${pc(c.terminators.collapsibleShare)} exact, `
+    + `${pc(c.terminators.collapsibleByMode.all)} with all three relaxations`);
+  if (c.terminators.topSelfLoops.length) {
+    L.push('    hottest self-loops:  cs:ip / style / entries / body ops / foldable / longest / full-body');
+    for (const s of c.terminators.topSelfLoops) {
+      L.push(`      ${`${s.cs.toString(16)}:${s.bip.toString(16)}`.padEnd(14)}`
+        + `${s.style.padEnd(9)}${String(s.entries).padStart(9)} `
+        + `${String(s.bodyOps).padStart(6)} ${String(s.foldOps).padStart(6)} `
+        + `${String(s.longest).padStart(6)}   ${s.full ? 'yes' : s.fullAll ? 'with relax' : 'no'}`);
+    }
+  }
+
+  // --- the relaxation sweep -------------------------------------------------
+  L.push('  relaxation modes (same run, same weights, re-classified):');
+  L.push('    mode      foldable   >=4-fold   run p50/p90/max   ops undispatched   top remaining barrier');
+  for (const m of c.modeOrder) {
+    const v = c.modes[m];
+    const b0 = v.barrier[0] || ['-', 0];
+    L.push(`    ${m.padEnd(9)}${pc(v.foldShare).padStart(7)}    ${pc(v.ge4Share).padStart(7)}   `
+      + `${`${v.runP50}/${v.runP90}/${v.runMax}`.padStart(14)}   `
+      + `${pc(v.removedShare).padStart(10)}         ${b0[0]} ${pc(b0[1] / c.retired)}`);
+  }
+  {
+    const p = c.modes.partial;
+    if (p.partialTaken) {
+      L.push(`    partial detail: ${p.partialTaken.toLocaleString()} narrow ops promoted, `
+        + `${pc(p.highByteShare)} of them a HIGH-byte (AH/BH/CH/DH) write`);
+    }
+    const dist = (m) => c.modes[m].runDist.filter(([, s]) => s >= 0.005)
+      .map(([v, s]) => `${v}:${(100 * s).toFixed(0)}`).join(' ');
+    L.push(`    run-length distribution (len:% of entries) exact   ${dist('exact')}`);
+    L.push(`    run-length distribution (len:% of entries) all     ${dist('all')}`);
+    L.push('    barriers remaining under all three:');
+    for (const [k, n] of c.modes.all.barrier) {
+      L.push(`      ${k.padEnd(18)}${String(n.toLocaleString()).padStart(14)}   ${pc(n / c.retired)}`);
+    }
+  }
+
+  L.push(`  top ${opts.top} blocks by retired ops (fold/longest under \`${c.relaxKey}\`):`);
+  L.push('       cs:ip      w   entries       ops   fold  longest  liveout  loads  stores   retired  terminator');
   for (const b of c.top.slice(0, opts.top)) {
-    L.push(`    ${`${b.cs.toString(16)}:${b.bip.toString(16)}`.padEnd(12)}`
+    L.push(`    ${`${b.cs.toString(16)}:${b.bip.toString(16)}`.padEnd(14)}`
       + `${String(b.width).padStart(2)}  ${String(b.entries).padStart(9)} `
       + `${String(b.ops).padStart(9)} ${String(b.foldOps).padStart(6)} `
       + `${String(b.longest).padStart(8)} ${String(b.liveOut).padStart(8)} `
       + `${String(b.loads).padStart(6)} ${String(b.stores).padStart(7)} `
-      + `${String(b.retired).padStart(11)}`);
+      + `${String(b.retired).padStart(11)}  ${b.term.cls}`
+      + `${b.term.cls === 'self-loop' ? ` (${b.term.style})` : ''}`);
   }
 
   for (const b of c.top.slice(0, opts.show)) {
@@ -485,7 +855,11 @@ function report(c, opts) {
       + `(${b.width}-bit, ${b.entries} entries, ${b.retired} retired ops, `
       + `longest run ${b.longest}, ${b.liveOut} live-out reg(s))`);
     for (const o of b._ops) {
-      const cls = o.classes.map(x => x.cls).join('+');
+      // Under `--relax=`, an op the mode PROMOTES is shown as `fold*` rather
+      // than under the barrier class it has in the exact census, so the dump
+      // reads as the mode being argued about.
+      const cls = o.classes.map(x => (x.fold ? 'fold'
+        : x.relax && c.relaxSet.includes(x.relax) ? `fold*(${x.cls})` : x.cls)).join('+');
       L.push(`      0x${o.addr.toString(16)}  ${String(o.hits).padStart(9)}  `
         + `${o.name.padEnd(24)} ${o.args.map(a => (a < 0 ? String(a) : `0x${(a >>> 0).toString(16)}`)).join(' ').padEnd(28)} `
         + `[${cls}]${o.base.length > 1 ? `  = ${o.base.join(' + ')}` : ''}`);
@@ -498,7 +872,8 @@ async function main() {
   const exes = ARGV.filter(a => !a.startsWith('--'));
   if (!exes.length) {
     console.log('usage: node tools/toyvm/expr-fold-census.js <exe> [...] '
-      + '[--dispatches=20m] [--top=20] [--show=5] [--json=FILE]');
+      + '[--dispatches=20m] [--top=20] [--show=5] [--why] '
+      + '[--relax=alias,partial,flags] [--json=FILE]');
     process.exit(2);
   }
   const opts = {
@@ -510,7 +885,14 @@ async function main() {
     autoKey: flag('auto-key'),
     soundPref: arg('sound-pref', 'silent'),
     env: arg('env', '').split(';').filter(Boolean),
+    // `--relax=alias,partial,flags` -- any subset. The five-mode sweep is
+    // printed whatever this says; what it selects is which mode drives the
+    // per-block listing and the eyeball op dump, so a claim about one
+    // relaxation can be checked against the block it is a claim about.
+    relax: RELAXATIONS.filter(x => arg('relax', '').split(',').includes(x)),
   };
+  const bogus = arg('relax', '').split(',').filter(x => x && !RELAXATIONS.includes(x));
+  if (bogus.length) { console.log(`unknown relaxation(s): ${bogus.join(',')}`); process.exit(2); }
   const out = [];
   for (const exe of exes) {
     if (!fs.existsSync(exe)) { console.log(`missing: ${exe}`); continue; }
@@ -527,6 +909,32 @@ async function main() {
       + `${pc(c.foldShare).padStart(6)}     ${pc(c.ge4Share).padStart(6)}   `
       + `${`${c.runP50}/${c.runP90}/${c.runMax}`.padStart(12)}   `
       + `${b0[0]} ${pc(b0[1] / c.retired)}`);
+  }
+
+  // The two cross-program tables the relaxation sweep exists to produce.
+  console.log('\n=== terminator class, hit-weighted share of retired ops');
+  console.log('  program        self-loop  interior-br  plain-exit   '
+    + 'loop  dec/jnz  cmp/jcc  other   COLLAPSIBLE (exact / all)');
+  for (const c of out) {
+    const t = Object.fromEntries(c.terminators.byClass.map(([k, , s]) => [k, s]));
+    const st = Object.fromEntries(c.terminators.counterStyle.map(([k, , s]) => [k, s]));
+    const g = (m, k) => pc(m[k] || 0).padStart(7);
+    console.log(`  ${c.exe.padEnd(14)}${g(t, 'self-loop')}      ${g(t, 'interior-branch')}     `
+      + `${g(t, 'plain-exit')}${g(st, 'loop')}  ${g(st, 'dec/jnz')}  ${g(st, 'cmp/jcc')}  `
+      + `${g(st, 'other')}   ${pc(c.terminators.collapsibleShare).padStart(6)} / `
+      + `${pc(c.terminators.collapsibleByMode.all).padStart(6)}`);
+  }
+
+  console.log('\n=== relaxation sweep: foldable share / >=4-fold share / run p50 / run p90 / ops undispatched');
+  const hdr = MODES.map(([m]) => m.padStart(m === 'exact' ? 24 : 24)).join('');
+  console.log(`  program       ${hdr}`);
+  for (const c of out) {
+    const cell = (m) => {
+      const v = c.modes[m];
+      return `${pc(v.foldShare)}/${pc(v.ge4Share)}/${v.runP50}/${v.runP90}/${pc(v.removedShare)}`
+        .padStart(24);
+    };
+    console.log(`  ${c.exe.padEnd(13)}${MODES.map(([m]) => cell(m)).join('')}`);
   }
 
   const jf = arg('json');
