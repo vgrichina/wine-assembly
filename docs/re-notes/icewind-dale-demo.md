@@ -74,8 +74,40 @@ The other two files are installer-created `uninst.isu` and `readme.txt`.
 The installed EXE SHA-256 is
 `b94816d10029cb99c0315f175330c917be2fff298394e853e2764973d8d13af4`.
 
-Next: repeat the verified route with a longer internal test deadline,
-require the actual completion screen, and verify the complete output before
+### Longer execution and interrupted-install replay
+
+A fresh replay with `--max-seconds=1800` reached inspected progress screens
+at batches 8750 (34%), 9750 (37%), 10750 (40%), 12750 (47%), 14750 (53%),
+16750 (59%), 18750 (65%), and 20750 (79%). The internal deadline stopped
+at batch 21190, `EIP=0x007b4edd`, still inside cabinet decompression.
+It exited cleanly and exported `/private/tmp/iwd-original-complete-vfs`;
+despite that directory name, this is **not a complete installation**.
+Its destination has 302 files totaling 407,579,613 bytes, with 298
+byte-identical to the legacy reference. The incomplete file is now
+`Data/sndspell.bif` (21,606,400 of 22,416,309 bytes). The other differences
+remain the unpatched INI and installer-created README/uninstall log.
+No payload bytes were supplied by a host decompressor.
+
+Directly replaying the engine from that export exits with guest code 4
+before its wizard: `_ins0432.ini` and `_isenv31.ini` have been consumed.
+Running the original `Setup.exe` again with the exported VFS succeeds and
+emits a fresh engine under `_ISTMP2.DIR`, preserving the installed files.
+This capture is `/private/tmp/iwd-rebootstrap` (426 files). Its engine
+reaches the same wizard, but selecting Program Folder produces
+`unInstaller setup failed to initialize. You may not be able to uninstall
+this product.` Dismiss the native message box with `dlg-cmd:1`; unlike the
+guest wizard buttons, `dlg-input-click:1` alone did not dismiss it.
+This interrupted-install route is not a clean-install acceptance.
+
+It also does **not** resume decompression: after 1000 additional copy steps
+the wizard shows 11%, and the previously complete `Data/ar1000.bif` has
+been replaced with an 8,632,320-byte partial file. The original partial
+`sndspell.bif` is untouched. This probe was quit explicitly; its separate
+`/private/tmp/iwd-original-reinstall-vfs` export must not replace the earlier
+output. A subsequent completion attempt needs one uninterrupted run with
+sufficient internal execution allowance, not repeated partial-VFS replay.
+
+Next: require the actual completion screen and verify the complete output before
 changing the fetch recipe or registry. Then test gameplay using the original
 installed INI/KEY and CD2 layout. Do not reuse this partial directory as an
 installed fixture or assume the legacy KEY/CBF modifications remain necessary.
