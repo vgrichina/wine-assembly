@@ -30,6 +30,14 @@ function request(port, pathname, method = 'GET') {
   });
 }
 
+function javascriptFiles(dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) return javascriptFiles(file);
+    return entry.isFile() && entry.name.endsWith('.js') ? [file] : [];
+  });
+}
+
 (async () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-static-server-'));
   const root = path.join(parent, 'root');
@@ -41,6 +49,11 @@ function request(port, pathname, method = 'GET') {
     assert.strictEqual(mimeType('x.WASM'), 'application/wasm');
     assert.strictEqual(mimeType('x.unknown'), 'application/octet-stream');
     assert.strictEqual(mimeType('x.bin', { '.bin': 'test/custom' }), 'test/custom');
+    const serverOwners = javascriptFiles(__dirname)
+      .filter(file => /\bhttp\s*\.\s*createServer\s*\(/.test(fs.readFileSync(file, 'utf8')))
+      .map(file => path.relative(__dirname, file));
+    assert.deepStrictEqual(serverOwners, ['static-server.js'],
+      'browser tests must extend the shared static server instead of cloning it');
 
     assert.strictEqual((await resolveStaticPath(root, '/')).file,
       fs.realpathSync(path.join(root, 'index.html')));
@@ -79,7 +92,30 @@ function request(port, pathname, method = 'GET') {
     } finally {
       await closeServer(server);
     }
-    console.log('PASS  shared static test server is typed, no-store, isolated, and traversal-safe');
+
+    const customServer = await startStaticServer({
+      root,
+      cacheControl: 'no-cache',
+      rewritePath: pathname => pathname === '/virtual' ? '/index.html' : pathname,
+      handleRequest(request, response) {
+        if (request.url !== '/api') return false;
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end('{"ok":true}');
+        return true;
+      },
+    });
+    try {
+      const port = customServer.address().port;
+      const api = await request(port, '/api');
+      assert.strictEqual(api.body, '{"ok":true}');
+      assert.strictEqual(api.headers['content-type'], 'application/json');
+      const rewritten = await request(port, '/virtual');
+      assert.strictEqual(rewritten.body, '<h1>index</h1>');
+      assert.strictEqual(rewritten.headers['cache-control'], 'no-cache');
+    } finally {
+      await closeServer(customServer);
+    }
+    console.log('PASS  shared static test server preserves types, policies, routes, and path safety');
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });
   }

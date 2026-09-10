@@ -11,7 +11,7 @@
 
 const assert = require('assert');
 const fs = require('fs');
-const http = require('http');
+const { startStaticServer: startSharedStaticServer } = require('./static-server');
 const path = require('path');
 const puppeteer = require('puppeteer');
 
@@ -49,42 +49,16 @@ const APPS = [
 ];
 
 function startStaticServer() {
-  const root = fs.realpathSync(ROOT);
-  const server = http.createServer((request, response) => {
-    let pathname;
-    try { pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname); }
-    catch (_) { response.writeHead(400); response.end(); return; }
-    if (pathname === '/') pathname = '/index.html';
-    // The page asks for /binaries/..., which in a normal checkout is a
-    // root-level symlink to test/binaries. That symlink is gitignored, so a
-    // git worktree never has it and every guest binary 404s — the app then
-    // loads a zero-length PE, reports "Entry: 0xffffffff", exits at slice 1,
-    // and the only visible symptom is this test timing out waiting for a
-    // window. Resolve the path ourselves rather than depend on the link.
-    if (pathname.startsWith('/binaries/')
-        && !fs.existsSync(path.join(root, 'binaries'))) {
-      pathname = '/test' + pathname;
-    }
-    const file = path.normalize(path.join(root, pathname));
-    if (file !== root && !file.startsWith(root + path.sep)) {
-      response.writeHead(403); response.end(); return;
-    }
-    fs.readFile(file, (error, data) => {
-      if (error) { response.writeHead(error.code === 'ENOENT' ? 404 : 500); response.end(); return; }
-      const types = {
-        '.css': 'text/css', '.html': 'text/html', '.js': 'text/javascript',
-        '.json': 'application/json', '.wasm': 'application/wasm',
-      };
-      response.writeHead(200, {
-        'Content-Type': types[path.extname(file).toLowerCase()] || 'application/octet-stream',
-        'Cache-Control': 'no-store',
-      });
-      response.end(data);
-    });
-  });
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve(server));
+  return startSharedStaticServer({
+    root: ROOT,
+    rewritePath(pathname) {
+      // Worktrees do not carry the gitignored root-level binaries symlink.
+      if (pathname.startsWith('/binaries/') &&
+          !fs.existsSync(path.join(ROOT, 'binaries'))) {
+        return '/test' + pathname;
+      }
+      return pathname;
+    },
   });
 }
 
