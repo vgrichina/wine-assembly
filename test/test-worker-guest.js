@@ -19,7 +19,7 @@
 
 const assert = require('assert');
 const fs = require('fs');
-const http = require('http');
+const { startStaticServer: startSharedStaticServer } = require('./static-server');
 const path = require('path');
 const puppeteer = require('puppeteer');
 
@@ -42,28 +42,12 @@ const MIME = {
 };
 
 function startIsolatedServer() {
-  const root = fs.realpathSync(ROOT);
-  const server = http.createServer((req, res) => {
-    let pathname;
-    try { pathname = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname); }
-    catch (_) { res.writeHead(400); res.end(); return; }
-    if (pathname === '/') pathname = '/index.html';
-    const full = path.join(root, pathname);
-    if (!full.startsWith(root)) { res.writeHead(403); res.end(); return; }
-    fs.stat(full, (err, st) => {
-      if (err || !st.isFile()) { res.writeHead(404); res.end(); return; }
-      res.writeHead(200, {
-        'Content-Type': MIME[path.extname(full).toLowerCase()] || 'application/octet-stream',
-        'Content-Length': st.size,
-        'Cache-Control': 'no-cache',
-        // The whole point: without these a shared memory cannot reach a Worker.
-        'Cross-Origin-Opener-Policy': 'same-origin',
-        'Cross-Origin-Embedder-Policy': 'require-corp',
-      });
-      fs.createReadStream(full).pipe(res).on('error', () => res.destroy());
-    });
+  return startSharedStaticServer({
+    root: ROOT,
+    mimeTypes: MIME,
+    cacheControl: 'no-cache',
+    crossOriginIsolated: true,
   });
-  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
 const wait = ms => new Promise(r => setTimeout(r, ms));

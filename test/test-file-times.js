@@ -3,6 +3,8 @@
 
 const assert = require('assert');
 const { createFilesystemImports } = require('../lib/filesystem');
+const { createHostImports } = require('../lib/host-imports');
+const RegionMap = require('../lib/region-map.generated');
 const { bootRenderHarness } = require('./render-helper');
 
 const memory = new WebAssembly.Memory({ initial: 2 });
@@ -20,7 +22,37 @@ function readTime(at) {
   return { lo: dv.getUint32(at, true), hi: dv.getUint32(at + 4, true) };
 }
 
+function readSystemTime(at) {
+  return Array.from({ length: 8 }, (_, i) => dv.getUint16(at + i * 2, true));
+}
+
 (async () => {
+  // Calendar time is the host wall clock, not the synthetic guest tick clock.
+  // Validate UTC/local field selection and the complete 64-bit FILETIME carry
+  // against one deterministic leap-day snapshot.
+  const fixedNow = Date.UTC(2024, 1, 29, 23, 58, 59, 321);
+  const clockCtx = {
+    getMemory: () => memory.buffer,
+    renderer: null,
+    wallNowMs: () => fixedNow,
+  };
+  const clockHost = createHostImports(clockCtx).host;
+  assert.strictEqual(clockHost.wall_clock(0x600, 0), 1);
+  assert.deepStrictEqual(readSystemTime(0x600), [2024, 2, 4, 29, 23, 58, 59, 321],
+    'UTC SYSTEMTIME must describe the host wall-clock instant');
+  const local = new Date(fixedNow);
+  assert.strictEqual(clockHost.wall_clock(0x620, 1), 1);
+  assert.deepStrictEqual(readSystemTime(0x620), [
+    local.getFullYear(), local.getMonth() + 1, local.getDay(), local.getDate(),
+    local.getHours(), local.getMinutes(), local.getSeconds(), local.getMilliseconds(),
+  ], 'local SYSTEMTIME must use the host time zone');
+  assert.strictEqual(clockHost.wall_clock(0x640, 2), 1);
+  const expectedFileTime = 116444736000000000n + BigInt(fixedNow) * 10000n;
+  const actualFileTime = BigInt(dv.getUint32(0x644, true)) * 0x100000000n +
+    BigInt(dv.getUint32(0x640, true));
+  assert.strictEqual(actualFileTime, expectedFileTime,
+    'FILETIME must retain the high-word carry for the full wall-clock epoch');
+
   const h = ctx.vfs.createFile('C:\\archive.bin', 0x40000100, 2);
   assert(h, 'writable archive fixture opens');
 
@@ -85,6 +117,7 @@ function readTime(at) {
   // Pin the Win32 handlers too: nullable guest pointers are translated before
   // the host call, stdcall pops four args, and host errors become LastError.
   const calls = [];
+  const clockCalls = [];
   const { exports: wat } = await bootRenderHarness({
     extraWat: String.raw`
       (func (export "test_set_file_time") (param $h i32) (param $c i32) (param $a i32) (param $w i32) (result i64)
@@ -99,11 +132,30 @@ function readTime(at) {
           (i32.const 0) (i32.const 0))
         (i64.or (i64.extend_i32_u (global.get $eax))
           (i64.shl (i64.extend_i32_u (global.get $last_error)) (i64.const 32))))
+      (func (export "test_get_local_time") (param $out i32) (result i32)
+        (global.set $esp (i32.const 0x00300000))
+        (call $handle_GetLocalTime (local.get $out) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (global.get $esp))
+      (func (export "test_get_system_time") (param $out i32) (result i32)
+        (global.set $esp (i32.const 0x00300000))
+        (call $handle_GetSystemTime (local.get $out) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (global.get $esp))
+      (func (export "test_get_system_time_as_file_time") (param $out i32) (result i32)
+        (global.set $esp (i32.const 0x00300000))
+        (call $handle_GetSystemTimeAsFileTime (local.get $out) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (global.get $esp))
     `,
     extraHostOverrides: {
       fs_file_time: (...args) => {
         calls.push(args);
         return args[1] ? 0 : 6;
+      },
+      wall_clock: (out, kind) => {
+        clockCalls.push([out, kind]);
+        return 1;
       },
     },
   });
@@ -123,6 +175,19 @@ function readTime(at) {
   assert.deepStrictEqual(calls.shift(), [0x88, 0, 0, 0, 0],
     'GetFileTime keeps NULL outputs NULL');
   assert.strictEqual(wat.get_esp() >>> 0, 0x00300014, 'GetFileTime pops four arguments');
+
+  const clockGuest = imageBase + 0x3000;
+  assert.strictEqual(wat.test_get_local_time(clockGuest) >>> 0, 0x00300008,
+    'GetLocalTime pops its pointer argument');
+  assert.strictEqual(wat.test_get_system_time(clockGuest) >>> 0, 0x00300008,
+    'GetSystemTime pops its pointer argument');
+  assert.strictEqual(wat.test_get_system_time_as_file_time(clockGuest) >>> 0, 0x00300008,
+    'GetSystemTimeAsFileTime pops its pointer argument');
+  assert.deepStrictEqual(clockCalls, [
+    [RegionMap.GUEST_BASE + 0x3000, 1],
+    [RegionMap.GUEST_BASE + 0x3000, 0],
+    [RegionMap.GUEST_BASE + 0x3000, 2],
+  ], 'Win32 calendar APIs translate once and select local, UTC, and FILETIME modes');
 
   console.log('PASS  SetFileTime persists exact Win32 timestamps through Get/Find');
 })().catch(error => {

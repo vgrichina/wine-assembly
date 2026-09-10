@@ -9,7 +9,7 @@
 
 const assert = require('assert');
 const fs = require('fs');
-const http = require('http');
+const { startStaticServer: startSharedStaticServer } = require('./static-server');
 const os = require('os');
 const path = require('path');
 const puppeteer = require('puppeteer');
@@ -42,33 +42,7 @@ function mimeType(file) {
 }
 
 function startStaticServer() {
-  const root = fs.realpathSync(ROOT);
-  const server = http.createServer((request, response) => {
-    let pathname;
-    try { pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname); }
-    catch (_) { response.writeHead(400); response.end('bad url'); return; }
-    if (pathname === '/') pathname = '/index.html';
-    const file = path.normalize(path.join(root, pathname));
-    if (file !== root && !file.startsWith(root + path.sep)) {
-      response.writeHead(403); response.end('forbidden'); return;
-    }
-    fs.readFile(file, (error, data) => {
-      if (error) {
-        response.writeHead(error.code === 'ENOENT' ? 404 : 500);
-        response.end(error.code || 'read error');
-        return;
-      }
-      response.writeHead(200, {
-        'Content-Type': mimeType(file),
-        'Cache-Control': 'no-store',
-      });
-      response.end(data);
-    });
-  });
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve(server));
-  });
+  return startSharedStaticServer({ root: ROOT, mimeType });
 }
 
 function pixelMetrics(png, x0, y0, x1, y1) {

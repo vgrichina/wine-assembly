@@ -14,6 +14,7 @@ const {
   FSR_EASU_FRAGMENT_SHADER,
   POST_FRAGMENT_SHADER,
 } = require('../lib/presentation-filter');
+const { hasPageScript } = require('./browser-runtime-scripts');
 
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
@@ -42,7 +43,7 @@ assert(html.includes('id="crt-glow-toggle"'));
 assert(html.includes("localStorage.setItem(PRESENTATION_CRT_KEY, JSON.stringify(effects))"),
   'CRT choices should persist independently from the scaling mode');
 assert(html.includes('renderer.setPresentationEffects(effects)'));
-assert(html.includes('lib/presentation-filter.js?v=5'));
+assert(hasPageScript('lib/presentation-filter.js'));
 
 const draws = [];
 const context = {

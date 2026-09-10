@@ -5,6 +5,8 @@
 // load_pe, the exe-name/cmdline pokes, and the DLL dependency walk.
 // lib/process-boot.js is a classic script loaded ahead of this one.
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
+const HostMemUtils = (typeof window !== 'undefined' && window.memUtils) ||
+  (typeof require !== 'undefined' ? require('./lib/mem-utils') : null);
 
 // iOS decides whether a page may be heard at all, and WebAudio alone does not
 // get a say. A page that only ever makes sound through an AudioContext lands
@@ -523,7 +525,11 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '306';
+  static SOURCE_VERSION = String(globalThis.WINE_SOURCE_VERSION || 'dev');
+  static versionedUrl(source) {
+    const separator = source.includes('?') ? '&' : '?';
+    return source + separator + 'v=' + encodeURIComponent(WineAssembly.SOURCE_VERSION);
+  }
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -1611,32 +1617,19 @@ class WineAssembly {
     h.get_exit_code_thread = (handle) => self.threadManager ? self.threadManager.getExitCodeThread(handle) : 0x103;
     h.terminate_thread = (handle, exitCode) => self.threadManager
       ? self.threadManager.terminateThread(handle, exitCode) : 0;
-    const readSyncObjectName = (nameWa, wide) => {
-      if (!nameWa) return '';
-      if (!(wide & 1)) return self.readString(nameWa);
-      const memoryBuffer = self.memory && (self.memory.buffer || self.memory);
-      if (!(memoryBuffer instanceof ArrayBuffer) &&
-          !(typeof SharedArrayBuffer !== 'undefined' && memoryBuffer instanceof SharedArrayBuffer)) return '';
-      const dv = new DataView(memoryBuffer);
-      let name = '';
-      for (let i = 0; i < 512; i++) {
-        const ch = dv.getUint16(nameWa + i * 2, true);
-        if (!ch) break;
-        name += String.fromCharCode(ch);
-      }
-      return name;
-    };
+    const readSyncName = (nameWa, flags) =>
+      HostMemUtils ? HostMemUtils.readSyncObjectName(self.memory, nameWa, flags) : '';
     const win32ThreadId = () => ((ctx.threadId | 0) + 1) | 0;
     h.create_event = (m, i, nameWa, wide) => {
       if (!self.threadManager) return 0;
-      const name = readSyncObjectName(nameWa, wide);
+      const name = readSyncName(nameWa, wide);
       return (wide & 2)
         ? self.threadManager.createMutex(i, name, win32ThreadId())
         : self.threadManager.createEvent(m, i, name);
     };
     h.open_event = (nameWa, wide) => {
       if (!self.threadManager) return 0;
-      const name = readSyncObjectName(nameWa, wide);
+      const name = readSyncName(nameWa, wide);
       return (wide & 2) ? self.threadManager.openMutex(name) : self.threadManager.openEvent(name);
     };
     h.set_event = (handle) => {
@@ -1724,7 +1717,7 @@ class WineAssembly {
     const wasmReady = WineAssembly.getWasmModule();
     const apiTableReady = !this.apiTable ? (async () => {
       try {
-        const r = await fetch(`src/api_table.json?v=${WineAssembly.SOURCE_VERSION}`);
+        const r = await fetch(WineAssembly.versionedUrl('src/api_table.json'));
         this.apiTable = await r.json();
       } catch (e) {
         console.warn('[host] failed to load api_table.json:', e);
@@ -1993,7 +1986,7 @@ class WineAssembly {
             ? 'build/wine-assembly.wasm'
             : 'build/wine-assembly.compat.wasm';
           try {
-            const response = await fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions);
+            const response = await fetch(WineAssembly.versionedUrl(artifact), fetchOptions);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return await WebAssembly.compile(await response.arrayBuffer());
           } catch (error) {
@@ -2020,6 +2013,7 @@ class WineAssembly {
           // bytes and has to be checked; see below.
           const built = await window.watxLauncher.compileDetailed({ tailCalls }, {
             version: WineAssembly.SOURCE_VERSION,
+            workerUrl: WineAssembly.versionedUrl('lib/watx-compile-worker.js'),
             noStore: debugFetch,
             // Diagnostic/low-memory escape hatch: compile cooperatively on the
             // page thread, yielding between compiler stages and function
@@ -2135,9 +2129,8 @@ class WineAssembly {
   _guestToWasmAddress(addr) {
     const ex = this.instance && this.instance.exports;
     if (!ex || !this.memory || !this.memory.buffer || !ex.get_image_base) return -1;
-    const imageBase = ex.get_image_base() >>> 0;
-    const guestBase = ex.get_guest_base ? (ex.get_guest_base() >>> 0) : 0x12000;
-    return (((addr >>> 0) - imageBase + guestBase) >>> 0);
+    return HostMemUtils.guestToWasm(
+      addr, ex, this.memory, ex.get_image_base() >>> 0);
   }
 
   // The patch table is lib/app-profiles.js, shared with the CLI harness — it
@@ -2180,7 +2173,7 @@ class WineAssembly {
       return;
     }
     try {
-      const res = await fetch('lib/host-import-sigs.generated.json?v=10');
+      const res = await fetch(WineAssembly.versionedUrl('lib/host-import-sigs.generated.json'));
       if (!res.ok) throw new Error(`sigs HTTP ${res.status}`);
       const sigs = (await res.json()).sigs;
       const self = this;
@@ -2189,7 +2182,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=32',
+        workerUrl: WineAssembly.versionedUrl('lib/guest-worker.js'),
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
@@ -2413,7 +2406,7 @@ class WineAssembly {
     if (!fontMounts) return;
     let manifest;
     try {
-      const response = await fetch('fonts/substitutions.json?v=1');
+      const response = await fetch(WineAssembly.versionedUrl('fonts/substitutions.json'));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       manifest = await response.json();
     } catch (err) {

@@ -10,6 +10,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { startStaticServer } = require('./static-server');
 
 const ROOT = path.join(__dirname, '..');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -22,33 +23,6 @@ if (!fs.existsSync(CHROME)) {
 }
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-function startStaticServer() {
-  const root = fs.realpathSync(ROOT);
-  const server = http.createServer((request, response) => {
-    let pathname;
-    try { pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname); }
-    catch (_) { response.writeHead(400); response.end(); return; }
-    if (pathname === '/') pathname = '/index.html';
-    const file = path.normalize(path.join(root, pathname));
-    if (file !== root && !file.startsWith(root + path.sep)) {
-      response.writeHead(403); response.end(); return;
-    }
-    fs.readFile(file, (error, data) => {
-      if (error) { response.writeHead(error.code === 'ENOENT' ? 404 : 500); response.end(); return; }
-      const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
-      response.writeHead(200, {
-        'Content-Type': types[path.extname(file).toLowerCase()] || 'application/octet-stream',
-        'Cache-Control': 'no-store',
-      });
-      response.end(data);
-    });
-  });
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve(server));
-  });
-}
 
 function reservePort() {
   return new Promise((resolve, reject) => {
@@ -155,7 +129,7 @@ function connectWebSocket(wsUrl) {
 
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
-  const server = await startStaticServer();
+  const server = await startStaticServer({ root: ROOT });
   const port = server.address().port;
   const debugPort = await reservePort();
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-mspaint-web-'));

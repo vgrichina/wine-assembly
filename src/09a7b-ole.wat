@@ -227,11 +227,13 @@
           (else (global.set $eax (i32.const 0x80004002))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
-  (func $handle_IRunningObjectTable_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; Shared dispatch targets for OLE interfaces whose identity pointer is the
+  ;; owning object and whose final Release needs no interface-specific work.
+  (func $handle_ole_obj_addref (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $ole_obj_addref (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
-  (func $handle_IRunningObjectTable_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (func $handle_ole_obj_release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $ole_obj_release (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -443,24 +445,18 @@
           (else (global.set $eax (i32.const 0x80004002))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  (func $handle_IEnumMoniker_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_addref (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  (func $handle_IEnumMoniker_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_release (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
   (func $handle_IEnumMoniker_Next (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $ole_moniker_enum_next
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  (func $handle_IEnumMoniker_Skip (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_moniker_enum_skip (local.get $arg0) (local.get $arg1)))
+  ;; Shared dispatch target for the snapshot enumerators whose Skip operation
+  ;; is exactly cursor arithmetic over the common count/cursor fields.
+  (func $handle_ole_enum_skip (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_enum_skip (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  (func $handle_IEnumMoniker_Reset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (func $handle_ole_enum_reset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $gs32 (i32.add (local.get $arg0) (i32.const 20)) (i32.const 0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
@@ -555,10 +551,6 @@
         (global.set $eax (i32.const 0)))
       (else (global.set $eax (i32.const 0x80004002))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-
-  (func $handle_IBindCtx_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_addref (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IBindCtx_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $ole_bindctx_release_api (local.get $arg0) (i32.const 8)))
@@ -913,27 +905,10 @@
           (else (global.set $eax (i32.const 0x80004002))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  (func $handle_IEnumString_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_addref (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  (func $handle_IEnumString_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_release (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
   (func $handle_IEnumString_Next (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $ole_string_enum_next
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
-
-  (func $handle_IEnumString_Skip (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_string_enum_skip (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
-
-  (func $handle_IEnumString_Reset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gs32 (i32.add (local.get $arg0) (i32.const 20)) (i32.const 0))
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IEnumString_Clone (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $clone i32)
@@ -1064,14 +1039,6 @@
         (global.set $eax (i32.const 0)))
       (else (global.set $eax (i32.const 0x80004002)))) ;; E_NOINTERFACE
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-
-  (func $handle_IMoniker_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_addref (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  (func $handle_IMoniker_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_release (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IMoniker_GetClassID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.eqz (local.get $arg1))
@@ -1511,6 +1478,23 @@
       (i32.and
         (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 8))) (i32.const 0x000000C0))
         (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 12))) (i32.const 0x46000000)))))
+
+  ;; Enumerator interfaces implemented by one WAT object expose only IUnknown
+  ;; and their own enumerator IID. QueryInterface must clear a rejected output
+  ;; and successful queries own one additional reference.
+  (func $ole_enum_query_interface (param $obj i32) (param $iid i32)
+        (param $out i32) (param $enum_data1 i32) (result i32)
+    (if (i32.eqz (local.get $out))
+      (then (return (i32.const 0x80004003)))) ;; E_POINTER
+    (call $gs32 (local.get $out) (i32.const 0))
+    (if (i32.or
+          (call $ole_iid_is_com (local.get $iid) (i32.const 0))
+          (call $ole_iid_is_com (local.get $iid) (local.get $enum_data1)))
+      (then
+        (call $gs32 (local.get $out) (local.get $obj))
+        (drop (call $ole_obj_addref (local.get $obj)))
+        (return (i32.const 0))))
+    (i32.const 0x80004002)) ;; E_NOINTERFACE
 
   ;; File-moniker comparisons follow Win32 filename semantics for the stable
   ;; value subset implemented here: ASCII case-insensitive and slash-neutral,
@@ -1990,7 +1974,11 @@
     (if (local.get $fetched_out) (then (call $gs32 (local.get $fetched_out) (local.get $fetched))))
     (select (i32.const 0) (i32.const 1) (i32.eq (local.get $fetched) (local.get $requested))))
 
-  (func $ole_moniker_enum_skip (param $obj i32) (param $requested i32) (result i32)
+  ;; The local IEnumMoniker/IEnumString/IEnumFORMATETC-style records all keep
+  ;; count at +16 and cursor at +20. Skip has no element-specific ownership
+  ;; work, so one implementation preserves COM's S_OK/S_FALSE contract for
+  ;; every such snapshot instead of letting interface copies drift.
+  (func $ole_enum_skip (param $obj i32) (param $requested i32) (result i32)
     (local $count i32) (local $cursor i32) (local $remaining i32) (local $take i32)
     (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
     (local.set $cursor (call $gl32 (i32.add (local.get $obj) (i32.const 20))))
@@ -2192,14 +2180,6 @@
         (global.set $eax (i32.const 0)))
       (else (global.set $eax (i32.const 0x80004002))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-
-  (func $handle_IFont_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_addref (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  (func $handle_IFont_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_release (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IFont_get_Name (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.eqz (local.get $arg1))
@@ -2692,16 +2672,6 @@
       (br $copy_values)))
     (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (i32.add (local.get $cursor) (local.get $take)))
     (if (local.get $fetched_out) (then (call $gs32 (local.get $fetched_out) (local.get $take))))
-    (select (i32.const 0) (i32.const 1) (i32.eq (local.get $take) (local.get $requested))))
-
-  (func $ole_string_enum_skip (param $obj i32) (param $requested i32) (result i32)
-    (local $count i32) (local $cursor i32) (local $take i32)
-    (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
-    (local.set $cursor (call $gl32 (i32.add (local.get $obj) (i32.const 20))))
-    (local.set $take
-      (select (local.get $requested) (i32.sub (local.get $count) (local.get $cursor))
-        (i32.le_u (local.get $requested) (i32.sub (local.get $count) (local.get $cursor)))))
-    (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (i32.add (local.get $cursor) (local.get $take)))
     (select (i32.const 0) (i32.const 1) (i32.eq (local.get $take) (local.get $requested))))
 
   (func $ole_stream_root (param $obj i32) (result i32)
@@ -4778,10 +4748,6 @@
       (then (call $gs32 (local.get $arg2) (local.get $arg0)) (drop (call $ole_obj_addref (local.get $arg0))) (global.set $eax (i32.const 0)))
       (else (call $gs32 (local.get $arg2) (i32.const 0)) (global.set $eax (i32.const 0x80004002))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-  (func $handle_ILockBytes_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_addref (local.get $arg0))) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-  (func $handle_ILockBytes_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_release (local.get $arg0))) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_ILockBytes_ReadAt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $read_out i32) (local $old_pos i32)
     (local.set $read_out (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
@@ -4824,10 +4790,6 @@
       (then (call $gs32 (local.get $arg2) (local.get $arg0)) (drop (call $ole_obj_addref (local.get $arg0))) (global.set $eax (i32.const 0)))
       (else (call $gs32 (local.get $arg2) (i32.const 0)) (global.set $eax (i32.const 0x80004002))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-  (func $handle_IStream_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_addref (local.get $arg0))) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-  (func $handle_IStream_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_release (local.get $arg0))) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_IStream_Read (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $ole_stream_read (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
@@ -4901,10 +4863,6 @@
       (then (call $gs32 (local.get $arg2) (local.get $arg0)) (drop (call $ole_obj_addref (local.get $arg0))) (global.set $eax (i32.const 0)))
       (else (call $gs32 (local.get $arg2) (i32.const 0)) (global.set $eax (i32.const 0x80004002))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-  (func $handle_IStorage_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_addref (local.get $arg0))) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-  (func $handle_IStorage_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_release (local.get $arg0))) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_IStorage_CreateStream (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $out i32) (local $stream i32) (local $old i32)
     (local.set $out (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
@@ -5064,16 +5022,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IEnumSTATSTG_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2)
-      (then (call $gs32 (local.get $arg2) (local.get $arg0)) (drop (call $ole_obj_addref (local.get $arg0))) (global.set $eax (i32.const 0)))
-      (else (global.set $eax (i32.const 0x80004003))))
+    (global.set $eax (call $ole_enum_query_interface
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0x0000000D))) ;; IEnumSTATSTG
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-  (func $handle_IEnumSTATSTG_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_addref (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-  (func $handle_IEnumSTATSTG_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_release (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_IEnumSTATSTG_Next (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $ole_stat_enum_next (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
@@ -6898,15 +6849,6 @@
     (if (local.get $fetched_out) (then (call $gs32 (local.get $fetched_out) (local.get $fetched))))
     (select (i32.const 0) (i32.const 1) (i32.eq (local.get $fetched) (local.get $requested))))
 
-  (func $ole_format_enum_skip (param $obj i32) (param $requested i32) (result i32)
-    (local $count i32) (local $cursor i32) (local $remaining i32) (local $take i32)
-    (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
-    (local.set $cursor (call $gl32 (i32.add (local.get $obj) (i32.const 20))))
-    (local.set $remaining (select (i32.sub (local.get $count) (local.get $cursor)) (i32.const 0) (i32.lt_u (local.get $cursor) (local.get $count))))
-    (local.set $take (select (local.get $requested) (local.get $remaining) (i32.lt_u (local.get $requested) (local.get $remaining))))
-    (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (i32.add (local.get $cursor) (local.get $take)))
-    (select (i32.const 0) (i32.const 1) (i32.eq (local.get $take) (local.get $requested))))
-
   (func $ole_clone_format_enum (param $source i32) (result i32)
     (local $obj i32) (local $source_data i32) (local $data i32) (local $count i32) (local $i i32) (local $hr i32)
     (local.set $count (call $gl32 (i32.add (local.get $source) (i32.const 16))))
@@ -6948,8 +6890,6 @@
       (then (call $gs32 (local.get $arg2) (local.get $arg0)) (drop (call $ole_obj_addref (local.get $arg0))) (global.set $eax (i32.const 0)))
       (else (call $gs32 (local.get $arg2) (i32.const 0)) (global.set $eax (i32.const 0x80004002))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-  (func $handle_IDataObject_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_addref (local.get $arg0))) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_IDataObject_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $ole_owned_object_release_api (local.get $arg0) (i32.const 8)))
   (func $handle_IDataObject_GetData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -7085,12 +7025,17 @@
     (global.set $eax (i32.const 0x80040003)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IEnumFORMATETC_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2)
-      (then (call $gs32 (local.get $arg2) (local.get $arg0)) (drop (call $ole_obj_addref (local.get $arg0))) (global.set $eax (i32.const 0)))
-      (else (global.set $eax (i32.const 0x80004003))))
+    (local $kind i32)
+    (local.set $kind (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
+    (global.set $eax (call $ole_enum_query_interface
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (select
+        (i32.const 0x00000105) ;; IEnumSTATDATA (cache/advise snapshots)
+        (i32.const 0x00000103) ;; IEnumFORMATETC
+        (i32.or
+          (i32.eq (local.get $kind) (i32.const 8))
+          (i32.eq (local.get $kind) (i32.const 10))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-  (func $handle_IEnumFORMATETC_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_addref (local.get $arg0))) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_IEnumFORMATETC_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $ole_enum_release_api (local.get $arg0) (i32.const 8)))
   (func $handle_IEnumFORMATETC_Next (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -7142,12 +7087,6 @@
       (else (global.set $eax (call $ole_format_enum_next
         (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
-  (func $handle_IEnumFORMATETC_Skip (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_format_enum_skip (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
-  (func $handle_IEnumFORMATETC_Reset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gs32 (i32.add (local.get $arg0) (i32.const 20)) (i32.const 0))
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_IEnumFORMATETC_Clone (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $clone i32) (local $kind i32) (local $ret i32) (local $ctx i32)
     (if (i32.eqz (local.get $arg1))
@@ -8743,8 +8682,6 @@
   (func $handle_IOleObject_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $ole_static_query_interface (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-  (func $handle_IOleObject_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_addref (local.get $arg0))) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_IOleObject_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $ole_static_release_api (local.get $arg0) (i32.const 8)))
   (func $handle_IOleObject_SetClientSite (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

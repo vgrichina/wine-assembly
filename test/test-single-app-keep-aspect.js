@@ -247,6 +247,7 @@ for (const id of ['reversi', 'notepad', 'mspaint98', 'sol', 'spider', 'cruel',
 }
 
 const shellSource = fs.readFileSync(path.join(root, 'lib', 'browser-shell.js'), 'utf8');
+const { hasPageScript } = require('./browser-runtime-scripts');
 assert(shellSource.includes('keepAspect: app.keepAspect === true'),
   'the shell should carry the registry flag onto the running app');
 assert(shellSource.includes('sharedRenderer.singleAppKeepAspect = !!(last && last.keepAspect)'),
@@ -254,10 +255,8 @@ assert(shellSource.includes('sharedRenderer.singleAppKeepAspect = !!(last && las
 assert(/const alreadyFull = !keepAspect &&/.test(shellSource),
   'the "already full-screen, nothing to do" shortcut must not skip the fitted resize');
 
-const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 for (const file of ['lib/renderer.js', 'lib/apps.js', 'lib/browser-shell.js']) {
-  assert(new RegExp(file.replace(/[.\/]/g, m => '\\' + m) + '\\?v=\\d+').test(html),
-    `${file} should stay cache-busted`);
+  assert(hasPageScript(file), `${file} should stay centrally versioned`);
 }
 
 console.log('PASS  single-app keepAspect: fitted maximize, client aspect, letterboxed present');

@@ -58,6 +58,7 @@
 //   node tools/bench-loops.js --list
 //   node tools/bench-loops.js                          # all shapes, 4MB set
 //   node tools/bench-loops.js --shapes=lut,store_stream --bytes=16m
+//   node tools/bench-loops.js --shapes=lut,store_stream --mapping=sparse
 //   node tools/bench-loops.js --shapes=cmp_ladder --toggle=case_chain
 //   node tools/bench-loops.js --json
 
@@ -113,6 +114,61 @@ function blockEntryShape(a, useJmp) {
 }
 
 const SHAPES = {
+  sparse_scatter: {
+    describe: 'cyclic dword loads across independent sparse mappings (--scatter-pages)',
+    real: 'fragmented VirtualAlloc heaps; upper bound for replacing record scans, not an app-speed claim',
+    prepare(inst, a) {
+      const pages = [];
+      for (let i = 0; i < a.scatterPageCount; i++) {
+        // One page in each successive 1MB directory slot prevents adjacent
+        // commits from coalescing into the same affine map record.
+        const guest = 0x20000000 + i * 0x00100000;
+        const got = inst.e.test_virtual_map_commit(guest, 0x1000) >>> 0;
+        if (got !== guest) throw new Error(`sparse_scatter: commit 0x${guest.toString(16)} failed`);
+        pages.push(guest);
+      }
+      a.scatterPages = pages;
+    },
+    emit(a) {
+      const n = Math.floor(a.bufBytes / 4);
+      const pointers = a.buf;
+      return {
+        iters: n,
+        bytesTouched: n * 8,
+        code: loopBack([
+          0x8B, 0x06,             // mov eax, [esi]  — direct pointer table
+          0x8B, 0x10,             // mov edx, [eax]  — scattered sparse page
+          0x01, 0xD3,             // add ebx, edx
+          0x83, 0xC6, 0x04,       // add esi, 4
+        ]),
+        setup(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (let i = 0; i < a.scatterPages.length; i++) {
+            dv.setUint32(g2w(a.scatterPages[i]), i + 1, true);
+          }
+          const tableWa = g2w(pointers);
+          for (let i = 0; i < n; i++) {
+            dv.setUint32(tableWa + i * 4,
+              a.scatterPages[i % a.scatterPages.length], true);
+          }
+          e.set_esi(pointers); e.set_ecx(n); e.set_ebx(0); e.set_eax(0); e.set_edx(0);
+        },
+        verify(e) {
+          const pages = a.scatterPages.length;
+          const rounds = Math.floor(n / pages);
+          const tail = n % pages;
+          let want = rounds * (pages * (pages + 1) / 2);
+          for (let i = 0; i < tail; i++) want += i + 1;
+          if ((e.get_ebx() >>> 0) !== (want >>> 0)) {
+            return `sum=0x${(e.get_ebx() >>> 0).toString(16)} want 0x${(want >>> 0).toString(16)}`;
+          }
+          if (e.get_ecx() !== 0) return `ecx=${e.get_ecx()}, expected 0`;
+          return null;
+        },
+      };
+    },
+  },
+
   lut: {
     describe: 'dst[i] = lut[src[i]] byte loop (Heroes II ICN 0x004c755d, ~9 dispatches/pixel)',
     real: 'Heroes II sprite blitter; the LUT_RUN candidate in docs/loop-idiom-superops-design.md',
@@ -470,7 +526,9 @@ async function newInstance() {
   e.load_pe(exeBytes.length);
 
   const imageBase = e.get_image_base();
-  const g2w = ga => ga - imageBase + 0x12000;
+  // Use the module's translator so the same setup/verification code works for
+  // both ordinary direct addresses and demand-backed sparse guest mappings.
+  const g2w = ga => e.guest_to_wasm(ga >>> 0) >>> 0;
   return { e, mem, g2w, imageBase };
 }
 
@@ -634,11 +692,19 @@ async function main() {
   const reps = Number(arg('reps', 9));
   const toggle = arg('toggle', null);
   const wantJson = has('json');
+  const mapping = arg('mapping', 'direct');
+  const scatterPageCount = Number(arg('scatter-pages', 64));
   TOP_N = Number(arg('top', 6));
   const names = String(arg('shapes', Object.keys(SHAPES).join(','))).split(',').filter(Boolean);
 
   for (const n of names) if (!SHAPES[n]) throw new Error(`unknown shape: ${n} (try --list)`);
   if (toggle && !TOGGLES[toggle]) throw new Error(`unknown toggle: ${toggle} (${Object.keys(TOGGLES).join(', ')})`);
+  if (!['direct', 'sparse'].includes(mapping)) {
+    throw new Error(`unknown --mapping=${mapping} (expected direct or sparse)`);
+  }
+  if (!Number.isInteger(scatterPageCount) || scatterPageCount < 1 || scatterPageCount > 256) {
+    throw new Error(`bad --scatter-pages=${scatterPageCount} (expected integer 1..256)`);
+  }
 
   ensureBuilt();
 
@@ -650,6 +716,13 @@ async function main() {
     // order, which is the exact failure mode that wrecked the whole-app A/Bs.
     const inst = await newInstance();
     const a = layout(inst.imageBase, bufBytes);
+    a.scatterPageCount = scatterPageCount;
+    if (mapping === 'sparse') {
+      const sparse = inst.e.guest_map_alloc(bufBytes) >>> 0;
+      if (!sparse) throw new Error(`${name}: could not allocate ${bufBytes} sparse guest bytes`);
+      a.buf = sparse;
+    }
+    if (shape.prepare) shape.prepare(inst, a);
 
 
     const arms = toggle
@@ -744,9 +817,9 @@ async function main() {
     results.push(row);
   }
 
-  if (wantJson) { console.log(JSON.stringify({ bufBytes, reps, toggle, results }, null, 2)); return; }
+  if (wantJson) { console.log(JSON.stringify({ bufBytes, reps, mapping, toggle, results }, null, 2)); return; }
 
-  console.log(`\nworking set ${fmt(bufBytes)} bytes, ${reps} interleaved reps, minima quoted`);
+  console.log(`\nworking set ${fmt(bufBytes)} bytes (${mapping} guest mapping), ${reps} interleaved reps, minima quoted`);
   if (toggle) console.log(`A/B toggle: ${toggle} (on vs off, same process, alternating)`);
   console.log('');
   for (const r of results) {

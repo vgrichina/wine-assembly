@@ -10,6 +10,28 @@ const { bootRenderHarness } = require('./render-helper');
 const RegionMap = require('../lib/region-map.generated.js');
 const { fontMounts } = require('../lib/font-substitutions');
 
+const gdiSources = {
+  A: fs.readFileSync(path.join(__dirname, '..', 'src', '09a4-handlers-gdi.wat'), 'utf8'),
+  W: fs.readFileSync(path.join(__dirname, '..', 'src', '09a-handlers.wat'), 'utf8'),
+};
+function watFunction(source, name) {
+  const start = source.indexOf(`(func $${name}`);
+  assert(start >= 0, `missing ${name}`);
+  let depth = 0;
+  for (let index = start; index < source.length; index++) {
+    if (source[index] === '(') depth++;
+    else if (source[index] === ')' && --depth === 0) return source.slice(start, index + 1);
+  }
+  throw new Error(`unterminated ${name}`);
+}
+for (const suffix of ['A', 'W']) {
+  const legacy = watFunction(gdiSources[suffix], `handle_GetCharWidth${suffix}`);
+  assert(legacy.includes(`call $handle_GetCharWidth32${suffix}`),
+    `legacy GetCharWidth${suffix} must delegate to its canonical 32-bit handler`);
+  assert(!legacy.includes('$gdi_font_char_widths'),
+    `legacy GetCharWidth${suffix} must not retain a second width-query body`);
+}
+
 (async () => {
   const harness = await bootRenderHarness({
     extraWat: `
@@ -54,11 +76,29 @@ const { fontMounts } = require('../lib/font-substitutions');
           (i32.const 0) (i32.const 0))
         (global.set $esp (local.get $saved))
         (global.get $eax))
+      (func (export "test_public_call_GetCharWidthA")
+            (param i32 i32 i32 i32) (result i32)
+        (local $saved i32)
+        (local.set $saved (global.get $esp))
+        (call $handle_GetCharWidthA
+          (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+          (i32.const 0) (i32.const 0))
+        (global.set $esp (local.get $saved))
+        (global.get $eax))
       (func (export "test_public_call_GetCharWidth32W")
             (param i32 i32 i32 i32) (result i32)
         (local $saved i32)
         (local.set $saved (global.get $esp))
         (call $handle_GetCharWidth32W
+          (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+          (i32.const 0) (i32.const 0))
+        (global.set $esp (local.get $saved))
+        (global.get $eax))
+      (func (export "test_public_call_GetCharWidthW")
+            (param i32 i32 i32 i32) (result i32)
+        (local $saved i32)
+        (local.set $saved (global.get $esp))
+        (call $handle_GetCharWidthW
           (local.get 0) (local.get 1) (local.get 2) (local.get 3)
           (i32.const 0) (i32.const 0))
         (global.set $esp (local.get $saved))
@@ -184,7 +224,13 @@ const { fontMounts } = require('../lib/font-substitutions');
   assert.strictEqual(wat.test_public_call_GetCharWidth32A(hdc, 65, 67, widths), 1);
   assert.deepStrictEqual([0, 1, 2].map(index => wat.guest_read32(widths + index * 4)),
     bitmapWidths);
+  assert.strictEqual(wat.test_public_call_GetCharWidthA(hdc, 65, 67, widths), 1);
+  assert.deepStrictEqual([0, 1, 2].map(index => wat.guest_read32(widths + index * 4)),
+    bitmapWidths);
   assert.strictEqual(wat.test_public_call_GetCharWidth32W(hdc, 65, 67, widths), 1);
+  assert.deepStrictEqual([0, 1, 2].map(index => wat.guest_read32(widths + index * 4)),
+    bitmapWidths);
+  assert.strictEqual(wat.test_public_call_GetCharWidthW(hdc, 65, 67, widths), 1);
   assert.deepStrictEqual([0, 1, 2].map(index => wat.guest_read32(widths + index * 4)),
     bitmapWidths);
 

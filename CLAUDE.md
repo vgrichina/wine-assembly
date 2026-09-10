@@ -273,13 +273,14 @@ What *is* durable is the handful of addresses that are an ABI rather than a plac
 | `0x03D12000` | GUEST_HEAP_BASE (~3.9 MB) | derived, `g2w 0x04100000` |
 | `0x07012000` | GUEST_STACK (1 MB) | derived, `g2w 0x07400000` |
 | `0x07112000` | THUNK_BASE (256 KB) | derived, `g2w 0x07500000` |
-| `0x08000000` | VIRTUAL_BACKING_BASE (320 MB) | backing window, sized to what is left |
+| `0x08000000` | VIRTUAL_BACKING_BASE (316 MB) | sparse `VirtualAlloc` backing window |
+| `0x1BC00000` | GUEST_PAGE_TABLE (4 MB) | one packed PTE per 4KB guest page |
 | `0x1C000000` | DIB_BACKING_BASE (63 MB) | backing window |
 | `0x1FF00000` | THREAD_RPC (1 MB) | backing window |
 
 Plus one span, `$DIRECT_WINDOW` `0x0`–`0x08000000`: a transparent named limit, not a region, and the range `$g2w`'s fast path covers.
 
-The PE loads at its preferred `image_base` (typically `0x400000`). `g2w(guest) = guest - image_base + GUEST_BASE` is now the **direct-window case only** — when that result falls outside `$DIRECT_WINDOW`, `$g2w` tries the DIB range (guest `0x50000000`, backed by DIB_BACKING_BASE) and then a record-walked affine virtual-mapping table backed by VIRTUAL_BACKING_BASE; a miss returns the NULL sentinel at `0xF0`.
+The PE loads at its preferred `image_base` (typically `0x400000`). `g2w(guest) = guest - image_base + GUEST_BASE` is now the **direct-window case only** — when that result falls outside `$DIRECT_WINDOW`, `$g2w` tries the DIB range (guest `0x50000000`, backed by DIB_BACKING_BASE) and then the selected sparse translator: the experimental flat page table or the record-walked affine map backed by VIRTUAL_BACKING_BASE. A miss returns the NULL sentinel at `0xF0`; packed-mode misses are authoritative and never fall through to the record walk.
 
 Two things that used to be in this list and are gone: **CACHE_INDEX no longer exists as a region at all**, and the threaded-code cache is `$THREAD_CACHE_BASE`, 30 MB, carved into eight per-thread `0x3C0000` partitions — `$THREAD_BASE` survives only as a per-thread cursor global, so the cache size is a partition limit, never a separate region.
 

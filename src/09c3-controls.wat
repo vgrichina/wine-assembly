@@ -190,7 +190,7 @@
     (field col_widths_ptr    i32)  ;; +24  guest ptr to u32[]
     (field col_texts_ptr     i32)  ;; +28  guest ptr to u32[] heap string ptrs
     (field selected_index    i32)  ;; +32  -1 = none
-    (field top_index         i32)  ;; +36
+    (field top_index         i32)  ;; +36  content viewport; not SetScrollPos's thumb-only state
     (field extended_style    i32)  ;; +40  LVM_SETEXTENDEDLISTVIEWSTYLE shadow
     (field drag_anchor_y     i32)  ;; +44
     (field drag_anchor_top   i32)  ;; +48
@@ -4795,10 +4795,8 @@
     (local $pat_g i32) (local $pat_w i32)
     (local $path_edit i32) (local $lb i32)
     (local.set $len (call $strlen (call $g2w (local.get $new_dir_g))))
-    (local.set $buf_g (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (local.set $buf_g (call $guest_strdup (local.get $new_dir_g)))
     (local.set $buf_w (call $g2w (local.get $buf_g)))
-    (call $memcpy (local.get $buf_w) (call $g2w (local.get $new_dir_g)) (local.get $len))
-    (i32.store8 (i32.add (local.get $buf_w) (local.get $len)) (i32.const 0))
     (call $heap_free (global.get $opendlg_current_dir))
     (global.set $opendlg_current_dir (local.get $buf_g))
     ;; Update path edit
@@ -7747,7 +7745,8 @@
   ;;   +24  col_widths_ptr   guest ptr to u32[]
   ;;   +28  col_texts_ptr    guest ptr to u32[] heap string pointers
   ;;   +32  selected_index   -1 = none
-  ;;   +36  top_index
+  ;;   +36  top_index        content viewport (LVM_GETTOPINDEX), distinct from
+  ;;                         the thumb-only state changed by SetScrollPos
   ;;   +40  extended_style   LVM_SETEXTENDEDLISTVIEWSTYLE shadow
   ;;   +44  drag_anchor_y
   ;;   +48  drag_anchor_top
@@ -8085,7 +8084,7 @@
     (call $lv_set_col_texts_ptr (local.get $sw) (local.get $new_texts)))
 
   (func $lv_set_cell_text (param $sw i32) (param $item i32) (param $sub i32) (param $src_g i32)
-    (local $cell i32) (local $old i32) (local $src_w i32) (local $len i32) (local $copy_g i32)
+    (local $cell i32) (local $old i32) (local $copy_g i32)
     (if (i32.or
           (i32.or (i32.lt_s (local.get $item) (i32.const 0))
                   (i32.ge_s (local.get $item) (call $lv_item_count (local.get $sw))))
@@ -8099,15 +8098,11 @@
     (i32.store (local.get $cell) (i32.const 0))
     (if (i32.or (i32.eqz (local.get $src_g)) (i32.eq (local.get $src_g) (i32.const -1)))
       (then (return)))
-    (local.set $src_w (call $g2w (local.get $src_g)))
-    (local.set $len (call $strlen (local.get $src_w)))
-    (local.set $copy_g (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
-    (call $memcpy (call $g2w (local.get $copy_g)) (local.get $src_w) (local.get $len))
-    (i32.store8 (i32.add (call $g2w (local.get $copy_g)) (local.get $len)) (i32.const 0))
+    (local.set $copy_g (call $guest_strdup (local.get $src_g)))
     (i32.store (local.get $cell) (local.get $copy_g)))
 
   (func $lv_set_col_text (param $sw i32) (param $idx i32) (param $src_g i32)
-    (local $cell i32) (local $old i32) (local $src_w i32) (local $len i32) (local $copy_g i32)
+    (local $cell i32) (local $old i32) (local $copy_g i32)
     (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
                 (i32.ge_s (local.get $idx) (call $lv_col_count (local.get $sw))))
       (then (return)))
@@ -8122,11 +8117,7 @@
     (i32.store (local.get $cell) (i32.const 0))
     (if (i32.or (i32.eqz (local.get $src_g)) (i32.eq (local.get $src_g) (i32.const -1)))
       (then (return)))
-    (local.set $src_w (call $g2w (local.get $src_g)))
-    (local.set $len (call $strlen (local.get $src_w)))
-    (local.set $copy_g (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
-    (call $memcpy (call $g2w (local.get $copy_g)) (local.get $src_w) (local.get $len))
-    (i32.store8 (i32.add (call $g2w (local.get $copy_g)) (local.get $len)) (i32.const 0))
+    (local.set $copy_g (call $guest_strdup (local.get $src_g)))
     (i32.store (local.get $cell) (local.get $copy_g)))
 
   (func $lv_copy_cell_text

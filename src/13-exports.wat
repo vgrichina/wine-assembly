@@ -3293,6 +3293,8 @@
   ;; call to see the same setting.
   (func (export "set_fault_unmapped") (param $mode i32)
     (global.set $fault_unmapped (local.get $mode)))
+  (func (export "get_guest_page_table_size") (result i32)
+    (global.get $GUEST_PAGE_TABLE_SIZE))
   (func (export "get_bp_first_caller") (result i32) (global.get $bp_first_caller))
 
   ;; --trace-esp wiring (test harness uses this). Pass hi=0 to disable the
@@ -4677,7 +4679,7 @@
   (func (export "test_ole_format_enum_next") (param $obj i32) (param $requested i32) (param $formats i32) (param $fetched i32) (result i32)
     (call $ole_format_enum_next (local.get $obj) (local.get $requested) (local.get $formats) (local.get $fetched)))
   (func (export "test_ole_format_enum_skip") (param $obj i32) (param $requested i32) (result i32)
-    (call $ole_format_enum_skip (local.get $obj) (local.get $requested)))
+    (call $ole_enum_skip (local.get $obj) (local.get $requested)))
   (func (export "test_ole_format_enum_reset") (param $obj i32)
     (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (i32.const 0)))
   (func (export "test_ole_clone_format_enum") (param $obj i32) (result i32)
@@ -5356,15 +5358,10 @@
   ;; JS calls this from the <input type="file"> change handler once the
   ;; new file has been written into the VFS, so the listbox shows it.
   (func (export "opendlg_refresh_listbox") (param $dlg i32)
-    (local $dir_g i32) (local $dir_w i32) (local $len i32) (local $copy_g i32) (local $copy_w i32)
+    (local $dir_g i32) (local $copy_g i32)
     (local.set $dir_g (global.get $opendlg_current_dir))
     (if (i32.eqz (local.get $dir_g)) (then (return)))
-    (local.set $dir_w (call $g2w (local.get $dir_g)))
-    (local.set $len (call $strlen (local.get $dir_w)))
-    (local.set $copy_g (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
-    (local.set $copy_w (call $g2w (local.get $copy_g)))
-    (call $memcpy (local.get $copy_w) (local.get $dir_w) (local.get $len))
-    (i32.store8 (i32.add (local.get $copy_w) (local.get $len)) (i32.const 0))
+    (local.set $copy_g (call $guest_strdup (local.get $dir_g)))
     (call $opendlg_set_dir (local.get $dlg) (local.get $copy_g))
     (call $heap_free (local.get $copy_g)))
 

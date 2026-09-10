@@ -14,6 +14,62 @@ const apiTable = require('../src/api_table.json');
 const RegionMap = require('../lib/region-map.generated.js');
 
 const ROOT = path.join(__dirname, '..');
+const oleSource = fs.readFileSync(path.join(ROOT, 'src', '09a7b-ole.wat'), 'utf8');
+const hasOleHandler = name => new RegExp(`\\(func \\$handle_${name}\\b`).test(oleSource);
+const enumSkipApis = ['IEnumMoniker_Skip', 'IEnumString_Skip', 'IEnumFORMATETC_Skip'];
+for (const name of enumSkipApis) {
+  assert.strictEqual(apiTable.find(api => api.name === name)?.handler, 'ole_enum_skip',
+    `${name} must dispatch through the shared enum cursor implementation`);
+  assert(!hasOleHandler(name),
+    `${name} must not regain a private handler body`);
+}
+assert.strictEqual((oleSource.match(/\(func \$handle_ole_enum_skip\b/g) || []).length, 1,
+  'OLE snapshot enumerators must have one Skip dispatch body');
+const enumResetApis = ['IEnumMoniker_Reset', 'IEnumString_Reset', 'IEnumFORMATETC_Reset'];
+for (const name of enumResetApis) {
+  assert.strictEqual(apiTable.find(api => api.name === name)?.handler, 'ole_enum_reset',
+    `${name} must dispatch through the shared enum cursor reset handler`);
+  assert(!hasOleHandler(name), `${name} must not regain a private handler`);
+}
+assert.strictEqual((oleSource.match(/\(func \$handle_ole_enum_reset\b/g) || []).length, 1,
+  'OLE snapshot enumerators must have one Reset dispatch body');
+assert.notStrictEqual(apiTable.find(api => api.name === 'IEnumSTATSTG_Reset')?.handler,
+  'ole_enum_reset', 'IEnumSTATSTG_Reset must retain its null-validating reset helper');
+assert(hasOleHandler('IEnumSTATSTG_Reset'),
+  'IEnumSTATSTG_Reset must retain its semantically distinct handler');
+
+const genericAddRefInterfaces = [
+  'IRunningObjectTable', 'IEnumMoniker', 'IBindCtx', 'IEnumString',
+  'IMoniker', 'IFont', 'ILockBytes', 'IStream', 'IStorage',
+  'IEnumSTATSTG', 'IDataObject', 'IEnumFORMATETC', 'IOleObject',
+];
+const genericReleaseInterfaces = [
+  'IRunningObjectTable', 'IEnumMoniker', 'IEnumString', 'IMoniker',
+  'IFont', 'ILockBytes', 'IStream', 'IStorage', 'IEnumSTATSTG',
+];
+for (const iface of genericAddRefInterfaces) {
+  const name = `${iface}_AddRef`;
+  assert.strictEqual(apiTable.find(api => api.name === name)?.handler, 'ole_obj_addref',
+    `${name} must dispatch through the shared direct-object AddRef handler`);
+  assert(!hasOleHandler(name), `${name} must not regain a private handler`);
+}
+for (const iface of genericReleaseInterfaces) {
+  const name = `${iface}_Release`;
+  assert.strictEqual(apiTable.find(api => api.name === name)?.handler, 'ole_obj_release',
+    `${name} must dispatch through the shared direct-object Release handler`);
+  assert(!hasOleHandler(name), `${name} must not regain a private handler`);
+}
+for (const name of [
+  'IBindCtx_Release', 'IDataObject_Release', 'IEnumFORMATETC_Release', 'IOleObject_Release',
+]) {
+  assert.notStrictEqual(apiTable.find(api => api.name === name)?.handler, 'ole_obj_release',
+    `${name} must retain its interface-specific final-release teardown`);
+  assert(hasOleHandler(name), `${name} must retain a specialized handler`);
+}
+assert.strictEqual((oleSource.match(/\(func \$handle_ole_obj_addref\b/g) || []).length, 1,
+  'direct OLE AddRef APIs must have one shared dispatch body');
+assert.strictEqual((oleSource.match(/\(func \$handle_ole_obj_release\b/g) || []).length, 1,
+  'basic direct OLE Release APIs must have one shared dispatch body');
 
 async function main() {
   const wasm = compileSrcWasm();

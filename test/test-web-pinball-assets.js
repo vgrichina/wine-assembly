@@ -4,6 +4,9 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const {
+  hasPageScript, pageScripts,
+} = require('./browser-runtime-scripts');
 
 const ROOT = path.join(__dirname, '..');
 // The app registry, the launcher and the canvas input bridge used to live
@@ -174,10 +177,10 @@ assert(/DEBUG_ONLY_APPS\s*=\s*\[[\s\S]*\[\s*'diablo_demo'\s*,\s*'Diablo Demo'/s.
   'Diablo should remain debug-only rather than becoming a desktop app');
 assert(/diablo_demo:\s*\{[\s\S]*?exe:\s*diabloCandidateRoot \+ 'DIABDEMO\.EXE'[\s\S]*?dlls:\s*\[diabloCandidateRoot \+ 'STORM\.DLL'\][\s\S]*?persistFiles:\s*\['c:\\\\save\\\\\*\.sav'\][\s\S]*?vfsPaths:\s*\['c:\\\\diablo\.exe', 'z:\\\\diablo\.exe'\][\s\S]*?requiredFiles:\s*true[\s\S]*?\n\s*\},\n\s*funtris:/s.test(webApp),
   'Diablo debug launch should load the extracted game, Storm, and its MPQ package on C: and Z:');
-assert(pageHtml.includes('lib/vfs-persistence.js?v=2'),
-  'web host should load bounded per-app VFS persistence');
-assert(/lib\/browser-shell\.js\?v=\d+/.test(pageHtml),
-  'web host should cache-bust the current launcher');
+assert(hasPageScript('lib/vfs-persistence.js'),
+  'web host should centrally version bounded per-app VFS persistence');
+assert(hasPageScript('lib/browser-shell.js'),
+  'web host should centrally version the current launcher');
 assert(!deployJs.includes('test/binaries/candidates/diablo'),
   'public deploy should exclude the local Diablo demo payload');
 assert(webApp.includes('playDebugMidi()'), 'debug toolbar should expose direct MIDI playback');
@@ -324,34 +327,27 @@ assert(/\[WinampReg\][\s\S]*?NeedReg=0/.test(fs.readFileSync(path.join(ROOT, 'bi
 assert(fs.existsSync(path.join(ROOT, 'binaries', 'whatsnew.txt')), 'Winamp version history text should exist for web fetch/deploy');
 assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winamp version history text should not be empty');
 assert(!webApp.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
-assert(!webApp.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(/lib\/renderer-input\.js\?v=\d+/.test(webApp), 'web host should cache-bust renderer input after live Worker focus mirroring');
-assert(/lib\/browser-input\.js\?v=\d+/.test(webApp), 'web host should cache-bust explicit Quake relative-mouse capture');
-assert(/lib\/renderer\.js\?v=\d+/.test(webApp), 'web host should cache-bust renderer after nested Worker modal publication');
-assert(webApp.includes('lib/pe.js?v=1'), 'web host should load the shared PE section reader');
-assert(webApp.includes('lib/process-boot.js?v=6'), 'web host should cache-bust mounted executable drive plumbing');
-assert(webApp.includes('lib/app-profiles.js?v=3'), 'web host should cache-bust executable compatibility patches');
-assert(webApp.includes('lib/host-window.js?v=10'), 'web host should cache-bust foreground window behavior');
-assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
-assert(webApp.includes('lib/storage.js?v=170'), 'web host should cache-bust storage after renderer-aware registry delivery');
-assert(webApp.includes('lib/filesystem.js?v=174'), 'web host should cache-bust persisted Win32 file timestamps');
-assert(webApp.includes('lib/gdi-surface.js?v=2'), 'web host should load the canonical GDI surface module');
-assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=215'),
+for (const source of [
+  'lib/renderer-input.js', 'lib/browser-input.js', 'lib/renderer.js',
+  'lib/pe.js', 'lib/process-boot.js', 'lib/app-profiles.js',
+  'lib/host-window.js', 'lib/storage.js', 'lib/filesystem.js',
+  'lib/gdi-surface.js', 'lib/host-imports.js', 'lib/touch-cursor.js',
+  'lib/thread-manager.js', 'lib/compile-wat.js', 'lib/guest-rpc.js',
+  'lib/guest-thread-host.js', 'lib/dll-loader.js',
+  'lib/debug-thread-state.js', 'lib/host-audio.js', 'host.js',
+]) {
+  assert(hasPageScript(source), `${source} should be in the centrally versioned browser graph`);
+}
+assert(pageScripts.indexOf('lib/gdi-surface.js') < pageScripts.indexOf('lib/host-imports.js'),
   'web host should load the GDI surface module before host imports');
-assert(webApp.includes('lib/host-imports.js?v=215'), 'web host should cache-bust the current host imports');
-assert(/lib\/touch-cursor\.js\?v=\d+/.test(webApp), 'web host should cache-bust custom touch cursor rendering');
-assert(webApp.includes('lib/thread-manager.js?v=188'), 'web host should cache-bust DLL thread-notification routing');
-assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
-assert(webApp.includes('lib/guest-rpc.js?v=8'), 'web host should cache-bust Worker clock RPC');
-assert(webApp.includes('lib/guest-thread-host.js?v=11'), 'web host should cache-bust Worker executable drive routing');
-assert(webApp.includes('lib/dll-loader.js?v=172'), 'web host should cache-bust timed DllMain resume');
-assert(webApp.includes('lib/debug-thread-state.js?v=7'), 'web host should cache-bust live Worker status diagnostics');
-assert(/lib\/host-audio\.js\?v=\d+/.test(webApp), 'web host should cache-bust CD-DA and waveOut scheduling');
-assert(/host\.js\?v=\d+/.test(webApp), 'web host should cache-bust live Worker focus mirroring');
-assert(/static SOURCE_VERSION = '\d+'/.test(hostJs), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(pageHtml.includes("window.WINE_SOURCE_VERSION = String(window.WINE_BUILD || 'dev')") &&
+  pageHtml.includes('window.wineLoadVersionedScripts(WINE_RUNTIME_SCRIPTS)'),
+  'the page should derive and apply one build-info version to its whole source graph');
+assert(hostJs.includes("static SOURCE_VERSION = String(globalThis.WINE_SOURCE_VERSION || 'dev')"),
+  'WASM artifacts and WAT source compilation should consume the page source version');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');
-assert(hostJs.includes('fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions)'),
+assert(hostJs.includes('fetch(WineAssembly.versionedUrl(artifact), fetchOptions)'),
   'debug sessions should apply their cache policy when loading rebuilt WASM artifacts');
 assert(/constructor\(\)[\s\S]*has\('debug'\)[\s\S]*WineAssembly\._wasmModulePromise = null;/.test(hostJs),
   'new debug processes should discard the page-level compiled WASM module cache');
@@ -363,6 +359,8 @@ assert(hostJs.includes("'build/wine-assembly.compat.wasm'"), 'web startup should
 assert(hostJs.includes("has('compile-wat')"), 'web startup should retain an explicit source-compilation mode');
 assert(hostJs.includes('window.watxLauncher'),
   'host.js should retain WAT source compilation as a development/failure fallback, now via the WATX launcher');
+assert(hostJs.includes("workerUrl: WineAssembly.versionedUrl('lib/watx-compile-worker.js')"),
+  'the fallback compiler worker should inherit the central source version');
 assert(pageHtml.includes('lib/watx-launcher.js'),
   'the page should load the WATX launcher that backs the source-compilation fallback');
 assert(hostJs.includes('Promise.all([fontsReady, wasmReady, apiTableReady])'), 'web startup should overlap independent font, WASM, and API-table loading');

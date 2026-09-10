@@ -37,6 +37,11 @@
   ;; synthesise — test/run.js derives get_ticks from the batch counter. Use
   ;; this only to bound a wait on something outside this instance.
   (import "host" "real_time_ms" (func $host_real_time_ms (result i32)))
+  ;; Snapshot the host wall clock into a caller-provided WASM buffer.
+  ;; kind: 0=UTC SYSTEMTIME, 1=local SYSTEMTIME, 2=UTC FILETIME.
+  ;; The i32 result keeps Worker RPC synchronous so the shared-memory write is
+  ;; visible before the guest resumes.
+  (import "host" "wall_clock" (func $host_wall_clock (param i32 i32) (result i32)))
   (import "host" "yield" (func $host_yield (param i32)))
   ;; One bounded inline turn for the worker threads, for the case where the
   ;; main instance cannot yield: inside a synchronous wndproc the interpreter
@@ -1527,7 +1532,7 @@
   ;; 0x07992200  128B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
   ;; 0x07992300   64B    DLL path table (16 guest string pointers)
   ;; 0x07992400  ...     File mapping zone (MapViewOfFile allocations)
-  ;; 0x08000000 320MB    VirtualAlloc backing pool for sparse high guest maps
+  ;; 0x08000000 316MB    VirtualAlloc backing; 0x1BC00000 4MB flat guest PTE table
   ;; 0x1C000000  63MB    Page-aligned CreateDIBSection pixel arena
   ;; 0x1FF00000   1MB    THREAD_RPC (per-thread host-import control blocks)
   ;; Total: 8192 pages = 512MB
@@ -2335,6 +2340,16 @@
   (global $SYNC_TABLE i32 (region.addr $SYNC_TABLE 0))
   (global $SYNC_TABLE_SIZE i32 (region.size $SYNC_TABLE))
   (global $MAX_SYNC_OBJECTS i32 (i32.const 512))
+  ;; Packed guest page table. One entry covers each 4KB page in the
+  ;; complete 32-bit guest address space. Entries store an aligned WASM backing
+  ;; page plus normalized access flags in the otherwise-zero low 12 bits.
+  (global $GUEST_PAGE_TABLE i32 (region.addr $GUEST_PAGE_TABLE 0))
+  (global $GUEST_PAGE_TABLE_SIZE i32 (region.size $GUEST_PAGE_TABLE))
+  ;; Backing pages are 4KB-aligned, leaving the low 12 PTE bits for state.
+  ;; Keep PAGE_* verbatim in bits 0..10 so VirtualQuery/Protect need no lossy
+  ;; reverse mapping. Bit 11 is private PRESENT; a zero entry is unmapped.
+  (global $GUEST_PTE_PROTECT_MASK i32 (i32.const 0x7FF))
+  (global $GUEST_PTE_PRESENT i32 (i32.const 0x800))
   ;; Sparse VirtualAlloc mapping table. Guest reserve addresses are high
   ;; virtual addresses; committed chunks are backed here so they do not collide
   ;; with the low HeapAlloc arena.
@@ -2603,28 +2618,6 @@
   (global $heap_sparse_ptr (mut i32) (i32.const 0))
   (global $heap_sparse_end (mut i32) (i32.const 0))
   (global $heap_sparse_record (mut i32) (i32.const 0))
-  ;; Four recent successful sparse guest translations. Storm's decompressor
-  ;; stays in slot 0; generated video converters alternate palette/input/output
-  ;; ranges and need the extra slots to avoid rescanning hundreds of append-only
-  ;; map records on nearly every instruction.
-  (global $g2w_sparse_base (mut i32) (i32.const 0))
-  (global $g2w_sparse_size (mut i32) (i32.const 0))
-  (global $g2w_sparse_backing (mut i32) (i32.const 0))
-  (global $g2w_sparse_base1 (mut i32) (i32.const 0))
-  (global $g2w_sparse_size1 (mut i32) (i32.const 0))
-  (global $g2w_sparse_backing1 (mut i32) (i32.const 0))
-  (global $g2w_sparse_base2 (mut i32) (i32.const 0))
-  (global $g2w_sparse_size2 (mut i32) (i32.const 0))
-  (global $g2w_sparse_backing2 (mut i32) (i32.const 0))
-  (global $g2w_sparse_base3 (mut i32) (i32.const 0))
-  (global $g2w_sparse_size3 (mut i32) (i32.const 0))
-  (global $g2w_sparse_backing3 (mut i32) (i32.const 0))
-  ;; Byte reads in generated converters repeatedly hit one palette page while
-  ;; dword input/output accesses use other mappings. Keep that translation
-  ;; separate from the shared recent-range cache so the access classes do not
-  ;; evict or linearly probe through each other.
-  (global $g2w_gl8_page (mut i32) (i32.const -1))
-  (global $g2w_gl8_delta (mut i32) (i32.const 0))
   ;; Guest-space top of the downward-growing sparse VirtualAlloc arena. Kept
   ;; 64KB-aligned to match Win32 allocation granularity for NULL MEM_RESERVE
   ;; calls.

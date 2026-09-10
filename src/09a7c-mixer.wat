@@ -239,9 +239,12 @@
     (global.set $eax (call $mixer_get_line_controls (local.get $arg1) (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  (func $handle_mixerGetControlDetailsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; MIXER_GETCONTROLDETAILSF_VALUE writes numeric detail records, so its A/W
+  ;; entry points have no encoding-dependent work. Keep that behavior in one
+  ;; implementation; LISTTEXT remains a separate, currently unsupported case.
+  (func $mixer_get_control_details_value (param $pmxcd_g i32)
     (local $p i32) (local $details i32) (local $channels i32) (local $volume i32) (local $control i32)
-    (local.set $p (call $g2w (local.get $arg1)))
+    (local.set $p (call $g2w (local.get $pmxcd_g)))
     (local.set $channels (i32.load offset=8 (local.get $p)))
     (local.set $details (call $g2w (i32.load offset=20 (local.get $p))))
     (local.set $control (i32.load offset=4 (local.get $p)))
@@ -257,29 +260,15 @@
         (if (i32.gt_u (local.get $channels) (i32.const 1))
           (then (i32.store offset=4 (local.get $details)
             (select (local.get $volume) (i32.shr_u (local.get $volume) (i32.const 16))
-              (i32.ge_u (local.get $control) (i32.const 0x3000))))))))
+              (i32.ge_u (local.get $control) (i32.const 0x3000)))))))))
+
+  (func $handle_mixerGetControlDetailsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $mixer_get_control_details_value (local.get $arg1))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_mixerGetControlDetailsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $p i32) (local $details i32) (local $channels i32) (local $volume i32) (local $control i32)
-    (local.set $p (call $g2w (local.get $arg1)))
-    (local.set $channels (i32.load offset=8 (local.get $p)))
-    (local.set $details (call $g2w (i32.load offset=20 (local.get $p))))
-    (local.set $control (i32.load offset=4 (local.get $p)))
-    (if (i32.ge_u (local.get $control) (i32.const 0x3000))
-      (then (local.set $volume (call $host_audio_mixer_get_peak (i32.sub (local.get $control) (i32.const 0x3000)))))
-      (else
-        (if (i32.ge_u (local.get $control) (i32.const 0x2000))
-          (then (local.set $volume (call $host_audio_mixer_get_mute (i32.sub (local.get $control) (i32.const 0x2000)))))
-          (else (local.set $volume (call $host_audio_mixer_get_volume (i32.sub (local.get $control) (i32.const 0x1000))))))))
-    (if (local.get $details)
-      (then
-        (i32.store offset=0 (local.get $details) (i32.and (local.get $volume) (i32.const 0xffff)))
-        (if (i32.gt_u (local.get $channels) (i32.const 1))
-          (then (i32.store offset=4 (local.get $details)
-            (select (local.get $volume) (i32.shr_u (local.get $volume) (i32.const 16))
-              (i32.ge_u (local.get $control) (i32.const 0x3000))))))))
+    (call $mixer_get_control_details_value (local.get $arg1))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 

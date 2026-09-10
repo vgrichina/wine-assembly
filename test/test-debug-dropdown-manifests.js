@@ -16,17 +16,22 @@ const {
   categorizeCatalog,
   searchCatalog,
 } = require(path.join(ROOT, 'lib', 'debug-app-picker.js'));
+const { hasPageScript } = require('./browser-runtime-scripts');
 const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+const pickerSource = fs.readFileSync(path.join(ROOT, 'lib', 'debug-app-picker.js'), 'utf8');
 const browserShell = fs.readFileSync(path.join(ROOT, 'lib', 'browser-shell.js'), 'utf8');
 const guestExports = fs.readFileSync(path.join(ROOT, 'src', '13-exports.wat'), 'utf8');
 const select = html.match(/<select id="app-select">([\s\S]*?)<\/select>/);
 assert(select, 'index.html has no #app-select');
 assert(html.includes('id="app-picker"') && html.includes('class="app-picker-popup"'),
   'debug toolbar must expose the searchable app-picker shell');
-assert(html.includes('lib/debug-app-picker.js?v=2'),
-  'debug app picker must be loaded with an explicit browser cache token');
-assert(html.includes('lib/browser-shell.js?v=41'),
-  'browser shell must be cache-busted for session-overlay installer throughput');
+assert(hasPageScript('lib/debug-app-picker.js'),
+  'debug app picker must be in the centrally versioned browser graph');
+assert(hasPageScript('lib/browser-shell.js'),
+  'browser shell must be in the centrally versioned browser graph');
+assert(!browserShell.includes('guest-page-translation') &&
+  !guestExports.includes('set_guest_page_translation'),
+  'packed translation is unconditional and must not retain a browser runtime toggle');
 const dropdownIds = [...select[1].matchAll(/<option value="([^"]+)"/g)]
   .map(match => match[1]);
 
@@ -38,6 +43,24 @@ for (const id of ['heaven7', 'cashcow', 'bakkslide7', 'ptct']) {
   assert(!DESKTOP_APPS.some(([listed]) => listed === id),
     `${id} must stay off the production desktop`);
 }
+
+const otherGroup = select[1].match(/<optgroup label="Other">([\s\S]*?)<\/optgroup>/);
+assert(otherGroup, 'debug dropdown has no Other group');
+const otherIds = [...otherGroup[1].matchAll(/<option value="([^"]+)"/g)]
+  .map(match => match[1])
+  .sort();
+const metadataIds = Object.entries(APPS)
+  .filter(([, app]) => app.debugPickerSection)
+  .map(([id, app]) => {
+    assert(['other-apps', 'other-games'].includes(app.debugPickerSection),
+      `${id} has an unknown debug picker section`);
+    return id;
+  })
+  .sort();
+assert.deepStrictEqual(metadataIds, otherIds,
+  'the APPS registry must classify every Other option exactly once');
+assert(!/OTHER_(?:APP|GAME)_IDS/.test(pickerSource),
+  'the debug picker must not carry a second app-ID list');
 
 assert(dropdownIds.includes('heaven7'), 'web dropdown must list Heaven Seven');
 assert(LOCAL_CANDIDATE_APPS.some(([id]) => id === 'heaven7'),

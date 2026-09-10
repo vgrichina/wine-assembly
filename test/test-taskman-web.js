@@ -10,6 +10,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { startStaticServer } = require('./static-server');
 
 const ROOT = path.join(__dirname, '..');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -24,40 +25,6 @@ if (!fs.existsSync(CHROME)) {
 }
 
 function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-
-function mimeType(file) {
-  const ext = path.extname(file).toLowerCase();
-  if (ext === '.html') return 'text/html; charset=utf-8';
-  if (ext === '.js') return 'text/javascript; charset=utf-8';
-  if (ext === '.css') return 'text/css; charset=utf-8';
-  if (ext === '.wasm') return 'application/wasm';
-  if (ext === '.json') return 'application/json';
-  if (ext === '.png') return 'image/png';
-  return 'application/octet-stream';
-}
-
-function startStaticServer() {
-  const root = fs.realpathSync(ROOT);
-  const server = http.createServer((req, res) => {
-    let pathname;
-    try { pathname = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname); }
-    catch (_) { res.writeHead(400); res.end('bad url'); return; }
-    if (pathname === '/') pathname = '/index.html';
-    const file = path.normalize(path.join(root, pathname));
-    if (file !== root && !file.startsWith(root + path.sep)) {
-      res.writeHead(403); res.end('forbidden'); return;
-    }
-    fs.readFile(file, (error, data) => {
-      if (error) { res.writeHead(error.code === 'ENOENT' ? 404 : 500); res.end(error.code || 'read error'); return; }
-      res.writeHead(200, { 'Content-Type': mimeType(file), 'Cache-Control': 'no-store' });
-      res.end(data);
-    });
-  });
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve(server));
-  });
-}
 
 function reserveTcpPort() {
   return new Promise((resolve, reject) => {
@@ -196,7 +163,7 @@ async function main() {
   try { fs.unlinkSync(alonePng); } catch (_) {}
   try { fs.unlinkSync(tasksPng); } catch (_) {}
 
-  const server = BASE_URL ? null : await startStaticServer();
+  const server = BASE_URL ? null : await startStaticServer({ root: ROOT });
   const port = server && server.address().port;
   const pageUrl = BASE_URL
     ? `${BASE_URL}/index.html?debug&taskman-web=${Date.now()}`

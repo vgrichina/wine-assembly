@@ -1054,6 +1054,39 @@
         (i32.div_u (i32.sub (local.get $entry_wa) (global.get $DX_OBJECTS)) (i32.const 32))
         (i32.const 0) (i32.const 0) (i32.const 0)))))
 
+  ;; Generic IUnknown lifetime operations for DX_OBJECTS-backed interfaces.
+  ;; The API table routes only interfaces with byte-identical lifetime rules
+  ;; here; surfaces, buffers, devices, viewports and other owned objects keep
+  ;; their named Release handlers so their final-release teardown still runs.
+  (func $dx_com_addref (param $this i32) (result i32)
+    (local $entry i32) (local $rc i32)
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (local.set $rc
+      (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (store.field DxObject refcount (local.get $entry) (local.get $rc))
+    (local.get $rc))
+
+  (func $dx_com_release_basic (param $this i32) (result i32)
+    (local $entry i32) (local $rc i32)
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (local.set $rc
+      (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (store.field DxObject refcount (local.get $entry) (local.get $rc))
+    (if (i32.le_s (local.get $rc) (i32.const 0))
+      (then
+        (call $dx_free (local.get $entry))
+        (return (i32.const 0))))
+    (local.get $rc))
+
+  ;; Shared dispatch endpoints. One stdcall argument: this.
+  (func $handle_dx_com_addref (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $dx_com_addref (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_dx_com_release_basic (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $dx_com_release_basic (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   ;; ── Init COM vtables ─────────────────────────────────────────
   ;; Allocate thunks for each COM method and populate the vtable blocks.
   ;; Called once from JS before guest code runs (via an exported init fn).
@@ -1238,44 +1271,45 @@
   ;; DX7VB's DirectX7 coclass is a dual interface used by VB6 games before
   ;; they ever call DDRAW.DLL directly. Keep the Automation prefix complete,
   ;; then bridge its first direct method to our IDirectDraw7-compatible object.
+  (func $directx7_query_interface_wa (param $obj i32) (param $iid_wa i32)
+      (param $out i32) (result i32)
+    (if (i32.eqz (local.get $out))
+      (then (return (i32.const 0x80004003)))) ;; E_POINTER
+    (if (i32.eqz (local.get $iid_wa))
+      (then
+        (call $gs32 (local.get $out) (i32.const 0))
+        (return (i32.const 0x80004003))))
+    ;; IUnknown, IDispatch, or IID_IDirectX7
+    ;; {FAFA3599-8B72-11D2-90B2-00C04FC2C602}. In particular, reject the
+    ;; VB runtime's optional IPersistStreamInit probe; returning this vtable
+    ;; for that interface makes it invoke a nonexistent persistence method.
+    (call $dx_query_interface_result
+      (local.get $obj) (local.get $out)
+      (i32.or
+        (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0) (i32.const 0)
+          (i32.const 0x000000C0) (i32.const 0x46000000))
+        (i32.or
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x00020400) (i32.const 0)
+            (i32.const 0x000000C0) (i32.const 0x46000000))
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0xFAFA3599) (i32.const 0x11D28B72)
+            (i32.const 0xC000B290) (i32.const 0x02C6C24F))))))
+
+  (func $directx7_query_interface (param $obj i32) (param $iid i32)
+      (param $out i32) (result i32)
+    (local $iid_wa i32)
+    ;; Translate riid exactly once, then compare all four GUID words in-place.
+    (if (local.get $iid)
+      (then (local.set $iid_wa (call $g2w (local.get $iid)))))
+    (call $directx7_query_interface_wa
+      (local.get $obj) (local.get $iid_wa) (local.get $out)))
+
   (func $handle_IDirectX7_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $iid_d1 i32) (local $entry i32)
-    (if (i32.eqz (local.get $arg2))
-      (then (global.set $eax (i32.const 0x80004003)))
-      (else
-        (local.set $iid_d1 (call $gl32 (local.get $arg1)))
-        ;; IUnknown, IDispatch, IID_IDirectX7
-        ;; {FAFA3599-8B72-11D2-90B2-00C04FC2C602}. In particular, reject the
-        ;; VB runtime's optional IPersistStreamInit probe; returning this dual
-        ;; vtable for that interface makes it invoke nonexistent slot 8.
-        (if (i32.or
-              (i32.eqz (local.get $iid_d1))
-              (i32.or
-                (i32.eq (local.get $iid_d1) (i32.const 0x00020400))
-                (i32.eq (local.get $iid_d1) (i32.const 0xFAFA3599))))
-          (then
-            (call $gs32 (local.get $arg2) (local.get $arg0))
-            (local.set $entry (call $dx_from_this (local.get $arg0)))
-            (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-            (global.set $eax (i32.const 0)))
-          (else
-            (call $gs32 (local.get $arg2) (i32.const 0))
-            (global.set $eax (i32.const 0x80004002))))))
+    (global.set $eax (call $directx7_query_interface
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-  (func $handle_IDirectX7_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (global.set $eax (load.field DxObject refcount (local.get $entry)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-  (func $handle_IDirectX7_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (if (i32.le_s (local.get $rc) (i32.const 0)) (then (call $dx_free (local.get $entry))))
-    (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_IDirectX7_DirectSlot003 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x80004001))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
@@ -1330,14 +1364,6 @@
     (call $handle_IDirectDraw_QueryInterface
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
-  (func $handle_IVBDirectDraw7_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_IDirectDraw_AddRef
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
-  (func $handle_IVBDirectDraw7_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_IDirectDraw_Release
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
   (func $handle_IVBDirectDraw7_DirectSlot (param $slot i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x80004001))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
@@ -1388,10 +1414,6 @@
     (call $handle_IDirectDrawClipper_QueryInterface
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
-  (func $handle_IVBDirectDrawClipper_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_IDirectDrawClipper_AddRef
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
   (func $handle_IVBDirectDrawClipper_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_IDirectDrawClipper_Release
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
@@ -1408,14 +1430,6 @@
 
   (func $handle_IVBDirectSound_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_IDirectSound_QueryInterface
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
-  (func $handle_IVBDirectSound_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_IDirectSound_AddRef
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
-  (func $handle_IVBDirectSound_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_IDirectSound_Release
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
   (func $handle_IVBDirectSound_DirectSlot (param $slot i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1490,10 +1504,10 @@
 
   ;; DirectDrawCreateEx(lpGUID, lplpDD, riid, pUnkOuter) → HRESULT
   ;; DirectX 7 callers request IDirectDraw7 directly rather than creating the
-  ;; v1 interface and calling QueryInterface. The emulator's extended DDraw
-  ;; wrapper serves IDirectDraw2/4/7, matching the existing QI path.
+  ;; v1 interface and calling QueryInterface. Unlike QueryInterface, the
+  ;; documented factory contract accepts only IID_IDirectDraw7.
   (func $handle_DirectDrawCreateEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $iid_dword i32) (local $vtbl i32) (local $obj_guest i32)
+    (local $iid_wa i32) (local $obj_guest i32)
     (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
     (if (local.get $arg3)
       (then
@@ -1505,25 +1519,18 @@
         (global.set $eax (i32.const 0x80070057)) ;; E_INVALIDARG
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
-    (local.set $iid_dword (call $gl32 (local.get $arg2)))
-    (if (i32.or
-          (i32.eqz (local.get $iid_dword))
-          (i32.eq (local.get $iid_dword) (i32.const 0x6C14DB80)))
-      (then (local.set $vtbl (global.get $DX_VTBL_DDRAW)))
-      (else
-        (if (i32.eq (local.get $iid_dword) (i32.const 0xB3A6F3E0))
-          (then (local.set $vtbl (global.get $DX_VTBL_DDRAW2)))
-          (else
-            (if (i32.eq (local.get $iid_dword) (i32.const 0x9C59509A))
-              (then (local.set $vtbl (call $dx_get_ddraw4_vtbl)))
-              (else
-                (if (i32.eq (local.get $iid_dword) (i32.const 0x15E65EC0))
-                  (then (local.set $vtbl (call $dx_get_ddraw7_vtbl)))
-                  (else
-                    (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
-                    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-                    (return)))))))))
-    (local.set $obj_guest (call $dx_create_com_obj (i32.const 1) (local.get $vtbl)))
+    ;; Translate the caller's REFIID once, then compare all four GUID words.
+    ;; IID_IDirectDraw7 {15E65EC0-3B9C-11D2-B92F-00609797EA5B}.
+    (local.set $iid_wa (call $g2w (local.get $arg2)))
+    (if (i32.eqz (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0x15E65EC0) (i32.const 0x11D23B9C)
+          (i32.const 0x60002FB9) (i32.const 0x5BEA9797)))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DDERR_INVALIDPARAMS
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $obj_guest
+      (call $dx_create_com_obj (i32.const 1) (call $dx_get_ddraw7_vtbl)))
     (if (i32.eqz (local.get $obj_guest))
       (then
         (global.set $eax (i32.const 0x80004005)) ;; E_FAIL
@@ -1577,12 +1584,54 @@
     (global.set $eax (i32.const 0)) ;; DI_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))) ;; stdcall 4 args
 
+  ;; Complete DirectInput interface classifier. A/W pairs share the same
+  ;; wrapper shape here, but remain distinct complete COM identities.
+  (func $dinput_iid_kind_wa (param $iid_wa i32) (result i32)
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0) (i32.const 0)
+          (i32.const 0x000000C0) (i32.const 0x46000000))
+      (then (return (i32.const 1)))) ;; IUnknown
+    (if (i32.or
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x89521360) (i32.const 0x11CFAA8A)
+            (i32.const 0x4544C7BF) (i32.const 0x00005453))
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x89521361) (i32.const 0x11CFAA8A)
+            (i32.const 0x4544C7BF) (i32.const 0x00005453)))
+      (then (return (i32.const 2)))) ;; IDirectInputA/W
+    (if (i32.or
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x5944E662) (i32.const 0x11CFAA8A)
+            (i32.const 0x4544C7BF) (i32.const 0x00005453))
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x5944E663) (i32.const 0x11CFAA8A)
+            (i32.const 0x4544C7BF) (i32.const 0x00005453)))
+      (then (return (i32.const 3)))) ;; IDirectInput2A/W
+    (if (i32.or
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x9A4CB684) (i32.const 0x11D3236D)
+            (i32.const 0xC0009D8E) (i32.const 0xAE44684F))
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x9A4CB685) (i32.const 0x11D3236D)
+            (i32.const 0xC0009D8E) (i32.const 0xAE44684F)))
+      (then (return (i32.const 4)))) ;; IDirectInput7A/W
+    (if (i32.or
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0xBF798030) (i32.const 0x4DA2483A)
+            (i32.const 0x645D99AA) (i32.const 0x009736ED))
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0xBF798031) (i32.const 0x4DA2483A)
+            (i32.const 0x645D99AA) (i32.const 0x009736ED)))
+      (then (return (i32.const 5)))) ;; IDirectInput8A/W
+    (i32.const 0))
+
   ;; DirectInputCreateEx(hInstance, dwVersion, riid, ppvOut, pUnkOuter)
   ;; The dinput.dll 5/7 entry point apps reach by GetProcAddress. Same object
   ;; as DirectInputCreateA — IDirectInput2/7 only append methods after the
   ;; v1 vtable, which is what $DX_VTBL_DINPUT already provides.
   (func $handle_DirectInputCreateEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $iid_dword i32) (local $obj_guest i32) (local $entry i32)
+    (local $iid_wa i32) (local $kind i32) (local $vtbl i32)
+    (local $obj_guest i32) (local $entry i32)
     (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
     (if (i32.or (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg3)))
       (then
@@ -1594,22 +1643,19 @@
         (global.set $eax (i32.const 0x80040110)) ;; CLASS_E_NOAGGREGATION
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
-    ;; IID_IDirectInput{,2,7}{A,W} — first dword of each GUID pair.
-    (local.set $iid_dword (call $gl32 (local.get $arg2)))
-    (if (i32.eqz (i32.or
-          (i32.or (i32.eq (local.get $iid_dword) (i32.const 0x89521360))
-                  (i32.eq (local.get $iid_dword) (i32.const 0x89521361)))
-          (i32.or
-            (i32.or (i32.eq (local.get $iid_dword) (i32.const 0x5944E662))
-                    (i32.eq (local.get $iid_dword) (i32.const 0x5944E663)))
-            (i32.or (i32.eq (local.get $iid_dword) (i32.const 0x9A4CB684))
-                    (i32.eq (local.get $iid_dword) (i32.const 0x9A4CB685))))))
+    (local.set $iid_wa (call $g2w (local.get $arg2)))
+    (local.set $kind (call $dinput_iid_kind_wa (local.get $iid_wa)))
+    (if (i32.or (i32.lt_u (local.get $kind) (i32.const 2))
+                (i32.gt_u (local.get $kind) (i32.const 4)))
       (then
         (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
+    (local.set $vtbl
+      (select (global.get $DX_VTBL_DINPUT7) (global.get $DX_VTBL_DINPUT)
+        (i32.ge_u (local.get $kind) (i32.const 3))))
     (local.set $obj_guest
-      (call $dx_create_com_obj (i32.const 6) (global.get $DX_VTBL_DINPUT7)))
+      (call $dx_create_com_obj (i32.const 6) (local.get $vtbl)))
     (if (i32.eqz (local.get $obj_guest))
       (then
         (global.set $eax (i32.const 0x80004005)) ;; E_FAIL
@@ -1625,7 +1671,7 @@
   ;; IDirectInput8 keeps the legacy methods at the front of its vtable, which
   ;; covers the device creation/input path currently implemented here.
   (func $handle_DirectInput8Create (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $iid_dword i32) (local $obj_guest i32) (local $entry i32)
+    (local $iid_wa i32) (local $obj_guest i32) (local $entry i32)
     (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
     (if (local.get $arg4)
       (then
@@ -1637,10 +1683,8 @@
         (global.set $eax (i32.const 0x80070057)) ;; E_INVALIDARG
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
-    (local.set $iid_dword (call $gl32 (local.get $arg2)))
-    (if (i32.and
-          (i32.ne (local.get $iid_dword) (i32.const 0xBF798030))
-          (i32.ne (local.get $iid_dword) (i32.const 0xBF798031)))
+    (local.set $iid_wa (call $g2w (local.get $arg2)))
+    (if (i32.ne (call $dinput_iid_kind_wa (local.get $iid_wa)) (i32.const 5))
       (then
         (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
@@ -1666,113 +1710,160 @@
   ;; Stack layout: [ESP]=ret, [ESP+4]=this, [ESP+8]=arg1, ...
   ;; The dispatch already loaded 5 args from ESP+4..ESP+24.
 
+  ;; Classify the complete Win98-era DirectDraw/Direct3D interface identities.
+  ;; The result selects an ABI-compatible wrapper; zero means unsupported.
+  (func $ddraw_iid_kind_wa (param $iid_wa i32) (result i32)
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0) (i32.const 0)
+          (i32.const 0x000000C0) (i32.const 0x46000000))
+      (then (return (i32.const 1)))) ;; IUnknown
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0x6C14DB80) (i32.const 0x11CEA733)
+          (i32.const 0x200021A5) (i32.const 0x60E50BAF))
+      (then (return (i32.const 2)))) ;; IDirectDraw
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0xB3A6F3E0) (i32.const 0x11CF2B43)
+          (i32.const 0xAA00DEA2) (i32.const 0x5633B900))
+      (then (return (i32.const 3)))) ;; IDirectDraw2
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0x9C59509A) (i32.const 0x11D139BD)
+          (i32.const 0xC0004A8C) (i32.const 0xC530D94F))
+      (then (return (i32.const 4)))) ;; IDirectDraw4
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0x15E65EC0) (i32.const 0x11D23B9C)
+          (i32.const 0x60002FB9) (i32.const 0x5BEA9797))
+      (then (return (i32.const 5)))) ;; IDirectDraw7
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0x3BBA0080) (i32.const 0x11CF2421)
+          (i32.const 0xAA001AA3) (i32.const 0x5633B900))
+      (then (return (i32.const 6)))) ;; IDirect3D
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0x6AAE1EC1) (i32.const 0x11D0662A)
+          (i32.const 0xAA009D88) (i32.const 0x6AB7BB00))
+      (then (return (i32.const 7)))) ;; IDirect3D2
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0xBB223240) (i32.const 0x11D0E72B)
+          (i32.const 0xAA00B4A9) (i32.const 0x3E99C000))
+      (then (return (i32.const 8)))) ;; IDirect3D3
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0xF5049E77) (i32.const 0x11D24861)
+          (i32.const 0xA00007A4) (i32.const 0xA82906C9))
+      (then (return (i32.const 9)))) ;; IDirect3D7
+    (i32.const 0))
+
   ;; QueryInterface(this, riid, ppvObj)
-  ;; Accept DDraw and D3D family interfaces with proper vtables
+  ;; Accept DDraw and D3D family interfaces with proper vtables.
   (func $handle_IDirectDraw_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $iid_dword i32) (local $obj i32)
-    (local.set $iid_dword (call $gl32 (local.get $arg1)))
-    ;; IUnknown / IDirectDraw — return same object
-    (if (i32.or (i32.eqz (local.get $iid_dword))
-                (i32.eq (local.get $iid_dword) (i32.const 0x6C14DB80)))
+    (local $iid_wa i32) (local $kind i32) (local $entry i32)
+    (local $slot i32) (local $obj i32) (local $child_entry i32)
+    (if (i32.eqz (local.get $arg2))
       (then
-        (call $gs32 (local.get $arg2) (local.get $arg0))
-        (local.set $obj (call $dx_from_this (local.get $arg0)))
-        (i32.store (i32.add (local.get $obj) (i32.const 4))
-          (i32.add (i32.load (i32.add (local.get $obj) (i32.const 4))) (i32.const 1)))
-        (global.set $eax (i32.const 0))
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Translate riid exactly once, then compare all four GUID words in-place.
+    (local.set $iid_wa (call $g2w (local.get $arg1)))
+    (local.set $kind (call $ddraw_iid_kind_wa (local.get $iid_wa)))
+    (if (i32.eqz (local.get $kind))
+      (then
+        (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Resolve this and its primary slot once. Every wrapper for this object
+    ;; shares that entry; IUnknown must always return the controlling wrapper.
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $slot (call $dx_slot_of (local.get $entry)))
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then
+        (local.set $obj
+          (i32.add
+            (i32.sub
+              (i32.add (global.get $COM_WRAPPERS)
+                (i32.mul (local.get $slot) (i32.const 8)))
+              (global.get $GUEST_BASE))
+            (global.get $image_base)))))
+    (if (i32.eq (local.get $kind) (i32.const 2))
+      (then (local.set $obj (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (global.get $DX_VTBL_DDRAW)))))
     ;; IDirectDraw2/4/7 — return a distinct wrapper with the requested ABI.
     ;; Must NOT mutate the primary wrapper: apps like foxbear QI for
     ;; IDirectDraw2 but continue using the original pointer with v1-signature
     ;; calls (SetDisplayMode with 3 args, not 5). Upgrading in-place then
     ;; made SetDisplayMode pop 28 bytes (v2) when only 20 were pushed (v1),
     ;; corrupting ESP and jumping to 0.
-    (if (i32.eq (local.get $iid_dword) (i32.const 0xB3A6F3E0))
+    (if (i32.eq (local.get $kind) (i32.const 3))
+      (then (local.set $obj (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (global.get $DX_VTBL_DDRAW2)))))
+    (if (i32.eq (local.get $kind) (i32.const 4))
+      (then (local.set $obj (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (call $dx_get_ddraw4_vtbl)))))
+    (if (i32.eq (local.get $kind) (i32.const 5))
+      (then (local.set $obj (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (call $dx_get_ddraw7_vtbl)))))
+    (if (local.get $obj)
       (then
-        (local.set $obj (call $dx_from_this (local.get $arg0)))
-        (call $gs32 (local.get $arg2)
-          (call $dx_get_wrapper_for_vtbl
-            (call $dx_slot_of (local.get $obj))
-            (global.get $DX_VTBL_DDRAW2)))
-        (i32.store (i32.add (local.get $obj) (i32.const 4))
-          (i32.add (i32.load (i32.add (local.get $obj) (i32.const 4))) (i32.const 1)))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-        (return)))
-    (if (i32.eq (local.get $iid_dword) (i32.const 0x9C59509A))
-      (then
-        (local.set $obj (call $dx_from_this (local.get $arg0)))
-        (call $gs32 (local.get $arg2)
-          (call $dx_get_wrapper_for_vtbl
-            (call $dx_slot_of (local.get $obj))
-            (call $dx_get_ddraw4_vtbl)))
-        (i32.store (i32.add (local.get $obj) (i32.const 4))
-          (i32.add (i32.load (i32.add (local.get $obj) (i32.const 4))) (i32.const 1)))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-        (return)))
-    (if (i32.eq (local.get $iid_dword) (i32.const 0x15E65EC0))
-      (then
-        (local.set $obj (call $dx_from_this (local.get $arg0)))
-        (call $gs32 (local.get $arg2)
-          (call $dx_get_wrapper_for_vtbl
-            (call $dx_slot_of (local.get $obj))
-            (call $dx_get_ddraw7_vtbl)))
-        (i32.store (i32.add (local.get $obj) (i32.const 4))
-          (i32.add (i32.load (i32.add (local.get $obj) (i32.const 4))) (i32.const 1)))
+        (store.field DxObject refcount (local.get $entry)
+          (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+        (call $gs32 (local.get $arg2) (local.get $obj))
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
     ;; IDirect3D{,2,3} — create a new child entry and link parent DDraw slot at +8
     ;; so that IDirect3D::QI(IID_IDirectDraw) can find the parent via the link
     ;; (rather than relying on a scan that misses after Release cycles).
-    (if (i32.or (i32.eq (local.get $iid_dword) (i32.const 0x3BBA0080))
-        (i32.or (i32.eq (local.get $iid_dword) (i32.const 0x6AAE1EC1))
-                (i32.eq (local.get $iid_dword) (i32.const 0xBB223240))))
+    (if (i32.and (i32.ge_u (local.get $kind) (i32.const 6))
+                 (i32.le_u (local.get $kind) (i32.const 8)))
       (then
-        (if (i32.eq (local.get $iid_dword) (i32.const 0x3BBA0080))
+        (if (i32.eq (local.get $kind) (i32.const 6))
           (then (local.set $obj (call $dx_create_com_obj (i32.const 8) (global.get $DX_VTBL_D3D))))
-          (else (if (i32.eq (local.get $iid_dword) (i32.const 0x6AAE1EC1))
+          (else (if (i32.eq (local.get $kind) (i32.const 7))
             (then (local.set $obj (call $dx_create_com_obj (i32.const 9) (global.get $DX_VTBL_D3D2))))
             (else (local.set $obj (call $dx_create_com_obj (i32.const 9) (global.get $DX_VTBL_D3D3)))))))
+        (if (i32.eqz (local.get $obj))
+          (then
+            (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+            (return)))
         ;; Store parent DDraw slot at child_entry+8.
-        (store.field DxObject misc0 (call $dx_from_this (local.get $obj)) (call $dx_slot_of (call $dx_from_this (local.get $arg0))))
+        (local.set $child_entry (call $dx_from_this (local.get $obj)))
+        (store.field DxObject misc0 (local.get $child_entry) (local.get $slot))
         (call $gs32 (local.get $arg2) (local.get $obj))
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
     ;; IDirect3D7 — keep this separate so the legacy D3D1/2/3 path remains
     ;; unchanged for d3drm.dll, which is sensitive to QueryInterface HRESULTs.
-    (if (i32.eq (local.get $iid_dword) (i32.const 0xF5049E77))
+    (if (i32.eq (local.get $kind) (i32.const 9))
       (then
         (local.set $obj (call $dx_create_com_obj (i32.const 9) (global.get $DX_VTBL_D3D7)))
-        (store.field DxObject misc0 (call $dx_from_this (local.get $obj)) (call $dx_slot_of (call $dx_from_this (local.get $arg0))))
+        (if (i32.eqz (local.get $obj))
+          (then
+            (global.set $eax (i32.const 0x8007000E))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+            (return)))
+        (local.set $child_entry (call $dx_from_this (local.get $obj)))
+        (store.field DxObject misc0 (local.get $child_entry) (local.get $slot))
         (call $gs32 (local.get $arg2) (local.get $obj))
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
-    ;; Unsupported interface — *ppvObj = NULL, return E_NOINTERFACE
-    (call $gs32 (local.get $arg2) (i32.const 0))
+    ;; Classification above makes this unreachable, but fail closed if a new
+    ;; kind is added without a corresponding wrapper path.
     (global.set $eax (i32.const 0x80004002))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  (func $handle_IDirectDraw_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (global.set $eax (load.field DxObject refcount (local.get $entry)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))) ;; 1 arg
 
-  (func $handle_IDirectDraw_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry))))
-    (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; Compact — no-op
   (func $handle_IDirectDraw_Compact (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -3514,17 +3605,15 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  (func $handle_IDirectDrawSurface_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (global.set $eax (load.field DxObject refcount (local.get $entry)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  (func $handle_IDirectDrawSurface_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; One teardown path serves every COM view of a type-2 surface, including
+  ;; IDirect3DSurface9. It returns the remaining reference count without
+  ;; owning a handler stack frame, so device teardown can release its implicit
+  ;; render-target reference directly.
+  (func $dx_surface_release (param $this i32) (result i32)
     (local $entry i32) (local $rc i32) (local $surf_bytes i32) (local $dib_wa i32)
     (call $d3dim_worker_fence)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $entry (call $dx_from_this (local.get $this)))
     (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
     (store.field DxObject refcount (local.get $entry) (local.get $rc))
     (if (i32.le_s (local.get $rc) (i32.const 0))
@@ -3538,7 +3627,10 @@
         (if (i32.eqz (i32.and (load.field DxObject flags (local.get $entry)) (i32.const 0x200)))
           (then (call $dib_free_wasm (local.get $dib_wa))))
         (call $dx_free (local.get $entry))))
-    (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
+    (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
+
+  (func $handle_IDirectDrawSurface_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $dx_surface_release (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; AddAttachedSurface — retain the parent relationship on the child in the
@@ -5008,12 +5100,6 @@
     (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  (func $handle_IDirectDrawPalette_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (global.set $eax (load.field DxObject refcount (local.get $entry)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirectDrawPalette_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $rc i32)
@@ -5106,12 +5192,6 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  (func $handle_IDirectDrawClipper_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (global.set $eax (load.field DxObject refcount (local.get $entry)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirectDrawClipper_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $rc i32)
@@ -5162,26 +5242,14 @@
   ;; ════════════════════════════════════════════════════════════
 
   (func $handle_IDirectSound_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gs32 (local.get $arg2) (local.get $arg0))
-    (global.set $eax (i32.const 0))
+    ;; IID_IDirectSound {279AFA83-4981-11CE-A521-0020AF0BE560}.
+    (global.set $eax (call $dx_query_interface_single
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0x279AFA83) (i32.const 0x11CE4981)
+      (i32.const 0x200021A5) (i32.const 0x60E50BAF)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  (func $handle_IDirectSound_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (global.set $eax (load.field DxObject refcount (local.get $entry)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  (func $handle_IDirectSound_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry))))
-    (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; CreateSoundBuffer(this, lpDSBufferDesc, lplpDirectSoundBuffer, pUnkOuter)
   (func $handle_IDirectSound_CreateSoundBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -5340,62 +5408,89 @@
     (local.get $handle))
 
   ;; IID_IDirectSound3DBuffer = {279AFA86-4981-11CE-A521-0020AF0BE560}.
-  (func $dsbuf_iid_is_3d (param $iid i32) (result i32)
-    (if (i32.eqz (local.get $iid)) (then (return (i32.const 0))))
-    (i32.and
-      (i32.and
-        (i32.eq (call $gl32 (local.get $iid)) (i32.const 0x279AFA86))
-        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 4))) (i32.const 0x11CE4981)))
-      (i32.and
-        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 8))) (i32.const 0x200021A5))
-        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 12))) (i32.const 0x60E50BAF)))))
-
   ;; IID_IDirectSound3DListener = {279AFA84-4981-11CE-A521-0020AF0BE560}.
-  ;; Primary buffers expose this interface; it is distinct from the per-voice
-  ;; IDirectSound3DBuffer interface despite sharing the rest of the GUID.
-  (func $dsbuf_iid_is_3d_listener (param $iid i32) (result i32)
-    (if (i32.eqz (local.get $iid)) (then (return (i32.const 0))))
-    (i32.and
-      (i32.and
-        (i32.eq (call $gl32 (local.get $iid)) (i32.const 0x279AFA84))
-        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 4))) (i32.const 0x11CE4981)))
-      (i32.and
-        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 8))) (i32.const 0x200021A5))
-        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 12))) (i32.const 0x60E50BAF)))))
+  ;; Complete DirectSound buffer-family interface classification. These four
+  ;; GUIDs share a suffix, so compare all four words after one translation.
+  (func $dsbuf_iid_kind_wa (param $iid_wa i32) (result i32)
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0) (i32.const 0)
+          (i32.const 0x000000C0) (i32.const 0x46000000))
+      (then (return (i32.const 1)))) ;; IUnknown
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0x279AFA85) (i32.const 0x11CE4981)
+          (i32.const 0x200021A5) (i32.const 0x60E50BAF))
+      (then (return (i32.const 2)))) ;; IDirectSoundBuffer
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0x279AFA86) (i32.const 0x11CE4981)
+          (i32.const 0x200021A5) (i32.const 0x60E50BAF))
+      (then (return (i32.const 3)))) ;; IDirectSound3DBuffer
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0x279AFA84) (i32.const 0x11CE4981)
+          (i32.const 0x200021A5) (i32.const 0x60E50BAF))
+      (then (return (i32.const 4)))) ;; IDirectSound3DListener
+    (i32.const 0))
 
   (func $handle_IDirectSoundBuffer_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $wrapper i32) (local $handle i32)
+    (local $iid_wa i32) (local $kind i32) (local $entry i32)
+    (local $slot i32) (local $wrapper i32) (local $handle i32)
     (if (i32.eqz (local.get $arg2))
-      (then (global.set $eax (i32.const 0x80004003)))
-      (else
-        (local.set $entry (call $dx_from_this (local.get $arg0)))
-        (if (call $dsbuf_iid_is_3d (local.get $arg1))
-          (then
-            (local.set $wrapper (call $dx_get_wrapper_for_vtbl
-              (call $dx_slot_of (local.get $entry)) (global.get $DX_VTBL_DS3DBUF)))
-            (local.set $handle (call $dsbuf_ensure_voice (local.get $entry)))
-            ;; Property 15 enables the default NORMAL spatial state without
-            ;; resetting a buffer that has already received 3D parameters.
-            (call $host_voice_3d_set
-              (local.get $handle) (i32.const 15)
-              (i32.const 0) (i32.const 0) (i32.const 0)))
-          (else
-            (if (call $dsbuf_iid_is_3d_listener (local.get $arg1))
-              (then (local.set $wrapper (call $dx_get_wrapper_for_vtbl
-                (call $dx_slot_of (local.get $entry)) (global.get $DX_VTBL_DS3DLISTENER))))
-              (else (local.set $wrapper (call $dx_get_wrapper_for_vtbl
-                (call $dx_slot_of (local.get $entry)) (global.get $DX_VTBL_DSBUF)))))))
-        (call $gs32 (local.get $arg2) (local.get $wrapper))
-        (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-        (global.set $eax (i32.const 0))))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Translate riid exactly once, then classify the complete identity.
+    (local.set $iid_wa (call $g2w (local.get $arg1)))
+    (local.set $kind (call $dsbuf_iid_kind_wa (local.get $iid_wa)))
+    (if (i32.eqz (local.get $kind))
+      (then
+        (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $slot (call $dx_slot_of (local.get $entry)))
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then
+        ;; All auxiliary 3D faces return the same controlling IUnknown.
+        (local.set $wrapper
+          (i32.add
+            (i32.sub
+              (i32.add (global.get $COM_WRAPPERS)
+                (i32.mul (local.get $slot) (i32.const 8)))
+              (global.get $GUEST_BASE))
+            (global.get $image_base)))))
+    (if (i32.eq (local.get $kind) (i32.const 2))
+      (then (local.set $wrapper (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (global.get $DX_VTBL_DSBUF)))))
+    (if (i32.eq (local.get $kind) (i32.const 3))
+      (then
+        (local.set $wrapper (call $dx_get_wrapper_for_vtbl
+          (local.get $slot) (global.get $DX_VTBL_DS3DBUF)))
+        (local.set $handle (call $dsbuf_ensure_voice (local.get $entry)))
+        ;; Property 15 enables the default NORMAL spatial state without
+        ;; resetting a buffer that has already received 3D parameters.
+        (call $host_voice_3d_set
+          (local.get $handle) (i32.const 15)
+          (i32.const 0) (i32.const 0) (i32.const 0))))
+    (if (i32.eq (local.get $kind) (i32.const 4))
+      (then (local.set $wrapper (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (global.get $DX_VTBL_DS3DLISTENER)))))
+    (store.field DxObject refcount (local.get $entry)
+      (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (call $gs32 (local.get $arg2) (local.get $wrapper))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  (func $handle_IDirectSoundBuffer_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (global.set $eax (load.field DxObject refcount (local.get $entry)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirectSoundBuffer_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $rc i32) (local $handle i32)
@@ -5749,7 +5844,7 @@
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   (func $handle_IDirectSound3DBuffer_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_IDirectSoundBuffer_AddRef
+    (call $handle_dx_com_addref
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
@@ -5945,7 +6040,7 @@
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   (func $handle_IDirectSound3DListener_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_IDirectSoundBuffer_AddRef
+    (call $handle_dx_com_addref
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
@@ -6105,26 +6200,83 @@
   ;; ════════════════════════════════════════════════════════════
 
   (func $handle_IDirectInput_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gs32 (local.get $arg2) (local.get $arg0))
+    (local $iid_wa i32) (local $kind i32) (local $entry i32)
+    (local $version i32) (local $slot i32) (local $obj i32)
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Translate riid exactly once and classify the complete GUID.
+    (local.set $iid_wa (call $g2w (local.get $arg1)))
+    (local.set $kind (call $dinput_iid_kind_wa (local.get $iid_wa)))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $version (load.field.memarg DxObject misc0 (local.get $entry)))
+    (if (i32.eqz (local.get $version))
+      (then (local.set $version (i32.const 0x0700))))
+    ;; DirectInput8 is a separate class and cannot expose older interfaces.
+    ;; Legacy objects likewise cannot be upgraded to IDirectInput8.
+    (if (i32.or
+          (i32.eqz (local.get $kind))
+          (if (result i32) (i32.ge_u (local.get $version) (i32.const 0x0800))
+            (then (i32.and
+              (i32.ne (local.get $kind) (i32.const 1))
+              (i32.ne (local.get $kind) (i32.const 5))))
+            (else (i32.or
+              (i32.eq (local.get $kind) (i32.const 5))
+              (i32.or
+                (i32.and (i32.eq (local.get $kind) (i32.const 3))
+                  (i32.lt_u (local.get $version) (i32.const 0x0500)))
+                (i32.and (i32.eq (local.get $kind) (i32.const 4))
+                  (i32.lt_u (local.get $version) (i32.const 0x0700))))))))
+      (then
+        (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $slot (call $dx_slot_of (local.get $entry)))
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then
+        ;; Return the primary wrapper as the one controlling IUnknown.
+        (local.set $obj
+          (i32.add
+            (i32.sub
+              (i32.add (global.get $COM_WRAPPERS)
+                (i32.mul (local.get $slot) (i32.const 8)))
+              (global.get $GUEST_BASE))
+            (global.get $image_base)))))
+    (if (i32.eq (local.get $kind) (i32.const 2))
+      (then (local.set $obj (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (global.get $DX_VTBL_DINPUT)))))
+    (if (i32.or (i32.eq (local.get $kind) (i32.const 3))
+                (i32.eq (local.get $kind) (i32.const 4)))
+      (then (local.set $obj (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (global.get $DX_VTBL_DINPUT7)))))
+    (if (i32.eq (local.get $kind) (i32.const 5))
+      (then (local.set $obj (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (global.get $DX_VTBL_DINPUT)))))
+    (if (i32.eqz (local.get $obj))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (store.field DxObject refcount (local.get $entry)
+      (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (call $gs32 (local.get $arg2) (local.get $obj))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  (func $handle_IDirectInput_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (global.set $eax (load.field DxObject refcount (local.get $entry)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  (func $handle_IDirectInput_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry))))
-    (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; CreateDevice(this, rguid, lplpDirectInputDevice, pUnkOuter)
   ;; rguid: GUID_SysKeyboard = {6F1D2B61-D5A0-11CF-BFC7-444553540000}
@@ -6162,27 +6314,90 @@
     (global.set $eax (i32.const 0x80070002)) ;; DIERR_DEVICENOTREG
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
+  ;; Complete DirectInput device interface classifier. Device7/8 identities
+  ;; are recognized so callers get an honest E_NOINTERFACE until their extra
+  ;; vtable methods exist, rather than a successful pointer to a short table.
+  (func $dinput_device_iid_kind_wa (param $iid_wa i32) (result i32)
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0) (i32.const 0)
+          (i32.const 0x000000C0) (i32.const 0x46000000))
+      (then (return (i32.const 1)))) ;; IUnknown
+    (if (i32.or
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x5944E680) (i32.const 0x11CFC92E)
+            (i32.const 0x4544C7BF) (i32.const 0x00005453))
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x5944E681) (i32.const 0x11CFC92E)
+            (i32.const 0x4544C7BF) (i32.const 0x00005453)))
+      (then (return (i32.const 2)))) ;; IDirectInputDeviceA/W
+    (if (i32.or
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x5944E682) (i32.const 0x11CFC92E)
+            (i32.const 0x4544C7BF) (i32.const 0x00005453))
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x5944E683) (i32.const 0x11CFC92E)
+            (i32.const 0x4544C7BF) (i32.const 0x00005453)))
+      (then (return (i32.const 3)))) ;; IDirectInputDevice2A/W
+    (if (i32.or
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x57D7C6BC) (i32.const 0x11D32356)
+            (i32.const 0xC0009D8E) (i32.const 0xAE44684F))
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x57D7C6BD) (i32.const 0x11D32356)
+            (i32.const 0xC0009D8E) (i32.const 0xAE44684F)))
+      (then (return (i32.const 4)))) ;; IDirectInputDevice7A/W
+    (if (i32.or
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x54D41080) (i32.const 0x4833DC15)
+            (i32.const 0x8F741BA4) (i32.const 0x7981A373))
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0x54D41081) (i32.const 0x4833DC15)
+            (i32.const 0x8F741BA4) (i32.const 0x7981A373)))
+      (then (return (i32.const 5)))) ;; IDirectInputDevice8A/W
+    (i32.const 0))
+
   ;; IDirectInput7::CreateDeviceEx(this, rguid, riid, ppvOut, punkOuter)
-  ;; Same device object as CreateDevice — the IDirectInputDevice2 vtable
-  ;; covers the v2/v7 method range — with the riid slot ignored because
-  ;; every IID_IDirectInputDevice* variant maps to it.
+  ;; Device1/2 are the complete ABI range implemented here. Device7 adds two
+  ;; methods beyond that table, so do not manufacture a plausible wrong face.
   (func $handle_IDirectInput7_CreateDeviceEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32) (local $entry i32) (local $guid_first i32)
+    (local $iid_wa i32) (local $kind i32) (local $vtbl i32)
+    (local $obj i32) (local $entry i32) (local $parent_entry i32)
+    (local $guid_first i32)
     (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
-    (if (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg3)))
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2)))
+          (i32.eqz (local.get $arg3)))
       (then
         (global.set $eax (i32.const 0x80070057)) ;; E_INVALIDARG
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
-    (local.set $obj (call $dx_create_com_obj (i32.const 7) (global.get $DX_VTBL_DIDEV2)))
+    (if (local.get $arg4)
+      (then
+        (global.set $eax (i32.const 0x80040110)) ;; CLASS_E_NOAGGREGATION
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    ;; Translate riid exactly once and accept only implemented complete faces.
+    (local.set $iid_wa (call $g2w (local.get $arg2)))
+    (local.set $kind (call $dinput_device_iid_kind_wa (local.get $iid_wa)))
+    (if (i32.or (i32.lt_u (local.get $kind) (i32.const 2))
+                (i32.gt_u (local.get $kind) (i32.const 3)))
+      (then
+        (global.set $eax (i32.const 0x80004002)) ;; DIERR_NOINTERFACE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (local.set $vtbl
+      (select (global.get $DX_VTBL_DIDEV2) (global.get $DX_VTBL_DIDEV)
+        (i32.eq (local.get $kind) (i32.const 3))))
+    (local.set $obj (call $dx_create_com_obj (i32.const 7) (local.get $vtbl)))
     (if (i32.eqz (local.get $obj))
       (then
         (global.set $eax (i32.const 0x80004005))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
     (local.set $entry (call $dx_from_this (local.get $obj)))
+    (local.set $parent_entry (call $dx_from_this (local.get $arg0)))
     (i32.store offset=16 (local.get $entry)
-      (load.field.memarg DxObject misc0 (call $dx_from_this (local.get $arg0))))
+      (load.field.memarg DxObject misc0 (local.get $parent_entry)))
     (local.set $guid_first (call $gl32 (local.get $arg1)))
     (store.field DxObject misc0 (local.get $entry) (i32.const 0))
     (if (i32.eq (local.get $guid_first) (i32.const 0x6F1D2B61))
@@ -6493,32 +6708,73 @@
   ;; ════════════════════════════════════════════════════════════
 
   (func $handle_IDirectInputDevice_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (call $gs32 (local.get $arg2) (local.get $arg0))
-    ;; QI must AddRef even when returning the same 'this' — otherwise a paired
-    ;; Release on the original frees the DX_OBJECTS slot while the caller still
-    ;; holds the QI'd pointer (MCM triggers exactly this pattern).
+    (local $iid_wa i32) (local $kind i32) (local $entry i32)
+    (local $version i32) (local $slot i32) (local $obj i32)
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Translate riid exactly once and compare the complete device IID.
+    (local.set $iid_wa (call $g2w (local.get $arg1)))
+    (local.set $kind (call $dinput_device_iid_kind_wa (local.get $iid_wa)))
     (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $version (i32.load offset=16 (local.get $entry)))
+    (if (i32.eqz (local.get $version))
+      (then (local.set $version (i32.const 0x0700))))
+    ;; This emulator currently has complete Device1/2 vtables. Reject the
+    ;; recognized Device7/8 identities until their appended methods exist.
+    (if (i32.or
+          (i32.eqz (local.get $kind))
+          (i32.or
+            (i32.gt_u (local.get $kind) (i32.const 3))
+            (i32.and (i32.eq (local.get $kind) (i32.const 3))
+              (i32.lt_u (local.get $version) (i32.const 0x0500)))))
+      (then
+        (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $slot (call $dx_slot_of (local.get $entry)))
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then
+        (local.set $obj
+          (i32.add
+            (i32.sub
+              (i32.add (global.get $COM_WRAPPERS)
+                (i32.mul (local.get $slot) (i32.const 8)))
+              (global.get $GUEST_BASE))
+            (global.get $image_base)))))
+    (if (i32.eq (local.get $kind) (i32.const 2))
+      (then (local.set $obj (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (global.get $DX_VTBL_DIDEV)))))
+    (if (i32.eq (local.get $kind) (i32.const 3))
+      (then (local.set $obj (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (global.get $DX_VTBL_DIDEV2)))))
+    (if (i32.eqz (local.get $obj))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; QI must AddRef even when returning the same object identity — MCM pairs
+    ;; Release on the original while retaining the queried Device2 pointer.
+    (store.field DxObject refcount (local.get $entry)
+      (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (call $gs32 (local.get $arg2) (local.get $obj))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  (func $handle_IDirectInputDevice_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (global.set $eax (load.field DxObject refcount (local.get $entry)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  (func $handle_IDirectInputDevice_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry))))
-    (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; GetCapabilities — preserve the caller-selected DX3/full structure size
   ;; and report the pre-DX8 device type when used through a Win98-era face.
@@ -7226,15 +7482,6 @@
               (i32.mul (global.get $DP_ENTITY_MAX) (global.get $DP_ENTITY_STRIDE)))))))
     (global.get $dp_entity_table))
 
-  (func $dp_clone_string (param $src i32) (result i32)
-    (local $copy i32) (local $len i32)
-    (if (i32.eqz (local.get $src)) (then (return (i32.const 0))))
-    (local.set $len (call $guest_strlen (local.get $src)))
-    (local.set $copy (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
-    (if (local.get $copy)
-      (then (call $guest_strcpy (local.get $copy) (local.get $src))))
-    (local.get $copy))
-
   (func $dp_clone_name (param $src i32) (result i32)
     (local $name i32)
     (local.set $name (call $heap_alloc (i32.const 16)))
@@ -7246,10 +7493,10 @@
         (call $gs32 (i32.add (local.get $name) (i32.const 4))
           (call $gl32 (i32.add (local.get $src) (i32.const 4))))
         (call $gs32 (i32.add (local.get $name) (i32.const 8))
-          (call $dp_clone_string
+          (call $guest_strdup
             (call $gl32 (i32.add (local.get $src) (i32.const 8)))))
         (call $gs32 (i32.add (local.get $name) (i32.const 12))
-          (call $dp_clone_string
+          (call $guest_strdup
             (call $gl32 (i32.add (local.get $src) (i32.const 12)))))))
     (local.get $name))
 
@@ -7663,13 +7910,60 @@
     (global.set $eax (i32.const 1))
     (call $dp_enum_continue))
 
+  ;; Query the two bounded ANSI DirectPlay families that this runtime exposes.
+  ;; family 0: IDirectPlay2A/3A (47-slot vtable); family 1:
+  ;; IDirectPlayLobbyA/Lobby2A (15-slot vtable). Unicode and later generations
+  ;; need different string semantics or additional slots, so fail honestly.
+  (func $dplay_query_interface_wa (param $obj i32) (param $iid_wa i32)
+        (param $out i32) (param $family i32) (result i32)
+    (local $supported i32)
+    (if (i32.eqz (local.get $out))
+      (then (return (i32.const 0x80004003)))) ;; E_POINTER
+    (if (local.get $iid_wa)
+      (then
+        (local.set $supported
+          (call $guid_words_equal (local.get $iid_wa)
+            (i32.const 0) (i32.const 0)
+            (i32.const 0x000000C0) (i32.const 0x46000000)))
+        (if (i32.eqz (local.get $family))
+          (then
+            ;; IID_IDirectPlay2A {9D460580-A822-11CF-960C-0080C7534E82}.
+            (local.set $supported (i32.or (local.get $supported)
+              (call $guid_words_equal (local.get $iid_wa)
+                (i32.const 0x9D460580) (i32.const 0x11CFA822)
+                (i32.const 0x80000C96) (i32.const 0x824E53C7))))
+            ;; IID_IDirectPlay3A {133EFE41-32DC-11D0-9CFB-00A0C90A43CB}.
+            (local.set $supported (i32.or (local.get $supported)
+              (call $guid_words_equal (local.get $iid_wa)
+                (i32.const 0x133EFE41) (i32.const 0x11D032DC)
+                (i32.const 0xA000FB9C) (i32.const 0xCB430AC9)))))
+          (else
+            ;; IID_IDirectPlayLobbyA {26C66A70-B367-11CF-A024-00AA006157AC}.
+            (local.set $supported (i32.or (local.get $supported)
+              (call $guid_words_equal (local.get $iid_wa)
+                (i32.const 0x26C66A70) (i32.const 0x11CFB367)
+                (i32.const 0xAA0024A0) (i32.const 0xAC576100))))
+            ;; IID_IDirectPlayLobby2A {1BB4AF80-A303-11D0-9C4F-00A0C905425E}.
+            (local.set $supported (i32.or (local.get $supported)
+              (call $guid_words_equal (local.get $iid_wa)
+                (i32.const 0x1BB4AF80) (i32.const 0x11D0A303)
+                (i32.const 0xA0004F9C) (i32.const 0x5E4205C9))))))))
+    (call $dx_query_interface_result
+      (local.get $obj) (local.get $out) (local.get $supported)))
+
+  (func $dplay_query_interface (param $obj i32) (param $iid i32)
+        (param $out i32) (param $family i32) (result i32)
+    (local $iid_wa i32)
+    ;; One guest-to-WASM translation covers every candidate GUID.
+    (if (local.get $iid)
+      (then (local.set $iid_wa (call $g2w (local.get $iid)))))
+    (call $dplay_query_interface_wa
+      (local.get $obj) (local.get $iid_wa)
+      (local.get $out) (local.get $family)))
+
   (func $handle_IDirectPlay3_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (local.get $arg0))))
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (if (local.get $entry)
-      (then (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $dplay_query_interface
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectPlay3_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -8002,12 +8296,8 @@
   ;; that create a lobby object during startup; no actual launched-from-lobby
   ;; state or transport providers are exposed.
   (func $handle_IDirectPlayLobby2_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (local.get $arg0))))
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (if (local.get $entry)
-      (then (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $dplay_query_interface
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectPlayLobby2_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -8333,14 +8623,9 @@
 
   ;; IDirect3D::CreateLight — mirrors the IDirect3D3 pattern (DX type 24, vtbl D3DLIGHT)
   (func $handle_IDirect3D_CreateLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 24) (global.get $DX_VTBL_D3DLIGHT)))
-    (if (i32.eqz (local.get $obj)) (then
-      (global.set $eax (i32.const 0x80004005))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-      (return)))
-    (call $gs32 (local.get $arg1) (local.get $obj))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_create_child
+      (local.get $arg1) (local.get $arg2)
+      (i32.const 24) (global.get $DX_VTBL_D3DLIGHT)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3D::CreateMaterial returns the legacy v1 material layout.
@@ -8358,14 +8643,9 @@
 
   ;; IDirect3D::CreateViewport — DX type 23, vtbl D3DVP3
   (func $handle_IDirect3D_CreateViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 23) (global.get $DX_VTBL_D3DVP3)))
-    (if (i32.eqz (local.get $obj)) (then
-      (global.set $eax (i32.const 0x80004005))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-      (return)))
-    (call $gs32 (local.get $arg1) (local.get $obj))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_create_child
+      (local.get $arg1) (local.get $arg2)
+      (i32.const 23) (global.get $DX_VTBL_D3DVP3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3D::FindDevice — return a concrete legacy RGB device GUID. D3DRM
@@ -8407,14 +8687,9 @@
 
   ;; IDirect3D3::CreateLight(this, lplpDirect3DLight, pUnkOuter) — 3 args
   (func $handle_IDirect3D3_CreateLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 24) (global.get $DX_VTBL_D3DLIGHT)))
-    (if (i32.eqz (local.get $obj)) (then
-      (global.set $eax (i32.const 0x80004005))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-      (return)))
-    (call $gs32 (local.get $arg1) (local.get $obj))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_create_child
+      (local.get $arg1) (local.get $arg2)
+      (i32.const 24) (global.get $DX_VTBL_D3DLIGHT)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3D3::CreateMaterial(this, lplpDirect3DMaterial, pUnkOuter) — 3 args
@@ -8431,14 +8706,9 @@
 
   ;; IDirect3D3::CreateViewport(this, lplpDirect3DViewport, pUnkOuter) — 3 args
   (func $handle_IDirect3D3_CreateViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 23) (global.get $DX_VTBL_D3DVP3)))
-    (if (i32.eqz (local.get $obj)) (then
-      (global.set $eax (i32.const 0x80004005))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-      (return)))
-    (call $gs32 (local.get $arg1) (local.get $obj))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_create_child
+      (local.get $arg1) (local.get $arg2)
+      (i32.const 23) (global.get $DX_VTBL_D3DVP3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3D3::FindDevice(this, lpD3DFDS, lpD3DFDR) — 3 args
@@ -8575,31 +8845,14 @@
 
   ;; QueryInterface(this, riid, ppv) — 3 args
   (func $handle_IDirectDrawFactory_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $iid_dword i32) (local $obj i32)
-    (local.set $iid_dword (call $gl32 (local.get $arg1)))
-    ;; Accept IUnknown (NULL/zero) and IDirectDrawFactory {4FD2A823-...}
-    (if (i32.or (i32.eqz (local.get $iid_dword))
-                (i32.eq (local.get $iid_dword) (i32.const 0x4FD2A823)))
-      (then
-        (call $gs32 (local.get $arg2) (local.get $arg0))
-        ;; AddRef
-        (local.set $obj (call $dx_from_this (local.get $arg0)))
-        (i32.store (i32.add (local.get $obj) (i32.const 4))
-          (i32.add (i32.load (i32.add (local.get $obj) (i32.const 4))) (i32.const 1)))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-        (return)))
-    (call $gs32 (local.get $arg2) (i32.const 0))
-    (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
+    ;; IID_IDirectDrawFactory {4FD2A823-86C8-11D0-8FCA-00C04FD9189D}.
+    (global.set $eax (call $dx_query_interface_single
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0x4FD2A823) (i32.const 0x11D086C8)
+      (i32.const 0xC000CA8F) (i32.const 0x9D18D94F)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; AddRef(this) — 1 arg
-  (func $handle_IDirectDrawFactory_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (global.set $eax (load.field DxObject refcount (local.get $entry)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; Release(this) — 1 arg
   (func $handle_IDirectDrawFactory_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -9163,22 +9416,16 @@
     (global.set $eax (call $d3dim_qi (i32.const 2) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  (func $handle_IDirect3DDevice3_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (global.set $eax (load.field DxObject refcount (local.get $entry)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirect3DDevice3_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
     (call $d3dim_worker_fence)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry))))
-    (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
+    (global.set $eax (call $d3dim_device_release (local.get $arg0)))
+
+
+
+
+
+
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DDevice3_GetCaps — 3 args (incl. this): (this, lpHWDesc, lpHELDesc)
@@ -9193,20 +9440,21 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_AddViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $vp_entry i32)
-    (if (local.get $arg1) (then
-      (local.set $vp_entry (call $dx_from_this (local.get $arg1)))
-      (if (local.get $vp_entry)
-        (then (i32.store (i32.add (local.get $vp_entry) (i32.const 8)) (local.get $arg0))))))
-    (global.set $eax (i32.const 0))
+    (global.set $eax
+      (call $d3dim_device_add_viewport (local.get $arg0) (local.get $arg1)))
+
+
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_DeleteViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax
+      (call $d3dim_device_delete_viewport (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_NextViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax
+      (call $d3dim_device_next_viewport
+        (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   (func $handle_IDirect3DDevice3_EnumTextureFormats (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -9232,11 +9480,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_SetCurrentViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $vp_entry i32)
-    (if (local.get $arg1) (then
-      (local.set $vp_entry (call $dx_from_this (local.get $arg1)))
-      (if (local.get $vp_entry)
-        (then (i32.store (i32.add (local.get $vp_entry) (i32.const 8)) (local.get $arg0))))))
+    ;; The viewport must already belong to this device through AddViewport;
+    ;; the shared setter validates ownership and owns the current reference.
+
+
+
+
     (call $d3dim_set_current_viewport (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -9465,12 +9714,6 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  (func $handle_IDirect3DViewport3_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (global.set $eax (load.field DxObject refcount (local.get $entry)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirect3DViewport3_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $rc i32)
@@ -9597,12 +9840,6 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  (func $handle_IDirect3DLight_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (global.set $eax (load.field DxObject refcount (local.get $entry)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirect3DLight_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $rc i32) (local $buf i32)
@@ -9676,22 +9913,7 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  (func $handle_IDirect3DMaterial3_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (global.set $eax (load.field DxObject refcount (local.get $entry)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  (func $handle_IDirect3DMaterial3_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry))))
-    (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirect3DMaterial3_SetMaterial (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $d3dim_material_set (local.get $arg0) (local.get $arg1))

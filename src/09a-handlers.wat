@@ -803,23 +803,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; 6: GetLocalTime(lpSystemTime) — fills SYSTEMTIME with simulated time
+  ;; 6: GetLocalTime(lpSystemTime) — host wall clock in the local time zone.
   (func $handle_GetLocalTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $secs i32)
-    (local.set $wa (call $g2w (local.get $arg0)))
-    (local.set $secs (i32.div_u (call $host_get_ticks) (i32.const 1000)))
-    (i32.store16 (local.get $wa) (i32.const 2000))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 1))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 4)) (i32.const 6))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 6)) (i32.const 1))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 8))
-      (i32.rem_u (i32.div_u (local.get $secs) (i32.const 3600)) (i32.const 24)))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 10))
-      (i32.rem_u (i32.div_u (local.get $secs) (i32.const 60)) (i32.const 60)))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 12))
-      (i32.rem_u (local.get $secs) (i32.const 60)))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 14))
-      (i32.rem_u (call $host_get_ticks) (i32.const 1000)))
+    (drop (call $host_wall_clock (call $g2w (local.get $arg0)) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -1300,17 +1286,25 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; LoadLibraryExA(lpFileName, hFile, dwFlags). With dwFlags=0 this is
-  ;; exactly LoadLibraryA; the Wise DX-Ball installer uses that documented
-  ;; form to obtain KERNEL32 before probing an optional procedure.
+  ;; LoadLibraryEx adds hFile and dwFlags to the encoding-specific LoadLibrary
+  ;; entry point. Keep the common stack/yield behavior in one place: the base
+  ;; handler consumes return+name, then this consumes the two Ex-only args.
+  (func $handle_LoadLibraryEx_core (param $name i32) (param $hfile i32)
+        (param $flags i32) (param $wide i32)
+    (if (local.get $wide)
+      (then
+        (call $handle_LoadLibraryW
+          (local.get $name) (local.get $hfile) (local.get $flags)
+          (i32.const 0) (i32.const 0) (i32.const 0)))
+      (else
+        (call $handle_LoadLibraryA
+          (local.get $name) (local.get $hfile) (local.get $flags)
+          (i32.const 0) (i32.const 0) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   (func $handle_LoadLibraryExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_LoadLibraryA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
-    ;; LoadLibraryA consumed its return address plus one argument. Consume the
-    ;; two additional Ex arguments without changing its result/yield state.
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
+    (call $handle_LoadLibraryEx_core
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
 
   ;; Win32 DDEML state.  DDE objects are scoped to the instance returned by
   ;; DdeInitialize: passing a freed HSZ to another instance, using a dead
@@ -1651,14 +1645,13 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
-    (local.set $copy (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (local.set $copy (call $guest_strdup (local.get $arg1)))
     (if (i32.eqz (local.get $copy))
       (then
         (call $dde32_set_error (local.get $arg0) (i32.const 0x4008))
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
-    (call $guest_strcpy (local.get $copy) (local.get $arg1))
     (local.set $handle (global.get $dde32_next_hsz))
     (global.set $dde32_next_hsz
       (i32.add (global.get $dde32_next_hsz) (i32.const 1)))
@@ -2530,22 +2523,40 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg + ret
   )
 
-  ;; 24: _lread — STUB: unimplemented
+  ;; 24: _lread
   (func $handle__lread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; _lread(hFile, lpBuffer, uBytes) — 3 args stdcall
-    ;; host_fs_read_file(handle, bufferWA, nBytes, lpBytesRead_WA) -> bool
-    ;; We use a scratch area on the stack for bytesRead
+    ;; This is the one implementation shared by _hread and mmioRead below.
+    ;; A successful zero-byte read is EOF; a host failure is HFILE_ERROR (-1).
+    ;; Provider-backed files park and retry this same thunk instead of turning
+    ;; a not-yet-resident chunk into false EOF.
     (local $bytes_read_ga i32) (local $bytes_read_wa i32)
+    (local $read_ok i32) (local $pending i32)
     (local.set $bytes_read_ga (i32.sub (global.get $esp) (i32.const 4)))
     (local.set $bytes_read_wa (call $g2w (local.get $bytes_read_ga)))
     (i32.store (local.get $bytes_read_wa) (i32.const 0))
-    (drop (call $host_fs_read_file
+    (local.set $read_ok (call $host_fs_read_file
       (local.get $arg0)
       (local.get $arg1)
       (local.get $arg2)
       (local.get $bytes_read_ga)))
-    (global.set $eax (i32.load (local.get $bytes_read_wa)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args + ret
+    (if (local.get $read_ok)
+      (then (global.set $eax (i32.load (local.get $bytes_read_wa))))
+      (else
+        (local.set $pending (call $host_fs_read_pending))
+        (if (i32.eq (local.get $pending) (i32.const 1))
+          (then
+            ;; The Win16 bridge owns its Pascal frame and parks it after the
+            ;; temporary 32-bit frame has been restored. Redirecting that
+            ;; scratch frame here would make $win16_call32_end trap.
+            (if (global.get $win16_in_call32)
+              (then (global.set $eax (i32.const 0)))
+              (else (call $io_block (i32.const 16)))))
+          (else
+            (global.set $eax (i32.const -1))
+            (if (local.get $pending)
+              (then (global.set $last_error (i32.const 30)))))))) ;; ERROR_READ_FAULT
   )
 
   ;; VkKeyScanA(CHAR ch) → SHORT. The low byte is the virtual-key code and
@@ -2710,19 +2721,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 938: _hread — identical to _lread
+  ;; 938: _hread — the LONG-count spelling of _lread.
   (func $handle__hread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $bytes_read_ga i32) (local $bytes_read_wa i32)
-    (local.set $bytes_read_ga (i32.sub (global.get $esp) (i32.const 4)))
-    (local.set $bytes_read_wa (call $g2w (local.get $bytes_read_ga)))
-    (i32.store (local.get $bytes_read_wa) (i32.const 0))
-    (drop (call $host_fs_read_file
-      (local.get $arg0)
-      (local.get $arg1)
-      (local.get $arg2)
-      (local.get $bytes_read_ga)))
-    (global.set $eax (i32.load (local.get $bytes_read_wa)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (if (i32.lt_s (local.get $arg2) (i32.const 0))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $handle__lread
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 25: Sleep — STUB: unimplemented
@@ -3158,6 +3166,12 @@
   ;; NULL reserves return 64KB-granularity bases; commits are page-aligned.
   (func $handle_VirtualAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $size i32) (local $new_top i32)
+    (if (i32.eqz (call $guest_page_protection_valid (local.get $arg3)))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; Round size up to page boundary
     (local.set $size (i32.and (i32.add (local.get $arg1) (i32.const 0xFFF)) (i32.const 0xFFFFF000)))
     (if (i32.eqz (local.get $size))
@@ -3170,7 +3184,8 @@
         (if (i32.ge_u (local.get $arg0) (global.get $VIRTUAL_ALLOC_MIN))
           (then
             ;; Commit into a sparse high guest reserve.
-            (global.set $eax (call $virtual_map_commit (local.get $arg0) (local.get $size))))
+            (global.set $eax (call $virtual_map_commit_protect
+              (local.get $arg0) (local.get $size) (local.get $arg3))))
           (else
             ;; MEM_COMMIT at an existing low address. Refuse commits that would
             ;; map into emulator-private decoded-code/cache memory.
@@ -3188,7 +3203,8 @@
           (then (global.set $eax (i32.const 0)))
           (else
             (if (i32.and (local.get $arg2) (i32.const 0x1000))
-              (then (global.set $eax (call $virtual_map_commit (local.get $new_top) (local.get $size))))
+              (then (global.set $eax (call $virtual_map_commit_protect
+                (local.get $new_top) (local.get $size) (local.get $arg3))))
               (else (global.set $eax (local.get $new_top))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
@@ -4674,9 +4690,28 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; A local WND_RECORDS entry, the permanent desktop, or a top-level window
+  ;; owned by another process through the shared renderer are the three valid
+  ;; HWND domains. Keep this predicate shared so geometry APIs and IsWindow do
+  ;; not drift on cross renderer-only windows.
+  (func $window_handle_valid (param $hwnd i32) (result i32)
+    (i32.and
+      (i32.ne (local.get $hwnd) (i32.const 0))
+      (i32.or
+        (i32.eq (local.get $hwnd) (i32.const 0x10000))
+        (i32.or
+          (i32.ge_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
+          (call $host_get_window_info (local.get $hwnd) (i32.const 4))))))
+
   ;; 93: GetWindowRect
   (func $handle_GetWindowRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; GetWindowRect(hwnd, lpRect) — fills RECT with screen coords
+    (if (i32.eqz (call $window_handle_valid (local.get $arg0)))
+      (then
+        (global.set $last_error (i32.const 1400)) ;; ERROR_INVALID_WINDOW_HANDLE
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (call $host_get_window_rect (local.get $arg0) (call $g2w (local.get $arg1)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
@@ -9806,16 +9841,9 @@
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
-  ;; LoadLibraryExW(lpFileName, hFile, dwFlags). The flags select how Windows
-  ;; exposes the mapped image, but do not change our module/resource lookup.
-  ;; Preserve LoadLibraryW's result (and possible DLL-load yield), then consume
-  ;; the two additional Ex arguments.
   (func $handle_LoadLibraryExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_LoadLibraryW
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
+    (call $handle_LoadLibraryEx_core
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
 
   ;; 301: GetStartupInfoW — zero-fill the struct
   (func $handle_GetStartupInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -10060,11 +10088,7 @@
   ;; HWND_BROADCAST (-1) is unsigned-greater than 0x10000, and treating it as a
   ;; window leaves old InstallShield splash pumps waiting for it forever.
   (func $handle_IsWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.and
-      (i32.ne (local.get $arg0) (i32.const 0))
-      (i32.or
-        (i32.eq (local.get $arg0) (i32.const 0x10000))
-        (i32.or (i32.ge_s (call $wnd_table_find (local.get $arg0)) (i32.const 0)) (call $host_get_window_info (local.get $arg0) (i32.const 4))))))
+    (global.set $eax (call $window_handle_valid (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IsWindowUnicode(hwnd) reflects whether the HWND was created through a W
@@ -11620,7 +11644,8 @@ HookEx — no next hook in chain, return 0
     (drop (local.get $arg3))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
-    (global.set $eax (call $clipboard_register_format_w (local.get $arg0)))
+    (global.set $eax
+      (call $clipboard_register_format (local.get $arg0) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 399: CopyRect(lprcDst, lprcSrc) → BOOL — 2 args stdcall
@@ -15000,14 +15025,9 @@ HookEx — no next hook in chain, return 0
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 514: GetSystemTimeAsFileTime(lpFileTime) — writes 8-byte FILETIME
+  ;; 514: GetSystemTimeAsFileTime(lpFileTime) — exact UTC wall-clock FILETIME.
   (func $handle_GetSystemTimeAsFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg0)))
-    ;; Base: 2000-01-01 = 0x01BF53EB256D4000, add ticks*10000 (100ns units)
-    (i32.store (local.get $wa)
-      (i32.add (i32.const 0x256D4000) (i32.mul (call $host_get_ticks) (i32.const 10000))))
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x01BF53EB))
+    (drop (call $host_wall_clock (call $g2w (local.get $arg0)) (i32.const 2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -15016,23 +15036,9 @@ HookEx — no next hook in chain, return 0
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 516: GetSystemTime(lpSystemTime) — fills SYSTEMTIME with simulated time
+  ;; 516: GetSystemTime(lpSystemTime) — host wall clock in UTC.
   (func $handle_GetSystemTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $secs i32)
-    (local.set $wa (call $g2w (local.get $arg0)))
-    (local.set $secs (i32.div_u (call $host_get_ticks) (i32.const 1000)))
-    (i32.store16 (local.get $wa) (i32.const 2000))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 1))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 4)) (i32.const 6))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 6)) (i32.const 1))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 8))
-      (i32.rem_u (i32.div_u (local.get $secs) (i32.const 3600)) (i32.const 24)))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 10))
-      (i32.rem_u (i32.div_u (local.get $secs) (i32.const 60)) (i32.const 60)))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 12))
-      (i32.rem_u (local.get $secs) (i32.const 60)))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 14))
-      (i32.rem_u (call $host_get_ticks) (i32.const 1000)))
+    (drop (call $host_wall_clock (call $g2w (local.get $arg0)) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -15323,20 +15329,42 @@ HookEx — no next hook in chain, return 0
   )
 
   ;; VirtualProtect(lpAddress, dwSize, flNewProtect, lpflOldProtect).
-  ;; The interpreter's linear memory has no host page-permission distinction,
-  ;; so a valid committed/direct guest range is already readable, writable,
-  ;; and executable. Publish that effective prior protection and accept the
-  ;; requested mode; generated/self-modifying code is handled by cache guards.
+  ;; Sparse VirtualAlloc pages retain their exact PAGE_* value in packed PTEs.
+  ;; Validate the complete page-rounded range before changing any page and
+  ;; publish the first page's actual previous value. Direct image/heap pages
+  ;; remain permissive until their section/page metadata joins this model.
   (func $handle_VirtualProtect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $old i32) (local $old_wa i32)
     (if (i32.or
           (i32.eqz (local.get $arg0))
-          (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg3))))
+          (i32.or
+            (i32.eqz (local.get $arg1))
+            (i32.or
+              (i32.eqz (local.get $arg3))
+              (i32.eqz (call $guest_page_protection_valid (local.get $arg2))))))
       (then
         (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
         (global.set $eax (i32.const 0)))
       (else
-        (call $gs32 (local.get $arg3) (i32.const 0x40)) ;; PAGE_EXECUTE_READWRITE
-        (global.set $eax (i32.const 1))))
+        (local.set $old_wa (call $g2w (local.get $arg3)))
+        (if (i32.eq (local.get $old_wa) (global.get $NULL_SENTINEL))
+          (then
+            (global.set $last_error (i32.const 87))
+            (global.set $eax (i32.const 0)))
+          (else
+            (if (i32.ge_u (local.get $arg0) (global.get $VIRTUAL_ALLOC_MIN))
+              (then
+                (local.set $old (call $virtual_map_protect
+                  (local.get $arg0) (local.get $arg1) (local.get $arg2))))
+              (else
+                (local.set $old (i32.const 0x40))))
+            (if (i32.eq (local.get $old) (i32.const -1))
+              (then
+                (global.set $last_error (i32.const 487)) ;; ERROR_INVALID_ADDRESS
+                (global.set $eax (i32.const 0)))
+              (else
+                (i32.store (local.get $old_wa) (local.get $old))
+                (global.set $eax (i32.const 1))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -15592,68 +15620,69 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 545: GetSystemDirectoryA(lpBuffer, uSize) — 2 args stdcall
+  (func $fixed_windows_path_char (param $i i32) (result i32)
+    (local $c i32)
+    (if (i32.eq (local.get $i) (i32.const 0)) (then (local.set $c (i32.const 67))))  ;; C
+    (if (i32.eq (local.get $i) (i32.const 1)) (then (local.set $c (i32.const 58))))  ;; :
+    (if (i32.eq (local.get $i) (i32.const 2)) (then (local.set $c (i32.const 92))))  ;; \
+    (if (i32.eq (local.get $i) (i32.const 3)) (then (local.set $c (i32.const 87))))  ;; W
+    (if (i32.eq (local.get $i) (i32.const 4)) (then (local.set $c (i32.const 73))))  ;; I
+    (if (i32.eq (local.get $i) (i32.const 5)) (then (local.set $c (i32.const 78))))  ;; N
+    (if (i32.eq (local.get $i) (i32.const 6)) (then (local.set $c (i32.const 68))))  ;; D
+    (if (i32.eq (local.get $i) (i32.const 7)) (then (local.set $c (i32.const 79))))  ;; O
+    (if (i32.eq (local.get $i) (i32.const 8)) (then (local.set $c (i32.const 87))))  ;; W
+    (if (i32.eq (local.get $i) (i32.const 9)) (then (local.set $c (i32.const 83))))  ;; S
+    (if (i32.eq (local.get $i) (i32.const 10)) (then (local.set $c (i32.const 92)))) ;; \
+    (if (i32.eq (local.get $i) (i32.const 11)) (then (local.set $c (i32.const 83)))) ;; S
+    (if (i32.eq (local.get $i) (i32.const 12)) (then (local.set $c (i32.const 89)))) ;; Y
+    (if (i32.eq (local.get $i) (i32.const 13)) (then (local.set $c (i32.const 83)))) ;; S
+    (if (i32.eq (local.get $i) (i32.const 14)) (then (local.set $c (i32.const 84)))) ;; T
+    (if (i32.eq (local.get $i) (i32.const 15)) (then (local.set $c (i32.const 69)))) ;; E
+    (if (i32.eq (local.get $i) (i32.const 16)) (then (local.set $c (i32.const 77)))) ;; M
+    (local.get $c))
+
+  ;; The emulated Win98 installation has one fixed Windows directory and its
+  ;; SYSTEM child. Both APIs share the same TCHAR-count and truncation rules.
+  (func $get_fixed_windows_directory (param $buf_g i32) (param $size i32)
+        (param $wide i32) (param $system i32) (result i32)
+    (local $required i32) (local $length i32)
+    (local $base_wa i32) (local $at_wa i32) (local $i i32) (local $c i32)
+    (local.set $required
+      (select (i32.const 18) (i32.const 11) (local.get $system)))
+    (local.set $length (i32.sub (local.get $required) (i32.const 1)))
+    (if (i32.or (i32.eqz (local.get $buf_g))
+                (i32.lt_u (local.get $size) (local.get $required)))
+      (then (return (local.get $required))))
+    (local.set $base_wa (call $g2w (local.get $buf_g)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $required)))
+      (local.set $at_wa (i32.add (local.get $base_wa)
+        (i32.shl (local.get $i) (local.get $wide))))
+      (local.set $c
+        (if (result i32) (i32.lt_u (local.get $i) (local.get $length))
+          (then (call $fixed_windows_path_char (local.get $i)))
+          (else (i32.const 0))))
+      (if (local.get $wide)
+        (then (i32.store16 (local.get $at_wa) (local.get $c)))
+        (else (i32.store8 (local.get $at_wa) (local.get $c))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (local.get $length))
+
   (func $handle_GetSystemDirectoryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32)
-    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
-                 (i32.ge_u (local.get $arg1) (i32.const 18)))
-      (then
-        (local.set $dst (call $g2w (local.get $arg0)))
-        ;; Write "C:\WINDOWS\SYSTEM" (18 chars including null)
-        (i32.store (local.get $dst) (i32.const 0x575c3a43))          ;; C:\W
-        (i32.store (i32.add (local.get $dst) (i32.const 4)) (i32.const 0x4f444e49))   ;; INDO
-        (i32.store (i32.add (local.get $dst) (i32.const 8)) (i32.const 0x535c5357))   ;; WS\S
-        (i32.store (i32.add (local.get $dst) (i32.const 12)) (i32.const 0x45545359))  ;; YSTE
-        (i32.store16 (i32.add (local.get $dst) (i32.const 16)) (i32.const 0x004d))    ;; M\0
-        (global.set $eax (i32.const 17)))
-      (else
-        ;; Required size includes the terminator when the buffer is short.
-        (global.set $eax (i32.const 18))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
+    (global.set $eax (call $get_fixed_windows_directory
+      (local.get $arg0) (local.get $arg1) (i32.const 0) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; GetSystemDirectoryW(lpBuffer, uSize) — UTF-16 counterpart.  On a short
-  ;; buffer Win32 returns the required size including the terminator and does
-  ;; not publish a partial path; on success it excludes the terminator.
   (func $handle_GetSystemDirectoryW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32)
-    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
-                 (i32.ge_u (local.get $arg1) (i32.const 18)))
-      (then
-        (local.set $dst (call $g2w (local.get $arg0)))
-        ;; UTF-16LE "C:\\WINDOWS\\SYSTEM\0".
-        (i32.store (local.get $dst) (i32.const 0x003a0043))
-        (i32.store offset=4 (local.get $dst) (i32.const 0x0057005c))
-        (i32.store offset=8 (local.get $dst) (i32.const 0x004e0049))
-        (i32.store offset=12 (local.get $dst) (i32.const 0x004f0044))
-        (i32.store offset=16 (local.get $dst) (i32.const 0x00530057))
-        (i32.store offset=20 (local.get $dst) (i32.const 0x0053005c))
-        (i32.store offset=24 (local.get $dst) (i32.const 0x00530059))
-        (i32.store offset=28 (local.get $dst) (i32.const 0x00450054))
-        (i32.store offset=32 (local.get $dst) (i32.const 0x0000004d))
-        (global.set $eax (i32.const 17)))
-      (else
-        (global.set $eax (i32.const 18))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
+    (global.set $eax (call $get_fixed_windows_directory
+      (local.get $arg0) (local.get $arg1) (i32.const 1) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 813: GetWindowsDirectoryA(lpBuffer, uSize) → length
   (func $handle_GetWindowsDirectoryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32)
-    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
-                 (i32.ge_u (local.get $arg1) (i32.const 11)))
-      (then
-        (local.set $dst (call $g2w (local.get $arg0)))
-        ;; Write "C:\WINDOWS" (10 chars + null)
-        (i32.store (local.get $dst) (i32.const 0x575c3a43))          ;; C:\W
-        (i32.store (i32.add (local.get $dst) (i32.const 4)) (i32.const 0x4f444e49))   ;; INDO
-        (i32.store16 (i32.add (local.get $dst) (i32.const 8)) (i32.const 0x5357))     ;; WS
-        (i32.store8 (i32.add (local.get $dst) (i32.const 10)) (i32.const 0))          ;; NUL
-        (global.set $eax (i32.const 10)))
-      (else
-        (global.set $eax (i32.const 11))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
+    (global.set $eax (call $get_fixed_windows_directory
+      (local.get $arg0) (local.get $arg1) (i32.const 0) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; GetSystemWindowsDirectoryA was introduced for terminal-server-aware
   ;; callers. Win98 has one Windows directory, so it is the same path and
@@ -15666,23 +15695,9 @@ HookEx — no next hook in chain, return 0
   ;; GetWindowsDirectoryW(lpBuffer, uSize) — UTF-16 counterpart with the
   ;; Win32 required-size contract used by Unicode setup runtimes.
   (func $handle_GetWindowsDirectoryW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32)
-    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
-                 (i32.ge_u (local.get $arg1) (i32.const 11)))
-      (then
-        (local.set $dst (call $g2w (local.get $arg0)))
-        ;; UTF-16LE "C:\WINDOWS\0".
-        (i32.store (local.get $dst) (i32.const 0x003a0043))
-        (i32.store offset=4 (local.get $dst) (i32.const 0x0057005c))
-        (i32.store offset=8 (local.get $dst) (i32.const 0x004e0049))
-        (i32.store offset=12 (local.get $dst) (i32.const 0x004f0044))
-        (i32.store offset=16 (local.get $dst) (i32.const 0x00530057))
-        (i32.store16 offset=20 (local.get $dst) (i32.const 0))
-        (global.set $eax (i32.const 10)))
-      (else
-        (global.set $eax (i32.const 11))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
+    (global.set $eax (call $get_fixed_windows_directory
+      (local.get $arg0) (local.get $arg1) (i32.const 1) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 546: GetVolumeInformationW — the same volume GetVolumeInformationA
   ;; describes, with its two strings written as UTF-16.
@@ -15920,12 +15935,9 @@ SetColorAdjustment — validate and copy complete per-DC state.
 
   ;; 603: GetCharWidthW(hdc, first, last, widths) — UTF-16 range width query.
   (func $handle_GetCharWidthW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_font_char_widths
+    (call $handle_GetCharWidth32W
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (if (result i32) (local.get $arg3)
-        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))
-      (i32.const 1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 606: GetTextFaceW(hdc, cch, face) — UTF-16 variant of GetTextFaceA.
@@ -18206,108 +18218,78 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; CharLowerA(lpsz) — mirror of CharUpperA.
-  (func $handle_CharLowerA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $p i32) (local $c i32)
-    (global.set $eax (local.get $arg0))
-    (if (i32.eqz (i32.and (local.get $arg0) (i32.const 0xffff0000)))
+  ;; CharLower accepts either a character in the low word or a mutable,
+  ;; NUL-terminated string. Translate a string pointer once, then vary only
+  ;; the character width between A and W.
+  (func $char_lower (param $value i32) (param $wide i32) (result i32)
+    (local $p_wa i32) (local $c i32) (local $lower i32) (local $step i32)
+    (if (i32.eqz (i32.and (local.get $value) (i32.const 0xffff0000)))
       (then
-        (local.set $c (i32.and (local.get $arg0) (i32.const 0xff)))
-        (if (i32.and
-              (i32.ge_u (local.get $c) (i32.const 0x41))
-              (i32.le_u (local.get $c) (i32.const 0x5a)))
-          (then (global.set $eax (i32.add (local.get $c) (i32.const 0x20))))))
-      (else
-        (local.set $p (call $g2w (local.get $arg0)))
-        (block $done (loop $lp
-          (local.set $c (i32.load8_u (local.get $p)))
-          (br_if $done (i32.eqz (local.get $c)))
-          (if (i32.and
-                (i32.ge_u (local.get $c) (i32.const 0x41))
-                (i32.le_u (local.get $c) (i32.const 0x5a)))
-            (then (i32.store8 (local.get $p) (i32.add (local.get $c) (i32.const 0x20)))))
-          (local.set $p (i32.add (local.get $p) (i32.const 1)))
-          (br $lp)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; CharLowerW(lpsz) — Unicode counterpart of CharLowerA. Win32 also accepts
-  ;; a single WCHAR encoded directly in the low word; otherwise lowercase the
-  ;; NUL-terminated UTF-16 string in place. Preserve non-ASCII code units.
-  (func $handle_CharLowerW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $p i32) (local $c i32)
-    (global.set $eax (local.get $arg0))
-    (if (i32.eqz (i32.and (local.get $arg0) (i32.const 0xffff0000)))
-      (then
-        (local.set $c (i32.and (local.get $arg0) (i32.const 0xffff)))
-        (if (i32.and
-              (i32.ge_u (local.get $c) (i32.const 0x41))
-              (i32.le_u (local.get $c) (i32.const 0x5a)))
-          (then (global.set $eax (i32.add (local.get $c) (i32.const 0x20))))))
-      (else
-        (local.set $p (local.get $arg0))
-        (block $done (loop $lp
-          (local.set $c (call $gl_char (local.get $p) (i32.const 1)))
-          (br_if $done (i32.eqz (local.get $c)))
-          (if (i32.and
-                (i32.ge_u (local.get $c) (i32.const 0x41))
-                (i32.le_u (local.get $c) (i32.const 0x5a)))
-            (then (call $store_char (local.get $p)
-              (i32.add (local.get $c) (i32.const 0x20)) (i32.const 1))))
-          (local.set $p (i32.add (local.get $p) (i32.const 2)))
-          (br $lp)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; CharLowerBuffA(lpsz, cchLength) — lowercase exactly cchLength ANSI bytes
-  ;; in place. Returns the number of bytes processed.
-  (func $handle_CharLowerBuffA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $p i32) (local $i i32) (local $c i32)
-    (if (i32.eqz (local.get $arg0))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-        (return)))
-    (local.set $p (call $g2w (local.get $arg0)))
+        (local.set $c (i32.and (local.get $value)
+          (if (result i32) (local.get $wide)
+            (then (i32.const 0xffff)) (else (i32.const 0xff)))))
+        (return (call $tolower (local.get $c)))))
+    (local.set $p_wa (call $g2w (local.get $value)))
+    (local.set $step (i32.shl (i32.const 1) (local.get $wide)))
     (block $done (loop $lp
-      (br_if $done (i32.ge_u (local.get $i) (local.get $arg1)))
-      (local.set $c (i32.load8_u (i32.add (local.get $p) (local.get $i))))
-      (if (i32.and
-            (i32.ge_u (local.get $c) (i32.const 0x41))
-            (i32.le_u (local.get $c) (i32.const 0x5a)))
+      (local.set $c
+        (if (result i32) (local.get $wide)
+          (then (i32.load16_u (local.get $p_wa)))
+          (else (i32.load8_u (local.get $p_wa)))))
+      (br_if $done (i32.eqz (local.get $c)))
+      (local.set $lower (call $tolower (local.get $c)))
+      (if (i32.ne (local.get $lower) (local.get $c))
         (then
-          (i32.store8
-            (i32.add (local.get $p) (local.get $i))
-            (i32.add (local.get $c) (i32.const 0x20)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (if (local.get $wide)
+            (then (i32.store16 (local.get $p_wa) (local.get $lower)))
+            (else (i32.store8 (local.get $p_wa) (local.get $lower))))))
+      (local.set $p_wa (i32.add (local.get $p_wa) (local.get $step)))
       (br $lp)))
-    (global.set $eax (local.get $arg1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
+    (local.get $value))
 
-  ;; CharLowerBuffW(lpsz, cchLength) — lowercase exactly cchLength UTF-16
-  ;; code units in place. As with the ANSI form, an embedded NUL does not end
-  ;; the counted buffer and the return value is the requested character count.
-  (func $handle_CharLowerBuffW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $i i32) (local $c i32) (local $at i32)
-    (if (i32.eqz (local.get $arg0))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-        (return)))
+  (func $handle_CharLowerA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $char_lower (local.get $arg0) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_CharLowerW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $char_lower (local.get $arg0) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; CharLowerBuff is count-delimited and therefore processes embedded NULs.
+  ;; cchLength is a character count for both encodings, not a byte count for W.
+  (func $char_lower_buff (param $buf_g i32) (param $length i32)
+        (param $wide i32) (result i32)
+    (local $base_wa i32) (local $at_wa i32)
+    (local $i i32) (local $c i32) (local $lower i32)
+    (if (i32.eqz (local.get $buf_g)) (then (return (i32.const 0))))
+    (local.set $base_wa (call $g2w (local.get $buf_g)))
     (block $done (loop $lp
-      (br_if $done (i32.ge_u (local.get $i) (local.get $arg1)))
-      (local.set $at (i32.add (local.get $arg0) (i32.shl (local.get $i) (i32.const 1))))
-      (local.set $c (call $gl16 (local.get $at)))
-      (if (i32.and
-            (i32.ge_u (local.get $c) (i32.const 0x41))
-            (i32.le_u (local.get $c) (i32.const 0x5a)))
-        (then (call $gs16 (local.get $at) (i32.add (local.get $c) (i32.const 0x20)))))
+      (br_if $done (i32.ge_u (local.get $i) (local.get $length)))
+      (local.set $at_wa (i32.add (local.get $base_wa)
+        (i32.shl (local.get $i) (local.get $wide))))
+      (local.set $c
+        (if (result i32) (local.get $wide)
+          (then (i32.load16_u (local.get $at_wa)))
+          (else (i32.load8_u (local.get $at_wa)))))
+      (local.set $lower (call $tolower (local.get $c)))
+      (if (i32.ne (local.get $lower) (local.get $c))
+        (then
+          (if (local.get $wide)
+            (then (i32.store16 (local.get $at_wa) (local.get $lower)))
+            (else (i32.store8 (local.get $at_wa) (local.get $lower))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
-    (global.set $eax (local.get $arg1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
+    (local.get $length))
+
+  (func $handle_CharLowerBuffA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $char_lower_buff
+      (local.get $arg0) (local.get $arg1) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_CharLowerBuffW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $char_lower_buff
+      (local.get $arg0) (local.get $arg1) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; CharUpperBuffA(lpsz, cchLength) — uppercase cchLength characters in
   ;; place and return how many were converted. Unlike CharUpperA this does not

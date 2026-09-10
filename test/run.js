@@ -19,7 +19,11 @@ const {
 const { seedExeImage, win16FileCandidates, residentWin16Module } = require('../lib/vfs-seed');
 const { expandIncludePatterns, guestPathInTree } = require('../lib/vfs-host-files');
 const { saveVfsToHost } = require('../lib/vfs-export');
-const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
+const {
+  decodeMfcCString,
+  g2w: translateGuest,
+  readSyncObjectName,
+} = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
 const { APPS, resolveCopySuperops } = require('../lib/apps');
@@ -476,6 +480,10 @@ const TRACE_CALLSTACK_DEPTH = TRACE_CALLSTACK_RAW && TRACE_CALLSTACK_RAW.include
 const FAULT_NULL_RAW = args.find(a => a === '--fault-null' || a.startsWith('--fault-null='));
 const FAULT_NULL = !FAULT_NULL_RAW ? 0
   : (FAULT_NULL_RAW.split('=')[1] === 'stop' ? 2 : 1);
+// Offline census mode requires the separately built instrumented artifact from
+// tools/build-page-translation-stats.js. The canonical WASM has no counter
+// branch in $g2w, so profiling cannot perturb ordinary production runs.
+const GUEST_PAGE_STATS = hasFlag('guest-page-stats');
 const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break at address(es)
 const BREAK_ONCE = hasFlag('break-once'); // --break-once: do NOT re-arm bp after first hit (so prev_eip stays the true caller)
 const TRACE_AT = getArg('trace-at', null); // --trace-at=0xADDR: log regs each time EIP hits addr (non-interactive)
@@ -3304,26 +3312,17 @@ async function main() {
   h.exit_thread = (exitCode) => threadManager.exitThread(exitCode);
   h.get_exit_code_thread = (handle) => threadManager.getExitCodeThread(handle);
   h.terminate_thread = (handle, exitCode) => threadManager.terminateThread(handle, exitCode);
-  const readSyncObjectName = (nameWa, wide) => {
-    if (!nameWa) return '';
-    const dv = new DataView(memory.buffer);
-    let name = '';
-    for (let i = 0; i < 512; i++) {
-      const ch = (wide & 1)
-        ? dv.getUint16(nameWa + i * 2, true)
-        : dv.getUint8(nameWa + i);
-      if (!ch) break;
-      name += String.fromCharCode(ch);
-    }
-    return name;
-  };
   const win32ThreadId = () => ((ctx.threadId | 0) + 1) | 0;
-  h.create_event = (manualReset, initialState, nameWa, wide) => (wide & 2)
-    ? threadManager.createMutex(initialState, readSyncObjectName(nameWa, wide), win32ThreadId())
-    : threadManager.createEvent(manualReset, initialState, readSyncObjectName(nameWa, wide));
-  h.open_event = (nameWa, wide) => (wide & 2)
-    ? threadManager.openMutex(readSyncObjectName(nameWa, wide))
-    : threadManager.openEvent(readSyncObjectName(nameWa, wide));
+  h.create_event = (manualReset, initialState, nameWa, wide) => {
+    const name = readSyncObjectName(memory, nameWa, wide);
+    return (wide & 2)
+      ? threadManager.createMutex(initialState, name, win32ThreadId())
+      : threadManager.createEvent(manualReset, initialState, name);
+  };
+  h.open_event = (nameWa, wide) => {
+    const name = readSyncObjectName(memory, nameWa, wide);
+    return (wide & 2) ? threadManager.openMutex(name) : threadManager.openEvent(name);
+  };
   h.set_event = (handle) => ((handle >>> 0) & 0x80000000)
     ? threadManager.releaseMutex((handle >>> 0) & 0x7fffffff, win32ThreadId())
     : threadManager.setEvent(handle);
@@ -3497,6 +3496,28 @@ async function main() {
 
   const instance = await WebAssembly.instantiate(wasmModule, imports);
   ctx.exports = instance.exports;
+  if (GUEST_PAGE_STATS) {
+    if (!instance.exports.reset_guest_page_stats || !instance.exports.get_guest_page_stat) {
+      throw new Error('--guest-page-stats requires the offline artifact from ' +
+        '`node tools/build-page-translation-stats.js`');
+    }
+    instance.exports.reset_guest_page_stats();
+  }
+  let guestPageStatsReported = false;
+  const reportGuestPageStats = () => {
+    if (!GUEST_PAGE_STATS || guestPageStatsReported) return;
+    guestPageStatsReported = true;
+    const { STAT_NAMES } = require('../tools/build-page-translation-stats.js');
+    const values = STAT_NAMES.map((_, i) => instance.exports.get_guest_page_stat(i) >>> 0);
+    const stats = Object.fromEntries(STAT_NAMES.map((name, i) => [name, values[i]]));
+    const packedTotal = stats.packed_hit + stats.packed_miss;
+    const pct = (n, d) => d ? `${(n * 100 / d).toFixed(2)}%` : 'n/a';
+    console.log('\nGuest page translation stats (packed):');
+    console.log(`  direct=${stats.direct} dib=${stats.dib}`);
+    console.log(`  packed hit=${stats.packed_hit} miss=${stats.packed_miss} ` +
+      `hit-rate=${pct(stats.packed_hit, packedTotal)}`);
+    console.log(`  affine span packed hit=${stats.span_packed_hit} miss=${stats.span_packed_miss}`);
+  };
   // A run that is stopped from outside still knows things worth having. The
   // two-process tests kill both emulators when their checks are done, and
   // without this the --count summary -- the whole point of the flag -- was
@@ -4724,6 +4745,8 @@ async function main() {
     console.log(`[fault] --fault-null armed (mode=${FAULT_NULL}: `
       + `${FAULT_NULL === 2 ? 'log and trap' : 'log and continue'})`);
   }
+  // Exclude PE/DLL load from the offline translation-path census.
+  if (GUEST_PAGE_STATS) instance.exports.reset_guest_page_stats();
   if (TRACE_WIN16_DDE && instance.exports.set_win16_dde_trace) {
     instance.exports.set_win16_dde_trace(1);
   }
@@ -9077,6 +9100,7 @@ if (VERBOSE) {
   console.log(`\nStats: ${apiCount} API calls, ${batchesRun} batches`
     + (MAX_SECONDS ? ` in ${MAX_SECONDS}s (${(batchesRun / MAX_SECONDS).toFixed(0)} batches/s)` : ''));
   reportMmx();
+  reportGuestPageStats();
 
   // --reg-export writes what the run left in the registry/INI store, which is
   // what a browser tab would have kept in localStorage. Feed it back with

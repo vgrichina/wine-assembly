@@ -33,6 +33,11 @@ node tools/check-region-decls.js --strict
 # owners must contain both exact symbols. Line-number owners are rejected.
 node tools/check-region-decls.js --check-owners
 node tools/aw-census.js --check
+# Exact WAT clones are a ratchet just like independent A/W implementations:
+# an existing duplicate may disappear, but a new handler/helper must share the
+# old body rather than copying it under another name. Params and locals are
+# alpha-renamed, so cosmetic identifier changes cannot evade the census.
+node tools/wat-dup-census.js --check
 # Raw address literals inside declared regions are a RATCHET: the count per file
 # may fall (bank it with --record), never rise, and a region marked converted
 # must stay at zero. This is what keeps the symbolization wave from regressing.

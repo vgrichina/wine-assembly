@@ -7,7 +7,7 @@
 
 const assert = require('assert');
 const fs = require('fs');
-const http = require('http');
+const { startStaticServer: startSharedStaticServer } = require('./static-server');
 const os = require('os');
 const path = require('path');
 const puppeteer = require('puppeteer');
@@ -26,30 +26,7 @@ if (!fs.existsSync(CHROME) || !fs.existsSync(EXE)) {
 }
 
 function startServer() {
-  return new Promise((resolve, reject) => {
-    const root = fs.realpathSync(ROOT);
-    const server = http.createServer((request, response) => {
-      let pathname;
-      try { pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname); }
-      catch (_) { response.writeHead(400); response.end(); return; }
-      if (pathname === '/') pathname = '/index.html';
-      const file = path.normalize(path.join(root, pathname));
-      if (file !== root && !file.startsWith(root + path.sep)) {
-        response.writeHead(403); response.end(); return;
-      }
-      fs.readFile(file, (error, bytes) => {
-        if (error) { response.writeHead(404); response.end(); return; }
-        const ext = path.extname(file).toLowerCase();
-        const type = ext === '.js' ? 'text/javascript' : ext === '.wasm'
-          ? 'application/wasm' : ext === '.json' ? 'application/json'
-            : ext === '.html' ? 'text/html' : 'application/octet-stream';
-        response.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
-        response.end(bytes);
-      });
-    });
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve(server));
-  });
+  return startSharedStaticServer({ root: ROOT });
 }
 
 async function gameFrame(page) {

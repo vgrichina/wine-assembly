@@ -2,45 +2,16 @@
 
 const assert = require('assert');
 const fs = require('fs');
-const http = require('http');
 const os = require('os');
 const path = require('path');
 const puppeteer = require('puppeteer');
+const { startStaticServer } = require('./static-server');
 
 const ROOT = path.join(__dirname, '..');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
-function mime(file) {
-  if (file.endsWith('.html')) return 'text/html';
-  if (file.endsWith('.js')) return 'text/javascript';
-  if (file.endsWith('.json')) return 'application/json';
-  if (file.endsWith('.wasm')) return 'application/wasm';
-  return 'application/octet-stream';
-}
-
-function serve() {
-  const root = fs.realpathSync(ROOT);
-  const server = http.createServer((req, res) => {
-    const pathname = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname);
-    const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
-    const file = path.normalize(path.join(root, relative));
-    if (file !== root && !file.startsWith(root + path.sep)) {
-      res.writeHead(403); res.end(); return;
-    }
-    fs.readFile(file, (error, data) => {
-      if (error) { res.writeHead(404); res.end(); return; }
-      res.writeHead(200, { 'Content-Type': mime(file), 'Cache-Control': 'no-store' });
-      res.end(data);
-    });
-  });
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve(server));
-  });
-}
-
 (async () => {
-  const server = await serve();
+  const server = await startStaticServer({ root: ROOT });
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-retina-scale2x-'));
   const browser = await puppeteer.launch({
     headless: true,

@@ -14,6 +14,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { startStaticServer: startSharedStaticServer } = require('./static-server');
 
 const ROOT = path.join(__dirname, '..');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -279,40 +280,7 @@ function mimeType(file) {
 }
 
 function startStaticServer() {
-  const rootReal = fs.realpathSync(ROOT);
-  const server = http.createServer((req, res) => {
-    let pathname;
-    try {
-      pathname = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname);
-    } catch (_) {
-      res.writeHead(400);
-      res.end('bad url');
-      return;
-    }
-    if (pathname === '/') pathname = '/index.html';
-    const candidate = path.normalize(path.join(rootReal, pathname));
-    if (candidate !== rootReal && !candidate.startsWith(rootReal + path.sep)) {
-      res.writeHead(403);
-      res.end('forbidden');
-      return;
-    }
-    fs.readFile(candidate, (err, data) => {
-      if (err) {
-        res.writeHead(err.code === 'ENOENT' ? 404 : 500);
-        res.end(err.code || 'read error');
-        return;
-      }
-      res.writeHead(200, {
-        'Content-Type': mimeType(candidate),
-        'Cache-Control': 'no-store',
-      });
-      res.end(data);
-    });
-  });
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve(server));
-  });
+  return startSharedStaticServer({ root: ROOT, mimeType });
 }
 
 function reserveTcpPort(preferred = 0) {

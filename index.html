@@ -1544,87 +1544,96 @@ Resource-aware Win98 emulator
   <!-- Written by tools/deploy-berrry.js, absent in a local tree. A 404 here is
        expected off the deployed site and costs nothing. -->
   <script src="build-info.js"></script>
-  <!-- The generated region map must load before any lib script: filesystem.js
-       reads the RegionMap global at script-evaluation time, not call time. -->
-  <script src="lib/region-map.generated.js?v=306"></script>
-  <script src="lib/mem-utils.js?v=169"></script>
-  <script src="lib/dib.js?v=168"></script>
-  <script src="lib/gdi-surface.js?v=2"></script>
-  <script src="lib/surface.js?v=1"></script>
-  <script src="lib/resources-icon.js?v=172"></script>
-  <script src="lib/renderer-input.js?v=202"></script>
-  <script src="lib/presentation-filter.js?v=6"></script>
-  <script src="lib/renderer.js?v=200"></script>
-  <script src="lib/dll-registry.js?v=2"></script>
-  <script src="lib/apps.js?v=27"></script>
-  <script src="lib/debug-app-picker.js?v=2"></script>
-  <script src="lib/browser-input.js?v=18"></script>
-  <script src="lib/mobile-keyboard.js?v=3"></script>
-  <!-- Touch devices have no pointer, so every cursor shape the guest sets is
-       invisible there and a busy app looks like a dead one. Draws the cursor
-       itself; inert under a mouse. -->
-  <script src="lib/touch-cursor.js?v=4"></script>
-  <!-- On-screen buttons and a dpad for guests driven by the keyboard: a phone
-       can produce a click and nothing else, so Pinball's flippers and
-       SkiFree's arrows are otherwise unreachable. Appears only on a coarse
-       pointer and only for apps that declare `touchControls` in lib/apps.js. -->
-  <script src="lib/touch-controls.js?v=7"></script>
-  <!-- Inert unless ?diag is on the URL. It watches the one invariant a phone
-       desktop has -- a tap at the first icon's centre lands on that icon --
-       and posts the failing state to /ios-report, because the machine this
-       breaks on is the one machine with no debugger. -->
-  <script src="lib/phone-diag.js?v=2"></script>
-  <script src="lib/vfs-persistence.js?v=3"></script>
-  <script src="lib/overlay-store.js?v=2"></script>
-  <script src="lib/vfs-overlay.js?v=2"></script>
-  <!-- Byte providers for lazily mounted media; must precede filesystem.js,
-       which resolves window.byteProvider when a container mounts. -->
-  <script src="lib/byte-provider.js?v=1"></script>
-  <!-- Bring-your-own media (docs/design-byo-media.md phase 4): the containers,
-       the OPFS/IndexedDB library, and the drop-to-insert desktop flow. The
-       mounts run against a guest's VFS, so these load before host.js. -->
-  <script src="lib/zip-mount.js?v=1"></script>
-  <script src="lib/iso9660.js?v=1"></script>
-  <script src="lib/cdrom.js?v=3"></script>
-  <script src="lib/media-sniff.js?v=1"></script>
-  <script src="lib/media-library.js?v=2"></script>
-  <script src="lib/media-import.js?v=11"></script>
-  <script src="lib/media-import-ui.js?v=10"></script>
-  <!-- Start > Shut Down..., and the exit_windows host import's landing. -->
-  <script src="lib/shutdown.js?v=10"></script>
-  <script src="lib/browser-shell.js?v=42"></script>
-  <script src="lib/pe.js?v=1"></script>
-  <script src="lib/process-boot.js?v=6"></script>
-  <script src="lib/app-profiles.js?v=3"></script>
-  <script src="lib/dll-loader.js?v=172"></script>
-  <script src="lib/storage.js?v=170"></script>
-  <script src="lib/filesystem.js?v=174"></script>
-  <script src="lib/font-substitutions.js?v=1"></script>
-  <script src="lib/vendor/webaudio-tinysynth.js?v=168"></script>
-  <script src="lib/host-audio.js?v=7"></script>
-  <script src="lib/host-window.js?v=10"></script>
-  <script src="lib/gpu-backend.js?v=5"></script>
-  <script src="lib/d3d9-shader.js?v=1"></script>
-  <script src="lib/d3d9-backend.js?v=1"></script>
-  <script src="lib/d3d9-host.js?v=1"></script>
-  <script src="lib/gl-command-stream.js?v=9"></script>
-  <script src="lib/gl-compat.js?v=11"></script>
-  <script src="lib/worker-imports.js?v=5"></script>
-  <script src="lib/vfs-seed.js?v=4"></script>
-  <script src="lib/debug-midi.js?v=2"></script>
-  <script src="lib/debug-thread-state.js?v=7"></script>
-  <script src="lib/host-imports.js?v=215"></script>
-  <script src="lib/compile-wat.js?v=169"></script>
-  <script src="lib/watx-launcher.js?v=3"></script>
-  <script src="lib/thread-manager.js?v=189"></script>
-  <script src="lib/vlan-wire.js?v=1"></script>
-  <script src="lib/vlan-rtc.js?v=1"></script>
-  <script src="lib/vlan-lobby.js?v=1"></script>
-  <script src="lib/guest-rpc.js?v=8"></script>
-  <script src="lib/guest-thread-host.js?v=11"></script>
-  <script src="host.js?v=306"></script>
-  <script src="lib/recorder.js?v=172"></script>
-  <script src="lib/perf-hud.js?v=4"></script>
+  <script>
+    // One release identity owns the whole browser source graph. Production
+    // gets a fresh identity from build-info.js on every deploy; local servers
+    // send no-store and use the stable "dev" fallback. document.write is
+    // intentional here: parser-inserted classic scripts execute in list order,
+    // preserving the old blocking script-tag dependency graph.
+    window.WINE_SOURCE_VERSION = String(window.WINE_BUILD || 'dev');
+    window.wineVersionedUrl = function wineVersionedUrl(source) {
+      const separator = source.includes('?') ? '&' : '?';
+      return source + separator + 'v=' + encodeURIComponent(window.WINE_SOURCE_VERSION);
+    };
+    window.wineLoadVersionedScripts = function wineLoadVersionedScripts(sources) {
+      if (document.readyState !== 'loading') {
+        throw new Error('Wine runtime scripts must be loaded while parsing index.html');
+      }
+      document.write(sources.map(function(source) {
+        return '<script src="' + window.wineVersionedUrl(source) + '"><\/script>';
+      }).join(''));
+    };
+
+    // The generated region map must stay first: several libraries read its
+    // global at script-evaluation time. The remaining order is likewise the
+    // runtime dependency order, now named once without 59 hand-bumped keys.
+    const WINE_RUNTIME_SCRIPTS = Object.freeze([
+      "lib/region-map.generated.js",
+      "lib/mem-utils.js",
+      "lib/dib.js",
+      "lib/gdi-surface.js",
+      "lib/surface.js",
+      "lib/resources-icon.js",
+      "lib/renderer-input.js",
+      "lib/presentation-filter.js",
+      "lib/renderer.js",
+      "lib/dll-registry.js",
+      "lib/apps.js",
+      "lib/debug-app-picker.js",
+      "lib/browser-input.js",
+      "lib/mobile-keyboard.js",
+      "lib/touch-cursor.js",
+      "lib/touch-controls.js",
+      "lib/phone-diag.js",
+      "lib/vfs-persistence.js",
+      "lib/overlay-store.js",
+      "lib/vfs-overlay.js",
+      "lib/byte-provider.js",
+      "lib/zip-mount.js",
+      "lib/iso9660.js",
+      "lib/cdrom.js",
+      "lib/media-sniff.js",
+      "lib/media-library.js",
+      "lib/media-import.js",
+      "lib/media-import-ui.js",
+      "lib/shutdown.js",
+      "lib/browser-shell.js",
+      "lib/pe.js",
+      "lib/process-boot.js",
+      "lib/app-profiles.js",
+      "lib/dll-loader.js",
+      "lib/storage.js",
+      "lib/filesystem.js",
+      "lib/font-substitutions.js",
+      "lib/vendor/webaudio-tinysynth.js",
+      "lib/host-audio.js",
+      "lib/host-window.js",
+      "lib/gpu-backend.js",
+      "lib/d3d9-shader.js",
+      "lib/d3d9-backend.js",
+      "lib/d3d9-host.js",
+      "lib/gl-command-stream.js",
+      "lib/gl-compat.js",
+      "lib/worker-imports.js",
+      "lib/vfs-seed.js",
+      "lib/debug-midi.js",
+      "lib/debug-thread-state.js",
+      "lib/host-imports.js",
+      "lib/compile-wat.js",
+      "lib/watx-launcher.js",
+      "lib/thread-manager.js",
+      "lib/vlan-wire.js",
+      "lib/vlan-rtc.js",
+      "lib/vlan-lobby.js",
+      "lib/guest-rpc.js",
+      "lib/guest-thread-host.js",
+      "host.js",
+      "lib/recorder.js",
+      "lib/perf-hud.js"
+    ]);
+    window.WINE_RUNTIME_SCRIPTS = WINE_RUNTIME_SCRIPTS;
+    window.wineLoadVersionedScripts(WINE_RUNTIME_SCRIPTS);
+  </script>
   <script>
 
     async function approveBrowserFullscreen(event) {

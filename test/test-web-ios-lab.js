@@ -15,7 +15,7 @@
 'use strict';
 
 const assert = require('assert');
-const http = require('http');
+const { startStaticServer: startSharedStaticServer } = require('./static-server');
 const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer');
@@ -33,25 +33,23 @@ if (!fs.existsSync(CHROME)) {
 // answers it -- served from a file:// URL they would log fetch failures and
 // the eval channel would not exist at all.
 function serve() {
-  return new Promise(resolve => {
-    const server = http.createServer((request, response) => {
+  return startSharedStaticServer({
+    root: ROOT,
+    cacheControl: false,
+    handleRequest(request, response) {
       const url = new URL(request.url, 'http://127.0.0.1');
-      if (url.pathname === '/favicon.ico') { response.writeHead(204); response.end(); return; }
+      if (url.pathname === '/favicon.ico') {
+        response.writeHead(204);
+        response.end();
+        return true;
+      }
       if (request.method === 'POST' || url.pathname === '/ios-cmd') {
         response.writeHead(200, { 'Content-Type': 'application/json' });
         response.end('[]');
-        return;
+        return true;
       }
-      const file = path.join(ROOT, url.pathname);
-      fs.readFile(file, (error, data) => {
-        if (error) { response.writeHead(404); response.end(); return; }
-        response.writeHead(200, {
-          'Content-Type': file.endsWith('.js') ? 'text/javascript' : 'text/html',
-        });
-        response.end(data);
-      });
-    });
-    server.listen(0, '127.0.0.1', () => resolve(server));
+      return false;
+    },
   });
 }
 
