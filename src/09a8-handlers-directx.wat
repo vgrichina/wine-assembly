@@ -5399,54 +5399,87 @@
     (local.get $handle))
 
   ;; IID_IDirectSound3DBuffer = {279AFA86-4981-11CE-A521-0020AF0BE560}.
-  (func $dsbuf_iid_is_3d (param $iid i32) (result i32)
-    (if (i32.eqz (local.get $iid)) (then (return (i32.const 0))))
-    (i32.and
-      (i32.and
-        (i32.eq (call $gl32 (local.get $iid)) (i32.const 0x279AFA86))
-        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 4))) (i32.const 0x11CE4981)))
-      (i32.and
-        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 8))) (i32.const 0x200021A5))
-        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 12))) (i32.const 0x60E50BAF)))))
-
   ;; IID_IDirectSound3DListener = {279AFA84-4981-11CE-A521-0020AF0BE560}.
-  ;; Primary buffers expose this interface; it is distinct from the per-voice
-  ;; IDirectSound3DBuffer interface despite sharing the rest of the GUID.
-  (func $dsbuf_iid_is_3d_listener (param $iid i32) (result i32)
-    (if (i32.eqz (local.get $iid)) (then (return (i32.const 0))))
-    (i32.and
-      (i32.and
-        (i32.eq (call $gl32 (local.get $iid)) (i32.const 0x279AFA84))
-        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 4))) (i32.const 0x11CE4981)))
-      (i32.and
-        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 8))) (i32.const 0x200021A5))
-        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 12))) (i32.const 0x60E50BAF)))))
+  ;; Complete DirectSound buffer-family interface classification. These four
+  ;; GUIDs share a suffix, so compare all four words after one translation.
+  (func $dsbuf_iid_kind_wa (param $iid_wa i32) (result i32)
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0) (i32.const 0)
+          (i32.const 0x000000C0) (i32.const 0x46000000))
+      (then (return (i32.const 1)))) ;; IUnknown
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0x279AFA85) (i32.const 0x11CE4981)
+          (i32.const 0x200021A5) (i32.const 0x60E50BAF))
+      (then (return (i32.const 2)))) ;; IDirectSoundBuffer
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0x279AFA86) (i32.const 0x11CE4981)
+          (i32.const 0x200021A5) (i32.const 0x60E50BAF))
+      (then (return (i32.const 3)))) ;; IDirectSound3DBuffer
+    (if (call $guid_words_equal (local.get $iid_wa)
+          (i32.const 0x279AFA84) (i32.const 0x11CE4981)
+          (i32.const 0x200021A5) (i32.const 0x60E50BAF))
+      (then (return (i32.const 4)))) ;; IDirectSound3DListener
+    (i32.const 0))
 
   (func $handle_IDirectSoundBuffer_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $wrapper i32) (local $handle i32)
+    (local $iid_wa i32) (local $kind i32) (local $entry i32)
+    (local $slot i32) (local $wrapper i32) (local $handle i32)
     (if (i32.eqz (local.get $arg2))
-      (then (global.set $eax (i32.const 0x80004003)))
-      (else
-        (local.set $entry (call $dx_from_this (local.get $arg0)))
-        (if (call $dsbuf_iid_is_3d (local.get $arg1))
-          (then
-            (local.set $wrapper (call $dx_get_wrapper_for_vtbl
-              (call $dx_slot_of (local.get $entry)) (global.get $DX_VTBL_DS3DBUF)))
-            (local.set $handle (call $dsbuf_ensure_voice (local.get $entry)))
-            ;; Property 15 enables the default NORMAL spatial state without
-            ;; resetting a buffer that has already received 3D parameters.
-            (call $host_voice_3d_set
-              (local.get $handle) (i32.const 15)
-              (i32.const 0) (i32.const 0) (i32.const 0)))
-          (else
-            (if (call $dsbuf_iid_is_3d_listener (local.get $arg1))
-              (then (local.set $wrapper (call $dx_get_wrapper_for_vtbl
-                (call $dx_slot_of (local.get $entry)) (global.get $DX_VTBL_DS3DLISTENER))))
-              (else (local.set $wrapper (call $dx_get_wrapper_for_vtbl
-                (call $dx_slot_of (local.get $entry)) (global.get $DX_VTBL_DSBUF)))))))
-        (call $gs32 (local.get $arg2) (local.get $wrapper))
-        (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-        (global.set $eax (i32.const 0))))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Translate riid exactly once, then classify the complete identity.
+    (local.set $iid_wa (call $g2w (local.get $arg1)))
+    (local.set $kind (call $dsbuf_iid_kind_wa (local.get $iid_wa)))
+    (if (i32.eqz (local.get $kind))
+      (then
+        (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $slot (call $dx_slot_of (local.get $entry)))
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then
+        ;; All auxiliary 3D faces return the same controlling IUnknown.
+        (local.set $wrapper
+          (i32.add
+            (i32.sub
+              (i32.add (global.get $COM_WRAPPERS)
+                (i32.mul (local.get $slot) (i32.const 8)))
+              (global.get $GUEST_BASE))
+            (global.get $image_base)))))
+    (if (i32.eq (local.get $kind) (i32.const 2))
+      (then (local.set $wrapper (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (global.get $DX_VTBL_DSBUF)))))
+    (if (i32.eq (local.get $kind) (i32.const 3))
+      (then
+        (local.set $wrapper (call $dx_get_wrapper_for_vtbl
+          (local.get $slot) (global.get $DX_VTBL_DS3DBUF)))
+        (local.set $handle (call $dsbuf_ensure_voice (local.get $entry)))
+        ;; Property 15 enables the default NORMAL spatial state without
+        ;; resetting a buffer that has already received 3D parameters.
+        (call $host_voice_3d_set
+          (local.get $handle) (i32.const 15)
+          (i32.const 0) (i32.const 0) (i32.const 0))))
+    (if (i32.eq (local.get $kind) (i32.const 4))
+      (then (local.set $wrapper (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (global.get $DX_VTBL_DS3DLISTENER)))))
+    (store.field DxObject refcount (local.get $entry)
+      (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (call $gs32 (local.get $arg2) (local.get $wrapper))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
 
