@@ -1546,7 +1546,7 @@ Resource-aware Win98 emulator
   <script src="build-info.js"></script>
   <!-- The generated region map must load before any lib script: filesystem.js
        reads the RegionMap global at script-evaluation time, not call time. -->
-  <script src="lib/region-map.generated.js?v=298"></script>
+  <script src="lib/region-map.generated.js?v=301"></script>
   <script src="lib/mem-utils.js?v=169"></script>
   <script src="lib/dib.js?v=168"></script>
   <script src="lib/gdi-surface.js?v=2"></script>
@@ -1554,11 +1554,11 @@ Resource-aware Win98 emulator
   <script src="lib/resources-icon.js?v=172"></script>
   <script src="lib/renderer-input.js?v=202"></script>
   <script src="lib/presentation-filter.js?v=6"></script>
-  <script src="lib/renderer.js?v=197"></script>
+  <script src="lib/renderer.js?v=200"></script>
   <script src="lib/dll-registry.js?v=2"></script>
-  <script src="lib/apps.js?v=25"></script>
+  <script src="lib/apps.js?v=27"></script>
   <script src="lib/debug-app-picker.js?v=2"></script>
-  <script src="lib/browser-input.js?v=17"></script>
+  <script src="lib/browser-input.js?v=18"></script>
   <script src="lib/mobile-keyboard.js?v=3"></script>
   <!-- Touch devices have no pointer, so every cursor shape the guest sets is
        invisible there and a busy app looks like a dead one. Draws the cursor
@@ -1568,7 +1568,7 @@ Resource-aware Win98 emulator
        can produce a click and nothing else, so Pinball's flippers and
        SkiFree's arrows are otherwise unreachable. Appears only on a coarse
        pointer and only for apps that declare `touchControls` in lib/apps.js. -->
-  <script src="lib/touch-controls.js?v=4"></script>
+  <script src="lib/touch-controls.js?v=7"></script>
   <!-- Inert unless ?diag is on the URL. It watches the one invariant a phone
        desktop has -- a tap at the first icon's centre lands on that icon --
        and posts the failing state to /ios-report, because the machine this
@@ -1592,7 +1592,7 @@ Resource-aware Win98 emulator
   <script src="lib/media-import-ui.js?v=10"></script>
   <!-- Start > Shut Down..., and the exit_windows host import's landing. -->
   <script src="lib/shutdown.js?v=10"></script>
-  <script src="lib/browser-shell.js?v=41"></script>
+  <script src="lib/browser-shell.js?v=42"></script>
   <script src="lib/pe.js?v=1"></script>
   <script src="lib/process-boot.js?v=6"></script>
   <script src="lib/app-profiles.js?v=3"></script>
@@ -1619,7 +1619,7 @@ Resource-aware Win98 emulator
   <script src="lib/vlan-lobby.js?v=1"></script>
   <script src="lib/guest-rpc.js?v=8"></script>
   <script src="lib/guest-thread-host.js?v=11"></script>
-  <script src="host.js?v=298"></script>
+  <script src="host.js?v=301"></script>
   <script src="lib/recorder.js?v=172"></script>
   <script src="lib/perf-hud.js?v=3"></script>
   <script>
@@ -2165,6 +2165,13 @@ Resource-aware Win98 emulator
     // a second guest (WRITE.EXE -> WordPad). host.js has no other handle on
     // the page's process list.
     window.wineShell = shell;
+    // Drop the old page's fixed 512MB guest synchronously before Safari can
+    // freeze it in the back-forward cache. A restored page has deliberately
+    // disposed its emulator state, so start it as a fresh document.
+    window.addEventListener('pagehide', () => shell.releaseForPageHide());
+    window.addEventListener('pageshow', event => {
+      if (event.persisted) window.location.reload();
+    });
     // Start > Shut Down... and the guest's own ExitWindowsDialog/ExitWindowsEx
     // (through host.js's exit_windows import) both land here.
     window.wineShutdown = window.wineShutdownUI.install({
@@ -2807,8 +2814,19 @@ Resource-aware Win98 emulator
       const scale = displayW > 0 && displayH > 0
         ? Math.max(Math.max(1, MIN_BACKING_WIDTH / displayW), MIN_BACKING_HEIGHT / displayH)
         : 1;
-      const w = Math.max(MIN_BACKING_WIDTH, Math.round((displayW || 1) * scale));
-      const h = Math.max(MIN_BACKING_HEIGHT, Math.round((displayH || 1) * scale));
+      let w = Math.max(MIN_BACKING_WIDTH, Math.round((displayW || 1) * scale));
+      let h = Math.max(MIN_BACKING_HEIGHT, Math.round((displayH || 1) * scale));
+      // Fixed board windows keep their guest position across rotation. Keep
+      // their complete backing pixels when the physical screen gets shorter;
+      // presentation scales that intact board into the new control layout.
+      const boardRenderer = window.wineShell && window.wineShell.renderer;
+      if (boardRenderer && boardRenderer.mobileCrop && boardRenderer.mobileCrop.contain) {
+        for (const win of Object.values(boardRenderer.windows || {})) {
+          if (!win || win.isChild || !win.visible) continue;
+          w = Math.max(w, (win.x | 0) + (win.w | 0));
+          h = Math.max(h, (win.y | 0) + (win.h | 0));
+        }
+      }
       const dpr = Math.max(1, Number(window.devicePixelRatio) || 1);
       return { fullscreen, displayW, displayH, w, h, dpr };
     }
@@ -2905,7 +2923,11 @@ Resource-aware Win98 emulator
         },
         // Freezing the display height changes what the backing store should
         // be, so the resize path has to run again once the keyboard settles.
-        onChange: () => resizeCanvas(),
+        onChange: ({ shift }) => {
+          const controls = document.getElementById('touch-controls');
+          if (controls) controls.style.transform = shift ? `translateY(${shift}px)` : '';
+          resizeCanvas();
+        },
       });
       keyboardController.attach();
       // The caret moves while the keyboard stays put, and no viewport event

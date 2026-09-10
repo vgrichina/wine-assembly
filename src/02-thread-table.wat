@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 447 funcref)
+  (table $handlers 448 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -505,4 +505,5 @@
     $th_add_edx_eax2_disp     ;; 444: ADD EDX,[EAX*2+disp32]
     $th_add_ebp_eax2_disp     ;; 445: ADD EBP,[EAX*2+disp32]
     $th_add_esi_eax2_disp     ;; 446: ADD ESI,[EAX*2+disp32]
+    $th_verr                  ;; 447: VERR r/m16 (selector readability -> ZF)
   )

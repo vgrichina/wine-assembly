@@ -506,7 +506,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '298';
+  static SOURCE_VERSION = '301';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -2171,7 +2171,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=31',
+        workerUrl: 'lib/guest-worker.js?v=32',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
@@ -2962,7 +2962,16 @@ class WineAssembly {
     // run is over -- --png, --dump, the hit counts and the MMX tally at exit
     // -- and it gets its memory back by exiting the process, so it has
     // nothing to gain here and everything to lose.
-    if (typeof window !== 'undefined' && !this._releaseTimer) {
+    // pagehide freezes Safari's page before a zero-delay timer is guaranteed
+    // to run. A cached old page would then retain this 512MB while the new
+    // document tries to allocate its own and fail at WebAssembly.Memory.
+    // releaseNow is reserved for that outside-the-guest-call lifecycle edge;
+    // ordinary stops must keep the deferred path above.
+    if (typeof window !== 'undefined' && options.releaseNow) {
+      if (this._releaseTimer) clearTimeout(this._releaseTimer);
+      this._releaseTimer = null;
+      this._releaseGuestMemory();
+    } else if (typeof window !== 'undefined' && !this._releaseTimer) {
       this._releaseTimer = setTimeout(() => {
         this._releaseTimer = null;
         if (this._stopped) this._releaseGuestMemory();

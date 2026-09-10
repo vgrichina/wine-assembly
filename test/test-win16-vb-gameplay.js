@@ -86,7 +86,8 @@ function testRodent(outDir) {
       `500:mousedown:202:72,501:mouseup:202:72,` +
       `520:mousedown:240:93,521:mouseup:240:93,` +
       `1050:png:${before},1100:keydown:39,1101:sleep-ms:1200,` +
-      `1200:keyup:39,1250:png:${after},1350:stop`,
+      `1200:keyup:39,1250:png:${after},1270:mousedown:447:52,` +
+      `1271:mouseup:447:52,1390:stop`,
   ]);
   assertHealthy(output, 'Rodent');
   const titleWrites = [...output.matchAll(/\[SetWindowText\] "([^"]*)"/g)]
@@ -94,6 +95,8 @@ function testRodent(outDir) {
   assert.match(titleWrites.at(-1) || '', /^Rodent's Revenge \[\d+\]$/,
     'Rodent DefWindowProc must retain the caption written by SetWindowText');
   assert.match(output, /keydown vk=39/, 'Rodent Right key must reach the renderer');
+  assert.doesNotMatch(output, /Sub or Function not defined/,
+    'Rodent close must resolve KERNEL.WritePrivateProfileString instead of VB error 35');
   assert(changedPixels(before, after, { x: 180, y: 116, w: 276, h: 276 }) > 40,
     'Rodent board should visibly advance after holding Right');
   const clock = colorBounds(after, { x: 302, y: 84, w: 34, h: 34 },

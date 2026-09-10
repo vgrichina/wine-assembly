@@ -77,8 +77,9 @@ global.document = {
 global.window = { addEventListener() {}, removeEventListener() {}, innerHeight: 844 };
 global.location = { search: '' };
 
-const touchEvent = (touches) => ({
-  changedTouches: touches,
+const touchEvent = (changed, active = changed) => ({
+  changedTouches: changed,
+  touches: active,
   preventDefault() {},
   stopPropagation() {},
 });
@@ -419,6 +420,38 @@ TouchControls.destroy();
   assert.deepStrictEqual(keys, [], 'a short move is not a swipe');
   assert.deepStrictEqual(mouse, [['down', 208, 206, 0], ['up', 208, 206, 0]],
     'and reaches the guest as a click in canvas coordinates, so menus still work');
+
+  // The swipe field, not the canvas, owns these touches in Rodent. Its second
+  // finger must therefore expose the same Fit/Fill and wheel gestures.
+  let mode = 'fit';
+  const wheel = [];
+  swipeRenderer.viewMode = mode;
+  swipeRenderer.setViewMode = next => {
+    mode = next;
+    swipeRenderer.viewMode = next;
+    return true;
+  };
+  swipeRenderer.handleWheel = (x, y, delta) =>
+    wheel.push([Math.round(x), Math.round(y), delta]);
+  mouse.length = 0;
+  field.dispatch('touchstart', touchEvent([touch(82, 100, 100)], [touch(82, 100, 100)]));
+  field.dispatch('touchstart', touchEvent([touch(83, 200, 100)],
+    [touch(82, 100, 100), touch(83, 200, 100)]));
+  field.dispatch('touchmove', touchEvent([touch(82, 70, 100), touch(83, 230, 100)],
+    [touch(82, 70, 100), touch(83, 230, 100)]));
+  assert.strictEqual(mode, 'zoom', 'spreading two fingers over a swipe field selects Fill');
+  field.dispatch('touchend', touchEvent([touch(82, 70, 100)], [touch(83, 230, 100)]));
+  field.dispatch('touchend', touchEvent([touch(83, 230, 100)], []));
+  assert.deepStrictEqual(mouse, [], 'a field pinch never leaks a guest click');
+
+  field.dispatch('touchstart', touchEvent([touch(84, 100, 100)], [touch(84, 100, 100)]));
+  field.dispatch('touchstart', touchEvent([touch(85, 200, 100)],
+    [touch(84, 100, 100), touch(85, 200, 100)]));
+  field.dispatch('touchmove', touchEvent([touch(84, 100, 130), touch(85, 200, 130)],
+    [touch(84, 100, 130), touch(85, 200, 130)]));
+  assert.deepStrictEqual(wheel, [[300, 260, 1]],
+    'parallel two-finger travel over a swipe field becomes mouse wheel input');
+  field.dispatch('touchend', touchEvent([touch(84, 100, 130), touch(85, 200, 130)], []));
   TouchControls.destroy();
 }
 
@@ -493,6 +526,19 @@ TouchControls.destroy();
   assert.strictEqual(toggle.style.opacity, '1', 'and is legible while it is in dead space');
   assert.notStrictEqual(keyPill.style.left, toggle.style.left, 'never stacked on each other');
 
+  // If only one pill fits beside the bottom controls, use the other dead band
+  // for the second one instead of falling back over the game content.
+  for (const w of TouchControls._widgets) {
+    if (w._tcCorner === 'bl') {
+      w.getBoundingClientRect = () => ({ left: 18, right: 310, top: 506, bottom: 646, width: 292, height: 140 });
+    }
+  }
+  layoutRenderer.getPresentedRectClient = () => ({ x: 0, y: 80, w: 390, h: 420 });
+  TouchControls.layoutZones();
+  assert.strictEqual(keyPill.style.top, '562px', 'one pill uses the narrow bottom opening');
+  assert.strictEqual(toggle.style.top, '20px', 'the remaining pill uses the empty top band');
+  assert.strictEqual(toggle.style.opacity, '1', 'and never falls back translucent over content');
+
   // Filling the screen leaves no dead space: it gets a corner and goes quiet
   // rather than taking room from the picture.
   layoutRenderer.getPresentedRectClient = () => ({ x: 0, y: 0, w: 390, h: 664 });
@@ -516,6 +562,38 @@ TouchControls.destroy();
   TouchControls.layoutZones();
   assert.strictEqual(field.style.pointerEvents, 'auto', 'and it comes back when the caret goes');
   TouchControls.destroy();
+}
+
+// 13b. Safari keeps the running page at 100vh while its visible viewport is
+// shorter. Bottom controls follow the visible edge, and the reported occupied
+// band includes the obscured toolbar so the guest is kept above both.
+{
+  const viewportHandlers = new Map();
+  global.window.visualViewport = {
+    height: 700, offsetTop: 0,
+    addEventListener(type, fn) { viewportHandlers.set(type, fn); },
+    removeEventListener(type, fn) {
+      if (viewportHandlers.get(type) === fn) viewportHandlers.delete(type);
+    },
+  };
+  const layoutRenderer = {
+    handleKeyDown() {}, handleKeyUp() {}, viewMode: 'fit',
+    setViewMode() { return false; }, caretRect: () => null,
+    getPresentedRectClient: () => ({ x: 0, y: 80, w: 390, h: 480 }),
+  };
+  TouchControls.install({ document: global.document, renderer: layoutRenderer });
+  TouchControls.el.getBoundingClientRect = () => ({
+    left: 0, top: 0, right: 390, bottom: 844, width: 390, height: 844,
+  });
+  TouchControls.setLayout({ dpad: { pos: 'bl', style: 'cross' }, swipes: true });
+  const bottomCorner = TouchControls._corners.bl;
+  assert.strictEqual(bottomCorner.style.bottom, '144px',
+    'the dpad clears Safari visual-viewport occlusion without resizing the guest');
+  assert.ok(viewportHandlers.has('resize') && viewportHandlers.has('scroll'),
+    'toolbar movement relayouts controls immediately');
+  TouchControls.destroy();
+  assert.strictEqual(viewportHandlers.size, 0, 'visual viewport listeners are removed at teardown');
+  delete global.window.visualViewport;
 }
 
 // 14. The manual keyboard pill: it exists for every app, and a tap on it calls

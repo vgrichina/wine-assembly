@@ -13,6 +13,24 @@ OLE picture startup fix and gameplay command.
 
 ## Reaching gameplay headlessly
 
+### Phone board presentation (2026-09-10)
+
+Fill contains the full 276x276 FIELD100 board including its cyan one-tile
+perimeter. Its window-local bounds are x=3, y=78 within the 282x357 form.
+Portrait reserves 204 CSS pixels below the board for the D-pad and New Game;
+Fill/Keyboard sit directly above New Game. Landscape centres the intact square
+between left D-pad and right action controls, using the available height.
+Rotation preserves the window's guest backing extent so a shorter viewport
+cannot cut away the bottom rows before presentation. Fit retains window chrome;
+dialogs and open menus temporarily use the composed window bounds in Fill.
+
+Portrait now omits the 12px wall column on each side (252x276 crop), preserving
+all playable cells and the top/bottom wall. Landscape retains the full square.
+Two-finger separation continuously interpolates window/board presentation and
+snaps to the nearer endpoint on release; cancellation restores the starting
+mode. Keyboard opening freezes control anchors and counteracts the parent
+view's caret shift, allowing the keyboard to cover the controls.
+
 The app deals a board at launch, but a *game* only starts from the menu:
 
 ```
@@ -103,7 +121,7 @@ VB builds the menu at runtime from the form.
 | Game | New Game (F2) | works — deals mouse, cats, blocks |
 | Game | Pause (F3) | works — "Paused. Press F3 To Continue." |
 | Game | High Scores… | **partial** — the Hall of Fame dialog paints (trophies, OK, Clear Scores) and VBRUN then raises `Control array element '0' does not exist` over it |
-| Game | Exit | **broken** — VBRUN raises `Sub or Function not defined`; the app stays up |
+| Game | Exit | works — resolves VB1's dynamic KERNEL `WritePrivateProfileString` lookup and closes cleanly |
 | Options | Level… | **partial** — "Enter Starting Level: (1-50)" with Ok/Cancel paints, but the input box is not there: typing a digit and pressing Ok leaves the title at `[1]` |
 | Options | Snail / Slow / Medium / Fast / Blazing | work — the radio check follows the selection (verified Slow → Blazing) |
 | Help | Index (F1) | works — RODENT.HLP renders with live hyperlinks |
@@ -112,11 +130,40 @@ VB builds the menu at runtime from the form.
 | Help | Using Help | works — Help Topics dialog, Contents/Index tabs, 12 topics |
 | Help | About Rodent's Revenge… | works — full WEP splash, author, VB credit |
 
-Both "broken" verdicts are VBRUN100 runtime errors raised by the guest, not
-emulator traps, so they name a missing piece of the VB1 runtime rather than a
-GDI or USER gap. `Control array element '0' does not exist` and `Sub or Function
-not defined` are the two to chase; the Level… input box is likely the same
+The High Scores error is a VBRUN100 runtime error raised by the guest, not an
+emulator trap. The former Exit error was different: VBRUN dynamically asks
+`GetProcAddress(KERNEL, "WRITEPRIVATEPROFILESTRING")`; the API existed as
+KERNEL.129 but was absent from the emulator's by-name export table, so the
+false NULL became VB error 35 (`Sub or Function not defined`). Mapping that
+name to the existing ordinal makes both the title-bar close button and Game >
+Exit close cleanly. The Level… input box is likely related to the remaining
 control-array shortfall one form over.
+
+## VBRUN100 VERR during phone interaction (fixed 2026-09-09)
+
+An actual iPhone run trapped at linear `0x001401a4`, bytes
+`0f 00 26 ad 91`: `VERR word ptr [91ad]` in a loaded VBRUN100 segment. The
+two-byte decoder previously knew LAR but not the adjacent protected-mode
+selector-readability probe, so it emitted `$th_bad_opcode` and Safari reported
+`RuntimeError: Unreachable code should not be executed`.
+
+Handler 447 now implements both register and memory forms. A mapped Win16
+selector is readable under the descriptor model already synthesized by LAR;
+an unmapped selector is not, and VERR reports that result through ZF while
+preserving the other materialized arithmetic flags. The focused selector test
+executes the same disp16 memory encoding and checks both valid and invalid
+answers.
+
+### High Scores focus is intentionally not text focus (checked 2026-09-09)
+
+The Game > High Scores window is a viewer, not the new-score name prompt. A
+current `dump-windows` / `dlg-dump` run shows 20 static score/name labels, three
+trophy buttons, OK, and disabled Clear Scores; there is no Edit control. USER
+focus is correctly on the OK button (`hwnd=0x1000f`, control class 1, id 1).
+Consequently there is no USER caret to blink and the browser's caret-gated
+phone keyboard correctly stays closed. Adding a synthetic caret or forcing the
+keyboard here would send text to a push button. A real post-game name prompt,
+if reached, must be checked separately because it is a different form/path.
 
 ## Status panel regression (fixed 2026-08-25, dec5373c)
 

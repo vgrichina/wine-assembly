@@ -4498,6 +4498,25 @@
         (then
           (local.set $op (call $d_fetch8))
 
+          ;; 0x0F 0x00 /4: VERR r/m16. It always reads a selector word and
+          ;; changes only ZF; VBRUN100 executes the disp16 memory form while
+          ;; closing Rodent's main form.
+          (if (i32.eq (local.get $op) (i32.const 0x00))
+            (then
+              (call $decode_modrm)
+              (if (i32.ne (global.get $mr_reg) (i32.const 4))
+                (then
+                  (call $te (i32.const 92) (local.get $insn_start))
+                  (br $decode)))
+              (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                (then (call $te (i32.const 447) (global.get $mr_val)))
+                (else
+                  (call $apply_seg_override)
+                  (local.set $a (call $emit_sib_or_abs))
+                  (call $te (i32.const 447) (i32.const 0x100))
+                  (call $te_raw (local.get $a))))
+              (br $decode)))
+
           ;; 0x0F 0x02: LAR r16/32, r/m16. The source is always a selector
           ;; word; prefix_66 (already inverted for a 16-bit code segment)
           ;; selects the destination width.
