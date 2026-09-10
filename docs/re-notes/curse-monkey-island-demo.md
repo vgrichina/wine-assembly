@@ -12,7 +12,8 @@ The bundled README identifies demo 1.0 and requires Windows 95, a Pentium,
 16 MB RAM, CD-ROM, and a mouse. `CURSE.EXE` is the original launcher: a real
 emulated launch displayed Play, Install DirectX, Readme, Troubleshooting,
 and Exit. It reached the child-launch yield without a game-copy wizard.
-The top artwork panel was blank in that capture and needs investigation.
+The top artwork panel was initially blank; the etched-static fix below
+restores it.
 The registered app runs `COMI.EXE` with the original 11 companion files.
 
 ## Functional acceptance
@@ -52,3 +53,22 @@ The LoadImage result selected into the source DC is nonzero (`0x410005`).
 These observations narrow the next probe to actual bitmap pixels and
 destination/repaint behavior; a successful BitBlt return alone does not
 prove visible rendering. The bounded 80-step probe exits cleanly.
+
+### Etched frame fix
+
+The cause was static-control painting: a four-bit type mask changed
+SS_ETCHEDFRAME (`0x12`) into SS_RIGHT (`0x02`), then its text-label fill
+erased the parent's artwork. Preserve five type bits and handle etched
+horizontal, vertical, and full frames with EDGE_ETCHED and the appropriate
+border flags, without BF_MIDDLE. This follows the
+[static-control style contract](https://learn.microsoft.com/en-us/windows/win32/controls/static-control-styles).
+
+`test/test-static-bitmap-control.js` seeds colored interior pixels and
+checks all three etched styles across repeated paints, including which
+edges change. It failed gray before the fix and passes afterward, alongside
+the existing resource/dynamic bitmap coverage. The original launcher now
+shows the moon, sea, and Guybrush in his boat; its capture was inspected.
+The art region changed from zero to 38238 chromatic pixels. Canonical and
+compat builds pass, as does the full COMI movement/inventory/verb-coin test
+against the new build. This verifies artwork presence, not exact LoadImage
+scaling fidelity or every launcher button.

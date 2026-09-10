@@ -6814,9 +6814,22 @@
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
         (local.set $full_style (call $static_style (local.get $state_w)))
-        (local.set $style (i32.and (local.get $full_style) (i32.const 0x0F)))
+        (local.set $style (i32.and (local.get $full_style) (i32.const 0x1F)))
         (local.set $ex (call $ctrl_get_ex_style (local.get $hwnd)))
         (local.set $ctrl_id (call $ctrl_table_get_id (local.get $hwnd)))
+        ;; Etched statics are borders, not labels. In particular, do not erase
+        ;; artwork the parent painted inside an SS_ETCHEDFRAME rectangle.
+        (if (i32.and (i32.ge_u (local.get $style) (i32.const 0x10))
+                     (i32.le_u (local.get $style) (i32.const 0x12)))
+          (then
+            (drop (call $host_gdi_draw_edge (local.get $hdc)
+              (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+              (i32.const 6) ;; EDGE_ETCHED, without BF_MIDDLE
+              (if (result i32) (i32.eq (local.get $style) (i32.const 0x10))
+                (then (i32.const 0x0A)) ;; BF_TOP | BF_BOTTOM
+                (else (select (i32.const 0x05) (i32.const 0x0F)
+                  (i32.eq (local.get $style) (i32.const 0x11)))))))
+            (return (i32.const 0))))
         ;; Default text rect = full client.
         (local.set $tx_l (i32.const 0))
         (local.set $tx_t (i32.const 0))

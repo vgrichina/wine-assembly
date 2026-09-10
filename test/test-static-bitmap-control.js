@@ -6,6 +6,15 @@ const { bootRenderHarness } = require('./render-helper');
 const RegionMap = require('../lib/region-map.generated.js');
 
 const extraWat = String.raw`
+  (func (export "test_seed_etched_static") (param $child i32) (param $style i32)
+    (local $brush i32)
+    (call $static_set_style (call $g2w (call $wnd_get_state_ptr (local.get $child)))
+      (i32.or (i32.const 0x50000000) (local.get $style)))
+    (local.set $brush (call $host_gdi_create_solid_brush (i32.const 0x00332211)))
+    (drop (call $host_gdi_fill_rect (i32.add (local.get $child) (i32.const 0x40000))
+      (i32.const 0) (i32.const 0) (i32.const 16) (i32.const 16) (local.get $brush)))
+    (drop (call $host_gdi_delete_object (local.get $brush))))
+
   (func (export "test_create_bitmap_static")
       (param $style_bits i32) (param $w i32) (param $h i32) (result i32)
     (local $top i32) (local $child i32)
@@ -126,7 +135,26 @@ function pixel(canvas, x, y) {
   assert.strictEqual(e.test_count_bitmap_objects() | 0, beforeStretch,
     'stretched resource painting releases its temporary HBITMAP');
 
-  console.log('PASS  SS_BITMAP resource and STM_SETIMAGE painting');
+  for (const style of [0x10, 0x11, 0x12]) {
+    const etched = e.test_create_bitmap_static(0x200, 16, 16) >>> 0;
+    h.renderer.repaint();
+    e.test_seed_etched_static(etched, style);
+    for (let i = 0; i < 3; i++) e.send_message(etched, 0x000F, 0, 0);
+    h.renderer.repaint();
+    const ex = e.wnd_window_screen_x(etched) | 0;
+    const ey = e.wnd_window_screen_y(etched) | 0;
+    assert.deepStrictEqual(pixel(h.canvas, ex + 8, ey + 8), [17, 34, 51],
+      `etched style ${style.toString(16)} must preserve interior artwork`);
+    assert.notDeepStrictEqual(pixel(h.canvas, ex, ey), [17, 34, 51],
+      'etched border must actually draw');
+    const top = pixel(h.canvas, ex + 8, ey);
+    const left = pixel(h.canvas, ex, ey + 8);
+    if (style === 0x11) assert.deepStrictEqual(top, [17, 34, 51]);
+    else assert.notDeepStrictEqual(top, [17, 34, 51]);
+    if (style === 0x10) assert.deepStrictEqual(left, [17, 34, 51]);
+    else assert.notDeepStrictEqual(left, [17, 34, 51]);
+  }
+  console.log('PASS  SS_BITMAP resource, STM_SETIMAGE, and etched frame painting');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);
