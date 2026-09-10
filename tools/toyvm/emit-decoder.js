@@ -122,6 +122,11 @@ function decoderWat() {
 (global $dc_base (mut i32) (i32.const 0))    ;; CS linear base
 (global $dc_mask (mut i32) (i32.const 0))    ;; address bus mask
 (global $dc_d32 (mut i32) (i32.const 0))     ;; CS descriptor D bit
+;; ...and, separately, whether EIP is a full 32-bit offset here. Usually the same
+;; bit, but not the same question: a protected-mode descriptor can have D=0 and a
+;; limit past 64K, and then the guest executes above 0xFFFF with an offset that
+;; must not wrap. See decodeOne in decode.js for the program that needs it.
+(global $dc_ip32 (mut i32) (i32.const 0))
 (global $dc_ip (mut i32) (i32.const 0))      ;; guest ip of this instruction
 (global $dc_n (mut i32) (i32.const 0))       ;; bytes consumed so far
 (global $dc_opsize (mut i32) (i32.const 0))
@@ -158,7 +163,7 @@ function decoderWat() {
 ;; produce a near miss -- ACME-SYW.EXE's return to 0x11c43 read as 0x1c43 is a
 ;; text banner in its data.
 (func $dc_wip (param $v i32) (result i32)
-  (if (result i32) (global.get $dc_d32)
+  (if (result i32) (global.get $dc_ip32)
     (then (local.get $v))
     (else (i32.and (local.get $v) (i32.const 0xFFFF)))))
 
@@ -617,7 +622,14 @@ function decoderWat() {
   (local $cur i32)
   (global.set $dc_base (local.get $base))
   (global.set $dc_mask (local.get $mask))
-  (global.set $dc_d32 (local.get $d32))
+  ;; The $d32 parameter is a two-bit description of the code segment's shape:
+  ;; bit 0 is the descriptor's D bit (default operand and address size) and bit 1
+  ;; is the width of EIP. A caller that passes plain 0/1 gets the old meaning of
+  ;; both, which is what every 32-bit and every real-mode segment wants.
+  (global.set $dc_d32 (i32.and (local.get $d32) (i32.const 1)))
+  (global.set $dc_ip32 (i32.or (i32.and (local.get $d32) (i32.const 1))
+                               (i32.shr_u (i32.and (local.get $d32) (i32.const 2))
+                                          (i32.const 1))))
   (global.set $dc_arena (local.get $arena))
   (global.set $dc_max (local.get $maxWords))
   (global.set $dc_out (i32.const 0))

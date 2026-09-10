@@ -173,7 +173,8 @@ async function runDos(o) {
   const {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6, seconds = 0,
     // A number (the first N handbacks) or a { from, to } handback window.
-    traceInt = false, traceFault = false, traceEntry = 0, traceV86 = false,
+    traceInt = false, traceFault = false, traceEntry = 0, traceEntryRegs = false,
+    traceV86 = false,
     noCache = false, smcFlush = false, wasmDecode = true, fuse = true,
     lazyFlags = true, fuseCond = true, deadFlags = true, crossFlags = true,
     traceBlocks = true, spinLoops = true, regSpec = false, traceDeadFlags = false,
@@ -518,6 +519,7 @@ async function runDos(o) {
           // it takes -- which is the whole question when the run derails inside
           // it -- is invisible from the entry address alone.
           const h4 = (v) => v.toString(16).padStart(4, '0');
+          const h8 = (v) => (v >>> 0).toString(16).padStart(8, '0');
           log(`  entry ${cs.toString(16)}:${ip.toString(16)}`
             + (pe ? ` base=${vm.exports.get_csb().toString(16)} pm` : '')
             + `  ax=${h4(vm.get('ax'))} bx=${h4(vm.get('bx'))}`
@@ -531,6 +533,17 @@ async function runDos(o) {
             // holds live code; only DS says whether that is intentional.
             + ` ds=${h4(vm.get('ds'))} es=${h4(vm.get('es'))}`
             + ` ss:sp=${h4(vm.get('ss'))}:${h4(vm.get('sp'))}`
+            // The index registers and the FULL 32-bit stack pointer, behind
+            // `--trace-entry-regs`. Off by default because it doubles the width
+            // of every line, and on when the question is WHERE rather than
+            // WHICH: a 32-bit demo addresses through ESI/EDI/EBP and the line
+            // above cannot say what a `mov [edi+0xf50],eax` wrote to, while a
+            // stack pointer read as sixteen bits hides the half of ESP that
+            // says the guest is no longer on its own stack at all.
+            + (traceEntryRegs
+              ? ` esp=${h8(vm.raw('sp'))} ebp=${h8(vm.raw('bp'))}`
+                + ` esi=${h8(vm.raw('si'))} edi=${h8(vm.raw('di'))}`
+              : '')
             // ...and the emulated clock, which is what two arms that reach
             // the same registers at different handbacks disagree about.
             + ` d=${dispatched}`);
@@ -929,6 +942,7 @@ async function main() {
     traceFault: flag('trace-fault'),
     traceV86: flag('trace-v86'),
     traceEntry: flag('trace-entry') ? { from: 0, to: 40 } : parseTraceEntry(arg('trace-entry')),
+    traceEntryRegs: flag('trace-entry-regs'),
     noCache: flag('no-cache'),
     smcFlush: flag('smc-flush'),
     // The wasm decoder is on by default. Its A/B partner: what it decodes is

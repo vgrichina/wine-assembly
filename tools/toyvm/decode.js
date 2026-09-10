@@ -172,10 +172,24 @@ function setCpuLevel(n) { cpuLevel = n; }
 // default address size, and the width of EIP itself -- in a 32-bit segment an
 // offset does not wrap at 0xFFFF, so every "next instruction" and every branch
 // target computed here is a full 32-bit number.
-function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, benign = null) {
+// `ip32` is the width of EIP, which is USUALLY the D bit but is not the same
+// question. D=0 fixes the default operand and address size at 16; it does not
+// make the offset sixteen bits wide. In real mode it may as well, because the
+// segment is 64K and nothing can be above it -- but a protected-mode descriptor
+// with D=0 and a limit past 64K is a real and used shape: COCAHOLC.EXE's
+// extender runs generated code, every instruction of it carrying 0x66 and 0x67,
+// through a 16-bit code selector with a 1MB byte-granular limit, at EIP
+// 0x23e60. Masking that fetch to 0x3e60 does not fault, it decodes whatever
+// else is there -- there it found `add sp,[bp+0x67]` followed by
+// `jmp [bp+0x67]`, so ESP and EIP both took the same word out of the stack
+// segment and the run derailed six dispatches into the block.
+// Defaults to `d32`, so a caller that has not thought about it gets exactly the
+// old behaviour.
+function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, benign = null,
+                   ip32 = d32) {
   const start = ip;
   // How an instruction pointer wraps in this segment.
-  const wip = d32 ? (v) => v >>> 0 : (v) => v & 0xFFFF;
+  const wip = ip32 ? (v) => v >>> 0 : (v) => v & 0xFFFF;
   const at = (n) => rd(((base + wip(start + n)) & mask));
   let n = 0;
   let segOverride = null;

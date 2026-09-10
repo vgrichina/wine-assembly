@@ -4579,7 +4579,16 @@ class Machine {
           this.conPutc(dl);
           return true;
         }
-        const k = this.keys.shift() || (this.autoKeyNext());
+        // A POLL, so it goes through the poll answerer and not autoKeyNext.
+        // The difference is the whole behaviour of a demo that uses this as its
+        // "has anyone pressed anything yet" check: autoKeyNext manufactures a
+        // key on every call it sees, and COCAHOLC.EXE -- which polls exactly
+        // this call from inside its render loop -- was handed one 72,000 times
+        // in an 80M-dispatch run and spent the whole demo consuming a keystream
+        // instead of drawing. autoKeyPoll is the same screen-settled gate INT
+        // 16h AH=01h uses, and reports nothing until the picture stops moving.
+        this.autoKeyPoll();
+        const k = this.keys.shift();
         r.setResultZf(!k);
         r.set('ax', (r.get('ax') & 0xFF00) | (k ? k.al & 0xFF : 0));
         return true;
@@ -4597,6 +4606,10 @@ class Machine {
         return true;
       }
       case 0x0B: {                              // check standard input status
+        // The DOS twin of INT 16h AH=01h, and answered the same way: a program
+        // that polls here and then reads with AH=08h never sees a key at all
+        // unless the poll is allowed to manufacture one.
+        this.autoKeyPoll();
         r.set('ax', (r.get('ax') & 0xFF00) | (this.keys.length ? 0xFF : 0x00));
         return true;
       }

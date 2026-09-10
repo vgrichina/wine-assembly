@@ -66,6 +66,16 @@ const { STUB_SEG, STUB_OFF, STUB_BYTE } = require('./dos');
 // traced branch (no fall-through arena operand), the spin-collapsed branch.
 // Each of those can also be flagless. repairOperands needs the question
 // answered without re-running the passes.
+// The block cache is keyed by linear base, not by selector, so two programs can
+// share a base and be reached through different descriptors. The shape of the
+// code segment therefore has to be part of the key: `d` for a 32-bit segment,
+// `w` for a 16-bit one whose EIP is nonetheless a full 32-bit offset (protected
+// mode, D=0, limit past 64K). Compiling one program's blocks and handing them to
+// the other decodes the same bytes into different instructions.
+function keyFor(codeBase, d32, ip32) {
+  return d32 ? `${codeBase}d` : (ip32 ? `${codeBase}w` : codeBase);
+}
+
 function twinOf(h, x) {
   if (h === x) return true;
   for (const m of [NOFLAG, TRACE, SPIN, PSPIN]) {
@@ -375,13 +385,14 @@ class CodeCache {
     const mem = this.vm.mem;
     const rd = (l) => mem[l];
     const { codeBase, mask, d32, cs, words } = prog;
+    const ip32 = prog.ip32 === undefined ? d32 : prog.ip32;
     const reached = new Uint8Array(hi - lo + 1);
     for (const [q, ip] of prog.wordIp) {
       const lin = (codeBase + ip) & mask;
       // An instruction is at most 15 bytes, so nothing starting further below
       // the store than that can reach it.
       if (lin > hi || lin + 15 < lo) continue;
-      const d = decodeOne(rd, cs, ip, codeBase, mask, d32, this.benign);
+      const d = decodeOne(rd, cs, ip, codeBase, mask, d32, this.benign, ip32);
       if (!d) return this.decline('decoder refused the instruction');
       if (lin + d.length <= lo) continue;
       const w = d.words;
@@ -398,7 +409,8 @@ class CodeCache {
       if (i !== w.length) return this.decline('decoded words are not whole ops');
       let span = d.length;
       if (!twinOf(h, w[0])) {
-        const d2 = w.length === 1 + ARITY[w[0]] && decodeOne(rd, cs, d.nextIp, codeBase, mask, d32, this.benign);
+        const d2 = w.length === 1 + ARITY[w[0]]
+          && decodeOne(rd, cs, d.nextIp, codeBase, mask, d32, this.benign, ip32);
         const f = d2 ? FUSE.get(w[0] * 65536 + d2.words[0]) : undefined;
         if (f === undefined || !twinOf(h, f)) return this.decline('handler differs');
         // Only the first half's operand words are checked and patched; the
@@ -529,11 +541,11 @@ class CodeCache {
   // writes, which makes them the natural scratch: a single-step block is thrown
   // away the moment it has run, so caching it would only pollute the region
   // list with one-instruction traces that a later full-speed entry could find.
-  stepOne(cs, ip, codeBase, mask, d32 = false) {
+  stepOne(cs, ip, codeBase, mask, d32 = false, ip32 = d32) {
     const prog = compileProgram((lin) => this.vm.mem[lin], cs, ip, {
       arenaBase: this.arenaEnd,
       maxWords: 1000,
-      codeBase, mask, d32, oneInsn: true,
+      codeBase, mask, d32, ip32, oneInsn: true,
     });
     new Int32Array(this.vm.mem.buffer, prog.arenaBase, prog.words.length).set(prog.words);
     this.compiles++;
@@ -664,7 +676,7 @@ class CodeCache {
   }
 
   // Compile the volatile block at cs:ip into the scratch headroom, uncached.
-  volatileEntry(cs, ip, codeBase, mask, d32) {
+  volatileEntry(cs, ip, codeBase, mask, d32, ip32 = d32) {
     const vm = this.vm;
     const head = this.runHead(((codeBase + ip) & mask) >>> 4);
     // Has the code changed since it was last compiled? The stores themselves
@@ -695,18 +707,18 @@ class CodeCache {
     if (st && st.hash === hash) {
       if (++st.stale > VOLATILE_STALE) {
         this.demote(head);
-        return this.entryFor(cs, ip, codeBase, mask, d32);
+        return this.entryFor(cs, ip, codeBase, mask, d32, ip32);
       }
     } else if (st) { st.hash = hash; st.stale = 0; } else {
       let n = 0;
       for (let p = head; this.volPara[p] === 1; p++) n += 16;
       this.volState.set(head, st = { hash, stale: 0, decoded: new Uint8Array(n) });
     }
-    const key = d32 ? `${codeBase}d` : codeBase;
+    const key = keyFor(codeBase, d32, ip32);
     const prog = compileProgram((lin) => vm.mem[lin], cs, ip, {
       arenaBase: this.arenaEnd,
       maxWords: 1000,
-      codeBase, mask, d32, benign: this.benign, wasmDecoder: this.wasmDecoder,
+      codeBase, mask, d32, ip32, benign: this.benign, wasmDecoder: this.wasmDecoder,
       fuse: this.fuse, deadFlags: this.deadFlags, crossFlags: this.crossFlags,
       traceBlocks: this.traceBlocks, spinLoops: this.spinLoops,
       regSpec: this.regSpec,
@@ -777,18 +789,18 @@ class CodeCache {
   // and PMODE/W reuses the numbers it was just using as real-mode segments. Key
   // on the selector there and a block compiled before the switch is handed back
   // for an address that is now somewhere else entirely.
-  entryFor(cs, ip, codeBase = (cs << 4), mask = 0xFFFFF, d32 = false) {
+  entryFor(cs, ip, codeBase = (cs << 4), mask = 0xFFFFF, d32 = false, ip32 = d32) {
     const vm = this.vm;
     // The D bit belongs in the key, not just in the compile: one linear base
     // can be reached through both a 16-bit and a 32-bit descriptor -- a flat
     // extender's code segment and the real-mode segment 0 underneath it are
     // the same bytes at the same address and decode to different programs.
-    const key = d32 ? `${codeBase}d` : codeBase;
+    const key = keyFor(codeBase, d32, ip32);
     // Before the cache lookup, not after: a cached program can hold an `end`
     // stub at a volatile ip (the cut a straight line took at the boundary),
     // and finding that first would hand back to this same entry forever.
     if (this.volList.length && this.volPara[((codeBase + ip) & mask) >>> 4] === 1) {
-      return this.volatileEntry(cs, ip, codeBase, mask, d32);
+      return this.volatileEntry(cs, ip, codeBase, mask, d32, ip32);
     }
     if (!this.noCache) {
       const a = this.lookup(key, ip >>> 0);
@@ -851,7 +863,7 @@ class CodeCache {
     const prog = compileProgram((lin) => vm.mem[lin], cs, ip, {
       arenaBase: this.arenaNext,
       maxWords: (this.arenaEnd - this.arenaNext) >> 2,
-      codeBase, mask, d32, benign: this.benign, wasmDecoder: this.wasmDecoder,
+      codeBase, mask, d32, ip32, benign: this.benign, wasmDecoder: this.wasmDecoder,
       fuse: this.fuse, deadFlags: this.deadFlags, crossFlags: this.crossFlags,
       traceBlocks: this.traceBlocks, spinLoops: this.spinLoops,
       regSpec: this.regSpec,
@@ -913,6 +925,7 @@ class CodeCache {
     prog.live = true;            // cleared by dropProgs; a repair plan checks it
     prog.mask = mask;
     prog.d32 = d32;
+    prog.ip32 = ip32;
     // A Set, because covered ranges can overlap each other within one program.
     // A paragraph listed twice would be removed once and leave a byPara entry
     // pointing at a dropped program, and its code bit would never come down.
@@ -1284,6 +1297,18 @@ class DosSession {
     // programs can live at one linear base, one reached through a 16-bit
     // descriptor and one through a 32-bit one.
     const d32 = vm.exports.get_d32() !== 0;
+    // Whether EIP is a full 32-bit offset. In real mode and in V86 it is not:
+    // the segment is 64K and the offset wraps, which is what a 16-bit program
+    // running off the end of its segment expects. In protected mode it always
+    // is, D bit or not -- a descriptor limit is what stops an offset there, not
+    // a 16-bit truncation, and a D=0 descriptor with a limit past 64K is a real
+    // shape. COCAHOLC.EXE's extender executes generated 0x66/0x67-prefixed code
+    // through exactly one of those at EIP 0x23e60; masking the fetch to 0x3e60
+    // decoded an unrelated `add sp,[bp+0x67]` / `jmp [bp+0x67]` pair, so ESP and
+    // EIP took the same stack word and the demo derailed into a dead spin.
+    // Where the limit is 64K or less this changes nothing: the guest cannot be
+    // above 0xFFFF in the first place.
+    const ip32 = d32 || ((vm.exports.get_cr0() & 1) !== 0 && !vm.exports.get_vm86());
     // A CS that names no descriptor while PE is set. $segbase deliberately
     // reads such a selector as a real-mode paragraph, which is right for a DATA
     // segment in an extender running unreal -- but a real CPU cannot execute
@@ -1349,8 +1374,8 @@ class DosSession {
     const int1Hooked = !(int1seg === STUB_SEG && int1 === STUB_OFF + 1);
     const stepping = int1Hooked && (vm.get('flags') & (1 << isa.F.TF)) !== 0;
     const entry = stepping
-      ? this.cache.stepOne(cs, ip, codeBase, mask, d32)
-      : this.cache.entryFor(cs, ip, codeBase, mask, d32);
+      ? this.cache.stepOne(cs, ip, codeBase, mask, d32, ip32)
+      : this.cache.entryFor(cs, ip, codeBase, mask, d32, ip32);
     if (this.hooks.beforeSlice) this.hooks.beforeSlice();
     // Run to the next thing that wants to happen, not to the full slice.
     //

@@ -51,6 +51,13 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // address size of every instruction in the segment, and a 32-bit EIP that no
   // longer wraps at 0xFFFF.
   const d32 = !!opts.d32;
+  // Whether EIP is a full 32-bit offset in this segment. Normally that is the D
+  // bit, and it defaults to it; protected mode is the case where the two come
+  // apart, because a D=0 descriptor may still carry a limit past 64K and the
+  // guest may be executing above it. See decodeOne.
+  const ip32 = opts.ip32 === undefined ? d32 : !!opts.ip32;
+  // Region keys carry the same code-segment shape the block cache keys do.
+  const csKey = d32 ? `${codeBase}d` : (ip32 ? `${codeBase}w` : codeBase);
   // Guest IPs (the address AFTER the store) where a CS-override store has been
   // watched hitting nothing compiled, over and over. See benignPatch in
   // dos-loop.js: the decoder's rule for self-patching code is a static guess,
@@ -65,7 +72,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // See docs/toyvm-decoder-in-wasm.md, and tools/toyvm/decode-diff.js for the
   // differential test that the two decoders agree where they overlap.
   const wd = opts.wasmDecoder || null;
-  const entry = d32 ? (entryIp >>> 0) : (entryIp & 0xFFFF);
+  const entry = ip32 ? (entryIp >>> 0) : (entryIp & 0xFFFF);
 
   const blocks = new Map();      // guest IP -> arena address
   const blockIps = [];           // emission order
@@ -352,7 +359,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // 98.8% of the samples bought -2%. Marking every region head up front, and
   // compiling it first, makes each of them the boundary the region needs.
   if (opts.regionAt) {
-    const myKey = `${d32 ? `${codeBase}d` : codeBase}:`;
+    const myKey = `${csKey}:`;
     for (const key of opts.regionAt.keys()) {
       if (!key.startsWith(myKey)) continue;
       const rip = Number(key.slice(myKey.length));
@@ -399,7 +406,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     // whatever key it read out of the cache. Keying on `cs` here looked right
     // and matched nothing: the region silently never ran, and the only symptom
     // was a run that was neither faster nor different.
-    const regionKey = `${d32 ? `${codeBase}d` : codeBase}:${blockIp}`;
+    const regionKey = `${csKey}:${blockIp}`;
     // A REGION IS ONLY VALID OVER THE BYTES IT WAS COMPILED FROM. It is keyed
     // by guest ip, and a program that rewrites the code at that ip would
     // otherwise get the old loop installed over the new instructions -- with
@@ -512,7 +519,8 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       if (wd) {
         const room = Math.min(isa.DEC_SCRATCH_WORDS, maxWords - words.length);
         const n = room > 32
-          ? wd.exports.compile_block(cur, codeBase, mask, d32 ? 1 : 0,
+          ? wd.exports.compile_block(cur, codeBase, mask,
+              (d32 ? 1 : 0) | (ip32 ? 2 : 0),
               isa.DEC_SCRATCH, room, 0, (wrote ? 1 : 0) | (bulkWrote ? 2 : 0))
           : 0;
         if (n > 0) {
@@ -571,7 +579,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
         }
       }
 
-      const d = decodeOne(readByte, cs, cur, codeBase, mask, d32, benign);
+      const d = decodeOne(readByte, cs, cur, codeBase, mask, d32, benign, ip32);
       if (!d) {
         // An opcode we do not implement ends the trace and hands the guest IP
         // back, so the host can report exactly where coverage ran out instead
