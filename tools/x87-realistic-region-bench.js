@@ -403,12 +403,17 @@ async function productionBench(rounds) {
   const extraWat = `
     (func (export "x87_bench_reset") (param $seed i32)
       (global.set $fpu_top (i32.and (local.get $seed) (i32.const 7)))
-      (global.set $fpu_tag (i32.const 0)) (global.set $fpu_raw_tag (i32.const 0))
       (global.set $fpu_sw (i32.const 0))
-      (f64.store (i32.const 0x200) (f64.const 0)) (f64.store (i32.const 0x208) (f64.const 0))
-      (f64.store (i32.const 0x210) (f64.const 0)) (f64.store (i32.const 0x218) (f64.const 0))
-      (f64.store (i32.const 0x220) (f64.const 0)) (f64.store (i32.const 0x228) (f64.const 0))
-      (f64.store (i32.const 0x230) (f64.const 0)) (f64.store (i32.const 0x238) (f64.const 0)))
+      (call $fpu_set (i32.const 0) (f64.const 0))
+      (call $fpu_set (i32.const 1) (f64.const 0))
+      (call $fpu_set (i32.const 2) (f64.const 0))
+      (call $fpu_set (i32.const 3) (f64.const 0))
+      (call $fpu_set (i32.const 4) (f64.const 0))
+      (call $fpu_set (i32.const 5) (f64.const 0))
+      (call $fpu_set (i32.const 6) (f64.const 0))
+      (call $fpu_set (i32.const 7) (f64.const 0))
+      (global.set $fpu_tag (i32.const 0))
+      (global.set $fpu_raw_tag (i32.const 0)))
     (func (export "x87_bench_meta") (result i32)
       (i32.xor (global.get $fpu_tag) (i32.xor (i32.shl (global.get $fpu_top) (i32.const 8)) (i32.shl (global.get $fpu_sw) (i32.const 16)))))`;
   const h = await bootRenderHarness({ extraWat, fonts: 'none' }), e = h.exports;
