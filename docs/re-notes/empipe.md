@@ -25,3 +25,10 @@ census. Do not infer that audible playback requires900 guest polls/s. The
 instrumented discrepancy remains to isolate; neither measurement changed
 runtime code. The startup New-only screen likewise has zero main slices
 during10s but9.57% renderer when music is playing.
+
+Combined phase+delay census repeat (`wa-idle-empipe-combined304`) also sleeps
+normally:296 turns/15s, every delay50ms, main slices71 ->71, wait polls59 ->355.
+Guest/worker/present time all0; total host phases11.3ms. Renderer7.97% with
+music, no errors. This rules out the phase hook alone as a sufficient cause
+of the earlier anomaly; it does not establish why that earlier run differed.
+Three subsequent measured paused runs now show the normal20Hz park cadence.

@@ -225,12 +225,25 @@ not an untouched launch screen. Raw `wa-idle-bricks-board304` and
 numerical precision, but zero guest runs during each sample establishes that
 the board is not spinning. No additional runtime change was needed.
 
-- Classify remaining realtime puzzle practice/paused states; Heroes actual
-  player-turn map is now verified headfully above.
-- Golf, Minesweeper after reveal, and Blackjack after deal pass locally above.
-- Verify additional sleeping-helper games after input; Four Stones passes locally.
-- Finish real-game/after-input checks, not only launch states.
-- Headful measurements with visible pages and a blank-page CPU floor.
-- Integrate/commit scoped work without foreign changes; keep paired local
-  artifacts and cache graph coherent. Do not deploy.
-- Repeat the passing local three-app shared-scheduler check on a quiet box.
+EmPipe combined phase+delay census (`wa-idle-empipe-combined304`) confirms296
+turns/15s, all50ms, zero guest work and11.3ms host phases. Renderer7.97% with
+music. The phase hook alone does not reproduce the earlier excessive wakeups.
+No additional runtime fix follows from that outlier without a reproducible cause.
+
+### Outstanding acceptance decisions / work
+
+- All15 traditional card/board titles now have visible actual-board evidence;
+  Four Stones, Bricks, Blackjack and Minesweeper additionally have explicit
+  move/deal/reveal follow-ups. Funtris gameplay and EmPipe/CWordZap paused
+  boards are verified, so those are no longer generic untested checklist items.
+- Heroes' audible menu/map still use about10–16% renderer CPU. Its core spin
+  is fixed, but evidence of useful audio/animation is not a claim that its
+  total CPU is negligible. Further optimization must preserve those features.
+- Marbles' actual active play is realtime; Pause/P have not paused it. Keep
+  any practice/paused investigation distinct from the15 turn-based titles.
+- A same-browser blank-page floor was measured for Heroes. The three-app
+  shared-scheduler sample passed at1.45% on a loaded host; a quiet repeat
+  remains useful for precise CPU acceptance, not for discovering a core spin.
+- Implementation and evidence are committed in the isolated worktree; shared
+  main integration remains separate because of overlapping concurrent edits.
+  Paired source304 artifacts remain unchanged. Do not deploy.
