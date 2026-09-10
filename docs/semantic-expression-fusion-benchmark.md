@@ -53,6 +53,85 @@ Stack actions such as push, pop, duplicate and swap should become decode-time
 reference renaming where possible. They should not be runtime micro-ops in the
 fused and straight-region arms.
 
+## x86 integer expression lowering
+
+The same representation applies to ordinary x86 integer code, and its core
+arithmetic is simpler because Wasm `i32` wrapping matches 32-bit x86 addition,
+subtraction and multiplication:
+
+```text
+mov eax,[x]
+imul eax,3             STORE32 z
+add eax,[y]               |
+xor eax,mask             XOR
+mov [z],eax             /   \
+                      ADD   mask
+                     /   \
+                   MUL   LOAD32 y
+                  /   \
+            LOAD32 x    3
+```
+
+The expression IR should distinguish a value from the flags produced by that
+value. Flags may remain lazy when nothing observes them:
+
+```text
+v1 = add32(a,b)             ; wrapping value
+f1 = flags_add32(a,b,v1)    ; materialize only if consumed
+```
+
+Examples:
+
+```text
+add eax,ebx; add eax,ecx; mov [p],eax
+  -> store32(p, add32(add32(eax,ebx),ecx))
+
+add eax,ebx; adc edx,0
+  -> t = add_with_carry32(eax,ebx,0)
+     eax = t.value
+     edx = add32(edx,t.carry)
+
+cmp eax,limit; jl target
+  -> branch(signed_lt32(eax,limit), target, fallthrough)
+```
+
+Start with full-register `i32` operations. Treat `AL/AH/AX` writes as barriers
+until the IR explicitly models insert/extract operations, because `AH` aliases
+bits 8-15 rather than a separate register. Likewise, do not initially fuse
+across `PUSHFD`, `LAHF`, `SETcc`, `ADC`, `SBB`, rotates-through-carry or a branch
+unless the region carries the required flag value to that consumer.
+
+Memory accesses remain an ordered side-effect list even when arithmetic becomes
+a tree:
+
+```text
+r = load32(a)       # access 0
+s = load32(b)       # access 1
+store32(c,r+s)      # access 2
+```
+
+Do not move the store ahead of either load unless alias analysis proves it safe.
+Preserve original fault order in exact mode. `DIV/IDIV` require explicit zero and
+quotient-overflow checks matching x86 traps; shifts require x86's masked count
+and exact flag rules. These are later primitives, not ordinary Wasm `/` or `>>`.
+
+Useful integer benchmark arms should include:
+
+```text
+flag-dead arithmetic chain
+arithmetic followed by Jcc
+ADC/SBB carry chain
+base+index address-update loop
+partial-register near miss
+possibly-aliasing load/store near miss
+DIV zero/overflow side exits
+```
+
+Exact integer fusion should be bit- and state-identical. There is little reason
+for an integer "fast math" mode: reassociation is safe only when both value and
+all intermediate flag observations are proven irrelevant. That is an optimizer
+proof, not an application tolerance setting.
+
 ## Workloads
 
 Test at least these exact-order shapes at lengths 4, 8, 16 and 32 semantic
@@ -132,4 +211,3 @@ predictable straight-line host expression. Previous Wine-Assembly experiments
 found straight local regions crossing direct-memory regions after roughly 4-8
 repetitions and a useful safepoint neighborhood around `K=16`; ToyVM should test
 those values independently rather than treating them as constants.
-
