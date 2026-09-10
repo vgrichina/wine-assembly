@@ -51,8 +51,10 @@ Temporary harness: `/private/tmp/audit-idle-games.js`; raw production baseline:
 | Marbles | **52.92** | Animated mode menu; GPU 11.87%, needs gameplay/practice check |
 
 Non-realtime scope also includes Heroes II's player-turn adventure map, not
-just its title screen. Bricks, EmPipe, Funtris and CWordZap still need explicit
-state classification: inspect static menus/paused states but do not mistake
+just its title screen. Bricks is a Klotski sliding-block puzzle and belongs in
+the non-realtime board-game inventory (15 card/board titles, not 14). EmPipe,
+Funtris and CWordZap still need explicit state classification:
+inspect static menus/paused states but do not mistake
 active realtime simulation for an idle wait. Rodent is included because it
 initiated the investigation. SkiFree, Pinball, DX-Ball, Blobby Volley, Rattler
 and RollerCoaster Tycoon have realtime active play, not a turn-based idle board.
@@ -136,6 +138,9 @@ host scheduling/presentation costs. Evidence `wa-idle-heroes-settled304`.
 Marbles `p` key did **not** produce a verified paused screen; its resulting
 19.53% sample must not be recorded as paused acceptance. Actual pause binding
 remains to be established (guest pause routine0x41a975, thunk0x401370).
+The physical Pause key also fails to pause: `wa-idle-marbles-pause-key304`
+screenshots show the opponent counter changing1 ->2 and both grids advancing.
+Its42.52% loaded-host sample is active gameplay, not paused acceptance.
 
 Extended production sweep: Bricks menu0.46%, EmPipe8.34%, Funtris102.18%,
 CWordZap2.16%, Heroes II menu107.04%. Funtris has a sleeping helper (not a
@@ -198,6 +203,15 @@ the audible animated game. The separate menu audio-isolation evidence above
 explains why real-time synthesis must be distinguished from idle guest polling.
 
 ### Remaining work
+
+Bricks headful local304 follow-up: actual started Klotski board **0.93%**
+renderer, then **0.84% after a real drag**,15s samples. Main slice counters
+remain4 ->4 and9 ->9 respectively, message wait7, no page errors. The drag
+changes1838 board pixels and the rendered counter reads `MOVES: 1`; this is
+not an untouched launch screen. Raw `wa-idle-bricks-board304` and
+`wa-idle-bricks-drag304`, screenshots inspected. Host loads18.15/15.65 limit
+numerical precision, but zero guest runs during each sample establishes that
+the board is not spinning. No additional runtime change was needed.
 
 - Classify remaining realtime puzzle practice/paused states; Heroes actual
   player-turn map is now verified headfully above.
