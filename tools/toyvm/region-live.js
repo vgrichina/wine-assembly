@@ -125,6 +125,24 @@ function workerBackend(url) {
   };
 }
 
+// INSTALL-SIDE BISECTORS. `--trap` (region-jit.js) separates "the compiled
+// body" from "the install"; these separate the INSTALL into its parts, which is
+// the split every divergence measured on this path has actually needed. Node
+// only, and read the way region-jit.js reads its own switches -- the page
+// passes none of them and `process` is not defined there.
+//
+//   --no-install-precompile   leave the dropped blocks for the guest to trip
+//                             over instead of compiling them back here
+//   --install-drop-rtop       empty the shadow return stack instead of keeping
+//                             the prefix below the lowest stale frame
+//   --no-install-repair-rtop  cut the shadow return stack at the lowest stale
+//                             frame instead of re-pointing the stale frames at
+//                             the blocks compiled back above
+//   --no-install-invalidate   leave the dropped blocks in the cache
+//   --no-region-code-bits     do not mark the region's bytes as compiled code
+const liveFlag = (n) => (typeof process !== 'undefined' && Array.isArray(process.argv)
+  && process.argv.includes(`--${n}`));
+
 // --- the live driver --------------------------------------------------------
 
 class LiveJit {
@@ -155,17 +173,27 @@ class LiveJit {
       // can see: `repFast` is a switch the host sets, and `cpu` is the decoder's
       // level (its FLAGS half does ride in MACHINE_STATE).
       repFast = true, cpu = 386,
+      // The emit options the running module was built with, so the install's
+      // rebuild is the SAME module plus a region. Empty means "the defaults",
+      // which is what a default run is.
+      build = {},
       log = () => {},
     } = opts;
     Object.assign(this, {
       session, vm, machine, portIn, portOut, sampleAfter, profileFor, regions,
-      minShare, minOps, gateAt, gateIters, backend, repFast, cpu, log,
+      minShare, minOps, gateAt, gateIters, backend, repFast, cpu, build, log,
     });
     this.phase = 'profiling';
     this.declined = null;
     this.installedAt = null;         // guest ips of the installed regions
     this.installs = 0;
     this.drops = 0;
+    // Shadow-return-stack frames an install found stale: how many were
+    // re-pointed at the block compiled back in their place, and how many the
+    // stack still had to be cut at. Each one of the second kind is a `ret`
+    // that will miss, and a miss is a handback the interpreter never took.
+    this.rtopRepaired = 0;
+    this.rtopCut = 0;
     this.ms = {};                    // per-stage cost, milliseconds
     this.samples = new Map();        // arena address -> hits
     this.sampleLog = [];             // flat [dispatched, arena address, ...]
@@ -213,7 +241,7 @@ class LiveJit {
       if (get) machine[g] = get();
     }
     return {
-      variant: this.vm.variant,
+      variant: this.vm.variant, build: this.build,
       samples: [...this.samples], sampleLog: this.sampleLog,
       dispatched: this.dispatched, progs,
       // A copy, not a view: the guest keeps running while this is being
@@ -342,6 +370,20 @@ class LiveJit {
     this.ms.instantiate = now() - tc;
     const ts = now();
     carryState(old, next.exports);
+    // `--install-audit`: every zero-argument `get_`/`mget_`/`fget_` export the
+    // two instances share, compared after the carry. A global the carry does
+    // not know about is not a crash, it is a WRONG NUMBER LATER -- `idtb` and
+    // `attr_flip` were both found this way, by hand -- and the shape of the
+    // bug is always "the list in carryState is not the list emit.js emits".
+    // This asks the module instead of the list.
+    if (liveFlag('install-audit')) {
+      for (const k of Object.keys(next.exports)) {
+        if (!/^(get|mget|fget)_/.test(k) || typeof old[k] !== 'function') continue;
+        let a, b;
+        try { a = old[k](); b = next.exports[k](); } catch (e) { continue; }
+        if (a !== b) this.log(`[jit] install-audit: ${k} ${a} -> ${b}`);
+      }
+    }
     vm.rebind(next);
     // The machine caches the export table it pokes registers through, and the
     // VGA period is programmed once per change -- both have to be told.
@@ -355,13 +397,32 @@ class LiveJit {
     // `unreachable`) each reproduced its divergence exactly and never trapped.
     if (this.machine) this.machine.setVmExports(vm.exports);
     if (vm.exports.set_rep_fast) vm.exports.set_rep_fast(this.repFast ? 1 : 0);
-    this.session.vgaHz = 0;
+    // THE CARD'S PROGRAMMING IS RE-APPLIED, NOT RE-DERIVED. `$vga_period`,
+    // `$vga_vb`, `$vga_line`, `$vga_hb` and `$vga_phase0` are five globals with
+    // no accessor pair, so `carryState` cannot reach them and the new instance
+    // starts on the module's defaults (26000/2340/57/11/0). This used to be
+    // handled by setting `session.vgaHz = 0`, which makes the next slice
+    // program the card AGAIN -- and that is not the same thing: the session
+    // only re-reads `vgaTiming()` when the refresh RATE changes, so a card
+    // whose line count moved under an unchanged rate is running on a `lines`
+    // the current call no longer reports, and the recompute would then hand
+    // the new instance a retrace geometry the old instance was not running on.
+    // No corpus program has been shown to depend on that difference -- on the
+    // measured corpus `vgaTiming()` returns what it returned -- so this is a
+    // narrowing, not a fix for a known divergence: it re-applies a number the
+    // host already has instead of asking for it again.
+    if (this.session.vgaPeriod && vm.exports.set_vga_period) {
+      vm.exports.set_vga_period(this.session.vgaPeriod, this.session.vgaLines);
+      if (old.get_vga_phase0 && vm.exports.set_vga_phase0) {
+        vm.exports.set_vga_phase0(old.get_vga_phase0());
+      }
+    }
 
     const cache = this.session.cache;
     cache.regionAt = new Map(prepared.picks.map(p => [p.key, p.idx]));
     cache.regionSucc = new Map(prepared.picks.map(p => [p.key, p.succ]));
     cache.regionBytes = new Map(prepared.picks.map(p => [p.key, p.guard]));
-    cache.regionCodeBits = true;
+    cache.regionCodeBits = !liveFlag('no-region-code-bits');
     // ONLY THE REGION'S OWN BYTES. This used to flush the whole cache, on the
     // argument that every block in the arena was compiled against the old
     // handler table. It was not: a region is an EXTRA entry appended to that
@@ -414,19 +475,20 @@ class LiveJit {
     const rtop0 = vm.raw('rtop');
     const stack = new Int32Array(vm.mem.buffer, isa.RSTACK_BASE, rtop0 * 3);
     let keep = rtop0;
-    for (let i = 0; i < rtop0; i++) {
-      const a = stack[i * 3 + 1];
-      for (const prog of doomedProgs) {
-        if (a >= prog.arenaBase && a < prog.arenaBase + prog.words.length * 4) { keep = Math.min(keep, i); break; }
-      }
-    }
+    // The arena spans about to stop meaning anything, taken BEFORE the drop --
+    // after it, `prog.words` still describes a range the next compile is free
+    // to lay something else over.
+    const doomedSpans = [...doomedProgs]
+      .map(p => [p.arenaBase, p.arenaBase + p.words.length * 4]);
+    const stale = (a) => doomedSpans.some(([lo, hi]) => a >= lo && a < hi);
     // ...but only when the drop really was narrow. `invalidateRange` falls back
     // to a whole-cache `flush()` for a wide range or under `--smc-flush`, and a
     // flush leaves no arena address anywhere valid.
     const narrow = !cache.smcFlush
       && this.guards0(prepared).every(g => ((g.lin + g.bytes.length - 1) >>> 4) - (g.lin >>> 4) <= 512);
-    for (const g of this.guards0(prepared)) cache.invalidateRange(g.lin, g.lin + g.bytes.length - 1);
-    vm.set('rtop', narrow ? keep : 0);
+    if (!liveFlag('no-install-invalidate')) {
+      for (const g of this.guards0(prepared)) cache.invalidateRange(g.lin, g.lin + g.bytes.length - 1);
+    }
     // ...AND COMPILE IT BACK HERE, NOT WHEN THE GUEST TRIPS OVER IT. A block
     // the cache does not hold is a HANDBACK: $jlook misses, the slice exits,
     // and the host compiles it before the next `run()`. So leaving the head
@@ -442,14 +504,66 @@ class LiveJit {
     // wav differed from sample 99,584 on. Compiling the head here is the same
     // work the handback would have done, done on the host's turn instead.
     const vmx = vm.exports;
+    const resets0 = cache.arenaResets;
     const curCs = vm.get('cs') & 0xFFFF;
     const codeBase = vmx.get_csb(), linmask = vmx.get_linmask(), d32 = vmx.get_d32() !== 0;
-    for (const [cs, bip] of doomed.values()) {
+    for (const [cs, bip] of (liveFlag('no-install-precompile') ? [] : doomed.values())) {
       // Only what this CS's base still describes: a block compiled under
       // another selector would be decoded here at the wrong linear address.
       if ((cs & 0xFFFF) !== curCs) continue;
       cache.entryFor(cs & 0xFFFF, bip, codeBase, linmask, d32);
     }
+    // ...AND THE SAME ARGUMENT APPLIES TO THE FRAMES ABOVE THE LOWEST STALE
+    // ONE. Truncating at the first frame whose arena address is inside a
+    // dropped program keeps the stack SOUND, but it still costs the run
+    // exactly the handback the paragraph above exists to avoid: the next `ret`
+    // that would have popped a truncated frame misses instead, $rpop returns
+    // 0, the slice exits early, and the unspent remainder shifts every later
+    // boundary. That is BMGLP.EXE, whose frame, pixel count, interrupt tally
+    // and dispatch total are identical on and off and whose wav is not: the
+    // install truncated one frame, the run took one extra handback (13,206
+    // against 13,207 by 4M dispatches), and every slice after it was cut at a
+    // different guest instant.
+    //
+    // A stale frame is not unrecoverable, it is just UNRESOLVED. Frame i holds
+    // the guest return offset it was pushed for (+0) and the selector it was
+    // pushed under (+8); a block compiled at that offset now is the same code
+    // the miss path would have compiled, so the frame can be re-pointed at it
+    // instead of thrown away. Only a frame under another selector, or one
+    // whose compile does not come back, still forces the cut.
+    let repaired = 0, unrepaired = 0;
+    if (narrow && !liveFlag('install-drop-rtop') && !liveFlag('no-install-repair-rtop')) {
+      for (let i = 0; i < rtop0; i++) {
+        if (!stale(stack[i * 3 + 1])) continue;
+        let na = 0;
+        if ((stack[i * 3 + 2] & 0xFFFF) === curCs) {
+          na = cache.entryFor(curCs, stack[i * 3 + 0] >>> 0, codeBase, linmask, d32) || 0;
+        }
+        if (na) { stack[i * 3 + 1] = na; repaired++; } else { unrepaired++; keep = Math.min(keep, i); }
+      }
+      // A compile that RECYCLED the arena makes every address in the stack
+      // meaningless, repaired ones included, so that one really does cut it
+      // back to nothing. `$rtop` itself cannot be asked -- `invalidateRange`
+      // has already zeroed it above and the `set` below is what puts it back
+      // -- so the arena's own reset counter is what says whether the ground
+      // moved under the repair.
+      if (cache.arenaResets !== resets0) keep = 0;
+    } else {
+      for (let i = 0; i < rtop0; i++) if (stale(stack[i * 3 + 1])) keep = Math.min(keep, i);
+    }
+    vm.set('rtop', (narrow && !liveFlag('install-drop-rtop')) ? keep : 0);
+    // Counted for `stats()`, so a test can assert that this path was EXERCISED
+    // rather than merely that two arms agreed -- a program whose return stack
+    // held no stale frame agrees either way and would grade a repair that
+    // never ran.
+    this.rtopRepaired += repaired;
+    this.rtopCut += rtop0 - ((narrow && !liveFlag('install-drop-rtop')) ? keep : 0);
+    // What the install actually cost the cache, under `--region-jit-verbose`:
+    // the two numbers a "the wav moved" report always turns out to need.
+    this.log(`[jit] install: ${doomedProgs.size} program(s) / ${doomed.size} block(s)`
+      + ` dropped, return stack ${rtop0} -> ${(narrow && !liveFlag('install-drop-rtop')) ? keep : 0}`
+      + ` (${repaired} frame(s) re-pointed, ${unrepaired} not)`
+      + `${narrow ? '' : ' (wide drop)'}`);
     this.guards = this.guards0(prepared);
     this.installedAt = prepared.picks.map(p => p.headIp);
     this.ms.swap = now() - ts;
@@ -470,6 +584,7 @@ class LiveJit {
     return {
       phase: this.phase, declined: this.declined, installs: this.installs,
       drops: this.drops, share: this.share, gate: this.gateRatio,
+      rtopRepaired: this.rtopRepaired, rtopCut: this.rtopCut,
       at: this.installedAt, ms: { ...this.ms }, backend: this.backend.name,
       samples: this.samples.size,
     };

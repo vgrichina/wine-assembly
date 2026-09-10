@@ -19,9 +19,9 @@
   rendered audio at 12M and 19/20 at 80M (where it was 12/20): DREAM still
   drifts one IRQ boundary by 80M on the shipped clock, and the clock that fixes
   it (`--lattice-clock`) re-times six flag-off witnesses, so it is opt-in.
-  The 191-program corpus sweep is not clean either: CRITICAL.EXE draws a
-  different picture with the JIT on. See "The correctness gate", "What was wrong" and "The one
-  row that still differs".
+  The two corpus rows that used to draw a different picture no longer do:
+  BMGLP.EXE was one truncated shadow-return frame and is fixed, CRITICAL.EXE
+  declines. See "The correctness gate", "What was wrong" and "The corpus sweep".
 ```
 
 ## What ships
@@ -109,6 +109,11 @@ Two gaps were found while measuring this and are fixed here:
 
 Neither changed any row of the tables below, which is worth saying plainly: they
 are correct and they were not the cause of anything measured here.
+
+The **shadow return stack** is not a global and is not carried — it lives in
+guest-adjacent memory at `isa.RSTACK_BASE` and survives the swap on its own. What
+does not survive is the arena address in each frame, and that is item 5 of "What
+was wrong".
 
 ## A stale region is a wrong picture
 
@@ -280,7 +285,8 @@ slice's unspent remainder, for the rest of the program:
   is dropping, and whatever prefix is below the lowest such frame is kept. On
   CYCLE.EXE that single miss put all 650,000 following boundaries 33,909
   dispatches early — identical frame, identical pixels, identical interrupts,
-  different wav from sample 99,584 on.
+  different wav from sample 99,584 on. **Keeping the prefix is not enough** — see
+  item 5, which is what BMGLP.EXE turned out to be.
 * the region's own slice protocol. A region used to test for the end of the
   slice only at its back edge, once per iteration, and with `$steps > 0` rather
   than `>= 0`. The interpreter takes that boundary at EVERY transfer, so the two
@@ -313,6 +319,34 @@ frame are carried rather than folded in at `Infinity`) — but the DMA fetch can
 only ever read memory as it is now, which is why the render instant itself had
 to go on the lattice.
 
+**5. The frame the guest is STANDING ON cannot be cut either, and that was
+BMGLP.EXE.** Item 3 kept the prefix below the lowest stale frame, which is sound
+— a `ret` whose shadow frame is gone misses, falls back to the slow path and
+computes the right answer — but a miss is `$slice_exit` (`emit.js` `RET_BODY`),
+so it is a handback, so it is a moved boundary, so it is a different wav for the
+rest of the program. BMGLP's guest is *inside* a subroutine when its region
+installs, and that one live frame points into the program the install drops:
+13,206 handbacks off against 13,207 on by 4M dispatches, first divergence at
+dispatch 4,005,434 (a voluntary handback with `left=16` that the interpreter
+never takes), identical frame and pixels and interrupt count, different audio.
+
+A stale frame is now **re-pointed** rather than cut. Each entry carries the guest
+return offset at `+0` and its selector at `+8`, so `cache.entryFor(cs, ip, …)`
+compiles exactly the block the miss path would have compiled and the frame is
+aimed at it — before `vm.set('rtop', …)`, after the eager re-compile of the
+dropped blocks. Only a frame under another selector, or one whose compile does
+not come back, still forces the cut; an arena recycle during the repair (checked
+by watching `cache.arenaResets`, because the addresses just written would then
+name something else) cuts to zero. `stats()` reports `rtopRepaired` and
+`rtopCut`, and **`rtopCut` is the number that has to be zero** — the install log
+line reads `return stack 1 -> 1 (1 frame(s) re-pointed, 0 not)`.
+
+`--no-install-repair-rtop` is the bisector: it goes back to cutting, which is
+how `test/test-toyvm-region-install-clock.js` proves its own assertions are about
+the repair. Note that `test-toyvm-region-live.js` structurally cannot catch this
+class: it allows the dispatch clock to move by one per install (a region's lump
+step charge legitimately does), and one missed `ret` costs exactly one.
+
 ### How to see a moved cut
 
 `--slice-log=FILE` (run-dos.js) writes the cumulative dispatch count, the
@@ -323,7 +357,7 @@ it. A frame hash says two runs ended somewhere different; this says *where*, and
 it is the only thing that separates "the region computed something else" from
 "the region ended its slice one instruction along".
 
-## The corpus sweep: two rows still differ, and that is why it stays off
+## The corpus sweep: the two rows that differed, and what each turned out to be
 
 `sweep-dos.js --dir=/tmp/demos --reps=1 --variants=tailcall` (191 programs,
 8M dispatches each) run twice — once plain, once `--region-jit` — through
@@ -342,42 +376,65 @@ measurement scatter and the two real ones would have been argued away with them.
 * **35 rows moved the dispatch count by 1-9 out of 8,000,000** with the frame
   hash and the pixel count identical. That is a slice boundary landing one
   block later at the very end of the budget, not a different picture.
-* **BMGLP.EXE and CRITICAL.EXE draw something else.** Both reproduce exactly,
-  every time, in `sweep-dos.js --one=` under both arms:
+* **BMGLP.EXE and CRITICAL.EXE drew something else** — as measured at that
+  sweep, both reproducing exactly every time in `sweep-dos.js --one=` under both
+  arms. Neither does now; the rows below are what was seen then:
 
   | program | region | frame off/on | px off/on | dispatched off/on |
   |---|---|---|---|---|
   | BMGLP.EXE | `0x28c`, 2 blocks, 17 ops, 28.4% of samples, gate 2.39x | `85841133` / `f6942521` | 793 / 649 | 8000003 / 8000005 |
   | CRITICAL.EXE | `0x196`, 2 blocks, 29 ops, 1.8% of samples, gate 2.22x | `8859edaf` / `0e717135` | 2932 / 2933 | 8000002 / 8000011 |
 
-**These are in the region, and they are the class the snapshot audit cannot
-see.** Everything in "What was wrong" above was install-side and each one
-reproduced under `--trap` (a region body of `unreachable`) *without trapping*.
-CRITICAL.EXE **traps** under `--trap`: the guest really executes the compiled
-body. It still differs under `--once` (no back edge at all), so it is not the
-slice protocol, and unchanged under `--no-exact-slice`. And the audit agreed on
-both regions — 2.39x and 2.22x over 4000 iterations with every register and
-every byte of memory matching — which is exactly the limit written into
-`region-prepare.js`: the audit is a check on the lowering of the ops it *saw
-run*, not a proof about a path it never took. `test/test-toyvm-region-live.js`
-now has a program whose second exit is only reachable five audit windows in, for
-that reason; these two rows say the general case is still open.
+**Neither one was a miscompile, and the guess that they were "the class the
+snapshot audit cannot see" was wrong.** Both were chased down; this is what they
+were.
 
-At the default profile window (6M in, 6M wide) and 80M dispatches CRITICAL.EXE
-is much worse than at the sweep's settings: 245 px against 265, 35,361
-dispatches apart, and the wav differs too. It is the row to start from.
+**BMGLP.EXE was install-side, like every row above it — the region is never even
+entered before the picture diverges.** `--step-audit` reports the region charged
+0 steps for 0 instruction weights at 4.009M dispatches, well past the
+divergence. A declined install (`--region-jit-gate=100`) is byte-identical, so
+profiling and gating are innocent; the minimal install
+(`--no-install-invalidate --no-install-precompile --no-region-code-bits`)
+reproduces it exactly, so the cause is inside `install()`. It is the truncated
+shadow-return frame in item 5 of "What was wrong", and re-pointing the frame
+fixes it: **SAME at 8M** (2M/2M window, `--region-jit-gate=0`, installed) and
+**SAME at 80M** (default window, installed) on frame, pixels, interrupts and wav.
+
+**CRITICAL.EXE no longer selects a region at all, so its row is stale.** It
+declines under every configuration tried — `region-live-ab.js` defaults at 8M and
+80M, `--region-jit-after=2m --region-jit-window=2m --region-jit-gate=0` at 8M
+with and without `--pit-clock`, and the sweep's own budget (44,063,325
+dispatches, after/window = budget/4). `--why` names the rejects: `0x1001cdc`
+`ret with no inlined call to return to`, `0x10020dc` `inner loop at ip 253 closed
+but the path after it died: edge to 0x0 is not a block head`, `0x1002148` `ends
+bad-handler, not jmp`, `0x1002328` `ret with no inlined call`. The program's hot
+path has moved since the row was measured; with nothing installed both arms are
+byte-identical at 8M and at 80M. Whatever the `0x196` region was, it is not
+picked any more, so there is no lowering left to check — if a future picker
+reaches that shape again the row comes back and this note is the starting point.
+
+The audit's limit still stands as written in `region-prepare.js` — it is a check
+on the lowering of the ops it *saw run*, not a proof about a path it never took,
+and `test/test-toyvm-region-live.js` has a program whose second exit is only
+reachable five audit windows in for that reason. It just is not what either of
+these two rows was.
+
+The full 191-program sweep has **not** been re-run since the fix; the two rows
+were re-measured individually with `region-live-ab.js`.
 
 ## What is NOT done
 
-* **The corpus gate is not clean**, so `--region-jit` and `?jit=1` default OFF
-  and this is not on for anyone by accident. BMGLP.EXE at `0x28c` and
-  CRITICAL.EXE at `0x196` are the work list, and unlike the four progress stalls
-  they really are inside the compiled region.
+* **The 191-program corpus sweep has not been re-run since BMGLP was fixed.**
+  Both rows that differed are individually SAME again at 8M and 80M, but a
+  re-sweep is what would let the flag default ON, and until it runs
+  `--region-jit` and `?jit=1` stay OFF. The 20-program gate is 20/20 at 12M and
+  19/20 at 80M (DREAM, on the shipped clock — see "At 80M dispatches").
 * **The audit still has no way to say "I never took that exit".** It reports
   DISAGREES, INCONCLUSIVE (arms took different branches) or a ratio; an exit the
-  seeded 4000 iterations never reach is silently counted as audited. Making an
-  unexercised side exit an INCONCLUSIVE verdict rather than a pass is the change
-  that would have declined both rows above.
+  seeded 4000 iterations never reach is silently counted as audited. This is a
+  real hole, but note that neither corpus row above turned out to be in it —
+  BMGLP never entered its region and CRITICAL no longer picks one — so nothing
+  has yet demonstrated the hole costing a wrong picture.
 * **The page's `M steps/s` and audio-underrun numbers were not measured.** The
   runtime now ships (`site.js --js-only`), but `live-audio-probe.js` has no
   `--query=` pass-through, so there is no way to open a tile with `?jit=1` from

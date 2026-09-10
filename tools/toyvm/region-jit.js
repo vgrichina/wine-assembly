@@ -2680,7 +2680,7 @@ async function main() {
 
 module.exports = {
   pickRegion, buildRegion, guardBytes, regionSuccessors, snapshotFor, successorIps,
-  passSpec, isTransfer,
+  passSpec, isTransfer, EXIT_SITES,
 };
 
 if (require.main === module) main().catch(e => { console.error(e.stack || String(e)); process.exit(1); });

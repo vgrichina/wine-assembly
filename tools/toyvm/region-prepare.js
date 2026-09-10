@@ -155,7 +155,14 @@ async function prepareRegions(bundle) {
       fs.writeFileSync(f, `(func $${p.region.name} ${p.region.locals}\n${p.region.body}\n)\n`);
     }
   }
-  const built = await buildModule(bundle.variant, { regions: out.map(p => p.region) });
+  // THE SAME MODULE, PLUS A REGION. `bundle.build` carries the emit options
+  // the running instance was made with; passing only `regions` rebuilt on the
+  // defaults, which agrees with a default run and silently would not with
+  // `--handler-hist` (the histogram changes nothing the arena holds, but the
+  // option is part of what the module IS) or `--no-lazy`/`--no-fusecond`,
+  // where the guest would be swapped onto handlers with different semantics.
+  const built = await buildModule(bundle.variant,
+    { ...(bundle.build || {}), regions: out.map(p => p.region) });
   return {
     picks: out, bytes: built.bytes, gate: { agree: true, ratio },
     ms: { pick: tPick - t0, gate: tGate - tPick, build: now() - tGate },

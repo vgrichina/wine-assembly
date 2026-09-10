@@ -207,6 +207,10 @@ async function runDos(o) {
     cpuMeter = false,
     // `--slice-log=FILE`: where to write the per-handback dispatch counts.
     sliceLogFile = null,
+    // Put the register file on every slice-log line, so a diff of two logs
+    // names the first handback where the guest STATE parted company rather
+    // than the first one where the dispatch count did.
+    sliceLogRegs = false,
     // Build the instrumented dispatch and print the census at exit. `hist` is
     // how many handlers to list, `histPairs` how many pairs; 0 for either
     // suppresses that table. Timings from such a run are meaningless -- three
@@ -598,7 +602,22 @@ async function runDos(o) {
         // region computed something else" from "the region ended its slice one
         // instruction along and the audio was rendered against a different
         // grid". `diff` the two files and read the first line that differs.
-        if (sliceLog) sliceLog.push(`${dispatched} ${left} ${cs.toString(16)}:${ip.toString(16)}`);
+        // `--slice-log-regs` adds the guest's whole 16-bit register file and
+        // flags to each line. THE DISPATCH COUNT ALONE CANNOT SEPARATE THE TWO
+        // FAILURES a region has: two arms that reach the same `cs:ip` at
+        // different dispatch counts have either (a) computed the same thing and
+        // billed it differently, or (b) computed something else and only look
+        // aligned because the ip happens to match. `diff` on the counts calls
+        // both of those "the cut moved". With the registers on the line, the
+        // first handback whose STATE differs is the first real divergence, and
+        // everything before it is billing.
+        if (sliceLog) {
+          sliceLog.push(`${dispatched} ${left} ${cs.toString(16)}:${ip.toString(16)}`
+            + (sliceLogRegs
+              ? ' ' + [...isa.REG16, ...isa.SEG].map(n => vm.get(n).toString(16)).join(',')
+                + ',' + (vm.get('flags') >>> 0).toString(16)
+              : ''));
+        }
       },
     },
   });
@@ -609,6 +628,14 @@ async function runDos(o) {
   const jit = regionJit
     ? new (require('./region-live').LiveJit)({
       session, vm, machine, repFast, cpu,
+      // The module options the RUNNING instance was emitted with. The install
+      // builds a second module and swaps the guest onto it, so anything the
+      // first build was told has to be told to the second one too: `hist`
+      // moves the handler indices the arena is already full of, and
+      // `lazyFlags`/`fuseCond` change what a handler MEANS. Rebuilding on the
+      // defaults happened to agree with a default run and would have swapped
+      // `--no-lazy` or `--handler-hist` onto a different machine mid-flight.
+      build: { hist: hist > 0 || histPairs > 0, lazyFlags, fuseCond },
       portIn: (p, w) => machine.portIn(p, w),
       portOut: (p, v, w) => machine.portOut(p, v, w),
       // In-process and blocking, which is the right choice HERE: a headless run
@@ -980,6 +1007,7 @@ async function main() {
     // per line. `diff` two of them and the first differing line is the exact
     // handback where the cut moved.
     sliceLogFile: arg('slice-log'),
+    sliceLogRegs: flag('slice-log-regs'),
     // `--pit-clock` runs every guest clock off dispatchesPerTick and the PIT's
     // reload, which is what the page does; the sweep's defaults keep the timer
     // interrupt at irqEvery.
@@ -1137,10 +1165,39 @@ async function main() {
       + (j.gate ? `  gate ${j.gate.toFixed(2)}x, share ${j.share.toFixed(1)}%` : '')
       + (j.installs ? `  ${j.installs} install(s), ${j.drops} drop(s)` : '')
       + (j.ms.prepare !== undefined
-        ? `  [pick ${j.ms.pick.toFixed(1)}ms, snapshot ${(j.ms.snapshot || 0).toFixed(1)}ms,`
+        // Every field defaulted: a run that DECLINED has `prepare` and only
+        // some of the stages under it, and reading `pick` off that threw --
+        // so `--report` crashed on exactly the runs whose timings say why the
+        // JIT did nothing.
+        ? `  [pick ${(j.ms.pick || 0).toFixed(1)}ms, snapshot ${(j.ms.snapshot || 0).toFixed(1)}ms,`
           + ` gate ${(j.ms.gate || 0).toFixed(0)}ms, build ${(j.ms.build || 0).toFixed(0)}ms,`
           + ` instantiate ${(j.ms.instantiate || 0).toFixed(0)}ms,`
           + ` swap ${(j.ms.swap || 0).toFixed(1)}ms]` : ''));
+    // THE REGION'S OWN CLOCK, READ BACK. `--step-audit` and `--exit-census`
+    // (region-jit.js) mirror every `$steps` charge, every op weight and every
+    // `br $out` site into fixed histogram slots with plain `i32.store`s, so
+    // they need no histogram build and no bench harness -- but until now only
+    // region-jit's own CLI printed them, and that CLI cannot run a LIVE
+    // install. A live divergence that is a clock difference rather than a
+    // wrong value is exactly the case that needs them: `charged` against
+    // `weights` says whether the body billed one step per x86 instruction, and
+    // the exit census says which edge is leaving the region and how often --
+    // which is what prices the once-per-entry charge against the per-iteration
+    // one.
+    const u32 = new Uint32Array(r.vm.mem.buffer);
+    if (flag('step-audit')) {
+      const base = (isa.HIST_BASE >> 2) + isa.HIST_SLOTS - 200;
+      console.log(`  step audit: regions charged ${u32[base] | 0} steps`
+        + ` for ${u32[base + 1] | 0} instruction weights`);
+    }
+    if (flag('exit-census')) {
+      const { EXIT_SITES } = require('./region-jit');
+      const rows = EXIT_SITES.map((e, k) => ({ ...e, n: u32[(isa.HIST_BASE >> 2) + isa.HIST_SLOTS - 1 - k] }))
+        .filter(e => e.n > 0).sort((a, b) => b.n - a.n);
+      for (const e of rows) {
+        console.log(`  exit ${e.region} -> ${e.ip === null ? 'computed' : '0x' + e.ip.toString(16)}: ${e.n}`);
+      }
+    }
   }
   console.log(`  ${r.handbacks} handbacks, ${r.ints} interrupts`
     // Every vector the host raises, not just the timer: single-step traps and

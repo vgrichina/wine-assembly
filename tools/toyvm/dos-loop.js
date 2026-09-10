@@ -1097,6 +1097,7 @@ class DosSession {
     // edge is waiting to be delivered as IRQ2.
     this.vgaHz = 0;
     this.vgaPeriod = 0;
+    this.vgaLines = 449;
     this.vgaFrame = 0;
     this.retraceEdge = false;
     this.lastKey = -1;
@@ -1403,6 +1404,13 @@ class DosSession {
         // Dispatches in one frame: the frame's length in guest seconds
         // divided by what one dispatch is worth.
         this.vgaPeriod = Math.max(100, Math.round(1 / (t.hz * this.guestSeconds(1))));
+        // Kept because the PROGRAMMING is state, not a derivation. `lines` is
+        // only re-read when `hz` changes, so the card can be running on a line
+        // count the current `vgaTiming()` no longer reports -- and anything
+        // that has to re-apply this programming to a second wasm instance (a
+        // region-JIT install) has to re-apply what was ACTUALLY programmed, not
+        // what a fresh call would compute now.
+        this.vgaLines = t.lines;
         vm.exports.set_vga_period(this.vgaPeriod, t.lines);
       }
       vm.exports.set_vga_phase0(this.dispatched % this.vgaPeriod);
