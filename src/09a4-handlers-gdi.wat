@@ -551,15 +551,9 @@
 
   ;; 165: GetTextExtentPointA — font-aware text measurement via host
   (func $handle_GetTextExtentPointA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $packed i32)
-    (local.set $packed (call $host_get_text_metrics (local.get $arg0))) ;; get height from hdc font
-    (call $gs32 (local.get $arg3)
-      (call $host_measure_text (local.get $arg0) (call $g2w (local.get $arg1))
-        (local.get $arg2) (i32.const 0))) ;; cx
-    (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
-      (i32.and (local.get $packed) (i32.const 0xFFFF)))                                            ;; cy
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
+    (call $handle_GetTextExtentPoint32A
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 166: GetTextCharset(hdc) — charset of the selected realized font.
@@ -2391,15 +2385,9 @@
 
   ;; 445: GetTextExtentPointW — font-aware wide text measurement
   (func $handle_GetTextExtentPointW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $packed i32)
-    (local.set $packed (call $host_get_text_metrics (local.get $arg0)))
-    (call $gs32 (local.get $arg3)
-      (call $host_measure_text (local.get $arg0) (call $g2w (local.get $arg1))
-        (local.get $arg2) (i32.const 1)))
-    (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
-      (i32.and (local.get $packed) (i32.const 0xFFFF)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (call $handle_GetTextExtentPoint32W
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 446: CreateICW — STUB: unimplemented
