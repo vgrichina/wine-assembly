@@ -258,7 +258,38 @@ The installed-payload run passes: entry-to-level changed share 0.773,
 right-key 0.030, post-release 0.032, and the same sprite centroids recorded
 above. The automated before/after captures were also visually inspected.
 
-### Historical larger-batch route
+### Browser frozen-clock investigation (2026-09-09)
+
+The registered browser launch is not yet gameplay acceptance. A fresh
+headless Chrome page at `?debug&app=abedemo&frozen&no-log`, cooperative mode,
+100000 blocks/slice and 200ms/frozen step, stays black through 1050 steps.
+The CLI schedule cannot be assumed portable to browser slices.
+
+Read-only diagnostics find main EIP `0x4978e0`, immediately after `Sleep(16)`
+inside `0x4978d0`; the caller is `0x41d40d` in the resource-loading loop.
+Guest `0x4e886c` reports two pending loads. The loader thread at `0x49b502`
+does receive numeric thread-ID-2 posts and performs ReadFile calls, so this
+is not the old CreateThread HANDLE/ID bug. All eight registered companions
+finish browser fetching before guest startup.
+
+`host.js` supplies ThreadManager's `now` from renderer `_profileNow` (wall
+time), while frozen GetTickCount advances with stepped guest time. Thus
+1050 rapid steps advance the visible guest clock to 210000ms but do not
+equivalently advance scheduler Sleep deadlines. As a diagnostic only,
+replacing that instance's `_now` with `() => host.frozenGuestMs()` before the
+first step lets the same 1050-step run finish loading: pending loads become
+zero and the animated main menu appears. Screenshot
+`/private/tmp/abe-browser-1050.png` was visually inspected. Probe and trace:
+`/private/tmp/abe-browser-check.js`, `/private/tmp/abe-browser-check.log`.
+
+No guest code/data was patched. This host override is NOT a proposed final
+fix: ThreadManager also uses `_now` for wall-clock execution budgets and
+profiling. A correction must give guest wait deadlines their own coherent
+clock while preserving bounded worker execution. Live browser movement and
+original-installer child handoff remain unverified. The temporary browser
+and server were closed after each probe.
+
+### Historical larger-batch route (CLI)
 
 At `--batch-size=1000000`, the registered route reaches the main menu near
 batch 390. These normal keyboard events reach gameplay:
