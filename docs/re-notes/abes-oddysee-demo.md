@@ -116,6 +116,34 @@ the earlier large-image and thread-ID faults are not reproduced here.
 
 The route below records the earlier passing build, not current proof.
 
+### Input delivery isolation
+
+The game callback at `0x44b710` records key-down through `0x498150`, which
+writes `0x81` at `0xac37a0 + virtualKey`. The primary window is subclassed
+through `0x4999a0`; the underlying callback pointer at `0xa59f98` is correct.
+With Enter held through normal renderer input, both physical and async host
+states read `0x8000` but guest byte `0xac37ad` remains zero, even after five
+batches. Posting WM_KEYDOWN to the owning HWND through `post_message_q`
+sets that byte to `0x80` after the game consumes its press bit and starts
+the level. Thus the input has not merely arrived too early.
+
+In the same frozen process, posted Enter at batch 576 starts the game;
+after 80 steps it has read `r1.lvl` and `gamebgn.ddv`. Posted Escape reaches
+the pause panel, Enter resumes it, and posted Right moves Abe into the next
+room. The installed-payload level and moving captures were visually inspected
+(`/private/tmp/abe-installed-level.png`, `/private/tmp/abe-installed-moving.png`).
+No executable or game-state bytes were patched. This proves installed data
+and game simulation work, but is a diagnostic route, not acceptance of the
+normal keyboard path.
+
+A related synthetic regression proves GetMessage/PeekMessage can consume
+hardware input belonging to a different window-owning thread. Their shared
+input-owner routing now forwards such input to the owner's queue and retains
+it for retry when that queue is full. The focused filter/ownership/full-queue
+test, teardown-quit test, and canonical/compat build pass. However, the full
+Abe normal-keyboard test still fails identically after that fix. Further
+delivery tracing is required; do not claim this queue fix resolves Abe.
+
 At `--batch-size=1000000`, the registered route reaches the main menu near
 batch 390. These normal keyboard events reach gameplay:
 
