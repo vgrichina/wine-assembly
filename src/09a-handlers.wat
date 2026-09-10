@@ -15678,12 +15678,9 @@ SetColorAdjustment — validate and copy complete per-DC state.
 
   ;; 603: GetCharWidthW(hdc, first, last, widths) — UTF-16 range width query.
   (func $handle_GetCharWidthW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_font_char_widths
+    (call $handle_GetCharWidth32W
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (if (result i32) (local.get $arg3)
-        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))
-      (i32.const 1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 606: GetTextFaceW(hdc, cch, face) — UTF-16 variant of GetTextFaceA.
