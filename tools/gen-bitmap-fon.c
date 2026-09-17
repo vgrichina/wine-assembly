@@ -91,6 +91,7 @@ static void resize_zero(Buffer *buffer, size_t length) {
 
 static size_t append(Buffer *buffer, const void *data, size_t length) {
   size_t offset = buffer->len;
+  if (length > SIZE_MAX - offset) die("output is too large");
   resize_zero(buffer, offset + length);
   if (length) memcpy(buffer->data + offset, data, length);
   return offset;
